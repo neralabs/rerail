@@ -51,7 +51,7 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
     // (`source_tree::root`, 1.9 M instructions), 0.6 G of a 317-file pack's texts when asked per text.
     let dirs = phase0::Dirs::here();
     let mut out = Vec::with_capacity(texts.len());
-    for ((path, text), j) in paths.iter().zip(texts).zip(json) {
+    for ((_, text), j) in paths.iter().zip(texts).zip(json) {
         if j || !includes(&text) {
             out.push(if policy(&text) && !includes(&text) { format!("#include \"core.rerail\"\n{text}") } else { text });
             continue;

@@ -130,8 +130,6 @@ const SCRATCH: &[&str] = &[
 ];
 /// Caches between runs not yet facts: (table, the 0104 step that moves it).
 const NOT_YET_TABLES: &[(&str, &str)] = &[
-    // The cost model fitted from `samples`, per machine (planning's placement).
-    ("models", "6"),
     ("corpus_plans", "3"),
     ("corpus_plan_relations", "3"),
     ("corpus_manifests", "3"),
@@ -159,8 +157,9 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// did (t33 step 7); 12 when the observer's run records (the Git files' listing, the cone's rounds, the Git functors'
 /// answers, the constants, the whole-run cutoff) became kept facts of the observer's space (t33 step 1); 9 when the
 /// derivation graph (names' bindings, derivations and their inputs) became kept facts of the store, read through virtual
-/// tables of their names (t33 step 1).
-const NOT_YET_TABLES_PIN: usize = 9;
+/// tables of their names (t33 step 1); 8 when the cost model saved per machine became a kept fact of the statistics' store
+/// (`costs::models`, t33 step 6).
+const NOT_YET_TABLES_PIN: usize = 8;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
