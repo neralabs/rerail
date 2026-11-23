@@ -2072,7 +2072,12 @@ impl Batch {
         p.extend(cols.iter().map(|&c| c as u32));
         if out.rows > 0 {
             let params = self.block(&p.iter().flat_map(|w| w.to_ne_bytes()).collect::<Vec<u8>>())?;
-            let pass = self.pass()?;
+            // Encoded at once in the open submission, the level's queued work left queued: it reads the chunk block
+            // (the host's) and writes `out`, which no job queued yet reads, so the program its readers join runs after
+            // it. Run first (`pass`), that program split the level a stage was encoding: a stage probing the view
+            // made here, after a stage that read a view in place, found no row (decision 0431 R8, an HTML file's
+            // scripts' `docof`; any view made beside one read in place).
+            let pass = self.open()?;
             pass.run_bytes(&expand, &[block, &out.buffer.buffer, &params.buffer], &[], groups(out.rows));
             self.done.expanded += 1;
         }
