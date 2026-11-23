@@ -1526,3 +1526,15 @@ dropped the `--timings` runs (2026-11-22).
     - Checks: the workspace with `--tests` is clean on Linux and macOS. logic-core's, costs' and demand-catalog's
       tests pass, but for demand-catalog's Metal dispatch test on a Linux host without the device; it passes on a
       Mac.
+  - **10e-3, the lean parsers' adapters leave lang for rerail-lean-tapes.** lang stood on all 17 lean parsers for
+    its adapters (`tape::<language>_lean`, 1,497 lines) and for one read: an embedded program (`embed::Parse::read`)
+    went to the ECMAScript, PHP and HTML encoders by name. The adapters are rerail-lean-tapes, above lang; boot
+    already registered each in the parser router (`tape::install_parsers`), and mounts them in its `tape`. An
+    embedded program is read through the router too: `TreeParser` has `program` (the text as an embedder hands it,
+    `None` where the parser refuses it), which the three adapters implement as the encoders lang called. A process
+    with no router reads it with tree-sitter, which is the same tape (decision 0198). lang-ecma's test binary
+    registers ECMAScript's pack and its lean parsers as boot does, as lang-python's registers Python's.
+    - Then: the longest chain is 18 (19). An edit to a lean parser rebuilds 25 crates (lang and every crate above
+      it before).
+    - Checks: the workspace with `--tests` is clean on Linux and macOS. lang's, lean-tapes', lang-ecma's and
+      lang-php's tests pass (124), and tests-tape's lean, embed, Vue, PHP and HTML tests (43).

@@ -1,0 +1,39 @@
+[package]
+name = "rerail-lean-tapes"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The lean parsers' adapters (`tape::<language>_lean`): each lean parser's tape read in the engine's codes, for a file, a fragment and an embedded program; boot registers them in the parser router."
+
+[features]
+default = ["rerail-lang/default"]
+# The test hooks of the crates below.
+test-hooks = ["rerail-lang/test-hooks", "rerail-python-lean/test-hooks", "rerail-ecma-lean/test-hooks", "rerail-rust-lean/test-hooks", "rerail-java-lean/test-hooks", "rerail-go-lean/test-hooks", "rerail-c-lean/test-hooks", "rerail-csharp-lean/test-hooks", "rerail-kotlin-lean/test-hooks", "rerail-swift-lean/test-hooks", "rerail-scala-lean/test-hooks", "rerail-php-lean/test-hooks", "rerail-html-lean/test-hooks", "rerail-css-lean/test-hooks", "rerail-markdown-lean/test-hooks", "rerail-markdown-inline-lean/test-hooks", "rerail-sql-lean/test-hooks", "rerail-vue-lean/test-hooks"]
+
+[dependencies]
+# The tape, its grammars and the parser router the adapters are registered in.
+rerail-lang = { path = "../lang", default-features = false }
+# A lean parser reads where tree-sitter's grammar is the dialect's (`LanguageExt`).
+ast-grep-language = { version = "=0.51.0", default-features = false }
+# The lean parsers: each writes its grammar's tree-sitter tape as the parse goes (decisions 0184 to 0242, 0314, 0317).
+rerail-python-lean = { path = "../python_lean" }
+rerail-ecma-lean = { path = "../ecma_lean" }
+rerail-rust-lean = { path = "../rust_lean" }
+rerail-java-lean = { path = "../java_lean" }
+rerail-go-lean = { path = "../go_lean" }
+rerail-c-lean = { path = "../c_lean" }
+rerail-csharp-lean = { path = "../csharp_lean" }
+rerail-kotlin-lean = { path = "../kotlin_lean" }
+rerail-swift-lean = { path = "../swift_lean" }
+rerail-scala-lean = { path = "../scala_lean" }
+rerail-php-lean = { path = "../php_lean" }
+rerail-html-lean = { path = "../html_lean" }
+rerail-css-lean = { path = "../css_lean" }
+rerail-markdown-lean = { path = "../markdown_lean" }
+rerail-markdown-inline-lean = { path = "../markdown_inline_lean" }
+rerail-sql-lean = { path = "../sql_lean" }
+rerail-vue-lean = { path = "../vue_lean" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-lean-tapes = { path = ".", features = ["test-hooks"] }

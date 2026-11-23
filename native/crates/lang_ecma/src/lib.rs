@@ -644,3 +644,27 @@ pub mod code_rule_dsl {
     use std::sync::Arc;
 }
 // cratify: mounts end
+
+/// This crate's own test binary, which the engine does not load: ECMAScript's language pack and the dialects' lean
+/// parser are registered as the binary loads, as the engine registers them (`boot::install_languages`), so a script,
+/// whole or embedded (`embed::Parse::read`), is read by the lean parser, as the engine reads one.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        use crate::code_rule_dsl::language::{self, Family, GrammarDialect, adapter::{ecma::Ecma, pack::{Pack, register}}};
+        register(Family::Ecma, &Pack::<Ecma>::NEW);
+        language::register_base(Family::Ecma, &Pack::<Ecma>::NEW);
+        use crate::code_rule_dsl::tape::{ParserImpl, install_parsers};
+        use rerail_lean_tapes::code_rule_dsl::tape::ecma_lean::{JAVASCRIPT, TSX, TYPESCRIPT};
+        install_parsers(vec![
+            ParserImpl { dialect: GrammarDialect::JavaScript, name: "lean JavaScript parser", rank: 0, runs: true, parser: &JAVASCRIPT },
+            ParserImpl { dialect: GrammarDialect::TypeScript, name: "lean TypeScript parser", rank: 0, runs: true, parser: &TYPESCRIPT },
+            ParserImpl { dialect: GrammarDialect::Tsx, name: "lean TSX parser", rank: 0, runs: true, parser: &TSX },
+        ]);
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}

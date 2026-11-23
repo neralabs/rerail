@@ -51,6 +51,11 @@ impl TreeParser for Lean {
         rerail_html_lean::STARTS
     }
 
+    /// An embedded page's text (a string or a template that holds HTML).
+    fn program(&self, grammar: &Grammar, text: &str, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+        encode(grammar, text, budget).ok()
+    }
+
     /// One element (decision 0466). Its scripts and styles are its `raw_text`: a fragment's tape is one image, and no
     /// program is made from them (a rule asks for one by its own embed).
     fn parse_from(&self, grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {

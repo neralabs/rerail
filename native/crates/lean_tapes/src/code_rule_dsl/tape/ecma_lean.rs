@@ -93,6 +93,11 @@ impl TreeParser for Lean {
         encode_from(self.0, grammar, source, start, budget)?.ok()
     }
 
+    /// An embedded program's text, read as it is (a Vue component's script, an HTML page's).
+    fn program(&self, grammar: &Grammar, text: &str, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+        encode(self.0, grammar, text, budget).ok()
+    }
+
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         if !matches!(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(grammar.lang)).parse_input(source), std::borrow::Cow::Borrowed(_))
         {

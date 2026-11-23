@@ -79,6 +79,12 @@ fn encode_input(grammar: &Grammar, input: &[u8], source: &str, budget: &dyn Fn()
 pub struct Lean;
 
 impl TreeParser for Lean {
+    /// An embedded program's text as it is, with no `<?php` tag and no view (`encode_program`: a Blade template's
+    /// compiled program).
+    fn program(&self, grammar: &Grammar, text: &str, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+        encode_program(grammar, text, budget).ok()
+    }
+
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         let span = crate::code_rule_dsl::logic::profile::span(|| "lean PHP parse and tape".into());
         match encode(grammar, source, &budget) {

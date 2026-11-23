@@ -3345,6 +3345,8 @@ pub mod code_rule_dsl {
             use super::*;
         }
         pub use rerail_lang::code_rule_dsl::tape::*;
+        // The lean parsers' adapters (rerail-lean-tapes), which boot registers in the parser router.
+        pub use rerail_lean_tapes::code_rule_dsl::tape::{c_lean, csharp_lean, css_lean, ecma_lean, go_lean, html_lean, java_lean, kotlin_lean, markdown_inline_lean, markdown_lean, php_lean, python_lean, rust_lean, scala_lean, sql_lean, swift_lean, vue_lean};
         #[allow(unused_imports)]
         use crate::code_rule_dsl::embed::segments::SegmentMap;
         #[allow(unused_imports)]

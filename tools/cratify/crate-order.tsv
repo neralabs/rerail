@@ -57,6 +57,7 @@ rerail-store	core
 rerail-program-image	core
 rerail-cpu-stream	core
 rerail-lang	core
+rerail-lean-tapes	core
 rerail-parser-tests	test
 rerail-rr-parser	core
 rerail-kotlin-parser	core
