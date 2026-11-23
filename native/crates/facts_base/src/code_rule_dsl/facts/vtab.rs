@@ -245,6 +245,12 @@ pub trait Source: Send + Sync {
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], _cursor: &mut ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read(column, value, columns, each)
     }
+    /// Whether some row with `value` in `column` has `want` in `columns` (a membership step's test, `exists`), read
+    /// as `lookup_read_at` would find it, without a row or its values handed on: `None` where the source has no such
+    /// test (the caller reads the matches instead).
+    fn test_at(&self, _column: usize, _value: i64, _columns: &[usize], _want: &[i64], _cursor: &mut ProbeCursor) -> Option<bool> {
+        None
+    }
     /// `for_rows` over rows `range` alone, until `each` returns false: a join step's scan of a view reads its rows
     /// so (decision 0353 step 2), a view of a batch's documents walking the documents the range holds once, each row's
     /// node, id and parent coming from the walk, not a point read a row.

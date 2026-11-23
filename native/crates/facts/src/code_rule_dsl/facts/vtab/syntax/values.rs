@@ -674,6 +674,25 @@ impl Source for Layered {
         }
         true
     }
+    /// The base's test; where the relation has parts that may hold the value, `None` (the matches are read).
+    fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut super::super::ProbeCursor) -> Option<bool> {
+        if self.values.admitted.load(Ordering::Acquire) == 0 {
+            return self.base.test_at(column, value, columns, want, cursor);
+        }
+        let all = self.values.parts.load();
+        let Some(p) = all.get(&self.name).filter(|p| p.total > 0) else {
+            return self.base.test_at(column, value, columns, want, cursor);
+        };
+        if self.made.is_some() {
+            return None;
+        }
+        if self.base.test_at(column, value, columns, want, cursor)? {
+            return Some(true);
+        }
+        let mut any = false;
+        p.of(value, self.base.keys_documents(column), &mut |_| any = true);
+        (!any).then_some(false)
+    }
     fn keys_documents(&self, column: usize) -> bool {
         self.base.keys_documents(column)
     }

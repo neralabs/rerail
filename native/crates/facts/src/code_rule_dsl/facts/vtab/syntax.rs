@@ -4306,6 +4306,22 @@ impl Source for Viewed {
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.read_matches(column, value, columns, cursor, each)
     }
+    /// A node's row by its id, tested (`kind(n, k)`, `node(n, _, k)` bound): its tape node found once, each tested
+    /// column read off the tape and compared as read, the first other value ending it. A view with a row for every
+    /// node alone: no row is found, no values handed on.
+    fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut super::ProbeCursor) -> Option<bool> {
+        use read_op::*;
+        if column != self.own() || !matches!(self.view, View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Unit | View::End) {
+            return None;
+        }
+        let plan = self.plan_for(column, columns, cursor)?;
+        let b = &*self.batch;
+        let Some((doc, local)) = b.node_near(value, &mut cursor.hint[0]) else { return Some(false) };
+        let p = &b.docs[doc];
+        let x = if plan.needs & NEED_X != 0 { p.node(local) } else { NONE };
+        let up = if plan.needs & NEED_UP != 0 { Self::parent_id_of(p, local, x) } else { 0 };
+        Some(plan.ops[..usize::from(plan.len)].iter().zip(want).all(|(&op, &w)| Self::op_value(b, p, local, x, value, up, Known::default(), op) == w))
+    }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         self.lookup_docs(column, values, None)
     }
@@ -4651,6 +4667,19 @@ impl Viewed {
     /// probe in key order finds its document and its matches' granule without a search) and the plan of the reads
     /// (`read_op`, made on the step's first probe): a match computes only the inputs the plan needs, the ones the
     /// probe did not bring, then fills each slot from its op.
+    /// The cursor's plan of a match's reads for key `column` and output `columns`, made on the step's first probe.
+    fn plan_for(&self, column: usize, columns: &[usize], cursor: &mut super::ProbeCursor) -> Option<super::ReadPlan> {
+        if !cursor.plan.is_for(column, columns) {
+            let mut plan = super::ReadPlan::new(column, columns)?;
+            for (k, &c) in columns.iter().enumerate() {
+                let (op, needs) = Self::read_op(self.view, c);
+                plan.ops[k] = op;
+                plan.needs |= needs;
+            }
+            cursor.plan = plan;
+        }
+        Some(cursor.plan)
+    }
     fn read_matches(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         use read_op::*;
         // A place's row by its node or position (`line`, `col`, `docof`, by `n`): its values read off its span, into
@@ -4681,16 +4710,7 @@ impl Viewed {
         if matches!(self.view, View::Tok(_)) {
             return false;
         }
-        if !cursor.plan.is_for(column, columns) {
-            let Some(mut plan) = super::ReadPlan::new(column, columns) else { return false };
-            for (k, &c) in columns.iter().enumerate() {
-                let (op, needs) = Self::read_op(self.view, c);
-                plan.ops[k] = op;
-                plan.needs |= needs;
-            }
-            cursor.plan = plan;
-        }
-        let plan = cursor.plan;
+        let Some(plan) = self.plan_for(column, columns, cursor) else { return false };
         let (len, view, b) = (usize::from(plan.len), self.view, &*self.batch);
         let cursor_also = cursor.also;
         let [doc_hint, granule] = &mut cursor.hint;

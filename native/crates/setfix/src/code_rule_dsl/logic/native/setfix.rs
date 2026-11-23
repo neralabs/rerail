@@ -4412,6 +4412,10 @@ impl View {
                 m += 1;
             }
         }
+        // The source's own test, where it has one: no match handed here.
+        if let Some(held) = self.src.test_at(self.cols[cols[lead]], key[lead], &src[..m], &want[..m], cursor) {
+            return Some(held);
+        }
         let mut found = false;
         // The other key's value, which the source may keep its matches to (checked here all the same).
         cursor.also = (m == 1).then(|| (src[0], want[0]));

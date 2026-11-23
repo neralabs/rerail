@@ -365,6 +365,44 @@ fn a_views_probes_read_through_a_cursor_are_its_lookups_and_rows() {
     assert!(tried >= 6, "views read as found: {tried}");
 }
 
+/// A view's membership test (`Source::test_at`, a membership step's `kind(n, k)`) is what its rows say: for every view
+/// that has the test, by its key column with each other column, every row's own values are held and a value no row
+/// of that key has is not; a node id no view has is not held; and the test keeps no state but its cursor's.
+#[test]
+fn a_views_membership_test_is_its_rows() {
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
+    let store = ContentStore::open(&temp("test-at")).unwrap();
+    let mut tried = 0;
+    for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
+        let (n, width) = (source.len(), source.columns().len());
+        if n == 0 || width < 2 {
+            continue;
+        }
+        let mut cursor = ProbeCursor::default();
+        if source.test_at(0, source.value(0, 0), &[1], &[source.value(0, 1)], &mut cursor).is_none() {
+            continue;
+        }
+        for other in 1..width {
+            let mut cursor = ProbeCursor::default();
+            for r in 0..n {
+                let (key, v) = (source.value(r, 0), source.value(r, other));
+                let rows = source.lookup(0, &[key]).expect("a tested view looks up");
+                let held = |w: i64| rows.iter().any(|&q| source.value(q, other) == w);
+                assert_eq!(source.test_at(0, key, &[other], &[v], &mut cursor), Some(true), "{name} row {r} column {other}");
+                let absent = (v + 1..).find(|&w| !held(w)).unwrap();
+                assert_eq!(source.test_at(0, key, &[other], &[absent], &mut cursor), Some(false), "{name} row {r} column {other}: {absent}");
+            }
+            let all: Vec<usize> = (1..width).collect();
+            let want: Vec<i64> = all.iter().map(|&c| source.value(n / 2, c)).collect();
+            assert_eq!(source.test_at(0, source.value(n / 2, 0), &all, &want, &mut cursor), Some(true), "{name}: every column at once");
+        }
+        let past = (0..n).map(|r| source.value(r, 0)).max().unwrap() + 1;
+        assert_eq!(source.test_at(0, past, &[1], &[source.value(0, 1)], &mut cursor), Some(false), "{name}: an id past every node's");
+        tried += 1;
+    }
+    assert!(tried >= 2, "views with a membership test: {tried}");
+}
+
 /// The statistics of a relation held as a view of `node` (decision 0329) are its rows' counts, made without reading
 /// them: per column, the distinct values, the squares of their counts and each value's count, as counting every row
 /// gives (`n`, the key: each value once, no counts).
