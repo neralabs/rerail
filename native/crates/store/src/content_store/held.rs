@@ -89,12 +89,9 @@ impl ContentStore {
 /// plan's space (`local_space`) whose content no kept manifest names. Their reads hold their document's sha256, and
 /// `corpus_live` the kept manifests' sources. A dead plan's whole space goes with the plan (`collect_corpus_pass`).
 /// How many.
-pub(super) fn collect_unreachable_memo(t: &Connection) -> rusqlite::Result<usize> {
-    let live: HashSet<[u8; 32]> = t
-        .prepare("SELECT plan_digest FROM corpus_plans WHERE live = 1")?
-        .query_map([], |r| r.get::<_, Vec<u8>>(0))?
-        .filter_map(|p| p.ok()?.try_into().ok())
-        .collect();
+pub(super) fn collect_unreachable_memo(t: &Connection) -> super::StoreResult<usize> {
+    let store = std::path::PathBuf::from(t.path().unwrap_or_default());
+    let live: HashSet<[u8; 32]> = super::corpus_runs::kept::with_corpus(&store, t, |c| c.plans().into_iter().filter(|p| p.1).map(|p| p.0).collect())?;
     // The kept manifests' contents, by sha256.
     let contents: HashSet<[u8; 32]> = t
         .prepare(
@@ -104,7 +101,7 @@ pub(super) fn collect_unreachable_memo(t: &Connection) -> rusqlite::Result<usize
         .query_map([], |r| Ok(super::HashKey { algorithm: r.get(0)?, lanes: [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?] }))?
         .filter_map(|k| k.ok()?.sha256_bytes())
         .collect();
-    memo_pack::collect_memo_entries(t, &live, &contents)
+    Ok(memo_pack::collect_memo_entries(t, &live, &contents)?)
 }
 
 /// The space of the per-file memo of plan `plan` (decision 0146): one space per file-local program.

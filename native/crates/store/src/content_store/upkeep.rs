@@ -533,7 +533,11 @@ mod tests {
         let folder = dir.path().join("test-store");
         let path = folder.join("store.sqlite");
         drop(ContentStore::open(&path).unwrap());
-        Connection::open(&path).unwrap().execute("UPDATE corpus_decided SET run = swept + 1 WHERE singleton = 1", []).unwrap();
+        let c = Connection::open(&path).unwrap();
+        c.execute("UPDATE corpus_decided SET run = swept + 1 WHERE singleton = 1", []).unwrap();
+        // As every writer of the table writes its kept form (`corpus_runs::kept`).
+        crate::content_store::corpus_runs::kept::sync_at(&c, &crate::content_store::corpus_runs::kept::Touch::all()).unwrap();
+        drop(c);
         let mut job = MemoSweep::new(&path);
         assert_eq!(job.due(), Due::Urgent, "a decision past the last sweep");
         std::fs::remove_dir_all(&folder).unwrap();

@@ -291,6 +291,17 @@ pub(in crate::content_store) fn sync_at(t: &Connection, touch: &Touch) -> StoreR
     }
 }
 
+/// Whether the store `t` is a connection to holds runs in its tables and no kept form of them: one written before
+/// the kept form was.
+pub(in crate::content_store) fn unmirrored(t: &Connection) -> StoreResult<bool> {
+    Ok(t.query_row(
+        "SELECT NOT EXISTS (SELECT 1 FROM facts_chain WHERE space = ?1) \
+         AND (EXISTS (SELECT 1 FROM corpus_roots) OR EXISTS (SELECT 1 FROM corpus_plans) OR coalesce((SELECT run FROM corpus_state WHERE singleton = 1), 0) > 0)",
+        [&space()[..]],
+        |r| r.get(0),
+    )?)
+}
+
 /// Where the kept form differs from the tables, a line each (empty: they agree). A store whose tables are as a new
 /// store's, never mirrored, agrees.
 pub(in crate::content_store) fn agree(store: &Path, t: &Connection) -> StoreResult<Vec<String>> {
@@ -314,16 +325,165 @@ pub(in crate::content_store) fn agree(store: &Path, t: &Connection) -> StoreResu
         .collect())
 }
 
+fn of_words(row: &[i64]) -> [u8; 32] {
+    let mut d = [0u8; 32];
+    for (i, w) in row.iter().take(4).enumerate() {
+        d[i * 8..i * 8 + 8].copy_from_slice(&w.to_le_bytes());
+    }
+    d
+}
+
+/// An entry's bytes (`of_bytes`'s layout: the length, then 8 a word).
+fn bytes_of(e: &Kept<'_>) -> Vec<u8> {
+    let words: Vec<i64> = (0..e.rows.len()).map(|r| e.rows.get(r, 0)).collect();
+    let Some((&len, rest)) = words.split_first() else { return Vec::new() };
+    let mut out: Vec<u8> = rest.iter().flat_map(|w| w.to_le_bytes()).collect();
+    out.truncate(len.max(0) as usize);
+    out
+}
+
+/// A manifest as the kept form holds it (`corpus_manifest`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::content_store) struct KeptManifest {
+    pub id: i64,
+    pub root: i64,
+    pub last_run: i64,
+    pub last_time: i64,
+    pub grammar_version: i64,
+    pub tape_format: i64,
+    pub plan: [u8; 32],
+    pub digest: [u8; 32],
+    pub lane: Option<[u8; 32]>,
+    pub policy: Option<[u8; 32]>,
+}
+
+/// `corpus_state`'s and `corpus_decided`'s values (zeros where never mirrored, as a new store's).
+#[derive(Clone, Copy, Debug, Default)]
+pub(in crate::content_store) struct KeptState {
+    pub run: i64,
+    pub history_bytes: i64,
+    pub due: i64,
+    pub archive_due: i64,
+    pub decided_run: i64,
+    pub decided_time: i64,
+    pub swept: i64,
+}
+
+/// The corpus runs' kept form, as a transaction finds it (none: a store that keeps none).
+pub(in crate::content_store) struct Corpus<'v>(Option<&'v dyn KeptRead>);
+
+impl Corpus<'_> {
+    fn entry(&self, rel: &str, ident: &[u8; 32], part: i64) -> Option<Kept<'_>> {
+        self.0?.get(&FactKey { rel, ident, part }).filter(|e| e.key.ident == ident)
+    }
+
+    fn of(&self, rel: &'static str) -> Vec<Kept<'_>> {
+        let id = ident(rel);
+        self.0.map(|v| v.of(rel).filter(|e| *e.key.ident == id).collect()).unwrap_or_default()
+    }
+
+    /// Every root, by id, with its path.
+    pub fn roots(&self) -> Vec<(i64, String)> {
+        self.of(ROOT).iter().map(|e| (e.key.part, String::from_utf8_lossy(&bytes_of(e)).into_owned())).collect()
+    }
+
+    /// The root of `path`.
+    pub fn root(&self, path: &str) -> Option<i64> {
+        self.of(ROOT).iter().find(|e| bytes_of(e) == path.as_bytes()).map(|e| e.key.part)
+    }
+
+    /// Every manifest, newest run first.
+    pub fn manifests(&self) -> Vec<KeptManifest> {
+        let mut out: Vec<KeptManifest> = self
+            .of(MANIFEST)
+            .iter()
+            .filter(|e| e.rows.len() == 1)
+            .map(|e| {
+                let r = e.row(0);
+                let opt = |at: usize| (r[at] != 0).then(|| of_words(&r[at + 1..at + 5]));
+                KeptManifest {
+                    id: e.key.part,
+                    root: r[0],
+                    last_run: r[1],
+                    last_time: r[2],
+                    grammar_version: r[3],
+                    tape_format: r[4],
+                    plan: of_words(&r[5..9]),
+                    digest: of_words(&r[9..13]),
+                    lane: opt(13),
+                    policy: opt(18),
+                }
+            })
+            .collect();
+        out.sort_by_key(|m| std::cmp::Reverse(m.last_run));
+        out
+    }
+
+    /// `root`'s manifests, newest run first.
+    pub fn manifests_of(&self, root: i64) -> Vec<KeptManifest> {
+        self.manifests().into_iter().filter(|m| m.root == root).collect()
+    }
+
+    /// The sources manifest `manifest` read, ascending.
+    pub fn sources(&self, manifest: i64) -> Vec<i64> {
+        self.entry(SOURCE, &ident(SOURCE), manifest).map(|e| (0..e.rows.len()).map(|r| e.rows.get(r, 0)).collect()).unwrap_or_default()
+    }
+
+    /// The other plans manifest `manifest` names, ascending.
+    pub fn named(&self, manifest: i64) -> Vec<[u8; 32]> {
+        self.entry(NAMED, &ident(NAMED), manifest).map(|e| (0..e.rows.len()).map(|r| of_words(&e.row(r))).collect()).unwrap_or_default()
+    }
+
+    /// Every recorded plan, with whether it is live.
+    pub fn plans(&self) -> Vec<([u8; 32], bool)> {
+        self.0
+            .map(|v| v.of(PLAN).filter(|e| e.rows.len() == 1 && e.key.part == 0).map(|e| (*e.key.ident, e.rows.get(0, 0) != 0)).collect())
+            .unwrap_or_default()
+    }
+
+    /// `plan`'s relations and their columns (JSON), by relation.
+    pub fn relations(&self, plan: &[u8; 32]) -> Vec<(String, String)> {
+        let Some(e) = self.entry(RELATIONS, plan, 0) else { return Vec::new() };
+        let text = bytes_of(&e);
+        let parts: Vec<&[u8]> = text.split(|b| *b == 0).collect();
+        parts.chunks_exact(2).map(|p| (String::from_utf8_lossy(p[0]).into_owned(), String::from_utf8_lossy(p[1]).into_owned())).collect()
+    }
+
+    /// The source ids `corpus_live` holds, each with its tapes' `(grammar_version, tape_format)`.
+    pub fn live(&self) -> Vec<(i64, i64, i64)> {
+        self.of(LIVE).iter().flat_map(|e| (0..e.rows.len()).map(move |r| (e.key.part, e.rows.get(r, 0), e.rows.get(r, 1)))).collect()
+    }
+
+    pub fn state(&self) -> KeptState {
+        let Some(e) = self.entry(STATE, &ident(STATE), 0).filter(|e| e.rows.len() == 1) else { return KeptState::default() };
+        let r = e.row(0);
+        KeptState { run: r[0], history_bytes: r[1], due: r[2], archive_due: r[3], decided_run: r[4], decided_time: r[5], swept: r[6] }
+    }
+}
+
+/// `f` over the kept form of the corpus runs as `t` (a connection to the store at `store`) finds it.
+pub(in crate::content_store) fn with_corpus<T>(store: &Path, t: &Connection, f: impl FnOnce(&Corpus<'_>) -> T) -> StoreResult<T> {
+    let kept = open(store, t)?;
+    let view = kept.as_ref().map(KeptSpace::view);
+    Ok(f(&Corpus(view.as_ref().map(|v| v as &dyn KeptRead))))
+}
+
 impl ContentStore {
+    /// `with_corpus` on the store's connection.
+    pub(in crate::content_store) fn corpus_kept<T>(&self, f: impl FnOnce(&Corpus<'_>) -> T) -> StoreResult<T> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        with_corpus(&self.database_path, &connection, f)
+    }
+
     /// Mirrors what `touch` names into the kept form, in `t` (`sync`), and returns what to note once committed.
     pub(in crate::content_store) fn mirror_corpus(&self, t: &Connection, touch: &Touch) -> StoreResult<Option<ChainRows>> {
         sync(&self.database_path, t, touch)
     }
 
     /// Where the corpus runs' kept form differs from their tables (`agree`).
+    /// Both read in one transaction, as no writer's commit can fall between them.
     pub fn corpus_kept_differences(&self) -> StoreResult<Vec<String>> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        agree(&self.database_path, &connection)
+        self.immediate_transaction(|t| agree(&self.database_path, t))
     }
 
     /// In a test build, refuses a collection whose kept form of the corpus runs differs from their tables (stage 2 of

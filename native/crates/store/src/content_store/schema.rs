@@ -651,6 +651,22 @@ impl ContentStore {
                 let _ = std::fs::remove_dir_all(frames);
             }
         }
+        // The corpus runs' kept form (t33 step 3): what reads them. A store whose tables hold runs and no kept form
+        // (written before it) is mirrored whole, once, by a writer's thread, before anything reads it.
+        if super::corpus_runs::kept::unmirrored(connection)? {
+            rerail_accel::exec::scoped(|scope| {
+                scope
+                    .spawn(|| -> StoreResult<()> {
+                        super::hazards::behind_the_run();
+                        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                        super::corpus_runs::kept::sync_at(&transaction, &super::corpus_runs::kept::Touch::all())?;
+                        transaction.commit()?;
+                        Ok(())
+                    })
+                    .join()
+                    .unwrap_or_else(|p| std::panic::resume_unwind(p))
+            })?;
+        }
         let id: Option<i64> = connection
             .query_row_cached(
                 "SELECT id FROM store_identity WHERE singleton = 1",

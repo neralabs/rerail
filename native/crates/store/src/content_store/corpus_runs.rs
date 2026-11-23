@@ -248,67 +248,33 @@ impl ContentStore {
     /// its plan's entries hold rows of with their declared columns (JSON). `None` if the root has no run.
     #[allow(clippy::type_complexity)]
     pub fn corpus_run_of(&self, root: &str) -> StoreResult<Option<([u8; 32], Vec<i64>, Vec<(String, String)>)>> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let run: Option<(Vec<u8>, Vec<u8>)> = connection
-            .query_row_cached(
-                "SELECT m.plan_digest, m.sources FROM corpus_manifests m JOIN corpus_roots r USING (root_id) \
-                 WHERE r.path = ?1 ORDER BY m.last_run DESC LIMIT 1",
-                [root],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-        let Some((plan, sources)) = run else { return Ok(None) };
-        let plan: [u8; 32] = plan.try_into().map_err(|_| StoreError::Corrupt("a corpus manifest's plan is not 32 bytes".into()))?;
-        let relations = connection
-            .prepare_cached("SELECT relation, columns FROM corpus_plan_relations WHERE plan_digest = ?1 ORDER BY relation")?
-            .query_map([&plan[..]], |r| Ok((r.get(0)?, r.get(1)?)))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Some((plan, decode_ids(&sources)?, relations)))
+        self.corpus_kept(|c| {
+            let m = c.root(root).and_then(|r| c.manifests_of(r).into_iter().next())?;
+            Some((m.plan, c.sources(m.id), c.relations(&m.plan)))
+        })
     }
 
     /// The digests the newest run of `root` named besides its plan (`record_corpus_run_naming`'s `also`): among them,
     /// what it kept for the next run to find by them (its pipelines' runs, decision 0333).
     pub fn corpus_run_also(&self, root: &str) -> StoreResult<Vec<[u8; 32]>> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let rows = connection
-            .prepare_cached(
-                "SELECT plan_digest FROM corpus_manifest_plans WHERE manifest_id = (SELECT m.manifest_id FROM corpus_manifests m \
-                 JOIN corpus_roots r USING (root_id) WHERE r.path = ?1 ORDER BY m.last_run DESC LIMIT 1)",
-            )?
-            .query_map([root], |r| r.get::<_, Vec<u8>>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows.into_iter().filter_map(|d| d.try_into().ok()).collect())
+        self.corpus_kept(|c| c.root(root).and_then(|r| c.manifests_of(r).into_iter().next()).map(|m| c.named(m.id)).unwrap_or_default())
     }
 
     /// `corpus_run_also` of the newest run of lane `lane` over `root`: what a run of the same programs named last.
     pub fn corpus_lane_also(&self, root: &str, lane: &[u8; 32]) -> StoreResult<Vec<[u8; 32]>> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let rows = connection
-            .prepare_cached(
-                "SELECT plan_digest FROM corpus_manifest_plans WHERE manifest_id = (SELECT m.manifest_id FROM corpus_manifests m \
-                 JOIN corpus_roots r USING (root_id) WHERE r.path = ?1 AND m.lane = ?2 ORDER BY m.last_run DESC LIMIT 1)",
-            )?
-            .query_map(params![root, &lane[..]], |r| r.get::<_, Vec<u8>>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows.into_iter().filter_map(|d| d.try_into().ok()).collect())
+        self.corpus_kept(|c| {
+            c.root(root).and_then(|r| c.manifests_of(r).into_iter().find(|m| m.lane.as_ref() == Some(lane))).map(|m| c.named(m.id)).unwrap_or_default()
+        })
     }
 
     /// The sources the newest `runs` runs over `root` read, of any lane. A lane is the programs' texts, so a rule's
     /// edit starts a new one with no run: what a root's files and guests are does not change with the rules (Q22).
     pub fn root_sources(&self, root: &str, runs: usize) -> StoreResult<Vec<SourceId>> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let blobs = connection
-            .prepare_cached(
-                "SELECT m.sources FROM corpus_manifests m JOIN corpus_roots r USING (root_id) \
-                 WHERE r.path = ?1 ORDER BY m.last_run DESC LIMIT ?2",
-            )?
-            .query_map(params![root, runs as i64], |r| r.get::<_, Vec<u8>>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut out = std::collections::BTreeSet::new();
-        for b in blobs {
-            out.extend(decode_ids(&b)?);
-        }
-        Ok(out.into_iter().map(SourceId).collect())
+        self.corpus_kept(|c| {
+            let manifests = c.root(root).map(|r| c.manifests_of(r)).unwrap_or_default();
+            let out: std::collections::BTreeSet<i64> = manifests.iter().take(runs).flat_map(|m| c.sources(m.id)).collect();
+            out.into_iter().map(SourceId).collect()
+        })
     }
 
     /// Records a run of the corpus at `root` that read `sources` (tapes of `grammar_version` and `tape_format`) under
@@ -525,10 +491,7 @@ impl ContentStore {
     /// The plans a kept manifest names or a run holds (`corpus_plans`, live): what the observer's store keeps a
     /// whole-run cutoff's record for (`observe::collect`).
     pub fn live_plans(&self) -> StoreResult<HashSet<[u8; 32]>> {
-        let connection = self.connection.lock().expect("content store connection unavailable");
-        let mut st = connection.prepare("SELECT plan_digest FROM corpus_plans WHERE live=1")?;
-        let plans = st.query_map([], |r| r.get::<_, Vec<u8>>(0))?.filter_map(|p| p.ok()?.try_into().ok()).collect();
-        Ok(plans)
+        self.corpus_kept(|c| c.plans().into_iter().filter(|p| p.1).map(|p| p.0).collect())
     }
 
     /// The collection a run's owner held off while it ran (its lease, `AnalysisRun`), once it lets go: passes while
@@ -573,39 +536,25 @@ impl ContentStore {
     /// have passed since it (the backstop and gone roots). Reads the recent manifests through `last_run`'s index.
     fn corpus_decision_worth(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<bool> {
         let connection = self.connection.lock().expect("content store connection unavailable");
-        let (run, decided_run, decided_time): (i64, i64, i64) = connection.query_row_cached(
-            "SELECT s.run, coalesce(d.run, 0), coalesce(d.time, 0) FROM corpus_state s LEFT JOIN corpus_decided d ON d.singleton=1 WHERE s.singleton=1",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )?;
-        if run - decided_run >= policy.decide_every_runs || now - decided_time >= policy.decide_every_secs {
+        let (state, manifests) = kept::with_corpus(&self.database_path, &connection, |c| (c.state(), c.manifests()))?;
+        if state.run - state.decided_run >= policy.decide_every_runs || now - state.decided_time >= policy.decide_every_secs {
             return Ok(true);
         }
         // A plan hold that lapsed: the plan may be dead now (a memo whose writer holds its plans, the slice's).
         if lapsed_plan_hold(&connection, now)? {
             return Ok(true);
         }
-        let displaced: Option<i64> = connection
-            .query_row_cached(
-                "SELECT 1 FROM corpus_manifests m WHERE m.last_run > ?1 \
-                 AND (SELECT count(*) FROM corpus_manifests o WHERE o.root_id=m.root_id AND o.lane IS m.lane) > ?2 LIMIT 1",
-                params![decided_run, policy.protected_runs as i64],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if displaced.is_some() {
+        let recent = || manifests.iter().filter(|m| m.last_run > state.decided_run);
+        // A root recorded since past its protected runs of a lane.
+        let mut per_lane: HashMap<(i64, Option<[u8; 32]>), usize> = HashMap::new();
+        for m in &manifests {
+            *per_lane.entry((m.root, m.lane)).or_default() += 1;
+        }
+        if recent().any(|m| per_lane[&(m.root, m.lane)] > policy.protected_runs) {
             return Ok(true);
         }
         // A policy set's newer lane (decision 0302): its older lanes lose their protection.
-        let superseded: Option<i64> = connection
-            .query_row_cached(
-                "SELECT 1 FROM corpus_manifests m WHERE m.last_run > ?1 AND m.policy IS NOT NULL \
-                 AND EXISTS (SELECT 1 FROM corpus_manifests o WHERE o.root_id=m.root_id AND o.policy=m.policy AND o.lane IS NOT m.lane) LIMIT 1",
-                [decided_run],
-                |r| r.get(0),
-            )
-            .optional()?;
-        Ok(superseded.is_some())
+        Ok(recent().any(|m| m.policy.is_some() && manifests.iter().any(|o| o.root == m.root && o.policy == m.policy && o.lane != m.lane)))
     }
 
     /// Whether a plan hold has lapsed (`object_pins` of `OBJECT_PLAN` past their lease).
@@ -616,8 +565,7 @@ impl ContentStore {
 
     /// `corpus_state.due`: 0 nothing, 1 a new manifest (a decision is due), 2 a decision's rows being collected.
     fn corpus_due(&self) -> StoreResult<i64> {
-        let connection = self.connection.lock().expect("content store connection unavailable");
-        Ok(connection.query_row_cached("SELECT due FROM corpus_state WHERE singleton=1", [], |r| r.get(0))?)
+        self.corpus_kept(|c| c.state().due)
     }
 
     /// Decides which manifests to keep under `policy` at unix second `now`, and applies it: evicted manifests go,
@@ -1082,12 +1030,10 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// Whether `corpus_decided.run` is past its `swept` on connection `c` (a read: the memo sweep's `due`).
-pub fn memo_sweep_wanted(c: &rusqlite::Connection) -> rusqlite::Result<bool> {
-    c.query_row(
-        "SELECT run > swept FROM corpus_decided WHERE singleton=1",
-        [],
-        |r| r.get(0),
-    )
-    .optional()
-    .map(|v| v.unwrap_or(false))
+pub fn memo_sweep_wanted(c: &rusqlite::Connection) -> StoreResult<bool> {
+    let store = std::path::PathBuf::from(c.path().unwrap_or_default());
+    kept::with_corpus(&store, c, |k| {
+        let state = k.state();
+        state.decided_run > state.swept
+    })
 }

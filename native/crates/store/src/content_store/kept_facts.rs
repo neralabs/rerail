@@ -913,7 +913,7 @@ impl super::ContentStore {
     pub fn collect_kept_facts(&self) -> StoreResult<usize> {
         let (dead, spaces): (HashSet<[u8; 32]>, Vec<[u8; 32]>) = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
-            let dead = connection.prepare("SELECT plan_digest FROM corpus_plans WHERE live=0")?.query_map([], |r| r.get::<_, Vec<u8>>(0))?.filter_map(|p| p.ok().and_then(|p| <[u8; 32]>::try_from(p.as_slice()).ok())).collect();
+            let dead = super::corpus_runs::kept::with_corpus(&self.database_path, &connection, |c| c.plans().into_iter().filter(|p| !p.1).map(|p| p.0).collect())?;
             let spaces = connection.prepare("SELECT DISTINCT space FROM facts_chain")?.query_map([], |r| r.get::<_, Vec<u8>>(0))?.filter_map(|s| s.ok().and_then(|s| <[u8; 32]>::try_from(s.as_slice()).ok())).collect();
             (dead, spaces)
         };
