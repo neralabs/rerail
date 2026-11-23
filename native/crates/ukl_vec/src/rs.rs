@@ -19,7 +19,7 @@
 
 use crate::Error;
 use crate::k::{Builtin, Kind, M, NO_SLOT, Op, View};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 type R<T> = Result<T, Error>;
 
@@ -349,23 +349,47 @@ struct Em<'a> {
     /// The group is one chunk, one SIMD group (`kernel_group`): its threads run in step, so a barrier is met where
     /// it is written, and a SIMD group's operation is one across the chunk's lanes.
     one: bool,
+    /// Each function (by its number in the program) called as compiled code of its own (`Read`), not written here.
+    compiled: HashMap<u32, Read>,
+    /// The structures (by context and variable) copied into whole where the copy cannot read them where they lie (its
+    /// source's bytes a write of the kernel reaches): fields, though only read after (`fields`).
+    unaliased: HashSet<(u32, u32)>,
+}
+
+/// A function of the program that a kernel's Rust calls as compiled code of its own, through the launch's table of
+/// them (`Launch::reads`, by `index`), not written as its vector code: a read written once in CLIF (decision 0310),
+/// whose UKL the kernel's source includes (`<ukl/reads/*.h>`) and which the CPU has compiled (`rerail_clif::jit`).
+/// Its UKL takes a base `t` and the offset `a0` of its first pointer from it, and computes every address as an
+/// offset from `t`; its compiled code takes that pointer (`t + a0`), its other arguments as the UKL's, and computes
+/// addresses.
+#[derive(Clone, Debug)]
+pub struct Read {
+    /// Its name in the program (the UKL's, `clif_rows_at`).
+    pub name: String,
+    /// Its place in the launch's table.
+    pub index: u32,
+    /// Its result is an address from `t` (the UKL's: the compiled code's less `t`).
+    pub result: bool,
+    /// Each of its UKL arguments past `t` and `a0`: an offset from `t` (passed to the compiled code plus `t`).
+    pub offsets: Vec<bool>,
 }
 
 /// Kernel `name`'s vector tape `k` (of program `prog`, whose constant memory it reads) as Rust at `w` lanes (4, 8, 16
 /// or 32): a module's text, its entry
 /// `pub unsafe fn {name}_w{w}(argv: *const *const u8, l: &Launch)`.
 pub fn kernel(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32) -> R<String> {
-    emit(prog, k, w, false)
+    emit(prog, k, w, false, &[])
 }
 
 /// The Rust of kernel `k` for groups of one SIMD group (`UKL_SIMD_WIDTH`, 32 threads), each group one chunk of 32
 /// lanes: its barriers, anywhere (in a loop, a branch every thread takes, a called function), are met in step, and
-/// its SIMD groups' operations are the chunk's. A launch of other groups is refused where it runs.
-pub fn kernel_group(prog: &crate::lower::Program, k: &crate::vector::Kernel) -> R<String> {
-    emit(prog, k, 32, true)
+/// its SIMD groups' operations are the chunk's. A launch of other groups is refused where it runs. The functions
+/// `reads` names are calls of their compiled code (`Read`).
+pub fn kernel_group(prog: &crate::lower::Program, k: &crate::vector::Kernel, reads: &[Read]) -> R<String> {
+    emit(prog, k, 32, true, reads)
 }
 
-fn emit(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32, one: bool) -> R<String> {
+fn emit(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32, one: bool, reads: &[Read]) -> R<String> {
     if !matches!(w, 4 | 8 | 16 | 32) {
         return err(format!("{w} lanes: 4, 8, 16 or 32"));
     }
@@ -376,13 +400,19 @@ fn emit(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32, one: bo
             bodies.insert(v.w(i, 0), i);
         }
     }
-    let mut e = Em { data: prog.data(), called: prog.funcs.iter().map(|f| f.called).collect(), names: prog.funcs.iter().map(|f| f.name.clone()).collect(), v, w, p: w / 4, bodies, lanes: HashMap::new(), iotas: Default::default(), refs: HashMap::new(), structs: HashMap::new(), mems: HashMap::new(), runs: HashMap::new(), lane_conds: Default::default(), shadows: Default::default(), shadow_fail: false, iota_params: HashMap::new(), wants: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), written: Some(Default::default()), aliases: Default::default(), arrays: HashMap::new(), risky: false, risky_insts: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new(), shared: None, sub: None, pending: None, one };
+    let mut e = Em { data: prog.data(), called: prog.funcs.iter().map(|f| f.called).collect(), names: prog.funcs.iter().map(|f| f.name.clone()).collect(), v, w, p: w / 4, bodies, lanes: HashMap::new(), iotas: Default::default(), refs: HashMap::new(), structs: HashMap::new(), mems: HashMap::new(), runs: HashMap::new(), lane_conds: Default::default(), shadows: Default::default(), shadow_fail: false, iota_params: HashMap::new(), wants: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), written: Some(Default::default()), aliases: Default::default(), arrays: HashMap::new(), risky: false, risky_insts: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new(), shared: None, sub: None, pending: None, one, compiled: HashMap::new(), unaliased: HashSet::new() };
+    for r in reads {
+        if let Some(f) = prog.funcs.iter().position(|f| f.name == r.name) {
+            e.compiled.insert(f as u32, r.clone());
+        }
+    }
     if !e.v.is_empty() && e.v.kind(0) == Kind::Func && e.v.w(0, 2) > 0 {
         e.shared = Some(e.v.w(0, 4));
     }
     // Each pass finds lanes the one before did not (a variable written a lane's value, or apart); until none. A
     // pass finds at least a function's instances a call deeper than the last's (format 16's parent read, through
     // its slot, its array's value and column, the window load: 17 passes).
+    let mut refused = None;
     for _ in 0..64 {
         if !e.again {
             break;
@@ -393,7 +423,22 @@ fn emit(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32, one: bo
         e.seen.clear();
         e.writes.clear();
         e.pending = None;
-        e.module(&k.name)?;
+        // Where the last pass stopped, if a refusal ended it: nothing of it goes on.
+        e.ind = 0;
+        e.memo.clear();
+        e.valid.clear();
+        e.sub = None;
+        // A pass that learned something (`again`) and then refused a statement: the refusal may be of what it learned
+        // too late in it to apply (a structure found to need its fields after a statement read it whole). The next
+        // pass applies it; a refusal that stays is the last pass's.
+        match e.module(&k.name) {
+            Err(x) if e.again => {
+                refused = Some(x);
+                continue;
+            }
+            r => r?,
+        }
+        refused = None;
         // The buffers only their own threads write: none written where the writes' buffer is not known.
         let mut d: std::collections::BTreeSet<u32> = e.writes.iter().filter_map(|w| w.0).collect();
         if e.writes.iter().any(|w| w.0.is_none()) {
@@ -413,6 +458,9 @@ fn emit(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32, one: bo
             e.params = std::mem::take(&mut e.seen);
             e.again = true;
         }
+    }
+    if let Some(x) = refused {
+        return Err(x);
     }
     if e.again {
         return err("the variables' lanes did not settle");
@@ -1179,6 +1227,69 @@ impl Em<'_> {
         Ok(())
     }
 
+    /// A call of read `r` (its body `b`), compiled code of its own, through the launch's table: one call where its
+    /// arguments are each one value (as a function's instance of one value's arguments runs once), else one for each
+    /// running lane, its results gathered into the lanes.
+    fn call_compiled(&mut self, r: &Read, b: usize, vals: Vec<V>, cx: &Cx) -> R<V> {
+        let ret = M(self.v.w(b, 4));
+        let ms: Vec<M> = (0..vals.len()).map(|k| M(self.v.w(b, 8 + 2 * k))).collect();
+        if vals.len() < 2 || r.offsets.len() != vals.len() - 2 || ms.iter().chain([&ret]).any(|m| m.is_agg() || m.float()) {
+            return err(format!("{}: not a read's arguments and result", r.name));
+        }
+        let ty = |m: M| if m.bytes() == 8 { "u64" } else { "u32" };
+        let (w, p) = (self.w, self.p);
+        // Each argument as an expression of lane `j`, or its one value.
+        let mut each = Vec::new();
+        for (k, v) in vals.iter().enumerate() {
+            let m = ms[k];
+            let t = self.tmp();
+            match v {
+                V::S(s, am) => {
+                    let x = if *am == M::PTR { format!("(({s}) as usize as u64)") } else { conv(s, *am, if m == M::PTR { M::U64 } else { m }) };
+                    self.line(format!("let {t}: {} = {x} as {};", ty(m), ty(m)));
+                    each.push(t);
+                }
+                v => {
+                    let l = self.lanes(v, m)?;
+                    let n = if wide(m) || m == M::PTR { 2 * p } else { p };
+                    self.line(format!("let {t} = core::mem::transmute::<[uint32x4_t; {n}], [u32; {}]>({l});", 4 * n));
+                    each.push(if n == 2 * p { format!("(({t}[{w} + j] as u64) << 32 | {t}[j] as u64)") } else { format!("{t}[j]") });
+                }
+            }
+        }
+        let base = each[0].clone();
+        let mut args = vec![format!("{base}.wrapping_add({})", each[1])];
+        for (k, a) in each[2..].iter().enumerate() {
+            args.push(if r.offsets[k] { format!("{base}.wrapping_add({a})") } else { a.clone() });
+        }
+        let f = self.tmp();
+        let sig = std::iter::once("u64").chain(ms[2..].iter().map(|&m| ty(m))).collect::<Vec<_>>().join(", ");
+        self.line(format!("let {f}: unsafe extern \"C\" fn({sig}) -> {} = core::mem::transmute(*l.reads.add({}));", ty(ret), r.index));
+        let call = format!("{f}({})", args.join(", "));
+        let call = if r.result { format!("{call}.wrapping_sub({base})") } else { call };
+        let t = self.tmp();
+        if vals.iter().all(|v| matches!(v, V::S(..))) {
+            self.line(format!("let {t}: {} = {call};", ty(ret)));
+            return Ok(V::S(t, ret));
+        }
+        // Each running lane's call, its result in its lane.
+        let n = if wide(ret) { 2 * p } else { p };
+        let g = self.tmp();
+        self.line(format!("let mut {g} = [0u32; {}];", 4 * n));
+        let on = if cx.full {
+            String::new()
+        } else {
+            let k = self.tmp();
+            let cur = cx.cur.clone();
+            self.line(format!("let {k} = bits(&{cur});"));
+            format!("if {k} >> j & 1 != 0 ")
+        };
+        let put = if n == 2 * p { format!("{g}[j] = v as u32; {g}[{w} + j] = (v >> 32) as u32;") } else { format!("{g}[j] = v;") };
+        self.line(format!("for j in 0..{w} {{ {on}{{ let v = {call}; {put} }} }}"));
+        self.line(format!("let {t} = core::mem::transmute::<[u32; {}], [uint32x4_t; {n}]>({g});", 4 * n));
+        Ok(V::L(t, ret))
+    }
+
     /// Function `id`'s instance of `shapes`' number.
     fn inst(&mut self, id: u32, shapes: &[Sh], full: bool, valid: &[u32]) -> u32 {
         let k = self.insts.len() as u32;
@@ -1244,7 +1355,7 @@ impl Em<'_> {
                 continue;
             }
             // A thread's structure: each field its own variable, as a scalar is.
-            if let Some(fields) = self.fields(n, off) {
+            if let Some(fields) = self.fields(n, off, !self.unaliased.contains(&(ctx, off))) {
                 for &(byte, m) in &fields {
                     let key = field_key(off, byte);
                     let lanes = self.lanes.get(&(ctx, key)).copied().unwrap_or(false);
@@ -1297,7 +1408,7 @@ impl Em<'_> {
     /// not otherwise passed or kept. Its fields do not overlap. Where it is read whole (copied from, passed, returned,
     /// loaded) every byte is a field's: the bytes no access names are fields too (`gaps`), which a copy into it
     /// fills and a read of it whole writes.
-    fn fields(&self, f: usize, off: u32) -> Option<Vec<(u32, M)>> {
+    fn fields(&self, f: usize, off: u32, alias: bool) -> Option<Vec<(u32, M)>> {
         let mut size = 0;
         let mut whole = false;
         let mut fields: Vec<(u32, M)> = Vec::new();
@@ -1354,8 +1465,9 @@ impl Em<'_> {
             return None;
         }
         if whole {
-            // Copied into from memory and only read: read where it is (`aliasable`), not each byte loaded.
-            if self.aliasable(f, off) {
+            // Copied into from memory and only read: read where it is (`aliasable`), not each byte loaded; unless
+            // its copy found it cannot be (`unaliased`).
+            if alias && self.aliasable(f, off) {
                 return None;
             }
             let named = fields.clone();
@@ -3059,6 +3171,12 @@ impl Em<'_> {
                         return Ok(a);
                     }
                 }
+                // A structure copied whole that `fields` left to be read where it lies, which it cannot be here: its
+                // fields, from the next pass.
+                if self.v.kind(dst) == Kind::Local && self.v.w(dst, 2) == 0 && self.unaliased.insert((cx.ctx, self.vid(dst))) {
+                    self.again = true;
+                    return Ok(V::None);
+                }
                 // Bytes to bytes: each running lane's (one copy where both addresses are one value's).
                 let (d, s) = (self.expr(dst, cx)?, self.expr(src, cx)?);
                 let k = match &d {
@@ -3283,6 +3401,9 @@ impl Em<'_> {
     /// A call of function `id` with its arguments' values `vals`: the instance of their shapes, its result.
     fn call(&mut self, id: u32, vals: Vec<V>, cx: &Cx) -> R<V> {
         let Some(&b) = self.bodies.get(&id) else { return err(format!("a call of function {id}, which has no body")) };
+        if let Some(r) = self.compiled.get(&self.v.w(b, 1)).cloned() {
+            return self.call_compiled(&r, b, vals, cx);
+        }
         let ret = M(self.v.w(b, 4));
         // Where all lanes run, the instance of all lanes (no mask); else the mask's.
         let mut args = vec!["l".to_string(), "lid0".to_string()];

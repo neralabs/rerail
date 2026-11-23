@@ -828,6 +828,27 @@ kernel to check in: the instances of the view reads are the bulk (`clif_verdict_
 lines each, twice; each format's `view_loc_*` read 1,900). Next: the code's size, then the kernel against Metal's
 and the c++ build's results, then the CPU joins on it.
 
+### The reads called, not written again (the user's: "under 200kb ... substantially smaller than 1MB", 2026-11-23)
+
+The reads written once in CLIF (decision 0310) are compiled code on the CPU already (`rerail_clif::jit::Reads`). A
+kernel's Rust now calls them through the launch's table (`Launch::reads`, `READS`' order: `Reads::table`), not as 32
+lanes' vector code of their UKL (`rs::Read`, `call_compiled`): once where the arguments are each one value, else once
+per running lane, its result gathered into the lanes. Their UKL passes a base `t` and the pointer's offset `a0` from
+it, and computes addresses as offsets from `t`; the compiled read takes `t + a0`. So a read whose result is an
+address from that pointer gives its result less `t`, and one parameter that is an address (`cache_done`'s) is passed
+plus `t`: `reads::addresses`, a flow of the pointer through each read's CLIF, finds them
+(`the_reads_addresses_are_these`: eight results, one parameter).
+
+Two changes it needed in `rs.rs`. A structure copied whole that `fields` had left to be read in place, where its copy
+then finds it cannot be (its source's bytes a write reaches), is marked (`unaliased`) and gets its fields from the
+next pass. And a pass that learned something and then refused a statement ends only that pass: the refusal may be of
+what it learned too late to apply.
+
+`join_run`'s Rust: 10.8 MB to 2.53 MB (26,245 lines, 309 instances of 161 functions; the view, relation and lines
+reads now 79 calls). The largest: `row_text_one` 210 KB, `txt_of` 174 KB (2 instances), `lat_merge_one` 145 KB,
+`ukl_radix_scatter_tile_u32_prog` 134 KB (2). Not compiled yet. Next: the instances (one per shape where shapes
+differ little), then the text of each (declarations, splats, masks).
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one

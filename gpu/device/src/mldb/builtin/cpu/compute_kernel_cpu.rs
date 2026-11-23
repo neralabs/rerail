@@ -789,7 +789,7 @@ impl CpuBindContext<'_> {
                     for z in 0..grid[2] {
                         for y in 0..grid[1] {
                             for x in 0..grid[0] {
-                                let l = rerail_ukl_rust::Launch { group: [x, y, z], block, groups: grid };
+                                let l = rerail_ukl_rust::Launch { group: [x, y, z], block, groups: grid, reads: std::ptr::null() };
                                 // SAFETY: `argv` holds the kernel's arguments as its rows bound them (each buffer's
                                 // address, each value's bytes), and the shim's two.
                                 unsafe { k(argv.as_ptr(), &l) };
