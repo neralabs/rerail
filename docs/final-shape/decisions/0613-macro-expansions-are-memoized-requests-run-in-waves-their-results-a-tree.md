@@ -425,6 +425,10 @@ So:
    - The corpus (GB10, CUDA, warm, a second evaluation, one run each): C 5.8 to 5.6 ms, C++ 2.5 to 2.1 ms,
      within the runs' swing. Its units take at most 2 rounds, and a first round's tree is mostly its roots
      (the table is empty), so it keeps the groups and little else; deeper include chains keep more.
+   - With real headers (the corpus's first 20 C units, glibc's and GCC's headers searched before the stubs:
+     `RERAIL_PP_INCLUDE`; GB10, CUDA, warm, a second evaluation): up to 9 rounds a unit, 6 runs. The rounds' GPU
+     time 125.2 ms from the roots (`RERAIL_PP_FROM_ROOTS`) to 62.9 ms from the last round's tree, the median run
+     25.7 to 10.5 ms; every unit gives the serial pass's tokens both ways.
 
    **Measured, not kept: a batch's first round held before its text** (2026-11-22).
    - Every unit of a batch's first round stopped at P1's end, so that the units that request ran their second

@@ -193,7 +193,8 @@ impl Progress {
         let (cfg, loaded) = (d.cfg, &self.loaded);
         let (unit, _) = place_kept(&loaded.files.iter().map(|s| (s.as_slice(), cpp)).collect::<Vec<_>>(), &mut self.digests)?;
         let roots = || vec![PpNode { file: 0, parent: NO_PARENT, pdir: 0, depth: 0, unit: 0 }, PpNode { file: 1, parent: NO_PARENT, pdir: 1, depth: 0, unit: 0 }];
-        let tree = self.tree.clone().unwrap_or_default();
+        // `RERAIL_PP_FROM_ROOTS` (a measurement): every round from the roots, as before the tree was kept.
+        let tree = self.tree.clone().filter(|_| std::env::var_os("RERAIL_PP_FROM_ROOTS").is_none()).unwrap_or_default();
         let lay = Layout {
             nodes: if tree.nodes.is_empty() { roots() } else { tree.nodes },
             entered: tree.entered,
