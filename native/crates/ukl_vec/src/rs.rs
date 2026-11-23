@@ -241,6 +241,10 @@ struct Em<'a> {
     /// for the next pass: the others' value is one, though the tape's level says lanes (an instance of uniform
     /// arguments).
     lane_conds: std::collections::HashSet<(u32, usize)>,
+    /// The names of the lanes' variables' copies of one lane, while a loop's scalar rounds are written
+    /// (`finish_scalar`), and whether a store there was of lanes (the rounds then not written).
+    shadows: std::collections::HashSet<String>,
+    shadow_fail: bool,
     /// The `K` each function's parameter of consecutive lanes would take `Sh::Run` of (its smallest shift or mask
     /// that wants it, or its callee's), kept from pass to pass: a call that has such lanes tests its chunk.
     wants: HashMap<(u32, usize), u32>,
@@ -294,7 +298,7 @@ pub fn kernel(k: &crate::vector::Kernel, w: u32) -> R<String> {
             bodies.insert(v.w(i, 0), i);
         }
     }
-    let mut e = Em { v, w, p: w / 4, bodies, lanes: HashMap::new(), iotas: Default::default(), runs: HashMap::new(), lane_conds: Default::default(), iota_params: HashMap::new(), wants: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), risky: false, risky_insts: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new(), shared: None, pending: None };
+    let mut e = Em { v, w, p: w / 4, bodies, lanes: HashMap::new(), iotas: Default::default(), runs: HashMap::new(), lane_conds: Default::default(), shadows: Default::default(), shadow_fail: false, iota_params: HashMap::new(), wants: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), risky: false, risky_insts: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new(), shared: None, pending: None };
     if e.v.len() > 0 && e.v.kind(0) == Kind::Func && e.v.w(0, 2) > 0 {
         e.shared = Some(e.v.w(0, 4));
     }
@@ -1131,6 +1135,159 @@ impl Em<'_> {
     }
 
     /// Loop `n`'s rounds, each lane its own: the lanes still in it, those whose condition holds; none, it ends.
+    /// Whether lanes loop `n`'s rounds may be each lane's in turn (`finish_scalar`): it leaves only by its condition,
+    /// calls nothing, writes only variables, and reads no lane's id, SIMD group, barrier or atomic (a lane's rounds
+    /// run alone are one interleaving of the threads').
+    fn scalar_loop(&self, n: usize) -> bool {
+        (n..n + self.v.size(n)).all(|i| match self.v.kind(i) {
+            Kind::Break | Kind::Continue | Kind::Return | Kind::Call | Kind::Inline => false,
+            Kind::Store | Kind::Update => {
+                let a = self.v.child(i, 0);
+                self.v.kind(a) == Kind::Local && self.v.w(a, 2) == 0
+            }
+            Kind::Builtin => {
+                let b = Builtin::of(self.v.w(i, 0));
+                matches!(b, Builtin::LocalSize | Builtin::GlobalSize | Builtin::GroupId | Builtin::NumGroups | Builtin::MemFence) || b as u32 >= Builtin::Popcount as u32
+            }
+            _ => true,
+        })
+    }
+
+    /// At a lanes loop `n`'s round, `lm` its lanes that go on: where at most `FEW` do, each one's rounds to the
+    /// loop's end in turn, as Rust's rounds of one value (a round of all the chunk's lanes costs as much as of all of
+    /// them: its gathers a load a lane either way), then the loop left. Each variable the loop reads that is each
+    /// lane's (consecutive lanes, an address of each lane's) is the lane's copy for those rounds, and each it writes
+    /// one, written back to the lane after; a variable of one value it writes (dead past the loop, or it would be each
+    /// lane's) is a copy, each lane's rounds from its value now. Not written where a round's value is of lanes.
+    /// Whether node `n`'s condition (a short circuit, `?:`) is of lanes where its first operand is one value, as a
+    /// pass learned: never in a lane's scalar rounds (`finish_scalar`), whose values are that lane's.
+    fn lane_cond(&self, ctx: u32, n: usize) -> bool {
+        self.shadows.is_empty() && self.lane_conds.contains(&(ctx, n))
+    }
+
+    /// Node `n`'s condition found of lanes: learned for the next pass; in a lane's scalar rounds, those rounds not
+    /// written.
+    fn learn_lane_cond(&mut self, ctx: u32, n: usize) {
+        if self.shadows.is_empty() {
+            self.lane_conds.insert((ctx, n));
+            self.again = true;
+        } else {
+            self.shadow_fail = true;
+        }
+    }
+
+    fn finish_scalar(&mut self, n: usize, lm: &str, cx: &Cx) -> R<()> {
+        if !self.scalar_loop(n) {
+            return Ok(());
+        }
+        let kids: Vec<usize> = self.v.children(n).collect();
+        let (cond, body, step) = (kids[0], kids[1], kids.get(2).copied());
+        let (at, top, ind) = (self.out.len(), self.top, self.ind);
+        let (w, p) = (self.w, self.p);
+        let (bits, left) = (self.tmp(), self.tmp());
+        self.line(format!("let {bits} = bits(&{lm});"));
+        self.line(format!("if {bits}.count_ones() <= {} {{", Self::FEW));
+        self.ind += 1;
+        self.line(format!("let mut {left} = {bits};"));
+        self.line(format!("while {left} != 0 {{"));
+        self.ind += 1;
+        self.line(format!("let j = {left}.trailing_zeros() as usize;"));
+        self.line(format!("{left} &= {left} - 1;"));
+        let end = n + self.v.size(n);
+        let mut ids: Vec<u32> = (n..end).filter(|&i| self.v.kind(i) == Kind::Local).map(|i| self.vid(i)).collect();
+        ids.sort();
+        ids.dedup();
+        let written: Vec<u32> = (n..end).filter(|&i| matches!(self.v.kind(i), Kind::Store | Kind::Update) && self.v.kind(self.v.child(i, 0)) == Kind::Local).map(|i| self.vid(self.v.child(i, 0))).collect();
+        let mut saved = Vec::new();
+        let mut back = Vec::new();
+        let mut ok = true;
+        for id in ids {
+            let Some(var) = self.vars.get(&(cx.ctx, id)).cloned() else { continue };
+            let writes = written.contains(&id);
+            let now = match &var.fixed {
+                Some(V::S(..)) => None,
+                Some(f) => Some(f.clone()),
+                None if var.lanes => Some(if var.m == M::B { V::K(var.name.clone()) } else { V::L(var.name.clone(), var.m) }),
+                None if var.iota => Some(V::Iota(var.name.clone(), var.m)),
+                None if writes => Some(V::S(var.name.clone(), var.m)),
+                None => None,
+            };
+            let Some(now) = now else { continue };
+            let V::S(e, em) = self.lane_of(&now)? else {
+                ok = false;
+                break;
+            };
+            let copy = if var.fixed.is_some() && !writes {
+                Var { fixed: Some(V::S(conv(&e, em, var.m), var.m)), ..var.clone() }
+            } else {
+                let name = format!("{}_j", var.name);
+                self.line(format!("let mut {name}: {} = {};", scalar(var.m)?, conv(&e, em, var.m)));
+                self.shadows.insert(name.clone());
+                if var.lanes && writes {
+                    back.push((var.clone(), name.clone()));
+                }
+                Var { name, m: var.m, lanes: false, iota: false, fixed: None }
+            };
+            saved.push((id, var));
+            self.vars.insert((cx.ctx, id), copy);
+        }
+        if ok {
+            let one = Cx { cur: self.ones(), divergent: false, left: false, brk: None, cont: None, full: true, looped: None, region: None, ..cx.clone() };
+            self.shadow_fail = false;
+            self.line("loop {");
+            self.ind += 1;
+            match self.expr(cond, &one)? {
+                V::S(c, _) => {
+                    self.line(format!("if !({}) {{ break; }}", truth(&c, M::B)));
+                    self.stmt(body, &one)?;
+                    if let Some(s) = step {
+                        self.stmt(s, &one)?;
+                    }
+                }
+                _ => ok = false,
+            }
+            self.ind -= 1;
+            self.line("}");
+            // The lane's values back in their lanes.
+            for (var, copy) in &back {
+                let regs = if wide(var.m) { 2 * p } else { p };
+                let (lo, hi) = if var.m == M::B {
+                    (format!("if {copy} {{ u32::MAX }} else {{ 0 }}"), None)
+                } else if wide(var.m) {
+                    (format!("{copy} as u32"), Some(format!("({copy} as u64 >> 32) as u32")))
+                } else if var.m.float() {
+                    (format!("{copy}.to_bits()"), None)
+                } else {
+                    (format!("{copy} as u32"), None)
+                };
+                let a = self.tmp();
+                self.line(format!("let mut {a} = core::mem::transmute::<[uint32x4_t; {regs}], [u32; {}]>({});", 4 * regs, var.name));
+                self.line(format!("{a}[j] = {lo};"));
+                if let Some(hi) = hi {
+                    self.line(format!("{a}[{w} + j] = {hi};"));
+                }
+                self.line(format!("{} = core::mem::transmute::<[u32; {}], [uint32x4_t; {regs}]>({a});", var.name, 4 * regs));
+            }
+            self.ind -= 1;
+            self.line("}");
+            self.line("break;");
+            self.ind -= 1;
+            self.line("}");
+        }
+        for (id, var) in saved {
+            self.vars.insert((cx.ctx, id), var);
+        }
+        self.shadows.clear();
+        if !ok || std::mem::take(&mut self.shadow_fail) {
+            // Rounds of lanes: what was written of them goes (after what the function's top gained since).
+            self.out.truncate(at + (self.top - top));
+            self.ind = ind;
+            self.memo.retain(|m| m.2 <= ind);
+            self.valid.retain(|m| m.1 <= ind);
+        }
+        Ok(())
+    }
+
     fn stmt_loop(&mut self, n: usize, cx: &Cx) -> R<()> {
         let kids: Vec<usize> = self.v.children(n).collect();
         let (cond, body, step) = (kids[0], kids[1], kids.get(2).copied());
@@ -1144,6 +1301,7 @@ impl Em<'_> {
         }
         self.line("loop {");
         self.ind += 1;
+        self.finish_scalar(n, &lm, cx)?;
         self.line("// Lanes part: each its own rounds.");
         let head = Cx { cur: lm.clone(), divergent: true, left: false, brk: hb.then(|| brk.clone()), cont: None, full: false, looped: Some(n), region: Some(n), ..cx.clone() };
         let c = self.expr(cond, &head)?;
@@ -1714,7 +1872,7 @@ impl Em<'_> {
                     // of a right side of lanes (as the last pass found it), a mask, the left side's in every lane
                     // until the right side's decides.
                     let t = self.tmp();
-                    let lanes = self.lane_conds.contains(&(cx.ctx, n));
+                    let lanes = self.lane_cond(cx.ctx, n);
                     let x = truth(x, *xm);
                     // A right side of lanes that reads no memory (but variables) and calls nothing: evaluated whole,
                     // the left side's mask and its (no branch to skip a few operations).
@@ -1745,8 +1903,7 @@ impl Em<'_> {
                         }
                         V::S(y, ym) => self.line(format!("{t} = {};", truth(&y, ym))),
                         _ => {
-                            self.lane_conds.insert((cx.ctx, n));
-                            self.again = true;
+                            self.learn_lane_cond(cx.ctx, n);
                         }
                     }
                     self.ind -= 1;
@@ -2085,7 +2242,7 @@ impl Em<'_> {
             let c = truth(c, *cm);
             // Of lanes by the tape, but one value where both arms are (as the last pass found them).
             let varying = lanes;
-            let lanes = lanes && self.lane_conds.contains(&(cx.ctx, n));
+            let lanes = lanes && self.lane_cond(cx.ctx, n);
             self.line(format!("let {t}: {};", self.ty(m, lanes)?));
             self.line(format!("if {c} {{"));
             for (j, &arm) in kids[1..].iter().enumerate() {
@@ -2098,8 +2255,7 @@ impl Em<'_> {
                     match x {
                         V::S(s, xm) => conv(&s, xm, m),
                         _ if varying => {
-                            self.lane_conds.insert((cx.ctx, n));
-                            self.again = true;
+                            self.learn_lane_cond(cx.ctx, n);
                             "0".into()
                         }
                         x => return err(format!("a uniform ?:'s arm of lanes: {x:?}")),
@@ -2198,7 +2354,7 @@ impl Em<'_> {
                 // Consecutive lanes where all of them run, or where those that do not never read it again: their
                 // first, the variable's (`Var::iota`); found so, a variable of one value is one of them from the next
                 // pass.
-                V::Iota(f, _) if (!cx.divergent || self.dead_off(cx, off)) && var.m.bytes() == 4 => {
+                V::Iota(f, _) if (!cx.divergent || self.dead_off(cx, off)) && var.m.bytes() == 4 && !self.shadows.contains(&var.name) => {
                     if var.iota {
                         self.line(format!("{} = {f};", var.name));
                     } else {
@@ -2208,6 +2364,11 @@ impl Em<'_> {
                     return Ok(());
                 }
                 _ => {
+                    // A lane's copy in a loop's scalar rounds (`finish_scalar`): those rounds are not one lane's.
+                    if self.shadows.contains(&var.name) {
+                        self.shadow_fail = true;
+                        return Ok(());
+                    }
                     // A lane's value, or a value set where lanes are apart: each lane's, from the next pass.
                     self.lanes.insert(key, true);
                     self.again = true;
@@ -2977,13 +3138,20 @@ impl Em<'_> {
                 let x = match x {
                     V::S(e, xm) => conv(e, *xm, m),
                     _ if m.bytes() == 4 => {
-                        // Lanes' values at one address: C's threads race there, and any one's value stands. Each
-                        // running lane's in turn, in lane order, so the last running lane's is left.
+                        // Lanes' values at one address: C's threads race there, and any one's value stands. The
+                        // last running lane's, as each running lane's in lane order would leave it: one store, where
+                        // a lane runs (its mask's bits tested once).
                         let l = self.lanes(x, m)?;
-                        let cur = cx.cur.clone();
-                        for j in 0..self.w {
-                            let on = self.on(&cur, j);
-                            self.line(format!("if {on} {{ ({s} as *mut u32).write_unaligned(vgetq_lane_u32::<{}>({l}[{}])); }}", j % 4, j / 4));
+                        let (w, p) = (self.w, self.p);
+                        if cx.full {
+                            self.line(format!("({s} as *mut u32).write_unaligned(vgetq_lane_u32::<{}>({l}[{}]));", (w - 1) % 4, (w - 1) / 4));
+                        } else {
+                            let b = self.tmp();
+                            self.line(format!("let {b} = bits(&{});", cx.cur));
+                            self.line(format!("if {b} != 0 {{"));
+                            self.line(format!("    let j = 31 - {b}.leading_zeros() as usize;"));
+                            self.line(format!("    ({s} as *mut u32).write_unaligned(core::mem::transmute::<[uint32x4_t; {p}], [u32; {w}]>({l})[j]);"));
+                            self.line("}");
                         }
                         return Ok(());
                     }

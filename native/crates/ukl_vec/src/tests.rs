@@ -1553,11 +1553,11 @@ fn the_f16_parent_back_kernels_rust_is_the_checked_in_one() {
     assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
 }
 
-/// A store of each lane's value at one address is C's race of the threads: each running lane's in lane order, the
-/// last running lane's left, one of the values C allows (rerail-ukl-aot's `a_chain_past_seven_links_is_a_corrupt_tape`
+/// A store of each lane's value at one address is C's race of the threads: the last running lane's value, one of
+/// those C allows, stored once where a lane runs (rerail-ukl-aot's `a_chain_past_seven_links_is_a_corrupt_tape`
 /// runs one).
 #[test]
-fn a_store_of_lanes_values_at_one_address_is_a_running_lanes() {
+fn a_store_of_lanes_values_at_one_address_is_the_last_running_lanes() {
     let text = "#include <ukl/backend.h>\n\
         DEFINE_KERNEL2(t, race, RWBUFFER, uint32_t, c, \"[1]\", GID0, uint32_t, i, )\n\
         { if (i < 64u && (i & 1u) != 0u) c[0] = i; }\n";
@@ -1566,8 +1566,30 @@ fn a_store_of_lanes_values_at_one_address_is_a_running_lanes() {
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("race").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
     let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}", e.0));
-    let stores = rust.lines().filter(|l| l.contains(".write_unaligned(vgetq_lane_u32::<")).count();
-    assert!(stores >= 8 && rust.contains("if vgetq_lane_u32::<3>("), "not each running lane's store in turn:\n{rust}");
+    let stores = rust.lines().filter(|l| l.contains(".write_unaligned(")).count();
+    assert!(stores == 2 && rust.matches(".leading_zeros() as usize;").count() == 2 && !rust.contains("if vgetq_lane_u32::<"), "not one store of the last running lane's:\n{rust}");
+}
+
+/// A loop of lanes' rounds where few lanes go on is each one's rounds in turn, of one value (its loads one a round,
+/// not a gather): its variables the lane's copies, written back to its lane; not so for a loop that stores to memory.
+#[test]
+fn a_lanes_loop_of_few_lanes_ends_as_each_ones_rounds() {
+    let text = "#include <ukl/backend.h>\n\
+        DEFINE_KERNEL2(t, chase, ROBUFFER, uint32_t, next, \"[64]\", RWBUFFER, uint32_t, out, \"[64]\", GID0, uint32_t, i, )\n\
+        { if (i >= 64u) return; uint32_t r = next[i]; for (uint32_t k = 0u; k < 7u && r < 64u; k++) r = next[r]; out[i] = r; }\n\
+        DEFINE_KERNEL2(t, mark, RWBUFFER, uint32_t, next, \"[64]\", GID0, uint32_t, i, )\n\
+        { if (i >= 64u) return; uint32_t r = next[i]; while (r < 64u) { next[r] = 64u; r = next[i]; } }\n";
+    let src = super::source("/<kernels>/chase.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let rust = |name: &str| {
+        let k = super::vector::vectorize(&p, p.kernel(name).unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+        super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}", e.0))
+    };
+    let chase = rust("chase");
+    assert!(chase.contains(".count_ones() <= 2 {") && chase.contains("let mut x") && chase.contains("_j: u32 = ") && chase.contains("[j] = x"), "no lane's own rounds:\n{chase}");
+    let mark = rust("mark");
+    assert!(!mark.contains("_j: u32 = "), "a loop that stores to memory run a lane at a time:\n{mark}");
 }
 
 /// An atomic add of one value at one address is each running thread's, as in C: one atomic of the value times the
