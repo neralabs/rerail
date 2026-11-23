@@ -25,12 +25,12 @@
     code "react/no-deprecated"
     "Move the logic of {name} to {new}, or rename it UNSAFE_{name} if it must stay; the unprefixed name is deprecated."
     suppress eslint "react/no-deprecated"
-api(at, old, new) :- use(at, old), replaced(old, new).
-api_gone(at, old) :- use(at, old), !replaced(old, _).
+api(at, old, new) :- use(at, old), docof(at, d), replaced(d, old, new).
+api_gone(at, old) :- use(at, old), docof(at, d), !replaced(d, old, _).
 // The member's key name (react-class's member_named): `#componentWillMount() {}`, `[componentWillMount]() {}` and
 // a spec's shorthand `{ componentWillMount }` count; a string key `"componentWillMount"() {}` does not.
-lifecycle(at, x, new) :- react_component(k), member_named(k, x, m), lifecycle_name(x), replaced(x, new),
-    member_key(m, at), docof(k, d), react_doc(d).
+lifecycle(at, x, new) :- react_component(k), member_named(k, x, m), lifecycle_name(x), docof(k, d), replaced(d, x, new),
+    member_key(m, at), react_doc(d).
 
 // use(at, old): at uses the deprecated API old.
 .decl use(at: node, old: symbol)
@@ -88,10 +88,12 @@ fixed_api("this.transferPropsTo"). fixed_api("ReactPerf.printDOM"). fixed_api("P
 fixed_api("ReactPerf.getMeasurementsSummaryMap"). fixed_api("Perf.getMeasurementsSummaryMap").
 fixed_api("ReactDOM.render"). fixed_api("ReactDOM.hydrate"). fixed_api("ReactDOM.unmountComponentAtNode").
 fixed_api("ReactDOMServer.renderToNodeStream").
-.decl replaced(old: symbol, new: symbol)
-replaced(old, new) :- deprecated(d, _, old), pragma(d, p), pragma_api(x), old = cat(p, ".", x), pragma_new(x, n),
+// replaced(d, old, new): in document d, old's replacement: by d's pragma, or from the fixed list (decision 0652: a
+// file's pragma decides its names).
+.decl replaced(d: number, old: symbol, new: symbol)
+replaced(d, old, new) :- deprecated(d, _, old), pragma(d, p), pragma_api(x), old = cat(p, ".", x), pragma_new(x, n),
     new = @replace_all(n, "^React\\.", cat(p, ".")).
-replaced(old, new) :- fixed_new(old, new).
+replaced(d, old, new) :- react_doc(d), fixed_new(old, new).
 .decl pragma_new(x: symbol, new: symbol)
 pragma_new("renderComponent", "React.render"). pragma_new("renderComponentToString", "React.renderToString").
 pragma_new("renderComponentToStaticMarkup", "React.renderToStaticMarkup").

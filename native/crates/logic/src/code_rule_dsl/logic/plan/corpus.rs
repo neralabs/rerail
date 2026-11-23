@@ -2685,6 +2685,8 @@ fn run_observed_within(
             let domains = lower::domains_of(&version)?;
             let _step = crate::code_rule_dsl::logic::profile::span(|| "split the file-local and cross-file parts".into());
             let split = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
+            // No relation is cross-file without a declaration (decision 0652).
+            crate::code_rule_dsl::typing::file_local::crossings_checked(&split).map_err(Error::Plan)?;
             // The run's program: the image alone; no tree is kept.
             let lowered = lower::Lowered::of_placed(super::body::Placed::whole(version), domains, ops, dialect);
             drop(_step);
@@ -3248,6 +3250,21 @@ fn run_observed_within(
             let mut counts = crate::code_rule_dsl::logic::plan::statkeep::RelStats::new(source.columns());
             counts.delta(&flat(source.as_ref()), &[], width);
             let measured = counts.statistics(&|_| true);
+            repository.push((rel.clone(), source, measured));
+        }
+        // A library's own input that core does not make and no fact gives (`tsx/node-package.rerail`'s
+        // `npm_ignored`, "until core has it"): no rows, under its declared columns. A cross-file rule reads it as an
+        // input like any other (decision 0652 moves such readers there), so it is bound, empty.
+        let unbound: Vec<&String> = split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)).collect();
+        for rel in unbound {
+            let own = projection.columns(rel).is_none() && head.find(rel).and_then(|a| head.facts(a)).is_none();
+            let Some(cols) = head.columns_of(rel).filter(|_| own) else { continue };
+            // Its columns by position (`c0`, …), as a phase's export's (`atoms_source`): the cross part reads a
+            // relation core does not shape by position.
+            let names: Vec<String> = (0..cols.len()).map(|c| format!("c{c}")).collect();
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(crate::code_rule_dsl::facts::vtab::Relation::new(&names));
+            let measured = syntax::statistics(source.as_ref());
             repository.push((rel.clone(), source, measured));
         }
         repository

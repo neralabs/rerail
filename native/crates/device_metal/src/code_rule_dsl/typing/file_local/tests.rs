@@ -460,6 +460,42 @@ same_ann(f, g) :- ann_of(f, a), ann_of(g, a), f != g.
     assert_eq!(split.same_doc.get("ann_of").map(Vec::as_slice), Some(&[0][..]), "{:?}", split.same_doc);
 }
 
+/// An undeclared crossing is refused (decision 0652): a rule joining two documents by a value names its relation,
+/// cause and rule. Declared `cross_file`, it is accepted, and its reader follows it with no declaration. A relation
+/// the lowering made for a rule is named with that rule's relation.
+#[test]
+fn an_undeclared_crossing_is_refused_and_a_declared_one_is_not() {
+    let base = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl named(n: node, s: symbol)
+named(n, s) :- node(_, n, "identifier", _, _), text(n, s).
+.decl twin(a: node, b: node)DECL
+twin(a, b) :- named(a, s), named(b, s), a != b.
+.decl has_twin(a: node)
+has_twin(a) :- twin(a, _).
+.output has_twin
+"#;
+    let refused = crossings_checked(&programs_of(read(&base.replace("DECL", ""))).unwrap()).unwrap_err();
+    assert!(refused.contains("twin: joins 2 documents"), "{refused}");
+    assert!(refused.contains("decision 0652") && refused.contains("cross_file"), "{refused}");
+    assert!(!refused.contains("has_twin"), "a reader of a crossing is not one: {refused}");
+    let declared = programs_of(read(&base.replace("DECL", " cross_file"))).unwrap();
+    crossings_checked(&declared).unwrap();
+    assert!(!declared.file_local.contains("twin") && !declared.file_local.contains("has_twin"), "{:?}", declared.file_local);
+    let helper = read(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl alone(a: node)
+alone(a) :- node(_, a, "identifier", _, _), text(a, s), !(text(b, s), b != a).
+.output alone
+"#);
+    let refused = crossings_checked(&programs_of(helper).unwrap()).unwrap_err();
+    assert!(refused.contains("made by the lowering of alone") || refused.contains("  alone:"), "{refused}");
+}
+
 /// A cross-file rule reading a node's position (decision 0649) is reported, with the relation it reads; one placing a
 /// finding (its head an output) is not, and a file-local rule reading one is not.
 #[test]

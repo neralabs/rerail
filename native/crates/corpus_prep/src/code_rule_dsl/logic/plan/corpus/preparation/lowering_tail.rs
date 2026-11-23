@@ -711,8 +711,12 @@ fn declare_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
 /// granule, so a comparison of two nodes (`b < n`: a binding before a use) and a `min`/`max` over nodes read the
 /// nodes' preorder keys instead (`node_order`): the order preorder ids gave, so the rule means what it did.
 /// - `x < y`, both nodes: `node_order(x, kx), node_order(y, ky), kx < ky` (`<=`, `>`, `>=` likewise);
-/// - `v = max x : { r(…x…) }`, `x` a node: `kv = max k : { r_ord(…x…, k) }, node_order(v, kv)`, where
-///   `r_ord(…x…, k) :- r(…x…), node_order(x, k)`: a helper `rr_ordered<k>`, written after the program's rules.
+/// - `v = max x : { r(…x…) }`, `x` a node: `kv = max k : { r_ord(…, _, k) }, r_ord(…, v, kv)`, where
+///   `r_ord(…, x, k) :- r(…x…), node_order(x, k)`: a helper `rr_ordered<k>`, written after the program's rules.
+///   `v` is the aggregated row's own node, read back from the helper at the key, not `node_order(v, kv)`: the key
+///   names one node (decision 0121's keys hold the document), but the split cannot see a document in a number, and
+///   took that rule for a join of two documents (decision 0652). The helper's row holds the group and its node
+///   together, as the aggregated atom did. Its columns bound only inside the aggregate are `_` there.
 ///
 /// A variable is a node when a column it fills is declared `node`: in the head or any atom of the body. Fresh
 /// variables are numbered over the program in rule order.
@@ -723,8 +727,9 @@ enum Ordered {
     Keep(u32),
     /// `x op y` over nodes: `node_order(x, kx), node_order(y, ky), kx op ky`.
     Cmp { x: Slot, y: Slot, op: crate::code_rule_dsl::logic::program_image::CmpOp, k: usize },
-    /// `var = op o : { atom }` over a node `o`: `kv = op k : { helper(args, k) }, node_order(var, kv)`.
-    Agg { lit: u32, var: Slot, o: Slot, op: crate::code_rule_dsl::logic::front::AggOp, k: usize, helper: usize, args: Vec<Slot> },
+    /// `var = op o : { atom }` over a node `o`: `kv = op k : { helper(args, _, k) }, helper(args', var, kv)`, `args'`
+    /// the arguments bound outside the aggregate (`outer`), the others `_`.
+    Agg { lit: u32, var: Slot, o: Slot, op: crate::code_rule_dsl::logic::front::AggOp, k: usize, helper: usize, args: Vec<Slot>, outer: Vec<bool> },
 }
 
 impl ProgramPass for OrderNodes {
@@ -808,7 +813,16 @@ impl ProgramPass for OrderNodes {
                                 args.push(s);
                             }
                         }
-                        plan.push(Ordered::Agg { lit: l.node(), var, o, op: op_of(op).expect("min or max"), k: fresh, helper: helpers, args });
+                        // The arguments the rule binds outside the aggregate: its head's and its other literals'.
+                        let mut outside = crate::code_rule_dsl::logic::plan::body::VarSet::new();
+                        for t in r.head().args() {
+                            crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut outside);
+                        }
+                        for other in r.body().filter(|x| x.node() != l.node()) {
+                            outside.extend(&lit_vars(other));
+                        }
+                        let outer = args.iter().map(|&s| outside.contains(s)).collect();
+                        plan.push(Ordered::Agg { lit: l.node(), var, o, op: op_of(op).expect("min or max"), k: fresh, helper: helpers, args, outer });
                         fresh += 2;
                         helpers += 1;
                         changed = true;
@@ -851,6 +865,7 @@ impl ProgramPass for OrderNodes {
                     decl.push((format!("c{i}"), cols.get(i).map_or_else(|| "int".to_owned(), |(_, ty)| ty.to_string())));
                 }
             }
+            decl.push(("n".to_owned(), "node".to_owned()));
             decl.push(("k".to_owned(), "int".to_owned()));
             declared.push((format!("rr_ordered{helper}"), decl));
         }
@@ -876,11 +891,15 @@ impl ProgramPass for OrderNodes {
                         let (kx, ky) = (ord(*k), ord(k + 1));
                         rb.atom(node_order, &[T::VarAtom(r.var(*x)), T::Var(&kx)]).atom(node_order, &[T::VarAtom(r.var(*y)), T::Var(&ky)]).cmp(T::Var(&kx), *op, T::Var(&ky))
                     }
-                    Ordered::Agg { var, op, k, helper, args, .. } => {
+                    Ordered::Agg { var, op, k, helper, args, outer, .. } => {
                         let (kk, kv) = (ord(*k), ord(k + 1));
                         let mut agg_args: Vec<T<'_>> = args.iter().map(|s| T::VarAtom(r.var(*s))).collect();
+                        agg_args.push(T::Wild);
                         agg_args.push(T::Var(&kk));
-                        rb.agg(T::Var(&kv), op, Some(T::Var(&kk)), names[*helper].as_str(), &agg_args).atom(node_order, &[T::VarAtom(r.var(*var)), T::Var(&kv)])
+                        let mut at_args: Vec<T<'_>> = args.iter().zip(outer).map(|(s, &o)| if o { T::VarAtom(r.var(*s)) } else { T::Wild }).collect();
+                        at_args.push(T::VarAtom(r.var(*var)));
+                        at_args.push(T::Var(&kv));
+                        rb.agg(T::Var(&kv), op, Some(T::Var(&kk)), names[*helper].as_str(), &agg_args).atom(names[*helper].as_str(), &at_args)
                     }
                 };
             }
@@ -892,6 +911,7 @@ impl ProgramPass for OrderNodes {
             let L::Agg { atom, over: Some(o), .. } = lit_at(&input, *id, *lit).view() else { return Err("an ordered aggregate".into()) };
             let kk = ord(*k);
             let mut head_args: Vec<T<'_>> = args.iter().map(|s| T::VarAtom(r.var(*s))).collect();
+            head_args.push(T::VarAtom(r.var(o)));
             head_args.push(T::Var(&kk));
             let atom_args: Vec<T<'_>> = atom.args().map(|t| t_of(r, t)).collect();
             b.rule()
