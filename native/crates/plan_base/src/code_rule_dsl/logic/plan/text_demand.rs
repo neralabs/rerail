@@ -85,40 +85,31 @@ fn is_var(t: Option<&TermRef<'_>>, s: Slot) -> bool {
 /// a per-file scan: only copying a span (including variable equality) carries its origin. Regex captures have their
 /// own bounded ranges and do not demand the container text.
 pub fn span_text_demand(v: &Version) -> (BTreeSet<SpanIn>, bool) {
-    // Bit 1 the source, 2 a line, 4 a token (the second column of the four token relations).
+    let columns = span_columns(v);
+    let mut requested = 0;
+    for rule in v.rules() {
+        let vars = span_vars(v, &columns, rule);
+        for atom in rule.body().filter_map(|l| l.atom()).filter(|a| v.rel_name(a.rel()) == "text") {
+            if let Some(TermRef::Var(value)) = atom.args().next() {
+                requested |= vars.get(&value).copied().unwrap_or(0);
+            }
+        }
+    }
+    ([(SpanIn::Source, 1), (SpanIn::Line, 2)].into_iter().filter_map(|(span, bit)| (requested & bit != 0).then_some(span)).collect(), requested & 4 != 0)
+}
+
+/// Each relation column that holds a span, by the spans it holds: bit 1 the source, 2 a line, 4 a token (the second
+/// column of the four token relations), carried by the rules that copy them (including variable equality), to a
+/// fixpoint.
+fn span_columns(v: &Version) -> HashMap<(&str, usize), u8> {
     let mut columns: HashMap<(&str, usize), u8> = [(("source", 1), 1), (("src_line", 2), 2)]
         .into_iter()
         .chain(["first_token", "last_token", "token_before", "token_after"].map(|rel| ((rel, 1), 4)))
         .collect();
-    let mut requested = 0;
     loop {
         let mut changed = false;
         for rule in v.rules() {
-            let mut vars: HashMap<Slot, u8> = HashMap::default();
-            for atom in rule.body().filter_map(|l| l.atom()).filter(|a| !a.neg()) {
-                let rel = v.rel_name(atom.rel());
-                for (column, term) in atom.args().enumerate() {
-                    if let TermRef::Var(value) = term {
-                        *vars.entry(value).or_default() |= columns.get(&(rel, column)).copied().unwrap_or(0);
-                    }
-                }
-            }
-            loop {
-                let mut aliases_changed = false;
-                for literal in rule.body() {
-                    if let Lit::Cmp { l: TermRef::Var(left), op: CmpOp::Eq, r: TermRef::Var(right) } = literal.view() {
-                        let mask = vars.get(&left).copied().unwrap_or(0) | vars.get(&right).copied().unwrap_or(0);
-                        for value in [left, right] {
-                            let entry = vars.entry(value).or_default();
-                            aliases_changed |= *entry != (*entry | mask);
-                            *entry |= mask;
-                        }
-                    }
-                }
-                if !aliases_changed {
-                    break;
-                }
-            }
+            let vars = span_vars(v, &columns, rule);
             let head = v.rel_name(rule.head().rel());
             for (column, term) in rule.head().args().enumerate() {
                 if let TermRef::Var(value) = term {
@@ -130,17 +121,41 @@ pub fn span_text_demand(v: &Version) -> (BTreeSet<SpanIn>, bool) {
                     }
                 }
             }
-            for atom in rule.body().filter_map(|l| l.atom()).filter(|a| v.rel_name(a.rel()) == "text") {
-                if let Some(TermRef::Var(value)) = atom.args().next() {
-                    requested |= vars.get(&value).copied().unwrap_or(0);
+        }
+        if !changed {
+            return columns;
+        }
+    }
+}
+
+/// The spans each variable of `rule` holds (`span_columns`' bits): a positive atom's span column binds it, and an
+/// equality carries it.
+fn span_vars(v: &Version, columns: &HashMap<(&str, usize), u8>, rule: RuleRef<'_>) -> HashMap<Slot, u8> {
+    let mut vars: HashMap<Slot, u8> = HashMap::default();
+    for atom in rule.body().filter_map(|l| l.atom()).filter(|a| !a.neg()) {
+        let rel = v.rel_name(atom.rel());
+        for (column, term) in atom.args().enumerate() {
+            if let TermRef::Var(value) = term {
+                *vars.entry(value).or_default() |= columns.get(&(rel, column)).copied().unwrap_or(0);
+            }
+        }
+    }
+    loop {
+        let mut aliases_changed = false;
+        for literal in rule.body() {
+            if let Lit::Cmp { l: TermRef::Var(left), op: CmpOp::Eq, r: TermRef::Var(right) } = literal.view() {
+                let mask = vars.get(&left).copied().unwrap_or(0) | vars.get(&right).copied().unwrap_or(0);
+                for value in [left, right] {
+                    let entry = vars.entry(value).or_default();
+                    aliases_changed |= *entry != (*entry | mask);
+                    *entry |= mask;
                 }
             }
         }
-        if !changed {
-            break;
+        if !aliases_changed {
+            return vars;
         }
     }
-    ([(SpanIn::Source, 1), (SpanIn::Line, 2)].into_iter().filter_map(|(span, bit)| (requested & bit != 0).then_some(span)).collect(), requested & 4 != 0)
 }
 
 /// A kind as the program holds it (`python:call`) or as a grammar names it (`call`).
@@ -405,13 +420,11 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
         })
         .collect();
     let twinned = |head: &str, var: &str| twins.contains(&(head, var));
-    // Whether `s` is a span (a `span` column binds it): its text is a span's (`text_spans`), not a node's.
-    let span = |r: RuleRef<'_>, s: Slot| {
-        r.body().filter_map(|l| l.atom()).filter(|a| !a.neg() && v.rel_name(a.rel()) != "text").any(|a| {
-            let types: Option<Vec<&str>> = v.decl_of(v.rel_name(a.rel())).map(|d| d.cols().map(|(_, t)| v.text(t)).collect());
-            a.args().enumerate().any(|(c, t)| matches!(t, TermRef::Var(x) if x == s) && types.as_ref().and_then(|ts| ts.get(c)).is_some_and(|ty| *ty == "span"))
-        })
-    };
+    // Whether `s` is a span (the source, a line or a token: `span_columns`): its text is a span's (`text_spans`), made
+    // at any length where a rule reads it, not a node's. (A declared `span` column lowers to `node`, so the type does
+    // not tell.)
+    let spans = span_columns(v);
+    let span = |r: RuleRef<'_>, s: Slot| span_vars(v, &spans, r).get(&s).is_some_and(|&m| m != 0);
     // A matcher capture's node: the kinds and fields its matcher gives it (`{"pattern": "$N", "field": "name"}`, or a
     // `kind` or `field` beside the pattern in an `all`). Columns past the root are the captures, in order. An
     // `inside`'s `field` is where the node it holds sits in that ancestor, not the ancestor's own.
@@ -529,6 +542,9 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
                 None if !redefined.contains("field") && leaf_field(v, rule, s) || short_constant(v, text) => {}
                 None if text.neg() => negated_any += 1,
                 None if twinned(head, name) => {}
+                // A span's text (the source's, a line's, a token's) is no node's: `rr_long_text_node` holds nodes only,
+                // so a twin of it reads nothing, and the span's text is made at any length where a rule reads it.
+                None if span(rule, s) => {}
                 None => any.push((ri, i)),
             }
         }
