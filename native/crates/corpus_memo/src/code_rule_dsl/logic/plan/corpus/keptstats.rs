@@ -414,6 +414,8 @@ impl Keeper {
     ///   not know keeps no exact maps (its constants are then counted from the rows held).
     /// - `keeper_watched(r, c, value: atom, count)`: the constants a symbol column watches (`RelStats::watch`), kept
     ///   and mapped as the exact counts are.
+    /// - `keeper_summary(r, c, ndv, sq, sqd)`: each column as the statistics give it (`RelStats::summary`, the exact
+    ///   maps in): a later run answers the planner from it and decodes a relation's statistics only to patch them.
     /// - `keeper_holder(r, owner, n)` and `keeper_id(r, i0..i3)`: the holders and identities.
     ///
     /// The partition is held by `program`, the memo program `plan` is made of (`plan_holder_put`): the store's
@@ -424,6 +426,9 @@ impl Keeper {
         // `keeper_watched`: their values are atoms, which the store's writer maps (decision 0170).
         let mut exact: Vec<(String, usize, Vec<(i64, i64)>)> = Vec::new();
         let mut watched: Vec<(String, usize, Vec<(i64, i64)>)> = Vec::new();
+        // Each relation's summary (`RelStats::summary`), with its exact maps in, before they are taken out: a later
+        // run answers the planner's statistics from it, its sketches not decoded (t33 K4).
+        let summaries: Vec<(String, Vec<(i64, i64, i64)>)> = self.rels.iter().map(|(rel, stats)| (rel.clone(), stats.summary())).collect();
         for (rel, stats) in self.rels.iter_mut() {
             let width = stats.columns().len();
             match syms(rel, stats.columns()).filter(|c| c.len() == width) {
@@ -503,6 +508,13 @@ impl Keeper {
                     }
                 }
             })?,
+            put(SUMMARY, b"iiiii", summaries.iter().map(|(_, s)| s.len()).sum(), &mut |push| {
+                for (rel, summary) in &summaries {
+                    for (c, &(ndv, sq, sqd)) in summary.iter().enumerate() {
+                        [index[rel.as_str()], c as i64, ndv, sq, sqd].into_iter().for_each(&mut *push);
+                    }
+                }
+            })?,
             put(HOLDERS, b"iii", self.holders.values().map(|h| h.len()).sum(), &mut |push| {
                 for (rel, held) in &self.holders {
                     for (&o, &n) in held {
@@ -568,8 +580,18 @@ impl Keeper {
             };
             k.docs.insert(String::from_utf8(paths.remove(&d)?).ok()?, (content, key));
         }
+        // Each relation's statistics as kept, decoded where first read, its summary answering the planner until then.
+        let mut summaries: HashMap<i64, Vec<(i64, (i64, i64, i64))>> = HashMap::new();
+        for row in rows(SUMMARY) {
+            let [r, c, ndv, sq, sqd] = row[..] else { return None };
+            summaries.entry(r).or_default().push((c, (ndv, sq, sqd)));
+        }
         for (r, b) in bytes_of(&cols(STATS))? {
-            k.rels.insert(name(r)?, RelStats::decode(&b, &mut 0)?);
+            let summary = summaries.remove(&r).map(|mut s| {
+                s.sort_unstable_by_key(|(c, _)| *c);
+                s.into_iter().map(|(_, x)| x).collect()
+            });
+            k.rels.insert(name(r)?, RelStats::kept(b.into(), summary)?);
         }
         // The exact counts and the watched values (`keeper_watched`), their atoms this process's.
         let by_column = |rel: &str| -> Option<BTreeMap<(i64, usize), Vec<(i64, i64)>>> {
@@ -698,6 +720,8 @@ const EXACT: &str = "keeper_exact";
 /// `keeper_watched(r, c, value: atom, count)`: the constants a column watches (`RelStats::watch`), mapped as
 /// `keeper_exact`'s are.
 const WATCHED: &str = "keeper_watched";
+/// `keeper_summary(r, c, ndv, sq, sqd)`: relation `r`'s column `c` as its statistics give it (`RelStats::summary`).
+const SUMMARY: &str = "keeper_summary";
 const HOLDERS: &str = "keeper_holder";
 const IDS: &str = "keeper_id";
 const LAST: &str = "last_program";
