@@ -764,6 +764,8 @@ export class SessionNotices {
   readonly #byFolder: boolean;
   /** Whether the watch holds the folder now. */
   #watching = false;
+  /** Set once the session let go of the folder (`close`): nothing watches it again. */
+  #closed = false;
   /** The folders the watch follows (Linux). */
   readonly #followed = new FollowedFolders();
   /** What the last whole walk saw, which notices are weighed against; undefined before the first and while one runs. */
@@ -925,23 +927,28 @@ export class SessionNotices {
     this.#whole = false;
   }
 
-  /** Lets go of the folder and of the watch. */
+  /**
+   * Lets go of the folder and of the watch, for good: a pass still under way (one that waited for Git as the session
+   * closed) watches nothing again, since the engine's shared watch keeps no closed mark for each of its users.
+   */
   close(): void {
+    this.#closed = true;
     this.#watching = false;
     this.#watch?.close();
   }
 
   #open(): void {
-    if (this.#watch === undefined || this.#watching || this.#refused !== undefined) return;
+    if (this.#closed || this.#watch === undefined || this.#watching || this.#refused !== undefined) return;
     this.#followed.restart();
     this.#watching = this.#watchFolders([""]);
   }
 
   /**
-   * Watches the folder through `folders`. A refusal of more than one stands until a whole walk walks fewer folders
-   * (`ended`); the folder alone is asked for again at the next whole pass (`#open`).
+   * Watches the folder through `folders`; none once closed. A refusal of more than one stands until a whole walk walks
+   * fewer folders (`ended`); the folder alone is asked for again at the next whole pass (`#open`).
    */
   #watchFolders(folders: readonly string[]): boolean {
+    if (this.#closed) return false;
     const watching = this.#watch!.watch(this.#root, folders);
     if (!watching && folders.length > 1) this.#refused = folders.length;
     return watching;

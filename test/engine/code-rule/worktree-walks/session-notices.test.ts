@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BOUNDARY_DISCOVERY_WAIT_MS, CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
 import { LinkedFiles, SessionNotices, type SessionReads, SharedTreeWatch, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
+import { WorktreeLooks } from "../../../../src/engine/code-rule/worktree-look.js";
 import { RepositoryWorktreeWalks, WORKTREE_FULL_WALK_MS, WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 import { StampTreeWatch } from "./support/stamp-tree-watch.js";
@@ -742,5 +743,35 @@ describe("a shell command's result reads the session folder by its change notice
     });
     expect(listed.folders.length).toBeGreaterThan(0);
     expect(checked(audits)).toEqual([[".gitignore", "src/pkg_0/m.py"]]);
+  });
+
+  it("watches the folder no more once the session closed while a result's pass read what Git ignores", async () => {
+    const root = await workspace();
+    const watch = platformWatch();
+    const { bridge } = await opened(root, watch);
+    const asked = watch.asked.get(root);
+    // The pass at the command's result waits for its read of what Git ignores beyond the .gitignore files; the read then
+    // names something new, so the pass reads the whole folder, which watches it again first while its watch is down.
+    const read = Promise.withResolvers<string | undefined>();
+    const reading = Promise.withResolvers<void>();
+    const spy = vi.spyOn(WorktreeLooks.prototype, "ignoresOf").mockImplementation(async () => {
+      reading.resolve();
+      return await read.promise;
+    });
+    try {
+      await bridge.begin("shell-1", "Bash", { command: "python3 tools/rewrite.py" });
+      await writeFile(join(root, "src", "pkg_0", "new.py"), "x = 1\n");
+      const finished = bridge.finish("shell-1").catch(() => []);
+      await reading.promise;
+
+      const closing = bridge.close();
+      read.resolve("excluded/");
+      await Promise.all([closing, finished]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(watch.folders.has(root)).toBe(false);
+    expect(watch.asked.get(root)).toBe(asked);
   });
 });
