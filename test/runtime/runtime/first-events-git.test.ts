@@ -21,10 +21,37 @@ vi.mock("../../../src/engine/catalog/checkouts/declared-submodules.js", async ()
   };
 });
 
+/** An edit batch a session's router audited, as far as a case reads it. */
+interface AuditedBatch {
+  readonly owner?: string | undefined;
+  readonly edits: ReadonlyArray<{ readonly path: string }>;
+}
+/** Each batch a router audited (`auditGeneratedEdits`), with the session whose evaluator ran it. */
+const audited = vi.hoisted(() => ({ calls: [] as Array<readonly [string, AuditedBatch]> }));
+vi.mock("../../../src/engine/code-rule/checkout-code-rule-router.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/engine/code-rule/checkout-code-rule-router.js")>(
+    "../../../src/engine/code-rule/checkout-code-rule-router.js",
+  );
+  const { prototype } = actual.CheckoutCodeRuleRouter;
+  const audit = prototype.auditGeneratedEdits;
+  prototype.auditGeneratedEdits = async function (this: typeof prototype, ...args: Parameters<typeof audit>) {
+    audited.calls.push([args[0], args[1]]);
+    return await audit.apply(this, args);
+  };
+  return actual;
+});
+
+import { codeRuleSchema } from "../../../src/engine/index.js";
 import { RerailRuntime, SqliteSessionReader } from "../../../src/runtime/index.js";
 import { testEmbedder } from "../../support/hook-events.js";
+import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
+
+const printRule = codeRuleSchema.parse({
+  format: "rerail.policy/v1", id: "test:print", revision: 1, mode: "steer", scope: { include: ["**/*.py"], exclude: [] },
+  clauses: [{ id: "print", violation: { code: "P", anchor: "witness.span", message: "No print" }, forbid: { ast: { language: "python", rule: { pattern: "print($ARG)" } } } }],
+});
 
 const folders: string[] = [];
 afterEach(() => {
@@ -153,6 +180,45 @@ describe("a repository's first events in a daemon", () => {
       await vi.waitFor(() => expect(learnt.toSorted()).toEqual(["main", ...checkouts.map(checkout => basename(checkout))].toSorted()), { timeout: 10_000, interval: 20 });
     } finally {
       clearTimeout(timer);
+      pass.resolve();
+      submoduleReads.before = () => undefined;
+      await runtime.dispose();
+    }
+  });
+
+  // The walks join the pass that places the other worktrees; once the walk of them reads the worktree the shell
+  // command ran in, the write there is that session's own (`cwd`), as a write by one of its calls is.
+  it("takes a shell write in a worktree the pass is placing as the session's own whose command ran there, and starts no Git the daemon waits on", { timeout: 60_000 }, async () => {
+    const { root, checkouts, databasePath } = startedRepository(2);
+    const [main, worktree] = checkouts as [string, string];
+    setUpTestRepository(main, { library: [{ kind: "code", rule: printRule }] }, databasePath);
+    const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, autostart: false, embedder: testEmbedder });
+    const pass = Promise.withResolvers<void>();
+    const held: string[] = [];
+    submoduleReads.before = async checkout => {
+      if (!basename(checkout).startsWith("wt-")) return;
+      held.push(basename(checkout));
+      await pass.promise;
+    };
+    audited.calls.length = 0;
+    const file = join(worktree, "shell_there.py");
+    const writes = (batch: AuditedBatch): boolean => batch.edits.some(edit => edit.path.endsWith(`${basename(worktree)}/shell_there.py`));
+    const call = { sessionId: "own", toolCallId: "call-shell", toolName: "Bash", input: { command: "python3 write.py" }, cwd: worktree };
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "own-start", session: { host: "claude-code", sessionId: "own", cwd: main } });
+      await vi.waitFor(() => expect(held.length).toBeGreaterThan(0), { timeout: 10_000, interval: 20 });
+      const blocking = await blockingGitStarts(async () => {
+        await runtime.ingest({ kind: "call", eventId: "own-call", ...call });
+        writeFileSync(file, "print(1)\n");
+        // The session folder's walk at the result joins the pass too, so the result is answered once the pass is let go.
+        const result = runtime.ingest({ kind: "result", eventId: "own-result", ...call, output: "" });
+        pass.resolve();
+        await result;
+        await vi.waitFor(() => expect(audited.calls.some(([, batch]) => writes(batch))).toBe(true), { timeout: 30_000, interval: 20 });
+      }, false);
+      const owners = audited.calls.filter(([, batch]) => writes(batch)).map(([sessionId, batch]) => [sessionId, batch.owner ?? "session"]);
+      expect({ blocking, owners }).toEqual({ blocking: [], owners: [["own", "session"]] });
+    } finally {
       pass.resolve();
       submoduleReads.before = () => undefined;
       await runtime.dispose();
