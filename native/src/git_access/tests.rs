@@ -1402,6 +1402,31 @@ fn a_linked_worktree_follows_includes_named_from_home_and_prefix() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// An include named `~<user>/...` reads in a linked worktree what it reads in the main checkout,
+/// and what Git reads in each: that user's home folder from the system's user records, as gix's
+/// own open names it. Unix only: on Windows gix names no folder for `~<user>/`.
+#[cfg(unix)]
+#[test]
+fn a_linked_worktree_follows_an_include_named_from_a_users_home() {
+    let (root, main, linked) = linked_fixture("linked-user-home");
+    let file = root.join("user.gitconfig");
+    std::fs::write(&file, "[test]\n\tuser = yes\n").unwrap();
+    let output = Command::new("id").arg("-un").output().unwrap();
+    let user = String::from_utf8(output.stdout).unwrap().trim().to_owned();
+    let home = gix::config::path::interpolate::home_for_user(&user).unwrap();
+    // Up from the user's home folder to `/`, then down to the file.
+    let up = "../".repeat(home.canonicalize().unwrap().components().count());
+    let below_root = file.to_str().unwrap().trim_start_matches('/');
+    let path = format!("~{user}/{up}{below_root}");
+    git(&main, &["config", "--add", "include.path", &path]);
+    for checkout in [&main, &linked] {
+        let (ours, git) = setting(checkout, "user");
+        assert_eq!(ours.as_deref(), Some("yes"), "test.user in {}", checkout.display());
+        assert_eq!(ours, git, "test.user in {}", checkout.display());
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// An include loop under a condition only the linked worktree meets stops Git there, and the
 /// opener refuses that worktree as Git does; the main checkout, where Git reads no loop, opens.
 #[test]

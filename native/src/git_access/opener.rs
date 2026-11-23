@@ -168,7 +168,8 @@ fn include_as_git_does(repository: &mut gix::Repository) -> Result<(), OpenError
     let git_dir = repository.git_dir().to_owned();
     // An unreadable `HEAD` matches no `onbranch:` condition, as gix's own open leaves it.
     let branch = repository.head_name().ok().flatten();
-    // `~/` and `%(prefix)/` in an include path name what they name in gix's own open.
+    // `~/`, `~<user>/` and `%(prefix)/` in an include path name the folders they name in gix's own
+    // open: each field of the context is set as gix sets it.
     let install_dir = repository.install_dir().ok();
     let home = gix::path::env::home_dir();
     let options = gix::config::file::init::Options {
@@ -176,7 +177,7 @@ fn include_as_git_does(repository: &mut gix::Repository) -> Result<(), OpenError
             gix::config::path::interpolate::Context {
                 git_install_dir: install_dir.as_deref(),
                 home_dir: home.as_deref(),
-                ..Default::default()
+                home_for_user: Some(gix::config::path::interpolate::home_for_user),
             },
             gix::config::file::includes::conditional::Context {
                 git_dir: Some(&git_dir),
