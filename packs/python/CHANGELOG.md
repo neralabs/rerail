@@ -14,7 +14,7 @@ Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- This version needs Rerail 0.2.1 or newer (0.2.0 was never published), where rules that test punctuation or keywords the grammar implies run again; 0.2.1 skips the previous version's. They report what they did, except that `ruff-ret505` to `ruff-ret508` now span the whole `else` or `elif` clause, not only its keyword.
+- This version needs Rerail 0.2.1 or newer, where rules that test punctuation or keywords the grammar implies run again; 0.2.1 skips the previous version's. They report what they did, except that `ruff-ret505` to `ruff-ret508` now span the whole `else` or `elif` clause, not only its keyword.
 
 ### Fixed
 
