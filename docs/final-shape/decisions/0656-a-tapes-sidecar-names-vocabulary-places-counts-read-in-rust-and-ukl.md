@@ -55,17 +55,29 @@ prototype's rule, "never key postings to known rules".
 ## Steps
 
 1. The format, the Rust builder (`sidecar::build`, over any `Tape`), the reads in Rust and UKL, and the tests that
-   hold them equal. Done here.
-2. The builder in UKL, on the device and on the CPU's vector path: one plan per batch of tapes, with a bounded
-   number of launches. Its passes:
-   - nodes: counts, leaves and presence;
-   - families: the 8th siblings;
-   - leaves: hashes;
-   - a radix sort for the terms;
-   - a second sort for their frequency order;
-   - a compaction for rare codes.
+   hold them equal. Done.
+2. The builder in UKL (`rerail_gpu::sidecar::build`, `gpu/src/sidecar.uglykl`): one plan per batch of format 15
+   or 16 tapes, with the same launches whatever the batch. Each kernel takes one element of the whole batch: a
+   node, a leaf, a sorted row, a term, a code or a document. Between the kernels run the library's scans,
+   compactions and stable radix sorts. The plan:
+   - one pass over the nodes: leaves, codes and families;
+   - one pass over the leaves: each text's hash;
+   - the leaves sorted by (document, hash), which gives the terms;
+   - the terms sorted by (document, count descending, first leaf), which gives their numbers;
+   - the nodes sorted by (document, code), which gives the counts and the rare codes;
+   - each document's layout, scanned into the output's offsets. This is the plan's one wait, to size the output;
+   - each section written where it lies.
 
-   Its bytes are held equal to `sidecar::build`'s.
+   The device refuses two kinds of batch, and the host builds those (`Refused`):
+   - one where two texts of a document share a hash (each run of a hash is compared byte for byte);
+   - one past the sorts' keys (65535 documents, or a code of 65536).
+
+   Its bytes are `sidecar::build`'s: `the_device_builds_each_sidecar_as_the_crate_does`, on the CPU device and on
+   Metal (an M1 Max). Done.
+
+   The hash's device test found a fault in `<ukl/memory.h>`. Metal took a word's offset from the byte offset alone,
+   and read a word through an unaligned base as it lay; the M1 Max read the wrong bytes. The offset is now the
+   address's own on every backend, as CUDA's was, and is unchanged for an aligned base.
 3. The store keeps the sidecar beside the tape, keyed by the tape's content and the sections' versions, and makes a
    missing section on demand.
 4. The engine reads from it: `text` by string and by node, a child's place, kind counts, and rare kinds. The rows

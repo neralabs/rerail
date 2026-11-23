@@ -14,6 +14,8 @@ pub use rerail_device::compute_kernel_cuda;
 pub use rerail_device::compute_kernel_metal;
 pub mod kernels;
 pub mod library;
+/// A batch of tapes' sidecars built on the device (decision 0656 step 2).
+pub mod sidecar;
 pub mod vec;
 #[cfg(test)]
 mod device_tests;

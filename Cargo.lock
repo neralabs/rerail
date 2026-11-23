@@ -4242,6 +4242,7 @@ dependencies = [
  "objc",
  "rerail-blocks",
  "rerail-device",
+ "rerail-tape-format",
  "rerail-ukl",
  "rerail-ukl-vec",
 ]
