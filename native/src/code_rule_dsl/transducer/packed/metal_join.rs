@@ -376,8 +376,13 @@ pub(in crate::code_rule_dsl) fn run_view_format() -> u32 {
 /// before it wrote, dispatches before it in its submission, so its blocks are read as any kernel's are. Its stages read
 /// views, each compiled for the tape format of the views it reads (decision 0576): on an Arc 140V `stage_count`
 /// compiled in 36 s over every format, 16 s over format 16's and 7 s over format 15's.
+///
+/// On Metal both are call-free: their rare and once-only bodies (`UKL_COLD`, `UKL_ONCE`) inlined, not called. On the
+/// M3, an indirect dispatch of a pipeline that makes calls (a call stack) hung the GPU at its second group, even when
+/// every thread returned first (decision 0639). Inlined, the phase runs indirectly, as on every backend.
 fn program_pipes(format: u32) -> Result<[Arc<rerail_accel::gpu::join::Pipe>; 2], String> {
-    let source = || format!("#define JOIN_PROGRAM 1\n{}", view_source(format));
+    let inline = if rerail_device::device::is_metal() { "#define UKL_COLD static inline\n#define UKL_ONCE static inline\n" } else { "" };
+    let source = || format!("{inline}#define JOIN_PROGRAM 1\n{}", view_source(format));
     Ok([pipeline(&format!("joinprog{format}"), "join_grid", source)?, pipeline(&format!("joinprog{format}"), "join_phase", source)?])
 }
 
@@ -3009,7 +3014,7 @@ impl Batch {
 
     /// One stack of `r`'s program (decision 0638): its own submission, one launch in the ledger, of its phases along
     /// its walk from `r.at` (`walk_next`), each a grid (`join_grid`, its groups from the counts the phases before it
-    /// made) and its dispatch (`join_phase`: indirect; on Metal its bound's groups, those past the grid returning), up to `r.rounds` rounds' ends or `STACK_PHASES` phases; after a
+    /// made) and its dispatch (`join_phase`, indirect: the grid's groups), up to `r.rounds` rounds' ends or `STACK_PHASES` phases; after a
     /// park, the items it lists first (`r.list`). Its arena's room, the pages mapped, in its top's second word.
     fn launch(&mut self, mut r: Ran) -> Result<(), Error> {
         let kit = &mut r.kit;
@@ -3064,7 +3069,6 @@ impl Batch {
         }
         let nphases = kit.phase_items.len() as u32;
         let grids = Words::zeroed(3 * STACK_PHASES)?;
-        let direct = rerail_device::device::is_metal();
         let args = |q: u32, list: u32, at: u32, slot: u32| -> Vec<u8> { [q, list, at, slot].iter().flat_map(|w| w.to_ne_bytes()).collect() };
         let bufs = [(&kit.descs.buffer, 0), (&kit.items.buffer, 0), (&kit.phases.buffer, 0), (&kit.segs.buffer, 0), (&kit.scans.buffer, 0), (&kit.sorts.buffer, 0), (&kit.script.buffer, 0), (&r.ctl.buffer.buffer, 0), (&r.slots.buffer.buffer, 0), (&kit.counts.buffer, 0), (&grids.buffer.buffer, 0)];
         // The items a park listed, again: the rest of its phase ran.
@@ -3082,11 +3086,7 @@ impl Batch {
             pass.run_bytes_at(&grid, &[(&kit.phases.buffer, 0), (&kit.segs.buffer, 0), (&r.ctl.buffer.buffer, 0), (&grids.buffer.buffer, 0)], &args(q, 0, 0, slot), 1);
             let [_, count, _, ns] = kit.phase_items[q as usize];
             let most = if ns == 0 { count as usize } else { PHASE_GROUPS };
-            if direct {
-                pass.run_bytes_at(&phase, &bufs, &args(q, 0, 0, slot), most);
-            } else {
-                pass.run_bytes_indirect_at(&phase, &bufs, &args(q, 0, 0, slot), &grids.buffer.buffer, 4 * u64::from(slot), most);
-            }
+            pass.run_bytes_indirect_at(&phase, &bufs, &args(q, 0, 0, slot), &grids.buffer.buffer, 4 * u64::from(slot), most);
             n += 1;
             at = walk_next(&kit.jumps, kit.last, nphases, q);
             if kit.jumps.iter().any(|j| j.0 == q) {
@@ -4297,8 +4297,8 @@ const STACK_ROUNDS_FIRST: u32 = 2;
 const STACK_ROUNDS_MOST: u32 = 32;
 
 /// A phase's groups at most when its segments' counts set them (`PHASE_GROUPS` of `join_stages.uglykl`): its
-/// indirect dispatch's bound, and on Metal its dispatch's groups, those past its grid's count returning (decision
-/// 0638: Metal's indirect dispatch of the phase kernel hung the M3, its grid as the direct one's).
+/// indirect dispatch's bound, which a CUDA or OpenCL launch starts, those past its grid's count returning (Metal's
+/// starts its grid's groups alone).
 const PHASE_GROUPS: usize = 1 << 12;
 
 /// Whether a recursive component's rooms are mapped as its rounds reach them (decision 0603's fewer reruns, its gate's

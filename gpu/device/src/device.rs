@@ -94,8 +94,8 @@ pub fn backend() -> &'static str {
     }
 }
 
-/// Whether the process's device is Metal's (Apple's GPUs), where a phase of a join program is launched with its
-/// bound's groups, not indirectly (decision 0638: Metal's indirect dispatch of it hung the M3).
+/// Whether the process's device is Metal's (Apple's GPUs), where a join program's kernels are compiled call-free
+/// (decision 0639: on the M3, an indirect dispatch of a pipeline that makes calls hung the GPU).
 pub fn is_metal() -> bool {
     cfg!(target_os = "macos") && matches!(crate::shared::get().map(|s| &s.device), Some(Device::Native(_)))
 }
@@ -384,6 +384,9 @@ pub trait Watch: Send + Sync {
 pub struct ComputeQueue {
     kind: QueueKind,
     watch: Option<std::sync::Arc<dyn Watch>>,
+    /// Its launches so far (`new_bind_context`): each one's span of residency where a buffer made resident is kept
+    /// by the launch alone (`residency_span`).
+    launches: std::cell::Cell<u64>,
 }
 
 enum QueueKind {
@@ -401,7 +404,7 @@ impl ComputeQueue {
             QueueRoot::Cpu(r) => QueueKind::Cpu(cpu::CpuComputeQueue::new(r)),
             QueueRoot::OpenCl(r) => QueueKind::OpenCl(cl::ClComputeQueue::new(r)),
         };
-        ComputeQueue { kind, watch: None }
+        ComputeQueue { kind, watch: None, launches: std::cell::Cell::new(0) }
     }
 
     /// A queue whose every reach of a buffer `watch` sees first.
@@ -416,6 +419,7 @@ impl ComputeQueue {
     }
 
     pub fn new_bind_context<'a>(&'a self, function: &'a ComputeFunction) -> BindContext<'a> {
+        self.launches.set(self.launches.get() + 1);
         let kind = match (&self.kind, function) {
             (QueueKind::Native(q), ComputeFunction::Native(f)) => BindKind::Native(q.new_bind_context(f)),
             (QueueKind::Cpu(q), ComputeFunction::Cpu(f)) => BindKind::Cpu(q.new_bind_context(f)),
@@ -462,6 +466,18 @@ impl ComputeQueue {
             (QueueKind::Cpu(q), SharedEvent::Cpu(e)) => q.wait_for_event(e, value),
             (QueueKind::OpenCl(q), SharedEvent::OpenCl(e)) => q.wait_for_event(e, value),
             _ => other(),
+        }
+    }
+
+    /// Which span of its launches a buffer made resident (`GridBindContext::use_buffer`) stays resident over: while
+    /// this is the same, a launch after it needs it made resident no more (decision 0639). Metal's is its open
+    /// compute encoder (`useResource` holds for the encoder's life). The other backends keep what a launch uses with
+    /// that launch alone (OpenCL's indirect-access list, the CPU's and CUDA's buffers kept), so each launch is a span.
+    pub fn residency_span(&self) -> u64 {
+        match &self.kind {
+            #[cfg(target_os = "macos")]
+            QueueKind::Native(q) => q.encoders(),
+            _ => self.launches.get(),
         }
     }
 

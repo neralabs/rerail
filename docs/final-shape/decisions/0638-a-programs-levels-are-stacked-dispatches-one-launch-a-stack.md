@@ -1,6 +1,7 @@
 # 0638. A program's levels are stacked dispatches, one launch a stack
 
-Status: accepted (2026-11-23). Supersedes 0637 (a program's idle groups poll) and 0603's single launch (one
+Status: accepted (2026-11-23), amended by 0641: Metal dispatches a phase indirectly too, its program's kernels
+call-free (the M3 hung at an indirect dispatch of a pipeline that makes calls). Supersedes 0637 (a program's idle groups poll) and 0603's single launch (one
 `join_run` over a work queue). 0603's program keeps everything else: its phases, items, segments and size scripts,
 its placed tables, its arena mapped as its claims reach it, and its gates' rooms.
 

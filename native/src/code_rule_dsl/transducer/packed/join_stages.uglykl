@@ -1785,8 +1785,8 @@ UKL_STATIC_ASSERT(sizeof(Item) == 16, "Item: size");
 // guess). A phase of segments hands theirs out, at least one item in all.
 typedef struct Seg { JSPACE const uint32_t* count; uint32_t first, items, per, plus; } Seg;
 UKL_STATIC_ASSERT(sizeof(Seg) == 24, "Seg: size");
-// A phase's groups at most (decision 0638): its indirect dispatch's bound, and on Metal its dispatch's groups, of
-// which those past the count its grid wrote (`join_grid`) return. A segment's in a phase of `ns` segments, their share; past it, a group strides its job's rows
+// A phase's groups at most (decision 0638): its indirect dispatch's bound, which a CUDA or OpenCL launch starts, those
+// past the count its grid wrote (`join_grid`) returning. A segment's in a phase of `ns` segments, their share; past it, a group strides its job's rows
 // (`prog_item`). `metal_join::PHASE_GROUPS`.
 #define PHASE_GROUPS (1u << 12)
 // A loop's turns at most: an item's strides past its groups (its rows, its tiles), every loop bounded.
@@ -2122,8 +2122,8 @@ DEFINE_KERNEL2(join, join_phase,
     m.before = before;
     m.base = base;
     m.digits = digits;
-    // Launched indirectly as its grid's groups, or (Metal) as its phase's groups at most (`PHASE_GROUPS`, or its
-    // items): those past its grid's return.
+    // Launched indirectly as its grid's groups: a backend that starts its bound's (`PHASE_GROUPS`, or its items),
+    // those past its grid's return.
     if (a.list == 0u && gid >= grids[a.slot]) return;
     uint32_t group = 0u;
     uint32_t item = a.list != 0u ? slots[a.at + gid] : phase_group(items, phases, segs, a.q, gid, &group);

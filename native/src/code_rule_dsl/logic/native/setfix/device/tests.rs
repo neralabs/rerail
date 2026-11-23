@@ -1941,6 +1941,7 @@
         for (name, lines) in strata.iter().filter(|(n, _)| only.as_deref().is_none_or(|o| n.starts_with(o))) {
             let mut m: [Vec<f64>; 4] = Default::default();
             let mut counts = (0, 0, 0);
+            let mut rounds = (0, 0, 0);
             for run in 0..runs + 2 {
                 db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
                 let mut spec = vec!["name dev_measure".to_owned(), "device".to_owned(), "rel h0 ii empty".to_owned()];
@@ -1949,6 +1950,7 @@
                 let started = std::time::Instant::now();
                 super::super::run(&db, "dev_measure", 0).unwrap();
                 let wall = started.elapsed().as_secs_f64();
+
                 let r = super::take_report().expect("a device report");
                 assert!(r.refused.is_none(), "{name}: {r:?}");
                 super::super::close(&db, "dev_measure").unwrap();
@@ -1958,9 +1960,11 @@
                     }
                     let rows: i64 = db.query_row("SELECT count(*) FROM temp.h0", [], |r| r.get(0)).unwrap();
                     counts = (r.dispatches, r.submissions, rows);
+                    rounds = (r.rounds, r.relaunches, r.remaps);
                 }
             }
             let [wall, gpu, encode, wait] = m.map(median);
             eprintln!("MEASURE {name:<20} wall {wall:8.2} ms  gpu {gpu:8.2} ms  encode {encode:7.2} ms  wait {wait:8.2} ms  launches {:4}  submissions {:3}  rows {}", counts.0, counts.1, counts.2);
+            eprintln!("MEASURE {name:<20} rounds {}, stacks after the first {}, remaps {}", rounds.0, rounds.1, rounds.2);
         }
     }
