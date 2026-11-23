@@ -1,5 +1,6 @@
 //! Decision 0254: connections on one database (a run's chunks evaluating at once) bind sources of their own, so the
 //! inputs the engine loads are each connection's.
+use rerail_blocks::vector::Vector;
 use super::spec::hex;
 use super::*;
 
@@ -10,15 +11,15 @@ use super::*;
 fn a_connection_reads_its_own_input_while_another_on_its_database_loads_one() {
     let path = crate::code_rule_dsl::fixtures::temp();
     drop(crate::code_rule_dsl::fixtures::open(&path));
-    let open = |rows: Vec<i64>| {
+    let open = |rows: Vector<i64>| {
         let db = Connection::open(&path).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
         modules.bind(&db, "e", crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into()], vec![Some(rows)])).unwrap();
         (db, modules)
     };
-    let (a, _a) = open(vec![1, 2]);
-    let (b, _b) = open(vec![10]);
+    let (a, _a) = open(rerail_blocks::vector![1, 2]);
+    let (b, _b) = open(rerail_blocks::vector![10]);
     let spec = format!("b:{}:{}:i", hex("main.e"), hex("c0"));
     let rows = |db: &Connection| {
         let shared = symbols(db).unwrap();

@@ -270,7 +270,8 @@ pub(crate) fn handler(text: &str, dialect: GrammarDialect, budget: &dyn Fn() -> 
         }
         _ => return Parse::Statements,
     };
-    Host::new(&tape, &grammar)
+    let cache = tape.own_cache();
+    Host::new(&tape, &grammar, cache.as_ref())
         .root()
         .map_or(Parse::Statements, |root| classified(root, &wrapped))
 }
@@ -462,8 +463,10 @@ pub mod tests {
             let tape =
                 TapeImage::encode_tree_image(tree.root_node(), &grammar, &wrapped, None, &|| false)
                     .expect("a tape");
+            // Read in a batch of its own: a 16z tape's blocks decoded into a cache made for it.
+            let cache = tape.own_cache();
             let from_tree =
-                classified(Host::new(&tape, &grammar).root().expect("a root"), &wrapped);
+                classified(Host::new(&tape, &grammar, cache.as_ref()).root().expect("a root"), &wrapped);
             assert_eq!(
                 std::mem::discriminant(&from_tree),
                 std::mem::discriminant(&parse),

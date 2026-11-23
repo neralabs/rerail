@@ -150,21 +150,21 @@ pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> 
 
 /// `src`'s tape, the engine's bytes (decision 0140): from the compiled grammar, or, for a file
 /// the grammar refuses, from the engine's parser (`logic::rr::tape`) through the tape's writer.
-pub fn tape(src: &str) -> Vec<u8> {
+pub fn tape(src: &str) -> rerail_tape_format::Vector<u8> {
     compiled_tape(src).unwrap_or_else(|| engine_tape(src))
 }
 
 /// The compiled grammar's tape, or `None` where it refuses the file (or did not compile). Every
 /// byte is the compiled code's, each column written by tier 2's words at its place as it
 /// parses: no pass after the parse (docs/parser-generators/37).
-pub fn compiled_tape(src: &str) -> Option<Vec<u8>> {
+pub fn compiled_tape(src: &str) -> Option<rerail_tape_format::Vector<u8>> {
     compiled().ok()?.parser.image(src.as_bytes()).ok()
 }
 
 /// The tapes of `files`, in order, as `tape` gives each: tier 1 over the whole batch on
 /// the device (Metal's forward carry), then tier 2 over each file reading tier 1's buffers where
 /// the device left them; without a device, `tape` file by file.
-pub fn tapes(files: &[&str]) -> Vec<Vec<u8>> {
+pub fn tapes(files: &[&str]) -> Vec<rerail_tape_format::Vector<u8>> {
     let mut out = Vec::with_capacity(files.len());
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if let Ok(c) = compiled() {
@@ -186,7 +186,7 @@ const SEGMENTS: rerail_metal_programs::block_program::serial::Segments = rerail_
 /// `tapes` on Metal: halves while the device refuses the batch for capacity; `false` when it
 /// cannot run it at all.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<Vec<u8>>) -> bool {
+fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<rerail_tape_format::Vector<u8>>) -> bool {
     use rerail_metal_programs::block_program::serial::run_resident;
     let mut batch = Vec::with_capacity(files.len());
     for file in files {
@@ -211,7 +211,7 @@ fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<Vec<u8>>) -> bool {
 }
 
 /// The fallback: the engine's parser's nodes through the tape's writer, its bytes.
-pub fn engine_tape(src: &str) -> Vec<u8> {
+pub fn engine_tape(src: &str) -> rerail_tape_format::Vector<u8> {
     rr::tape::image(&rr::engine_tape(src), src)
 }
 
@@ -512,7 +512,7 @@ pub mod tests {
         // The CPU's form leaves out the masks its record pass makes, and the rows of the totals
         // no one reads by them (`BlockNative::cpu_unstored`).
         let unmade = native.cpu_unstored();
-        let same_outputs = |g: &[Vec<u64>], w: &[Vec<u64>]| g.len() == w.len() && (0..w.len()).all(|o| unmade.contains(&o) || g[o] == w[o]);
+        let same_outputs = |g: &[rerail_blocks::vector::Vector<u64>], w: &[rerail_blocks::vector::Vector<u64>]| g.len() == w.len() && (0..w.len()).all(|o| unmade.contains(&o) || g[o] == w[o]);
         // Metal sets the gap marks the CPU's tier 2 tests itself (`lazy_marks`).
         let lazy = lazy_bits(native);
         for (k, (g, w)) in got.run.files.iter().zip(&want).enumerate() {
@@ -524,7 +524,7 @@ pub mod tests {
             let refused = refusal(&w.totals);
             let differs = if refused {
                 let cut = native.totals.iter().filter_map(|&t| g.outputs.get(t)).filter_map(|o| o.iter().position(|&x| x != 0).map(|j| j as u32 * 64 + o[j].trailing_zeros())).min().unwrap_or(u32::MAX);
-                let before = |v: &[Vec<u32>]| v.iter().map(|p| p.iter().copied().filter(|&x| x < cut).collect::<Vec<_>>()).collect::<Vec<_>>();
+                let before = |v: &[rerail_blocks::vector::Vector<u32>]| v.iter().map(|p| p.iter().copied().filter(|&x| x < cut).collect::<Vec<_>>()).collect::<Vec<_>>();
                 let r = native.records.as_ref().expect("records");
                 let n = w.positions[usize::from(r.lasts)].iter().filter(|&&x| x < cut).count().min(w.codes.len()).min(g.codes.len());
                 refusal(&g.totals) != refused || !prefix_of(&before(&w.positions), &before(&g.positions)) || unlazy(&g.codes[..n], lazy) != unlazy(&w.codes[..n], lazy)
@@ -2114,7 +2114,7 @@ pub mod tests {
                 if let Some(i) = (0..upto(x.len(), y.len())).find(|&i| x.get(i) != y.get(i)) {
                     let at = y.get(i).or(x.get(i)).copied().unwrap_or(0) as usize;
                     let text = String::from_utf8_lossy(&f[at.saturating_sub(8).min(f.len())..(at + 12).min(f.len())]).into_owned();
-                    let around = |v: &Vec<u32>, w: &Vec<u32>| (i.saturating_sub(2)..(i + 3).min(v.len())).map(|j| (v[j], w.get(j).copied())).collect::<Vec<_>>();
+                    let around = |v: &[u32], w: &[u32]| (i.saturating_sub(2)..(i + 3).min(v.len())).map(|j| (v[j], w.get(j).copied())).collect::<Vec<_>>();
                     panic!("file {k} ({} bytes): {what} {i} the CPU's {:?}, the interpreter's {:?} ({} and {} of them), near {text:?}; the CPU's (start, last) {:?}, the interpreter's {:?}", f.len(), x.get(i), y.get(i), x.len(), y.len(), around(&g.positions[usize::from(r.starts)], &g.positions[usize::from(r.lasts)]), around(&want.positions[usize::from(r.starts)], &want.positions[usize::from(r.lasts)]));
                 }
             }
@@ -2892,7 +2892,7 @@ pub mod tests {
         let want: Vec<_> = files.iter().map(|f| super::tape(f)).collect();
         let tokens: usize = files.iter().map(|f| super::rr::engine_tape(f).len()).sum();
         // (CPU, wall) a pass of `f`, its last pass's tables checked.
-        let time = |warm: usize, f: &mut dyn FnMut() -> Option<Vec<Vec<u8>>>| {
+        let time = |warm: usize, f: &mut dyn FnMut() -> Option<Vec<rerail_tape_format::Vector<u8>>>| {
             let w = std::time::Instant::now();
             for _ in 0..warm {
                 let _ = f();
@@ -2957,7 +2957,7 @@ pub mod tests {
             // Three calls first: the second runs a program its first run learned from (its source
             // made and compiled again), the third the settled one.
             let metal = time(3, &mut || {
-                let mut out: Vec<Option<Vec<u8>>> = vec![None; want.len()];
+                let mut out: Vec<Option<rerail_tape_format::Vector<u8>>> = vec![None; want.len()];
                 let (mut np, mut oc) = (0, 0);
                 parts(c, &batch, &digests, 0, &mut |secs, at, n, res| {
                     gpu += secs;
@@ -3714,7 +3714,7 @@ mod json_probe {
             let (ws, wl) = (&want.positions[usize::from(r.starts)], &want.positions[usize::from(r.lasts)]);
             let n = upto(gs.len(), ws.len());
             if let Some(i) = (0..n).find(|&i| gs.get(i) != ws.get(i) || gl.get(i) != wl.get(i) || g.codes.get(i) != want.codes.get(i)) {
-                let around = |s: &Vec<u32>, l: &Vec<u32>, c: &Vec<u32>| (i.saturating_sub(2)..(i + 3).min(s.len())).map(|j| (s[j], l.get(j).copied(), c.get(j).map(|x| format!("{x:#x}")))).collect::<Vec<_>>();
+                let around = |s: &[u32], l: &[u32], c: &[u32]| (i.saturating_sub(2)..(i + 3).min(s.len())).map(|j| (s[j], l.get(j).copied(), c.get(j).map(|x| format!("{x:#x}")))).collect::<Vec<_>>();
                 panic!("file {k} ({:?}): token {i}: the CPU's (start, last, code) {:?}, the interpreter's {:?}", String::from_utf8_lossy(&f[..f.len().min(120)]), around(gs, gl, &g.codes), around(ws, wl, &want.codes));
             }
             if !refused {

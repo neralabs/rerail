@@ -98,7 +98,7 @@ impl Embedder for TestScript {
         if segments.is_empty() {
             return None;
         }
-        let parse = super::Parse::read(dialect, &text, budget)?;
+        let parse = super::Parse::read_program(dialect, &text, &segments, budget)?;
         segments.index();
         Some(Program {
             dialect,

@@ -20,7 +20,7 @@ pub struct ViewEntry {
 impl ViewEntry {
     /// `p`'s entry, in `block` (the block its numbering is in), its kinds as `dialect` holds them.
     pub fn new(block: &Arc<Block>, p: &Projected, dialect: &Dialect) -> Self {
-        let f = &*p.facts;
+        let f = p.f();
         let n = f.code_count();
         // copy: derived (each code's kind and field atom, computed once from the tape's code table and the dialect)
         let kinds = Cells::build(block, n.max(1), |out| {

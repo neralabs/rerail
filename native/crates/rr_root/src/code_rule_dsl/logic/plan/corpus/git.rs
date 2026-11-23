@@ -525,11 +525,11 @@ pub fn metadata_only(program: &Version) -> bool {
 
 /// Restore the root entries before the host looks up Git-backed control files. The memo plans its run recorded
 /// manifests of; none when the root was already observed.
-pub fn prime_root(root: &Path) -> super::Result<Vec<[u8; 32]>> {
+pub fn prime_root(root: &Path) -> super::Result<rerail_blocks::vector::Vector<[u8; 32]>> {
     use crate::code_rule_dsl::logic::plan::output::{Outputs, Value as Cell};
     let reads = super::ThreadStore::git_reads();
     if !snapshot::contains(root) || reads.as_deref().is_some_and(|reads| snapshot::root_observed(root, reads)) {
-        return Ok(Vec::new());
+        return Ok(rerail_blocks::vector::Vector::new());
     }
     let program = ROOT_TREE;
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });

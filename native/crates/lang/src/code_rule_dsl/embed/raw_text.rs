@@ -58,7 +58,7 @@ impl Embedder for RawText {
             let mut segments = SegmentMap::new();
             segments.push(0, text.len(), range, true, false);
             segments.index();
-            let Some(parse) = super::Parse::read(dialect, &text, budget) else { continue };
+            let Some(parse) = super::Parse::read_program(dialect, &text, &segments, budget) else { continue };
             programs.push(Program { dialect, parse, text, segments, host_errors: Vec::new(), at: None });
         }
         programs

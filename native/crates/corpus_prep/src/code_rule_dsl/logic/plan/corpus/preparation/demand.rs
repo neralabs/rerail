@@ -10,7 +10,7 @@
 
 use crate::code_rule_dsl::logic::front::AXIS;
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
-use crate::code_rule_dsl::logic::program_image::{About, AtomRef, Builder, Cell, Lit, NativeKind, NativeSpec, Rewrite, RuleId, RuleRef, T, TermRef, Version, t_of};
+use crate::code_rule_dsl::logic::program_image::{About, AtomRef, Builder, Cell, Lit, ArchivedNativeSpec, NativeKind, NativeSpec, Rewrite, RuleId, Rows, RuleRef, T, TermRef, Version, t_of};
 use crate::code_rule_dsl::logic::reach_form::{QUALIFIER, SEED};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -18,7 +18,7 @@ type Result<T> = std::result::Result<T, String>;
 
 /// Native about rows `name` with the rows of `drop`'s relations left out and `add` added, in `program_facts::
 /// write_field`'s order: by the native's name (column 1), then by column 2 where it is a number.
-pub fn edit_native_rows(b: &mut Builder<'_>, name: &str, drop: &HashSet<String>, add: Vec<Vec<Cell>>) {
+pub fn edit_native_rows(b: &mut Builder<'_>, name: &str, drop: &HashSet<String>, add: Rows) {
     let mut rows = b.about_rows(name);
     let rel_of = |b: &Builder<'_>, r: &[Cell]| match r.get(1) {
         Some(Cell::Str(a)) => b.text(*a).to_owned(),
@@ -28,7 +28,7 @@ pub fn edit_native_rows(b: &mut Builder<'_>, name: &str, drop: &HashSet<String>,
     if add.is_empty() && rows.len() == b.about_rows(name).len() {
         return;
     }
-    rows.extend(add);
+    rows.extend(add.iter());
     rows.sort_by_cached_key(|r| {
         let n = match r.get(2) {
             Some(Cell::Int(n)) => *n,
@@ -296,20 +296,20 @@ impl ProgramPass for ReachForm {
             }
         }
         let p = about_p(b);
-        let mut rows = Vec::new();
+        let mut rows = Rows::new();
         for (rel, (_, edge)) in &reaches {
             let seed = format!("{SEED}{rel}");
             let cols: Vec<(String, String)> = input.decl_of(rel).ok_or_else(|| format!("{rel} is not declared"))?.cols().map(|(n, t)| (input.text(n).to_owned(), input.text(t).to_owned())).collect();
             let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
             b.fields().declare(&seed, &cols);
             let (r, s, e) = (b.atom(rel), b.atom(&seed), b.atom(edge));
-            rows.push(vec![p, Cell::Str(r), Cell::Str(s), Cell::Str(e)]);
+            rows.push([p, Cell::Str(r), Cell::Str(s), Cell::Str(e)]);
         }
         edit_native_rows(b, "native_reach", &HashSet::new(), rows);
-        let mut rows = Vec::new();
+        let mut rows = Rows::new();
         for (rel, (reach, map)) in &throughs {
             let (r, x, m) = (b.atom(rel), b.atom(reach), b.atom(map));
-            rows.push(vec![p, Cell::Str(r), Cell::Str(x), Cell::Str(m)]);
+            rows.push([p, Cell::Str(r), Cell::Str(x), Cell::Str(m)]);
         }
         edit_native_rows(b, "native_reach_through", &HashSet::new(), rows);
         Ok(())
@@ -351,7 +351,7 @@ impl ProgramPass for UndoInCycles {
             .natives
             .iter()
             .filter_map(|n| match n.spec {
-                NativeSpec::Reach { seed, .. } => Some((v.rel_name(n.rel).to_owned(), v.rel_name(seed).to_owned())),
+                ArchivedNativeSpec::Reach { seed, .. } => Some((v.rel_name(n.rel).to_owned(), v.rel_name(seed).to_owned())),
                 _ => None,
             })
             .collect();
@@ -405,8 +405,8 @@ impl ProgramPass for UndoInCycles {
         for seed in seeds.keys() {
             b.fields().undeclare(seed);
         }
-        edit_native_rows(b, "native_reach", &gone, Vec::new());
-        edit_native_rows(b, "native_reach_through", &gone, Vec::new());
+        edit_native_rows(b, "native_reach", &gone, Rows::new());
+        edit_native_rows(b, "native_reach_through", &gone, Rows::new());
         Ok(())
     }
 }

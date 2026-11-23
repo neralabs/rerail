@@ -39,8 +39,8 @@
             ],
             vec![python_tape("one\n"), python_tape("two\n")],
             vec![
-                vec![vec![0], vec![0], vec![0]],
-                vec![vec![0], Vec::new(), Vec::new()],
+                vec![rerail_blocks::vector![0], rerail_blocks::vector![0], rerail_blocks::vector![0]],
+                vec![rerail_blocks::vector![0], rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new()],
             ],
             vec![vec![true, true, true], vec![true, true, false]],
             vec![u32::MAX, u32::MAX, u32::MAX],
@@ -84,7 +84,7 @@
             ExecutionBackend::CpuJit,
             vec![Program::compile_universe().expect("verified universe")],
             vec![tape],
-            vec![vec![vec![0]]],
+            vec![vec![rerail_blocks::vector![0]]],
             vec![vec![false]],
             vec![u32::MAX],
         );

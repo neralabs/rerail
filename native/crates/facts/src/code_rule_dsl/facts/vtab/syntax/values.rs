@@ -17,6 +17,7 @@
 //! binds whole (`in_block`). A view's rows are read in place through one directory of the batch's documents and the
 //! values' (`device_chunk::views_over`), made again when values are admitted after it.
 
+use rerail_blocks::vector::Vector;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use super::super::DeviceView;
 use super::super::Source;
@@ -26,6 +27,9 @@ use rustc_hash::FxHashMap;
 use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// The end of a key's chain (`Shard::chained`).
+const END: u32 = u32::MAX;
 
 /// One admitted value's rows of a relation: its source (a batch of the value alone), from row `start` of the parts.
 #[derive(Clone)]
@@ -90,25 +94,52 @@ const SHARDS: usize = 256;
 
 #[derive(Clone, Default)]
 struct Keys {
-    shards: Vec<Arc<FxHashMap<u32, Vec<usize>>>>,
+    shards: Vec<Arc<Shard>>,
+}
+
+/// One shard of the keys, in blocks (decision 0353): per key, the first and last links of its chain in `chained`;
+/// each link a part and the next link of its key's chain (`END` at the last).
+#[derive(Clone, Default)]
+struct Shard {
+    by_key: rerail_blocks::maps::BlockHash<u32, [u32; 2]>,
+    chained: Vector<[u32; 2]>,
 }
 
 impl Keys {
     fn shard(k: u32) -> usize {
         (k.wrapping_mul(0x9E37_79B9) >> 24) as usize % SHARDS
     }
-    fn get(&self, k: &u32) -> Option<&Vec<usize>> {
-        self.shards.get(Self::shard(*k))?.get(k)
+    /// The parts that hold rows of key `k`, in the order admitted.
+    fn parts(&self, k: u32) -> impl Iterator<Item = usize> + '_ {
+        let shard = self.shards.get(Self::shard(k));
+        let mut at = shard.and_then(|s| s.by_key.get(&k)).map_or(END, |c| c[0]);
+        std::iter::from_fn(move || {
+            let [part, next] = *shard?.chained.as_slice().get(at as usize)?;
+            at = next;
+            Some(part as usize)
+        })
     }
     /// Part `i` holds rows of key `k`.
     fn add(&mut self, k: u32, i: usize) {
         if self.shards.is_empty() {
             self.shards = (0..SHARDS).map(|_| Arc::default()).collect();
         }
-        if self.get(&k).is_some_and(|at| at.last() == Some(&i)) {
+        let shard = &self.shards[Self::shard(k)];
+        if shard.by_key.get(&k).is_some_and(|c| shard.chained[c[1] as usize][0] == i as u32) {
             return;
         }
-        Arc::make_mut(&mut self.shards[Self::shard(k)]).entry(k).or_default().push(i);
+        let shard = Arc::make_mut(&mut self.shards[Self::shard(k)]);
+        let link = shard.chained.len() as u32;
+        match shard.by_key.get_mut(&k) {
+            Some(chain) => {
+                let last = std::mem::replace(&mut chain[1], link);
+                shard.chained[last as usize][1] = link;
+            }
+            None => {
+                shard.by_key.insert(k, [link, link]);
+            }
+        }
+        shard.chained.push([i as u32, END]);
     }
 }
 
@@ -118,7 +149,7 @@ impl Keys {
 struct Parts {
     list: Blocks,
     total: usize,
-    /// The parts by the document keys of the node ids their rows hold.
+    /// The parts by the document keys of the node ids their rows hold (`Keys`).
     by_key: Keys,
     /// The parts by the keys of their documents and those documents' files: a lookup by a document key (`Parts::of`).
     by_doc: Keys,
@@ -147,8 +178,8 @@ impl Parts {
             }
             return;
         };
-        for &i in if docs { &self.by_doc } else { &self.by_key }.get(&key).into_iter().flatten() {
-            each(&self.list[i]);
+        for part in if docs { &self.by_doc } else { &self.by_key }.parts(key) {
+            each(&self.list[part]);
         }
     }
 }
@@ -253,7 +284,7 @@ impl Values {
     pub fn source_of(&self, name: &str, n: i64) -> Option<Arc<dyn Source>> {
         let parts = self.parts.load();
         let p = parts.get(name)?;
-        let i = *p.by_key.get(&((n >> 32) as u32))?.first()?;
+        let i = p.by_key.parts((n >> 32) as u32).next()?;
         Some(Arc::clone(&p.list[i].src))
     }
     fn total(&self, name: &str) -> usize {
@@ -311,7 +342,7 @@ impl Source for Slice {
         false
     }
     // A value's rows are few: read whole (`Layered::lookup`).
-    fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
     fn value(&self, row: usize, column: usize) -> i64 {
@@ -329,10 +360,11 @@ const MADE_ROOM: usize = (1 << 32) - MADE_AT;
 /// looked-up value's rows written once, where they are computed, as `within` writes its own.
 #[derive(Default)]
 struct Made {
-    rows: Vec<i64>,
+    rows: Vector<i64>,
     /// Each looked-up value's run of rows, and how many parts there were when it was made: a part admitted since (a
     /// value given a place more) makes it again.
-    runs: FxHashMap<(usize, i64), ((usize, usize), usize)>,
+    /// Under (column, value): [first row, rows, parts].
+    runs: rerail_blocks::maps::BlockHash<[i64; 2], [u64; 3]>,
     /// The values' rows as a scan reads them (`Layered::scanned`), once one has.
     scan: Option<Arc<Scan>>,
 }
@@ -353,9 +385,10 @@ struct Scan {
 /// The rows of some parts, made whole: from row `first` of the scan's.
 struct Seg {
     first: usize,
-    rows: Vec<i64>,
-    /// Per column and value, the rows that hold it (from `first`).
-    index: FxHashMap<(usize, i64), Vec<u32>>,
+    rows: Vector<i64>,
+    /// Each row's (column, value, row), sorted: the rows that hold a value are one run of it (`holding`), read in
+    /// place (decision 0628: a run's data in blocks).
+    index: Vector<[i64; 3]>,
 }
 
 impl Scan {
@@ -386,7 +419,12 @@ impl Scan {
     }
     /// The rows whose `column` is `v`, by their numbers in the source.
     fn holding(&self, column: usize, v: i64) -> impl Iterator<Item = usize> + '_ {
-        self.segs.iter().flat_map(move |s| s.index.get(&(column, v)).into_iter().flatten().map(move |&r| self.at + s.first + r as usize))
+        let key = [column as i64, v];
+        self.segs.iter().flat_map(move |s| {
+            let lo = s.index.partition_point(|e| [e[0], e[1]] < key);
+            let hi = lo + s.index[lo..].partition_point(|e| [e[0], e[1]] == key);
+            s.index[lo..hi].iter().map(move |e| self.at + s.first + e[2] as usize)
+        })
     }
 }
 
@@ -447,17 +485,18 @@ impl Layered {
         let more = self.parts(|p| {
             (scan.parts < p.list.len()).then(|| {
                 let first = scan.len(width);
-                let mut seg = Seg { first, rows: Vec::new(), index: FxHashMap::default() };
+                let mut seg = Seg { first, rows: Vector::new(), index: Vector::new() };
                 for part in (&p.list).into_iter().skip(scan.parts) {
                     for r in 0..part.src.len() {
                         let row = (seg.rows.len() / width) as u32;
                         for c in 0..self.width {
                             let x = part.src.value(r, c);
                             seg.rows.push(x);
-                            seg.index.entry((c, x)).or_default().push(row);
+                            seg.index.push([c as i64, x, i64::from(row)]);
                         }
                     }
                 }
+                seg.index.sort_unstable();
                 (p.list.len(), seg)
             })
         });
@@ -564,7 +603,7 @@ impl Source for Layered {
     }
     /// The base's counts: the values admitted past its rows are a few (a chunk's tape values), and a count read
     /// across the rows made the base's batch whole.
-    fn value_counts(&self, wanted: &[(usize, i64)]) -> Option<Vec<i64>> {
+    fn value_counts(&self, wanted: &[(usize, i64)]) -> Option<Vector<i64>> {
         self.base.value_counts(wanted)
     }
     fn indexed(&self, column: usize) -> bool {
@@ -585,7 +624,7 @@ impl Source for Layered {
     fn doc_column(&self) -> Option<usize> {
         self.base.doc_column()
     }
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         let mut out = self.base.lookup(column, values)?;
         if let Some(rows) = self.if_scanned(|s| values.iter().flat_map(|&v| s.holding(column, v)).collect::<Vec<_>>()) {
             out.extend(rows);
@@ -596,8 +635,8 @@ impl Source for Layered {
             self.parts(|p| {
                 let mut made = made.lock();
                 for &v in values {
-                    let run = match made.runs.get(&(column, v)) {
-                        Some(&(run, parts)) if parts == p.list.len() => run,
+                    let run = match made.runs.get(&[column as i64, v]) {
+                        Some(&[first, n, parts]) if parts as usize == p.list.len() => (first as usize, n as usize),
                         _ => {
                             let at = made.rows.len() / self.width.max(1);
                             p.of(v, docs, &mut |part| {
@@ -610,7 +649,7 @@ impl Source for Layered {
                             });
                             let run = (at, made.rows.len() / self.width.max(1) - at);
                             assert!(at + run.1 <= MADE_ROOM, "{}: more rows made of the tape values than its room", self.name);
-                            made.runs.insert((column, v), (run, p.list.len()));
+                            made.runs.insert([column as i64, v], [run.0 as u64, run.1 as u64, p.list.len() as u64]);
                             run
                         }
                     };
@@ -687,7 +726,7 @@ impl Source for Layered {
     }
     /// The base's rows in the range, then each part's, past the base's: a part with no range read is read whole (a
     /// value's rows are few). `rr_ann_node`'s range of the annotations' nodes is the values' rows.
-    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<rerail_blocks::vector::Vector<usize>> {
         if self.made.is_some() {
             return None;
         }
@@ -730,13 +769,13 @@ impl Source for Layered {
     }
     /// The base's rows of the values; with values admitted, the lead column's rows (the base's and the parts', as
     /// `lookup` gives them) that hold every value.
-    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vector<usize>> {
         if !self.has_parts() {
             return self.base.lookup_all(equal);
         }
         let &(c, v) = equal.first()?;
         let rows = self.lookup(c, &[v])?;
-        Some(rows.into_iter().filter(|&r| equal.iter().all(|&(c, v)| self.value(r, c) == v)).collect())
+        Some(rows.iter().copied().filter(|&r| equal.iter().all(|&(c, v)| self.value(r, c) == v)).collect())
     }
     /// The base's test (`within`'s interval, t50 step 4), else the test of each part that may hold the row's first
     /// value's node: a value's nodes are its part's, never the batch's. Unforwarded, a chunk's every `within` test was
@@ -811,10 +850,10 @@ impl Source for Layered {
         });
         true
     }
-    fn lookup_eq(&self, column: usize, value: i64, eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
+    fn lookup_eq(&self, column: usize, value: i64, eqs: &[(usize, i64)]) -> Option<rerail_blocks::vector::Vector<usize>> {
         if self.has_parts() { None } else { self.base.lookup_eq(column, value, eqs) }
     }
-    fn lookup_in(&self, column: usize, values: &[i64], doc: i64) -> Option<Vec<usize>> {
+    fn lookup_in(&self, column: usize, values: &[i64], doc: i64) -> Option<rerail_blocks::vector::Vector<usize>> {
         if self.has_parts() { None } else { self.base.lookup_in(column, values, doc) }
     }
     fn kept_to_doc(&self, column: usize) -> bool {
@@ -979,8 +1018,8 @@ mod tests {
         fn indexed(&self, _: usize) -> bool {
             true
         }
-        fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
-            Some(Vec::new())
+        fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+            Some(rerail_blocks::vector::Vector::new())
         }
         fn value(&self, row: usize, _: usize) -> i64 {
             row as i64
@@ -1037,7 +1076,7 @@ mod tests {
         fn indexed(&self, _: usize) -> bool {
             true
         }
-        fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+        fn lookup(&self, c: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
             Some((0..self.rows.len()).filter(|&r| values.contains(&self.rows[r][c])).collect())
         }
         fn value(&self, row: usize, c: usize) -> i64 {
@@ -1099,12 +1138,12 @@ mod tests {
         let want: Vec<(usize, Vec<i64>)> = (0..6).map(|r| (r, vec![(r % 3) as i64; 2])).collect();
         assert_eq!(rows, want);
         assert_eq!((3..6).map(|r| layered.value(r, 1)).collect::<Vec<_>>(), [0, 1, 2]);
-        assert_eq!(layered.lookup(0, &[1]), Some(vec![4]), "a lookup reads the scan's row");
+        assert_eq!(layered.lookup(0, &[1]), Some(rerail_blocks::vector![4]), "a lookup reads the scan's row");
         assert_eq!(layered.value(1 << 30, 0), (1 << 30) as i64, "a base's row past the scan's is the base's");
         values.add(&[2], part());
         assert_eq!(layered.len(), 9);
         assert_eq!(layered.value(8, 0), 2);
-        assert_eq!(layered.lookup(1, &[2]), Some(vec![5, 8]));
+        assert_eq!(layered.lookup(1, &[2]), Some(rerail_blocks::vector![5, 8]));
     }
 
     /// A value's long-text nodes, kept though it has none (a Vue piece's string reads its value in its own batch),
@@ -1131,7 +1170,7 @@ mod tests {
             assert_eq!(base.0.load(Ordering::Relaxed), 0, "made on lookup: {made_on_lookup}");
             assert_eq!(layered.value(1, 0), 1);
             let lookup = layered.lookup(0, &[1]);
-            assert_eq!(lookup, Some(Vec::new()));
+            assert_eq!(lookup, Some(rerail_blocks::vector::Vector::new()));
             assert_eq!(base.0.load(Ordering::Relaxed), usize::from(!made_on_lookup), "made on lookup: {made_on_lookup}");
         }
     }

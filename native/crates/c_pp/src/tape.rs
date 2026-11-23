@@ -149,7 +149,7 @@ impl Gather<'_> {
 }
 
 /// `src`'s preprocessor tape, read as `opts` say.
-pub fn image(src: &[u8], opts: Options) -> Vec<u8> {
+pub fn image(src: &[u8], opts: Options) -> rerail_tape_format::Vector<u8> {
     let nodes = nodes(src, opts);
     let mut widths = Widths::guess(src.len());
     loop {

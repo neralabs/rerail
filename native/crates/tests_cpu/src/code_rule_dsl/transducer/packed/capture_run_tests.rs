@@ -15,7 +15,7 @@ pub fn program() -> Program {
     let lang = SupportLang::Python.get_ts_language();
     let kind = |name| lang.id_for_node_kind(name, true);
     Program::new(
-        vec![
+        rerail_blocks::vector![
             word(SAVE_CURSOR, 0, 0),
             word(CAPTURE, 0, 0),
             word(REPEAT_BEGIN, 0, 0),
@@ -43,8 +43,8 @@ pub fn program() -> Program {
         ],
         vec![b"prefix".to_vec(), b"body".to_vec()],
         vec![],
-        vec![0, 1],
-        vec![],
+        rerail_blocks::vector![0, 1],
+        rerail_blocks::vector![],
     )
     .unwrap()
     .with_tree_sitter_query_semantics()
@@ -201,8 +201,8 @@ fn capture_runs_preserve_every_duplicate_capture_property_and_transformed_value(
             b"example".to_vec(),
         ],
         vec![],
-        vec![0, 1],
-        vec![],
+        rerail_blocks::vector![0, 1],
+        rerail_blocks::vector![],
     )
     .unwrap()
     .with_tree_sitter_query_semantics()
@@ -249,7 +249,7 @@ fn capture_runs_preserve_every_duplicate_capture_property_and_transformed_value(
     let run = compiled.execute(&doc, root, Limits::default()).unwrap();
     assert_eq!(run.outputs, expected);
     assert_eq!(
-        execute_with_backend(ExecutionBackend::CpuJit, &[p], &[doc], &[vec![vec![root]]]).unwrap(),
+        execute_with_backend(ExecutionBackend::CpuJit, &[p], &[doc], &[vec![rerail_blocks::vector![root]]]).unwrap(),
         vec![vec![expected]]
     );
 }

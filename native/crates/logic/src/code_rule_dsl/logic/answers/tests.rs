@@ -1,3 +1,4 @@
+    use rerail_blocks::vector::Vector;
     use super::*;
 
     /// `!seen(x)` inside a component that loads waits for its key's gate; the rule asking about it is its prefix.
@@ -67,7 +68,7 @@
         // Each gated aggregate is read gated, and the rule's `done`s come before them.
         let few = gated.rules().find(|r| gated.rel_name(r.head().rel()) == "few").unwrap();
         let lits: Vec<LitRef<'_>> = few.body().collect();
-        let aggs: Vec<usize> = (0..lits.len()).filter(|&i| matches!(lits[i].view(), Lit::Agg { .. })).collect();
+        let aggs: Vector<usize> = (0..lits.len()).filter(|&i| matches!(lits[i].view(), Lit::Agg { .. })).collect();
         assert_eq!(aggs.len(), 2);
         for &i in &aggs {
             assert!(lits[i].atom().unwrap().gated(), "the aggregate at {i} is gated");

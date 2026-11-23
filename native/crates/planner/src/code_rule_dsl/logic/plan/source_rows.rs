@@ -3,6 +3,7 @@
 //! which keeps a component's relations (`plan.rs`, `compose::retained`); the corpus's keeps read it (`retain`).
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::plan::Cells;
+use rerail_blocks::vector::Vector;
 use std::sync::Arc;
 
 /// An order-independent digest of `source`'s rows (a set: rows are distinct), with its row count, of their content
@@ -35,7 +36,7 @@ pub fn each_row(source: &dyn Source, cells: &Cells, mut f: impl FnMut(&[i64], u6
     {
         return;
     }
-    let all: Vec<usize> = (0..width).collect();
+    let all: Vector<usize> = (0..width).collect();
     let mut raw = vec![0i64; width * CHUNK];
     let n = source.len();
     for start in (0..n).step_by(CHUNK) {

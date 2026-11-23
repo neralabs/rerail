@@ -486,7 +486,7 @@ impl Builder {
 
 /// A kernel tape: its image, and its payload words (its spans' units).
 pub struct Tape {
-    pub image: Vec<u8>,
+    pub image: rerail_tape_format::Vector<u8>,
     pub words: Vec<u32>,
 }
 

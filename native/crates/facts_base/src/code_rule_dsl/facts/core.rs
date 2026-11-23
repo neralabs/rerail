@@ -9,6 +9,7 @@
 //! dialects never collide and no table is needed. The abstract classes the tape records
 //! (Tree-sitter supertypes, tape v8) get postings beside the concrete kinds.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::language::tape_tag;
 use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::tape::TapeDoc;
@@ -154,7 +155,7 @@ pub struct Facts {
     /// The dialect's grammar: whether a kind is named.
     grammar: Option<Arc<crate::code_rule_dsl::tape::Grammar>>,
     /// The ERROR and MISSING nodes, ascending, found on first ask (a scan of the codes): few, and most files have none.
-    errors: std::sync::OnceLock<Vec<u32>>,
+    errors: std::sync::OnceLock<Vector<u32>>,
     /// The codes the document holds, ascending, found on the first kind or class test (a scan of the codes): a
     /// summary of the document, not of its nodes. On format 16 the table is the language's, so a test of a kind the
     /// document lacks is answered here without a scan, as format 15's table of the document's own codes answers it.
@@ -174,9 +175,9 @@ pub struct Facts {
 
 /// What a document holds, ascending: its codes, the kinds of those with no ERROR flag, and their classes.
 struct Held {
-    codes: Box<[u32]>,
-    kinds: Box<[u16]>,
-    classes: Box<[u16]>,
+    codes: Vector<u32>,
+    kinds: Vector<u16>,
+    classes: Vector<u16>,
 }
 
 /// An anonymous child: a token the tape stores ([`Facts::tokens`]).
@@ -277,7 +278,8 @@ fn with_programs(built: Built, grammar: &Arc<crate::code_rule_dsl::tape::Grammar
             continue;
         }
         let Some(tape) = facts.tape.as_ref() else { continue };
-        let doc = TapeDoc::over(Arc::clone(tape), Arc::clone(grammar), Arc::clone(&facts.lines));
+        // The host read in a batch of its own: its 16z blocks decoded into a cache made for it.
+        let doc = TapeDoc::over(Arc::clone(tape), Arc::clone(grammar), Arc::clone(&facts.lines)).alone();
         for program in embedder.build_in_doc(&doc, &|| false) {
             let image = crate::code_rule_dsl::tape::DerivedImage::encode(via, program, 0, grammar, &facts.source, &|| false)?;
             programs.push(image);
@@ -315,13 +317,15 @@ pub fn build_fragment(file: &dyn SourceFile, fragment: Fragment) -> Result<Built
 
 /// [`build_with_tape`] of an embedded program (decision 0431 §4), read off the tape or tree its embedder parsed
 /// (`embed::Parse`), not parsed again.
-pub fn build_parsed(file: &dyn SourceFile, parse: crate::code_rule_dsl::embed::Parse, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
+/// A tree's placeholders `segments` omits are left out as it is encoded; a lean parser's tape left them out as it
+/// was written (`Parse::read_program`).
+pub fn build_parsed(file: &dyn SourceFile, parse: crate::code_rule_dsl::embed::Parse, segments: &crate::code_rule_dsl::embed::segments::SegmentMap, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
     use crate::code_rule_dsl::{lines::Terminators, tape::{Grammar, TapeImage}};
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
     let grammar = Grammar::embedded(language)?;
     let primary = match parse {
         crate::code_rule_dsl::embed::Parse::Tape(image) => image,
-        crate::code_rule_dsl::embed::Parse::Tree(tree) => TapeImage::encode_tree_image(tree.root_node(), &grammar, file.source(), None, &|| false)?,
+        crate::code_rule_dsl::embed::Parse::Tree(tree) => TapeImage::encode_tree_image(tree.root_node(), &grammar, file.source(), Some(segments), &|| false)?,
     };
     facts_of_image(file, &grammar, primary, crate::code_rule_dsl::lines::terminators(language), keep)
 }
@@ -751,13 +755,13 @@ pub const TEXT: u8 = u8::MAX;
 /// for a file with no language (`lines::terminators_of(None)`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
 pub fn text(source: Arc<String>) -> Facts {
     let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators_of(None)));
-    Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(Vec::new()), held: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
+    Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), held: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
 /// The text document of parsed file `f` (decision 0512: a file the run reads for its programs): its source and line
 /// table, shared, and no tree.
 pub fn text_of(f: &Facts) -> Facts {
-    Facts { tag: TEXT, source: Arc::clone(&f.source), lines: Arc::clone(&f.lines), tape: None, grammar: None, errors: std::sync::OnceLock::from(Vec::new()), held: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
+    Facts { tag: TEXT, source: Arc::clone(&f.source), lines: Arc::clone(&f.lines), tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), held: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
 /// Counts a read of the facts' `$part` of node `$node` (E17, `tape::reads`); nothing without `tape-reads`.
@@ -774,7 +778,7 @@ macro_rules! watched {
 /// `$body` over the facts' tape `$t`, monomorphised per format.
 macro_rules! on_tape {
     ($f:expr, |$t:ident| $body:expr) => {
-        rerail_tape_format::with_tape!($f.doc_tape().tape(), |$t| $body)
+        rerail_tape_format::with_tape!($f.facts.doc_tape().tape_with($f.cache), |$t| $body)
     };
 }
 
@@ -790,18 +794,76 @@ impl Facts {
         self.tape.as_deref().expect("a node read from facts with no tape (a text-only document has no nodes)")
     }
     /// The atom of a code's kind: ERROR's where it is one.
-    fn atom(&self, e: &rerail_tape_format::tape::Entry) -> u32 {
+    fn atom(&self, e: rerail_tape_format::tape::EntryRef<'_>) -> u32 {
         kind_atom(self.tag, if e.flags & rerail_tape_format::CODE_ERROR != 0 { ERROR_SYMBOL } else { e.kind })
     }
-    #[cfg_attr(feature = "tape-reads", track_caller)]
-    pub fn start_line(&self, id: u32) -> u32 {
-        self.lines.line(self.start(id) as usize) as u32 + 1
+    /// Whether a node is an ERROR or MISSING: the document's fault bit, which the parse wrote (decision 0434 §4), read
+    /// without its nodes; a tape without presence (format 15's) scanned for them, in a batch of its own.
+    pub fn has_syntax_error(&self) -> bool {
+        use rerail_tape_format::tape::Tape as _;
+        match self.tape.as_deref() {
+            None => false,
+            Some(t) if t.image().has_presence() => {
+                rerail_tape_format::with_tape!(t.tape_with(None), |t| t.has_kind(u32::MAX, rerail_tape_format::ERROR_CODE))
+            }
+            Some(_) => self.alone(|f| f.syntax_errors()),
+        }
+    }
+    /// `f` over the facts read in a batch of their own (a caller outside every batch, `FactsIn`): a 16z tape's blocks
+    /// decoded into a cache made for them.
+    pub fn alone<R>(&self, f: impl FnOnce(FactsIn<'_>) -> R) -> R {
+        let cache = self.own_cache();
+        f(self.read_in(cache.as_ref()))
+    }
+    /// A cache for its 16z tape's blocks alone (a batch of its own), where it holds one.
+    pub fn own_cache(&self) -> Option<rerail_tape_format::f16::ZCache> {
+        self.z_tape().map(|t| rerail_tape_format::f16::ZCache::of([t]))
+    }
+    /// The facts read in a batch: a 16z tape's blocks decoded into `cache`, the batch's (`FactsIn`).
+    pub fn read_in<'a>(&'a self, cache: Option<&'a rerail_tape_format::f16::ZCache>) -> FactsIn<'a> {
+        FactsIn { facts: self, cache }
+    }
+    /// Its 16z tape, where it holds one: what a batch's cache is made for (`ZCache::of`).
+    pub fn z_tape(&self) -> Option<&rerail_tape_format::f16::Tape16Z> {
+        self.tape.as_deref().and_then(|t| t.image().z_tape())
     }
     pub fn len(&self) -> usize {
         self.tape.as_ref().map_or(0, |t| t.image().node_count())
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+    /// Resident bytes the facts hold of their own: none past the struct, as they copy nothing off the tape.
+    pub fn bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+    }
+    /// The resident bytes of the tape they read.
+    pub fn tape_bytes(&self) -> usize {
+        self.tape.as_ref().map_or(0, |t| t.bytes())
+    }
+}
+
+/// The facts read in a batch (`Facts::read_in`): a 16z tape's blocks decoded into the batch's cache (`ZCache`, the
+/// block the device's reads share). Every read of a node goes through one, its batch's cache named at the read (the
+/// user's choice, 2026-11-21: a document is in many batches, so no cache is fixed in it); a tape of another format
+/// needs none.
+#[derive(Clone, Copy)]
+pub struct FactsIn<'a> {
+    pub facts: &'a Facts,
+    cache: Option<&'a rerail_tape_format::f16::ZCache>,
+}
+
+impl std::ops::Deref for FactsIn<'_> {
+    type Target = Facts;
+    fn deref(&self) -> &Facts {
+        self.facts
+    }
+}
+
+impl<'a> FactsIn<'a> {
+    #[cfg_attr(feature = "tape-reads", track_caller)]
+    pub fn start_line(&self, id: u32) -> u32 {
+        self.lines.line(self.start(id) as usize) as u32 + 1
     }
     /// The tape's codes (its table's numbers, what `kind` and `field` read a node's of): none without a tape.
     pub fn code_count(&self) -> usize {
@@ -870,7 +932,7 @@ impl Facts {
             return 0;
         }
         on_tape!(self, |t| {
-            let (mut open, mut deepest): (Vec<usize>, usize) = (Vec::new(), 0);
+            let (mut open, mut deepest): (Vector<usize>, usize) = (rerail_blocks::vector::Vector::new(), 0);
             for i in 0..t.len() {
                 while open.last().is_some_and(|&end| end <= i) {
                     open.pop();
@@ -882,7 +944,7 @@ impl Facts {
         })
     }
     /// The node's children, in order.
-    pub fn children(&self, id: u32) -> Vec<u32> {
+    pub fn children(&self, id: u32) -> Vector<u32> {
         on_tape!(self, |t| rerail_tape_format::tape::children(&t, id as usize).map(|c| c as u32).collect())
     }
     /// `id`'s children in order, each handed to `f`, read off the tape with no list made (a probe's).
@@ -914,40 +976,45 @@ impl Facts {
             .collect()
     }
     /// A token's text.
-    pub fn token_text(&self, token: &Token) -> &str {
-        &self.source[token.start as usize..token.end as usize]
+    pub fn token_text(&self, token: &Token) -> &'a str {
+        &self.facts.source[token.start as usize..token.end as usize]
     }
     /// The nodes whose code is in the set `codes` makes of the tape's table, by id: a scan of the codes, 64 nodes at
     /// a time. The set is a kind's or a class's numbers from the table's index (`CodeTable::of_kind`), not a test of
     /// every entry: on format 16 the table is the language's (decision 0336 §7).
-    fn matching(&self, codes: Codes) -> Vec<u32> {
+    fn matching(&self, codes: Codes) -> Vector<u32> {
         use rerail_tape_format::tape::CodeSet;
         if self.is_empty() {
-            return Vec::new();
+            return rerail_blocks::vector::Vector::new();
         }
         on_tape!(self, |t| {
             let table = t.table();
             // A kind's or a class's set is the table's own, borrowed (decision 0336 §7: on format 16 the table is the
             // language's, so a set made per document would cost a table's index per probe).
-            let made;
-            let set: &CodeSet = match codes {
+            // ERROR's: its kind's codes, the errors and kind 0's, in one sorted run in a block.
+            let mut made: Vector<u32> = Vector::new();
+            let set: CodeSet<'_> = match codes {
                 Codes::Kind(code) if code == ERROR_SYMBOL => {
-                    let numbers = |s: &CodeSet| s.numbers().unwrap_or_default().to_vec();
-                    made = CodeSet::of_numbers([table.of_kind(code), table.errors(), table.of_kind(0)].into_iter().flat_map(numbers));
-                    &made
+                    for s in [table.of_kind(code), table.errors(), table.of_kind(0)] {
+                        // copy: derived: the union of three of the table's sets, written once as ERROR's.
+                        made.extend_from_slice(s.numbers().unwrap_or_default());
+                    }
+                    made.sort_unstable();
+                    made.dedup();
+                    CodeSet::Few(&made)
                 }
                 Codes::Kind(code) => table.of_kind(code),
                 Codes::Class(code) => table.of_class(code),
                 Codes::Faults => table.faults(),
             };
             if set.is_empty() {
-                return Vec::new();
+                return rerail_blocks::vector::Vector::new();
             }
-            let held = self.held.get_or_init(|| {
-                let mut codes: Vec<u32> = (0..t.len()).map(|i| t.code(i)).collect();
+            let held = self.facts.held.get_or_init(|| {
+                let mut codes: Vector<u32> = (0..t.len()).map(|i| t.code(i)).collect();
                 codes.sort_unstable();
                 codes.dedup();
-                let (mut kinds, mut classes) = (Vec::new(), Vec::new());
+                let (mut kinds, mut classes) = (Vector::new(), Vector::new());
                 for &c in &codes {
                     let e = table.entry(c);
                     if e.flags & rerail_tape_format::CODE_ERROR == 0 {
@@ -971,10 +1038,10 @@ impl Facts {
                 },
             };
             if !meets {
-                return Vec::new();
+                return rerail_blocks::vector::Vector::new();
             }
-            let mut out = Vec::new();
-            t.match_groups(set, |base, mut m| {
+            let mut out = rerail_blocks::vector::Vector::new();
+            t.match_groups(&set, |base, mut m| {
                 while m != 0 {
                     out.push((base + m.trailing_zeros() as usize) as u32);
                     m &= m - 1;
@@ -984,18 +1051,18 @@ impl Facts {
         })
     }
     /// The nodes of kind `kind` (an atom), by id.
-    pub fn of_kind(&self, kind: u32) -> Vec<u32> {
+    pub fn of_kind(&self, kind: u32) -> Vector<u32> {
         if kind_tag(kind) != self.tag {
-            return Vec::new();
+            return rerail_blocks::vector::Vector::new();
         }
         // `atom`'s inverse: the codes of the kind with no ERROR flag; for slot 0 (ERROR's atom, which kind 0's shares)
         // also every ERROR code and kind 0's.
         self.matching(Codes::Kind(kind_code(kind)))
     }
     /// Nodes of the abstract class `class` (a supertype's kind atom), by id.
-    pub fn of_class(&self, class: u32) -> Vec<u32> {
+    pub fn of_class(&self, class: u32) -> Vector<u32> {
         if kind_tag(class) != self.tag {
-            return Vec::new();
+            return rerail_blocks::vector::Vector::new();
         }
         self.matching(Codes::Class(kind_code(class)))
     }
@@ -1015,7 +1082,7 @@ impl Facts {
             for (&code, &n) in &count {
                 let e = t.table().entry(code);
                 *kinds.entry(self.atom(e)).or_insert(0u32) += n;
-                for &class in &e.classes {
+                for &class in e.classes {
                     *classes.entry(kind_atom(self.tag, class)).or_insert(0u32) += n;
                 }
             }
@@ -1023,12 +1090,16 @@ impl Facts {
         })
     }
     /// The kind atoms the document holds, ascending.
-    pub fn kinds(&self) -> Vec<u32> {
+    pub fn kinds(&self) -> Vector<u32> {
         self.histogram().0.into_iter().map(|(k, _)| k).collect()
     }
-    /// The ERROR and MISSING nodes, ascending.
-    pub fn errors(&self) -> &[u32] {
-        self.errors.get_or_init(|| self.matching(Codes::Faults))
+    /// The ERROR and MISSING nodes, ascending: as the tape's writer listed them in its home (`TapeImage::faults`),
+    /// read there; a format 15 tape's found once by its codes.
+    pub fn errors(&self) -> &'a [u32] {
+        if let Some(listed) = self.facts.tape.as_deref().and_then(|t| t.image().faults()) {
+            return listed;
+        }
+        self.facts.errors.get_or_init(|| self.matching(Codes::Faults))
     }
     /// Whether a node is an ERROR or MISSING.
     pub fn syntax_errors(&self) -> bool {
@@ -1044,9 +1115,9 @@ impl Facts {
         self.errors().iter().any(|&e| (id..end).contains(&e)) || self.under_error(id)
     }
     #[cfg_attr(feature = "tape-reads", track_caller)]
-    pub fn text(&self, id: u32) -> &str {
+    pub fn text(&self, id: u32) -> &'a str {
         let (start, end) = self.span(id);
-        &self.source[start as usize..end as usize]
+        &self.facts.source[start as usize..end as usize]
     }
     pub fn named(&self, id: u32) -> bool {
         self.flags(id) & 1 != 0
@@ -1059,7 +1130,7 @@ impl Facts {
     /// The nodes `a..b` in preorder, each with its parent: from the subtrees open around it, read in the same pass,
     /// where its parent is in the range; else read off the tape (on format 15, a search back). So a walk over a
     /// subtree reads one parent off the tape, not one a node.
-    pub fn with_parents(&self, a: u32, b: u32) -> impl Iterator<Item = (u32, Option<u32>)> + '_ {
+    pub fn with_parents(self, a: u32, b: u32) -> impl Iterator<Item = (u32, Option<u32>)> + 'a {
         let mut open: Vec<(u32, u32)> = Vec::new();
         (a..b).map(move |id| {
             while open.last().is_some_and(|&(_, end)| end <= id) {
@@ -1081,14 +1152,6 @@ impl Facts {
     }
     pub fn parent_or_none(&self, id: u32) -> u32 {
         self.parent(id).unwrap_or(NONE)
-    }
-    /// Resident bytes the facts hold of their own: none past the struct, as they copy nothing off the tape.
-    pub fn bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-    }
-    /// The resident bytes of the tape they read.
-    pub fn tape_bytes(&self) -> usize {
-        self.tape.as_ref().map_or(0, |t| t.bytes())
     }
 }
 

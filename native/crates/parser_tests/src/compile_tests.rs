@@ -2,6 +2,7 @@
 //! (`tools/bitlex`): each named mask of the compiled block program equals the evaluator's mask on
 //! every input and every executor (`docs/parser-generators/13-tape-on-the-gpu.md` §7, step 2).
 
+use rerail_blocks::vector::Vector;
 use crate::block_tests::{Executors, inputs, runs};
 #[allow(unused_imports)]
 use rerail_compiler::*;
@@ -55,7 +56,7 @@ fn evaluated(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8], names: &[&str]) -> 
         .collect()
 }
 
-fn cut(mut words: Vec<u64>, n: usize) -> Vec<u64> {
+fn cut(mut words: Vector<u64>, n: usize) -> Vector<u64> {
     words.truncate(n.div_ceil(64));
     if !n.is_multiple_of(64)
         && let Some(last) = words.last_mut()
@@ -529,12 +530,12 @@ fn the_cpu_executors_take_a_batch() {
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
     // The rows the CPU's tier 1 does not store (0406): a total no one reads by its rows is its
     // flag only, compared below.
-    let unstored: Vec<Vec<usize>> = blocks.iter().map(|b| rerail_compiler::block_native::BlockNative::lower(b).cpu_unstored()).collect();
+    let unstored: Vec<Vector<usize>> = blocks.iter().map(|b| rerail_compiler::block_native::BlockNative::lower(b).cpu_unstored()).collect();
     for (name, got) in [("interpreter", block::run_batch(&blocks, &files)), ("cranelift", native_cpu_block::run_batch(&compiled, &files))] {
         assert_eq!(got.len(), files.len());
         for (k, (got, want)) in got.iter().zip(&want).enumerate() {
             let what = format!("{name}: file {k} ({} bytes, program {})", files[k].bytes.len(), files[k].program);
-            let rows = |r: &block::BlockRun| -> Vec<Vec<u64>> {
+            let rows = |r: &block::BlockRun| -> Vec<Vector<u64>> {
                 r.outputs.iter().enumerate().filter(|&(o, _)| name == "interpreter" || !unstored[files[k].program].contains(&o)).map(|(_, w)| w.clone()).collect()
             };
             assert_eq!(rows(got), rows(want), "{what}");
@@ -1107,7 +1108,7 @@ fn json_compiled_text(json: &str) -> Result<(Program, bitlex_compile::Compiled),
 }
 
 /// A node as ids: kind, field, supertypes (sorted), start, end, size.
-type IdNode = (u16, u16, Vec<u16>, usize, usize, usize);
+type IdNode = (u16, u16, Vector<u16>, usize, usize, usize);
 
 /// The reference parser's nodes for `bytes` as ids, or `None` where the file goes to tree-sitter.
 fn reference_nodes(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8]) -> Option<Vec<IdNode>> {
@@ -1126,7 +1127,7 @@ fn reference_nodes(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8]) -> Option<Vec
             .iter()
             .map(|n| {
                 let field = n.field.as_deref().map_or(0, |f| grammar.field_id_for_name(f).expect("a field").get());
-                let mut supers: Vec<u16> = n.supertypes.iter().map(|s| kind(s)).collect();
+                let mut supers: Vector<u16> = n.supertypes.iter().map(|s| kind(s)).collect();
                 supers.sort_unstable();
                 (kind(&n.kind), field, supers, n.start, n.end, n.size)
             })
@@ -1164,7 +1165,7 @@ fn tier2_nodes(p: &Program, bytes: &[u8]) -> Option<Vec<IdNode>> {
             .map(|n| {
                 let mut supers = n.supers;
                 supers.sort_unstable();
-                (n.kind, n.field, supers, n.start as usize, n.end as usize, n.size as usize)
+                (n.kind, n.field, Vector::from(&supers[..]), n.start as usize, n.end as usize, n.size as usize)
             })
             .collect(),
     )

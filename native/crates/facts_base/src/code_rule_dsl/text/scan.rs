@@ -29,6 +29,7 @@
 //! - Anything else (`How::Each`: a backtracking pattern, an automaton with no finite edge
 //!   literals) is tested on each candidate's text.
 
+use rerail_blocks::vector::Vector;
 use super::Lowered;
 use super::plan::{Anchor, Plan, literal_searcher};
 use regex_syntax::hir::Hir;
@@ -52,7 +53,7 @@ pub struct Nodes<'a> {
 /// Bit `n` set where candidate `n`'s text matches; `None` where the plan cannot decide a node (a
 /// backtracking pattern past its limits, an automaton that did not build). A batch of one plan,
 /// built once per plan.
-pub fn bits(lowered: &Arc<Lowered>, nodes: &Nodes<'_>) -> Option<Vec<u64>> {
+pub fn bits(lowered: &Arc<Lowered>, nodes: &Nodes<'_>) -> Option<Vector<u64>> {
     #[derive(Default)]
     struct AloneBatches(Mutex<HashMap<super::Key, Arc<Batch>>>);
     let batch = {
@@ -70,7 +71,7 @@ pub struct Batch {
     /// How many of `units` are plans asked for.
     asked: usize,
     /// Every unit's shared literals as one searcher, and each pattern's units.
-    literals: Option<(aho_corasick::AhoCorasick, Vec<Vec<u32>>)>,
+    literals: Option<(aho_corasick::AhoCorasick, Vec<Vector<u32>>)>,
 }
 
 struct Unit {
@@ -90,7 +91,7 @@ enum How {
     /// Matches placed from the file's forward and backward passes; `strict` per side (start, end),
     /// a match touching the node's edge on that side does not count, and the units `edges` (its core
     /// at those edges) decide the rest.
-    Contains { strict: [bool; 2], edges: Vec<usize> },
+    Contains { strict: [bool; 2], edges: Vector<usize> },
     /// A literal set with an empty literal: each candidate's edge.
     Edges,
     /// Each candidate's text.
@@ -115,7 +116,7 @@ impl Batch {
                 && (looks_at(core, false) || looks_at(core, true))
             {
                 let strict = [looks_at(core, false), looks_at(core, true)];
-                let mut edges = Vec::new();
+                let mut edges = rerail_blocks::vector::Vector::new();
                 for (anchor, _) in [Anchor::Start, Anchor::End].into_iter().zip(strict).filter(|(_, on)| *on) {
                     let part = super::Lowered::of_plan(Plan::Automaton { anchor, core: core.clone() }, "edge");
                     let (how, literals) = how(&part.plan);
@@ -129,12 +130,12 @@ impl Batch {
         // Every shared literal once, with the units holding it.
         let mut patterns = Vec::<Vec<u8>>::new();
         let mut at = HashMap::<Vec<u8>, usize>::new();
-        let mut owners = Vec::<Vec<u32>>::new();
+        let mut owners = Vec::<Vector<u32>>::new();
         for (u, literals) in shared.iter().enumerate() {
             for literal in literals.iter().flatten() {
                 let i = *at.entry(literal.clone()).or_insert_with(|| {
                     patterns.push(literal.clone());
-                    owners.push(Vec::new());
+                    owners.push(rerail_blocks::vector::Vector::new());
                     patterns.len() - 1
                 });
                 owners[i].push(u as u32);
@@ -153,10 +154,10 @@ impl Batch {
     }
 
     /// Each plan's bits (`bits`), in the order asked.
-    pub fn bits(&self, nodes: &Nodes<'_>) -> Vec<Option<Vec<u64>>> {
+    pub fn bits(&self, nodes: &Nodes<'_>) -> Vec<Option<Vector<u64>>> {
         let words = nodes.len.div_ceil(64);
         if nodes.candidates.is_empty() {
-            return vec![Some(vec![0; words]); self.asked];
+            return vec![Some(rerail_blocks::vector![0; words]); self.asked];
         }
         // Each unit's occurrences of its literals, from one pass.
         let mut hits = vec![Vec::new(); self.units.len()];
@@ -174,11 +175,11 @@ impl Batch {
             }
         }
         let mut index = None;
-        let mut out: Vec<Option<Vec<u64>>> = vec![None; self.units.len()];
+        let mut out: Vec<Option<Vector<u64>>> = vec![None; self.units.len()];
         // Parts first: they follow the plans they make up.
         for u in (0..self.units.len()).rev() {
             let unit = &self.units[u];
-            let mut bits = vec![0_u64; words];
+            let mut bits = rerail_blocks::vector![0_u64; words];
             let mut set = |node: u32| bits[node as usize / 64] |= 1 << (node % 64);
             let decided = match &unit.how {
                 How::Constant(all) => {
@@ -252,7 +253,7 @@ fn how(plan: &Plan) -> (How, Option<Vec<Vec<u8>>>) {
         Plan::Never => (How::Constant(false), None),
         Plan::Literals { literals, .. } if literals.iter().any(Vec::is_empty) => (How::Edges, None),
         Plan::Literals { anchor, literals } => (How::Exact(*anchor), Some(literals.clone())),
-        Plan::Automaton { anchor: Anchor::Within, .. } => (How::Contains { strict: [false, false], edges: Vec::new() }, None),
+        Plan::Automaton { anchor: Anchor::Within, .. } => (How::Contains { strict: [false, false], edges: rerail_blocks::vector::Vector::new() }, None),
         Plan::Automaton { anchor, core } => {
             let prefix = matches!(anchor, Anchor::Whole | Anchor::Start).then(|| edge_literals(core, ExtractKind::Prefix)).flatten();
             let suffix = matches!(anchor, Anchor::Whole | Anchor::End).then(|| edge_literals(core, ExtractKind::Suffix)).flatten();
@@ -513,9 +514,9 @@ impl Automata {
 /// after `s`, ending before `e`).
 struct Placement {
     /// Ascending, distinct.
-    starts: Vec<u32>,
+    starts: Vector<u32>,
     /// `earliest[i]`: the least end of a match starting at `starts[i]` or after.
-    earliest: Vec<u32>,
+    earliest: Vector<u32>,
 }
 
 impl Placement {
@@ -523,8 +524,8 @@ impl Placement {
     fn of(pairs: Vec<(u32, u32)>) -> Self {
         let mut pairs = pairs.into_iter().map(|(end, start)| (start, end)).collect::<Vec<_>>();
         pairs.sort_unstable();
-        let mut starts = Vec::with_capacity(pairs.len());
-        let mut earliest = Vec::with_capacity(pairs.len());
+        let mut starts = rerail_blocks::vector::Vector::with_capacity(pairs.len());
+        let mut earliest = rerail_blocks::vector::Vector::with_capacity(pairs.len());
         for (start, end) in pairs {
             // Sorted by start, then end: the first pair of a start has its least end.
             if starts.last() != Some(&start) {

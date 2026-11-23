@@ -28,7 +28,7 @@ pub enum Error {
 /// parse goes, with no statements built and no conversion after it. It is `engine_tape`'s tree
 /// through the writer, byte for byte (`lean_tape_is_the_engines`, every `.rerail` file of the
 /// repository and seven cuts of each).
-pub fn tape(src: &str) -> Vec<u8> {
+pub fn tape(src: &str) -> rerail_tape_format::Vector<u8> {
     lean::tape(src)
 }
 

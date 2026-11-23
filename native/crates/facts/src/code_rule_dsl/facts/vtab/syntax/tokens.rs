@@ -80,9 +80,9 @@ impl Projected {
         let r = &self.ranks;
         let k = match rel {
             TokRel::First => r.rank(Item::Lexeme, x),
-            TokRel::Last => r.rank_to(Item::Lexeme, self.facts.subtree_end(x)) - 1,
+            TokRel::Last => r.rank_to(Item::Lexeme, self.f().subtree_end(x)) - 1,
             TokRel::Before => r.rank(Item::Lexeme, x) - 1,
-            TokRel::After => r.rank_to(Item::Lexeme, self.facts.subtree_end(x)),
+            TokRel::After => r.rank_to(Item::Lexeme, self.f().subtree_end(x)),
         };
         r.select(Item::Lexeme, k).map(|t| self.place_of(t)).filter(|&l| l != NONE).map_or(-1, |l| self.global(l))
     }

@@ -33,7 +33,7 @@ pub fn rows(
     lang: u32,
     tapes: &[(i64, &TapeDoc)],
     slots: &[TextSlot],
-) -> StoreResult<Vec<BTreeMap<String, Arc<Vec<u64>>>>> {
+) -> StoreResult<Vec<BTreeMap<String, Arc<rerail_blocks::vector::Vector<u64>>>>> {
     let mut out = vec![BTreeMap::new(); tapes.len()];
     if slots.is_empty() || tapes.is_empty() {
         return Ok(out);

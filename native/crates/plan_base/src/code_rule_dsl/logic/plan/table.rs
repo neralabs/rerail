@@ -6,6 +6,8 @@
 //! columns by a count (decision 0210 §9). Readers that hold numbers (`Model`'s prepared atoms) read by number; readers
 //! by name pay one lookup of the name, not a string built per key.
 
+use rerail_blocks::maps::BlockHash;
+use rerail_blocks::vector::Vector;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -61,26 +63,287 @@ pub fn rel_name(id: RelId) -> Arc<str> {
     with_names(|names| Arc::clone(&names.read().names[id as usize]))
 }
 
-/// A statistic of relations: a value per relation number.
-#[derive(Clone, Debug)]
-pub struct RelMap<T> {
-    vals: Vec<Option<T>>,
-    n: usize,
+/// A statistic's value as an overlay layer holds it (decision 0628 §1): a number in the layer's block vector, or a
+/// handle to what lies in blocks of its own (a heavy column's values, a column's keys or counts, a relation's mark).
+pub trait Stat: Clone {
+    type Store: Default;
+    /// `v` put in `s`: its slot.
+    fn put(s: &mut Self::Store, v: Self) -> u32;
+    fn at(s: &Self::Store, i: u32) -> &Self;
+    fn at_mut(s: &mut Self::Store, i: u32) -> &mut Self;
 }
 
-impl<T> Default for RelMap<T> {
-    fn default() -> Self {
-        RelMap { vals: Vec::new(), n: 0 }
+impl Stat for f64 {
+    type Store = Vector<f64>;
+    fn put(s: &mut Vector<f64>, v: f64) -> u32 {
+        s.push(v);
+        (s.len() - 1) as u32
+    }
+    fn at(s: &Vector<f64>, i: u32) -> &f64 {
+        &s[i as usize]
+    }
+    fn at_mut(s: &mut Vector<f64>, i: u32) -> &mut f64 {
+        &mut s[i as usize]
     }
 }
 
-impl<T> RelMap<T> {
+/// A handle's slots: the handles that keep the blocks their values lie in (not block data).
+macro_rules! handle_stat {
+    ($($t:ty),* $(,)?) => {$(
+        impl Stat for $t {
+            type Store = Vec<$t>;
+            fn put(s: &mut Vec<$t>, v: $t) -> u32 {
+                s.push(v);
+                (s.len() - 1) as u32
+            }
+            fn at(s: &Vec<$t>, i: u32) -> &$t {
+                &s[i as usize]
+            }
+            fn at_mut(s: &mut Vec<$t>, i: u32) -> &mut $t {
+                &mut s[i as usize]
+            }
+        }
+    )*};
+}
+handle_stat!(Arc<rerail_section::Section<super::joins::Note>>, Arc<rerail_section::Section<Vec<super::joins::Proposal>>>, Arc<BlockHash<u64, [i64; 2]>>, Arc<dyn super::Deferred>, Arc<HeavyCol>, (Arc<crate::code_rule_dsl::logic::native::component::RelMark>, Arc<HeavyCol>), Arc<Freq>, Arc<crate::code_rule_dsl::logic::join_size::JoinCounts>, Arc<crate::code_rule_dsl::logic::native::component::RelMark>, crate::code_rule_dsl::logic::bloom::Keys);
+
+/// A statistic's key: a relation's number, or (relation, column).
+pub trait StatKey: rerail_blocks::maps::Key + Ord {
+    fn rel(&self) -> RelId;
+    /// Its column, for a statistic of columns.
+    fn col(&self) -> Option<u32>;
+}
+impl StatKey for u32 {
+    fn rel(&self) -> RelId {
+        *self
+    }
+    fn col(&self) -> Option<u32> {
+        None
+    }
+}
+/// A key of no relation (the join memo's, `joins::Memo`): never seen through a fork's relations.
+impl StatKey for u64 {
+    fn rel(&self) -> RelId {
+        RelId::MAX
+    }
+    fn col(&self) -> Option<u32> {
+        None
+    }
+}
+impl StatKey for [u32; 2] {
+    fn rel(&self) -> RelId {
+        self[0]
+    }
+    fn col(&self) -> Option<u32> {
+        Some(self[1])
+    }
+}
+
+/// A key's slot that says it is gone: a removal over a layer below that holds it.
+const GONE: u32 = u32::MAX;
+/// Layers deeper than this are folded into one as a write comes (as a version folds, decision 0241).
+const FOLD_DEPTH: u32 = 8;
+
+/// One layer of a statistic: its own entries (a slot of `vals`, or `GONE`), over the layer below it, of which it
+/// shows the relations `shown` names (each below its width), or every one.
+struct Layer<K: StatKey, T: Stat> {
+    at: BlockHash<K, u32>,
+    vals: T::Store,
+    below: Option<(Arc<Layer<K, T>>, Option<Arc<BlockHash<RelId, u32>>>)>,
+    depth: u32,
+}
+
+impl<K: StatKey, T: Stat> Layer<K, T> {
+    fn empty() -> Self {
+        Layer { at: BlockHash::default(), vals: T::Store::default(), below: None, depth: 0 }
+    }
+}
+
+/// Whether `shown` shows `k`: its relation, and its column below the relation's width.
+fn shows<K: StatKey>(shown: &BlockHash<RelId, u32>, k: &K) -> bool {
+    shown.get(&k.rel()).is_some_and(|&w| k.col().is_none_or(|c| c < w))
+}
+
+/// A statistic in blocks (decision 0628 §1): its top layer written, over the frozen layers its forks share. A fork
+/// (`shown_of`) is a layer over its parent's top, which the parent's next write leaves for a layer of its own: a
+/// fork costs what it writes.
+pub struct Overlay<K: StatKey, T: Stat> {
+    top: Arc<Layer<K, T>>,
+}
+
+impl<K: StatKey, T: Stat> Default for Overlay<K, T> {
+    fn default() -> Self {
+        Overlay { top: Arc::new(Layer::empty()) }
+    }
+}
+
+/// A clone shares every layer: its next write, and the original's, each go to a layer of its own.
+impl<K: StatKey, T: Stat> Clone for Overlay<K, T> {
+    fn clone(&self) -> Self {
+        Overlay { top: Arc::clone(&self.top) }
+    }
+}
+
+impl<K: StatKey, T: Stat> Overlay<K, T> {
+    /// A fork of `from` that shows the relations `shown` names, each below its width.
+    pub(super) fn shown_of(from: &Overlay<K, T>, shown: &Arc<BlockHash<RelId, u32>>) -> Self {
+        let depth = from.top.depth + 1;
+        Overlay { top: Arc::new(Layer { below: Some((Arc::clone(&from.top), Some(Arc::clone(shown)))), depth, ..Layer::empty() }) }
+    }
+
+    pub(super) fn get(&self, k: &K) -> Option<&T> {
+        let mut layer = &*self.top;
+        loop {
+            if let Some(&s) = layer.at.get(k) {
+                return (s != GONE).then(|| T::at(&layer.vals, s));
+            }
+            let (below, shown) = layer.below.as_ref()?;
+            if shown.as_ref().is_some_and(|sh| !shows(sh, k)) {
+                return None;
+            }
+            layer = below;
+        }
+    }
+
+    /// Whether a layer below the top holds `k`, as the top shows it.
+    fn below_holds(&self, k: &K) -> bool {
+        let Some((below, shown)) = &self.top.below else { return false };
+        shown.as_ref().is_none_or(|sh| shows(sh, k)) && (Overlay { top: Arc::clone(below) }).get(k).is_some()
+    }
+
+    /// The top layer, this statistic's alone: a new one over the shared top, or every layer folded into one past
+    /// `FOLD_DEPTH`.
+    fn writable(&mut self) -> &mut Layer<K, T> {
+        if Arc::get_mut(&mut self.top).is_none() {
+            let depth = self.top.depth + 1;
+            if depth > FOLD_DEPTH {
+                // copy: derived: an overlay's layers folded into one, as a version folds (0241)
+                let mut flat = Layer::empty();
+                for k in self.keys() {
+                    let v = self.get(&k).expect("listed").clone();
+                    let s = T::put(&mut flat.vals, v);
+                    flat.at.insert(k, s);
+                }
+                self.top = Arc::new(flat);
+            } else {
+                self.top = Arc::new(Layer { below: Some((Arc::clone(&self.top), None)), depth, ..Layer::empty() });
+            }
+        }
+        Arc::get_mut(&mut self.top).expect("just made this statistic's own")
+    }
+
+    pub(super) fn insert(&mut self, k: K, v: T) -> Option<T> {
+        let old = self.get(&k).cloned();
+        let top = self.writable();
+        match top.at.get(&k) {
+            Some(&s) if s != GONE => *T::at_mut(&mut top.vals, s) = v,
+            _ => {
+                let s = T::put(&mut top.vals, v);
+                top.at.insert(k, s);
+            }
+        }
+        old
+    }
+
+    pub(super) fn get_mut(&mut self, k: &K) -> Option<&mut T> {
+        let v = self.get(k)?.clone();
+        let top = self.writable();
+        let s = match top.at.get(k) {
+            Some(&s) if s != GONE => s,
+            _ => {
+                let s = T::put(&mut top.vals, v);
+                top.at.insert(*k, s);
+                s
+            }
+        };
+        Some(T::at_mut(&mut top.vals, s))
+    }
+
+    pub(super) fn remove(&mut self, k: &K) -> Option<T> {
+        let old = self.get(k).cloned()?;
+        // Whether a layer under the one written holds it, once that one is this statistic's own.
+        self.writable();
+        let below = self.below_holds(k);
+        let top = Arc::get_mut(&mut self.top).expect("made this statistic's own");
+        if below {
+            top.at.insert(*k, GONE);
+        } else {
+            top.at.remove(k);
+        }
+        Some(old)
+    }
+
+    /// The keys with a value, ascending.
+    pub(super) fn keys(&self) -> Vector<K> {
+        let mut seen: BlockHash<K, ()> = BlockHash::default();
+        let mut out: Vector<K> = Vector::new();
+        // The relations each layer is seen through: every `shown` above it.
+        let mut through: Vec<&BlockHash<RelId, u32>> = Vec::new();
+        let mut layer = Some(&*self.top);
+        while let Some(l) = layer {
+            for (k, s) in l.at.iter() {
+                if through.iter().all(|sh| shows(sh, &k)) && seen.put(k) && s != GONE {
+                    out.push(k);
+                }
+            }
+            layer = l.below.as_ref().map(|(below, shown)| {
+                if let Some(sh) = shown {
+                    through.push(sh);
+                }
+                &**below
+            });
+        }
+        out.sort_unstable();
+        out
+    }
+
+    fn clear(&mut self) {
+        self.top = Arc::new(Layer::empty());
+    }
+
+    /// Whether any key has a value: the first one found ends the search.
+    pub(super) fn any(&self) -> bool {
+        let mut layer = Some(&*self.top);
+        while let Some(l) = layer {
+            if l.at.iter().any(|(k, _)| self.get(&k).is_some()) {
+                return true;
+            }
+            layer = l.below.as_ref().map(|(below, _)| &**below);
+        }
+        false
+    }
+}
+
+/// A statistic of relations: a value per relation number.
+pub struct RelMap<T: Stat>(Overlay<RelId, T>);
+
+impl<T: Stat> Default for RelMap<T> {
+    fn default() -> Self {
+        RelMap(Overlay::default())
+    }
+}
+impl<T: Stat> Clone for RelMap<T> {
+    fn clone(&self) -> Self {
+        RelMap(self.0.clone())
+    }
+}
+impl<T: Stat + std::fmt::Debug> std::fmt::Debug for RelMap<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+impl<T: Stat> RelMap<T> {
     pub fn new() -> Self {
         Self::default()
     }
+    /// A fork's: `from`'s relations `shown` names, shared.
+    pub fn shown_of(from: &RelMap<T>, shown: &Arc<BlockHash<RelId, u32>>) -> Self {
+        RelMap(Overlay::shown_of(&from.0, shown))
+    }
     #[inline]
     pub fn at(&self, id: RelId) -> Option<&T> {
-        self.vals.get(id as usize).and_then(Option::as_ref)
+        self.0.get(&id)
     }
     #[inline]
     pub fn get<S: AsRef<str> + ?Sized>(&self, k: &S) -> Option<&T> {
@@ -88,65 +351,49 @@ impl<T> RelMap<T> {
     }
     pub fn get_mut<S: AsRef<str> + ?Sized>(&mut self, k: &S) -> Option<&mut T> {
         let id = find(k.as_ref())?;
-        self.vals.get_mut(id as usize).and_then(Option::as_mut)
+        self.0.get_mut(&id)
     }
     pub fn insert_at(&mut self, id: RelId, v: T) -> Option<T> {
-        let i = id as usize;
-        if self.vals.len() <= i {
-            self.vals.resize_with(i + 1, || None);
-        }
-        let old = self.vals[i].replace(v);
-        if old.is_none() {
-            self.n += 1;
-        }
-        old
+        self.0.insert(id, v)
     }
     pub fn insert<S: AsRef<str>>(&mut self, k: S, v: T) -> Option<T> {
         self.insert_at(rel_id(k.as_ref()), v)
     }
     pub fn remove<S: AsRef<str> + ?Sized>(&mut self, k: &S) -> Option<T> {
         let id = find(k.as_ref())?;
-        let old = self.vals.get_mut(id as usize).and_then(Option::take);
-        if old.is_some() {
-            self.n -= 1;
-        }
-        old
+        self.0.remove(&id)
     }
     pub fn contains_key<S: AsRef<str> + ?Sized>(&self, k: &S) -> bool {
         self.get(k).is_some()
     }
     pub fn len(&self) -> usize {
-        self.n
+        self.0.keys().len()
     }
     pub fn is_empty(&self) -> bool {
-        self.n == 0
+        !self.0.any()
     }
-    /// The relations with a value, by name.
+    /// The relations with a value, by name, in their numbers' order.
     pub fn iter(&self) -> impl Iterator<Item = (Arc<str>, &T)> {
-        self.vals.iter().enumerate().filter_map(|(i, v)| v.as_ref().map(|v| (rel_name(i as RelId), v)))
+        let keys = self.0.keys();
+        (0..keys.len()).map(move |i| (rel_name(keys[i]), self.0.get(&keys[i]).expect("listed")))
     }
     pub fn values(&self) -> impl Iterator<Item = &T> {
-        self.vals.iter().filter_map(Option::as_ref)
+        self.iter().map(|(_, v)| v)
     }
     pub fn clear(&mut self) {
-        self.vals.clear();
-        self.n = 0;
+        self.0.clear();
     }
     /// The value of `k`, made with `f` where it has none.
     pub fn entry_or_insert_with<S: AsRef<str>>(&mut self, k: S, f: impl FnOnce() -> T) -> &mut T {
-        let i = rel_id(k.as_ref()) as usize;
-        if self.vals.len() <= i {
-            self.vals.resize_with(i + 1, || None);
+        let id = rel_id(k.as_ref());
+        if self.0.get(&id).is_none() {
+            self.0.insert(id, f());
         }
-        if self.vals[i].is_none() {
-            self.vals[i] = Some(f());
-            self.n += 1;
-        }
-        self.vals[i].as_mut().expect("just set")
+        self.0.get_mut(&id).expect("just set")
     }
 }
 
-impl<T, S: AsRef<str>> FromIterator<(S, T)> for RelMap<T> {
+impl<T: Stat, S: AsRef<str>> FromIterator<(S, T)> for RelMap<T> {
     fn from_iter<I: IntoIterator<Item = (S, T)>>(it: I) -> Self {
         let mut m = RelMap::new();
         for (k, v) in it {
@@ -156,7 +403,7 @@ impl<T, S: AsRef<str>> FromIterator<(S, T)> for RelMap<T> {
     }
 }
 
-impl<T, S: AsRef<str>> Extend<(S, T)> for RelMap<T> {
+impl<T: Stat, S: AsRef<str>> Extend<(S, T)> for RelMap<T> {
     fn extend<I: IntoIterator<Item = (S, T)>>(&mut self, it: I) {
         for (k, v) in it {
             self.insert(k, v);
@@ -164,27 +411,38 @@ impl<T, S: AsRef<str>> Extend<(S, T)> for RelMap<T> {
     }
 }
 
-/// A statistic of columns (`Model::ndv`, `Stats::fan`, `dfreq`, `heavy`): per relation number, its columns one shared
-/// vector. A reader with the relation's number finds a column by two reads (decision 0209 §3); a strand's model
-/// (`Model::fork`) takes a relation's columns by a count, and a write copies only that relation's (decision 0210 §9).
-#[derive(Clone, Debug)]
-pub struct ColMap<T> {
-    rels: Vec<Option<Arc<Vec<Option<T>>>>>,
-}
+/// A statistic of columns (`Model::ndv`, `Stats::fan`, `dfreq`, `heavy`): one overlay keyed by (relation number,
+/// column). A strand's model (`Model::fork`) is a layer over its parent's that shows its relations' columns below
+/// their widths (decision 0628 §1, which replaced 0210 §9's shared vectors).
+pub struct ColMap<T: Stat>(Overlay<[u32; 2], T>);
 
-impl<T> Default for ColMap<T> {
+impl<T: Stat> Default for ColMap<T> {
     fn default() -> Self {
-        ColMap { rels: Vec::new() }
+        ColMap(Overlay::default())
+    }
+}
+impl<T: Stat> Clone for ColMap<T> {
+    fn clone(&self) -> Self {
+        ColMap(self.0.clone())
+    }
+}
+impl<T: Stat + std::fmt::Debug> std::fmt::Debug for ColMap<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
     }
 }
 
-impl<T: Clone> ColMap<T> {
+impl<T: Stat> ColMap<T> {
     pub fn new() -> Self {
         Self::default()
     }
+    /// A fork's: `from`'s columns of the relations `shown` names, below their widths, shared.
+    pub fn shown_of(from: &ColMap<T>, shown: &Arc<BlockHash<RelId, u32>>) -> Self {
+        ColMap(Overlay::shown_of(&from.0, shown))
+    }
     #[inline]
     pub fn at_rel(&self, rel: RelId, c: usize) -> Option<&T> {
-        self.rels.get(rel as usize)?.as_ref()?.get(c)?.as_ref()
+        self.0.get(&[rel, c as u32])
     }
     /// Column `c` of `rel`, by name.
     #[inline]
@@ -196,119 +454,83 @@ impl<T: Clone> ColMap<T> {
         self.at(k.0.as_ref(), k.1)
     }
     pub fn get_mut<S: AsRef<str>>(&mut self, k: &(S, usize)) -> Option<&mut T> {
-        let r = find(k.0.as_ref())? as usize;
-        let cols = self.rels.get_mut(r)?.as_mut()?;
-        cols.get(k.1)?.as_ref()?;
-        Arc::make_mut(cols)[k.1].as_mut()
-    }
-    /// The slot of column `c` of `rel`, its vector made, widened or unshared for it.
-    fn slot(&mut self, rel: RelId, c: usize) -> &mut Option<T> {
-        let r = rel as usize;
-        if self.rels.len() <= r {
-            self.rels.resize_with(r + 1, || None);
-        }
-        let cols = Arc::make_mut(self.rels[r].get_or_insert_with(Default::default));
-        if cols.len() <= c {
-            cols.resize(c + 1, None);
-        }
-        &mut cols[c]
+        let r = find(k.0.as_ref())?;
+        self.0.get_mut(&[r, k.1 as u32])
     }
     pub fn insert_at_rel(&mut self, rel: RelId, c: usize, v: T) -> Option<T> {
-        self.slot(rel, c).replace(v)
+        self.0.insert([rel, c as u32], v)
     }
     pub fn insert<S: AsRef<str>>(&mut self, k: (S, usize), v: T) -> Option<T> {
         self.insert_at_rel(rel_id(k.0.as_ref()), k.1, v)
     }
     /// The value at `k`, `v` put there first where there is none (as `entry(…).or_insert(v)`).
     pub fn or_insert<S: AsRef<str>>(&mut self, k: (S, usize), v: T) -> &mut T {
-        self.slot(rel_id(k.0.as_ref()), k.1).get_or_insert(v)
+        self.entry_or_insert_with(k, || v)
     }
     /// The value of `k`, made with `f` where it has none.
     pub fn entry_or_insert_with<S: AsRef<str>>(&mut self, k: (S, usize), f: impl FnOnce() -> T) -> &mut T {
-        self.slot(rel_id(k.0.as_ref()), k.1).get_or_insert_with(f)
+        let key = [rel_id(k.0.as_ref()), k.1 as u32];
+        if self.0.get(&key).is_none() {
+            self.0.insert(key, f());
+        }
+        self.0.get_mut(&key).expect("just set")
     }
     pub fn remove<S: AsRef<str>>(&mut self, k: &(S, usize)) -> Option<T> {
-        let r = find(k.0.as_ref())? as usize;
-        let cols = self.rels.get_mut(r)?.as_mut()?;
-        cols.get(k.1)?.as_ref()?;
-        Arc::make_mut(cols)[k.1].take()
+        let r = find(k.0.as_ref())?;
+        self.0.remove(&[r, k.1 as u32])
     }
     pub fn contains_key<S: AsRef<str>>(&self, k: &(S, usize)) -> bool {
         self.get(k).is_some()
     }
     pub fn len(&self) -> usize {
-        self.rels.iter().flatten().map(|cols| cols.iter().filter(|v| v.is_some()).count()).sum()
+        self.0.keys().len()
     }
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        !self.0.any()
     }
-    /// The columns with a value: (relation, column), value.
+    /// The columns with a value: (relation, column), value, in (number, column) order.
     pub fn iter(&self) -> impl Iterator<Item = ((Arc<str>, usize), &T)> {
-        self.rels.iter().enumerate().filter_map(|(r, cols)| Some((r, cols.as_ref()?))).flat_map(|(r, cols)| {
-            let name = rel_name(r as RelId);
-            cols.iter().enumerate().filter_map(move |(c, v)| Some(((Arc::clone(&name), c), v.as_ref()?)))
+        let keys = self.0.keys();
+        (0..keys.len()).map(move |i| {
+            let [r, c] = keys[i];
+            ((rel_name(r), c as usize), self.0.get(&keys[i]).expect("listed"))
         })
     }
     /// Relation `rel`'s columns with a value. The iterator borrows `self` only, not `rel` (`use<'a, T>`; Relax's
     /// checker refused the capture of `rel`'s lifetime that edition 2024 implies, E0310).
     pub fn of_rel<'a>(&'a self, rel: &str) -> impl Iterator<Item = (usize, &'a T)> + use<'a, T> {
-        let cols = find(rel).and_then(|r| self.rels.get(r as usize)).and_then(Option::as_ref);
-        cols.into_iter().flat_map(|cols| cols.iter().enumerate().filter_map(|(c, v)| Some((c, v.as_ref()?))))
+        let r = find(rel);
+        let keys: Vector<[u32; 2]> = r.map_or_else(Vector::new, |r| self.0.keys().iter().copied().filter(|k| k[0] == r).collect());
+        (0..keys.len()).map(move |i| (keys[i][1] as usize, self.0.get(&keys[i]).expect("listed")))
     }
     pub fn clear(&mut self) {
-        self.rels.clear();
+        self.0.clear();
     }
     /// Keeps the columns `keep` says to.
     pub fn retain(&mut self, mut keep: impl FnMut(&str, usize, &mut T) -> bool) {
-        for (r, cols) in self.rels.iter_mut().enumerate() {
-            let Some(cols) = cols else { continue };
-            let name = rel_name(r as RelId);
-            // A shared vector is copied only where a column goes.
-            let mut gone: Vec<usize> = Vec::new();
-            for (c, v) in Arc::make_mut(cols).iter_mut().enumerate() {
-                if let Some(x) = v.as_mut()
-                    && !keep(&name, c, x)
-                {
-                    gone.push(c);
-                }
-            }
-            let cols = Arc::make_mut(cols);
-            for c in gone {
-                cols[c] = None;
+        for k in self.0.keys().iter() {
+            let name = rel_name(k[0]);
+            let kept = keep(&name, k[1] as usize, self.0.get_mut(k).expect("listed"));
+            if !kept {
+                self.0.remove(k);
             }
         }
     }
-    /// Takes `from`'s columns of `rel` below `width`, shared by a count where none is cut (`Model::fork`).
+    /// Takes `from`'s columns of `rel` below `width` (a test's fork; `Model::fork` makes its own by `shown_of`).
     pub fn share_from(&mut self, from: &ColMap<T>, rel: &str, width: usize) {
-        let Some(r) = find(rel) else { return };
-        let Some(cols) = from.rels.get(r as usize).and_then(Option::as_ref) else { return };
-        let r = r as usize;
-        if self.rels.len() <= r {
-            self.rels.resize_with(r + 1, || None);
+        for c in 0..width {
+            if let Some(v) = from.at(rel, c) {
+                self.insert((rel, c), v.clone());
+            }
         }
-        self.rels[r] = Some(if cols.len() <= width { Arc::clone(cols) } else { Arc::new(cols[..width].to_vec()) });
     }
     /// Sets `rel`'s columns below `width` to `from`'s (each taken, or none), as one entry each was moved
     /// (`Model::absorb`).
     pub fn take_from(&mut self, from: &mut ColMap<T>, rel: &str, width: usize) {
-        let Some(r) = find(rel) else { return };
-        let ri = r as usize;
-        let theirs = from.rels.get_mut(ri).and_then(Option::take);
-        let mine = self.rels.get(ri).and_then(Option::as_ref);
-        if let Some(t) = &theirs
-            && mine.is_none()
-            && t.len() <= width
-        {
-            if self.rels.len() <= ri {
-                self.rels.resize_with(ri + 1, || None);
-            }
-            self.rels[ri] = Some(Arc::clone(t));
-            return;
-        }
         for c in 0..width {
-            match theirs.as_ref().and_then(|t| t.get(c)).cloned().flatten() {
+            match from.at(rel, c).cloned() {
                 Some(v) => {
-                    self.insert_at_rel(r, c, v);
+                    self.insert((rel, c), v);
                 }
                 None => {
                     self.remove(&(rel, c));
@@ -318,7 +540,7 @@ impl<T: Clone> ColMap<T> {
     }
 }
 
-impl<T: Clone, S: AsRef<str>> FromIterator<((S, usize), T)> for ColMap<T> {
+impl<T: Stat, S: AsRef<str>> FromIterator<((S, usize), T)> for ColMap<T> {
     fn from_iter<I: IntoIterator<Item = ((S, usize), T)>>(it: I) -> Self {
         let mut m = ColMap::new();
         for (k, v) in it {
@@ -328,7 +550,7 @@ impl<T: Clone, S: AsRef<str>> FromIterator<((S, usize), T)> for ColMap<T> {
     }
 }
 
-impl<T: Clone, S: AsRef<str>> Extend<((S, usize), T)> for ColMap<T> {
+impl<T: Stat, S: AsRef<str>> Extend<((S, usize), T)> for ColMap<T> {
     fn extend<I: IntoIterator<Item = ((S, usize), T)>>(&mut self, it: I) {
         for (k, v) in it {
             self.insert(k, v);
@@ -336,7 +558,7 @@ impl<T: Clone, S: AsRef<str>> Extend<((S, usize), T)> for ColMap<T> {
     }
 }
 
-impl<T> std::ops::Index<&str> for RelMap<T> {
+impl<T: Stat> std::ops::Index<&str> for RelMap<T> {
     type Output = T;
     #[track_caller]
     fn index(&self, k: &str) -> &T {
@@ -344,7 +566,7 @@ impl<T> std::ops::Index<&str> for RelMap<T> {
     }
 }
 
-impl<T> std::ops::Index<&String> for RelMap<T> {
+impl<T: Stat> std::ops::Index<&String> for RelMap<T> {
     type Output = T;
     #[track_caller]
     fn index(&self, k: &String) -> &T {
@@ -352,11 +574,216 @@ impl<T> std::ops::Index<&String> for RelMap<T> {
     }
 }
 
-impl<T: Clone, S: AsRef<str>> std::ops::Index<&(S, usize)> for ColMap<T> {
+impl<T: Stat, S: AsRef<str>> std::ops::Index<&(S, usize)> for ColMap<T> {
     type Output = T;
     #[track_caller]
     fn index(&self, k: &(S, usize)) -> &T {
         self.get(k).unwrap_or_else(|| panic!("no statistic of {}.{}", k.0.as_ref(), k.1))
+    }
+}
+
+/// A statistic of named columns: (relation, column name), each numbered by `rel_id` (decision 0628 §4). A fork
+/// shows a relation's every column, whatever its width (its key has no column index).
+impl StatKey for [u64; 2] {
+    fn rel(&self) -> RelId {
+        self[0] as RelId
+    }
+    fn col(&self) -> Option<u32> {
+        None
+    }
+}
+
+/// A statistic of a relation's columns by name (`Stats::col`, `Stats::memo`): one overlay keyed by (relation number,
+/// name number).
+pub struct NamedMap<T: Stat>(Overlay<[u64; 2], T>);
+
+impl<T: Stat> Default for NamedMap<T> {
+    fn default() -> Self {
+        NamedMap(Overlay::default())
+    }
+}
+impl<T: Stat> Clone for NamedMap<T> {
+    fn clone(&self) -> Self {
+        NamedMap(self.0.clone())
+    }
+}
+impl<T: Stat + std::fmt::Debug> std::fmt::Debug for NamedMap<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+fn named_key(rel: &str, name: &str) -> Option<[u64; 2]> {
+    Some([u64::from(find(rel)?), u64::from(find(name)?)])
+}
+
+impl<T: Stat> NamedMap<T> {
+    /// A fork's: `from`'s columns of the relations `shown` names, shared.
+    pub fn shown_of(from: &NamedMap<T>, shown: &Arc<BlockHash<RelId, u32>>) -> Self {
+        NamedMap(Overlay::shown_of(&from.0, shown))
+    }
+    /// `rel`'s column `name`'s.
+    pub fn get(&self, rel: &str, name: &str) -> Option<&T> {
+        self.0.get(&named_key(rel, name)?)
+    }
+    pub fn get_mut(&mut self, rel: &str, name: &str) -> Option<&mut T> {
+        let k = named_key(rel, name)?;
+        self.0.get_mut(&k)
+    }
+    pub fn contains(&self, rel: &str, name: &str) -> bool {
+        self.get(rel, name).is_some()
+    }
+    pub fn insert(&mut self, rel: &str, name: &str, v: T) -> Option<T> {
+        self.0.insert([u64::from(rel_id(rel)), u64::from(rel_id(name))], v)
+    }
+    /// The value of `rel`'s `name`, made with `f` where it has none.
+    pub fn entry_or_insert_with(&mut self, rel: &str, name: &str, f: impl FnOnce() -> T) -> &mut T {
+        let k = [u64::from(rel_id(rel)), u64::from(rel_id(name))];
+        if self.0.get(&k).is_none() {
+            self.0.insert(k, f());
+        }
+        self.0.get_mut(&k).expect("just set")
+    }
+    pub fn remove(&mut self, rel: &str, name: &str) -> Option<T> {
+        let k = named_key(rel, name)?;
+        self.0.remove(&k)
+    }
+    pub fn len(&self) -> usize {
+        self.0.keys().len()
+    }
+    pub fn is_empty(&self) -> bool {
+        !self.0.any()
+    }
+    /// Whether any column of `rel` has a value.
+    pub fn has(&self, rel: &str) -> bool {
+        self.of_rel(rel).next().is_some()
+    }
+    /// Each (relation, column name) with a value, in their numbers' order.
+    pub fn iter(&self) -> impl Iterator<Item = ((Arc<str>, Arc<str>), &T)> {
+        let keys = self.0.keys();
+        (0..keys.len()).map(move |i| {
+            let [r, n] = keys[i];
+            ((rel_name(r as RelId), rel_name(n as RelId)), self.0.get(&keys[i]).expect("listed"))
+        })
+    }
+    /// `rel`'s columns with a value, by name.
+    pub fn of_rel<'a>(&'a self, rel: &str) -> impl Iterator<Item = (Arc<str>, &'a T)> + use<'a, T> {
+        let r = find(rel).map(u64::from);
+        let keys: Vector<[u64; 2]> = r.map_or_else(Vector::new, |r| self.0.keys().iter().copied().filter(|k| k[0] == r).collect());
+        (0..keys.len()).map(move |i| (rel_name(keys[i][1] as RelId), self.0.get(&keys[i]).expect("listed")))
+    }
+}
+
+impl<T: Stat, R: AsRef<str>, N: AsRef<str>> FromIterator<((R, N), T)> for NamedMap<T> {
+    fn from_iter<I: IntoIterator<Item = ((R, N), T)>>(it: I) -> Self {
+        let mut m = NamedMap::default();
+        for ((r, n), v) in it {
+            m.insert(r.as_ref(), n.as_ref(), v);
+        }
+        m
+    }
+}
+
+impl NamedMap<Arc<Freq>> {
+    /// `rel`'s column `name`'s postings with `more`'s, which replace its own of the same values.
+    pub fn extend(&mut self, rel: &str, name: &str, more: impl IntoIterator<Item = (super::Constant, i64)>) {
+        let f = Arc::make_mut(self.entry_or_insert_with(rel, name, || Arc::new(Freq::default())));
+        for (k, n) in more {
+            f.insert(k, n);
+        }
+    }
+}
+
+/// A statistic's number in the layer's block vector.
+macro_rules! vector_stat {
+    ($($t:ty),* $(,)?) => {$(
+        impl Stat for $t {
+            type Store = Vector<$t>;
+            fn put(s: &mut Vector<$t>, v: $t) -> u32 {
+                s.push(v);
+                (s.len() - 1) as u32
+            }
+            fn at(s: &Vector<$t>, i: u32) -> &$t {
+                &s[i as usize]
+            }
+            fn at_mut(s: &mut Vector<$t>, i: u32) -> &mut $t {
+                &mut s[i as usize]
+            }
+        }
+    )*};
+}
+vector_stat!([i64; 4], u32, u64);
+
+/// A column's few values' postings (`Stats::dfreq`), in blocks: an integer's by its value, a string's by its text.
+#[derive(Clone, Default)]
+pub struct Freq {
+    ints: BlockHash<i64, i64>,
+    /// The strings' texts (`Constant::Str`), and each one's postings by its index.
+    strs: Option<rerail_blocks::maps::BlockInterner>,
+    str_n: Vector<i64>,
+}
+
+impl std::fmt::Debug for Freq {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+impl Freq {
+    pub fn get(&self, k: &super::Constant) -> Option<&i64> {
+        match k {
+            super::Constant::Int(i) => self.ints.get(i),
+            super::Constant::Str(s) => self.strs.as_ref()?.find(s).map(|i| &self.str_n[i]),
+        }
+    }
+    pub fn insert(&mut self, k: super::Constant, n: i64) {
+        match k {
+            super::Constant::Int(i) => {
+                self.ints.insert(i, n);
+            }
+            super::Constant::Str(s) => {
+                let strs = self.strs.get_or_insert_with(|| rerail_blocks::maps::BlockInterner::new(rerail_blocks::maps::default_room()));
+                let i = strs.intern(&s);
+                if i == self.str_n.len() {
+                    self.str_n.push(n);
+                } else {
+                    self.str_n[i] = n;
+                }
+            }
+        }
+    }
+    pub fn len(&self) -> usize {
+        self.ints.len() + self.str_n.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// Each value and its postings: the integers, then the strings.
+    pub fn iter(&self) -> impl Iterator<Item = (super::Constant, i64)> + '_ {
+        let strs = self.strs.iter().flat_map(|s| s.iter().enumerate()).map(|(i, s)| (super::Constant::Str(s.to_owned()), self.str_n[i]));
+        self.ints.iter().map(|(v, n)| (super::Constant::Int(v), n)).chain(strs)
+    }
+    pub fn keys(&self) -> impl Iterator<Item = super::Constant> + '_ {
+        self.iter().map(|(k, _)| k)
+    }
+    pub fn values(&self) -> impl Iterator<Item = i64> + '_ {
+        self.iter().map(|(_, n)| n)
+    }
+}
+
+impl PartialEq for Freq {
+    fn eq(&self, other: &Freq) -> bool {
+        self.len() == other.len() && self.iter().all(|(k, n)| other.get(&k) == Some(&n))
+    }
+}
+
+impl FromIterator<(super::Constant, i64)> for Freq {
+    fn from_iter<I: IntoIterator<Item = (super::Constant, i64)>>(it: I) -> Self {
+        let mut f = Freq::default();
+        for (k, n) in it {
+            f.insert(k, n);
+        }
+        f
     }
 }
 
@@ -366,12 +793,19 @@ pub const HEAVY: usize = 64;
 /// merged (a Misra–Gries summary's 2k counters).
 pub const KEPT: usize = 2 * HEAVY;
 
+/// A heavy value and its rows (`HeavyCol::top`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeavyVal(pub i64, pub f64);
+// SAFETY: `repr(C)`, two 8-byte numbers, no padding.
+unsafe impl rerail_blocks::Pod for HeavyVal {}
+
 /// A column's heavy values: its most common values with their exact rows, and what is left (the tail), made over
 /// `rows` rows (decision 0209 §4).
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeavyCol {
     /// The values and their rows, by value (for lookups), at most `KEPT`.
-    pub top: Vec<(i64, f64)>,
+    pub top: Vector<HeavyVal>,
     /// How many rows a value's count may miss: 0 when made by a full pass; after merges (`merge`), the most a value
     /// left out of `top` held, which a value that came in since may have had before it came.
     pub err: f64,
@@ -409,9 +843,9 @@ impl<'a> PricedCol<'a> {
 impl HeavyCol {
     /// From a column's exact counts.
     pub fn of_counts(counts: impl IntoIterator<Item = (i64, u64)>) -> HeavyCol {
-        let mut all: Vec<(i64, u64)> = counts.into_iter().filter(|c| c.1 > 0).collect();
+        let mut all: Vector<[i64; 2]> = counts.into_iter().filter(|c| c.1 > 0).map(|(v, n)| [v, n as i64]).collect();
         let (mut rows, mut sq, mut cube) = (0.0, 0.0, 0.0);
-        for &(_, n) in &all {
+        for &[_, n] in all.iter() {
             let n = n as f64;
             rows += n;
             sq += n * n;
@@ -419,10 +853,10 @@ impl HeavyCol {
         }
         let ndv = all.len() as f64;
         if all.len() > KEPT {
-            all.select_nth_unstable_by(KEPT - 1, |a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            all.select_nth_unstable_by(KEPT - 1, |a, b| b[1].cmp(&a[1]).then(a[0].cmp(&b[0])));
             all.truncate(KEPT);
         }
-        let mut top: Vec<(i64, f64)> = all.into_iter().map(|(v, n)| (v, n as f64)).collect();
+        let mut top: Vector<HeavyVal> = all.iter().map(|&[v, n]| HeavyVal(v, n as f64)).collect();
         top.sort_unstable_by_key(|t| t.0);
         let held: f64 = top.iter().map(|t| t.1).sum();
         HeavyCol { tail_rows: rows - held, tail_ndv: ndv - top.len() as f64, top, err: 0.0, rows, ndv, sq, cube }
@@ -433,7 +867,7 @@ impl HeavyCol {
     /// the tail. sq and cube move by each value's change, a tail value's taken at the tail's mean.
     pub fn merge(&self, added: &FxHashMap<i64, u64>, removed: &FxHashMap<i64, u64>, ndv: f64) -> HeavyCol {
         let mean = self.tail_mean();
-        let mut counts: FxHashMap<i64, f64> = self.top.iter().copied().collect();
+        let mut counts: BlockHash<i64, f64> = self.top.iter().map(|t| (t.0, t.1)).collect();
         let (mut rows, mut sq, mut cube) = (self.rows, self.sq, self.cube);
         let mut tail_rows = self.tail_rows;
         let mut moved = |was: f64, now: f64| {
@@ -456,7 +890,7 @@ impl HeavyCol {
                 None => { tail_rows -= r; moved(mean, (mean - r).max(0.0)); }
             }
         }
-        let mut all: Vec<(i64, f64)> = counts.into_iter().filter(|c| c.1 > 0.0).collect();
+        let mut all: Vector<HeavyVal> = counts.iter().filter(|c| c.1 > 0.0).map(|(v, n)| HeavyVal(v, n)).collect();
         let mut err = self.err;
         if all.len() > KEPT {
             all.select_nth_unstable_by(KEPT - 1, |a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
@@ -487,7 +921,7 @@ impl HeavyCol {
 /// a value heavy in one only taken at the others' tail mean (none where a column's filter refuses it), and the tails'
 /// values at their means: those `by` share drawn, those `here` shares too met. `None` where no value is drawn.
 pub fn heavy_fan(here: PricedCol<'_>, by: &[PricedCol<'_>]) -> Option<f64> {
-    let mut vals: Vec<i64> = here.heavy.top.iter().map(|t| t.0).chain(by.iter().flat_map(|h| h.heavy.top.iter().map(|t| t.0))).collect();
+    let mut vals: Vector<i64> = here.heavy.top.iter().map(|t| t.0).chain(by.iter().flat_map(|h| h.heavy.top.iter().map(|t| t.0))).collect();
     vals.sort_unstable();
     vals.dedup();
     let (mut num, mut den) = (0.0f64, 0.0f64);
@@ -542,7 +976,7 @@ pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
     let rows: usize = reqs.iter().map(|(s, _, cols)| s.as_ref().map_or(0, |s| s.len() * cols.len())).sum();
     if gpu_pays(rows) {
         // Values gathered only for a source the engine does not hold as a relation.
-        let values: Vec<Option<Vec<Vec<i64>>>> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
+        let values: Vec<Option<Vec<Vector<i64>>>> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
             reqs
                 .par_iter()
                 .map(|(src, rel, cols)| match (src, rel) {
@@ -583,7 +1017,7 @@ pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
 }
 
 /// A request of `heavy_batch`: a relation's source, the engine's relation where it holds one, and the columns.
-pub type HeavyReq = (Option<std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, Option<std::sync::Arc<crate::code_rule_dsl::logic::native::component::InRel>>, Vec<usize>);
+pub type HeavyReq = (Option<std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, Option<std::sync::Arc<crate::code_rule_dsl::logic::native::component::InRel>>, Vector<usize>);
 
 /// The batches made, on the CPU and on the GPU.
 #[derive(Default)]
@@ -610,7 +1044,7 @@ pub fn heavy_of_device(cols: &[crate::code_rule_dsl::logic::device::StatColumn<'
     let (made, read) = crate::code_rule_dsl::logic::device::solver()?.column_stats(cols, KEPT).ok()?;
     rerail_prof::code_rule_dsl::logic::profile::local::<InPlace>().0.fetch_add(read as u64, std::sync::atomic::Ordering::Relaxed);
     Some(made.into_iter().map(|m| {
-        let mut top: Vec<(i64, f64)> = m.top.iter().map(|&(v, n)| (v, n as f64)).collect();
+        let mut top: Vector<HeavyVal> = m.top.iter().map(|&(v, n)| HeavyVal(v, n as f64)).collect();
         top.sort_unstable_by_key(|t| t.0);
         let held: f64 = top.iter().map(|t| t.1).sum();
         let (rows, ndv) = (m.rows as f64, m.ndv as f64);

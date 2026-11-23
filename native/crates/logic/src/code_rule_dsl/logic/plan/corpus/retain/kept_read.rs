@@ -4,6 +4,7 @@
 //! (`KeptSource`), its values read where they lie. No row is decoded or copied (0353), but for a relation whose levels
 //! the entry keeps (decision 0090): those are packed beside its rows, and the relation is read in with them.
 
+use rerail_blocks::vector::Vector;
 use super::kept_source::KeptSource;
 use crate::code_rule_dsl::logic::native::component::InRel;
 use crate::content_store::atoms::Atoms;
@@ -154,11 +155,11 @@ impl Entry {
         };
         // copy: load: the rows and their levels into the run's relation, which maintains a recursive stratum by them.
         let n = rows.len();
-        let mut flat = Vec::with_capacity(n * k);
+        let mut flat = Vector::with_capacity(n * k);
         for i in 0..n {
             flat.extend((0..k).map(|c| rows.get(i, c)));
         }
-        let mut level = Vec::with_capacity(n);
+        let mut level = Vector::with_capacity(n);
         levels.for_each(|v| level.push(v as u32));
         InRel::from_flat_levels(flat, n, types, level)
     }
@@ -168,7 +169,7 @@ impl Entry {
         let rows = self.packed();
         let (k, n) = (rows.arity as usize, rows.len());
         // copy: not block data: a batch of decoded values handed to the reader, never kept.
-        let mut buf: Vec<i64> = Vec::with_capacity(4096.min(n) * k);
+        let mut buf: Vector<i64> = rerail_blocks::vector::Vector::with_capacity(4096.min(n) * k);
         for i in 0..n {
             buf.extend((0..k).map(|c| rows.get(i, c)));
             if buf.len() >= 4096 * k.max(1) {
@@ -190,7 +191,7 @@ impl Entry {
 /// relation, its types the engine's: a view of the granules where they lie, one after another; `None` when one's
 /// atoms are not this process's numbering.
 pub(in crate::code_rule_dsl) fn gathered(parts: &[Entry], width: usize, atoms: &Atoms) -> Option<Arc<InRel>> {
-    let Some(first) = parts.first() else { return Some(InRel::from_flat(Vec::new(), 0, vec![b'i'; width])) };
+    let Some(first) = parts.first() else { return Some(InRel::from_flat(rerail_blocks::vector::Vector::new(), 0, vec![b'i'; width])) };
     if parts.iter().any(|p| p.width() != width || !Arc::ptr_eq(&p.bound, &first.bound) || !readable(p, atoms)) {
         return None;
     }

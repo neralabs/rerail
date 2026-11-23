@@ -244,13 +244,13 @@ struct Doc16<'a> {
     lang: &'a rerail_tape_format::f16::Lang,
     numbers: &'a Numbers,
     z: bool,
-    lines: &'a dyn Fn(&mut Vec<u8>),
+    lines: &'a dyn Fn(&mut rerail_tape_format::Vector<u8>),
 }
 
 /// A language's numbers by tier 2's slot keys (`native_cpu_tape::id_slots`, as `native_cpu_tape::commit` keys a
 /// node): what a format 16 run passes each node's number by (decision 0434 §6, R17). `u32::MAX` where the
 /// language's table has none for the key.
-pub struct Numbers(Vec<u32>);
+pub struct Numbers(rerail_tape_format::Vector<u32>);
 
 /// A compiled tier-2 program.
 pub struct CompiledStream {
@@ -7489,32 +7489,41 @@ fn fed_bound(tier1: &Tier1View, len: usize) -> usize {
     if tier1.feed != 0 { len + 1 } else { tier1.nstarts }
 }
 
+use rerail_tape_format::Vector;
+
+/// `n` copies of `v`, in the run's room.
+fn filled<T: rerail_blocks::Pod + Copy>(n: usize, v: T) -> Vector<T> {
+    let mut c = Vector::with_capacity(n);
+    c.resize(n, v);
+    c
+}
+
 /// The buffers one call writes, sized from the stream and the program's `Bounds`.
 pub struct Tape {
     /// The working rows, 12 bytes a node (key, start, end): never part of the tape.
-    rows: Vec<u8>,
+    rows: Vector<u8>,
     /// The tape's columns at the compiled widths (`SLACK` bytes past each), the bases, and the
     /// image: the header's room, the code column in place, then room for the columns moved
     /// after it and the code table (`native_cpu_tape::finish`).
-    size: Vec<u8>,
-    off: Vec<u8>,
-    tail: Vec<u8>,
-    base: Vec<u32>,
-    pub image: Vec<u8>,
+    size: Vector<u8>,
+    off: Vector<u8>,
+    tail: Vector<u8>,
+    base: Vector<u32>,
+    pub image: Vector<u8>,
     /// The code ids: each key's (the thread's table, cleared by the image's end), each code's key
     /// and first node.
-    id_of: Vec<u16>,
-    code_kf: Vec<u32>,
-    code_first: Vec<u32>,
-    pub super_node: Vec<u32>,
-    pub super_kind: Vec<u32>,
-    open: Vec<u32>,
-    returns: Vec<u32>,
+    id_of: Vector<u16>,
+    code_kf: Vector<u32>,
+    code_first: Vector<u32>,
+    pub super_node: Vector<u32>,
+    pub super_kind: Vector<u32>,
+    open: Vector<u32>,
+    returns: Vector<u32>,
     /// The node count, the supertype count, the image's length.
     pub counts: [u64; 3],
     /// A program with `WRAP`'s: frames, chains, places (a drop's stack: two slots a node).
-    frames: [Vec<u32>; 3],
-    chains: [Vec<u32>; 3],
+    frames: [Vector<u32>; 3],
+    chains: [Vector<u32>; 3],
     /// The nodes, supertypes and calls it has room for: the code's room checks (`Ctx::room_nodes`). A format 16 run
     /// holds no buffer of format 15's (its image, columns and code ids), and a direct one (`CompiledStream::direct`) no
     /// working row either, so the room is not a buffer's.
@@ -7522,27 +7531,6 @@ pub struct Tape {
     /// A format 16 run's writer state and numbers (`Ctx::writer`, `Ctx::numbers`): null in a format 15 run.
     writer: *mut u8,
     numbers: *const u32,
-}
-
-thread_local! {
-    /// The code ids by key, kept between a thread's tapes: each image's end clears what it set.
-    static IDS: std::cell::RefCell<Vec<u16>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-impl Drop for Tape {
-    /// The id table back to the thread. A run that stopped before its end clears what it set.
-    fn drop(&mut self) {
-        // A format 16 run's tape took no table (`sized`).
-        if self.id_of.capacity() == 0 {
-            return;
-        }
-        let mut ids = std::mem::take(&mut self.id_of);
-        // A format 16 run numbers no codes: the table is as it found it.
-        if self.counts[2] == 0 && self.writer.is_null() {
-            ids.fill(crate::native_cpu_tape::NO_CODE as u16);
-        }
-        IDS.with(|t| *t.borrow_mut() = ids);
-    }
 }
 
 impl CompiledStream {
@@ -7601,18 +7589,18 @@ impl CompiledStream {
         // Format 15's buffers only in a format 15 run; the working rows, their sizes and the supertypes only where the
         // nodes are passed from rows (not `direct`).
         let (f15, rowed) = (!self.sixteen, !self.direct);
-        let room = |n: usize, used: bool| -> Vec<u32> {
+        let room = |n: usize, used: bool| -> Vector<u32> {
             match (used, poison) {
-                (false, _) => Vec::new(),
-                (true, true) => vec![u32::MAX; n],
-                (true, false) => Vec::with_capacity(n),
+                (false, _) => Vector::new(),
+                (true, true) => filled(n, u32::MAX),
+                (true, false) => Vector::with_capacity(n),
             }
         };
-        let bytes = |n: usize, used: bool| -> Vec<u8> {
+        let bytes = |n: usize, used: bool| -> Vector<u8> {
             match (used, poison) {
-                (false, _) => Vec::new(),
-                (true, true) => vec![u8::MAX; n],
-                (true, false) => Vec::with_capacity(n),
+                (false, _) => Vector::new(),
+                (true, true) => filled(n, u8::MAX),
+                (true, false) => Vector::with_capacity(n),
             }
         };
         let wraps = |n: usize| if self.wraps { n } else { 0 };
@@ -7620,18 +7608,8 @@ impl CompiledStream {
         let pad = rerail_tape_format::padded;
         let blocks = nodes.div_ceil(rerail_tape_format::CHECKPOINT_STRIDE) + 1;
         let image = rerail_tape_format::HEADER_BYTES + pad(2 * nodes) + pad(usize::from(w.size) * nodes) + pad(4 * blocks) + pad(usize::from(w.off) * nodes) + pad(usize::from(w.tail) * nodes) + (6 + 2 * self.classes.len()) * nodes + 2 * SLACK;
-        let id_of = if f15 {
-            IDS.with(|t| {
-                let mut ids = std::mem::take(&mut *t.borrow_mut());
-                let slots = crate::native_cpu_tape::id_slots(self.classes.len());
-                if ids.len() < slots {
-                    ids.resize(slots, crate::native_cpu_tape::NO_CODE as u16);
-                }
-                ids
-            })
-        } else {
-            Vec::new()
-        };
+        // The code ids by key, each `NO_CODE` until the run numbers it: the tape's own, in the run's room.
+        let id_of = if f15 { filled(crate::native_cpu_tape::id_slots(self.classes.len()), crate::native_cpu_tape::NO_CODE as u16) } else { Vector::new() };
         let returns = if self.context { 2 * pushes } else { pushes };
         let mut t = Tape {
             rows: bytes(ROW as usize * nodes + SLACK, rowed),
@@ -7641,7 +7619,7 @@ impl CompiledStream {
             base: room(blocks + SLACK, f15),
             image: bytes(image, f15),
             id_of,
-            code_kf: if f15 { Vec::with_capacity(nodes + 1) } else { Vec::new() },
+            code_kf: if f15 { Vector::with_capacity(nodes + 1) } else { Vector::new() },
             code_first: room(nodes + 1, f15),
             super_node: room(supers, rowed),
             super_kind: room(supers, rowed),
@@ -7772,7 +7750,7 @@ impl CompiledStream {
 
     /// The format 15 image `run` writes (a test's), or the call's result.
     #[cfg(test)]
-    pub fn image_on(&self, bytes: &[u8], tier1: &crate::block::BlockRun) -> Result<Vec<u8>, u64> {
+    pub fn image_on(&self, bytes: &[u8], tier1: &crate::block::BlockRun) -> Result<Vector<u8>, u64> {
         let mut tape = self.tape(self.tokens(self.records_of(tier1), bytes.len()));
         match self.run_raw(bytes, tier1, &mut tape) {
             0 => Ok(tape.image()),
@@ -7783,7 +7761,7 @@ impl CompiledStream {
     /// `Parser::image16` over tier 1's run `tier1` (a test's), by this tier 2, compiled to write format 16.
     #[cfg(test)]
     pub fn image16_on(&self, bytes: &[u8], terminators: rerail_tape_format::newlines::Terminators, tier1: &crate::block::BlockRun, lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
-        let scan = |out: &mut Vec<u8>| rerail_tape_format::newlines::index_into(out, bytes, terminators);
+        let scan = |out: &mut rerail_tape_format::Vector<u8>| rerail_tape_format::newlines::index_into(out, bytes, terminators);
         let doc = Doc16 { source: bytes, lang, numbers, z, lines: &scan };
         self.write16(&mut rerail_tape_format::f16::Writer::empty(), self.tokens(self.records_of(tier1), bytes.len()), &doc, |tape| self.run_raw(bytes, tier1, tape))
     }
@@ -7828,8 +7806,8 @@ impl CompiledStream {
         let mut padded = vec![0u8; bytes.len() + 65];
         padded[1..=bytes.len()].copy_from_slice(bytes);
         // Each stream ended in two entries of the file's length, as the batch's (`Batch::end_streams`).
-        let stream = |e: Option<usize>| -> (Vec<u32>, usize) {
-            let mut v = e.map_or_else(Vec::new, |e| tier1.positions[e].clone());
+        let stream = |e: Option<usize>| -> (rerail_blocks::vector::Vector<u32>, usize) {
+            let mut v = e.map_or_else(rerail_blocks::vector::Vector::new, |e| tier1.positions[e].clone());
             let n = v.len();
             v.extend([bytes.len() as u32; 2]);
             (v, n)
@@ -7837,7 +7815,7 @@ impl CompiledStream {
         let starts = stream(self.starts);
         // The outputs interleaved, as a batch holds them: output `o`'s word `w` at `o + w * n`.
         let n = tier1.outputs.len().max(1);
-        let count = tier1.outputs.iter().map(Vec::len).max().unwrap_or(0);
+        let count = tier1.outputs.iter().map(|w| w.len()).max().unwrap_or(0);
         let mut all = vec![0u64; n * count.max(1)];
         for (o, words) in tier1.outputs.iter().enumerate() {
             for (w, &x) in words.iter().enumerate() {
@@ -7847,7 +7825,7 @@ impl CompiledStream {
         let lasts = stream(self.lasts);
         let mut codes = tier1.codes.clone();
         codes.extend([0, 0]);
-        let totals = if tier1.totals.is_empty() { vec![0] } else { tier1.totals.clone() };
+        let totals = if tier1.totals.is_empty() { rerail_blocks::vector![0] } else { tier1.totals.clone() };
         // SAFETY: `padded` has the byte before and 64 after; each stream two slots past its count;
         // the tape is sized for the stream; every output has `count` words in `all`.
         let view = Tier1View {
@@ -7922,7 +7900,7 @@ impl Tape {
     }
 
     /// The engine's tape: the image's bytes, as tier 2 wrote them (no copy).
-    pub fn image(mut self) -> Vec<u8> {
+    pub fn image(mut self) -> Vector<u8> {
         std::mem::take(&mut self.image)
     }
 
@@ -8060,7 +8038,7 @@ impl Parser {
     /// docs/parser-generators/37's wider parse): by `read` at `Widths::WIDE`, then, where its
     /// values fit narrower columns (`least_widths`), at those, so the image is the writer's.
     /// A refusal at `WIDE` is the grammar's: the file goes to the fallback.
-    pub fn again(&self, narrow: Refused, read: impl Fn(&CompiledStream) -> Result<Vec<u8>, Refused>) -> Result<Vec<u8>, Refused> {
+    pub fn again(&self, narrow: Refused, read: impl Fn(&CompiledStream) -> Result<Vector<u8>, Refused>) -> Result<Vector<u8>, Refused> {
         let (Some(w), Some(wide)) = (self.wide.as_ref(), self.wide()) else { return Err(narrow) };
         let image = read(wide)?;
         let least = least_widths(&image);
@@ -8073,7 +8051,7 @@ impl Parser {
     /// The engine's tape of `bytes` as tier 2 wrote it (its bytes), or the word that refused
     /// it (the file goes to the fallback). A file whose tape does not fit the narrow widths is
     /// read again at wider ones, over the same tier 1 run (`again`).
-    pub fn image(&self, bytes: &[u8]) -> Result<Vec<u8>, Refused> {
+    pub fn image(&self, bytes: &[u8]) -> Result<Vector<u8>, Refused> {
         let mut batch = crate::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
         batch.call(&self.tier1);
         let mut tape = self.tape(&batch);
@@ -8220,7 +8198,7 @@ impl Parser {
         // document's terminators: no scan of the source. Bit `p` of the output's words is byte `p` of the file: the host puts a stripped prefix's bytes back
         // (`Batch::call`), and a prefix holds no newline.
         let row = batch.rows[0];
-        let from_bits = |out: &mut Vec<u8>| {
+        let from_bits = |out: &mut rerail_tape_format::Vector<u8>| {
             let (o, n) = (self.tier1.newlines.expect("tier 1's line ends").0, self.tier1.outputs);
             let at = |w: usize| batch.out[row.out as usize + o + w * n];
             // The candidates kept where they end a terminator: a test of the bytes at each, no scan.
@@ -8229,8 +8207,8 @@ impl Parser {
             #[cfg(debug_assertions)]
             debug_assert!(out[..] == rerail_tape_format::newlines::index(bytes, terminators)[..], "the line index from tier 1's bits is the scan's");
         };
-        let scan = |out: &mut Vec<u8>| rerail_tape_format::newlines::index_into(out, bytes, terminators);
-        let lines: &dyn Fn(&mut Vec<u8>) = if self.tier1.newlines.is_some_and(|(_, set)| set == terminators) { &from_bits } else { &scan };
+        let scan = |out: &mut rerail_tape_format::Vector<u8>| rerail_tape_format::newlines::index_into(out, bytes, terminators);
+        let lines: &dyn Fn(&mut rerail_tape_format::Vector<u8>) = if self.tier1.newlines.is_some_and(|(_, set)| set == terminators) { &from_bits } else { &scan };
         t2.write16(w, tokens, &Doc16 { source: bytes, lang, numbers, z, lines }, |tape| self.words_raw(t2, &batch, tape))
     }
 }

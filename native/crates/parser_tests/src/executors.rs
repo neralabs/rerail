@@ -5,6 +5,7 @@
 //!
 //! Public so the engine's tests of its own block programs (`packed::regex_block`) use them too.
 
+use rerail_blocks::vector::Vector;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::{block, native_ir};
 use rerail_cpu_block::native_cpu_block;
@@ -66,7 +67,7 @@ pub fn runs() -> Vec<Vec<u8>> {
 }
 
 /// Each executor's outputs on a file, by its name.
-pub type Runs = Vec<(String, Vec<Vec<u64>>)>;
+pub type Runs = Vec<(String, Vec<Vector<u64>>)>;
 
 /// A program's first block program, lowered and compiled once, for runs over many inputs.
 pub struct Executors<'a> {

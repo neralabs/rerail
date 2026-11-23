@@ -8,6 +8,7 @@
 //! when it is refused; the others (shapes the device refuses by design) need only the same rows. The summary prints
 //! each family's cases, those the device ran, and the refusals' reasons.
 
+use rerail_blocks::vector::Vector;
 use rusqlite::Connection;
 use std::collections::BTreeMap;
 
@@ -740,7 +741,7 @@ fn random_mixed(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
         .map(|_| {
             // Start from the names, or from names and numbers joined by a number.
             let mut steps = vec![format!("pos {} v0 v1", r.sn)];
-            let (mut texts, mut nums, mut next) = (vec![0usize], vec![1usize], 2usize);
+            let (mut texts, mut nums, mut next) = (rerail_blocks::vector![0usize], rerail_blocks::vector![1usize], 2usize);
             if g.chance(30) {
                 steps.push(format!("pos {} v1 v2", g.pick(&ints)));
                 nums.push(2);
@@ -750,7 +751,7 @@ fn random_mixed(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
                 let t = *g.pick(&texts);
                 let k = *g.pick(&nums);
                 let p = *g.pick(&pats);
-                let mut fresh = |pool: &mut Vec<usize>| {
+                let mut fresh = |pool: &mut Vector<usize>| {
                     pool.push(next);
                     next += 1;
                     next - 1

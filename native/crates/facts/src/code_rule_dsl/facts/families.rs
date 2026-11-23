@@ -18,6 +18,7 @@
 //! reader that finds neither decodes the stored tape. New paths are pushed in chunks (`push`), so
 //! a cold scan holds a chunk's tapes, not the scope's.
 
+use crate::code_rule_dsl::facts::core::FactsIn;
 use super::Graph;
 use super::core::{self, Facts};
 use super::observe::{Push, observe_root, path_name};
@@ -139,11 +140,11 @@ pub fn derived_inputs(
 }
 
 /// A file's (kind atom, count) and (class atom, count), each sorted by atom.
-pub(crate) fn histogram(f: &Facts) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
+pub(crate) fn histogram(f: FactsIn<'_>) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
     f.histogram()
 }
 
-pub(crate) fn histogram_digest(f: &Facts) -> [u8; 32] {
+pub(crate) fn histogram_digest(f: FactsIn<'_>) -> [u8; 32] {
     let (kinds, classes) = histogram(f);
     let mut hash = Sha256::new();
     hash.update(b"rerail.kind-histogram/v1\0");
@@ -575,7 +576,7 @@ impl Families {
             output: kinds_name(scope, path),
             producer: kinds_producer(),
             inputs: vec![DerivationInput { name: Some(name), digest: read }],
-            digest: facts.as_deref().map_or(ABSENT, histogram_digest),
+            digest: facts.as_deref().map_or(ABSENT, |f| f.alone(histogram_digest)),
             status: 0,
             cost: 1,
         })

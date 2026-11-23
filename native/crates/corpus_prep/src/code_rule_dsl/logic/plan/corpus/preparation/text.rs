@@ -11,10 +11,11 @@
 //! The names they make follow content (the tests', the regexes', the matchers'), and their fresh variables are
 //! counted per rule: a program's names do not depend on the order of its rules.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::plan::corpus::matchers::{MOST_CAPTURES, PREFIX, columns, single_field};
 use crate::code_rule_dsl::logic::plan::text_demand;
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, Pipeline, RuleOut, RulePass, Select, Step};
-use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, Cell, CmpOp, Lit, LitRef, Rewrite, RuleRef, Slot, T, TermRef, Version, t_of};
+use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, Cell, CmpOp, Lit, LitRef, Rewrite, Rows, RuleRef, Slot, T, TermRef, Version, t_of};
 use crate::code_rule_dsl::logic::strings::{DURING, GROUPS, MATCHES, Matcher, RELATION, SET, TEXT_COLUMNS, Vocabulary, is_test};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -405,7 +406,7 @@ impl RulePass for NodeSubjects {
             }
         }
         let body: Vec<LitRef<'_>> = r.body().collect();
-        let rewritten: Vec<usize> = body.iter().enumerate().filter(|(_, l)| test_of(v, **l).is_some_and(|(_, a, _)| matches!(a.first(), Some(TermRef::Var(s)) if nodes.contains(s)))).map(|(i, _)| i).collect();
+        let rewritten: Vector<usize> = body.iter().enumerate().filter(|(_, l)| test_of(v, **l).is_some_and(|(_, a, _)| matches!(a.first(), Some(TermRef::Var(s)) if nodes.contains(s)))).map(|(i, _)| i).collect();
         if rewritten.is_empty() {
             return Ok(Step::Keep);
         }
@@ -446,7 +447,7 @@ impl RulePass for NodeSubjects {
 struct Twins {
     matchers: Matchers,
     /// The rules twinned, by id: their `text` atoms' places.
-    by_rule: HashMap<crate::code_rule_dsl::logic::program_image::RuleId, Vec<usize>>,
+    by_rule: HashMap<crate::code_rule_dsl::logic::program_image::RuleId, Vector<usize>>,
     made: usize,
 }
 
@@ -465,7 +466,7 @@ impl RulePass for Twins {
             let Some(TermRef::Var(x)) = text.args().next() else { return false };
             body.iter().enumerate().filter(|(j, _)| *j != i).filter_map(|(_, l)| l.atom()).filter(|a| !a.neg() && v.rel_name(a.rel()) != "text").any(|a| a.args().any(|t| t.var() == Some(x)))
         };
-        let mut by_rule: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        let mut by_rule: BTreeMap<usize, Vector<usize>> = BTreeMap::new();
         for (ri, i) in demand.any.into_iter().filter(|&(ri, i)| bound(rules[ri], i)) {
             by_rule.entry(ri).or_default().push(i);
         }
@@ -557,9 +558,9 @@ fn is_input(v: &Version, rel: &str) -> bool {
 }
 
 /// `rel`'s facts (not its about rows), each row's cells.
-fn fact_rows(v: &Version, rel: &str) -> Option<Vec<Vec<Cell>>> {
+fn fact_rows(v: &Version, rel: &str) -> Option<Rows> {
     let f = v.facts(v.find(rel)?)?;
-    Some(f.rows().map(|row| row.collect()).collect())
+    Some(Rows::of_cells(f.rows()))
 }
 
 /// The values column `col` of `rel` can hold when they come from the program's constants alone: a fact relation's
@@ -585,7 +586,8 @@ fn constant_domain(v: &Version, rel: &str, col: usize, visiting: &mut Vec<(Strin
     visiting.push((rel.to_owned(), col));
     // Its facts' values too: a relation of facts and rules holds both.
     let mut out = BTreeSet::new();
-    for row in fact_rows(v, rel).into_iter().flatten() {
+    let facts = fact_rows(v, rel).unwrap_or_default();
+    for row in facts.iter() {
         let Some(s) = str_cell(row.get(col)) else {
             visiting.pop();
             return None;
@@ -1002,7 +1004,7 @@ impl RulePass for TextRelations {
         // negated or not), or none (dropped).
         let mut put: BTreeMap<usize, Option<(String, From, bool)>> = BTreeMap::new();
         // The atoms a holding native test stands for (its rows are theirs that pass).
-        let mut replaced: Vec<usize> = Vec::new();
+        let mut replaced: Vector<usize> = rerail_blocks::vector::Vector::new();
         for Plan { place, key, holds, how } in plan {
             let k = self.ids[&key];
             match how {
@@ -1076,13 +1078,13 @@ impl RulePass for TextRelations {
                 tests.retain(|r| r.get(1) != Some(&Cell::Str(rel)));
                 pats.retain(|r| r.get(1) != Some(&Cell::Str(rel)));
                 let (i, o) = (b.atom(&input), b.atom(&op));
-                tests.push(vec![p, Cell::Str(rel), Cell::Str(i), Cell::Int(column as i64), Cell::Str(o)]);
+                tests.push([p, Cell::Str(rel), Cell::Str(i), Cell::Int(column as i64), Cell::Str(o)]);
                 for (n, pattern) in patterns.iter().enumerate() {
                     let pa = b.atom(pattern);
-                    pats.push(vec![p, Cell::Str(rel), Cell::Int(n as i64), Cell::Str(pa)]);
+                    pats.push([p, Cell::Str(rel), Cell::Int(n as i64), Cell::Str(pa)]);
                 }
             }
-            let key = |b: &Builder<'_>, r: &Vec<Cell>| match (r.get(1), r.get(2)) {
+            let key = |b: &Builder<'_>, r: &[Cell]| match (r.get(1), r.get(2)) {
                 (Some(Cell::Str(a)), Some(Cell::Int(n))) => (b.text(*a).to_owned(), *n),
                 (Some(Cell::Str(a)), _) => (b.text(*a).to_owned(), 0),
                 _ => (String::new(), 0),

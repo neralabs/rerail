@@ -2,6 +2,7 @@
 //! overlay per range of worktrees (`--flat`: none), the 40 worktrees as deltas over their
 //! layers, S3's events maintained one at a time, each (or every N-th) checked against a
 //! from-scratch build of that worktree in a forked child.
+use rerail_blocks::vector::Vector;
 use super::engine::{self, KIND_NAMES, NK};
 use super::view::{assign_def_ids, Graph, GraphRead, GraphView};
 use super::world::*;
@@ -159,7 +160,7 @@ fn pct(v: &mut [f64], p: f64) -> f64 {
     v[((v.len() as f64 - 1.0) * p).round() as usize]
 }
 
-fn summary(mut v: Vec<f64>) -> serde_json::Value {
+fn summary(mut v: Vector<f64>) -> serde_json::Value {
     let n = v.len();
     let mean = if n == 0 { 0.0 } else { v.iter().sum::<f64>() / n as f64 };
     json!({"n": n, "mean": mean, "p50": pct(&mut v, 0.5), "p95": pct(&mut v, 0.95), "p99": pct(&mut v, 0.99), "max": pct(&mut v, 1.0)})
@@ -395,11 +396,11 @@ pub fn run(args: &[String]) {
         None => events,
     };
     let mut per = Vec::new();
-    let mut lat_edit: Vec<f64> = Vec::new();
-    let mut rows_edit: Vec<f64> = Vec::new();
-    let mut rerun_edit: Vec<f64> = Vec::new();
-    let mut probes_edit: Vec<f64> = Vec::new();
-    let mut lat_other: Vec<f64> = Vec::new();
+    let mut lat_edit: Vector<f64> = rerail_blocks::vector::Vector::new();
+    let mut rows_edit: Vector<f64> = rerail_blocks::vector::Vector::new();
+    let mut rerun_edit: Vector<f64> = rerail_blocks::vector::Vector::new();
+    let mut probes_edit: Vector<f64> = rerail_blocks::vector::Vector::new();
+    let mut lat_other: Vector<f64> = rerail_blocks::vector::Vector::new();
     let mut fallbacks = json!({"init": 0, "incomplete_flip": 0});
     let mut fp_samples = vec![json!({"at": "loaded", "mem": fp_loaded, "delta_bytes": delta_bytes_loaded, "cluster_bytes": cluster_bytes, "interner_bytes": sh.it.bytes()})];
     // the per-step edge delta (Step::edges_*), applied to each worktree's pair set and compared

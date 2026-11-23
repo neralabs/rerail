@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::*;
 
 fn change(e: &mut CodeRuleSqlExecutor, value: Value) -> Value {
@@ -86,7 +87,7 @@ fn recursive_deletion_removes_unsupported_cycles_and_preserves_alternate_support
 fn deterministic_edit_sequences_match_fresh_execution_including_multi_atom_batches() {
     use std::collections::BTreeSet;
     let (_dir, mut e) = executor();
-    let mut graph = BTreeSet::<Vec<i64>>::from([vec![0, 1], vec![1, 2], vec![2, 0], vec![2, 3]]);
+    let mut graph = BTreeSet::<Vector<i64>>::from([rerail_blocks::vector![0, 1], rerail_blocks::vector![1, 2], rerail_blocks::vector![2, 0], rerail_blocks::vector![2, 3]]);
     edge(&mut e, json!(graph));
     e.run(CLOSURE.into(), "python".into(), None).unwrap();
     let mut random = 41u64;
@@ -95,7 +96,7 @@ fn deterministic_edit_sequences_match_fresh_execution_including_multi_atom_batch
         let mut delete = Vec::new();
         for _ in 0..2 {
             random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
-            let pair = vec![(random % 7) as i64, ((random >> 16) % 7) as i64];
+            let pair = rerail_blocks::vector![(random % 7) as i64, ((random >> 16) % 7) as i64];
             if random & 256 == 0 {
                 insert.push(pair);
             } else {

@@ -32,6 +32,8 @@ pub mod code_rule_dsl {
             pub use rerail_plan_base::code_rule_dsl::logic::plan::*;
             pub mod search;
             pub use search::*;
+            /// The tree's statistics, its kinds' and edges', in a section (decision 0628 §4).
+            pub mod tree_stats;
             pub mod choices;
             /// A memo entry of program facts kept as kept facts, held by its source (t33 step 3).
             pub mod kept_entry;

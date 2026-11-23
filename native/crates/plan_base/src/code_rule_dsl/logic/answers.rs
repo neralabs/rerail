@@ -20,6 +20,7 @@
 //! Both passes are made on the program's version (decision 0241's form), reading its rules by their handles and its
 //! fields, never a tree.
 
+use rerail_blocks::vector::Vector;
 use super::front::{Edges, path, tarjan};
 use super::front::ast::Gate;
 use super::plan::body::Placed;
@@ -68,7 +69,7 @@ impl Rewrite for Gated<'_> {
 enum Out {
     Copy(usize),
     DoneAll(String),
-    Done(String, Vec<usize>, usize),
+    Done(String, Vector<usize>, usize),
     Gated(usize),
 }
 
@@ -215,7 +216,7 @@ impl RulePass for GateRules<'_> {
             }
             // The key: a negated atom's columns that are not wild, all bound by the literals before it; an
             // aggregate's that they bind (a constant's too), its group.
-            let at: Vec<usize> = a
+            let at: Vector<usize> = a
                 .args()
                 .enumerate()
                 .filter(|(_, t)| match t {

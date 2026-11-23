@@ -8,7 +8,7 @@ use super::*;
 /// panicked, "row 0 of a relation of 0 rows", and its live rows were none, so a kept stratum's put held no rows).
 #[test]
 fn a_relation_over_a_source_reads_its_rows_through_it() {
-    let src = super::columns_source(vec!["a".into(), "b".into()], vec![Some(vec![1, 2, 5]), Some(vec![3, 4, 0])]);
+    let src = super::columns_source(vec!["a".into(), "b".into()], vec![Some(rerail_blocks::vector![1, 2, 5]), Some(rerail_blocks::vector![3, 4, 0])]);
     let r = InRel::over_source(src, b"ii".to_vec());
     assert_eq!((r.len(), r.rows()), (3, 3));
     assert_eq!((0..3).map(|i| [r.value(i, 0), r.value(i, 1)]).collect::<Vec<_>>(), [[1, 3], [2, 4], [5, 0]], "its values");
@@ -22,7 +22,7 @@ fn a_relation_over_a_source_reads_its_rows_through_it() {
     // put, read through it: rr-align's 4e3d12466 re-kept views by a frame and `kept_rows`, which take a relation
     // in a block, and lost their rows (7d8103eed's warm-run losses, which it met by naming a view by its reads).
     use crate::code_rule_dsl::logic::plan::corpus::retain;
-    let flat = InRel::from_flat(vec![5, 0, 1, 3, 2, 4], 3, b"ii".to_vec());
+    let flat = InRel::from_flat(rerail_blocks::vector![5, 0, 1, 3, 2, 4], 3, b"ii".to_vec());
     let d = retain::held_digest(&cells, &r);
     assert!(d.is_some() && d == retain::held_digest(&cells, &flat), "a view's digest is its rows'");
     let put = retain::kept_put(&crate::content_store::KeptRel { name: "r".into(), ident: [1; 32] }, 0, Vec::new(), b"ii".to_vec(), &r);

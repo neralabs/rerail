@@ -340,7 +340,7 @@ pub struct PackedDemand {
     file_facts: Vec<Option<FileFactDescriptor>>,
     file_paths: Vec<String>,
     files: Vec<TapeDoc>,
-    anchors: Vec<Vec<Vec<u32>>>,
+    anchors: Vec<Vec<rerail_blocks::vector::Vector<u32>>>,
     task_grid: Vec<Vec<bool>>,
     sound_under_errors: Vec<bool>,
     result_limits: Vec<u32>,
@@ -371,10 +371,12 @@ impl PackedDemand {
         backend: ExecutionBackend,
         programs: Vec<Program>,
         files: Vec<TapeDoc>,
-        anchors: Vec<Vec<Vec<u32>>>,
+        anchors: Vec<Vec<rerail_blocks::vector::Vector<u32>>>,
         task_grid: Vec<Vec<bool>>,
         result_limits: Vec<u32>,
     ) -> Result<Self, PackedError> {
+        // The demand's files read in one batch, its rows' reads and the transducer's (`tape::formats::in_one_batch`).
+        let files = crate::code_rule_dsl::tape::formats::in_one_batch(&files).into_owned();
         if anchors.len() != files.len()
             || task_grid.len() != files.len()
             || anchors.iter().any(|file| file.len() != programs.len())
@@ -728,7 +730,7 @@ impl PackedDemand {
                         continue;
                     }
                     if !self.sound_under_errors[program]
-                        && !self.files[file].syntax_error_ranges().is_empty()
+                        && self.files[file].has_syntax_error()
                     {
                         rows.push(PackedRow::producer_status(
                             token,
@@ -803,7 +805,7 @@ impl PackedDemand {
                         let _scope = crate::code_rule_dsl::matcher::FileScopeSlot::install(
                             Vec::new(),
                             None,
-                            !parsed.root().get_doc().syntax_error_ranges().is_empty(),
+                            parsed.root().get_doc().has_syntax_error(),
                         );
                         let parse_row_start = rows.len();
                         let mut failure = None;
@@ -905,7 +907,7 @@ impl PackedDemand {
                         let _scope = crate::code_rule_dsl::matcher::FileScopeSlot::install(
                             Vec::new(),
                             None,
-                            !parsed.root().get_doc().syntax_error_ranges().is_empty(),
+                            parsed.root().get_doc().has_syntax_error(),
                         );
                         let transform_row_start = rows.len();
                         let matches = descriptor
@@ -1056,7 +1058,7 @@ impl PackedDemand {
                         let _scope = crate::code_rule_dsl::matcher::FileScopeSlot::install(
                             Vec::new(),
                             None,
-                            !parsed.root().get_doc().syntax_error_ranges().is_empty(),
+                            parsed.root().get_doc().has_syntax_error(),
                         );
                         let semantic_row_start = rows.len();
                         let semantic_capacity_failed = std::cell::Cell::new(false);
@@ -1067,7 +1069,7 @@ impl PackedDemand {
                                     test.language,
                                     "",
                                     None,
-                                    !parsed.root().get_doc().syntax_error_ranges().is_empty(),
+                                    parsed.root().get_doc().has_syntax_error(),
                                     self.files[file].transducer_source().len(),
                                     None,
                                 )
@@ -1387,7 +1389,7 @@ impl PackedDemand {
                         let _scope = crate::code_rule_dsl::matcher::FileScopeSlot::install(
                             Vec::new(),
                             None,
-                            !parsed.root().get_doc().syntax_error_ranges().is_empty(),
+                            parsed.root().get_doc().has_syntax_error(),
                         );
                         crate::code_rule_dsl::matcher::with_file_memo(&parsed, || {
                             let root = parsed.root();
@@ -3066,8 +3068,8 @@ mod tests {
             ],
             vec![python_tape("one\n"), python_tape("two\n")],
             vec![
-                vec![vec![0], vec![0], vec![0]],
-                vec![vec![0], Vec::new(), Vec::new()],
+                vec![rerail_blocks::vector![0], rerail_blocks::vector![0], rerail_blocks::vector![0]],
+                vec![rerail_blocks::vector![0], rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new()],
             ],
             vec![vec![true, true, true], vec![true, true, false]],
             vec![u32::MAX, u32::MAX, u32::MAX],
@@ -3111,7 +3113,7 @@ mod tests {
             ExecutionBackend::CpuJit,
             vec![Program::compile_universe().expect("verified universe")],
             vec![tape],
-            vec![vec![vec![0]]],
+            vec![vec![rerail_blocks::vector![0]]],
             vec![vec![false]],
             vec![u32::MAX],
         );
@@ -3135,7 +3137,7 @@ mod tests {
             ExecutionBackend::CpuJit,
             vec![Program::compile_navigation().expect("verified navigation producer")],
             vec![tape],
-            vec![vec![vec![0]]],
+            vec![vec![rerail_blocks::vector![0]]],
             vec![vec![true]],
             vec![u32::MAX],
         )

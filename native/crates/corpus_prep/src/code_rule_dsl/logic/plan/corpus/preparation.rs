@@ -2,6 +2,7 @@
 //! program's version, run in one pipeline after the program's one image, from the last of the tree's passes
 //! backward as they move.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::program_image::manager::{self, Run, Cx, Pipeline, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::Version;
 use std::collections::{BTreeSet, HashSet};
@@ -92,7 +93,7 @@ impl ProgramPass for RuleOrder {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
     /// The relations the run makes for the tree axes and `nearest` (`Nearest::sets`).
-    pub sets: Vec<(String, Vec<i64>)>,
+    pub sets: Vec<(String, Vector<i64>)>,
     /// The relations the file-local joins were pushed into (`file_local::PushLocalJoins`).
     pub pushed: Vec<String>,
     /// What the factorized store handed on as parts (`file_local::FactorizeExports`): a line per relation.

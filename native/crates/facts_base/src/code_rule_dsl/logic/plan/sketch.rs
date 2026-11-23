@@ -16,6 +16,7 @@
 //! of inserts and deletes are those of the final multiset (history-independent), two sketches add to the sketch of
 //! both, and a document's rows are taken out by subtracting them.
 
+use rerail_blocks::vector::Vector;
 /// Counters per row of the AMS sketch.
 pub(in crate::code_rule_dsl) const W: usize = 64;
 /// Rows of the AMS sketch (the estimate is their median).
@@ -33,14 +34,14 @@ const _: () = assert!(W == 64 && M == 64 && D == 3, "`add` takes 6 bits a counte
 /// went back to zero keeps its page, zeroed, but is not open.
 #[derive(Clone)]
 pub struct Sketch {
-    words: crate::code_rule_dsl::facts::rows::BlockVec<i64>,
+    words: rerail_blocks::vector::Vector<i64>,
     page: [u8; LEVELS],
     open: u32,
 }
 
 impl Default for Sketch {
     fn default() -> Self {
-        let mut words = crate::code_rule_dsl::facts::rows::BlockVec::new();
+        let mut words = crate::code_rule_dsl::facts::rows::vector_in(None, 0);
         words.resize(D * W, 0);
         Sketch { words, page: [0; LEVELS], open: 0 }
     }
@@ -219,15 +220,19 @@ const HLL_P: u32 = 12;
 /// A column's moments where values are only ever added (the corpus's chunks' totals, which merge parts that share
 /// values): `sq` from the AMS sketch above, and the distinct values by HyperLogLog, which cannot take a value out
 /// but is far closer than the counting bitmap a deletable `Sketch` needs (1.6% against up to 1.7×).
-#[derive(Clone)]
+/// A record (`rerail_blocks::Pod`): it lies in its holder's block (`corpus::Totals`), not on the heap.
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Moments {
     ams: [[i64; W]; D],
-    regs: Box<[u8; 1 << HLL_P]>,
+    regs: [u8; 1 << HLL_P],
 }
+// SAFETY: `repr(C)`, integers only, no padding (the counters' bytes, then the registers', a multiple of 8).
+unsafe impl rerail_blocks::Pod for Moments {}
 
 impl Default for Moments {
     fn default() -> Self {
-        Moments { ams: [[0; W]; D], regs: Box::new([0; 1 << HLL_P]) }
+        Moments { ams: [[0; W]; D], regs: [0; 1 << HLL_P] }
     }
 }
 
@@ -269,7 +274,7 @@ fn ams_add(ams: &mut [i64], h: u64, n: i64) {
 
 /// The AMS counters' estimate of the sum of squared postings: the median row's.
 fn ams_sq(ams: &[i64]) -> f64 {
-    let mut rows: Vec<f64> = ams.as_chunks::<W>().0.iter().map(|r| r.iter().map(|&c| (c as f64) * (c as f64)).sum()).collect();
+    let mut rows: Vector<f64> = ams.as_chunks::<W>().0.iter().map(|r| r.iter().map(|&c| (c as f64) * (c as f64)).sum::<f64>()).collect();
     rows.sort_by(f64::total_cmp);
     rows[D / 2]
 }
@@ -308,7 +313,7 @@ pub mod tests {
         for v in 0..5000 {
             s.add(v, 2);
         }
-        assert!(s.words.facts().is_some() && s.open != 0, "its counters in a block");
+        assert!(rerail_blocks::maps::Placed::place(&s.words).is_some() && s.open != 0, "its counters in a block");
         let mut t = s.clone();
         for v in 5000..5100 {
             t.add(v, 1);

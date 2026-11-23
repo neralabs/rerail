@@ -1056,8 +1056,8 @@ impl Atoms {
     /// hashed once, outside any lock; those held are found under the read lock, and only the rest are looked for
     /// again and given ids under the write lock (`give`), so a batch of mostly known values stops the arena's readers
     /// for its new ones only.
-    pub fn intern_all(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
-        let hashes: Vec<u64> = values.iter().map(|value| hash_str(value)).collect();
+    pub fn intern_all(&self, values: &[&str]) -> StoreResult<rerail_blocks::vector::Vector<Sym>> {
+        let hashes: rerail_blocks::vector::Vector<u64> = values.iter().map(|value| hash_str(value)).collect();
         // Looked up `READ_RUN` at a time, each run under a read lock of its own: a writer waits for every reader
         // (`Sharded::write`), and while it waits every reader of a shard it holds waits too; a parser's batch read
         // under one lock was the arena's longest hold (decision 0315).
@@ -1092,7 +1092,7 @@ impl Atoms {
 
     /// The ids of `values` (hashed: `hashes`), those not `found` looked for again and new ones pending from this
     /// process's end, under the write lock: the only work under it is theirs.
-    fn give(&self, values: &[&str], hashes: &[u64], found: Vec<Option<Sym>>) -> Vec<Sym> {
+    fn give(&self, values: &[&str], hashes: &[u64], found: Vec<Option<Sym>>) -> rerail_blocks::vector::Vector<Sym> {
         let missing: Vec<usize> = found.iter().enumerate().filter(|(_, f)| f.is_none()).map(|(i, _)| i).collect();
         let mut given = Vec::with_capacity(missing.len());
         let mut state = self.state.write();
@@ -1109,7 +1109,7 @@ impl Atoms {
         for (&i, id) in missing.iter().zip(given) {
             ids[i] = Some(id);
         }
-        let ids: Vec<Sym> = ids.into_iter().map(|id| id.expect("every value given an id")).collect();
+        let ids: rerail_blocks::vector::Vector<Sym> = ids.into_iter().map(|id| id.expect("every value given an id")).collect();
         if new > 0 {
             self.test_fork(new as usize);
         }
@@ -1662,7 +1662,7 @@ impl super::ContentStore {
         std::sync::Arc::clone(&self.atoms)
     }
 
-    pub fn intern_atoms(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
+    pub fn intern_atoms(&self, values: &[&str]) -> StoreResult<rerail_blocks::vector::Vector<Sym>> {
         let ids = self.atoms.intern_all(values)?;
         // A store with a writer has it append them (decision 0104: only its writers write); one without, now.
         if self.write_back.is_some() {

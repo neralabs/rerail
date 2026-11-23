@@ -10,12 +10,12 @@ use rerail_compiler::stream::Refused;
 /// (`Resident`): tier 2 reads the file's bytes, positions, mask words and totals in the device's
 /// shared memory, where tier 1 wrote them. Or the word that refused it. A file whose tape does not
 /// fit the narrow widths is read again at wider ones (`Parser::again`).
-pub fn image_on(parser: &Parser, run: &Resident, i: usize) -> Result<Vec<u8>, Refused> {
+pub fn image_on(parser: &Parser, run: &Resident, i: usize) -> Result<rerail_tape_format::Vector<u8>, Refused> {
     image_with(parser, &parser.tier2, run, i).or_else(|narrow| parser.again(narrow, |t2| image_with(parser, t2, run, i)))
 }
 
 /// `image_on`, by tier 2 `t2`.
-fn image_with(parser: &Parser, t2: &CompiledStream, run: &Resident, i: usize) -> Result<Vec<u8>, Refused> {
+fn image_with(parser: &Parser, t2: &CompiledStream, run: &Resident, i: usize) -> Result<rerail_tape_format::Vector<u8>, Refused> {
     let f = run.files[i];
     let source = &run.sources[i];
     let (pos, tot, out) = (run.positions.host().cast::<u32>(), run.tot.host().cast::<u32>(), run.out.host().cast::<u64>());

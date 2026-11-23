@@ -25,5 +25,5 @@ pub struct SearchAnchorLookup {
 pub enum StoredAnchorSelection {
     Unknown,
     Candidate,
-    Roots(Vec<u32>),
+    Roots(rerail_blocks::vector::Vector<u32>),
 }

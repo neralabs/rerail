@@ -9,6 +9,7 @@
 //! never writes it there. A file the parser refuses (any syntax error, which tree-sitter recovers
 //! from; a construct it does not read) goes to tree-sitter.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::tape::{CODE_EXTRA, Code, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, TapeImage, TemplateError, TreeParser};
 use rerail_ecma_lean::Dialect;
@@ -59,6 +60,12 @@ pub fn encode(dialect: Dialect, grammar: &Grammar, source: &str, budget: &dyn Fn
 
 /// [`encode`] from the node kind `start` (decision 0466): `None` for a kind the parser does not start at.
 pub fn encode_from(dialect: Dialect, grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<Result<TapeImage, String>, rerail_ecma_lean::Refusal>> {
+    encode_omitting(dialect, grammar, source, start, Vector::new(), budget)
+}
+
+/// [`encode_from`] of an embedded program, its placeholders `omit` (`SegmentMap::omissions`) left out as it is
+/// written (`Writer::omitting`).
+pub fn encode_omitting(dialect: Dialect, grammar: &Grammar, source: &str, start: &str, omit: Vector<[u32; 2]>, budget: &dyn Fn() -> bool) -> Option<Result<Result<TapeImage, String>, rerail_ecma_lean::Refusal>> {
     let ids = ids(dialect);
     let lacks = move |what: &str, i: usize| format!("{dialect:?}'s grammar lacks the lean parser's {what} {i}");
     let code_of = move |&key: &u32| -> Result<Code, String> {
@@ -72,7 +79,7 @@ pub fn encode_from(dialect: Dialect, grammar: &Grammar, source: &str, start: &st
         }
         Ok(code)
     };
-    rerail_ecma_lean::tape_from_into(source.as_bytes(), dialect, start, &mut super::formats::lean(grammar, source, budget, code_of))
+    rerail_ecma_lean::tape_from_into(source.as_bytes(), dialect, start, &mut super::formats::lean(grammar, source, budget, code_of).omitting(omit))
 }
 
 /// A dialect's tree parser: the lean parser, standing in for tree-sitter where it reads the file.

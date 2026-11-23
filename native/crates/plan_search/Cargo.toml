@@ -41,6 +41,7 @@ metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-rr
 test-hooks = ["rerail-logic-core/test-hooks", "rerail-setfix/test-hooks", "rerail-blocks/test-hooks", "rerail-program-image/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rr/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-plan-base/test-hooks"]
 
 [dependencies]
+rerail-section = { path = "../section" }
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"
 libc = "0.2.189"

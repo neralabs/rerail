@@ -80,7 +80,7 @@ impl Kernel {
         let mut tapes = Vec::new();
         for _ in 0..2 {
             let n = len(take(8)?)?;
-            let image = take(n)?.to_vec();
+            let image = rerail_tape_format::Vector::from(take(n)?);
             let n = len(take(8)?)?;
             let words = take(n.checked_mul(4)?)?.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect();
             rerail_tape_format::View::new(&image).ok()?;

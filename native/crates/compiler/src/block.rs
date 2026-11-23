@@ -20,6 +20,7 @@
 //! byte. The CPU works in 64-byte words; Metal gives each lane 16, 32 or 64 bytes
 //! (`metal_block_program::LaneWidth`).
 
+use rerail_blocks::vector::Vector;
 use crate::Error;
 
 /// The bits of a file's start an `Early` may move: Metal's narrowest lane has 16 bytes, so its
@@ -277,12 +278,12 @@ impl BlockOp {
     }
 
     /// The values the operation reads.
-    pub fn operands(&self) -> Vec<u16> {
+    pub fn operands(&self) -> Vector<u16> {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Prefix(..) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => vec![],
-            BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Early(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) | BlockOp::Carry(a) => vec![a],
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Prefix(..) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => rerail_blocks::vector![],
+            BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Early(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) | BlockOp::Carry(a) => rerail_blocks::vector![a],
             BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) | BlockOp::Fill(a, b) | BlockOp::BackFill(a, b) => {
-                vec![a, b]
+                rerail_blocks::vector![a, b]
             }
         }
     }
@@ -465,21 +466,21 @@ impl ClassTable {
 pub struct BlockProgram {
     pub tables: Vec<ClassTable>,
     pub ops: Vec<BlockOp>,
-    pub outputs: Vec<u16>,
+    pub outputs: Vector<u16>,
     /// Values, each also an output, whose set bits the extract pass writes as byte positions
     /// (`docs/parser-generators/10-bit-programs.md` §4.1): simdjson's structural
     /// indexes from its structural mask.
-    pub extracts: Vec<u16>,
+    pub extracts: Vector<u16>,
     /// Values, each also an output, that each executor tests over the whole stream, all of them
     /// together: one flag per file (`BlockRun::totals`), 1 when any of them has a bit and 0 when
     /// none has (simdjson's one accumulated error, doc 26 §1.5). Tier 2 reads it (`EMPTY 0`):
     /// the fallback's masks, one per delay, are totals, and a file with any bit goes to
     /// tree-sitter. Only whether there is a bit is wanted, so no executor counts them.
-    pub totals: Vec<u16>,
+    pub totals: Vector<u16>,
     /// Values, each also an output, that tier 2 reads as masks, a word of 64 bytes at a time:
     /// the last byte of each token whose end its row does not know (`SPAN m=1`), found as the
     /// next set bit. Nothing flattens them.
-    pub masks: Vec<u16>,
+    pub masks: Vector<u16>,
     /// The value, also an output, whose bits are the bytes a line terminator of its set can end with, the set its
     /// grammar's language reads (decision 0612, `Terminators::last_bytes`), where the program has a tree section: the
     /// format 16 tape's line index is made from its words, each kept where it ends one (`Terminators::ends_at`), with
@@ -568,8 +569,8 @@ pub struct WalkKind {
 
 impl Walk {
     /// The values the walk makes: the hidden places, then each kind's open, fill and empty.
-    pub fn made(&self) -> Vec<u16> {
-        let mut out = vec![self.hidden];
+    pub fn made(&self) -> Vector<u16> {
+        let mut out = rerail_blocks::vector![self.hidden];
         for k in &self.kinds {
             out.push(k.open);
             out.push(k.fill);
@@ -579,7 +580,7 @@ impl Walk {
     }
 
     /// The values it reads: each kind's opener and closer, and a second closer.
-    pub fn reads(&self) -> Vec<u16> {
+    pub fn reads(&self) -> Vector<u16> {
         self.kinds.iter().flat_map(|k| [k.opener, k.closer].into_iter().chain(k.or.map(|o| o.0))).collect()
     }
 
@@ -625,7 +626,7 @@ pub fn byte_tests(ops: &[BlockOp], v: u16) -> Option<Vec<(u8, ByteTest)>> {
 /// to one of its nexts, carries included), and the last of them, where the group runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Group {
-    pub members: Vec<usize>,
+    pub members: Vector<usize>,
     pub carries: Vec<(usize, usize)>,
 }
 
@@ -636,7 +637,7 @@ pub struct Group {
 pub fn groups(ops: &[BlockOp], rounds: &[Vec<(u16, u16)>]) -> Result<Vec<Group>, String> {
     let n = ops.len();
     let users = {
-        let mut u: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut u: Vec<Vector<usize>> = vec![rerail_blocks::vector::Vector::new(); n];
         for (at, op) in ops.iter().enumerate() {
             for o in op.operands() {
                 u[usize::from(o)].push(at);
@@ -657,20 +658,20 @@ pub fn groups(ops: &[BlockOp], rounds: &[Vec<(u16, u16)>]) -> Result<Vec<Group>,
         }
         // Forward from the carries, backward from the nexts.
         let mut ahead = vec![false; n];
-        let mut todo: Vec<usize> = pairs.iter().map(|p| p.0).collect();
+        let mut todo: Vector<usize> = pairs.iter().map(|p| p.0).collect();
         while let Some(x) = todo.pop() {
             if !std::mem::replace(&mut ahead[x], true) {
                 todo.extend(users[x].iter().copied());
             }
         }
         let mut behind = vec![false; n];
-        let mut todo: Vec<usize> = pairs.iter().map(|p| p.1).collect();
+        let mut todo: Vector<usize> = pairs.iter().map(|p| p.1).collect();
         while let Some(x) = todo.pop() {
             if !std::mem::replace(&mut behind[x], true) && !matches!(ops[x], BlockOp::Carry(_)) {
                 todo.extend(ops[x].operands().into_iter().map(usize::from));
             }
         }
-        let members: Vec<usize> = (0..n).filter(|&x| ahead[x] && behind[x]).collect();
+        let members: Vector<usize> = (0..n).filter(|&x| ahead[x] && behind[x]).collect();
         // A fixed point settles block by block, first to last: a `back_fill` carries the other way.
         if let Some(&m) = members.iter().find(|&&m| matches!(ops[m], BlockOp::BackFill(..))) {
             return Err(format!("rounds group {g}: `back_fill` %{m} in a fixed point"));
@@ -682,7 +683,7 @@ pub fn groups(ops: &[BlockOp], rounds: &[Vec<(u16, u16)>]) -> Result<Vec<Group>,
         }
         // Strict: from the carries, without passing a `prev`, no next.
         let mut loose = vec![false; n];
-        let mut todo: Vec<usize> = pairs.iter().map(|p| p.0).collect();
+        let mut todo: Vector<usize> = pairs.iter().map(|p| p.0).collect();
         while let Some(x) = todo.pop() {
             if !std::mem::replace(&mut loose[x], true) {
                 todo.extend(users[x].iter().copied().filter(|&u| !matches!(ops[u], BlockOp::Prev(..))));
@@ -732,12 +733,12 @@ pub struct BatchFile<'a> {
 /// order), and each total: 1 when its output has a bit, else 0.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockRun {
-    pub outputs: Vec<Vec<u64>>,
-    pub positions: Vec<Vec<u32>>,
-    pub totals: Vec<u64>,
+    pub outputs: Vec<Vector<u64>>,
+    pub positions: Vec<Vector<u32>>,
+    pub totals: Vector<u64>,
     /// With records, each token's code (`records`); the totals' flag is set too where the
     /// record pass refuses the streams.
-    pub codes: Vec<u32>,
+    pub codes: Vector<u32>,
 }
 
 impl BlockRun {
@@ -752,7 +753,7 @@ impl BlockRun {
                 .enumerate()
                 .map(|(k, w)| {
                     if made.contains(&k) {
-                        Vec::new()
+                        rerail_blocks::vector::Vector::new()
                     } else {
                         w.clone()
                     }
@@ -1003,7 +1004,7 @@ impl BlockProgram {
     }
 
     /// Each extract's output index (its place in `outputs`).
-    pub fn extract_outputs(&self) -> Vec<usize> {
+    pub fn extract_outputs(&self) -> Vector<usize> {
         self.extracts
             .iter()
             .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: an extract is an output"))
@@ -1016,7 +1017,7 @@ impl BlockProgram {
     }
 
     /// Each mask's output index.
-    pub fn mask_outputs(&self) -> Vec<usize> {
+    pub fn mask_outputs(&self) -> Vector<usize> {
         self.masks
             .iter()
             .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: a mask is an output"))
@@ -1024,7 +1025,7 @@ impl BlockProgram {
     }
 
     /// Each total's output index.
-    pub fn total_outputs(&self) -> Vec<usize> {
+    pub fn total_outputs(&self) -> Vector<usize> {
         self.totals
             .iter()
             .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: a total is an output"))
@@ -1046,7 +1047,7 @@ impl BlockProgram {
             .zip(files)
             .map(|(outputs, bytes)| {
                 let mut any = totals.iter().any(|&k| outputs[k].iter().any(|&w| w != 0));
-                let positions: Vec<Vec<u32>> = extracts
+                let positions: Vec<Vector<u32>> = extracts
                     .iter()
                     .map(|&k| {
                         let words = &outputs[k];
@@ -1084,9 +1085,9 @@ impl BlockProgram {
                         any |= bad;
                         codes
                     }
-                    _ => Vec::new(),
+                    _ => rerail_blocks::vector::Vector::new(),
                 };
-                let totals = if totals.is_empty() { Vec::new() } else { vec![u64::from(any)] };
+                let totals = if totals.is_empty() { rerail_blocks::vector::Vector::new() } else { rerail_blocks::vector![u64::from(any)] };
                 BlockRun { outputs, positions, totals, codes }
             })
             .collect()
@@ -1094,15 +1095,22 @@ impl BlockProgram {
 
     /// The CPU interpreter: every output's words over `bytes`. Bits past the end of `bytes` are
     /// zero.
-    pub fn interpret(&self, bytes: &[u8]) -> Vec<Vec<u64>> {
+    pub fn interpret(&self, bytes: &[u8]) -> Vec<Vector<u64>> {
         self.interpret_files(&[bytes]).pop().expect("one file")
+    }
+
+    /// The CPU interpreter's words of output `k` over `bytes`, into `out` (`bytes.len().div_ceil(64)` words, the
+    /// caller's: a block the reader reads in place). Bits past the end of `bytes` are zero.
+    pub fn interpret_into(&self, bytes: &[u8], k: usize, out: &mut [u64]) {
+        let (values, spans) = self.all_values(&[bytes]);
+        undelay_into(&values[usize::from(self.outputs[k])][spans[0].clone()], self.output_delay(k), bytes.len(), out);
     }
 
     /// The CPU interpreter over a batch of files under this program: one dispatch per operation
     /// over every file's blocks (each file's stream and `delay` bytes past it, end to end). A
     /// carried operation starts each file with a zero carry, as a stream of its own; `within`
     /// and the byte before a block are the block's file's.
-    pub fn interpret_files(&self, files: &[&[u8]]) -> Vec<Vec<Vec<u64>>> {
+    pub fn interpret_files(&self, files: &[&[u8]]) -> Vec<Vec<Vector<u64>>> {
         let (values, spans) = self.all_values(files);
         spans
             .into_iter()
@@ -1121,17 +1129,17 @@ impl BlockProgram {
     /// bytes past it included), as they are made: not cut at the file's end, not undelayed.
     /// With each file's span of blocks. For checks of what is claimed about a value
     /// (`token_local`).
-    pub fn all_values(&self, files: &[&[u8]]) -> (Vec<Vec<u64>>, Vec<std::ops::Range<usize>>) {
+    pub fn all_values(&self, files: &[&[u8]]) -> (Vec<Vector<u64>>, Vec<std::ops::Range<usize>>) {
         self.values_by(files, true)
     }
 
     /// `all_values` with each walk's group run as rounds, not walked: the other backend's form
     /// (Metal's), for the check that the two are one.
-    pub fn rounds_values(&self, files: &[&[u8]]) -> (Vec<Vec<u64>>, Vec<std::ops::Range<usize>>) {
+    pub fn rounds_values(&self, files: &[&[u8]]) -> (Vec<Vector<u64>>, Vec<std::ops::Range<usize>>) {
         self.values_by(files, false)
     }
 
-    fn values_by(&self, files: &[&[u8]], walk: bool) -> (Vec<Vec<u64>>, Vec<std::ops::Range<usize>>) {
+    fn values_by(&self, files: &[&[u8]], walk: bool) -> (Vec<Vector<u64>>, Vec<std::ops::Range<usize>>) {
         let extra = usize::from(self.delay);
         // Each block's file (its length, and its block number within it), and whether it is
         // the file's first.
@@ -1147,7 +1155,7 @@ impl BlockProgram {
         }
         let first: Vec<bool> = place.iter().map(|&(at, _)| at == 0).collect();
         // A carried pass: the carry is `zero` at each file's first block.
-        fn carried<C: Copy>(xs: impl Iterator<Item = (usize, u64, u64)>, first: &[bool], zero: C, f: impl Fn(u64, u64, C) -> (u64, C)) -> Vec<u64> {
+        fn carried<C: Copy>(xs: impl Iterator<Item = (usize, u64, u64)>, first: &[bool], zero: C, f: impl Fn(u64, u64, C) -> (u64, C)) -> Vector<u64> {
             let mut c = zero;
             xs.map(|(i, x, y)| {
                 if first[i] {
@@ -1166,7 +1174,7 @@ impl BlockProgram {
         let walk_of: Vec<Option<&Walk>> = (0..groups.len()).map(|g| self.walks.iter().find(|w| usize::from(w.group) == g).filter(|_| walk)).collect();
         for (g, w) in walk_of.iter().enumerate() {
             if let Some(w) = w {
-                let mut made: Vec<usize> = w.made().into_iter().map(usize::from).collect();
+                let mut made: Vector<usize> = w.made().into_iter().map(usize::from).collect();
                 made.sort_unstable();
                 groups[g].members = made;
             }
@@ -1178,9 +1186,9 @@ impl BlockProgram {
             }
         }
         // The groups each value waits on: its own, or one a value it reads waits on.
-        let mut waits: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut waits: Vec<Vector<usize>> = vec![rerail_blocks::vector::Vector::new(); n];
         for x in 0..n {
-            let mut w: Vec<usize> = owner[x].into_iter().collect();
+            let mut w: Vector<usize> = owner[x].into_iter().collect();
             for o in self.ops[x].operands() {
                 w.extend(waits[usize::from(o)].iter().copied());
             }
@@ -1188,13 +1196,13 @@ impl BlockProgram {
             w.dedup();
             waits[x] = w;
         }
-        let last: Vec<usize> = groups.iter().map(|g| *g.members.last().expect("a member")).collect();
-        let mut values: Vec<Vec<u64>> = vec![Vec::new(); n];
+        let last: Vector<usize> = groups.iter().map(|g| *g.members.last().expect("a member")).collect();
+        let mut values: Vec<Vector<u64>> = vec![rerail_blocks::vector::Vector::new(); n];
         let mut ran = vec![false; groups.len()];
-        let mut deferred: Vec<Vec<usize>> = vec![Vec::new(); groups.len()];
+        let mut deferred: Vec<Vector<usize>> = vec![rerail_blocks::vector::Vector::new(); groups.len()];
         // Each value in order, op by op over every block; a group's members at its last, block
         // by block (`rounds`); a value that waits on a group not run yet, after it.
-        let mut order: Vec<usize> = Vec::with_capacity(n);
+        let mut order: Vector<usize> = rerail_blocks::vector::Vector::with_capacity(n);
         for x in 0..n {
             if let Some(g) = owner[x] {
                 if x == last[g] {
@@ -1220,11 +1228,11 @@ impl BlockProgram {
             }
             let op = &self.ops[x];
             let v = |at: u16| &values[usize::from(at)];
-            let two = |a: u16, b: u16, f: fn(u64, u64) -> u64| -> Vec<u64> {
+            let two = |a: u16, b: u16, f: fn(u64, u64) -> u64| -> Vector<u64> {
                 v(a).iter().zip(v(b)).map(|(&x, &y)| f(x, y)).collect()
             };
             let one = |a: u16| v(a).iter().enumerate().map(|(i, &x)| (i, x, 0));
-            let words: Vec<u64> = match *op {
+            let words: Vector<u64> = match *op {
                 BlockOp::Within(d) => place.iter().map(|&(at, len)| within_at(at, len, d)).collect(),
                 BlockOp::Prefix(n, w) => blocks.iter().zip(&place).map(|(block, &(at, len))| prefix_at(block, at, len, n, w)).collect(),
                 BlockOp::Phase(k, r) => place.iter().map(|&(at, _)| phase(64 * at, k, r)).collect(),
@@ -1243,7 +1251,7 @@ impl BlockProgram {
                     let (a, b) = (&self.tables[usize::from(t)], &self.tables[usize::from(table)]);
                     blocks.iter().zip(&before).map(|(block, prev)| pair(prev, block, a, b, bits)).collect()
                 }
-                BlockOp::Const(c) => vec![c; blocks.len()],
+                BlockOp::Const(c) => rerail_blocks::vector![c; blocks.len()],
                 BlockOp::Not(a) => v(a).iter().map(|&x| !x).collect(),
                 BlockOp::And(a, b) => two(a, b, |x, y| x & y),
                 BlockOp::Or(a, b) => two(a, b, |x, y| x | y),
@@ -1261,7 +1269,7 @@ impl BlockProgram {
                 // Last block to first, the carry zero at each file's last block.
                 BlockOp::BackFill(a, b) => {
                     let (s, e) = (v(a), v(b));
-                    let mut out = vec![0u64; s.len()];
+                    let mut out = rerail_blocks::vector![0u64; s.len()];
                     let mut c = 0u64;
                     for i in (0..s.len()).rev() {
                         if i + 1 == s.len() || first[i + 1] {
@@ -1281,11 +1289,11 @@ impl BlockProgram {
 impl BlockProgram {
     /// A walk over every file's blocks (`Walk`): its regions left to right, each opener's
     /// region to the first bit of its closer after it.
-    fn walk_group(&self, walk: &Walk, first: &[bool], values: &mut [Vec<u64>]) {
+    fn walk_group(&self, walk: &Walk, first: &[bool], values: &mut [Vector<u64>]) {
         let blocks = first.len();
         let hidden = usize::from(walk.hidden);
         for v in walk.made() {
-            values[usize::from(v)] = vec![0; blocks];
+            values[usize::from(v)] = rerail_blocks::vector![0; blocks];
         }
         let next_bit = |v: &[u64], from: usize, end: usize| -> Option<usize> {
             let mut t = from;
@@ -1303,7 +1311,7 @@ impl BlockProgram {
                 v[t / 64] |= 1 << (t % 64);
             }
         };
-        let starts: Vec<usize> = (0..blocks).filter(|&i| first[i]).collect();
+        let starts: Vector<usize> = (0..blocks).filter(|&i| first[i]).collect();
         for (f, &s) in starts.iter().enumerate() {
             let end = 64 * starts.get(f + 1).copied().unwrap_or(blocks);
             let mut resume = 64 * s;
@@ -1357,20 +1365,20 @@ impl BlockProgram {
     /// A rounds group over every block, block by block: from the carries' initial words, its
     /// members again until no carry changes, each carried member from the settled block before
     /// (zero at a file's first block). The values the group does not hold are made already.
-    fn rounds_group(&self, group: &Group, first: &[bool], values: &mut [Vec<u64>]) {
+    fn rounds_group(&self, group: &Group, first: &[bool], values: &mut [Vector<u64>]) {
         let blocks = first.len();
         let mut local = vec![0u64; self.ops.len()];
         let mut state = vec![0u64; group.members.len()];
         let mut outs = vec![0u64; group.members.len()];
         for &m in &group.members {
-            values[m] = vec![0; blocks];
+            values[m] = rerail_blocks::vector![0; blocks];
         }
         let carry_of = |c: usize| group.carries.iter().position(|p| p.0 == c).expect("a carry of the group");
         for i in 0..blocks {
             if first[i] {
                 state.iter_mut().for_each(|x| *x = 0);
             }
-            let mut cur: Vec<u64> = group
+            let mut cur: Vector<u64> = group
                 .carries
                 .iter()
                 .map(|&(c, _)| match self.ops[c] {
@@ -1399,7 +1407,7 @@ impl BlockProgram {
                     local[m] = w;
                     outs[k] = c;
                 }
-                let next: Vec<u64> = group.carries.iter().map(|&(_, x)| local[x]).collect();
+                let next: Vector<u64> = group.carries.iter().map(|&(_, x)| local[x]).collect();
                 if next == cur {
                     settled = true;
                     break;
@@ -1420,7 +1428,7 @@ impl BlockProgram {
 pub fn run_batch(programs: &[&BlockProgram], files: &[BatchFile<'_>]) -> Vec<BlockRun> {
     let mut out: Vec<Option<BlockRun>> = vec![None; files.len()];
     for (p, program) in programs.iter().enumerate() {
-        let mine: Vec<usize> = (0..files.len()).filter(|&i| files[i].program == p).collect();
+        let mine: Vector<usize> = (0..files.len()).filter(|&i| files[i].program == p).collect();
         let bytes: Vec<&[u8]> = mine.iter().map(|&i| files[i].bytes).collect();
         for (i, run) in mine.into_iter().zip(program.run_files(&bytes)) {
             out[i] = Some(run);
@@ -1434,10 +1442,11 @@ impl BlockProgram {
     /// `values` holding them value by value (`words` each, reused from run to run), then each
     /// output's words, cut at the batch's length. Straight-line word operations over the
     /// columns; `Cmp` and `Bit` build a word from 64 rows each.
-    pub fn interpret_rows<'v>(&'v self, batch: &RowBatch<'_>, values: &'v mut Vec<u64>) -> impl Iterator<Item = &'v [u64]> + 'v {
+    /// `values` is the caller's (a block, kept from run to run), at least `row_words(batch.len)` long.
+    pub fn interpret_rows<'v>(&'v self, batch: &RowBatch<'_>, values: &'v mut [u64]) -> impl Iterator<Item = &'v [u64]> + 'v {
         let words = batch.len.div_ceil(64);
-        values.clear();
-        values.resize(self.ops.len() * words, 0);
+        let values = &mut values[..self.row_words(batch.len)];
+        values.fill(0);
         for (x, op) in self.ops.iter().enumerate() {
             let (before, rest) = values.split_at_mut(x * words);
             let out = &mut rest[..words];
@@ -1496,10 +1505,15 @@ impl BlockProgram {
 
     /// A row program of `ops` over `shape`'s inputs, with its outputs and the outputs whose rows
     /// the extract pass writes; verified.
-    pub fn row_program(shape: RowShape, ops: Vec<BlockOp>, outputs: Vec<u16>, extracts: Vec<u16>) -> Result<Self, Error> {
+    pub fn row_program(shape: RowShape, ops: Vec<BlockOp>, outputs: Vector<u16>, extracts: Vector<u16>) -> Result<Self, Error> {
         let program = BlockProgram { ops, outputs, extracts, rows: Some(shape), ..BlockProgram::default() };
         program.verify()?;
         Ok(program)
+    }
+
+    /// The words `interpret_rows` takes for its values over `len` rows.
+    pub fn row_words(&self, len: usize) -> usize {
+        self.ops.len() * len.div_ceil(64)
     }
 
     /// A row program's operations, in order (an interpreter of them elsewhere: the device's `metal_join`).
@@ -1514,7 +1528,7 @@ impl BlockProgram {
 
     /// A row program's extract pass: the rows (numbers within the batch, in order) whose bit
     /// output `k` sets, appended to `out`.
-    pub fn extract_rows(&self, batch: &RowBatch<'_>, k: usize, values: &mut Vec<u64>, out: &mut Vec<u32>) {
+    pub fn extract_rows(&self, batch: &RowBatch<'_>, k: usize, values: &mut [u64], out: &mut Vector<u32>) {
         let words = self.interpret_rows(batch, values).nth(k).expect("an output");
         for (w, &word) in words.iter().enumerate() {
             let mut m = word;
@@ -1529,14 +1543,15 @@ impl BlockProgram {
 /// The extract pass on the CPU (`10-bit-programs.md` §4.1): a plane's set bits as
 /// byte positions, into a vector allocated once at its final size.
 pub mod extract {
+    use rerail_blocks::vector::Vector;
     /// The positions of `words`' set bits, `count` of them (the mask pass's popcount), by
     /// simdjson's flattening (`bit_indexer::write`): per word, eight positions written whether
     /// or not the word has them (trailing zeros, then clear the lowest bit), then eight more
     /// while the word has more; the slack past the last position is never read.
-    pub fn positions(words: &[u64], count: usize) -> Vec<u32> {
+    pub fn positions(words: &[u64], count: usize) -> Vector<u32> {
         // A word writes at most seven entries past its own bits, which the next word overwrites;
         // eight entries of slack cover the last.
-        let mut out = vec![0u32; count + 8];
+        let mut out = rerail_blocks::vector![0u32; count + 8];
         let mut at = 0usize;
         for (i, &word) in words.iter().enumerate() {
             let base = i as u32 * 64;
@@ -1563,7 +1578,7 @@ pub mod extract {
 }
 
 /// The source as whole 64-byte blocks, zero past its end.
-pub fn padded(bytes: &[u8]) -> Vec<[u8; 64]> {
+pub fn padded(bytes: &[u8]) -> Vector<[u8; 64]> {
     bytes
         .chunks(64)
         .map(|chunk| {
@@ -1575,7 +1590,7 @@ pub fn padded(bytes: &[u8]) -> Vec<[u8; 64]> {
 }
 
 /// The blocks of `bytes` and `extra` zero bytes after them.
-pub fn padded_by(bytes: &[u8], extra: usize) -> Vec<[u8; 64]> {
+pub fn padded_by(bytes: &[u8], extra: usize) -> Vector<[u8; 64]> {
     let mut blocks = padded(bytes);
     let want = (bytes.len() + extra).div_ceil(64);
     blocks.resize(want.max(blocks.len()), [0u8; 64]);
@@ -1627,19 +1642,21 @@ pub fn within_at(at: usize, len: usize, d: u8) -> u64 {
 
 /// An executor's output words as the stream's mask: shifted down by the program's `delay` (bit
 /// `i + delay` is byte `i`'s), cut to `len` bytes. Shared by every executor's host side.
-pub fn undelay(words: &[u64], delay: u8, len: usize) -> Vec<u64> {
-    let d = u32::from(delay);
-    let mut out: Vec<u64> = (0..len.div_ceil(64))
-        .map(|j| {
-            let w = words.get(j).copied().unwrap_or(0);
-            if d == 0 {
-                return w;
-            }
-            (w >> d) | (words.get(j + 1).copied().unwrap_or(0) << (64 - d))
-        })
-        .collect();
-    mask_tail(&mut out, len);
+pub fn undelay(words: &[u64], delay: u8, len: usize) -> Vector<u64> {
+    let mut out = rerail_blocks::vector![0; len.div_ceil(64)];
+    undelay_into(words, delay, len, &mut out);
     out
+}
+
+/// `undelay` into `out`, `len.div_ceil(64)` words the caller holds.
+pub fn undelay_into(words: &[u64], delay: u8, len: usize, out: &mut [u64]) {
+    let d = u32::from(delay);
+    assert_eq!(out.len(), len.div_ceil(64), "an output of the stream's words");
+    for (j, o) in out.iter_mut().enumerate() {
+        let w = words.get(j).copied().unwrap_or(0);
+        *o = if d == 0 { w } else { (w >> d) | (words.get(j + 1).copied().unwrap_or(0) << (64 - d)) };
+    }
+    mask_tail(out, len);
 }
 
 /// Clear the bits past `len` bytes.
@@ -1699,7 +1716,7 @@ pub fn class(block: &[u8; 64], table: &ClassTable, bits: u8) -> u64 {
 
 /// Each block's bytes one back: byte `j` of block `i`'s is stream byte `64 i + j - 1`, 0x00
 /// before the stream.
-pub fn before_blocks(blocks: &[[u8; 64]]) -> Vec<[u8; 64]> {
+pub fn before_blocks(blocks: &[[u8; 64]]) -> Vector<[u8; 64]> {
     let mut last = 0u8;
     blocks
         .iter()

@@ -33,7 +33,7 @@ pub fn compiled(cpp: bool) -> Result<&'static Compiled, &'static str> {
 }
 
 /// `src`'s tape: the grammar's, or the lean writer's where the grammar refuses the file.
-pub fn image(src: &[u8], cpp: bool) -> Vec<u8> {
+pub fn image(src: &[u8], cpp: bool) -> rerail_tape_format::Vector<u8> {
     compiled(cpp).ok().and_then(|c| c.image(src)).unwrap_or_else(|| rerail_c_pp::tape::image(src, options(cpp)))
 }
 

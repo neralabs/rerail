@@ -86,7 +86,7 @@ pub fn build(
         let first = format!("{GATE}(__rr_parent.state,{id},1)");
         let mut changed = BTreeMap::new();
         let mut seen = vec![];
-        let mut journals = vec![];
+        let mut journals = rerail_blocks::vector![];
         for input in &op.run.inputs {
             // During a cold positive set loop, base relations only gain rows and
             // external facts stay frozen. Generated frontier inputs can lose rows.

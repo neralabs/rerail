@@ -97,8 +97,10 @@ fn main() {
             for (k, &x) in items.iter().enumerate() {
                 let got = table.id(p.ranks(), x).map(|(l, _)| l);
                 if got != Some(low[k]) {
+                    let file = files[facts.iter().position(|g| Arc::ptr_eq(g, f)).unwrap()].display();
+                    let f = p.f();
                     let parent = f.parent(x).map(|q| (q, dialect.name(f, q), f.named(q)));
-                    panic!("{}: item {k} (tape {x}, {:?} {:?}, parent {parent:?}): in place {got:x?}, numbered {:x}", files[facts.iter().position(|g| Arc::ptr_eq(g, f)).unwrap()].display(), dialect.name(f, x), f.text(x), low[k]);
+                    panic!("{file}: item {k} (tape {x}, {:?} {:?}, parent {parent:?}): in place {got:x?}, numbered {:x}", dialect.name(f, x), f.text(x), low[k]);
                 }
             }
             let mut least = [Cost::default(); 6];

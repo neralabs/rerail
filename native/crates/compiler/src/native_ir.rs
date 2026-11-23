@@ -377,7 +377,7 @@ pub struct Structure {
     pub has_repeats: bool,
     pub maximum_cursor_slot: u32,
     pub reservation_sites: Vec<ReservationSite>,
-    pub longs: Vec<u64>,
+    pub longs: rerail_blocks::vector::Vector<u64>,
     pub strings: Vec<Vec<u8>>,
     /// Tier 2's switch tables (`SWITCH`).
     pub switches: Vec<crate::stream_ir::ByteSwitch>,

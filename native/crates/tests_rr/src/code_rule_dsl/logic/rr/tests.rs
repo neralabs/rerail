@@ -1,6 +1,7 @@
 //! The `.rerail` front end: the rule-syntax files parse and pass `check_rr.py`'s checks, the spellings lower to the
 //! engine's forms, and every `.rdl` program translates to `.rerail` that lowers to the same program.
 
+use rerail_blocks::vector::Vector;
 use rerail_store::Canonical as _;
 use super::*;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
@@ -42,7 +43,7 @@ fn body_of(v: &Version, r: RuleRef<'_>) -> Vec<String> {
 
 /// `v`'s components in T's order, or the first that a negation or an aggregate closes.
 fn strata(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
-    analyses::components_by_name(v, &About::of(v))
+    analyses::components_by_name(v, &About::of(v)).map(|c| c.to_sets())
 }
 
 #[test]
@@ -293,7 +294,7 @@ fn rule_syntax_files_pass_check_rr() {
     // Phase 0 resolves every file's includes in one run of `bootstrap.rerail`, not one run each.
     let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonical().unwrap())).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
-    let programs: Vec<(PathBuf, Vec<(PathBuf, Vec<from_tape::Stmt>)>)> = rr_files().into_iter().map(|f| {
+    let programs: Vec<(PathBuf, Vec<(PathBuf, from_tape::Statements)>)> = rr_files().into_iter().map(|f| {
         let program = program(&f).unwrap().0;
         (f, program)
     }).collect();
@@ -321,9 +322,9 @@ fn rule_syntax_files_pass_check_rr() {
         if !program.iter().any(|(p, _)| *p == core) {
             program.push((core.clone(), read(&core).unwrap().0));
         }
-        let named: Vec<(String, Vec<from_tape::Stmt>)> = program.iter().map(|(p, s)| (short(p), s.clone())).collect();
+        let named: Vec<(String, from_tape::Statements)> = program.iter().map(|(p, s)| (short(p), s.clone())).collect();
         problems.extend(check::declarations(&named).into_iter().map(|p| format!("{}: {p}", short(&f))));
-        let all: Vec<&from_tape::Stmt> = program.iter().flat_map(|(_, s)| s).collect();
+        let all: from_tape::Statements = program.iter().flat_map(|(_, s)| s).collect();
         problems.extend(check::strata(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
         // A relation read and declared nowhere in the file's program, as check-rr and a run refuse it.
         problems.extend(check::undeclared(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
@@ -345,15 +346,15 @@ fn check_rr_finds_problems() {
     let cat = statements(".decl a(m: symbol)\n.decl b(q: symbol)\nb(q) :- a(m), m = @cat(q, x).\nb(q) :- a(q), m = @cat(q, x).\n");
     assert_eq!(check::grounded(&cat, &BTreeSet::new()), vec![(4, vec!["m".to_owned()])]);
     let cyclic = statements(".decl a(x: number)\n.decl b(x: number)\na(x) :- b(x), !a(x).\nb(x) :- a(x).\n");
-    let refs: Vec<&from_tape::Stmt> = cyclic.iter().collect();
+    let refs: from_tape::Statements = cyclic.iter().collect();
     assert_eq!(check::strata(&refs).len(), 1);
     // A negation in a component that reads a world answer is the engine's gated negation (decision 0065 §2a, as
     // `c/includes.rerail`'s `#include_next`); an aggregate there is still refused.
     let world = ".decl dir_entry(d: symbol, n: symbol, k: number)\n.input dir_entry\n.decl a(x: symbol)\n.decl b(x: symbol)\n";
     let gated = statements(&format!("{world}a(x) :- b(x), dir_entry(x, _, 0), !a(x).\nb(x) :- a(x).\n"));
-    assert!(check::strata(&gated.iter().collect::<Vec<_>>()).is_empty());
+    assert!(check::strata(&gated).is_empty());
     let counted = statements(&format!("{world}.decl c(x: symbol, n: number)\nc(x, n) :- b(x), dir_entry(x, _, 0), n = count : {{ c(x, _) }}.\nb(x) :- c(x, _).\n"));
-    assert_eq!(check::strata(&counted.iter().collect::<Vec<_>>()).len(), 1);
+    assert_eq!(check::strata(&counted).len(), 1);
     let twice = vec![("a.rerail".to_owned(), statements(".decl a(x: number)")), ("b.rerail".to_owned(), statements(".decl a(x: number)\n.decl glob(x: symbol)"))];
     assert_eq!(check::declarations(&twice).len(), 2);
 }
@@ -1655,7 +1656,7 @@ fn a_handed_program_run_again_finds_the_same() {
     crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let run = |out: &str| crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(out), &serde_json::Value::Null).map(|r| r["diagnostics"].clone());
     let first = run("first").unwrap();
-    assert_eq!(first.as_array().map(Vec::len), Some(1), "{first}");
+    assert_eq!(first.as_array().map(|v| v.len()), Some(1), "{first}");
     let again = run("again");
     crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
     let _ = std::fs::remove_dir_all(&dir);
@@ -2776,7 +2777,7 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     let names = ["sqlkinds", "objects", "unscoped", "qualified", "counted"];
     let (shown, docs) = guests_run_with("sqlguest", &[("a.py", py)], rule, |o| {
         let shown: Vec<Vec<Vec<String>>> = names.iter().map(|rel| o.get(rel).map(|r| r.shown()).unwrap_or_default()).collect();
-        (shown, o.rows("docs").iter().map(|r| r.get(0).int().expect("a document number")).collect::<Vec<i64>>())
+        (shown, o.rows("docs").iter().map(|r| r.get(0).int().expect("a document number")).collect::<Vector<i64>>())
     });
     let [sqlkinds, objects, unscoped, qualified, counted] = <[Vec<Vec<String>>; 5]>::try_from(shown).unwrap();
     assert!(sqlkinds.contains(&shown_row(&["object_reference"])), "{sqlkinds:?}");
@@ -4493,7 +4494,7 @@ fn library_modules_link_to_the_lowering_of_them_together() {
             continue;
         }
         let files: Files = paths.iter().map(|p| (p.clone(), read(p).unwrap().0.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect())).collect();
-        let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
+        let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter()).collect()).unwrap();
         let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
         // Each module read back from its image (decision 0246 §6) links to the same program, on versions (0377).
         let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(std::sync::Arc::new(module_image::encode(m).unwrap())).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
@@ -5191,15 +5192,15 @@ fn a_layout_line_states_a_relations_facts_by_its_columns() {
                 .decl o(x: number)\n.output o\no(x) :- e(x, _, _).\n";
     let p = parse(text).unwrap();
     let want = vec![
-        F::Key(vec![1]),
-        F::Key(vec![0, 2]),
-        F::Fanout { from: vec![0], to: vec![1], fan: Fan::Few },
+        F::Key(rerail_blocks::vector![1]),
+        F::Key(rerail_blocks::vector![0, 2]),
+        F::Fanout { from: rerail_blocks::vector![0], to: rerail_blocks::vector![1], fan: Fan::Few },
         F::Local,
-        F::Order { col: 2, within: vec![0], dense: true },
+        F::Order { col: 2, within: rerail_blocks::vector![0], dense: true },
         F::Tree { from: 0, to: 1 },
         F::Size(LayoutSize::Per { most: 2, col: 0 }),
-        F::Fanout { from: vec![1], to: vec![0], fan: Fan::About(3) },
-        F::By(Algo::Running { col: 2, within: vec![0] }),
+        F::Fanout { from: rerail_blocks::vector![1], to: rerail_blocks::vector![0], fan: Fan::About(3) },
+        F::By(Algo::Running { col: 2, within: rerail_blocks::vector![0] }),
     ];
     let layouts = ProgramFields::layouts(&*p);
     assert_eq!(layouts.get("e"), Some(&want), "{layouts:?}");
@@ -5236,14 +5237,14 @@ fn layouts_are_carried_with_the_program() {
     let p = parse(&policy("a")).unwrap();
     let layouts = ProgramFields::layouts(&*p);
     let child = layouts.get("child").expect("core.rerail declares child's layout");
-    assert!(child.contains(&F::Key(vec![1])) && child.contains(&F::Order { col: 2, within: vec![0], dense: true }), "{child:?}");
-    assert!(layouts.get("node").is_some_and(|f| f.contains(&F::Key(vec![1]))), "{:?}", layouts.get("node"));
+    assert!(child.contains(&F::Key(rerail_blocks::vector![1])) && child.contains(&F::Order { col: 2, within: rerail_blocks::vector![0], dense: true }), "{child:?}");
+    assert!(layouts.get("node").is_some_and(|f| f.contains(&F::Key(rerail_blocks::vector![1]))), "{:?}", layouts.get("node"));
     // The image's facts, read back from its bytes.
     let v = Version::open(p.fold().unwrap().base_bytes().unwrap()).unwrap();
     assert_eq!(ProgramFields::layouts(&*v), layouts);
     let about = About::of(&v);
     let rel = v.rel("child").unwrap();
-    assert_eq!(about.layouts.iter().find(|(r, _)| *r == rel).map(|(_, f)| f), Some(child));
+    assert_eq!(about.layouts.iter().find(|e| e.0 == rel).map(|e| e.1.iter().map(|f| <crate::code_rule_dsl::logic::front::ast::LayoutFact as rerail_section::Decode>::decode(f, &rerail_section::Names::NONE)).collect::<Vec<_>>()).as_ref(), Some(child));
     // Combined: each relation keeps its facts under the name it has there.
     let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&policy("a"), &policy("b")]).unwrap();
     let layouts = combined.layouts();

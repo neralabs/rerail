@@ -7,6 +7,7 @@
 //! every other program's are copied from the last link as they are (`Part::spliced`). The header, the requests, the
 //! kind sets and the policies are the last link's: a program's part of each is in its interface.
 
+use rerail_blocks::vector::Vector;
 use super::added::Added;
 use super::preparation::parts::{hex, keep, kept, ordered, rows_of, str, unhex};
 use super::scoping::Policy;
@@ -29,7 +30,7 @@ pub(super) const TERMS: [&str; 12] = ["its place", "its bound", "its guests", "i
 
 /// A program's interface: each term's digest (`TERMS`), so that a slot whose interface changed names what changed.
 #[derive(Clone, PartialEq, Eq)]
-pub(super) struct Interface(Vec<[u8; 32]>);
+pub(super) struct Interface(Vector<[u8; 32]>);
 
 impl Interface {
     /// The terms that differ from `was`'s.
@@ -45,7 +46,7 @@ impl Interface {
     }
 
     fn unhex(text: &str) -> Option<Interface> {
-        text.split(':').map(unhex).collect::<Option<Vec<_>>>().map(Interface)
+        text.split(':').map(unhex).collect::<Option<Vector<_>>>().map(Interface)
     }
 }
 
@@ -53,7 +54,7 @@ impl Interface {
 pub(super) struct Record {
     /// How many of the linked rules each part's are, in the link's order: the header's, the library's (held once),
     /// then each program's.
-    pub counts: Vec<usize>,
+    pub counts: Vector<usize>,
     /// Each program's slot, in order.
     pub slots: Vec<Slot>,
     /// Each request's key (decision 0089 §3): its number, and the program that asked it first (the one its copy is).
@@ -93,7 +94,7 @@ pub(super) fn family(programs: usize, extra: &Added, library: &[HashKey]) -> [u8
 /// policy and core rules.
 pub(super) fn interface(parts: &[&dyn std::fmt::Debug; 12]) -> Interface {
     use sha2::Digest as _;
-    Interface(parts.iter().map(|p| sha2::Sha256::digest(format!("{p:?}").as_bytes()).into()).collect())
+    Interface(parts.iter().map(|p| <[u8; 32]>::from(sha2::Sha256::digest(format!("{p:?}").as_bytes()))).collect())
 }
 
 fn join(set: &BTreeSet<String>) -> String {
@@ -129,7 +130,7 @@ fn facts_of(r: &Record, digest: &[u8; 32]) -> Facts {
 }
 
 fn record_of(facts: &Facts) -> Option<Record> {
-    let counts = ordered(facts, "combine_count").into_iter().map(|r| r.get(1)?.parse().ok()).collect::<Option<Vec<usize>>>()?;
+    let counts = ordered(facts, "combine_count").into_iter().map(|r| r.get(1)?.parse::<usize>().ok()).collect::<Option<rerail_blocks::vector::Vector<usize>>>()?;
     let slots = ordered(facts, "combine_slot").into_iter().map(|r| Some(Slot { key: unhex(r.get(1)?)?, interface: Interface::unhex(r.get(2)?)? })).collect::<Option<Vec<_>>>()?;
     let requests = rows_of(facts, "combine_request").map(|r| Some((unhex(r.get(1)?)?, (r.first()?.parse().ok()?, r.get(2)?.parse().ok()?)))).collect::<Option<BTreeMap<_, _>>>()?;
     let sets = rows_of(facts, "combine_set").map(|r| Some((r.get(1).map(|k| if k.is_empty() { Vec::new() } else { k.split('\u{1f}').map(str::to_owned).collect() })?, r.first()?.clone()))).collect::<Option<BTreeMap<_, _>>>()?;

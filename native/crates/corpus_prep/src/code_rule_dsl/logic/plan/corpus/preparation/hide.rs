@@ -8,6 +8,7 @@
 //! set, a kind name a comparison qualified, and for a copy its head); the version is written once at the end, each
 //! rule copied from its source with those edits, the bounds the last stage adds, and the aggregates' helpers.
 
+use rerail_blocks::vector::Vector;
 use super::super::hiding::{ENTRIES, Fact, VIEWS, dialect_label, qualified};
 use crate::code_rule_dsl::logic::front::{self, Value};
 use crate::code_rule_dsl::logic::program_image::fields::{Edit as Staged, FieldsMut, ProgramFields};
@@ -189,7 +190,7 @@ impl ProgramPass for Hide {
         // The analysis kept across the rounds, each round's change applied to it (decision 0246 §3).
         let mut delta = Delta::new(&rules);
         // The rules the round before changed or added (every rule, at first).
-        let mut touched: Vec<usize> = (0..rules.len()).collect();
+        let mut touched: Vector<usize> = (0..rules.len()).collect();
         loop {
             let _round = crate::code_rule_dsl::logic::profile::span(|| "hiding: a round".to_owned());
             let looked = delta.round(&rules, &prog.b, &seeds, &base_locations, &view, &touched);
@@ -774,7 +775,7 @@ fn plan_rows(reached: &BTreeSet<String>, made: &BTreeSet<String>, specialized: &
 
 /// A positive atom of a base relation (`bases`' locations): its columns that hold locations in one document, and its
 /// document column. `combining::one_document` reads a document's rows by them too.
-pub(super) fn located<'b>(rel: &str, base: &'b HashMap<String, Vec<usize>>) -> (&'b [usize], Option<usize>) {
+pub(super) fn located<'b>(rel: &str, base: &'b HashMap<String, rerail_blocks::vector::Vector<usize>>) -> (&'b [usize], Option<usize>) {
     const PAIR: &[usize] = &[0, 1];
     match rel {
         // A node's parent is in its document (`tape(n, par, size, depth)`, the climbs' walk).
@@ -782,18 +783,18 @@ pub(super) fn located<'b>(rel: &str, base: &'b HashMap<String, Vec<usize>>) -> (
         // A tree axis's node and its ancestor (`rr_has_<set>(n, a)`, `rr_inside_<set>(n, a)`): `has(r, c, "field")`
         // over a guest's root r makes c the guest's node.
         r if front::is_axis(r) => (PAIR, None),
-        r => (base.get(r).map_or(&[], Vec::as_slice), front::document_column(r)),
+        r => (base.get(r).map_or(&[], |v| v.as_slice()), front::document_column(r)),
     }
 }
 
 /// The views the lowering writes as rules (those the program does not take as inputs), and each base relation's
 /// location columns (its node columns and its document's).
-pub(super) fn bases(prog: &dyn ProgramFields) -> (BTreeSet<String>, HashMap<String, Vec<usize>>) {
+pub(super) fn bases(prog: &dyn ProgramFields) -> (BTreeSet<String>, HashMap<String, Vector<usize>>) {
     let inputs = prog.input_names();
     let views: BTreeSet<String> = VIEWS.iter().filter(|r| !inputs.iter().any(|i| i == *r)).map(|r| (*r).to_owned()).collect();
     let base: BTreeSet<String> = inputs.iter().cloned().chain(VIEWS.iter().filter(|r| views.contains(**r)).map(|r| (*r).to_owned())).filter(|r| !ENTRIES.iter().any(|(e, ..)| e == r)).collect();
-    let locations = |rel: &str| -> Vec<usize> {
-        let mut cols: Vec<usize> = prog.columns_of(rel).map_or_else(Vec::new, |c| c.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
+    let locations = |rel: &str| -> Vector<usize> {
+        let mut cols: Vector<usize> = prog.columns_of(rel).map_or_else(rerail_blocks::vector::Vector::new, |c| c.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
         if let Some(c) = crate::code_rule_dsl::typing::file_local::document_column(rel)
             && !cols.contains(&c)
         {
@@ -826,7 +827,7 @@ fn write_rule(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, v
 
 /// Hiding's last stage for one rule: its kind and field names qualified, its wildcards named, and its bounds
 /// (`bound`), by its facts (`analyse`; none where it is not reached).
-fn bounded(v: &Version, rule: &W, facts: &Facts, base_locations: &HashMap<String, Vec<usize>>, bound: u32) -> Final {
+fn bounded(v: &Version, rule: &W, facts: &Facts, base_locations: &HashMap<String, Vector<usize>>, bound: u32) -> Final {
     let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
     let src = v.rule(rule.src).expect("a rule of the input");
     let name = |s: Slot| v.text(src.var(s)).to_owned();
@@ -1052,7 +1053,7 @@ impl Rewrite for Writing<'_> {
 /// enters no guest, so its analysis is empty, and is not made: in a policy most rules are such.
 fn reaching(rules: &[W], seeds: &[Facts]) -> Vec<bool> {
     // A worklist over each relation's readers: a rule is looked at once, and again only when it is marked.
-    let mut readers: HashMap<&str, Vec<usize>> = HashMap::default();
+    let mut readers: HashMap<&str, Vector<usize>> = HashMap::default();
     let mut out = vec![false; rules.len()];
     let mut work = Vec::new();
     for (i, rule) in rules.iter().enumerate() {
@@ -1180,12 +1181,12 @@ fn asking(prog: &dyn ProgramFields, rules: &[W]) -> BTreeSet<String> {
 ///   edits made.
 struct Delta {
     /// Each relation's rules, by head.
-    heads: HashMap<String, Vec<usize>>,
+    heads: HashMap<String, Vector<usize>>,
     /// The rules reading each relation in a positive atom: what reaching and the fixpoints follow. An edited rule is
     /// listed under the relation it read too (a superset: following it looks at one rule more, and changes nothing).
-    readers: HashMap<String, Vec<usize>>,
+    readers: HashMap<String, Vector<usize>>,
     /// The rules reading each relation in any literal: whose analysis a change of its columns changes.
-    any_readers: HashMap<String, Vec<usize>>,
+    any_readers: HashMap<String, Vector<usize>>,
     reaches: Vec<bool>,
     /// The relations a rule reaching a guest derives.
     made: std::collections::HashSet<String>,
@@ -1236,12 +1237,12 @@ impl Delta {
 
     /// Brings the analysis to the rules as the round begins, `touched` being those changed since the round before (every
     /// rule at first); returns the rules the round analyses, in order.
-    fn round(&mut self, rules: &[W], prog: &dyn ProgramFields, seeds: &[Facts], base: &HashMap<String, Vec<usize>>, view: &dyn Fn(&str) -> bool, touched: &[usize]) -> Vec<usize> {
+    fn round(&mut self, rules: &[W], prog: &dyn ProgramFields, seeds: &[Facts], base: &HashMap<String, Vector<usize>>, view: &dyn Fn(&str) -> bool, touched: &[usize]) -> Vector<usize> {
         let first = std::mem::replace(&mut self.first, false);
         self.reaches.resize(rules.len(), false);
         // Reaching a guest, from the rules changed: one that enters, or reads a relation a reaching rule derives.
-        let mut newly: Vec<usize> = Vec::new();
-        let mut work: Vec<usize> = Vec::new();
+        let mut newly: Vector<usize> = rerail_blocks::vector::Vector::new();
+        let mut work: Vector<usize> = rerail_blocks::vector::Vector::new();
         for &i in touched {
             let rule = &rules[i];
             let enters = seeds.get(i).is_some_and(|s| !s.is_empty())
@@ -1305,7 +1306,7 @@ impl Delta {
                 before.insert(rel.clone(), old);
             }
         }
-        let which: Vec<usize> = cone.iter().flat_map(|r| self.heads.get(r.as_str()).into_iter().flatten().copied()).collect::<BTreeSet<usize>>().into_iter().collect();
+        let which: Vector<usize> = cone.iter().flat_map(|r| self.heads.get(r.as_str()).into_iter().flatten().copied()).collect::<BTreeSet<usize>>().into_iter().collect();
         let mut lost: BTreeSet<String> = BTreeSet::new();
         fixpoint(rules, base, seeds, &self.reaches, &self.readers, &mut self.carried, which, &mut lost, &|facts, t, slot| {
             let definite = matches!(t, S::Var(x) if facts.get(x).is_some_and(|f| f.definite));
@@ -1336,12 +1337,12 @@ impl Delta {
 #[allow(clippy::too_many_arguments)]
 fn fixpoint(
     rules: &[W],
-    base: &HashMap<String, Vec<usize>>,
+    base: &HashMap<String, Vector<usize>>,
     seeds: &[Facts],
     reaches: &[bool],
-    readers: &HashMap<String, Vec<usize>>,
+    readers: &HashMap<String, Vector<usize>>,
     carried: &mut HashMap<String, Vec<Fact>>,
-    start: Vec<usize>,
+    start: Vector<usize>,
     changed: &mut BTreeSet<String>,
     step: &dyn Fn(&Facts, &S, &mut Fact) -> bool,
 ) {
@@ -1369,7 +1370,7 @@ fn fixpoint(
 }
 
 /// A rule's variables that are scoped, and their grammars; `seed` holds what a specialized copy's head is.
-fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<String, Vec<Fact>>, seed: &Facts) -> Facts {
+fn analyse(rule: &W, base: &HashMap<String, Vector<usize>>, carried: &HashMap<String, Vec<Fact>>, seed: &Facts) -> Facts {
     let mut facts: Facts = seed.clone();
     let positive = || rule.body.iter().filter_map(|(_, l)| l.positive());
     // Seeds: the guest relations' guest columns, with the grammar a constant names.

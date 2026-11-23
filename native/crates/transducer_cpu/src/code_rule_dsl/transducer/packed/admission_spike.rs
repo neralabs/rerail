@@ -1,4 +1,5 @@
 //! Test-only decision experiment. This module is absent from production builds.
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::tape::{Grammar, TapeImage};
 use ast_grep_core::tree_sitter::StrDoc;
@@ -57,7 +58,7 @@ struct TerminalKey {
     pc: u16,
     node: u32,
     cursors: Vec<Option<u32>>,
-    repeats: Vec<u16>,
+    repeats: Vector<u16>,
     captures: Vec<(u16, u32, usize, usize)>,
 }
 
@@ -156,7 +157,7 @@ fn experiment_capacity_refusal_never_reports_complete_results() {
 
 #[test]
 fn deferred_exact_deduplication_preserves_distinct_cursor_frames() {
-    let program = repeated(vec![
+    let program = repeated(rerail_blocks::vector![
         word(REPEAT_BEGIN, 0, 0),
         word(FORK, 0, 12),
         word(FORK, 0, 7),
@@ -196,13 +197,13 @@ fn non_query_multiplicity_and_operand_errors_remain_observable() {
         assert_eq!(run(&program, &tape, &[0], strategy).0, Ok(expected.clone()));
     }
     for words in [
-        vec![
+        rerail_blocks::vector![
             word(SAVE_CURSOR, 0, 500),
             word(SAVE_CURSOR, 0, 0),
             word(RESTORE_CURSOR, 0, 500),
             word(EMIT, 0, 0),
         ],
-        vec![
+        rerail_blocks::vector![
             word(REPEAT_BEGIN, 0, 0),
             word(REPEAT_BUMP, 0, 1),
             word(EMIT, 0, 0),
@@ -226,13 +227,13 @@ fn document(source: &str) -> TapeDoc {
     TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
 }
 
-fn repeated(words: Vec<u32>) -> Program {
+fn repeated(words: Vector<u32>) -> Program {
     let mut program = Program::new(
         words,
         vec![b"x".to_vec(), b"y".to_vec(), b"z".to_vec()],
         vec![],
-        vec![0, 1, 2],
-        vec![],
+        rerail_blocks::vector![0, 1, 2],
+        rerail_blocks::vector![],
     )
     .unwrap();
     program.tree_sitter_query = true;
@@ -240,7 +241,7 @@ fn repeated(words: Vec<u32>) -> Program {
 }
 
 fn diamond(depth: usize) -> Program {
-    let mut words = vec![word(REPEAT_BEGIN, 0, 0)];
+    let mut words = rerail_blocks::vector![word(REPEAT_BEGIN, 0, 0)];
     for _ in 0..depth {
         let pc = words.len() as u16;
         words.extend([
@@ -275,7 +276,7 @@ fn deferred_generation_exposes_exact_reconvergence_amplification() {
 #[test]
 fn exact_admission_and_deferred_containment_preserve_complete_output() {
     let tape = document("name\n");
-    let program = repeated(vec![
+    let program = repeated(rerail_blocks::vector![
         word(REPEAT_BEGIN, 0, 0),
         word(FORK, 0, 5),
         word(CAPTURE, 0, 0),
@@ -316,7 +317,7 @@ fn exact_admission_and_deferred_containment_preserve_complete_output() {
 #[test]
 fn deferred_exact_deduplication_reconstructs_candidate_numbering() {
     let tape = document("name\n");
-    let program = repeated(vec![
+    let program = repeated(rerail_blocks::vector![
         word(REPEAT_BEGIN, 0, 0),
         word(FORK, 0, 7),
         word(FORK, 0, 5),
@@ -348,8 +349,8 @@ fn rejected_cursor_restoring_cycle_requires_more_than_active_batch_deduplication
     let tape = document("# first\n# second\n");
     // Keep the historical execution characterization on deliberately unchecked
     // test data. The production validation boundary must now reject this input.
-    let mut program = repeated(vec![word(EMIT, 0, 0)]);
-    program.words = vec![
+    let mut program = repeated(rerail_blocks::vector![word(EMIT, 0, 0)]);
+    program.words = rerail_blocks::vector![
         word(REPEAT_BEGIN, 0, 0),
         word(SAVE_CURSOR, 0, 0),
         word(FORK, 0, 6),
@@ -397,13 +398,13 @@ fn rejected_cursor_restoring_cycle_requires_more_than_active_batch_deduplication
         pc: usize,
         node: u32,
         cursor: Option<u32>,
-        repeats: Vec<u16>,
+        repeats: Vector<u16>,
     }
     let mut active = vec![Snapshot {
         pc: 0,
         node: 1,
         cursor: None,
-        repeats: vec![],
+        repeats: rerail_blocks::vector![],
     }];
     let mut terminal = Vec::new();
     let mut entry = None;
@@ -460,7 +461,7 @@ fn rejected_cursor_restoring_cycle_requires_more_than_active_batch_deduplication
             pc: 2,
             node: 1,
             cursor: Some(1),
-            repeats: vec![0]
+            repeats: rerail_blocks::vector![0]
         }]
     );
     assert_eq!(terminal.len(), 8);
@@ -472,7 +473,7 @@ fn rejected_cursor_restoring_cycle_requires_more_than_active_batch_deduplication
             pc: 6,
             node: 1,
             cursor: Some(1),
-            repeats: vec![0]
+            repeats: rerail_blocks::vector![0]
         }]
     );
     eprintln!(
@@ -490,7 +491,7 @@ fn rejected_cursor_restoring_cycle_requires_more_than_active_batch_deduplication
 pub fn advancing_greedy_reconvergence() -> (Program, TapeDoc, Vec<Output>) {
     let tape = document("# a\n# b\n");
     assert_eq!(tape.transducer_children(0).collect::<Vec<_>>(), [1, 2]);
-    let program = repeated(vec![
+    let program = repeated(rerail_blocks::vector![
         word(REPEAT_BEGIN, 0, 0),
         word(SAVE_CURSOR, 0, 0),
         word(FORK, 0, 8),

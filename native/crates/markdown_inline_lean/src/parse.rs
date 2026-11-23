@@ -1321,7 +1321,7 @@ impl<'a> P<'a> {
         }
         let mut widths = Widths::guess(self.src.len());
         loop {
-            let mut w = Writer::new(0, widths, nodes.len() + 1).to(finish.target(), self.src);
+            let mut w = Writer::new(0, widths, nodes.len() + 1).to(finish.target(), self.src).omitting(finish.omissions());
             let mut stack: Vec<(usize, u32, usize)> = Vec::new();
             for (i, &(k, s, e, size)) in nodes.iter().enumerate() {
                 while stack.last().is_some_and(|&(_, _, end)| end <= i) {

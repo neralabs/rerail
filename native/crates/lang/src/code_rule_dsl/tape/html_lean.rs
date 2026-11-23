@@ -6,6 +6,7 @@
 //! they are its ids. A file the parser refuses (any syntax error, which tree-sitter recovers from; a
 //! construct it does not read) goes to tree-sitter-html.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::tape::{CODE_EXTRA, Code, FileImage, Grammar, KIND_LIMIT, TapeImage, TemplateError, TreeParser};
 
 /// tree-sitter-html's ids of the parser's kinds (`None`: not in the language).
@@ -30,6 +31,12 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
 
 /// [`encode`] from the node kind `start` (decision 0466): `None` for a kind the parser does not start at.
 pub fn encode_from(grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<Result<TapeImage, String>, rerail_html_lean::Refusal>> {
+    encode_omitting(grammar, source, start, Vector::new(), budget)
+}
+
+/// [`encode_from`] of an embedded program, its placeholders `omit` (`SegmentMap::omissions`) left out as it is
+/// written (`Writer::omitting`).
+pub fn encode_omitting(grammar: &Grammar, source: &str, start: &str, omit: Vector<[u32; 2]>, budget: &dyn Fn() -> bool) -> Option<Result<Result<TapeImage, String>, rerail_html_lean::Refusal>> {
     let ids = kind_ids();
     let code_of = move |&key: &u32| -> Result<Code, String> {
         let (kind, _, _, extra) = rerail_html_lean::unkey(key);
@@ -40,7 +47,7 @@ pub fn encode_from(grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn
         }
         Ok(code)
     };
-    rerail_html_lean::tape_from_into(source.as_bytes(), start, &mut super::formats::lean(grammar, source, budget, code_of))
+    rerail_html_lean::tape_from_into(source.as_bytes(), start, &mut super::formats::lean(grammar, source, budget, code_of).omitting(omit))
 }
 
 /// HTML's tree parser: the lean parser, standing in for tree-sitter-html where it reads the file.

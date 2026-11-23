@@ -92,6 +92,7 @@ rerail-facts = { path = "../facts", default-features = false }
 rerail-lang = { path = "../lang", default-features = false }
 rerail-prof = { path = "../prof" }
 rerail-blocks = { path = "../blocks" }
+rerail-section = { path = "../section" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-store = { path = "../store" }
 rerail-rules = { path = "../rules", default-features = false }

@@ -7,6 +7,7 @@
 //! Everything is looked up by id, through the stack: texts, relations, rules (by id, by head, by the literals that
 //! read a relation), declarations, facts, inputs and outputs. A version's digest is kept as it is made: its parent's,
 //! less what the edit removes or replaces, plus what it adds.
+use rerail_blocks::vector::Vector;
 use super::handles::{AtomRef, RuleRef};
 use super::{AtomId, Cell, Image, RelId, RuleId, bad};
 use crate::code_rule_dsl::logic::front::name::Lists;
@@ -553,7 +554,7 @@ pub fn same_program(a: &Version, b: &Version) -> bool {
         v.asked()
             .into_iter()
             .map(|(req, by)| {
-                let hashes: Vec<u64> = v.rel(&req).into_iter().flat_map(|rel| v.heads(rel)).map(|r| r.hash()).collect();
+                let hashes: Vector<u64> = v.rel(&req).into_iter().flat_map(|rel| v.heads(rel)).map(|r| r.hash()).collect();
                 let mut rules: Vec<(u64, Vec<String>)> = by.into_iter().enumerate().map(|(k, readers)| (hashes.get(k).copied().unwrap_or(0), readers.into_iter().collect())).collect();
                 rules.sort();
                 (req, rules)

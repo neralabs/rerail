@@ -187,7 +187,7 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::borrow::Cow;
                 #[allow(unused_imports)]
-                use hashbrown::HashTable;
+                use rerail_blocks::maps::IdTable as HashTable;
                 #[allow(unused_imports)]
                 use rustc_hash::{FxHashMap as HashMap, FxHasher};
                 #[allow(unused_imports)]
@@ -201,7 +201,7 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::time::Instant;
                 #[allow(unused_imports)]
-                use crate::code_rule_dsl::logic::native::setfix::spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
+                use crate::code_rule_dsl::logic::native::setfix::spec::{ComponentSpec, InputKey, JoinItem, Join, JoinSpec, Line, Reprobe, Source, Start, Tok};
                 #[allow(unused_imports)]
                 pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::device::{Report as DeviceReport, take_report as device_report};
                 #[allow(unused_imports)]
@@ -284,7 +284,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::native::TOP;
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::logic::native::component::spec::{Arg, ComponentSpec, EdgeSpec, Extreme, HeadTok, InputKey, JoinItem, JoinSpec, Line as SpecLine, Reprobe, Source as JoinSource, Start, Tok};
+            use crate::code_rule_dsl::logic::native::component::spec::{Arg, ComponentSpec, EdgeSpec, Extreme, HeadTok, InputKey, JoinItem, Join as PlanJoin, JoinSpec, Line as SpecLine, Reprobe, Source as JoinSource, Start, Tok};
             #[allow(unused_imports)]
             use std::sync::Arc;
             #[allow(unused_imports)]

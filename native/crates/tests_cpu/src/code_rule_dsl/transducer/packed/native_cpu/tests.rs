@@ -1,4 +1,5 @@
     use super::*;
+    use rerail_blocks::vector::Vector;
     use crate::code_rule_dsl::{
         tape::{Grammar, TapeImage},
         transducer::packed::{CAPTURE, EMIT, KIND, Program, native_ir, word},
@@ -116,7 +117,7 @@
             let anchors = vec![vec![
                 (0..files[0].transducer_len() as u32)
                     .filter(|&node| kinds.contains(&files[0].transducer_kind(node)))
-                    .collect::<Vec<_>>(),
+                    .collect::<rerail_blocks::vector::Vector<_>>(),
             ]];
             let expected = super::execute_batch(&programs, &files, &anchors).unwrap();
             let actual = crate::code_rule_dsl::transducer::packed::interpreter_reference(
@@ -146,7 +147,7 @@
                 &SupportLang::Python.get_ts_language(),
             )
             .unwrap();
-            let roots = (0..files[0].transducer_len() as u32).collect::<Vec<_>>();
+            let roots = (0..files[0].transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
             let anchors = vec![vec![roots.clone()]];
             let expected = crate::code_rule_dsl::transducer::packed::execute_batch(
                 std::slice::from_ref(&program),
@@ -232,11 +233,11 @@
             )
             .unwrap(),
             Program::new(
-                vec![word(RESTORE_CURSOR, 0, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(RESTORE_CURSOR, 0, 0), word(EMIT, 0, 0)],
                 vec![b"error".to_vec()],
                 vec![],
-                vec![0],
-                vec![],
+                rerail_blocks::vector![0],
+                rerail_blocks::vector![],
             )
             .unwrap(),
             Program::compile_tree_sitter_query_pattern(
@@ -245,8 +246,8 @@
             )
             .unwrap(),
         ];
-        let roots = (0..files[0].transducer_len() as u32).collect::<Vec<_>>();
-        let anchors = vec![roots.clone(), vec![0], roots.clone()];
+        let roots = (0..files[0].transducer_len() as u32).collect::<Vector<_>>();
+        let anchors = vec![roots.clone(), rerail_blocks::vector![0], roots.clone()];
         let limits = [0, 0, 1];
         let mut expected = crate::code_rule_dsl::transducer::packed::execute_batch_outcomes(
             &programs,
@@ -291,7 +292,7 @@
             interpreter_reference(&programs, &files[0], &anchors, &limits[..2]),
             Err(Error::InvalidAnchor)
         ));
-        let invalid_roots = vec![vec![1, 0], vec![0], roots];
+        let invalid_roots = vec![rerail_blocks::vector![1, 0], rerail_blocks::vector![0], roots];
         assert!(matches!(
             interpreter_reference(&programs, &files[0], &invalid_roots, &limits),
             Err(Error::InvalidAnchor)
@@ -340,7 +341,7 @@
                 .id_for_node_kind("call", true);
             let roots = (0..files[0].transducer_len() as u32)
                 .filter(|&node| files[0].transducer_kind(node) == call)
-                .collect::<Vec<_>>();
+                .collect::<rerail_blocks::vector::Vector<_>>();
             assert_eq!(roots.len(), root_count);
             let anchors = vec![vec![roots.clone()]];
             let expected = crate::code_rule_dsl::transducer::packed::execute_batch(
@@ -417,7 +418,7 @@
         let anchors = vec![vec![
             (0..files[0].transducer_len() as u32)
                 .filter(|&node| kinds.contains(&files[0].transducer_kind(node)))
-                .collect::<Vec<_>>(),
+                .collect::<rerail_blocks::vector::Vector<_>>(),
         ]];
         let started = std::time::Instant::now();
         let output =
@@ -447,7 +448,7 @@
             "fields: ClassVar[dict[str, Field[str]]]\nfile: IO[str] | IO[bytes] | None\n",
         )];
         let anchors = vec![vec![
-            (0..files[0].transducer_len() as u32).collect::<Vec<_>>(),
+            (0..files[0].transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>(),
         ]];
         let expected =
             crate::code_rule_dsl::transducer::packed::execute_batch(&programs, &files, Some(&anchors))
@@ -467,7 +468,7 @@
         .unwrap();
         let files = [tape("# first\n# second\nvalue\n# third\n")];
         let anchors = vec![vec![
-            (0..files[0].transducer_len() as u32).collect::<Vec<_>>(),
+            (0..files[0].transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>(),
         ]];
         let expected = crate::code_rule_dsl::transducer::packed::execute_batch(
             std::slice::from_ref(&program),
@@ -484,17 +485,17 @@
         let grammar = SupportLang::Python.get_ts_language();
         let kind = grammar.id_for_node_kind("identifier", true);
         let program = Program::new(
-            vec![word(KIND, 0, kind), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(KIND, 0, kind), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let files = vec![tape("first\n"), tape("second\n")];
         let anchors = files
             .iter()
-            .map(|file| vec![(0..file.transducer_len() as u32).collect::<Vec<_>>()])
+            .map(|file| vec![(0..file.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>()])
             .collect::<Vec<_>>();
         let expected = crate::code_rule_dsl::transducer::packed::execute_batch(
             std::slice::from_ref(&program),
@@ -514,11 +515,11 @@
             .into_iter()
             .map(|expected| {
                 Program::new(
-                    vec![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+                    rerail_blocks::vector![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
                     vec![expected.clone(), b"match".to_vec()],
                     vec![TextPredicate::Equal(0)],
-                    vec![1],
-                    Vec::new(),
+                    rerail_blocks::vector![1],
+                    rerail_blocks::vector::Vector::new(),
                 )
                 .unwrap()
                 .with_directives(vec![Directive::Downcase { capture: 0 }])
@@ -531,7 +532,7 @@
             .map(|file| {
                 programs
                     .iter()
-                    .map(|_| (0..file.transducer_len() as u32).collect::<Vec<_>>())
+                    .map(|_| (0..file.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>())
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
@@ -545,11 +546,11 @@
     #[test]
     fn cranelift_task_shell_writes_status_without_a_rust_callout() {
         let program = Program::new(
-            vec![word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -573,7 +574,7 @@
         use crate::code_rule_dsl::transducer::packed::{FLAGS, KIND, SIZE};
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(KIND, 0, 7),
                 word(FLAGS, 1, 2),
                 word(SIZE, 0, 4),
@@ -581,8 +582,8 @@
             ],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -686,11 +687,11 @@
         use crate::code_rule_dsl::transducer::packed::KIND;
 
         let program = Program::new(
-            vec![word(KIND, 0, 8), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(KIND, 0, 8), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -793,7 +794,7 @@
         use crate::code_rule_dsl::transducer::packed::{FORK, STOP};
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(FORK, 0, 3),
                 word(EMIT, 0, 0),
                 word(STOP, 0, 0),
@@ -801,8 +802,8 @@
             ],
             vec![b"first".to_vec(), b"second".to_vec()],
             Vec::new(),
-            vec![0, 1],
-            Vec::new(),
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -914,7 +915,7 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, FORK, NEXT, STOP};
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(FORK, 0, 5),
                 word(NEXT, 0, 0),
                 word(CAPTURE, 0, 0),
@@ -925,8 +926,8 @@
             ],
             vec![b"capture".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let compiled = compile_straight_line(&native_ir::lower(&program).unwrap()).unwrap();
@@ -974,7 +975,7 @@
         use crate::code_rule_dsl::transducer::packed::{FORK, GOTO};
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(FORK, 1, 5),
                 word(FORK, 0, 3),
                 word(GOTO, 0, 3),
@@ -984,8 +985,8 @@
             ],
             vec![b"first".to_vec(), b"second".to_vec()],
             Vec::new(),
-            vec![0, 1],
-            Vec::new(),
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let mut native = native_ir::lower(&program).unwrap();
@@ -1109,11 +1110,11 @@
 
         fn run(mode: u8, expected: u32, expected_last: u32) {
             let program = Program::new(
-                vec![word(FOLLOWING, mode, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(FOLLOWING, mode, 0), word(EMIT, 0, 0)],
                 vec![b"match".to_vec()],
                 Vec::new(),
-                vec![0],
-                Vec::new(),
+                rerail_blocks::vector![0],
+                rerail_blocks::vector::Vector::new(),
             )
             .unwrap();
             let mut native = native_ir::lower(&program).unwrap();
@@ -1242,7 +1243,7 @@
         use crate::code_rule_dsl::transducer::packed::{FORK, GOTO};
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(FORK, 0, 3),
                 word(FORK, 0, 3),
                 word(GOTO, 0, 3),
@@ -1250,8 +1251,8 @@
             ],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let mut native = native_ir::lower(&program).unwrap();
@@ -1355,11 +1356,11 @@
         use crate::code_rule_dsl::transducer::packed::FORK;
 
         let program = Program::new(
-            vec![word(FORK, 0, 1), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(FORK, 0, 1), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -1474,11 +1475,11 @@
         use crate::code_rule_dsl::transducer::packed::FORK;
 
         let program = Program::new(
-            vec![word(FORK, 0, 2), word(EMIT, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(FORK, 0, 2), word(EMIT, 0, 0), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -1576,11 +1577,11 @@
     #[test]
     fn cranelift_scheduler_relations_compare_complete_packed_states() {
         let program = Program::new(
-            vec![word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -2020,7 +2021,7 @@
         }
 
         let normal_forks = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(FORK, 0, 4),
                 word(FORK, 0, 3),
                 word(EMIT, 0, 0),
@@ -2029,12 +2030,12 @@
             ],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let greedy_forks = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(FORK, 1, 4),
                 word(FORK, 1, 3),
                 word(EMIT, 0, 0),
@@ -2043,16 +2044,16 @@
             ],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let query = Program::new(
-            vec![word(KIND, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(KIND, 0, 0), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let ample = Capacities {
@@ -2135,7 +2136,7 @@
         };
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(SAVE_CURSOR, 0, 0),
                 word(CHILD, 0, 0),
                 word(CAPTURE, 0, 0),
@@ -2147,8 +2148,8 @@
             ],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -2349,11 +2350,11 @@
 
         fn run(operation: u8, mode: u8, _expected: u32) {
             let program = Program::new(
-                vec![word(operation, mode, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(operation, mode, 0), word(EMIT, 0, 0)],
                 vec![b"match".to_vec()],
                 Vec::new(),
-                vec![0],
-                Vec::new(),
+                rerail_blocks::vector![0],
+                rerail_blocks::vector::Vector::new(),
             )
             .unwrap();
             let mut native = native_ir::lower(&program).unwrap();
@@ -2480,11 +2481,11 @@
         use crate::code_rule_dsl::transducer::packed::TEXT;
 
         let program = Program::new(
-            vec![word(TEXT, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(TEXT, 0, 0), word(EMIT, 0, 0)],
             strings,
             vec![predicate],
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -2535,7 +2536,7 @@
             (
                 CapturePredicate::AnyOf {
                     capture: 0,
-                    strings: vec![0, 1],
+                    strings: rerail_blocks::vector![0, 1],
                     negated: false,
                     any: false,
                 },
@@ -2546,7 +2547,7 @@
             (
                 CapturePredicate::AnyOf {
                     capture: 0,
-                    strings: vec![0],
+                    strings: rerail_blocks::vector![0],
                     negated: true,
                     any: false,
                 },
@@ -2557,7 +2558,7 @@
             (
                 CapturePredicate::AnyOf {
                     capture: 0,
-                    strings: vec![0],
+                    strings: rerail_blocks::vector![0],
                     negated: false,
                     any: false,
                 },
@@ -2579,7 +2580,7 @@
             (
                 CapturePredicate::Contains {
                     capture: 0,
-                    strings: vec![0],
+                    strings: rerail_blocks::vector![0],
                     negated: false,
                     any: false,
                 },
@@ -2590,7 +2591,7 @@
             (
                 CapturePredicate::Relation {
                     capture: 0,
-                    kinds: vec![1],
+                    kinds: rerail_blocks::vector![1],
                     ancestor: true,
                     negated: true,
                 },
@@ -2605,12 +2606,12 @@
                 Vec::new()
             };
             let program = Program::new_with_capture_predicates(
-                vec![word(CAPTURE, 0, 0), word(ASSERT, 0, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(CAPTURE, 0, 0), word(ASSERT, 0, 0), word(EMIT, 0, 0)],
                 strings,
                 text_predicates,
                 vec![predicate],
-                vec![0],
-                Vec::new(),
+                rerail_blocks::vector![0],
+                rerail_blocks::vector::Vector::new(),
             )
             .unwrap();
             let native = native_ir::lower(&program).unwrap();
@@ -2672,7 +2673,7 @@
             },
         ] {
             let program = Program::new_with_capture_predicates(
-                vec![
+                rerail_blocks::vector![
                     word(CAPTURE, 0, 1),
                     word(CAPTURE, 0, 0),
                     word(ASSERT, 0, 0),
@@ -2681,8 +2682,8 @@
                 vec![b"left".to_vec(), b"right".to_vec()],
                 Vec::new(),
                 vec![predicate],
-                vec![0, 1],
-                Vec::new(),
+                rerail_blocks::vector![0, 1],
+                rerail_blocks::vector::Vector::new(),
             )
             .unwrap();
             let native = native_ir::lower(&program).unwrap();
@@ -2727,14 +2728,14 @@
         use crate::code_rule_dsl::transducer::packed::Directive;
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(crate::code_rule_dsl::transducer::packed::CAPTURE, 0, 0),
                 word(EMIT, 0, 0),
             ],
             vec![b"key".to_vec(), b"value".to_vec(), b"match".to_vec()],
             Vec::new(),
-            vec![2],
-            Vec::new(),
+            rerail_blocks::vector![2],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![
@@ -2796,11 +2797,11 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, Directive};
 
         let program = Program::new(
-            vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
             vec![b"capture".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![Directive::Offset {
@@ -2852,11 +2853,11 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, Directive};
 
         let program = Program::new(
-            vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
             vec![b"capture".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![Directive::Offset {
@@ -2908,7 +2909,7 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, CHILD, Directive, NEXT};
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(CHILD, 0, 0),
                 word(CAPTURE, 0, 0),
                 word(NEXT, 0, 0),
@@ -2919,8 +2920,8 @@
             ],
             vec![b"source".to_vec(), b"target".to_vec()],
             Vec::new(),
-            vec![0, 1],
-            Vec::new(),
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![Directive::SelectAdjacent {
@@ -2992,11 +2993,11 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, Directive};
 
         let program = Program::new(
-            vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
             vec![b"capture".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![
@@ -3051,11 +3052,11 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, Directive};
 
         let program = Program::new(
-            vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
             vec![b"n".to_vec(), b"capture".to_vec()],
             Vec::new(),
-            vec![1],
-            Vec::new(),
+            rerail_blocks::vector![1],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![Directive::Strip {
@@ -3113,11 +3114,11 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, Directive};
 
         let program = Program::new(
-            vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
             vec![b"capture".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![Directive::SetLanguageFromMimeType { capture: 0 }])
@@ -3338,11 +3339,11 @@
             (TextPredicate::Prefix(1), b"val".as_slice(), 0),
         ] {
             let program = Program::new(
-                vec![word(TEXT, 0, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(TEXT, 0, 0), word(EMIT, 0, 0)],
                 vec![b"match".to_vec(), b"value".to_vec()],
                 vec![predicate],
-                vec![0],
-                Vec::new(),
+                rerail_blocks::vector![0],
+                rerail_blocks::vector::Vector::new(),
             )
             .unwrap();
             let native = native_ir::lower(&program).unwrap();
@@ -3444,11 +3445,11 @@
         use crate::code_rule_dsl::transducer::packed::SUPERTYPE;
 
         let program = Program::new(
-            vec![word(SUPERTYPE, 0, 9), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(SUPERTYPE, 0, 9), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -3557,11 +3558,11 @@
         use crate::code_rule_dsl::transducer::packed::ABSENT_FIELD;
 
         let program = Program::new(
-            vec![word(ABSENT_FIELD, 0, 7), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(ABSENT_FIELD, 0, 7), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -3674,11 +3675,11 @@
 
         for (mode, expected_results) in [(0x80, 1), (0x81, 1), (0x82, 1)] {
             let program = Program::new(
-                vec![word(SIZE, mode, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(SIZE, mode, 0), word(EMIT, 0, 0)],
                 vec![b"match".to_vec()],
                 Vec::new(),
-                vec![0],
-                vec![70_000],
+                rerail_blocks::vector![0],
+                rerail_blocks::vector![70_000],
             )
             .unwrap();
             let native = native_ir::lower(&program).unwrap();
@@ -3779,11 +3780,11 @@
     #[test]
     fn straight_line_cranelift_reports_exact_result_capacity() {
         let program = Program::new(
-            vec![word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -3891,10 +3892,10 @@
             })
             .expect("two capture searches fit one budget but two candidates do not");
         let files = [tape(&format!("{source}\n{source}\n"))];
-        let anchors = [vec![vec![0]]];
+        let anchors = [vec![rerail_blocks::vector![0]]];
         for query in [false, true] {
             let base = Program::new(
-                vec![
+                rerail_blocks::vector![
                     word(super::super::CHILD, 1, 0),
                     word(CAPTURE, 0, 0),
                     word(CAPTURE, 0, 0),
@@ -3902,8 +3903,8 @@
                 ],
                 vec![b"text".to_vec(), pattern.as_bytes().to_vec()],
                 vec![],
-                vec![0],
-                vec![],
+                rerail_blocks::vector![0],
+                rerail_blocks::vector![],
             )
             .unwrap()
             .with_directives(vec![Directive::Strip {
@@ -3979,11 +3980,11 @@
             }
             cost *= 2;
             let programs = [Program::new(
-                vec![word(CAPTURE, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(CAPTURE, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
                 vec![b"text".to_vec(), pattern.as_bytes().to_vec()],
                 vec![],
-                vec![0],
-                vec![],
+                rerail_blocks::vector![0],
+                rerail_blocks::vector![],
             )
             .unwrap()
             .with_directives(vec![Directive::Strip {
@@ -3993,7 +3994,7 @@
             }])
             .unwrap()];
             let files = [tape(source)];
-            let anchors = [vec![vec![0]]];
+            let anchors = [vec![rerail_blocks::vector![0]]];
             let expected =
                 crate::code_rule_dsl::transducer::packed::execute_batch(&programs, &files, Some(&anchors))
                     .unwrap();

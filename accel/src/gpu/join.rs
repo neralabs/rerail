@@ -623,6 +623,13 @@ impl Pass {
         }
     }
 
+    /// Holds `b` by this submission's fence from now until its work completes (`holds`), for a launch encoded later in
+    /// it: a job queued for a level's one launch (decision 0603) reaches its buffers when it is queued, and what drops
+    /// one before the level launches keeps it from the pool until then (decision 0491 step 2).
+    pub fn hold_for_later(&self, b: &Buffer, write: bool) {
+        self.holds(b, "a queued job", 0, write);
+    }
+
     /// Makes `buffers` resident for the launches after it: buffers a kernel reaches by address (a view's directory
     /// and tapes, decision 0353 step 4d), bound by none.
     pub fn use_read(&self, buffers: &[&Buffer]) {
@@ -1291,7 +1298,7 @@ fn stats_round(cols: &[StatCol<'_>], k: usize, wide: bool) -> Result<Vec<Option<
 
 /// A probe join's pairs, (left row, right host row), in left row order, and its GPU time.
 pub struct Probed {
-    pub pairs: Vec<(u32, u32)>,
+    pub pairs: rerail_blocks::vector::Vector<[u32; 2]>,
     pub gpu_seconds: f64,
     /// Command buffers: one, or two when the pairs overflowed the space expected for them.
     pub submissions: u32,
@@ -1483,14 +1490,14 @@ impl ProbeJob {
     }
 
     /// The pairs, (left row, right host row), in left row order: after the submission completed.
-    pub fn pairs(&self) -> Vec<(u32, u32)> {
+    pub fn pairs(&self) -> rerail_blocks::vector::Vector<[u32; 2]> {
         let total = self.total();
         let Some(space) = &self.space else {
-            return Vec::new();
+            return rerail_blocks::vector::Vector::new();
         };
         // SAFETY: `total` pairs, written by a completed scatter into space for at least that many.
         let flat = unsafe { std::slice::from_raw_parts(space.buffer.contents().cast::<[u32; 2]>(), total) };
-        flat.iter().map(|p| (p[0], p[1])).collect()
+        flat.iter().copied().collect()
     }
 }
 
@@ -1614,10 +1621,10 @@ impl ProbeOne {
 
     /// The pairs, in left row order (block by block), after the submission completed. `None` when they did not
     /// fit.
-    pub fn pairs(&self, arena: &Arena) -> Option<Vec<(u32, u32)>> {
+    pub fn pairs(&self, arena: &Arena) -> Option<rerail_blocks::vector::Vector<[u32; 2]>> {
         let blocks = self.read_blocks(arena);
         let total: usize = blocks.iter().map(|&(_, n)| n as usize).sum();
-        let mut out = Vec::with_capacity(total);
+        let mut out = rerail_blocks::vector::Vector::with_capacity(total);
         for (at, n) in blocks {
             if n == 0 {
                 continue;
@@ -1627,7 +1634,8 @@ impl ProbeOne {
             }
             // SAFETY: `n` pairs at `at`, inside the arena (the device checked the capacity), written by it.
             let flat = unsafe { std::slice::from_raw_parts(arena.pairs.buffer.contents().cast::<[u32; 2]>().add(at as usize), n as usize) };
-            out.extend(flat.iter().map(|p| (p[0], p[1])));
+            // copy: not block data: the pairs read back from the device arena, as `read` does (gpu/mod.rs)
+            out.extend_from_slice(flat);
         }
         let _ = self.nl;
         Some(out)
@@ -1958,7 +1966,7 @@ mod tests {
         let Ok(dev) = device() else { return };
         use rerail_blocks::bloom::{Bloom, hash};
         let right: Vec<i64> = (0..20_000i64).map(|i| i * 6 - 50_000).collect();
-        let left: Vec<i64> = (0..60_000i64).map(|i| i * 3 - 80_000).collect();
+        let left: rerail_blocks::vector::Vector<i64> = (0..60_000i64).map(|i| i * 3 - 80_000).collect();
         // copy: not block data (a test's literal keys)
         let own = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
         own.settle();

@@ -4,6 +4,7 @@
 //! version's handles: a variable is its slot in its rule, a string its atom's text. `projection` puts them together
 //! as the facts crate's `Projection` holds them.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::facts::vtab::syntax::{Projection, ProjectionParts, TextDemand, TextNodes};
 use crate::code_rule_dsl::logic::front::ast::SpanIn;
 use crate::code_rule_dsl::logic::program_image::{AtomRef, CmpOp, Lit, RuleRef, Slot, TermRef, Version};
@@ -203,17 +204,17 @@ enum Fix {
     /// A derived relation's column.
     Column(u32, usize),
     /// Kinds known whatever the round (`kind(v, "K")`, a matcher's root), or any (`None`).
-    Known(Option<Vec<u32>>),
+    Known(Option<Vector<u32>>),
 }
 
-type Kinds = Option<Vec<u32>>;
+type Kinds = Option<Vector<u32>>;
 
-fn intersect(a: &[u32], b: &[u32]) -> Vec<u32> {
+fn intersect(a: &[u32], b: &[u32]) -> Vector<u32> {
     a.iter().copied().filter(|k| b.binary_search(k).is_ok()).collect()
 }
 
-fn union(a: &[u32], b: &[u32]) -> Vec<u32> {
-    let mut u: Vec<u32> = a.iter().chain(b).copied().collect();
+fn union(a: &[u32], b: &[u32]) -> Vector<u32> {
+    let mut u: Vector<u32> = a.iter().chain(b).copied().collect();
     u.sort_unstable();
     u.dedup();
     u
@@ -231,7 +232,7 @@ fn fold(columns: &[Vec<Kinds>], fixes: &[Fix]) -> Kinds {
             Fix::Known(k) => k.as_deref(),
         };
         kinds = match (kinds, fixed) {
-            (None, k) => k.map(<[u32]>::to_vec),
+            (None, k) => k.map(Vector::<u32>::from),
             (k, None) => k,
             (Some(a), Some(b)) => Some(intersect(&a, b)),
         };
@@ -372,7 +373,7 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
         t.0.insert(k, n);
         n
     };
-    let roots: HashMap<&str, Kinds> = matchers.iter().map(|(rel, text, _)| (rel.as_str(), root_kind(text).map(|k| vec![intern(bare(&k))]))).collect();
+    let roots: HashMap<&str, Kinds> = matchers.iter().map(|(rel, text, _)| (rel.as_str(), root_kind(text).map(|k| rerail_blocks::vector![intern(bare(&k))]))).collect();
     let rules: Vec<RuleRef<'_>> = v.rules().collect();
     let head_of = |r: RuleRef<'_>| v.rel_name(r.head().rel());
     let derived: Vec<&str> = {
@@ -408,11 +409,11 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
                 // The base relations narrow by their meaning only where the program gives no rules of its own to one
                 // of that name (`redefined`): there it is a relation like any other (its columns).
                 out.push(match (rel, c, args.get(1)) {
-                    ("kind", 0, Some(TermRef::Str(k))) if !redefined.contains("kind") => Fix::Known(Some(vec![intern(bare(v.text(*k)))])),
+                    ("kind", 0, Some(TermRef::Str(k))) if !redefined.contains("kind") => Fix::Known(Some(rerail_blocks::vector![intern(bare(v.text(*k)))])),
                     ("kind", _, _) if !redefined.contains("kind") => Fix::Known(None),
                     // T's base `node(d, n, kind, …)` (a program that declares its base relations itself): `n` of `kind`.
                     ("node", 1, _) if !redefined.contains("node") => Fix::Known(match args.get(2) {
-                        Some(TermRef::Str(k)) => Some(vec![intern(bare(v.text(*k)))]),
+                        Some(TermRef::Str(k)) => Some(rerail_blocks::vector![intern(bare(v.text(*k)))]),
                         _ => None,
                     }),
                     ("node", _, _) if !redefined.contains("node") => Fix::Known(None),
@@ -434,7 +435,7 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
         let hargs = args(rule.head());
         let width = &mut columns[h as usize];
         if width.len() < hargs.len() {
-            width.resize(hargs.len(), Some(Vec::new()));
+            width.resize(hargs.len(), Some(rerail_blocks::vector::Vector::new()));
         }
         for (c, t) in hargs.iter().enumerate() {
             let TermRef::Var(s) = *t else { continue };
@@ -674,6 +675,8 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
                 _ if text.neg() && short_constant(v, text) => {}
                 Some(k) => kinds.extend(k),
                 None if !redefined.contains("field") && leaf_field(v, rule, s) || short_constant(v, text) => {}
+                // A span's text is read at any length (`text_spans`): no twin stands in for it.
+                None if span(rule, s) => {}
                 None if text.neg() => negated_any += 1,
                 None if twinned(head, name) => {}
                 // A span's text (the source's, a line's, a token's) is no node's: `rr_long_text_node` holds nodes only,

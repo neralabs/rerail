@@ -26,6 +26,7 @@
 //! (decision 0431): equal texts in one run are parsed once (`parse`), and its tape is stored with its text, so a later
 //! run finds it and parses nothing (R6). A program's tape (`taped`, read off its embedder's parse) is not stored yet.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::facts::vtab::syntax::{self, Document, Guest, Made, Placement};
 use crate::content_store::guest_keys::GuestKeys;
@@ -283,11 +284,12 @@ fn string_text(label: &str, kind: &str, text: &str, start: u32, node: [u32; 2]) 
 /// The text of host node `local` to parse, and where it stands: a string's normalized text (decision 0058 §3; a
 /// concatenation's parts joined), any other node's text, copied.
 fn host_text(host: &Document, ids: &syntax::Numbering, local: u32) -> Option<(String, Placement)> {
-    let f = &*host.facts;
+    let _ = host;
+    let f = ids.f()?;
     let (id, kind) = ids.node(local)?;
     let (start, end) = (f.start(id), f.end(id));
     let node = [start, end];
-    let tag = core::facts_tag(f);
+    let tag = core::facts_tag(f.facts);
     let label = crate::code_rule_dsl::language::from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label).unwrap_or("");
     let is_string = |kind: &str| matches!(kind, "string" | "string_literal" | "raw_string_literal" | "interpreted_string_literal");
     if is_string(kind) {
@@ -336,8 +338,8 @@ fn template_text(host: &Document, ids: &syntax::Numbering, local: u32) -> Option
         Some((doc, _)) => doc.clone(),
         None => crate::code_rule_dsl::tape::TapeDoc::over(Arc::clone(host.facts.tape.as_ref()?), Arc::clone(host.facts.grammar()?), Arc::clone(&host.facts.lines)),
     };
-    let f = &*host.facts;
-    syntax::template(dialect, &doc, id, [f.start(id), f.end(id)])
+    let span = host.facts.alone(|f| [f.start(id), f.end(id)]);
+    syntax::template(dialect, &doc, id, span)
 }
 
 /// The guests' makers' state for one chunk: the run's language and shape, the hosts' numberings, the guests made, and
@@ -487,7 +489,7 @@ impl Guests {
     }
 
     /// Each value document's files.
-    pub fn askers(&self) -> HashMap<i64, Vec<i64>> {
+    pub fn askers(&self) -> HashMap<i64, Vector<i64>> {
         self.files.iter().map(|(k, f)| (*k, f.iter().copied().collect())).collect()
     }
 
@@ -720,10 +722,11 @@ impl Guests {
             for via in vias {
                 let embedder = crate::code_rule_dsl::embed::embedder(via);
                 // An embedder that reads the file's scope table reads it from a document over the host's tape, read in
-                // place (decision 0470); another reads the host's nodes.
+                // place (decision 0470), in a batch of its own (its 16z blocks decoded into a cache made for it, 0628 §6);
+                // another reads the host's nodes.
                 let doc = || {
                     let (tape, grammar) = (host.facts.tape.as_ref()?, host.facts.grammar()?);
-                    Some(crate::code_rule_dsl::tape::TapeDoc::over(Arc::clone(tape), Arc::clone(grammar), Arc::clone(&host.facts.lines)))
+                    Some(crate::code_rule_dsl::tape::TapeDoc::over(Arc::clone(tape), Arc::clone(grammar), Arc::clone(&host.facts.lines)).alone())
                 };
                 let programs = if embedder.reads_scope() {
                     host.tape.as_ref().map(|(doc, _)| doc.clone()).or_else(doc).map_or_else(Vec::new, |doc| embedder.build_in_doc(&doc, &|| false))
@@ -750,6 +753,7 @@ impl Guests {
             self.unseen += 1;
             return Ok(None);
         }
+        let segments = Arc::clone(&program.segments);
         let place = Placement::Segments(program.segments);
         let at = match at {
             Some(at) => at,
@@ -774,7 +778,7 @@ impl Guests {
         };
         let host_key = (at >> 32) as u32;
         let tape_verdict = crate::code_rule_dsl::embed::embedder(via).tape_verdict();
-        let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, program.parse, tape_verdict)? else { return Ok(None) };
+        let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, program.parse, &segments, tape_verdict)? else { return Ok(None) };
         let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &host.path);
         let file = self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key));
         self.host_of.insert(i64::from(key), file);
@@ -831,18 +835,24 @@ impl Guests {
         let Some(w) = docs.iter().find(|x| syntax::tape_hex(&x.digest) == with) else { return Ok(None) };
         let ids = self.numbering(d)?;
         let Some((_, id, _)) = ids.at((node & 0xffff_ffff) as u32) else { return Ok(None) };
-        let base = syntax::unparsed(d);
-        // The unparsed text's offset in the document's text (where its root is not its first node).
-        let off = match d.guest.as_deref() {
-            Some(g) if g.root != 0 => d.facts.start(g.root) as usize,
-            _ => 0,
-        };
-        let (a, b) = (d.facts.start(id) as usize, d.facts.end(id) as usize);
-        let (Some(a), Some(b)) = (a.checked_sub(off), b.checked_sub(off)) else { return Ok(None) };
-        if b > base.len() || !base.is_char_boundary(a) || !base.is_char_boundary(b) {
+        // Each document read in a batch of its own (`Facts::alone`): the splice reads two nodes of one and the text of
+        // the other.
+        let Some(text) = d.facts.alone(|f| {
+            let base = syntax::unparsed(f, d);
+            // The unparsed text's offset in the document's text (where its root is not its first node).
+            let off = match d.guest.as_deref() {
+                Some(g) if g.root != 0 => f.start(g.root) as usize,
+                _ => 0,
+            };
+            let (a, b) = (f.start(id) as usize, f.end(id) as usize);
+            let (Some(a), Some(b)) = (a.checked_sub(off), b.checked_sub(off)) else { return None };
+            if b > base.len() || !base.is_char_boundary(a) || !base.is_char_boundary(b) {
+                return None;
+            }
+            Some(w.facts.alone(|wf| format!("{}{}{}", &base[..a], syntax::unparsed(wf, w), &base[b..])))
+        }) else {
             return Ok(None);
-        }
-        let text = format!("{}{}{}", &base[..a], syntax::unparsed(w), &base[b..]);
+        };
         let grammar = match d.guest.as_deref() {
             Some(g) => g.grammar.clone(),
             None => {
@@ -874,7 +884,8 @@ fn embedded(host: &Document, build: &mut dyn FnMut(crate::code_rule_dsl::embed::
     let Some(dialect) = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts)) else { return Vec::new() };
     let Some(tape) = host.facts.tape.as_ref() else { return Vec::new() };
     let Ok(grammar) = crate::code_rule_dsl::tape::Grammar::new(dialect) else { return Vec::new() };
-    let Some(root) = crate::code_rule_dsl::embed::host::Host::new(tape.image(), &grammar).root() else { return Vec::new() };
+    let cache = tape.image().own_cache();
+    let Some(root) = crate::code_rule_dsl::embed::host::Host::new(tape.image(), &grammar, cache.as_ref()).root() else { return Vec::new() };
     build(root, host.facts.source.as_str())
 }
 
@@ -982,10 +993,10 @@ fn parse(path: &str, label: &str, fragment: Option<core::Fragment>, text: String
 /// An embedded program's facts, read off the tape or tree its embedder parsed its text into (`parse`), with its tape
 /// kept beside them (decision 0222): the rules over a view read W's values (`value`, a key's text) as over a file,
 /// and a value is read off the document's tape. Its tape is not stored (Q30).
-fn taped(path: &str, label: &str, text: Arc<String>, parse: crate::code_rule_dsl::embed::Parse, tape_verdict: bool) -> Result<Option<(Parsed, Tape)>, String> {
+fn taped(path: &str, label: &str, text: Arc<String>, parse: crate::code_rule_dsl::embed::Parse, segments: &crate::code_rule_dsl::embed::segments::SegmentMap, tape_verdict: bool) -> Result<Option<(Parsed, Tape)>, String> {
     let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: text };
     // Read off the embedder's parse, not parsed again.
-    let built = core::build_parsed(&file, parse, true).map_err(|e| format!("{path}: {e}"))?;
+    let built = core::build_parsed(&file, parse, segments, true).map_err(|e| format!("{path}: {e}"))?;
     let (Built::Facts(mut facts), tape) = built else { return Ok(None) };
     facts.tape_verdict = tape_verdict;
     let digest = core::digest(&facts);

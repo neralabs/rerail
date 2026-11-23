@@ -10835,3 +10835,15 @@ closure in one dispatch on the work queue, its GPU price bench, and join program
 
 Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device tests 39/39 on UKL's CPU backend
 (the recursive stratum among them). The matrix units and Metal are not run here.
+
+### Q517. Roll-up 90 (final-rerail-shape-phased-facts 4de2121865 onto Pulling-it-all-together): what the merge chose
+
+- The branch's run data in blocks (0628: `Vector`, `BlockHash`, `BlockInterner`, `StringsView`, sections) taken throughout; the hub's newer code carried onto it, not the other way round.
+- Facts read through the batch's 16z cache (`Projected::f()`, 0569 §6) in the hub's new code too: `TextReads::reads` by codes, `KIND`/`OP` columns, `unit_flags`, token ranks.
+- `Totals` (corpus.rs): the branch's block-backed, generation-per-relation form; the hub's one-pass `forget_all` kept as a call of `forget` per relation (each a generation of its own, no pass over the measures). The hub's `fresh`/`given_rows`, `drop(psec.take())` and the spanned `own::tested_constants` kept.
+- `Shapes`' kept rows (t33 K4) written and read over the branch's section (`Of`: rels, from, left, each sorted); `Proofs`' kept rows rebuild the recursive components alone, each at its place (`Proofs::of` reads only its own). Round trip test passes.
+- Source `lookup_columns` returns a `Vector` like the trait's other lookups; `find_columns` likewise.
+- The branch's closure relaunch loop in accel (`Job::again`) left out: roll-up 89 chose CUDA's `cl_dag` on the work queue.
+- `metal_programs` takes `rerail-blocks` (its block_serial now holds outputs in blocks).
+- `from_tape::Tape::start` was moved by both sides: one kept. `Held` has two forms: the dead wildcard arm dropped.
+- Checked: Relax engine check 0 errors; lib tests of every changed crate compile; run: plan-base, logic (wellfounded, kept strata, choices, cross views, totals), tests-logic (layout pricing round trip, kept), setfix (cands, statkeep), facts, accel closure.

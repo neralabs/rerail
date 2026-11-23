@@ -12,6 +12,7 @@
 //!   writes `<p>_out(c0, c1)`. Returns "rows waves visits solve_ms total_ms".
 //! - `set_fixpoint_open/run/close` and the `set_rel` vtab evaluate one component of set-valued relations natively
 //!   (see `setfix.rs`).
+use rerail_blocks::vector::Vector;
 // T's own set engine as copied (`extension/setfix.rs`); `logic::native::setfix` is its adaptation (O19).
 pub mod setfix;
 use rusqlite::ffi;
@@ -31,14 +32,14 @@ const BOT: i64 = i64::MIN;
 const BIG: i64 = 1 << 40;
 
 /// The tree in preorder: each node's parent, kind and descendant count (its subtree is `n+1..=n+size`).
-pub(super) struct Tape { par: Vec<i32>, kind: Vec<u16>, size: Vec<u32>, kinds: HashMap<String, u16> }
+pub(super) struct Tape { par: Vector<i32>, kind: Vector<u16>, size: Vector<u32>, kinds: HashMap<String, u16> }
 
 /// The extension's state of one connection (decision 0442): `init` makes it, and every function and module it
 /// registers holds it.
 #[derive(Default)]
 struct Ext {
     /// Fixpoint results kept in memory, by name, for `lattice_result`.
-    results: Mutex<Vec<(String, Arc<Vec<i64>>)>>,
+    results: Mutex<Vec<(String, Arc<Vector<i64>>)>>,
     /// The set engine's (`setfix`).
     set: Arc<setfix::State>,
 }
@@ -47,7 +48,7 @@ fn user_err(m: String) -> Error { Error::UserFunctionError(m.into()) }
 
 fn tape_load(ext: &Ext, conn: &Connection, schema: &str) -> Result<usize> {
     let mut kinds: HashMap<String, u16> = HashMap::new();
-    let (mut par, mut kind) = (Vec::new(), Vec::new());
+    let (mut par, mut kind) = (Vector::new(), Vector::new());
     let mut st = conn.prepare(&format!("SELECT n, kind FROM {schema}.node"))?;
     let mut rows = st.query([])?;
     while let Some(r) = rows.next()? {
@@ -58,7 +59,7 @@ fn tape_load(ext: &Ext, conn: &Connection, schema: &str) -> Result<usize> {
         if kind.len() <= n as usize { kind.resize(n as usize + 1, u16::MAX); par.resize(n as usize + 1, -1); }
         kind[n as usize] = id;
     }
-    let mut size = vec![0u32; par.len()];
+    let mut size = rerail_blocks::vector![0u32; par.len()];
     let mut st = conn.prepare(&format!("SELECT n, par, size FROM {schema}.tape"))?;
     let mut rows = st.query([])?;
     while let Some(r) = rows.next()? {
@@ -118,7 +119,7 @@ fn lattice_fixpoint(ext: &Ext, conn: &Connection, p: &str, target: Option<&str>)
     let mut n = seeds.iter().map(|r| r.0).chain(copies.iter().flat_map(|r| [r.0, r.1]))
         .chain(bins.iter().flat_map(|r| [r.0, r.2, r.3])).max().map_or(0, |m| m as usize + 1);
     if let Some(t) = &tape { n = n.max(t.kind.len()); }
-    let mut seed = vec![BOT; n];
+    let mut seed = rerail_blocks::vector![BOT; n];
     if let Some(t) = &tape {
         let mut by_kind = vec![BOT; t.kinds.len()];
         for (k, v) in &kseed { if let Some(&id) = t.kinds.get(k) { by_kind[id as usize] = join(by_kind[id as usize], *v); } }
@@ -126,9 +127,9 @@ fn lattice_fixpoint(ext: &Ext, conn: &Connection, p: &str, target: Option<&str>)
     }
     for &(k, v) in &seeds { seed[k as usize] = join(seed[k as usize], v); }
     // In-edges per node (to evaluate it) and out-edges (to find dependents), as CSR.
-    let csr = |edges: &mut Vec<(u32, u32)>| -> (Vec<u32>, Vec<u32>) {
+    let csr = |edges: &mut Vec<(u32, u32)>| -> (Vector<u32>, Vector<u32>) {
         edges.sort_unstable();
-        let mut start = vec![0u32; n + 1];
+        let mut start = rerail_blocks::vector![0u32; n + 1];
         for &(a, _) in edges.iter() { start[a as usize + 1] += 1; }
         for i in 0..n { start[i + 1] += start[i]; }
         (start, edges.iter().map(|e| e.1).collect())
@@ -157,7 +158,7 @@ fn lattice_fixpoint(ext: &Ext, conn: &Connection, p: &str, target: Option<&str>)
         x
     };
     let mut val = seed.clone();
-    let mut frontier: Vec<u32> = (0..n as u32).filter(|&v| val[v as usize] != BOT).collect();
+    let mut frontier: Vector<u32> = (0..n as u32).filter(|&v| val[v as usize] != BOT).collect();
     let (mut stamp, mut waves, mut visits) = (vec![0u32; n], 0u32, 0u64);
     while !frontier.is_empty() {
         waves += 1;
@@ -199,7 +200,7 @@ fn lattice_fixpoint(ext: &Ext, conn: &Connection, p: &str, target: Option<&str>)
 
 
 #[repr(C)]
-struct ResultTab { base: ffi::sqlite3_vtab, vals: Arc<Vec<i64>>, rows: usize }
+struct ResultTab { base: ffi::sqlite3_vtab, vals: Arc<Vector<i64>>, rows: usize }
 
 unsafe impl<'vtab> VTab<'vtab> for ResultTab {
     type Aux = Arc<Ext>;
@@ -234,7 +235,7 @@ unsafe impl<'vtab> VTab<'vtab> for ResultTab {
 impl CreateVTab<'_> for ResultTab { const KIND: VTabKind = VTabKind::Default; }
 
 #[repr(C)]
-struct ResultCursor { base: ffi::sqlite3_vtab_cursor, vals: Arc<Vec<i64>>, pos: usize, end: usize }
+struct ResultCursor { base: ffi::sqlite3_vtab_cursor, vals: Arc<Vector<i64>>, pos: usize, end: usize }
 impl ResultCursor {
     fn skip(&mut self) { while self.pos < self.end && self.vals[self.pos] == BOT { self.pos += 1; } }
 }

@@ -78,7 +78,7 @@ pub fn placement<'a>(
         let table_at = table_at.ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
         let new_table = (!table_at.held).then(|| {
             let mut t = vec![0u8; 24 * codes];
-            for (n, e) in lang.table().entries().iter().enumerate() {
+            for (n, e) in lang.table().entries().enumerate() {
                 // `DeviceCode`: kind, field (u16s), flags, class count, then room for its classes.
                 t[24 * n..24 * n + 2].copy_from_slice(&e.kind.to_le_bytes()); // copy: not block data
                 t[24 * n + 2..24 * n + 4].copy_from_slice(&e.field.to_le_bytes()); // copy: not block data

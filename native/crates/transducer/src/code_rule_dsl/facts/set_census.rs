@@ -9,6 +9,7 @@
 //!
 //! `RERAIL_SET_CENSUS_ROOT=<dir>` names the repository; Python files only.
 
+use rerail_blocks::vector::Vector;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -64,6 +65,9 @@ fn census(path: &Path, rel: &str, scopes: &[(String, u32)], names: &HashMap<u32,
     let source = std::fs::read_to_string(path).ok()?;
     let file = FileInput::new(rel.to_owned(), "python".to_owned(), Arc::new(source), None, None, "core").ok()?;
     let Ok(Built::Facts(f)) = core::build(&file) else { return None };
+    // Read in a batch of its own: its 16z blocks decoded into a cache made for it (`Facts::alone`).
+    let cache = f.own_cache();
+    let f = f.read_in(cache.as_ref());
     // The engine's ids: named, non-extra (comment) nodes in preorder. rank[id] = kept nodes before id.
     let n = f.len();
     let keep: Vec<bool> = (0..n).map(|i| f.flags(i as u32) & 1 == 1 && f.flags(i as u32) & 2 == 0).collect();
@@ -87,7 +91,7 @@ fn census(path: &Path, rel: &str, scopes: &[(String, u32)], names: &HashMap<u32,
         }
     };
     // Kind sets: members in id order.
-    let mut by_kind: HashMap<u32, Vec<u32>> = HashMap::new();
+    let mut by_kind: HashMap<u32, Vector<u32>> = HashMap::new();
     for i in 0..n {
         if keep[i] {
             by_kind.entry(f.kind(i as u32)).or_default().push(rank[i]);
@@ -222,7 +226,7 @@ fn set_census() {
 /// One document's sets as positions: kind members and inside-scope runs.
 struct DocSets {
     nodes: u32,
-    kinds: HashMap<String, Vec<u32>>,
+    kinds: HashMap<String, Vector<u32>>,
     inside: HashMap<String, Vec<(u32, u32)>>,
 }
 
@@ -230,13 +234,16 @@ fn doc_sets(path: &Path, rel: &str, scopes: &[(String, u32)], names: &HashMap<u3
     let source = std::fs::read_to_string(path).ok()?;
     let file = FileInput::new(rel.to_owned(), "python".to_owned(), Arc::new(source), None, None, "core").ok()?;
     let Ok(Built::Facts(f)) = core::build(&file) else { return None };
+    // Read in a batch of its own: its 16z blocks decoded into a cache made for it (`Facts::alone`).
+    let cache = f.own_cache();
+    let f = f.read_in(cache.as_ref());
     let n = f.len();
     let keep: Vec<bool> = (0..n).map(|i| f.flags(i as u32) & 1 == 1 && f.flags(i as u32) & 2 == 0).collect();
     let mut rank = vec![0u32; n + 1];
     for i in 0..n {
         rank[i + 1] = rank[i] + u32::from(keep[i]);
     }
-    let mut kinds: HashMap<String, Vec<u32>> = HashMap::new();
+    let mut kinds: HashMap<String, Vector<u32>> = HashMap::new();
     for i in (0..n).filter(|&i| keep[i]) {
         let name = names.get(&f.kind(i as u32)).cloned().unwrap_or_default();
         kinds.entry(name).or_default().push(rank[i]);
@@ -467,7 +474,7 @@ fn posting_forms() {
     println!("  delta-varint {:.1} MB, container segments {:.1} MB", vb as f64 / 1e6, sb as f64 / 1e6);
     // Reading: each kind's set over the repository, from every posting of the kind (the prefilter's
     // leaves). Varint: decode to positions, then insert; segments: copy the containers.
-    let mut by_kind: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut by_kind: HashMap<String, Vector<usize>> = HashMap::new();
     varint.iter().enumerate().for_each(|(i, (_, k, _))| by_kind.entry(k.clone()).or_default().push(i));
     let rounds = 3;
     let read_varint = || {

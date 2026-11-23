@@ -21,6 +21,7 @@
 //! 0264) has that store's atoms: the strings are interned here and its branded name atoms moved to these
 //! (`lower::relocate`, decision 0270).
 
+use rerail_blocks::vector::Vector;
 pub use super::Prepared;
 use super::lower;
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -52,8 +53,8 @@ fn pointer_plan(key: &[u8; 32]) -> FactsPlanSet {
 /// The plans the program `key` names is stored under: the pointer's. The run's manifest names it
 /// (`record_corpus_run_naming`), so collection keeps its rows while it keeps the run, and takes those of an earlier
 /// engine build or grammar once no kept run names them (the program's text, their source, may live on).
-pub(super) fn plans(key: &[u8; 32]) -> Vec<[u8; 32]> {
-    vec![pointer_plan(key).plans[0]]
+pub(super) fn plans(key: &[u8; 32]) -> Vector<[u8; 32]> {
+    rerail_blocks::vector![pointer_plan(key).plans[0]]
 }
 
 /// The relations a prepared program adds to the program schema, and their columns.
@@ -128,11 +129,11 @@ fn cols_text(cols: &[usize]) -> String {
     cols.iter().map(usize::to_string).collect::<Vec<_>>().join(",")
 }
 
-fn cols_of_text(text: &str) -> Option<Vec<usize>> {
+fn cols_of_text(text: &str) -> Option<Vector<usize>> {
     if text.is_empty() {
-        return Some(Vec::new());
+        return Some(Vector::new());
     }
-    text.split(',').map(|c| c.parse().ok()).collect()
+    text.split(',').map(|c| c.parse::<usize>().ok()).collect()
 }
 
 /// What preparing found, as facts: `prepared`'s other than its two programs.
@@ -290,8 +291,8 @@ pub fn prepared_of(
             Ok((text(&r[0])?, ds))
         })
         .collect::<Result<_, String>>()?;
-    let ops: Vec<i64> = indexed(facts, "prepared_op")?.iter().map(|(_, r)| int(&r[0])).collect::<Result<_, _>>()?;
-    let ops: [i64; 3] = ops.try_into().map_err(|_| bad("not three operators"))?;
+    let ops: Vector<i64> = indexed(facts, "prepared_op")?.iter().map(|(_, r)| int(&r[0])).collect::<Result<_, _>>()?;
+    let ops: [i64; 3] = <[i64; 3]>::try_from(&ops[..]).map_err(|_| bad("not three operators"))?;
     let kinds = nested(facts, "prepared_set_kind")?;
     let mut sets = Vec::new();
     for (k, r) in indexed(facts, "prepared_set")? {
@@ -325,7 +326,7 @@ pub fn prepared_of(
             return Err(bad(format!("intern call {k} has {} of its {} strings", rows.len(), int(&r[0])?)));
         }
         let strings = rows.iter().map(|v| text(&v[0])).collect::<Result<Vec<_>, _>>()?;
-        let ids = rows.iter().map(|v| int(&v[1]).map(|a| a as u32)).collect::<Result<Vec<_>, _>>()?;
+        let ids = rows.iter().map(|v| int(&v[1]).map(|a| a as u32)).collect::<Result<Vector<_>, _>>()?;
         interned.push((strings, ids));
     }
     let patterns = nested(facts, "prepared_test_pattern")?;
@@ -347,7 +348,7 @@ pub fn prepared_of(
     let split = match facts.get("prepared_split").is_some_and(|r| !r.is_empty()) {
         true => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the split's parts, of the lowered program and what the split found".into());
-            let columns = |rel: &str| -> Result<BTreeMap<String, Vec<usize>>, String> {
+            let columns = |rel: &str| -> Result<BTreeMap<String, Vector<usize>>, String> {
                 facts.get(rel).into_iter().flatten().map(|r| {
                     let cols = text(&r[1])?;
                     Ok((text(&r[0])?, cols_of_text(&cols).ok_or_else(|| bad(format!("columns {cols}")))?))
@@ -532,8 +533,8 @@ pub fn relocate(
     let _s = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's atoms, in this store".into());
     let rows = facts.get_mut("prepared_interned_atom")?;
     let strings: Vec<&str> = rows.iter().map(|r| match r.get(2) { Some(Value::Str(x)) => Some(x.as_str()), _ => None }).collect::<Option<_>>()?;
-    let old: Vec<u32> = rows.iter().map(|r| r.get(3).and_then(Value::integer).and_then(|a| u32::try_from(a).ok())).collect::<Option<_>>()?;
-    let new: Vec<u32> = store.intern_atoms(&strings).ok()?.into_iter().collect();
+    let old: Vector<u32> = rows.iter().map(|r| r.get(3).and_then(Value::integer).and_then(|a| u32::try_from(a).ok())).collect::<Option<_>>()?;
+    let new: Vector<u32> = store.intern_atoms(&strings).ok()?.into_iter().collect();
     if new == old {
         return Some(None);
     }

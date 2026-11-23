@@ -624,7 +624,7 @@ fn complete_async_family_producer_profile() {
         for (iteration, times) in runs.iter_mut().enumerate() {
             let posting = || {
                 let start = cpu_ns();
-                let rows = families::rows(&grammar, &facts);
+                let rows = facts.alone(|f| families::rows(&grammar, f));
                 (rows, cpu_ns()-start)
             };
             let reference = || {

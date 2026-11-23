@@ -67,7 +67,7 @@
             Step { at: 0, mode: Some(Mode::Range) },
             Step { at: 2, mode: Some(Mode::Descend) },
         ];
-        let priced = Priced { sizes: vec![3700.0, 10.0, 0.0, -2.0], got: ((order.clone(), 12.5, 3.0), None) };
+        let priced = Priced { sizes: rerail_blocks::vector![3700.0, 10.0, 0.0, -2.0], got: ((order.clone(), 12.5, 3.0), None) };
         let kept: Kept = (order.clone().into(), 0.25, None, 1.5, Some(Arc::new(priced)), Some(40.0));
         let stored = StoredPlan::of(&kept).expect("a plan the store keeps");
         assert_eq!((scale(3700.0), scale(55_000.0), scale(0.0)), (5, 7, 0), "scales by powers of 4");
@@ -107,8 +107,8 @@
         // The join memo (decision 0203 §6) is kept in the same entry, and given to the process's memo when read.
         let line: super::super::PlanKey = 0x5eed_0192_u128 << 64 | 0x77;
         let sig: super::super::Sig = ("b".into(), vec![(0, None)]);
-        let note = super::super::joins::Note { rule: 42, runs: 1, critical: 0.5, est: 10.0, ran: 1e6, wants_search: true, ..Default::default() };
-        let rows = note_rows((vec![(line, note.clone())], vec![(line, 42, sig.clone(), [50, 50_000])], vec![(line, "inf".into(), 0)]));
+        let note = super::super::joins::Note { rule: 42, runs: 1, critical: 0.5, est: 10.0, ran: 1e6, wants_search: true, exact: vec![(sig.clone(), [50, 50_000])], raised: vec![("inf".into(), 0)], ..Default::default() };
+        let rows = note_rows(vec![(line, std::sync::Arc::new(rerail_section::Section::of(&note)))]);
         assert!(write_plans(&store, &prepared, &[StoredPlan::row(key, &stored).into_iter().map(Value::Int).collect()], &rows).unwrap());
         let read = read_plans(&store, &prepared).unwrap().0;
         assert_eq!(read.get(&key), Some(&stored), "the plans are kept beside the notes");

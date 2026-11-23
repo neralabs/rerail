@@ -646,3 +646,21 @@ pub mod code_rule_dsl {
     use std::sync::Arc;
 }
 // cratify: mounts end
+
+/// This crate's own test binary, which the engine does not load: ECMAScript's and Vue's language packs are registered
+/// as the binary loads, as the engine registers them (`boot::install_languages`), so its tests parse with their
+/// terminators (decision 0612) here.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        use crate::code_rule_dsl::language::{self, Family, adapter::{ecma::Ecma, pack::{Pack, register}, vue::Vue}};
+        register(Family::Ecma, &Pack::<Ecma>::NEW);
+        language::register_base(Family::Ecma, &Pack::<Ecma>::NEW);
+        register(Family::Vue, &Pack::<Vue>::NEW);
+        language::register_base(Family::Vue, &Pack::<Vue>::NEW);
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}

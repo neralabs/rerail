@@ -110,15 +110,16 @@ fn stream_probe<'a>(v: &'a View, cols: &'a [usize], lead: usize, key: &[i64], la
             mk.extend_from_slice(key);
             *q = Probed::Pending;
         }
-        None => last.memo = Some((key.to_vec(), Probed::Pending)),
+        None => last.memo = Some((key.iter().copied().collect(), Probed::Pending)),
     }
     Cands::Stream(Stream { view: v, cols, lead, key: k, len: key.len() })
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within, stream: bool) -> (Rows<'a>, Cands<'a>) {
+pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within, stream: bool) -> (Rows<'a>, Cands<'a>) {
     match src {
         Src::In(rel, ix) => {
+            let (rel, ix) = j.src_in(rel, ix);
             let settings = last.settings();
             if settings.noted && !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
             if keys.is_empty() { scan_within(Rows::In(rel), 0, rel.len() as u32, within) }
@@ -186,7 +187,7 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
                         // The memo's list, which the probe before's candidates no longer hold, is this probe's.
                         // (Its answer alone is taken: its key's buffer is kept for the next.)
                         if let Some((_, q)) = &mut last.memo
-                            && let Probed::Read(Found::Many(rows), _) = std::mem::replace(q, Probed::Ids(Vec::new()))
+                            && let Probed::Read(Found::Many(rows), _) = std::mem::replace(q, Probed::Ids(rerail_blocks::vector::Vector::new()))
                         {
                             last.spare = Some(rows);
                         }
@@ -206,7 +207,7 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
                                 k.extend_from_slice(key);
                                 *q = p.clone();
                             }
-                            None => last.memo = Some((key.to_vec(), p.clone())),
+                            None => last.memo = Some((key.iter().copied().collect(), p.clone())),
                         }
                         p
                     }
@@ -269,7 +270,7 @@ pub(super) fn scan_within<'a>(rows: Rows<'a>, lo: u32, hi: u32, within: Within) 
 /// A probe's state kept from one row's test to the next: the key's buffer, the index runs' hints, the last probe.
 #[derive(Default)]
 pub(super) struct Asked {
-    key: Vec<i64>,
+    key: rerail_blocks::vector::Vector<i64>,
     hints: [u32; runs::HINTS],
     last: LastProbe,
 }
@@ -277,7 +278,7 @@ pub(super) struct Asked {
 /// A test (an atom of an input that binds nothing) asked as the index's probe alone, `slots` the row's values: whether
 /// a row matches its keys and its column pairs. The join's step for it (`enter`'s `Step::Atom`, a test) does the same
 /// inside a walk, with the walk's frames around it (decision 0561, "a test asked directly").
-pub(super) fn holds(step: &Step, store: &Store, slots: &[i64], asked: &mut Asked) -> bool {
+pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], asked: &mut Asked) -> bool {
     let Step::Atom { src, keys, tests, binds, .. } = step else { unreachable!("a test is an atom") };
     debug_assert!(binds.is_empty(), "a test binds nothing");
     let val = |k: Key| match k {
@@ -289,12 +290,13 @@ pub(super) fn holds(step: &Step, store: &Store, slots: &[i64], asked: &mut Asked
     // As the join's step: the key columns a view's probe matched exactly, which its rows need not be checked for.
     let exact: u64 = match src {
         _ if keys.is_empty() => 0,
-        Src::In(rel, ix) if rel.view.is_some() && ix.runs(rel).is_none() => {
+        Src::In(rel, ix) if { let (rel, ix) = j.src_in(rel, ix); rel.view.is_some() && ix.runs(rel).is_none() } => {
+            let (in_rel, ix) = j.src_in(rel, ix);
             if ix.composite {
                 ix.cols.iter().fold(0, |m, &c| m | 1 << c)
             } else if ix.sorted || (ix.source && ix.cols.len() == 1) {
                 1 << ix.cols[ix.lead]
-            } else if ix.source && tests.is_empty() && rel.view.as_ref().is_some_and(|v| v.keys_tested(&ix.cols)) {
+            } else if ix.source && tests.is_empty() && in_rel.view.as_ref().is_some_and(|v| v.keys_tested(&ix.cols)) {
                 // A view's test by several columns: the source's (`View::tests_keys`), every key compared there.
                 ix.cols.iter().fold(0, |m, &c| m | 1 << c)
             } else {
@@ -304,7 +306,7 @@ pub(super) fn holds(step: &Step, store: &Store, slots: &[i64], asked: &mut Asked
         _ => 0,
     };
     let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
-    let (rows, cands) = candidates(src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None, true);
+    let (rows, cands) = candidates(j, src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None, true);
     rows.each(cands, need, &mut asked.last, |id, row| {
         !rows.dead(id) && keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
     })

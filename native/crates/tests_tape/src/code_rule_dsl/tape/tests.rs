@@ -3073,6 +3073,25 @@ pub(crate) fn python_tape_plain(image: &TapeImage, grammar: &Grammar) -> String 
     out
 }
 
+/// Whether two writers' tapes of one source say the same: in format 16 the same bytes; in 16z the same nodes, read
+/// in a batch of their own, as 16z's piece order is the order its blocks were finished, which follows the writer's
+/// commits (a lean parser commits at its statements, the conversion at each node; decision 0434 §2).
+fn same_tape(ours: &TapeImage, theirs: &TapeImage) -> bool {
+    use rerail_tape_format::tape::Tape as _;
+    if ours.format() != super::formats::Format::F16Z || theirs.format() != super::formats::Format::F16Z {
+        return ours.to_bytes().unwrap() == theirs.to_bytes().unwrap();
+    }
+    let (ca, cb) = (ours.own_cache(), theirs.own_cache());
+    let (a, b) = (ours.tape_in(ca.as_ref()), theirs.tape_in(cb.as_ref()));
+    rerail_tape_format::with_tape!(a, |a| rerail_tape_format::with_tape!(b, |b| {
+        a.len() == b.len()
+            && (0..a.len()).all(|i| {
+                a.table().entry(a.code(i)) == b.table().entry(b.code(i))
+                    && (a.start(i), a.end(i), a.subtree_end(i), a.parent(i)) == (b.start(i), b.end(i), b.subtree_end(i), b.parent(i))
+            })
+    }))
+}
+
 /// Python's tapes from the lean parser (the product's Python parser) are tree-sitter-python's, byte for
 /// byte, on hand-written cases; a text tree-sitter reads with an error the lean parser refuses (its
 /// file goes to tree-sitter). The corpus comparison is `rerail-python-lean`'s `oracle`.
@@ -3179,7 +3198,7 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
             .unwrap()
             .primary;
         assert!(
-            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            same_tape(&ours, &theirs),
             "the tapes of a chain of {} bytes differ",
             source.len()
         );
@@ -3570,7 +3589,7 @@ fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
                 .unwrap()
                 .primary;
             assert!(
-                ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+                same_tape(&ours, &theirs),
                 "{dialect:?}: the tapes of a chain of {} bytes differ",
                 source.len()
             );
@@ -6521,7 +6540,8 @@ fn vue_parse_costs() {
         .iter()
         .filter_map(|f| {
             let tape = vue_lean::encode(&grammar, f, &|| false).unwrap().unwrap();
-            let root = crate::code_rule_dsl::embed::host::Host::new(&tape, &grammar).root()?;
+            let cache = tape.own_cache();
+            let root = crate::code_rule_dsl::embed::host::Host::new(&tape, &grammar, cache.as_ref()).root()?;
             let view = crate::code_rule_dsl::vue::view::View::build(root, f, &|| false)?;
             Some((view.dialect(), view.text().to_owned()))
         })
@@ -6974,7 +6994,12 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
         assert_eq!(placed.placed(), crate::code_rule_dsl::tape::placed::device().is_some(), "{format:?}: in a slab's room where there is a device");
         assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
         let text = Arc::new(source.clone());
-        let (own, placed) = (super::formats::DocTape::new(Arc::new(own), Arc::clone(&text)), super::formats::DocTape::new(Arc::new(placed), text));
+        // Each read in a batch of its own: a 16z tape's blocks decoded into a cache made for it.
+        let batch = |image: TapeImage| {
+            let cache = image.own_cache().map(Arc::new);
+            super::formats::DocTape::in_batch(Arc::new(image), Arc::clone(&text), cache)
+        };
+        let (own, placed) = (batch(own), batch(placed));
         let (a, b) = (own.tape(), placed.tape());
         rerail_tape_format::with_tape!(a, |a| {
             rerail_tape_format::with_tape!(b, |b| {
@@ -7008,6 +7033,8 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
 fn a_file_stored_in_each_format_reads_back_as_format_16() {
     use super::formats::Format;
     fn same(a: &TapeDoc, b: &TapeDoc, name: &str) {
+        // Each read in a batch of its own: a 16z tape's blocks decoded into a cache made for it.
+        let (a, b) = (&a.alone(), &b.alone());
         assert_eq!(a.transducer_len(), b.transducer_len(), "{name}: nodes");
         for node in 0..a.transducer_len() as u32 {
             assert_eq!(
@@ -7161,7 +7188,9 @@ fn the_lean_parsers_write_each_format_directly() {
             assert_eq!(image.source_digest, reference.source_digest, "{at}");
             // 16z's pieces are in the order its blocks were finished, which follows the writer's commits: the same
             // blocks, read node by node below.
-            let (a, b) = (reference.tape(), image.tape());
+            // The tape read in a batch of its own: a 16z tape's blocks decoded into a cache made for it.
+            let cache = image.own_cache();
+            let (a, b) = (reference.tape(), image.tape_in(cache.as_ref()));
             rerail_tape_format::with_tape!(a, |a| rerail_tape_format::with_tape!(b, |b| {
                 assert_eq!(a.len(), b.len(), "{at}");
                 for i in 0..a.len() {
@@ -7325,10 +7354,11 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
                 format,
                 "held as {format:?}"
             );
+            // A 16z tape read in a batch of its own, the CLIF reads and the document's: its blocks decoded into a
+            // cache made for it.
+            let doc = doc.alone();
             let (tape, view) = doc.doc_tape().in_place().unwrap();
-            let reader = rerail_clif::view::Reader::new(&view, tape.as_ptr());
-            // SAFETY: the reader's view, which this thread alone reads.
-            let view = unsafe { &*reader.view() };
+            let view = &doc.doc_tape().cache().map_or(view, |c| c.view_for(&view, tape.as_ptr()));
             let codes = resident::doc_codes(&doc).unwrap();
             let none = |v: Option<u32>| v.unwrap_or(NONE);
             let n = doc.transducer_len() as u32;
@@ -7565,8 +7595,10 @@ fn a_type_fragment_is_tree_sitters_written_annotation() {
     parser.set_language(&GrammarDialect::Python.get_ts_language()).unwrap();
     // A tape's nodes from `root` on, in either format: depth, kind, field, flags, classes and span, the span less
     // `shift`, the root's field left out.
+    // Each image is read in a batch of its own (a 16z tape's blocks decoded into a cache made for it, 0628 §6).
     let plain = |image: &TapeImage, root: usize, shift: u64| -> String {
-        let t = image.tape();
+        let cache = image.own_cache();
+        let t = image.tape_in(cache.as_ref());
         let end = t.subtree_end(root);
         let mut open: Vec<usize> = Vec::new();
         let mut out = String::new();
@@ -7588,10 +7620,13 @@ fn a_type_fragment_is_tree_sitters_written_annotation() {
         let tree = parser.parse(&src, None).unwrap();
         assert!(!tree.root_node().has_error(), "{src:?}");
         let theirs = TapeImage::encode(tree.root_node(), &grammar, &src, &|| false).unwrap().primary;
-        let t = theirs.tape();
+        let theirs_cache = theirs.own_cache();
+        let t = theirs.tape_in(theirs_cache.as_ref());
         let at = (0..t.len()).find(|&i| grammar.kind_name(t.table().entry(t.code(i)).kind) == Some("type")).expect("the annotation's type");
         assert_eq!(plain(&ours, 0, 0), plain(&theirs, at, 3), "{text:?}");
-        assert_eq!(ours.tape().subtree_end(0), ours.tape().len(), "{text:?}: one root");
+        let ours_cache = ours.own_cache();
+        let o = ours.tape_in(ours_cache.as_ref());
+        assert_eq!(o.subtree_end(0), o.len(), "{text:?}: one root");
     }
 }
 
@@ -7614,7 +7649,8 @@ fn a_fragment_is_parsed_from_its_start_by_its_parser() {
     use rerail_tape_format::tape::Tape as _;
     let js = Grammar::new(GrammarDialect::JavaScript).unwrap();
     let root = |image: &FileImage| {
-        let t = image.primary.tape();
+        let cache = image.primary.own_cache();
+        let t = image.primary.tape_in(cache.as_ref());
         assert_eq!(t.subtree_end(0), t.len(), "one root");
         let e = t.table().entry(t.code(0));
         (if e.flags & CODE_ERROR != 0 { "ERROR" } else { js.kind_name(e.kind).unwrap() }, t.start(0), t.end(0))
@@ -7635,7 +7671,8 @@ fn an_html_fragment_is_one_element() {
     use rerail_tape_format::tape::Tape as _;
     let html = Grammar::new(GrammarDialect::Html).unwrap();
     let image = TapeImage::parse_from(&html, "\n<li>a <b>c</b></li>\n", "element", &|| false).unwrap().unwrap();
-    let t = image.primary.tape();
+    let cache = image.primary.own_cache();
+    let t = image.primary.tape_in(cache.as_ref());
     assert_eq!(t.subtree_end(0), t.len(), "one root");
     assert_eq!((html.kind_name(t.table().entry(t.code(0)).kind), t.start(0), t.end(0)), (Some("element"), 1, 20));
 }

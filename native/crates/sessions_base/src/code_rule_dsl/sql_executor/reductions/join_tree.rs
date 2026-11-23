@@ -1,5 +1,6 @@
 //! AVL summaries for an associative, commutative, idempotent registered lattice merge.
 //! SQL owns the nodes. Each edit reads and rewrites only its search and rotation paths.
+use rerail_blocks::vector::Vector;
 use super::*;
 use rusqlite::params_from_iter;
 fn read<T>(
@@ -38,7 +39,7 @@ struct Edit<'a> {
     db: &'a rusqlite::Connection,
     tree: &'a JoinTree,
     storage: Option<&'a versions::Store>,
-    key: Vec<i64>,
+    key: Vector<i64>,
     cache: BTreeMap<i64, Node>,
 }
 impl JoinTree {
@@ -88,7 +89,7 @@ impl JoinTree {
                     .collect::<rusqlite::Result<Vec<_>>>()
             })
             .map_err(error)?;
-        let mut key = Vec::new();
+        let mut key = rerail_blocks::vector::Vector::new();
         let mut values = Vec::new();
         for row in rows {
             let row = row.map_err(error)?;
@@ -96,7 +97,7 @@ impl JoinTree {
                 self.build(db, storage.filter(|_|native), std::mem::take(&mut key), &values)?;
                 values.clear();
             }
-            key = row[..self.keys].to_vec();
+            key = Vector::from(&row[..self.keys]);
             values.push(row[self.keys]);
         }
         if !values.is_empty() {
@@ -104,7 +105,7 @@ impl JoinTree {
         }
         Ok(())
     }
-    fn build(&self, db: &rusqlite::Connection, storage: Option<&versions::Store>, key: Vec<i64>, values: &[i64]) -> Result<()> {
+    fn build(&self, db: &rusqlite::Connection, storage: Option<&versions::Store>, key: Vector<i64>, values: &[i64]) -> Result<()> {
         let mut edit = Edit {
             db,
             tree: self,
@@ -130,10 +131,10 @@ impl JoinTree {
                     .collect::<rusqlite::Result<Vec<_>>>()
             })
             .map_err(error)?;
-        let mut edits = BTreeMap::<Vec<i64>, Edit<'_>>::new();
+        let mut edits = BTreeMap::<Vector<i64>, Edit<'_>>::new();
         for row in rows {
             let row = row.map_err(error)?;
-            let key = row[..self.keys].to_vec();
+            let key = Vector::from(&row[..self.keys]);
             let edit = edits.entry(key.clone()).or_insert_with(|| Edit {
                 db,
                 tree: self,

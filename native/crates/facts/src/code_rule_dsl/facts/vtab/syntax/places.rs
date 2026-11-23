@@ -16,6 +16,7 @@
 //! block, one relation to a stage (`PlacedDir`, the kernels' `vread` of a kind with `VIEW_PLACED`).
 
 use super::super::Source;
+use rerail_blocks::vector::Vector;
 use super::granules;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -83,9 +84,9 @@ impl Places {
 
     /// The rows of the ids `values` on `column`, each id from the side that holds it on column 0 (a node's from the
     /// view, a span's from the spans), from both on another column: `None` when a part asked cannot answer.
-    fn by_side(&self, column: usize, values: &[i64], of: impl Fn(&dyn Source, &[i64]) -> Option<Vec<usize>>) -> Option<Vec<usize>> {
+    fn by_side(&self, column: usize, values: &[i64], of: impl Fn(&dyn Source, &[i64]) -> Option<Vector<usize>>) -> Option<Vector<usize>> {
         let (spans, nodes): (Vec<i64>, Vec<i64>) = if column == 0 { values.iter().partition(|&&v| is_span(v)) } else { (values.to_vec(), values.to_vec()) };
-        let mut rows = if nodes.is_empty() { Vec::new() } else { of(&*self.view, &nodes)? };
+        let mut rows = if nodes.is_empty() { Vector::new() } else { of(&*self.view, &nodes)? };
         if !spans.is_empty() {
             let first = self.first();
             rows.extend(of(&*self.spans, &spans)?.into_iter().map(|r| first + r));
@@ -94,12 +95,12 @@ impl Places {
     }
 
     /// Both parts' rows, the spans' past the view's: `None` when either cannot answer.
-    fn both(&self, of: impl Fn(&dyn Source) -> Option<Vec<usize>>) -> Option<Vec<usize>> {
+    fn both(&self, of: impl Fn(&dyn Source) -> Option<Vector<usize>>) -> Option<Vector<usize>> {
         let mut rows = of(&*self.view)?;
         let spans = of(&*self.spans)?;
         if !spans.is_empty() {
             let first = self.first();
-            rows.extend(spans.into_iter().map(|r| first + r));
+            rows.extend(spans.iter().map(|&r| first + r));
         }
         Some(rows)
     }
@@ -222,7 +223,7 @@ impl Source for Places {
         self.spans.for_rows_in(0..self.spans.len(), &all, &mut |r, row| !spans.contains(&row[k]) || each(first + r, &row[..k]));
         true
     }
-    fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
+    fn rows_of(&self, columns: &[usize], out: &mut Vector<i64>) {
         self.view.rows_of(columns, out);
         self.spans.rows_of(columns, out);
     }
@@ -231,10 +232,10 @@ impl Source for Places {
         let first = self.first();
         self.spans.documents_of(column, &mut |r, d| each(first + r, d));
     }
-    fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
+    fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vector<usize>> {
         self.both(|s| s.rows_of_documents(docs))
     }
-    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vector<u32> {
         let first = self.first() as u32;
         let mut rows = self.view.filter_eq(eqs);
         rows.extend(self.spans.filter_eq(eqs).into_iter().map(|r| r + first));
@@ -246,7 +247,7 @@ impl Source for Places {
     fn kept_to_doc(&self, column: usize) -> bool {
         self.view.kept_to_doc(column) && self.spans.kept_to_doc(column)
     }
-    fn lookup_in(&self, column: usize, values: &[i64], doc: i64) -> Option<Vec<usize>> {
+    fn lookup_in(&self, column: usize, values: &[i64], doc: i64) -> Option<Vector<usize>> {
         self.by_side(column, values, |s, v| s.lookup_in(column, v, doc).or_else(|| s.lookup(column, v)))
     }
     fn indexed(&self, column: usize) -> bool {
@@ -262,7 +263,7 @@ impl Source for Places {
         // A row's id is one row, the view's or a span's.
         if column == 0 { self.view.estimated_matches(column, batch) } else { self.view.estimated_matches(column, batch) + self.spans.estimated_matches(column, batch) }
     }
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vector<usize>> {
         self.by_side(column, values, |s, v| s.lookup(column, v))
     }
     fn keys_rows(&self, column: usize) -> bool {
@@ -354,11 +355,11 @@ pub fn join<N: AsRef<str>>(out: &mut [(N, Arc<dyn Source>)], batch: &Arc<super::
 /// A place relation's second column's values with each row's document (`value`, `document`), in an array in the
 /// run's blocks, none on the heap: sorted, a run of one value is its postings, and within it a run of one document
 /// that document's, whatever the rows' order or the values' range.
-struct Pairs(crate::code_rule_dsl::facts::rows::BlockVec<[i64; 2]>);
+struct Pairs(rerail_blocks::vector::Vector<[i64; 2]>);
 
 impl Pairs {
     fn new() -> Pairs {
-        Pairs(crate::code_rule_dsl::facts::rows::BlockVec::new())
+        Pairs(crate::code_rule_dsl::facts::rows::vector_in(None, 0))
     }
     /// A row of `id` (the first column: its document is the high half) and `value`.
     fn add(&mut self, id: i64, value: i64) {

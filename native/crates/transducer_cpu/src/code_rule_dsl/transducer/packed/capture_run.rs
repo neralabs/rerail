@@ -1,5 +1,6 @@
 //! CPU execution of proved normal sibling repetitions over capture ranges.
 //! Finite bodies form DAGs. Current-node admission retires before the next node.
+use rerail_blocks::vector::Vector;
 use super::*;
 #[path = "capture_run_entry.rs"]
 pub mod entry;
@@ -50,7 +51,7 @@ struct Record {
 struct Body {
     first: usize,
     end: usize,
-    paths: Vec<Vec<usize>>,
+    paths: Vec<Vector<usize>>,
 }
 struct Proof {
     begin: usize,
@@ -60,7 +61,7 @@ struct Proof {
     initial_named: bool,
     repeating_named: bool,
     tail_named: bool,
-    post_kind: Vec<usize>,
+    post_kind: Vector<usize>,
     initial: Body,
     repeating: Body,
 }
@@ -71,7 +72,7 @@ fn guard(op: u8) -> bool {
     )
 }
 fn body(program: &Program, first: usize, end: usize, header: usize, repeat: u16) -> Option<Body> {
-    let mut pending = vec![(first, Vec::new(), false, false)];
+    let mut pending = vec![(first, rerail_blocks::vector::Vector::new(), false, false)];
     let mut paths = Vec::new();
     let mut incoming = BTreeMap::<usize, usize>::new();
     let mut edges = BTreeSet::new();
@@ -236,7 +237,7 @@ fn prove(program: &Program) -> Result<Proof, Error> {
         return Err(unsupported());
     }
     let mut pc = tail_kind + 1;
-    let mut post_kind = Vec::new();
+    let mut post_kind = rerail_blocks::vector::Vector::new();
     loop {
         if post_kind.len() >= MAX_FINITE_JOB_INSTRUCTIONS {
             return Err(unsupported());

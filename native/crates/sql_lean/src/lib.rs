@@ -67,6 +67,14 @@ pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
 /// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 15's columns (`tape`), or
 /// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0434).
 pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
+    let mut kept = rerail_tape_format::Kept::new(finish);
+    tape_into_kept(src, &mut kept).map(|()| kept.take())
+}
+
+/// `tape_into` writing through `Sink<()>` (`rerail_tape_format::Kept`): the parse is one instance, compiled in this
+/// crate (optimized in dev builds), whatever the caller's output.
+#[inline(never)]
+fn tape_into_kept(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<()>) -> Result<(), Refusal> {
     if src.len() >= u32::MAX as usize / 2 {
         return Err(Refusal::TooLarge);
     }

@@ -1,5 +1,6 @@
 //! The converter's run over the data-layer pack, and checks of what it writes.
 
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::test_support::{CAPABILITIES, pack_test_data};
@@ -1311,7 +1312,7 @@ fn a_sample_of_the_replay_gives_the_recorded_findings() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("replay-sample");
     let _ = std::fs::remove_dir_all(&root);
     // Per group and check, its events with findings to compare that the baseline records exact.
-    let mut by_check = BTreeMap::<(&str, &str), Vec<usize>>::new();
+    let mut by_check = BTreeMap::<(&str, &str), Vector<usize>>::new();
     for (k, (event, id)) in events.iter().zip(&ids).enumerate() {
         // `RERAIL_REPLAY_CHECK`: only the checks whose group or name holds it (one check, to time or profile it).
         let named = std::env::var("RERAIL_REPLAY_CHECK").map_or(true, |c| event.group.contains(&c) || event.check.contains(&c));
@@ -1720,7 +1721,7 @@ fn the_options_are_given() {
     let rule = rule_file("transaction_patterns").unwrap();
     let plain = convert_over(&rule, &Adjust::default(), None).unwrap();
     assert_eq!(plain.clauses.iter().find(|(c, _)| c == "category-1").map(|(_, r)| r.clone()), Some(Ok(Origin::Converted)));
-    assert_eq!(plain.when.get("category-1").map(Vec::as_slice), Some(&[r#"{"option":{"oracleAnalyzer":true}}"#.to_owned()][..]));
+    assert_eq!(plain.when.get("category-1").map(|v| v.as_slice()), Some(&[r#"{"option":{"oracleAnalyzer":true}}"#.to_owned()][..]));
     let authored = format!(
         r#"
 .decl in_scope(d: number)
@@ -1798,8 +1799,8 @@ impl Baseline {
                 Some(("count", rest)) => {
                     let mut parts = rest.splitn(3, " | ");
                     let (Some(group), Some(check), Some(numbers)) = (parts.next(), parts.next(), parts.next()) else { return Err(bad()) };
-                    let numbers: Vec<usize> = numbers.split_whitespace().map(str::parse).collect::<Result<_, _>>().map_err(|_| bad())?;
-                    out.counts.insert((group.to_owned(), check.to_owned()), numbers.try_into().map_err(|_| bad())?);
+                    let numbers: Vector<usize> = numbers.split_whitespace().map(str::parse::<usize>).collect::<Result<_, _>>().map_err(|_| bad())?;
+                    out.counts.insert((group.to_owned(), check.to_owned()), <[usize; 5]>::try_from(&numbers[..]).map_err(|_| bad())?);
                 }
                 Some((kind @ ("miss" | "error"), event)) => {
                     out.misses.insert(event.to_owned(), kind.to_owned());

@@ -44,6 +44,7 @@
 //!
 //! The profile names each choice and why (`inline or store (decision 0099)`).
 
+use rerail_blocks::vector::Vector;
 use super::Model;
 use super::body::{Body, Placed};
 use super::fields::Fields;
@@ -94,7 +95,7 @@ pub fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<String>, P
         return Ok(None);
     }
     // Each relation's rules (the program's rule indices, in its order), by head.
-    let mut ids_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    let mut ids_of: BTreeMap<&str, Vector<usize>> = BTreeMap::new();
     for k in 0..n {
         ids_of.entry(rel_of(base.rule(k).head())).or_default().push(k);
     }
@@ -107,7 +108,7 @@ pub fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<String>, P
         return Ok(None);
     }
     let Ok(strata) = super::super::program_image::analyses::strata(v, f.about) else { return Ok(None) };
-    let sccs: Vec<BTreeSet<String>> = strata.sccs.iter().map(|s| s.iter().map(|&r| v.rel_name(r).to_owned()).collect()).collect();
+    let sccs = crate::code_rule_dsl::logic::front::Components::of_names(strata.sccs.iter().map(|s| s.iter().map(|&r| v.rel_name(r))));
     let reasons = refusals(&f, base, n, &ids_of, &sccs);
     // The rules as the planner reads them, rule `k` the program's rule `k`.
     let bodies: Vec<Body<'_>> = (0..n).map(|k| base.body(k)).collect();
@@ -206,7 +207,7 @@ pub fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<String>, P
     if observed_any {
         for (rel, p) in &by_estimates {
             let inlined = matches!(p, Priced::Weighed(v) if v.inline);
-            let reads = readers.get(rel.as_str()).map_or(&[][..], Vec::as_slice);
+            let reads = readers.get(rel.as_str()).map_or(&[][..], |v| v.as_slice());
             let stored_ran = !reads.is_empty() && reads.iter().all(|&(ri, _)| observed_rule(&bodies[ri], 1.0).is_some());
             let copies_ran = reads.iter().all(|&(ri, _)| observed_copies(rel, &bodies[ri], 1.0).is_some());
             if stored_ran && (inlined || copies_ran) {
@@ -354,7 +355,7 @@ enum Priced {
 struct Read<'r, 'v> {
     base: &'r Placed,
     bodies: &'r [Body<'v>],
-    ids_of: &'r BTreeMap<&'r str, Vec<usize>>,
+    ids_of: &'r BTreeMap<&'r str, Vector<usize>>,
 }
 
 /// Prices every relation the choice may inline (`need`'s candidates), with the observations kept now (none while
@@ -367,7 +368,7 @@ fn price_all(
     reasons: &BTreeMap<String, &'static str>,
     estimates: &BTreeMap<String, (f64, f64, f64)>,
     need: &BTreeSet<&str>,
-    sccs: &[BTreeSet<String>],
+    sccs: &crate::code_rule_dsl::logic::front::Components,
 ) -> BTreeMap<String, Priced> {
     let nodes = model.stats.nodes;
     // Each reader's own price (by its delta atom read first, `None`: whole), planned once however many of the
@@ -411,7 +412,7 @@ fn price_all(
             // rr_cx_edge(e, f)` priced whole joined `rr_cx_edge`'s imports and modules first, and inlining it looked
             // 7.8 M work cheaper; run, each new reach row scanned every document's module (277 s of calls_cx).
             let scc = sccs.iter().find(|s| s.contains(reader.rel(reader.head())));
-            let deltas: Vec<usize> = (0..reader.len())
+            let deltas: Vector<usize> = (0..reader.len())
                 .filter(|&k| k != i && reader.plain_atom(k).is_some_and(|a| !a.neg() && scc.is_some_and(|s| s.contains(reader.rel(a)))))
                 .collect();
             let firsts: Vec<Option<usize>> = if deltas.is_empty() { vec![None] } else { deltas.iter().map(|&k| Some(k)).collect() };
@@ -578,12 +579,12 @@ pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     CORE_NAMES.get().unwrap_or_else(|missing| panic!("{missing}: no program registered the core's names"))()
 }
 
-pub fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&str, Vec<usize>>, sccs: &[BTreeSet<String>]) -> BTreeMap<String, &'static str> {
+pub fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&str, Vector<usize>>, sccs: &crate::code_rule_dsl::logic::front::Components) -> BTreeMap<String, &'static str> {
     use super::super::program_image::{Lit, NativeKind, TermRef};
     let v: &Version = &base.v;
     let mut why: BTreeMap<String, &'static str> = BTreeMap::new();
     let natives_read = f.natives_read();
-    let recursive: BTreeSet<&str> = sccs.iter().filter(|s| s.len() > 1).flatten().map(String::as_str).collect();
+    let recursive: BTreeSet<&str> = sccs.iter().filter(|s| s.len() > 1).flatten().collect();
     let core = core_names();
     for (rel, ks) in rules_of {
         let rel = *rel;
@@ -669,12 +670,12 @@ pub fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&st
 /// A candidate whose rows are bounded under `SMALL` is stored unpriced, as `price_all` stores one whose estimates are
 /// under it, with neither it nor what it reads planned: on the data-layer batch over 9 in 10 priced candidates were
 /// small, and their estimates planned three quarters of the programs' rules.
-pub fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: &BTreeMap<&str, Vec<usize>>, sccs: &[BTreeSet<String>]) -> BTreeMap<String, (f64, Vec<f64>)> {
+pub fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: &BTreeMap<&str, Vector<usize>>, sccs: &crate::code_rule_dsl::logic::front::Components) -> BTreeMap<String, (f64, Vector<f64>)> {
     use super::super::program_image::{AtomRef, CmpOp, Lit, TermRef};
     let v: &Version = &base.v;
     let facts = |rel: &str| v.find(rel).and_then(|a| v.facts(a)).is_some();
-    let mut out: BTreeMap<String, (f64, Vec<f64>)> = BTreeMap::new();
-    let mut counted: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
+    let mut out: BTreeMap<String, (f64, Vector<f64>)> = BTreeMap::new();
+    let mut counted: BTreeMap<&str, Vector<f64>> = BTreeMap::new();
     for k in 0..n {
         for a in base.rule(k).body().filter_map(|l| l.atom()) {
             let rel = v.rel_name(a.rel());
@@ -682,15 +683,15 @@ pub fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: 
                 continue;
             }
             let Some(&n) = model.stats.card.get(rel) else { continue };
-            let cols = (0..a.arity()).map(|c| model.ndv.at(rel, c).map_or(n, |d| d.min(n))).collect();
+            let cols: rerail_blocks::vector::Vector<_> = (0..a.arity()).map(|c| model.ndv.at(rel, c).map_or(n, |d| d.min(n))).collect();
             counted.insert(rel, cols);
         }
     }
     let _ = f;
     for scc in sccs {
-        let recursive = scc.len() > 1 || scc.iter().any(|rel| rules_of.get(rel.as_str()).into_iter().flatten().any(|&k| base.rule(k).body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()) == rel)));
+        let recursive = scc.len() > 1 || scc.iter().any(|rel| rules_of.get(rel).into_iter().flatten().any(|&k| base.rule(k).body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()) == rel)));
         for rel in scc {
-            let Some(ks) = rules_of.get(rel.as_str()) else { continue };
+            let Some(ks) = rules_of.get(rel) else { continue };
             if recursive || facts(rel) {
                 continue;
             }
@@ -712,7 +713,7 @@ pub fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: 
                 }
             };
             let width = ks.first().map_or(0, |&k| base.rule(k).head().arity());
-            let (mut rows, mut cols) = (0.0f64, vec![0.0f64; width]);
+            let (mut rows, mut cols) = (0.0f64, rerail_blocks::vector![0.0f64; width]);
             for &k in ks {
                 let r = base.rule(k);
                 let mut var: BTreeMap<&str, f64> = BTreeMap::new();
@@ -732,7 +733,7 @@ pub fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: 
                         var.insert(name(s), 1.0);
                     }
                 }
-                let head: Vec<f64> = r.head().args().map(|t| match t {
+                let head: Vector<f64> = r.head().args().map(|t| match t {
                     TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => 1.0,
                     TermRef::Var(s) => var.get(name(s)).copied().unwrap_or(f64::INFINITY),
                     _ => f64::INFINITY,
@@ -745,7 +746,7 @@ pub fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: 
             for c in &mut cols {
                 *c = c.min(rows);
             }
-            out.insert(rel.clone(), (rows, cols));
+            out.insert(rel.to_owned(), (rows, cols));
         }
     }
     out
@@ -758,7 +759,7 @@ pub fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: 
 /// shrink so (one the program's test refused: a finding, a part of one row a key, a reader binding none of it), with
 /// its flat rows (observed where an earlier chunk measured them) and its parts' estimated rows, where the flat rows
 /// are over twice the parts'.
-fn factorizable(f: Fields<'_>, base: &Placed, ids_of: &BTreeMap<&str, Vec<usize>>, estimates: &BTreeMap<String, (f64, f64, f64)>, model: &Model) -> Vec<String> {
+fn factorizable(f: Fields<'_>, base: &Placed, ids_of: &BTreeMap<&str, Vector<usize>>, estimates: &BTreeMap<String, (f64, f64, f64)>, model: &Model) -> Vec<String> {
     use super::super::program_image::T;
     let v: &Version = &base.v;
     let mut out = Vec::new();
@@ -813,15 +814,15 @@ fn factorizable(f: Fields<'_>, base: &Placed, ids_of: &BTreeMap<&str, Vec<usize>
 /// Rule `r`'s body split at a variable `key` the head does not name: the parts that meet only at `key`, each naming a
 /// head variable, with each comparison and negation in the part whose variables it reads; the key's name, and each
 /// part's literals by place. `None` where no variable splits it so, or it holds anything but atoms and comparisons.
-pub fn factors_of(v: &Version, r: super::super::program_image::RuleRef<'_>) -> Option<(String, Vec<Vec<usize>>)> {
+pub fn factors_of(v: &Version, r: super::super::program_image::RuleRef<'_>) -> Option<(String, Vec<Vector<usize>>)> {
     factors_without(v, r, None)
 }
 
 /// `factors_of` over rule `r`'s body without its literal `skip` (a request that guards the rule, which names both
 /// halves of its head): the parts' literals by their places in the whole body.
-pub fn factors_without(v: &Version, r: super::super::program_image::RuleRef<'_>, skip: Option<usize>) -> Option<(String, Vec<Vec<usize>>)> {
+pub fn factors_without(v: &Version, r: super::super::program_image::RuleRef<'_>, skip: Option<usize>) -> Option<(String, Vec<Vector<usize>>)> {
     use super::super::program_image::Lit;
-    let places: Vec<usize> = (0..r.body().count()).filter(|&i| Some(i) != skip).collect();
+    let places: Vector<usize> = (0..r.body().count()).filter(|&i| Some(i) != skip).collect();
     let all: Vec<_> = r.body().collect();
     let lits: Vec<_> = places.iter().map(|&i| all[i]).collect();
     if !lits.iter().all(|l| matches!(l.view(), Lit::Atom(_) | Lit::Cmp { .. })) {
@@ -832,7 +833,7 @@ pub fn factors_without(v: &Version, r: super::super::program_image::RuleRef<'_>,
     for t in r.head().args() {
         super::body::term_vars(t, &mut head);
     }
-    let positive: Vec<usize> = (0..lits.len()).filter(|&i| matches!(lits[i].view(), Lit::Atom(a) if !a.neg())).collect();
+    let positive: Vector<usize> = (0..lits.len()).filter(|&i| matches!(lits[i].view(), Lit::Atom(a) if !a.neg())).collect();
     let vars: Vec<super::body::VarSet> = lits.iter().map(|&l| super::body::lit_vars(l)).collect();
     let numbered = Numbered::of(head.iter().map(name), vars.iter().map(|vs| vs.iter().map(name)));
     let (key, parts) = factor_parts(&numbered, &positive)?;
@@ -869,11 +870,11 @@ impl<'a> Numbered<'a> {
 
 /// A set of a body's variable numbers.
 #[derive(Clone, PartialEq)]
-struct Bits(Vec<u64>);
+struct Bits(Vector<u64>);
 
 impl Bits {
     fn new(n: usize) -> Bits {
-        Bits(vec![0; n.div_ceil(64)])
+        Bits(rerail_blocks::vector![0; n.div_ceil(64)])
     }
     fn set(&mut self, i: usize) {
         self.0[i / 64] |= 1 << (i % 64);
@@ -901,7 +902,7 @@ impl Bits {
 /// `factors_of`'s split of a body of literals (`b.vars`, each literal's variables; `positive`, the positive atoms' places)
 /// under a head naming `b.head`: the key's number, and the parts' literals by place. On numbered variables: as sets
 /// of names, each key's components cloned and compared names at every step.
-fn factor_parts(b: &Numbered<'_>, positive: &[usize]) -> Option<(usize, Vec<Vec<usize>>)> {
+fn factor_parts(b: &Numbered<'_>, positive: &[usize]) -> Option<(usize, Vec<Vector<usize>>)> {
     let (head, vars) = (&b.head, &b.vars);
     let mut keys = Bits::new(b.names.len());
     for &i in positive {
@@ -913,12 +914,12 @@ fn factor_parts(b: &Numbered<'_>, positive: &[usize]) -> Option<(usize, Vec<Vec<
     }
     for key in keys.iter() {
         // Components over every literal, joined by the variables they share other than the key.
-        let mut comps: Vec<(Vec<usize>, Bits)> = Vec::new();
+        let mut comps: Vec<(Vector<usize>, Bits)> = Vec::new();
         for (i, vs) in vars.iter().enumerate() {
             let mut vs = vs.clone();
             vs.unset(key);
             let (joined, rest): (Vec<_>, Vec<_>) = comps.into_iter().partition(|(_, v)| v.meets(&vs));
-            let mut all = (vec![i], vs);
+            let mut all = (rerail_blocks::vector![i], vs);
             for (ls, more) in joined {
                 all.0.extend(ls);
                 all.1.add(&more);
@@ -1468,7 +1469,7 @@ pub struct Inserted {
 /// keeps its measured rows, and its columns' measured distinct values and fanouts: a column's distinct values are
 /// otherwise guessed (the least of the body columns that bind it, or the rows), and a guess prices a probe of it
 /// wrongly in either direction (0099, "The regression").
-pub fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTreeMap<&str, Vec<usize>>), sccs: &[BTreeSet<String>], need: &BTreeSet<&str>, built: &BTreeSet<&str>) -> (BTreeMap<String, (f64, f64, f64)>, Inserted) {
+pub fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTreeMap<&str, Vector<usize>>), sccs: &crate::code_rule_dsl::logic::front::Components, need: &BTreeSet<&str>, built: &BTreeSet<&str>) -> (BTreeMap<String, (f64, f64, f64)>, Inserted) {
     let mut out = BTreeMap::new();
     let mut inserted = Inserted { card: Vec::new(), ndv: Vec::new(), fan: Vec::new() };
     // The relations estimated, in evaluation order. Each is planned with the estimates of those before it, so its
@@ -1478,17 +1479,17 @@ pub fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTr
     use rayon::prelude::*;
     use super::super::program_image::{Lit, TermRef};
     let v: &Version = &base.v;
-    let order: Vec<(&String, &Vec<usize>)> = sccs.iter().flatten().filter_map(|rel| ids_of.get(rel.as_str()).filter(|_| need.contains(rel.as_str())).map(|ks| (rel, ks))).collect();
-    let at: std::collections::HashMap<&str, usize> = order.iter().enumerate().map(|(i, (rel, _))| (rel.as_str(), i)).collect();
+    let order: Vec<(&str, &Vector<usize>)> = sccs.iter().flatten().filter_map(|rel| ids_of.get(rel).filter(|_| need.contains(rel)).map(|ks| (rel, ks))).collect();
+    let at: std::collections::HashMap<&str, usize> = order.iter().enumerate().map(|(i, (rel, _))| (*rel, i)).collect();
     let (mut level, mut floor) = (vec![0usize; order.len()], vec![0usize; order.len()]);
     for (i, (_, ks)) in order.iter().enumerate() {
-        let reads: Vec<usize> = ks.iter().flat_map(|&k| base.rule(k).body()).filter_map(|l| l.atom().and_then(|a| at.get(v.rel_name(a.rel())).copied())).collect();
+        let reads: Vector<usize> = ks.iter().flat_map(|&k| base.rule(k).body()).filter_map(|l| l.atom().and_then(|a| at.get(v.rel_name(a.rel())).copied())).collect();
         level[i] = reads.iter().filter(|&&j| j < i).map(|&j| level[j] + 1).fold(floor[i], usize::max);
         for &j in reads.iter().filter(|&&j| j > i) {
             floor[j] = floor[j].max(level[i] + 1);
         }
     }
-    let mut levels: Vec<Vec<usize>> = vec![Vec::new(); level.iter().max().map_or(0, |m| m + 1)];
+    let mut levels: Vec<Vector<usize>> = vec![rerail_blocks::vector::Vector::new(); level.iter().max().map_or(0, |m| m + 1)];
     for (i, &l) in level.iter().enumerate() {
         levels[l].push(i);
     }
@@ -1498,7 +1499,7 @@ pub fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTr
         // A relation measured, whose build is not priced, takes its measured rows and columns without planning.
         let measured_only: Vec<bool> = each.iter().map(|&i| {
             let rel = order[i].0;
-            !built.contains(rel.as_str()) && (model.stats.card.contains_key(rel) || observed_rows(rel, nodes).is_some())
+            !built.contains(rel) && (model.stats.card.contains_key(rel) || observed_rows(rel, nodes).is_some())
         }).collect();
         let model_now: &Model = model;
         // In the run, on whichever thread prices a relation: its plans read the run's and the object's statistics.
@@ -1547,10 +1548,10 @@ pub fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTr
                     }
                 }
             }
-            out.insert(rel.clone(), (rows, work, planned));
+            out.insert(rel.to_owned(), (rows, work, planned));
             if !model.stats.card.contains_key(rel) {
-                model.stats.card.insert(rel.clone(), rows.max(1.0));
-                inserted.card.push(rel.clone());
+                model.stats.card.insert(rel.to_owned(), rows.max(1.0));
+                inserted.card.push(rel.to_owned());
                 // A column's distinct values: at most the rows, and at most those of the body column that binds it.
                 let width = v.decl_of(rel).map_or(0, |d| d.cols().len());
                 let seen = observed_cols(rel, nodes, rows);
@@ -1559,15 +1560,15 @@ pub fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTr
                     if let Some(f) = seen_fan
                         && model.stats.fan.at(rel, c).is_none()
                     {
-                        model.stats.fan.insert((rel.clone(), c), f);
-                        inserted.fan.push((rel.clone(), c));
+                        model.stats.fan.insert((rel.to_owned(), c), f);
+                        inserted.fan.push((rel.to_owned(), c));
                     }
                     if model.ndv.at(rel, c).is_some() {
                         continue;
                     }
                     if let Some(d) = seen_ndv {
-                        model.ndv.insert((rel.clone(), c), d);
-                        inserted.ndv.push((rel.clone(), c));
+                        model.ndv.insert((rel.to_owned(), c), d);
+                        inserted.ndv.push((rel.to_owned(), c));
                         continue;
                     }
                     // The relation's values in column `c` are its rules' together: at most the sum of each rule's,
@@ -1601,8 +1602,8 @@ pub fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTr
                         };
                     }
                     let ndv = rows.min(sum);
-                    model.ndv.insert((rel.clone(), c), ndv.max(1.0));
-                    inserted.ndv.push((rel.clone(), c));
+                    model.ndv.insert((rel.to_owned(), c), ndv.max(1.0));
+                    inserted.ndv.push((rel.to_owned(), c));
                 }
             }
         }

@@ -2,7 +2,8 @@
 //! name, as the tree passes read `Program`'s (`keeps::choose`, `demand::split_negations`; t36 item 6), and as `plan::run`
 //! reads them (t36 item 7). A maintained program's `again` and `together` are not here: they are `body::Maint`'s.
 
-use super::super::program_image::{About, AtomId, Cell, DeclRef, FactsRef, GateRef, LatticeRef, NativeRef, RelId, ShapeRef, Version};
+use rerail_blocks::vector::Vector;
+use super::super::program_image::{About, AtomId, Cell, DeclRef, FactsRef, ArchivedGateRef, ArchivedNativeRef, ArchivedShapeRef, LatticeRef, RelId, Version};
 use super::body::Placed;
 use std::collections::BTreeSet;
 
@@ -11,12 +12,32 @@ use std::collections::BTreeSet;
 #[derive(Debug, PartialEq, Eq)]
 pub struct FieldsData {
     pub about: About,
+    lists: rerail_section::Section<Lists>,
+}
+
+/// A version's inputs and outputs, in order and sorted, and its derived relations, sorted: a section (decision 0628
+/// §4), searched in place.
+#[derive(rerail_section::Archive)]
+#[archive(derive(Debug, PartialEq, Eq))]
+struct Lists {
+    #[archive(flat)]
     inputs: Vec<AtomId>,
+    #[archive(flat)]
     outputs: Vec<AtomId>,
-    input_set: BTreeSet<AtomId>,
-    output_set: BTreeSet<AtomId>,
+    #[archive(flat)]
+    input_set: Vec<AtomId>,
+    #[archive(flat)]
+    output_set: Vec<AtomId>,
     /// The relations a rule derives (its head's).
-    heads: BTreeSet<RelId>,
+    #[archive(flat)]
+    heads: Vec<RelId>,
+}
+
+/// `v` sorted, without repeats.
+fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
+    v.sort_unstable();
+    v.dedup();
+    v
 }
 
 impl FieldsData {
@@ -30,8 +51,9 @@ impl FieldsData {
         };
         let inputs: Vec<AtomId> = v.inputs().filter(|a| !given.contains(a)).collect();
         let outputs: Vec<AtomId> = v.outputs().collect();
-        let heads = v.rules().map(|r| r.head().rel()).chain(given.iter().filter_map(|&a| v.rel(v.text(a)))).collect();
-        FieldsData { about, input_set: inputs.iter().copied().collect(), output_set: outputs.iter().copied().collect(), inputs, outputs, heads }
+        let heads = sorted(v.rules().map(|r| r.head().rel()).chain(given.iter().filter_map(|&a| v.rel(v.text(a)))).collect());
+        let lists = Lists { input_set: sorted(inputs.clone()), output_set: sorted(outputs.clone()), inputs, outputs, heads };
+        FieldsData { about, lists: rerail_section::Section::of(&lists) }
     }
 }
 
@@ -118,18 +140,18 @@ impl<'v> Fields<'v> {
     /// The inputs, in the program's order (`Program::inputs`).
     pub fn inputs(&self) -> impl ExactSizeIterator<Item = &'v str> + 'v {
         let v = self.v;
-        self.d.inputs.iter().map(move |&a| v.text(a))
+        self.d.lists.inputs.iter().map(move |&a| v.text(a))
     }
     /// The outputs, in the program's order (`Program::outputs`).
     pub fn outputs(&self) -> impl ExactSizeIterator<Item = &'v str> + 'v {
         let v = self.v;
-        self.d.outputs.iter().map(move |&a| v.text(a))
+        self.d.lists.outputs.iter().map(move |&a| v.text(a))
     }
     pub fn is_output(&self, rel: &str) -> bool {
-        self.atom(rel).is_some_and(|a| self.d.output_set.contains(&a))
+        self.atom(rel).is_some_and(|a| self.d.lists.output_set.binary_search(&a).is_ok())
     }
     pub fn is_input(&self, rel: &str) -> bool {
-        self.atom(rel).is_some_and(|a| self.d.input_set.contains(&a))
+        self.atom(rel).is_some_and(|a| self.d.lists.input_set.binary_search(&a).is_ok())
     }
 
     /// Whether `rel` is a part's relation another part derives (`GIVEN`): derived here, by no rule of this version.
@@ -139,7 +161,7 @@ impl<'v> Fields<'v> {
 
     /// Whether a rule of the program derives `rel` (a rule's head), or another part does (`given`).
     pub fn derives(&self, rel: &str) -> bool {
-        self.rel(rel).is_some_and(|r| self.d.heads.contains(&r))
+        self.rel(rel).is_some_and(|r| self.d.lists.heads.binary_search(&r).is_ok())
     }
 
     // -- declarations --
@@ -238,7 +260,7 @@ impl<'v> Fields<'v> {
         self.atom(rel).is_some_and(|a| self.about.gate_keys.binary_search(&a).is_ok())
     }
     /// The gates in the program's order (`Program::gates`).
-    pub fn gates(&self) -> &'v [GateRef] {
+    pub fn gates(&self) -> &'v [ArchivedGateRef] {
         &self.about.gate_list
     }
     /// Whether `rel` is a request or a relation an answer produces (`Program::answers`).
@@ -293,12 +315,12 @@ impl<'v> Fields<'v> {
     pub fn lattices(&self) -> &'v [LatticeRef] {
         &self.about.lattice
     }
-    pub fn native(&self, rel: &str) -> Option<&'v NativeRef> {
+    pub fn native(&self, rel: &str) -> Option<&'v ArchivedNativeRef> {
         let about: &'v About = self.about;
         self.rel(rel).and_then(|r| about.native(r))
     }
     /// Every native relation, by relation id (`Program::natives`).
-    pub fn natives(&self) -> &'v [NativeRef] {
+    pub fn natives(&self) -> &'v [ArchivedNativeRef] {
         &self.about.natives
     }
     /// The relations natives read (`Native::reads`), by name.
@@ -306,8 +328,8 @@ impl<'v> Fields<'v> {
         self.about.natives.iter().flat_map(|n| n.reads.iter()).map(|&r| self.v.rel_name(r)).collect()
     }
     /// `rel`'s columns declared `tape` (`Program::tapes[rel]`), in order.
-    pub fn tapes_of(&self, rel: &str) -> Vec<usize> {
-        let Some(r) = self.rel(rel) else { return Vec::new() };
+    pub fn tapes_of(&self, rel: &str) -> Vector<usize> {
+        let Some(r) = self.rel(rel) else { return rerail_blocks::vector::Vector::new() };
         self.about.tapes.iter().filter(|t| t.0 == r).map(|t| t.1).collect()
     }
     /// Every relation's columns declared `tape`, sorted.
@@ -320,11 +342,11 @@ impl<'v> Fields<'v> {
         about.kindsets.iter().find(|k| self.v.text(k.0) == set).map(|k| k.1.as_slice())
     }
     /// Every kind set and its kinds, by name.
-    pub fn kindsets(&self) -> &'v [(AtomId, Vec<AtomId>)] {
+    pub fn kindsets(&self) -> &'v [rerail_section::Tuple2<AtomId, rerail_section::RelList<AtomId>>] {
         &self.about.kindsets
     }
     /// The join shape directives, in the program's order (`Program::shapes`).
-    pub fn shapes(&self) -> &'v [ShapeRef] {
+    pub fn shapes(&self) -> &'v [ArchivedShapeRef] {
         &self.about.shapes
     }
 }
@@ -358,7 +380,7 @@ mod tests {
         let l = f.lattice_decl("best").unwrap();
         assert_eq!((l.keys, f.text(l.ty), l.merge.map(|m| f.text(m)), l.widen, f.lattice_name("best")), (1, "sym", Some("type_join"), Some(2), Some("type_join")));
         match &f.native("far").unwrap().spec {
-            super::super::super::program_image::NativeSpec::DfsFirst { edge, target, roots } => {
+            super::super::super::program_image::ArchivedNativeSpec::DfsFirst { edge, target, roots } => {
                 assert_eq!((f.rel_name(*edge), f.rel_name(*target), roots.map(|r| f.rel_name(r))), ("e", "s", Some("s")));
             }
             s => panic!("{s:?}"),

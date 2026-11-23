@@ -16,6 +16,7 @@
 //! The frame is kept and read with `options.reuse`: the command line's runs, and phase 0's. A run that reads something it cannot name does not record. That covers typing inputs,
 //! T facts, a program reading another phase's exports, or a run that consulted no file.
 
+use rerail_blocks::vector::Vector;
 use super::{Report, Result, Typing, observe};
 use super::Error;
 use sha2::{Digest as _, Sha256};
@@ -161,10 +162,13 @@ fn graphs_line(graphs: &[Option<[u8; 32]>]) -> String {
 /// The record's entry of the program's parts the check reads (`corpus::Summary`), as JSON.
 const SUMMARY: &str = "program";
 
-/// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249).
+/// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249). A Git
+/// snapshot's file is not read: the key names the snapshot's commit or tree (`snapshot::run_identity`), which fixes
+/// the file's bytes, and a run that reads Git metadata alone has no tree to read it from (`metadata_without_env`).
 fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Added> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    let read_file = crate::git_workspace::snapshot::run_identity(root).is_none();
+    let settings = crate::code_rule_dsl::logic::settings::settings_with_file(root, &flags, read_file).map_err(Error::Plan)?;
     Ok(super::added::Added::of(&settings, options))
 }
 
@@ -307,7 +311,7 @@ pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
     let (plans, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "plan");
     let (graphs, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == GRAPHS);
     let (summary, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == SUMMARY);
-    let plans: Vec<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
+    let plans: Vector<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
     let Some(outputs) = decode_outputs(&outputs) else {
         miss("the record's outputs do not decode");
         return Ok(None);

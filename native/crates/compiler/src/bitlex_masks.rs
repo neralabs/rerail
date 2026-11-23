@@ -747,7 +747,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     let mut machine = String::new();
     if let Some((text, lowered, _, mark_masks, records)) = tier2 {
         let (s, l) = stream.expect("a tree section's stream");
-        low.program.extracts = vec![at[s], at[l]];
+        low.program.extracts = rerail_blocks::vector![at[s], at[l]];
         low.program.newlines = newline_at.map(|(k, set)| (at[k], set));
         low.program.records = Some(records);
         // Each mark's mask: `MARK`'s operand.
@@ -4916,7 +4916,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 Some(at) => at,
                 None => {
                     let thirds = pairs.iter().filter(|p| p.len() == 3).map(|p| [p[0], p[1], p[2]]).collect();
-                    let mut t = crate::records::PairTable { row: vec![0; 256], sets: vec![[0; 4]], thirds };
+                    let mut t = crate::records::PairTable { row: vec![0; 256], sets: rerail_blocks::vector![[0; 4]], thirds };
                     for first in 0..256usize {
                         let mut set = [0u64; 4];
                         for p in pairs.iter().filter(|p| p.len() == 2 && usize::from(p[0]) == first) {
@@ -5308,7 +5308,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let settling = low.settles.iter().filter(|&&k| gaps >> k & 1 == 1 && low.tested_only.iter().all(|&t| t != k)).fold(0u32, |a, &k| a | 1 << k);
     let own = if extra_mark.is_some() { blanks.iter().fold(settling, |a, &(k, _)| a | 1 << k) } else { 0 };
     let token_read = token_read | settling;
-    let records = crate::records::Records { own, starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, kind_rows, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), alone: token_alone & ((1u32 << crate::records::MARKS) - 1), read: token_read, blanks, check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default(), gap };
+    let records = crate::records::Records { own, starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, kind_rows, untaken: rerail_blocks::vector::Vector::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), alone: token_alone & ((1u32 << crate::records::MARKS) - 1), read: token_read, blanks, check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default(), gap };
     crate::records::WordTable::new(&records.words)?;
     // A mark's tests pass over an extra's token by its mark (`records::gap_marks`): the token
     // loop knows it only where the reader gives it (`Reader::retag`).

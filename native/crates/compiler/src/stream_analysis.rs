@@ -876,9 +876,10 @@ pub fn shared_runs(native: &Structure, pushes: &[u16], alone_to: Option<&[bool]>
 /// (no alias, a kind and field within a key's bits, its flags the extra's where its kind is one of `extras`, its
 /// classes among `classes`, the program's supertype classes), at the key (`kind | field << KIND_BITS | class bits <<
 /// 16`). The JIT's run reads them at run time (`Ctx::numbers`).
-pub fn numbers_by_key(lang: &rerail_tape_format::f16::Lang, classes: &[u16], extras: &[u16]) -> Vec<u32> {
+pub fn numbers_by_key(lang: &rerail_tape_format::f16::Lang, classes: &[u16], extras: &[u16]) -> rerail_tape_format::Vector<u32> {
     use rerail_tape_format::{CODE_EXTRA, KIND_BITS};
-    let mut by = vec![u32::MAX; id_slots(classes.len())];
+    let mut by = rerail_tape_format::Vector::new();
+    by.resize(id_slots(classes.len()), u32::MAX);
     for e in lang.table().entries() {
         let Some(n) = lang.number(e) else { continue };
         let extra = if extras.contains(&e.kind) { CODE_EXTRA } else { 0 };

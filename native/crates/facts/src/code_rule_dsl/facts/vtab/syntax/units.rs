@@ -18,7 +18,7 @@ use super::{Dialect, NONE, Projected};
 
 impl Projected {
     fn unit_flags(&self, d: &Dialect, local: u32) -> u8 {
-        d.granule_kind(d.code(&self.facts, self.node(local)))
+        d.granule_kind(d.code(self.f(), self.node(local)))
     }
     /// The definition wrapper `local` claims (its first definition child), if it is a wrapper that claims one.
     fn claimed(&self, d: &Dialect, local: u32) -> Option<u32> {

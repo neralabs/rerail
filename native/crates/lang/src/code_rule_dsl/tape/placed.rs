@@ -93,7 +93,8 @@ pub fn place(len: usize, fill: impl FnOnce(&mut [u8]) -> std::io::Result<()>) ->
     if device().is_some() {
         crate::code_rule_dsl::prof::count("tape.room_refused", 1);
     }
-    let mut v = vec![0u8; len];
+    let mut v = rerail_tape_format::Vector::with_capacity(len);
+    v.resize(len, 0);
     fill(&mut v)?;
     Ok(Home::Own(v))
 }

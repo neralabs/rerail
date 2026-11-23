@@ -287,16 +287,16 @@ impl Line<'_> {
     }
 
     /// A bracketed list of items read by `item`.
-    pub fn list(&mut self, mut item: impl FnMut(&mut Self) -> Result<u16, String>) -> Result<Vec<u16>, String> {
+    pub fn list<C: Default + Extend<u16>>(&mut self, mut item: impl FnMut(&mut Self) -> Result<u16, String>) -> Result<C, String> {
         if self.next()? != Token::OpenList {
             return Err("a list opens with `[`".into());
         }
-        let mut out = Vec::new();
+        let mut out = C::default();
         while self.tokens.peek() != Some(&Token::CloseList) {
             if self.tokens.peek().is_none() {
                 return Err("a list closes with `]`".into());
             }
-            out.push(item(self)?);
+            out.extend([item(self)?]);
         }
         self.next()?;
         Ok(out)
@@ -757,7 +757,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, kind_rows: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, alone: 0, read: 0, blanks: Vec::new(), own: 0, check_masks: Vec::new(), prefix: Vec::new(), gap: None });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, kind_rows: None, untaken: rerail_blocks::vector::Vector::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, alone: 0, read: 0, blanks: Vec::new(), own: 0, check_masks: rerail_blocks::vector::Vector::new(), prefix: Vec::new(), gap: None });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
@@ -788,7 +788,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let r = program.records.as_mut().ok_or(format!("block {at} recnext before its records"))?;
                 let hex = line.word()?;
                 let row = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<Vec<u8>, _>>().map_err(|_| "a bad pair row")?;
-                r.nexts.push(crate::records::PairTable { row, sets: Vec::new(), thirds: Vec::new() });
+                r.nexts.push(crate::records::PairTable { row, sets: rerail_blocks::vector::Vector::new(), thirds: rerail_blocks::vector::Vector::new() });
             } else if first == "recpairs" {
                 // `recpairs W0 W1 W2 W3`: a set of the last table's (`PairTable::sets`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recpairs before its records"))?;

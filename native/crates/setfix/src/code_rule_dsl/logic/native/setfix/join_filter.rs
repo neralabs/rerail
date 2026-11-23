@@ -9,6 +9,7 @@
 //! - Every hit is still probed exactly: a wrong choice costs time, never an answer.
 //!
 //! The filter is blocked (`logic::bloom`): a test is one hash, one load and one compare.
+use rerail_blocks::vector::Vector;
 use super::{
     JoinRule, Key, Rows, Src, Step, Store,
     sketch::Sketch,
@@ -88,9 +89,9 @@ impl Screening {
     /// scan's column `JoinFilter::scan_col`) a block of 64 at a time, each block hashed in one loop and tested
     /// (`Kept::may_hold_each`). A selection pass, the device's shape, in place of a test a binding at the screened
     /// step. While the screen backs off, ids pass unread and untested.
-    pub(super) fn select(&mut self, f: &JoinFilter, ids: impl Iterator<Item = u32>, key: impl Fn(u32) -> i64) -> Vec<u32> {
+    pub(super) fn select(&mut self, f: &JoinFilter, ids: impl Iterator<Item = u32>, key: impl Fn(u32) -> i64) -> Vector<u32> {
         self.scanned = true;
-        let mut out = Vec::new();
+        let mut out = rerail_blocks::vector::Vector::new();
         let (mut bid, mut bkey, mut n) = ([0u32; BLOCK], [0i64; BLOCK], 0);
         for id in ids {
             if self.skip > 0 {
@@ -112,7 +113,7 @@ impl Screening {
         out
     }
 
-    fn block(&mut self, f: &JoinFilter, ids: &[u32; BLOCK], keys: &[i64], out: &mut Vec<u32>) {
+    fn block(&mut self, f: &JoinFilter, ids: &[u32; BLOCK], keys: &[i64], out: &mut Vector<u32>) {
         let held = f.keys.may_hold_each(keys);
         out.extend((0..keys.len()).filter(|&b| held >> b & 1 != 0).map(|b| ids[b]));
         self.count(keys.len() as u64, keys.len() as u64 - u64::from(held.count_ones()));
@@ -152,14 +153,15 @@ enum Held<'a> {
 }
 
 impl<'a> Column<'a> {
-    fn of(src: &'a Src, store: &'a Store, column: usize) -> Option<Self> {
+    fn of(j: &'a JoinRule, src: &'a Src, store: &'a Store, column: usize) -> Option<Self> {
         let (rows, start, end, sketch, keys) = match src {
-            Src::In(r, _) => match &r.view {
+            Src::In(r, _) => match &j.bound(r).view {
                 // A whole view (no ids of its own): its rows are its source's, each read on the tape.
-                Some(v) if v.ids.is_none() => (Held::View(r), 0, r.len(), None, None),
+                Some(v) if v.ids.is_none() => { let r = j.bound(r); (Held::View(r), 0, r.len(), None, None) }
                 Some(_) => return None,
                 // A held relation's sketches, where it has them, count all its rows.
                 None => {
+                    let r = j.bound(r);
                     let sketch = r.sketches.get(column).filter(|_| r.sketches.len() == r.k);
                     (Held::Rows(&r.rows, r.k), 0, r.n, sketch, sketch)
                 }
@@ -227,17 +229,17 @@ impl JoinFilter {
         // The scan's rows first: a walk under `MIN_SCAN` is never screened, so the probe side is not measured for it.
         // Its length can cost what the walk does not: a text test's is its strings' that pass, every document made
         // (decision 0494); on ep2's comprehension edit a removal join of a few `text` rows made 299 documents so.
-        let outer = Column::of(left, store, left_col).ok_or("the scan is of a view with ids")?;
+        let outer = Column::of(j, left, store, left_col).ok_or("the scan is of a view with ids")?;
         if outer.len < MIN_SCAN {
             return Err("under 256 scan rows");
         }
-        let inner = Column::of(right, store, right_col).ok_or("the probe is of a view with ids")?;
+        let inner = Column::of(j, right, store, right_col).ok_or("the probe is of a view with ids")?;
         // The probe side's own filter, else one built for this walk. A full one refuses little, and its samples say so.
         let (filter, reservation, kept) = match inner.keys.map(|sk| (sk, sk.filter())) {
             Some((_, Some(f))) => (Arc::clone(f), None, true),
             Some((sk, None)) => {
                 let f = Kept::new(bloom::MIN_WORDS);
-                for &(v, _) in sk.exact_counts().expect("a sketch without a filter has its few values").iter() {
+                for &[v, _] in sk.exact_counts().expect("a sketch without a filter has its few values").iter() {
                     f.add_hashed(bloom::hash(v));
                 }
                 (Arc::new(f), None, true)
@@ -338,21 +340,17 @@ mod tests {
             rels: Vec::new(),
             syms: symbols,
         };
-        let mut j = parse_join(&db, "pos c0 v0\npos c1 v0\nhead v0", &mut syms).unwrap();
+        let j = parse_join(&db, "pos c0 v0\npos c1 v0\nhead v0", &mut syms).unwrap();
         let outer = InRel::kept(vec![b'i'], (0..16_384).collect(), 16_384);
         let inner = InRel::kept(vec![b'i'], (0..1659).collect(), 1659);
-        for (step, (rel, cols)) in j
-            .steps
-            .iter_mut()
-            .zip([(outer, &[][..]), (inner, &[0][..])])
-        {
-            let Step::Atom { src, .. } = step else {
-                panic!("expected an atom")
-            };
-            *src = Src::In(rel.clone(), rel.index(cols));
-        }
+        let mut rels = [(outer, &[][..]), (inner, &[0][..])].into_iter();
+        let j = j.edited(|step| {
+            let super::super::steps::Step::Atom { src, .. } = step else { panic!("expected an atom") };
+            let (rel, cols) = rels.next().unwrap();
+            *src = super::super::steps::Src::In(rerail_section::Bound(rel.clone()), rerail_section::Bound(rel.index(cols)));
+        });
         assert!(JoinFilter::choose(&j, &store).is_some());
-        let mut answers = Vec::new();
+        let mut answers = rerail_blocks::vector::Vector::new();
         run_join_collect(&j, &store, &mut syms, &[], &mut answers).unwrap();
         answers.sort_unstable();
         assert_eq!(answers, (0..1659).collect::<Vec<_>>());
@@ -360,7 +358,7 @@ mod tests {
 
     /// `spec`'s walk over a scan of 0..16,384 (`c0`) and a probe side of 0..1,659 (`c1`): the screen it chooses
     /// (its step and whether negated) and the head's answers, sorted.
-    fn walk(spec: &str) -> (Option<(usize, bool)>, Vec<i64>) {
+    fn walk(spec: &str) -> (Option<(usize, bool)>, Vector<i64>) {
         use super::super::{InRel, Interner, parse_join, run_join_collect, symbols};
         let path = crate::code_rule_dsl::fixtures::temp();
         drop(crate::code_rule_dsl::fixtures::open(&path));
@@ -368,16 +366,16 @@ mod tests {
         let symbols = symbols(&db).unwrap();
         let mut syms = Interner::for_loading(&symbols);
         let store = Store { rels: Vec::new(), syms: symbols };
-        let mut j = parse_join(&db, spec, &mut syms).unwrap();
+        let j = parse_join(&db, spec, &mut syms).unwrap();
         let mut rels = [(InRel::kept(vec![b'i'], (0..16_384).collect(), 16_384), &[][..]), (InRel::kept(vec![b'i'], (0..1659).collect(), 1659), &[0][..])].into_iter();
-        for step in &mut j.steps {
-            if let Step::Atom { src, .. } = step {
+        let j = j.edited(|step| {
+            if let super::super::steps::Step::Atom { src, .. } = step {
                 let (rel, cols) = rels.next().unwrap();
-                *src = Src::In(rel.clone(), rel.index(cols));
+                *src = super::super::steps::Src::In(rerail_section::Bound(rel.clone()), rerail_section::Bound(rel.index(cols)));
             }
-        }
+        });
         let chosen = JoinFilter::choose(&j, &store).map(|f| (f.step, f.neg));
-        let mut answers = Vec::new();
+        let mut answers = rerail_blocks::vector::Vector::new();
         run_join_collect(&j, &store, &mut syms, &[], &mut answers).unwrap();
         answers.sort_unstable();
         (chosen, answers)
@@ -406,7 +404,7 @@ mod tests {
             fn indexed(&self, column: usize) -> bool {
                 column == 0
             }
-            fn lookup(&self, _: usize, values: &[i64]) -> Option<Vec<usize>> {
+            fn lookup(&self, _: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
                 Some(values.iter().filter(|&&v| (0..1000).contains(&v) && v % 2 == 0).map(|&v| v as usize).collect())
             }
             fn value(&self, row: usize, _: usize) -> i64 {
@@ -419,18 +417,20 @@ mod tests {
         let symbols = symbols(&db).unwrap();
         let mut syms = Interner::for_loading(&symbols);
         let store = Store { rels: Vec::new(), syms: symbols };
-        let mut j = parse_join(&db, "pos c0 v0\npos c1 v0\nhead v0", &mut syms).unwrap();
+        let j = parse_join(&db, "pos c0 v0\npos c1 v0\nhead v0", &mut syms).unwrap();
         let counted = Arc::new(Counted(std::sync::atomic::AtomicUsize::new(0)));
         let outer = InRel::kept(vec![b'i'], (0..10).collect(), 10);
         let inner = InRel::over_source(Arc::clone(&counted) as Arc<dyn Source>, vec![b'i']);
-        for (step, (rel, cols)) in j.steps.iter_mut().zip([(outer, &[][..]), (inner, &[0][..])]) {
-            let Step::Atom { src, .. } = step else { panic!("expected an atom") };
-            *src = Src::In(rel.clone(), rel.index(cols));
-        }
+        let mut rels = [(outer, &[][..]), (inner, &[0][..])].into_iter();
+        let j = j.edited(|step| {
+            let super::super::steps::Step::Atom { src, .. } = step else { panic!("expected an atom") };
+            let (rel, cols) = rels.next().unwrap();
+            *src = super::super::steps::Src::In(rerail_section::Bound(rel.clone()), rerail_section::Bound(rel.index(cols)));
+        });
         let before = counted.0.load(Relaxed);
         assert!(JoinFilter::choose(&j, &store).is_none(), "10 scan rows: no screen");
         assert_eq!(counted.0.load(Relaxed), before, "the probe side is not measured for a walk under 256 rows");
-        let mut answers = Vec::new();
+        let mut answers = rerail_blocks::vector::Vector::new();
         run_join_collect(&j, &store, &mut syms, &[], &mut answers).unwrap();
         answers.sort_unstable();
         assert_eq!(answers, vec![0, 2, 4, 6, 8]);
@@ -500,8 +500,8 @@ mod tests {
         let symbols = symbols(&db).unwrap();
         let mut syms = Interner::for_loading(&symbols);
         let store = Store { rels: Vec::new(), syms: symbols };
-        let mut j = parse_join(&db, "pos c0 v0\npos c1 v0\nhead v0", &mut syms).unwrap();
-        let keys: Vec<i64> = (0..1659).chain(100_000..138_341).collect();
+        let j = parse_join(&db, "pos c0 v0\npos c1 v0\nhead v0", &mut syms).unwrap();
+        let keys: Vector<i64> = (0..1659).chain(100_000..138_341).collect();
         let mut inner = InRel::kept(vec![b'i'], keys.clone(), keys.len());
         let mut sk = Sketch::default();
         for &v in &keys {
@@ -510,14 +510,16 @@ mod tests {
         sk.grow(|| keys.iter().copied());
         Arc::get_mut(&mut inner).unwrap().sketches = vec![sk];
         let outer = InRel::kept(vec![b'i'], (0..16_384).collect(), 16_384);
-        for (step, (rel, cols)) in j.steps.iter_mut().zip([(outer, &[][..]), (inner, &[0][..])]) {
-            let Step::Atom { src, .. } = step else { panic!("expected an atom") };
-            *src = Src::In(rel.clone(), rel.index(cols));
-        }
+        let mut rels = [(outer, &[][..]), (inner, &[0][..])].into_iter();
+        let j = j.edited(|step| {
+            let super::super::steps::Step::Atom { src, .. } = step else { panic!("expected an atom") };
+            let (rel, cols) = rels.next().unwrap();
+            *src = super::super::steps::Src::In(rerail_section::Bound(rel.clone()), rerail_section::Bound(rel.index(cols)));
+        });
         let screen = JoinFilter::choose(&j, &store).expect("a kept filter screens");
         assert!(screen._reservation.is_none(), "nothing built");
         drop(screen);
-        let mut answers = Vec::new();
+        let mut answers = rerail_blocks::vector::Vector::new();
         run_join_collect(&j, &store, &mut syms, &[], &mut answers).unwrap();
         answers.sort_unstable();
         assert_eq!(answers, (0..1659).collect::<Vec<_>>());
@@ -547,7 +549,7 @@ mod tests {
         let key = |id: u32| i64::from(id) * 3;
         let mut s = Screening::default();
         let got = s.select(&f, 0..10_001u32, key);
-        let want: Vec<u32> = (0..10_001u32).filter(|&id| !f.rejects(&[key(id)])).collect();
+        let want: Vector<u32> = (0..10_001u32).filter(|&id| !f.rejects(&[key(id)])).collect();
         assert_eq!(got, want);
         assert!(got.len() < 6_000 && got.len() > 1_000, "{} rows kept", got.len());
         assert_eq!(s.tested, 10_001);

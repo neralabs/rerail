@@ -615,15 +615,34 @@ pub fn token_count(src: &str) -> usize {
 }
 
 /// `src`'s tape: the engine's (`code_rule_dsl::tape`'s image of `crate::tape(src)`), its bytes.
-pub fn tape(src: &str) -> Vec<u8> {
+pub fn tape(src: &str) -> rerail_tape_format::Vector<u8> {
     struct Image<'s>(&'s str);
     impl Finish for Image<'_> {
-        type Out = Vec<u8>;
-        fn finish<L: Layout>(&mut self, w: Writer<L>) -> Result<Vec<u8>, Redo> {
+        type Out = rerail_tape_format::Vector<u8>;
+        fn finish<L: Layout>(&mut self, w: Writer<L>) -> Result<rerail_tape_format::Vector<u8>, Redo> {
             w.finish(self.0.as_bytes())
         }
     }
     tape_into(src, &mut Image(src))
+}
+
+/// `src`'s tape in format 16 or 16z (`sixteen`'s target), written by its ops as the statements are committed: an error
+/// where a code is not in its language's table or the nodes pass format 16's bounds (the engine holds format 16 alone,
+/// decision 0626). Not generic, so the parser is compiled here (optimized in dev builds), not in the engine's crate
+/// (`tape_into`'s caller).
+#[inline(never)]
+pub fn tape_to(src: &str, sixteen: rerail_tape_format::Sixteen) -> Result<rerail_tape_format::f16::Finished, String> {
+    struct To(rerail_tape_format::Sixteen);
+    impl Finish for To {
+        type Out = Result<rerail_tape_format::f16::Finished, String>;
+        fn target(&self) -> rerail_tape_format::Target {
+            rerail_tape_format::Target::F16(self.0.clone())
+        }
+        fn finish<L: Layout>(&mut self, mut w: Writer<L>) -> Result<Self::Out, Redo> {
+            w.finish_16()
+        }
+    }
+    tape_into(src, &mut To(sixteen))
 }
 
 /// [`tape`], the writer writing to `finish`'s target and finished by it: format 15's image (`tape`), or format 16
@@ -1924,7 +1943,7 @@ mod tests {
 
     /// The lean parser's tape of `src` when it is the engine's, byte for byte; else how the two differ: their
     /// lengths, and the first byte that differs, placed in the engine's tape.
-    fn lean_tape_or_difference(src: &str) -> Result<Vec<u8>, String> {
+    fn lean_tape_or_difference(src: &str) -> Result<rerail_tape_format::Vector<u8>, String> {
         let (lean, engine) = (super::tape(src), crate::tape::image(&crate::engine_tape(src), src));
         if lean == engine {
             return Ok(lean);

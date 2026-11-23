@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
 use crate::code_rule_dsl::fixtures::{document, temp};
@@ -103,7 +104,7 @@ fn sources_are_admitted_once_and_read_in_place() {
     }
     let _serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let files: Vec<Vec<u8>> = vec![b"{\"a\": [1, 2]}".to_vec(), Vec::new(), vec![b'x'; 1000], b"{\"a\": [1, 2]}".to_vec()];
-    let bytes: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    let bytes: Vec<&[u8]> = files.iter().map(|v| v.as_slice()).collect();
     let first = admit_sources(&bytes).expect("admits");
     for (source, file) in first.iter().zip(&files) {
         assert_eq!(source.offset % 16, 0);

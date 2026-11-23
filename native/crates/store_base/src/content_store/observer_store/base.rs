@@ -24,7 +24,7 @@ pub trait Kept: Send {
     /// An atom's text (`ContentStore::atom_value`).
     fn text(&self, atom: u32) -> Option<String>;
     /// The atoms of `texts`, interned (`ContentStore::intern_atoms`).
-    fn intern(&self, texts: &[&str]) -> Option<Vec<u32>>;
+    fn intern(&self, texts: &[&str]) -> Option<rerail_blocks::vector::Vector<u32>>;
     /// `f` of `space`'s chain as kept (`ContentStore::kept_space`), or of `None` when it has none.
     fn read(&self, space: &[u8; 32], f: &mut dyn FnMut(Option<&dyn KeptRead>));
     /// Queues `puts` as one put of `space`, a job called `what` (`ContentStore::queue_kept_as`).

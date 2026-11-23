@@ -19,7 +19,8 @@ use crate::{CHECKPOINT_STRIDE, HEADER_BYTES, MAGIC, FORMAT_VERSION, TAIL_FROM_ST
 
 /// What a code is: the grammar's kind and field, the flags (`CODE_EXTRA`, `CODE_ERROR`, `CODE_MISSING`), a
 /// contextual alias (its displayed name and whether it is named; format 15 numbers them per tape, so a table
-/// holds the name) and the supertype classes the node is a member of, ascending.
+/// holds the name) and the supertype classes the node is a member of, ascending. A table is made of these
+/// (`CodeTable::new`, `encode`); it is read as `EntryRef`s, where its words lie.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Entry {
     pub kind: u16,
@@ -29,161 +30,381 @@ pub struct Entry {
     pub classes: Vec<u16>,
 }
 
-/// The codes a tape's numbers name, by number, and the table's index of them by kind and by class (made once,
-/// with the table, on first use): a kind's codes without a scan of the table, which on format 16 is the language's
-/// every code (`f16::Lang`), not the document's few.
-#[derive(Clone, Debug, Default)]
+impl Entry {
+    /// The entry as a table holds it.
+    pub fn as_ref(&self) -> EntryRef<'_> {
+        EntryRef { kind: self.kind, field: self.field, flags: self.flags, alias: self.alias.as_ref().map(|(s, n)| (s.as_str(), *n)), classes: &self.classes }
+    }
+}
+
+impl<'a> From<&'a Entry> for EntryRef<'a> {
+    fn from(e: &'a Entry) -> EntryRef<'a> {
+        e.as_ref()
+    }
+}
+
+/// A code as its table's words hold it (decision 0628 §2): read in place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct EntryRef<'a> {
+    pub kind: u16,
+    pub field: u16,
+    pub flags: u8,
+    pub alias: Option<(&'a str, bool)>,
+    pub classes: &'a [u16],
+}
+
+impl EntryRef<'_> {
+    pub fn to_owned(&self) -> Entry {
+        Entry { kind: self.kind, field: self.field, flags: self.flags, alias: self.alias.map(|(s, n)| (s.to_owned(), n)), classes: self.classes.to_vec() }
+    }
+    fn hash(&self) -> u64 {
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        let mut mix = |x: u64| h = (h ^ x).wrapping_mul(0x0000_0100_0000_01b3);
+        mix(u64::from(self.kind) | u64::from(self.field) << 16 | u64::from(self.flags) << 32);
+        match self.alias {
+            None => mix(1),
+            Some((s, named)) => {
+                mix(2 + u64::from(named));
+                s.bytes().for_each(|b| mix(u64::from(b)));
+            }
+        }
+        self.classes.iter().for_each(|&c| mix(u64::from(c) | 1 << 20));
+        h
+    }
+}
+
+/// The words a code table or a set is read from, where its owner keeps them: the engine's in a block, a tool's or a
+/// test's on the heap.
+pub type Words = std::sync::Arc<dyn AsRef<[u32]> + Send + Sync>;
+
+/// Where a table made with no owner's words (`CodeTable::new`) is placed: the engine registers a block's (decision
+/// 0628 §2), once, at load; without it the words are the heap's.
+static PLACE: std::sync::OnceLock<fn(&[u32]) -> Words> = std::sync::OnceLock::new();
+
+/// The engine's placing of a table's words (`PLACE`).
+pub fn place_tables_with(place: fn(&[u32]) -> Words) {
+    let _ = PLACE.set(place);
+}
+
+// The table's words: a header, then the codes' records, their classes (u16s), their aliases' bytes, its index by
+// kind and by class (starts, then numbers), the codes with `CODE_ERROR`, with `CODE_MISSING` and either, and a
+// hash of the entries (a code + 1 a slot, 0 for none).
+const H_N: usize = 0;
+const H_KINDS: usize = 1;
+const H_CLASSES: usize = 2;
+const H_REC: usize = 3;
+const H_CLS: usize = 4;
+const H_CLS_N: usize = 5;
+const H_STR: usize = 6;
+const H_STR_N: usize = 7;
+const H_KIND_STARTS: usize = 8;
+const H_KIND_NUMS: usize = 9;
+const H_CLASS_STARTS: usize = 10;
+const H_CLASS_NUMS: usize = 11;
+const H_ERR: usize = 12;
+const H_ERR_N: usize = 13;
+const H_MISS: usize = 14;
+const H_MISS_N: usize = 15;
+const H_FAULT: usize = 16;
+const H_FAULT_N: usize = 17;
+const H_HASH: usize = 18;
+const H_HASH_N: usize = 19;
+const HEADER_WORDS: usize = 20;
+/// A record: kind | field << 16; flags | has an alias << 8 | named << 9; its classes' start and count; its alias's
+/// byte start and length.
+const REC: usize = 6;
+
+/// The codes a tape's numbers name, by number, and its index of them by kind and by class: encoded words, read where
+/// they lie (decision 0628 §2). On format 16 every document of a language shares its table (`f16::Lang`).
+#[derive(Clone)]
 pub struct CodeTable {
-    entries: Vec<Entry>,
-    index: std::sync::OnceLock<CodeIndex>,
+    words: Words,
+}
+
+impl std::fmt::Debug for CodeTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.entries()).finish()
+    }
+}
+
+impl Default for CodeTable {
+    fn default() -> Self {
+        CodeTable::new(Vec::new())
+    }
 }
 
 impl PartialEq for CodeTable {
     fn eq(&self, other: &Self) -> bool {
-        self.entries == other.entries
+        self.len() == other.len() && self.entries().zip(other.entries()).all(|(a, b)| a == b)
     }
 }
 impl Eq for CodeTable {}
 
-/// A table's codes by kind (those with no `CODE_ERROR`), by class, and those with `CODE_ERROR` and with
-/// `CODE_MISSING`, each as the set a kind test reads: made once per table, so a test of a document borrows it
-/// (on format 16 every document of a language shares the table).
-#[derive(Clone, Debug, Default)]
-struct CodeIndex {
-    /// By kind (a u16 symbol, so a vector).
-    kinds: Vec<CodeSet>,
-    classes: Vec<CodeSet>,
-    errors: CodeSet,
-    missing: CodeSet,
-    /// `errors` and `missing`.
-    faults: CodeSet,
-    empty: CodeSet,
-}
-
 impl CodeTable {
+    /// The table of `entries`, its words where the engine places tables (`place_tables_with`), else the heap's.
     pub fn new(entries: Vec<Entry>) -> Self {
-        CodeTable { entries, index: std::sync::OnceLock::new() }
+        let words = Self::encode(&entries);
+        // copy: derived: the table encoded once, then placed where the engine keeps tables
+        CodeTable { words: match PLACE.get() { Some(place) => place(&words), None => std::sync::Arc::new(words.into_boxed_slice()) } }
     }
-    fn index(&self) -> &CodeIndex {
-        self.index.get_or_init(|| {
-            let mut kinds: Vec<Vec<u32>> = Vec::new();
-            let mut classes: Vec<Vec<u32>> = Vec::new();
-            let slot = |v: &mut Vec<Vec<u32>>, k: u16, n: u32| {
-                if v.len() <= k as usize {
-                    v.resize_with(k as usize + 1, Vec::new);
-                }
-                v[k as usize].push(n);
-            };
-            let (mut errors, mut missing) = (Vec::new(), Vec::new());
-            for (n, e) in self.entries.iter().enumerate() {
-                let n = n as u32;
-                if e.flags & crate::CODE_MISSING != 0 {
-                    missing.push(n);
-                }
-                if e.flags & crate::CODE_ERROR != 0 {
-                    errors.push(n);
-                } else {
-                    slot(&mut kinds, e.kind, n);
-                }
-                for &c in &e.classes {
-                    slot(&mut classes, c, n);
+
+    /// The words of the table of `entries` (`over` reads them).
+    pub fn encode(entries: &[Entry]) -> Vec<u32> {
+        let n = entries.len();
+        let kinds = entries.iter().map(|e| usize::from(e.kind) + 1).max().unwrap_or(0);
+        let classes = entries.iter().flat_map(|e| e.classes.iter().map(|&c| usize::from(c) + 1)).max().unwrap_or(0);
+        let cls_n: usize = entries.iter().map(|e| e.classes.len()).sum();
+        let str_n: usize = entries.iter().map(|e| e.alias.as_ref().map_or(0, |a| a.0.len())).sum();
+        let by = |key: &dyn Fn(&Entry) -> Vec<usize>, of: usize| -> (Vec<u32>, Vec<u32>) {
+            let mut starts = vec![0u32; of + 1];
+            for e in entries {
+                for k in key(e) {
+                    starts[k + 1] += 1;
                 }
             }
-            let faults = CodeSet::of_numbers(errors.iter().chain(&missing).copied());
-            CodeIndex {
-                kinds: kinds.into_iter().map(CodeSet::of_numbers).collect(),
-                classes: classes.into_iter().map(CodeSet::of_numbers).collect(),
-                errors: CodeSet::of_numbers(errors),
-                missing: CodeSet::of_numbers(missing),
-                faults,
-                empty: CodeSet::default(),
+            for k in 0..of {
+                starts[k + 1] += starts[k];
             }
-        })
+            let mut at = starts.clone();
+            let mut nums = vec![0u32; starts[of] as usize];
+            for (i, e) in entries.iter().enumerate() {
+                for k in key(e) {
+                    nums[at[k] as usize] = i as u32;
+                    at[k] += 1;
+                }
+            }
+            (starts, nums)
+        };
+        let (kind_starts, kind_nums) = by(&|e| if e.flags & crate::CODE_ERROR == 0 { vec![usize::from(e.kind)] } else { Vec::new() }, kinds);
+        let (class_starts, class_nums) = by(&|e| e.classes.iter().map(|&c| usize::from(c)).collect(), classes);
+        let flagged = |f: u8| -> Vec<u32> { (0..n as u32).filter(|&i| entries[i as usize].flags & f != 0).collect() };
+        let (errors, missing, faults) = (flagged(crate::CODE_ERROR), flagged(crate::CODE_MISSING), flagged(crate::CODE_ERROR | crate::CODE_MISSING));
+        let slots = (2 * n).next_power_of_two().max(2);
+        let mut w = vec![0u32; HEADER_WORDS];
+        let section = |w: &mut Vec<u32>, at: usize, words: &[u32]| {
+            w[at] = w.len() as u32;
+            w.extend_from_slice(words);
+        };
+        w[H_N] = n as u32;
+        w[H_KINDS] = kinds as u32;
+        w[H_CLASSES] = classes as u32;
+        w[H_REC] = w.len() as u32;
+        let (mut cls_at, mut str_at) = (0u32, 0u32);
+        for e in entries {
+            let (alias, named, len) = e.alias.as_ref().map_or((0, 0, 0), |(s, named)| (1, u32::from(*named), s.len() as u32));
+            w.extend_from_slice(&[u32::from(e.kind) | u32::from(e.field) << 16, u32::from(e.flags) | alias << 8 | named << 9, cls_at, e.classes.len() as u32, str_at, len]);
+            cls_at += e.classes.len() as u32;
+            str_at += len;
+        }
+        // The classes, two to a word.
+        let cls: Vec<u16> = entries.iter().flat_map(|e| e.classes.iter().copied()).collect();
+        let cls_words: Vec<u32> = cls.chunks(2).map(|p| u32::from(p[0]) | u32::from(*p.get(1).unwrap_or(&0)) << 16).collect();
+        section(&mut w, H_CLS, &cls_words);
+        w[H_CLS_N] = cls_n as u32;
+        let bytes: Vec<u8> = entries.iter().filter_map(|e| e.alias.as_ref()).flat_map(|a| a.0.bytes()).collect();
+        let str_words: Vec<u32> = bytes.chunks(4).map(|c| {
+            let mut b = [0u8; 4];
+            b[..c.len()].copy_from_slice(c);
+            u32::from_le_bytes(b)
+        }).collect();
+        section(&mut w, H_STR, &str_words);
+        w[H_STR_N] = str_n as u32;
+        section(&mut w, H_KIND_STARTS, &kind_starts);
+        section(&mut w, H_KIND_NUMS, &kind_nums);
+        section(&mut w, H_CLASS_STARTS, &class_starts);
+        section(&mut w, H_CLASS_NUMS, &class_nums);
+        section(&mut w, H_ERR, &errors);
+        w[H_ERR_N] = errors.len() as u32;
+        section(&mut w, H_MISS, &missing);
+        w[H_MISS_N] = missing.len() as u32;
+        section(&mut w, H_FAULT, &faults);
+        w[H_FAULT_N] = faults.len() as u32;
+        let mut hash = vec![0u32; slots];
+        for (i, e) in entries.iter().enumerate() {
+            let mut s = e.as_ref().hash() as usize & (slots - 1);
+            while hash[s] != 0 {
+                s = (s + 1) & (slots - 1);
+            }
+            hash[s] = i as u32 + 1;
+        }
+        section(&mut w, H_HASH, &hash);
+        w[H_HASH_N] = slots as u32;
+        w
     }
+
+    /// The table in `words` (`encode`'s), wherever its owner keeps them: its header, its sections' bounds, its
+    /// aliases' text checked.
+    pub fn over(words: Words) -> Result<Self, String> {
+        let w = (*words).as_ref();
+        if w.len() < HEADER_WORDS {
+            return Err("a short code table".into());
+        }
+        let ends = [
+            (H_REC, w[H_N] as usize * REC),
+            (H_CLS, (w[H_CLS_N] as usize).div_ceil(2)),
+            (H_STR, (w[H_STR_N] as usize).div_ceil(4)),
+            (H_KIND_STARTS, w[H_KINDS] as usize + 1),
+            (H_CLASS_STARTS, w[H_CLASSES] as usize + 1),
+            (H_ERR, w[H_ERR_N] as usize),
+            (H_MISS, w[H_MISS_N] as usize),
+            (H_FAULT, w[H_FAULT_N] as usize),
+            (H_HASH, w[H_HASH_N] as usize),
+        ];
+        if ends.iter().any(|&(at, n)| w[at] as usize + n > w.len()) {
+            return Err("a code table's section past its words".into());
+        }
+        let t = CodeTable { words };
+        std::str::from_utf8(t.str_bytes()).map_err(|_| "a code table's alias is not UTF-8")?;
+        if (0..t.len() as u32).any(|i| {
+            let r = t.rec(i);
+            r[2] as usize + r[3] as usize > t.words()[H_CLS_N] as usize || r[4] as usize + r[5] as usize > t.str_bytes().len()
+        }) {
+            return Err("a code's classes or alias past its table".into());
+        }
+        Ok(t)
+    }
+
+    #[inline(always)]
+    fn words(&self) -> &[u32] {
+        (*self.words).as_ref()
+    }
+    #[inline(always)]
+    fn rec(&self, n: u32) -> &[u32] {
+        let at = self.words()[H_REC] as usize + n as usize * REC;
+        &self.words()[at..at + REC]
+    }
+    fn section(&self, at: usize, n: usize) -> &[u32] {
+        let s = self.words()[at] as usize;
+        &self.words()[s..s + n]
+    }
+    fn str_bytes(&self) -> &[u8] {
+        let s = self.section(H_STR, (self.words()[H_STR_N] as usize).div_ceil(4));
+        // SAFETY: the section's words, read as their bytes, `H_STR_N` of them.
+        unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u8>(), self.words()[H_STR_N] as usize) }
+    }
+    fn classes_all(&self) -> &[u16] {
+        let s = self.section(H_CLS, (self.words()[H_CLS_N] as usize).div_ceil(2));
+        // SAFETY: the section's words, read as their u16s (little-endian, as `encode` packed them), `H_CLS_N` of them.
+        unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u16>(), self.words()[H_CLS_N] as usize) }
+    }
+    /// The words it is read from, for an owner that keeps them elsewhere.
+    pub fn as_words(&self) -> &[u32] {
+        self.words()
+    }
+
     /// The codes of kind `kind` with no `CODE_ERROR`.
-    pub fn of_kind(&self, kind: u16) -> &CodeSet {
-        let x = self.index();
-        x.kinds.get(kind as usize).unwrap_or(&x.empty)
+    pub fn of_kind(&self, kind: u16) -> CodeSet<'_> {
+        self.index(H_KIND_STARTS, H_KIND_NUMS, H_KINDS, kind)
     }
     /// The codes whose classes hold `class`.
-    pub fn of_class(&self, class: u16) -> &CodeSet {
-        let x = self.index();
-        x.classes.get(class as usize).unwrap_or(&x.empty)
+    pub fn of_class(&self, class: u16) -> CodeSet<'_> {
+        self.index(H_CLASS_STARTS, H_CLASS_NUMS, H_CLASSES, class)
+    }
+    fn index(&self, starts: usize, nums: usize, of: usize, k: u16) -> CodeSet<'_> {
+        if usize::from(k) >= self.words()[of] as usize {
+            return CodeSet::default();
+        }
+        let s = self.section(starts, self.words()[of] as usize + 1);
+        let (a, b) = (s[usize::from(k)] as usize, s[usize::from(k) + 1] as usize);
+        CodeSet::Few(&self.section(nums, b)[a..b])
     }
     /// The codes with `CODE_ERROR`.
-    pub fn errors(&self) -> &CodeSet {
-        &self.index().errors
+    pub fn errors(&self) -> CodeSet<'_> {
+        CodeSet::Few(self.section(H_ERR, self.words()[H_ERR_N] as usize))
     }
     /// The codes with `CODE_MISSING`.
-    pub fn missing(&self) -> &CodeSet {
-        &self.index().missing
+    pub fn missing(&self) -> CodeSet<'_> {
+        CodeSet::Few(self.section(H_MISS, self.words()[H_MISS_N] as usize))
     }
     /// The codes with `CODE_ERROR` or `CODE_MISSING`.
-    pub fn faults(&self) -> &CodeSet {
-        &self.index().faults
+    pub fn faults(&self) -> CodeSet<'_> {
+        CodeSet::Few(self.section(H_FAULT, self.words()[H_FAULT_N] as usize))
     }
     #[inline]
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.words()[H_N] as usize
     }
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.len() == 0
     }
     /// Code `number`'s entry.
     #[inline(always)]
-    pub fn entry(&self, number: u32) -> &Entry {
-        &self.entries[number as usize]
+    pub fn entry(&self, number: u32) -> EntryRef<'_> {
+        let r = self.rec(number);
+        let alias = (r[1] >> 8 & 1 != 0).then(|| {
+            let b = &self.str_bytes()[r[4] as usize..(r[4] + r[5]) as usize];
+            // SAFETY: `over` checked the aliases' bytes are UTF-8, and `encode` wrote each alias whole.
+            (unsafe { std::str::from_utf8_unchecked(b) }, r[1] >> 9 & 1 != 0)
+        });
+        EntryRef { kind: r[0] as u16, field: (r[0] >> 16) as u16, flags: r[1] as u8, alias, classes: &self.classes_all()[r[2] as usize..(r[2] + r[3]) as usize] }
     }
-    pub fn entries(&self) -> &[Entry] {
-        &self.entries
+    /// The entries, by number.
+    pub fn entries(&self) -> impl ExactSizeIterator<Item = EntryRef<'_>> + '_ {
+        (0..self.len() as u32).map(|n| self.entry(n))
     }
-    /// The codes for which `member` holds, as a set by number.
-    pub fn set(&self, member: impl Fn(&Entry) -> bool) -> CodeSet {
-        CodeSet { repr: Members::Dense(self.entries.iter().map(member).collect()) }
-    }
-}
-
-/// A set of codes of one table, by number: what a kind test reads. Either a flag per code of the table (a set
-/// made by a test of every entry), or the few numbers it holds (a kind's or a class's, from the table's index).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CodeSet {
-    repr: Members,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Members {
-    Dense(Vec<bool>),
-    Few(Box<[u32]>),
-}
-
-impl Default for CodeSet {
-    fn default() -> Self {
-        CodeSet { repr: Members::Few(Box::default()) }
-    }
-}
-
-impl CodeSet {
-    /// The set of `numbers` (any order, repeats allowed).
-    pub fn of_numbers(numbers: impl IntoIterator<Item = u32>) -> CodeSet {
-        let mut v: Vec<u32> = numbers.into_iter().collect();
-        v.sort_unstable();
-        v.dedup();
-        CodeSet { repr: Members::Few(v.into_boxed_slice()) }
-    }
-    #[inline(always)]
-    pub fn contains(&self, number: u32) -> bool {
-        match &self.repr {
-            Members::Dense(member) => member.get(number as usize).copied().unwrap_or(false),
-            Members::Few(few) if few.len() <= 8 => few.contains(&number),
-            Members::Few(few) => few.binary_search(&number).is_ok(),
+    /// `entry`'s number, if the table has it.
+    pub fn number(&self, entry: EntryRef<'_>) -> Option<u32> {
+        let slots = self.section(H_HASH, self.words()[H_HASH_N] as usize);
+        let mut s = entry.hash() as usize & (slots.len() - 1);
+        loop {
+            match slots[s] {
+                0 => return None,
+                k if self.entry(k - 1) == entry => return Some(k - 1),
+                _ => s = (s + 1) & (slots.len() - 1),
+            }
         }
     }
-    /// The numbers of a set made from numbers, ascending; a set of a flag per code has none to give.
-    pub fn numbers(&self) -> Option<&[u32]> {
-        match &self.repr {
-            Members::Dense(_) => None,
-            Members::Few(few) => Some(few),
+    /// The codes for which `member` holds, as a set by number, its bits into `out` (`set_words` of them).
+    pub fn set_into(&self, member: impl Fn(EntryRef<'_>) -> bool, out: &mut [u32]) {
+        out.fill(0);
+        for (n, e) in self.entries().enumerate() {
+            if member(e) {
+                out[n / 32] |= 1 << (n % 32);
+            }
+        }
+    }
+    /// The words a set of this table's codes by bits takes (`set_into`).
+    pub fn set_words(&self) -> usize {
+        self.len().div_ceil(32)
+    }
+    /// The codes for which `member` holds, its bits on the heap (a tool's, a test's).
+    pub fn set(&self, member: impl Fn(EntryRef<'_>) -> bool) -> CodeSetBuf {
+        let mut bits = vec![0u32; self.set_words()];
+        self.set_into(member, &mut bits);
+        CodeSetBuf { words: std::sync::Arc::new(bits.into_boxed_slice()), dense: true, n: self.len() as u32 }
+    }
+}
+
+/// A set of codes of one table, by number: what a kind test reads, where its words lie. Either a bit per code of the
+/// table (a set made by a test of every entry), or the few numbers it holds, ascending (a kind's or a class's, from
+/// the table's index).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodeSet<'a> {
+    Dense(&'a [u32], u32),
+    Few(&'a [u32]),
+}
+
+impl Default for CodeSet<'_> {
+    fn default() -> Self {
+        CodeSet::Few(&[])
+    }
+}
+
+impl<'a> CodeSet<'a> {
+    #[inline(always)]
+    pub fn contains(&self, number: u32) -> bool {
+        match *self {
+            CodeSet::Dense(bits, n) => number < n && bits[number as usize / 32] >> (number % 32) & 1 != 0,
+            CodeSet::Few(few) if few.len() <= 8 => few.contains(&number),
+            CodeSet::Few(few) => few.binary_search(&number).is_ok(),
+        }
+    }
+    /// The numbers of a set made from numbers, ascending; a set of a bit per code has none to give.
+    pub fn numbers(&self) -> Option<&'a [u32]> {
+        match *self {
+            CodeSet::Dense(..) => None,
+            CodeSet::Few(few) => Some(few),
         }
     }
     /// Marks in `out` each number of the set below `cut` (at most 256), clearing the rest: a set of a few numbers
@@ -191,23 +412,55 @@ impl CodeSet {
     pub fn mark_below(&self, cut: usize, out: &mut [bool; 256]) {
         let cut = cut.min(256);
         *out = [false; 256];
-        match &self.repr {
-            Members::Dense(member) => out[..cut.min(member.len())].copy_from_slice(&member[..cut.min(member.len())]),
-            Members::Few(few) => few.iter().take_while(|&&n| (n as usize) < cut).for_each(|&n| out[n as usize] = true),
+        match *self {
+            CodeSet::Dense(_, n) => (0..cut.min(n as usize)).for_each(|i| out[i] = self.contains(i as u32)),
+            CodeSet::Few(few) => few.iter().take_while(|&&n| (n as usize) < cut).for_each(|&n| out[n as usize] = true),
         }
     }
     /// Whether the set holds a number `from` or past it.
     pub fn any_from(&self, from: usize) -> bool {
-        match &self.repr {
-            Members::Dense(member) => member.iter().skip(from).any(|&m| m),
-            Members::Few(few) => few.last().is_some_and(|&n| n as usize >= from),
+        match *self {
+            CodeSet::Dense(_, n) => (from..n as usize).any(|i| self.contains(i as u32)),
+            CodeSet::Few(few) => few.last().is_some_and(|&n| n as usize >= from),
         }
     }
     pub fn is_empty(&self) -> bool {
-        match &self.repr {
-            Members::Dense(member) => !member.iter().any(|&m| m),
-            Members::Few(few) => few.is_empty(),
+        match *self {
+            CodeSet::Dense(bits, _) => bits.iter().all(|&w| w == 0),
+            CodeSet::Few(few) => few.is_empty(),
         }
+    }
+}
+
+/// A set's words, held: a tool's or a test's on the heap (`CodeTable::set`, `of_numbers`), the engine's in a block.
+#[derive(Clone)]
+pub struct CodeSetBuf {
+    words: Words,
+    dense: bool,
+    n: u32,
+}
+
+impl std::fmt::Debug for CodeSetBuf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.view().fmt(f)
+    }
+}
+
+impl CodeSetBuf {
+    /// The set of `numbers` (any order, repeats allowed), on the heap.
+    pub fn of_numbers(numbers: impl IntoIterator<Item = u32>) -> CodeSetBuf {
+        let mut v: Vec<u32> = numbers.into_iter().collect();
+        v.sort_unstable();
+        v.dedup();
+        CodeSetBuf { words: std::sync::Arc::new(v.into_boxed_slice()), dense: false, n: 0 }
+    }
+    /// The set in `words`: a bit per code of a table of `n` (`dense`), or numbers, ascending.
+    pub fn over(words: Words, dense: bool, n: u32) -> CodeSetBuf {
+        CodeSetBuf { words, dense, n }
+    }
+    pub fn view(&self) -> CodeSet<'_> {
+        let w = (*self.words).as_ref();
+        if self.dense { CodeSet::Dense(w, self.n) } else { CodeSet::Few(w) }
     }
 }
 
@@ -251,6 +504,17 @@ pub trait Tape {
     }
     fn start(&self, i: usize) -> u64;
     fn end(&self, i: usize) -> u64;
+    /// `i`'s code and the id just past its subtree, together: a format that reads a node where its block lies (16z,
+    /// through its batch's cache) reads them in one lookup of the block.
+    #[inline(always)]
+    fn code_and_end(&self, i: usize) -> (u32, usize) {
+        (self.code(i), self.subtree_end(i))
+    }
+    /// `i`'s start and end, together (as `code_and_end`).
+    #[inline(always)]
+    fn span(&self, i: usize) -> (u64, u64) {
+        (self.start(i), self.end(i))
+    }
     /// A cursor's step in preorder: `i`'s start, given the start of the node before it (unused for the first). A
     /// format that stores starts relatively answers with one gap.
     #[inline(always)]
@@ -547,25 +811,25 @@ pub fn f15_columns(bytes: &[u8]) -> Result<(F15Columns<'_>, CodeTable), String> 
 /// No node: `nearest_all`'s answer for a node with no ancestor in the set.
 pub const NONE: u32 = u32::MAX;
 
-/// Every node's nearest strict ancestor among the set's nodes that `keep` keeps (`NONE`: none), by preorder id: the
-/// lab's `prim::axis_groups` (E12). The codes are matched 64 at a time and only a match's subtree end is read; between
-/// two events (a match, the end of an open one) the answer is one value, written as a run. No parent is read.
-pub fn nearest_all<T: Tape>(t: &T, set: &CodeSet, keep: impl Fn(usize) -> bool, out: &mut Vec<u32>) {
+/// Every node's nearest strict ancestor among the set's nodes that `keep` keeps (`NONE`: none), by preorder id, into
+/// `out` (at least the tape's nodes long; the caller's memory): the lab's `prim::axis_groups` (E12). The codes are
+/// matched 64 at a time and only a match's subtree end is read; between two events (a match, the end of an open one)
+/// the answer is one value, written as a run. No parent is read, and nothing is kept but `out`: the open matches are
+/// a chain through `out` itself (an open match's own answer is the match open around it).
+pub fn nearest_all<T: Tape>(t: &T, set: &CodeSet, keep: impl Fn(usize) -> bool, out: &mut [u32]) {
     let n = t.len();
-    out.clear();
-    out.reserve(n);
-    let mut stack: Vec<(u32, usize)> = Vec::with_capacity(32);
-    // Every node's answer before `upto`.
-    let fill = |out: &mut Vec<u32>, stack: &mut Vec<(u32, usize)>, upto: usize| {
-        while out.len() < upto {
-            while stack.last().is_some_and(|&(_, end)| end <= out.len()) {
-                stack.pop();
+    assert!(out.len() >= n, "nearest_all: {} answers for {n} nodes", out.len());
+    // The nodes answered (`0..done`), and the innermost match open there with its subtree's end.
+    let (mut done, mut top, mut end) = (0usize, NONE, n);
+    let fill = |out: &mut [u32], upto: usize, done: &mut usize, top: &mut u32, end: &mut usize| {
+        while *done < upto {
+            while *top != NONE && *end <= *done {
+                *top = out[*top as usize];
+                *end = if *top == NONE { n } else { t.subtree_end(*top as usize) };
             }
-            let (v, lim) = match stack.last() {
-                Some(&(a, end)) => (a, end.min(upto)),
-                None => (NONE, upto),
-            };
-            out.resize(lim, v);
+            let lim = if *top == NONE { upto } else { (*end).min(upto) };
+            out[*done..lim].fill(*top);
+            *done = lim;
         }
     };
     t.match_groups(set, |base, mut m| {
@@ -573,12 +837,12 @@ pub fn nearest_all<T: Tape>(t: &T, set: &CodeSet, keep: impl Fn(usize) -> bool, 
             let s = base + m.trailing_zeros() as usize;
             m &= m - 1;
             if keep(s) {
-                fill(out, &mut stack, s + 1);
-                stack.push((s as u32, t.subtree_end(s)));
+                fill(out, s + 1, &mut done, &mut top, &mut end);
+                (top, end) = (s as u32, t.subtree_end(s));
             }
         }
     });
-    fill(out, &mut stack, n);
+    fill(out, n, &mut done, &mut top, &mut end);
 }
 
 // ---- every format ------------------------------------------------------------------------------------------
@@ -656,6 +920,14 @@ impl Tape for AnyTape<'_> {
     fn end_with_start(&self, i: usize, start: u64) -> u64 {
         with_tape!(self, |t| t.end_with_start(i, start))
     }
+    #[inline(always)]
+    fn code_and_end(&self, i: usize) -> (u32, usize) {
+        with_tape!(self, |t| t.code_and_end(i))
+    }
+    #[inline(always)]
+    fn span(&self, i: usize) -> (u64, u64) {
+        with_tape!(self, |t| t.span(i))
+    }
     fn match_groups(&self, set: &CodeSet, f: impl FnMut(usize, u64)) {
         with_tape!(self, |t| t.match_groups(set, f))
     }
@@ -693,7 +965,7 @@ pub(crate) mod tests {
     /// Each node: its key, start, end and subtree size.
     pub(crate) type Nodes = Vec<(u32, u32, u32, u32)>;
 
-    pub(crate) fn sample() -> (Vec<u8>, Nodes) {
+    pub(crate) fn sample() -> (crate::Vector<u8>, Nodes) {
         let src = vec![b' '; 2_000];
         let mut nodes = vec![(key(1, 0, 0), 0, 1_990, 41)];
         for i in 0..8u32 {
@@ -713,9 +985,10 @@ pub(crate) mod tests {
         let (columns, table) = f15_columns(&image).unwrap();
         let t = F15::new(&image, columns, &table).unwrap();
         for k in 0..table.len() as u32 {
-            let set = table.set(|e| *e == *table.entry(k) || e.kind % 3 == 0);
+            let set = table.set(|e| e == table.entry(k) || e.kind % 3 == 0);
+            let set = set.view();
             let keep = |i: usize| i % 5 != 2;
-            let mut out = Vec::new();
+            let mut out = vec![0; t.len()];
             nearest_all(&t, &set, keep, &mut out);
             for (i, &got) in out.iter().enumerate() {
                 let mut q = t.parent(i);
@@ -800,6 +1073,7 @@ pub(crate) mod tests {
         assert_eq!(children(&t, 0).count(), 8);
         assert_eq!(children(&t, 1).collect::<Vec<_>>(), vec![2, 3, 4, 5]);
         let set = table.set(|e| e.kind == 3);
+        let set = set.view();
         let mut hits = Vec::new();
         t.match_groups(&set, |base, mut m| {
             while m != 0 {

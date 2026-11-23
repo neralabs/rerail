@@ -1,3 +1,4 @@
+    use rerail_blocks::vector::Vector;
     use super::*;
 
     #[test]
@@ -17,7 +18,7 @@
             let _store = crate::content_store::ContentStore::open(&path).unwrap();
             let db = Connection::open(&path).unwrap();
             let mut batches = Vec::new();
-            let mut answer = |rel: &str, keys: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
+            let mut answer = |rel: &str, keys: &[Vector<i64>]| -> Result<Vec<(String, Vec<Vector<i64>>)>> {
                 assert_eq!(rel, "req");
                 batches.push(keys.to_vec());
                 if batches.len() == 1 {

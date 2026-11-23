@@ -13,6 +13,8 @@
 //! - **`str_part`** (Python): the str constants CPython builds from a literal, pieces split at an f-string's
 //!   fields.
 
+use crate::code_rule_dsl::facts::core::FactsIn;
+use rerail_blocks::vector::Vector;
 use super::{Dialect, Projected, Relation};
 use crate::code_rule_dsl::facts::core::Facts;
 
@@ -37,7 +39,7 @@ pub trait DialectFacts: Send + Sync {
         Vec::new()
     }
     /// A document's syntax verdict where the family gives its own (`verdict`); `None`: the tree's first error.
-    fn verdict(&self, f: &Facts) -> Option<Result<Option<(u32, String)>, String>> {
+    fn verdict(&self, f: FactsIn<'_>) -> Option<Result<Option<(u32, String)>, String>> {
         let _ = f;
         None
     }
@@ -118,7 +120,7 @@ pub(super) fn is_unit(family: Family, kind: &str) -> bool {
 }
 
 /// A unit's name: the text of its first named child that is an identifier (Python's `def f`, `class C`).
-pub(super) fn unit_name<'a>(f: &'a Facts, dialect: &Dialect, id: u32) -> Option<&'a str> {
+pub(super) fn unit_name<'a>(f: FactsIn<'a>, dialect: &Dialect, id: u32) -> Option<&'a str> {
     f.children(id).iter().copied().find(|&c| f.named(c) && dialect.name(f, c) == "identifier").map(|c| f.text(c))
 }
 
@@ -173,7 +175,7 @@ pub struct Literal {
 
 /// Whether a node of `kind` with `children` has a part other than constant text (a Python `interpolation`, a PHP
 /// `encapsed_string`'s variable).
-fn interpolated(f: &Facts, dialect: &Dialect, kind: &str, children: &[u32]) -> bool {
+fn interpolated(f: FactsIn<'_>, dialect: &Dialect, kind: &str, children: &[u32]) -> bool {
     let named_child = |k: &dyn Fn(&str) -> bool| children.iter().any(|&c| f.named(c) && k(dialect.name(f, c)));
     match (dialect.family, kind) {
         (Family::Python, _) => named_child(&|k| k == "interpolation"),
@@ -184,7 +186,7 @@ fn interpolated(f: &Facts, dialect: &Dialect, kind: &str, children: &[u32]) -> b
 
 /// Tape node `id`'s string literal's content (`str(n, s)` in `core.rerail`'s shape), as `CoreRows::node` reads it: none
 /// for a comment or a node that is no string. What `str`'s answer on request reads (decision 0353 step 3, 0174).
-pub fn node_str(f: &Facts, dialect: &Dialect, id: u32) -> Option<String> {
+pub fn node_str(f: FactsIn<'_>, dialect: &Dialect, id: u32) -> Option<String> {
     let kind = dialect.name(f, id);
     if is_comment(kind) {
         return None;
@@ -429,7 +431,7 @@ pub fn failure(path: &str, raised: &str) -> crate::content_store::StoreError {
 /// Without `python-syntax-error` (the browser build), Python's verdict is tree-sitter's, as for the other languages:
 /// it misses what tree-sitter accepts and CPython does not (Python 2's `print "x"`). `Err`: `ast.parse` raises no
 /// `SyntaxError` but another exception, which fails the batch (`python_syntax::failure`).
-pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Result<Option<(u32, String)>, String> {
+pub(super) fn verdict(f: FactsIn<'_>, dialect: &Dialect) -> Result<Option<(u32, String)>, String> {
     // A family's own verdict: Python's CPython's, a `.rerail` file's the one running it gives. A program no file of
     // its language is (a rule's pattern, decision 0495 §3) has its tape's.
     if !f.tape_verdict
@@ -442,7 +444,7 @@ pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Result<Option<(u32, Strin
 
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
 /// MISSING nodes. Python uses its demanded, cached native grammar verdict instead.
-pub(super) fn first_error(f: &Facts, lines: &crate::code_rule_dsl::lines::LineTable, kind_name: &dyn Fn(u32) -> &'static str) -> Option<(u32, String)> {
+pub(super) fn first_error(f: FactsIn<'_>, lines: &crate::code_rule_dsl::lines::LineTable, kind_name: &dyn Fn(u32) -> &'static str) -> Option<(u32, String)> {
     if !f.syntax_errors() {
         return None;
     }
@@ -477,27 +479,27 @@ pub(super) struct CoreRows {
     /// `text_nodes` and `op_nodes` as the walked document's dialect's codes (`for_dialect`).
     text_codes: Option<super::NodesOf>,
     op_codes: Option<super::NodesOf>,
-    op_at: Vec<[i64; 3]>,
-    text: Vec<[i64; 2]>,
-    name: Vec<[i64; 2]>,
-    str: Vec<[i64; 2]>,
-    strprefix: Vec<[i64; 2]>,
+    op_at: Vector<[i64; 3]>,
+    text: Vector<[i64; 2]>,
+    name: Vector<[i64; 2]>,
+    str: Vector<[i64; 2]>,
+    strprefix: Vector<[i64; 2]>,
     /// `value(n, v)` with v's `value_type` t: (n, v, t).
-    value: Vec<[i64; 3]>,
-    comment: Vec<[i64; 2]>,
-    syntax_error: Vec<[i64; 3]>,
-    source: Vec<[i64; 2]>,
-    src_line: Vec<[i64; 3]>,
-    line_count: Vec<[i64; 2]>,
-    str_part: Vec<[i64; 5]>,
-    str_part_start: Vec<[i64; 4]>,
-    str_part_word: Vec<[i64; 5]>,
-    structural_before: Vec<[i64; 2]>,
-    structural_after: Vec<[i64; 2]>,
-    tree_digest: Vec<[i64; 2]>,
+    value: Vector<[i64; 3]>,
+    comment: Vector<[i64; 2]>,
+    syntax_error: Vector<[i64; 3]>,
+    source: Vector<[i64; 2]>,
+    src_line: Vector<[i64; 3]>,
+    line_count: Vector<[i64; 2]>,
+    str_part: Vector<[i64; 5]>,
+    str_part_start: Vector<[i64; 4]>,
+    str_part_word: Vector<[i64; 5]>,
+    structural_before: Vector<[i64; 2]>,
+    structural_after: Vector<[i64; 2]>,
+    tree_digest: Vector<[i64; 2]>,
     /// `def_digest(n, h)`: each definition unit's own-content hash (`digests`).
-    def_digest: Vec<[i64; 2]>,
-    ast_match: Vec<[i64; 4]>,
+    def_digest: Vector<[i64; 2]>,
+    ast_match: Vector<[i64; 4]>,
 }
 
 impl CoreRows {
@@ -617,7 +619,7 @@ impl CoreRows {
     /// `id` is its tape node (`Projected::node`) and `n` its id (`Projected::global`), which the caller's walk holds.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, id: u32, n: i64, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
-        let f = &*p.facts;
+        let f = p.f();
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
@@ -751,7 +753,7 @@ impl CoreRows {
     /// its tokens (none for a text-only document, `dialect` `None`: it has no node).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn document(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
-        let f = &*p.facts;
+        let f = p.f();
         let x = p.extra.as_ref().expect("core.rerail's spans");
         let key = i64::from(p.key);
         let lines_span = crate::code_rule_dsl::logic::profile::span(|| "lines".into());
@@ -803,7 +805,7 @@ impl CoreRows {
         if patterns.is_empty() {
             return;
         }
-        let f = &*p.facts;
+        let f = p.f();
         let mut at: std::collections::HashMap<(u32, u32, &str), u32> = std::collections::HashMap::new();
         for (local, id) in p.nodes() {
             at.entry((f.start(id), f.end(id), dialect.name(f, id))).or_insert(local);
@@ -849,11 +851,11 @@ impl CoreRows {
     /// name, so editing a method's body changes the method's digest and not its class's or its module's.
     pub(super) fn digests(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, trees: bool, units: bool) {
         use sha2::{Digest, Sha256};
-        let f = &*p.facts;
+        let f = p.f();
         // Children have greater ids than their parent (preorder), so one pass from the end sees them first.
-        let mut hash: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
+        let mut hash: Vector<[u8; 32]> = rerail_blocks::vector![[0; 32]; f.len()];
         // The same hash, each nested unit standing for its kind and name.
-        let mut own: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
+        let mut own: Vector<[u8; 32]> = rerail_blocks::vector![[0; 32]; f.len()];
         let unit = |id: u32| is_unit(dialect.family, dialect.name(f, id));
         let placeholder = |id: u32| -> [u8; 32] {
             let mut h = Sha256::new();
@@ -865,7 +867,7 @@ impl CoreRows {
         };
         for id in (0..f.len() as u32).rev() {
             let kind = dialect.name(f, id);
-            let kept: Vec<u32> = f
+            let kept: Vector<u32> = f
                 .children(id)
                 .iter()
                 .copied()
@@ -960,8 +962,8 @@ impl CoreRows {
         }
         let node_sym = |rows: &[[i64; 2]]| make(&["n", "s"], rows, [false, true], atom);
         let pair = |columns: &[&str; 2], rows: &[[i64; 2]]| make(columns, rows, [false, false], atom);
-        let value: Vec<[i64; 2]> = self.value.iter().map(|&[n, v, _]| [n, v]).collect();
-        let mut value_type: Vec<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
+        let value: Vector<[i64; 2]> = self.value.iter().map(|&[n, v, _]| [n, v]).collect();
+        let mut value_type: Vector<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
         value_type.sort_unstable();
         vec![
             ("op_at", make(&["n", "i", "s"], &self.op_at, [false, false, true], atom)),

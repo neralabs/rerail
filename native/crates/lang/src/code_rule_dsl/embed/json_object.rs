@@ -36,7 +36,7 @@ impl Embedder for JsonObject {
             let mut segments = SegmentMap::new();
             segments.push(0, text.len(), range, true, false);
             segments.index();
-            let Some(parse) = super::Parse::read(GrammarDialect::Json, &text, budget) else { continue };
+            let Some(parse) = super::Parse::read_program(GrammarDialect::Json, &text, &segments, budget) else { continue };
             programs.push(Program { dialect: GrammarDialect::Json, parse, text, segments, host_errors: Vec::new(), at: None });
         }
         programs

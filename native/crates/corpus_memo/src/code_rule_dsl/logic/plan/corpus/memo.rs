@@ -9,6 +9,7 @@
 //! grammar version and the file-local program (its constants as atoms). It is one per run, so the run's manifest names
 //! it (decision 0053); the document key is in the entry, and an entry under another key is a miss.
 
+use rerail_blocks::vector::Vector;
 use crate::content_store::{ContentStore, HashKey, SourceId, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -108,9 +109,9 @@ pub fn covered(entry: &Entry) -> HashSet<[i64; 2]> {
 
 /// Whether `a` and `b` hold the same rows (exported or output) of relation `rel`, in any order.
 pub fn same_relation(a: &Entry, b: &Entry, rel: &str) -> bool {
-    let rows = |e: &Entry| -> Option<(usize, Vec<Vec<i64>>)> {
+    let rows = |e: &Entry| -> Option<(usize, Vec<Vector<i64>>)> {
         e.rows.get(rel).filter(|(_, v)| !v.is_empty()).map(|(w, v)| {
-            let mut rows: Vec<Vec<i64>> = v.chunks_exact((*w).max(1)).map(<[i64]>::to_vec).collect();
+            let mut rows: Vec<Vector<i64>> = v.chunks_exact((*w).max(1)).map(Vector::<i64>::from).collect();
             rows.sort_unstable();
             (*w, rows)
         })
@@ -128,7 +129,7 @@ pub fn identities_of(entry: &Entry) -> Entry {
 
 /// Records that `entry` holds the relations of `identities`.
 pub fn cover<'a>(entry: &mut Entry, identities: impl Iterator<Item = &'a [u8; 32]>) {
-    let mut words: Vec<[i64; 2]> = covered(entry).into_iter().chain(identities.map(covered_words)).collect();
+    let mut words: Vector<[i64; 2]> = covered(entry).into_iter().chain(identities.map(covered_words)).collect();
     words.sort_unstable();
     words.dedup();
     entry.rows.insert(COVERED.to_owned(), (2, words.into_iter().flatten().collect()));
@@ -167,7 +168,7 @@ pub fn strata(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BT
     let sccs = local.components().map_err(|e| e.to_string())?;
     let ids = crate::code_rule_dsl::logic::plan::Leaves::of_placed(local.clone()).identities_by_heads(&sccs).map_err(|e| e.to_string())?;
     let v = &local.v;
-    let at: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.as_str(), i))).collect();
+    let at: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r, i))).collect();
     let mut reads: Vec<Vec<&str>> = vec![Vec::new(); sccs.len()];
     for k in 0..local.len() {
         let rule = local.rule(k);
@@ -189,7 +190,7 @@ pub fn strata(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BT
             }
         }
         for rel in scc {
-            reach.insert(rel.as_str(), leaves.clone());
+            reach.insert(rel, leaves.clone());
         }
     }
     let by_rel = rels
@@ -254,15 +255,15 @@ pub struct Entry {
     /// The document's nodes (for the run's report).
     pub nodes: u64,
     /// Per exported relation: its width and its rows, flat.
-    pub rows: BTreeMap<String, (usize, Vec<i64>)>,
+    pub rows: BTreeMap<String, (usize, Vector<i64>)>,
     /// Per file-local output: its node columns and its rows, typed as the run handed them.
-    pub outputs: BTreeMap<String, (Vec<usize>, crate::code_rule_dsl::logic::plan::output::Rows)>,
+    pub outputs: BTreeMap<String, (Vector<usize>, crate::code_rule_dsl::logic::plan::output::Rows)>,
 }
 
 /// Each path's document key: from its hash, in `1..2^30`, the next free one on a collision. A key is in each entry,
 /// so a key a collision moved only misses the memo. Guests (decision 0055) take `2^30..2^31`, so every key's
 /// `key << 32` stays positive.
-pub fn doc_keys(paths: &[String]) -> Vec<i64> {
+pub fn doc_keys(paths: &[String]) -> Vector<i64> {
     const SPAN: u64 = (1 << 30) - 1;
     let mut taken = HashSet::with_capacity(paths.len());
     paths
@@ -505,12 +506,12 @@ pub fn named_source(cache: &ContentStore, text: String, store: bool, stored_by: 
 /// record (decision 0306), behind the writes queued before (a new content's tape stores its source), and named there
 /// (`Apply::name`), kept from collection by the run's lease until the manifest names them (0306 step 4). A second run
 /// in one process finds those files' tapes held and writes none, so only this names them (Q24).
-pub fn named_digests(cache: &ContentStore, digests: Vec<[u8; 32]>) {
+pub fn named_digests(cache: &ContentStore, digests: Vector<[u8; 32]>) {
     if digests.is_empty() {
         return;
     }
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
-        let digests: Vec<[u8; 32]> = crate::content_store::record::codec::from_body("the sources the manifest names by digest", body)?;
+        let digests: Vector<[u8; 32]> = crate::content_store::record::codec::from_body("the sources the manifest names by digest", body)?;
         let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
         let found: Vec<SourceId> = cx.store.sources_by_hashes(&hashes)?.into_iter().flatten().collect();
         cx.name(found);
@@ -583,7 +584,7 @@ pub fn foreign_symbol(entries: &[&Entry], syms: &Syms, atoms: usize) -> Option<(
     for entry in entries {
         for (key, (w, rows)) in &entry.rows {
             let Some(cols) = syms.columns(key, *w) else { continue };
-            let at: Vec<usize> = (0..(*w).min(cols.len())).filter(|&c| cols[c]).collect();
+            let at: Vector<usize> = (0..(*w).min(cols.len())).filter(|&c| cols[c]).collect();
             if at.is_empty() || *w == 0 {
                 continue;
             }
@@ -632,9 +633,9 @@ impl Frame {
         if let Some(bytes) = self.blob.over.as_ref().filter(|_| keep(COVERED))
             && let Ok(more) = image::decode(bytes, &|k| k == COVERED, &self.atoms)
         {
-            let held: Vec<[i64; 2]> = covered(&more).into_iter().collect();
+            let held: Vector<[i64; 2]> = covered(&more).into_iter().collect();
             if !held.is_empty() {
-                let mut all: Vec<[i64; 2]> = covered(&entry).into_iter().chain(held).collect();
+                let mut all: Vector<[i64; 2]> = covered(&entry).into_iter().chain(held).collect();
                 all.sort_unstable();
                 all.dedup();
                 entry.rows.insert(COVERED.to_owned(), (2, all.into_iter().flatten().collect()));
@@ -741,7 +742,7 @@ pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(Source
     off();
     let atoms = store.atoms_handle();
     let held: Vec<Option<Found>> = docs.iter().map(|(s, p)| pending(store, &queued(*s, p, program), &atoms)).collect();
-    let asked: Vec<usize> = (0..docs.len()).filter(|i| held[*i].is_none()).collect();
+    let asked: Vector<usize> = (0..docs.len()).filter(|i| held[*i].is_none()).collect();
     let digests = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "memo lookup: the contents' digests".into());
         store.source_digests(&asked.iter().map(|i| docs[*i].0).collect::<Vec<_>>())?
@@ -764,7 +765,7 @@ fn by_digest(store: &ContentStore, program: &Program, paths: &[&str], wanted: Ve
     let stored = !crate::code_rule_dsl::logic::profile::inside_waves();
     let space = crate::content_store::local_space(&plan_digest(program));
     let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
-    let parts: Vec<i64> = wanted.iter().map(|(_, _, p)| *p).collect();
+    let parts: Vector<i64> = wanted.iter().map(|(_, _, p)| *p).collect();
     let mut blobs = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "memo lookup: the entries read".into());
         store.memo_entries(&space, &parts, stored)?
@@ -918,7 +919,7 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
     // the stored entry with the new identities over it, as the store reads it once written; where the stored entry
     // is not found (collected meanwhile), nothing: the write is dropped, and a reader misses.
     let space = crate::content_store::local_space(&plan);
-    let over_parts: Vec<i64> = rows.iter().filter(|r| r.over).map(|r| r.part).collect();
+    let over_parts: Vector<i64> = rows.iter().filter(|r| r.over).map(|r| r.part).collect();
     let mut under = if over_parts.is_empty() { HashMap::new() } else { store.memo_entries(&space, &over_parts, !crate::code_rule_dsl::logic::profile::inside_waves())? };
     let keys: Vec<(crate::content_store::write_back::Key, Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>)> = rows
         .iter()
@@ -1093,7 +1094,7 @@ impl Memo<'_> {
         match self {
             Memo::Stored(store) => {
                 let mut out: Vec<Option<Entry>> = vec![None; docs.len()];
-                let (at, stored): (Vec<usize>, Vec<(SourceId, &str, i64)>) = docs.iter().enumerate().filter_map(|(i, (c, p, k))| c.stored().map(|id| (i, (id, *p, *k)))).unzip();
+                let (at, stored): (Vector<usize>, Vec<(SourceId, &str, i64)>) = docs.iter().enumerate().filter_map(|(i, (c, p, k))| c.stored().map(|id| (i, (id, *p, *k)))).unzip();
                 for (i, e) in at.into_iter().zip(lookup_all(store, program, &stored)?) {
                     out[i] = e;
                 }
@@ -1109,7 +1110,7 @@ impl Memo<'_> {
         match self {
             Memo::Stored(store) => {
                 let mut out: Vec<Option<Found>> = (0..docs.len()).map(|_| None).collect();
-                let (at, stored): (Vec<usize>, Vec<(SourceId, &str)>) = docs.iter().enumerate().filter_map(|(i, (c, p))| c.stored().map(|id| (i, (id, *p)))).unzip();
+                let (at, stored): (Vector<usize>, Vec<(SourceId, &str)>) = docs.iter().enumerate().filter_map(|(i, (c, p))| c.stored().map(|id| (i, (id, *p)))).unzip();
                 for (i, e) in at.into_iter().zip(found_all(store, program, &stored)?) {
                     out[i] = e;
                 }

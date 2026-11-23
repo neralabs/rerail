@@ -9,6 +9,7 @@
 //! Every language has its table, made from its grammar (decision 0626). A node whose code the table lacks, or past
 //! format 16's bounds, is an error: there is no other format to keep (format 15 is removed, 0626).
 
+use rerail_blocks::vector::Vector;
 use super::{Code, FileImage, Grammar, Held, TapeDoc, TapeImage};
 use crate::code_rule_dsl::language::GrammarDialect;
 use rerail_tape_format::{Redo, Writer};
@@ -26,8 +27,9 @@ pub enum Format {
 /// Format 16's and 16z's stored layout: 3 since decision 0336 §6 (a newline index after the side lists, its count
 /// in the header; 16z holds it raw after the checkpoints). Layout 2 (0336: region starts in the header; 16z's blocks
 /// one piece an array, raw, LZ4 or a repeat) had keys 216 and 1216; layout 1, 16 and 1016. Layout 5 (decision 0434
-/// §4, step 6): the tape's presence stored after it, in its home.
-const F16_LAYOUT: u32 = 5;
+/// §4, step 6): the tape's presence stored after it, in its home. Layout 6: a MISSING node sets the presence's
+/// fault bit (`ERROR_CODE`'s) beside its kind's, so a presence says which blocks hold a syntax error.
+const F16_LAYOUT: u32 = 7;
 
 impl Format {
     pub const ALL: [Format; 2] = [Format::F16, Format::F16Z];
@@ -106,11 +108,11 @@ impl Code {
     }
 }
 
-/// The run's format 16 target for `language`, each of the parser's keys numbered in the language's table through
-/// its code (`number`).
-fn sixteen(language: GrammarDialect, number: impl Fn(&'static Lang, u32) -> Option<u32> + Send + Sync + 'static) -> Result<rerail_tape_format::Sixteen, String> {
+/// The run's format 16 target for `language`, its lines ending at `terminators` (its ecosystem's, decision 0612), each
+/// of the parser's keys numbered in the language's table through its code (`number`).
+fn sixteen(language: GrammarDialect, terminators: crate::code_rule_dsl::lines::Terminators, number: impl Fn(&'static Lang, u32) -> Option<u32> + Send + Sync + 'static) -> Result<rerail_tape_format::Sixteen, String> {
     let (lang, tag, z) = run_16(language)?;
-    Ok(rerail_tape_format::Sixteen { lang, terminators: crate::code_rule_dsl::lines::terminators(language), tag, z, blocks: true, number: Arc::new(move |key| number(lang, key)) })
+    Ok(rerail_tape_format::Sixteen { lang, terminators, tag, z, blocks: true, number: Arc::new(move |key| number(lang, key)) })
 }
 
 /// The language's format 16 table, its tag and whether the run stores 16z; `Err` for a language with no tape tag or
@@ -138,7 +140,14 @@ pub(super) struct TreeOps {
 impl TreeOps {
     /// The run's format 16 output for a tree of `language` over `source`, of about `nodes` nodes (`run_16`).
     pub(super) fn of_run(language: GrammarDialect, source: &[u8], nodes: usize) -> Result<Self, String> {
+        Self::of_run_as(language, source, nodes, true)
+    }
+
+    /// `of_run`, its blocks packed (16z) only where `packed` and the run stores 16z: a tape read where it is written
+    /// and never stored (a rule's pattern) is not packed to be unpacked at its next read.
+    pub(super) fn of_run_as(language: GrammarDialect, source: &[u8], nodes: usize, packed: bool) -> Result<Self, String> {
         let (lang, tag, z) = run_16(language)?;
+        let z = z && packed;
         let w = f16::Writer::new(lang, source, crate::code_rule_dsl::lines::terminators(language), tag, z, true, nodes);
         Ok(TreeOps { lang, w, ends: Vec::with_capacity(64), numbers: Default::default(), aliases: Vec::new(), bad: None })
     }
@@ -221,6 +230,17 @@ pub struct Lean<'a> {
     source: &'a str,
     budget: &'a dyn Fn() -> bool,
     target: Result<rerail_tape_format::Sixteen, String>,
+    /// The program ranges its tape leaves out (`omitting`).
+    omit: Vector<[u32; 2]>,
+}
+
+impl Lean<'_> {
+    /// The sink of a program's tape that leaves out its placeholders `omit` (`SegmentMap::omissions`), as the parse
+    /// writes it (`Writer::omitting`).
+    pub fn omitting(mut self, omit: Vector<[u32; 2]>) -> Self {
+        self.omit = omit;
+        self
+    }
 }
 
 pub fn lean<'a>(grammar: &'a Grammar, source: &'a str, budget: &'a dyn Fn() -> bool, code_of: impl Fn(&u32) -> Result<Code, String> + Send + Sync + 'static) -> Lean<'a> {
@@ -237,17 +257,21 @@ pub fn lean_aliased<'a>(
     code_of: impl Fn(&u32) -> Result<Code, String> + Send + Sync + 'static,
     alias_of: impl Fn(u32) -> Option<(String, bool)> + Send + Sync + 'static,
 ) -> Lean<'a> {
-    let target = sixteen(grammar.lang, move |lang, key| {
+    let target = sixteen(grammar.lang, crate::code_rule_dsl::lines::terminators(grammar.lang), move |lang, key| {
         let mut entry = code_of(&key).ok()?.entry();
         entry.alias = alias_of(key);
         lang.number(&entry)
     });
-    Lean { grammar, source, budget, target }
+    Lean { grammar, source, budget, target, omit: Vector::new() }
 }
 
 impl rerail_tape_format::Sink<Result<TapeImage, String>> for Lean<'_> {
     fn target(&self) -> rerail_tape_format::Target {
         self.target.clone().map_or(rerail_tape_format::Target::F15, rerail_tape_format::Target::F16)
+    }
+
+    fn omissions(&self) -> Vector<[u32; 2]> {
+        self.omit.clone()
     }
 
     fn finish(&mut self, mut w: Writer) -> Result<Result<TapeImage, String>, Redo> {
@@ -282,56 +306,52 @@ impl TapeImage {
     }
 }
 
-/// The finish the `.rerail` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
-/// keys are the codes (`kf | flags << 16`, no supertypes).
-struct Rr {
-    target: Result<rerail_tape_format::Sixteen, String>,
-}
 
-impl rerail_tape_format::Finish for Rr {
-    type Out = Result<f16::Finished, String>;
-    fn target(&self) -> rerail_tape_format::Target {
-        self.target.clone().map_or(rerail_tape_format::Target::F15, rerail_tape_format::Target::F16)
-    }
 
-    fn finish<L: rerail_tape_format::Layout>(&mut self, mut w: Writer<L>) -> Result<Self::Out, Redo> {
-        if let Err(e) = &self.target {
-            return Ok(Err(e.clone()));
-        }
-        w.finish_16()
-    }
-}
-
-/// `source`'s tape from the `.rerail` parser, in the run's format (`Rr`).
+/// `source`'s tape from the `.rerail` parser, in the run's format (`rerail_rr_syntax::lean::tape_to`, compiled in the
+/// parser's crate): its keys are the codes (`kf | flags << 16`, no supertypes), numbered in the language's table.
 pub(super) fn rr_tape(source: &str) -> Result<f16::Finished, String> {
     let kind_mask = (1u16 << rerail_tape_format::KIND_BITS) - 1;
     let entry = move |key: u32| {
         let kf = (key & 0xffff) as u16;
         Entry { kind: kf & kind_mask, field: kf >> rerail_tape_format::KIND_BITS, flags: (key >> 16 & 7) as u8, alias: None, classes: Vec::new() }
     };
-    let target = sixteen(GrammarDialect::Rr, move |lang, key| lang.number(&entry(key)));
-    rerail_rr_syntax::lean::tape_into(source, &mut Rr { target })
+    // A rule file's lines end at the rr language's terminators, its syntax's (the adapter's are the same constant):
+    // rule files are read before, and without, the language packs (a library's own tests register none).
+    let terminators = rerail_rr_syntax::syntax::TERMINATORS;
+    rerail_rr_syntax::lean::tape_to(source, sixteen(GrammarDialect::Rr, terminators, move |lang, key| lang.number(&entry(key)))?)
 }
 
 /// A document's tape as held (its image), shared by the document (`TapeDoc`) and the facts read off it
 /// (`Facts::tape`).
 pub struct DocTape {
-    /// The image's reader, made once (`reader`). It borrows `image`, so it is declared first: dropped before it.
+    /// The image's reader, made once (`reader`). It borrows `image` and `cache`, so it is declared first: dropped
+    /// before them.
     reader: AnyTape<'static>,
     image: Arc<TapeImage>,
+    /// The cache a 16z tape's blocks are decoded into: its batch's (`TapeDoc::in_batch`); none outside a batch.
+    cache: Option<Arc<f16::ZCache>>,
     /// The document's source.
     source: Arc<String>,
+
 }
 
 impl DocTape {
     pub fn new(image: Arc<TapeImage>, source: Arc<String>) -> Self {
-        let reader = image.tape();
-        // SAFETY: the reader borrows the image's bytes and code table, and the language tables (static). The image
-        // is in the `Arc`'s allocation, which does not move, and is never changed once held; this holds the `Arc`
-        // for as long as the reader, and `reader` lends it at the borrow of `self` only.
-        let reader = unsafe { std::mem::transmute::<AnyTape<'_>, AnyTape<'static>>(reader) };
-        DocTape { reader, image, source }
+        Self::in_batch(image, source, None)
     }
+
+    /// `new`, a 16z tape's blocks decoded into `cache`, its batch's.
+    pub fn in_batch(image: Arc<TapeImage>, source: Arc<String>, cache: Option<Arc<f16::ZCache>>) -> Self {
+        let reader = image.tape_in(cache.as_deref());
+        // SAFETY: the reader borrows the image's bytes and code table, the cache, and the language tables (static).
+        // The image and the cache are in their `Arc`s' allocations, which do not move, and are never changed once
+        // held (the cache is written through its atomics only); this holds the `Arc`s for as long as the reader, and
+        // `reader` lends it at the borrow of `self` only.
+        let reader = unsafe { std::mem::transmute::<AnyTape<'_>, AnyTape<'static>>(reader) };
+        DocTape { reader, image, cache, source }
+    }
+
 
     /// The tape's reader, made once: a node's reads dispatch on the format, and nothing is built a read.
     #[inline]
@@ -342,6 +362,11 @@ impl DocTape {
     /// The image, shared: a document over the same tape holds it (`TapeDoc::over`).
     pub fn image_arc(&self) -> &Arc<TapeImage> {
         &self.image
+    }
+
+    /// The cache its 16z tape's blocks are decoded into: its batch's, where it is read in one.
+    pub fn cache(&self) -> Option<&Arc<f16::ZCache>> {
+        self.cache.as_ref()
     }
 
     /// The source the tape is over.
@@ -356,11 +381,12 @@ impl DocTape {
     /// The bytes it holds.
     pub fn bytes(&self) -> usize {
         self.image.estimated_bytes()
+
     }
 
     /// The tape as the reads written once take it (decision 0310): the bytes every offset of its view counts
-    /// from, and the view. Format 16's arrays as held; a 16z tape's blocks as stored, which
-    /// a reader reads through a `rerail_clif::view::Reader` of its own (a block decoded where a read falls, 0353
+    /// from, and the view. Format 16's arrays as held; a 16z tape's blocks as stored, which a reader reads through its
+    /// batch's cache (`ZCache::view_for`: a block decoded where a read falls, 0353
     /// step 4b).
     pub fn in_place(&self) -> Result<(&[u8], rerail_clif::view::TapeView), String> {
         fn sixteen<'a>(t: &'a f16::Tape16, lang: Option<&Lang>) -> Result<(&'a [u8], rerail_clif::view::TapeView), String> {
@@ -378,6 +404,16 @@ impl DocTape {
     pub fn tape(&self) -> AnyTape<'_> {
         self.reader
     }
+
+    /// The tape, a 16z tape's blocks decoded into `cache`, its batch's: a read of it in that batch.
+    pub fn tape_with<'a>(&'a self, cache: Option<&'a f16::ZCache>) -> AnyTape<'a> {
+        // Its own cache where it holds one: its batch's, or its own batch's where its blocks did not fit the batch's
+        // entries (`TapeDoc::in_batch`). `cache` is for a document held outside every batch.
+        match (&self.reader, cache) {
+            (AnyTape::F16Z(_), Some(_)) if self.cache.is_none() => self.image.tape_in(cache),
+            _ => self.reader,
+        }
+    }
 }
 
 impl TapeDoc {
@@ -390,4 +426,47 @@ impl TapeDoc {
     pub fn doc_tape(&self) -> &Arc<DocTape> {
         &self.held
     }
+
+    /// The document read in its batch: a 16z tape's blocks decoded into `cache`, the batch's (the device's reads
+    /// share it). The document itself stays its own, read in every batch it is in, each through its own cache; a
+    /// tape of another format is read as held, and the document is returned as it is.
+    /// A tape whose blocks the batch's entries do not hold (a document made when first read, after its batch's cache
+    /// was sized: `syntax::Pending`) is read in a batch of its own (`alone`).
+    pub fn in_batch(&self, cache: &Arc<f16::ZCache>) -> TapeDoc {
+        if self.held.image.format() != Format::F16Z {
+            return self.clone();
+        }
+        if self.z_tape().is_some_and(|t| cache.entry_size() < t.entry_size()) {
+            return self.alone();
+        }
+        let held = DocTape::in_batch(Arc::clone(&self.held.image), Arc::clone(&self.held.source), Some(Arc::clone(cache)));
+        TapeDoc { held: Arc::new(held), ..self.clone() }
+    }
+
+    /// Its 16z tape, where it holds one: a batch's cache is made for these (`f16::ZCache::of`).
+    pub fn z_tape(&self) -> Option<&f16::Tape16Z> {
+        self.held.image.z_tape()
+    }
+
+    /// The document read in a batch of its own (a reader outside every batch): a 16z tape's blocks decoded into a
+    /// cache made for it, where it is in no batch already (`in_one_batch`).
+    pub fn alone(&self) -> TapeDoc {
+        in_one_batch(std::slice::from_ref(self)).into_owned().swap_remove(0)
+    }
+
+    /// Whether it is a 16z document read in no batch whose cache holds its blocks (`in_batch`).
+    fn unbatched(&self) -> bool {
+        self.z_tape().is_some_and(|t| self.held.cache.as_ref().is_none_or(|c| c.entry_size() < t.entry_size()))
+    }
+}
+
+/// `files` read in one batch: a reader of documents outside every batch (the transducer's) makes one of the 16z
+/// documents it reads that are in none, their blocks decoded into one cache made for them (`TapeDoc::in_batch`). The
+/// files as they are where each is in one already.
+pub fn in_one_batch(files: &[TapeDoc]) -> std::borrow::Cow<'_, [TapeDoc]> {
+    if !files.iter().any(TapeDoc::unbatched) {
+        return std::borrow::Cow::Borrowed(files);
+    }
+    let cache = Arc::new(f16::ZCache::of(files.iter().filter(|d| d.unbatched()).filter_map(TapeDoc::z_tape)));
+    std::borrow::Cow::Owned(files.iter().map(|d| if d.unbatched() { d.in_batch(&cache) } else { d.clone() }).collect())
 }

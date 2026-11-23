@@ -17,21 +17,22 @@
 //! A withheld guest (one that does not parse, `.on guest_error skip`) has its `rr_program`, `tape_of` and `sub_tape`
 //! rows, and no `parsed`: it has no nodes.
 
+use rerail_blocks::vector::Vector;
 use super::{Document, Guest, Made, Placement, Projected, Relation, TapePlace};
 
 #[derive(Default)]
 pub struct GuestRows {
-    program: Vec<[i64; 3]>,
+    program: Vector<[i64; 3]>,
     grammar: Vec<[i64; 2]>,
-    tape: Vec<[i64; 2]>,
-    parsed: Vec<[i64; 3]>,
-    sub_tape: Vec<[i64; 3]>,
-    host_node: Vec<[i64; 2]>,
-    guest_of: Vec<[i64; 2]>,
-    guest_place: Vec<[i64; 4]>,
-    parse_of: Vec<[i64; 3]>,
-    splice_of: Vec<[i64; 4]>,
-    unparse_of: Vec<[i64; 2]>,
+    tape: Vector<[i64; 2]>,
+    parsed: Vector<[i64; 3]>,
+    sub_tape: Vector<[i64; 3]>,
+    host_node: Vector<[i64; 2]>,
+    guest_of: Vector<[i64; 2]>,
+    guest_place: Vector<[i64; 4]>,
+    parse_of: Vector<[i64; 3]>,
+    splice_of: Vector<[i64; 4]>,
+    unparse_of: Vector<[i64; 2]>,
 }
 
 fn hex(digest: &[u8; 32]) -> String {
@@ -88,7 +89,7 @@ impl GuestRows {
         let root = (!withheld && p.len() > 0).then(|| p.global(0));
         let Some(g) = guest else { return };
         if unparse {
-            self.unparse_of.push([tape, string(super::unparsed(d)) as i64]);
+            self.unparse_of.push([tape, string(super::unparsed(p.f(), d)) as i64]);
         }
         let grammar = string(&g.grammar) as i64;
         // A value document has no host: what made it is its row.
@@ -193,17 +194,17 @@ impl GuestRows {
 
     pub(super) fn relations(&self, atom: &dyn Fn(i64) -> i64, rel: super::Make) -> Vec<(&'static str, Relation)> {
         vec![
-            ("rr_program", rel(&["d", "file", "grammar"], &mut self.program.iter().map(|&[d, f, s]| vec![d, f, atom(s)]))),
-            ("doc_grammar", rel(&["d", "g"], &mut self.grammar.iter().map(|&[d, g]| vec![d, atom(g)]))),
-            ("tape_of", rel(&["d", "t"], &mut self.tape.iter().map(|&[d, t]| vec![d, atom(t)]))),
-            ("parsed", rel(&["s", "grammar", "root"], &mut self.parsed.iter().map(|&[s, g, r]| vec![s, atom(g), r]))),
-            ("sub_tape", rel(&["at", "grammar", "t"], &mut self.sub_tape.iter().map(|&[a, g, t]| vec![a, atom(g), atom(t)]))),
-            ("host_node", rel(&["n", "h"], &mut self.host_node.iter().map(|r| r.to_vec()))),
-            ("guest_of", rel(&["n", "s"], &mut self.guest_of.iter().map(|r| r.to_vec()))),
-            ("guest_place", rel(&["n", "s", "l", "c"], &mut self.guest_place.iter().map(|r| r.to_vec()))),
-            ("parse_of", rel(&["x", "g", "t"], &mut self.parse_of.iter().map(|&[x, g, t]| vec![atom(x), atom(g), atom(t)]))),
-            ("splice_of", rel(&["t", "n", "t2", "t3"], &mut self.splice_of.iter().map(|&[t, n, t2, t3]| vec![atom(t), n, atom(t2), atom(t3)]))),
-            ("unparse_of", rel(&["t", "x"], &mut self.unparse_of.iter().map(|&[t, x]| vec![atom(t), atom(x)]))),
+            ("rr_program", rel(&["d", "file", "grammar"], &mut self.program.iter().map(|&[d, f, s]| rerail_blocks::vector![d, f, atom(s)]))),
+            ("doc_grammar", rel(&["d", "g"], &mut self.grammar.iter().map(|&[d, g]| rerail_blocks::vector![d, atom(g)]))),
+            ("tape_of", rel(&["d", "t"], &mut self.tape.iter().map(|&[d, t]| rerail_blocks::vector![d, atom(t)]))),
+            ("parsed", rel(&["s", "grammar", "root"], &mut self.parsed.iter().map(|&[s, g, r]| rerail_blocks::vector![s, atom(g), r]))),
+            ("sub_tape", rel(&["at", "grammar", "t"], &mut self.sub_tape.iter().map(|&[a, g, t]| rerail_blocks::vector![a, atom(g), atom(t)]))),
+            ("host_node", rel(&["n", "h"], &mut self.host_node.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))),
+            ("guest_of", rel(&["n", "s"], &mut self.guest_of.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))),
+            ("guest_place", rel(&["n", "s", "l", "c"], &mut self.guest_place.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))),
+            ("parse_of", rel(&["x", "g", "t"], &mut self.parse_of.iter().map(|&[x, g, t]| rerail_blocks::vector![atom(x), atom(g), atom(t)]))),
+            ("splice_of", rel(&["t", "n", "t2", "t3"], &mut self.splice_of.iter().map(|&[t, n, t2, t3]| rerail_blocks::vector![atom(t), n, atom(t2), atom(t3)]))),
+            ("unparse_of", rel(&["t", "x"], &mut self.unparse_of.iter().map(|&[t, x]| rerail_blocks::vector![atom(t), atom(x)]))),
         ]
     }
 }

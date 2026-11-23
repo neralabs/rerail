@@ -81,9 +81,10 @@ test-hooks = ["rerail-boot/test-hooks", "rerail-c-pp/test-hooks", "rerail-clif/t
   "ast-grep-language/tree-sitter-kotlin", "ast-grep-language/tree-sitter-lua", "ast-grep-language/tree-sitter-php",
   "ast-grep-language/tree-sitter-ruby", "ast-grep-language/tree-sitter-rust", "ast-grep-language/tree-sitter-scala",
   "ast-grep-language/tree-sitter-swift",
-  "rerail-compiler/test-hooks", "rerail-device-metal/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-lang-ecma/test-hooks", "rerail-lang-json/test-hooks", "rerail-lang-php/test-hooks", "rerail-lang-python/test-hooks", "rerail-lang-rust/test-hooks", "rerail-lang-sql/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-sessions/test-hooks", "rerail-transducer/test-hooks", "rerail-workspace/test-hooks", "rerail-store/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks"]
+  "rerail-compiler/test-hooks", "rerail-device-metal/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-lang-ecma/test-hooks", "rerail-lang-json/test-hooks", "rerail-lang-php/test-hooks", "rerail-lang-python/test-hooks", "rerail-lang-rust/test-hooks", "rerail-lang-sql/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-sessions/test-hooks", "rerail-transducer/test-hooks", "rerail-workspace/test-hooks", "rerail-store/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-blocks/test-hooks"]
 
 [dependencies]
+rerail-blocks = { path = "../blocks" }
 rerail-boot = { path = "../boot", default-features = false }
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"

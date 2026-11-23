@@ -1,4 +1,5 @@
 //! Indexed access to completed output. No producer runs in callbacks.
+use rerail_blocks::vector::Vector;
 use super::{Completed, MAX_OUTPUT_BYTES, Output, capacity, source, sql_error};
 use crate::code_rule_dsl::residency::admission::relational::{syntax::Source, table};
 use rusqlite::{Connection, types::Value, vtab::Context};
@@ -19,13 +20,13 @@ impl Meter {
     }
 }
 struct Index {
-    offsets: Vec<usize>,
-    rows: Vec<u32>,
+    offsets: Vector<usize>,
+    rows: Vector<u32>,
     distinct: usize,
 }
 impl Index {
     fn build(values: &[u32], size: usize, meter: &Meter) -> rusqlite::Result<Self> {
-        let mut offsets = vec![0usize; size];
+        let mut offsets = rerail_blocks::vector![0usize; size];
         for &v in values {
             meter.charge(1)?;
             offsets[v as usize + 1] += 1;
@@ -37,7 +38,7 @@ impl Index {
         }
         meter.charge(offsets.len())?;
         let mut next = offsets.clone();
-        let mut rows = vec![0; values.len()];
+        let mut rows = rerail_blocks::vector![0; values.len()];
         for (row, &v) in values.iter().enumerate() {
             meter.charge(1)?;
             rows[next[v as usize]] = row as u32;
@@ -91,9 +92,9 @@ impl Source for CompletedSource {
             self.len().div_ceil(distinct.max(1)).max(1)
         }
     }
-    fn lookup(&self, c: usize, values: &[Value]) -> rusqlite::Result<Option<Vec<usize>>> {
+    fn lookup(&self, c: usize, values: &[Value]) -> rusqlite::Result<Option<rerail_blocks::vector::Vector<usize>>> {
         let index = if c == 1 { &self.root } else { &self.node };
-        let mut result = Vec::new();
+        let mut result = rerail_blocks::vector::Vector::new();
         for v in values {
             self.meter.charge(1)?;
             match v {

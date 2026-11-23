@@ -94,9 +94,9 @@ fn versioned_reducer_state_matches_fresh_sql_across_sparse_edits_and_forks() {
     let saved = native.version("saved_heads");
     let source = engine.live_inputs["event"].clone();
     for (plus, minus) in [
-        (vec![vec![2001, 17, 100]], vec![]),
-        (vec![], vec![vec![17, 17, 18]]),
-        (vec![], vec![vec![2001, 17, 100]]),
+        (vec![rerail_blocks::vector![2001, 17, 100]], vec![]),
+        (vec![], vec![rerail_blocks::vector![17, 17, 18]]),
+        (vec![], vec![rerail_blocks::vector![2001, 17, 100]]),
     ] {
         source.apply(&plus, &minus);
         let p = work.rows(3, &plus).unwrap();

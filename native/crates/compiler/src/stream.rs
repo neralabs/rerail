@@ -336,7 +336,7 @@ pub struct Node {
 /// (`rerail_tape_format`, decision 0140). A node of an extra's kind (`Readings::extras`) is
 /// flagged an extra; `tag` is the language's. The interpreter's tape: the meaning the
 /// compiled tiers' bytes are checked against.
-pub fn image(nodes: &[Node], extras: &[u16], tag: u8, src: &[u8]) -> Vec<u8> {
+pub fn image(nodes: &[Node], extras: &[u16], tag: u8, src: &[u8]) -> rerail_tape_format::Vector<u8> {
     // The supertypes the nodes are in, ascending: a bit each in a node's key, its code's classes.
     let mut classes: Vec<u16> = nodes.iter().flat_map(|n| n.supers.iter().copied()).collect();
     classes.sort_unstable();

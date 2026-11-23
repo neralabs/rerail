@@ -164,14 +164,7 @@ impl Parser {
         if code != 0 {
             return Err(Refusal::Simdjson(Error(code)));
         }
-        for v in &mut sink.col {
-            // The buffers were made for the most nodes a file of its length can have: what the tape
-            // does not use is given back (as `rerail_simdjson::tape_with`).
-            if v.capacity() > v.len() + v.len() / 2 + 64 {
-                v.shrink_to_fit();
-            }
-        }
-        let codes = (0..sink.codes as usize).map(|i| (sink.code_kind[i], sink.code_field[i], sink.code_value[i] != 0)).collect();
+        let codes = (0..sink.codes as usize).map(|i| [sink.code_kind[i], sink.code_field[i], u16::from(sink.code_value[i] != 0)]).collect();
         let [code, size, off, tail, base] = sink.col;
         Ok(Tape { code, codes, size, base, off, tail, widths: sink.width, digest: None })
     }

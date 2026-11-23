@@ -73,10 +73,10 @@ impl Semantics {
         for &n in &missing {
             let tape = root.get_doc();
             let span = tape.transducer_span(n);
-            if span.start != p.facts.start(n) as usize
-                || span.end != p.facts.end(n) as usize
+            if span.start != p.f().start(n) as usize
+                || span.end != p.f().end(n) as usize
                 || tape.transducer_kind(n)
-                    != crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(n))
+                    != crate::code_rule_dsl::facts::core::kind_code(p.f().kind(n))
             {
                 return Err("semantic tape node identity differs from demanded core node".into());
             }
@@ -165,7 +165,7 @@ impl PythonProject for Batch {
             if kind == "arguments" {
                 let input: Vec<_> = ids.iter().copied().collect();
                 let mut positions: BTreeMap<u32, Option<i64>> = BTreeMap::new();
-                for [call, _, _, keyword, spread, value] in py::arguments(grammar, &p.facts, &input)
+                for [call, _, _, keyword, spread, value] in py::arguments(grammar, p.f(), &input)
                 {
                     let pos = positions.entry(call).or_insert(Some(0));
                     let ordinal = if keyword == NONE && spread == 0 {
@@ -183,7 +183,7 @@ impl PythonProject for Batch {
                     let keyword = if keyword == NONE {
                         String::new()
                     } else {
-                        crate::code_rule_dsl::identifier::python_name(p.facts.text(keyword).into())
+                        crate::code_rule_dsl::identifier::python_name(p.f().text(keyword).into())
                             .into_owned()
                     };
                     rows.push(vec![
@@ -209,7 +209,7 @@ impl PythonProject for Batch {
             let imports = py_families.imports(self, p);
             if kind == "qualified" {
                 ids.retain(|&n| {
-                    py::qualification_chain(grammar, &p.facts, n).is_none_or(|(head, tail)| {
+                    py::qualification_chain(grammar, p.f(), n).is_none_or(|(head, tail)| {
                         imports.may_qualify_parts(
                             head,
                             tail,
@@ -228,7 +228,7 @@ impl PythonProject for Batch {
             let references: BTreeSet<_> = ids
                 .iter()
                 .copied()
-                .filter(|&n| py::qualification_chain(grammar, &p.facts, n).is_some())
+                .filter(|&n| py::qualification_chain(grammar, p.f(), n).is_some())
                 .collect();
             let mut state = py_families.semantics[index]
                 .lock()
@@ -263,7 +263,7 @@ impl PythonProject for Batch {
                     let owner = global(n)?;
                     rows.push(vec![
                         Value::Integer(owner),
-                        Value::Integer(global(py::unparen(grammar, &p.facts, n))?),
+                        Value::Integer(global(py::unparen(grammar, p.f(), n))?),
                     ]);
                     let Some(s) = state.as_ref() else {
                         continue;

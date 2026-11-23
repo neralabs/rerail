@@ -22,6 +22,7 @@
 //! handed to the reader as input rows, and the reader's run takes their delta as it takes any input's. There is no
 //! store, record or version of a phase's own.
 
+use rerail_blocks::vector::Vector;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
@@ -306,7 +307,7 @@ type BatchRuns = std::collections::HashMap<[u8; 32], (PhaseOne, Vec<(String, usi
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct BatchState {
     runs: std::sync::Mutex<BatchRuns>,
-    plans: std::sync::Mutex<std::collections::HashMap<String, Vec<[u8; 32]>>>,
+    plans: std::sync::Mutex<std::collections::HashMap<String, Vector<[u8; 32]>>>,
 }
 
 /// The batch under way (`Batch`), in the run's context: its caller's, and its runs' jobs'.
@@ -394,11 +395,11 @@ pub fn reading_store() -> Option<std::sync::Arc<crate::content_store::ContentSto
 /// root's last `protected_runs` (2): of a 44-policy batch, 42 plans were dead at the next decision, their memo spaces
 /// dropped, and the next batch found a hit's memo entry gone. The batch is one run of the root. `None` outside a
 /// batch.
-pub fn batch_plans(root: &str, plan: [u8; 32], also: &[[u8; 32]]) -> Option<Vec<[u8; 32]>> {
+pub fn batch_plans(root: &str, plan: [u8; 32], also: &[[u8; 32]]) -> Option<Vector<[u8; 32]>> {
     let state = Batch::state()?;
     let mut all = state.plans.lock().expect("the batch's plans");
     let plans = all.entry(root.to_owned()).or_default();
-    let earlier: Vec<[u8; 32]> = plans.iter().filter(|p| **p != plan && !also.contains(p)).copied().collect();
+    let earlier: Vector<[u8; 32]> = plans.iter().filter(|p| **p != plan && !also.contains(p)).copied().collect();
     for p in std::iter::once(&plan).chain(also) {
         if !plans.contains(p) {
             plans.push(*p);
@@ -427,7 +428,7 @@ pub struct PhaseRun {
 /// Kept facts of the store (`plan::kept_entry`), a partition a frame, held by a small source and the frames' plan,
 /// which the reader's run names in its manifest (`named`).
 pub mod frame {
-    use super::{Report, Value};
+    use super::{Report, Value, Vector};
     use crate::code_rule_dsl::logic::plan::kept_entry::Entries;
     use crate::code_rule_dsl::logic::program_facts::Facts;
     use crate::content_store::{ContentStore, HashKey};
@@ -465,7 +466,7 @@ pub mod frame {
     pub struct Kept {
         pub rows: BTreeMap<String, Vec<Vec<Value>>>,
         pub consulted: Vec<(String, String, String)>,
-        pub plans: Vec<[u8; 32]>,
+        pub plans: Vector<[u8; 32]>,
         pub summary: Vec<u8>,
     }
 
@@ -499,7 +500,7 @@ pub mod frame {
             [k, p, d] => Some((text(k)?, text(p)?, text(d)?)),
             _ => None,
         }).collect::<Option<Vec<_>>>()?;
-        let plans = facts.get(PLAN).into_iter().flatten().map(|r| r.first().and_then(text).and_then(|h| crate::content_store::observe::unhex(&h))).collect::<Option<Vec<_>>>()?;
+        let plans = facts.get(PLAN).into_iter().flatten().map(|r| r.first().and_then(text).and_then(|h| crate::content_store::observe::unhex(&h))).collect::<Option<Vector<_>>>()?;
         let summary = text(facts.get(SUMMARY)?.first()?.first()?)?.into_bytes();
         let rows = facts.iter().filter_map(|(rel, rows)| Some((rel.strip_prefix(EXPORT)?.to_owned(), rows.iter().map(|r| r.to_vec()).collect()))).collect();
         Some(Kept { rows, consulted, plans, summary })
@@ -593,7 +594,7 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
         };
         let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &*program, &declared, &image)? };
         { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&reads, &rows, &mut facts); }
-        let exports = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, Vec::len))).collect();
+        let exports = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, |v| v.len()))).collect();
         runs.push(PhaseRun { name, report, exports, frame: None });
     }
     Ok((facts, runs))
@@ -821,7 +822,7 @@ fn one_of_rows(root: &Path, label: &str, files: &[(String, String, String, Strin
         .collect();
     libraries.sort();
     libraries.dedup_by(|a, b| a.0 == b.0);
-    let exports: Vec<(String, usize)> = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, Vec::len))).collect();
+    let exports: Vec<(String, usize)> = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, |v| v.len()))).collect();
     (PhaseOne { root: root.to_path_buf(), label: label.to_owned(), documents, libraries, rows }, exports)
 }
 

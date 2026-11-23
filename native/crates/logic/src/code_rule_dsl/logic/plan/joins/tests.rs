@@ -1,3 +1,5 @@
+use rerail_section::Section;
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::plan::{KeepPlans, Model, Stats, body};
 use crate::code_rule_dsl::logic::plan::Inputs;
@@ -51,15 +53,16 @@ fn notes_and_exact_statistics_read_back_as_written() {
         ran: 5e5,
         wants_search: true,
         tried: vec![Tried { order: vec![(0, None), (2, Some(Mode::Range)), (1, None)], ratio: 12.5, runs: 2 }],
-        proposals: vec![(vec![(2, None), (0, None), (1, Some(Mode::Climb)), (3, None), (4, None)], 80.0)],
+        proposals: vec![Proposal(vec![(2, None), (0, None), (1, Some(Mode::Climb)), (3, None), (4, None)], 80.0)],
         exact: Vec::new(),
         raised: Vec::new(),
         walked: 2.5e5,
     };
     let key: PlanKey = (5u128 << 70) | 9;
-    assert_eq!(of_note_row(&note_row(key, &n)), Some((key, n.clone())));
+    let held = Section::of(&n);
+    assert_eq!(of_note_row(&note_row(key, held.get())), Some((key, n.clone())));
     // Decision 0243: a row stored before the walked work was kept ends at its proposals, and reads as priced.
-    let row = note_row(key, &n);
+    let row = note_row(key, held.get());
     assert_eq!(of_note_row(&row[..row.len() - 1]), Some((key, Note { walked: 0.0, ..n })));
     let sig: Sig = ("rel".into(), vec![(0, None), (2, Some(Constant::Int(-4))), (3, Some(Constant::Str("a=b".into())))]);
     let (ints, rel, cols, c) = exact_row(key, 7, &sig, [40, 400]);
@@ -73,7 +76,7 @@ fn random_orders_are_distinct_connected_and_start_where_asked() {
     let mut rng = Rng(12345);
     let orders = random_orders(&vars, Some(1), 20, &mut rng);
     assert!(orders.len() >= 2, "{orders:?}");
-    let distinct: FxHashSet<&Vec<usize>> = orders.iter().collect();
+    let distinct: FxHashSet<&Vector<usize>> = orders.iter().collect();
     assert_eq!(distinct.len(), orders.len());
     for o in &orders {
         assert_eq!(o[0], 1);
@@ -93,7 +96,7 @@ fn the_critical_path_is_the_heaviest_chain_and_its_heavy_lines_are_noted() {
     let _own = own();
     // s0 -> s1 -> s3 (work 10 + 200k + 10), s0 -> s2 -> s3 (10 + 50k + 10).
     let names: Vec<String> = ["s0", "s1", "s2", "s3"].map(String::from).to_vec();
-    let producers = vec![vec![], vec![0], vec![0], vec![1, 2]];
+    let producers = vec![rerail_blocks::vector![], rerail_blocks::vector![0], rerail_blocks::vector![0], rerail_blocks::vector![1, 2]];
     let line = |stratum: &str, key: PlanKey, work: f64, est: f64| LineRun { stratum: stratum.into(), key, rule: key as u64, order: vec![(0, None), (1, None)], work, est, ..Default::default() };
     let runs = vec![line("s0", 100, 10.0, 10.0), line("s1", 101, 200_000.0, 1_000.0), line("s2", 102, 50_000.0, 50_000.0), line("s3", 103, 10.0, 10.0)];
     let path = critical(&names, &producers, &runs);
@@ -118,7 +121,7 @@ fn a_choice_is_corrected_by_what_its_order_measured_and_rounds_choose_together()
     choose(&mut round);
     assert_eq!(round[0].chosen, 0);
     // The best order measured 20 times its price: the other is cheaper, corrected.
-    critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 200, rule: 1, order: steps(&order(&[0, 1])), work: 2e6, est: 1e5, ..Default::default() }]);
+    critical(&["s".into()], &[rerail_blocks::vector![]], &[LineRun { stratum: "s".into(), key: 200, rule: 1, order: steps(&order(&[0, 1])), work: 2e6, est: 1e5, ..Default::default() }]);
     let mut round = vec![Choice { key: 200, candidates: candidates.clone(), chosen: 0, why: "" }];
     choose(&mut round);
     assert_eq!(round[0].chosen, 1, "{}", round[0].why);
@@ -142,7 +145,7 @@ fn a_noted_line_explores_untried_orders_within_the_margin() {
     // lines explore, and a line chooses the same at every plan until it measures more.
     let mut explored = [0usize; 3];
     for key in 300..700u128 {
-        critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key, rule: 1, order: steps(&order(&[0, 1, 2])), work: 1e6, est: 1e6, ..Default::default() }]);
+        critical(&["s".into()], &[rerail_blocks::vector![]], &[LineRun { stratum: "s".into(), key, rule: 1, order: steps(&order(&[0, 1, 2])), work: 1e6, est: 1e6, ..Default::default() }]);
         let pick = || {
             let mut round = vec![Choice { key, candidates: candidates.clone(), chosen: 0, why: "" }];
             choose(&mut round);
@@ -167,13 +170,13 @@ fn a_run_that_changes_no_decision_writes_no_notes() {
     let _own = own();
     let order = vec![Step { at: 1, mode: None }, Step { at: 0, mode: None }];
     let line = |work: f64| LineRun { stratum: "s".into(), key: 220, rule: 1, order: steps(&order), work, est: 1e5, ..Default::default() };
-    critical(&["s".into()], &[vec![]], &[line(2e5)]);
+    critical(&["s".into()], &[rerail_blocks::vector![]], &[line(2e5)]);
     assert!(to_store().is_some(), "a new note is written");
     // The same line run again, measuring within a quarter octave: its runs and shares change, no decision does.
-    critical(&["s".into()], &[vec![]], &[line(2.05e5)]);
+    critical(&["s".into()], &[rerail_blocks::vector![]], &[line(2.05e5)]);
     assert!(to_store().is_none(), "nothing the planner reads changed");
     // Measured at four times: its order's ratio moves, and the note is written.
-    critical(&["s".into()], &[vec![]], &[line(8e5)]);
+    critical(&["s".into()], &[rerail_blocks::vector![]], &[line(8e5)]);
     assert!(to_store().is_some(), "a changed measure is written");
 }
 
@@ -183,7 +186,7 @@ fn walked_orders_are_costed_against_the_walked_order_that_ran() {
     let _own = own();
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
     // The order that ran measured twice its price; the other is priced ten times higher.
-    critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 210, rule: 1, order: steps(&order(&[0, 1])), work: 2e5, est: 1e5, ..Default::default() }]);
+    critical(&["s".into()], &[rerail_blocks::vector![]], &[LineRun { stratum: "s".into(), key: 210, rule: 1, order: steps(&order(&[0, 1])), work: 2e5, est: 1e5, ..Default::default() }]);
     let candidates = vec![Candidate { order: order(&[0, 1]), est: 100.0, steps: Vec::new() }, Candidate { order: order(&[1, 0]), est: 1000.0, steps: Vec::new() }];
     let mut round = vec![Choice { key: 210, candidates: candidates.clone(), chosen: 9, why: "" }];
     choose(&mut round);
@@ -211,7 +214,7 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     let pf = placed.fields().unwrap();
     let inputs = Inputs { facts: "main.".into(), stats: "main.".into(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = derived_of(&p);
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&pf), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&pf), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.iter().collect() };
     for (rel, rows) in [("a", 50.0), ("b", 100.0)] {
         model.stats.card.insert(rel, rows);
         for c in 0..2 {
@@ -235,7 +238,7 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     let key = model.reused_key(&b, None);
     let ((best, _, _), _) = model.plan_rule_reused(pf, &b, None).unwrap();
     assert_eq!(lead(&best), "a");
-    critical(&["h".into()], &[vec![]], &[LineRun { stratum: "h".into(), key, rule: b.observed_key(), order: steps(&best), work: 1e6, est: 100.0, ..Default::default() }]);
+    critical(&["h".into()], &[rerail_blocks::vector![]], &[LineRun { stratum: "h".into(), key, rule: b.observed_key(), order: steps(&best), work: 1e6, est: 100.0, ..Default::default() }]);
     assert!(pending(&key), "a wider search is wanted");
     let ((order, _, _), _) = model.plan_rule_reused(pf, &b, None).unwrap();
     assert_eq!(lead(&order), "b", "corrected by what `a` first measured");
@@ -253,7 +256,7 @@ fn a_requested_search_proposes_its_orders() {
     {
         let held = joins();
         let mut m = held.memo.write();
-        noted_mut(&mut m, 400, 1).wants_search = true;
+        noted_mut(&mut m, 400, 1, |n| n.wants_search = true);
     }
     request(400, 1.0, false, Box::new(|_| Searched { orders: vec![(vec![(1, None), (0, None)], 5.0), (vec![(0, None), (1, None)], 3.0)], walked: None }));
     assert_eq!(requests(), 1);
@@ -272,7 +275,7 @@ fn a_one_shot_run_serves_its_waiting_searches_at_its_end() {
     let _serial = SERIAL.lock();
     let _own = own();
     drain_at_end(false);
-    noted_mut(&mut joins().memo.write(), 410, 1).wants_search = true;
+    noted_mut(&mut joins().memo.write(), 410, 1, |n| n.wants_search = true);
     request(410, 1.0, false, Box::new(|_| Searched { orders: vec![(vec![(1, None), (0, None)], 5.0)], walked: None }));
     drain();
     assert_eq!(requests(), 1, "a long-lived process leaves the search to the idle job");
@@ -290,7 +293,7 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     let _serial = SERIAL.lock();
     let _own = own();
     assert!(!take_trial(500), "decision 0274: a line not seen on a critical path is not trialled");
-    noted_mut(&mut joins().memo.write(), 500, 1).critical = 0.5;
+    noted_mut(&mut joins().memo.write(), 500, 1, |n| n.critical = 0.5);
     assert!(take_trial(500) && !take_trial(500), "once");
     flag_slow(500, 1, &[Step { at: 0, mode: None }, Step { at: 1, mode: None }], 10.0, 1e6);
     assert!(take_trial(500), "again after a flag");
@@ -346,14 +349,14 @@ fn trials_are_for_lines_observed_on_the_critical_path() {
     // A first run: no line has been seen on a path, so none is trialled.
     assert!(!trial_due(&600) && !take_trial(600));
     // The run's path is its one stratum: line 600 holds nearly all of it, 601 under `critical_share`.
-    critical(&strata, &[vec![]], &[run(600, 1e6), run(601, 1e3)]);
+    critical(&strata, &[rerail_blocks::vector![]], &[run(600, 1e6), run(601, 1e3)]);
     assert!(on_critical_path(&600) && !on_critical_path(&601));
     assert!(trial_due(&600) && take_trial(600) && !trial_due(&600), "trialled once in a process");
     assert!(!take_trial(601));
     // 600 is made faster and 602 is now the path: 600's share halves each run, and it leaves within five.
     let mut runs = 0;
     while on_critical_path(&600) {
-        critical(&strata, &[vec![]], &[run(600, 1e2), run(602, 1e6)]);
+        critical(&strata, &[rerail_blocks::vector![]], &[run(600, 1e2), run(602, 1e6)]);
         runs += 1;
         assert!(runs <= 5, "a line off the path stops being trialled");
     }
@@ -455,7 +458,7 @@ fn the_measured_critical_path_follows_what_each_stratum_waited_for() {
     let _serial = SERIAL.lock();
     let _own = own();
     let names: Vec<String> = ["s0", "s1", "s2", "s3"].map(String::from).to_vec();
-    let producers = vec![vec![], vec![0], vec![0], vec![1, 2]];
+    let producers = vec![rerail_blocks::vector![], rerail_blocks::vector![0], rerail_blocks::vector![0], rerail_blocks::vector![1, 2]];
     let timeline = vec![Some((0.0, 0.1, 0)), Some((0.1, 0.3, 1)), Some((0.12, 0.9, 0)), Some((0.95, 1.0, 0))];
     let m = measured_path(&producers, &timeline).unwrap();
     assert_eq!(m.strata, vec![0, 2, 3]);
@@ -465,7 +468,7 @@ fn the_measured_critical_path_follows_what_each_stratum_waited_for() {
     let path = critical_timed(&names, &producers, &runs, Some(&timeline));
     assert_eq!(path.strata, vec![0, 1, 3], "predicted by work");
     let measured = path.measured.as_ref().unwrap();
-    assert_eq!((measured.strata.clone(), measured.shared), (vec![0, 2, 3], 2));
+    assert_eq!((measured.strata.clone(), measured.shared), (rerail_blocks::vector![0, 2, 3], 2));
     let noted: Vec<PlanKey> = path.lines.iter().map(|l| l.0).collect();
     assert_eq!(noted, vec![701], "the lines on the predicted path, by work (s3's is under the share): {:?}", path.lines);
     assert!(note(&702).is_none(), "s2 is off the predicted path, though the measured one waited on it");
@@ -489,7 +492,7 @@ fn heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment() {
     let pf = placed.fields().unwrap();
     let inputs = Inputs { facts: "main.".into(), stats: "main.".into(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = derived_of(&p);
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&pf), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&pf), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.iter().collect() };
     let counts: Vec<(i64, u64)> = (0..100).map(|v| (v, 1)).chain([(1000, 300)]).collect();
     let h = crate::code_rule_dsl::logic::plan::table::HeavyCol::of_counts(counts);
     model.stats.card.insert("r", h.rows);
@@ -520,9 +523,9 @@ fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
     let rb = body::nth(&p, 0);
     // Two functions of 30 nodes: 3 calls (kind 1), 2 returns (kind 2), the rest identifiers (kind 3). Function 1's
     // calls have an edge to every node; function 2's, one each.
-    let (mut r, mut k, mut e): (Vec<[i64; 2]>, Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut r, mut k, mut e): (Vector<[i64; 2]>, Vector<[i64; 2]>, Vector<[i64; 2]>) = (rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new());
     for f in [1i64, 2] {
-        let nodes: Vec<i64> = (0..30).map(|i| f * 1000 + i).collect();
+        let nodes: Vector<i64> = (0..30).map(|i| f * 1000 + i).collect();
         for (i, &n) in nodes.iter().enumerate() {
             r.push([f, n]);
             k.push([n, if i < 3 { 1 } else if i < 5 { 2 } else { 3 }]);
@@ -563,21 +566,21 @@ fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
     let walker = Walker::new(&rb, 3, 1 << 16, &|n| rels.get(n).cloned(), &|_| None);
     for f in [1i64, 2] {
         let start = [f * 1000 + 3, 2];
-        assert_eq!(walker.work(&order, &[start.to_vec()]), run(start), "function {f}");
+        assert_eq!(walker.work(&order, &[rerail_blocks::vector::Vector::from(&start[..])]), run(start), "function {f}");
     }
-    let (w1, w2) = (walker.work(&order, &[vec![1003, 2]]), walker.work(&order, &[vec![2003, 2]]));
+    let (w1, w2) = (walker.work(&order, &[rerail_blocks::vector![1003, 2]]), walker.work(&order, &[rerail_blocks::vector![2003, 2]]));
     // The same size and calls; the difference is the edges the triangle's atom passes: 90 in function 1, 3 in 2.
     // And the rows they make (decision 0273): 75 in function 1, 3 in 2.
     assert_eq!((w1, w2), (290.0, 131.0), "the triangle's edges, measured at the key");
     // A narrow walk (16 bindings a step, of up to 90) is unbiased: its mean over walks is the work.
     let narrow = Walker::new(&rb, 3, 16, &|n| rels.get(n).cloned(), &|_| None);
     let walks = 400;
-    let est = (0..walks).map(|_| narrow.work(&order, &[vec![1003, 2]])).sum::<f64>() / walks as f64;
+    let est = (0..walks).map(|_| narrow.work(&order, &[rerail_blocks::vector![1003, 2]])).sum::<f64>() / walks as f64;
     assert!((est / w1 - 1.0).abs() < 0.05, "{est} against {w1}");
     // Decision 0236: narrower still (2 bindings a step, 32 before checks), the triangle's 90 edges pass the probes'
     // limit and are drawn by position (`InRel::probe_sample`); the mean is still the work.
     let thin = Walker::new(&rb, 3, 2, &|n| rels.get(n).cloned(), &|_| None);
-    let est = (0..2000).map(|_| thin.work(&order, &[vec![1003, 2]])).sum::<f64>() / 2000.0;
+    let est = (0..2000).map(|_| thin.work(&order, &[rerail_blocks::vector![1003, 2]])).sum::<f64>() / 2000.0;
     assert!((est / w1 - 1.0).abs() < 0.05, "{est} against {w1}");
 }
 
@@ -587,7 +590,7 @@ fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
 fn a_sampled_probe_reads_its_limit_and_estimates_its_matches() {
     use crate::code_rule_dsl::logic::native::component::InRel;
     // Key 7: 10,000 rows, every fourth of kind 1. Key 8: 50 rows, all kind 1.
-    let mut rows: Vec<i64> = Vec::new();
+    let mut rows: Vector<i64> = rerail_blocks::vector::Vector::new();
     for i in 0..10_000i64 { rows.extend([7, i, (i % 4 == 0) as i64]) }
     for i in 0..50i64 { rows.extend([8, i, 1]) }
     let rel = InRel::from_flat(rows, 10_050, vec![b'i'; 3]);
@@ -618,9 +621,9 @@ fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
     let rb = body::nth(&p, 0);
     // The triangle's functions (decision 0232's test): 30 nodes each, 3 calls, 2 returns; function 1's calls have an
     // edge to every node, function 2's one each.
-    let (mut r, mut k, mut e): (Vec<[i64; 2]>, Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut r, mut k, mut e): (Vector<[i64; 2]>, Vector<[i64; 2]>, Vector<[i64; 2]>) = (rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new());
     for f in [1i64, 2] {
-        let nodes: Vec<i64> = (0..30).map(|i| f * 1000 + i).collect();
+        let nodes: Vector<i64> = (0..30).map(|i| f * 1000 + i).collect();
         for (i, &n) in nodes.iter().enumerate() {
             r.push([f, n]);
             k.push([n, if i < 3 { 1 } else if i < 5 { 2 } else { 3 }]);
@@ -629,7 +632,7 @@ fn a_background_search_ranks_its_orders_by_their_walked_work_over_the_line() {
             if f == 1 { for &j in &nodes { e.push([c, j]) } } else { e.push([c, nodes[10]]) }
         }
     }
-    let table = |rel: &str| -> &Vec<[i64; 2]> { match rel { "r" => &r, "k" => &k, _ => &e } };
+    let table = |rel: &str| -> &Vector<[i64; 2]> { match rel { "r" => &r, "k" => &k, _ => &e } };
     // An order run by hand from every row of its lead, each step adding the bindings it reads.
     let body_atoms = atoms(&p);
     let run = |order: &[usize]| -> f64 {
@@ -684,7 +687,7 @@ fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, n: number)\nh(f, n) :- k(n, 1), r(f, n), r(f, m), k(m, 2).\n.output h\n").unwrap();
     let rb = body::nth(&p, 0);
     // 1,000 functions of 30 nodes with 5 calls, and 2 of 2,000 nodes with 50: 2% of the calls, 56% of the work.
-    let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
+    let (mut r, mut k): (Vector<[i64; 2]>, Vector<[i64; 2]>) = (rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new());
     let mut add = |f: i64, nodes: i64, calls: i64| for i in 0..nodes {
         r.push([f, f * 10_000 + i]);
         k.push([f * 10_000 + i, if i < calls { 1 } else { 2 }]);
@@ -696,7 +699,7 @@ fn a_background_walk_splits_its_lead_rows_by_a_heavy_key() {
     let truth = 5100.0 + 5100.0 + (1000.0 * 5.0 * 30.0 + 2.0 * 50.0 * 2000.0) + (1000.0 * 5.0 * 25.0 + 2.0 * 50.0 * 1950.0);
     let rel = |rows: &[[i64; 2]]| InRel::from_flat(rows.iter().flatten().copied().collect(), rows.len(), vec![b'i'; 2]);
     // The function column's heavy values: both large functions, and some of the rest (their rows tie).
-    let heavy: Vec<i64> = [5001, 5002].into_iter().chain(1..=10).collect();
+    let heavy: Vector<i64> = [5001, 5002].into_iter().chain(1..=10).collect();
     let snap = WalkSnap { rels: [("r", rel(&r)), ("k", rel(&k))].into_iter().map(|(n, x)| (n.to_owned(), x)).collect(), syms: HashMap::new(), delta: None, heavy: [(("r".to_owned(), 0), heavy)].into_iter().collect() };
     let order: Vec<Step> = [0usize, 1, 2, 3].iter().map(|&at| Step { at, mode: None }).collect();
     let st = snap.starts(&rb, &order, None).expect("measured");
@@ -722,7 +725,7 @@ fn a_walk_past_a_rare_check_starts_from_the_checks_rows() {
     // From every node, a check on a kind 10 nodes of 30,000 have, then the function's nodes and their kinds.
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, n: number)\nh(f, n) :- r(f, n), k(n, 9), r(f, m), k(m, 2).\n.output h\n").unwrap();
     let rb = body::nth(&p, 0);
-    let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
+    let (mut r, mut k): (Vector<[i64; 2]>, Vector<[i64; 2]>) = (rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new());
     for f in 1..=1000i64 {
         for i in 0..30 {
             let n = f * 100 + i;
@@ -749,7 +752,7 @@ fn a_wildcard_in_a_check_is_no_column_of_its_probe() {
     // 100 functions of 10 nodes; half the nodes have a kind, whatever it is (`k(n, _)`).
     let p = parse(".decl r(f: number, x: number)\n.decl k(x: number, t: number)\n.decl h(f: number, m: number)\nh(f, m) :- r(f, n), k(n, _), r(f, m).\n.output h\n").unwrap();
     let rb = body::nth(&p, 0);
-    let (mut r, mut k): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
+    let (mut r, mut k): (Vector<[i64; 2]>, Vector<[i64; 2]>) = (rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new());
     for f in 1..=100i64 {
         for i in 0..10 {
             let n = f * 100 + i;
@@ -878,7 +881,7 @@ fn a_chunks_notes_enter_the_memo_at_its_filing_whatever_its_threads_order() {
     let o = |a: u16| vec![(a, None), (a + 1, None)];
     let tried = |key: PlanKey, a: u16, ratio: f64| Op::Tried { key, rule: key as u64, order: o(a), ratio, weight: TRIAL_WEIGHT };
     let ops = vec![tried(801, 0, 2.0), tried(802, 0, 3.0), tried(801, 0, 8.0), Op::Slow { key: 802, rule: 802, order: o(0), est: 10.0, ran: 90.0 }, tried(801, 2, 0.5)];
-    let rows = || [801, 802].map(|k| note(&k).map(|n| note_row(k, &n)));
+    let rows = || [801, 802].map(|k| note(&k).map(|n| note_row(k, Section::of(&n).get())));
     let chunk = chunk_memo(&snapshot());
     for op in &ops {
         op.apply(&mut chunk.memo.write());

@@ -7,6 +7,7 @@
 //! sorted order over them all (`composite`), else a probe of the most selective column with the rest
 //! checked here; estimates come from the source's distinct counts, so SQL written by hand plans well.
 //! SQLite rechecks every constraint, so a source may answer with a superset. Every column is an integer: kinds, fields and symbols are atoms.
+use rerail_blocks::vector::Vector;
 use fallible_iterator::FallibleIterator;
 use rusqlite::{
     Connection, Result,
@@ -93,22 +94,21 @@ pub struct HasWalk {
     pub kinds: Arc<[i64]>,
 }
 
-/// A batch's 16z cache (decision 0353 step 4b, `view::cache`): its bytes at `at` in a block of its own (a home of its
-/// views' directory), which the host's and the device's reads of its views share, and that block's device buffer
-/// where there is a device.
+/// A batch's 16z cache as its views' directory names it (decision 0353 step 4b, `view::cache`): the batch's one cache
+/// (`rerail_tape_format::f16::ZCache`, decision 0628 §6), which its host's reads decode into, a home of its views'
+/// directory that the host's and the device's reads of its views share; and its device buffer where the cache is in
+/// the device's memory.
 #[derive(Clone)]
 pub struct ZCache {
-    pub block: Arc<rerail_blocks::Block>,
-    pub at: usize,
-    pub len: usize,
+    pub cache: Arc<rerail_tape_format::f16::ZCache>,
     pub buffer: Option<rerail_device::device::Buffer>,
 }
 
 impl ZCache {
     /// Its counts, as its reads left them.
     pub fn counts(&self) -> rerail_clif::view::cache::Counts {
-        // SAFETY: the cache's bytes in the block, which this holds.
-        rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(self.block.ptr::<u8>(self.at), self.len) })
+        // SAFETY: the cache's bytes, which this holds.
+        rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(self.cache.at(), self.cache.bytes()) })
     }
 }
 
@@ -195,7 +195,7 @@ pub trait Source: Send + Sync {
     fn row_cells(&self,_row:usize)->Option<(i64,Arc<dyn RowCells>)> {None}
     fn prepare_index(&self, _columns:&[usize]) {}
     fn primary_key_len(&self)->Option<usize> {None}
-    fn lookup_primary_batch(&self, _values:&[Vec<i64>])->Option<Vec<usize>> {None}
+    fn lookup_primary_batch(&self, _values:&[Vector<i64>])->Option<rerail_blocks::vector::Vector<usize>> {None}
     /// Pin a stable version before a SQL cursor starts. Immutable sources need no copy.
     fn frozen(&self) -> Option<Arc<dyn Source>> { None }
     /// A stable data revision for this source identity; None disables cross-gate reuse.
@@ -278,7 +278,7 @@ pub trait Source: Send + Sync {
     }
     /// Every row's values of `columns`, row after row, appended to `out`: `row_at` a row at a time by default; a
     /// view of a batch's documents reads each document's rows in turn, finding no row's place.
-    fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
+    fn rows_of(&self, columns: &[usize], out: &mut Vector<i64>) {
         let k = columns.len();
         out.reserve(self.len() * k);
         for row in 0..self.len() {
@@ -292,7 +292,7 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose column `g` holds a node `owned` names, where the source finds them without reading every row
     /// (a view over a batch's documents, by its nodes): `None` when it cannot, and the caller reads them all.
-    fn rows_owned(&self, _g: usize, _owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+    fn rows_owned(&self, _g: usize, _owned: &dyn Fn(i64) -> bool) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize;
@@ -306,7 +306,7 @@ pub trait Source: Send + Sync {
     /// as independent (each keeps its share of the rows), bounded by the most selective one.
     fn estimated_matches_all(&self, columns: &[usize]) -> usize {
         let n = self.estimated_len().max(1) as f64;
-        let each: Vec<usize> = columns.iter().map(|&c| self.estimated_matches(c, false)).collect();
+        let each: Vector<usize> = columns.iter().map(|&c| self.estimated_matches(c, false)).collect();
         let independent = each.iter().fold(n, |rows, &m| rows * (m as f64 / n).min(1.0));
         (independent.ceil() as usize).max(1).min(each.into_iter().min().unwrap_or(usize::MAX))
     }
@@ -316,12 +316,12 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose columns equal the values (`(column, value)` by column, at least two), from one sorted
     /// order over them; `None` probes one column and filters the rest.
-    fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+    fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
     /// The rows of the documents `docs` (by key), ascending, where the source knows where they lie (decision 0494: a
     /// batch's, by group or by offset); `None` where it does not, and they are found by a read of its rows.
-    fn rows_of_documents(&self, _docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
+    fn rows_of_documents(&self, _docs: &std::collections::BTreeSet<u32>) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
     /// Whether the relation holds the row of these values, every column given (`(column, value)`), answered by a
@@ -334,7 +334,7 @@ pub trait Source: Send + Sync {
     /// source can keep the probe to the rows the columns together name: a made relation's to the documents every
     /// bound column routes to (`docof(n, d)` by both: none where `n`'s document is not `d`'s), none made for the
     /// others. `None`: no such probe; the caller probes one column and checks the rest.
-    fn lookup_columns(&self, _columns: &[usize], _values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup_columns(&self, _columns: &[usize], _values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
     /// Whether `lookup_columns` may answer: a probe of several columns is then that lookup, not one column's
@@ -348,7 +348,7 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose `column` is one of `values` in document `doc` (by its key): a lookup over a column that
     /// spans the documents (a kind) where the statement binds the document too. `None`: not kept to one.
-    fn lookup_in(&self, _column: usize, _values: &[i64], _doc: i64) -> Option<Vec<usize>> {
+    fn lookup_in(&self, _column: usize, _values: &[i64], _doc: i64) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
     /// Whether a lookup on `column` can be kept to one document (`lookup_in`).
@@ -357,7 +357,7 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose columns hold every `(column, value)` of `eqs`, ascending: a scan, which a source may do faster
     /// than a `value` call per row.
-    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vector<u32> {
         (0..self.len()).filter(|&r| eqs.iter().all(|&(c, v)| self.value(r, c) == v)).map(|r| r as u32).collect()
     }
     /// A `has` axis the device reads off the tape (decision 0353 step 5): a stage probes it by one column, each
@@ -408,7 +408,7 @@ pub trait Source: Send + Sync {
     }
     /// How many rows hold each value `v` in column `c`, for each `(c, v)` of `wanted`, where the source keeps them
     /// (its rows do not change): `None` when the caller counts them.
-    fn value_counts(&self, _wanted: &[(usize, i64)]) -> Option<Vec<i64>> {
+    fn value_counts(&self, _wanted: &[(usize, i64)]) -> Option<Vector<i64>> {
         None
     }
     /// Why rows could not be made, where a source makes them on demand and making them failed (a
@@ -430,11 +430,11 @@ pub trait Source: Send + Sync {
         false
     }
     /// The rows whose `column` lies between the bounds (each with its inclusiveness); `None` scans.
-    fn range_lookup(&self, _column: usize, _lower: Option<(i64, bool)>, _upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+    fn range_lookup(&self, _column: usize, _lower: Option<(i64, bool)>, _upper: Option<(i64, bool)>) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
     /// The rows whose `column` is one of `values`; `None` scans.
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>>;
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>>;
     /// Whether each value of `column` is at most one row, which `key_row` finds without allocating (a node's own
     /// column): a view of the source's columns held in place probes by it (`setfix::hold_view_in_place`).
     fn keys_rows(&self, _column: usize) -> bool {
@@ -458,7 +458,7 @@ pub trait Source: Send + Sync {
     /// The rows whose `column` is `value` and whose columns hold every `(column, value)` of `eqs`, in `lookup`'s
     /// order, where the source tests `eqs` as it finds them (a view's children by parent and field, off the tape)
     /// rather than each row's values read back; `None`: looked up, then filtered.
-    fn lookup_eq(&self, _column: usize, _value: i64, _eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
+    fn lookup_eq(&self, _column: usize, _value: i64, _eqs: &[(usize, i64)]) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
     fn value(&self, row: usize, column: usize) -> i64;
@@ -486,7 +486,7 @@ pub trait Source: Send + Sync {
     }
     /// The columns its rows lie in order on, in turn (a kept relation's canonical order, decision 0456 K7), when
     /// they do: a scan of its rows is in that order, with no sort.
-    fn order(&self) -> Option<Vec<usize>> {
+    fn order(&self) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
     /// Whether its rows are a kept relation's, read where they lie in the store's mapped chain (decision 0456 step
@@ -559,7 +559,7 @@ impl Source for Metadata {
     fn indexed(&self, _: usize) -> bool {
         false
     }
-    fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
     fn value(&self, _: usize, _: usize) -> i64 {
@@ -831,7 +831,7 @@ pub fn install_node_tables(tables: Vec<NodeTables>) {
 }
 
 fn node_tables() -> &'static [NodeTables] {
-    NODE_TABLES.get().map_or(&[], Vec::as_slice)
+    NODE_TABLES.get().map_or(&[], |v| v.as_slice())
 }
 
 /// What the engine keeps for one connection (decision 0442): its own values, by type, each made as it is first asked
@@ -913,7 +913,7 @@ pub fn connection_data(db: &Connection) -> Arc<ConnData> {
 #[derive(Clone, Debug)]
 pub struct UnmadeView {
     pub base: String,
-    pub cols: Vec<usize>,
+    pub cols: Vector<usize>,
     pub eqs: Vec<(usize, i64)>,
 }
 
@@ -1034,13 +1034,13 @@ pub fn forget_views(db: &Connection) {
 
 /// The rows of the noted view `name` (`note_view`), read from its bound input: each once, as SQL's view gives them
 /// (a set), column by column.
-pub fn view_columns(db: &Connection, name: &str) -> Option<Vec<Vec<i64>>> {
+pub fn view_columns(db: &Connection, name: &str) -> Option<Vec<Vector<i64>>> {
     let view = on(db).views.lock().get(name).cloned()?;
     let src = bound_source(db, &view.base)?;
-    let mut rows: Vec<Vec<i64>> = src.filter_eq(&view.eqs).into_iter().map(|id| view.cols.iter().map(|&c| src.value(id as usize, c)).collect()).collect();
+    let mut rows: Vec<Vector<i64>> = src.filter_eq(&view.eqs).into_iter().map(|id| view.cols.iter().map(|&c| src.value(id as usize, c)).collect()).collect();
     rows.sort_unstable();
     rows.dedup();
-    let mut columns = vec![Vec::with_capacity(rows.len()); view.cols.len()];
+    let mut columns: Vec<Vector<i64>> = (0..view.cols.len()).map(|_| Vector::with_capacity(rows.len())).collect();
     for row in rows {
         for (c, v) in row.into_iter().enumerate() {
             columns[c].push(v);
@@ -1221,7 +1221,7 @@ unsafe impl<'a> VTab<'a> for Table {
                 }
             }
         }
-        let columns: Vec<usize> = equal.iter().map(|&(_, c)| c).collect();
+        let columns: Vector<usize> = equal.iter().map(|&(_, c)| c).collect();
         let all = (columns.len() >= 2).then(|| source.estimated_matches_all(&columns));
         let selected = probe.map(|(i, col, _, matches)| (i, col as c_int, matches));
         let range = info.constraints().enumerate().find_map(|(i, c)| {
@@ -1362,7 +1362,7 @@ struct Cursor {
     binding: Binding,
     source: Arc<dyn Source>,
     range: Range<usize>,
-    selected: Option<Vec<usize>>,
+    selected: Option<rerail_blocks::vector::Vector<usize>>,
     position: usize,
     reverse: bool,
     lazy: bool,
@@ -1462,9 +1462,9 @@ unsafe impl VTabCursor for Cursor {
             return Ok(());
         }
         if index == PRIMARY_BATCH {
-            let mut columns=Vec::new();
+            let mut columns:Vec<Vector<i64>>=Vec::new();
             for (arg,tag) in list.ok_or_else(||failure("missing primary batch columns"))?.chars().enumerate() {
-                let mut values=Vec::new();
+                let mut values=Vector::new();
                 if tag=='b' {
                     stats.batches.fetch_add(1,Ordering::Relaxed);
                     let mut iter=args.in_values(arg)?;
@@ -1476,8 +1476,8 @@ unsafe impl VTabCursor for Cursor {
         } else if index == MULTI {
             let list = list.ok_or_else(|| failure("missing index columns"))?;
             let (tag, list) = list.split_at(1);
-            let columns: Vec<usize> = list.split(',').map(|c| c.parse().map_err(|_| failure("bad index columns"))).collect::<Result<_>>()?;
-            let mut values = Vec::new();
+            let columns: Vector<usize> = list.split(',').map(|c| c.parse::<usize>().map_err(|_| failure("bad index columns"))).collect::<Result<_>>()?;
+            let mut values = rerail_blocks::vector::Vector::new();
             let mut equal: Vec<(usize, i64)> = Vec::new();
             let mut matchless = false;
             for (arg, &c) in columns.iter().enumerate() {
@@ -1500,21 +1500,21 @@ unsafe impl VTabCursor for Cursor {
             let source = &self.source;
             let keep = |r: &usize| equal.iter().all(|&(c, v)| source.value(*r, c) == v);
             self.selected = if matchless {
-                Some(Vec::new())
+                Some(rerail_blocks::vector::Vector::new())
             } else {
                 match tag {
                     "c" => {
                         let mut by = equal.clone();
                         by.sort_unstable();
                         self.direct=source.direct_all(&by);
-                        if self.direct.is_some() {Some(Vec::new())} else {
+                        if self.direct.is_some() {Some(rerail_blocks::vector::Vector::new())} else {
                             source.lookup_all(&by).or_else(|| source.lookup(by[0].0, &[by[0].1]).map(|r| r.into_iter().filter(keep).collect()))
                         }
                     }
                     // A probe over a column that spans the documents (a kind), where the document is bound as
                     // well: kept to that document, rather than every document's rows rechecked against it.
                     "p" | "b" => {
-                        let probed: Vec<i64> = if tag == "p" { vec![equal[0].1] } else { values.clone() };
+                        let probed: Vector<i64> = if tag == "p" { rerail_blocks::vector![equal[0].1] } else { values.clone() };
                         let doc = source.doc_column().filter(|_| source.kept_to_doc(columns[0])).and_then(|d| equal.iter().find(|&&(c, _)| c == d).map(|&(_, v)| v));
                         doc.and_then(|d| source.lookup_in(columns[0], &probed, d))
                             .or_else(|| source.lookup(columns[0], &probed))
@@ -1567,7 +1567,7 @@ unsafe impl VTabCursor for Cursor {
         if let Some(message) = self.source.failure() {
             return Err(failure(&message));
         }
-        let count = self.direct.as_ref().map_or_else(||self.selected.as_ref().map_or(self.range.len(), Vec::len),Vec::len);
+        let count = self.direct.as_ref().map_or_else(||self.selected.as_ref().map_or(self.range.len(), |v| v.len()),|v| v.len());
         stats.candidates.fetch_add(count as u64, Ordering::Relaxed);
         self.start_stream();
         Ok(())
@@ -1607,7 +1607,7 @@ unsafe impl VTabCursor for Cursor {
 pub struct Relation {
     columns: Vec<String>,
     /// Rows pushed and not yet read, row-major: the first read moves them into `cells`.
-    staged: std::sync::Mutex<Vec<i64>>,
+    staged: std::sync::Mutex<Vector<i64>>,
     rows: usize,
     cells: OnceLock<super::rows::Rows>,
     indexes: Box<[OnceLock<ColumnIndex>]>,
@@ -1615,17 +1615,17 @@ pub struct Relation {
     ordered: Box<[Option<usize>]>,
     /// Every row's id in order, made when a column pushed in order is first probed for a slice of its rows
     /// (`sorted_rows`): such a column's rows of one value are consecutive, and need no index of their own.
-    identity: OnceLock<Vec<u32>>,
+    identity: OnceLock<Vector<u32>>,
     /// Rows a later relation goes on from (`grown`, decision 0431 §6): frozen when they are written into their block,
     /// so that one takes their writer and its rows follow these in the same block relation.
     grows: bool,
 }
 struct ColumnIndex {
-    rows: Vec<u32>,
+    rows: Vector<u32>,
     distinct: usize,
     /// Every `FENCE`th row's value, in order: a search reads these, contiguous, before the rows they bound, whose
     /// values it reads one random access each (a search of 100 k rows was 34 of them a probe, two bounds).
-    fence: Vec<i64>,
+    fence: Vector<i64>,
 }
 /// Rows a fence entry stands for (0.125 bytes a row).
 const FENCE: usize = 64;
@@ -1737,14 +1737,14 @@ impl Relation {
     }
     /// A relation of `rows`, staged (`push`), not yet written into a block: rows a relation that goes on from another
     /// writes once, past that one's (`grown`: a tape value's rows admitted inside a chunk's fixpoint, decision 0431 §8).
-    pub fn staged(columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>) -> Self {
+    pub fn staged(columns: &[&str], rows: &mut dyn Iterator<Item = Vector<i64>>) -> Self {
         let mut r = Relation::new(columns);
         rows.for_each(|row| r.push(&row));
         r
     }
     /// A relation of `rows`: written straight into its block, at their number, when the iterator knows it exactly
     /// (no staging, no growth or move); else staged, as `push` stages them.
-    pub fn from_rows(columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>) -> Self {
+    pub fn from_rows(columns: &[&str], rows: &mut dyn Iterator<Item = Vector<i64>>) -> Self {
         let mut r = Relation::new(columns);
         if let (n, Some(m)) = rows.size_hint()
             && n == m
@@ -1828,7 +1828,7 @@ impl Relation {
         start..first(&|v| v <= hi).max(start)
     }
     /// The rows with values in `lo..=hi`, in value order.
-    fn rows_between(&self, column: usize, lo: i64, hi: i64) -> Vec<usize> {
+    fn rows_between(&self, column: usize, lo: i64, hi: i64) -> rerail_blocks::vector::Vector<usize> {
         if self.ordered[column].is_some() {
             return self.ordered_between(column, lo, hi).collect();
         }
@@ -1875,13 +1875,13 @@ impl Source for Relation {
     fn range_indexed(&self, _: usize) -> bool {
         true
     }
-    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<rerail_blocks::vector::Vector<usize>> {
         let lo = match lower {
             None => i64::MIN,
             Some((v, true)) => v,
             Some((v, false)) => match v.checked_add(1) {
                 Some(v) => v,
-                None => return Some(Vec::new()),
+                None => return Some(rerail_blocks::vector::Vector::new()),
             },
         };
         let hi = match upper {
@@ -1889,12 +1889,12 @@ impl Source for Relation {
             Some((v, true)) => v,
             Some((v, false)) => match v.checked_sub(1) {
                 Some(v) => v,
-                None => return Some(Vec::new()),
+                None => return Some(rerail_blocks::vector::Vector::new()),
             },
         };
         Some(self.rows_between(column, lo, hi))
     }
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         #[cfg(any(test, feature = "test-hooks"))]
         if let Some(rows) = lookup_spike::selected(self, column, values) { return Some(rows); }
         if self.ordered[column].is_some() {
