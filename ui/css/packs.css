@@ -82,6 +82,8 @@ body[data-panel="open"] .catalog:not(.rv) .prow2 .pt2 > b,body[data-panel="open"
 .whyhead b{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--brand)}
 .whyhead .ico{flex:none;align-self:center}
 .prow2 .pt2 .whybox{margin-top:6px}
+/* The box follows its description straight on: a description shorter than three lines keeps no blank line above it. */
+.catalog:not(.rv) .prow2 .pt2 .sub:has(+ .whybox){min-height:0}
 /* Cards: on a suggested pack the box is the divider; it sits on the footer, whose line goes. It is three lines tall
  * whether its reason takes two or three, so the cards of a row line up; a longer reason grows it. */
 .pcard .whybox{margin-top:auto;min-height:calc(3 * 1.45em + 16px)}
