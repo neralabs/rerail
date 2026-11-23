@@ -185,7 +185,7 @@ describe("an engine Rerail cannot load", () => {
   it("gives no command for a Rerail an update staged, whose folder the update removes, and says to run the update again", () => {
     const { prefix, packageRoot } = installedRerail(undefined, ".1.2.0.0b0f1d6e-5d1c-4f0e-9a43-6f7f0f3f2a10.staging");
     const spec = `${nativeEnginePackageName(...LINUX)}@1.2.0`;
-    const again = "An update staged this Rerail, and removes its folder when the update fails: run `rerail update` again once npm can install the package. " +
+    const again = "An update or set-up staged this Rerail, and removes its folder when it fails: run the update or set-up again once npm can install the package. " +
       "Where npm's settings leave optional dependencies out, set the environment variable npm_config_include=optional for that run.";
     expect(() => engineOf(packageRoot, LINUX)).toThrow(new Error(
       `Rerail's engine for Linux on x64 is not installed: the Rerail at ${packageRoot} has no ${spec}, an optional dependency of @neralabs/rerail. ` +

@@ -836,15 +836,15 @@ const UPDATE_STAGING_FOLDER = /^\..+\.staging$/u;
  * a `package.json` that names it), as set-up and `npx` do: an install into any other folder with `--prefix` removes
  * the packages its `package.json` does not name, which under a global install is every one.
  *
- * A Rerail an update staged gets no command ({@link UPDATE_STAGING_FOLDER}): the update removes that folder as its
- * check of the engine fails, so the update is what to run again. The updater of a version from before the engine
- * packages installs core alone, and `npm_config_include=optional` has its npm install the optional dependencies that
- * npm's settings leave out.
+ * A Rerail an update or a first set-up staged gets no command ({@link UPDATE_STAGING_FOLDER}): either removes that
+ * folder as its check of the engine fails, so it is what to run again. A first set-up has no `rerail` command yet.
+ * The updater of a version from before the engine packages installs core alone, and `npm_config_include=optional` has
+ * its npm install the optional dependencies that npm's settings leave out.
  */
 function installAdvice(packageRoot: string, spec: string, keepOthers = false): string {
   const folder = resolve(packageRoot, "..", "..", "..");
   if (UPDATE_STAGING_FOLDER.test(basename(folder))) {
-    return "An update staged this Rerail, and removes its folder when the update fails: run `rerail update` again once npm can install the package. Where npm's settings leave optional dependencies out, set the environment variable npm_config_include=optional for that run.";
+    return "An update or set-up staged this Rerail, and removes its folder when it fails: run the update or set-up again once npm can install the package. Where npm's settings leave optional dependencies out, set the environment variable npm_config_include=optional for that run.";
   }
   const dependency = join(folder, "node_modules", ...RERAIL_PACKAGE_NAME.split("/")) === resolve(packageRoot) && namesRerail(join(folder, "package.json"));
   const options = keepOthers ? " --force" : "";

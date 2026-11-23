@@ -220,9 +220,9 @@ that version to npmjs on the channel it names, after a reviewer approves.
 `workflow_dispatch` builds a trial tarball, retries a failed release, or moves `latest`.
 
 - **No inputs:** uploads the seven tarballs as a run artifact, unpublished. Try them with
-  `npm install <core tarball> <your platform's engine tarball>`: core's tarball alone takes its engine from the
-  registry, which has none for a version not yet published, and the released one, not this build's, for a version
-  that is.
+  `npm install <core tarball> <your platform's engine tarball>`: core's tarball alone installs no engine. Its
+  shrinkwrap pins this build's engines, the registry has none for a version not yet published, and for a version that
+  is, the published engine is not this build's, fails the pin, and npm leaves it out.
 - **`publish` set to a version:** retries that version's release from `main`, to `next`; see below.
 - **`latest` set to a released plain version:** builds nothing and points `latest` at it: a newer version promotes it,
   as a release run's own promotion does once approved ([Promoting](#promoting)), an older one puts core back.

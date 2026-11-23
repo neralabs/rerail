@@ -259,8 +259,10 @@ const digestsOf = (integrity: string): readonly string[] => integrity.split(/\s+
  * digests its registry's document gives for a version, and a registry whose documents carry only a SHA-1
  * (`dist.shasum`, with no `dist.integrity`) leaves nothing there to hold against core's pin. `npm pack --dry-run`
  * reads the same tarball, from npm's cache once the install has fetched it, writes no file, and prints its SHA-512
- * beside its SHA-1. That SHA-1 must be the one recorded, so what npm hashed is what it installed. Run in a folder no
- * repository configures, as the install is. Throws where npm prints neither, or another tarball's.
+ * beside its SHA-1. That SHA-1 must be the only digest recorded, so what npm hashed is what it installed: npm takes
+ * a download that matches any one digest of the strongest algorithm recorded, and a second digest would let it
+ * install another tarball than the one hashed here. Run in a folder no repository configures, as the install is.
+ * Throws where npm prints neither, or another tarball's.
  */
 async function hashedIntegrity(npm: NpmRunner, spec: string, recorded: string): Promise<string> {
   const { stdout } = await outsideAnyProject(async cwd => await npm(["pack", spec, "--dry-run", "--json", "--ignore-scripts"], { cwd, timeoutMs: NPM_INSTALL_TIMEOUT_MS }));
@@ -268,8 +270,27 @@ async function hashedIntegrity(npm: NpmRunner, spec: string, recorded: string): 
   const { integrity, shasum } = packed ?? {};
   if (typeof integrity !== "string" || !integrity.startsWith("sha512-") || typeof shasum !== "string") throw new Error(`npm pack printed no SHA-512 and SHA-1 for ${spec}`);
   const sha1 = `sha1-${Buffer.from(shasum, "hex").toString("base64")}`;
-  if (!digestsOf(recorded).includes(sha1)) throw new Error(`npm pack read a tarball whose SHA-1 is ${sha1}`);
+  if (recorded !== sha1) throw new Error(`npm pack read a tarball whose SHA-1 is ${sha1}, which is not the only digest npm recorded`);
   return integrity;
+}
+
+/**
+ * Fails unless the SHA-512 in `found`, the integrity of the `spec` npm installed, is `expected`, the one core pins.
+ * npm takes a download that matches any one SHA-512 it recorded, so an integrity with a second one is refused even
+ * where the pin is among them.
+ */
+function checkPinned(spec: string, found: string, expected: string, coreSpec: string): void {
+  const sha512 = digestsOf(found).filter(digest => digest.startsWith("sha512-"));
+  if (sha512.length > 1) {
+    throw new Error(
+      `npm recorded more than one SHA-512 for the ${spec} it installed (its integrity is ${found}) and takes a file that matches any of them, so the file it installed cannot be held to the one ${coreSpec} pins, ${expected}. Nothing of it was run.`,
+    );
+  }
+  if (sha512[0] !== expected) {
+    throw new Error(
+      `The ${spec} npm installed is not the one ${coreSpec} was released with: its integrity is ${found}, and ${coreSpec} pins ${expected}. The registry npm installs from serves another file under that name. Nothing of it was run.`,
+    );
+  }
 }
 
 /**
@@ -305,13 +326,7 @@ async function checkMachinePackages(npm: NpmRunner, prefix: string, machineSpecs
       throw new Error(`${coreSpec} pins no ${specName(spec)} in its npm-shrinkwrap.json, so the ${spec} npm installed cannot be checked against it. Nothing of either was run.`);
     }
     if (typeof recorded !== "string") throw new Error(`npm installed ${coreSpec} without ${spec}, its engine on this system. Nothing of it was run.`);
-    // Core pins the SHA-512, which the integrity npm recorded holds among its digests, or does not hold at all.
-    const found = await comparableIntegrity(npm, spec, recorded, coreSpec);
-    if (!digestsOf(found).includes(expected)) {
-      throw new Error(
-        `The ${spec} npm installed is not the one ${coreSpec} was released with: its integrity is ${found}, and ${coreSpec} pins ${expected}. The registry npm installs from serves another file under that name. Nothing of it was run.`,
-      );
-    }
+    checkPinned(spec, await comparableIntegrity(npm, spec, recorded, coreSpec), expected, coreSpec);
   }
 }
 

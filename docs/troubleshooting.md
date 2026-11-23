@@ -328,7 +328,7 @@ as it failed, and the version that was active stays active. Fix the cause below,
 - **An update from Rerail 0.1.5 or earlier:** in place of a command, the message says
 
   ```text
-  An update staged this Rerail, and removes its folder when the update fails: run `rerail update` again once npm can install the package. Where npm's settings leave optional dependencies out, set the environment variable npm_config_include=optional for that run.
+  An update or set-up staged this Rerail, and removes its folder when it fails: run the update or set-up again once npm can install the package. Where npm's settings leave optional dependencies out, set the environment variable npm_config_include=optional for that run.
   ```
 
   Those versions install `@neralabs/rerail` alone and leave its engine to npm's optional dependencies, so a setting

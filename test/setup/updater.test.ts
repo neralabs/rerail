@@ -205,7 +205,7 @@ describe("ManagedUpdater", () => {
 
     const failure = await updater.update().catch((error: unknown) => String(error));
     expect(failure).toContain("Rerail's engine for Linux on x64 is not installed");
-    expect(failure).toContain("An update staged this Rerail, and removes its folder when the update fails: run `rerail update` again");
+    expect(failure).toContain("An update or set-up staged this Rerail, and removes its folder when it fails: run the update or set-up again");
     expect(failure).not.toContain("npm install --prefix");
     expect(await readdir(updater.versionsRoot)).toEqual([]);
   });
@@ -948,12 +948,31 @@ describe("NpmPackageRegistry: one engine per machine", () => {
   });
 
   it.each<[string, (name: string) => { integrity?: string; shasum?: string }, string]>([
-    ["hashes another tarball than the one it installed", name => ({ integrity: releasedIntegrity(name), shasum: releasedSha1("another tarball").shasum }), `npm pack read a tarball whose SHA-1 is ${releasedSha1("another tarball").integrity}`],
+    ["hashes another tarball than the one it installed", name => ({ integrity: releasedIntegrity(name), shasum: releasedSha1("another tarball").shasum }), `npm pack read a tarball whose SHA-1 is ${releasedSha1("another tarball").integrity}, which is not the only digest npm recorded`],
     ["prints no SHA-512", name => ({ shasum: releasedSha1(name).shasum }), `npm pack printed no SHA-512 and SHA-1 for ${engineSpec}`],
   ])("refuses an engine npm recorded only a SHA-1 for when npm %s: unchecked is not checked", async (_what, packed, why) => {
     const run = await updateWith({ installed: name => releasedSha1(name).integrity, packed });
     await expect(run.update).rejects.toThrow(
       `npm recorded no SHA-512 for the ${engineSpec} it installed (its integrity is ${releasedSha1(engine).integrity}), and its tarball could not be hashed to check it against the one @neralabs/rerail@1.1.0 pins: ${why}. Nothing of it was run.`,
+    );
+    await expectNothingStaged(run);
+  });
+
+  // npm takes a download that matches any one digest of the strongest algorithm it recorded, so with a second one it
+  // can install another tarball than the one core pins, or than the one npm pack hashes.
+  it("refuses an engine npm recorded a second SHA-512 for, though one is the digest core pins", async () => {
+    const run = await updateWith({ installed: name => `${releasedIntegrity(name)} sha512-b3RoZXIgYnl0ZXM=` });
+    await expect(run.update).rejects.toThrow(
+      `npm recorded more than one SHA-512 for the ${engineSpec} it installed (its integrity is ${releasedIntegrity(engine)} sha512-b3RoZXIgYnl0ZXM=) and takes a file that matches any of them, so the file it installed cannot be held to the one @neralabs/rerail@1.1.0 pins, ${releasedIntegrity(engine)}. Nothing of it was run.`,
+    );
+    await expectNothingStaged(run);
+  });
+
+  it("refuses an engine npm recorded a second SHA-1 for, though npm hashes one of them to the SHA-512 core pins", async () => {
+    const recorded = (name: string): string => `${releasedSha1(name).integrity} ${releasedSha1("another tarball").integrity}`;
+    const run = await updateWith({ installed: recorded });
+    await expect(run.update).rejects.toThrow(
+      `npm recorded no SHA-512 for the ${engineSpec} it installed (its integrity is ${recorded(engine)}), and its tarball could not be hashed to check it against the one @neralabs/rerail@1.1.0 pins: npm pack read a tarball whose SHA-1 is ${releasedSha1(engine).integrity}, which is not the only digest npm recorded. Nothing of it was run.`,
     );
     await expectNothingStaged(run);
   });

@@ -222,15 +222,15 @@ async function publishFolder(directory) {
 const USAGE = "usage: engine/release.mjs publish <folder written by engine/packages.mjs pack> | specs <version> [<dist-tag>]";
 
 /**
- * Whether Node was started on this file. Real paths on both sides: Node gives a module its real path, and the script
- * can be started through a link. A comparison that failed there would run nothing and exit 0, which release.yml takes
+ * Whether Node was started on this file. Real paths on both sides: the script can be started through a link, and Node
+ * gives a module its real path only without `--preserve-symlinks-main`. A comparison that failed there would run nothing and exit 0, which release.yml takes
  * for all six published. A first argument that names no file is not this file: a script given with `-e` that imports
  * this one has its own first argument there.
  */
 function startedOnThisFile() {
   if (process.argv[1] === undefined) return false;
   try {
-    return fileURLToPath(import.meta.url) === realpathSync(process.argv[1]);
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
   } catch {
     return false;
   }
