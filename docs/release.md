@@ -96,8 +96,8 @@ releases. Nothing in CI reads them: the checklist is the merger's word (`BEFORE_
 Merging publishes the release to `next`; nothing reaches `latest` until a person approves its promotion. First:
 
 - **End-user testing.** One hour using the release the way a user does. `rerail update --channel next` installs its
-  core and lists the newer versions of your installed packs on `next`, with the `rerail packs add` command for each:
-  run them, so the packs under test are the release's too.
+  core, then updates your installed packs to their newest versions on `next`, so the packs under test are the
+  release's too.
 
 If testing finds a problem, fix it on `main` as any pull request. The next Release pull request releases the fix as the
 next version on `next`, and that version is the one to test and promote. The version that failed stays on `next` and

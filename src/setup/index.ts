@@ -31,6 +31,7 @@ export {
   PACK_FALLBACK_TAG,
   packsLeftOutByCore,
   parsePackVersions,
+  updatePacks,
   type PackDiscovery,
   type PackStore,
   type PackVersion,

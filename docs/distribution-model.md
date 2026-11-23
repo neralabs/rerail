@@ -173,7 +173,10 @@ An update:
     - An agent that cannot be registered again fails alone; the update exits non-zero with the new version active.
     - Agents whose configuration cannot be read to tell whether they are connected are named and left alone.
     - The update that introduces this step runs the previous version's updater, which lacks it: run `rerail install --refresh` once after it.
-11. Lists each installed rule pack with a newer version that fits the active core, with the `rerail packs add` command that installs it. It installs none.
+11. Runs `rerail packs update` as the new CLI, once the refresh succeeds: each installed rule pack moves to the newest version on the channel that the new core accepts, checked by the new core's engine.
+    - Runs even with no newer core: packs are released without one.
+    - A pack that does not install or load is put back alone; the update exits non-zero with the new version active.
+    - The update that introduces this step runs the previous version's updater, which only lists the newer packs: run `rerail packs update` once after it.
 
 **Health gate:** the native entrypoint and a real `RERAIL-EVENTS/1` session-start exchange must pass, or the update is discarded without changing the active version.
 
