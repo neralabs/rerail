@@ -1,6 +1,7 @@
 # 0366: The full body is written once
 
-Status: decided (the user, 2026-11-17: "just fix the shape of the generated code"). Follows 0363.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "just fix the shape of the generated code").
+Follows 0363.
 
 ## Intro
 

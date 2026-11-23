@@ -9,28 +9,55 @@ use std::collections::BTreeSet;
 
 /// Dependency edges, head → dependency, with whether each is negative (an aggregate's is, a gated negation's is
 /// not): sorted by head and dependency, each once.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Edges {
+/// A section (decision 0628 §4), shared by a count.
+#[derive(Clone)]
+pub struct Edges(std::sync::Arc<rerail_section::Section<EdgeList>>);
+
+/// The edges' section: each one as it lies.
+#[derive(rerail_section::Archive, Default)]
+pub struct EdgeList {
+    #[archive(flat)]
     edges: Vec<(RelId, RelId, bool)>,
+}
+
+impl Default for Edges {
+    fn default() -> Edges {
+        Edges::of(Vec::new())
+    }
+}
+
+impl PartialEq for Edges {
+    fn eq(&self, o: &Edges) -> bool {
+        self.as_slice() == o.as_slice()
+    }
+}
+
+impl Eq for Edges {}
+
+impl std::fmt::Debug for Edges {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.as_slice()).finish()
+    }
 }
 
 impl Edges {
     pub fn of(mut edges: Vec<(RelId, RelId, bool)>) -> Edges {
         edges.sort_unstable();
         edges.dedup();
-        Edges { edges }
+        Edges(std::sync::Arc::new(rerail_section::Section::of(&EdgeList { edges })))
     }
     /// What `head` depends on, and whether negatively.
     pub fn of_head(&self, head: RelId) -> impl Iterator<Item = (RelId, bool)> + '_ {
-        let s = self.edges.partition_point(|e| e.0 < head);
-        self.edges[s..].iter().take_while(move |e| e.0 == head).map(|e| (e.1, e.2))
+        let edges = self.as_slice();
+        let s = edges.partition_point(|e| e.0 < head);
+        edges[s..].iter().take_while(move |e| e.0 == head).map(|e| (e.1, e.2))
     }
     /// The edges, sorted by head and dependency.
     pub fn as_slice(&self) -> &[(RelId, RelId, bool)] {
-        &self.edges
+        &self.0.edges
     }
     pub fn iter(&self) -> impl Iterator<Item = (RelId, RelId, bool)> + '_ {
-        self.edges.iter().copied()
+        self.as_slice().iter().copied()
     }
 }
 
@@ -72,10 +99,56 @@ pub fn components(v: &Version, about: &About) -> (Vec<RelId>, Edges, Vec<(RelId,
             edges.push((head, a.rel(), (a.neg() || agg) && !a.gated()));
         }
     }
+    guest_copies_after_requests(v, about, &derived, &mut edges);
     aggs.sort_unstable();
     aggs.dedup();
     let derived = (0..n as u32).map(RelId).filter(|r| derived[r.index()]).collect();
     (derived, Edges::of(edges), aggs)
+}
+
+/// The prefix of a relation hiding copies for a guest's grammar (`rr_in_<grammar>_<relation>`, decision 0058 §2): its
+/// rules read the nodes of that grammar's documents.
+pub const GUEST_COPY: &str = "rr_in_";
+
+/// A guest copy runs after each answer the run gives (decision 0597): a request is answered where a stratum reads
+/// what it produces (`parsed`), and the answer admits documents (a Vue template's pieces, a string's tape) whose rows
+/// the strata above read. A copy made only of base atoms (`decl_site` over `kind` and `field`) depends on no derived
+/// relation, so it could be placed below and never see them (vue/code's `tvar` was empty unless another rule happened
+/// to place it above). The edge orders only: it is never negative, and it is not added where the answer reaches the
+/// copy (a nested guest's ask reads it), which would close a cycle.
+fn guest_copies_after_requests(v: &Version, about: &About, derived: &[bool], edges: &mut Vec<(RelId, RelId, bool)>) {
+    let mut answers: Vec<RelId> = about.produced().map(|(p, _)| p).collect();
+    answers.sort_unstable();
+    answers.dedup();
+    if answers.is_empty() {
+        return;
+    }
+    let copies: Vec<RelId> = (0..derived.len() as u32).map(RelId).filter(|r| derived[r.index()] && v.rel_name(*r).starts_with(GUEST_COPY)).collect();
+    if copies.is_empty() {
+        return;
+    }
+    let mut deps: Vec<Vec<RelId>> = vec![Vec::new(); derived.len()];
+    for &(h, w, _) in edges.iter() {
+        deps[h.index()].push(w);
+    }
+    for answer in answers {
+        let mut reached = vec![false; derived.len()];
+        let mut todo = vec![answer];
+        reached[answer.index()] = true;
+        while let Some(r) = todo.pop() {
+            for &w in &deps[r.index()] {
+                if !reached[w.index()] {
+                    reached[w.index()] = true;
+                    todo.push(w);
+                }
+            }
+        }
+        // The next answer's reach counts these edges too: through one, it could reach a copy.
+        for &c in copies.iter().filter(|c| !reached[c.index()]) {
+            edges.push((c, answer, false));
+            deps[c.index()].push(answer);
+        }
+    }
 }
 
 /// The dependency edges by name, as `analyses::strata` gives them: each derived relation's dependencies among the derived
@@ -92,7 +165,7 @@ pub fn edges_by_name(v: &Version, about: &About) -> crate::code_rule_dsl::logic:
 /// The components by name, dependencies first (`analyses::strata` without its edges), in the tree's order: the relations numbered in the order of their
 /// names, and the tree's error where a negation closes a cycle. For a reader whose output follows the components' order (the
 /// composed query lists its definitions in it); `strata` gives them in an order of ids.
-pub fn components_by_name(v: &Version, about: &About) -> Result<Vec<BTreeSet<String>>, Error> {
+pub fn components_by_name(v: &Version, about: &About) -> Result<crate::code_rule_dsl::logic::front::Components, Error> {
     let (mut by_name, edges, aggs) = components(v, about);
     by_name.sort_unstable_by(|a, b| v.rel_name(*a).cmp(v.rel_name(*b)));
     const NONE: u32 = u32::MAX;

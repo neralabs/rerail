@@ -15,9 +15,9 @@
 //! - **HIP**, the `gfx` target (`gfx1035`, `gfx11-generic`): its wave (64 on gfx9's, the CDNA parts; 32 on RDNA's)
 //!   and, on the exact RDNA2 targets (`gfx103*`), its dot-product instructions (`UKL_HIP_AMD_DOT`).
 //!
-//! OpenCL's and the CPU's text is prepared from what the device reports (its sub-group width, its largest group;
-//! the CPU's knobs): their drivers and compilers are on every machine, so nothing of theirs ships, and their
-//! targets are local (`Target::local`).
+//! OpenCL's, the CPU's and the CPU's vector code's (`Vec`, decision 0567) text is prepared from what the device
+//! reports (its sub-group width, its largest group; the CPU's knobs): their drivers and compilers are on every
+//! machine, so nothing of theirs ships, and their targets are local (`Target::local`).
 
 use crate::{Backend, Preprocess};
 
@@ -87,6 +87,7 @@ impl Target {
         let name = match backend {
             Backend::OpenCl => "opencl",
             Backend::Cpu => "cpu",
+            Backend::Vec => "vec",
             Backend::Metal { .. } => "metal-local",
             Backend::Cuda { .. } => "cuda-local",
             Backend::Hip { .. } => "hip-local",
@@ -110,7 +111,7 @@ impl Target {
             Backend::Cuda { .. } if self.name.starts_with("compute_") => "ptx",
             Backend::Cuda { .. } => "cubin",
             Backend::Hip { .. } => "hsaco",
-            Backend::OpenCl | Backend::Cpu => return None,
+            Backend::OpenCl | Backend::Cpu | Backend::Vec => return None,
         })
     }
 

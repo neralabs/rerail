@@ -2,6 +2,7 @@
 //! program's version, run in one pipeline after the program's one image, from the last of the tree's passes
 //! backward as they move.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::program_image::manager::{self, Run, Cx, Pipeline, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::Version;
 use std::collections::{BTreeSet, HashSet};
@@ -21,6 +22,7 @@ pub mod simplify;
 mod nearest;
 pub mod parts;
 pub mod text;
+pub mod kept;
 pub use merge::{DropRepeated, MergeIdentical, congruence};
 pub use prune::Prune;
 pub use nearest::Nearest;
@@ -91,7 +93,7 @@ impl ProgramPass for RuleOrder {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
     /// The relations the run makes for the tree axes and `nearest` (`Nearest::sets`).
-    pub sets: Vec<(String, Vec<i64>)>,
+    pub sets: Vec<(String, Vector<i64>)>,
     /// The relations the file-local joins were pushed into (`file_local::PushLocalJoins`).
     pub pushed: Vec<String>,
     /// What the factorized store handed on as parts (`file_local::FactorizeExports`): a line per relation.
@@ -232,6 +234,11 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
     // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as; the base relations the program
     // reads and does not derive are inputs, as an authored file's are.
     p.program(&mut simplify::CpythonFunctors);
+    // A pass's tape-local facts kept by its tape (decision 0597 rule 8): its kept rows are inputs (`BaseInputs`). A
+    // pack's parts were rewritten whole before they were split (`parts::front`).
+    if whole {
+        p.program(&mut kept::Kept);
+    }
     p.program(&mut simplify::BaseInputs);
     // Only the rules an output reads, directly or through other rules (T's front prunes the same way).
     p.program(&mut prune::Prune::default());

@@ -5,6 +5,7 @@
 //! language reads, behind the registered `RUNNER`. `corpus.rs` re-exports it (through rerail-rr-root's `corpus`).
 
 use super::*;
+use rerail_blocks::vector::Vector;
 
 /// The corpus runner, as the corpus's lower modules call it: phase 0 runs its bootstrap program through it to read the
 /// rule library's imports (`phase0`), so the language's loading runs a program, and the runner reads the language.
@@ -48,8 +49,6 @@ pub const COMBINING: &[&str] = &[
     // (`lower::bounded`, decision 0511) and a group's first by an order (`lower::first`, decision 0515).
     "RERAIL_ASOF",
     "RERAIL_FIRST",
-    // A narrow copy derived again, `=off`, not diffed from its original (`combining::Diffed`, decision 0575).
-    "RERAIL_NARROW_DIFF",
 ];
 
 pub fn text(v: &SqlValue) -> String {
@@ -98,7 +97,7 @@ pub struct Report {
     /// constants' and phase 0's runs'): the outermost run's record names them all, so they stay live while a root's
     /// last runs name it (`keep_corpus_runs`). One process records a run per nested run, so recorded alone the
     /// phases' plans fell out of a root's last two runs after every process and were prepared again by the next.
-    pub plans: Vec<[u8; 32]>,
+    pub plans: Vector<[u8; 32]>,
     /// The per-file memo: files read from it, and chunks whose rows it could not keep (a row naming no document).
     pub memo: (usize, usize),
     /// Of the files the memo held, those read as partial hits (decision 0225 §2): their entries kept but the
@@ -181,15 +180,6 @@ pub struct Report {
     /// The run's own record (decision 0441: what it met of its limits, the trees it decoded), where it was the
     /// outermost run.
     pub run: Option<crate::code_rule_dsl::logic::run::Record>,
-}
-
-/// Whether a run of `programs` over `root` that consulted `consulted` (`Report::consulted`) would consult the same
-/// now: the same workspace documents with the same bytes, and every request answered alike (decision 0083 §2). It
-/// reads what the run read, and derives nothing. A program whose inputs come from elsewhere too (declarations,
-/// earlier phases, an explicit batch) is never judged unchanged.
-/// `graphs`: each program text's include graph's digest, as the run found it (`run_handed`).
-pub fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], summary: Option<Summary>) -> Result<bool> {
-    Ok(changes_of(programs, graphs, read, root, typing, options, consulted, summary)?.is_some_and(|c| c.is_empty()))
 }
 
 /// The parts of a run's combined program that `changes` reads, and nothing else: whether it reads `declared_ret`,
@@ -315,14 +305,35 @@ impl ProgramFields for Summary {
     }
 }
 
-/// The program `programs` combine to, as `changes` combines them: the root's settings (`<root>/rerail.env`, the `env`
-/// option) as the rows the run adds (decision 0249), the texts as the run's keys read them, messages masked
-/// (`texts_digest`, decision 0225 §3).
-pub fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+/// The run's settings (t21 E4): `<root>/rerail.env`, then the `env` option's `key=value`s (the command line's `--env`),
+/// and whether the run reads no file (`true`): a run of a workspace's language paths, or a program over a Git snapshot
+/// whose outputs read the snapshot's metadata alone and no setting (the selected commit may have no tree to read the
+/// file from). `masked` are `programs` as the run's keys read them (`masked`). The one decision, the run's and its
+/// record's summary's (`combined_with_settings`).
+pub fn run_settings(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<(Vec<(String, String)>, bool)> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    let metadata_without_env = if options.get("workspaceLanguagePaths").is_some() {
+        true
+    } else if crate::git_workspace::snapshot::contains(root) {
+        // The program without the root's settings: whether its outputs read Git metadata alone, and no setting.
+        let (probe, _) = combine_version(programs, masked, graphs, &added::Added::of(&[], options), read)?;
+        use crate::code_rule_dsl::logic::program_image::{About, analyses};
+        let need = analyses::needed(&probe, &About::of(&probe), probe.output_names().iter().filter_map(|o| probe.rel(o)));
+        super::git::metadata_only(&probe) && !probe.rel("env").is_some_and(|env| need[env.index()])
+    } else {
+        false
+    };
+    let settings = crate::code_rule_dsl::logic::settings::settings_with_file(root, &flags, !metadata_without_env).map_err(Error::Plan)?;
+    Ok((settings, metadata_without_env))
+}
+
+/// The program `programs` combine to, as `changes` combines them: the run's settings (`run_settings`) as the rows the
+/// run adds (decision 0249), the texts as the run's keys read them, messages masked (`texts_digest`, decision 0225 §3).
+pub fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let masked = masked(programs);
-    Ok(combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read)?.0)
+    let masked: Vec<&str> = masked.iter().map(|t| t.as_ref()).collect();
+    let (settings, _) = run_settings(programs, &masked, graphs, read, root, options)?;
+    Ok(combine_version(programs, &masked, graphs, &added::Added::of(&settings, options), read)?.0)
 }
 
 /// `changes`, reading the program's parts off `summary` where one is given (the whole-run cutoff's record), else off
@@ -333,7 +344,7 @@ pub fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&
     // A run given no file of its own (`inputFiles: []`, a phase's: phase 1 loads its documents by request) has no
     // listed documents to compare; what it loaded is among its requests, checked below. Other named files are not
     // compared.
-    let none_named = options.get("inputFiles").and_then(|v| v.as_array()).is_some_and(Vec::is_empty);
+    let none_named = options.get("inputFiles").and_then(|v| v.as_array()).is_some_and(|v| v.is_empty());
     if (options.get("inputFiles").is_some() && !none_named) || consulted.is_empty() {
         trace(format!("not comparable: input files {}, {} consulted", options.get("inputFiles").is_some(), consulted.len()));
         return Ok(None);
@@ -466,7 +477,7 @@ pub fn keep_combined(key: [u8; 32], edit: impl FnOnce(&mut Combined)) {
 /// prints from, already lowered (`Texts::read`): the program itself, not its text lowered again. The image is made
 /// once per combined program and kept for the process (`COMBINED`).
 pub fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, [u8; 32])> {
-    let key = texts_digest(masked, graphs, extra);
+    let key = texts_digest(masked, graphs, extra, read.is_some() && programs.len() == 1);
     if let Some(v) = combined_kept().0.lock().expect("the combined programs").get(&key).and_then(|k| k.version.clone()) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
         return Ok((v, key));
@@ -510,12 +521,14 @@ pub fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<c
     Ok((v, run))
 }
 
-/// The combine kept in the persistent store across processes for a pack of programs (`combined`, decision 0094 §6):
-/// keyed by the texts and checked against the library files the combine read. The store's entry opened as a version
+/// The combine kept in the persistent store across processes (`combined`, decision 0094 §6): keyed by the texts and
+/// checked against the library files the combine read. A pack's, a program handed its run (decision 0275), and one
+/// program's from its text alike: each new process that runs one program combined it again (0.3–0.4 s at the tests'
+/// opt-level, 23 times in one test). The store's entry opened as a version
 /// (`combined::lookup_version`), or the combine's tail run on the version (`combine_tail`) and its image kept as the
 /// entry (`combined::record_version`).
 pub fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
-    let store = if cfg!(feature = "tape-cache") && (programs.len() > 1 || read.is_some()) && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
+    let store = if cfg!(feature = "tape-cache") && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
         phases::reading_store()
     } else {
         None
@@ -546,17 +559,19 @@ pub fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8
 }
 
 /// The digest of `combine`'s texts and the rows it adds: what a combined program is a function of. `graphs`: each
-/// text's include graph's digest (`Texts::graphs`).
+/// text's include graph's digest (`Texts::graphs`). `handed`: the one text is the print of a program handed its run
+/// (decision 0275), which combines to another program than the text read again does (the handed program keeps its
+/// inputs' layouts), so the two are kept apart.
 /// `programs` are the texts with their messages masked (`masked`): a finding's message by its placeholders alone, its
 /// words the writer's, not the program's (decision 0225 §3), so an edit of them finds the program combined, prepared
 /// and memoised.
-pub fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added) -> [u8; 32] {
+pub fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, handed: bool) -> [u8; 32] {
     use sha2::Digest as _;
     let mut hash = sha2::Sha256::new();
     // Under another value of a switch `combine_tail` reads, the same texts combine to another program (`COMBINING`).
     // Only those set: an unset switch keeps the key every run has had.
     for switch in COMBINING {
-        if let Some(v) = std::env::var_os(switch) {
+        if let Some(v) = crate::code_rule_dsl::logic::profile::var_os(switch) {
             hash.update(format!("\0{switch}={}", v.to_string_lossy()).as_bytes());
         }
     }
@@ -573,6 +588,9 @@ pub fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &adde
     // The rows the run adds, none for most runs (`added`).
     if !extra.is_empty() {
         extra.hash(&mut hash);
+    }
+    if handed {
+        hash.update(b"\0handed");
     }
     hash.finalize().into()
 }
@@ -734,7 +752,7 @@ pub fn tail_passes<'s>(mut p: crate::code_rule_dsl::logic::program_image::manage
     let mut spaces_report = None;
     if let Tail::Many { hide: bound, policies, .. } = tail {
         // A context's instance completed over the combined program (decision 0597): a member's rule of a library's
-        // context (`p1_rr_cx_annotation_ann_list`) reads the library's rules it reaches as the context's, which its
+        // context (`p1_rr_pass_annotation_ann_list`) reads the library's rules it reaches as the context's, which its
         // part, lowered without the library's rules, could not.
         p.program(&mut crate::code_rule_dsl::logic::contexts::Passes).program(&mut crate::code_rule_dsl::logic::contexts::CrossingCycles);
         // core.rerail's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
@@ -790,7 +808,7 @@ pub fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::prog
     if !asks {
         return Ok(p);
     }
-    if !std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager") {
+    if !crate::code_rule_dsl::logic::profile::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager") {
         let requests: Vec<&'static str> = ON_REQUEST.iter().flat_map(|round| round.iter()).map(|a| a.req).filter(|r| v.rel(r).is_some()).collect();
         let mut pass = crate::code_rule_dsl::typing::file_local::RequestsFileLocal { requests, narrowed: Vec::new() };
         p.program(&mut pass);
@@ -1039,13 +1057,13 @@ pub fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::A
     // The combine's last link (decision 0373): each program's slot is its image's key, and the run's shape the key the
     // link is kept under. Where it is the last run's, only the programs whose image changed are lowered.
     let per_program = std::env::var("RERAIL_REQUESTS").is_ok_and(|v| v == "copied");
-    let keeping: Option<(Vec<[u8; 32]>, [u8; 32])> = (|| {
+    let keeping: Option<(Vector<[u8; 32]>, [u8; 32])> = (|| {
         let library = in_scope?;
         images.as_ref()?;
         if !splice || !P::KEEPS || programs.len() < 2 || read.is_some() || copied {
             return None;
         }
-        let keys = programs.iter().zip(&scope_of).map(|(text, k)| scoped[(*k)?].program_image(text).sha256_bytes()).collect::<Option<Vec<_>>>()?;
+        let keys = programs.iter().zip(&scope_of).map(|(text, k)| scoped[(*k)?].program_image(text).sha256_bytes()).collect::<Option<Vector<_>>>()?;
         Some((keys, kept_link::family(programs.len(), extra, &library.image_keys())))
     })();
     if let (Some((keys, family)), Some(store), Some(library)) = (&keeping, images.as_deref(), in_scope)
@@ -1361,7 +1379,7 @@ pub fn combine_spliced<P: link::Part>(
     if rec.slots.len() != programs.len() || rec.counts.len() != programs.len() + 2 {
         return Ok(None);
     }
-    let changed: Vec<usize> = (0..programs.len()).filter(|&i| rec.slots[i].key != keys[i]).collect();
+    let changed: Vector<usize> = (0..programs.len()).filter(|&i| rec.slots[i].key != keys[i]).collect();
     let _span = crate::code_rule_dsl::logic::profile::span(|| format!("the changed programs spliced into the combine's last link ({} of {}; decision 0373)", changed.len(), programs.len()));
     let core = crate::code_rule_dsl::logic::rr::core_names();
     let mut parts: Vec<(usize, P::Rules)> = Vec::new();
@@ -1784,7 +1802,13 @@ pub fn tape_cache_path() -> Option<std::path::PathBuf> {
         return path;
     }
     #[cfg(any(test, feature = "test-hooks"))]
-    if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()).or_else(test_store::handed) {
+    if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()) {
+        // A store the test named, begun from the template where it is new (`test_store::begun`).
+        test_store::begun(&path);
+        return Some(path);
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    if let Some(path) = test_store::handed() {
         return Some(path);
     }
     if std::env::var_os("RERAIL_TAPE_CACHE").is_none()
@@ -1891,6 +1915,13 @@ pub fn test_tape_cache() -> &'static std::path::PathBuf {
 pub struct FactPhase<'a> {
     pub program_entry: Option<&'a combined::Embedded>,
     _run: std::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> FactPhase<'a> {
+    /// A phase's run of the program `program_entry` keeps (a builtin phase's, `phases::lowered_entry`).
+    pub fn of(program_entry: Option<&'a combined::Embedded>) -> Self {
+        Self { program_entry, _run: std::marker::PhantomData }
+    }
 }
 
 /// Runs under way here, in the run's context: a run started inside another (a phase, the constants, phase 0) is
@@ -2128,8 +2159,23 @@ pub fn usage() -> (f64, f64, f64) {
 
 /// The root a manifest names: the fact root of a snapshot, else the canonical path.
 pub fn manifest_root(root: &Path) -> String {
-    crate::git_workspace::snapshot::fact_root(root)
-        .or_else(|| root.canonical().ok()).unwrap_or_else(|| root.to_path_buf()).to_string_lossy().into_owned()
+    named_root(root).to_string_lossy().into_owned()
+}
+
+/// The name the run's facts give `root` (its manifest's, its fact spaces', `kept_strata::part_space`): the fact root
+/// of a snapshot, else the canonical path, else `root`. Found once a run for each root: asked at each call, a run
+/// resolved its root 17 times.
+pub fn named_root(root: &Path) -> std::path::PathBuf {
+    #[derive(Default)]
+    struct Named(std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, std::path::PathBuf>>);
+    let named = crate::code_rule_dsl::logic::profile::local::<Named>();
+    if let Some(found) = named.0.lock().expect("the run's named roots").get(root) {
+        return found.clone();
+    }
+    let found = crate::git_workspace::snapshot::fact_root(root)
+        .or_else(|| root.canonical().ok()).unwrap_or_else(|| root.to_path_buf());
+    named.0.lock().expect("the run's named roots").insert(root.to_path_buf(), found.clone());
+    found
 }
 
 /// `run_read` inside another run that hands it the source texts it read (`sources`, decision 0300): phase 1's.
@@ -2145,10 +2191,11 @@ pub fn run_read_handing(
     typing: &Typing,
     options: &serde_json::Value,
     image: Option<&mut Vec<u8>>,
+    phase: FactPhase<'_>,
 ) -> Result<Report> {
     added::check_tool_calls(options).map_err(Error::Plan)?;
     let key = read_key(read)?;
-    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, image, Default::default())
+    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, image, phase)
 }
 
 pub fn run_fact_image(source: &str, root: &Path, options: &serde_json::Value) -> Result<Vec<u8>> {
@@ -2157,7 +2204,7 @@ pub fn run_fact_image(source: &str, root: &Path, options: &serde_json::Value) ->
 
 /// `run_fact_image`, with the memo plans its run (and the phases it ran) recorded manifests of: what a later run that
 /// reuses its image in memory (a Git view's inventory) owns again for its own scope (`own_recorded_manifests`).
-pub fn run_fact_image_planned(source: &str, root: &Path, options: &serde_json::Value) -> Result<(Vec<u8>, Vec<[u8; 32]>)> {
+pub fn run_fact_image_planned(source: &str, root: &Path, options: &serde_json::Value) -> Result<(Vec<u8>, Vector<[u8; 32]>)> {
     let store = if cfg!(feature = "tape-cache") { phases::reading_store() } else { None };
     let _reading = store.as_ref().map(|store| store.hold_collection()).transpose()?;
     let (program, program_entry) = combined::embedded_program(source, store.as_deref())?;

@@ -209,6 +209,20 @@ error "a byte no token takes" by tokens when code & ~ws & ~hashword & ~ident & ~
 # loop starts each token after the one before, so never inside a region (2c). A number's run is
 # its digits and its `.`s between digits, one of them (`once dot`): the second ends it.
 mask num_run    = digit | (dot & prev(digit) & next(digit))
+# A number's first digit: an integer's, not after one of its digits.
+mask int_first  = digit & int & ~prev(int)
+# What the token loop reads of the masks above at a token's start (decision 0607): a token starts
+# where the one before ended, so never in a region (the regions open only at a token's start), a
+# word, a number's run or a pair. The prover proves each, or a test build checks it.
+assume "a token starts in code: the regions open only at a token's start" at starts code = ~empty
+assume "a quote at a start opens a string: a backslash is no token's first byte" at starts o_str = quote
+assume "a `//` at a start opens a line comment" at starts o_line = line_open
+assume "a `/*` at a start opens a block comment" at starts o_block = block_open
+assume "a backtick at a start opens a literal of one, two or three" at starts o_tick = tick1 | tick2 | tick3
+assume "a name starts at a letter: a start is never in a word" at starts id_first = alpha
+assume "a number starts at a digit: a start is never in a word or a float's fraction" at starts int_first = digit
+assume "an operator starts at its first byte: a start is never a pair's second or a float's `.`" at starts p_start = punct
+
 # --- Tokens ------------------------------------------------------------------------------------
 
 # A region's token is read, as a lexer reads a string or a comment: from its opener to its
@@ -218,10 +232,10 @@ token comment    = start slash & (o_line | o_block) read line | block
 token code_literal = start tick & o_tick read t1 | t2 | t3
 token hash_word  = start hash & directive run word
 keywords hash_word { "#include" } required
-token identifier = start alpha & ident & ~prev(ident) run word
+token identifier = start id_first run word
 # A float's `.` and fraction are its number's: one token.
 mask numeral    = int | f_dot | frac
-token number     = start digit & int & ~prev(int) run num_run once dot
+token number     = start int_first run num_run once dot
 # A number's check, at its token as a lexer reads it: an integer of 19 digits or more.
 escape "a number of 19 digits or more" at number when all(digit) at least 19
 token punct      = start punct & p_start pair two_start

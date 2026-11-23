@@ -21,6 +21,7 @@
 //!
 //! The manager writes through `Builder` (0173 §6, 0276 §3): a pass never opens one, never copies the rules it
 //! keeps, and never picks a view, an overlay or a derivation.
+use rerail_blocks::vector::Vector;
 use super::build::{Builder, Rewrite, RuleBuilder};
 use super::handles::RuleRef;
 use super::version::{Made, Version};
@@ -61,7 +62,7 @@ impl Dense for RuleId {
 /// reads the same on an edit of it that numbered more.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct IdSet<I> {
-    bits: Vec<u64>,
+    bits: Vector<u64>,
     len: usize,
     of: PhantomData<I>,
 }
@@ -70,7 +71,7 @@ pub type RuleSet = IdSet<RuleId>;
 
 impl<I: Dense> IdSet<I> {
     pub fn new() -> Self {
-        IdSet { bits: Vec::new(), len: 0, of: PhantomData }
+        IdSet { bits: rerail_blocks::vector::Vector::new(), len: 0, of: PhantomData }
     }
     pub fn has(&self, i: I) -> bool {
         let k = i.index();
@@ -252,6 +253,9 @@ impl Delta {
                 facts: delta.fact_count() > 0 || !delta.u32s(super::R::FactGone).is_empty(),
                 about: delta.owns() & 4 != 0,
             },
+            // A view states none of its own: its declarations, facts and `.about` rows are its parent's, which are
+            // the input's where it numbers its rules as the input does (the input, or a view of the same parent).
+            Version::View { .. } if same_numbering(input, output) => States { decls: false, facts: false, about: false },
             _ => States { decls: true, facts: true, about: true },
         };
         fields_delta(input, output, &mut d, states);
@@ -1121,9 +1125,9 @@ pub struct Pipeline<'s> {
 /// is needed. The record is by place among a relation's
 /// rules, which a pass that adds, drops or reorders rules shifts: the pipeline states it again at its end.
 ///
-/// A pass that renames readers states the record itself: one that merges or folds relations (`MergeIdentical`,
-/// hiding's `FoldOwn`) has a request of a merged reader serve the relation it was merged into, and one that inlines
-/// relations into their readers has a request of an inlined relation serve those readers. A copy of a request rule
+/// A pass that renames readers states the record itself: one that merges relations (`MergeIdentical`) has a request
+/// of a merged reader serve the relation it was merged into, and one that inlines relations into their readers has a
+/// request of an inlined relation serve those readers. A copy of a request rule
 /// under another name is no request rule, but reads what its source reads: where its source is a reader, so is it (a
 /// guest's copy of a reader, read in its place, asks what the reader asked).
 #[derive(Clone, Debug)]
@@ -1833,7 +1837,7 @@ pub enum StoredVersion<'r> {
     /// An overlay of version `parent`: its delta's image.
     Overlay { parent: usize, delta: &'r Arc<super::Image> },
     /// A view of version `parent`: the parent's rules it leaves out, ascending.
-    View { parent: usize, removed: Vec<u32> },
+    View { parent: usize, removed: Vector<u32> },
 }
 
 /// What a store keeps of a run's step: its pass, its input and output (in the run's table), its writer's form, and
@@ -1865,7 +1869,7 @@ pub struct StoredAsked {
 /// analyses it asked for, and its `own_end`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredRule {
-    pub select: (u8, Vec<u32>),
+    pub select: (u8, Vector<u32>),
     pub asked: Vec<String>,
     pub own_end: u32,
 }
@@ -1906,15 +1910,15 @@ impl Form {
 }
 
 impl Select {
-    fn stored(&self) -> (u8, Vec<u32>) {
+    fn stored(&self) -> (u8, Vector<u32>) {
         match self {
-            Select::All => (0, Vec::new()),
+            Select::All => (0, rerail_blocks::vector::Vector::new()),
             Select::Heads(s) => (1, s.iter().map(|r| r.0).collect()),
             Select::Readers(s) => (2, s.iter().map(|r| r.0).collect()),
             Select::Rules(s) => (3, s.iter().map(|r| r.0).collect()),
         }
     }
-    fn of_stored((kind, ids): &(u8, Vec<u32>)) -> Option<Select> {
+    fn of_stored((kind, ids): &(u8, Vector<u32>)) -> Option<Select> {
         Some(match kind {
             0 => Select::All,
             1 => Select::Heads(ids.iter().map(|&k| RelId(k)).collect()),

@@ -1,6 +1,6 @@
 # 0358: A reader's closer is looked for in 16 bytes first
 
-Status: decided (the user, 2026-11-17: "go ahead with 2 then 1", item 1: short strings).
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "go ahead with 2 then 1", item 1: short strings).
 Follows 0357.
 
 ## Intro

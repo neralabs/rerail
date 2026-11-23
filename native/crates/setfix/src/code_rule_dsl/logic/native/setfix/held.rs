@@ -9,6 +9,7 @@
 //! - Columns no rule reads are not held, and read as 0.
 //! - Past the relation's directory (`ADDED_INDEXES`), a column is probed by a sorted index on the host
 //!   (`Sorted`), the one form left there.
+use rerail_blocks::vector::Vector;
 use super::Sorted;
 use crate::code_rule_dsl::facts::rows::{InBlock, Life, Rows};
 use crate::code_rule_dsl::facts::vtab::Source;
@@ -30,10 +31,10 @@ pub(super) struct Held {
 }
 
 impl Held {
-    pub(super) fn new(columns: Vec<String>, values: Vec<Option<Vec<i64>>>, statistics: Option<Vec<(String, i64, i64, i64, i64)>>) -> Held {
-        let n = values.iter().flatten().map(Vec::len).max().unwrap_or(0);
+    pub(super) fn new(columns: Vec<String>, values: Vec<Option<Vector<i64>>>, statistics: Option<Vec<(String, i64, i64, i64, i64)>>) -> Held {
+        let n = values.iter().flatten().map(|v| v.len()).max().unwrap_or(0);
         let mut slot = Vec::with_capacity(values.len());
-        let mut held: Vec<Vec<i64>> = Vec::new();
+        let mut held: Vec<Vector<i64>> = Vec::new();
         for v in values {
             match v {
                 Some(v) => {
@@ -70,7 +71,7 @@ impl Held {
     }
 
     /// Column `c` read whole (its slot's values), for a measure or a host index.
-    fn column(&self, s: u16) -> Vec<i64> {
+    fn column(&self, s: u16) -> Vector<i64> {
         (0..self.n).map(|r| self.at(r, s)).collect()
     }
 
@@ -109,7 +110,7 @@ impl Held {
     }
 
     /// The rows whose column `c` (held, at `s`) is `v`, appended to `out`.
-    fn rows_with(&self, c: usize, s: u16, v: i64, out: &mut Vec<usize>) {
+    fn rows_with(&self, c: usize, s: u16, v: i64, out: &mut Vector<usize>) {
         match (self.col_index(c, s), &self.ib) {
             (Some(i), Some(ib)) => {
                 let h = rerail_blocks::mix(rerail_blocks::SEED, v);
@@ -169,18 +170,18 @@ impl Source for Held {
         if batch { one * 8 } else { one }
     }
     fn composite(&self) -> bool { true }
-    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<rerail_blocks::vector::Vector<usize>> {
         // A column not held reads as 0: its test holds of every row or of none.
         if equal.iter().any(|&(c, v)| self.slot[c].is_none() && v != 0) {
-            return Some(Vec::new());
+            return Some(rerail_blocks::vector::Vector::new());
         }
         let held: Vec<(u16, i64)> = equal.iter().filter_map(|&(c, v)| self.slot[c].map(|s| (s, v))).collect();
         if held.is_empty() {
             return Some((0..self.n).collect());
         }
-        let key: Vec<u16> = held.iter().take(rerail_blocks::relation::MAX_KEY).map(|h| h.0).collect();
+        let key: Vector<u16> = held.iter().take(rerail_blocks::relation::MAX_KEY).map(|h| h.0).collect();
         let keys = self.keys(equal.iter().filter(|e| self.slot[e.0].is_some()).take(key.len()).map(|e| e.0));
-        let mut out = Vec::new();
+        let mut out = rerail_blocks::vector::Vector::new();
         if let Some(ib) = &self.ib
             && let Some(i) = ib.own_index_for(&key, keys)
         {
@@ -196,11 +197,11 @@ impl Source for Held {
         Some(out)
     }
     fn indexed(&self, _: usize) -> bool { true }
-    fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, c: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         let Some(s) = self.slot[c] else {
-            return Some(if values.contains(&0) { (0..self.n).collect() } else { Vec::new() });
+            return Some(if values.contains(&0) { (0..self.n).collect() } else { rerail_blocks::vector::Vector::new() });
         };
-        let mut out = Vec::new();
+        let mut out = rerail_blocks::vector::Vector::new();
         for &v in values {
             self.rows_with(c, s, v, &mut out);
         }
@@ -214,7 +215,7 @@ impl Source for Held {
     }
     fn own_index(&self, cols: &[usize]) -> Option<(InBlock, usize)> {
         let ib = self.ib.as_ref()?;
-        let slots: Vec<u16> = cols.iter().map(|&c| self.slot[c]).collect::<Option<_>>()?;
+        let slots: Vector<u16> = cols.iter().map(|&c| self.slot[c]).collect::<Option<_>>()?;
         let keys = self.keys(cols.iter().copied());
         let i = ib.own_index_for(&slots, keys)?;
         Some((ib.clone(), i))
@@ -232,13 +233,13 @@ mod tests {
     fn held_rows_look_up_what_a_scan_finds() {
         let n = 3_000i64;
         let cols = 12;
-        let values: Vec<Option<Vec<i64>>> = (0..cols)
+        let values: Vec<Option<Vector<i64>>> = (0..cols)
             .map(|c| if c == 5 { None } else { Some((0..n).map(|r| (r * (c as i64 * 7 + 3) + c as i64) % (c as i64 * 13 + 2) - 4).collect()) })
             .collect();
         let names: Vec<String> = (0..cols).map(|c| format!("c{c}")).collect();
         let held = Held::new(names, values.clone(), None);
         let at = |r: usize, c: usize| values[c].as_ref().map_or(0, |v| v[r]);
-        let scan = |eq: &[(usize, i64)]| (0..n as usize).filter(|&r| eq.iter().all(|&(c, v)| at(r, c) == v)).collect::<Vec<_>>();
+        let scan = |eq: &[(usize, i64)]| (0..n as usize).filter(|&r| eq.iter().all(|&(c, v)| at(r, c) == v)).collect::<rerail_blocks::vector::Vector<_>>();
         for c in 0..cols {
             for v in [-4, -3, 0, 1, 5, 9, 40] {
                 assert_eq!(held.lookup(c, &[v]), Some(scan(&[(c, v)])), "column {c} = {v}");

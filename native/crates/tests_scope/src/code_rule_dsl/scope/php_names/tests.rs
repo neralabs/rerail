@@ -419,7 +419,7 @@ fn benchmark_php_names_corpus() {
                     continue;
                 }
             };
-            let line = |offset: usize| source[..offset].matches('\n').count() + 1;
+            let line = |offset: usize| crate::code_rule_dsl::lines::line_of(&source, crate::code_rule_dsl::language::GrammarDialect::Php, offset);
             let mut contradiction = |offset: usize, message: String, counts: &mut Counts| {
                 counts.contradictions += 1;
                 match NAME_DIVERGENCES.iter().find(|(name, path, start, _)| {

@@ -130,7 +130,7 @@ pub enum Kind {
     /// `[function, type, temp]`: a call of the program's function, its arguments the children; an aggregate's
     /// result copied to the caller's frame at `temp`, its value that address.
     Call,
-    /// `[builtin, type, arguments, site, argument types...]`: one of OpenCL's builtins (`Builtin`), its call's place
+    /// `[builtin, type, arguments, site, argument types...]`: one of the intrinsics (`Builtin`), its call's place
     /// in the source `Program::sites[site]`.
     Builtin,
     /// `a, b`: `b`'s value.
@@ -161,6 +161,11 @@ pub enum Kind {
 
 /// A `Return`'s slot when it ends the thread (the kernel's own body's).
 pub const NO_SLOT: u32 = u32::MAX;
+
+/// An `if`'s, a `while`'s or a `for`'s second word: its condition's hint (`UKL_LIKELY`, `UKL_UNLIKELY`), else 0.
+/// A loop's `UKL_LIKELY`: its lanes go on together, so rounds where all do are worth a test.
+pub const IF_LIKELY: u32 = 1;
+pub const IF_UNLIKELY: u32 = 2;
 
 impl Kind {
     pub const LAST: u16 = Kind::Case as u16;
@@ -211,7 +216,7 @@ impl Op {
     }
 }
 
-/// OpenCL's builtins a kernel calls (its sub-groups 32 lanes).
+/// The intrinsics a kernel calls (`__ukl_*`, `Builtin::named`; its SIMD groups 32 lanes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum Builtin {
@@ -241,7 +246,8 @@ pub enum Builtin {
     SubGroupReduceAdd,
     SubGroupReduceMin,
     SubGroupReduceMax,
-    /// Relaxed atomics on a 32-bit word: `(pointer, value)`, `(pointer, expected, new)` for `cmpxchg`.
+    /// Relaxed atomics on a 32-bit word: `(pointer, value)`, `(pointer, expected, new)` for `cmpxchg`, `(pointer)`
+    /// for a load. A store is an exchange whose old value no one reads.
     AtomicAdd,
     AtomicSub,
     AtomicAnd,
@@ -253,6 +259,8 @@ pub enum Builtin {
     AtomicCmpxchg,
     AtomicInc,
     AtomicDec,
+    AtomicLoad,
+    AtomicStore,
     /// Bit counts, of the argument's type.
     Popcount,
     Clz,
@@ -262,14 +270,18 @@ pub enum Builtin {
     As,
     Min,
     Max,
-    /// `a * b + c`, rounded once (OpenCL's `fma`, `mad`, and what a floating `a * b + c` contracts to).
+    /// `a * b + c`, rounded once (`__ukl_fma`, and what a floating `a * b + c` contracts to).
     Fma,
+    /// A condition most lanes take, or few do (`UKL_LIKELY`, `UKL_UNLIKELY`): the condition, its hint the `if`'s
+    /// (`lower`), never a node of a tape.
+    Likely,
+    Unlikely,
 }
 
 impl Builtin {
     pub fn of(w: u32) -> Builtin {
-        assert!(w <= Builtin::Fma as u32, "a builtin: {w}");
-        // SAFETY: `Builtin` is `repr(u32)`, its values 0 to `Fma` in order.
+        assert!(w <= Builtin::Unlikely as u32, "a builtin: {w}");
+        // SAFETY: `Builtin` is `repr(u32)`, its values 0 to `Unlikely` in order.
         unsafe { std::mem::transmute::<u32, Builtin>(w) }
     }
 
@@ -284,49 +296,61 @@ impl Builtin {
         )
     }
 
-    /// The builtin OpenCL names so, with its result type, from its arguments' types (`None`: not a builtin).
+    /// The builtin of an intrinsic's name (`None`: not a builtin): the `Vec` backend's spellings (`ukl_vec_shim.h`,
+    /// `ukl/backend.h`'s `UKL_VEC` section), one name an operation.
     pub fn named(name: &str) -> Option<Builtin> {
         Some(match name {
-            "get_local_id" => Builtin::LocalId,
-            "get_local_size" => Builtin::LocalSize,
-            "get_global_id" => Builtin::GlobalId,
-            "get_global_size" => Builtin::GlobalSize,
-            "get_group_id" => Builtin::GroupId,
-            "get_num_groups" => Builtin::NumGroups,
-            "get_sub_group_local_id" => Builtin::SubGroupLocalId,
-            "barrier" => Builtin::Barrier,
-            "mem_fence" | "read_mem_fence" | "write_mem_fence" => Builtin::MemFence,
-            "__ukl_vec_yield" => Builtin::Yield,
-            "sub_group_barrier" => Builtin::SubGroupBarrier,
-            "sub_group_ballot" => Builtin::SubGroupBallot,
-            "sub_group_shuffle" => Builtin::SubGroupShuffle,
-            "sub_group_shuffle_up" => Builtin::SubGroupShuffleUp,
-            "sub_group_shuffle_down" => Builtin::SubGroupShuffleDown,
-            "sub_group_shuffle_xor" => Builtin::SubGroupShuffleXor,
-            "sub_group_reduce_add" => Builtin::SubGroupReduceAdd,
-            "sub_group_reduce_min" => Builtin::SubGroupReduceMin,
-            "sub_group_reduce_max" => Builtin::SubGroupReduceMax,
-            "atomic_add" | "atom_add" => Builtin::AtomicAdd,
-            "atomic_sub" | "atom_sub" => Builtin::AtomicSub,
-            "atomic_and" | "atom_and" => Builtin::AtomicAnd,
-            "atomic_or" | "atom_or" => Builtin::AtomicOr,
-            "atomic_xor" | "atom_xor" => Builtin::AtomicXor,
-            "atomic_xchg" | "atom_xchg" => Builtin::AtomicXchg,
-            "atomic_min" | "atom_min" => Builtin::AtomicMin,
-            "atomic_max" | "atom_max" => Builtin::AtomicMax,
-            "atomic_cmpxchg" | "atom_cmpxchg" => Builtin::AtomicCmpxchg,
-            "atomic_inc" | "atom_inc" => Builtin::AtomicInc,
-            "atomic_dec" | "atom_dec" => Builtin::AtomicDec,
-            "popcount" => Builtin::Popcount,
-            "clz" => Builtin::Clz,
-            "mul_hi" => Builtin::MulHi,
-            "as_int" | "as_uint" | "as_float" | "as_long" | "as_ulong" | "as_double" | "as_short" | "as_ushort" | "as_char" | "as_uchar" => Builtin::As,
-            "min" => Builtin::Min,
-            "max" => Builtin::Max,
-            "fma" | "mad" => Builtin::Fma,
+            "__ukl_local_id" => Builtin::LocalId,
+            "__ukl_local_size" => Builtin::LocalSize,
+            "__ukl_global_id" => Builtin::GlobalId,
+            "__ukl_global_size" => Builtin::GlobalSize,
+            "__ukl_group_id" => Builtin::GroupId,
+            "__ukl_num_groups" => Builtin::NumGroups,
+            "__ukl_lane" => Builtin::SubGroupLocalId,
+            "__ukl_barrier" => Builtin::Barrier,
+            "__ukl_fence" => Builtin::MemFence,
+            "__ukl_yield" => Builtin::Yield,
+            "__ukl_sg_barrier" => Builtin::SubGroupBarrier,
+            "__ukl_sg_ballot" => Builtin::SubGroupBallot,
+            "__ukl_sg_shuffle" => Builtin::SubGroupShuffle,
+            "__ukl_sg_shuffle_up" => Builtin::SubGroupShuffleUp,
+            "__ukl_sg_shuffle_down" => Builtin::SubGroupShuffleDown,
+            "__ukl_sg_shuffle_xor" => Builtin::SubGroupShuffleXor,
+            "__ukl_sg_sum" => Builtin::SubGroupReduceAdd,
+            "__ukl_sg_min" => Builtin::SubGroupReduceMin,
+            "__ukl_sg_max" => Builtin::SubGroupReduceMax,
+            "__ukl_atomic_add" => Builtin::AtomicAdd,
+            "__ukl_atomic_sub" => Builtin::AtomicSub,
+            "__ukl_atomic_and" => Builtin::AtomicAnd,
+            "__ukl_atomic_or" => Builtin::AtomicOr,
+            "__ukl_atomic_xor" => Builtin::AtomicXor,
+            "__ukl_atomic_xchg" => Builtin::AtomicXchg,
+            "__ukl_atomic_min" => Builtin::AtomicMin,
+            "__ukl_atomic_max" => Builtin::AtomicMax,
+            "__ukl_atomic_cas" => Builtin::AtomicCmpxchg,
+            "__ukl_atomic_inc" => Builtin::AtomicInc,
+            "__ukl_atomic_dec" => Builtin::AtomicDec,
+            "__ukl_atomic_load" => Builtin::AtomicLoad,
+            "__ukl_atomic_store" => Builtin::AtomicStore,
+            "__ukl_popcount" => Builtin::Popcount,
+            "__ukl_clz" => Builtin::Clz,
+            "__ukl_mulhi" => Builtin::MulHi,
+            "__ukl_min" => Builtin::Min,
+            "__ukl_max" => Builtin::Max,
+            "__ukl_fma" => Builtin::Fma,
+            "__ukl_likely" => Builtin::Likely,
+            "__ukl_unlikely" => Builtin::Unlikely,
+            _ if as_type(name).is_some() => Builtin::As,
             _ => return None,
         })
     }
+}
+
+/// The type a reinterpretation `__ukl_as_<type>` names (`__ukl_as_int32_t`, `__ukl_as_float`): C's fixed-width
+/// integers and its floats.
+pub fn as_type(name: &str) -> Option<&str> {
+    let t = name.strip_prefix("__ukl_as_")?;
+    matches!(t, "int8_t" | "uint8_t" | "int16_t" | "uint16_t" | "int32_t" | "uint32_t" | "int64_t" | "uint64_t" | "float" | "double").then_some(t)
 }
 
 /// A vector tape's node's field (`vector`), its bits: its value's uniformity (`LEVEL`, a `Level`), whether its
@@ -384,13 +408,14 @@ impl Level {
     }
 }
 
-/// The tape's language tag: none of a grammar's.
-pub const TAG: u8 = 0xfe;
+/// The bits of a node's key below its field: its kind's.
+pub const KIND_BITS: u32 = 10;
 
-/// A kernel tape being written: its nodes in preorder (key, start, end, size), and its payload words.
+/// A kernel tape being written: its nodes in preorder, each `[key, start, end, size]` (its kind and field, its span
+/// in payload words, its subtree's nodes), and its payload words. The tape is these, as written (`finish`).
 #[derive(Default)]
 pub struct Builder {
-    nodes: Vec<(u32, u32, u32, u32)>,
+    nodes: Vec<[u32; 4]>,
     pub words: Vec<u32>,
 }
 
@@ -399,15 +424,14 @@ impl Builder {
     pub fn open(&mut self, kind: Kind, words: &[u32]) -> usize {
         let start = self.words.len() as u32;
         self.words.extend_from_slice(words);
-        self.nodes.push((rerail_tape_format::key(kind as u16, 0, 0), start, start, 0));
+        self.nodes.push([u32::from(kind as u16), start, start, 0]);
         self.nodes.len() - 1
     }
 
     /// Closes node `n`, opened last of those open: its subtree and its span end here.
     pub fn close(&mut self, n: usize) {
-        let (size, end) = ((self.nodes.len() - n) as u32, self.words.len() as u32);
-        self.nodes[n].2 = end;
-        self.nodes[n].3 = size;
+        self.nodes[n][2] = self.words.len() as u32;
+        self.nodes[n][3] = (self.nodes.len() - n) as u32;
     }
 
     /// A node of `kind` with no children.
@@ -428,72 +452,91 @@ impl Builder {
 
     /// Node `n`'s payload word `k` changed (a forward reference filled in).
     pub fn set_word(&mut self, n: usize, k: usize, w: u32) {
-        let at = self.nodes[n].1 as usize + k;
+        let at = self.nodes[n][1] as usize + k;
         self.words[at] = w;
     }
 
     /// Node `n`'s key, as written.
     pub fn key(&self, n: usize) -> u32 {
-        self.nodes[n].0
+        self.nodes[n][0]
     }
 
     /// Node `n`'s subtree, once closed.
     pub fn size(&self, n: usize) -> usize {
-        self.nodes[n].3 as usize
+        self.nodes[n][3] as usize
     }
 
     /// Node `n`'s payload word `k`.
     pub fn word(&self, n: usize, k: usize) -> u32 {
-        self.words[self.nodes[n].1 as usize + k]
+        self.words[self.nodes[n][1] as usize + k]
     }
 
     /// Node `n`'s field set to `field` (a vector tape's bits, `LEVEL`, ...).
     pub fn set_field(&mut self, n: usize, field: u16) {
-        self.nodes[n].0 |= u32::from(field) << rerail_tape_format::KIND_BITS;
+        self.nodes[n][0] |= u32::from(field) << KIND_BITS;
     }
 
-    /// The tape: its image (spans in payload words) and the words.
+    /// The tape: its nodes and words, as written.
     pub fn finish(self) -> Tape {
-        let bytes: Vec<u8> = self.words.iter().flat_map(|w| w.to_le_bytes()).collect();
-        let image = rerail_tape_format::preorder_image(TAG, &bytes, &self.nodes);
-        Tape { image, words: self.words }
+        Tape { nodes: self.nodes, words: self.words }
     }
 }
 
-/// A kernel tape: its image, and its payload words (its spans' units).
+/// A kernel tape: its nodes in preorder (`[key, start, end, size]`, `Builder`'s), and its payload words.
 pub struct Tape {
-    pub image: Vec<u8>,
+    pub nodes: Vec<[u32; 4]>,
     pub words: Vec<u32>,
+}
+
+impl Tape {
+    /// Whether the nodes are a tape over `words`: each subtree within the tape and within its parent's, each
+    /// span within the words, each kind a kernel tape's.
+    pub fn well_formed(&self) -> bool {
+        let n = self.nodes.len();
+        let mut open: Vec<usize> = Vec::new();
+        for (i, &[key, start, end_word, size]) in self.nodes.iter().enumerate() {
+            while open.last().is_some_and(|&e| e <= i) {
+                open.pop();
+            }
+            let end = i + size as usize;
+            let kind = (key & ((1 << KIND_BITS) - 1)) as u16;
+            if size == 0 || end > n || open.last().is_some_and(|&e| end > e) || start > end_word || end_word as usize > self.words.len() || !(1..=Kind::LAST).contains(&kind) {
+                return false;
+            }
+            open.push(end);
+        }
+        true
+    }
 }
 
 /// A kernel tape read in place.
 pub struct View<'t> {
-    pub v: rerail_tape_format::View<'t>,
+    pub nodes: &'t [[u32; 4]],
     pub words: &'t [u32],
 }
 
 impl<'t> View<'t> {
     pub fn new(t: &'t Tape) -> View<'t> {
-        View { v: rerail_tape_format::View::new(&t.image).expect("a kernel tape's image"), words: &t.words }
+        View { nodes: &t.nodes, words: &t.words }
     }
 
     pub fn len(&self) -> usize {
-        self.v.len()
+        self.nodes.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.v.is_empty()
+        self.nodes.is_empty()
     }
 
     #[inline(always)]
     pub fn kind(&self, i: usize) -> Kind {
-        Kind::of((self.v.key(i) & 0x3ff) as u16)
+        Kind::of((self.nodes[i][0] & ((1 << KIND_BITS) - 1)) as u16)
     }
 
     /// Node `i`'s field (a vector tape's bits).
     #[inline(always)]
     pub fn field(&self, i: usize) -> u16 {
-        (self.v.key(i) >> rerail_tape_format::KIND_BITS) as u16 & 0x3f
+        (self.nodes[i][0] >> KIND_BITS) as u16 & 0x7f
     }
 
     pub fn level(&self, i: usize) -> Level {
@@ -508,27 +551,61 @@ impl<'t> View<'t> {
     /// Node `i`'s payload, its words from its start (a visit's reads, its start found once).
     #[inline(always)]
     pub fn p(&self, i: usize) -> &'t [u32] {
-        &self.words[self.v.start(i) as usize..]
+        &self.words[self.nodes[i][1] as usize..]
     }
 
     /// Node `i`'s payload word `k`.
     #[inline(always)]
     pub fn w(&self, i: usize, k: usize) -> u32 {
-        self.words[self.v.start(i) as usize + k]
+        self.words[self.nodes[i][1] as usize + k]
     }
 
     /// Node `i`'s payload words from `k` on, to its span's end.
     pub fn ws(&self, i: usize, k: usize, n: usize) -> &'t [u32] {
-        let s = self.v.start(i) as usize + k;
+        let s = self.nodes[i][1] as usize + k;
         &self.words[s..s + n]
     }
 
-    pub fn size(&self, i: usize) -> usize {
-        self.v.size(i)
+    /// Node `i`'s span in payload words.
+    pub fn start(&self, i: usize) -> usize {
+        self.nodes[i][1] as usize
     }
 
+    pub fn end(&self, i: usize) -> usize {
+        self.nodes[i][2] as usize
+    }
+
+    pub fn size(&self, i: usize) -> usize {
+        self.nodes[i][3] as usize
+    }
+
+    /// Node `i`'s children, in order: each after the one before's subtree.
     pub fn children(&self, i: usize) -> impl Iterator<Item = usize> + '_ {
-        self.v.children(i)
+        let (mut c, end) = (i + 1, i + self.size(i));
+        std::iter::from_fn(move || {
+            let here = c;
+            (here < end).then(|| {
+                c += self.size(here);
+                here
+            })
+        })
+    }
+
+    /// The tape as text, a node a line indented by its depth: its number, kind, level (a vector tape's) and words.
+    pub fn listing(&self) -> String {
+        let mut out = String::new();
+        let mut ends: Vec<usize> = Vec::new();
+        for i in 0..self.len() {
+            while ends.last().is_some_and(|&e| i >= e) {
+                ends.pop();
+            }
+            // A node's words run to the next node's (preorder: its first child's, or the one after it).
+            let end = if i + 1 < self.len() { self.start(i + 1) } else { self.words.len() };
+            let words = end.saturating_sub(self.start(i)).min(10);
+            out += &format!("{:indent$}{i} {:?} {:?} {:?}\n", "", self.kind(i), self.level(i), self.ws(i, 0, words), indent = 2 * ends.len());
+            ends.push(i + self.size(i));
+        }
+        out
     }
 
     /// Node `i`'s `k`-th child.
@@ -536,7 +613,7 @@ impl<'t> View<'t> {
         // Children follow their parent in preorder, each after the one before's subtree.
         let mut c = i + 1;
         for _ in 0..k {
-            c += self.v.size(c);
+            c += self.size(c);
         }
         c
     }

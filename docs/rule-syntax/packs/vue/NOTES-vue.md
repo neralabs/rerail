@@ -87,6 +87,15 @@ These changes are in `tools/rrlab`, and the README's Vue paragraph now describes
 roles above. Today it has one view program, reached through `ast.embedded` and `host`. The vue libraries depend
 only on `parsed`, `kind`, `field`, `child` and core's axes. Guest positions are the host's.
 
+**As built (decision 0597, step 5).** The engine makes them: the registry's demand embeddings (`vue-script`, read
+as "typescript", and the five template roles) build a file's pieces where a rule asks (`embed::vue_code`), each at
+the file's bytes. The alias's wrapper is `const [A]=0`. `lib/vue/script.rerail` and `lib/vue/expression.rerail` are
+the contexts `script` and `expression`. The 15 policies that read the script or the template code are context
+policies: their rules over the script run in `script`, those over the template code in `expression`, and the host
+reports what the contexts export, each finding at its node's own bytes in the file. A relation both read is one per
+context (no-mutating-props' `script_mutated_in` and `template_mutated_in`). Each finds its examples alone and beside
+another policy (0597's rungs 5.7-5.10).
+
 ## Review fixes
 
 The review (ESLint 10.11 on the reviewer's cases in scratchpad/rev-vue/cases) found eight defects. Seven are fixed,

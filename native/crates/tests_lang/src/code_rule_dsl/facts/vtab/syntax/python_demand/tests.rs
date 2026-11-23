@@ -50,9 +50,9 @@ use crate::code_rule_dsl::facts::producers::python::families as py;
         let mut requests = Vec::new();
         let mut calls = Vec::new();
         for p in &batch.docs {
-            for [call, callee] in py::structure(grammar, &p.facts).call {
+            for [call, callee] in py::structure(grammar, p.f()).call {
                 requests.push(p.global(p.local_of_node(callee)));
-                if p.key == 0 && p.facts.text(callee) == "r.get" {
+                if p.key == 0 && p.f().text(callee) == "r.get" {
                     calls.push(p.global(p.local_of_node(call)));
                 }
             }

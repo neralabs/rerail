@@ -4,7 +4,7 @@
 
 use super::demand::{about_p, edit_native_rows, is_input, qualified};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
-use crate::code_rule_dsl::logic::program_image::{About, Cell, Version};
+use crate::code_rule_dsl::logic::program_image::{About, Cell, Rows, Version};
 use crate::code_rule_dsl::logic::rank_form::{self, NO_RANK};
 use std::collections::HashSet;
 
@@ -54,9 +54,9 @@ impl ProgramPass for RankForm {
         let b = w.derive()?;
         let made = rank_form::write(v, &of, &plan, b)?;
         let p = about_p(b);
-        let mut rows = Vec::new();
+        let mut rows = Rows::new();
         for (rel, query, counted, group, op) in &made {
-            rows.push(vec![p, Cell::Str(b.atom(rel)), Cell::Str(b.atom(query)), Cell::Str(b.atom(counted)), Cell::Int(*group as i64), Cell::Str(b.atom(op))]);
+            rows.push([p, Cell::Str(b.atom(rel)), Cell::Str(b.atom(query)), Cell::Str(b.atom(counted)), Cell::Int(*group as i64), Cell::Str(b.atom(op))]);
         }
         edit_native_rows(b, "native_rank", &HashSet::new(), rows);
         Ok(())

@@ -199,8 +199,18 @@ fn r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows() {
         assert_eq!(ran.shape.maintenance_held, 0, "R1: after {what}, no relation is held under a maintenance name");
         assert_eq!(ran.shape.rows_copied, 0, "R2: after {what}, no row is copied to state a change");
         // The changed documents' memo entries are found (under the memo plan's id and the store path), so the inputs'
-        // deltas are read from them, not every document hashed. (A few still are: 0364's open item.)
-        assert!(ran.shape.inputs_from_entries > 0, "R2: after {what}, inputs' deltas are read from the changed documents' entries ({} hashed)", ran.shape.inputs_hashed);
+        // deltas are read from them, or given beside a kept input by its changed owners (0458, `inputs_from_owners`, as
+        // R2 in a new process reads them), not every document hashed. (A few still are: 0364's open item.) The run's
+        // shape counts its phases' runs too: phase 1's, which evaluated `sources.rerail` again in each run, met this
+        // with its own deltas after the cycle closed again, until its whole-run cutoff (`phases::sources`) reused it
+        // over the files of the session's first run.
+        assert!(
+            ran.shape.inputs_from_entries + ran.shape.inputs_from_owners > 0,
+            "R2: after {what}, inputs' deltas are read from the changed documents ({} from entries, {} from owners, {} hashed)",
+            ran.shape.inputs_from_entries,
+            ran.shape.inputs_from_owners,
+            ran.shape.inputs_hashed
+        );
     }
 }
 
@@ -230,10 +240,10 @@ fn r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs() {
     }
 }
 
-/// R2 in a new process, whole: its kept rows are read where they lie, not decoded from the frames into memory (0353's
-/// frames copy, `shape::rows_decoded`). Met when the reads bind the kept blocks (0401 step 7, being merged).
+/// R2 in a new process, whole: its kept rows are read where they lie (decision 0439: the kept entries bound in place,
+/// `kept_read::gathered`'s views of their granules), not decoded into memory. No path decodes a kept row, so what
+/// is checked is that the kept entries were bound and no row was copied to state the change.
 #[test]
-#[ignore = "R2: a new process decodes its kept rows from the frames until the kept blocks are read in place (0401 step 7)"]
 fn r2_a_new_process_reads_its_kept_rows_in_place() {
     let mut s = kinds("r2-in-place");
     s.run_kept();
@@ -241,7 +251,8 @@ fn r2_a_new_process_reads_its_kept_rows_in_place() {
         s.write(file, body);
         let ran = s.run_kept();
         assert_eq!(ran.rows, s.fresh(), "R10: after {what}, the kept run's outputs are a fresh run's");
-        assert_eq!(ran.shape.rows_decoded, 0, "R2: after {what}, no kept row is decoded from the frames");
+        assert!(ran.shape.frames_read > 0, "R2: after {what}, the kept entries are bound where they lie");
+        assert_eq!(ran.shape.rows_copied, 0, "R2: after {what}, no kept row is copied");
     }
 }
 
@@ -348,7 +359,9 @@ fn r4_a_line_inserted_is_no_change_to_a_stratum_that_reads_no_offset() {
 /// that order is searched before the comparison.
 #[test]
 fn a_finding_s_places_moved_are_maintained() {
-    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
+    // For this test's runs alone (`switches::set`): set on the process and left, the floor was every later test's in
+    // the process (a session test's cross-file aggregate derived again, a warm host-file edit made every document).
+    let _floor = super::switches::set(&[("RERAIL_AGAIN_MIN", "50")]);
     let program = r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).

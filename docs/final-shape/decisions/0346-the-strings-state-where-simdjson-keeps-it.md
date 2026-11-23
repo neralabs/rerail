@@ -2,7 +2,7 @@
 
 Numbered 0345 when first written; renumbered past another worktree's 0345.
 
-Status: decided (the user, 2026-11-17: "we should take the faster form; also do the two
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "we should take the faster form; also do the two
 state-placement fixes"; the carried state: "chains only"). Follows 0343 and 0341; amends 0070.
 
 ## Intro

@@ -14,10 +14,11 @@
 //! ann_tree(s, v, t) :- ann_key(s, v), parse_of(s, "annotation", t).     t is a tape on both sides
 //! ```
 
+use rerail_blocks::vector::Vector;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::clause::{At, L, LitAt, Reads, T};
-use super::from_tape::{RrFile, S, Stmt};
+use super::from_tape::{RrFile, S, Statements, Stmt};
 use super::tape::Field;
 use crate::code_rule_dsl::logic::front::Error;
 
@@ -37,7 +38,7 @@ const BUILT_IN: &[(&str, &[&str])] = &[
 ];
 
 /// A relation of `core.rerail`'s tape columns.
-pub(super) fn tape_columns(rel: &str) -> Vec<usize> {
+pub(super) fn tape_columns(rel: &str) -> Vector<usize> {
     BUILT_IN.iter().filter(|(r, _)| *r == rel).flat_map(|(_, cols)| cols.iter().enumerate().filter(|(_, t)| **t == "tape").map(|(i, _)| i)).collect()
 }
 
@@ -93,12 +94,12 @@ impl Seen<'_> {
 
 /// The relations' declared column types, then each clause's variables: an error at the first variable that is of a
 /// content-keyed type and of another type.
-pub(super) fn check(statements: &[Stmt]) -> Result<(), Error> {
+pub(super) fn check(statements: &Statements) -> Result<(), Error> {
     check_in(statements, &BTreeMap::new())
 }
 
 /// `check`, with the column types `given` declares besides the statements' own (a module's includes').
-pub(super) fn check_in(statements: &[Stmt], given: &BTreeMap<String, Vec<String>>) -> Result<(), Error> {
+pub(super) fn check_in(statements: &Statements, given: &BTreeMap<String, Vec<String>>) -> Result<(), Error> {
     let mut decls: BTreeMap<String, Vec<String>> = given.clone();
     for s in statements.iter().filter(|s| matches!(s.what(), Some(S::Decl(_)))) {
         let (t, n) = s.tape();

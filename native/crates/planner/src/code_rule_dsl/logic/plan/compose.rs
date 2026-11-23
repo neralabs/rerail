@@ -5,7 +5,8 @@
 //! other fields through `Fields`, and its components in the tree's order (`analyses::components_by_name`). Where it
 //! edits a program (`stages`: relations made inputs, rules proved empty, outputs chosen) the edit is an overlay of the
 //! version it was given.
-use super::super::program_image::{Builder, Lit, NativeKind, NativeSpec, RelId, analyses};
+use rerail_blocks::vector::Vector;
+use super::super::program_image::{Builder, Lit, NativeKind, ArchivedNativeSpec, NativeSpec, RelId, analyses};
 use super::super::sql::ident;
 use super::body::{Placed, Versions};
 use super::*;
@@ -153,7 +154,7 @@ pub fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
         .collect();
     let needed = needed(pf, outputs.iter().map(String::as_str));
     // The program's rules by the relation they derive, in the program's order.
-    let mut by_head = HashMap::<&str, Vec<usize>>::new();
+    let mut by_head = HashMap::<&str, Vector<usize>>::new();
     for k in 0..p.len() {
         by_head.entry(head(p, k)).or_default().push(k);
     }
@@ -168,14 +169,14 @@ pub fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
     }
     let python = |rel: &str| -> Option<(&str, &str, Option<&str>)> {
         match &pf.native(rel)?.spec {
-            NativeSpec::Python { kind, input, targets } => Some((pf.text(*kind), pf.rel_name(*input), targets.map(|t| pf.rel_name(t)))),
+            ArchivedNativeSpec::Python { kind, input, targets } => Some((pf.text(*kind), pf.rel_name(*input), targets.map(|t| pf.rel_name(t)))),
             _ => None,
         }
     };
     let mut frame_counts = BTreeMap::<String, usize>::new();
     for n in pf.natives() {
         if needed.contains(pf.rel_name(n.rel))
-            && let NativeSpec::Python { input, .. } | NativeSpec::PythonCandidates { input, .. } = &n.spec {
+            && let ArchivedNativeSpec::Python { input, .. } | ArchivedNativeSpec::PythonCandidates { input, .. } = &n.spec {
                 *frame_counts.entry(pf.rel_name(*input).to_owned()).or_default() += 1;
             }
     }
@@ -276,8 +277,8 @@ pub fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
             continue;
         }
         // The relation's rules, read by their handles.
-        let reads_itself = |b: &super::body::Body<'_>| (0..b.len()).filter_map(|i| b.atom(i)).any(|a| b.rel(a) == rel.as_str());
-        let mut rules: Vec<super::body::Body<'_>> = by_head.get(rel.as_str()).into_iter().flatten().map(|&k| p.body(k)).collect();
+        let reads_itself = |b: &super::body::Body<'_>| (0..b.len()).filter_map(|i| b.atom(i)).any(|a| b.rel(a) == rel);
+        let mut rules: Vec<super::body::Body<'_>> = by_head.get(rel).into_iter().flatten().map(|&k| p.body(k)).collect();
         // SQLite requires every seed before every recursive arm. UNION provides the visited set.
         rules.sort_by_key(|b| reads_itself(b));
         if rules.is_empty() {
@@ -286,8 +287,8 @@ pub fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
         let mut arms = constants(rel);
         let mut dependencies = BTreeMap::new();
         let producer=match pf.native(rel).map(|n| &n.spec) {
-            Some(NativeSpec::Python{kind,input,targets})=>Some((pf.text(*kind),pf.rel_name(*input),targets.map(|t|pf.rel_name(t)),String::new())),
-            Some(NativeSpec::PythonCandidates{input,targets,context,member})=>Some(("candidates",pf.rel_name(*input),Some(pf.rel_name(*targets)),format!(" AND context='{}' AND member='{}'",pf.text(*context).replace(char::from(39),"''"),pf.text(*member).replace(char::from(39),"''")))),
+            Some(ArchivedNativeSpec::Python{kind,input,targets})=>Some((pf.text(*kind),pf.rel_name(*input),targets.map(|t|pf.rel_name(t)),String::new())),
+            Some(ArchivedNativeSpec::PythonCandidates{input,targets,context,member})=>Some(("candidates",pf.rel_name(*input),Some(pf.rel_name(*targets)),format!(" AND context='{}' AND member='{}'",pf.text(*context).replace(char::from(39),"''"),pf.text(*member).replace(char::from(39),"''")))),
             _=>None,
         };
         if let Some((kind,input,targets,parameters))=producer {
@@ -558,7 +559,7 @@ impl Compiled {
                                     ))
                                 }
                             })
-                            .collect::<Result<Vec<_>>>()
+                            .collect::<Result<Vector<_>>>()
                     })
                     .collect::<Result<Vec<_>>>()?;
                 super::super::native::component::retain(

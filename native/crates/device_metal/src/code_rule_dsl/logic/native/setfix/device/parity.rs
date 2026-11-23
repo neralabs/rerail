@@ -8,6 +8,7 @@
 //! when it is refused; the others (shapes the device refuses by design) need only the same rows. The summary prints
 //! each family's cases, those the device ran, and the refusals' reasons.
 
+use rerail_blocks::vector::Vector;
 use rusqlite::Connection;
 use std::collections::BTreeMap;
 
@@ -263,7 +264,7 @@ fn check_on(fx: &Fixture, cases: &[Case], first: usize) -> (Vec<String>, BTreeMa
         if drows != crows {
             let only_d: Vec<_> = drows.iter().filter(|r| !crows.contains(r)).take(3).collect();
             let only_c: Vec<_> = crows.iter().filter(|r| !drows.contains(r)).take(3).collect();
-            failures.push(format!("{}: rows differ: device {} rows, CPU {}; device alone {only_d:?}, CPU alone {only_c:?}", what(), drows.len(), crows.len()));
+            failures.push(format!("{}: rows differ: device {} rows, CPU {}; device alone {only_d:?}, CPU alone {only_c:?}; report {report:?}", what(), drows.len(), crows.len()));
         } else if let (Err(e), true) = (super::tests::counts_agree(&ccounts.0, &dcounts.0, &ccounts.1), c.joins.is_empty()) {
             // A recursive stratum's counts are its strategy's (the CPU walks a closure without counting rounds): its
             // rows are compared alone.
@@ -740,7 +741,7 @@ fn random_mixed(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
         .map(|_| {
             // Start from the names, or from names and numbers joined by a number.
             let mut steps = vec![format!("pos {} v0 v1", r.sn)];
-            let (mut texts, mut nums, mut next) = (vec![0usize], vec![1usize], 2usize);
+            let (mut texts, mut nums, mut next) = (rerail_blocks::vector![0usize], rerail_blocks::vector![1usize], 2usize);
             if g.chance(30) {
                 steps.push(format!("pos {} v1 v2", g.pick(&ints)));
                 nums.push(2);
@@ -750,7 +751,7 @@ fn random_mixed(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
                 let t = *g.pick(&texts);
                 let k = *g.pick(&nums);
                 let p = *g.pick(&pats);
-                let mut fresh = |pool: &mut Vec<usize>| {
+                let mut fresh = |pool: &mut Vector<usize>| {
                     pool.push(next);
                     next += 1;
                     next - 1
@@ -848,7 +849,7 @@ parity_test!(parity_random_texts, "random text strata", |r: &Rels| [0xb0b, 0x7e4
 parity_test!(parity_random_mixed, "random mixed text and integer strata", |r: &Rels| [0x31, 0x5157, 0xab1e].into_iter().flat_map(|s| random_mixed(r, 400, s)).collect());
 
 
-/// Cats made per row past the arena's first size: the stage runs again from the first made text, at the size wanted,
+/// Cats made per row past the arena's first size: the phase parks, the arena is mapped further, and it runs again,
 /// the rows the CPU's.
 #[test]
 fn parity_row_texts_past_the_arena() {
@@ -862,7 +863,8 @@ fn parity_row_texts_past_the_arena() {
     let (crows, ccounts, _) = run(&fx, &c, 0, false).unwrap();
     let report = report.expect("a device report");
     assert!(report.refused.is_none(), "{report:?}");
-    assert!(report.arena_reruns >= 1, "the cats fill the arena's first size: {report:?}");
+    // The cats fill the arena's first size: its pages mapped further in the same program (`Arena::grow`), no rerun.
+    assert!(report.arena_reruns == 0 && report.reruns == 0 && report.remaps >= 1, "the arena grown in place: {report:?}");
     assert!(crows.len() > 10_000, "{} rows", crows.len());
     assert_eq!(drows, crows, "the device's rows are the CPU's");
     assert_eq!(dcounts, ccounts);

@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
     use super::super::{CAPTURE, CHILD, DESCEND, ExecutionBackend, KIND, Micro, NAMED, Program, execute_with_backend, word};
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
@@ -20,13 +21,13 @@
     fn set_mode_emits_each_key_once_on_every_cpu_executor() {
         let identifier = GrammarDialect::Python.get_ts_language().id_for_node_kind("identifier", true);
         let doc = tape("def f(a, b):\n    return a + b * g(a, b)\nclass K:\n    x = y + z\n");
-        let roots = (0..doc.transducer_len() as u32).collect::<Vec<_>>();
-        let program = |words: Vec<u32>, labels: usize| {
-            Program::new(words, vec![b"one".to_vec(), b"two".to_vec()], vec![], (0..labels as u16).collect(), vec![]).unwrap()
+        let roots = (0..doc.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
+        let program = |words: Vector<u32>, labels: usize| {
+            Program::new(words, vec![b"one".to_vec(), b"two".to_vec()], vec![], (0..labels as u16).collect(), rerail_blocks::vector![]).unwrap()
         };
         // One label: every identifier below a start. Two labels: those, or a named child.
-        let one = vec![word(DESCEND, NAMED, 0), word(KIND, 0, identifier), word(CAPTURE, 0, 0), word(EMIT, 0, 0)];
-        let two = vec![
+        let one = rerail_blocks::vector![word(DESCEND, NAMED, 0), word(KIND, 0, identifier), word(CAPTURE, 0, 0), word(EMIT, 0, 0)];
+        let two = rerail_blocks::vector![
             word(FORK, 0, 5),
             word(DESCEND, NAMED, 0),
             word(KIND, 0, identifier),

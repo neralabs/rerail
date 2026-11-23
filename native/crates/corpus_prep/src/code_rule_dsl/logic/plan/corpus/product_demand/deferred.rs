@@ -7,6 +7,7 @@
 //! On the version, as `product_demand`'s other steps (decision 0276): each rewrite is a derivation of the program
 //! (`Program`), and the pass publishes the last as an edit of its input.
 
+use rerail_blocks::vector::Vector;
 use super::{DEFERRED_PAIRS, PREFIX, Program, plain, rewritten, same, upstream};
 use crate::code_rule_dsl::logic::plan::body::{VarSet, atom_vars, lit_vars, term_vars};
 use crate::code_rule_dsl::logic::plan::corpus::preparation::Deferral;
@@ -56,7 +57,7 @@ fn guard(v: &Version, rule: RuleRef<'_>) -> Option<usize> {
 /// guard left out), each part reading the key: its key's name and the parts by place. `None` for a rule whose head
 /// is not two variables, whose body holds anything but positive atoms of plain terms and comparisons other than `=`,
 /// or that splits otherwise.
-fn split(v: &Version, rule: RuleRef<'_>) -> Option<(String, Vec<Vec<usize>>)> {
+fn split(v: &Version, rule: RuleRef<'_>) -> Option<(String, Vec<Vector<usize>>)> {
     let head: Vec<TermRef<'_>> = rule.head().args().collect();
     let [TermRef::Var(a), TermRef::Var(b)] = head.as_slice() else {
         return None;
@@ -71,7 +72,7 @@ fn split(v: &Version, rule: RuleRef<'_>) -> Option<(String, Vec<Vec<usize>>)> {
     }
     let (key, parts) = crate::code_rule_dsl::logic::plan::keeps::factors_without(v, rule, guard(v, rule))?;
     let lits: Vec<_> = rule.body().collect();
-    let keyed = |part: &Vec<usize>| part.iter().any(|&i| matches!(lits[i].view(), Lit::Atom(x) if atom_vars(x).iter().any(|s| v.text(rule.var(s)) == key)));
+    let keyed = |part: &Vector<usize>| part.iter().any(|&i| matches!(lits[i].view(), Lit::Atom(x) if atom_vars(x).iter().any(|s| v.text(rule.var(s)) == key)));
     (parts.len() == 2 && parts.iter().all(keyed)).then_some((key, parts))
 }
 
@@ -149,6 +150,23 @@ fn void_request(v: &Version, rel: &str, cols: &[usize], proof: &upstream::Proof)
     keyed
 }
 
+/// Whether a reader's request (`proof`) of `rel`, a context's instance (decision 0597), reads a relation no rule derives:
+/// a scan of the batch, which lists no tape value's nodes (decision 0431 §8: a value's nodes are reached by lookup),
+/// so the request holds none of the context's nodes and the join it guards finds nothing. A join left as written is
+/// always right. vue's `getter(f, x) :- vcomputed(_, x, f), docof(f, d)` in the context `script` asked
+/// `rr_deferred_pairs_…_vcomputed(f) :- docof(f, _)` and found no computed getter of a component's script.
+fn blind_in_a_context(v: &Version, rel: &str, proof: &upstream::Proof) -> bool {
+    if !crate::code_rule_dsl::logic::passes_made::of_a_context(rel) {
+        return false;
+    }
+    let Some(reader) = v.rule(proof.rule) else { return true };
+    let derived = |a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>| v.heads(a.rel()).next().is_some();
+    proof.parts.iter().any(|part| match *part {
+        super::Part::Lit(j) => reader.body().nth(j).and_then(|l| l.atom()).is_some_and(|a| !a.neg() && !derived(a)),
+        _ => false,
+    })
+}
+
 /// The pass over `p` (its input `input`): which restrictions the readers give each binary join (the module comment),
 /// and the rewrites made. `adaptive`: endpoints shared and reduced factors for broad readers; `cache_pairs`: pair
 /// caches admitted besides.
@@ -221,9 +239,10 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
             return Ok(plans);
         };
         let recursive: BTreeSet<String> = sccs
-            .into_iter()
+            .iter()
             .filter(|c| c.len() > 1)
             .flatten()
+            .map(str::to_owned)
             .chain(rules.iter().filter(|r| r.body().any(|l| l.atom().is_some_and(|a| a.rel() == r.head().rel()))).map(|r| p.head_rel(*r).to_owned()))
             .collect();
         let mut pairs: Vec<(String, &'static [usize], bool)> = Vec::new();
@@ -274,7 +293,7 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
     };
     // The requests installed, once every read is classified: in rounds, each one derivation of the program.
     let requests: Vec<(String, &[usize])> = pairs.iter().map(|(rel, cols, _)| (rel.clone(), *cols)).collect();
-    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r)))?;
+    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r) || blind_in_a_context(v, rel, r)))?;
     let mut no_inline = Vec::new();
     for ((rel, cols, positive), installed) in pairs.into_iter().zip(installed) {
         if !installed {

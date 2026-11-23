@@ -2,6 +2,7 @@
 //! relations read for a whole batch: the trees and where the solve runs are facts', and the solve is the file-local
 //! FIX's (`typing::file_local::nearest`), registered at load (`install_nearest`).
 
+use rerail_blocks::vector::Vector;
 use crate::content_store::{StoreError, StoreResult};
 
 /// No node: a root's parent, or a node with no ancestor in the set.
@@ -22,7 +23,7 @@ pub struct Trees<'a> {
 }
 
 /// What solves `nearest`: per set, each node's nearest strict ancestor of a kind in the set, or `NONE`.
-pub(crate) type Nearest = fn(&Trees<'_>, &[Vec<i64>], Binding) -> StoreResult<Vec<Vec<u32>>>;
+pub(crate) type Nearest = fn(&Trees<'_>, &[Vector<i64>], Binding) -> StoreResult<Vec<rerail_blocks::vector::Vector<u32>>>;
 
 static NEAREST: std::sync::OnceLock<Nearest> = std::sync::OnceLock::new();
 
@@ -32,7 +33,7 @@ pub fn install_nearest(solve: Nearest) {
 }
 
 /// The registered solve of `nearest` over `trees`.
-pub fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
+pub fn nearest(trees: &Trees<'_>, sets: &[Vector<i64>], binding: Binding) -> StoreResult<Vec<rerail_blocks::vector::Vector<u32>>> {
     match NEAREST.get() {
         Some(solve) => solve(trees, sets, binding),
         None => Err(StoreError::Invalid("no nearest solve is registered".to_owned())),

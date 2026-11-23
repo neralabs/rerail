@@ -1,6 +1,6 @@
 # 0343: simdjson, translated to Rust, is the reference
 
-Status: decided (2026-11-17). Corrects 0341's premise. Follows 0337–0341.
+Status: built (audited 2026-11-23). Decided (2026-11-17). Corrects 0341's premise. Follows 0337–0341.
 
 ## Intro
 

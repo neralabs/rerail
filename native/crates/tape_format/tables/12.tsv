@@ -1,42 +1,57 @@
-# Tape format 16's choices for tape tag 12 (vue), decision 0293 §3. Written by the lab:
-#   tape16 table <captures…> (native/lab/tape16/src/table.rs)
-# from 2 files, 243 nodes; 97 codes, 28 seen first by count.
-revision	1
+# Tape format 16's choices for tape tag 12 (vue), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+#   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
+# 76 codes; numbered by how often each is a node's over 3770 files, 800970 nodes (`rerail-engine code-counts`).
+revision	4
 widths	1	1	1
 code	14	0	0	-	-
-code	30	0	0	-	-
-code	3	0	0	-	-
-code	8	0	0	-	-
-code	10	0	0	-	-
 code	54	0	0	-	-
+code	10	0	0	-	-
+code	30	0	0	-	-
 code	60	0	0	-	-
-code	5	0	0	-	-
-code	7	0	0	-	-
-code	36	0	0	-	-
+code	9	0	0	-	-
+code	53	0	0	-	-
+code	24	0	0	-	-
 code	47	0	0	-	-
 code	51	0	0	-	-
-code	16	0	0	-	-
-code	17	0	0	-	-
-code	24	0	0	-	-
-code	58	0	0	-	-
 code	44	0	0	-	-
-code	55	0	0	-	-
-code	9	0	0	-	-
 code	18	0	0	-	-
-code	21	0	0	-	-
 code	23	0	0	-	-
-code	53	0	0	-	-
+code	36	0	0	-	-
+code	50	0	0	-	-
+code	56	0	0	-	-
+code	58	0	0	-	-
+code	21	0	0	-	-
+code	22	0	0	-	-
 code	41	0	0	-	-
 code	45	0	0	-	-
-code	56	0	0	-	-
-code	6	0	0	-	-
-code	50	0	0	-	-
+code	55	0	0	-	-
+code	29	0	0	-	-
+code	62	0	0	-	-
+code	37	0	1	-	-
+code	46	0	0	-	-
+code	27	0	0	-	-
+code	61	0	0	-	-
 code	0	0	2	-	-
 code	0	0	3	-	-
+code	12	0	0	-	-
+code	20	0	0	-	-
+code	5	0	0	-	-
+code	8	0	0	-	-
 code	1	0	0	-	-
+code	3	0	0	-	-
+code	4	0	0	-	-
+code	6	0	0	-	-
+code	7	0	0	-	-
+code	11	0	0	-	-
+code	16	0	0	-	-
+code	17	0	0	-	-
+code	25	0	0	-	-
+code	26	0	0	-	-
+code	34	0	0	-	-
+code	42	0	0	-	-
+code	52	0	0	-	-
 code	1	0	4	-	-
 code	3	0	4	-	-
-code	4	0	0	-	-
 code	4	0	4	-	-
 code	5	0	4	-	-
 code	6	0	4	-	-
@@ -44,59 +59,113 @@ code	7	0	4	-	-
 code	8	0	4	-	-
 code	9	0	4	-	-
 code	10	0	4	-	-
-code	11	0	0	-	-
 code	11	0	4	-	-
-code	12	0	0	-	-
 code	12	0	4	-	-
-code	13	0	0	-	-
-code	13	0	4	-	-
 code	14	0	4	-	-
-code	15	0	0	-	-
-code	15	0	4	-	-
 code	16	0	4	-	-
 code	17	0	4	-	-
 code	18	0	4	-	-
-code	19	0	0	-	-
-code	19	0	4	-	-
-code	20	0	0	-	-
 code	20	0	4	-	-
 code	21	0	4	-	-
-code	22	0	0	-	-
 code	22	0	4	-	-
 code	23	0	4	-	-
 code	24	0	4	-	-
-code	25	0	0	-	-
 code	25	0	4	-	-
-code	26	0	0	-	-
 code	26	0	4	-	-
-code	27	0	0	-	-
 code	27	0	4	-	-
-code	28	0	0	-	-
-code	28	0	4	-	-
-code	29	0	0	-	-
 code	29	0	4	-	-
 code	30	0	4	-	-
-code	31	0	0	-	-
-code	31	0	4	-	-
-code	32	0	0	-	-
-code	32	0	4	-	-
-code	33	0	0	-	-
-code	33	0	4	-	-
-code	34	0	0	-	-
 code	34	0	4	-	-
 code	36	0	4	-	-
-code	37	0	1	-	-
-code	38	0	0	-	-
-code	38	0	4	-	-
-code	40	0	0	-	-
-code	40	0	4	-	-
-code	42	0	0	-	-
 code	42	0	4	-	-
-code	46	0	0	-	-
-code	48	0	0	-	-
-code	49	0	0	-	-
-code	52	0	0	-	-
 code	55	0	4	-	-
-code	57	0	0	-	-
-code	61	0	0	-	-
-code	62	0	0	-	-
+kind	1	0	<!
+kind	3	0	>
+kind	4	0	doctype
+kind	5	0	<
+kind	6	0	/>
+kind	7	0	</
+kind	8	0	=
+kind	9	1	attribute_name
+kind	10	1	attribute_value
+kind	11	1	entity
+kind	12	0	'
+kind	14	0	"
+kind	16	0	{{
+kind	17	0	}}
+kind	18	0	:
+kind	20	0	.
+kind	21	0	@
+kind	22	0	#
+kind	23	1	directive_name
+kind	24	1	directive_value
+kind	25	0	[
+kind	26	0	]
+kind	27	1	dynamic_directive_inner_value
+kind	29	1	directive_modifier
+kind	30	1	tag_name
+kind	34	1	erroneous_end_tag_name
+kind	36	1	raw_text
+kind	37	1	comment
+kind	41	1	document
+kind	42	1	doctype
+kind	44	1	element
+kind	45	1	script_element
+kind	46	1	style_element
+kind	47	1	start_tag
+kind	50	1	self_closing_tag
+kind	51	1	end_tag
+kind	52	1	erroneous_end_tag
+kind	53	1	attribute
+kind	54	1	quoted_attribute_value
+kind	55	1	text
+kind	56	1	template_element
+kind	58	1	interpolation
+kind	60	1	directive_attribute
+kind	61	1	dynamic_directive_value
+kind	62	1	directive_modifiers
+lookup	0	<!	1
+lookup	0	>	3
+lookup	0	doctype	4
+lookup	0	<	5
+lookup	0	/>	6
+lookup	0	</	7
+lookup	0	=	8
+lookup	1	attribute_name	9
+lookup	1	attribute_value	10
+lookup	1	entity	11
+lookup	0	'	12
+lookup	0	"	14
+lookup	0	{{	16
+lookup	0	}}	17
+lookup	0	:	18
+lookup	0	.	20
+lookup	0	@	21
+lookup	0	#	22
+lookup	1	directive_name	23
+lookup	1	directive_value	24
+lookup	0	[	25
+lookup	0	]	26
+lookup	1	dynamic_directive_inner_value	27
+lookup	1	directive_modifier	29
+lookup	1	tag_name	30
+lookup	1	erroneous_end_tag_name	34
+lookup	1	raw_text	36
+lookup	1	comment	37
+lookup	1	document	41
+lookup	1	doctype	42
+lookup	1	element	44
+lookup	1	script_element	45
+lookup	1	style_element	46
+lookup	1	start_tag	47
+lookup	1	self_closing_tag	50
+lookup	1	end_tag	51
+lookup	1	erroneous_end_tag	52
+lookup	1	attribute	53
+lookup	1	quoted_attribute_value	54
+lookup	1	text	55
+lookup	1	template_element	56
+lookup	1	interpolation	58
+lookup	1	directive_attribute	60
+lookup	1	dynamic_directive_value	61
+lookup	1	directive_modifiers	62

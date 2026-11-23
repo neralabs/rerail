@@ -1,5 +1,6 @@
 //! Immutable version references shared by the host loop and recursive SQL comparison.
 //! Functions collect SQL result rows and build storage. They never execute rule SQL.
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::facts::vtab::{ReadRow, RowCells};
 use rusqlite::functions::{Aggregate, Context};
@@ -11,13 +12,13 @@ pub struct State {
 }
 pub struct Arena {
     pub states: Vec<State>,
-    pub widths: Vec<usize>,
+    pub widths: Vector<usize>,
     pub storage_cpu_ns: Option<u128>,
-    pub produced: Vec<Vec<usize>>,
+    pub produced: Vec<Vector<usize>>,
     pub failure: Option<String>,
 }
 impl Arena {
-    pub fn new(widths: Vec<usize>) -> Self {
+    pub fn new(widths: Vector<usize>) -> Self {
         let full = widths
             .iter()
             .map(|&width| {
@@ -94,8 +95,8 @@ impl Source for Rows {
     fn indexed(&self, _: usize) -> bool {
         true
     }
-    fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
-        Some(vec![])
+    fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+        Some(rerail_blocks::vector![])
     }
     fn value(&self, _: usize, _: usize) -> i64 {
         unreachable!("component rows require a version reference")

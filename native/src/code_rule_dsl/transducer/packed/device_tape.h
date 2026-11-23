@@ -2,15 +2,12 @@
 // table of its documents (`DocView`, the one view of `rerail_clif::view`, its MSL made by
 // `residency::slabs::msl` with every field's offset asserted); each document's tape, codes, source and line
 // starts are read in the block at `at` plus the part's offset, so a copy into another block changes `at`
-// alone. The tape is read where it lies, format 15's columns or format 16's arrays (a 16z tape is laid out as
-// format 16 where it is placed): nothing per node is derived beside it. A parent is a search (format 15: back
-// over at most 64 nodes, else a descent from the root; format 16: back over the siblings' slots), a child or
+// alone. The tape is read where it lies, format 16's arrays (a 16z tape is laid out as format 16 where it is
+// placed): nothing per node is derived beside it. A parent is a search back over the siblings' slots, a child or
 // sibling a hop over a subtree. Node indices here are document-local; a batch's numbering is
 // `doc.node_base + local`. NONE is u32's max.
 // source_base, line_base: the document's place in the batch's numbering of source bytes and lines.
-// Format 15: widths are `size`'s, `off`'s and `tail`'s at bits 0, 4, 8, bit 12 tails from the node's
-// own start; columns: code, size, base, off, tail. Format 16: widths are the slots', gaps' and lengths'
-// at bits 0, 4, 8, the checkpoints' at 12, the side lists' values' at 16, 20, 24, 28; columns: codes,
+// Widths are the slots', gaps' and lengths' at bits 0, 4, 8, the checkpoints' at 12, the side lists' values' at 16, 20, 24, 28; columns: codes,
 // slots, gaps, lengths, checkpoints; side, parts: each side list and its part starts.
 // `tape::resident::DeviceCode`: flags are named, extra<<1, missing<<2, error<<3.
 // Written in UKL's portable subset: the reads, `<ukl/reads/tape.h>` or `tape_z.h`, are included before it; a
@@ -33,8 +30,7 @@ UKL_INLINE DocView doc_of(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t
 UKL_SHARED uint32_t tape_size(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_size(TAPE_READ(s,d),i);}
 // The node's code's number in its document's (format 16: its language's) table.
 UKL_SHARED uint32_t tape_number(UKL_GLOBAL const uint8_t* doc,DocView d,uint32_t i){return clif_tape_number(doc,(CLIF_VIEW_SPACE const uint32_t*)&d,i);}
-// The node's code: its document's table (format 15), or its language's, its slab's (format 16): `codes` from the
-// document, modulo 2^32 (an i32), so a table before the document is reached too (decision 0336 §7).
+// The node's code: its language's table, its slab's: `codes` from the document, modulo 2^32 (an i32), so a table before the document is reached too (decision 0336 §7).
 UKL_SHARED UKL_GLOBAL const DeviceCode* tape_code(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){UKL_GLOBAL const uint8_t* doc=tape_doc(s,d);return ((UKL_GLOBAL const DeviceCode*)(doc+(int32_t)d.codes))+tape_number(doc,d,i);}
 UKL_SHARED uint32_t tape_kind(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->kind;}
 UKL_SHARED uint32_t tape_field(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->field;}
@@ -43,8 +39,7 @@ UKL_SHARED bool tape_named(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){ret
 UKL_SHARED bool tape_has_class(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t kind){UKL_GLOBAL const DeviceCode* c=tape_code(s,d,i);for(uint32_t k=0u;k<c->classCount;k++){if(c->classes[k]==kind)return true;if(c->classes[k]>kind)return false;}return false;}
 UKL_SHARED uint32_t tape_start(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_start(TAPE_READ(s,d),i);}
 UKL_SHARED uint32_t tape_end(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_end(TAPE_READ(s,d),i);}
-// The parent: a search (format 16 back over the siblings' slots; format 15 back over at most 64 nodes, else a descent
-// from the root over the siblings' subtrees).
+// The parent: a search back over the siblings' slots.
 UKL_SHARED uint32_t tape_parent(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_parent(TAPE_READ(s,d),i);}
 // The node after `i`'s subtree while it is before `end` (its parent's subtree's end).
 UKL_SHARED uint32_t tape_next_in(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t end){return clif_tape_next_in(TAPE_READ(s,d),i,end);}
@@ -60,8 +55,8 @@ UKL_SHARED uint32_t tape_child_count(UKL_GLOBAL const uint8_t* s,DocView d,uint3
 UKL_SHARED uint32_t tape_child(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t k){return clif_tape_child(TAPE_READ(s,d),i,k);}
 UKL_SHARED uint8_t tape_byte(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t at){return (tape_doc(s,d)+d.source)[at];}
 UKL_SHARED UKL_GLOBAL const uint8_t* tape_source(UKL_GLOBAL const uint8_t* s,DocView d){return tape_doc(s,d)+d.source;}
-// Lines (decision 0336 §6): format 16's newline index, format 15's line starts. A byte's line (from 0), and a
-// line's first byte, document-local.
+// Lines (decision 0336 §6): the tape's newline index. A byte's line (from 0), and a line's first byte,
+// document-local.
 UKL_SHARED uint32_t tape_line(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t at){return clif_tape_line(TAPE_READ(s,d),at);}
 UKL_SHARED uint32_t tape_line_start(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t line){return clif_tape_line_start(TAPE_READ(s,d),line);}
 // A pass's roots (`label_passes::Roots`; decisions 0033, 0293 §10), with no list of them. In

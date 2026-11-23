@@ -1,9 +1,11 @@
 # 0293. One tape API over every format, read in place
 
-Status: decided (2026-11-16), by the user: "The tape needs to have a common, abstract API that abstracts away the
-format behind it. We will remove some formats when we make a decision, but in the mean time it needs to be connected
-up." Building. **0353 (2026-11-17):** every reader reads in place, so §6's `Projected::up` and the projection's
-per-node arrays are copies, removed by 0353 step 2, `up` with them. Follows 0156 (format 16, draft) and the lab's `inplace::Reader` (t39).
+Status: built (audited 2026-11-23). Decided (2026-11-16), by the user: "The tape needs to have a common, abstract API
+that abstracts away the format behind it. We will remove some formats when we make a decision, but in the mean time it
+needs to be connected up." Building. **0353 (2026-11-17):** every reader reads in place, so §6's `Projected::up` and
+the projection's per-node arrays are copies, removed by 0353 step 2, `up` with them. **0631 (2026-11-22):** format 15
+is removed; the API has format 16 (and 16z) alone below it, and every language has its table from its grammar. Follows
+0156 (format 16, draft) and the lab's `inplace::Reader` (t39).
 
 ## Intro
 

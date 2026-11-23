@@ -1082,7 +1082,7 @@ quoted_resolved(x) :- res(x).
     std::fs::write(src.join("b.py"), "y = 2\n").unwrap();
     let report = run();
     assert_eq!(rows(), full(), "the session's rows are a full run's");
-    assert!(!report.cross_changed.iter().any(|c| c.contains("rr_cx_quoted") || c == "defined_at"), "no input of the context changed: {:?}", report.cross_changed);
+    assert!(!report.cross_changed.iter().any(|c| c.contains("rr_pass_quoted") || c == "defined_at"), "no input of the context changed: {:?}", report.cross_changed);
     std::fs::write(src.join("a.py"), "class Bar: ...\nx: \"Foo\" = 1\n").unwrap();
     let report = run();
     assert_eq!(rows(), full(), "the session's rows are a full run's");

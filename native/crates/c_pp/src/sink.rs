@@ -76,11 +76,84 @@ pub trait Sink {
     /// A macro's expansion (`Expansion`).
     fn expansion(&mut self, e: Expansion<'_>) {}
 
+    /// Whether `entered` is to be told each macro invocation (a measurement's: what an expansion
+    /// depends on, decision 0613).
+    fn wants_entries(&self) -> bool {
+        false
+    }
+
+    /// A macro invocation entered (`wants_entries`): what its expansion depends on.
+    fn entered(&mut self, e: Entered) {}
+
+    /// The unit's expansions as requests (`wants_entries`, decision 0613's measurement), at its end.
+    fn requests(&mut self, r: &[Request], deps: &[u32]) {}
+
     /// A pragma (a `#pragma` line's text after `pragma`, or `_Pragma`'s string).
     fn pragma(&mut self, file: u32, at: u32, text: &[u8]) {}
 
     /// A diagnostic, at `at` in `file`.
     fn diag(&mut self, file: u32, at: u32, d: Diag, text: &[u8]) {}
+}
+
+/// A macro invocation as its expansion depends on it (`Sink::entered`).
+/// - `key`: the definition (its spelling), its arguments' spellings, and the names of the macros
+///   disabled where it is entered: equal in two units where their expansions are.
+/// - `epoch_key`: `key` and the count of `#define`s and `#undef`s before it, so that every name its
+///   rescan looks up resolves alike (a key equal in this one is equal at any place).
+/// - `depth`: the expansions it is inside (its rescans' and its arguments').
+/// - `size`: its tokens after substitution, before their rescan.
+#[derive(Clone, Copy, Debug)]
+pub struct Entered {
+    pub def: u32,
+    pub key: u64,
+    pub epoch_key: u64,
+    pub depth: u32,
+    pub size: u32,
+}
+
+/// An expansion as a request (decision 0613's measurement): request 0 is the top (the files'
+/// tokens); the others are macro invocations and arguments' expansions, in the order entered.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Request {
+    /// The request whose reading posted this one (an argument's: its invocation).
+    pub parent: u32,
+    /// The parent's tokens read when this was posted (an argument's: 0).
+    pub pos: u32,
+    /// The tokens this request's own reading took from its list (its children's are theirs).
+    pub own: u32,
+    /// `Entered::epoch_key` (an argument's: its tokens, the disabled names, the definitions' count).
+    pub key: u64,
+    /// An argument's expansion before substitution.
+    pub arg: bool,
+    /// A place-dependent built-in read here (`__LINE__`, `__COUNTER__`, ...): not memoized.
+    pub place: bool,
+    /// Calls whose name is this request's last token and whose `(` comes after it (open tails).
+    pub tails: u32,
+    /// `Entered::key` (no definitions' count): the key of a memo across units.
+    pub skey: u64,
+    /// An invocation's expansion id (its body's tokens'); an argument's, 0.
+    pub exp: u32,
+    /// The step model of 0588's loop: the steps of the reading so far (`run` tokens not yet a step).
+    pub steps: u32,
+    pub run: u32,
+    /// The parent's steps when this was posted.
+    pub pos_steps: u32,
+    /// An invocation whose name or arguments come from its parent's arguments' expansions.
+    pub needs_args: bool,
+    /// An argument's expansion with an edge its rescan can't decide before it is done.
+    pub blocks: bool,
+    /// An invocation's holes with such an edge: before (a function-like name, then a macro's
+    /// name first) and after (a macro's name or `)` last, then the body's `(`).
+    pub edge_first: u32,
+    pub edge_last: u32,
+    /// Calls in the rescan whose name and `(` came from different parts (an argument and the body).
+    pub taken: u32,
+    /// An invocation's dependencies, `deps[dep_at..dep_at + dep_n]` of `Sink::requests`: the
+    /// expansions (`Tk::exp`) whose tokens its name and its call's shape came from (its `(` and `)`,
+    /// the commas that split it, parentheses a producer left unpaired). A child taking its
+    /// arguments as references waits for these alone.
+    pub dep_at: u32,
+    pub dep_n: u32,
 }
 
 /// No outputs.
@@ -122,6 +195,17 @@ impl Sink for Tee<'_> {
     fn expansion(&mut self, e: Expansion<'_>) {
         self.0.expansion(e);
         self.1.expansion(e);
+    }
+    fn wants_entries(&self) -> bool {
+        self.0.wants_entries() || self.1.wants_entries()
+    }
+    fn entered(&mut self, e: Entered) {
+        self.0.entered(e);
+        self.1.entered(e);
+    }
+    fn requests(&mut self, r: &[Request], deps: &[u32]) {
+        self.0.requests(r, deps);
+        self.1.requests(r, deps);
     }
     fn pragma(&mut self, file: u32, at: u32, text: &[u8]) {
         self.0.pragma(file, at, text);

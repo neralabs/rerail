@@ -18,6 +18,7 @@ use super::*;
 use crate::cpu::tests::{bits, graph, parts, Rng};
 use crate::exec::process_cpu;
 use crate::kernel::Bits;
+use rerail_blocks::vector::Vector;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -26,10 +27,10 @@ fn load() -> String {
 }
 
 /// A graph whose condensation has about `layers` levels (the closure's spike shape, as the GPU's timing test).
-fn layered(rng: &mut Rng, n: usize, deg: u64, layers: usize) -> (Arc<[u32]>, Arc<[u32]>) {
+fn layered(rng: &mut Rng, n: usize, deg: u64, layers: usize) -> (Arc<rerail_blocks::vector::Vector<u32>>, Arc<rerail_blocks::vector::Vector<u32>>) {
     let layer = |v: usize| v * layers / n;
-    let mut off = vec![0u32];
-    let mut dst = Vec::new();
+    let mut off = rerail_blocks::vector![0u32];
+    let mut dst = rerail_blocks::vector::Vector::new();
     for v in 0..n {
         let lo = (0..v).find(|&w| layer(w) == layer(v)).unwrap_or(v);
         for _ in 0..rng.below(2 * deg + 1) {
@@ -73,15 +74,15 @@ fn tiny(f: Form) -> Kernel {
         Form::Program => unreachable!("a program prices itself"),
         Form::BitProduct => Kernel::BitProduct { a: bits(&mut rng, 4, 64, 4), b: bits(&mut rng, 4, 64, 4), min: None },
         Form::CountTable | Form::CountPairs => {
-            Kernel::CountTable { loff: vec![0, 2].into(), left: vec![1, 2].into(), roff: vec![0, 2].into(), right: vec![2, 1].into(), emit: f == Form::CountPairs }
+            Kernel::CountTable { loff: rerail_blocks::vector![0, 2].into(), left: rerail_blocks::vector![1, 2].into(), roff: rerail_blocks::vector![0, 2].into(), right: rerail_blocks::vector![2, 1].into(), emit: f == Form::CountPairs }
         }
-        Form::Histogram => Kernel::Histogram { off: vec![0, 2].into(), codes: vec![0, 1].into(), width: 2 },
+        Form::Histogram => Kernel::Histogram { off: rerail_blocks::vector![0, 2].into(), codes: rerail_blocks::vector![0, 1].into(), width: 2 },
         Form::Closure => {
             let (off, dst) = graph(&mut rng, 8, 1);
             Kernel::Closure { n: 8, off, dst }
         }
         Form::Probe | Form::Tile => {
-            let keys: crate::kernel::Keys = vec![crate::col::Col::from(vec![1i64, 2])].into();
+            let keys: crate::kernel::Keys = vec![crate::col::Col::from(rerail_blocks::vector![1i64, 2])].into();
             let by = if f == Form::Tile { crate::kernel::JoinBy::Tile } else { crate::kernel::JoinBy::Probe };
             Kernel::Join { left: keys.clone(), right: keys, right_id: None, by }
         }
@@ -304,7 +305,7 @@ fn ane_overlap() {
                 splits.push(lane.last_split());
             }
             let med = |f: &dyn Fn(&Split) -> f64| {
-                let mut v: Vec<f64> = splits.iter().map(f).collect();
+                let mut v: Vector<f64> = splits.iter().map(f).collect();
                 v.sort_by(f64::total_cmp);
                 v[v.len() / 2] * 1e3
             };

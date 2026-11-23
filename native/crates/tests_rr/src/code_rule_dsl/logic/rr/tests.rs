@@ -1,6 +1,7 @@
 //! The `.rerail` front end: the rule-syntax files parse and pass `check_rr.py`'s checks, the spellings lower to the
 //! engine's forms, and every `.rdl` program translates to `.rerail` that lowers to the same program.
 
+use rerail_blocks::vector::Vector;
 use rerail_store::Canonical as _;
 use super::*;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
@@ -42,7 +43,7 @@ fn body_of(v: &Version, r: RuleRef<'_>) -> Vec<String> {
 
 /// `v`'s components in T's order, or the first that a negation or an aggregate closes.
 fn strata(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
-    analyses::components_by_name(v, &About::of(v))
+    analyses::components_by_name(v, &About::of(v)).map(|c| c.to_sets())
 }
 
 #[test]
@@ -293,7 +294,7 @@ fn rule_syntax_files_pass_check_rr() {
     // Phase 0 resolves every file's includes in one run of `bootstrap.rerail`, not one run each.
     let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonical().unwrap())).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
-    let programs: Vec<(PathBuf, Vec<(PathBuf, Vec<from_tape::Stmt>)>)> = rr_files().into_iter().map(|f| {
+    let programs: Vec<(PathBuf, Vec<(PathBuf, from_tape::Statements)>)> = rr_files().into_iter().map(|f| {
         let program = program(&f).unwrap().0;
         (f, program)
     }).collect();
@@ -321,9 +322,9 @@ fn rule_syntax_files_pass_check_rr() {
         if !program.iter().any(|(p, _)| *p == core) {
             program.push((core.clone(), read(&core).unwrap().0));
         }
-        let named: Vec<(String, Vec<from_tape::Stmt>)> = program.iter().map(|(p, s)| (short(p), s.clone())).collect();
+        let named: Vec<(String, from_tape::Statements)> = program.iter().map(|(p, s)| (short(p), s.clone())).collect();
         problems.extend(check::declarations(&named).into_iter().map(|p| format!("{}: {p}", short(&f))));
-        let all: Vec<&from_tape::Stmt> = program.iter().flat_map(|(_, s)| s).collect();
+        let all: from_tape::Statements = program.iter().flat_map(|(_, s)| s).collect();
         problems.extend(check::strata(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
         // A relation read and declared nowhere in the file's program, as check-rr and a run refuse it.
         problems.extend(check::undeclared(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
@@ -345,15 +346,15 @@ fn check_rr_finds_problems() {
     let cat = statements(".decl a(m: symbol)\n.decl b(q: symbol)\nb(q) :- a(m), m = @cat(q, x).\nb(q) :- a(q), m = @cat(q, x).\n");
     assert_eq!(check::grounded(&cat, &BTreeSet::new()), vec![(4, vec!["m".to_owned()])]);
     let cyclic = statements(".decl a(x: number)\n.decl b(x: number)\na(x) :- b(x), !a(x).\nb(x) :- a(x).\n");
-    let refs: Vec<&from_tape::Stmt> = cyclic.iter().collect();
+    let refs: from_tape::Statements = cyclic.iter().collect();
     assert_eq!(check::strata(&refs).len(), 1);
     // A negation in a component that reads a world answer is the engine's gated negation (decision 0065 §2a, as
     // `c/includes.rerail`'s `#include_next`); an aggregate there is still refused.
     let world = ".decl dir_entry(d: symbol, n: symbol, k: number)\n.input dir_entry\n.decl a(x: symbol)\n.decl b(x: symbol)\n";
     let gated = statements(&format!("{world}a(x) :- b(x), dir_entry(x, _, 0), !a(x).\nb(x) :- a(x).\n"));
-    assert!(check::strata(&gated.iter().collect::<Vec<_>>()).is_empty());
+    assert!(check::strata(&gated).is_empty());
     let counted = statements(&format!("{world}.decl c(x: symbol, n: number)\nc(x, n) :- b(x), dir_entry(x, _, 0), n = count : {{ c(x, _) }}.\nb(x) :- c(x, _).\n"));
-    assert_eq!(check::strata(&counted.iter().collect::<Vec<_>>()).len(), 1);
+    assert_eq!(check::strata(&counted).len(), 1);
     let twice = vec![("a.rerail".to_owned(), statements(".decl a(x: number)")), ("b.rerail".to_owned(), statements(".decl a(x: number)\n.decl glob(x: symbol)"))];
     assert_eq!(check::declarations(&twice).len(), 2);
 }
@@ -1655,7 +1656,7 @@ fn a_handed_program_run_again_finds_the_same() {
     crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let run = |out: &str| crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(out), &serde_json::Value::Null).map(|r| r["diagnostics"].clone());
     let first = run("first").unwrap();
-    assert_eq!(first.as_array().map(Vec::len), Some(1), "{first}");
+    assert_eq!(first.as_array().map(|v| v.len()), Some(1), "{first}");
     let again = run("again");
     crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
     let _ = std::fs::remove_dir_all(&dir);
@@ -2325,7 +2326,8 @@ Subtree(n) :- kind(n, "module"), text(n, _).
     let mut lines: Vec<_> = rows.iter().filter(|row| row["code"] == "LINE")
         .map(|row| (row["line"].as_i64().unwrap(), row["parameters"]["body"].as_str().unwrap())).collect();
     lines.sort();
-    assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass")]);
+    // The empty line after the final terminator is a line too (decision 0612).
+    assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass"), (3, "")]);
     // Decision 0108: a kind the rule reads by `kind` has its text at any length (the module's here, named by
     // `Subtree`); the source span and the lines are exact either way.
     assert_eq!(rows.iter().filter(|row| row["code"] == "TREE").count(), 1, "the module, a kind the rule reads, has its whole text");
@@ -2775,7 +2777,7 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     let names = ["sqlkinds", "objects", "unscoped", "qualified", "counted"];
     let (shown, docs) = guests_run_with("sqlguest", &[("a.py", py)], rule, |o| {
         let shown: Vec<Vec<Vec<String>>> = names.iter().map(|rel| o.get(rel).map(|r| r.shown()).unwrap_or_default()).collect();
-        (shown, o.rows("docs").iter().map(|r| r.get(0).int().expect("a document number")).collect::<Vec<i64>>())
+        (shown, o.rows("docs").iter().map(|r| r.get(0).int().expect("a document number")).collect::<Vector<i64>>())
     });
     let [sqlkinds, objects, unscoped, qualified, counted] = <[Vec<Vec<String>>; 5]>::try_from(shown).unwrap();
     assert!(sqlkinds.contains(&shown_row(&["object_reference"])), "{sqlkinds:?}");
@@ -2789,6 +2791,36 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     assert!(qualified.is_empty(), "{qualified:?}");
     // An aggregate's atom is bounded too.
     assert!(counted.iter().all(|c| c == &["0"]), "{counted:?}");
+}
+
+/// 0597 rung 5.3: an f-string in a language's grammar is its template, a text root whose holes are a marker
+/// (`syntax::HOLE`): `users` stands at its own column, the hole stands at `{uid}`, and its host node is the
+/// interpolation. Python's `annotation` reads a str's value, so an f-string parses as none.
+#[test]
+fn an_fstrings_template_is_a_guest_whose_holes_stand_at_their_fields() {
+    let py = "def f(db, uid):\n    db.execute(f\"SELECT name FROM users WHERE id = {uid}\")\n    db.execute(f\"SELECT \\\"id\\\" FROM orders WHERE a = {uid!r} AND b = {uid:>3}\")\n";
+    let rule = r#"
+.decl q(s: node)
+q(s) :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string").
+.decl objects(x: symbol, l: number, c: number)
+objects(x, l, c) :- q(s), parsed(s, "sql", r), within(n, r), kind(n, "object_reference"), text(n, x), guest_place(n, s, l, c).
+.decl holes(x: symbol, l: number, c: number)
+holes(x, l, c) :- q(s), parsed(s, "sql", r), within(m, r), text(m, "rr_hole"), !hole_inner(m), host_node(m, h), kind(h, "interpolation"), text(h, x), guest_place(m, s, l, c).
+.decl hole_inner(m: node)
+hole_inner(m) :- q(s), parsed(s, "sql", r), within(m, r), text(m, "rr_hole"), within(m, p), text(p, "rr_hole"), within(p, r).
+.decl annotated(s: node)
+annotated(s) :- q(s), parsed(s, "annotation", _).
+.output objects, holes, annotated
+"#;
+    let names = ["objects", "holes", "annotated"];
+    let shown = guests_run_with("fstring-sql", &[("a.py", py)], rule, |o| names.iter().map(|rel| o.get(rel).map(|r| r.shown()).unwrap_or_default()).collect::<Vec<Vec<Vec<String>>>>());
+    let [objects, holes, annotated] = <[Vec<Vec<String>>; 3]>::try_from(shown).unwrap();
+    assert!(objects.contains(&shown_row(&["users", "2", "34"])), "{objects:?}");
+    // Past an escape (`\"id\"`), `orders` keeps its column.
+    assert!(objects.contains(&shown_row(&["orders", "3", "36"])), "{objects:?}");
+    assert!(holes.contains(&shown_row(&["{uid}", "2", "51"])), "{holes:?}");
+    assert!(holes.contains(&shown_row(&["{uid!r}", "3", "53"])) && holes.contains(&shown_row(&["{uid:>3}", "3", "69"])), "{holes:?}");
+    assert!(annotated.is_empty(), "an f-string is no annotation: {annotated:?}");
 }
 
 /// An HTML file's `<script>` and `<style>` are its grammar's programs (decision 0238; 0431 §4: `embed::raw_text`, which
@@ -3611,13 +3643,52 @@ fn rule_files_pass_their_own_tests() {
 /// file has with its tests' lines blank.
 #[test]
 fn a_rule_files_tests_are_no_part_of_its_program() {
-    for file in files_with_tests() {
-        let text = std::fs::read_to_string(&file).unwrap();
-        let with = super::parse_version(&text).unwrap();
-        let without = super::parse_version(&without_tests(&text)).unwrap();
-        assert_eq!(format!("{with:?}"), format!("{without:?}"), "{}", file.display());
-        assert!(!super::testing::tests(&file).unwrap().is_empty());
+    let files: Vec<(PathBuf, String)> = files_with_tests().into_iter().map(|f| {
+        let text = std::fs::read_to_string(&f).unwrap();
+        (f, text)
+    }).collect();
+    let blank: Vec<String> = files.iter().map(|(_, t)| without_tests(t)).collect();
+    keep_graphs(files.iter().map(|(_, t)| t.as_str()).chain(blank.iter().map(String::as_str)));
+    let printed = in_parallel(&files.iter().zip(&blank).collect::<Vec<_>>(), |((file, text), blank)| {
+        let with = super::parse_version(text).unwrap();
+        let without = super::parse_version(blank).unwrap();
+        assert!(!super::testing::tests(file).unwrap().is_empty(), "{}", file.display());
+        (format!("{with:?}"), format!("{without:?}"))
+    });
+    for ((file, _), (with, without)) in files.iter().zip(printed) {
+        assert_eq!(with, without, "{}", file.display());
     }
+}
+
+/// Each text's include graph derived by one run of phase 0 over all of them and kept for the process
+/// (`phase0::graphs`), as `phase0::keep_files` does a pack's files: lowered one by one with none kept, each text that
+/// includes a module asked for a run of its own.
+fn keep_graphs<'t>(texts: impl IntoIterator<Item = &'t str>) {
+    let seeds: Vec<_> = texts.into_iter().filter_map(|t| super::text_seed(t).ok().flatten()).collect();
+    let _ = crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds);
+}
+
+/// `f` of each of `items` on a few threads, in `items`' order: each lowering is a second or less, one after another
+/// they were a test of a minute (57 policies lowered twice, at the tests' opt-level).
+fn in_parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let out: Vec<std::sync::Mutex<Option<R>>> = items.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    // The test's object (decision 0442), which holds what it kept (`keep_graphs`), handed to each thread.
+    let object = crate::code_rule_dsl::logic::profile::shared_here();
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                let _within = crate::code_rule_dsl::logic::profile::within(std::sync::Arc::clone(&object));
+                loop {
+                    let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(item) = items.get(at) else { break };
+                    *out[at].lock().unwrap() = Some(f(item));
+                }
+            });
+        }
+    });
+    out.into_iter().map(|r| r.into_inner().unwrap().expect("each item's result")).collect()
 }
 
 /// A failed `.expect` names its line and what the run had instead; `exactly` names the findings no `.expect` lists.
@@ -3975,16 +4046,20 @@ fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
     let dir = crate::source_tree::native().join("../docs/rule-syntax/data-layer");
     let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     paths.sort();
-    let (mut read, mut demanded) = (0, 0);
-    for path in &paths {
-        let text = std::fs::read_to_string(path).unwrap();
+    let texts: Vec<String> = paths.iter().map(|p| std::fs::read_to_string(p).unwrap()).collect();
+    keep_graphs(texts.iter().map(String::as_str));
+    let lowered = in_parallel(&texts, |text| {
         let lowered = |full: bool| {
             super::aggregate_demand::FULL_CHECKS.with(|c| c.set(full));
-            let p = super::read_text(&text).and_then(|t| t.lower_version(true)).map(|p| print_version(&p).unwrap());
+            let p = super::read_text(text).and_then(|t| t.lower_version(true)).map(|p| print_version(&p).unwrap());
             super::aggregate_demand::FULL_CHECKS.with(|c| c.set(false));
             p
         };
-        let (Ok(short), Ok(whole)) = (lowered(false), lowered(true)) else { continue };
+        (lowered(false).ok(), lowered(true).ok())
+    });
+    let (mut read, mut demanded) = (0, 0);
+    for (path, lowered) in paths.iter().zip(lowered) {
+        let (Some(short), Some(whole)) = lowered else { continue };
         read += 1;
         demanded += usize::from(short.contains("rr_demand_agg_"));
         assert_eq!(short, whole, "{}", path.display());
@@ -4419,7 +4494,7 @@ fn library_modules_link_to_the_lowering_of_them_together() {
             continue;
         }
         let files: Files = paths.iter().map(|p| (p.clone(), read(p).unwrap().0.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect())).collect();
-        let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
+        let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter()).collect()).unwrap();
         let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
         // Each module read back from its image (decision 0246 §6) links to the same program, on versions (0377).
         let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(std::sync::Arc::new(module_image::encode(m).unwrap())).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
@@ -5117,15 +5192,15 @@ fn a_layout_line_states_a_relations_facts_by_its_columns() {
                 .decl o(x: number)\n.output o\no(x) :- e(x, _, _).\n";
     let p = parse(text).unwrap();
     let want = vec![
-        F::Key(vec![1]),
-        F::Key(vec![0, 2]),
-        F::Fanout { from: vec![0], to: vec![1], fan: Fan::Few },
+        F::Key(rerail_blocks::vector![1]),
+        F::Key(rerail_blocks::vector![0, 2]),
+        F::Fanout { from: rerail_blocks::vector![0], to: rerail_blocks::vector![1], fan: Fan::Few },
         F::Local,
-        F::Order { col: 2, within: vec![0], dense: true },
+        F::Order { col: 2, within: rerail_blocks::vector![0], dense: true },
         F::Tree { from: 0, to: 1 },
         F::Size(LayoutSize::Per { most: 2, col: 0 }),
-        F::Fanout { from: vec![1], to: vec![0], fan: Fan::About(3) },
-        F::By(Algo::Running { col: 2, within: vec![0] }),
+        F::Fanout { from: rerail_blocks::vector![1], to: rerail_blocks::vector![0], fan: Fan::About(3) },
+        F::By(Algo::Running { col: 2, within: rerail_blocks::vector![0] }),
     ];
     let layouts = ProgramFields::layouts(&*p);
     assert_eq!(layouts.get("e"), Some(&want), "{layouts:?}");
@@ -5162,14 +5237,14 @@ fn layouts_are_carried_with_the_program() {
     let p = parse(&policy("a")).unwrap();
     let layouts = ProgramFields::layouts(&*p);
     let child = layouts.get("child").expect("core.rerail declares child's layout");
-    assert!(child.contains(&F::Key(vec![1])) && child.contains(&F::Order { col: 2, within: vec![0], dense: true }), "{child:?}");
-    assert!(layouts.get("node").is_some_and(|f| f.contains(&F::Key(vec![1]))), "{:?}", layouts.get("node"));
+    assert!(child.contains(&F::Key(rerail_blocks::vector![1])) && child.contains(&F::Order { col: 2, within: rerail_blocks::vector![0], dense: true }), "{child:?}");
+    assert!(layouts.get("node").is_some_and(|f| f.contains(&F::Key(rerail_blocks::vector![1]))), "{:?}", layouts.get("node"));
     // The image's facts, read back from its bytes.
     let v = Version::open(p.fold().unwrap().base_bytes().unwrap()).unwrap();
     assert_eq!(ProgramFields::layouts(&*v), layouts);
     let about = About::of(&v);
     let rel = v.rel("child").unwrap();
-    assert_eq!(about.layouts.iter().find(|(r, _)| *r == rel).map(|(_, f)| f), Some(child));
+    assert_eq!(about.layouts.iter().find(|e| e.0 == rel).map(|e| e.1.iter().map(|f| <crate::code_rule_dsl::logic::front::ast::LayoutFact as rerail_section::Decode>::decode(f, &rerail_section::Names::NONE)).collect::<Vec<_>>()).as_ref(), Some(child));
     // Combined: each relation keeps its facts under the name it has there.
     let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&policy("a"), &policy("b")]).unwrap();
     let layouts = combined.layouts();
@@ -5461,7 +5536,8 @@ fn a_host_files_own_nodes_are_not_shown() {
     assert!(own.is_empty(), "the host file's own nodes are not: {own:?}");
     // The run's own rule file (`g.rerail`) is a file of another grammar in its root too, shown as this one is.
     let lines: Vec<&Vec<String>> = lines.iter().filter(|r| r[0] == "rules/r.rerail").collect();
-    assert_eq!(lines, [&["rules/r.rerail", "1", ".decl a(x: symbol)"], &["rules/r.rerail", "2", "a({\"k\": 1})."]], "the host file's lines and their text are shown");
+    // Every line, the empty one after the final terminator too (decision 0612: `src_line` is the lines `line` numbers).
+    assert_eq!(lines, [&["rules/r.rerail", "1", ".decl a(x: symbol)"], &["rules/r.rerail", "2", "a({\"k\": 1})."], &["rules/r.rerail", "3", ""]], "the host file's lines and their text are shown");
 }
 
 /// Q324 (decision 0431 §4, "a program is named by its file and place"): where a program declares `docof` over nodes

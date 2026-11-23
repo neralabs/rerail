@@ -1,7 +1,7 @@
 # 0423: A gated region's vectors are made inside its branch
 
-Status: decided (the user, 2026-11-18: "do this: what's left: 14-json is 130 instructions over
-stage1.rir … the next part to trace"). Follows 0375, 0399 and 0421.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: "do this: what's left: 14-json is 130 instructions
+over stage1.rir … the next part to trace"). Follows 0375, 0399 and 0421.
 
 ## Intro
 

@@ -2,9 +2,9 @@
 
 Numbered 0353 where it was written (Parser-generators); 0353 is "blocks are never copied" on the hub.
 
-Status: decided (the user, 2026-11-17: "go ahead with 2 then 1", item 2: get the block body on
-plain bytes down toward simdjson stage 1, and `json_loop_keeps_values_in_registers` back under
-its first budget, 690 instructions and 4 stack accesses). Follows 0349–0351.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "go ahead with 2 then 1", item 2: get the block
+body on plain bytes down toward simdjson stage 1, and `json_loop_keeps_values_in_registers` back under its first
+budget, 690 instructions and 4 stack accesses). Follows 0349–0351.
 
 ## Intro
 

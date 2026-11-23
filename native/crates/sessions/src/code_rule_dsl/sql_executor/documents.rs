@@ -1,4 +1,5 @@
 //! Retained native document indexes. File edits replace only changed search paths and shared-fact counts.
+use rerail_blocks::vector::Vector;
 use super::*;
 pub mod shards;
 pub mod shared;
@@ -66,7 +67,7 @@ type Changes = BTreeMap<String, Option<Document>>;
 struct Indexed {
     families: BTreeMap<String, Arc<Family>>,
     shared: Arc<Shared>,
-    literals: BTreeMap<Vec<i64>, isize>,
+    literals: BTreeMap<Vector<i64>, isize>,
     nodes: usize,
 }
 fn native_sources(store: &ContentStore, docs: Vec<syntax::Document>) -> Result<Sources> {
@@ -83,7 +84,7 @@ fn native_sources(store: &ContentStore, docs: Vec<syntax::Document>) -> Result<S
 }
 fn document(store: &ContentStore, file: File) -> Result<Document> {
     let facts = match core::build_cached(&file, store).map_err(error)? {
-        Built::Facts(facts) if !facts.syntax_errors() => facts,
+        Built::Facts(facts) if !facts.has_syntax_error() => facts,
         _ => return Err(error(format!("{}: core facts are incomplete", file.path))),
     };
     let key = store.intern_atoms(&[&file.path]).map_err(error)?[0];
@@ -104,7 +105,7 @@ fn document(store: &ContentStore, file: File) -> Result<Document> {
         sources: native_sources(store, vec![doc])?,
     })
 }
-fn tuples(source: &dyn Source) -> BTreeSet<Vec<i64>> {
+fn tuples(source: &dyn Source) -> BTreeSet<Vector<i64>> {
     let width = source.columns().len();
     (0..source.len())
         .map(|r| (0..width).map(|c| source.value(r, c)).collect())
@@ -130,7 +131,7 @@ impl Documents {
                 families.insert(name.clone(), Arc::new(next));
             }
         }
-        let mut literals = BTreeMap::<Vec<i64>, isize>::new();
+        let mut literals = BTreeMap::<Vector<i64>, isize>::new();
         for (path, after) in changes {
             for (doc, sign) in [(self.files.get(path), -1), (after.as_ref(), 1)] {
                 if let Some(doc) = doc {

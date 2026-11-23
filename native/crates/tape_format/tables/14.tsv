@@ -1,75 +1,117 @@
-# Tape format 16's choices for tape tag 14 (json), decision 0293 §3. Written by the lab:
-#   tape16 table <captures…> (native/lab/tape16/src/table.rs)
-# from 2011 files, 20631982 nodes; 70 codes, 26 seen first by count.
-revision	1
+# Tape format 16's choices for tape tag 14 (json), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+#   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
+# 70 codes; numbered by how often each is a node's over 29726 files, 75226496 nodes (`rerail-engine code-counts`).
+revision	4
 widths	1	1	1
-code	7	0	0	-	-
 code	8	0	0	-	-
-code	2	0	0	-	-
-code	4	0	0	-	-
 code	18	0	0	-	-
 code	20	1	0	-	-
 code	20	2	0	-	16
+code	10	0	0	-	16
 code	9	0	0	-	-
-code	1	0	0	-	-
-code	3	0	0	-	-
-code	5	0	0	-	-
-code	6	0	0	-	-
+code	10	2	0	-	16
+code	17	0	0	-	16
+code	17	2	0	-	16
 code	20	0	0	-	16
 code	19	2	0	-	16
-code	17	0	0	-	16
-code	10	2	0	-	16
 code	12	2	0	-	16
-code	17	2	0	-	16
-code	10	0	0	-	16
+code	11	2	0	-	16
 code	19	0	0	-	16
 code	13	2	0	-	16
-code	11	2	0	-	16
+code	5	0	0	-	-
 code	15	0	0	-	-
-code	13	0	0	-	16
-code	12	0	0	-	16
 code	11	0	0	-	16
+code	12	0	0	-	16
 code	0	0	2	-	-
-code	0	0	3	-	-
-code	0	1	2	-	-
-code	0	2	2	-	-
-code	1	0	4	-	-
-code	2	0	4	-	-
-code	3	0	4	-	-
-code	4	0	4	-	-
-code	5	0	4	-	-
-code	6	0	4	-	-
-code	7	0	4	-	-
-code	8	0	4	-	-
-code	9	0	4	-	-
-code	10	0	0	-	-
-code	10	0	4	-	-
-code	10	0	4	-	16
-code	10	2	0	-	-
-code	10	2	4	-	-
-code	10	2	4	-	16
-code	11	0	0	-	-
-code	11	0	4	-	-
-code	11	0	4	-	16
-code	11	2	0	-	-
-code	11	2	4	-	-
-code	11	2	4	-	16
-code	12	0	0	-	-
-code	12	0	4	-	-
-code	12	0	4	-	16
-code	12	2	0	-	-
-code	12	2	4	-	-
-code	12	2	4	-	16
-code	13	0	0	-	-
-code	13	0	4	-	-
-code	13	0	4	-	16
-code	13	2	0	-	-
-code	13	2	4	-	-
-code	13	2	4	-	16
 code	14	0	1	-	-
+code	10	0	0	-	-
+code	13	0	0	-	16
+code	0	0	3	-	-
+code	2	0	0	-	-
+code	4	0	0	-	-
+code	3	0	0	-	-
+code	1	0	0	-	-
+code	20	0	0	-	-
+code	6	0	0	-	-
+code	11	0	0	-	-
+code	7	0	0	-	-
+code	6	0	4	-	-
+code	3	0	4	-	-
+code	13	0	0	-	-
+code	12	0	0	-	-
+code	7	0	4	-	-
+code	10	0	4	-	16
+code	10	2	4	-	16
+code	10	2	0	-	-
+code	11	2	0	-	-
+code	12	2	0	-	-
+code	13	2	0	-	-
 code	17	0	0	-	-
 code	17	2	0	-	-
 code	19	0	0	-	-
 code	19	2	0	-	-
-code	20	0	0	-	-
 code	20	2	0	-	-
+code	0	1	2	-	-
+code	0	2	2	-	-
+code	1	0	4	-	-
+code	2	0	4	-	-
+code	4	0	4	-	-
+code	5	0	4	-	-
+code	8	0	4	-	-
+code	9	0	4	-	-
+code	10	0	4	-	-
+code	10	2	4	-	-
+code	11	0	4	-	-
+code	11	0	4	-	16
+code	11	2	4	-	-
+code	11	2	4	-	16
+code	12	0	4	-	-
+code	12	0	4	-	16
+code	12	2	4	-	-
+code	12	2	4	-	16
+code	13	0	4	-	-
+code	13	0	4	-	16
+code	13	2	4	-	-
+code	13	2	4	-	16
+kind	1	0	{
+kind	2	0	,
+kind	3	0	}
+kind	4	0	:
+kind	5	0	[
+kind	6	0	]
+kind	7	0	"
+kind	8	1	string_content
+kind	9	1	escape_sequence
+kind	10	1	number
+kind	11	1	true
+kind	12	1	false
+kind	13	1	null
+kind	14	1	comment
+kind	15	1	document
+kind	17	1	object
+kind	18	1	pair
+kind	19	1	array
+kind	20	1	string
+lookup	0	{	1
+lookup	0	,	2
+lookup	0	}	3
+lookup	0	:	4
+lookup	0	[	5
+lookup	0	]	6
+lookup	0	"	7
+lookup	1	string_content	8
+lookup	1	escape_sequence	9
+lookup	1	number	10
+lookup	1	true	11
+lookup	1	false	12
+lookup	1	null	13
+lookup	1	comment	14
+lookup	1	document	15
+lookup	1	object	17
+lookup	1	pair	18
+lookup	1	array	19
+lookup	1	string	20
+field	1	key
+field	2	value
+class	16	_value
+supertype	_value	16

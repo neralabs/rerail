@@ -3,7 +3,7 @@ use crate::code_rule_dsl::facts::core;
 use crate::code_rule_dsl::facts::producers::python::call_batch::{collect, collect_arguments};
 use crate::code_rule_dsl::facts::producers::python::python_structure::{ContextKind, Spread};
 use crate::code_rule_dsl::language::{GrammarDialect, tape_tag};
-use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::tape::{Grammar as TapeGrammar, TapeDoc, TapeImage};
 use ast_grep_core::{AstGrep, tree_sitter::StrDoc};
 use std::path::Path;
@@ -58,15 +58,17 @@ fn sorted<T: Ord + Clone>(rows: &[T]) -> Vec<T> {
 /// The families' rows equal S's producers' on `source`.
 fn check(source: &str, what: &str) -> usize {
     let root = tape(source);
-    let facts = core::from_tape(root.root().get_doc(), Arc::new(LineTable::new(source, Terminators::of(GrammarDialect::Python)))).unwrap();
+    let facts = core::from_tape(root.root().get_doc(), Arc::new(LineTable::new(source, crate::code_rule_dsl::lines::terminators(GrammarDialect::Python)))).unwrap();
+    let facts_cache = facts.own_cache();
+    let facts = facts.read_in(facts_cache.as_ref());
     let grammar = Grammar::new(tape_tag(GrammarDialect::Python).unwrap(), &GrammarDialect::Python.kinds());
-    let rows = rows(&grammar, &facts);
-    let basic=structure(&grammar,&facts);
+    let rows = rows(&grammar, facts);
+    let basic=structure(&grammar, facts);
     assert!(basic.arg.is_empty(),"call structure must not extract arguments");
     assert_eq!(basic.call,rows.call);
     let selected:Vec<_>=rows.call.iter().take(2).map(|r|r[0]).collect();
-    assert_eq!(arguments(&grammar,&facts,&selected),rows.arg.iter().copied().filter(|r|selected.contains(&r[0])).collect::<Vec<_>>());
-    assert!(arguments(&grammar,&facts,&[]).is_empty());
+    assert_eq!(arguments(&grammar, facts,&selected),rows.arg.iter().copied().filter(|r|selected.contains(&r[0])).collect::<Vec<_>>());
+    assert!(arguments(&grammar, facts,&[]).is_empty());
     let (expected, args) = oracle(&root);
     assert_eq!(sorted(&rows.call), sorted(&expected.call), "{what}: py_call");
     assert_eq!(sorted(&rows.site), sorted(&expected.site), "{what}: py_call_site");

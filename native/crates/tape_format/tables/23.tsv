@@ -1,0 +1,247 @@
+# Tape format 16's choices for tape tag 23 (markdown-inline), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+#   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
+# 114 codes; no file of it counted: in the grammar's order.
+revision	4
+widths	1	1	1
+code	2	0	0	-	-
+code	3	0	0	-	-
+code	4	0	0	-	-
+code	5	0	0	-	-
+code	6	0	0	-	-
+code	7	0	0	-	-
+code	8	0	0	-	-
+code	9	0	0	-	-
+code	10	0	0	-	-
+code	11	0	0	-	-
+code	12	0	0	-	-
+code	13	0	0	-	-
+code	14	0	0	-	-
+code	15	0	0	-	-
+code	16	0	0	-	-
+code	17	0	0	-	-
+code	18	0	0	-	-
+code	19	0	0	-	-
+code	20	0	0	-	-
+code	21	0	0	-	-
+code	22	0	0	-	-
+code	23	0	0	-	-
+code	24	0	0	-	-
+code	25	0	0	-	-
+code	26	0	0	-	-
+code	27	0	0	-	-
+code	28	0	0	-	-
+code	29	0	0	-	-
+code	30	0	0	-	-
+code	31	0	0	-	-
+code	32	0	0	-	-
+code	33	0	0	-	-
+code	34	0	0	-	-
+code	35	0	0	-	-
+code	37	0	0	-	-
+code	38	0	0	-	-
+code	41	0	0	-	-
+code	42	0	0	-	-
+code	43	0	0	-	-
+code	44	0	0	-	-
+code	46	0	0	-	-
+code	47	0	0	-	-
+code	54	0	0	-	-
+code	58	0	0	-	-
+code	64	0	0	-	-
+code	67	0	0	-	-
+code	68	0	0	-	-
+code	69	0	0	-	-
+code	70	0	0	-	-
+code	73	0	0	-	-
+code	74	0	0	-	-
+code	75	0	0	-	-
+code	78	0	0	-	-
+code	79	0	0	-	-
+code	80	0	0	-	-
+code	81	0	0	-	-
+code	82	0	0	-	-
+code	99	0	0	-	-
+code	114	0	0	-	-
+code	116	0	0	-	-
+code	149	0	0	-	-
+code	150	0	0	-	-
+code	151	0	0	-	-
+code	152	0	0	-	-
+code	0	0	2	-	-
+code	0	0	3	-	-
+code	2	0	4	-	-
+code	3	0	4	-	-
+code	4	0	4	-	-
+code	5	0	4	-	-
+code	6	0	4	-	-
+code	7	0	4	-	-
+code	8	0	4	-	-
+code	9	0	4	-	-
+code	10	0	4	-	-
+code	11	0	4	-	-
+code	12	0	4	-	-
+code	13	0	4	-	-
+code	14	0	4	-	-
+code	15	0	4	-	-
+code	16	0	4	-	-
+code	17	0	4	-	-
+code	18	0	4	-	-
+code	19	0	4	-	-
+code	20	0	4	-	-
+code	21	0	4	-	-
+code	22	0	4	-	-
+code	23	0	4	-	-
+code	24	0	4	-	-
+code	25	0	4	-	-
+code	26	0	4	-	-
+code	27	0	4	-	-
+code	28	0	4	-	-
+code	29	0	4	-	-
+code	30	0	4	-	-
+code	31	0	4	-	-
+code	32	0	4	-	-
+code	33	0	4	-	-
+code	34	0	4	-	-
+code	35	0	4	-	-
+code	37	0	4	-	-
+code	38	0	4	-	-
+code	41	0	4	-	-
+code	42	0	4	-	-
+code	43	0	4	-	-
+code	44	0	4	-	-
+code	46	0	4	-	-
+code	47	0	4	-	-
+code	54	0	4	-	-
+code	58	0	4	-	-
+code	64	0	4	-	-
+code	68	0	4	-	-
+code	99	0	4	-	-
+code	150	0	4	-	-
+kind	2	1	entity_reference
+kind	3	1	numeric_character_reference
+kind	4	0	[
+kind	5	0	]
+kind	6	0	<
+kind	7	0	>
+kind	8	0	!
+kind	9	0	"
+kind	10	0	#
+kind	11	0	$
+kind	12	0	%
+kind	13	0	&
+kind	14	0	'
+kind	15	0	*
+kind	16	0	+
+kind	17	0	,
+kind	18	0	-
+kind	19	0	.
+kind	20	0	/
+kind	21	0	:
+kind	22	0	;
+kind	23	0	=
+kind	24	0	?
+kind	25	0	@
+kind	26	0	\\
+kind	27	0	^
+kind	28	0	_
+kind	29	0	`
+kind	30	0	{
+kind	31	0	|
+kind	32	0	}
+kind	33	0	~
+kind	34	0	(
+kind	35	0	)
+kind	37	1	uri_autolink
+kind	38	1	email_autolink
+kind	41	0	<!--
+kind	42	0	-->
+kind	43	0	<?
+kind	44	0	?>
+kind	46	0	<![CDATA[
+kind	47	0	]]>
+kind	54	1	code_span_delimiter
+kind	58	1	emphasis_delimiter
+kind	64	1	latex_span_delimiter
+kind	67	1	inline
+kind	68	1	backslash_escape
+kind	69	1	link_label
+kind	70	1	link_destination
+kind	73	1	link_title
+kind	74	1	code_span
+kind	75	1	latex_block
+kind	78	1	shortcut_link
+kind	79	1	full_reference_link
+kind	80	1	collapsed_reference_link
+kind	81	1	inline_link
+kind	82	1	image
+kind	99	1	hard_line_break
+kind	114	1	strikethrough
+kind	116	1	strong_emphasis
+kind	149	1	emphasis
+kind	150	1	html_tag
+kind	151	1	image_description
+kind	152	1	link_text
+lookup	1	entity_reference	2
+lookup	1	numeric_character_reference	3
+lookup	0	[	4
+lookup	0	]	5
+lookup	0	<	6
+lookup	0	>	7
+lookup	0	!	8
+lookup	0	"	9
+lookup	0	#	10
+lookup	0	$	11
+lookup	0	%	12
+lookup	0	&	13
+lookup	0	'	14
+lookup	0	*	15
+lookup	0	+	16
+lookup	0	,	17
+lookup	0	-	18
+lookup	0	.	19
+lookup	0	/	20
+lookup	0	:	21
+lookup	0	;	22
+lookup	0	=	23
+lookup	0	?	24
+lookup	0	@	25
+lookup	0	\\	26
+lookup	0	^	27
+lookup	0	_	28
+lookup	0	`	29
+lookup	0	{	30
+lookup	0	|	31
+lookup	0	}	32
+lookup	0	~	33
+lookup	0	(	34
+lookup	0	)	35
+lookup	1	uri_autolink	37
+lookup	1	email_autolink	38
+lookup	0	<!--	41
+lookup	0	-->	42
+lookup	0	<?	43
+lookup	0	?>	44
+lookup	0	<![CDATA[	46
+lookup	0	]]>	47
+lookup	1	code_span_delimiter	54
+lookup	1	emphasis_delimiter	58
+lookup	1	latex_span_delimiter	64
+lookup	1	inline	67
+lookup	1	backslash_escape	68
+lookup	1	link_label	69
+lookup	1	link_destination	70
+lookup	1	link_title	73
+lookup	1	code_span	74
+lookup	1	latex_block	75
+lookup	1	shortcut_link	78
+lookup	1	full_reference_link	79
+lookup	1	collapsed_reference_link	80
+lookup	1	inline_link	81
+lookup	1	image	82
+lookup	1	hard_line_break	99
+lookup	1	strikethrough	114
+lookup	1	strong_emphasis	116
+lookup	1	emphasis	149
+lookup	1	html_tag	150
+lookup	1	image_description	151
+lookup	1	link_text	152

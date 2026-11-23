@@ -140,6 +140,9 @@ struct ColPlan<'s> {
     split: u32,
     rel: bool,
     parts: Vec<(Vals<'s>, Choice)>,
+    /// Its greatest value, `None` with no rows: found as its form is chosen, so a kept entry records its atoms'
+    /// greatest without reading them again (`Prepared::col_max`).
+    max: Option<i64>,
 }
 
 impl ColPlan<'_> {
@@ -154,8 +157,9 @@ impl ColPlan<'_> {
 /// below it its high part is constant.
 fn plan_col<'s>(cols: &'s [i64], n: usize, c: usize, may_rel: Rel) -> ColPlan<'s> {
     let v = &cols[c * n..(c + 1) * n];
-    let whole = ColPlan { split: 0, rel: false, parts: vec![(Vals::Of(v), choose(v))] };
     let (lo, hi) = v.iter().fold((i64::MAX, i64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    let max = (n > 0).then_some(hi);
+    let whole = ColPlan { split: 0, rel: false, parts: vec![(Vals::Of(v), choose(v))], max };
     if n < 2 || (hi as i128 - lo as i128) < 1 << ID_SPLIT {
         return whole;
     }
@@ -171,15 +175,15 @@ fn plan_col<'s>(cols: &'s [i64], n: usize, c: usize, may_rel: Rel) -> ColPlan<'s
             best = cand;
         }
     };
-    take(ColPlan { split: s, rel: false, parts: vec![part(&|i| v[i] >> s), part(&|i| v[i] & m)] });
+    take(ColPlan { split: s, rel: false, parts: vec![part(&|i| v[i] >> s), part(&|i| v[i] & m)], max });
     if may_rel != Rel::Never && c > 0 {
         let b = &cols[..n];
         // A searched column keeps its order less a constant only where no difference wraps; the split parts' never
         // do (each part is under 2^46).
         if may_rel == Rel::Any || (0..n).all(|i| v[i].checked_sub(b[i]).is_some()) {
-            take(ColPlan { split: 0, rel: true, parts: vec![part(&|i| v[i].wrapping_sub(b[i]))] });
+            take(ColPlan { split: 0, rel: true, parts: vec![part(&|i| v[i].wrapping_sub(b[i]))], max });
         }
-        take(ColPlan { split: s, rel: true, parts: vec![part(&|i| (v[i] >> s).wrapping_sub(b[i] >> s)), part(&|i| (v[i] & m) - (b[i] & m))] });
+        take(ColPlan { split: s, rel: true, parts: vec![part(&|i| (v[i] >> s).wrapping_sub(b[i] >> s)), part(&|i| (v[i] & m) - (b[i] & m))], max });
     }
     best
 }
@@ -499,6 +503,16 @@ impl Prepared<'_> {
 
     pub fn is_empty(&self) -> bool {
         self.plan.n == 0
+    }
+
+    /// Its columns.
+    pub fn arity(&self) -> usize {
+        self.plan.arity
+    }
+
+    /// Column `c`'s greatest value, `None` with no rows: what choosing its encoding found.
+    pub fn col_max(&self, c: usize) -> Option<i64> {
+        self.plan.choices[c].max
     }
 
     /// The most bytes placing it takes.

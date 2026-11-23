@@ -8,6 +8,7 @@
 //! set, a kind name a comparison qualified, and for a copy its head); the version is written once at the end, each
 //! rule copied from its source with those edits, the bounds the last stage adds, and the aggregates' helpers.
 
+use rerail_blocks::vector::Vector;
 use super::super::hiding::{ENTRIES, Fact, VIEWS, dialect_label, qualified};
 use crate::code_rule_dsl::logic::front::{self, Value};
 use crate::code_rule_dsl::logic::program_image::fields::{Edit as Staged, FieldsMut, ProgramFields};
@@ -24,6 +25,9 @@ type Result<T> = std::result::Result<T, String>;
 enum S {
     Var(Slot),
     Str(String),
+    /// A membership test, `@equals($k, @set("a", "b"))`: a disjunction of `$k`'s comparisons with strings (a kind
+    /// variable's, `(k = "identifier" ; k = "…")`), the strings as written.
+    Member(Slot, Vec<String>),
     Wild,
     Other,
 }
@@ -34,6 +38,16 @@ impl S {
             TermRef::Var(s) => S::Var(s),
             TermRef::Str(a) => S::Str(v.text(a).to_owned()),
             TermRef::Wild => S::Wild,
+            TermRef::Call(f, args) if v.text(f).trim_start_matches('@') == "equals" => {
+                let mut args = args;
+                match (args.next(), args.next(), args.next()) {
+                    (Some(TermRef::Var(k)), Some(TermRef::Call(set, members)), None) if v.text(set).trim_start_matches('@') == "set" => {
+                        let strs: Option<Vec<String>> = members.map(|m| if let TermRef::Str(a) = m { Some(v.text(a).to_owned()) } else { None }).collect();
+                        strs.map_or(S::Other, |strs| S::Member(k, strs))
+                    }
+                    _ => S::Other,
+                }
+            }
             _ => S::Other,
         }
     }
@@ -114,8 +128,12 @@ fn context_grammars(passes: &[crate::code_rule_dsl::logic::passes_made::Made], c
 /// What a rule reads of a guest (decision 0597 step 4): a guest a context reads is read by the context's rules alone.
 /// A host rule carries its nodes as values (the context's roots, an export's rows), but reads none: its facts drop
 /// them, so it is not cloned or copied for them, and its views of them are bounded, as of any node not shown.
+/// A node attribute's request (`rr_value_req`, a reader's ask `rr_value_req_by_<reader>_<col>`) reads what its
+/// readers read: made for a context's rule, it asks of the context's nodes, whose kinds are their grammar's. Its facts
+/// dropped, `kind(s, "string")` was named in the host's grammar, and no string of a Vue piece was asked a value.
 fn as_read(rule: &W, mut facts: Facts, grammars: &BTreeSet<String>) -> Facts {
-    if !grammars.is_empty() && !crate::code_rule_dsl::logic::passes_made::of_a_context(&rule.head) {
+    let request = |h: &str| crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| h == a.req || h.strip_prefix(a.req).is_some_and(|rest| rest.starts_with("_by_")));
+    if !grammars.is_empty() && !crate::code_rule_dsl::logic::passes_made::of_a_context(&rule.head) && !request(&rule.head) {
         facts.retain(|_, f| !(f.scoped && f.grammar.as_ref().is_some_and(|g| grammars.contains(g))));
     }
     facts
@@ -172,7 +190,7 @@ impl ProgramPass for Hide {
         // The analysis kept across the rounds, each round's change applied to it (decision 0246 §3).
         let mut delta = Delta::new(&rules);
         // The rules the round before changed or added (every rule, at first).
-        let mut touched: Vec<usize> = (0..rules.len()).collect();
+        let mut touched: Vector<usize> = (0..rules.len()).collect();
         loop {
             let _round = crate::code_rule_dsl::logic::profile::span(|| "hiding: a round".to_owned());
             let looked = delta.round(&rules, &prog.b, &seeds, &base_locations, &view, &touched);
@@ -249,6 +267,16 @@ impl ProgramPass for Hide {
                                 changed = true;
                                 continue;
                             }
+                            // A membership test of the kind (`bound_name`'s `(pk = "identifier" ; …)`): each string in
+                            // the guest's grammar, as one comparison's.
+                            L::Cmp { l: S::Member(x, set), .. } | L::Cmp { r: S::Member(x, set), .. } if kind_of.contains_key(x) && set.iter().any(|s| qualified(s).is_none()) => {
+                                let label = dialect_label(&kind_of[x]);
+                                for s in set.iter().filter(|s| qualified(s).is_none()) {
+                                    edits.push((i, k, Edit::Str(s.clone(), format!("{label}:{s}"))));
+                                }
+                                changed = true;
+                                continue;
+                            }
                             // Negated as well: `kind(s, k), !def_or_class(k)` over a guest's node
                             // reads the set's qualified copy; the bare set holds none of the guest's kinds.
                             L::Atom(a)
@@ -260,7 +288,7 @@ impl ProgramPass for Hide {
                                     && let Some(g) = kind_of.get(x)
                                     && let Some(rows) = prog.states_facts(a.rel.as_str()).then(|| prog.fact_rows(a.rel.as_str())) =>
                             {
-                                let name = format!("rr_in_{}_rows_{}", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"), a.rel);
+                                let name = format!("rr_in_{}_rows_{}", dialect_label(g).replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"), a.rel);
                                 if made.insert(name.clone()) {
                                     let label = dialect_label(g);
                                     let names = rows.iter().filter_map(|row| match row.as_slice() {
@@ -281,9 +309,11 @@ impl ProgramPass for Hide {
                         if let Some(g) = grammar_of(*n)
                             && !set.starts_with("rr_in_")
                         {
-                            let name = format!("rr_in_{g}_{set}");
+                            // Named by the kinds' grammar: a Vue template's pieces (`vue-for-alias`, decision 0597)
+                            // share TypeScript's copy, and a name holds no `-`.
+                            let label = dialect_label(&g);
+                            let name = format!("rr_in_{}_{set}", label.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"));
                             if made.insert(name.clone()) {
-                                let label = dialect_label(&g);
                                 let kinds = all_kindsets.get(set.as_str()).cloned().unwrap_or_default();
                                 kindsets.push((name.clone(), kinds.into_iter().map(|k| if qualified(&k).is_some() { k } else { format!("{label}:{k}") }).collect()));
                             }
@@ -301,7 +331,7 @@ impl ProgramPass for Hide {
                         && all_kindsets.contains_key(set)
                         && let Some(g) = a.args.iter().find_map(|t| t.var().and_then(grammar_of))
                     {
-                        let copy = format!("rr_in_{}_{set}", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"));
+                        let copy = format!("rr_in_{}_{set}", dialect_label(&g).replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"));
                         let prefix = if descendants { front::DESCENDANTS } else { front::AXIS };
                         let name = format!("{prefix}{copy}");
                         if made.insert(name.clone()) {
@@ -366,8 +396,10 @@ impl ProgramPass for Hide {
                     // The string side of the comparison the edit was recorded for: the one that named `from`.
                     (L::Cmp { l, r, .. }, Edit::Str(from, to)) => {
                         for t in [l, r] {
-                            if matches!(t, S::Str(s) if *s == from) {
-                                *t = S::Str(to.clone());
+                            match t {
+                                S::Str(s) if *s == from => *t = S::Str(to.clone()),
+                                S::Member(_, set) => set.iter_mut().filter(|s| **s == from).for_each(|s| *s = to.clone()),
+                                _ => {}
                             }
                         }
                     }
@@ -743,7 +775,7 @@ fn plan_rows(reached: &BTreeSet<String>, made: &BTreeSet<String>, specialized: &
 
 /// A positive atom of a base relation (`bases`' locations): its columns that hold locations in one document, and its
 /// document column. `combining::one_document` reads a document's rows by them too.
-pub(super) fn located<'b>(rel: &str, base: &'b HashMap<String, Vec<usize>>) -> (&'b [usize], Option<usize>) {
+pub(super) fn located<'b>(rel: &str, base: &'b HashMap<String, rerail_blocks::vector::Vector<usize>>) -> (&'b [usize], Option<usize>) {
     const PAIR: &[usize] = &[0, 1];
     match rel {
         // A node's parent is in its document (`tape(n, par, size, depth)`, the climbs' walk).
@@ -751,18 +783,18 @@ pub(super) fn located<'b>(rel: &str, base: &'b HashMap<String, Vec<usize>>) -> (
         // A tree axis's node and its ancestor (`rr_has_<set>(n, a)`, `rr_inside_<set>(n, a)`): `has(r, c, "field")`
         // over a guest's root r makes c the guest's node.
         r if front::is_axis(r) => (PAIR, None),
-        r => (base.get(r).map_or(&[], Vec::as_slice), front::document_column(r)),
+        r => (base.get(r).map_or(&[], |v| v.as_slice()), front::document_column(r)),
     }
 }
 
 /// The views the lowering writes as rules (those the program does not take as inputs), and each base relation's
 /// location columns (its node columns and its document's).
-pub(super) fn bases(prog: &dyn ProgramFields) -> (BTreeSet<String>, HashMap<String, Vec<usize>>) {
+pub(super) fn bases(prog: &dyn ProgramFields) -> (BTreeSet<String>, HashMap<String, Vector<usize>>) {
     let inputs = prog.input_names();
     let views: BTreeSet<String> = VIEWS.iter().filter(|r| !inputs.iter().any(|i| i == *r)).map(|r| (*r).to_owned()).collect();
     let base: BTreeSet<String> = inputs.iter().cloned().chain(VIEWS.iter().filter(|r| views.contains(**r)).map(|r| (*r).to_owned())).filter(|r| !ENTRIES.iter().any(|(e, ..)| e == r)).collect();
-    let locations = |rel: &str| -> Vec<usize> {
-        let mut cols: Vec<usize> = prog.columns_of(rel).map_or_else(Vec::new, |c| c.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
+    let locations = |rel: &str| -> Vector<usize> {
+        let mut cols: Vector<usize> = prog.columns_of(rel).map_or_else(rerail_blocks::vector::Vector::new, |c| c.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
         if let Some(c) = crate::code_rule_dsl::typing::file_local::document_column(rel)
             && !cols.contains(&c)
         {
@@ -795,7 +827,7 @@ fn write_rule(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, v
 
 /// Hiding's last stage for one rule: its kind and field names qualified, its wildcards named, and its bounds
 /// (`bound`), by its facts (`analyse`; none where it is not reached).
-fn bounded(v: &Version, rule: &W, facts: &Facts, base_locations: &HashMap<String, Vec<usize>>, bound: u32) -> Final {
+fn bounded(v: &Version, rule: &W, facts: &Facts, base_locations: &HashMap<String, Vector<usize>>, bound: u32) -> Final {
     let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
     let src = v.rule(rule.src).expect("a rule of the input");
     let name = |s: Slot| v.text(src.var(s)).to_owned();
@@ -961,9 +993,12 @@ impl<'a> Writing<'a> {
                 L::Cmp { l, r, .. } => {
                     if let Some(L::Cmp { l: l0, r: r0, .. }) = was.get(node) {
                         for (now, then) in [(l, l0), (r, r0)] {
-                            if let (S::Str(now), S::Str(then)) = (now, then)
-                                && now != then
-                            {
+                            let pairs: Vec<(&String, &String)> = match (now, then) {
+                                (S::Str(now), S::Str(then)) => vec![(now, then)],
+                                (S::Member(_, now), S::Member(_, then)) => now.iter().zip(then).collect(),
+                                _ => Vec::new(),
+                            };
+                            for (now, then) in pairs.into_iter().filter(|(now, then)| now != then) {
                                 cmps.entry(*node).or_default().push((then.clone(), b.atom(now)));
                             }
                         }
@@ -1018,7 +1053,7 @@ impl Rewrite for Writing<'_> {
 /// enters no guest, so its analysis is empty, and is not made: in a policy most rules are such.
 fn reaching(rules: &[W], seeds: &[Facts]) -> Vec<bool> {
     // A worklist over each relation's readers: a rule is looked at once, and again only when it is marked.
-    let mut readers: HashMap<&str, Vec<usize>> = HashMap::default();
+    let mut readers: HashMap<&str, Vector<usize>> = HashMap::default();
     let mut out = vec![false; rules.len()];
     let mut work = Vec::new();
     for (i, rule) in rules.iter().enumerate() {
@@ -1146,12 +1181,12 @@ fn asking(prog: &dyn ProgramFields, rules: &[W]) -> BTreeSet<String> {
 ///   edits made.
 struct Delta {
     /// Each relation's rules, by head.
-    heads: HashMap<String, Vec<usize>>,
+    heads: HashMap<String, Vector<usize>>,
     /// The rules reading each relation in a positive atom: what reaching and the fixpoints follow. An edited rule is
     /// listed under the relation it read too (a superset: following it looks at one rule more, and changes nothing).
-    readers: HashMap<String, Vec<usize>>,
+    readers: HashMap<String, Vector<usize>>,
     /// The rules reading each relation in any literal: whose analysis a change of its columns changes.
-    any_readers: HashMap<String, Vec<usize>>,
+    any_readers: HashMap<String, Vector<usize>>,
     reaches: Vec<bool>,
     /// The relations a rule reaching a guest derives.
     made: std::collections::HashSet<String>,
@@ -1202,12 +1237,12 @@ impl Delta {
 
     /// Brings the analysis to the rules as the round begins, `touched` being those changed since the round before (every
     /// rule at first); returns the rules the round analyses, in order.
-    fn round(&mut self, rules: &[W], prog: &dyn ProgramFields, seeds: &[Facts], base: &HashMap<String, Vec<usize>>, view: &dyn Fn(&str) -> bool, touched: &[usize]) -> Vec<usize> {
+    fn round(&mut self, rules: &[W], prog: &dyn ProgramFields, seeds: &[Facts], base: &HashMap<String, Vector<usize>>, view: &dyn Fn(&str) -> bool, touched: &[usize]) -> Vector<usize> {
         let first = std::mem::replace(&mut self.first, false);
         self.reaches.resize(rules.len(), false);
         // Reaching a guest, from the rules changed: one that enters, or reads a relation a reaching rule derives.
-        let mut newly: Vec<usize> = Vec::new();
-        let mut work: Vec<usize> = Vec::new();
+        let mut newly: Vector<usize> = rerail_blocks::vector::Vector::new();
+        let mut work: Vector<usize> = rerail_blocks::vector::Vector::new();
         for &i in touched {
             let rule = &rules[i];
             let enters = seeds.get(i).is_some_and(|s| !s.is_empty())
@@ -1271,7 +1306,7 @@ impl Delta {
                 before.insert(rel.clone(), old);
             }
         }
-        let which: Vec<usize> = cone.iter().flat_map(|r| self.heads.get(r.as_str()).into_iter().flatten().copied()).collect::<BTreeSet<usize>>().into_iter().collect();
+        let which: Vector<usize> = cone.iter().flat_map(|r| self.heads.get(r.as_str()).into_iter().flatten().copied()).collect::<BTreeSet<usize>>().into_iter().collect();
         let mut lost: BTreeSet<String> = BTreeSet::new();
         fixpoint(rules, base, seeds, &self.reaches, &self.readers, &mut self.carried, which, &mut lost, &|facts, t, slot| {
             let definite = matches!(t, S::Var(x) if facts.get(x).is_some_and(|f| f.definite));
@@ -1302,12 +1337,12 @@ impl Delta {
 #[allow(clippy::too_many_arguments)]
 fn fixpoint(
     rules: &[W],
-    base: &HashMap<String, Vec<usize>>,
+    base: &HashMap<String, Vector<usize>>,
     seeds: &[Facts],
     reaches: &[bool],
-    readers: &HashMap<String, Vec<usize>>,
+    readers: &HashMap<String, Vector<usize>>,
     carried: &mut HashMap<String, Vec<Fact>>,
-    start: Vec<usize>,
+    start: Vector<usize>,
     changed: &mut BTreeSet<String>,
     step: &dyn Fn(&Facts, &S, &mut Fact) -> bool,
 ) {
@@ -1335,7 +1370,7 @@ fn fixpoint(
 }
 
 /// A rule's variables that are scoped, and their grammars; `seed` holds what a specialized copy's head is.
-fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<String, Vec<Fact>>, seed: &Facts) -> Facts {
+fn analyse(rule: &W, base: &HashMap<String, Vector<usize>>, carried: &HashMap<String, Vec<Fact>>, seed: &Facts) -> Facts {
     let mut facts: Facts = seed.clone();
     let positive = || rule.body.iter().filter_map(|(_, l)| l.positive());
     // Seeds: the guest relations' guest columns, with the grammar a constant names.
@@ -1352,16 +1387,23 @@ fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<Strin
             }
         }
     }
-    // Derived relations' carried columns.
-    for a in positive() {
-        if let Some(cols) = carried.get(a.rel.as_str()) {
+    // Derived relations' carried columns: the definite ones first. A rule's atoms bind one variable together, so a
+    // node a definite column names a grammar of is that grammar's whatever a column that only may hold a guest's node
+    // says: `value`'s node may be an `eslintDirective` comment's (a library asks for those), and joined with
+    // `vexpr`'s TypeScript node, a context's `kind(e, "string"), value(e, x)` knew no grammar and named the kind in
+    // the host's (decision 0597).
+    for definite in [true, false] {
+        for a in positive() {
+            let Some(cols) = carried.get(a.rel.as_str()) else { continue };
             for (c, f) in cols.iter().enumerate() {
                 // A column rules fill from guests of several grammars (`""`: a rule per dialect of a view, decision
                 // 0222) says nothing of this rule's: a guest relation here names it.
-                if (f.scoped || f.grammar.is_some())
+                if (f.definite && f.scoped) == definite
+                    && (f.scoped || f.grammar.is_some())
                     && let Some(x) = a.args.get(c).and_then(S::var)
                 {
-                    let grammar = f.grammar.clone().filter(|g| !g.is_empty());
+                    let named = facts.get(&x).is_some_and(|e| e.definite && e.grammar.as_ref().is_some_and(|g| !g.is_empty()));
+                    let grammar = f.grammar.clone().filter(|g| !g.is_empty() && (definite || !named));
                     facts.entry(x).or_default().join(&Fact { definite: f.definite && f.scoped, grammar, ..f.clone() });
                 }
             }

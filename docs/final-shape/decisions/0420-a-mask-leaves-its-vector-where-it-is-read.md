@@ -1,8 +1,8 @@
 # 0420: A mask leaves its vector where it is read
 
-Status: decided (the user, 2026-11-18: "okay please try that. I would like the compiler to do
-it automatically if possible", on relieving integer register pressure with vector or floating
-point registers). Follows 0069, 0417 and 0418.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: "okay please try that. I would like the compiler to
+do it automatically if possible", on relieving integer register pressure with vector or floating point registers).
+Follows 0069, 0417 and 0418.
 
 ## Intro
 

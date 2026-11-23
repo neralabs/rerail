@@ -70,6 +70,21 @@ pub fn map_zeroed(len: usize) -> Option<*mut u8> {
     sys::map(len)
 }
 
+/// `len` bytes (whole pages) of address space, zeroed by the system, committed only as [`commit`] commits a prefix of
+/// it (Unix: at once as address space, its pages committed as they are touched). Given back with [`unmap`].
+pub fn reserve(len: usize) -> Option<*mut u8> {
+    sys::reserve(len)
+}
+
+/// `[at, at + len)` of a [`reserve`]d range committed (Windows; Unix commits pages as they are touched): false where
+/// the system refused.
+///
+/// # Safety
+/// The range lies in one range `reserve` gave.
+pub unsafe fn commit(at: *mut u8, len: usize) -> bool {
+    unsafe { sys::commit(at, len) }
+}
+
 /// Gives back memory [`map_zeroed`] gave.
 ///
 /// # Safety
@@ -210,6 +225,16 @@ mod sys {
         (p != libc::MAP_FAILED).then_some(p.cast())
     }
 
+    pub fn reserve(len: usize) -> Option<*mut u8> {
+        map(len)
+    }
+
+    /// # Safety
+    /// The caller's (`super::commit`): nothing to do, pages are committed as they are touched.
+    pub unsafe fn commit(_at: *mut u8, _len: usize) -> bool {
+        true
+    }
+
     /// # Safety
     /// `[at, at + len)` is whole pages of a mapping `map` made.
     pub unsafe fn guard(at: *mut u8, len: usize) {
@@ -348,6 +373,19 @@ mod sys {
         // SAFETY: fresh memory, zeroed by the system.
         let p = unsafe { VirtualAlloc(std::ptr::null_mut(), len, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) };
         (!p.is_null()).then_some(p.cast())
+    }
+
+    pub fn reserve(len: usize) -> Option<*mut u8> {
+        // SAFETY: fresh address space, nothing committed.
+        let p = unsafe { VirtualAlloc(std::ptr::null_mut(), len, MEM_RESERVE, PAGE_READWRITE) };
+        (!p.is_null()).then_some(p.cast())
+    }
+
+    /// # Safety
+    /// The caller's (`super::commit`).
+    pub unsafe fn commit(at: *mut u8, len: usize) -> bool {
+        // SAFETY: within a range `reserve` gave; committed pages are zeroed by the system.
+        !unsafe { VirtualAlloc(at.cast(), len, MEM_COMMIT, PAGE_READWRITE) }.is_null()
     }
 
     /// # Safety

@@ -1,6 +1,6 @@
 # 0056: Bounded cross-file rounds are a program's declaration; typing answers are shared facts
 
-Status: proposed (2026-11-07)
+Status: superseded by 0065 / 0276 §9 (audited 2026-11-23). Proposed (2026-11-07)
 
 ## Intro
 

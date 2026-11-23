@@ -55,9 +55,7 @@ pub const JOB_BACKOFF_MAX: Duration = Duration::from_millis(500);
 /// How long a busy job is run again before it is given up (the run's end waits for it meanwhile).
 pub const JOB_DEADLINE: Duration = Duration::from_secs(120);
 
-/// What a job writes, named so a read of it can find the job (a digest of the table and its key).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Key(pub [u8; 32]);
+pub use rerail_store_base::content_store::write_back::Key;
 
 /// The WAL's size past which the writer's checkpointer copies it into the database (decision 0308).
 const CHECKPOINT_WAL_BYTES: u64 = 64 << 20;
@@ -65,18 +63,6 @@ const CHECKPOINT_WAL_BYTES: u64 = 64 << 20;
 /// The writer's page cache, KiB (decision 0308): a wave's changed pages, where the readers' connections keep 1 MB.
 const WRITER_CACHE_KIB: i64 = 32 << 10;
 
-impl Key {
-    /// The key of `parts` (a table's name, then its key's bytes).
-    pub fn of(parts: &[&[u8]]) -> Key {
-        use sha2::{Digest as _, Sha256};
-        let mut hash = Sha256::new();
-        for p in parts {
-            hash.update((p.len() as u64).to_le_bytes());
-            hash.update(p);
-        }
-        Key(hash.finalize().into())
-    }
-}
 
 /// What a job's rows hold of this process's atoms (decision 0170): after a fork, its ids and the store's differ.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1282,10 +1268,17 @@ mod tests {
     /// A job busy past its deadline is given up, busy; any other error is not run again.
     #[test]
     fn a_job_busy_past_its_deadline_or_failing_otherwise_is_given_up() {
+        // Busy is run again: twice busy, then done, well within the deadline.
+        let mut runs = 0;
+        let (outcome, busy) = run_job(|| { runs += 1; if runs <= 2 { Err(StoreError::Busy) } else { Ok(()) } }, JOB_DEADLINE);
+        assert!(outcome.is_ok());
+        assert_eq!((runs, busy), (3, 2));
+        // Busy past the deadline is given up, busy: each run counted. How many runs fit in it is the clock's (a
+        // first run slower than the deadline leaves one), so it is not asserted.
         let mut runs = 0;
         let (outcome, busy) = run_job(|| { runs += 1; Err(StoreError::Busy) }, Duration::from_millis(20));
         assert!(matches!(outcome, Err(StoreError::Busy)));
-        assert!(busy == runs && runs > 1, "{runs} runs");
+        assert!(busy == runs && runs >= 1, "{runs} runs");
         let mut runs = 0;
         let (outcome, busy) = run_job(|| { runs += 1; Err(StoreError::Invalid("no".into())) }, JOB_DEADLINE);
         assert!(matches!(outcome, Err(StoreError::Invalid(_))));
@@ -1458,8 +1451,8 @@ mod tests {
     fn a_runs_wave_is_written_whole_at_its_boundary() {
         let (dir, store) = store("waves");
         let other = ContentStore::open(&store.database_path).unwrap();
-        let kept = |s: &ContentStore, i: u8| s.stat_blob([i; 32]).unwrap().is_some();
-        let put = |s: &ContentStore, i: u8| s.write_back("blob", 0, vec![], job(move |s| s.put_stat_blob([i; 32], b"kept")));
+        let kept = |s: &ContentStore, i: u8| probed(s, i).is_some();
+        let put = |s: &ContentStore, i: u8| s.write_back("blob", 0, vec![], job(move |s| put_probe(s, i, b"kept")));
         let waves = run_waves();
         for i in 0..3 {
             put(&store, i);
@@ -1502,7 +1495,7 @@ mod tests {
         let d = Arc::clone(&done);
         store.write_back("blob", 0, vec![], job(move |s| {
             std::thread::sleep(std::time::Duration::from_millis(50));
-            s.put_stat_blob([1; 32], b"kept")?;
+            put_probe(s, 1, b"kept")?;
             *d.lock().unwrap() = true;
             Ok(())
         }));
@@ -1510,9 +1503,21 @@ mod tests {
         drop(hold);
         assert!(*done.lock().unwrap());
         let again = ContentStore::open(&path).unwrap();
-        assert_eq!(again.stat_blob([1; 32]).unwrap().as_deref(), Some(&b"kept"[..]));
+        assert_eq!(probed(&again, 1).as_deref(), Some(&b"kept"[..]));
         drop(again);
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// A write these tests make and read back: a source of `bytes` and `key`.
+    fn put_probe(s: &ContentStore, key: u8, bytes: &[u8]) -> StoreResult<()> {
+        s.put_source(&[bytes, &[key]].concat(), &[]).map(drop)
+    }
+
+    /// What `put_probe` wrote under `key`, as the store's file holds it now.
+    fn probed(s: &ContentStore, key: u8) -> Option<Vec<u8>> {
+        let id = s.source_by_hash(crate::content_store::HashKey::sha256(&[&b"kept"[..], &[key]].concat())).unwrap()?;
+        let mut bytes = s.get_source(id).unwrap();
+        assert_eq!(bytes.pop(), Some(key));
+        Some(bytes)
+    }
 }

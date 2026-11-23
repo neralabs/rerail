@@ -1,7 +1,6 @@
 # 0014: The slice's entry points keep the wave's rows per scope; a warm run evaluates changed documents only
 
-Status: accepted
-Date: 2026-10-30
+Status: built (audited 2026-11-23). Accepted Date: 2026-10-30
 
 ## Question
 06 S6: `slice::audit` and `slice::apply` take a scope from a root tree to its finding keys. Cold

@@ -1,10 +1,11 @@
 # 0353: Blocks are never copied: every reader reads the data where it lives
 
-Status: decided (2026-11-17), by the user: "the entire point is that the CPU and GPU kernels all operate on exactly
-the same linear data"; "it must be clear EVERYWHERE that blocks NEVER get copied into different data-structures for
-'convenience'". The plan below is being built. Supersedes the parts of 0289 §1–2, 0293 §6 and 0325 step 5 named in
-"What it replaces". Follows 0140 (the tape is the engine's bytes), 0266 (blocks), 0293 (one tape API, read in place),
-0310 (reads written once, three backends) and 0325 (relations are blocks).
+Status: partly built (audited 2026-11-23). Left: the marked copies of steps 3, 4/4a, 6, 7 and 8 (30 sites) are still
+to be removed. Decided (2026-11-17), by the user: "the entire point is that the CPU and GPU kernels all operate on
+exactly the same linear data"; "it must be clear EVERYWHERE that blocks NEVER get copied into different
+data-structures for 'convenience'". The plan below is being built. Supersedes the parts of 0289 §1–2, 0293 §6 and 0325
+step 5 named in "What it replaces". Follows 0140 (the tape is the engine's bytes), 0266 (blocks), 0293 (one tape API,
+read in place), 0310 (reads written once, three backends) and 0325 (relations are blocks).
 
 Amended between memory domains by 0440 §7.2 (the user, 2026-11-18): within one domain (a host's RAM and its unified GPUs) this holds as written; between domains (a discrete GPU's memory, another host) a block is copied as the same bytes, never into another data structure, and the engine keeps the copies coherent.
 
@@ -303,11 +304,20 @@ program read them, and `Batch::made` bound those rows in place of the views (`li
 no span: 3 interleaved pairs at load 23–25, `extra document rows` 0.094–0.135 s and 254–271 MB allocated to none;
 findings 1,629 in each; 73.5 B instructions (median) against 80.2 B.
 
-Where spans are made, the nodes' and tokens' place rows are still made beside the spans' (the spans' are derived
-facts; the nodes' are copies of tape answers), and bound in place of the view. The view already covers the whole
-source and its lines (`Locs::positions`, the `ExtraSpan::Line` ids); the other spans (`src_line_lf`, `tape_line`,
-matches, comments, `rx_span`) have their byte ranges only in `Extra`. Q216: those ranges written once into the
-batch's block, and the view reading them past its own positions, so nothing makes a node's place.
+**Where spans are made** (Q216, 2026-11-22), no node's or token's place is made either. In core.rr's shape `Extra`
+makes place rows for its spans alone (`Extra::node_places` is false): a match, a comment no node is, `source` and
+`src_line`. A span is a derived fact, placed once where it is made (`LineTable::place`). Each place relation is bound
+as the `Loc` view's rows, then those (`places::Places`, `places::join`). Two branches built this at once (this one
+and benchmarks-on-integration's b5fe5fcaa6, which measured 71 MB of the M3's 150 MB batch block); the merge of
+2026-11-22 keeps one type. A lookup by id goes to the side that holds the id
+(`granules::is_extra`), so a probe of a node's place reads the tape and makes no document. The device reads it in
+place as one relation: the kernels' `vread` of a placed kind reads a row below the view's count through the views'
+reads, and a row past it from the spans' relation where it lies in its block (`PlacedDir`: the view's directory,
+the spans' block and descriptor, the view's rows). `views_made_on_the_device_are_the_hosts_rows` copies and indexes
+each place relation of a span-reading program on the device. Before, such a probe
+made the node's document and its group: on ep2's `body` edit, 38 unchanged documents, about 0.09 s of 4.0 s.
+`a_span_reader_s_places_are_the_view_s_then_the_spans` checks the made rows (spans' alone), the view's rows first,
+and each line span's place.
 
 **Step 3's other relations of row 7** (2026-11-17), each checked against "Not copies":
 - `visit_index` (CPython's visit order), `host_node` (a guest node's innermost host node, an axis's answer) and
@@ -316,7 +326,15 @@ batch's block, and the view reading them past its own positions, so nothing make
 - `intval` and `op_t` are read by no core.rr library rule; in core.rr's shape `NodeRows` runs only where a program
   reads them. In T's shape they come with `NodeRows`' eager `text`, `name` and `str`, deferred with Q121.
 - What row 7 keeps: `core_rr`'s and `NodeRows`' eager derived values (`text`, `name`, `value`'s literals, T's
-  rows), deferred (Q121), and the nodes' place rows beside spans (Q216).
+  rows), deferred (Q121).
+- core.rerail's tape answers that `core_rr` made as rows are views (2026-11-22): `op` (`View::Op`: a numbered node's
+  anonymous children, the rank item `Item::Op`, zero-width ones included; a Python two-word operator is one child,
+  the grammar's alias, so no row is made for it or for any other), `end_point` (`View::End`: a node's position among `Locs::ends`),
+  `spread` (`View::Spread`: a rank item the walk marks from the code table) and the token order, `first_token`,
+  `last_token`, `token_before`, `token_after` (`View::Tok`, `syntax/tokens.rs`): the lexemes are a rank item,
+  each answer a rank and a select, each relation's rows the places marked as having one. The rank index's groups
+  are 15 words for its ten items. Tests hold each to what `core_rr` made (`the_token_order_is_the_sorted_tokens`,
+  `core_rr_relations_hold_what_core_rr_says`, `op_is_every_anonymous_child_and_op_ats_two_word_operators`).
 
 Found on the way and fixed:
 - `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by
@@ -667,10 +685,13 @@ Each step ends with:
          `[ns, starts[ns], ne, ends[ne]]`; the byte loop goes). The entry holds the positions' counts and a run to the
          lines; `loc_line` (a relation's read of the same body as `lines_line`) finds a line. A guest's places are
          its host's lines through its placement, a copied stretch or a point, from the entry's scalars (decision
-         0055). A normalized string's pieces and an embedder's segments live in no block: such a batch makes its
-         places (counted, `views.refused.locs.guest_*`). On hogql every guest is a copied stretch.
-       - Left made: the axis (step 5); a batch whose tapes are not on the device (the device's budget spent); a
-         batch with a guest whose placement is not a copied stretch or a point. `expand_view`, `VIEW_EXPAND`,
+         0055). A normalized string's pieces and an embedder's segments live in no block: such a guest's entry holds
+         its spans placed (`ViewDoc::placed`, `PLACED_TABLE`: each position's host span, made once into the block
+         as the host places it, `Placement::host`), so its batch's places are read in place too (2026-11-22: a
+         stratum over a Vue guest made `line` and `docof` by launches of their own, past decision 0603's one
+         launch). On hogql every guest is a copied stretch.
+       - Left made: the axis (step 5); a batch whose tapes are not on the device (the device's budget spent).
+         `expand_view`, `VIEW_EXPAND`,
          ChunkDoc's node columns and `fill_lines`/`fill_locs` (row 14) stay for them.
        - Found on the way: the slabs holding tapes were never retired (4d's first part); now they are retired once
          only the pool holds them, so a long session frees them with its tapes.

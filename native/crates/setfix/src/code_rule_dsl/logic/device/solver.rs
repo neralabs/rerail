@@ -1,6 +1,7 @@
 //! The solver's device interface (`SolverDevice`): setfix's seed joins and recursive fixpoints over its store, and
 //! columns' statistics, which the planner reads. A solver device is a device (`Device`, the run's solvers'), and
 //! registering it registers both (`register`).
+use rerail_blocks::vector::Vector;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -23,12 +24,13 @@ pub trait SolverDevice: Device {
     fn refuse(&self, why: String);
     /// The seed joins `rules` (plan, rule, head relation) in one batch, their rows into `fresh`: per rule, the rows
     /// made. `names`: the run's symbols, for texts the device makes into heads.
-    fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String>;
+    fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vector<u64>, String>;
     /// Encodes the seed joins `rules` into this thread's device wave (`lanes::wave`), to be finished by `resume`
-    /// once the wave ran: the ticket, or `None` when they cannot wait in it (they then run by `run_joins`).
-    fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String>;
+    /// once the wave ran: the ticket, or `None` when they cannot wait in it (they then run by `run_joins`). `store`:
+    /// the relations, as `resume` will find them (its heads' rows placed by the same program).
+    fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner) -> Result<Option<u64>, String>;
     /// Finishes the joins `submit` sent with ticket `ticket`: their rows into `fresh`, per rule the rows made.
-    fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String>;
+    fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vector<u64>, String>;
     /// Whether the plan reads its own component's relations (a delta join of a recursive component).
     fn reads_own(&self, plan: &JoinPlan) -> bool;
     /// A recursive component's fixpoint on the device: the `seeds` once, then the `deltas` round by round until no
@@ -42,7 +44,7 @@ pub trait SolverDevice: Device {
         store: &Store,
         names: &Interner,
         fresh: &mut [Fresh],
-    ) -> Result<Vec<u64>, String>;
+    ) -> Result<Vector<u64>, String>;
     /// Columns' exact statistics and `k` most common values (decision 0209 §6), in one batch. A relation's column the
     /// device holds is read where it is (decision 0261); the others are gathered. Also how many were read in place.
     fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused>;

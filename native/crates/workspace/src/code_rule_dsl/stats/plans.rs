@@ -29,7 +29,7 @@
 //! compiled into it, never answered from memory alone.
 
 use super::cache::Cache;
-use crate::content_store::kept_facts::{BlockFlat, KeptPut, KeptSpace, KeptWhat};
+use crate::content_store::kept_facts::{KeptPut, KeptSpace, filled_put};
 use crate::content_store::{ContentStore, StoreResult};
 use rerail_blocks::kept::{FactKey, KeptRead as _};
 use rusqlite::{Connection, OptionalExtension, Result, params};
@@ -102,25 +102,13 @@ fn rows_of(kept: &KeptSpace, rel: &str, plan: &PlanId) -> Vec<Vec<i64>> {
     (0..entry.rows.len()).map(|i| entry.row(i)).filter(|r| r[..4] == w).collect()
 }
 
-/// `plan`'s partition of `rel`: `n` rows of `width` words, which `fill` gives row by row, written into a block of
-/// their own as they are given (`BlockFlat`, never a heap vector) and digested there; gone when `n` is 0.
+/// `plan`'s partition of `rel`: `n` rows of `width` words, which `fill` gives row by row (`kept_facts::filled_put`).
 fn put(rel: &str, plan: &PlanId, width: usize, n: usize, fill: impl FnOnce(&mut dyn FnMut(i64))) -> KeptPut {
-    let (what, digest) = if n == 0 {
-        (KeptWhat::Gone, 0)
-    } else {
-        let mut block = BlockFlat::new(n, width, true);
-        let mut h = Sha256::new();
-        {
-            let mut w = block.writer();
-            fill(&mut |v| {
-                h.update(v.to_le_bytes());
-                w.push(v);
-            });
-            debug_assert_eq!(w.written(), n * width, "{rel}: whole rows");
-        }
-        (KeptWhat::Picked(Box::new(block)), u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes")))
-    };
-    KeptPut { rel: rel.to_owned(), ident: ident(rel), part: part(plan), digest, reads: Vec::new(), types: vec![b'i'; width], what }
+    filled_put(rel, ident(rel), part(plan), &vec![b'i'; width], n, |push| {
+        fill(push);
+        Ok::<(), crate::content_store::StoreError>(())
+    })
+    .expect("whole rows")
 }
 
 /// `bytes` as words, eight bytes each, the last padded with zeros.
@@ -179,7 +167,7 @@ impl Default for Plans {
 
 impl Plans {
     /// The store's kept plans, opened for reads (`valid`) that may run where the store's connection is held.
-    pub fn open(store: &ContentStore) -> StoreResult<Option<KeptSpace>> {
+    pub fn open(store: &ContentStore) -> StoreResult<Option<std::sync::Arc<KeptSpace>>> {
         store.kept_space(&space())
     }
 

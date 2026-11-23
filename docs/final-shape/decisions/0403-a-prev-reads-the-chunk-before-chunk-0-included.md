@@ -1,9 +1,8 @@
 # 0403: A `prev` reads the chunk before, chunk 0 included
 
-Status: decided (the user, 2026-11-18, after a spike measured this step at ±1% and it was taken
-out: "profitable is not 'less cycles'. It's 'allows us to move closer to the correct structure'
-too … How can we get to SIMDJSON performance if we can't get to the same structure?"). Follows
-0402.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18, after a spike measured this step at ±1% and it was
+taken out: "profitable is not 'less cycles'. It's 'allows us to move closer to the correct structure' too … How can we
+get to SIMDJSON performance if we can't get to the same structure?"). Follows 0402.
 
 ## Intro
 

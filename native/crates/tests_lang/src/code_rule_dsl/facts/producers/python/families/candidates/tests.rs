@@ -5,7 +5,7 @@ fn core_eligibility_equals_reference_on_known_inapplicable_and_broken_expression
     use crate::code_rule_dsl::{
         facts::{core, producers::python::python_facts},
         language::{GrammarDialect, tape_tag},
-        lines::{LineTable, Terminators},
+        lines::LineTable,
         tape::{Grammar as TapeGrammar, TapeDoc, TapeImage},
     };
     use ast_grep_core::{AstGrep, tree_sitter::StrDoc};
@@ -27,7 +27,7 @@ fn core_eligibility_equals_reference_on_known_inapplicable_and_broken_expression
             root.root().get_doc(),
             Arc::new(LineTable::new(
                 source,
-                Terminators::of(GrammarDialect::Python),
+                crate::code_rule_dsl::lines::terminators(GrammarDialect::Python),
             )),
         )
         .unwrap();
@@ -38,7 +38,7 @@ fn core_eligibility_equals_reference_on_known_inapplicable_and_broken_expression
         // Every expression/node, including malformed ancestors, checks conservative handling.
         for node in root.root().dfs() {
             assert_eq!(
-                eligibility(&g, &facts, node.node_id() as u32),
+                facts.alone(|f| eligibility(&g, f, node.node_id() as u32)),
                 python_facts::qualification_chain(&node),
                 "{source}: {}",
                 node.text()

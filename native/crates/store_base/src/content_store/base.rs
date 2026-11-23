@@ -620,8 +620,17 @@ impl FileStat {
 }
 
 /// How long before its recording an entry's mtime must be for the entry to be trusted (git's racy rule, with margin
-/// for file systems whose mtime is coarse).
+/// for file systems whose mtime is coarse): the default of [`racy_ns`].
 pub const RACY_NS: i64 = 2_000_000_000;
+
+/// The racy window the run under way uses: `RERAIL_RACY_MS` milliseconds where set (a file system whose times are
+/// exact to the nanosecond needs no 2 s margin: the tests of runs that trust their unchanged files by their stat run
+/// past a window of 100 ms, not one of 2 s each), else [`RACY_NS`]. Read once a run (`setting`).
+pub fn racy_ns() -> i64 {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| {
+        rerail_prof::code_rule_dsl::logic::profile::var("RERAIL_RACY_MS").ok().and_then(|v| v.trim().parse::<i64>().ok()).filter(|ms| *ms >= 0).map_or(RACY_NS, |ms| ms.saturating_mul(1_000_000))
+    })
+}
 
 impl TapeId {
     pub const fn for_benchmark(value: i64) -> Self {

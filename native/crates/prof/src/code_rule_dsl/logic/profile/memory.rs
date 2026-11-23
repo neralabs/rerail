@@ -248,8 +248,14 @@ pub(super) fn sample() {
             rerail_prof::heap::name_thread("profile memory (the memory sampler)");
             let start = std::time::Instant::now();
             let mut last_max = footprint().1;
+            let mut ticks = 0u64;
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(every_ms));
+                // The queues the system's nameless threads serve, about every 50 ms (`note_dispatch_labels`).
+                ticks += 1;
+                if ticks.is_multiple_of((50 / every_ms.max(1)).max(1)) {
+                    super::note_dispatch_labels();
+                }
                 let (now, max) = footprint();
                 let (live, resident) = heap();
                 let at = start.elapsed().as_secs_f64();
@@ -395,11 +401,12 @@ pub(super) fn sampled_report(r: &mut String) {
         }
     }
     if !s.blocks.is_empty() {
-        let total: usize = s.blocks.iter().map(|b| b.2).sum();
+        // Rows of no blocks (what a block of every array holds, by span: `rows::held_by_span`) are inside the others'.
+        let total: usize = s.blocks.iter().filter(|b| b.3 > 0).map(|b| b.2).sum();
         let _ = writeln!(r, "Relations' blocks live then, by the span that made them (at {} MB footprint; {} MB used in all, of {} blocks):",
             mb(s.heap_at as f64), total >> 20, s.blocks.iter().map(|b| b.3).sum::<usize>());
         let lives = ["a run's", "sources'", "kept", "a device run's own"];
-        for (id, life, bytes, n, by) in s.blocks.iter().take(30) {
+        for (id, life, bytes, n, by) in s.blocks.iter().take(40) {
             let by = if by.is_empty() { String::new() } else { format!(", by {by}") };
             let _ = writeln!(r, "{:>10} MB  {:>5} blocks, {}, made in {}{by}", bytes >> 20, n, lives.get(*life as usize).unwrap_or(&"?"), super::short(&rerail_prof::heap::name(*id), 140));
         }

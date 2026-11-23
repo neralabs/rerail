@@ -1,6 +1,7 @@
 # 0330: A file's start read ahead delays nothing
 
-Status: decided (2026-11-16); landed on the CPU, and on Metal (2026-11-18, below). Part of 0177's token loop, after 0323.
+Status: built (audited 2026-11-23). Decided (2026-11-16); landed on the CPU, and on Metal (2026-11-18, below). Part of
+0177's token loop, after 0323.
 
 ## Intro
 

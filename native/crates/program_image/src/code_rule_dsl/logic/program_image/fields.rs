@@ -163,7 +163,10 @@ impl Builder<'_> {
         let mut facts = Facts::new();
         program_facts::write_field(&mut facts, ABOUT, &f);
         for &name in f.relations() {
-            let rows: Vec<Vec<Cell>> = facts.remove(name).unwrap_or_default().iter().map(|row| row.iter().map(|v| self.cell(v)).collect()).collect();
+            let mut rows = super::encoder::Rows::new();
+            for row in facts.remove(name).unwrap_or_default().iter() {
+                rows.push_cells(row.iter().map(|v| self.cell(v)));
+            }
             self.set_about_rows(name, rows);
         }
     }
@@ -499,7 +502,7 @@ impl ProgramFields for Builder<'_> {
     }
     fn fact_rows(&self, rel: &str) -> Vec<List<Value>> {
         let Some(rows) = self.fact_cells(rel) else { return Vec::new() };
-        rows.into_iter().map(|row| List::from(row.into_iter().map(|c| self.value_of(c)).collect::<Vec<_>>())).collect()
+        rows.iter().map(|row| List::from(row.iter().map(|&c| self.value_of(c)).collect::<Vec<_>>())).collect()
     }
     fn about(&self, relations: &[&str]) -> Facts {
         let mut out = Facts::new();
@@ -509,8 +512,8 @@ impl ProgramFields for Builder<'_> {
             if rows.is_empty() {
                 continue;
             }
-            let rows = rows.into_iter().map(|cells| {
-                let row: Vec<Value> = std::iter::once(Value::Str(ABOUT.to_owned().into())).chain(cells.into_iter().skip(1).map(|c| self.value_of(c))).collect();
+            let rows = rows.iter().map(|cells| {
+                let row: Vec<Value> = std::iter::once(Value::Str(ABOUT.to_owned().into())).chain(cells.iter().skip(1).map(|&c| self.value_of(c))).collect();
                 List::from(row)
             });
             out.insert(name.to_owned(), rows.collect());
@@ -606,10 +609,10 @@ impl FieldsW<'_, '_> {
     pub fn drop_facts(&mut self, rel: &str) {
         self.0.drop_facts(rel)
     }
-    pub fn set_fact_cells(&mut self, rel: &str, rows: Vec<Vec<Cell>>) {
+    pub fn set_fact_cells(&mut self, rel: &str, rows: super::encoder::Rows) {
         self.0.set_fact_cells(rel, rows)
     }
-    pub fn set_about_rows(&mut self, name: &str, rows: Vec<Vec<Cell>>) {
+    pub fn set_about_rows(&mut self, name: &str, rows: super::encoder::Rows) {
         self.0.set_about_rows(name, rows)
     }
     pub fn set_inputs<S: AsRef<str>>(&mut self, names: &[S]) {

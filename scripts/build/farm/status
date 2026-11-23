@@ -19,22 +19,23 @@ import farm  # noqa: E402
 
 
 def speed(name, base):
-    """`name`'s compile benchmark (`bench`), as a line: its times at each job count, its 8-job time
-    against this Mac's (`base`), and the date; None when it has not been measured."""
+    """`name`'s compile benchmark (`bench`), as a line: its times at each job count, its time at its own
+    cores against this Mac's at its own (`base`, `farm.bench_rating`), and the date; None when it has
+    not been measured."""
     r = farm.read_json(farm.state("bench", name + ".json"), None)
     runs = {int(j): x for j, x in (r or {}).get("runs", {}).items() if x.get("s") is not None}
     if not runs:
         return None
     parts = [f"{x['s']:.0f} s at {j} job{'s' if j > 1 else ''}{' (contended)' if x.get('contended') else ''}" for j, x in sorted(runs.items())]
-    top = runs[max(runs)]
-    rel = f"; {top['s'] / base:.2f}x this Mac's time" if base and name != "local" else ""
+    j, s = farm.bench_rating(name)
+    top = runs[j]
+    rel = f"; at {j} jobs {s / base:.2f}x this Mac's time" if base and name != "local" else ""
     return f"compile benchmark (bench): {', '.join(parts)}{rel}; measured {time.strftime('%Y-%m-%d', time.localtime(top['at']))}"
 
 
 def main(argv):
     cfg = farm.config()
-    local_bench = farm.read_json(farm.state("bench", "local.json"), {}).get("runs", {})
-    base = (local_bench.get(str(max(map(int, local_bench)))) or {}).get("s") if local_bench else None
+    base = (farm.bench_rating("local") or (None, None))[1]
     path = farm.config_path()
     rows = []
     for host in farm.hosts():

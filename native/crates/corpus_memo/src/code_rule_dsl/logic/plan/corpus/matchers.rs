@@ -19,7 +19,7 @@ pub use crate::code_rule_dsl::facts::core::ast_matches::{MOST_CAPTURES, PREFIX, 
 /// ([`demanded_by_roots`]). A matcher that does not lower fails the run, naming it.
 pub fn compiled(
     matchers: &[(String, String, Vec<String>)],
-    demand: &[Option<Vec<usize>>],
+    demand: &[Option<rerail_blocks::vector::Vector<usize>>],
     policies: &[serde_json::Value],
 ) -> Result<crate::code_rule_dsl::facts::vtab::syntax::Matchers, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "ast matchers lowered".into());
@@ -34,7 +34,7 @@ pub fn compiled(
 /// the atom is widened to the document where its body is the batch's own relations; this is that rule at node grain,
 /// where its body is the same wave's matchers. `None` where any read is not so joined: negated, in an aggregate, an
 /// output, or joined only with what the batch's rows or the inputs fill.
-pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]) -> Vec<Option<Vec<usize>>> {
+pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]) -> Vec<Option<rerail_blocks::vector::Vector<usize>>> {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
     let outputs = v.output_names();
     // The relations something besides matchers' roots fills: the inputs, native and lattice relations, and the
@@ -48,6 +48,22 @@ pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]
         .collect();
     let index: HashMap<&str, usize> = matchers.iter().enumerate().map(|(k, (rel, _, _))| (rel.as_str(), k)).collect();
     let mut known = HashMap::new();
+    // Each rule's body once, and each matcher relation's reads in them (rule, literal), found in one pass: a scan of
+    // every rule for each matcher was 0.03 s of a warm run's 317 rules.
+    let bodies: Vec<Vec<Lit<'_>>> = v.rules().map(|rule| rule.body().map(|literal| literal.view()).collect()).collect();
+    let mut uses: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
+    for (r, body) in bodies.iter().enumerate() {
+        for (at, literal) in body.iter().enumerate() {
+            let atom = match *literal {
+                Lit::Atom(atom) | Lit::Agg { atom, .. } => atom,
+                _ => continue,
+            };
+            let rel = v.rel_name(atom.rel());
+            if index.contains_key(rel) {
+                uses.entry(rel).or_default().push((r, at));
+            }
+        }
+    }
     matchers
         .iter()
         .enumerate()
@@ -57,12 +73,12 @@ pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]
             }
             let mut by = BTreeSet::new();
             let mut read = false;
-            for rule in v.rules() {
-                let body: Vec<Lit<'_>> = rule.body().map(|literal| literal.view()).collect();
-                for (at, literal) in body.iter().enumerate() {
-                    let atom = match *literal {
-                        Lit::Atom(atom) if v.rel_name(atom.rel()) == rel.as_str() => atom,
-                        Lit::Agg { atom, .. } if v.rel_name(atom.rel()) == rel.as_str() => return None,
+            for &(r, at) in uses.get(rel.as_str()).into_iter().flatten() {
+                let body = &bodies[r];
+                {
+                    let atom = match body[at] {
+                        Lit::Atom(atom) => atom,
+                        Lit::Agg { .. } => return None,
                         _ => continue,
                     };
                     let node = atom.args().next().and_then(TermRef::var).filter(|_| !atom.neg())?;
@@ -114,7 +130,8 @@ fn filled_by_roots(
     visiting.push(key.clone());
     let mut found = Some(BTreeSet::new());
     let mut rules = 0;
-    for rule in v.rules().filter(|rule| v.rel_name(rule.head().rel()) == rel) {
+    // Its rules by the version's index of heads, in the rules' order.
+    for rule in v.rel(rel).into_iter().flat_map(|id| v.heads(id)) {
         rules += 1;
         let Some(var) = rule.head().args().nth(column).and_then(TermRef::var) else {
             found = None;

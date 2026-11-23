@@ -223,12 +223,12 @@ fn reference(d: &Directives, o: Options) -> Vec<(u32, &'static str, u32)> {
     out
 }
 
-/// The `\n`s of the file before the phase-2 position `s`.
+/// The line ends of the file (C's, `tape::LINE_ENDS`) before the phase-2 position `s`.
 fn count_lines(d: &Directives, s: usize) -> u32 {
     let src_end = d.p2.orig(s);
     // The file is read again from the phase-2 text and the removed ranges: the reference counts
     // the file's own bytes.
-    FILE.with(|f| f.borrow()[..src_end].iter().filter(|&&b| b == b'\n').count() as u32)
+    FILE.with(|f| rerail_tape_format::newlines::Lines::of(&f.borrow(), crate::tape::LINE_ENDS).line(src_end) as u32)
 }
 
 thread_local! {

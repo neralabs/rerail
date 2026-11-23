@@ -11,6 +11,9 @@
 //! `VACUUM INTO` and a rename, so a reader never sees half of one. A binary that registers no language (a lower
 //! crate's) cannot run phase 0: its template is an empty store, and it says so once.
 //!
+//! A store a test names (`TEST_TAPE_CACHE`, or one it hands a process it starts) begins as a copy of the template too,
+//! where it is not there yet (`begun`): a fresh store is one that holds nothing of the test's own program.
+//!
 //! A copy is a new store: the template has no identity, and a copy takes its own (`store_identity`) at its first open,
 //! as a store created does. So a copy is a clone and nothing more.
 use std::path::{Path, PathBuf};
@@ -128,14 +131,19 @@ fn make(path: &Path) {
     let _ = std::fs::remove_dir_all(&staging);
 }
 
-/// Phase 0 over every library module and the core program, then a run of the core program over an empty corpus:
-/// what a test's first run would do before it reads its own files.
+/// Phase 0 over every library module, the engine's phase programs and the core program, then a run of the core program
+/// over an empty corpus: what a test's first run would do before it reads its own files. Without the phase programs,
+/// each test whose runs had phases derived phase 1's graph (`typing/programs/sources.rerail`) in a bootstrap run of
+/// its own.
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
     let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
     let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rerail".to_owned())], phases: Vec::new() }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
+    if let Ok(phases) = dunce::canonicalize(super::phases::builtin_dir()) {
+        rule_files(&phases, &mut modules);
+    }
     modules.sort();
     seeds.extend(modules.into_iter().map(super::phase0::Seed::File));
     super::phase0::graphs(&seeds).map_err(|e| e.to_string())?;
@@ -143,6 +151,10 @@ fn fill(store: &Path) -> std::result::Result<(), String> {
     let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(program).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let corpus = templates().join("corpus");
     std::fs::create_dir_all(&corpus).map_err(|e| e.to_string())?;
+    // One Python file, so the run has phase 1 (`phases::sources`, over the source files of the run's language): its
+    // program, the same in every test's run of Python files, is prepared and stored here (decision 0073). Over no file
+    // phase 1 did not run, and each test process prepared `sources.rerail` again.
+    std::fs::write(corpus.join("a.py"), "import os\n\ndef f():\n    return os.sep\n").map_err(|e| e.to_string())?;
     let out = store.with_extension("out");
     let binding = crate::code_rule_dsl::typing::file_local::Binding::Cpu;
     super::run_with_options(&[&program], &corpus, None, &out, "program", binding, 1 << 18, &Default::default(), &serde_json::Value::Null).map_err(|e| e.to_string())?;
@@ -151,6 +163,11 @@ fn fill(store: &Path) -> std::result::Result<(), String> {
     let handle = crate::content_store::ContentStore::open(store).map_err(|e| e.to_string())?;
     handle.flush_atoms().map_err(|e| e.to_string())?;
     handle.written().map_err(|e| e.to_string())?;
+    // Its segments in one file each kind: every test store copies the template's files, and removes its copy at
+    // the end. Filled, the rule library's sources were one segment each (247 files, most of them one source), and
+    // copying and removing them was a fifth of a store-heavy test's thread (the reach index's, on m3).
+    handle.pack_object_segments().map_err(|e| e.to_string())?;
+    handle.pack_memo_pack().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -221,6 +238,38 @@ pub fn copy() -> Store {
         clone_dir(&beside(template, suffix), &beside(&path, suffix)).expect("a copy of the template's folders");
     }
     Store { dir, path }
+}
+
+/// The racy window (`RERAIL_RACY_MS`, `content_store::racy_ns`) of the tests whose runs trust their unchanged files by
+/// their stat: set on their child processes, or for their own runs (`switches::set`). Past the default 2 s they slept
+/// 2.1 s each (7 tests of the corpus), on file systems whose times are exact.
+pub const TEST_RACY_MS: &str = "100";
+
+/// Waits out `TEST_RACY_MS`, twice over: what was written before now is trusted by its stat by a run under it.
+pub fn past_test_racy_window() {
+    std::thread::sleep(std::time::Duration::from_millis(2 * TEST_RACY_MS.parse::<u64>().expect("a window in ms")));
+}
+
+/// The store a test names at `path` (`TEST_TAPE_CACHE`, or one it hands a child process) begun as a copy of the
+/// template where it is not there yet, as a test's own store is (`copy`). A store begun empty ran phase 0 over the rule
+/// library and planned the core program again, as `fill` does, before its test's own work: for a test of a few runs
+/// over a few files, most of its time (a child's cold run of the pickle policy over three files, 4.3 s, ran phase 0
+/// for 0.8 s of it). Not the template's own staging store, nor while the template is filled.
+pub fn begun(path: &Path) {
+    if filling() || path.starts_with(templates()) || path.exists() {
+        return;
+    }
+    let template = template();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).expect("a test store's directory");
+    }
+    // The folders first, then the file under a name of its own, renamed: a reader of the store's file finds what it names.
+    for suffix in FOLDERS {
+        clone_dir(&beside(template, suffix), &beside(path, suffix)).expect("a copy of the template's folders");
+    }
+    let at = path.with_extension(format!("{}.{}.begun", std::process::id(), nanos()));
+    clone_file(template, &at).expect("a copy of the template");
+    std::fs::rename(&at, path).expect("a test store, begun from the template");
 }
 
 thread_local! {

@@ -1,10 +1,10 @@
-//! The content store's tapes as `nera_tree` reads them (03 §17, the pure-SQL fallback): a tape's
-//! v9np image decoded from its `tape_objects` frame on first read, its `size` column read in
-//! place. The last few images are held (`HELD`), as SQLite holds pages. With each image its
-//! parents are rebuilt by one stack pass over the sizes (as `TapeDoc` restores them), so a parent
-//! or an ancestor chain is read, not found by descent from the root; this is a reader's working
-//! state, never stored (decision 0026). `RERAIL_TREE_DESCENT=1` finds them by descent instead,
-//! for the lab's comparison (list step 12).
+//! The content store's tapes as `nera_tree` reads them (03 §17, the pure-SQL fallback): a tape
+//! read from its `tape_objects` frame on first read, its sizes read in place. The last few images
+//! are held (`HELD`), as SQLite holds pages, each read in a batch of its own (a 16z tape's blocks
+//! decoded into a cache made for it, decision 0628 §6). A node's size and its parent are the tape's
+//! reads (`Tape::subtree_end`, `Tape::parent`): nothing walks the tape when it is loaded, and no
+//! node's parent is kept apart from it. `RERAIL_TREE_DESCENT=1` finds an ancestor chain by descent
+//! from the root instead, for the lab's comparison (list step 12).
 use super::tree::{Shared, Structure, descend};
 use crate::code_rule_dsl::language;
 use crate::code_rule_dsl::tape::{Grammar, TapeImage};
@@ -27,23 +27,16 @@ pub(super) struct StoreTapes {
 // mutex `Shared` wraps this in, and the module (with this) is dropped when the connection closes.
 unsafe impl Send for StoreTapes {}
 
-/// A decoded tape and, unless descent is asked for, each node's parent (`u32::MAX` at the root).
+/// A decoded tape, read in a batch of its own: its 16z blocks' cache, where it is 16z.
 struct Held {
     image: TapeImage,
-    parents: Option<Vec<u32>>,
+    cache: Option<rerail_tape_format::f16::ZCache>,
 }
 
-fn parents(image: &TapeImage) -> Vec<u32> {
-    let mut parents = Vec::with_capacity(image.node_count());
-    let mut open: Vec<(u32, u32)> = Vec::new();
-    for i in 0..image.node_count() as u32 {
-        while open.last().is_some_and(|&(_, end)| end <= i) {
-            open.pop();
-        }
-        parents.push(open.last().map_or(u32::MAX, |&(at, _)| at));
-        open.push((i, i + image.subtree_size(i as usize)));
+impl Held {
+    fn tape(&self) -> rerail_tape_format::tape::AnyTape<'_> {
+        self.image.tape_in(self.cache.as_ref())
     }
-    parents
 }
 
 fn invalid(message: impl Into<String>) -> rusqlite::Error {
@@ -94,8 +87,8 @@ impl StoreTapes {
         };
         // Its records' preorder is the node ids rows hold.
         let image = TapeImage::from_bytes(&bytes, &grammar).map_err(invalid)?;
-        let parents = std::env::var_os("RERAIL_TREE_DESCENT").is_none().then(|| parents(&image));
-        let image = Arc::new(Held { image, parents });
+        let cache = image.own_cache();
+        let image = Arc::new(Held { image, cache });
         if self.held.len() == HELD {
             self.held.pop_back();
         }
@@ -110,18 +103,23 @@ impl Structure for StoreTapes {
         if pre >= tape.image.node_count() {
             return Err(invalid("tree node outside its tape"));
         }
-        Ok(tape.image.subtree_size(pre) as usize)
+        Ok(rerail_tape_format::with_tape!(tape.tape(), |t| rerail_tape_format::tape::Tape::subtree_end(&t, pre) - pre))
     }
     fn ancestors(&mut self, fid: i64, node: usize, out: &mut Vec<i64>) -> Result<()> {
-        let tape = self.tape(fid)?;
-        let Some(parents) = &tape.parents else {
+        if std::env::var_os("RERAIL_TREE_DESCENT").is_some() {
             return descend(self, fid, node, out);
-        };
-        let mut at = *parents.get(node).ok_or_else(|| invalid("tree node outside its tape"))?;
-        while at != u32::MAX {
-            out.push(i64::from(at));
-            at = parents[at as usize];
         }
+        let tape = self.tape(fid)?;
+        if node >= tape.image.node_count() {
+            return Err(invalid("tree node outside its tape"));
+        }
+        rerail_tape_format::with_tape!(tape.tape(), |t| {
+            let mut at = rerail_tape_format::tape::Tape::parent(&t, node);
+            while let Some(p) = at {
+                out.push(p as i64);
+                at = rerail_tape_format::tape::Tape::parent(&t, p);
+            }
+        });
         Ok(())
     }
 }

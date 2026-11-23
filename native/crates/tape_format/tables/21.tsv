@@ -1,0 +1,384 @@
+# Tape format 16's choices for tape tag 21 (css), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+#   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
+# 169 codes; numbered by how often each is a node's over 6589 files, 7592743 nodes (`rerail-engine code-counts`).
+revision	4
+widths	1	1	1
+code	108	0	0	-	-
+code	149	0	0	-	-
+code	126	0	0	-	-
+code	66	0	0	-	-
+code	3	0	0	-	-
+code	93	0	0	-	-
+code	70	0	0	-	-
+code	120	0	0	-	-
+code	90	0	0	-	-
+code	89	0	0	-	-
+code	88	0	0	-	-
+code	61	0	0	-	-
+code	125	0	0	-	-
+code	100	0	0	-	-
+code	150	0	0	-	-
+code	123	0	0	-	-
+code	144	0	0	-	-
+code	94	0	0	-	-
+code	2	0	0	-	-
+code	121	0	0	-	-
+code	119	0	0	-	-
+code	56	0	0	-	-
+code	118	0	0	-	-
+code	99	0	0	-	-
+code	58	0	0	-	-
+code	48	0	0	-	-
+code	69	0	1	-	-
+code	28	0	0	-	-
+code	96	0	0	-	-
+code	55	0	0	-	-
+code	98	0	0	-	-
+code	142	0	0	-	-
+code	0	0	2	-	-
+code	97	0	0	-	-
+code	145	0	0	-	-
+code	31	0	0	-	-
+code	124	0	0	-	-
+code	64	0	0	-	-
+code	54	0	0	-	-
+code	0	0	3	-	-
+code	18	0	0	-	-
+code	19	0	0	-	-
+code	63	0	0	-	-
+code	111	0	0	-	-
+code	143	0	0	-	-
+code	77	0	0	-	-
+code	75	0	0	-	-
+code	40	0	0	-	-
+code	17	0	0	-	-
+code	80	0	0	-	-
+code	81	0	0	-	-
+code	146	0	0	-	-
+code	147	0	0	-	-
+code	102	0	0	-	-
+code	82	0	0	-	-
+code	92	0	0	-	-
+code	67	0	0	-	-
+code	47	0	0	-	-
+code	113	0	0	-	-
+code	49	0	0	-	-
+code	16	0	0	-	-
+code	87	0	0	-	-
+code	15	0	0	-	-
+code	39	0	0	-	-
+code	101	0	0	-	-
+code	12	0	0	-	-
+code	50	0	0	-	-
+code	35	0	0	-	-
+code	76	0	0	-	-
+code	86	0	0	-	-
+code	29	0	0	-	-
+code	33	0	0	-	-
+code	117	0	0	-	-
+code	83	0	0	-	-
+code	114	0	0	-	-
+code	112	0	0	-	-
+code	11	0	0	-	-
+code	38	0	0	-	-
+code	51	0	0	-	-
+code	10	0	0	-	-
+code	9	0	0	-	-
+code	16	0	4	-	-
+code	122	0	0	-	-
+code	78	0	0	-	-
+code	32	0	0	-	-
+code	3	0	4	-	-
+code	21	0	0	-	-
+code	103	0	0	-	-
+code	36	0	0	-	-
+code	84	0	0	-	-
+code	4	0	0	-	-
+code	79	0	0	-	-
+code	148	0	0	-	-
+code	71	0	0	-	-
+code	41	0	0	-	-
+code	68	0	1	-	-
+code	10	0	4	-	-
+code	45	0	0	-	-
+code	85	0	0	-	-
+code	48	0	4	-	-
+code	30	0	0	-	-
+code	37	0	0	-	-
+code	115	0	0	-	-
+code	17	0	4	-	-
+code	34	0	0	-	-
+code	5	0	0	-	-
+code	147	0	4	-	-
+code	1	0	0	-	-
+code	6	0	0	-	-
+code	7	0	0	-	-
+code	13	0	0	-	-
+code	14	0	0	-	-
+code	52	0	0	-	-
+code	1	0	4	-	-
+code	2	0	4	-	-
+code	4	0	4	-	-
+code	5	0	4	-	-
+code	6	0	4	-	-
+code	7	0	4	-	-
+code	9	0	4	-	-
+code	11	0	4	-	-
+code	12	0	4	-	-
+code	13	0	4	-	-
+code	14	0	4	-	-
+code	15	0	4	-	-
+code	18	0	4	-	-
+code	19	0	4	-	-
+code	21	0	4	-	-
+code	28	0	4	-	-
+code	29	0	4	-	-
+code	30	0	4	-	-
+code	31	0	4	-	-
+code	32	0	4	-	-
+code	33	0	4	-	-
+code	34	0	4	-	-
+code	35	0	4	-	-
+code	36	0	4	-	-
+code	37	0	4	-	-
+code	38	0	4	-	-
+code	39	0	4	-	-
+code	40	0	4	-	-
+code	41	0	4	-	-
+code	45	0	4	-	-
+code	47	0	4	-	-
+code	49	0	4	-	-
+code	50	0	4	-	-
+code	51	0	4	-	-
+code	52	0	4	-	-
+code	54	0	4	-	-
+code	55	0	4	-	-
+code	56	0	4	-	-
+code	58	0	4	-	-
+code	61	0	4	-	-
+code	63	0	4	-	-
+code	64	0	4	-	-
+code	66	0	4	-	-
+code	67	0	4	-	-
+code	70	0	4	-	-
+code	71	0	4	-	-
+code	83	0	4	-	-
+code	92	0	4	-	-
+code	118	0	4	-	-
+code	143	0	4	-	-
+code	144	0	4	-	-
+code	145	0	4	-	-
+code	146	0	4	-	-
+code	148	0	4	-	-
+code	149	0	4	-	-
+code	150	0	4	-	-
+kind	1	0	@import
+kind	2	0	,
+kind	3	0	;
+kind	4	0	@media
+kind	5	0	@charset
+kind	6	0	@namespace
+kind	7	0	@keyframes
+kind	9	0	{
+kind	10	0	}
+kind	11	1	from
+kind	12	0	to
+kind	13	0	@supports
+kind	14	0	@scope
+kind	15	0	(
+kind	16	0	)
+kind	17	1	nesting_selector
+kind	18	0	*
+kind	19	0	.
+kind	21	0	not
+kind	28	0	::
+kind	29	0	#
+kind	30	0	[
+kind	31	0	=
+kind	32	0	~=
+kind	33	0	^=
+kind	34	0	|=
+kind	35	0	*=
+kind	36	0	$=
+kind	37	0	]
+kind	38	0	>
+kind	39	0	~
+kind	40	0	+
+kind	41	0	|
+kind	45	0	of
+kind	47	0	:
+kind	48	1	important
+kind	49	0	and
+kind	50	0	or
+kind	51	0	only
+kind	52	0	selector
+kind	54	0	'
+kind	55	1	string_content
+kind	56	0	"
+kind	58	1	escape_sequence
+kind	61	1	unit
+kind	63	0	-
+kind	64	0	/
+kind	66	1	identifier
+kind	67	1	at_keyword
+kind	68	1	js_comment
+kind	69	1	comment
+kind	70	1	plain_value
+kind	71	1	important_value
+kind	75	1	stylesheet
+kind	76	1	import_statement
+kind	77	1	media_statement
+kind	78	1	charset_statement
+kind	79	1	namespace_statement
+kind	80	1	keyframes_statement
+kind	81	1	keyframe_block_list
+kind	82	1	keyframe_block
+kind	83	1	to
+kind	84	1	supports_statement
+kind	85	1	scope_statement
+kind	86	1	postcss_statement
+kind	87	1	at_rule
+kind	88	1	rule_set
+kind	89	1	selectors
+kind	90	1	block
+kind	92	1	universal_selector
+kind	93	1	class_selector
+kind	94	1	pseudo_class_selector
+kind	96	1	pseudo_element_selector
+kind	97	1	id_selector
+kind	98	1	attribute_selector
+kind	99	1	child_selector
+kind	100	1	descendant_selector
+kind	101	1	sibling_selector
+kind	102	1	adjacent_sibling_selector
+kind	103	1	namespace_selector
+kind	108	1	declaration
+kind	111	1	feature_query
+kind	112	1	parenthesized_query
+kind	113	1	binary_query
+kind	114	1	unary_query
+kind	115	1	selector_query
+kind	117	1	parenthesized_value
+kind	118	1	color_value
+kind	119	1	string_value
+kind	120	1	integer_value
+kind	121	1	float_value
+kind	122	1	grid_value
+kind	123	1	call_expression
+kind	124	1	binary_expression
+kind	125	1	arguments
+kind	126	1	class_name
+kind	142	1	attribute_name
+kind	143	1	feature_name
+kind	144	1	function_name
+kind	145	1	id_name
+kind	146	1	keyframes_name
+kind	147	1	keyword_query
+kind	148	1	namespace_name
+kind	149	1	property_name
+kind	150	1	tag_name
+lookup	0	@import	1
+lookup	0	,	2
+lookup	0	;	3
+lookup	0	@media	4
+lookup	0	@charset	5
+lookup	0	@namespace	6
+lookup	0	@keyframes	7
+lookup	1	at_keyword	67
+lookup	0	{	9
+lookup	0	}	10
+lookup	1	from	11
+lookup	0	to	12
+lookup	0	@supports	13
+lookup	0	@scope	14
+lookup	0	(	15
+lookup	0	)	16
+lookup	1	nesting_selector	17
+lookup	0	*	18
+lookup	0	.	19
+lookup	1	class_name	126
+lookup	0	not	21
+lookup	0	::	28
+lookup	0	#	29
+lookup	0	[	30
+lookup	0	=	31
+lookup	0	~=	32
+lookup	0	^=	33
+lookup	0	|=	34
+lookup	0	*=	35
+lookup	0	$=	36
+lookup	0	]	37
+lookup	0	>	38
+lookup	0	~	39
+lookup	0	+	40
+lookup	0	|	41
+lookup	1	plain_value	70
+lookup	0	of	45
+lookup	0	:	47
+lookup	1	important	48
+lookup	0	and	49
+lookup	0	or	50
+lookup	0	only	51
+lookup	0	selector	52
+lookup	0	'	54
+lookup	1	string_content	55
+lookup	0	"	56
+lookup	1	escape_sequence	58
+lookup	1	unit	61
+lookup	0	-	63
+lookup	0	/	64
+lookup	1	identifier	66
+lookup	1	js_comment	68
+lookup	1	comment	69
+lookup	1	important_value	71
+lookup	1	stylesheet	75
+lookup	1	import_statement	76
+lookup	1	media_statement	77
+lookup	1	charset_statement	78
+lookup	1	namespace_statement	79
+lookup	1	keyframes_statement	80
+lookup	1	keyframe_block_list	81
+lookup	1	keyframe_block	82
+lookup	1	to	83
+lookup	1	supports_statement	84
+lookup	1	scope_statement	85
+lookup	1	postcss_statement	86
+lookup	1	at_rule	87
+lookup	1	rule_set	88
+lookup	1	selectors	89
+lookup	1	block	90
+lookup	1	universal_selector	92
+lookup	1	class_selector	93
+lookup	1	pseudo_class_selector	94
+lookup	1	pseudo_element_selector	96
+lookup	1	id_selector	97
+lookup	1	attribute_selector	98
+lookup	1	child_selector	99
+lookup	1	descendant_selector	100
+lookup	1	sibling_selector	101
+lookup	1	adjacent_sibling_selector	102
+lookup	1	namespace_selector	103
+lookup	1	arguments	125
+lookup	1	declaration	108
+lookup	1	feature_query	111
+lookup	1	parenthesized_query	112
+lookup	1	binary_query	113
+lookup	1	unary_query	114
+lookup	1	selector_query	115
+lookup	1	parenthesized_value	117
+lookup	1	color_value	118
+lookup	1	string_value	119
+lookup	1	integer_value	120
+lookup	1	float_value	121
+lookup	1	grid_value	122
+lookup	1	call_expression	123
+lookup	1	binary_expression	124
+lookup	1	attribute_name	142
+lookup	1	feature_name	143
+lookup	1	function_name	144
+lookup	1	id_name	145
+lookup	1	keyframes_name	146
+lookup	1	keyword_query	147
+lookup	1	namespace_name	148
+lookup	1	property_name	149
+lookup	1	tag_name	150

@@ -1,7 +1,7 @@
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::json::meta_name;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
-use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::matcher::{
     FileGates, FileScopeSlot, GrammarMatcher, UtilLimit, WITNESS_NODE, export_text, exported_span,
     is_span_variable,
@@ -498,9 +498,7 @@ impl<'a> Leaf<'a> {
                 let lines = matches!(source, RegexSource::Content).then(|| {
                     LineTable::new(
                         &file.source,
-                        file_language(file)
-                            .map(Terminators::of)
-                            .unwrap_or(Terminators::Eslint),
+                        crate::code_rule_dsl::lines::terminators_of(file_language(file)),
                     )
                 });
                 let span = |start: usize, end: usize| {
@@ -999,7 +997,7 @@ fn restore_file_tape(
     use crate::code_rule_dsl::tape;
     let never = || false;
     let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
-    let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
+    let lines = Arc::new(image.primary.lines(&file.source, crate::code_rule_dsl::lines::terminators(language), false));
     #[cfg(any(test, feature = "test-hooks"))]
     crate::code_rule_dsl::matcher::note_line_table_construction();
     let doc = tape::TapeDoc::restore_with_lines(

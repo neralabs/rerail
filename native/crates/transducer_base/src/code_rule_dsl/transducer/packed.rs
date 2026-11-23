@@ -1,4 +1,5 @@
 
+use rerail_blocks::vector::Vector;
 use super::super::tape::TapeDoc;
 use ast_grep_core::MatchStrictness;
 use ast_grep_core::matcher::{Pattern, PatternNode};
@@ -53,9 +54,9 @@ pub use device::{RootJobs, RootsFound};
 pub trait CpuExecutor: Send + Sync {
     /// The batch on the compiled CPU, from `anchors`, at most `result_limits` results per program, each task held to
     /// `budget` (decision 0334).
-    fn execute_packed(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: Budget) -> Result<PackedExecution, Error>;
+    fn execute_packed(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<rerail_blocks::vector::Vector<u32>>], result_limits: Option<&[u32]>, budget: Budget) -> Result<PackedExecution, Error>;
     /// The batch's outcomes on the compiled CPU.
-    fn execute_outcomes(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) -> Result<BatchOutcome, Error>;
+    fn execute_outcomes(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<rerail_blocks::vector::Vector<u32>>]) -> Result<BatchOutcome, Error>;
     /// `program` compiled ahead of its first batch.
     fn warm(&self, program: &Program) -> Result<(), Error>;
     /// Whether every one of `programs` is compiled.
@@ -205,7 +206,7 @@ impl WorkBudget {
     /// The process's budget: `RERAIL_DEVICE_BUDGET` (`replan`, the default since decision 0334's pack check, or
     /// `full`).
     pub fn current() -> Self {
-        match std::env::var("RERAIL_DEVICE_BUDGET").as_deref() {
+        match crate::code_rule_dsl::logic::profile::var("RERAIL_DEVICE_BUDGET").as_deref() {
             Ok("full") => Self::Full,
             _ => Self::Replan { slack: REPLAN_SLACK, doublings: 0 },
         }
@@ -295,7 +296,7 @@ impl Budget {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Unfinished {
     pub work: bool,
-    pub outgrown: Vec<u32>,
+    pub outgrown: Vector<u32>,
 }
 
 /// The tasks whose states grew in a restart (decision 0334 §9): (file, program, root within its file) to how many
@@ -310,19 +311,19 @@ pub type StateGrowth = std::collections::BTreeMap<(usize, usize, u32), u32>;
 /// case's results. Each run's evaluations are observed for the cost store (`evaluation_costs`).
 pub fn restarting(
     programs: &[Program],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     budget: Budget,
-    once: &mut dyn FnMut(&[Vec<Vec<u32>>], Budget, &StateGrowth) -> Result<packed_batch::PackedExecution, Error>,
+    once: &mut dyn FnMut(&[Vec<Vector<u32>>], Budget, &StateGrowth) -> Result<packed_batch::PackedExecution, Error>,
 ) -> Result<packed_batch::PackedExecution, Error> {
     restarting_grown(programs, anchors, budget, &StateGrowth::new(), once)
 }
 
 fn restarting_grown(
     programs: &[Program],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     budget: Budget,
     growth: &StateGrowth,
-    once: &mut dyn FnMut(&[Vec<Vec<u32>>], Budget, &StateGrowth) -> Result<packed_batch::PackedExecution, Error>,
+    once: &mut dyn FnMut(&[Vec<Vector<u32>>], Budget, &StateGrowth) -> Result<packed_batch::PackedExecution, Error>,
 ) -> Result<packed_batch::PackedExecution, Error> {
     let execution = once(anchors, budget, growth)?;
     // Every run reprices its programs for the evaluations not yet started (decision 0334).
@@ -344,7 +345,7 @@ fn restarting_grown(
     if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!("RERAIL_PACKED_RESTART budget={budget:?} next={next:?} unfinished={unfinished:?}");
     }
-    let mut rerun = anchors.iter().map(|file| vec![Vec::new(); file.len()]).collect::<Vec<_>>();
+    let mut rerun = anchors.iter().map(|file| vec![Vector::new(); file.len()]).collect::<Vec<_>>();
     for &(file, program, _) in &unfinished {
         rerun[file][program] = anchors[file][program].clone();
     }
@@ -914,7 +915,7 @@ pub enum CapturePredicate {
     },
     AnyOf {
         capture: u16,
-        strings: Vec<u16>,
+        strings: Vector<u16>,
         negated: bool,
         any: bool,
     },
@@ -926,18 +927,18 @@ pub enum CapturePredicate {
     },
     Kinds {
         capture: u16,
-        kinds: Vec<u16>,
+        kinds: Vector<u16>,
         negated: bool,
     },
     Contains {
         capture: u16,
-        strings: Vec<u16>,
+        strings: Vector<u16>,
         negated: bool,
         any: bool,
     },
     Relation {
         capture: u16,
-        kinds: Vec<u16>,
+        kinds: Vector<u16>,
         ancestor: bool,
         negated: bool,
     },
@@ -987,7 +988,7 @@ pub enum ExecutionBackend {
 pub fn interpreter_reference(
     programs: &[Program],
     file: &TapeDoc,
-    roots: &[Vec<u32>],
+    roots: &[Vector<u32>],
     limits: &[u32],
 ) -> Result<packed_batch::PackedExecution, Error> {
     packed_batch::PackedExecution::interpret_reference(programs, file, roots, limits)
@@ -1013,8 +1014,8 @@ pub struct ExecutionArena {
     capture_transitions: HashMap<(u32, u16, u32), u32>,
     pub cursors: Vec<Vec<Option<u32>>>,
     cursor_indexes: HashMap<Vec<Option<u32>>, u32>,
-    pub repeats: Vec<Vec<u16>>,
-    repeat_indexes: HashMap<Vec<u16>, u32>,
+    pub repeats: Vec<Vector<u16>>,
+    repeat_indexes: HashMap<Vector<u16>, u32>,
     greedy_paths: Vec<Option<Path>>,
     greedy_indexes: HashMap<(u16, u32, u32, u32, u32), u32>,
 }
@@ -1027,8 +1028,8 @@ impl Default for ExecutionArena {
             capture_transitions: HashMap::new(),
             cursors: vec![Vec::new()],
             cursor_indexes: HashMap::from([(Vec::new(), 0)]),
-            repeats: vec![Vec::new()],
-            repeat_indexes: HashMap::from([(Vec::new(), 0)]),
+            repeats: vec![rerail_blocks::vector::Vector::new()],
+            repeat_indexes: HashMap::from([(Vector::new(), 0)]),
             greedy_paths: Vec::new(),
             greedy_indexes: HashMap::new(),
         }
@@ -1213,7 +1214,7 @@ pub fn compare_capture_nodes(left: CaptureIdentity, right: CaptureIdentity) -> s
 #[derive(Default)]
 struct CaptureAntichain {
     states: Vec<Option<Vec<CaptureIdentity>>>,
-    by_length: BTreeMap<usize, Vec<usize>>,
+    by_length: BTreeMap<usize, Vector<usize>>,
 }
 
 #[allow(dead_code)]
@@ -1464,7 +1465,7 @@ enum Slotted {
 struct SlottedPattern {
     root: Slotted,
     names: Vec<String>,
-    order: Vec<u16>,
+    order: Vector<u16>,
 }
 
 impl SlottedPattern {
@@ -1491,7 +1492,7 @@ impl SlottedPattern {
         }
         let mut names = Vec::new();
         let root = lower(pattern, &mut names);
-        let mut order: Vec<u16> = (0..names.len() as u16).collect();
+        let mut order: Vector<u16> = (0..names.len() as u16).collect();
         order.sort_by(|a, b| names[usize::from(*a)].cmp(&names[usize::from(*b)]));
         Self { root, names, order }
     }
@@ -1528,8 +1529,8 @@ enum Binding {
 #[derive(Default)]
 pub struct AstBindings {
     slots: Vec<Binding>,
-    nodes: Vec<u32>,
-    log: Vec<u16>,
+    nodes: Vector<u32>,
+    log: Vector<u16>,
 }
 
 impl AstBindings {
@@ -1845,7 +1846,7 @@ impl Program {
 
     pub fn compile_regex(regex: &Regex) -> Result<Self, Error> {
         Self::new(
-            vec![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
+            rerail_blocks::vector![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
             vec![
                 regex.as_str().as_bytes().to_vec(),
                 b"match".to_vec(),
@@ -1855,8 +1856,8 @@ impl Program {
                 source: 0,
                 compiled: regex.clone(),
             }],
-            vec![1, 2],
-            Vec::new(),
+            rerail_blocks::vector![1, 2],
+            rerail_blocks::vector::Vector::new(),
         )
     }
 
@@ -1877,21 +1878,21 @@ impl Program {
 
     pub fn compile_navigation() -> Result<Self, Error> {
         Self::new(
-            vec![word(STOP, 0, 0)],
+            rerail_blocks::vector![word(STOP, 0, 0)],
             Vec::new(),
             Vec::new(),
-            Vec::new(),
-            Vec::new(),
+            rerail_blocks::vector::Vector::new(),
+            rerail_blocks::vector::Vector::new(),
         )
     }
 
     pub fn compile_universe() -> Result<Self, Error> {
         Self::new(
-            vec![word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
+            rerail_blocks::vector![word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
             vec![b"match".to_vec(), b"universe".to_vec()],
             Vec::new(),
-            vec![0, 1],
-            Vec::new(),
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector::Vector::new(),
         )
     }
 
@@ -1905,15 +1906,15 @@ impl Program {
 
     fn compile_kind_operation(operation: u8, kind: u16) -> Result<Self, Error> {
         Self::new(
-            vec![
+            rerail_blocks::vector![
                 word(operation, 0, kind),
                 word(CAPTURE, 0, 0),
                 word(EMIT, 0, 1),
             ],
             vec![b"match".to_vec(), b"kind".to_vec()],
             Vec::new(),
-            vec![0, 1],
-            Vec::new(),
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector::Vector::new(),
         )
     }
 
@@ -1929,7 +1930,7 @@ impl Program {
         else {
             return Err(Error::UnsupportedPattern);
         };
-        let mut words = vec![word(KIND, 0, *kind_id)];
+        let mut words = rerail_blocks::vector![word(KIND, 0, *kind_id)];
         let predicates = if *is_named {
             words.push(word(TEXT, 0, 0));
             vec![TextPredicate::Equal(0)]
@@ -1945,8 +1946,8 @@ impl Program {
                 b"ast-grep-literal".to_vec(),
             ],
             predicates,
-            vec![1, 2],
-            Vec::new(),
+            rerail_blocks::vector![1, 2],
+            rerail_blocks::vector::Vector::new(),
         )
     }
 
@@ -2019,22 +2020,22 @@ impl Program {
     }
 
     pub fn new(
-        words: Vec<u32>,
+        words: Vector<u32>,
         strings: Vec<Vec<u8>>,
         predicates: Vec<TextPredicate>,
-        labels: Vec<u16>,
-        longs: Vec<u64>,
+        labels: Vector<u16>,
+        longs: Vector<u64>,
     ) -> Result<Self, Error> {
         Self::new_with_capture_predicates(words, strings, predicates, Vec::new(), labels, longs)
     }
 
     pub fn new_with_capture_predicates(
-        words: Vec<u32>,
+        words: Vector<u32>,
         strings: Vec<Vec<u8>>,
         predicates: Vec<TextPredicate>,
         capture_predicates: Vec<CapturePredicate>,
-        labels: Vec<u16>,
-        longs: Vec<u64>,
+        labels: Vector<u16>,
+        longs: Vector<u64>,
     ) -> Result<Self, Error> {
         let value_programs = predicates
             .iter()
@@ -2845,13 +2846,8 @@ impl Program {
                 right,
                 negated,
             } => {
-                let line = |node| {
-                    let start = tape.transducer_span(node).start;
-                    tape.transducer_source()[..start]
-                        .iter()
-                        .filter(|byte| **byte == b'\n')
-                        .count()
-                };
+                // A native tree's rows (`start_pos().line()`, below): the tape's tree-sitter rows.
+                let line = |node| tape.row(tape.transducer_span(node).start);
                 let results = nodes(*left)
                     .into_iter()
                     .zip(nodes(*right))
@@ -3037,7 +3033,7 @@ impl Program {
             node: Node<'tree, D>,
             captures: Vec<(u16, Node<'tree, D>)>,
             cursors: Vec<Option<Node<'tree, D>>>,
-            active_repeats: Vec<u16>,
+            active_repeats: Vector<u16>,
             steps: usize,
         }
         let mut paths = vec![Path {
@@ -3045,7 +3041,7 @@ impl Program {
             node: start.clone(),
             captures: Vec::new(),
             cursors: Vec::new(),
-            active_repeats: Vec::new(),
+            active_repeats: rerail_blocks::vector::Vector::new(),
             steps: 0,
         }];
         while let Some(mut path) = paths.pop() {
@@ -3250,27 +3246,26 @@ impl Program {
         captures: &mut Vec<Capture>,
         source: &[u8],
     ) -> Result<Option<Vec<DynamicProperty>>, Error> {
-        fn point(source: &[u8], byte: usize) -> (i64, i64) {
-            let prefix = &source[..byte];
-            let row = prefix.iter().filter(|byte| **byte == b'\n').count() as i64;
-            let column = prefix
-                .iter()
-                .rposition(|byte| *byte == b'\n')
-                .map_or(byte, |newline| prefix.len() - newline - 1) as i64;
-            (row, column)
+        // Rows and columns as tree-sitter's `TSPoint` counts them (only `\n` ends a row): `Lf`'s lines (decision
+        // 0612), made on first use.
+        use crate::code_rule_dsl::lines::{LineTable, Terminators};
+        let rows = std::cell::OnceCell::new();
+        let rows = || rows.get_or_init(|| LineTable::of_bytes(source, Terminators::Lf));
+        fn point(rows: &LineTable, byte: usize) -> (i64, i64) {
+            let (row, column) = rows.point(byte);
+            (row as i64, column as i64)
         }
-        fn byte_at(source: &[u8], row: i64, column: i64) -> Option<usize> {
+        fn byte_at(rows: &LineTable, source: &[u8], row: i64, column: i64) -> Option<usize> {
             if row < 0 || column < 0 {
                 return None;
             }
-            let mut start = 0_usize;
-            for _ in 0..row {
-                start = source[start..].iter().position(|byte| *byte == b'\n')? + start + 1;
+            let row = usize::try_from(row).ok()?;
+            if row >= rows.count() {
+                return None;
             }
-            let end = source[start..]
-                .iter()
-                .position(|byte| *byte == b'\n')
-                .map_or(source.len(), |newline| start + newline);
+            let start = rows.start(row);
+            // To its `\n`, which tree-sitter's row ends before.
+            let end = if row + 1 < rows.count() { rows.start(row + 1) - 1 } else { source.len() };
             let byte = start.checked_add(usize::try_from(column).ok()?)?;
             (byte <= end
                 && std::str::from_utf8(source).is_ok_and(|source| source.is_char_boundary(byte)))
@@ -3292,9 +3287,10 @@ impl Program {
                 }
                 Directive::Offset { capture, offsets } => {
                     for found in captures.iter_mut().filter(|found| found.label == *capture) {
-                        let (start_row, start_column) = point(source, found.span.start);
-                        let (end_row, end_column) = point(source, found.span.end);
+                        let (start_row, start_column) = point(rows(), found.span.start);
+                        let (end_row, end_column) = point(rows(), found.span.end);
                         let Some(start) = byte_at(
+                            rows(),
                             source,
                             start_row + i64::from(offsets[0]),
                             start_column + i64::from(offsets[1]),
@@ -3302,6 +3298,7 @@ impl Program {
                             return Ok(None);
                         };
                         let Some(end) = byte_at(
+                            rows(),
                             source,
                             end_row + i64::from(offsets[2]),
                             end_column + i64::from(offsets[3]),
@@ -3357,7 +3354,7 @@ impl Program {
                     let Some(target_start) = captures
                         .iter()
                         .find(|found| found.label == *target)
-                        .map(|found| point(source, found.span.start).0)
+                        .map(|found| point(rows(), found.span.start).0)
                     else {
                         continue;
                     };
@@ -3370,12 +3367,12 @@ impl Program {
                     let mut next_start = target_start;
                     while keep > 0 {
                         let found = selected[keep - 1].1;
-                        let end_row = point(source, found.span.end).0;
+                        let end_row = point(rows(), found.span.end).0;
                         if end_row + 1 < next_start {
                             break;
                         }
                         keep -= 1;
-                        next_start = point(source, found.span.start).0;
+                        next_start = point(rows(), found.span.start).0;
                     }
                     let remove = selected[..keep]
                         .iter()
@@ -3974,7 +3971,7 @@ impl Program {
         }
         let mut dominated = vec![false; output.len()];
         if has_repeats {
-            let mut by_start = BTreeMap::<u32, Vec<usize>>::new();
+            let mut by_start = BTreeMap::<u32, Vector<usize>>::new();
             for (index, found) in output.iter().enumerate() {
                 by_start.entry(found.start).or_default().push(index);
             }
@@ -4040,7 +4037,7 @@ impl Program {
 pub fn execute_batch(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: Option<&[Vec<Vec<u32>>]>,
+    anchors: Option<&[Vec<Vector<u32>>]>,
 ) -> Result<Vec<Vec<Vec<Output>>>, Error> {
     if let Some(anchors) = anchors
         && (anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()))
@@ -4109,7 +4106,7 @@ impl BatchOutcome {
 pub fn execute_batch_outcomes(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<BatchOutcome, Error> {
     if anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()) {
         return Err(Error::InvalidAnchor);
@@ -4161,7 +4158,7 @@ pub fn execute_with_backend(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<Vec<Vec<Vec<Output>>>, Error> {
     execute_with_backend_outcomes(backend, programs, files, anchors)?.into_result()
 }
@@ -4169,7 +4166,7 @@ pub fn execute_with_backend(
 pub fn packed_workspace_fits(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: &[u32],
 ) -> Result<(), Error> {
     let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
@@ -4185,7 +4182,7 @@ pub fn packed_workspace_fits(
 pub fn packed_workspace_size(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: &[u32],
 ) -> Result<(u64, [u64; 15]), Error> {
     let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
@@ -4198,15 +4195,15 @@ pub fn packed_workspace_size(
 pub fn packed_program_counts(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
-) -> Result<Vec<[u64; 15]>, Error> {
+    anchors: &[Vec<Vector<u32>>],
+) -> Result<Vector<[u64; 15]>, Error> {
     packed_batch::PackedBatch::new_in_place(programs, files, anchors)?.program_counts(programs)
 }
 
 pub(in crate::code_rule_dsl) fn packed_workspace_bytes(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: &[u32],
 ) -> Result<u64, Error> {
     let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
@@ -4218,7 +4215,7 @@ pub fn execute_with_backend_packed_result_limits(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<packed_batch::PackedExecution, Error> {
     execute_planned(backend, PlanId::of_programs(programs), programs, files, anchors, result_limits)
@@ -4232,7 +4229,7 @@ pub fn execute_planned(
     plan: PlanId,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<packed_batch::PackedExecution, Error> {
     execute_planned_budgeted(backend, plan, programs, files, anchors, result_limits, Budget::current())
@@ -4247,7 +4244,7 @@ pub fn execute_planned_budgeted(
     plan: PlanId,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
     budget: Budget,
 ) -> Result<packed_batch::PackedExecution, Error> {
@@ -4259,7 +4256,7 @@ fn execute_planned_once(
     plan: PlanId,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
     budget: Budget,
 ) -> Result<packed_batch::PackedExecution, Error> {
@@ -4288,7 +4285,7 @@ pub fn execute_with_backend_outcomes(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<BatchOutcome, Error> {
     match compilation::resolve(backend, programs)? {
         ExecutionBackend::CpuInterpreter => execute_batch_outcomes(programs, files, anchors),
@@ -4304,7 +4301,7 @@ pub fn execute_with_backend_bounded_limit(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     maximum_programs: usize,
 ) -> Result<BatchOutcome, Error> {
     if anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()) {
@@ -4373,8 +4370,8 @@ pub fn execute_with_backend_bounded_limit(
                             let take = available.min(left);
                             left -= take;
                             vec![
-                                file[start][offsets[file_index]..offsets[file_index] + take]
-                                    .to_vec(),
+                                Vector::from(&file[start][offsets[file_index]..offsets[file_index] + take]),
+                                    
                             ]
                         })
                         .collect::<Vec<_>>()
@@ -4511,7 +4508,7 @@ pub fn execute_production_corpus(
 ) -> Result<packed_batch::PackedExecution, Error> {
     let anchors = anchors
         .iter()
-        .map(|file| file.iter().map(|roots| roots.to_vec()).collect())
+        .map(|file| file.iter().map(|roots| Vector::from(&roots[..])).collect())
         .collect::<Vec<_>>();
     if let Some(device) = device::matcher() {
         return device.execute_packed(device::Engine::Jit, programs, files, &anchors, Some(result_limits), Budget::current());

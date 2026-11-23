@@ -271,6 +271,19 @@ pub struct Layout {
     pub file_literals: Vec<Vec<u8>>,
     /// Each file's `__FILE_NAME__`: its presumed path's last component's literal.
     pub name_literals: Vec<Vec<u8>>,
+    /// A round started from the last round's tree (decision 0613 §3): `nodes` holds it whole, each
+    /// instance's entered there (`entered`, by node) and its groups' activity (`groups`, each
+    /// instance's in its order). Empty: a round from the roots.
+    pub entered: Vec<u32>,
+    pub groups: Vec<u32>,
+}
+
+/// What a round's P1 settled at, for the next round to start from (`Layout::entered`).
+#[derive(Clone, Debug, Default)]
+pub struct Tree {
+    pub nodes: Vec<PpNode>,
+    pub entered: Vec<u32>,
+    pub groups: Vec<u32>,
 }
 
 impl Layout {
@@ -291,6 +304,8 @@ impl Layout {
             relex_options: first.relex_options,
             file_literals: Vec::new(),
             name_literals: Vec::new(),
+            entered: Vec::new(),
+            groups: Vec::new(),
         };
         let mut files = 0u32;
         for (u, &(l, n_files)) in parts.iter().enumerate() {
@@ -299,6 +314,7 @@ impl Layout {
                 "a batch of one dialect and configuration"
             );
             let (u, i0) = (u as u32, lay.nodes.len() as u32);
+            assert!(l.groups.is_empty(), "a batch joined of rounds from the roots");
             lay.nodes.extend(l.nodes.iter().map(|n| PpNode { file: n.file + files, parent: if n.parent == NO_PARENT { NO_PARENT } else { n.parent + i0 }, pdir: n.pdir, depth: n.depth, unit: u }));
             lay.table.extend(l.table.iter().map(|&(_, k, f)| (u, k, if f == NOT_FOUND { f } else { f + files })));
             // copy: not block data (the files' search entries, configuration input, joined on the host)
@@ -511,12 +527,15 @@ pub struct Sizes {
     /// What the last run's P1 used (`NEED_*`, its rooms' high water), and the first rooms of the
     /// unit it ran on: the next round's are sized from them (decision 0486 §8).
     pub used: Option<([u32; NEEDS], Caps)>,
+    /// The loop's work in the unit's last run that reached its text: the pieces' steps summed (`TRN` 25), the
+    /// lines' and the text's. A batch's teams take their groups by it (`expand_teams`).
+    pub work: Option<u64>,
 }
 
 impl Sizes {
     pub fn first(unit: &Unit, lay: &Layout) -> Sizes {
         let p1 = Caps::first(unit, lay);
-        Sizes { p1, x: XCaps::at(p1.top, 0), defs: 0, used: None }
+        Sizes { p1, x: XCaps::at(p1.top, 0), defs: 0, used: None, work: loop_work(unit) }
     }
 
     /// These rooms for `unit` (laid out as `lay`): from what the last run used where it says,
@@ -527,7 +546,7 @@ impl Sizes {
             Some((need, was)) => Caps::from_use(need, was, b, a.rung),
             None => Caps { nodes: a.nodes.max(b.nodes), dirs: a.dirs.max(b.dirs), gaps: a.gaps.max(b.gaps), top: a.top.max(b.top), reqs: a.reqs.max(b.reqs), names: a.names.max(b.names), rung: a.rung },
         };
-        Sizes { p1, x: self.x.fit(p1.top), defs: self.defs, used: None }
+        Sizes { p1, x: self.x.fit(p1.top), defs: self.defs, used: None, work: self.work.or_else(|| loop_work(unit)) }
     }
 }
 
@@ -679,6 +698,9 @@ pub struct Vis {
     p1_grpf: Buf,
     p1_ngrp: Buf,
     p1_ga: Buf,
+    p1_seede: Buf,
+    p1_seedg: Buf,
+    n_seed: u32,
     p1_taken: Buf,
     p1_own: Buf,
     p1_par: Buf,
@@ -857,6 +879,13 @@ impl Vis {
             p1_grpf: zeroed(ni)?,
             p1_ngrp: zeroed(1)?,
             p1_ga: zeroed(nq)?,
+            p1_seede: words(&{
+                let mut e = lay.entered.clone();
+                e.resize(ni.max(1), 0);
+                e
+            })?,
+            p1_seedg: words(&if lay.groups.is_empty() { vec![0] } else { lay.groups.clone() })?,
+            n_seed: lay.groups.len() as u32,
             p1_taken: zeroed(nq)?,
             p1_own: zeroed(nq)?,
             p1_par: zeroed(nq)?,
@@ -920,7 +949,7 @@ impl Vis {
         l.at("P1_DFIRST", &self.p1_dfirst).at("P1_GFIRST", &self.p1_gfirst).at("P1_SIZE", &self.p1_size).at("P1_CSIZE", &self.p1_csize);
         l.at("P1_GC", &self.p1_gc).at("P1_GHEADS", &self.p1_gheads).at("P1_GSHIFT", &self.p1_gshift).at("P1_USIZE", &self.p1_usize);
         l.at("P1_UTOTAL", &self.p1_utotal).at("P1_BASE", &self.p1_base);
-        l.word("NQ", self.nq as u32).at("P1_GCOUNT", &self.p1_gcount).at("P1_GRPF", &self.p1_grpf).at("P1_NGRP", &self.p1_ngrp).at("P1_GA", &self.p1_ga);
+        l.word("NQ", self.nq as u32).at("P1_GCOUNT", &self.p1_gcount).at("P1_GRPF", &self.p1_grpf).at("P1_NGRP", &self.p1_ngrp).at("P1_GA", &self.p1_ga).at("P1_SEEDE", &self.p1_seede).at("P1_SEEDG", &self.p1_seedg).word("P1_NSEED", self.n_seed);
         l.at("P1_TAKEN", &self.p1_taken).at("P1_OWN", &self.p1_own).at("P1_PAR", &self.p1_par).at("P1_OWN2", &self.p1_own2).at("P1_PAR2", &self.p1_par2);
         l.at("P1_JCHANGED", &self.p1_jchanged).at("P1_ICHANGED", &self.p1_ichanged);
         l.word("P1_JUMPS", P1_JUMPS as u32).word("P1_ITERS", P1_ITERS as u32);
@@ -953,6 +982,18 @@ impl Vis {
             requests: Vec::new(),
             refused: 0,
         }
+    }
+
+    /// The tree P1 settled at (`Tree`): its instances, each one entered where it is live, the groups'
+    /// activity.
+    pub fn tree(&self) -> Tree {
+        let (ni, nq) = (self.word(&self.n_insts) as usize, self.word(&self.p1_ngrp) as usize);
+        // SAFETY: the device finished; the stores hold `ni` instances and `nq` group words.
+        let words = |b: &Buf, n: usize| unsafe { std::slice::from_raw_parts(b.host().cast::<u32>(), n).to_vec() };
+        // SAFETY: as above.
+        let nodes = unsafe { std::slice::from_raw_parts(self.nodes.host().cast::<PpNode>(), ni).to_vec() };
+        // copy: not block data (P1's settled state, the next round's input: decision 0613 §3)
+        Tree { nodes, entered: words(&self.live, ni), groups: words(&self.p1_ga, nq) }
     }
 
     fn word(&self, b: &Buf) -> u32 {
@@ -1190,7 +1231,7 @@ impl Exp {
             cu_slot: zeroed(2 * cnt_cap)?,
             cu_sub: zeroed(2 * cnt_cap)?,
             cu_unit: zeroed(2 * cnt_cap)?,
-            trn: zeroed(24)?,
+            trn: zeroed(32)?,
             lread: zeroed(dirs)?,
             cnt_cap: cnt_cap as u32,
             lb_cap: lb_cap as u32,
@@ -1293,15 +1334,33 @@ impl Exp {
         unsafe { *self.opscan.total.host().cast::<u32>() }
     }
 
+    /// The longest piece's steps in the run (`TRN[16]`, decision 0588).
+    pub fn steps(&self) -> u32 {
+        // SAFETY: the device finished; `trn` holds 32 words.
+        unsafe { *self.trn.host().cast::<u32>().add(16) }
+    }
+
+    /// The memo's hits and the results it kept (`TRN[28]`, `TRN[29]`, decision 0613 §2).
+    pub fn memo(&self) -> (u32, u32) {
+        // SAFETY: the device finished; `trn` holds 32 words.
+        unsafe { (*self.trn.host().cast::<u32>().add(28), *self.trn.host().cast::<u32>().add(29)) }
+    }
+
     /// The last text pass's pieces (`TRN[13]`, decision 0588).
     pub fn loop_pieces(&self) -> u32 {
-        // SAFETY: the device finished; `trn` holds 24 words.
+        // SAFETY: the device finished; `trn` holds 32 words.
         unsafe { *self.trn.host().cast::<u32>().add(13) }
     }
 
     /// P1's iterations and the text passes the run made (`TRN[11]`, `TRN[10]`).
+    /// The pieces' steps summed over the run (`TRN` 25): the loop's work.
+    pub fn steps_summed(&self) -> u64 {
+        // SAFETY: the device finished; `trn` holds 32 words.
+        u64::from(unsafe { *self.trn.host().cast::<u32>().add(25) })
+    }
+
     pub fn passes(&self) -> (u32, u32) {
-        // SAFETY: the device finished; `trn` holds 24 words.
+        // SAFETY: the device finished; `trn` holds 32 words.
         unsafe { (*self.trn.host().cast::<u32>().add(11), *self.trn.host().cast::<u32>().add(10)) }
     }
 
@@ -1412,6 +1471,12 @@ pub struct Expanded {
     pub passes: (u32, u32),
     /// The givings back at the loop's substitutions (decision 0486 §10), every top's.
     pub gives: u32,
+    /// The longest piece's steps (`TRN[16]`, decision 0588): a measurement, and the tests' bound on a chain.
+    pub steps: u32,
+    /// The memo's hits and the results it kept (`TRN[28]`, `TRN[29]`, decision 0613 §2), every pass's.
+    pub memo: (u32, u32),
+    /// A round that made requests: the tree its P1 settled at, the next round's start (`Layout::entered`).
+    pub tree: Option<Tree>,
     pub def_rung: u32,
     /// The command it ran in (`next_run`): a batch's units ran in one, and its GPU time is that command's.
     pub run: u64,
@@ -1475,6 +1540,32 @@ fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) ->
     }
 }
 
+/// The loop's work of each unit last evaluated on this machine (`Sizes::work`), by its documents' digests: a
+/// unit's first run in a batch takes its team's groups by it (a round that ends at its requests measures none).
+#[derive(Default)]
+struct LoopWork(std::sync::Mutex<std::collections::HashMap<Vec<[u8; 32]>, u64>>);
+
+fn documents_key(unit: &Unit) -> Vec<[u8; 32]> {
+    unit.documents.iter().map(|d| d.digest).collect()
+}
+
+/// The loop's work `unit` took when last evaluated here, if it was.
+pub fn loop_work(unit: &Unit) -> Option<u64> {
+    let held = rerail_context::machine::<LoopWork>();
+    let held = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    held.get(&documents_key(unit)).copied()
+}
+
+fn keep_loop_work(unit: &Unit, work: u64) {
+    let held = rerail_context::machine::<LoopWork>();
+    let mut held = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Bounded: a long process's units past it start again from none.
+    if held.len() >= 1 << 16 {
+        held.clear();
+    }
+    held.insert(documents_key(unit), work);
+}
+
 /// A batch's units expanded together, a team each (decision 0588 §6): each round of runs is one
 /// command (`pp_eval::on_teams`) over the units still running, each in stores of its own in one
 /// arena, its setup a group's, and a unit that runs again (a room grown) does so in the next. Each
@@ -1503,10 +1594,20 @@ pub fn expand_teams(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
     // A team's groups at most: the grid's, or one after its barrier failed.
     let mut alone = vec![false; n];
     loop {
-        // Each unit's team: its share of the grid by its work (its nodes, or its expansion's
-        // tokens), at least one group.
-        let work: Vec<usize> = (0..n).map(|k| members[k].node_bound.max(runs[k].x.fit(runs[k].p1.top).tok)).collect();
+        // Each unit's team: its share of the grid by its work, at least one group. The loop's measured work
+        // (`Sizes::work`) where every unit has one: the loop's pass is what sets a round's last team (a unit
+        // of 19k nodes with the batch's most expansion ran 1.5 times the next team, 2026-11-22). Else its
+        // nodes, or its expansion's tokens.
         let live: Vec<usize> = (0..n).filter(|&k| out[k].is_none()).collect();
+        let measured = live.iter().all(|&k| sizes[k].work.is_some());
+        // A step holds a SIMD group's 32 lanes, a node's phase a lane: the loop's steps at 32 nodes each, beside
+        // the nodes every phase reads.
+        let work: Vec<usize> = (0..n)
+            .map(|k| {
+                let items = members[k].node_bound.max(runs[k].x.fit(runs[k].p1.top).tok);
+                if measured { items + 32 * sizes[k].work.unwrap_or(0) as usize } else { items }
+            })
+            .collect();
         let all: usize = live.iter().map(|&k| work[k]).sum::<usize>().max(1);
         let arena = Arena::new();
         let mut made: Vec<(usize, Made, u64)> = Vec::new();
@@ -1521,8 +1622,10 @@ pub fn expand_teams(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
         if made.is_empty() {
             break;
         }
-        // The largest first: its team's groups are the first wave's, and the last a group takes is a small one.
-        made.sort_by_key(|(k, _, team)| (std::cmp::Reverse(*team), std::cmp::Reverse(work[*k])));
+        // The longest first, by its work over its groups: past the grid's groups the teams queue, and a team that
+        // starts last should be a short one (a unit of 17k nodes on 1 group started 1.6 ms into a round sorted
+        // by team size, and set its end, 2026-11-22).
+        made.sort_by_key(|(k, _, team)| (std::cmp::Reverse(work[*k] as u64 / (*team).max(1)), std::cmp::Reverse(*team)));
         let seats: u64 = made.iter().map(|(_, _, t)| t).sum();
         let mut words = vec![made.len() as u32, 0, seats as u32];
         let mut first = 0u32;
@@ -1545,11 +1648,26 @@ pub fn expand_teams(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
         match ran {
             Ok((launches, gpu_seconds)) => {
                 gpu += gpu_seconds;
-                // `RERAIL_PP_TRACE`: the largest team's phases (its unit's trace).
+                // `RERAIL_PP_TRACE`: the first team's phases (its unit's trace: the longest expected).
                 if std::env::var_os("RERAIL_PP_TRACE").is_some() {
                     let (k, m, team) = &made[0];
-                    eprintln!("TRACE the largest of {} teams: unit {k}, {team} groups, nodes {}", made.len(), members[*k].node_bound);
+                    eprintln!("TRACE the first of {} teams: unit {k}, {team} groups, nodes {}", made.len(), members[*k].node_bound);
                     crate::pp_eval::report_trace(&m.front.trace(), gpu_seconds, m.front.barriers());
+                    // Every team's start and end on the device's clock, from the round's first start: the latest ends.
+                    let spans: Vec<(usize, u64, u64, usize, u64)> = made
+                        .iter()
+                        .filter_map(|(k, m, team)| {
+                            let t = m.front.trace();
+                            Some((*k, t.first()?.1, t.last()?.1, t.len(), *team))
+                        })
+                        .collect();
+                    let t0 = spans.iter().map(|s| s.1).min().unwrap_or(0);
+                    let mut by_end = spans.clone();
+                    by_end.sort_by_key(|s| std::cmp::Reverse(s.2));
+                    eprintln!("TEAMS {} teams on {groups} groups ({seats} seats); the latest ends (unit: start..end us, phases, groups, nodes):", spans.len());
+                    for (k, a, b, n, team) in by_end.iter().take(6) {
+                        eprintln!("TEAMS   unit {k}: {:.1}..{:.1}, {n} phases, {team} groups, nodes {}", (a - t0) as f64 / 1e3, (b - t0) as f64 / 1e3, members[*k].node_bound);
+                    }
                 }
                 for (k, m, team) in made {
                     // A team's barrier past its bound: the unit again, its team one group.
@@ -1642,13 +1760,22 @@ impl<'u> Runs<'u> {
         let (p1, x, def_rung) = (self.p1, self.x, self.def_rung);
         let rung = x.rung;
         if std::env::var_os("RERAIL_PP_LOOP_LOG").is_some() {
-            // SAFETY: the device finished; `trn` holds 24 words, 16 to 19 the longest piece's, 20 to 23 the slowest's.
+            // SAFETY: the device finished; `trn` holds 32 words, 16 to 19 the longest piece's, 20 to 23 the slowest's.
             let w = |k: usize| unsafe { *exp.trn.host().cast::<u32>().add(k) };
-            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {})", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound);
+            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29));
         }
-        *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
+        // The loop's work, where the run reached the text (a round that ends at its requests did not): the
+        // unit's, kept for its next run and its next evaluation.
+        let work = if exp.passes().1 > 0 {
+            let w = exp.steps_summed();
+            keep_loop_work(unit, w);
+            Some(w)
+        } else {
+            sizes.work
+        };
+        *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))), work };
         let expanded = |refused: u32, p1_flags: u32, requests: Vec<Request>, out: Vec<u32>, unit_out: Vec<u32>, scratch: Vec<u8>, stoks: Vec<[u32; 3]>| -> Result<Expanded, Error> {
-            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), def_rung, run })
+            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, run })
         };
         // SAFETY: the device finished writing `room`.
         let why = |room: &str| {
@@ -1684,7 +1811,11 @@ impl<'u> Runs<'u> {
         }
         let requests = vis.requests();
         if p1_flags != 0 || !requests.is_empty() {
-            return Some(expanded(0, p1_flags, requests, Vec::new(), Vec::new(), Vec::new(), Vec::new()));
+            let tree = (p1_flags == 0).then(|| vis.tree());
+            return Some(expanded(0, p1_flags, requests, Vec::new(), Vec::new(), Vec::new(), Vec::new()).map(|mut e| {
+                e.tree = tree;
+                e
+            }));
         }
         if let Err(e) = vis.read() {
             return Some(Err(e));
@@ -1768,7 +1899,7 @@ fn lookups_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Resu
         arena_log(&arena, &l, format_args!("lookups at rung {x_rung}, p1 rung {}, defs rung {rung}", p1.rung));
         arena.lease()?;
         on_grid(&arena, unit, &front, &l, groups)?;
-        *sizes = Sizes { p1, x, defs: rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
+        *sizes = Sizes { p1, x, defs: rung, used: Some((vis.p1_need(), Caps::first(unit, lay))), work: sizes.work };
         // SAFETY: the device finished writing `room`.
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {
             rung += 1;

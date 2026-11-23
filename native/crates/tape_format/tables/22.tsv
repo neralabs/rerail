@@ -1,0 +1,333 @@
+# Tape format 16's choices for tape tag 22 (markdown), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+#   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
+# 154 codes; numbered by how often each is a node's over 43225 files, 59649483 nodes (`rerail-engine code-counts`).
+revision	4
+widths	1	1	1
+code	20	0	0	-	-
+code	18	0	0	-	-
+code	19	0	0	-	-
+code	46	0	0	-	-
+code	29	0	0	-	-
+code	21	0	0	-	-
+code	28	0	0	-	-
+code	35	0	0	-	-
+code	34	0	0	-	-
+code	203	0	0	-	-
+code	133	0	0	-	-
+code	17	0	0	-	-
+code	9	0	0	-	-
+code	15	0	0	-	-
+code	164	0	0	-	-
+code	4	0	0	-	-
+code	5	0	0	-	-
+code	147	0	0	-	-
+code	7	0	0	-	-
+code	6	0	0	-	-
+code	31	0	0	-	-
+code	143	0	0	-	-
+code	23	0	0	-	-
+code	10	0	0	-	-
+code	25	0	0	-	-
+code	100	0	0	-	-
+code	108	0	0	-	-
+code	203	1	0	-	-
+code	14	0	0	-	-
+code	22	0	0	-	-
+code	68	0	0	-	-
+code	30	0	0	-	-
+code	32	0	0	-	-
+code	163	0	0	-	-
+code	144	0	0	-	-
+code	136	0	0	-	-
+code	50	0	0	-	-
+code	51	0	0	-	-
+code	11	0	0	-	-
+code	119	0	0	-	-
+code	120	0	0	-	-
+code	26	0	0	-	-
+code	121	2	0	-	-
+code	122	0	0	-	-
+code	12	0	0	-	-
+code	16	0	0	-	-
+code	13	0	0	-	-
+code	162	0	0	-	-
+code	145	0	0	-	-
+code	24	0	0	-	-
+code	8	0	0	-	-
+code	123	0	0	-	-
+code	52	0	0	-	-
+code	90	0	0	-	-
+code	49	0	0	-	-
+code	92	0	0	-	-
+code	93	0	0	-	-
+code	131	0	0	-	-
+code	159	0	0	-	-
+code	161	0	0	-	-
+code	206	0	0	-	-
+code	33	0	0	-	-
+code	27	0	0	-	-
+code	47	0	0	-	-
+code	135	0	0	-	-
+code	107	0	0	-	-
+code	36	0	0	-	-
+code	158	0	0	-	-
+code	115	0	0	-	-
+code	133	1	0	-	-
+code	117	0	0	-	-
+code	86	0	0	-	-
+code	56	0	0	-	-
+code	204	0	0	-	-
+code	53	0	0	-	-
+code	157	0	0	-	-
+code	205	0	0	-	-
+code	55	0	0	-	-
+code	142	0	0	-	-
+code	0	0	3	-	-
+code	146	0	0	-	-
+code	54	0	0	-	-
+code	0	0	2	-	-
+code	18	0	4	-	-
+code	96	0	0	-	-
+code	91	0	0	-	-
+code	3	0	0	-	-
+code	87	0	0	-	-
+code	2	0	0	-	-
+code	37	0	0	-	-
+code	38	0	0	-	-
+code	121	0	0	-	-
+code	0	1	2	-	-
+code	0	2	2	-	-
+code	2	0	4	-	-
+code	3	0	4	-	-
+code	4	0	4	-	-
+code	5	0	4	-	-
+code	6	0	4	-	-
+code	7	0	4	-	-
+code	8	0	4	-	-
+code	9	0	4	-	-
+code	10	0	4	-	-
+code	11	0	4	-	-
+code	12	0	4	-	-
+code	13	0	4	-	-
+code	14	0	4	-	-
+code	15	0	4	-	-
+code	16	0	4	-	-
+code	17	0	4	-	-
+code	19	0	4	-	-
+code	20	0	4	-	-
+code	21	0	4	-	-
+code	22	0	4	-	-
+code	23	0	4	-	-
+code	24	0	4	-	-
+code	25	0	4	-	-
+code	26	0	4	-	-
+code	27	0	4	-	-
+code	28	0	4	-	-
+code	29	0	4	-	-
+code	30	0	4	-	-
+code	31	0	4	-	-
+code	32	0	4	-	-
+code	33	0	4	-	-
+code	34	0	4	-	-
+code	35	0	4	-	-
+code	36	0	4	-	-
+code	37	0	4	-	-
+code	38	0	4	-	-
+code	46	0	4	-	-
+code	47	0	4	-	-
+code	49	0	4	-	-
+code	50	0	4	-	-
+code	51	0	4	-	-
+code	52	0	4	-	-
+code	53	0	4	-	-
+code	54	0	4	-	-
+code	55	0	4	-	-
+code	56	0	4	-	-
+code	68	0	4	-	-
+code	86	0	4	-	-
+code	87	0	4	-	-
+code	91	0	4	-	-
+code	142	0	4	-	-
+code	143	0	4	-	-
+code	144	0	4	-	-
+code	145	0	4	-	-
+code	146	0	4	-	-
+code	157	0	4	-	-
+code	158	0	4	-	-
+code	164	0	4	-	-
+code	204	0	4	-	-
+code	205	0	4	-	-
+kind	2	1	entity_reference
+kind	3	1	numeric_character_reference
+kind	4	0	[
+kind	5	0	]
+kind	6	0	<
+kind	7	0	>
+kind	8	0	!
+kind	9	0	"
+kind	10	0	#
+kind	11	0	$
+kind	12	0	%
+kind	13	0	&
+kind	14	0	'
+kind	15	0	*
+kind	16	0	+
+kind	17	0	,
+kind	18	0	-
+kind	19	0	.
+kind	20	0	/
+kind	21	0	:
+kind	22	0	;
+kind	23	0	=
+kind	24	0	?
+kind	25	0	@
+kind	26	0	\\
+kind	27	0	^
+kind	28	0	_
+kind	29	0	`
+kind	30	0	{
+kind	31	0	|
+kind	32	0	}
+kind	33	0	~
+kind	34	0	(
+kind	35	0	)
+kind	36	0	-->
+kind	37	0	?>
+kind	38	0	]]>
+kind	46	1	block_continuation
+kind	47	1	block_quote_marker
+kind	49	1	atx_h1_marker
+kind	50	1	atx_h2_marker
+kind	51	1	atx_h3_marker
+kind	52	1	atx_h4_marker
+kind	53	1	atx_h5_marker
+kind	54	1	atx_h6_marker
+kind	55	1	setext_h1_underline
+kind	56	1	setext_h2_underline
+kind	68	1	fenced_code_block_delimiter
+kind	86	1	minus_metadata
+kind	87	1	plus_metadata
+kind	90	1	document
+kind	91	1	backslash_escape
+kind	92	1	link_label
+kind	93	1	link_destination
+kind	96	1	link_title
+kind	100	1	section
+kind	107	1	thematic_break
+kind	108	1	atx_heading
+kind	115	1	setext_heading
+kind	117	1	indented_code_block
+kind	119	1	fenced_code_block
+kind	120	1	code_fence_content
+kind	121	1	info_string
+kind	122	1	language
+kind	123	1	html_block
+kind	131	1	link_reference_definition
+kind	133	1	paragraph
+kind	135	1	block_quote
+kind	136	1	list
+kind	142	1	list_marker_plus
+kind	143	1	list_marker_minus
+kind	144	1	list_marker_star
+kind	145	1	list_marker_dot
+kind	146	1	list_marker_parenthesis
+kind	147	1	list_item
+kind	157	1	task_list_marker_checked
+kind	158	1	task_list_marker_unchecked
+kind	159	1	pipe_table
+kind	161	1	pipe_table_delimiter_row
+kind	162	1	pipe_table_delimiter_cell
+kind	163	1	pipe_table_row
+kind	164	1	pipe_table_cell
+kind	203	1	inline
+kind	204	1	pipe_table_align_left
+kind	205	1	pipe_table_align_right
+kind	206	1	pipe_table_header
+lookup	1	entity_reference	2
+lookup	1	numeric_character_reference	3
+lookup	0	[	4
+lookup	0	]	5
+lookup	0	<	6
+lookup	0	>	7
+lookup	0	!	8
+lookup	0	"	9
+lookup	0	#	10
+lookup	0	$	11
+lookup	0	%	12
+lookup	0	&	13
+lookup	0	'	14
+lookup	0	*	15
+lookup	0	+	16
+lookup	0	,	17
+lookup	0	-	18
+lookup	0	.	19
+lookup	0	/	20
+lookup	0	:	21
+lookup	0	;	22
+lookup	0	=	23
+lookup	0	?	24
+lookup	0	@	25
+lookup	0	\\	26
+lookup	0	^	27
+lookup	0	_	28
+lookup	0	`	29
+lookup	0	{	30
+lookup	0	|	31
+lookup	0	}	32
+lookup	0	~	33
+lookup	0	(	34
+lookup	0	)	35
+lookup	0	-->	36
+lookup	0	?>	37
+lookup	0	]]>	38
+lookup	1	block_continuation	46
+lookup	1	block_quote_marker	47
+lookup	1	atx_h1_marker	49
+lookup	1	atx_h2_marker	50
+lookup	1	atx_h3_marker	51
+lookup	1	atx_h4_marker	52
+lookup	1	atx_h5_marker	53
+lookup	1	atx_h6_marker	54
+lookup	1	setext_h1_underline	55
+lookup	1	setext_h2_underline	56
+lookup	1	fenced_code_block_delimiter	68
+lookup	1	minus_metadata	86
+lookup	1	plus_metadata	87
+lookup	1	document	90
+lookup	1	backslash_escape	91
+lookup	1	link_label	92
+lookup	1	link_destination	93
+lookup	1	link_title	96
+lookup	1	section	100
+lookup	1	thematic_break	107
+lookup	1	atx_heading	108
+lookup	1	setext_heading	115
+lookup	1	indented_code_block	117
+lookup	1	fenced_code_block	119
+lookup	1	code_fence_content	120
+lookup	1	info_string	121
+lookup	1	language	122
+lookup	1	html_block	123
+lookup	1	link_reference_definition	131
+lookup	1	paragraph	133
+lookup	1	block_quote	135
+lookup	1	list	136
+lookup	1	list_marker_plus	142
+lookup	1	list_marker_minus	143
+lookup	1	list_marker_star	144
+lookup	1	list_marker_dot	145
+lookup	1	list_marker_parenthesis	146
+lookup	1	list_item	147
+lookup	1	task_list_marker_checked	157
+lookup	1	task_list_marker_unchecked	158
+lookup	1	pipe_table	159
+lookup	1	pipe_table_delimiter_row	161
+lookup	1	pipe_table_delimiter_cell	162
+lookup	1	pipe_table_row	163
+lookup	1	pipe_table_cell	164
+lookup	1	inline	203
+lookup	1	pipe_table_align_left	204
+lookup	1	pipe_table_align_right	205
+lookup	1	pipe_table_header	206
+field	1	heading_content
+field	2	info_string

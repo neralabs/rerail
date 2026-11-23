@@ -6,6 +6,7 @@
 //! pushed for a key, so a run is looked up by binary search and merged into SQLite in key order.
 //! A run encodes to a flat little-endian file when the overlay spills it.
 
+use rerail_blocks::vector::Vector;
 use std::cmp::Ordering;
 use std::io::{self, Read, Write};
 
@@ -17,20 +18,20 @@ pub(crate) struct Run {
     relation: u32,
     key: usize,
     rows: usize,
-    columns: Box<[Box<[u32]>]>,
+    columns: Box<[Vector<u32>]>,
 }
 
 /// Rows pushed in any order; `seal` makes the run.
 pub(crate) struct Builder {
     relation: u32,
     key: usize,
-    columns: Vec<Vec<u32>>,
+    columns: Vec<Vector<u32>>,
 }
 
 impl Builder {
     pub(crate) fn new(relation: u32, arity: usize, key: usize) -> Self {
         assert!(key >= 1 && key <= arity, "a run's key is a non-empty prefix of its columns");
-        Self { relation, key, columns: (0..arity).map(|_| Vec::new()).collect() }
+        Self { relation, key, columns: (0..arity).map(|_| Vector::new()).collect() }
     }
 
     pub(crate) fn push(&mut self, row: &[u32]) {
@@ -62,7 +63,7 @@ impl Builder {
         let columns = self
             .columns
             .iter()
-            .map(|column| kept.iter().map(|&row| column[row]).collect::<Box<[u32]>>())
+            .map(|column| kept.iter().map(|&row| column[row]).collect::<Vector<u32>>())
             .collect();
         Run { relation: self.relation, key: self.key, rows: kept.len(), columns }
     }
@@ -127,7 +128,7 @@ impl Run {
 
     /// Heap bytes the run holds.
     pub(crate) fn bytes(&self) -> usize {
-        self.columns.len() * std::mem::size_of::<Box<[u32]>>() + self.columns.len() * self.rows * 4
+        self.columns.len() * std::mem::size_of::<Vector<u32>>() + self.columns.len() * self.rows * 4
     }
 
     /// Flat encoding: magic, relation, key, arity, rows (u32 each), then each column.

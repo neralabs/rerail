@@ -20,6 +20,7 @@
 //! document's rows, which go to every file that asked) has its delta made by the rules, as does one whose row counts
 //! do not add up (`old - gone + new = rows`), which another source fed.
 
+use rerail_blocks::vector::Vector;
 use super::memo::{self, Content, Entry};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -76,7 +77,7 @@ pub(super) fn delta(changes: &[(Option<Arc<Entry>>, Option<Arc<Entry>>)], key: &
     // The entries, each once: an old one at `2 i`, a new one at `2 i + 1`.
     let entries: Vec<Option<Arc<Entry>>> = changes.iter().flat_map(|(w, n)| [w.clone(), n.clone()]).collect();
     let flats = entries.iter().map(|e| e.as_ref().and_then(|e| e.rows.get(key)).map(|(w, f)| Flat { w: *w, at: f.as_ptr(), len: f.len() })).collect();
-    let mut out = Delta { entries, flats, cols: cols.to_vec(), gone: Vec::new(), new: Vec::new() };
+    let mut out = Delta { entries, flats, cols: cols.to_vec(), gone: rerail_blocks::vector::Vector::new(), new: rerail_blocks::vector::Vector::new() };
     for (i, (was, now)) in changes.iter().enumerate() {
         // The same rows under the same key: nothing gone or new (an edit leaves most relations of a file as they were).
         if let (Some(w), Some(n)) = (was, now)
@@ -91,14 +92,14 @@ pub(super) fn delta(changes: &[(Option<Arc<Entry>>, Option<Arc<Entry>>)], key: &
         }
         // Each side's rows as the input's columns, a row once; then those the other side lacks.
         let (was_rows, now_rows) = (out.distinct(w), out.distinct(n));
-        let lacks = |rows: &hashbrown::HashTable<u32>, e: u32, r: u32| {
+        let lacks = |rows: &rerail_blocks::maps::IdTable<u32>, e: u32, r: u32| {
             let h = out.hash(e, r);
             rows.find(h, |&o| out.same((e, r), (if e == w { n } else { w }, o))).is_none()
         };
-        let gone: Vec<(u32, u32)> = was_rows.iter().filter(|&&r| lacks(&now_rows, w, r)).map(|&r| (w, r)).collect();
-        let new: Vec<(u32, u32)> = now_rows.iter().filter(|&&r| lacks(&was_rows, n, r)).map(|&r| (n, r)).collect();
-        out.gone.extend(gone);
-        out.new.extend(new);
+        let gone: rerail_blocks::vector::Vector<[u32; 2]> = was_rows.iter().filter(|&&r| lacks(&now_rows, w, r)).map(|&r| [w, r]).collect();
+        let new: rerail_blocks::vector::Vector<[u32; 2]> = now_rows.iter().filter(|&&r| lacks(&was_rows, n, r)).map(|&r| [n, r]).collect();
+        out.gone.extend_from_slice(&gone);
+        out.new.extend_from_slice(&new);
     }
     if !out.gone.is_empty() || !out.new.is_empty() {
         crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("input {key}: {} rows gone, {} new", out.gone.len(), out.new.len()));
@@ -114,8 +115,8 @@ pub(super) struct Delta {
     /// relations by name at each read (2.7 s of O125 step 05's edit was those searches).
     flats: Vec<Option<Flat>>,
     cols: Vec<Option<usize>>,
-    pub(super) gone: Vec<(u32, u32)>,
-    pub(super) new: Vec<(u32, u32)>,
+    pub(super) gone: rerail_blocks::vector::Vector<[u32; 2]>,
+    pub(super) new: rerail_blocks::vector::Vector<[u32; 2]>,
 }
 
 /// An entry's rows of one relation: its width and its flat values, where the entry holds them.
@@ -126,7 +127,7 @@ struct Flat {
     len: usize,
 }
 
-// SAFETY: `Flat` points into a `Vec<i64>` of an `Entry` its `Delta` holds by an `Arc` (`entries`), and an entry is
+// SAFETY: `Flat` points into a `Vector<i64>` of an `Entry` its `Delta` holds by an `Arc` (`entries`), and an entry is
 // never changed once made: the values stay where they are, readable from any thread, while the delta lives.
 unsafe impl Send for Flat {}
 unsafe impl Sync for Flat {}
@@ -165,8 +166,8 @@ impl Delta {
         flat.chunks(w).all(|row| row.iter().any(|&v| v >= 1 << 32 && (v >> 32 == entry.key || GUESTS.contains(&(v >> 32)))))
     }
     /// Entry `e`'s rows as the input's columns, each distinct row once (by its first place).
-    fn distinct(&self, e: u32) -> hashbrown::HashTable<u32> {
-        let mut t = hashbrown::HashTable::new();
+    fn distinct(&self, e: u32) -> rerail_blocks::maps::IdTable<u32> {
+        let mut t = rerail_blocks::maps::IdTable::new();
         for r in 0..self.rows(e) {
             let h = self.hash(e, r);
             if t.find(h, |&o| self.same((e, r), (e, o))).is_none() {
@@ -189,7 +190,7 @@ struct DeltaRows {
 }
 
 impl DeltaRows {
-    fn picks(&self) -> &[(u32, u32)] {
+    fn picks(&self) -> &[[u32; 2]] {
         if self.gone { &self.delta.gone } else { &self.delta.new }
     }
 }
@@ -205,12 +206,13 @@ impl crate::code_rule_dsl::facts::vtab::Source for DeltaRows {
         self.len()
     }
     fn value(&self, row: usize, column: usize) -> i64 {
-        self.delta.value(self.picks()[row], column)
+        let [e, r] = self.picks()[row];
+        self.delta.value((e, r), column)
     }
     fn indexed(&self, _column: usize) -> bool {
         false
     }
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         // A change's rows are few: tested in turn.
         Some((0..self.len()).filter(|&r| values.contains(&self.value(r, column))).collect())
     }
@@ -225,7 +227,7 @@ pub mod tests {
     }
 
     /// A change's rows gone and new, read out to compare (`Delta::source`).
-    fn delta(changes: &[(Option<Arc<Entry>>, Option<Arc<Entry>>)], key: &str, cols: &[Option<usize>]) -> Option<(Vec<Vec<i64>>, Vec<Vec<i64>>)> {
+    fn delta(changes: &[(Option<Arc<Entry>>, Option<Arc<Entry>>)], key: &str, cols: &[Option<usize>]) -> Option<(Vec<Vector<i64>>, Vec<Vector<i64>>)> {
         use crate::code_rule_dsl::facts::vtab::Source as _;
         let d = Arc::new(super::delta(changes, key, cols)?);
         let read = |gone: bool| {
@@ -242,10 +244,10 @@ pub mod tests {
         let was = entry(d, "r", &[[n(1), 10], [n(2), 20]]);
         let now = entry(d, "r", &[[n(2), 20], [n(3), 30]]);
         let (gone, new) = delta(&[(Some(was.clone()), Some(now.clone()))], "r", &[Some(0), Some(1)]).unwrap();
-        assert_eq!((gone, new), (vec![vec![n(1), 10]], vec![vec![n(3), 30]]));
+        assert_eq!((gone, new), (vec![rerail_blocks::vector![n(1), 10]], vec![rerail_blocks::vector![n(3), 30]]));
         // Read as an input holding its first column only: the second reads as 0.
         let (gone, new) = delta(&[(Some(was.clone()), Some(now))], "r", &[Some(0), None]).unwrap();
-        assert_eq!((gone, new), (vec![vec![n(1), 0]], vec![vec![n(3), 0]]));
+        assert_eq!((gone, new), (vec![rerail_blocks::vector![n(1), 0]], vec![rerail_blocks::vector![n(3), 0]]));
         // A document that went: every row gone. One the same: nothing.
         assert_eq!(delta(&[(Some(was.clone()), None)], "r", &[Some(0), Some(1)]).unwrap().0.len(), 2);
         assert_eq!(delta(&[(Some(was.clone()), Some(was))], "r", &[Some(0), Some(1)]).unwrap(), (vec![], vec![]));
@@ -267,9 +269,9 @@ pub mod tests {
 /// Rows of `now` that `docs` own, ascending: through `now`'s own index of its first column, a document key (`d`) or a
 /// node id (`key << 32 | …`), where it has one; else (`None`) the caller reads `now` through. Decision 0458: an
 /// edit reads its changed documents' rows, not every row.
-pub(super) fn rows_of_documents(now: &dyn crate::code_rule_dsl::facts::vtab::Source, docs: &std::collections::BTreeSet<i64>) -> Option<Vec<u32>> {
+pub(super) fn rows_of_documents(now: &dyn crate::code_rule_dsl::facts::vtab::Source, docs: &std::collections::BTreeSet<i64>) -> Option<Vector<u32>> {
     let first = now.columns().into_iter().next()?;
-    let mut rows: Vec<u32> = Vec::new();
+    let mut rows: Vector<u32> = rerail_blocks::vector::Vector::new();
     if first == "d" {
         if !now.indexed(0) {
             return None;
@@ -293,13 +295,13 @@ pub(super) fn rows_of_documents(now: &dyn crate::code_rule_dsl::facts::vtab::Sou
 /// batch of their old documents). No row is copied.
 pub(super) struct Before {
     now: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>,
-    skip: Vec<u32>,
+    skip: Vector<u32>,
     was: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>,
     kept: std::sync::OnceLock<usize>,
 }
 
 impl Before {
-    pub(super) fn new(now: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, skip: Vec<u32>, was: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>) -> Before {
+    pub(super) fn new(now: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, skip: Vector<u32>, was: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>) -> Before {
         Before { now, skip, was, kept: std::sync::OnceLock::new() }
     }
 
@@ -341,13 +343,16 @@ impl crate::code_rule_dsl::facts::vtab::Source for Before {
     fn lookup_cost(&self, column: usize) -> f64 {
         self.now.lookup_cost(column)
     }
+    fn scan_cost(&self) -> f64 {
+        self.now.scan_cost()
+    }
     fn indexed(&self, column: usize) -> bool {
         self.now.indexed(column)
     }
     /// The corpus batch's lookup, the changed documents' rows dropped, then the old documents' rows: by their own
     /// lookup, else read (they are the changed documents' alone).
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
-        let mut out: Vec<usize> = self.now.lookup(column, values)?.into_iter().filter_map(|id| self.before_row(id)).collect();
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+        let mut out: rerail_blocks::vector::Vector<usize> = self.now.lookup(column, values)?.into_iter().filter_map(|id| self.before_row(id)).collect();
         if let Some(was) = &self.was {
             match was.lookup(column, values) {
                 Some(ids) => out.extend(ids.into_iter().map(|r| r + self.kept())),
@@ -375,18 +380,18 @@ mod before_tests {
     /// The old version reads the rows now that the changed documents do not own, in order, then their old rows.
     #[test]
     fn before_reads_the_kept_rows_then_the_old_documents_rows() {
-        let col = |v: Vec<i64>| crate::code_rule_dsl::logic::native::component::columns_source(vec!["n".to_owned()], vec![Some(v)]);
-        let now = col(vec![10, 11, 12, 13, 14, 15]);
-        let was = col(vec![99, 98]);
-        let before = Before::new(now, vec![0, 2, 3], Some(was));
-        let rows: Vec<i64> = (0..before.len()).map(|r| before.value(r, 0)).collect();
+        let col = |v: rerail_blocks::vector::Vector<i64>| crate::code_rule_dsl::logic::native::component::columns_source(vec!["n".to_owned()], vec![Some(v)]);
+        let now = col(rerail_blocks::vector![10, 11, 12, 13, 14, 15]);
+        let was = col(rerail_blocks::vector![99, 98]);
+        let before = Before::new(now, rerail_blocks::vector![0, 2, 3], Some(was));
+        let rows: rerail_blocks::vector::Vector<i64> = (0..before.len()).map(|r| before.value(r, 0)).collect();
         assert_eq!(rows, vec![11, 14, 15, 99, 98]);
         // Looked up, the same rows by their place in the old version.
         for v in [10, 11, 14, 99, 7] {
-            let want: Vec<usize> = (0..before.len()).filter(|&r| before.value(r, 0) == v).collect();
+            let want: rerail_blocks::vector::Vector<usize> = (0..before.len()).filter(|&r| before.value(r, 0) == v).collect();
             assert_eq!(before.lookup(0, &[v]).expect("the rows now are looked up"), want, "{v}");
         }
-        let none = Before::new(col(vec![1, 2]), vec![], None);
+        let none = Before::new(col(rerail_blocks::vector![1, 2]), rerail_blocks::vector![], None);
         assert_eq!((0..none.len()).map(|r| none.value(r, 0)).collect::<Vec<_>>(), vec![1, 2]);
         let _ = Arc::new(none);
     }

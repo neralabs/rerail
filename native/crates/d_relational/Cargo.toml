@@ -11,9 +11,10 @@ default = ["rerail-rules-base/default", "rerail-p-anchors/default"]
 headless = ["napi-derive/noop", "rerail-rules-base/headless", "rerail-p-anchors/headless"]
 code-rule-profile = ["rerail-rules-base/code-rule-profile", "rerail-p-anchors/code-rule-profile"]
 p-anchor-corpus = ["rerail-rules-base/p-anchor-corpus", "rerail-p-anchors/p-anchor-corpus"]
-test-hooks = ["rerail-rules-base/test-hooks", "rerail-prof/test-hooks", "dep:tempfile", "rerail-p-anchors/test-hooks"]
+test-hooks = ["rerail-rules-base/test-hooks", "rerail-prof/test-hooks", "dep:tempfile", "rerail-p-anchors/test-hooks", "rerail-blocks/test-hooks"]
 
 [dependencies]
+rerail-blocks = { path = "../blocks" }
 ast-grep-core = "=0.51.0"
 ast-grep-language = { version = "=0.51.0", default-features = false }
 foldhash = "=0.2.0"

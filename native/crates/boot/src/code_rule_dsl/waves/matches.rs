@@ -10,6 +10,7 @@
 //! fact family per clause (`partitions`) and `statistics` keeps the terminal matches' row estimate (the most rows of
 //! one clause), as kept facts of the store, where the next drive's demand relations read it (`ContentStore::terminal_estimate`).
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::sql::select::Source;
 use super::owner::Lease;
 use super::schedule::Program;
@@ -103,7 +104,7 @@ pub struct Clause {
 #[derive(Clone, Debug, Default)]
 pub(in crate::code_rule_dsl) struct Chunk {
     /// Per clause, per document of the chunk: the candidates the root program starts from.
-    pub candidates: Vec<Vec<Vec<u32>>>,
+    pub candidates: Vec<Vec<Vector<u32>>>,
 }
 
 pub struct Wave {
@@ -148,12 +149,12 @@ impl Candidates {
 }
 
 /// Each clause's candidates kept only on the documents it is demanded on.
-fn restrict(candidates: &mut [Vec<Vec<u32>>], demanded: Option<&[Vec<bool>]>) {
+fn restrict(candidates: &mut [Vec<Vector<u32>>], demanded: Option<&[Vec<bool>]>) {
     let Some(demanded) = demanded else { return };
     for (clause, on) in candidates.iter_mut().zip(demanded) {
         for (nodes, &on) in clause.iter_mut().zip(on) {
             if !on {
-                *nodes = Vec::new();
+                *nodes = rerail_blocks::vector::Vector::new();
             }
         }
     }
@@ -268,7 +269,7 @@ impl Wave {
         }
         let id = *identity.finish().as_bytes();
         let kept = crate::code_rule_dsl::stats::plans::Plans::open(store)?;
-        let held = crate::code_rule_dsl::logic::profile::shared::<WavePlans>().0.lock().expect("wave plans mutex poisoned").valid(store.database_path(), kept.as_ref(), &[id], &reads);
+        let held = crate::code_rule_dsl::logic::profile::shared::<WavePlans>().0.lock().expect("wave plans mutex poisoned").valid(store.database_path(), kept.as_deref(), &[id], &reads);
         if let Some(held) = held.get(&id) {
             // The SQL holds this store's atom ids: a plan is reused only where the atoms it was
             // planned with have the same ids here (its decisions record them).
@@ -332,7 +333,7 @@ impl Wave {
 
     /// Each clause kept off the documents that fail one of its document gates (`Clause::paths`).
     fn gate(&self, demanded: &mut Option<Vec<Vec<bool>>>, documents: &[Document], tapes: &[Arc<Tape>]) {
-        if self.paths.iter().all(Vec::is_empty) {
+        if self.paths.iter().all(|v| v.is_empty()) {
             return;
         }
         let demanded = demanded.get_or_insert_with(|| vec![vec![true; documents.len()]; self.plans.len()]);
@@ -506,7 +507,7 @@ impl Wave {
         &self,
         graph: &(impl Graph + ?Sized),
         tapes: &[Arc<Tape>],
-    ) -> StoreResult<Vec<Vec<Vec<u32>>>> {
+    ) -> StoreResult<Vec<Vec<Vector<u32>>>> {
         let ids = tapes.iter().map(|tape| tape.id).collect::<Vec<_>>();
         let plans = self.plans.iter().map(Arc::as_ref).collect::<Vec<_>>();
         if self.route == Candidates::Sql {
@@ -518,13 +519,13 @@ impl Wave {
                 .into_iter()
                 .enumerate()
                 .map(|(clause, (rows, _exact))| {
-                    let mut out = vec![Vec::new(); tapes.len()];
+                    let mut out = vec![rerail_blocks::vector::Vector::new(); tapes.len()];
                     for (file, node) in rows {
                         if self.lowered.starts(clause, &tapes[file as usize].doc, node) {
                             out[file as usize].push(node);
                         }
                     }
-                    crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(Vec::len).sum());
+                    crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(|v| v.len()).sum());
                     out
                 })
                 .collect());
@@ -553,12 +554,12 @@ impl Wave {
                     let _in = carry.enter("candidates.clause");
                     let out = (0..tapes.len())
                         .map(|file| {
-                            let mut nodes = set.file_nodes(&space, file).filter(|&node| self.lowered.starts(clause, &tapes[file].doc, node)).collect::<Vec<_>>();
+                            let mut nodes = set.file_nodes(&space, file).filter(|&node| self.lowered.starts(clause, &tapes[file].doc, node)).collect::<rerail_blocks::vector::Vector<_>>();
                             nodes.shrink_to_fit();
                             nodes
                         })
                         .collect::<Vec<_>>();
-                    crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(Vec::len).sum());
+                    crate::code_rule_dsl::prof::count("candidates.kept", out.iter().map(|v| v.len()).sum());
                     Ok(out)
                 })
                 .collect()

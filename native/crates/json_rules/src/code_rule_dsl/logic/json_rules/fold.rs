@@ -1,6 +1,7 @@
 //! Folding: families of copy-pasted relations (alike up to their strings and to which member of another family
 //! they call) folded into one relation with a key column and a table of the strings that differed.
 
+use rerail_blocks::vector::Vector;
 use super::program::Program;
 use super::patterns::Patterns;
 use super::pyre::{captures, findall, g, has, re, search, split};
@@ -263,7 +264,7 @@ pub fn fold(px: &Patterns, rs: &mut Rules, prog: &mut Program, allowed: Option<&
     }
     loop {
         let keyless: BTreeMap<usize, bool> = fams.iter().map(|f| (f.id, f.keyless)).collect();
-        let lose: Vec<usize> = fams.iter().filter(|f| f.keyless && f.plan.iter().any(|p| matches!(p, Plan::CallSame(gid) if !keyless.get(gid).copied().unwrap_or(false)))).map(|f| f.id).collect();
+        let lose: Vector<usize> = fams.iter().filter(|f| f.keyless && f.plan.iter().any(|p| matches!(p, Plan::CallSame(gid) if !keyless.get(gid).copied().unwrap_or(false)))).map(|f| f.id).collect();
         if lose.is_empty() {
             break;
         }
@@ -342,7 +343,7 @@ pub fn fold(px: &Patterns, rs: &mut Rules, prog: &mut Program, allowed: Option<&
             table += "_of";
         }
         used.insert(table.clone());
-        let jnames: Vec<String> = ms.iter().map(|m| json_name(prog.notes.get(m).map(Vec::as_slice).unwrap_or(&[]), m)).collect();
+        let jnames: Vec<String> = ms.iter().map(|m| json_name(prog.notes.get(m).map(|v| v.as_slice()).unwrap_or(&[]), m)).collect();
         let shown = jnames.iter().take(3).map(|j| format!("`{j}`")).collect::<Vec<_>>().join(", ") + &if ms.len() > 3 { format!(" and {} more", ms.len() - 3) } else { String::new() };
         let colvar_of = |c: &Vec<String>| colvar.iter().find(|(k, _)| k == c).map(|(_, v)| v.clone()).expect("a column");
         if f.keyless {
@@ -444,7 +445,7 @@ fn json_name(note: &[String], m: &str) -> String {
 }
 
 /// Collapsed family nodes on a cycle that has an edge through `!` or an aggregate.
-fn unstratified(px: &Patterns, prog: &Program, defs: &IndexMap<String, Vec<usize>>, node_of: &BTreeMap<String, String>) -> Set {
+fn unstratified(px: &Patterns, prog: &Program, defs: &IndexMap<String, Vector<usize>>, node_of: &BTreeMap<String, String>) -> Set {
     let mut graph: BTreeMap<String, Set> = BTreeMap::new();
     let mut neg: Vec<(String, String)> = Vec::new();
     for (name, rules) in defs {

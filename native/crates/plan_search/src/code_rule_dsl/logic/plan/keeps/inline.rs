@@ -4,6 +4,7 @@
 //! one of that pass's), so the result is the base, less the readers and the inlined rules, plus the copies: what it
 //! costs is the change.
 
+use rerail_blocks::vector::Vector;
 use super::COPIES;
 use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, Builder, CmpOp, Lit, LitRef, RelId, Rewrite, RuleRef, Site, T, TermRef, Version};
 use crate::code_rule_dsl::logic::program_image::{RuleId, Slot};
@@ -198,7 +199,7 @@ fn unfold(b: &mut Builder<'_>, v: &Version, reader: RuleRef<'_>, at: usize, read
         return Ok(Some(out));
     }
     let Some(alternatives) = negated(v, reader, read, defs) else { return Ok(None) };
-    let mut copies: Vec<Vec<usize>> = vec![Vec::new()];
+    let mut copies: Vec<Vector<usize>> = vec![rerail_blocks::vector::Vector::new()];
     for alts in &alternatives {
         copies = copies.into_iter().flat_map(|c| (0..alts.len()).map(move |k| {
             let mut c = c.clone();

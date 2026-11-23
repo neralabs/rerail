@@ -752,7 +752,7 @@ fn the_device_rungs_run_a_tu_again_past_its_room() {
     let rungs = std::cell::Cell::new([0usize; pp_words::RUNGS]);
     let source = crate::expand::ukl().unwrap();
     let device = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
-        let ran = rerail_metal::pp_on::run_batch(source, &[(w, f, e, b)], 1).expect("the batch");
+        let ran = rerail_metal_programs::pp_on::run_batch(source, &[(w, f, e, b)], 1).expect("the batch");
         rungs.set(ran.rungs);
         ran.results.into_iter().next().expect("one result")
     };
@@ -786,7 +786,7 @@ fn the_device_words_time_against_the_jit() {
         for (k, &n) in ns.iter().enumerate() {
             let jobs = vec![(w, fl, e, b); n];
             let t = std::time::Instant::now();
-            let ran = match rerail_metal::pp_on::run_batch(src, &jobs, n) {
+            let ran = match rerail_metal_programs::pp_on::run_batch(src, &jobs, n) {
                 Ok(r) => r,
                 Err(err) => {
                     eprintln!("SPIKE n={n} refused ({err:?}) after {} bytes a run", bytes.get());
@@ -958,7 +958,7 @@ struct OnMetal {
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn counted_batch<'a>(totals: &'a std::cell::RefCell<OnMetal>) -> impl Fn(&[crate::expand::Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> + 'a {
     move |jobs| {
-        let ran = rerail_metal::pp_on::run_batch(crate::expand::ukl().unwrap(), jobs, jobs.len()).expect("the device's batch");
+        let ran = rerail_metal_programs::pp_on::run_batch(crate::expand::ukl().unwrap(), jobs, jobs.len()).expect("the device's batch");
         let mut t = totals.borrow_mut();
         (t.gpu, t.dispatches, t.arena, t.jobs, t.batches) = (t.gpu + ran.gpu_seconds, t.dispatches + ran.dispatches, t.arena.max(ran.arena_bytes), t.jobs + jobs.len(), t.batches + 1);
         for (r, n) in ran.rungs.iter().enumerate() {

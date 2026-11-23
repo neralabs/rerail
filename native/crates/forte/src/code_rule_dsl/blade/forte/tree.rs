@@ -244,34 +244,20 @@ pub struct Rec {
 #[derive(Clone)]
 pub struct BladeSource {
     bytes: Vec<u8>,
-    lines: Vec<u32>,
+    /// Its rows, as tree-sitter's `TSPoint` counts them (only `\n` ends one): `Lf`'s lines (decision 0612).
+    lines: std::sync::Arc<crate::code_rule_dsl::lines::LineTable>,
 }
 
 impl BladeSource {
     fn new(bytes: Vec<u8>) -> Self {
-        let mut lines = vec![0];
-        lines.extend(
-            bytes
-                .iter()
-                .enumerate()
-                .filter(|(_, byte)| **byte == b'\n')
-                .map(|(at, _)| at as u32 + 1),
-        );
-        Self { bytes, lines }
+        let lines = crate::code_rule_dsl::lines::LineTable::of_bytes(&bytes, crate::code_rule_dsl::lines::Terminators::Lf);
+        Self { bytes, lines: std::sync::Arc::new(lines) }
     }
 
     /// The line holding byte `at` and where it starts.
     fn line_of(&self, at: usize) -> (usize, usize) {
-        let line = self
-            .lines
-            .partition_point(|start| *start as usize <= at)
-            .saturating_sub(1);
-        (
-            line,
-            self.lines
-                .get(line)
-                .map_or(0, |start| (*start as usize).min(at)),
-        )
+        let line = self.lines.line(at.min(self.bytes.len()));
+        (line, self.lines.start(line).min(at))
     }
 
     fn position(&self, at: usize) -> Position {

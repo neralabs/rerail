@@ -51,8 +51,8 @@ impl PythonCandidates for Batch {
             .iter()
             .filter(|p| p.tag == py.grammar.tag() && scope.contains(&i64::from(p.key)))
         {
-            let (rows, work) = candidates::collect(&py.grammar, &p.facts, kind, &members, |n| {
-                match candidates::eligibility(&py.grammar, &p.facts, n) {
+            let (rows, work) = candidates::collect(&py.grammar, p.f(), kind, &members, |n| {
+                match candidates::eligibility(&py.grammar, p.f(), n) {
                     Fact::Known(chain) => py
                         .imports(self, p)
                         .may_qualify_parts(

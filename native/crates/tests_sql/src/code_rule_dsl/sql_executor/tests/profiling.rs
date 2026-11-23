@@ -136,31 +136,6 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
             && component_loop
             && insertion_coverage
     );
-    let root = crate::source_tree::native().parent().unwrap().to_path_buf();
-    let output = std::process::Command::new("node")
-        .arg(root.join("scripts/profiling/sql-report.mjs"))
-        .arg("--sql-session")
-        .arg(directory.path().join("sql"))
-        .arg(directory.path().join("report"))
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report: Value = serde_json::from_slice(
-        &std::fs::read(directory.path().join("report/profile.json")).unwrap(),
-    )
-    .unwrap();
-    assert!(report["captureCoverage"]["complete"].as_bool().unwrap());
-    assert!(
-        report["executionInventory"]["phases"]["relationalEvaluation"]
-            .as_u64()
-            .unwrap()
-            > 0
-    );
-    assert_ne!(report["executionBudget"]["accepted"], true);
     let report = std::fs::read_to_string(directory.path().join("logic/profile.txt")).unwrap();
     assert!(
         report.contains("SQL extension request") && report.contains("EXPLAIN ANALYZE"),
@@ -175,6 +150,42 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
             && report.contains("support_uniqueness"),
         "{report}"
     );
+    // The imported report over the capture is built by the JS profiling tools (`scripts/profiling/sql-report.mjs`,
+    // tested with them in test/scripts): it needs Node, which a host may not have. The capture's and the logic
+    // profile's checks above hold without it.
+    match std::process::Command::new("node").arg("--version").output() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("no `node` on this host: the imported SQL report over the capture is not built");
+        }
+        found => {
+            found.expect("node --version");
+            let root = crate::source_tree::native().parent().unwrap().to_path_buf();
+            let output = std::process::Command::new("node")
+                .arg(root.join("scripts/profiling/sql-report.mjs"))
+                .arg("--sql-session")
+                .arg(directory.path().join("sql"))
+                .arg(directory.path().join("report"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let report: Value = serde_json::from_slice(
+                &std::fs::read(directory.path().join("report/profile.json")).unwrap(),
+            )
+            .unwrap();
+            assert!(report["captureCoverage"]["complete"].as_bool().unwrap());
+            assert!(
+                report["executionInventory"]["phases"]["relationalEvaluation"]
+                    .as_u64()
+                    .unwrap()
+                    > 0
+            );
+            assert_ne!(report["executionBudget"]["accepted"], true);
+        }
+    }
 }
 
 #[test]

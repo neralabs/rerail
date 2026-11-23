@@ -80,7 +80,8 @@ fn pending_atoms_commit_with_the_rows_that_name_them() {
     assert_eq!(stored(&path), [""], "interning alone writes nothing");
     store
         .immediate_transaction(|transaction| {
-            transaction.execute("INSERT INTO name_bindings(name_atom, digest, revision) VALUES (?1, zeroblob(32), 0)", [p])?;
+            let _ = p;
+            transaction.execute("INSERT OR REPLACE INTO push_pending(pending) VALUES (1)", [])?;
             Ok(())
         })
         .unwrap();
@@ -96,11 +97,12 @@ fn a_commit_without_the_pending_atoms_is_refused() {
     let store = ContentStore::open(&path).unwrap();
     let [p] = store.intern_atoms(&["p"]).unwrap()[..] else { panic!() };
     let connection = store.open_connection().unwrap();
-    let write = "BEGIN; INSERT INTO name_bindings(name_atom, digest, revision) VALUES (1, zeroblob(32), 0);";
+    let _ = p;
+    let write = "BEGIN; INSERT OR REPLACE INTO push_pending(pending) VALUES (1);";
     connection.execute_batch(write).unwrap();
     assert!(connection.execute_batch("COMMIT").is_err());
     assert!(connection.is_autocommit(), "the refused commit rolled back");
-    let bound: i64 = connection.query_row("SELECT count(*) FROM name_bindings", [], |row| row.get(0)).unwrap();
+    let bound: i64 = connection.query_row("SELECT count(*) FROM push_pending", [], |row| row.get(0)).unwrap();
     assert_eq!(bound, 0);
     // A transaction that writes only another database commits; the atoms stay pending.
     connection.execute_batch("ATTACH ':memory:' AS scratch; CREATE TABLE scratch.t(a); BEGIN; INSERT INTO scratch.t VALUES (1); COMMIT; DETACH scratch;").unwrap();
@@ -193,6 +195,37 @@ fn a_store_created_again_at_its_path_has_its_own_atoms() {
     drop(old);
 }
 
+/// A store this thread holds open is opened again on the connection it holds (`connection::held_here`): the same
+/// store, its identity not read again. The open of a store found as it is leaves its connection to this thread, one
+/// whose `atoms` table is the store's; an open that made the store leaves none (its connection was configured before
+/// the store had an identity, over atoms of no store).
+#[test]
+fn a_store_held_open_here_is_opened_again_on_its_connection() {
+    use crate::content_store::connection::held_here;
+    let at = path("held-again");
+    let made = ContentStore::open(&at).unwrap();
+    assert_eq!(held_here(&at), None, "an open that made the store leaves no connection");
+    made.intern_atoms(&["kept"]).unwrap();
+    made.flush_atoms().unwrap();
+    made.written().unwrap();
+    drop(made);
+    let first = ContentStore::open(&at).unwrap();
+    let identity = first.connection.identity();
+    assert_eq!(held_here(&at), Some(identity), "the open of a store found as it is left its connection here");
+    let read: i64 = first.connection.lock().unwrap().query_row("SELECT atom FROM atoms WHERE value='kept'", [], |r| r.get(0)).unwrap();
+    assert_eq!(first.atom("kept").unwrap().map(|a| a as i64), Some(read), "its `atoms` table is the store's");
+    let second = ContentStore::open(&at).unwrap();
+    assert_eq!(second.connection.identity(), identity);
+    assert!(std::sync::Arc::ptr_eq(&second.atoms, &first.atoms));
+    assert_eq!(second.intern_atoms(&["shared"]).unwrap(), first.intern_atoms(&["shared"]).unwrap());
+    // On another thread, which holds no connection to it, it is opened in full: the same store still.
+    let elsewhere = std::thread::spawn({
+        let at = at.path.clone();
+        move || (held_here(&at), ContentStore::open(&at).unwrap().connection.identity())
+    }).join().unwrap();
+    assert_eq!(elsewhere, (None, identity));
+}
+
 const CHILD: &str = "RERAIL_ATOMS_CHILD";
 
 /// Runs `test` in a child process of this test binary, with `CHILD` set to `role`.
@@ -219,13 +252,7 @@ fn crash_child() {
     let Some((role, path)) = role() else { return };
     assert_eq!(role, "crash");
     let store = ContentStore::open(&path).unwrap();
-    let [kept] = store.intern_atoms(&["kept"]).unwrap()[..] else { panic!() };
-    store
-        .immediate_transaction(|transaction| {
-            transaction.execute("INSERT INTO name_bindings(name_atom, digest, revision) VALUES (?1, zeroblob(32), 0)", [kept])?;
-            Ok(())
-        })
-        .unwrap();
+    store.bind_names(&[crate::content_store::Binding { name: "kept".into(), digest: [1; 32] }]).unwrap();
     store.intern_atoms(&["lost"]).unwrap();
     std::process::abort();
 }
@@ -517,13 +544,13 @@ fn reserved_atoms_wait_for_their_component_then_commit_with_rows() {
     assert!(!store.atoms.pending(), "reserved atoms are no row's yet");
     // A commit that writes rows meanwhile is not refused.
     let connection = store.open_connection().unwrap();
-    connection.execute_batch("BEGIN; INSERT INTO name_bindings(name_atom, digest, revision) VALUES (0, zeroblob(32), 0); COMMIT;").unwrap();
+    connection.execute_batch("BEGIN; INSERT OR REPLACE INTO push_pending(pending) VALUES (1); COMMIT;").unwrap();
     // Retired: pending, so a commit that does not append them is refused again.
     drop(reserved);
     assert!(store.atoms.pending());
-    connection.execute_batch("BEGIN; INSERT INTO name_bindings(name_atom, digest, revision) VALUES (1, zeroblob(32), 1);").unwrap();
+    connection.execute_batch("BEGIN; INSERT OR REPLACE INTO push_pending(pending) VALUES (1);").unwrap();
     assert!(connection.execute_batch("COMMIT").is_err());
-    connection.execute_batch("BEGIN; INSERT INTO name_bindings(name_atom, digest, revision) VALUES (1, zeroblob(32), 1);").unwrap();
+    connection.execute_batch("BEGIN; INSERT OR REPLACE INTO push_pending(pending) VALUES (1);").unwrap();
     super::commit(&connection).unwrap();
     assert!(!store.atoms.pending());
     // Another arena's atoms are not this reservation's.
@@ -667,6 +694,7 @@ fn a_forked_processs_derivations_name_the_stores_atoms() {
     store.bind_names(&[crate::content_store::Binding { name: "y".into(), digest: digest(2) }]).unwrap();
     // The store holds `b` as 4 and `y` as 3 (the other process's).
     let connection = rusqlite::Connection::open(&path).unwrap();
+    super::install_kept_tables(&connection).unwrap();
     let bound: Vec<(i64, Vec<u8>)> = connection.prepare("SELECT name_atom, digest FROM name_bindings ORDER BY name_atom").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
     assert_eq!(bound, [(3, digest(2).to_vec()), (4, digest(3).to_vec())]);
     let input: i64 = connection.query_row("SELECT name_atom FROM derivation_inputs WHERE output_atom = 4", [], |r| r.get(0)).unwrap();

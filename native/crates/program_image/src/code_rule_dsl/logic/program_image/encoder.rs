@@ -1,8 +1,9 @@
 //! Writes one image (decision 0173): its strings, relations, rules' nodes, parts and indexes. A delta's encoder
 //! numbers what it adds after its parent's id spaces, and finds what its parent holds by its parent's tables, so a
 //! delta holds only what it adds. Hashes are of texts, never of ids, so a rule or part hashes the same in any image.
+use rerail_blocks::vector::Vector;
 use super::{ABOUT_BIT, AtomId, Cell, R, RelId, Version, bad, csr, extents::Extents, kind, meta, strings::{self, Strings}};
-use std::collections::HashMap;
+use rerail_blocks::maps::BlockHash;
 use std::hash::{BuildHasher, Hasher};
 
 fn hasher() -> impl Hasher {
@@ -95,30 +96,301 @@ pub fn names_hash<'a>(tag: u8, names: impl Iterator<Item = &'a str>) -> u64 {
     h.finish()
 }
 
-/// A part, by ids, with its hash.
-#[derive(Clone)]
-pub struct Decl {
-    pub cols: Vec<(u32, u32)>,
-    pub hash: u64,
-}
-#[derive(Clone)]
-pub struct FactRel {
-    pub rows: Vec<Vec<Cell>>,
-    pub hash: u64,
+/// A fact relation's rows of cells, in a block (decision 0628 §4): each row's end in `cells`, then the cells.
+#[derive(Clone, Default, PartialEq, Debug)]
+pub struct Rows {
+    ends: Vector<u32>,
+    cells: Vector<Cell>,
 }
 
-/// The parts an image holds besides its rules, by ids. A delta's are what it replaces.
+/// Rows read where they lie: a `Rows`', a builder's part's.
+#[derive(Clone, Copy)]
+pub struct RowsRef<'a> {
+    ends: &'a [u32],
+    cells: &'a [Cell],
+}
+
+impl<'a> RowsRef<'a> {
+    pub fn len(&self) -> usize {
+        self.ends.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ends.is_empty()
+    }
+
+    pub fn get(self, i: usize) -> Option<&'a [Cell]> {
+        let end = *self.ends.get(i)? as usize;
+        let start = if i == 0 { 0 } else { self.ends[i - 1] as usize };
+        Some(&self.cells[start..end])
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = &'a [Cell]> + Clone + 'a {
+        let (ends, cells) = (self.ends, self.cells);
+        (0..ends.len()).map(move |i| &cells[if i == 0 { 0 } else { ends[i - 1] as usize }..ends[i] as usize])
+    }
+
+    /// Every cell, row after row.
+    pub fn cells(self) -> &'a [Cell] {
+        self.cells
+    }
+
+    /// Its rows as a `Rows` of their own, to be edited and stated again.
+    pub fn to_rows(self) -> Rows {
+        // copy: derived: the rows an edit is made from, stated again by the builder (`set_about_rows`).
+        Rows { ends: Vector::from(self.ends), cells: Vector::from(self.cells) }
+    }
+}
+
+impl Rows {
+    pub fn new() -> Rows {
+        Rows::default()
+    }
+
+    pub fn as_ref(&self) -> RowsRef<'_> {
+        RowsRef { ends: &self.ends, cells: &self.cells }
+    }
+
+    pub fn len(&self) -> usize {
+        self.ends.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ends.is_empty()
+    }
+
+    /// Rows of cells read one by one (a version's fact relation's).
+    pub fn of_cells<R: IntoIterator<Item = Cell>>(rows: impl Iterator<Item = R>) -> Rows {
+        let mut out = Rows::new();
+        for r in rows {
+            out.push_cells(r);
+        }
+        out
+    }
+
+    /// A row of cells read one by one.
+    pub fn push_cells(&mut self, row: impl IntoIterator<Item = Cell>) {
+        self.cells.extend(row);
+        self.ends.push(u32::try_from(self.cells.len()).expect("4G cells"));
+    }
+
+    pub fn push(&mut self, row: impl AsRef<[Cell]>) {
+        self.cells.extend_from_slice(row.as_ref());
+        self.ends.push(u32::try_from(self.cells.len()).expect("4G cells"));
+    }
+
+    pub fn get(&self, i: usize) -> Option<&[Cell]> {
+        self.as_ref().get(i)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &[Cell]> + Clone + '_ {
+        self.as_ref().iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut [Cell]> + '_ {
+        let Rows { ends, cells } = self;
+        let mut rest: &mut [Cell] = cells;
+        let mut prev = 0usize;
+        ends.iter().map(move |&e| {
+            let (row, after) = std::mem::take(&mut rest).split_at_mut(e as usize - prev);
+            prev = e as usize;
+            rest = after;
+            row
+        })
+    }
+
+    /// Keeps the rows `keep` takes, in order.
+    pub fn retain(&mut self, mut keep: impl FnMut(&[Cell]) -> bool) {
+        let (mut w, mut start, mut kept) = (0usize, 0usize, 0usize);
+        for i in 0..self.ends.len() {
+            let end = self.ends[i] as usize;
+            if keep(&self.cells[start..end]) {
+                let n = end - start;
+                self.cells.copy_within(start..end, w);
+                w += n;
+                self.ends[kept] = w as u32;
+                kept += 1;
+            }
+            start = end;
+        }
+        self.cells.truncate(w);
+        self.ends.truncate(kept);
+    }
+
+    pub fn first(&self) -> Option<&[Cell]> {
+        self.get(0)
+    }
+
+    /// Orders the rows by `cmp`, stably: a permutation of the rows, then the rows laid again in its order.
+    pub fn sort_by(&mut self, mut cmp: impl FnMut(&[Cell], &[Cell]) -> std::cmp::Ordering) {
+        let mut order: Vector<u32> = (0..self.ends.len() as u32).collect();
+        let r = self.as_ref();
+        order.sort_by(|&a, &b| cmp(r.get(a as usize).expect("row"), r.get(b as usize).expect("row")));
+        let mut out = Rows { ends: Vector::with_capacity(self.ends.len()), cells: Vector::with_capacity(self.cells.len()) };
+        for &i in order.iter() {
+            out.push(r.get(i as usize).expect("row"));
+        }
+        *self = out;
+    }
+
+    /// Orders the rows by the key `key` gives each, stably.
+    pub fn sort_by_key<K: Ord>(&mut self, mut key: impl FnMut(&[Cell]) -> K) {
+        self.sort_by(|a, b| key(a).cmp(&key(b)));
+    }
+
+    /// Orders the rows by the key `key` gives each, computed once a row, stably.
+    pub fn sort_by_cached_key<K: Ord>(&mut self, key: impl FnMut(&[Cell]) -> K) {
+        // copy: derived: each row's key, computed once for the sort, dropped after it.
+        let keys: Vec<K> = self.iter().map(key).collect();
+        let mut order: Vector<u32> = (0..self.ends.len() as u32).collect();
+        order.sort_by(|&a, &b| keys[a as usize].cmp(&keys[b as usize]));
+        let r = self.as_ref();
+        let mut out = Rows { ends: Vector::with_capacity(self.ends.len()), cells: Vector::with_capacity(self.cells.len()) };
+        for &i in order.iter() {
+            out.push(r.get(i as usize).expect("row"));
+        }
+        *self = out;
+    }
+}
+
+impl<'a> IntoIterator for &'a Rows {
+    type Item = &'a [Cell];
+    type IntoIter = Box<dyn Iterator<Item = &'a [Cell]> + 'a>;
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(self.iter())
+    }
+}
+
+impl<R: AsRef<[Cell]>> FromIterator<R> for Rows {
+    fn from_iter<I: IntoIterator<Item = R>>(it: I) -> Rows {
+        let mut rows = Rows::new();
+        for r in it {
+            rows.push(r);
+        }
+        rows
+    }
+}
+
+impl<R: AsRef<[Cell]>> Extend<R> for Rows {
+    fn extend<I: IntoIterator<Item = R>>(&mut self, it: I) {
+        for r in it {
+            self.push(r);
+        }
+    }
+}
+
+/// A declaration of a builder's parts: its columns' (name, type) atoms in `Parts::cols`, and its hash.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct DeclAt {
+    at: u32,
+    len: u32,
+    hash: u64,
+}
+
+// SAFETY: plain numbers.
+unsafe impl rerail_blocks::Pod for DeclAt {}
+
+/// A fact relation of a builder's parts: its rows' ends in `Parts::ends` (from `cells`, its first cell in
+/// `Parts::cells`), and its hash.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct FactAt {
+    ends: u32,
+    rows: u32,
+    cells: u32,
+    _pad: u32,
+    hash: u64,
+}
+
+// SAFETY: plain numbers.
+unsafe impl rerail_blocks::Pod for FactAt {}
+
+/// The parts an image holds besides its rules, by ids, as a builder states them (a delta's are what it replaces), in
+/// blocks: each declaration and fact relation found by its atom, its columns and cells in arenas a replacement
+/// appends to. `finish` writes them into the image's sections, sorted by atom.
 #[derive(Clone, Default)]
 pub struct Parts {
-    pub decls: std::collections::BTreeMap<u32, Decl>,
-    pub decls_gone: std::collections::BTreeSet<u32>,
+    decls: BlockHash<u32, DeclAt>,
+    cols: Vector<[u32; 2]>,
+    pub decls_gone: rerail_blocks::maps::BlockSet<u32>,
     /// By (atom | `ABOUT_BIT` for an `.about` relation).
-    pub facts: std::collections::BTreeMap<u32, FactRel>,
-    pub facts_gone: std::collections::BTreeSet<u32>,
-    pub inputs: Option<(Vec<u32>, u64)>,
-    pub outputs: Option<(Vec<u32>, u64)>,
+    facts: BlockHash<u32, FactAt>,
+    ends: Vector<u32>,
+    cells: Vector<Cell>,
+    pub facts_gone: rerail_blocks::maps::BlockSet<u32>,
+    pub inputs: Option<(Vector<u32>, u64)>,
+    pub outputs: Option<(Vector<u32>, u64)>,
     /// Whether the image's `.about` rows (those in `facts`) are all the program's.
     pub owns_about: bool,
+}
+
+impl Parts {
+    /// Declaration `a`'s columns and hash.
+    pub fn decl(&self, a: u32) -> Option<(&[[u32; 2]], u64)> {
+        self.decls.get(&a).map(|d| (&self.cols[d.at as usize..(d.at + d.len) as usize], d.hash))
+    }
+
+    pub fn has_decl(&self, a: u32) -> bool {
+        self.decls.contains_key(&a)
+    }
+
+    pub fn set_decl(&mut self, a: u32, cols: &[[u32; 2]], hash: u64) {
+        let at = u32::try_from(self.cols.len()).expect("4G columns");
+        self.cols.extend_from_slice(cols);
+        self.decls.insert(a, DeclAt { at, len: cols.len() as u32, hash });
+    }
+
+    pub fn remove_decl(&mut self, a: u32) {
+        self.decls.remove(&a);
+    }
+
+    pub fn decl_count(&self) -> usize {
+        self.decls.len()
+    }
+
+    /// The declared atoms, in order.
+    pub fn decl_atoms(&self) -> Vector<u32> {
+        let mut v: Vector<u32> = self.decls.keys_iter().collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Fact relation `k`'s rows and hash.
+    pub fn fact(&self, k: u32) -> Option<(RowsRef<'_>, u64)> {
+        self.facts.get(&k).map(|f| {
+            let ends = &self.ends[f.ends as usize..(f.ends + f.rows) as usize];
+            let n = ends.last().map_or(0, |&e| e as usize);
+            (RowsRef { ends, cells: &self.cells[f.cells as usize..f.cells as usize + n] }, f.hash)
+        })
+    }
+
+    pub fn has_fact(&self, k: u32) -> bool {
+        self.facts.contains_key(&k)
+    }
+
+    pub fn set_fact(&mut self, k: u32, rows: RowsRef<'_>, hash: u64) {
+        let ends = u32::try_from(self.ends.len()).expect("4G rows");
+        let cells = u32::try_from(self.cells.len()).expect("4G cells");
+        self.ends.extend_from_slice(rows.ends);
+        self.cells.extend_from_slice(rows.cells);
+        self.facts.insert(k, FactAt { ends, rows: rows.len() as u32, cells, _pad: 0, hash });
+    }
+
+    pub fn remove_fact(&mut self, k: u32) {
+        self.facts.remove(&k);
+    }
+
+    /// The fact relations' keys, in order.
+    pub fn fact_keys(&self) -> Vector<u32> {
+        let mut v: Vector<u32> = self.facts.keys_iter().collect();
+        v.sort_unstable();
+        v
+    }
+
+    pub fn retain_facts(&mut self, mut keep: impl FnMut(u32) -> bool) {
+        self.facts.retain(|k, _| keep(*k));
+    }
 }
 
 #[derive(Clone)]
@@ -130,33 +402,33 @@ pub struct Encoder<'p> {
     rule_base: u32,
     strings: Strings,
     /// This image's relations: the atom naming each.
-    rels: Vec<u32>,
+    rels: Vector<u32>,
     /// The relations this image numbers, by their atoms.
-    rel_of: HashMap<u32, u32>,
+    rel_of: BlockHash<u32, u32>,
     /// The parent's atoms this image makes relations, and their relation numbers.
-    promoted: Vec<(u32, u32)>,
+    promoted: Vector<[u32; 2]>,
     kind: Extents<u8>,
     size: Extents<u32>,
     val: Extents<u32>,
-    ints: Vec<i64>,
-    rule_node: Vec<u32>,
-    rule_vars: Vec<u32>,
-    vars: Vec<u32>,
-    rule_hash: Vec<u64>,
+    ints: Vector<i64>,
+    rule_node: Vector<u32>,
+    rule_vars: Vector<u32>,
+    vars: Vector<u32>,
+    rule_hash: Vector<u64>,
     /// How many big integers there were when the open rule began: what `abandon` keeps.
     ints_at_rule: usize,
-    heads: Vec<(u32, u32)>,
+    heads: Vector<[u32; 2]>,
     /// (relation, read entry), with the entries' rules and nodes beside.
-    reads: Vec<(u32, u32)>,
-    read_rules: Vec<u32>,
-    read_nodes: Vec<u32>,
+    reads: Vector<[u32; 2]>,
+    read_rules: Vector<u32>,
+    read_nodes: Vector<u32>,
     /// Each rule's source (`R::From`), `NO_RULE` for none.
-    from: Vec<u32>,
+    from: Vector<u32>,
     /// The rule being written: its variables' atoms by slot, and the slot of each atom.
-    slots: HashMap<u32, u32>,
-    slot_names: Vec<u32>,
+    slots: BlockHash<u32, u32>,
+    slot_names: Vector<u32>,
     /// The parent's atoms' text hashes, as rules' hashes need them.
-    parent_hashes: HashMap<u32, u64>,
+    parent_hashes: BlockHash<u32, u64>,
 }
 
 impl<'p> Encoder<'p> {
@@ -169,26 +441,26 @@ impl<'p> Encoder<'p> {
             rel_base,
             rule_base,
             strings: Strings::default(),
-            rels: Vec::new(),
-            rel_of: HashMap::new(),
-            promoted: Vec::new(),
+            rels: rerail_blocks::vector::Vector::new(),
+            rel_of: BlockHash::default(),
+            promoted: Vector::new(),
             kind: Extents::new(12),
             size: Extents::new(12),
             val: Extents::new(12),
-            ints: Vec::new(),
-            rule_node: Vec::new(),
-            rule_vars: vec![0],
-            vars: Vec::new(),
-            rule_hash: Vec::new(),
+            ints: rerail_blocks::vector::Vector::new(),
+            rule_node: rerail_blocks::vector::Vector::new(),
+            rule_vars: rerail_blocks::vector![0],
+            vars: rerail_blocks::vector::Vector::new(),
+            rule_hash: rerail_blocks::vector::Vector::new(),
             ints_at_rule: 0,
-            heads: Vec::new(),
-            reads: Vec::new(),
-            read_rules: Vec::new(),
-            read_nodes: Vec::new(),
-            from: Vec::new(),
-            slots: HashMap::new(),
-            slot_names: Vec::new(),
-            parent_hashes: HashMap::new(),
+            heads: Vector::new(),
+            reads: Vector::new(),
+            read_rules: rerail_blocks::vector::Vector::new(),
+            read_nodes: rerail_blocks::vector::Vector::new(),
+            from: rerail_blocks::vector::Vector::new(),
+            slots: BlockHash::default(),
+            slot_names: rerail_blocks::vector::Vector::new(),
+            parent_hashes: BlockHash::default(),
         }
     }
 
@@ -264,7 +536,7 @@ impl<'p> Encoder<'p> {
         self.rels.push(a);
         self.rel_of.insert(a, r);
         if a < self.atom_base {
-            self.promoted.push((a, r));
+            self.promoted.push([a, r]);
         }
         r
     }
@@ -353,10 +625,10 @@ impl<'p> Encoder<'p> {
             let (kd, val) = (self.kind.get(n), self.val.get(n));
             if kd & kind::MASK == kind::ATOM {
                 if n == head_at {
-                    self.heads.push((val, k));
+                    self.heads.push([val, k]);
                 } else if n >= head_end {
                     let e = self.read_rules.len() as u32;
-                    self.reads.push((val, e));
+                    self.reads.push([val, e]);
                     self.read_rules.push(k);
                     self.read_nodes.push(n as u32);
                 }
@@ -485,49 +757,57 @@ impl<'p> Encoder<'p> {
         if !delta && !removed.is_empty() {
             return Err(super::bad("a base removes nothing"));
         }
-        let (empty_in, empty_out) = ((Vec::new(), names_hash(0, std::iter::empty())), (Vec::new(), names_hash(1, std::iter::empty())));
+        let (empty_in, empty_out) = ((Vector::new(), names_hash(0, std::iter::empty())), (Vector::new(), names_hash(1, std::iter::empty())));
         let inputs = parts.inputs.as_ref().or((!delta).then_some(&empty_in));
         let outputs = parts.outputs.as_ref().or((!delta).then_some(&empty_out));
         // A base that states no `.about` rows has none (`set_about` of none).
         let owns_about = parts.owns_about || !delta;
         let keep_fact = |k: u32| parts.owns_about || delta || k & ABOUT_BIT == 0;
-        let facts: Vec<(u32, &FactRel)> = parts.facts.iter().filter(|(k, _)| keep_fact(**k)).map(|(k, f)| (*k, f)).collect();
+        let fact_keys: Vector<u32> = parts.fact_keys().into_iter().filter(|&k| keep_fact(k)).collect();
+        let facts: Vec<(u32, RowsRef<'_>, u64)> = fact_keys.iter().map(|&k| {
+            let (rows, hash) = parts.fact(k).expect("a fact relation of the parts");
+            (k, rows, hash)
+        }).collect();
+        let decls: Vector<u32> = parts.decl_atoms();
+        let decl = |a: u32| parts.decl(a).expect("a declaration of the parts");
+        let gone_decls: Vector<u32> = { let mut v: Vector<u32> = parts.decls_gone.keys_iter().collect(); v.sort_unstable(); v };
+        let gone_facts: Vector<u32> = { let mut v: Vector<u32> = parts.facts_gone.keys_iter().collect(); v.sort_unstable(); v };
         let (str_bytes, str_ends, table) = self.strings.parts();
         let atoms = self.strings.len();
         let rules = self.rule_hash.len();
         let nodes: usize = self.kind.extents().map(<[u8]>::len).sum();
-        let mut promoted: Vec<u64> = self.promoted.iter().map(|&(a, r)| (a as u64) << 32 | r as u64).collect();
+        let mut promoted: Vector<u64> = self.promoted.iter().map(|&[a, r]| (a as u64) << 32 | r as u64).collect();
         promoted.sort_unstable();
         // Indexes: rules by head, and reads; dense over the relations in a base, keyed in a delta. Each is
         // (keys, starts, the pairs' values in place order).
-        let index = |pairs: &[(u32, u32)]| -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+        let index = |pairs: &[[u32; 2]]| -> (Vector<u32>, Vector<u32>, Vector<u32>) {
             if delta {
-                return csr::keyed(pairs.to_vec());
+                return csr::keyed(pairs);
             }
             let n = self.rels.len();
-            let mut starts = vec![0u32; n + 1];
-            for &(r, _) in pairs {
+            let mut starts = rerail_blocks::vector![0u32; n + 1];
+            for &[r, _] in pairs {
                 starts[r as usize + 1] += 1;
             }
             for i in 0..n {
                 starts[i + 1] += starts[i];
             }
             let mut at = starts.clone();
-            let mut values = vec![0u32; pairs.len()];
-            for &(r, x) in pairs {
+            let mut values = rerail_blocks::vector![0u32; pairs.len()];
+            for &[r, x] in pairs {
                 values[at[r as usize] as usize] = x;
                 at[r as usize] += 1;
             }
-            (Vec::new(), starts, values)
+            (rerail_blocks::vector::Vector::new(), starts, values)
         };
         let (head_keys, head_starts, head_rules) = index(&self.heads);
         let (read_keys, read_starts, read_entries) = index(&self.reads);
         let has_from = self.from.iter().any(|&f| f != super::NO_RULE);
-        let mut from_index: Vec<u64> = if has_from { self.from.iter().enumerate().filter(|(_, f)| **f != super::NO_RULE).map(|(k, &f)| (f as u64) << 32 | k as u64).collect() } else { Vec::new() };
+        let mut from_index: Vector<u64> = if has_from { self.from.iter().enumerate().filter(|(_, f)| **f != super::NO_RULE).map(|(k, &f)| (f as u64) << 32 | k as u64).collect() } else { rerail_blocks::vector::Vector::new() };
         from_index.sort_unstable();
-        let rows: usize = facts.iter().map(|(_, f)| f.rows.len()).sum();
-        let cells: usize = facts.iter().flat_map(|(_, f)| &f.rows).map(|r| r.len()).sum();
-        let cols: usize = parts.decls.values().map(|d| d.cols.len()).sum();
+        let rows: usize = facts.iter().map(|(_, f, _)| f.len()).sum();
+        let cells: usize = facts.iter().map(|(_, f, _)| f.cells().len()).sum();
+        let cols: usize = decls.iter().map(|&a| decl(a).0.len()).sum();
 
         let mut l = super::Layout::default();
         for (r, n) in [
@@ -546,18 +826,18 @@ impl<'p> Encoder<'p> {
             (R::RuleVars, self.rule_vars.len()),
             (R::RuleHash, rules),
             (R::Vars, self.vars.len()),
-            (R::DeclName, parts.decls.len()),
-            (R::DeclHash, parts.decls.len()),
-            (R::DeclCols, parts.decls.len() + 1),
+            (R::DeclName, decls.len()),
+            (R::DeclHash, decls.len()),
+            (R::DeclCols, decls.len() + 1),
             (R::Cols, 2 * cols),
-            (R::DeclGone, parts.decls_gone.len()),
+            (R::DeclGone, gone_decls.len()),
             (R::FactRel, facts.len()),
             (R::FactHash, facts.len()),
             (R::FactRows, facts.len() + 1),
             (R::RowCells, rows + 1),
             (R::CellKind, cells),
             (R::CellVal, cells),
-            (R::FactGone, parts.facts_gone.len()),
+            (R::FactGone, gone_facts.len()),
             (R::Inputs, inputs.map_or(0, |i| i.0.len())),
             (R::Outputs, outputs.map_or(0, |o| o.0.len())),
             (R::HeadKeys, head_keys.len()),
@@ -610,48 +890,48 @@ impl<'p> Encoder<'p> {
         w.u32s(R::Vars).copy_from_slice(&self.vars);
         // Parts, sorted by atom so they are found by search.
         let mut own_sum = self.rule_hash.iter().fold(0u64, |a, &h| a.wrapping_add(h));
-        for (slot, (&a, d)) in w.u32s(R::DeclName).iter_mut().zip(&parts.decls) {
+        for (slot, &a) in w.u32s(R::DeclName).iter_mut().zip(&decls) {
             *slot = a;
-            own_sum = own_sum.wrapping_add(d.hash);
+            own_sum = own_sum.wrapping_add(decl(a).1);
         }
-        for (slot, d) in w.u64s(R::DeclHash).iter_mut().zip(parts.decls.values()) {
-            *slot = d.hash;
+        for (slot, &a) in w.u64s(R::DeclHash).iter_mut().zip(&decls) {
+            *slot = decl(a).1;
         }
         {
             let (mut end, ends) = (0u32, w.u32s(R::DeclCols));
-            for (k, d) in parts.decls.values().enumerate() {
-                end += d.cols.len() as u32;
+            for (k, &a) in decls.iter().enumerate() {
+                end += decl(a).0.len() as u32;
                 ends[k + 1] = end;
             }
         }
-        for (slot, x) in w.u32s(R::Cols).iter_mut().zip(parts.decls.values().flat_map(|d| d.cols.iter().flat_map(|&(n, t)| [n, t]))) {
+        for (slot, x) in w.u32s(R::Cols).iter_mut().zip(decls.iter().flat_map(|&a| decl(a).0.iter().flat_map(|&[n, t]| [n, t]))) {
             *slot = x;
         }
-        for (slot, &a) in w.u32s(R::DeclGone).iter_mut().zip(&parts.decls_gone) {
+        for (slot, &a) in w.u32s(R::DeclGone).iter_mut().zip(&gone_decls) {
             *slot = a;
         }
-        for (slot, &(key, f)) in w.u32s(R::FactRel).iter_mut().zip(&facts) {
+        for (slot, &(key, _, hash)) in w.u32s(R::FactRel).iter_mut().zip(&facts) {
             *slot = key;
-            own_sum = own_sum.wrapping_add(f.hash);
+            own_sum = own_sum.wrapping_add(hash);
         }
-        for (slot, (_, f)) in w.u64s(R::FactHash).iter_mut().zip(&facts) {
-            *slot = f.hash;
+        for (slot, (_, _, hash)) in w.u64s(R::FactHash).iter_mut().zip(&facts) {
+            *slot = *hash;
         }
         {
             let fact_rows = w.u32s(R::FactRows);
             let mut n = 0u32;
-            for (k, (_, f)) in facts.iter().enumerate() {
-                n += f.rows.len() as u32;
+            for (k, (_, f, _)) in facts.iter().enumerate() {
+                n += f.len() as u32;
                 fact_rows[k + 1] = n;
             }
             let row_cells = w.u32s(R::RowCells);
             let mut n = 0u32;
-            for (k, row) in facts.iter().flat_map(|(_, f)| &f.rows).enumerate() {
+            for (k, row) in facts.iter().flat_map(|(_, f, _)| f.iter()).enumerate() {
                 n += row.len() as u32;
                 row_cells[k + 1] = n;
             }
         }
-        let each_cell = || facts.iter().flat_map(|(_, f)| &f.rows).flatten();
+        let each_cell = || facts.iter().flat_map(|(_, f, _)| f.cells().iter());
         for (slot, c) in w.u8s(R::CellKind).iter_mut().zip(each_cell()) {
             *slot = match *c {
                 Cell::Int(_) => 0,
@@ -666,7 +946,7 @@ impl<'p> Encoder<'p> {
                 Cell::Branded(b) => u64::from(b.atom),
             };
         }
-        for (slot, &k) in w.u32s(R::FactGone).iter_mut().zip(&parts.facts_gone) {
+        for (slot, &k) in w.u32s(R::FactGone).iter_mut().zip(&gone_facts) {
             *slot = k;
         }
         let mut owns = 0u64;

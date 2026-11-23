@@ -1,7 +1,9 @@
 # 0316: A store's atoms are read whole within a share of the memory budget, else mapped
 
-Status: decided (the user, 2026-11-16). Built on a side branch, not merged: it raises the peak of a run over its
-own corpus, whose atoms are its working set (below). It pays only over a store whose atoms are mostly not the run's. Numbered 0306 on final-rerail-shape until the hub's merge (the hub's 0306, a run's small writes as one record, was written first, at 16:50 against 17:22); its side branch keeps the old number.
+Status: superseded by 0401 (audited 2026-11-23). Decided (the user, 2026-11-16). Built on a side branch, not merged:
+it raises the peak of a run over its own corpus, whose atoms are its working set (below). It pays only over a store
+whose atoms are mostly not the run's. Numbered 0306 on final-rerail-shape until the hub's merge (the hub's 0306, a
+run's small writes as one record, was written first, at 16:50 against 17:22); its side branch keeps the old number.
 
 ## Intro
 

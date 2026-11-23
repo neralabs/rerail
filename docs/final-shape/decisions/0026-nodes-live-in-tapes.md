@@ -1,6 +1,7 @@
 # 0026: nodes live in tapes
 
-Status: accepted (2026-11-02, user decision; scope narrowed the same day to what is stored)
+Status: built (audited 2026-11-23). Accepted (2026-11-02, user decision; scope narrowed the same day to what is
+stored)
 
 ## Context
 

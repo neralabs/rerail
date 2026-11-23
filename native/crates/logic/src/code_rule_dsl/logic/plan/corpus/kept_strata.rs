@@ -19,7 +19,7 @@
 //! relation's rows are read back only when a stratum that runs reads it, or the run's end keeps it (an output): on
 //! the pack, 68 k rows of 695 relations, against 3.0 M rows derived. A run writes the relations whose rows changed.
 
-use rerail_store::Canonical as _;
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::native::component::LIVE_BATCH;
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::plan::KeptStrata;
@@ -49,8 +49,7 @@ pub(in crate::code_rule_dsl) fn space(root: &Path) -> [u8; 32] {
 
 /// The fact space of a part of the run over `root` (`cross`, `cone`: the cone of requests answered in the fixpoint).
 pub(in crate::code_rule_dsl) fn part_space(root: &Path, part: &str) -> [u8; 32] {
-    let root = crate::git_workspace::snapshot::fact_root(root)
-        .or_else(|| root.canonical().ok()).unwrap_or_else(|| root.to_path_buf());
+    let root = super::named_root(root);
     let mut h = Sha256::new();
     h.update(format!("rerail.space/v1\0{part}\0").as_bytes());
     h.update(root.to_string_lossy().as_bytes());
@@ -250,11 +249,11 @@ pub(in crate::code_rule_dsl) struct Part {
 /// Whether a new process maintains its cross-file part from the store (`RERAIL_KEPT_PART=off`: the per-stratum
 /// cut of `Kept` instead, to compare).
 pub(in crate::code_rule_dsl) fn part_wanted() -> bool {
-    std::env::var("RERAIL_KEPT_PART").map_or(true, |v| v != "off")
+    crate::code_rule_dsl::logic::profile::var("RERAIL_KEPT_PART").map_or(true, |v| v != "off")
 }
 
 /// Each derived relation of `prog` and the inputs (of `inputs`) it is derived from, through the strata it reads.
-fn cones(prog: &crate::code_rule_dsl::logic::plan::body::Placed, sccs: &[std::collections::BTreeSet<String>], inputs: &std::collections::HashSet<&str>) -> super::Result<HashMap<String, std::collections::BTreeSet<String>>> {
+fn cones(prog: &crate::code_rule_dsl::logic::plan::body::Placed, sccs: &crate::code_rule_dsl::logic::front::Components, inputs: &std::collections::HashSet<&str>) -> super::Result<HashMap<String, std::collections::BTreeSet<String>>> {
     let mut out: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
     // What each stratum reads: its rules' body atoms, its natives' reads, and the tree a `nearest` climbs.
     let reads = super::retain::Reads::of(prog)?;
@@ -271,7 +270,7 @@ fn cones(prog: &crate::code_rule_dsl::logic::plan::body::Placed, sccs: &[std::co
             }
         }
         for rel in scc {
-            out.insert(rel.clone(), cone.clone());
+            out.insert(rel.to_owned(), cone.to_owned());
         }
     }
     Ok(out)
@@ -287,7 +286,7 @@ pub(in crate::code_rule_dsl) fn load(
     binds: [u8; 32],
     prog: &crate::code_rule_dsl::logic::plan::body::Placed,
     domains: &super::lower::Domains,
-    sccs: &[std::collections::BTreeSet<String>],
+    sccs: &crate::code_rule_dsl::logic::front::Components,
     inputs: &[(String, Arc<dyn Source>)],
     now: &HashMap<String, u64>,
 ) -> super::Result<(Option<super::retain::Retained>, Part)> {

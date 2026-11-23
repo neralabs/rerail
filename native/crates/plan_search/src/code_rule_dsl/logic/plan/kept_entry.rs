@@ -72,21 +72,41 @@ impl Entries {
 
     /// The entry of partition `part`, as kept; `None` when the store keeps none (or one that no longer reads).
     pub fn get(&self, store: &ContentStore, part: i64) -> Option<Facts> {
-        self.read(store, Some(part)).remove(&part)
+        self.read(store, Some(&[part]), None).remove(&part)
+    }
+
+    /// The entries of partitions `parts`, by partition, in one read: those the store keeps (`get`'s).
+    pub fn get_many(&self, store: &ContentStore, parts: &[i64]) -> BTreeMap<i64, Facts> {
+        self.read(store, Some(parts), None)
+    }
+
+    /// The entry of partition `part` as `get` reads it, but relation `rel`'s rows of numbers alone (every column `i`)
+    /// handed to `each` as the block holds them, without their place, in no order, and left out of the facts: a
+    /// reader that decodes its own rows reads them in place, not through values (the kept plans, t33 K4).
+    pub fn get_numbers(&self, store: &ContentStore, part: i64, rel: &str, each: &mut dyn FnMut(&[i64])) -> Option<Facts> {
+        self.read(store, Some(&[part]), Some((rel, each))).remove(&part)
     }
 
     /// Every entry of the space, by partition.
     pub fn all(&self, store: &ContentStore) -> BTreeMap<i64, Facts> {
-        self.read(store, None)
+        self.read(store, None, None)
     }
 
-    fn read(&self, store: &ContentStore, only: Option<i64>) -> BTreeMap<i64, Facts> {
+    fn read(&self, store: &ContentStore, only: Option<&[i64]>, mut numbers: Option<(&str, &mut dyn FnMut(&[i64]))>) -> BTreeMap<i64, Facts> {
         let mut out: BTreeMap<i64, Facts> = BTreeMap::new();
         let mut placed: BTreeMap<i64, BTreeMap<String, Vec<(i64, Vec<Value>)>>> = BTreeMap::new();
         let mut bad = BTreeSet::new();
         let Ok(Some(kept)) = store.kept_space(&self.space()) else { return out };
         let chain = kept.view();
-        for entry in chain.all().filter(|e| only.is_none_or(|p| e.key.part == p) && *e.key.ident == self.ident(e.key.rel)) {
+        // One partition's read merges its own entries alone: the space holds one a program, every engine build's.
+        let entries: Box<dyn Iterator<Item = rerail_blocks::kept::Kept<'_>> + '_> = match only {
+            Some(parts) => Box::new(parts.iter().flat_map(|&p| chain.of_part(p))),
+            None => chain.all(),
+        };
+        // Each atom's text read once for the entry, shared by the rows that hold it (the relations' and rules' names
+        // repeat across a program's rows): read per cell, they were most of a warm run's kept plans' read.
+        let mut texts: std::collections::HashMap<u32, Option<super::super::front::Name>> = std::collections::HashMap::new();
+        for entry in entries.filter(|e| *e.key.ident == self.ident(e.key.rel)) {
             let part = entry.key.part;
             let Some((rel, kinds)) = entry.key.rel.rsplit_once('#') else { continue };
             let kinds = kinds.as_bytes();
@@ -94,9 +114,21 @@ impl Entries {
                 bad.insert(part);
                 continue;
             }
+            if let Some((want, each)) = numbers.as_mut()
+                && *want == rel
+                && kinds.iter().all(|&k| k == b'i')
+            {
+                entry.each_row(|words| each(&words[1..]));
+                // The partition read, though its rows went to `each`: an entry of these rows alone is one.
+                placed.entry(part).or_default();
+                continue;
+            }
             let rows = placed.entry(part).or_default().entry(rel.to_owned()).or_default();
-            for i in 0..entry.rows.len() {
-                let words = entry.row(i);
+            let mut broke = false;
+            entry.each_row(|words| {
+                if broke {
+                    return;
+                }
                 let at = words[0];
                 let row: Option<Vec<Value>> = words[1..]
                     .iter()
@@ -104,7 +136,10 @@ impl Entries {
                     .map(|(&w, &k)| {
                         Some(match k {
                             b'i' => Value::Int(w),
-                            b's' => Value::Str(store.atom_value(u32::try_from(w).ok()?).ok()??.into()),
+                            b's' => {
+                                let atom = u32::try_from(w).ok()?;
+                                Value::Str(texts.entry(atom).or_insert_with(|| store.atom_value(atom).ok().flatten().map(Into::into)).clone()?)
+                            }
                             b'n' | b'k' | b'f' => {
                                 let class = match k {
                                     b'n' => Class::Name,
@@ -119,11 +154,11 @@ impl Entries {
                     .collect();
                 match row {
                     Some(row) => rows.push((at, row)),
-                    None => {
-                        bad.insert(part);
-                        break;
-                    }
+                    None => broke = true,
                 }
+            });
+            if broke {
+                bad.insert(part);
             }
         }
         for (part, rels) in placed {

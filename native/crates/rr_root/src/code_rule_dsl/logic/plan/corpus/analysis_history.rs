@@ -49,7 +49,7 @@ pub fn requested(kind: &str, key: &str) -> Result<(Vec<[String; 10]>, String)> {
 }
 
 /// A retained answer may have a different row order. Compare each stored row with its current fields.
-pub fn kept(kind: &str, key: &str, previous: &[&Vec<i64>], text: impl Fn(i64) -> Option<String>) -> Option<String> {
+pub fn kept(kind: &str, key: &str, previous: &[&rerail_blocks::vector::Vector<i64>], text: impl Fn(i64) -> Option<String>) -> Option<String> {
     let (rows, digest) = requested(kind, key).ok()?;
     if rows.len() != previous.len() { return None; }
     let mut current: std::collections::HashSet<_> = rows.into_iter().collect();

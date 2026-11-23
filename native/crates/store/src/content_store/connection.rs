@@ -242,11 +242,42 @@ pub(super) fn jittered(backoff: Duration) -> Duration {
 
 type SharedConnection = Arc<ParkingMutex<Option<Connection>>>;
 
+/// A file's device and inode: which file a path names.
+pub(super) type FileKey = (u64, u64);
+
+/// The file at `path` now (`None` where unknown: no such file, or a system without inodes).
+pub(super) fn file_key(path: &Path) -> Option<FileKey> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
+}
+
 thread_local! {
-    /// By shared object (its `Connections`' number) and database path: the store's identity (`store_identity`) and
-    /// the connection to it.
-    static THREAD_CONNECTIONS: RefCell<HashMap<(u64, PathBuf), (i64, SharedConnection)>> =
+    /// By shared object (its `Connections`' number) and database path: the store's identity (`store_identity`), the
+    /// file the connection opened (the path named it before and after the open), and the connection to it.
+    static THREAD_CONNECTIONS: RefCell<HashMap<(u64, PathBuf), (i64, Option<FileKey>, SharedConnection)>> =
         RefCell::new(HashMap::new());
+}
+
+/// The identity of the store at `path`, when this thread holds an open connection to it and the path still names the
+/// file that connection opened: an open file's inode is not reused, so the path's file is the store the connection
+/// read, its identity read and its schema checked as it opened (`ContentStore::open_with`). `None` otherwise: no
+/// connection here, it is in use or closed, or the file at the path is another (a store created again there).
+pub(super) fn held_here(path: &Path) -> Option<i64> {
+    let now = file_key(path)?;
+    let number = connections().number;
+    THREAD_CONNECTIONS.with(|connections| {
+        let connections = connections.borrow();
+        let (identity, file, connection) = connections.get(&(number, path.to_path_buf()))?;
+        (*file == Some(now) && connection.try_lock().is_some_and(|c| c.is_some())).then_some(*identity)
+    })
 }
 
 /// Every thread's store connections by database, so an idle store closes them from whichever
@@ -356,28 +387,58 @@ impl ThreadConnection {
         last
     }
 
-    pub(super) fn lock(&self) -> Result<ConnectionGuard, String> {
-        if let Some(connection) = &self.pinned {
-            return Ok(ConnectionGuard(connection.lock_arc()));
+    /// This thread's connection to the store becomes `connection`, one configured as a runtime connection is
+    /// (`configure_connection`) and found to be this store's (its identity read on it), unless the thread holds one
+    /// already: the open that checked the schema hands its connection over (`ContentStore::open_with`), not dropped
+    /// for this thread's first read to open and configure another, its schema parsed again.
+    /// `file` is the file it opened (`file_key`, the same before and after the open), if known.
+    pub(super) fn seed(&self, connection: Connection, file: Option<FileKey>) {
+        if self.pinned.is_some() {
+            return;
         }
-        let connection = THREAD_CONNECTIONS.with(|connections| {
+        let mut guard = self.slot().lock_arc();
+        if guard.is_none() {
+            *guard = Some(connection);
+            self.opened(file);
+        }
+    }
+
+    /// Records the file this thread's connection to the store opened.
+    fn opened(&self, file: Option<FileKey>) {
+        THREAD_CONNECTIONS.with(|connections| {
+            if let Some(entry) = connections.borrow_mut().get_mut(&(self.connections.number, self.database_path.clone())) {
+                entry.1 = file;
+            }
+        });
+    }
+
+    /// This thread's slot for its connection to the store: made, and counted in the registry, at the first use.
+    fn slot(&self) -> SharedConnection {
+        THREAD_CONNECTIONS.with(|connections| {
             let mut connections = connections.borrow_mut();
             let key = (self.connections.number, self.database_path.clone());
             match connections.get(&key) {
-                Some((identity, connection)) if *identity == self.identity => Arc::clone(connection),
+                Some((identity, _, connection)) if *identity == self.identity => Arc::clone(connection),
                 _ => {
                     let connection = SharedConnection::default();
                     self.connections
                         .all
                         .lock()
                         .push((self.database_path.clone(), Arc::downgrade(&connection)));
-                    connections.insert(key, (self.identity, Arc::clone(&connection)));
+                    connections.insert(key, (self.identity, None, Arc::clone(&connection)));
                     connection
                 }
             }
-        });
-        let mut guard = connection.lock_arc();
+        })
+    }
+
+    pub(super) fn lock(&self) -> Result<ConnectionGuard, String> {
+        if let Some(connection) = &self.pinned {
+            return Ok(ConnectionGuard(connection.lock_arc()));
+        }
+        let mut guard = self.slot().lock_arc();
         if guard.is_none() {
+            let before = file_key(&self.database_path);
             // Its configuring reads (`page_count`, `journal_mode`) wait for another process's writer as a write
             // does: busy past one wait, they are tried again, not failed (every caller expects its connection).
             let opened = retry_busy(&mut BusyRetries::default(), || {
@@ -400,6 +461,8 @@ impl ThreadConnection {
                 ));
             }
             *guard = Some(opened);
+            let after = file_key(&self.database_path);
+            self.opened(before.filter(|b| Some(*b) == after));
         }
         Ok(ConnectionGuard(guard))
     }
@@ -669,6 +732,7 @@ fn open_runtime_connection(path: &Path, flush: Flush) -> StoreResult<Connection>
         | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
     let mut connection = Connection::open_with_flags(path, flags)?;
     configure_connection(&mut connection, flush)?;
+    rerail_prof::count("store.connections_opened", 1);
     Ok(connection)
 }
 

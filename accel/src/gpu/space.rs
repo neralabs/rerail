@@ -54,6 +54,8 @@ pub struct Space {
     bytes: usize,
     batch: u64,
     counts: Counts,
+    /// The submissions' scratch (`join::Scratch`): each submission takes one no submission in flight holds.
+    scratch: Vec<Arc<super::join::Scratch>>,
 }
 
 impl Space {
@@ -68,6 +70,20 @@ impl Space {
     pub fn clear(&mut self) {
         self.kept.clear();
         self.bytes = 0;
+        // The scratch goes back with the kept sides (a chunk's end), as each is dropped (`join::Scratch`): one a
+        // submission in flight holds, once that submission is finished.
+        self.scratch.clear();
+    }
+
+    /// Scratch no submission in flight holds: one the space holds alone (a submission drops its own once finished,
+    /// and takes none but here, under the space's lock), else a new one.
+    pub(super) fn free_scratch(&mut self) -> Arc<super::join::Scratch> {
+        if let Some(s) = self.scratch.iter().find(|s| Arc::strong_count(s) == 1) {
+            return Arc::clone(s);
+        }
+        let s = Arc::new(super::join::Scratch::default());
+        self.scratch.push(Arc::clone(&s));
+        s
     }
 
     pub fn counts(&self) -> Counts {
@@ -178,8 +194,12 @@ pub struct Started {
     tables: Vec<super::join::Held>,
     arena: Arena,
     jobs: Vec<Job>,
-    /// This submission's scratch set (`join::scratch_set`): its second pass, if any, encodes on it.
-    set: usize,
+    /// This submission's scratch, which no other in flight holds: its second pass, if any, encodes on it, on
+    /// whichever thread finishes it.
+    scratch: Arc<super::join::Scratch>,
+    /// The submission's evaluation of the launch budget (decision 0601), which `finish` goes on with on whichever
+    /// thread finishes it: None where `start` ran in its caller's.
+    evaluation: Option<super::launch::Carried>,
 }
 
 /// [`run`]'s first half: the batch's first submission encoded and committed, and its right sides kept (a sort
@@ -187,9 +207,15 @@ pub struct Started {
 /// read what this one keeps.
 pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started, String> {
     let mut space = space.lock().map_err(|_| "the gpu lane's space was poisoned")?;
-    // Each submission on the other scratch set from the one before: at most two are in flight.
-    let set = super::join::scratch_set(0) ^ 1;
-    super::join::scratch_set(set);
+    let scratch = space.free_scratch();
+    // The submission's launches are one evaluation (`launch`), or its caller's when it is in one.
+    let evaluation = super::launch::LaunchScope::enter();
+    let mut started = super::join::on_scratch(&scratch, || start_on(space, ks, Arc::clone(&scratch)))?;
+    started.evaluation = evaluation.carry();
+    Ok(started)
+}
+
+fn start_on(mut space: std::sync::MutexGuard<'_, Space>, ks: &[&Kernel], scratch: Arc<super::join::Scratch>) -> Result<Started, String> {
     space.batch += 1;
     let pass = crate::score::phase("encode", Pass::new)?;
     let device = super::join::device()?;
@@ -300,16 +326,15 @@ pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started,
             space.put(id, by, rows, bytes, entry);
         }
     });
-    Ok(Started { command, held, committed, reads, tables, arena, jobs, set })
+    Ok(Started { command, held, committed, reads, tables, arena, jobs, scratch, evaluation: None })
 }
 
 impl Started {
     /// [`run`]'s second half: waits for the first submission, runs the second when needed, and reads the pairs.
-    pub fn finish(self) -> Result<Vec<Output>, String> {
-        let before = super::join::scratch_set(self.set);
-        let r = self.finish_on_set();
-        super::join::scratch_set(before);
-        r
+    pub fn finish(mut self) -> Result<Vec<Output>, String> {
+        let _evaluation = super::launch::LaunchScope::resume(self.evaluation.take());
+        let scratch = Arc::clone(&self.scratch);
+        super::join::on_scratch(&scratch, || self.finish_on_set())
     }
 
     fn finish_on_set(self) -> Result<Vec<Output>, String> {

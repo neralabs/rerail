@@ -1231,6 +1231,52 @@ fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
     assert_eq!(v.fact_rows(&threshold).len(), 1, "{threshold}: {:?}", v.fact_names().into_iter().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
 }
 
+/// match-frames' `mf_def` (the innermost def around a node, read off the tree per node) has the rows of the climb it
+/// replaced: `mf_up`, the innermost def, class or decorator, a decorator standing for its definition, climbed through
+/// the classes. Over nested defs and classes, decorated defs and classes, decorators with lambdas and calls, and a
+/// decorated class inside a decorated class.
+#[test]
+fn mf_def_is_the_climb_through_classes() {
+    let program = ".language python\n#include \"data-layer/match-frames.rerail\"\n\
+        .decl om(k: symbol)\nom(\"function_definition\"). om(\"class_definition\"). om(\"decorator\").\n\
+        .decl oup(n: node, o: node)\n\
+        oup(n, o) :- nearest(n, o, om), !kind(o, \"decorator\").\n\
+        oup(n, o) :- nearest(n, dc, om), kind(dc, \"decorator\"), child(dd, dc, _), field(dd, \"definition\", o).\n\
+        .decl odef(n: node, f: node)\n\
+        odef(n, f) :- oup(n, f), kind(f, \"function_definition\").\n\
+        odef(n, f) :- oup(n, k), kind(k, \"class_definition\"), odef(k, f).\n\
+        .decl gap(side: symbol, k: symbol, l: number, lf: number)\n\
+        gap(\"new\", k, l, lf) :- mf_def(n, f), !odef(n, f), kind(n, k), line(n, l), line(f, lf).\n\
+        gap(\"old\", k, l, lf) :- odef(n, f), !mf_def(n, f), kind(n, k), line(n, l), line(f, lf).\n\
+        gap(\"new up\", k, l, lf) :- mf_up(n, f), !oup(n, f), kind(n, k), line(n, l), line(f, lf).\n\
+        gap(\"old up\", k, l, lf) :- oup(n, f), !mf_up(n, f), kind(n, k), line(n, l), line(f, lf).\n.output gap\n\
+        .decl rows(k: number)\nrows(k) :- k = count : { mf_def(_, _) }.\n.output rows\n\
+        .decl decorated(l: number, lf: number)\n\
+        decorated(l, lf) :- mf_def(n, f), kind(n, \"identifier\"), text(n, x), (x = \"w\" ; x = \"v\" ; x = \"arg\" ; x = \"q\" ; x = \"p\" ; x = \"c\"), line(n, l), line(f, lf).\n.output decorated\n";
+    let py = "@top(lambda q: q)\ndef f(a=lambda: 1):\n    class B:\n        x = 1\n        @staticmethod\n        def m(self):\n            def g():\n                return h(1)\n            return g\n        @deco(arg(2))\n        class Inner:\n            y = 2\n    return B\n@cls_deco(z)\nclass C:\n    def n(self):\n        @wrap(w)\n        class D:\n            @d2(v)\n            class E:\n                pass\n        return D\nu = 3\ndef outer():\n    @wrap2(p)\n    def inner():\n        return p2\n    if p:\n        @a\n        @b(c)\n        def k(): pass\n    return inner\n";
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mf-def");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), py).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("out");
+    super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+    let (gap, rows, decorated) = (read("gap"), read("rows"), read("decorated"));
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(gap.is_empty(), "mf_def against the climb: {gap:?}");
+    let n: usize = rows.first().and_then(|r| r.first()).and_then(|k| k.parse().ok()).unwrap_or(0);
+    assert!(n > 40, "mf_def's rows: {rows:?}");
+    // `q` (top's lambda, f's decorator) is f's (line 2); `arg` (Inner's decorator) is f's, through B and Inner;
+    // `w` (D's decorator) is n's (line 16); `v` (E's, a class decorating inside a decorated class) is n's too. In a
+    // function's body, `p` (inner's decorator, line 25) is inner's (26); `if p` (28) is outer's (24); `c` (k's
+    // second decorator, 30) is k's (31).
+    let mut got: Vec<(String, String)> = decorated.iter().map(|r| (r[0].clone(), r[1].clone())).collect();
+    got.sort();
+    let want: Vec<(String, String)> = [("1", "2"), ("10", "2"), ("17", "16"), ("19", "16"), ("25", "26"), ("28", "24"), ("30", "31")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+    assert_eq!(got, want);
+}
+
 /// A library's kind set that a program reads by `nearest` (ruff-n807's `nearest(f, s, scope)` over python/names.rerail's
 /// `scope`) has the library's kinds in a pack, as alone. Lowered in its library's scope, the program was seeded the
 /// set's declaration but not its facts, so it held `scope` empty, and its `nearest` climbed to nothing: ruff-n807,
@@ -1523,7 +1569,6 @@ fn a_python_file_no_package_holds_is_unpackaged() {
 /// file. Its context was the inputs alone (`str_node`), and a module of 111k string pairs (netbox's `un_locode.py`)
 /// asked for every one: 297k parses, past 25 minutes and 33 GB.
 #[test]
-#[ignore = "Q322: python/typing's file-local `pyi_sym` and the guests answered in the fixpoint (0431 §8) make one component that negates `typing_sym`"]
 fn a_parse_request_asks_only_for_the_strings_its_rule_reads() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("request-context");
     let _ = std::fs::remove_dir_all(&base);
@@ -1661,8 +1706,10 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
     // Past the observer's racy window: a file changed within it of its answer is hashed again by the next run, and
     // its answer recorded again (`RACY_NS`). The claim is of sources older than that; a cold run fast enough to read
     // them inside it made the warm run's writes (the answers, the manifest, the statistics).
-    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 100_000_000));
+    super::test_store::past_test_racy_window();
     let store = base.join("store.sqlite");
+    // Begun from the template (`test_store::begun`): its child processes would each fill an empty one first.
+    super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
@@ -1676,7 +1723,8 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
             .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::one_corpus_run_for_a_parent", "--ignored", "--test-threads", "1", "--nocapture"])
             .env("RERAIL_TAPE_CACHE", &store)
             .env("RERAIL_CHILD_RUN", &src)
-            .env("RERAIL_CHILD_OUT", base.join("out"));
+            .env("RERAIL_CHILD_OUT", base.join("out"))
+            .env("RERAIL_RACY_MS", super::test_store::TEST_RACY_MS);
         if let Some(program) = program {
             child.env("RERAIL_CHILD_PROGRAM", program);
         }
@@ -1728,9 +1776,11 @@ y = x{i} + 2
         path
     };
     let (before, edited) = (rule("before.rerail", ""), rule("edited.rerail", ", s >= 0"));
-    // Past the observer's racy window, so the second run knows each file by its stat (`RACY_NS`).
-    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 100_000_000));
+    // Past the observer's racy window, so the second run knows each file by its stat (`TEST_RACY_MS`).
+    super::test_store::past_test_racy_window();
     let store = base.join("store.sqlite");
+    // Begun from the template (`test_store::begun`): its child processes would each fill an empty one first.
+    super::test_store::begun(&store);
     let run = |program: &std::path::Path, strict: bool| {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap());
         child
@@ -1740,7 +1790,8 @@ y = x{i} + 2
             .env("RERAIL_CHILD_OUT", base.join("out"))
             .env("RERAIL_CHILD_PROGRAM", program)
             .env("RERAIL_COSTS", base.join("costs.sqlite"))
-            .env("RERAIL_IMAGE_STORE", base.join("images"));
+            .env("RERAIL_IMAGE_STORE", base.join("images"))
+            .env("RERAIL_RACY_MS", super::test_store::TEST_RACY_MS);
         if strict {
             child.env("RERAIL_SQL_STRICT", "1");
         }
@@ -1792,6 +1843,8 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
     std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
     let store = base.join("store.sqlite");
+    // Begun from the template (`test_store::begun`): its child processes would each fill an empty one first.
+    super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
@@ -1831,7 +1884,7 @@ fn a_handed_programs_hidden_form_is_kept_under_its_texts() {
     let read = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
     let (made, hidden, kept) = super::combine_handed(&read).unwrap();
     let id = |v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| (v.size(), v.digest());
-    assert_eq!(id(&made), id(&hidden), "a miss hides the program handed");
+    assert_eq!(id(&made), id(&hidden), "a miss hides the program handed: {}", crate::code_rule_dsl::logic::program_image::differences(&made, &hidden));
     assert_eq!(kept.as_ref().map(id), Some(id(&hidden)), "kept under the texts' digest, read back as hidden");
     let (again, _, _) = super::combine_handed(&read).unwrap();
     assert_eq!(id(&again), id(&hidden), "the store's, the second time");
@@ -1842,7 +1895,6 @@ fn a_handed_programs_hidden_form_is_kept_under_its_texts() {
 /// the combined program's readers; each part lowered alone made `rr_value_req` read `literal_leaf`, recursive
 /// with `value` through that negation, and the pair was refused as not stratifiable.
 #[test]
-#[ignore = "Q322: python/typing's file-local `pyi_sym` and the guests answered in the fixpoint (0431 §8) make one component that negates `typing_sym`"]
 fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let dir = std::env::temp_dir().join(format!("rerail-pyi062-pyi059-{}", std::process::id()));
@@ -1979,8 +2031,6 @@ fn every_switch_lowering_reads_is_classified() {
     /// and profiles, the store's and the cost model's paths, the session's binding.
     const NOT_PREPARING: &[&str] = &[
         "RERAIL_BLESS_CENSUS",
-        // Why a narrow copy is not diffed (decision 0575): a trace.
-        "RERAIL_NARROW_DIFF_DEBUG",
         "RERAIL_IDEMPOTENCY_DUMP",
         "RERAIL_MAGIC_CHECK",
         "RERAIL_MERGE_WHY",
@@ -1988,8 +2038,6 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_SPLIT_DUMP",
         "RERAIL_DEMAND_DUMP",
         "RERAIL_PREPARED_TRACE",
-        // Prints each diffed copy's change points (decision 0575).
-        "RERAIL_NARROW_DIFF_DEBUG",
         // How the combine's link is made (decision 0373): spliced into the last one, linked whole, or both and compared;
         // the program is the same (`check` asserts it).
         "RERAIL_COMBINE_LINK",
@@ -2122,8 +2170,8 @@ fn every_switch_lowering_reads_is_classified() {
     combining.push(("corpus/base.rs, the combine's tail".to_owned(), base_region("\npub enum Tail {", "\n/// The programs `programs` linked into one")));
     // The link: `combine_linked_as`, its modes, `combine_linked_spliced` and the splice (`combine_spliced`).
     combining.push(("corpus/base.rs, combine_linked_as".to_owned(), base_region("\npub fn combine_linked_as<", "Ok((all, Tail::Many { hide, policies, kept }))")));
-    // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`combining::FoldOwn`,
-    // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
+    // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (memo,
+    // session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
     // `choices::key`, which holds the switches those read (`RERAIL_INLINE`, `RERAIL_INLINE_ONLY`,
     // `RERAIL_OBSERVED_STEPS`).
@@ -2131,7 +2179,7 @@ fn every_switch_lowering_reads_is_classified() {
         // The tree passes that were `logic/simplify.rs` and `logic/magic.rs` are the preparation's now (0276 step 6).
         "logic/strings.rs", "logic/reach_form.rs", "logic/magic", "logic/plan/lower.rs",
         "logic/plan/corpus/import_closure.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
-        // Its passes, on the version (`preparation`): the front's, the lowering's, `FoldOwn`'s and the merges, and
+        // Its passes, on the version (`preparation`): the front's, the lowering's and the merges, and
         // the combine's fact spaces.
         "logic/plan/corpus/preparation.rs", "logic/plan/corpus/preparation",
         "logic/plan/corpus/session.rs", "logic/profile.rs", "logic/costs.rs", "typing/file_local.rs", "typing/file_local",
@@ -2365,6 +2413,24 @@ calls(x) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(
 .output calls
 "#, "calls");
     assert_eq!(calls, [["f(1)"], ["g(2)"]].map(|r| r.map(str::to_owned).to_vec()).to_vec(), "both scripts' calls");
+}
+
+/// Decision 0597 rule 8, within a run: a tape value is its text's, not its place's. Two files' strings holding one
+/// annotation text are one value, made and parsed once, given both places; a rule reading it through either place
+/// finds its nodes (the files' rows are each their own).
+#[test]
+fn one_annotation_text_in_two_files_is_one_value() {
+    let program = r#"
+.language python
+.decl ann_in(f: symbol, x: symbol)
+ann_in(f, x) :- string_annotation(s), docof(s, d), doc(d, f, _), parsed(s, "annotation", r), within(m, r), kind(m, "identifier"), text(m, x).
+.output ann_in
+"#;
+    let files = [("a.py", "x: \"List[int]\" = []\n"), ("b.py", "def g(y: \"List[int]\"): pass\n")];
+    let (report, rows) = batch_run("r8-one-text", &files, program, "ann_in");
+    assert_eq!((report.values_admitted, report.guest_parses), (1, 1), "one text, one value, parsed once");
+    let set = rows.into_iter().map(|r| r.join("\t")).collect::<std::collections::BTreeSet<String>>();
+    assert_eq!(set, ["a.py\tList", "a.py\tint", "b.py\tList", "b.py\tint"].map(str::to_owned).into(), "both places read the value");
 }
 
 /// Decision 0431 R10: a string a rule parses is parsed in the program's fixpoint (§8). No slice round runs and the
@@ -2627,10 +2693,10 @@ seen(e) :- host_inner(e).
 ";
     let v = parse_version(text).unwrap();
     let all = v.show();
-    assert!(!rules_of(&v, "rr_cx_quoted_unparen").is_empty(), "the context's own unparen: {all}");
-    assert!(rules_of(&v, "rr_cx_quoted_quoted_inner").iter().all(|r| r.contains("rr_cx_quoted_unparen(") && r.contains(" quoted_root(")), "{all}");
+    assert!(!rules_of(&v, "rr_pass_quoted_unparen").is_empty(), "the context's own unparen: {all}");
+    assert!(rules_of(&v, "rr_pass_quoted_quoted_inner").iter().all(|r| r.contains("rr_pass_quoted_unparen(") && r.contains(" quoted_root(")), "{all}");
     assert!(!rules_of(&v, "unparen").is_empty() && rules_of(&v, "host_inner").iter().all(|r| r.contains(" unparen(")), "the host's own: {all}");
-    assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_cx_quoted_quoted_inner(")), "{all}");
+    assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_pass_quoted_quoted_inner(")), "{all}");
 }
 
 // ---- decision 0597: a guest context is a pass of its own rules (step 2's ladder) ----
@@ -2745,6 +2811,123 @@ fn an_annotation_inside_an_annotation_is_the_contexts_own_root() {
     assert_eq!(together, alone);
 }
 
+/// A host whose f-strings' format specs are a context of region roots: the spec's subtree, parsed already, but for
+/// its holes (a nested field's `{w}`), which are the host's code.
+const SPEC_PASS: &str = "\
+.language python
+#include \"python/ast.rerail\"
+.decl spec_root(s: node)
+spec_root(s) :- kind(i, \"interpolation\"), field(i, \"format_specifier\", s).
+.decl spec_hole(h: node)
+spec_hole(h) :- spec_root(s), child(s, h, _), kind(h, \"format_expression\").
+.decl spec_ident(x: symbol)
+spec_ident(x) :- kind(i, \"identifier\"), text(i, x).
+.decl spec_kind(k: symbol)
+spec_kind(k) :- node(_, n, k, _, _).
+.decl host_ident(x: symbol)
+host_ident(x) :- kind(i, \"identifier\"), text(i, x).
+.decl spec_names(x: symbol)
+spec_names(x) :- names(x).
+.decl spec_kinds(k: symbol)
+spec_kinds(k) :- kinds(k).
+.output spec_names, spec_kinds, host_ident
+.context spec of python roots spec_root holes spec_hole exports spec_ident, spec_kind
+.from spec spec_ident as names
+.from spec spec_kind as kinds
+";
+
+/// 0597 rung 5.1: a region root is bounded at each read, and its holes are its host's: in `f\"{x:>{w}}\"` the spec
+/// context sees the `format_specifier` and no identifier, nor the nested field; the host sees `x` and `w`.
+#[test]
+fn a_regions_holes_are_its_hosts_code() {
+    let file = ("a.py", "s = f\"{x:>{w}}\"\n");
+    for rel in ["spec_names", "spec_kinds", "host_ident"] {
+        let (alone, together) = alone_and_together(&format!("pass-holes-{rel}"), file, SPEC_PASS, PLAIN_PASS, rel);
+        assert_eq!(together, alone, "{rel}");
+        let has = |x: &str| alone.iter().any(|r| r == &[x]);
+        match rel {
+            "spec_names" => assert!(alone.is_empty(), "the spec's identifiers: {alone:?}"),
+            "spec_kinds" => assert!(has("format_specifier") && !has("format_expression") && !has("identifier") && !has("interpolation"), "the spec's kinds: {alone:?}"),
+            _ => assert!(has("x") && has("w") && has("s"), "the host's identifiers: {alone:?}"),
+        }
+    }
+}
+
+/// 0597 rung 5.2: `python/format-spec.rerail` reads a spec's mini-language in the format-spec context, and the host
+/// reads its parts: a standard spec's parts as written, a datetime's own spec as no standard one, and a spec with a
+/// nested field as neither.
+#[test]
+fn a_format_spec_is_read_in_its_own_context() {
+    let file = ("a.py", "a = f\"{x:>10.2f}\"\nb = f\"{d:%Y}\"\nc = f\"{x:*^+#012,.3e}\"\nd = f\"{x:{w}}\"\ne = f\"{x:}\"\n");
+    let program = "\
+.language python
+#include \"python/format-spec.rerail\"
+.decl parts(t: symbol, p: symbol, v: symbol)
+parts(t, p, v) :- fmt_spec_part(s, p, v), text(s, t).
+.decl std(t: symbol)
+std(t) :- fmt_spec_std(s), text(s, t).
+.decl other(t: symbol)
+other(t) :- fmt_spec_other(s), text(s, t).
+.output parts, std, other
+";
+    let row = |r: &[&str]| r.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+    let (parts, together) = alone_and_together("spec-parts", file, program, PLAIN_PASS, "parts");
+    assert_eq!(together, parts);
+    let want: Vec<Vec<String>> = [
+        [":*^+#012,.3e", "align", "^"],
+        [":*^+#012,.3e", "alt", "#"],
+        [":*^+#012,.3e", "fill", "*"],
+        [":*^+#012,.3e", "grouping", ","],
+        [":*^+#012,.3e", "precision", "3"],
+        [":*^+#012,.3e", "sign", "+"],
+        [":*^+#012,.3e", "type", "e"],
+        [":*^+#012,.3e", "width", "12"],
+        [":*^+#012,.3e", "zero", "0"],
+        [":>10.2f", "align", ">"],
+        [":>10.2f", "precision", "2"],
+        [":>10.2f", "type", "f"],
+        [":>10.2f", "width", "10"],
+    ]
+    .iter()
+    .map(|r| row(r))
+    .collect();
+    let mut got = parts.clone();
+    got.sort();
+    assert_eq!(got, want);
+    let (mut std, _) = alone_and_together("spec-std", file, program, PLAIN_PASS, "std");
+    std.sort();
+    assert_eq!(std, [row(&[":"]), row(&[":*^+#012,.3e"]), row(&[":>10.2f"])]);
+    let (other, _) = alone_and_together("spec-other", file, program, PLAIN_PASS, "other");
+    assert_eq!(other, [row(&[":%Y"])]);
+}
+
+/// 0597 rung 5.4: `python/sql-template.rerail` reads SQL in an f-string's template in the context `sql`, by the SQL
+/// library's rules: the tables a query names, and each hole's place in it, read by the host at its f-strings. A
+/// string that reads as no query is no root.
+#[test]
+fn sql_in_a_template_is_read_in_its_own_context() {
+    let file = ("a.py", "def f(db, table, uid, col):\n    db.execute(f\"SELECT name FROM users WHERE id = {uid}\")\n    db.execute(f\"SELECT {col} FROM {table} WHERE a = {uid}\")\n    print(f\"hello {uid} from here\")\n");
+    let program = "\
+.language python
+#include \"python/sql-template.rerail\"
+.decl tables(x: symbol, l: number)
+tables(x, l) :- sql_template_table(s, x), line(s, l).
+.decl holes(x: symbol, k: symbol, l: number)
+holes(x, k, l) :- sql_template_hole(_, i, k), text(i, x), line(i, l).
+.output tables, holes
+";
+    let row = |r: &[&str]| r.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+    let (tables, together) = alone_and_together("sqlt-tables", file, program, PLAIN_PASS, "tables");
+    assert_eq!(together, tables);
+    assert_eq!(tables, [row(&["users", "2"])]);
+    let (mut holes, together) = alone_and_together("sqlt-holes", file, program, PLAIN_PASS, "holes");
+    let mut together = together;
+    together.sort();
+    holes.sort();
+    assert_eq!(together, holes);
+    assert_eq!(holes, [row(&["{col}", "name", "3"]), row(&["{table}", "table", "3"]), row(&["{uid}", "value", "2"]), row(&["{uid}", "value", "3"])]);
+}
+
 /// 0597 rung 2.8: a finding at a context's node stands at its string's line in the file (0431 §3, R9's
 /// `guest_place`): the unresolved name of `y: "Bar"`, on line 3.
 #[test]
@@ -2798,12 +2981,13 @@ fn a_run_with_no_root_runs_no_stratum_of_the_context() {
         assert!(status.success());
         // part, head, cpu_s, work (rows into the head's steps), plans
         let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
-        heads.lines().skip(1).filter(|l| l.split('\t').nth(1).is_some_and(|h| h.starts_with("rr_cx_quoted_"))).map(str::to_owned).collect()
+        heads.lines().skip(1).filter(|l| l.split('\t').nth(1).is_some_and(|h| h.starts_with("rr_pass_quoted_"))).map(str::to_owned).collect()
     };
     let none = ran("x = 1\ndef f(y: int): ...\n");
     assert!(none.is_empty(), "no root, no rule of the context runs: {none:?}");
     let some = ran("x: \"List[int]\" = []\n");
-    assert!(some.iter().any(|h| h.split('\t').nth(1) == Some("rr_cx_quoted_ann_ident")), "with a root they run: {some:?}");
+    // The pass's relation, kept by its tape (rule 8), is derived as `rr_pass_quoted_ann_ident_rr_kd`.
+    assert!(some.iter().any(|h| h.split('\t').nth(1).is_some_and(|h| h.starts_with("rr_pass_quoted_ann_ident"))), "with a root they run: {some:?}");
 }
 
 #[test]
@@ -2811,6 +2995,112 @@ fn a_run_with_no_root_runs_no_stratum_of_the_context() {
 fn context_root_child() {
     let source = std::env::var("CONTEXT_ROOT_SOURCE").unwrap();
     printed_run("pass-root", ("a.py", &source), ANNOTATION_PASS, "quoted_names");
+}
+
+/// 0597 rung 7.1 (rule 7 on the memo path): an edit that changes no root and nothing the context reads runs none of
+/// its strata. A comment added to a file whose annotation is unchanged leaves the context's roots (its values, keyed
+/// by their text) and its reads as they were: no stratum of the context runs. An edit of the annotation's text makes
+/// a new root, and they run. Each run is a child process (`context_edit_child`) into one store, its heads read from
+/// its profile's `heads.tsv`, as rung 2.10's are.
+#[test]
+fn a_memo_edit_that_changes_no_root_runs_no_stratum_of_the_context() {
+    let directory = tempfile::tempdir().unwrap();
+    let step = |k: &str, source: &str| -> (Vec<String>, Vec<Vec<String>>) {
+        let profile = directory.path().join(format!("profile-{k}"));
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::context_edit_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("CONTEXT_EDIT_DIR", directory.path())
+            .env("CONTEXT_EDIT_SOURCE", source);
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success(), "{k}");
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap_or_default();
+        let ran = heads.lines().skip(1).filter_map(|l| l.split('\t').nth(1)).filter(|h| h.contains("rr_pass_quoted_")).map(str::to_owned).collect();
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&directory.path().join("out"), "quoted_names").unwrap_or_default();
+        (ran, rows)
+    };
+    let (cold, rows) = step("cold", "x: \"List[int]\" = []\n");
+    assert!(!cold.is_empty() && rows.contains(&vec!["List".to_owned()]), "a cold run runs the context: {cold:?} {rows:?}");
+    let (comment, rows) = step("comment", "# a comment\nx: \"List[int]\" = []\n");
+    assert!(comment.is_empty(), "a comment changes no root: no stratum of the context runs: {comment:?}");
+    assert!(rows.contains(&vec!["List".to_owned()]) && rows.contains(&vec!["int".to_owned()]), "the context's rows stand: {rows:?}");
+    let (text, rows) = step("text", "# a comment\nx: \"List[str]\" = []\n");
+    assert!(!text.is_empty(), "a new annotation text is a new root: the context runs");
+    assert!(rows.contains(&vec!["str".to_owned()]) && !rows.contains(&vec!["int".to_owned()]), "the new text's rows: {rows:?}");
+}
+
+#[test]
+#[ignore = "child process of a_memo_edit_that_changes_no_root_runs_no_stratum_of_the_context"]
+fn context_edit_child() {
+    let dir = std::path::PathBuf::from(std::env::var("CONTEXT_EDIT_DIR").unwrap());
+    std::fs::write(dir.join("a.py"), std::env::var("CONTEXT_EDIT_SOURCE").unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let path = dir.join("g.rerail");
+    std::fs::write(&path, ANNOTATION_PASS).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::copy(dir.join("a.py"), src.join("a.py")).unwrap();
+    super::run(&printed, &src, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// 0597 rung 7.2 (rule 8 across chunks): a text a later chunk places is given the pass's rows the first chunk kept
+/// under its value, and runs none of the pass's strata. Two files holding one annotation text, each a chunk of its
+/// own (`RERAIL_PROBE_NODES`, `RERAIL_CHUNK_NODES`), do the pass's work of one file; both files' rows stand. Each run
+/// is a child process (`context_chunks_child`), its heads read from its profile's `heads.tsv` (part, head, cpu_s,
+/// work, plans), as rung 2.10's are.
+#[test]
+fn a_text_a_later_chunk_places_runs_no_stratum_of_the_context() {
+    let run = |files: usize| -> (std::collections::BTreeMap<String, u64>, String, Vec<Vec<String>>) {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = directory.path().join("profile");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::context_chunks_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("RERAIL_PROBE_NODES", "1")
+            .env("RERAIL_CHUNK_NODES", "1")
+            .env("RERAIL_CHUNKS_AT_ONCE", "1")
+            .env("CONTEXT_CHUNKS_DIR", directory.path())
+            .env("CONTEXT_CHUNKS_FILES", files.to_string());
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success(), "{files} files");
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap_or_default();
+        let mut work: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+        for l in heads.lines().skip(1) {
+            let cols: Vec<&str> = l.split('\t').collect();
+            if let (Some(h), Some(w)) = (cols.get(1).filter(|h| h.contains("rr_pass_quoted_")), cols.get(3).and_then(|w| w.parse::<u64>().ok())) {
+                *work.entry((*h).to_owned()).or_default() += w;
+            }
+        }
+        let report = std::fs::read_to_string(profile.join("profile.txt")).unwrap_or_default();
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&directory.path().join("out"), "quoted_names").unwrap_or_default();
+        (work, report, rows)
+    };
+    let (one, _, rows) = run(1);
+    assert!(!one.is_empty() && rows.contains(&vec!["List".to_owned()]), "one file runs the context: {one:?} {rows:?}");
+    let (two, report, rows) = run(2);
+    assert!(report.contains("2 made in chunks"), "each file a chunk of its own: the text is a value of each");
+    assert_eq!(two, one, "the second chunk is given the first's rows: the pass's work is one file's");
+    assert!(rows.contains(&vec!["List".to_owned()]) && rows.contains(&vec!["int".to_owned()]), "the rows stand: {rows:?}");
+}
+
+#[test]
+#[ignore = "child process of a_text_a_later_chunk_places_runs_no_stratum_of_the_context"]
+fn context_chunks_child() {
+    let dir = std::path::PathBuf::from(std::env::var("CONTEXT_CHUNKS_DIR").unwrap());
+    let files: usize = std::env::var("CONTEXT_CHUNKS_FILES").unwrap().parse().unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let path = dir.join("g.rerail");
+    std::fs::write(&path, ANNOTATION_PASS).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    for i in 0..files {
+        std::fs::write(src.join(format!("f{i}.py")), format!("v{i}: \"List[int]\" = []\n")).unwrap();
+    }
+    super::run(&printed, &src, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// 0597 rung 2.12: one mechanism on the CPU and the device: 2.3's context views and 2.5's `.from` read give Metal's
@@ -2828,6 +3118,294 @@ fn a_contexts_rows_on_metal_are_the_cpus() {
         assert!(!cpu.is_empty(), "{name}: rows");
         assert_eq!(metal, cpu, "{name}: the device's rows are the CPU's");
     }
+}
+
+/// A Vue program for `alone_and_together`'s second: one that reads the component and makes no context.
+const VUE_PLAIN: &str = ".language vue\n#include \"vue/component.rerail\"\n.decl setup(d: number)\nsetup(d) :- vsetup_doc(d).\n.output setup\n";
+
+/// 0597 rung 5.5: a component's code is two contexts. `script` (vue/script) over its script blocks exports what they
+/// declare; `expression` (vue/expression) over the template's code exports the names each piece reads, the template's
+/// alone (the script's `base` is never one), and which of them a script declares, read of `script`'s export. The host
+/// reads them by each piece's host node (rule 1: no rule sees another context's nodes), here its line.
+#[test]
+fn a_components_template_and_script_are_contexts_of_their_own() {
+    let file = ("a.vue", "<script setup>\nconst count = base\nfunction inc() {}\n</script>\n<template>\n  <button @click=\"inc\">{{ count + other }}</button>\n</template>\n");
+    let program = "\
+.language vue
+#include \"vue/expression.rerail\"
+.decl names(x: symbol)
+names(x) :- vscript_name(_, x).
+.decl reads(x: symbol, l: number)
+reads(x, l) :- vtemplate_ref(a, x), line(a, l).
+.decl script_reads(x: symbol)
+script_reads(x) :- vtemplate_script_ref(_, x).
+.output names, reads, script_reads
+";
+    let row = |r: &[&str]| r.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+    let sorted = |(mut a, mut b): (Vec<Vec<String>>, Vec<Vec<String>>)| {
+        a.sort();
+        b.sort();
+        assert_eq!(b, a);
+        a
+    };
+    assert_eq!(sorted(alone_and_together("vue-names", file, program, VUE_PLAIN, "names")), [row(&["count"]), row(&["inc"])]);
+    assert_eq!(sorted(alone_and_together("vue-reads", file, program, VUE_PLAIN, "reads")), [row(&["count", "6"]), row(&["inc", "6"]), row(&["other", "6"])]);
+    assert_eq!(sorted(alone_and_together("vue-script-reads", file, program, VUE_PLAIN, "script_reads")), [row(&["count"]), row(&["inc"])]);
+}
+
+/// 0597 rung 5.6: no-template-shadow reads a `<script setup>`'s names of the context `script`: `item` of the script
+/// shadowed by a v-for's alias is found; a name only the template reads (`items`) is no shadow.
+#[test]
+fn no_template_shadow_reads_the_scripts_names_of_its_context() {
+    let policy = crate::source_tree::native().join("../docs/rule-syntax/packs/vue/eslint-plugin-vue-no-template-shadow.rerail");
+    let policy = std::fs::read_to_string(policy).unwrap();
+    assert!(policy.contains("vscript_name"), "the policy reads the script's names of its context");
+    let file = ("a.vue", "<script setup>\nconst item = 1\n</script>\n<template>\n  <ul><li v-for=\"item in items\">{{ item }}</li><li v-for=\"x in items\">{{ x }}</li></ul>\n</template>\n");
+    let (found, together) = alone_and_together("vue-shadow", file, &policy, VUE_PLAIN, "shadow");
+    assert_eq!(together, found);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].last().map(String::as_str), Some("item"), "{found:?}");
+}
+
+/// 0597 step 5: a Vue component's code is pieces of their own, made where a rule asks for one (`demand` embeddings,
+/// `embed::vue_code`): each `<script>`, `{{ }}`, directive value and v-for part a TypeScript program at its host node,
+/// its nodes at the file's lines and its `docof` the file's (decision 0431 §4). A v-on value is statements, never an
+/// expression; v-for's value is its alias and its list. The pieces' nodes are read in the contexts (`expression`,
+/// `script`): a guest a context reads is read by the context's rules alone (step 4).
+#[test]
+fn a_components_code_is_pieces_made_where_a_rule_asks() {
+    let file = ("a.vue", "<script setup>\nconst count = base\nfunction inc() {}\n</script>\n<template>\n  <button @click=\"inc\">{{ count + other }}</button>\n  <li v-for=\"(item, i) in items\" :key=\"item\">{{ i }}</li>\n</template>\n");
+    let program = "\
+.language vue
+#include \"vue/script.rerail\"
+.decl pieces_in(r: symbol, x: symbol, l: number)
+pieces_in(r, x, l) :- vcode(_, g, r), within(i, g), kind(i, \"identifier\"), text(i, x), line(i, l).
+.decl names_in(x: symbol)
+names_in(x) :- vscript(p, \"true\"), decl_site(p, x, _, _, _).
+.context expression of vue roots vexpr_root exports pieces_in
+.context script of vue roots vscript_root exports names_in
+.from expression pieces_in
+.from script names_in
+.decl pieces(r: symbol, x: symbol, l: number)
+pieces(r, x, l) :- pieces_in(r, x, l).
+.decl files(f: symbol)
+files(f) :- vcode(_, g, _), docof(g, d), doc(d, f, _).
+files(f) :- vscript(p, _), docof(p, d), doc(d, f, _).
+.decl names(x: symbol)
+names(x) :- names_in(x).
+.output pieces, files, names
+";
+    let row = |r: &[&str]| r.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+    let sorted = |(mut a, mut b): (Vec<Vec<String>>, Vec<Vec<String>>)| {
+        a.sort();
+        b.sort();
+        assert_eq!(b, a);
+        a
+    };
+    let pieces = sorted(alone_and_together("vue-pieces", file, program, VUE_PLAIN, "pieces"));
+    let want = [["vue-expression", "count", "6"], ["vue-expression", "i", "7"], ["vue-expression", "item", "7"], ["vue-expression", "other", "6"], ["vue-for-alias", "i", "7"], ["vue-for-alias", "item", "7"], ["vue-for-source", "items", "7"], ["vue-statements", "inc", "6"]];
+    assert_eq!(pieces, want.map(|r| row(&r)));
+    assert_eq!(sorted(alone_and_together("vue-files", file, program, VUE_PLAIN, "files")), [row(&["a.vue"])]);
+    assert_eq!(sorted(alone_and_together("vue-names", file, program, VUE_PLAIN, "names")), [row(&["count"]), row(&["inc"])]);
+}
+
+/// A policy's id (its `.policy "<id>"` line).
+fn policy_id(program: &str) -> String {
+    program.lines().find_map(|l| l.strip_prefix(".policy \"")).and_then(|l| l.split('"').next()).unwrap_or_default().to_owned()
+}
+
+/// The rows of `violation` (policy, …, path, line, column, …) of `programs` run as one pack over `files` (path,
+/// text) under a directory of their own (`name`).
+fn pack_findings(name: &str, files: &[(String, &str)], programs: &[&str]) -> Vec<Vec<String>> {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    for (path, text) in files {
+        let at = dir.join(path);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, text).unwrap();
+    }
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("out");
+    let ran = super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    ran.unwrap_or_else(|e| panic!("{e}"));
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    rows
+}
+
+/// `program`'s relation `rel` over the one file `file`, run alone, and its findings (its rows of `violation`: path,
+/// line, column, sorted).
+fn findings_alone(name: &str, file: (&str, &str), program: &str, rel: &str) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
+    let id = policy_id(program);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(file.0), file.1).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("alone");
+    let ran = super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    ran.unwrap_or_else(|e| panic!("{e}"));
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+    let rows = read(&format!("p0_{rel}"));
+    let mut found: Vec<Vec<String>> = read("violation").into_iter().filter(|r| r.first() == Some(&id)).map(|r| r[3..].to_vec()).collect();
+    found.sort();
+    let rows = if rows.is_empty() { read(rel) } else { rows };
+    let _ = std::fs::remove_dir_all(&dir);
+    (rows, found)
+}
+
+/// Each case of the Vue pack's tables: the policy, a component, its violation, and the last column of each finding
+/// (`*`: a finding, whatever it says). Each finds that alone, and the same in the pack (rule 5: a relation has one
+/// meaning in every program): every case's policy run together, beside no-template-shadow, whose code is the
+/// contexts' alone, and no-mutating-props, which reads both contexts, over every case's component, each in a
+/// directory of its own (`case<k>/a.vue`). A case's findings in the pack are its policy's in its file.
+fn vue_pack_cases(cases: &[(&str, String, &str, Vec<&str>)]) {
+    let read = |policy: &str| std::fs::read_to_string(crate::source_tree::native().join(format!("../docs/rule-syntax/packs/vue/eslint-plugin-vue-{policy}.rerail"))).unwrap();
+    let mut policies: Vec<&str> = cases.iter().map(|c| c.0).chain(["no-template-shadow", "no-mutating-props"]).collect();
+    policies.sort_unstable();
+    policies.dedup();
+    let texts: Vec<String> = policies.iter().map(|p| read(p)).collect();
+    let files: Vec<(String, &str)> = cases.iter().enumerate().map(|(k, c)| (format!("case{k}/a.vue"), c.1.as_str())).collect();
+    let pack = pack_findings("vue-pack-together", &files, &texts.iter().map(String::as_str).collect::<Vec<_>>());
+    let mut wrong = Vec::new();
+    for (k, (policy, text, rel, want)) in cases.iter().enumerate() {
+        let program = read(policy);
+        let id = policy_id(&program);
+        let path = format!("case{k}/a.vue");
+        let mut together: Vec<Vec<String>> = pack
+            .iter()
+            .filter(|r| r.first() == Some(&id) && r.get(3) == Some(&path))
+            .map(|r| std::iter::once("a.vue".to_owned()).chain(r[4..].iter().cloned()).collect())
+            .collect();
+        together.sort();
+        let run = std::panic::catch_unwind(|| findings_alone(&format!("vue-pack-{policy}"), ("a.vue", text.as_str()), &program, rel));
+        let Ok((found, alone)) = run else {
+            let e = run.err().unwrap();
+            let e = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_owned())).unwrap_or_default();
+            wrong.push(format!("{policy} on {text:?}: {e}"));
+            continue;
+        };
+        let mut got: Vec<String> = found.iter().map(|r| if want.first() == Some(&"*") { "*".to_owned() } else { r.last().cloned().unwrap_or_default() }).collect();
+        got.sort();
+        if got != *want || alone.len() != found.len() || together != alone {
+            wrong.push(format!("{policy} on {text:?}: {found:?} (findings {alone:?}, in the pack {together:?}), wanted {want:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// 0597 rung 5.7: the Vue pack's policies that read the template's code find on the examples their headers give what
+/// those say (before step 5 the engine parsed no template code: each found nothing there).
+#[test]
+fn the_vue_packs_template_policies_find_their_examples() {
+    let t = |body: &str| format!("<template>\n  {body}\n</template>\n");
+    vue_pack_cases(&[
+        ("no-unused-vars", t("<ul><li v-for=\"(item, i) in items\">{{ i }}</li></ul>"), "unused_var", vec![]),
+        ("no-unused-vars", t("<ul><li v-for=\"(item, i) in items\">{{ item }}</li></ul>"), "unused_var", vec!["i"]),
+        ("no-unused-vars", t("<comp v-slot=\"{ a, b }\">{{ b }}</comp>"), "unused_var", vec!["a"]),
+        ("no-use-v-if-with-v-for", t("<ul><li v-for=\"u in users\" v-if=\"u.active\">{{ u }}</li></ul>"), "v_if_with_v_for", vec!["*"]),
+        ("no-use-v-if-with-v-for", t("<ul><li v-for=\"u in users\" v-if=\"shown\">{{ u }}</li></ul>"), "v_if_with_v_for", vec!["*"]),
+        ("valid-v-for", t("<div><my-item v-for=\"x in xs\" /></div>"), "valid_v_for", vec!["*"]),
+        ("valid-v-for", t("<ul><li v-for=\"x in xs\" :key=\"id\" /></ul>"), "valid_v_for", vec!["*"]),
+        ("valid-v-for", t("<ul><li v-for=\"x in xs\" :key=\"x\" /></ul>"), "valid_v_for", vec![]),
+        ("valid-v-for", t("<ul><li v-for=\"(x, 1) in xs\" :key=\"x\" /></ul>"), "valid_v_for", vec!["*"]),
+        ("no-v-html", t("<div v-html=\"raw\" />"), "no_v_html", vec!["*"]),
+        ("no-unused-refs", t("<div ref=\"box\" />"), "unused_ref", vec!["box"]),
+        ("no-unused-refs", t("<div ref=\"box\" @click=\"$refs.box.focus()\" />"), "unused_ref", vec![]),
+        ("no-template-shadow", t("<ul><li v-for=\"item in items\"><p v-for=\"item in item.parts\" /></li></ul>"), "shadow", vec!["item"]),
+        (
+            "no-template-shadow",
+            format!("<script>\nexport default {{ data() {{ return {{ item: 1 }} }} }}\n</script>\n{}", t("<ul><li v-for=\"item in items\" /></ul>")),
+            "shadow",
+            vec!["item"],
+        ),
+        ("no-template-shadow", t("<ul><li v-for=\"item in items\" /></ul>"), "shadow", vec![]),
+    ]);
+}
+
+/// 0597 rung 5.9: the Vue pack's policies that read the scripts are context policies (rule 6): their rules run in the
+/// context `script` (and `expression`, for the template's code), and each finds on its header's examples what it says,
+/// alone and in a pack.
+#[test]
+fn the_vue_packs_script_policies_find_their_examples() {
+    let s = |code: &str| format!("<script>\n{code}\n</script>\n");
+    let setup = |code: &str| format!("<script setup>\n{code}\n</script>\n");
+    vue_pack_cases(&[
+        ("no-async-in-computed-properties", s("export default { computed: { async a() { return 1 } } }"), "async_computed", vec!["*"]),
+        ("no-export-in-script-setup", setup("export const a = 1"), "export_in_setup", vec!["*"]),
+        ("no-export-in-script-setup", "<script setup lang=\"ts\">\nexport type T = 1\n</script>\n".to_owned(), "export_in_setup", vec![]),
+        ("no-dupe-keys", s("export default { props: ['foo'], computed: { foo() { return 1 } } }"), "dupe_key", vec!["foo"]),
+        ("no-side-effects-in-computed-properties", s("export default { computed: { a() { this.n++; return 1 } } }"), "side_effect", vec!["*"]),
+        ("no-setup-props-reactivity-loss", s("export default { setup({ count }) {} }"), "lost", vec!["*"]),
+        ("no-ref-as-operand", setup("import { ref } from 'vue'\nconst n = ref(0)\nif (n) {}"), "ref_operand", vec!["*"]),
+        ("no-watch-after-await", s("import { watch } from 'vue'\nexport default { async setup() { await load(); watch(a, f) } }"), "watch_after_await", vec!["*"]),
+        ("no-watch-after-await", s("import { watch } from 'vue'\nexport default { async setup() { await load(); const stop = watch(a, f) } }"), "watch_after_await", vec![]),
+        ("require-valid-default-prop", s("export default { props: { n: { type: Number, default: '' } } }"), "invalid", vec!["*"]),
+        ("return-in-computed-property", s("export default { computed: { foo() { if (a) return 1 } } }"), "no_return", vec!["*"]),
+        ("no-mutating-props", s("export default { props: ['list'], methods: { f() { this.list.push(1) } } }"), "mutated", vec!["list"]),
+        ("no-mutating-props", format!("{}<template>\n  <div @click=\"list = []\" />\n</template>\n", s("export default { props: ['list'] }")), "mutated", vec!["list"]),
+        ("no-unused-refs", format!("{}<template>\n  <div ref=\"box\" />\n</template>\n", s("export default { mounted() { this.$refs.box.focus() } }")), "unused_ref", vec![]),
+    ]);
+}
+
+/// A guest copy made only of base atoms (`rr_in_typescript_0_decl_site`, over `kind` and `field`) runs above the
+/// request whose answer makes the documents it reads (decision 0597): a Vue template's pieces are made where a rule
+/// asks, in the run, and `tvar`, vue/code's alone, found nothing until another rule of the program happened to place
+/// the copy above the request.
+#[test]
+fn a_guest_copy_reads_the_pieces_a_request_made_in_its_run() {
+    let file = ("a.vue", "<template>\n  <ul><li v-for=\"x in xs\" :key=\"x\" /></ul>\n</template>\n");
+    let program = ".language vue\n#include \"vue/code.rerail\"\n.decl o(x: symbol)\no(x) :- tvar(_, x, _, _).\n.output o\n";
+    let (alone, together) = alone_and_together("guest-copy-after-request", file, program, VUE_PLAIN, "o");
+    assert_eq!((alone, together), (vec![vec!["x".to_owned()]], vec![vec!["x".to_owned()]]));
+}
+
+/// 0597 rung 5.8: a context policy over a Vue component's code (rule 6): its rules run in the context `expression`,
+/// its violation is the host's read of their export, and a finding at a piece's node stands at that node's own line in
+/// the file (a piece's code is the file's bytes): `items` on line 3, in a `{{ }}` that opens on line 2.
+#[test]
+fn a_finding_at_a_pieces_node_stands_at_its_own_bytes() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("piece-place");
+    let (src, rules) = (root.join("src"), root.join("rules"));
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(src.join("a.vue"), "<template>\n  <p>{{\n    items\n  }}</p>\n</template>\n").unwrap();
+    let policy = rules.join("named.rerail");
+    std::fs::write(
+        &policy,
+        "\
+.policy \"t:named\" revision 1
+.language vue
+#include \"vue/expression.rerail\"
+.decl named_at(i: node)
+named_at(i) :- vexpr_root(g, _), within(i, g), kind(i, \"identifier\").
+.context expression of vue roots vexpr_root exports named_at
+.from expression named_at as named
+.violation Named(at: node) code \"named\" \"a name\"
+Named(i) :- named(i).
+",
+    )
+    .unwrap();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &src, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+    let found: Vec<(u64, String, String)> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["line"].as_u64().unwrap_or(0), d["path"].as_str().unwrap_or("").to_owned(), d["code"].as_str().unwrap_or("").to_owned())).collect();
+    assert_eq!(found, [(3, "a.vue".to_owned(), "named".to_owned())], "{report:#}");
+}
+
+/// 0597 rung 5.10: a policy's own rule of a library's context reads the library's relations of that context by their
+/// own names (`vname`, vue/component's, which the combined library holds as the context's instance alone), alone and
+/// in a pack.
+#[test]
+fn a_policys_rule_of_a_librarys_context_reads_the_librarys_relations() {
+    let program = ".language vue\n#include \"vue/script.rerail\"\n.decl names_in(g: symbol, x: symbol)\nnames_in(g, x) :- vname(_, g, x, _).\n.context script of vue roots vscript_root exports names_in\n.from script names_in as names\n.decl o(g: symbol, x: symbol)\no(g, x) :- names(g, x).\n.output o\n";
+    // An object's key, and an array's string (its value, asked of the string's tape in the context).
+    let mut got = Vec::new();
+    for props in ["{ foo: String }", "['foo']"] {
+        let text = format!("<script>\nexport default {{ props: {props} }}\n</script>\n");
+        got.push((props, alone_and_together("library-context-relation", ("a.vue", &text), program, VUE_PLAIN, "o")));
+    }
+    let want = vec![vec!["props".to_owned(), "foo".to_owned()]];
+    assert!(got.iter().all(|(_, (alone, together))| *alone == want && together == alone), "{got:?}");
 }
 
 /// The texts the combine last read (`kept_texts`): a text's kept modules stand while the text and each library file

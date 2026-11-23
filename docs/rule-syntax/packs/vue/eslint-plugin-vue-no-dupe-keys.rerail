@@ -17,8 +17,8 @@
 .violation dupe_key(at: node, x: symbol) code "vue/no-dupe-keys"
     "Duplicate key '{x}'. May cause name collision in script or template tag."
     suppress eslint "vue/no-dupe-keys"
-dupe_key(n, x) :- named(o, x, n), named(o, x, m), earlier(m, n).
-dupe_key(site, x) :- vprops_call(c), vprop_name(c, x, _), !renamed(c, x), top_binding(c, x, site),
+dupe_key_in(n, x) :- named(o, x, n), named(o, x, m), earlier(m, n).
+dupe_key_in(site, x) :- vprops_call(c), vprop_name(c, x, _), !renamed(c, x), top_binding(c, x, site),
     !reads_props(c, site).
 .decl named(o: node, x: symbol, n: node)
 named(o, x, n) :- vname(o, g, x, n), (group(g) ; option_item("groups", _, g)).
@@ -52,3 +52,10 @@ read_in(v, r) :- top_binding(_, _, at), field(at, "value", v), (has(v, r, "ident
 .decl binds(c: node, s: node)  // s is a declaration site of a name the props pattern binds
 binds(c, d) :- pattern(c, l), field(d, "name", l).
 binds(c, s) :- pattern(c, l), decl_site(_, _, s, "pattern", _), within(s, l).
+
+// The rules above are the context `script`'s (decision 0597): they read the scripts' nodes. The host reports what
+// they find, at each node's own bytes.
+.decl dupe_key_in(at: node, x: symbol)
+.context script of vue roots vscript_root exports dupe_key_in
+.from script dupe_key_in
+dupe_key(at, x) :- dupe_key_in(at, x).

@@ -5,7 +5,7 @@
 use rerail_store::Canonical as _;
 pub use super::logic::profile::watch::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
-pub use super::logic::settings::{program_text, program_texts, settings};
+pub use super::logic::settings::{program_text, program_texts, program_texts_read, read_program_file, settings};
 pub use super::logic::settings::process_counters;
 use crate::code_rule_dsl::transducer::packed::rir;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
@@ -1135,7 +1135,7 @@ fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&s
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine delete-scope <store.sqlite> <name>\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>... [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine delete-scope <store.sqlite> <name>\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine code-counts <root>... [--per-repo N] --out <counts.tsv>\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>... [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -1264,6 +1264,7 @@ fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus
         Some("repeat") => repeat_script_command(&args[1..]),
         Some("facts-stamp") => facts_stamp_command(&args[1..]),
         Some("capture-tapes") => capture_tapes_command(&args[1..]),
+        Some("code-counts") => code_counts_command(&args[1..]),
         Some("kind-names") => kind_names_command(&args[1..]),
         Some("run-rr") => run_rr_command(&args[1..], &with_revision),
         // Several policies over one repository, each over its own language's files (O105), and the tool calls it is
@@ -1642,9 +1643,11 @@ fn logic_command(args: &[String]) -> Result<String, String> {
         files.sort();
         // A file another one `#include`s is a library of it (`…confusables.rerail`), not a program of its own: alone it
         // has neither the declarations it reads nor the rules that fill its inputs.
-        let included: std::collections::BTreeSet<std::ffi::OsString> = files
+        // Each read once, as the run observes it, and its text handed on to `program_texts_read`.
+        let read: Vec<Result<String, String>> = files.iter().map(|path| crate::tools::read_program_file(path)).collect();
+        let included: std::collections::BTreeSet<std::ffi::OsString> = read
             .iter()
-            .filter_map(|path| std::fs::read_to_string(path).ok())
+            .filter_map(|text| text.as_ref().ok())
             .flat_map(|text| {
                 text.lines()
                     .filter_map(|l| l.trim().strip_prefix("#include"))
@@ -1653,9 +1656,9 @@ fn logic_command(args: &[String]) -> Result<String, String> {
                     .collect::<Vec<_>>()
             })
             .collect();
-        files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
+        let (files, read): (Vec<_>, Vec<_>) = files.into_iter().zip(read).filter(|(path, _)| !path.file_name().is_some_and(|n| included.contains(n))).unzip();
         timeline_mark("the program files listed");
-        let texts = crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?;
+        let texts = crate::tools::program_texts_read(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>(), read.into_iter().map(Result::ok).collect())?;
         _sources = super::logic::rr::profile_join_sources(&files.iter().map(|p| p.as_path()).collect::<Vec<_>>());
         timeline_mark("the program texts read");
         texts
@@ -2170,6 +2173,21 @@ fn kind_names_command(args: &[String]) -> Result<String, String> {
     use crate::code_rule_dsl::language::{from_tape_tag, tape_tag};
     use crate::code_rule_dsl::language::GrammarDialect;
     let [out] = args else { return Err("usage: rerail-engine kind-names <out file>".to_owned()) };
+    // A name escaped, so each kind and field is one line of cells: C's and Go's tokens hold a newline and a NUL.
+    let escaped = |name: &str| {
+        let mut s = String::with_capacity(name.len());
+        for c in name.chars() {
+            match c {
+                '\\' => s.push_str("\\\\"),
+                '\n' => s.push_str("\\n"),
+                '\r' => s.push_str("\\r"),
+                '\t' => s.push_str("\\t"),
+                '\0' => s.push_str("\\0"),
+                c => s.push(c),
+            }
+        }
+        s
+    };
     let mut text = String::new();
     let mut tags = 0;
     for &lang in GrammarDialect::all() {
@@ -2178,20 +2196,210 @@ fn kind_names_command(args: &[String]) -> Result<String, String> {
             continue;
         }
         tags += 1;
+        // Each kind's public symbol: the id a node of its name and kind has (`ts_node_symbol`). A grammar's symbols of
+        // one name and kind share one; an own parser's kinds are their own. Then the id its name looks up as a named
+        // kind: a supertype's, by which a parser names its classes (C#'s `type` token is 24, its supertype 294).
+        let grammar = lang.kinds().grammar();
         for id in 0..lang.kind_count() {
             let id = id as u16;
             if let Some(name) = lang.kind_name(id) {
-                text.push_str(&format!("{tag}\t{id}\t{name}\t{}\n", u8::from(lang.kinds().kind_is_named(id))));
+                let named = lang.kinds().kind_is_named(id);
+                let public = grammar.map_or(id, |g| g.id_for_node_kind(name, named));
+                let as_named = grammar.map_or(id, |g| g.id_for_node_kind(name, true));
+                text.push_str(&format!("{tag}\t{id}\t{}\t{}\t{public}\t{as_named}\n", escaped(name), u8::from(named)));
             }
         }
         for id in 1..=lang.kinds().field_count() {
             if let Some(name) = lang.kinds().field_name(id as u16) {
-                text.push_str(&format!("{tag}\tfield {id}\t{name}\t\n"));
+                text.push_str(&format!("{tag}\tfield {id}\t{}\t\n", escaped(name)));
             }
         }
     }
     std::fs::write(out, text).map_err(|e| e.to_string())?;
     Ok(format!("{tags} languages to {out}"))
+}
+
+/// Every file under `root` a tape language reads, in path order (`.git`, `node_modules`, `.venv`, `target`, `dist`
+/// and the like left out): `capture-tapes`' and `code-counts`' files.
+/// The directories a walk of sources skips: dependencies, builds, caches.
+const SKIPPED_DIRS: [&str; 10] = [".git", "node_modules", ".venv", "venv", "target", "dist", "build", "__pycache__", "tmp", "working-data"];
+
+/// A bare repository's (a mirror's) HEAD tree: each blob the engine parses, as `(blob, dialect)`, at most `per` of
+/// each dialect, spread evenly over the tree's order. Read from the object store through gix: nothing is checked
+/// out (decision 0497).
+fn bare_files(repo: &gix::Repository, per: usize) -> Vec<(gix::ObjectId, crate::code_rule_dsl::language::GrammarDialect)> {
+    use crate::code_rule_dsl::language::{dialect_by_label, label_of_path, tape_tag};
+    let Ok(tree) = repo.head_commit().map_err(|e| e.to_string()).and_then(|c| c.tree().map_err(|e| e.to_string())) else { return Vec::new() };
+    let mut rec = gix::traverse::tree::Recorder::default();
+    if tree.traverse().breadthfirst(&mut rec).is_err() {
+        return Vec::new();
+    }
+    let mut by: std::collections::BTreeMap<String, Vec<(gix::ObjectId, crate::code_rule_dsl::language::GrammarDialect)>> = Default::default();
+    for e in rec.records.into_iter().filter(|e| e.mode.is_blob()) {
+        let path = e.filepath.to_string();
+        if path.split('/').any(|part| SKIPPED_DIRS.contains(&part)) {
+            continue;
+        }
+        let Some(d) = label_of_path(&path).and_then(dialect_by_label).filter(|d| tape_tag(*d).is_some()) else { continue };
+        by.entry(format!("{d:?}")).or_default().push((e.oid, d));
+    }
+    by.into_values()
+        .flat_map(|all| {
+            let step = all.len().div_ceil(per.max(1)).max(1);
+            all.into_iter().step_by(step)
+        })
+        .collect()
+}
+
+fn tape_files(root: &Path) -> Vec<(std::path::PathBuf, crate::code_rule_dsl::language::GrammarDialect)> {
+    use crate::code_rule_dsl::language::{dialect_by_label, label_of_path, tape_tag};
+    fn walk(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() {
+                if !SKIPPED_DIRS.contains(&name.as_ref()) {
+                    walk(&entry.path(), files);
+                }
+            } else if kind.is_file() {
+                files.push(entry.path());
+            }
+        }
+    }
+    let mut all = Vec::new();
+    walk(root, &mut all);
+    all.into_iter()
+        .filter_map(|p| {
+            let d = label_of_path(&p.to_string_lossy()).and_then(dialect_by_label).filter(|d| tape_tag(*d).is_some())?;
+            Some((p, d))
+        })
+        .collect()
+}
+
+/// `code-counts <root>... --out <counts.tsv>`: how often each code of each language's format 16 table is a node's,
+/// over every file under the roots the engine parses (as `capture-tapes` walks them): `tag<TAB>number<TAB>count`, the
+/// number the shipped table's, and a `nodes` line per language. The lab's `tape16 table --counts` numbers a
+/// language's codes by it (most frequent first); what a table holds is the grammar's alone (decision 0626).
+fn code_counts_command(args: &[String]) -> Result<String, String> {
+    use crate::code_rule_dsl::language::tape_tag;
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage};
+    use rerail_tape_format::tape::Tape;
+    use std::collections::HashMap;
+    let usage = || "usage: rerail-engine code-counts <root>... [--per-repo N] --out <counts.tsv>".to_owned();
+    let at = args.iter().position(|a| a == "--out").ok_or_else(usage)?;
+    let out = args.get(at + 1).ok_or_else(usage)?;
+    let per = match args.iter().position(|a| a == "--per-repo") {
+        Some(i) => args.get(i + 1).and_then(|n| n.parse().ok()).ok_or_else(usage)?,
+        None => usize::MAX,
+    };
+    let roots: Vec<&String> = args.iter().take_while(|a| !a.starts_with("--")).collect();
+    if roots.is_empty() {
+        return Err(usage());
+    }
+    // A root is a directory of sources, a bare repository (a mirror: `HEAD` and `objects`, no work tree), or a
+    // directory of bare repositories. A repository's files are its HEAD tree's blobs, read from its object store.
+    enum Src {
+        File(std::path::PathBuf),
+        Blob(gix::ObjectId),
+    }
+    // What is counted, one after another: a directory's files, or a repository. A repository is open only while its
+    // files are counted, so its packs' maps and caches go with it.
+    enum Unit {
+        Dir(std::path::PathBuf),
+        Repo(std::path::PathBuf),
+    }
+    let bare = |p: &Path| p.join("HEAD").is_file() && p.join("objects").is_dir();
+    let mut units = Vec::new();
+    for root in &roots {
+        let root = Path::new(root.as_str());
+        let mut gits: Vec<std::path::PathBuf> = if bare(root) {
+            vec![root.to_path_buf()]
+        } else {
+            std::fs::read_dir(root).map_or(Vec::new(), |d| d.filter_map(Result::ok).map(|e| e.path()).filter(|p| bare(p)).collect())
+        };
+        gits.sort();
+        if gits.is_empty() {
+            units.push(Unit::Dir(root.to_path_buf()));
+        }
+        units.extend(gits.into_iter().map(Unit::Repo));
+    }
+    let counts: std::sync::Mutex<HashMap<(u8, u32), u64>> = std::sync::Mutex::new(HashMap::new());
+    let nodes: std::sync::Mutex<HashMap<u8, (u64, u64)>> = std::sync::Mutex::new(HashMap::new());
+    let refused = std::sync::atomic::AtomicUsize::new(0);
+    let mut listed = 0;
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8);
+    for unit in units {
+        let (repo, files): (Option<gix::ThreadSafeRepository>, Vec<(Src, crate::code_rule_dsl::language::GrammarDialect)>) = match unit {
+            Unit::Dir(d) => (None, tape_files(&d).into_iter().map(|(p, d)| (Src::File(p), d)).collect()),
+            Unit::Repo(g) => {
+                let Ok(repo) = gix::open_opts(&g, gix::open::Options::isolated()) else { continue };
+                let files = bare_files(&repo, per).into_iter().map(|(oid, d)| (Src::Blob(oid), d)).collect();
+                (Some(repo.into_sync()), files)
+            }
+        };
+        listed += files.len();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        rerail_accel::exec::scoped(|scope| {
+            for _ in 0..threads {
+                scope.spawn(|| {
+                    let (mut mine, mut seen): (HashMap<(u8, u32), u64>, HashMap<u8, (u64, u64)>) = (HashMap::new(), HashMap::new());
+                    let local = repo.as_ref().map(gix::ThreadSafeRepository::to_thread_local);
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some((src, lang)) = files.get(i) else { break };
+                        let bytes = match src {
+                            Src::File(path) => std::fs::read(path).ok(),
+                            Src::Blob(oid) => local.as_ref().and_then(|repo| repo.find_object(*oid).ok().map(|o| o.detach().data)),
+                        };
+                        let source = bytes.and_then(|s| String::from_utf8(s).ok()).filter(|s| s.len() <= 16 << 20);
+                        let image = source.as_ref().and_then(|source| Grammar::new(*lang).ok().and_then(|g| TapeImage::parse(&g, source, &|| false).and_then(Result::ok)));
+                        let Some(file) = image else {
+                            refused.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            continue;
+                        };
+                        let tag = tape_tag(*lang).expect("filtered");
+                        let n = rerail_tape_format::with_tape!(file.primary.tape(), |t| {
+                            for k in 0..t.len() {
+                                *mine.entry((tag, t.code(k))).or_default() += 1;
+                            }
+                            t.len() as u64
+                        });
+                        let e = seen.entry(tag).or_default();
+                        (e.0, e.1) = (e.0 + 1, e.1 + n);
+                    }
+                    let mut c = counts.lock().unwrap();
+                    for (k, v) in mine {
+                        *c.entry(k).or_default() += v;
+                    }
+                    let mut s = nodes.lock().unwrap();
+                    for (k, (f, n)) in seen {
+                        let e = s.entry(k).or_default();
+                        (e.0, e.1) = (e.0 + f, e.1 + n);
+                    }
+                });
+            }
+        });
+    }
+    let mut rows: Vec<_> = counts.into_inner().unwrap().into_iter().collect();
+    rows.sort_unstable();
+    let mut text = String::from("# code-counts: tag, the shipped table's number, nodes of that code; then per tag its files and nodes, and the table's revision\n");
+    for ((tag, number), n) in rows {
+        text.push_str(&format!("{tag}\t{number}\t{n}\n"));
+    }
+    let mut langs: Vec<_> = nodes.into_inner().unwrap().into_iter().collect();
+    langs.sort_unstable();
+    for (tag, (f, n)) in &langs {
+        text.push_str(&format!("nodes\t{tag}\t{f}\t{n}\n"));
+        // The table revision the numbers are of: a lab numbering by them refuses another's.
+        let revision = rerail_tape_format::f16::lang(*tag).map_or(0, |l| l.revision());
+        text.push_str(&format!("revision\t{tag}\t{revision}\n"));
+    }
+    std::fs::write(out, text).map_err(|e| e.to_string())?;
+    Ok(format!("{} files counted ({} refused) in {} languages\n", listed - refused.load(std::sync::atomic::Ordering::Relaxed), refused.into_inner(), langs.len()))
 }
 
 fn capture_tapes_command(args: &[String]) -> Result<String, String> {
@@ -2224,7 +2432,7 @@ fn capture_tapes_command(args: &[String]) -> Result<String, String> {
             let name = name.to_string_lossy();
             let Ok(kind) = entry.file_type() else { continue };
             if kind.is_dir() {
-                if !matches!(name.as_ref(), ".git" | "node_modules" | ".venv" | "venv" | "target" | "dist" | "build" | "__pycache__" | "tmp" | "working-data") {
+                if !SKIPPED_DIRS.contains(&name.as_ref()) {
                     walk(&entry.path(), files);
                 }
             } else if kind.is_file() {

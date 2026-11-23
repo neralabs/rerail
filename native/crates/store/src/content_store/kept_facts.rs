@@ -18,6 +18,7 @@ use rerail_blocks::relation::View;
 use rusqlite::Connection;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Maps a forked process's atom ids to the store's, in place.
 type MapIds<'a> = &'a dyn Fn(&mut [i64]) -> StoreResult<()>;
@@ -50,6 +51,45 @@ fn holder_ident() -> [u8; 32] {
     sha2::Sha256::digest(b"rerail.kept-facts/holder/v1").into()
 }
 
+/// `rel`'s rows of partition `part`: `n` rows of `types.len()` words, which `fill` gives row by row, written into a
+/// block of their own as they are given (`BlockFlat`, never a heap vector) and digested there; with none, the
+/// partition's rows of `rel` gone. A fill that gives other than `n` whole rows is refused. Kept as given: in the order
+/// given, none dropped (`sorted_put` keeps them in canonical order).
+pub fn filled_put<E: Into<StoreError>>(rel: &str, ident: [u8; 32], part: i64, types: &[u8], n: usize, fill: impl FnOnce(&mut dyn FnMut(i64)) -> Result<(), E>) -> StoreResult<KeptPut> {
+    block_put(rel, ident, part, types, n, true, fill)
+}
+
+/// `filled_put`, its rows kept in canonical order (columns ascending, duplicates dropped), the order recorded: a probe
+/// of leading columns is a range (`Packed::probe`).
+pub fn sorted_put<E: Into<StoreError>>(rel: &str, ident: [u8; 32], part: i64, types: &[u8], n: usize, fill: impl FnOnce(&mut dyn FnMut(i64)) -> Result<(), E>) -> StoreResult<KeptPut> {
+    block_put(rel, ident, part, types, n, false, fill)
+}
+
+fn block_put<E: Into<StoreError>>(rel: &str, ident: [u8; 32], part: i64, types: &[u8], n: usize, given: bool, fill: impl FnOnce(&mut dyn FnMut(i64)) -> Result<(), E>) -> StoreResult<KeptPut> {
+    use sha2::Digest as _;
+    let width = types.len();
+    let (what, digest) = if n == 0 {
+        (KeptWhat::Gone, 0)
+    } else {
+        let mut block = BlockFlat::new(n, width, given);
+        let mut h = sha2::Sha256::new();
+        let mut given = 0;
+        fill(&mut |v| {
+            if given < n * width {
+                block.put(given / width, given % width, v);
+                h.update(v.to_le_bytes());
+            }
+            given += 1;
+        })
+        .map_err(Into::into)?;
+        if given != n * width {
+            return Err(StoreError::Invalid(format!("{rel}: {given} values for {n} rows of {width}")));
+        }
+        (KeptWhat::Picked(Box::new(block)), u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes")))
+    };
+    Ok(KeptPut { rel: rel.to_owned(), ident, part, digest, reads: Vec::new(), types: types.to_vec(), what })
+}
+
 /// The put that makes the source of SHA-256 key `source`, and `plan`, partition `part`'s holder in its space.
 pub fn holder_put(part: i64, source: [u8; 32], plan: Option<[u8; 32]>) -> KeptPut {
     let mut row = BlockFlat::new(1, 8, true);
@@ -58,6 +98,12 @@ pub fn holder_put(part: i64, source: [u8; 32], plan: Option<[u8; 32]>) -> KeptPu
     }
     let digest = u64::from_le_bytes(source[..8].try_into().expect("8 bytes")) ^ plan.map_or(0, |p| u64::from_le_bytes(p[..8].try_into().expect("8 bytes")));
     KeptPut { rel: HOLDER.into(), ident: holder_ident(), part, digest, reads: Vec::new(), types: b"iiiiiiii".to_vec(), what: KeptWhat::Picked(Box::new(row)) }
+}
+
+/// The put that makes `plan` alone partition `part`'s holder in its space: held while the plan is not dead, whatever
+/// sources the store keeps (a holder of no source, its key zero).
+pub fn plan_holder_put(part: i64, plan: [u8; 32]) -> KeptPut {
+    holder_put(part, [0; 32], Some(plan))
 }
 
 /// The source key and plan a holder entry names.
@@ -891,6 +937,7 @@ impl super::ContentStore {
                 for entry in chain.of(HOLDER) {
                     let held = match holder_of(&entry) {
                         Some((_, Some(plan))) if dead.contains(&plan) => false,
+                        Some((key, Some(_))) if key == [0; 32] => true,
                         Some((key, _)) => super::objects::source_id_by_hash(t, super::HashKey::from_sha256_digest(key))?.is_some(),
                         None => false,
                     };
@@ -965,9 +1012,41 @@ impl super::ContentStore {
 
     /// The kept facts of `space` as this process holds its chain's rows (else the store's last commit), mapped
     /// (`open_kept`); `None` when it keeps none.
-    pub fn kept_space(&self, space: &[u8; 32]) -> StoreResult<Option<KeptSpace>> {
+    /// The process maps a chain once while its rows stay the same: every reader of the space shares the mapping
+    /// (`MappedSpaces`), as the kept inputs' bound chains are shared.
+    pub fn kept_space(&self, space: &[u8; 32]) -> StoreResult<Option<Arc<KeptSpace>>> {
         let Some(rows) = self.kept_row(space)? else { return Ok(None) };
-        Ok(self.open_kept(space, rows)?.map(|(_, kept)| kept))
+        let key = (self.database_path.clone(), *space);
+        let mapped = rerail_prof::code_rule_dsl::logic::profile::shared::<MappedSpaces>();
+        if let Some((was, kept)) = mapped.0.lock().unwrap_or_else(|e| e.into_inner()).get(&key)
+            && *was == rows
+        {
+            return Ok(Some(Arc::clone(kept)));
+        }
+        let Some((rows, kept)) = self.open_kept(space, rows)? else { return Ok(None) };
+        let kept = Arc::new(kept);
+        mapped.0.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (rows, Arc::clone(&kept)));
+        Ok(Some(kept))
+    }
+}
+
+/// Each space's chain as this process mapped it, by the store's file and the space, with the rows that named its
+/// files (`kept_space`): mapped again only when a commit changed them. A file a row names is never rewritten (a
+/// write makes a new file, and its row), so a mapping of the same rows reads what a new one would. The shared
+/// object's (decision 0442), shared by design by the runs on a store.
+#[derive(Default)]
+struct MappedSpaces(std::sync::Mutex<HashMap<(PathBuf, [u8; 32]), (ChainRows, Arc<KeptSpace>)>>);
+
+impl super::ContentStore {
+    /// Notes `space`'s chain as a write in a transaction of this process's left it (`written`, from `write_space`),
+    /// once that transaction has committed: the rows this process holds are the new ones.
+    pub(in crate::content_store) fn note_kept(&self, space: &[u8; 32], written: Option<ChainRows>) {
+        let Some(rows) = written else { return };
+        super::held::snapshot_kept(&self.database_path, |kept| {
+            if let Some(held) = kept {
+                held.insert(*space, rows);
+            }
+        });
     }
 }
 

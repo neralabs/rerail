@@ -1,21 +1,10 @@
-//! The engine's tape (v9np, decision 0025; format 15) as bytes, and a writer a parser writes it
-//! with as it parses (decision 0140).
+//! The engine's tape (format 16 and 16z, decisions 0293 and 0434) and the writer a lean parser writes it with as
+//! it parses (decision 0140).
 //!
-//! An image is a header, then five columns, each padded to `COLUMN_ALIGN` bytes, then the code
-//! table and the alias table:
-//!
-//! - header: magic, language tag, the three column widths, version, source length, and five
-//!   lengths: nodes, codes, the code table's bytes, aliases, the alias table's bytes (`header`);
-//! - `code`: each node's code id, 2 bytes, codes numbered by first use;
-//! - `size`: each node's subtree, itself counted (width 0);
-//! - `base`: each 16 nodes' least start, 4 bytes;
-//! - `off`: each node's start less its block's base (width 1);
-//! - `tail`: each node's end less its last descendant's start (width 2; `TAIL_FROM_START`:
-//!   less its own start);
-//! - a code: kind and field (`kf`, kind in the low 10 bits), flags, alias, supertype classes.
-//!
-//! The engine reads and writes images (`code_rule_dsl::tape`); its constants are these, and a
-//! format change is made here, once, for every writer.
+//! A lean parser gives its nodes in preorder to a `Writer`, which passes each statement's nodes to format 16's ops
+//! (`f16::Writer`) as the parse commits them: its own columns hold only the nodes since the last commit, the window
+//! the parse may still edit. The format's constants are these, and a format change is made here, once, for every
+//! writer.
 
 pub mod tape;
 pub mod f16;
@@ -26,50 +15,17 @@ pub mod reads;
 /// The tape's writer in Rust, written directly (decision 0532): the host's, and a generated tier 2's `ops` module.
 pub mod writer16;
 
+pub use rerail_vector::{Pod, vector::Vector};
 
-pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
-/// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:
-/// named-only at rest, no stored source digest (RER-131); 14: the tokens the grammar implies
-/// never written (`tokens::TokenGrammar::stored_children`); 15: a keyword or operator left out
-/// only where its kind always implies it (`tokens::kept`).
-pub const FORMAT_VERSION: u32 = 15;
-/// Where an image's header fields are, as byte offsets: the one place a writer or a reader of
-/// stored bytes (`resident`, tests) learns the layout, so a format change moves them here.
-pub mod header {
-    /// The magic, 8 bytes.
-    pub const MAGIC: usize = 0;
-    /// The language's tape tag, one byte.
-    pub const LANGUAGE: usize = 8;
-    /// The `size`, `off` and `tail` widths, a byte each (with `TAIL_FROM_START`).
-    pub const WIDTHS: usize = 9;
-    /// `FORMAT_VERSION`, u32.
-    pub const VERSION: usize = 12;
-    /// The source's length in bytes, u64.
-    pub const SOURCE_LEN: usize = 16;
-    /// The node count, u64; then the code count, the code table's bytes, the alias count and
-    /// the alias table's bytes.
-    pub const NODES: usize = 24;
-    pub const CODES: usize = 32;
-    pub const CODE_BYTES: usize = 40;
-    pub const ALIASES: usize = 48;
-    pub const ALIAS_BYTES: usize = 56;
-}
-/// Magic 8, language 1, widths 3, version 4, source length 8, five lengths 40.
-pub const HEADER_BYTES: usize = header::ALIAS_BYTES + 8;
-pub const COLUMN_ALIGN: usize = 16;
-/// Nodes a `base` covers.
-pub const CHECKPOINT_STRIDE: usize = 16;
-/// `widths[2]`'s high bit: a tail is measured from the node's own start.
-pub const TAIL_FROM_START: u8 = 0x80;
 pub const CODE_EXTRA: u8 = 1;
 pub const CODE_ERROR: u8 = 2;
 pub const CODE_MISSING: u8 = 4;
 pub const KIND_LIMIT: usize = 1024;
 pub const FIELD_LIMIT: usize = 64;
-/// No alias.
+/// No value: a cell of an index past its width (the engine's `tape::index`).
 pub const SENTINEL: u16 = u16::MAX;
 /// ERROR's `kf`.
-pub const ERROR_CODE: u16 = 0;
+pub const ERROR_CODE: u16 = writer16::ERROR_CODE;
 /// The `.rerail` dialect's language tag (`languages/rr.json`'s `tapeTag`).
 pub const RR_TAG: u8 = 13;
 
@@ -84,50 +40,10 @@ pub const fn key(kind: u16, field: u16, flags: u8) -> u32 {
     (kind as u32 | (field as u32) << KIND_BITS) | (flags as u32) << 16
 }
 
-/// The image of nodes in preorder, each its key, start, end and the nodes in its subtree
-/// (itself counted): each closed where its subtree ends. The widths are the narrowest, from
-/// `Widths::guess` and again where it does not hold.
-pub fn preorder_image(tag: u8, src: &[u8], nodes: &[(u32, u32, u32, u32)]) -> Vec<u8> {
-    preorder_image_in(tag, &[], src, nodes)
-}
-
-/// `preorder_image`, the keys naming the supertype `classes` (`Writer::classes`).
-pub fn preorder_image_in(tag: u8, classes: &[u16], src: &[u8], nodes: &[(u32, u32, u32, u32)]) -> Vec<u8> {
-    let mut widths = Widths::guess(src.len());
-    loop {
-        let mut w = Writer::new(tag, widths, nodes.len()).classes(classes);
-        // The open nodes, each its place and where its subtree ends.
-        let mut open: Vec<(usize, usize, u32)> = Vec::new();
-        for (i, &(key, start, end, size)) in nodes.iter().enumerate() {
-            while let Some(&(o, to, e)) = open.last() {
-                if i < to {
-                    break;
-                }
-                w.close(o, e);
-                open.pop();
-            }
-            w.push(key, start);
-            open.push((i, i + size.max(1) as usize, end));
-        }
-        while let Some((o, _, e)) = open.pop() {
-            w.close(o, e);
-        }
-        match w.finish(src) {
-            Ok(bytes) => return bytes,
-            Err(Redo(x)) => widths = x,
-        }
-    }
-}
-
 /// A source's SHA-256 (not in the header since format 12; the engine keeps it in memory).
 pub fn digest(src: &[u8]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
     Sha256::digest(src).into()
-}
-
-/// `length` rounded up to `COLUMN_ALIGN`.
-pub const fn padded(length: usize) -> usize {
-    length.div_ceil(COLUMN_ALIGN) * COLUMN_ALIGN
 }
 
 /// The narrowest width (2 or 4 bytes) that holds `max`.
@@ -135,28 +51,23 @@ pub fn width_for(max: u32) -> u8 {
     if max <= 0xffff { 2 } else { 4 }
 }
 
-/// The widths a writer writes at (`Writer::new`): `size`, `off` and `tail` in bytes (2 or 4),
-/// and whether tails are from the node's own start.
+/// The widths a writer's window holds its nodes at (`Writer::new`): `size` and `tail` in bytes (2 or 4), and whether
+/// tails are from the node's own start (else from its last descendant's).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Widths {
     pub size: u8,
-    pub off: u8,
     pub tail: u8,
     pub from_start: bool,
 }
 
 impl Widths {
-    /// The guess for a source of `len` bytes (decision 0140). An offset and a tail are at most
-    /// the source's length, and a `.rerail` file has fewer nodes than bytes: below 64 KiB every
-    /// column fits 2 bytes, so nearly every file is written once. Above it, offsets and tails
-    /// stay 2 (they are short distances), and sizes take 4 from `SIZE_GUESS_BYTES` on.
+    /// The guess for a source of `len` bytes (decision 0140). A tail is at most the source's
+    /// length, and a `.rerail` file has fewer nodes than bytes: below 64 KiB every column fits 2
+    /// bytes, so nearly every file is written once. Above it, tails stay 2 (they are short
+    /// distances), and sizes take 4 from `SIZE_GUESS_BYTES` on.
     pub fn guess(len: usize) -> Self {
-        Widths { size: if len < SIZE_GUESS_BYTES { 2 } else { 4 }, off: 2, tail: 2, from_start: false }
+        Widths { size: if len < SIZE_GUESS_BYTES { 2 } else { 4 }, tail: 2, from_start: false }
     }
-
-    /// Every column at 4 bytes: the widths a file is parsed again at when 2 do not hold it
-    /// (docs/parser-generators/37). A start and an end are `u32`s, so every value fits.
-    pub const WIDE: Widths = Widths { size: 4, off: 4, tail: 4, from_start: false };
 }
 
 /// A writer's widths, as a type: `Narrow`, the widths nearly every file is written at, fixed
@@ -166,12 +77,12 @@ pub trait Layout: Copy {
     fn widths(self) -> Widths;
 }
 
-/// Sizes, offsets and tails at 2 bytes, tails from the last descendant.
+/// Sizes and tails at 2 bytes, tails from the last descendant.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Narrow;
 
 impl Narrow {
-    pub const WIDTHS: Widths = Widths { size: 2, off: 2, tail: 2, from_start: false };
+    pub const WIDTHS: Widths = Widths { size: 2, tail: 2, from_start: false };
 }
 
 impl Layout for Narrow {
@@ -196,14 +107,8 @@ impl Layout for Widths {
 pub const SIZE_GUESS_BYTES: usize = 320_000;
 
 const NO_CODE: u16 = u16::MAX;
-/// The id table's slots: a key is below this (`kf` 16 bits, flags 3), with no supertype
-/// classes (`Writer::classes`): each class doubles it.
+/// The id table's slots: a key is below this (`kf` 16 bits, flags 3).
 const ID_SLOTS: usize = 1 << 19;
-/// A key's first class bit (`Writer::classes`): bit `CLASS_SHIFT + j` puts the node in the
-/// writer's class `j`.
-pub const CLASS_SHIFT: u32 = 19;
-/// The most supertype classes a writer's keys name.
-pub const MAX_CLASSES: usize = 4;
 
 /// `v[from..to]` moved up by `by` cells (an insert's room). A span that fits a fixed window of
 /// `W` cells, with room for the window past it, moves as one fixed-size copy: a vector load and
@@ -221,104 +126,182 @@ fn shift_up<T: Copy + Default, const W: usize>(v: &mut [T], from: usize, to: usi
     }
 }
 
-/// A tape written as a parser parses: each node's columns at their final widths, at its place,
-/// as it is made. The parser gives each node in preorder (`push`), its end and so its size at
-/// its close (`close`), and edits only the nodes it made last: a code changed (`set_key`), a
-/// node put before the ones from a place on (`insert`), the nodes from a place on taken back
-/// (`truncate`). Each edit rewrites only the nodes from its place on. At the end (`finish`) the
-/// columns are moved into place after the code column, and the header and code table written.
+/// A tape written as a parser parses, in format 16 or 16z (`to`). The parser gives each node in preorder (`push`),
+/// its end and so its size at its close (`close`), and edits only the nodes it made last: a code changed
+/// (`set_key`), a node put before the ones from a place on (`insert`), the nodes from a place on taken back
+/// (`truncate`). Each edit rewrites only the nodes from its place on. At a commit the nodes so far are final, and are
+/// passed to format 16's ops; at the end (`finish_16`) the rest are, and the ops finish the tape.
 ///
-/// A node's key is its code: `kf | flags << 16`, and a bit for each supertype class it is in
-/// (`classes`, from `CLASS_SHIFT`).
+/// A node's key is its code: `kf | flags << 16`.
 pub struct Writer<L: Layout = Widths> {
-    /// The header, then the code column: the image's start, as it will be. Reserved for the
-    /// whole image at `cap` nodes, so that `finish` appends the columns in place.
-    out: Vec<u8>,
-    /// The columns, each `cap` cells at its width; the first `n - base` are the nodes' from `base` on (`cell`).
-    size: Vec<u8>,
-    tail: Vec<u8>,
+    /// The window's columns, each `cap` cells; the first `n - base` are the nodes' from `base` on (`cell`): each
+    /// node's code id (written at its commit), and its size and tail at their widths.
+    code: Vector<u16>,
+    size: Vector<u8>,
+    tail: Vector<u8>,
     /// Each node's start and key: the parser's working state, what an edit recomputes from.
-    starts: Vec<u32>,
-    keys: Vec<u32>,
+    starts: Vector<u32>,
+    keys: Vector<u32>,
     /// The nodes, and the nodes the cells have room for.
     n: usize,
     cap: usize,
     /// The codes by id: each key and the node that first used it.
-    codes: Vec<(u32, u32)>,
+    codes: Vector<[u32; 2]>,
     /// The nodes before this have their codes written; the rest only their keys.
     coded: usize,
-    id_of: Vec<u16>,
-    /// The id table's slots in use: `ID_SLOTS`, doubled for each class.
-    slots: usize,
-    /// The supertype classes a key's bits name, ascending (none for most languages).
-    classes: Vec<u16>,
+    id_of: Vector<u16>,
     layout: L,
     /// An offset or tail from which a push or close takes the long way: 0x10000, or 0 once a
     /// node is marked (then every node does, and its marks are kept exact).
     wide_from: u32,
     /// The nodes whose tail needs 4 bytes, or that end before their last descendant starts
-    /// (`TAIL_WIDE`, `EARLY`): few, kept exact through every edit, so that `finish` knows the
-    /// narrowest widths without reading the tail column. (Offsets and bases are not kept as the
-    /// parse goes: `finish` computes them from the starts in one pass, `offsets`.)
-    marks: Vec<(u32, u8)>,
+    /// (`TAIL_WIDE`, `EARLY`): few, kept exact through every edit, so that `finish_16` knows
+    /// whether the widths held every tail without reading the tail column.
+    marks: Vector<[u32; 2]>,
     /// The open chains (`open_chain`), innermost last: each its node and where its wraps begin in
     /// `held`. `chain_at` is the innermost's node (`usize::MAX`: none), the one compare `close`,
     /// `key` and `set_key` make.
-    chains: Vec<(usize, usize)>,
+    chains: Vector<[usize; 2]>,
     chain_at: usize,
     /// The wraps of the open chains, not yet on the tape: each its key, start, and at its close the
     /// nodes there were then and its end (0 nodes: open).
-    held: Vec<Held>,
-    tag: u8,
+    held: Vector<Held>,
     /// Where the run writes format 16 or 16z (`to`): the nodes before `passed` are given to its ops, and an edit
-    /// reaches before them only to retag a node or set an open node's start (decision 0434 §2). 0 for format 15.
-    sixteen: Option<Box<Passing>>,
+    /// reaches before them only to retag a node or set an open node's start (decision 0434 §2). `Err`: why the
+    /// writer writes no tape (no target, or a language without a format 16 table); its columns then hold every node.
+    sixteen: Result<Box<Passing>, String>,
     passed: usize,
     /// The node the columns' first cells are: the nodes before it were passed to format 16's ops, and their cells
-    /// given back (the window, decision 0434 §2). 0 for format 15.
+    /// given back (the window, decision 0434 §2).
     base: usize,
     /// The most nodes the window has held at a commit: the sizes its cells held.
     widest: usize,
+    /// The source ranges of the placeholders a program's tape leaves out (`omitting`), sorted, apart: a node whose
+    /// span (not empty) lies in one is written with none of its subtree, as an embedded program's tape is
+    /// (`embed::segments::SegmentMap::omitted`). Empty for every other tape.
+    omit: Vector<[u32; 2]>,
 }
 
-/// Where a lean parser's writer writes (decision 0434 §2): format 15's columns, finished at the end, or format 16
-/// or 16z, each node given to `f16::Writer`'s ops as it is committed. The writer's columns are then the edit window.
-#[derive(Clone, Default)]
-pub enum Target {
-    #[default]
-    F15,
-    F16(Sixteen),
-}
+/// Where a lean parser's writer writes (decision 0434 §2): format 16 or 16z, each node given to `f16::Writer`'s ops
+/// as it is committed, the writer's columns the edit window; or why it writes no tape (a language without a format
+/// 16 table).
+pub type Target = Result<Sixteen, String>;
 
-/// A format 16 target: the language's table, its tag, 16z where `z`, each block's presence where `blocks`, and each
-/// key's number in the table (`None`: a code the table lacks, and the writer's tape is format 15's).
+/// A format 16 target: the language's table, the line terminators of its ecosystem (its line index's, decision
+/// 0612), its tag, 16z where `z`, each block's presence where `blocks`, and each key's number in the table (`None`: a
+/// code the table lacks, and the writer writes no tape).
 #[derive(Clone)]
 pub struct Sixteen {
     pub lang: &'static f16::Lang,
+    pub terminators: newlines::Terminators,
     pub tag: u8,
     pub z: bool,
     pub blocks: bool,
     pub number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
 }
 
-/// What a lean parser's writer writes to and is finished into: its target, given when the writer is made
-/// (`Writer::to`), and its finish. A closure is a sink for format 15.
-pub trait Sink<Out> {
+/// A node's key named as its grammar names it: what a parser without the grammar (a lean parser's own tests and
+/// tools) gives for each key, numbered in its language's table by these names (`f16::Lang::number_named`, `Named`).
+#[derive(Clone, Copy, Debug)]
+pub struct KeyNames {
+    pub kind: &'static str,
+    pub named: bool,
+    /// `""`: no field.
+    pub field: &'static str,
+    pub flags: u8,
+    pub classes: &'static [&'static str],
+}
+
+/// A lean parser's own sink (decision 0631): the tape in format 16 in its language's table (tag `tag`), each key
+/// numbered by its names (`name`), the language's line `terminators`. What the parser's crate writes its tapes with,
+/// without the grammar; the engine gives its own (its ids from the grammar), whose tapes are the same.
+pub struct Named {
+    target: Result<Sixteen, String>,
+}
+
+impl Named {
+    pub fn new(tag: u8, terminators: newlines::Terminators, name: impl Fn(u32) -> Option<KeyNames> + Send + Sync + 'static) -> Self {
+        let target = f16::lang(tag).ok_or_else(|| format!("tape tag {tag} has no format 16 table")).map(|lang| Sixteen {
+            lang,
+            terminators,
+            tag,
+            z: false,
+            blocks: true,
+            number: std::sync::Arc::new(move |key| lang.number_named(&name(key)?)),
+        });
+        Named { target }
+    }
+}
+
+impl Sink<Result<f16::Finished, String>> for Named {
     fn target(&self) -> Target {
-        Target::F15
+        self.target.clone()
+    }
+    fn finish(&mut self, mut w: Writer) -> Result<Result<f16::Finished, String>, Redo> {
+        w.finish_16()
+    }
+}
+
+impl Finish for Named {
+    type Out = Result<f16::Finished, String>;
+    fn target(&self) -> Target {
+        self.target.clone()
+    }
+    fn finish<L: Layout>(&mut self, mut w: Writer<L>) -> Result<Self::Out, Redo> {
+        w.finish_16()
+    }
+}
+
+/// What a lean parser's writer writes to and is finished into: its target, given when the writer is made
+/// (`Writer::to`), and its finish.
+pub trait Sink<Out> {
+    fn target(&self) -> Target;
+    /// The source ranges the tape leaves out (`Writer::omitting`): an embedded program's placeholders. None for
+    /// every other tape.
+    fn omissions(&self) -> Vector<[u32; 2]> {
+        Vector::new()
     }
     fn finish(&mut self, w: Writer) -> Result<Out, Redo>;
-    /// Whether the parse is to run again at the widths it had: `finish` could not write the target and changed it
-    /// (format 16's nodes went to its ops, and a node the table lacks leaves format 15, which the window does not
-    /// hold). Asked once a `Redo`.
+    /// Whether the parse is to run again at the widths it had, where `finish` asked for those widths again (a
+    /// sink that changed what it writes). Asked once a `Redo`.
     fn again(&mut self) -> bool {
         false
     }
 }
 
-impl<Out, F: FnMut(Writer) -> Result<Out, Redo>> Sink<Out> for F {
-    fn finish(&mut self, w: Writer) -> Result<Out, Redo> {
-        self(w)
+/// A sink's output kept aside, so that a parser writes through `Sink<()>`: its code is then one instance, compiled in
+/// its own crate (optimized in dev builds, `Cargo.toml`'s profiles), not one for each output type in the crate that
+/// calls it (the engine's, unoptimized there). A parser's entry is a shell over its `_kept` function
+/// (`rerail_python_lean::tape_into`): `Kept::new(finish)`, the parse, then `take`.
+pub struct Kept<'a, T> {
+    sink: &'a mut dyn Sink<T>,
+    out: Option<T>,
+}
+
+impl<'a, T> Kept<'a, T> {
+    pub fn new(sink: &'a mut dyn Sink<T>) -> Self {
+        Kept { sink, out: None }
+    }
+
+    /// What the sink's `finish` gave, once the parse finished its tape.
+    pub fn take(&mut self) -> T {
+        self.out.take().expect("a parse that finished its tape")
+    }
+}
+
+impl<T> Sink<()> for Kept<'_, T> {
+    fn target(&self) -> Target {
+        self.sink.target()
+    }
+    fn omissions(&self) -> Vector<[u32; 2]> {
+        self.sink.omissions()
+    }
+    fn finish(&mut self, w: Writer) -> Result<(), Redo> {
+        self.out = Some(self.sink.finish(w)?);
+        Ok(())
+    }
+    fn again(&mut self) -> bool {
+        self.sink.again()
     }
 }
 
@@ -327,9 +310,9 @@ struct Passing {
     w: f16::Writer,
     number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
     /// Each code id's number, as far as resolved.
-    numbers: Vec<u32>,
+    numbers: Vector<u32>,
     /// The nodes passed on whose close the ops have not had, outermost first: the parse's open ancestors.
-    open: Vec<Passed>,
+    open: Vector<Passed>,
     /// Why the nodes cannot be written in format 16 (a code the table lacks, an edit before the last commit).
     bad: Option<String>,
     /// A node read after its commit that the window no longer holds (`Writer::passed_node`).
@@ -338,14 +321,19 @@ struct Passing {
 
 /// A node passed to format 16's ops before its close: what the parse may still read of it, and its close.
 #[derive(Clone, Copy)]
+#[repr(C)]
 struct Passed {
     node: usize,
-    key: u32,
-    start: u32,
     /// Its subtree's end (`usize::MAX`: open), and its end.
     end_at: usize,
+    key: u32,
+    start: u32,
     end: u32,
+    pad: u32,
 }
+
+// SAFETY: `repr(C)`, two words and four `u32`s: no padding, no address.
+unsafe impl Pod for Passed {}
 
 impl Passing {
     fn fail(&mut self, why: impl FnOnce() -> String) {
@@ -367,12 +355,16 @@ impl Passing {
 
 /// A wrap of an open chain, put on the tape when its chain ends (`Writer::end_chain`).
 #[derive(Clone, Copy)]
+#[repr(C)]
 struct Held {
     key: u32,
     start: u32,
     nodes: u32,
     end: u32,
 }
+
+// SAFETY: `repr(C)`, four `u32`s.
+unsafe impl Pod for Held {}
 
 /// A closed leaf to put in before the node at `at` (`Writer::insert_leaves`).
 #[derive(Clone, Copy, Debug)]
@@ -399,76 +391,63 @@ const WINDOW: usize = 4096;
 const TAIL_WIDE: u8 = 1;
 const EARLY: u8 = 2;
 
-/// Code table bytes reserved for at first: room for 256 codes.
-const CODES_RESERVED: usize = 6 * 256;
+/// The cells a writer's columns hold at least.
+const MIN_CELLS: usize = 16;
 
-thread_local! {
-    /// The code ids by key, kept between a thread's tapes: each tape clears what it set.
-    static IDS: std::cell::RefCell<Vec<u16>> = const { std::cell::RefCell::new(Vec::new()) };
+/// `n` copies of `v`, in the run's room (`rerail_vector::default_room`).
+fn filled<T: Pod + Copy>(n: usize, v: T) -> Vector<T> {
+    let mut c = Vector::with_capacity(n);
+    c.resize(n, v);
+    c
 }
 
-/// What a parser's writer is finished into, whatever the type of its widths (`Layout`): format 15's image or
-/// columns, or format 16 (`Writer::finish_16`). For a parser generic over its layout; others take a `Sink`.
+/// What a parser's writer is finished into, whatever the type of its widths (`Layout`): format 16 or 16z
+/// (`Writer::finish_16`). For a parser generic over its layout; others take a `Sink`.
 pub trait Finish {
     type Out;
     /// What the writer writes to (`Writer::to`).
-    fn target(&self) -> Target {
-        Target::F15
-    }
+    fn target(&self) -> Target;
     fn finish<L: Layout>(&mut self, w: Writer<L>) -> Result<Self::Out, Redo>;
+    /// Whether the parse is to run again at the widths it had, where `finish` asked for those widths again (as
+    /// `Sink::again`).
+    fn again(&mut self) -> bool {
+        false
+    }
 }
 
 /// The widths a tape needs, where the writer's did not hold its values: parse again at these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Redo(pub Widths);
 
-/// An image's bytes at `nodes` nodes and `widths`, with the code table reserved.
-fn image_bytes(nodes: usize, w: Widths) -> usize {
-    HEADER_BYTES
-        + padded(2 * nodes)
-        + padded(usize::from(w.size) * nodes)
-        + padded(4 * nodes.div_ceil(CHECKPOINT_STRIDE))
-        + padded(usize::from(w.off) * nodes)
-        + padded(usize::from(w.tail) * nodes)
-        + CODES_RESERVED
-}
-
 impl<L: Layout> Writer<L> {
-    /// A writer for about `nodes` nodes (more grow it) at `layout`'s widths.
-    pub fn new(tag: u8, layout: L, nodes: usize) -> Self {
+    /// A writer for about `nodes` nodes (more grow it) at `layout`'s widths. It writes no tape until it is given
+    /// its target (`to`).
+    pub fn new(layout: L, nodes: usize) -> Self {
         let widths = layout.widths();
-        let cap = nodes.max(CHECKPOINT_STRIDE);
-        let mut out = Vec::with_capacity(image_bytes(cap, widths));
-        out.resize(HEADER_BYTES + 2 * cap, 0);
-        let cells = |w: u8| vec![0u8; cap * usize::from(w)];
+        let cap = nodes.max(MIN_CELLS);
+        let cells = |w: u8| filled(cap * usize::from(w), 0u8);
         Writer {
-            out,
+            code: filled(cap, 0),
             size: cells(widths.size),
             tail: cells(widths.tail),
-            starts: vec![0; cap],
-            keys: vec![0; cap],
+            starts: filled(cap, 0),
+            keys: filled(cap, 0),
             n: 0,
             cap,
-            codes: Vec::new(),
+            codes: Vector::new(),
             coded: 0,
-            id_of: IDS.with(|ids| {
-                let mut ids = std::mem::take(&mut *ids.borrow_mut());
-                ids.resize(ID_SLOTS, NO_CODE);
-                ids
-            }),
-            slots: ID_SLOTS,
-            classes: Vec::new(),
+            id_of: filled(ID_SLOTS, NO_CODE),
             layout,
             wide_from: 0x10000,
-            marks: Vec::new(),
-            chains: Vec::new(),
+            marks: Vector::new(),
+            chains: Vector::new(),
             chain_at: usize::MAX,
-            held: Vec::new(),
-            tag,
-            sixteen: None,
+            held: Vector::new(),
+            sixteen: Err("the writer was given no target".into()),
             passed: 0,
             base: 0,
             widest: 0,
+            omit: Vector::new(),
         }
     }
 
@@ -479,29 +458,52 @@ impl<L: Layout> Writer<L> {
         node - self.base
     }
 
+    /// The writer leaving out the subtrees in the source ranges `omit` (sorted, apart; `Sink::omissions`): an
+    /// embedded program's placeholders, left out as the parse writes them (format 16's ops are never given them,
+    /// `pass`), never by a walk of the tape after.
+    pub fn omitting(mut self, omit: Vector<[u32; 2]>) -> Self {
+        debug_assert!(omit.windows(2).all(|w| w[0][1] <= w[1][0]), "omitted ranges sorted and apart");
+        self.omit = omit;
+        self
+    }
+
+    /// Whether the span `start..end` (not empty) lies in an omitted range.
+    #[inline]
+    fn omitted(&self, start: u32, end: u32) -> bool {
+        start < end && {
+            let k = self.omit.partition_point(|r| r[1] <= start);
+            self.omit.get(k).is_some_and(|r| r[0] <= start && end <= r[1])
+        }
+    }
+
+    /// Whether an open node starting at `start` may yet be omitted (its end inside the range it starts in), its end
+    /// at least `reached` (the start of a node it holds): one holding a node past the range's end is kept.
+    #[inline]
+    fn may_be_omitted(&self, start: u32, reached: u32) -> bool {
+        let k = self.omit.partition_point(|r| r[1] <= start);
+        self.omit.get(k).is_some_and(|r| r[0] <= start && reached <= r[1])
+    }
+
     /// The writer writing to `target` for the source `src`: format 16's nodes passed to its ops as they are
     /// committed (decision 0434 §2). Before the first push.
     pub fn to(mut self, target: Target, src: &[u8]) -> Self {
         assert_eq!(self.n, 0, "a target before the first node");
-        if let Target::F16(t) = target {
-            let w = f16::Writer::new(t.lang, src, t.tag, t.z, t.blocks, self.cap);
-            self.sixteen = Some(Box::new(Passing { w, number: t.number, numbers: Vec::new(), open: Vec::new(), bad: None, lost: Default::default() }));
-            // The columns hold the window: the nodes since the last commit (more grow it).
-            if self.cap > WINDOW {
-                let (cap, widths) = (WINDOW, self.layout.widths());
-                let cells = |w: u8| vec![0u8; cap * usize::from(w)];
-                self.out = Vec::with_capacity(image_bytes(cap, widths));
-                self.out.resize(HEADER_BYTES + 2 * cap, 0);
-                (self.size, self.tail, self.starts, self.keys, self.cap) = (cells(widths.size), cells(widths.tail), vec![0; cap], vec![0; cap], cap);
+        let t = match target {
+            Ok(t) => t,
+            Err(e) => {
+                self.sixteen = Err(e);
+                return self;
             }
+        };
+        let w = f16::Writer::new(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap);
+        self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default() }));
+        // The columns hold the window: the nodes since the last commit (more grow it).
+        if self.cap > WINDOW {
+            let (cap, widths) = (WINDOW, self.layout.widths());
+            let cells = |w: u8| filled(cap * usize::from(w), 0u8);
+            (self.code, self.size, self.tail, self.starts, self.keys, self.cap) = (filled(cap, 0), cells(widths.size), cells(widths.tail), filled(cap, 0), filled(cap, 0), cap);
         }
         self
-    }
-
-    /// Whether the columns hold every node (format 15's finish can take them): none was passed to format 16's ops
-    /// and given back.
-    pub fn holds_all(&self) -> bool {
-        self.base == 0
     }
 
     /// The widths the writer's columns are at.
@@ -514,7 +516,7 @@ impl<L: Layout> Writer<L> {
     #[cold]
     #[inline(never)]
     fn passed_node(&self, node: usize) -> Option<Passed> {
-        let s = self.sixteen.as_ref()?;
+        let s = self.sixteen.as_ref().ok()?;
         let found = s.open.iter().rev().find(|e| e.node == node).copied();
         if found.is_none() {
             s.lost.set(Some(node));
@@ -522,30 +524,46 @@ impl<L: Layout> Writer<L> {
         found
     }
 
-    /// Whether the writer writes format 16 or 16z (`to`): `finish_16` gives its tape.
-    pub fn writes_16(&self) -> bool {
-        self.sixteen.is_some()
-    }
-
     /// The committed nodes not yet passed on given to the format 16 writer's ops in preorder: each opened, its number
     /// its code's, and closed where its subtree ends before the window.
     fn pass(&mut self) {
-        let Some(mut s) = self.sixteen.take() else { return };
+        let mut s = match std::mem::replace(&mut self.sixteen, Err(String::new())) {
+            Ok(s) => s,
+            Err(e) => {
+                self.sixteen = Err(e);
+                return;
+            }
+        };
         let to = self.coded;
         if s.bad.is_none() {
-            for i in self.passed..to {
+            let mut i = self.passed;
+            while i < to {
                 s.close_to(i);
+                // A closed subtree in an omitted placeholder (`omitting`): its ops never given. An open node holds
+                // every node pushed after it (preorder), so it ends at least where the last one starts: past its
+                // range's end, it is kept. One that may yet be omitted cannot be told, and the parse is refused.
+                if !self.omit.is_empty() {
+                    let (start, size) = (self.starts[self.cell(i)], self.size(i) as usize);
+                    if size > 0 && self.omitted(start, self.end(i)) {
+                        i += size;
+                        continue;
+                    }
+                    if size == 0 && self.may_be_omitted(start, self.starts[self.cell(self.n - 1)]) {
+                        s.fail(|| format!("node {i}, open at a commit, may be in an omitted placeholder"));
+                        break;
+                    }
+                }
                 let c = self.cell(i);
-                let id = usize::from(u16::from_le_bytes([self.out[HEADER_BYTES + 2 * c], self.out[HEADER_BYTES + 2 * c + 1]]));
+                let id = usize::from(self.code[c]);
                 while s.numbers.len() <= id {
-                    let key = self.codes[s.numbers.len()].0;
+                    let key = self.codes[s.numbers.len()][0];
                     match (s.number)(key) {
                         Some(number) => s.numbers.push(number),
                         None => break,
                     }
                 }
                 let Some(&number) = s.numbers.get(id) else {
-                    let key = self.codes[id].0;
+                    let key = self.codes[id][0];
                     s.fail(|| format!("key {key:#x}: a code its format 16 table lacks"));
                     break;
                 };
@@ -553,16 +571,17 @@ impl<L: Layout> Writer<L> {
                 match self.size(i) as usize {
                     0 => {
                         s.w.open(number, u64::from(start));
-                        s.open.push(Passed { node: i, key, start, end_at: usize::MAX, end: 0 });
+                        s.open.push(Passed { node: i, key, start, end_at: usize::MAX, end: 0, pad: 0 });
                     }
                     1 => {
                         s.w.leaf(number, u64::from(start), u64::from(self.end(i)));
                     }
                     size => {
                         s.w.open(number, u64::from(start));
-                        s.open.push(Passed { node: i, key, start, end_at: i + size, end: self.end(i) });
+                        s.open.push(Passed { node: i, key, start, end_at: i + size, end: self.end(i), pad: 0 });
                     }
                 }
+                i += 1;
             }
             s.close_to(to);
             s.w.commit();
@@ -572,7 +591,7 @@ impl<L: Layout> Writer<L> {
         self.widest = self.widest.max(to - self.base);
         self.passed = to;
         self.base = to;
-        self.sixteen = Some(s);
+        self.sixteen = Ok(s);
     }
 
     /// An edit at `at` (an insert, a truncate): one before the nodes passed on means the tape is not format 16's.
@@ -580,7 +599,7 @@ impl<L: Layout> Writer<L> {
     #[inline(never)]
     fn edit_before_passed(&mut self, at: usize) {
         let passed = self.passed;
-        if let Some(s) = &mut self.sixteen {
+        if let Ok(s) = &mut self.sixteen {
             s.fail(|| format!("an edit at node {at}, before the last commit's {passed}"));
         }
     }
@@ -590,7 +609,7 @@ impl<L: Layout> Writer<L> {
     #[inline(never)]
     fn close_passed(&mut self, node: usize, end: u32) {
         let n = self.n;
-        let Some(s) = &mut self.sixteen else { return };
+        let Ok(s) = &mut self.sixteen else { return };
         match s.open.iter().rposition(|e| e.node == node) {
             Some(k) => {
                 s.open[k].end_at = n;
@@ -605,7 +624,7 @@ impl<L: Layout> Writer<L> {
     #[cold]
     #[inline(never)]
     fn retag_passed(&mut self, node: usize, key: u32) {
-        let Some(s) = &mut self.sixteen else { return };
+        let Ok(s) = &mut self.sixteen else { return };
         match (s.number)(key) {
             Some(number) => s.w.retag(node, number),
             None => s.fail(|| format!("key {key:#x}: a code its format 16 table lacks")),
@@ -620,24 +639,12 @@ impl<L: Layout> Writer<L> {
     #[cold]
     #[inline(never)]
     fn set_start_passed(&mut self, node: usize, start: u32) {
-        let Some(s) = &mut self.sixteen else { return };
+        let Ok(s) = &mut self.sixteen else { return };
         s.w.set_start(node, u64::from(start));
         match s.open.iter_mut().rev().find(|e| e.node == node) {
             Some(e) => e.start = start,
             None => s.lost.set(Some(node)),
         }
-    }
-
-    /// The supertype classes a key's bits from `CLASS_SHIFT` name, ascending, at most
-    /// `MAX_CLASSES`: each node's code carries the classes its key has. Before the first push.
-    pub fn classes(mut self, classes: &[u16]) -> Self {
-        assert!(classes.len() <= MAX_CLASSES && classes.windows(2).all(|w| w[0] < w[1]) && self.n == 0);
-        self.slots = ID_SLOTS << classes.len();
-        if self.id_of.len() < self.slots {
-            self.id_of.resize(self.slots, NO_CODE);
-        }
-        self.classes = classes.to_vec();
-        self
     }
 
     /// Room for twice the nodes: every column at once.
@@ -646,8 +653,7 @@ impl<L: Layout> Writer<L> {
     fn grow(&mut self) {
         let cap = 2 * self.cap;
         let w = self.layout.widths();
-        self.out.reserve_exact(image_bytes(cap, w) - self.out.len());
-        self.out.resize(HEADER_BYTES + 2 * cap, 0);
+        self.code.resize(cap, 0);
         self.size.resize(cap * usize::from(w.size), 0);
         self.tail.resize(cap * usize::from(w.tail), 0);
         self.starts.resize(cap, 0);
@@ -659,9 +665,9 @@ impl<L: Layout> Writer<L> {
     #[cold]
     #[inline(never)]
     fn mark(&mut self, node: usize, what: u8, on: bool) {
-        let at = self.marks.iter().position(|&m| m == (node as u32, what));
+        let at = self.marks.iter().position(|&m| m == [node as u32, u32::from(what)]);
         match (on, at) {
-            (true, None) => self.marks.push((node as u32, what)),
+            (true, None) => self.marks.push([node as u32, u32::from(what)]),
             (false, Some(k)) => {
                 self.marks.swap_remove(k);
             }
@@ -703,10 +709,15 @@ impl<L: Layout> Writer<L> {
     #[inline]
     pub fn size(&self, node: usize) -> u32 {
         if node < self.base {
-            // A node given back reads as a leaf: a walk over siblings (`c += size(c)`) still moves on, and the parse
-            // runs again for format 15 (`passed_node`).
+            // A node given back reads as a leaf: a walk over siblings (`c += size(c)`) still moves on, and the tape
+            // is refused (`passed_node`).
             return self.passed_node(node).map_or(1, |e| if e.end_at == usize::MAX { 0 } else { (e.end_at - node) as u32 });
         }
+        self.size_here(node)
+    }
+
+    #[inline(always)]
+    fn size_here(&self, node: usize) -> u32 {
         let w = self.layout.widths().size;
         let at = self.cell(node) * usize::from(w);
         if w == 2 { u32::from(u16::from_le_bytes([self.size[at], self.size[at + 1]])) } else { u32::from_le_bytes(self.size[at..at + 4].try_into().expect("4 bytes")) }
@@ -723,11 +734,16 @@ impl<L: Layout> Writer<L> {
         if node < self.base {
             return self.passed_node(node).map_or(0, |e| e.end);
         }
+        self.end_here(node)
+    }
+
+    #[inline(always)]
+    fn end_here(&self, node: usize) -> u32 {
         let w = self.layout.widths();
         let c = self.cell(node);
         let at = c * usize::from(w.tail);
         let tail = if w.tail == 2 { u32::from(u16::from_le_bytes([self.tail[at], self.tail[at + 1]])) } else { u32::from_le_bytes(self.tail[at..at + 4].try_into().expect("4 bytes")) };
-        let from = if w.from_start { self.starts[c] } else { self.starts[c + self.size(node) as usize - 1] };
+        let from = if w.from_start { self.starts[c] } else { self.starts[c + self.size_here(node) as usize - 1] };
         from.wrapping_add(tail)
     }
 
@@ -753,7 +769,7 @@ impl<L: Layout> Writer<L> {
         if node >= self.coded {
             return;
         }
-        while let Some(&(key, first)) = self.codes.last() {
+        while let Some(&[key, first]) = self.codes.last() {
             if (first as usize) < node {
                 break;
             }
@@ -761,40 +777,40 @@ impl<L: Layout> Writer<L> {
             self.codes.pop();
         }
         self.coded = node;
-        if let Some(s) = &mut self.sixteen {
+        if let Ok(s) = &mut self.sixteen {
             s.numbers.truncate(self.codes.len());
         }
     }
 
     /// The nodes so far are final (a statement parsed or recovered): their codes, numbered by
-    /// first use, written to the code column.
+    /// first use, written to the code column, and the nodes passed to format 16's ops.
     pub fn commit(&mut self) {
         let (from, to) = (self.coded, self.n);
         let (a, b) = (self.cell(from), self.cell(to));
         // The columns as locals: a store to one is not a store to the writer's fields.
         let keys = &self.keys[a..b];
-        let code = &mut self.out[HEADER_BYTES + 2 * a..HEADER_BYTES + 2 * b];
-        let (id_of, codes, mask) = (&mut self.id_of[..], &mut self.codes, self.slots - 1);
-        for (k, (&key, cell)) in keys.iter().zip(code.as_chunks_mut::<2>().0).enumerate() {
-            // A key is below `slots` (`push`'s assertion): the mask is no change, and no check.
+        let code = &mut self.code[a..b];
+        let (id_of, codes, mask) = (&mut self.id_of[..], &mut self.codes, ID_SLOTS - 1);
+        for (k, (&key, cell)) in keys.iter().zip(code).enumerate() {
+            // A key is below `ID_SLOTS` (`push`'s assertion): the mask is no change, and no check.
             let slot = &mut id_of[(key as usize) & mask];
             if *slot == NO_CODE {
                 *slot = codes.len() as u16;
-                codes.push((key, (from + k) as u32));
+                codes.push([key, (from + k) as u32]);
             }
-            cell.copy_from_slice(&slot.to_le_bytes());
+            *cell = *slot;
         }
         self.coded = to;
-        if self.sixteen.is_some() {
+        if self.sixteen.is_ok() {
             self.pass();
         }
     }
 
     /// A node at the end, in preorder: its key and start. Its size and tail are written at its
-    /// close: every node is closed before `finish`. Its code is written when it is committed.
+    /// close: every node is closed before `finish_16`. Its code is written when it is committed.
     #[inline(always)]
     pub fn push(&mut self, key: u32, start: u32) -> usize {
-        debug_assert!((key as usize) < self.slots);
+        debug_assert!((key as usize) < ID_SLOTS);
         let node = self.n;
         let c = node - self.base;
         if c == self.cap {
@@ -848,6 +864,193 @@ impl<L: Layout> Writer<L> {
     fn close_marks(&mut self, node: usize, end: u32, last: u32, from: u32, tail: u32) {
         self.mark(node, EARLY, end < last);
         self.mark(node, TAIL_WIDE, tail > 0xffff && end >= from);
+    }
+
+    /// A closed leaf at the end, in preorder: `push` and `close` at once, as a token is written (its tail from its start,
+    /// as `insert_leaf`'s). At a chain's node, the two.
+    #[inline(always)]
+    pub fn push_leaf(&mut self, key: u32, start: u32, end: u32) -> usize {
+        if self.n == self.chain_at {
+            let at = self.push(key, start);
+            self.close(at, end);
+            return at;
+        }
+        self.leaf_here(key, start, end)
+    }
+
+    #[inline(always)]
+    fn leaf_here(&mut self, key: u32, start: u32, end: u32) -> usize {
+        let at = self.push(key, start);
+        let tail = end.wrapping_sub(start);
+        if tail >= self.wide_from {
+            self.close_marks(at, end, start, start, tail);
+        }
+        let (c, ws) = (self.cell(at), self.layout.widths());
+        Self::put(&mut self.size, c, ws.size, 1);
+        Self::put(&mut self.tail, c, ws.tail, tail);
+        at
+    }
+
+    /// `node`'s key given the bits `field` where its bits `mask` are none (a field set after the node was made, where
+    /// it has none): `key` and `set_key` at once.
+    #[inline]
+    pub fn set_field(&mut self, node: usize, mask: u32, field: u32) {
+        if node == self.chain_at || node < self.base {
+            let k = self.key(node);
+            if k & mask == 0 {
+                self.set_key(node, k | field);
+            }
+            return;
+        }
+        self.field_here(node, mask, field);
+    }
+
+    #[inline(always)]
+    fn field_here(&mut self, node: usize, mask: u32, field: u32) {
+        let c = self.cell(node);
+        let k = self.keys[c];
+        if k & mask == 0 {
+            self.uncode_from(node);
+            self.keys[c] = k | field;
+        }
+    }
+
+    /// `node` closed at `end`, or at its start where that is later (a node of no token), as `close`: its key, read before.
+    /// `key`, `start` and `close` at once.
+    #[inline(always)]
+    pub fn close_from(&mut self, node: usize, end: u32) -> u32 {
+        if node == self.chain_at || node < self.base {
+            let k = self.key(node);
+            let e = end.max(self.start(node));
+            self.close(node, e);
+            return k;
+        }
+        self.close_from_here(node, end)
+    }
+
+    #[inline(always)]
+    fn close_from_here(&mut self, node: usize, end: u32) -> u32 {
+        let c = self.cell(node);
+        let (k, s) = (self.keys[c], self.starts[c]);
+        self.close_at(node, end.max(s), self.n);
+        k
+    }
+
+    /// A node of key `key` put over node `at`, open (an operator found after its left operand, as `insert`): it takes
+    /// `at`'s key's bits `mask`, and those become `bits` (the wrapped node's field). `key`, `set_key`, `start` and
+    /// `insert` at once.
+    #[inline(always)]
+    pub fn wrap(&mut self, at: usize, mask: u32, bits: u32, key: u32) {
+        if at == self.chain_at || at < self.base {
+            let k = self.key(at);
+            self.set_key(at, k & !mask | bits);
+            let start = self.start(at);
+            self.insert(at, key | (k & mask), start);
+            return;
+        }
+        self.wrap_here(at, mask, bits, key);
+    }
+
+    #[inline(always)]
+    fn wrap_here(&mut self, at: usize, mask: u32, bits: u32, key: u32) {
+        let c = self.cell(at);
+        let (k, start) = (self.keys[c], self.starts[c]);
+        self.uncode_from(at);
+        self.keys[c] = k & !mask | bits;
+        self.insert_node(at, key | (k & mask), start);
+    }
+
+    /// Whether the tape holds no chain and has passed no node on: a parse that opens no chain and commits only at its
+    /// finish (tier 2's), whose calls are then the `plain_` ones.
+    fn plain(&self) -> bool {
+        self.chain_at == usize::MAX && self.chains.is_empty() && self.base == 0
+    }
+
+    /// `key`, on a tape with no chain held and no node passed on (`plain`): neither checked.
+    #[inline(always)]
+    pub fn plain_key(&self, node: usize) -> u32 {
+        debug_assert!(self.plain());
+        self.keys[node]
+    }
+
+    /// `start`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_start(&self, node: usize) -> u32 {
+        debug_assert!(self.plain());
+        self.starts[node]
+    }
+
+    /// `set_key`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_set_key(&mut self, node: usize, key: u32) {
+        debug_assert!(self.plain());
+        self.uncode_from(node);
+        self.keys[node] = key;
+    }
+
+    /// `set_start`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_set_start(&mut self, node: usize, start: u32) {
+        debug_assert!(self.plain() && self.is_open(node));
+        self.starts[node] = start;
+    }
+
+    /// `close`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_close(&mut self, node: usize, end: u32) {
+        debug_assert!(self.plain());
+        self.close_at(node, end, self.n);
+    }
+
+    /// `push_leaf`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_leaf(&mut self, key: u32, start: u32, end: u32) -> usize {
+        debug_assert!(self.plain());
+        self.leaf_here(key, start, end)
+    }
+
+    /// `set_field`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_field(&mut self, node: usize, mask: u32, field: u32) {
+        debug_assert!(self.plain());
+        self.field_here(node, mask, field);
+    }
+
+    /// `close_from`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_close_from(&mut self, node: usize, end: u32) -> u32 {
+        debug_assert!(self.plain());
+        self.close_from_here(node, end)
+    }
+
+    /// `size`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_size(&self, node: usize) -> u32 {
+        debug_assert!(self.plain());
+        self.size_here(node)
+    }
+
+    /// `end`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_end(&self, node: usize) -> u32 {
+        debug_assert!(self.plain());
+        self.end_here(node)
+    }
+
+    /// `truncate`, on a plain tape.
+    #[inline]
+    pub fn plain_truncate(&mut self, len: usize) {
+        debug_assert!(self.plain());
+        if len < self.n {
+            self.truncate_here(len);
+        }
+    }
+
+    /// `wrap`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_wrap(&mut self, at: usize, mask: u32, bits: u32, key: u32) {
+        debug_assert!(self.plain());
+        self.wrap_here(at, mask, bits, key);
     }
 
     /// `node`'s key changed (a field set after it was made, a kind found later).
@@ -911,8 +1114,8 @@ impl<L: Layout> Writer<L> {
         Self::put(&mut self.size, at, ws.size, 0);
         Self::put(&mut self.tail, at, ws.tail, 0);
         self.uncode_from(node);
-        for m in self.marks.iter_mut().filter(|m| m.0 as usize >= node) {
-            m.0 += 1;
+        for m in self.marks.iter_mut().filter(|m| m[0] as usize >= node) {
+            m[0] += 1;
         }
         node
     }
@@ -928,8 +1131,8 @@ impl<L: Layout> Writer<L> {
         debug_assert!(at <= self.n);
         let depth = self.chains.len();
         // An outer chain at the same node holds no wraps yet: they come after this chain ends.
-        debug_assert!(self.chains.last().is_none_or(|&(a, base)| a != at || base == self.held.len()));
-        self.chains.push((at, self.held.len()));
+        debug_assert!(self.chains.last().is_none_or(|&[a, base]| a != at || base == self.held.len()));
+        self.chains.push([at, self.held.len()]);
         self.chain_at = at;
         depth
     }
@@ -938,8 +1141,8 @@ impl<L: Layout> Writer<L> {
     /// tape at their nodes, the last held outermost, each closed as it was.
     pub fn end_chain(&mut self, depth: usize) {
         while self.chains.len() > depth {
-            let (at, base) = self.chains.pop().expect("a chain");
-            self.chain_at = self.chains.last().map_or(usize::MAX, |c| c.0);
+            let [at, base] = self.chains.pop().expect("a chain");
+            self.chain_at = self.chains.last().map_or(usize::MAX, |c| c[0]);
             self.put_held(at, base);
         }
     }
@@ -956,13 +1159,13 @@ impl<L: Layout> Writer<L> {
 
     #[inline]
     fn held_last(&self) -> Option<&Held> {
-        let &(_, base) = self.chains.last()?;
+        let &[_, base] = self.chains.last()?;
         self.held[base..].last()
     }
 
     #[inline]
     fn held_last_mut(&mut self) -> Option<&mut Held> {
-        let &(_, base) = self.chains.last()?;
+        let &[_, base] = self.chains.last()?;
         self.held[base..].last_mut()
     }
 
@@ -1009,8 +1212,8 @@ impl<L: Layout> Writer<L> {
         self.starts.copy_within(c..n, c + k);
         self.n += k;
         self.uncode_from(at);
-        for m in self.marks.iter_mut().filter(|m| m.0 as usize >= at) {
-            m.0 += k as u32;
+        for m in self.marks.iter_mut().filter(|m| m[0] as usize >= at) {
+            m[0] += k as u32;
         }
         for j in 0..k {
             let h = self.held[from + j];
@@ -1036,7 +1239,7 @@ impl<L: Layout> Writer<L> {
     /// Back to `c` (a parse that did not hold): the nodes, chains and wraps since taken back.
     pub fn rewind(&mut self, c: Checkpoint) {
         self.chains.truncate(c.chains);
-        self.chain_at = self.chains.last().map_or(usize::MAX, |c| c.0);
+        self.chain_at = self.chains.last().map_or(usize::MAX, |c| c[0]);
         self.held.truncate(c.held);
         self.truncate(c.n);
     }
@@ -1110,7 +1313,7 @@ impl<L: Layout> Writer<L> {
         self.uncode_from(leaves[0].at as usize);
         // A mark's node moves up by the leaves at or before it.
         for m in self.marks.iter_mut() {
-            m.0 += leaves.partition_point(|l| l.at <= m.0) as u32;
+            m[0] += leaves.partition_point(|l| l.at <= m[0]) as u32;
         }
         for (j, l) in leaves.iter().enumerate() {
             let node = l.at as usize + j;
@@ -1151,98 +1354,40 @@ impl<L: Layout> Writer<L> {
         } else {
             len
         };
+        self.truncate_here(len);
+    }
+
+    #[inline(always)]
+    fn truncate_here(&mut self, len: usize) {
         self.n = len;
         self.uncode_from(len);
-        self.marks.retain(|m| (m.0 as usize) < len);
+        self.marks.retain(|m| (m[0] as usize) < len);
         self.wide_from = if self.marks.is_empty() { 0x10000 } else { 0 };
     }
 
-    /// Each block's base (its nodes' least start) and each node's offset from it, in one pass
-    /// over the starts at `width` bytes, and whether an offset needs 4 bytes. A block is 16
-    /// starts: a min and 16 subtractions, straight-line, which the compiler vectorizes.
-    fn offsets(&self, width: u8) -> (Vec<u32>, Vec<u8>, bool) {
-        assert!(self.holds_all(), "format 15's columns of a writer whose nodes were passed to format 16's ops");
-        let starts = &self.starts[..self.n];
-        let mut base = Vec::with_capacity(starts.len().div_ceil(CHECKPOINT_STRIDE));
-        let mut off = Vec::with_capacity(starts.len() * usize::from(width));
-        let mut high = 0u32;
-        for block in starts.chunks(CHECKPOINT_STRIDE) {
-            let b = block.iter().copied().fold(u32::MAX, u32::min);
-            base.push(b);
-            if width == 2 {
-                if let Ok(block) = <&[u32; CHECKPOINT_STRIDE]>::try_from(block) {
-                    let mut cells = [0u8; 2 * CHECKPOINT_STRIDE];
-                    for (cell, &s) in cells.as_chunks_mut::<2>().0.iter_mut().zip(block) {
-                        let o = s - b;
-                        high |= o;
-                        cell.copy_from_slice(&(o as u16).to_le_bytes());
-                    }
-                    off.extend_from_slice(&cells);
-                    continue;
-                }
-                for &s in block {
-                    high |= s - b;
-                    off.extend_from_slice(&((s - b) as u16).to_le_bytes());
-                }
-            } else {
-                for &s in block {
-                    high |= s - b;
-                    off.extend_from_slice(&(s - b).to_le_bytes());
-                }
-            }
-        }
-        (base, off, high > 0xffff)
-    }
-
-    /// The widths the nodes need, and the bases and offsets (`offsets`): `Redo` where the
-    /// writer's widths do not hold them.
-    fn check_widths(&mut self) -> Result<(Vec<u32>, Vec<u8>), Redo> {
-        debug_assert!(self.chains.is_empty(), "a chain not ended");
-        self.commit();
-        let (base, off, wide) = self.offsets(self.layout.widths().off);
-        let has = |what: u8| self.marks.iter().any(|m| m.1 == what);
-        let from_start = has(EARLY);
-        let want = Widths {
-            size: width_for(self.n as u32),
-            off: if wide { 4 } else { 2 },
-            // Tails measured from the other place say nothing of the width: 2, the guess.
-            tail: if from_start == self.layout.widths().from_start && has(TAIL_WIDE) { 4 } else { 2 },
-            from_start,
-        };
-        if want != self.layout.widths() {
-            return Err(Redo(want));
-        }
-        Ok((base, off))
-    }
-
-    /// The keys of the codes the nodes use, by code id (numbered by first use): what a caller maps to a language's
-    /// format 16 numbers for `finish_16`.
-    pub fn code_keys(&mut self) -> Vec<u32> {
-        self.commit();
-        self.codes.iter().map(|&(key, _)| key).collect()
-    }
-
     /// The tape in format 16 or 16z and its presence, where the writer writes it (`to`; decision 0434 §2): the nodes
-    /// not yet passed on given to the ops, then their `finish`. Format 15's columns are not made. `Redo` where the
-    /// writer's widths did not keep every size and end exactly (format 15's offsets do not matter here); `Ok(Err)`
-    /// where the nodes are not a format 16 tape (a code the language's table lacks, an edit before a commit, a node
-    /// past format 16's bounds): the writer is kept, and format 15's `finish_columns` takes it.
+    /// not yet passed on given to the ops, then their `finish`. `Redo` where the writer's widths did not keep every
+    /// size and end exactly; `Ok(Err)` where the writer writes no tape, or the nodes are not a format 16 tape (a code
+    /// the language's table lacks, an edit before a commit, a node past format 16's bounds).
     pub fn finish_16(&mut self) -> Result<Result<f16::Finished, String>, Redo> {
         debug_assert!(self.chains.is_empty(), "a chain not ended");
         self.commit();
         let w = self.layout.widths();
-        let has = |what: u8| self.marks.iter().any(|m| m.1 == what);
+        let has = |what: u8| self.marks.iter().any(|m| m[1] == u32::from(what));
         // Sizes past their width, an end before the last descendant's start (tails from it), or a tail past its
         // width: not kept exactly.
         // A cell held a size of at most the window's nodes.
         let size = w.size.max(width_for(self.widest.max(self.n - self.base) as u32));
         let from_start = w.from_start || has(EARLY);
         let tail = if from_start == w.from_start && has(TAIL_WIDE) { 4 } else { w.tail };
-        let want = Widths { size, off: w.off, tail, from_start };
+        let want = Widths { size, tail, from_start };
         if want != w {
             return Err(Redo(want));
         }
-        let Some(mut s) = self.sixteen.take() else { return Ok(Err("the writer writes format 15".into())) };
+        let mut s = match std::mem::replace(&mut self.sixteen, Err("the writer was finished".into())) {
+            Ok(s) => s,
+            Err(e) => return Ok(Err(e)),
+        };
         if let Some(bad) = s.bad.take() {
             return Ok(Err(bad));
         }
@@ -1252,375 +1397,59 @@ impl<L: Layout> Writer<L> {
         s.close_to(self.n);
         Ok(s.w.finish())
     }
-
-    /// The columns alone, for a parser whose codes the caller makes (a key is the parser's own, not
-    /// `kf | flags << 16`): each at its width, and the keys by code id. `Redo` as `finish`. The
-    /// size and tail columns are moved out, not copied.
-    pub fn finish_columns(mut self) -> Result<Columns, Redo> {
-        let (base, off) = self.check_widths()?;
-        let w = self.layout.widths();
-        let n = self.n;
-        let column = |c: &mut Vec<u8>, width: u8| {
-            let mut c = std::mem::take(c);
-            c.truncate(n * usize::from(width));
-            c.shrink_to_fit();
-            c
-        };
-        Ok(Columns {
-            code: self.out[HEADER_BYTES..HEADER_BYTES + 2 * n].to_vec(),
-            size: column(&mut self.size, w.size),
-            base: base.iter().flat_map(|b| b.to_le_bytes()).collect(),
-            off,
-            tail: column(&mut self.tail, w.tail),
-            widths: [w.size, w.off, w.tail | if w.from_start { TAIL_FROM_START } else { 0 }],
-            keys: self.codes.iter().map(|&(key, _)| key).collect(),
-        })
-    }
-
-    /// The image of the source `src`: the columns moved into place after the code column, then
-    /// the code table, and the header. `Redo` when a column's values do not fit its width, or a
-    /// tail from its last descendant is negative: the widths to parse again at.
-    pub fn finish(mut self, src: &[u8]) -> Result<Vec<u8>, Redo> {
-        let (base, off) = self.check_widths()?;
-        let w = self.layout.widths();
-        let nodes = self.n;
-        let class_count = |key: u32| (key >> CLASS_SHIFT).count_ones() as usize;
-        let code_bytes: usize = self.codes.iter().map(|&(key, _)| 6 + 2 * class_count(key)).sum();
-        let pad = |out: &mut Vec<u8>| out.resize(padded(out.len()), 0);
-        let mut out = std::mem::take(&mut self.out);
-        out.truncate(HEADER_BYTES + 2 * nodes);
-        // Reserved at `new` or `grow` for these nodes and 256 codes: more codes grow it.
-        out.reserve(image_bytes(nodes, w) - CODES_RESERVED + code_bytes - out.len());
-        pad(&mut out);
-        out.extend_from_slice(&self.size[..nodes * usize::from(w.size)]);
-        pad(&mut out);
-        for b in &base {
-            out.extend_from_slice(&b.to_le_bytes());
-        }
-        pad(&mut out);
-        out.extend_from_slice(&off);
-        pad(&mut out);
-        out.extend_from_slice(&self.tail[..nodes * usize::from(w.tail)]);
-        pad(&mut out);
-        for &(key, _) in &self.codes {
-            out.extend_from_slice(&((key & 0xffff) as u16).to_le_bytes());
-            out.push((key >> 16 & 0x7) as u8);
-            out.extend_from_slice(&SENTINEL.to_le_bytes());
-            out.push(class_count(key) as u8);
-            for (j, c) in self.classes.iter().enumerate() {
-                if key >> (CLASS_SHIFT + j as u32) & 1 != 0 {
-                    out.extend_from_slice(&c.to_le_bytes());
-                }
-            }
-        }
-        let mut h = Vec::with_capacity(HEADER_BYTES);
-        h.extend_from_slice(MAGIC);
-        h.push(self.tag);
-        h.extend_from_slice(&[w.size, w.off, w.tail | if w.from_start { TAIL_FROM_START } else { 0 }]);
-        h.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
-        h.extend_from_slice(&(src.len() as u64).to_le_bytes());
-        for length in [nodes, self.codes.len(), code_bytes, 0, 0] {
-            h.extend_from_slice(&(length as u64).to_le_bytes());
-        }
-        out[..HEADER_BYTES].copy_from_slice(&h);
-        Ok(out)
-    }
 }
 
-impl<L: Layout> Drop for Writer<L> {
-    /// The code ids back to the thread, cleared.
-    fn drop(&mut self) {
-        for &(key, _) in &self.codes {
-            self.id_of[key as usize] = NO_CODE;
-        }
-        let ids = std::mem::take(&mut self.id_of);
-        IDS.with(|t| *t.borrow_mut() = ids);
-    }
-}
-
-/// A tape's columns as `Writer::finish_columns` gives them: `code` (2 bytes a node, code ids by
-/// first use), `size`, `base` (4 bytes each 16 nodes), `off`, `tail`, their widths (`tail`'s with
-/// `TAIL_FROM_START`), and each code id's key.
-#[derive(Clone, Debug, Default)]
-pub struct Columns {
-    pub code: Vec<u8>,
-    pub size: Vec<u8>,
-    pub base: Vec<u8>,
-    pub off: Vec<u8>,
-    pub tail: Vec<u8>,
-    pub widths: [u8; 3],
-    pub keys: Vec<u32>,
-}
-
-/// Where byte `at` of image `bytes` lies, as text: the header, a column's node, or a table.
-pub fn place(bytes: &[u8], at: usize) -> String {
-    if at < HEADER_BYTES || bytes.len() < HEADER_BYTES {
-        return format!("the header (byte {at})");
-    }
-    let n = u64::from_le_bytes(bytes[header::NODES..header::NODES + 8].try_into().expect("8 bytes")) as usize;
-    let w = [usize::from(bytes[header::WIDTHS]), usize::from(bytes[header::WIDTHS + 1]), usize::from(bytes[header::WIDTHS + 2] & !TAIL_FROM_START)];
-    let mut from = HEADER_BYTES;
-    for (name, width, count) in [("code", 2, n), ("size", w[0], n), ("base", 4, n.div_ceil(CHECKPOINT_STRIDE)), ("off", w[1], n), ("tail", w[2], n)] {
-        let to = padded(from + width * count);
-        if at < to {
-            return format!("{name} of node {}", (at - from) / width.max(1));
-        }
-        from = to;
-    }
-    format!("the code table (byte {})", at - from)
-}
-
-/// A node as an image holds it: its code's key (`kf | flags << 16`, as `Writer::push` takes it),
-/// its span, and its parent.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Decoded {
-    pub key: u32,
-    pub start: u32,
-    pub end: u32,
-    pub parent: Option<u32>,
-}
-
-/// The nodes of the image `bytes`, in preorder: `Writer`'s inverse, read in place (each node's
-/// code through the code table, its start from its block's base, its end from its tail and its
-/// last descendant's start, its parent from the sizes).
-pub fn decode(bytes: &[u8]) -> Result<Vec<Decoded>, String> {
-    let u64_at = |at: usize| -> Result<usize, String> {
-        let b = bytes.get(at..at + 8).ok_or("a short tape header")?;
-        usize::try_from(u64::from_le_bytes(b.try_into().expect("8 bytes"))).map_err(|_| "a tape length overflows".to_owned())
-    };
-    if bytes.len() < HEADER_BYTES || &bytes[..8] != MAGIC {
-        return Err("not a tape image".into());
-    }
-    if u32::from_le_bytes(bytes[header::VERSION..header::VERSION + 4].try_into().expect("4 bytes")) != FORMAT_VERSION {
-        return Err("a tape of another format".into());
-    }
-    let w = [usize::from(bytes[header::WIDTHS]), usize::from(bytes[header::WIDTHS + 1]), usize::from(bytes[header::WIDTHS + 2] & !TAIL_FROM_START)];
-    let from_start = bytes[header::WIDTHS + 2] & TAIL_FROM_START != 0;
-    let (n, code_count) = (u64_at(header::NODES)?, u64_at(header::CODES)?);
-    let mut at = HEADER_BYTES;
-    let mut column = |width: usize, count: usize| -> Result<&[u8], String> {
-        let c = bytes.get(at..at + width * count).ok_or("a short tape column")?;
-        at = padded(at + width * count);
-        Ok(c)
-    };
-    let (code, size, base, off, tail) = (column(2, n)?, column(w[0], n)?, column(4, n.div_ceil(CHECKPOINT_STRIDE))?, column(w[1], n)?, column(w[2], n)?);
-    let mut keys = Vec::with_capacity(code_count);
-    let mut c = at;
-    for _ in 0..code_count {
-        let entry = bytes.get(c..c + 6).ok_or("a short code table")?;
-        keys.push(u32::from(u16::from_le_bytes([entry[0], entry[1]])) | u32::from(entry[2]) << 16);
-        c += 6 + 2 * usize::from(entry[5]);
-    }
-    let get = |col: &[u8], width: usize, i: usize| -> u32 {
-        let mut v = [0u8; 4];
-        v[..width].copy_from_slice(&col[i * width..i * width + width]);
-        u32::from_le_bytes(v)
-    };
-    let start = |i: usize| get(base, 4, i / CHECKPOINT_STRIDE).wrapping_add(get(off, w[1], i));
-    let mut out = Vec::with_capacity(n);
-    let mut open: Vec<(u32, usize)> = Vec::new();
-    for i in 0..n {
-        while open.last().is_some_and(|&(_, end)| end <= i) {
-            open.pop();
-        }
-        let s = get(size, w[0], i) as usize;
-        let id = usize::from(u16::from_le_bytes([code[2 * i], code[2 * i + 1]]));
-        let key = *keys.get(id).ok_or("a node's code is not in the table")?;
-        let last = i + s.max(1) - 1;
-        if last >= n {
-            return Err("a node's size runs past the tape".into());
-        }
-        let from = if from_start { start(i) } else { start(last) };
-        out.push(Decoded { key, start: start(i), end: from.wrapping_add(get(tail, w[2], i)), parent: open.last().map(|&(p, _)| p) });
-        open.push((i as u32, i + s.max(1)));
-    }
-    Ok(out)
-}
-
-/// An image read in place: each node's key, subtree size and span, straight from the columns, with nothing decoded
-/// ahead (`decode` makes every node at once). A node's children are the nodes after it, each the next one's
-/// predecessor by its size (`children`).
-#[derive(Clone)]
-pub struct View<'a> {
-    n: usize,
-    code: &'a [u8],
-    size: &'a [u8],
-    base: &'a [u8],
-    off: &'a [u8],
-    tail: &'a [u8],
-    widths: [u8; 3],
-    from_start: bool,
-    /// Each code's key, by id: read from the code table, or a holder's (`with_keys`).
-    keys: std::borrow::Cow<'a, [u32]>,
-    /// Where the code table starts, and how many codes it holds.
-    table: usize,
-    codes: usize,
-}
-
-impl<'a> View<'a> {
-    /// The image `bytes`, checked as `decode` checks it: the header, the columns' lengths, the code table, and
-    /// each code id and size in range.
-    pub fn new(bytes: &'a [u8]) -> Result<Self, String> {
-        let view = Self::columns(bytes)?;
-        for i in 0..view.n {
-            if usize::from(u16::from_le_bytes([view.code[2 * i], view.code[2 * i + 1]])) >= view.keys.len() {
-                return Err("a node's code is not in the table".into());
-            }
-            if i + view.size(i).max(1) > view.n {
-                return Err("a node's size runs past the tape".into());
-            }
-        }
-        Ok(view)
-    }
-
-    /// An image `new` checked before, `keys` its code table's keys as `keys` gave them then (its holder keeps both,
-    /// unchanged): its header and columns read again, the nodes not checked again and the code table not read.
-    pub fn with_keys(bytes: &'a [u8], keys: &'a [u32]) -> Self {
-        let mut v = Self::columns_only(bytes).expect("an image checked before");
-        debug_assert_eq!(keys.len(), v.codes, "the image's own keys");
-        v.keys = std::borrow::Cow::Borrowed(keys);
-        v
-    }
-
-    /// Each code's key, by id, for a holder to keep (`with_keys`): those `new` read, not copied again.
-    pub fn into_keys(self) -> Box<[u32]> {
-        self.keys.into_owned().into_boxed_slice()
-    }
-
-    /// The header, the columns and the code table.
-    fn columns(bytes: &'a [u8]) -> Result<Self, String> {
-        let mut v = Self::columns_only(bytes)?;
-        let (code_count, mut c) = (v.codes, v.table);
-        let mut keys = Vec::with_capacity(code_count);
-        for _ in 0..code_count {
-            let entry = bytes.get(c..c + 6).ok_or("a short code table")?;
-            keys.push(u32::from(u16::from_le_bytes([entry[0], entry[1]])) | u32::from(entry[2]) << 16);
-            c += 6 + 2 * usize::from(entry[5]);
-        }
-        v.keys = std::borrow::Cow::Owned(keys);
-        Ok(v)
-    }
-
-    /// The header and the columns, and where the code table starts; no key read.
-    fn columns_only(bytes: &'a [u8]) -> Result<Self, String> {
-        let u64_at = |at: usize| -> Result<usize, String> {
-            let b = bytes.get(at..at + 8).ok_or("a short tape header")?;
-            usize::try_from(u64::from_le_bytes(b.try_into().expect("8 bytes"))).map_err(|_| "a tape length overflows".to_owned())
-        };
-        if bytes.len() < HEADER_BYTES || &bytes[..8] != MAGIC {
-            return Err("not a tape image".into());
-        }
-        if u32::from_le_bytes(bytes[header::VERSION..header::VERSION + 4].try_into().expect("4 bytes")) != FORMAT_VERSION {
-            return Err("a tape of another format".into());
-        }
-        let widths = [bytes[header::WIDTHS], bytes[header::WIDTHS + 1], bytes[header::WIDTHS + 2] & !TAIL_FROM_START];
-        if widths.iter().any(|&w| w != 2 && w != 4) {
-            return Err("a tape column of another width".into());
-        }
-        let from_start = bytes[header::WIDTHS + 2] & TAIL_FROM_START != 0;
-        let (n, code_count) = (u64_at(header::NODES)?, u64_at(header::CODES)?);
-        let mut at = HEADER_BYTES;
-        let mut column = |width: usize, count: usize| -> Result<&'a [u8], String> {
-            let c = bytes.get(at..at + width * count).ok_or("a short tape column")?;
-            at = padded(at + width * count);
-            Ok(c)
-        };
-        let w = widths.map(usize::from);
-        let (code, size, base, off, tail) = (column(2, n)?, column(w[0], n)?, column(4, n.div_ceil(CHECKPOINT_STRIDE))?, column(w[1], n)?, column(w[2], n)?);
-        Ok(View { n, code, size, base, off, tail, widths, from_start, keys: std::borrow::Cow::Borrowed(&[]), table: at, codes: code_count })
-    }
-
-    #[inline(always)]
-    fn cell(column: &[u8], width: u8, i: usize) -> u32 {
-        if width == 2 { u32::from(u16::from_le_bytes([column[2 * i], column[2 * i + 1]])) } else { u32::from_le_bytes(column[4 * i..4 * i + 4].try_into().expect("4 bytes")) }
-    }
-
-    /// The nodes.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.n
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.n == 0
-    }
-
-    /// Node `i`'s key: `kf | flags << 16`, as `Writer::push` took it.
-    #[inline(always)]
-    pub fn key(&self, i: usize) -> u32 {
-        self.keys[usize::from(u16::from_le_bytes([self.code[2 * i], self.code[2 * i + 1]]))]
-    }
-
-    /// Node `i`'s subtree, itself counted (at least 1).
-    #[inline(always)]
-    pub fn size(&self, i: usize) -> usize {
-        (Self::cell(self.size, self.widths[0], i) as usize).max(1)
-    }
-
-    #[inline(always)]
-    pub fn start(&self, i: usize) -> u32 {
-        Self::cell(self.base, 4, i / CHECKPOINT_STRIDE).wrapping_add(Self::cell(self.off, self.widths[1], i))
-    }
-
-    #[inline(always)]
-    pub fn end(&self, i: usize) -> u32 {
-        let from = if self.from_start { self.start(i) } else { self.start(i + self.size(i) - 1) };
-        from.wrapping_add(Self::cell(self.tail, self.widths[2], i))
-    }
-
-    /// Node `i`'s children, in order: from `i + 1`, each the one after the last one's subtree.
-    #[inline]
-    pub fn children(&self, i: usize) -> Children<'_, 'a> {
-        Children { view: self, at: i + 1, end: i + self.size(i) }
-    }
-}
-
-/// A node's children (`View::children`).
-pub struct Children<'v, 'a> {
-    view: &'v View<'a>,
-    at: usize,
-    end: usize,
-}
-
-impl Iterator for Children<'_, '_> {
-    type Item = usize;
-
-    #[inline(always)]
-    fn next(&mut self) -> Option<usize> {
-        if self.at >= self.end {
-            return None;
-        }
-        let c = self.at;
-        self.at += self.view.size(c);
-        Some(c)
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tape::{CodeTable, Entry, Tape};
 
-    /// Offsets come from the starts at `finish` (`Writer::offsets`): a block's base is its least
-    /// start, and an offset past 0xffff writes the off column at 4 bytes (a `Redo`).
-    #[test]
-    fn offsets_and_bases_are_computed_at_finish() {
-        let src = vec![b' '; 200_000];
-        for far in [100u32, 70_000, 150_000] {
-            // A root over 40 leaves: the 20th starts `far` in, past its block's base.
-            let mut nodes = vec![(key(1, 0, 0), 0, 199_000, 41)];
-            for i in 0..40u32 {
-                let start = if i == 19 { far } else { i * 10 };
-                nodes.push((key(2, 0, 0), start, start + 5, 1));
-            }
-            let bytes = preorder_image(1, &src, &nodes);
-            assert_eq!(bytes[header::WIDTHS + 1], if far > 0xffff { 4 } else { 2 });
-            let decoded = decode(&bytes).unwrap();
-            let starts: Vec<u32> = decoded.iter().map(|d| d.start).collect();
-            let want: Vec<u32> = nodes.iter().map(|n| n.1).collect();
-            assert_eq!(starts, want);
-            assert_eq!(decoded[20].end, far + 5);
+    /// Each node: its code, its subtree's end, its parent, its start and its end.
+    type Row = (u32, usize, Option<usize>, u64, u64);
+
+    /// A language whose table holds kinds 0 to 15, each numbered its kind.
+    fn lang() -> &'static f16::Lang {
+        static LANG: std::sync::OnceLock<f16::Lang> = std::sync::OnceLock::new();
+        LANG.get_or_init(|| {
+            let entries = (0..16).map(|kind| Entry { kind, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+            f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).unwrap()
+        })
+    }
+
+    /// Format 16 (16z where `z`) in `lang`, each key numbered its kind.
+    fn target(z: bool) -> Target {
+        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(|k: u32| (k < 16).then_some(k)) })
+    }
+
+    /// The rows of the tape `w` finishes.
+    fn rows(w: &mut Writer, z: bool) -> Result<Vec<Row>, Redo> {
+        fn of<T: Tape>(t: &T) -> Vec<Row> {
+            (0..t.len()).map(|i| (t.code(i), t.subtree_end(i), t.parent(i), t.start(i), t.end(i))).collect()
         }
+        let f = w.finish_16()?.unwrap();
+        Ok(match f.tape {
+            f16::Written::F16(t) => of(&t.reader(lang()).unwrap()),
+            f16::Written::F16Z(t) => {
+                assert!(z);
+                let cache = f16::ZCache::of([&t]);
+                of(&t.reader(lang(), Some(&cache)).unwrap())
+            }
+        })
+    }
+
+    /// The rows of nodes in preorder, each its key, start, end and subtree size.
+    fn tree(nodes: &[(u32, u64, u64, usize)]) -> Vec<Row> {
+        let mut open: Vec<(usize, usize)> = Vec::new();
+        let mut out = Vec::new();
+        for (i, &(key, start, end, size)) in nodes.iter().enumerate() {
+            while open.last().is_some_and(|&(_, e)| e <= i) {
+                open.pop();
+            }
+            out.push((key, i + size, open.last().map(|&(p, _)| p), start, end));
+            open.push((i, i + size));
+        }
+        out
     }
 
     /// Leaves put in at once (`insert_leaves`) give the tape an insert each gives, runs between
@@ -1628,7 +1457,6 @@ mod tests {
     #[test]
     fn leaves_inserted_at_once_are_an_insert_each() {
         let src = vec![b' '; 200_000];
-        let w = Widths::guess(src.len());
         let mut seed = 0x2545_f491_4f6c_dd1du64;
         let mut next = move || {
             seed ^= seed << 13;
@@ -1645,15 +1473,17 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(j, &at)| {
-                    let start = 10 * at + j as u32;
+                    // Before node `at` (at 10 at) and past the one before it (ended by 10 at - 9), in order: a
+                    // format 16 tape's starts never go back in preorder.
+                    let start = 10 * at - 8 + j as u32;
                     let end = if next() % 9 == 0 { start + 70_000 } else { start + 1 };
                     Leaf { key: key(4 + j as u16, 0, 0), start, end, at }
                 })
                 .collect();
             let build = |batch: bool| {
-                let mut w = w;
+                let mut w = Widths::guess(src.len());
                 loop {
-                    let mut o = Writer::new(1, w, 8);
+                    let mut o = Writer::new(w, 8).to(target(false), &src);
                     let r = o.push(key(1, 0, 0), 0);
                     for i in 1..n {
                         let x = o.push(key(2, 0, 0), 10 * i as u32);
@@ -1668,15 +1498,97 @@ mod tests {
                     }
                     o.close(r, 199_999);
                     o.commit();
-                    match o.finish(&src) {
-                        Ok(t) => break decode(&t).unwrap(),
+                    match rows(&mut o, false) {
+                        Ok(t) => break t,
                         // Wider columns where the guess was short (the wide tails).
                         Err(Redo(wider)) => w = wider,
                     }
                 }
             };
-            assert_eq!(build(false), build(true), "{places:?} over {n}");
+            let got = build(true);
+            assert_eq!(build(false), got, "{places:?} over {n}");
+            assert_eq!(got.len(), n + k);
         }
+    }
+
+    /// A leaf written at once (`push_leaf`), a field set where there is none (`set_field`), a wrap (`wrap`) and its close
+    /// (`close_from`) give the tape the calls they join give: wide tails among the leaves, a field set where one is and
+    /// where none is, a wrap closed past its leaf and at its start.
+    #[test]
+    fn a_leaf_at_once_and_a_field_are_the_calls_they_join() {
+        // A table of kinds 0 to 15 under fields 0 to 7, a key numbered `kind + 16 * field`.
+        static LANG: std::sync::OnceLock<f16::Lang> = std::sync::OnceLock::new();
+        let lang = LANG.get_or_init(|| {
+            let entries = (0..8).flat_map(|field| (0..16).map(move |kind| Entry { kind, field, flags: 0, alias: None, classes: Vec::new() })).collect();
+            f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).unwrap()
+        });
+        let number = |k: u32| (k >> 16 == 0 && k & 0x3ff < 16 && k >> 10 < 8).then(|| (k & 0x3ff) + 16 * (k >> 10));
+        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number) });
+        let src = vec![b' '; 200_000];
+        // 0: the calls joined; 1: the joined calls; 2: the plain ones (no chain, no node passed on).
+        let build = |way: u8| {
+            let joined = way > 0;
+            let mut w = Widths::guess(src.len());
+            loop {
+                let mut o = Writer::new(w, 8).to(target(), &src);
+                let r = o.push(key(1, 0, 0), 0);
+                for i in 0..40u32 {
+                    let (s, e) = (10 * i, if i % 7 == 3 { 10 * i + 70_000 } else { 10 * i + 3 });
+                    let k = key(2 + (i % 3) as u16, if i % 5 == 0 { 3 } else { 0 }, 0);
+                    let x = if way == 2 {
+                        o.plain_leaf(k, s, e)
+                    } else if joined {
+                        o.push_leaf(k, s, e)
+                    } else {
+                        let x = o.push(k, s);
+                        o.close(x, e);
+                        x
+                    };
+                    let field = u32::from(1 + (i % 4) as u16) << 10;
+                    if way == 2 {
+                        o.plain_field(x, 0x3f << 10, field);
+                    } else if joined {
+                        o.set_field(x, 0x3f << 10, field);
+                    } else if o.key(x) >> 10 & 0x3f == 0 {
+                        let k = o.key(x);
+                        o.set_key(x, k | field);
+                    }
+                    // A wrap over the leaf, closed past it or at its start (a later end, an earlier one).
+                    if i % 3 == 1 {
+                        let wk = key(9, 0, 0);
+                        let end = if i % 2 == 0 { e + 4 } else { s };
+                        if way == 2 {
+                            o.plain_wrap(x, 0x3f << 10, 5 << 10, wk);
+                            let _ = o.plain_close_from(x, end);
+                        } else if joined {
+                            o.wrap(x, 0x3f << 10, 5 << 10, wk);
+                            let _ = o.close_from(x, end);
+                        } else {
+                            let k = o.key(x);
+                            o.set_key(x, k & !(0x3f << 10) | 5 << 10);
+                            let st = o.start(x);
+                            o.insert(x, wk | (k & (0x3f << 10)), st);
+                            let e2 = end.max(o.start(x));
+                            o.close(x, e2);
+                        }
+                    }
+                }
+                o.close(r, 199_999);
+                match o.finish_16() {
+                    Ok(t) => {
+                        let t = t.unwrap();
+                        let f16::Written::F16(t) = t.tape else { panic!("format 16") };
+                        let r = t.reader(lang).unwrap();
+                        break (0..r.len()).map(|i| (r.code(i), r.subtree_end(i), r.parent(i), r.start(i), r.end(i))).collect::<Vec<Row>>();
+                    }
+                    Err(Redo(wider)) => w = wider,
+                }
+            }
+        };
+        let joined = build(0);
+        assert!(joined.len() > 40, "every leaf and wrap on the tape");
+        assert_eq!(joined, build(1));
+        assert_eq!(joined, build(2));
     }
 
     /// A leaf put in later, between closed nodes (`insert_leaf`), gives the tape written in order.
@@ -1685,7 +1597,7 @@ mod tests {
         let src = vec![b' '; 100];
         let w = Widths::guess(src.len());
         // In order: root(a(x), ",", b(y)).
-        let mut o = Writer::new(1, w, 8);
+        let mut o = Writer::new(w, 8).to(target(false), &src);
         let r = o.push(key(1, 0, 0), 0);
         let a = o.push(key(2, 0, 0), 0);
         let x = o.push(key(3, 0, 0), 0);
@@ -1700,7 +1612,7 @@ mod tests {
         o.close(r, 9);
         o.commit();
         // The comma held, then put in at its place before the root closes.
-        let mut l = Writer::new(1, w, 8);
+        let mut l = Writer::new(w, 8).to(target(false), &src);
         let r = l.push(key(1, 0, 0), 0);
         let a = l.push(key(2, 0, 0), 0);
         let x = l.push(key(3, 0, 0), 0);
@@ -1713,19 +1625,19 @@ mod tests {
         l.insert_leaf(3, key(4, 0, 0), 4, 5);
         l.close(r, 9);
         l.commit();
-        assert_eq!(decode(&o.finish(&src).unwrap()).unwrap(), decode(&l.finish(&src).unwrap()).unwrap());
+        let want = tree(&[(1, 0, 9, 6), (2, 0, 3, 2), (3, 0, 3, 1), (4, 4, 5, 1), (2, 6, 9, 2), (3, 6, 9, 1)]);
+        assert_eq!(rows(&mut o, false).unwrap(), want);
+        assert_eq!(rows(&mut l, false).unwrap(), want);
     }
 
-    /// A parser's writer writing format 16 or 16z (`to`, `finish_16`) gives the tree it finishes in format 15, after
-    /// the edits a parse makes: a rewind, a node put before its first child, a key changed. Committed as it goes, the
-    /// nodes are passed to the format 16 writer's ops before the edits that reach them: a close, a retag (decision
-    /// 0434 §2).
+    /// A parser's writer gives the tree its edits make: a rewind, a node put before its first child, a key changed.
+    /// Committed as it goes, the nodes are passed to the format 16 writer's ops before the edits that reach them: a
+    /// close, a retag (decision 0434 §2).
     #[test]
-    fn a_parsers_writer_finishes_in_format_16_as_in_format_15() {
-        use crate::tape::{CodeTable, Entry, F15, Tape, f15_columns};
+    fn a_parsers_writer_finishes_as_its_edits_make_the_tree() {
         let src = vec![b' '; 100];
         let make = |target: Target, commit: bool| {
-            let mut l = Writer::new(1, Widths::guess(src.len()), 8).to(target, &src);
+            let mut l = Writer::new(Widths::guess(src.len()), 8).to(target, &src);
             let r = l.push(key(1, 0, 0), 0);
             let held = l.checkpoint();
             let t = l.push(key(9, 0, 0), 0);
@@ -1747,51 +1659,26 @@ mod tests {
             l.close(r, 10);
             l
         };
-        let image = make(Target::F15, false).finish(&src).unwrap();
-        let (columns, table) = f15_columns(&image).unwrap();
-        let f15 = F15::new(&image, columns, &table).unwrap();
-        // The table's codes, and the operator's first key after them: each key's number its place.
-        let keys = make(Target::F15, false).code_keys();
-        let mut entries = table.entries().to_vec();
-        entries.push(Entry { kind: 2, field: 0, flags: 0, alias: None, classes: Vec::new() });
-        let lang: &'static f16::Lang = Box::leak(Box::new(f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).unwrap()));
+        let want = tree(&[(1, 0, 10, 5), (5, 0, 9, 3), (3, 0, 3, 1), (3, 6, 9, 1), (4, 9, 10, 1)]);
         for (z, commit) in [(false, false), (true, false), (false, true), (true, true)] {
-            let keys = keys.clone();
-            let number = move |k: u32| keys.iter().position(|&x| x == k).map(|p| p as u32).or((k == key(2, 0, 0)).then_some(4));
-            let target = Target::F16(Sixteen { lang, tag: 1, z, blocks: false, number: std::sync::Arc::new(number) });
-            let mut w = make(target, commit);
-            let written = w.finish_16().unwrap().unwrap().tape;
-            let check = |t: &dyn Fn(usize) -> (u32, usize, Option<usize>, u64, u64), n: usize| {
-                assert_eq!(n, f15.len());
-                for i in 0..n {
-                    assert_eq!(t(i), (f15.code(i), f15.subtree_end(i), f15.parent(i), f15.start(i), f15.end(i)), "node {i}, 16z {z}");
-                }
-            };
-            match written {
-                f16::Written::F16(t) => {
-                    let r = t.reader(lang).unwrap();
-                    check(&|i| (r.code(i), r.subtree_end(i), r.parent(i), r.start(i), r.end(i)), r.len());
-                }
-                f16::Written::F16Z(t) => {
-                    let r = t.reader(lang).unwrap();
-                    check(&|i| (r.code(i), r.subtree_end(i), r.parent(i), r.start(i), r.end(i)), r.len());
-                }
-            }
+            assert_eq!(rows(&mut make(target(z), commit), z).unwrap(), want, "16z {z}, committed {commit}");
         }
+        // A writer with no target writes no tape, and says why.
+        let e = make(Err("no table".into()), true).finish_16().unwrap().err().expect("no tape");
+        assert_eq!(e, "no table");
     }
 
     /// A format 16 writer's columns hold the window, the nodes since the last commit: a file of many statements
-    /// keeps them at `WINDOW` cells, and its tape is format 15's tree. The parse reads its open ancestors after a
-    /// commit; a read of a node given back, or an edit before the window, says the tape is not format 16's
-    /// (`finish_16`'s reason), and `holds_all` says the parse must run again for format 15 (decision 0434 §2).
+    /// keeps them at their first cells, and its tape is the tree. The parse reads its open ancestors after a commit;
+    /// a read of a node given back, or an edit before the window, says the tape is not format 16's (`finish_16`'s
+    /// reason; decision 0434 §2).
     #[test]
     fn a_format_16_writers_columns_are_the_window() {
-        use crate::tape::{CodeTable, F15, Tape, f15_columns};
         let statements = 3 * WINDOW / 4;
         let src = vec![b' '; 4 * statements + 1];
         // A module of statements, each an expression statement over two names, committed as it ends.
         let make = |target: Target, misread: bool, misedit: bool| {
-            let mut l = Writer::new(1, Widths::guess(src.len()), 8).to(target, &src);
+            let mut l = Writer::new(Widths::guess(src.len()), 8).to(target, &src);
             let module = l.push(key(1, 0, 0), 0);
             for s in 0..statements {
                 let at = (4 * s) as u32;
@@ -1814,44 +1701,23 @@ mod tests {
             l.close(module, src.len() as u32);
             l
         };
-        let keys = make(Target::F15, false, false).code_keys();
-        let image = make(Target::F15, false, false).finish(&src).unwrap();
-        let (columns, table) = f15_columns(&image).unwrap();
-        let f15 = F15::new(&image, columns, &table).unwrap();
-        let lang: &'static f16::Lang = Box::leak(Box::new(f16::Lang::new(CodeTable::new(table.entries().to_vec()), [1, 1, 1], 1).unwrap()));
-        let number = std::sync::Arc::new(move |k: u32| keys.iter().position(|&x| x == k).map(|p| p as u32));
-        let target = |z| Target::F16(Sixteen { lang, tag: 1, z, blocks: true, number: number.clone() });
+        let mut nodes = vec![(1, 0, src.len() as u64, 1 + 3 * statements)];
+        for s in 0..statements as u64 {
+            nodes.extend([(2, 4 * s, 4 * s + 3, 3), (3, 4 * s, 4 * s + 1, 1), (3, 4 * s + 2, 4 * s + 3, 1)]);
+        }
+        let want = tree(&nodes);
         // A large file's guess is cut to the window.
-        assert_eq!(Writer::new(1, Widths::guess(1 << 20), 1 << 16).to(target(false), &src).cap, WINDOW);
+        assert_eq!(Writer::new(Widths::guess(1 << 20), 1 << 16).to(target(false), &src).cap, WINDOW);
         for z in [false, true] {
             let mut w = make(target(z), false, false);
-            // Made for 8 nodes: the 16 cells it began with hold every statement's.
-            assert_eq!(w.cap, CHECKPOINT_STRIDE, "the columns stay at the window");
-            assert!(!w.holds_all());
-            let written = w.finish_16().unwrap().unwrap().tape;
-            let row = |r: &dyn Fn(usize) -> (u32, usize, Option<usize>, u64, u64), n: usize| {
-                assert_eq!(n, f15.len());
-                for i in 0..n {
-                    assert_eq!(r(i), (f15.code(i), f15.subtree_end(i), f15.parent(i), f15.start(i), f15.end(i)), "node {i}, 16z {z}");
-                }
-            };
-            match written {
-                f16::Written::F16(t) => {
-                    let r = t.reader(lang).unwrap();
-                    row(&|i| (r.code(i), r.subtree_end(i), r.parent(i), r.start(i), r.end(i)), r.len());
-                }
-                f16::Written::F16Z(t) => {
-                    let r = t.reader(lang).unwrap();
-                    row(&|i| (r.code(i), r.subtree_end(i), r.parent(i), r.start(i), r.end(i)), r.len());
-                }
-            }
+            // Made for 8 nodes: the cells it began with hold every statement's.
+            assert_eq!(w.cap, MIN_CELLS, "the columns stay at the window");
+            assert_eq!(rows(&mut w, z).unwrap(), want, "16z {z}");
             for (misread, misedit, why) in [(true, false, "read after its commit"), (false, true, "before the last commit")] {
                 let mut w = make(target(z), misread, misedit);
                 let e = w.finish_16().unwrap().err().expect("not format 16's");
                 assert!(e.contains(why), "{e}");
-                assert!(!w.holds_all());
             }
         }
     }
-
 }

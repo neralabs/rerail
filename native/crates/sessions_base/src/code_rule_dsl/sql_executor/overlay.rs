@@ -1,4 +1,5 @@
 //! Old-input probes combine the current native access paths with a small indexed deletion set.
+use rerail_blocks::vector::Vector;
 use super::super::facts::vtab::{Modules, bound_source};
 use super::*;
 
@@ -8,7 +9,7 @@ struct Overlay {
     probes: parking_lot::Mutex<(Vec<(bool, usize)>, HashMap<(bool, usize), usize>)>,
 }
 impl Overlay {
-    fn ids(&self, current: Vec<usize>, deleted: Vec<usize>) -> Vec<usize> {
+    fn ids(&self, current: Vector<usize>, deleted: Vector<usize>) -> Vector<usize> {
         let mut rows = self.probes.lock();
         current
             .into_iter()
@@ -51,6 +52,9 @@ impl Source for Overlay {
     fn lookup_cost(&self, c: usize) -> f64 {
         self.current.lookup_cost(c)
     }
+    fn scan_cost(&self) -> f64 {
+        self.current.scan_cost()
+    }
     fn indexed(&self, c: usize) -> bool {
         self.current.indexed(c)
     }
@@ -63,7 +67,7 @@ impl Source for Overlay {
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.current.expect_lookups(column, keys);
     }
-    fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, c: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         Some(self.ids(
             self.current.lookup(c, values)?,
             self.deleted.lookup(c, values)?,
@@ -78,7 +82,7 @@ impl Source for Overlay {
         c: usize,
         lo: Option<(i64, bool)>,
         hi: Option<(i64, bool)>,
-    ) -> Option<Vec<usize>> {
+    ) -> Option<rerail_blocks::vector::Vector<usize>> {
         let deleted = (0..self.deleted.len())
             .filter(|&r| {
                 let v = self.deleted.value(r, c);

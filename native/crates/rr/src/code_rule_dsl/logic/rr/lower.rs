@@ -54,6 +54,7 @@
 //! `dfs_first`/`dfs_first_memo`, and a negated built-in with its other node unnamed (`!within_stop(n, _, s)`,
 //! `!split_dot(q, _, x)`).
 
+use rerail_blocks::vector::Vector;
 pub mod core;
 pub mod first;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -62,7 +63,7 @@ pub use self::core::is_core;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::from_tape::{S, Stmt};
+use super::from_tape::{S, Statements, Stmt};
 use rerail_rr_syntax::syntax::quote;
 use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, Error, LatticeDecl, List, Native, RESERVED, SCOPE_NOT, SpanIn, Value, axis};
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
@@ -190,7 +191,7 @@ enum Logged {
     Skip(usize),
     /// An outlined literal's alternatives (`outline_put`): those kept in the rule, those of the helper relation, and
     /// the variables it shares with the rule, its columns.
-    Kept(Vec<usize>, Vec<usize>, Vec<String>),
+    Kept(Vector<usize>, Vector<usize>, Vec<String>),
 }
 
 /// What the literals a helper's rules are written with say of their variables, in the order written (decision 0276
@@ -484,7 +485,7 @@ impl Written {
 
 /// A helper relation's stem, column types and rules (their templates: variables numbered in order, so the fresh
 /// names one occurrence made inside it do not tell it from another).
-type HelperKey = (String, Vec<String>, Vec<u64>);
+type HelperKey = (String, Vec<String>, Vector<u64>);
 
 /// Rule `r` of `v`'s template (decision 0276 A3.4): its nodes, the head's relation left out and each variable by its
 /// slot (its first appearance's order), each relation named as `named` says. Two helpers of one stem, column types
@@ -728,7 +729,7 @@ pub fn seeds(scope: &[&Module]) -> Seeds {
 /// `statements` lowered as a module of a scope seeded already (`seeds`), its rules written as a version in the walk
 /// (decision 0377 step 3), which `link_seeded_parts` links without editing its rules and `rr::link_seeded_version`
 /// appends onto its scope.
-pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Result<Module, Error> {
+pub fn lower_module_seeded_written(statements: Statements, seeds: &Seeds) -> Result<Module, Error> {
     // A group's first by an order, written as a self-join (decision 0515), is a lattice relation: the module is read
     // so (`first::Firsts`).
     let firsts = first::Firsts::of(&first::recognize(&statements));
@@ -955,7 +956,7 @@ fn layout(prog: &(impl ProgramFields + ?Sized), text: &str) -> Result<(String, V
 
 /// A module of the modules `scope` reaches (each once), its rules written as a version in the walk: a library's
 /// module (`rr::lower_library`).
-pub fn lower_module_in_written(statements: Vec<Stmt>, scope: &[&Module]) -> Result<Module, Error> {
+pub fn lower_module_in_written(statements: Statements, scope: &[&Module]) -> Result<Module, Error> {
     lower_module_seeded_written(statements, &seeds(scope))
 }
 
@@ -1876,7 +1877,7 @@ fn spans(p: &SpanProgram<'_>, patterns: bool) -> Result<(SpanPatterns, SpanColum
     }
     // Each derived relation's rules, in order: one pass, not one over every rule per relation.
     let mut by_head: Vec<Vec<&SpanRule<'_>>> = vec![Vec::new(); rels];
-    let mut heads: Vec<u32> = Vec::new();
+    let mut heads: Vector<u32> = rerail_blocks::vector::Vector::new();
     for r in &p.rules {
         let h = of(r.head.rel).expect("a head's number");
         if by_head[h as usize].is_empty() {
@@ -1886,7 +1887,7 @@ fn spans(p: &SpanProgram<'_>, patterns: bool) -> Result<(SpanPatterns, SpanColum
     }
     // The relations whose rules read each relation (positive atoms, what `binder` reads): a round derives again
     // only the readers of the columns the round before changed, the rest being what they were.
-    let mut readers: Vec<Vec<u32>> = vec![Vec::new(); rels];
+    let mut readers: Vec<Vector<u32>> = vec![rerail_blocks::vector::Vector::new(); rels];
     for r in &p.rules {
         let h = of(r.head.rel).expect("a head's number");
         for a in r.body.iter().filter(|a| !a.neg) {
@@ -1897,7 +1898,7 @@ fn spans(p: &SpanProgram<'_>, patterns: bool) -> Result<(SpanPatterns, SpanColum
         rs.sort_unstable();
         rs.dedup();
     }
-    let mut dirty: Vec<u32> = heads.clone();
+    let mut dirty: Vector<u32> = heads.clone();
     loop {
         let mut found: Vec<(u32, usize, BTreeSet<SpanIn>)> = Vec::new();
         for &rel in &dirty {
@@ -1925,7 +1926,7 @@ fn spans(p: &SpanProgram<'_>, patterns: bool) -> Result<(SpanPatterns, SpanColum
         if found.is_empty() || rounds > 64 {
             break;
         }
-        let mut next: Vec<u32> = found.iter().flat_map(|(r, _, _)| readers[*r as usize].iter().copied()).collect();
+        let mut next: Vector<u32> = found.iter().flat_map(|(r, _, _)| readers[*r as usize].iter().copied()).collect();
         next.sort_unstable();
         next.dedup();
         dirty = next;
@@ -1944,7 +1945,7 @@ fn spans(p: &SpanProgram<'_>, patterns: bool) -> Result<(SpanPatterns, SpanColum
     // gives every reader the same rows. Not for a column the run outputs, which no reader bounds.
     let mut demand = Cols(vec![Vec::new(); rels]);
     let outputs: rustc_hash::FxHashSet<&str> = p.outputs.iter().copied().collect();
-    let mut helpers: Vec<u32> = heads.iter().copied().filter(|&h| !outputs.contains(by_head[h as usize][0].head.rel)).collect();
+    let mut helpers: Vector<u32> = heads.iter().copied().filter(|&h| !outputs.contains(by_head[h as usize][0].head.rel)).collect();
     helpers.sort_unstable();
     // Each relation's reading atoms with their rules, in the rules' and bodies' order: a column's readers, not a
     // scan of every rule for each column and round.
@@ -3438,7 +3439,7 @@ impl Lowerer {
         for l in &mut siblings {
             if let L::Atom { args, neg: false, .. } = self.lit(l) {
                 let mut sub = None;
-                let wild: Vec<u32> = args.iter().filter_map(|a| if let At::Node(w, _) = a && matches!(self.tv(a), T::Wild) { Some(*w) } else { None }).collect();
+                let wild: Vector<u32> = args.iter().filter_map(|a| if let At::Node(w, _) = a && matches!(self.tv(a), T::Wild) { Some(*w) } else { None }).collect();
                 for w in &wild {
                     let v = self.fresh("w");
                     let base = reads::sub_of_lit(l);
@@ -3621,8 +3622,8 @@ impl Lowerer {
                 let shared: BTreeSet<&String> = scans.iter().flat_map(|s| s.vars.iter()).filter(|v| used.contains(*v)).collect();
                 let shared: Vec<String> = shared.into_iter().cloned().collect();
                 // `unset(x)` is lowered in a rule's own body only (`emit_atom`).
-                let (out, keep): (Vec<usize>, Vec<usize>) = (0..n).partition(|&p| !scans[p].unset && scans[p].grounds(&shared));
-                let (keep, out) = if out.len() < 2 { (keep.into_iter().chain(out).collect(), Vec::new()) } else { (keep, out) };
+                let (out, keep): (Vector<usize>, Vector<usize>) = (0..n).partition(|&p| !scans[p].unset && scans[p].grounds(&shared));
+                let (keep, out) = if out.len() < 2 { (keep.into_iter().chain(out).collect(), Vector::new()) } else { (keep, out) };
                 self.log.push(Logged::Kept(keep.clone(), out.clone(), shared.clone()));
                 (keep, out, shared)
             }
@@ -4985,7 +4986,7 @@ impl Lowerer {
         let asked: BTreeSet<String> = vars.iter().cloned().collect();
         let of: Vec<BTreeSet<String>> = context.iter().map(|l| self.vars_of(l)).collect();
         // Each literal's group: literals sharing a variable not asked about are one group.
-        let mut group: Vec<usize> = (0..context.len()).collect();
+        let mut group: Vector<usize> = (0..context.len()).collect();
         fn root(g: &mut [usize], mut i: usize) -> usize {
             while g[i] != i {
                 g[i] = g[g[i]];
@@ -5001,7 +5002,7 @@ impl Lowerer {
                 }
             }
         }
-        let groups: Vec<usize> = (0..context.len()).map(|k| root(&mut group, k)).collect();
+        let groups: Vector<usize> = (0..context.len()).map(|k| root(&mut group, k)).collect();
         // The variables a binding atom binds: its plain arguments. One it computes from (`jb(@sub(p, 1), 92)`) it
         // reads: lowered, that is `t = @sub(p, 1), jb(t, 92)`, and a cover of it alone could not place `p`.
         let bound_by: Vec<BTreeSet<String>> = context
@@ -5257,7 +5258,7 @@ impl Lowerer {
             _ => return None,
         };
         let t = over?;
-        if std::env::var("RERAIL_ASOF").is_ok_and(|v| v == "off") {
+        if crate::code_rule_dsl::logic::profile::var("RERAIL_ASOF").is_ok_and(|v| v == "off") {
             return None;
         }
         // `t < r` for a max (`r > t` the same), `t > r` for a min; `<=` and `>=` not strict.

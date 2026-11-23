@@ -108,7 +108,10 @@ impl ContentStore {
             })?;
         }
         if archived == 0 {
-            self.immediate_transaction_once(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET archive_due=0 WHERE singleton=1", [])?))?;
+            self.immediate_transaction_once(|tx| {
+                tx.execute_cached("UPDATE corpus_state SET archive_due=0 WHERE singleton=1", [])?;
+                super::corpus_runs::kept::sync_at(tx, &super::corpus_runs::kept::Touch::default())
+            })?;
         }
         Ok(archived)
     }

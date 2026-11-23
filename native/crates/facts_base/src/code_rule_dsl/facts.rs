@@ -10,9 +10,6 @@ pub mod span_prefilter;
 pub mod connection;
 pub mod grammar_shape;
 // cratify: `families` is rerail-facts' (it mounts it, over the base)
-/// M's layered map as copied; `overlay` is its adaptation (open item O19).
-#[allow(dead_code)]
-pub mod lmap;
 // cratify: `facts_a` is rerail-workspace's (it mounts it)
 /// D's projection batches as copied; `runs` is their adaptation (open item O19).
 #[cfg(test)]

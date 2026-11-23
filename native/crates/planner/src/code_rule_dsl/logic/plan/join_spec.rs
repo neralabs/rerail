@@ -2,9 +2,10 @@
 //! handles (decision 0173, t36 item 4): the rule's `Body` and its steps, in plan order, each step a `JoinItem` over
 //! numbered slots, then the head. A literal with no native step (an aggregate other than `count`, `sum`, `min`, `max`
 //! and `join`, a descent, a document range, top) has no spec: that rule stays SQL.
+use rerail_blocks::vector::Vector;
 use super::body::{Body, VarSet};
 use super::{Mode, Run, Step, sym_char};
-use super::super::native::component::spec::{Arg, Extreme, HeadTok, InputKey, JoinItem, JoinSpec, Source as JoinSource, Tok};
+use super::super::native::component::spec::{Arg, Extreme, HeadTok, InputKey, JoinItem, Join, JoinSpec, Source as JoinSource, Tok};
 use super::super::program_image::{AggRef, CmpOp, Lit, Slot, TermRef};
 use super::super::strings;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -160,9 +161,9 @@ impl<'a> Run<'a, '_> {
         steps: &[Step],
         at: Option<usize>,
         ri: &BTreeMap<String, usize>,
-        scc: &BTreeSet<String>,
+        scc: &crate::code_rule_dsl::logic::front::Comp,
         native_rels: &BTreeSet<String>,
-    ) -> Option<Arc<JoinSpec>> {
+    ) -> Option<Join> {
         let _span = super::super::profile::span(|| "a line's join spec".into());
         // A recheck's head is bound by its candidate (`Body::with_head_bound`).
         let mut bound = b.bound_before();
@@ -217,9 +218,9 @@ impl<'a> Run<'a, '_> {
         bare: bool,
         at: Option<usize>,
         ri: &BTreeMap<String, usize>,
-        scc: &BTreeSet<String>,
+        scc: &crate::code_rule_dsl::logic::front::Comp,
         native_rels: &BTreeSet<String>,
-    ) -> Option<Arc<JoinSpec>> {
+    ) -> Option<Join> {
         let pf = self.fields();
         let inputs = |d: &mut super::super::derived::Inputs| {
             // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`), a mode line's from
@@ -259,11 +260,11 @@ impl<'a> Run<'a, '_> {
                     d.str(&self.model.relation(pf, rel, false).render());
                     d.u64(u64::from(self.inputs.contains(rel)) | u64::from(self.model.derived.contains(rel)) << 1 | u64::from(self.projections.contains_key(rel)) << 2);
                     match self.model.view_src.get(rel) {
-                        Some((base, cols)) => {
+                        Some(rerail_section::Tuple2(base, cols)) => {
                             d.str(base);
                             d.u64(cols.len() as u64);
-                            for c in cols {
-                                d.str(c.as_deref().unwrap_or("\u{0}"));
+                            for c in cols.iter() {
+                                d.str(c.as_ref().map_or("\u{0}", |c| c.as_str()));
                             }
                         }
                         None => d.u64(u64::MAX),
@@ -296,9 +297,9 @@ impl<'a> Run<'a, '_> {
         };
         // The maintain mode's joins read an input's version by name (`mode_reads`): made each time, never kept.
         if !self.mode_reads.is_empty() {
-            return self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(Arc::new);
+            return self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(|s| s.encode());
         }
-        super::super::derived::value("join spec", inputs, || self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(Arc::new))
+        super::super::derived::value("join spec", inputs, || self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(|s| s.encode()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -309,7 +310,7 @@ impl<'a> Run<'a, '_> {
         bare: bool,
         at: Option<usize>,
         ri: &BTreeMap<String, usize>,
-        scc: &BTreeSet<String>,
+        scc: &crate::code_rule_dsl::logic::front::Comp,
         native_rels: &BTreeSet<String>,
     ) -> Option<JoinSpec> {
         let pf = self.fields();
@@ -364,7 +365,7 @@ impl<'a> Run<'a, '_> {
                                 .and_then(|c| pf.column_type(b.rel(a), c).map(str::to_owned)),
                             Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: r @ TermRef::Call(..) } if v == n && numeric_call(b, r) => Some("int".to_owned()),
                             // A node's document (`$d = @doc($n)`, `JoinItem::DocOf`) is a document key, an integer: what
-                            // hiding's bound on it (`$d < RUN_VALUE_KEYS`) compares, once the `doc` read that typed it is
+                            // hiding's bound on it (`$d < HIDDEN_KEYS`) compares, once the `doc` read that typed it is
                             // gone.
                             Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: TermRef::Call(f, args) } if v == n && b.v.text(f) == "doc" && args.count() == 1 => Some("int".to_owned()),
                             // A variable equal to a constant (`0 = $r`, an inlined `fneed(f, 0)`) has the constant's type.
@@ -396,19 +397,19 @@ impl<'a> Run<'a, '_> {
             if native_rels.contains(rel) {
                 return Some((JoinSource::Native(rel.to_string()), arg_toks(args, slots)?));
             }
-            let keep: Vec<usize> = (0..args.len()).filter(|&c| !is_const(args[c])).collect();
+            let keep: Vector<usize> = (0..args.len()).filter(|&c| !is_const(args[c])).collect();
             // A view that only projects an input (`kind($n, $k) :- node(_, $n, $k, _, _)`) is read from the input,
             // in place: its columns are the input's.
-            let projected = self.model.view_src.get(rel).filter(|(_, vc)| vc.iter().all(Option::is_some)).filter(|_| self.projections.contains_key(rel));
+            let projected = self.model.view_src.get(rel).filter(|v| v.1.iter().all(|c| c.is_some())).filter(|_| self.projections.contains_key(rel));
             let sql_col = |c: usize| match projected {
-                Some((_, vc)) => vc[c].clone().unwrap(),
+                Some(v) => v.1[c].as_ref().expect("a projected column").as_str().to_owned(),
                 None => self.model.col(rel, c),
             };
             let cols = keep.iter().map(|&c| sql_col(c)).collect::<Vec<_>>().join(", ");
             let cols = if cols.is_empty() { "1".to_owned() } else { cols };
             let mut wheres = Vec::new();
             // The view's own filters, on its input's columns.
-            if let Some((base, _)) = projected {
+            if let Some(rerail_section::Tuple2(base, _)) = projected {
                 for &(c, v) in &self.projections[rel] {
                     wheres.push(format!("{} = {v}", self.model.col(base, c)));
                 }
@@ -431,7 +432,7 @@ impl<'a> Run<'a, '_> {
                 .map(|&c| sym_char(&self.model.inputs, decl.get(c).unwrap_or_else(|| panic!("{rel} is declared with {} columns and read with {}", decl.len(), args.len())).1))
                 .collect();
             let types = if types.is_empty() { "i".to_owned() } else { types };
-            let mut sel = self.model.relation(pf, projected.map_or(rel, |(base, _)| base), false).render();
+            let mut sel = self.model.relation(pf, projected.map_or(rel, |v| v.0.as_str()), false).render();
             if !wheres.is_empty() {
                 sel += &format!(" WHERE {}", wheres.join(" AND "));
             }
@@ -450,7 +451,7 @@ impl<'a> Run<'a, '_> {
         let call_of = |t: TermRef<'_>, f: &str| matches!(t, TermRef::Call(g, _) if b.v.text(g) == f);
         let mut lines = Vec::new();
         // Per item, the plan step it was made for (`JoinSpec::from`).
-        let mut from: Vec<u32> = Vec::new();
+        let mut from: Vector<u32> = rerail_blocks::vector::Vector::new();
         for (idx, s) in steps.iter().enumerate() {
             // The items the step before made are its (a literal can make several: `$k = @sub(@strlen($d), 1)`).
             from.resize(lines.len(), idx.saturating_sub(1) as u32);
@@ -595,7 +596,7 @@ impl<'a> Run<'a, '_> {
                     let rel = b.rel(a);
                     let mut args: Vec<TermRef<'_>> = b.args(s.at).to_vec();
                     // The over-variable belongs to the bag even if an outer step bound the same name.
-                    let local: Vec<usize> = args.iter().enumerate().filter_map(|(c, t)| (over.is_some() && t.var() == over).then_some(c)).collect();
+                    let local: Vector<usize> = args.iter().enumerate().filter_map(|(c, t)| (over.is_some() && t.var() == over).then_some(c)).collect();
                     let count = matches!(op, AggRef::Count);
                     if atoms.is_none() && (!count || local.len() > 1) {
                         return None;
@@ -684,7 +685,7 @@ impl<'a> Run<'a, '_> {
                         bycols.push((rc(&args, c), sym(c)));
                     }
                     let x = (rc(&args, xc), sym(xc));
-                    let wild: Vec<usize> = local.iter().map(|&v| column(v)).collect::<Option<_>>()?;
+                    let wild: Vector<usize> = local.iter().map(|&v| column(v)).collect::<Option<_>>()?;
                     for c in wild {
                         args[c] = TermRef::Wild;
                     }
@@ -741,6 +742,6 @@ impl<'a> Run<'a, '_> {
         }
         from.resize(lines.len(), steps.len() as u32);
         lines.push(JoinItem::Head(head));
-        Some(JoinSpec { items: lines, from, plan_steps: steps.len() as u32, est: Default::default() })
+        Some(JoinSpec { items: lines, from, plan_steps: steps.len() as u32 })
     }
 }

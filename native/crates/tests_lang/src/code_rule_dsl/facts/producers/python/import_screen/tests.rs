@@ -29,8 +29,8 @@
                 imports.observe(&node, module);
             }
         }
-        let facts=crate::code_rule_dsl::facts::core::from_tape(root.root().get_doc(),Arc::new(crate::code_rule_dsl::lines::LineTable::new(root.root().get_doc().file_source(),crate::code_rule_dsl::lines::Terminators::of(GrammarDialect::Python)))).unwrap();
-        let core=Imports::from_core(&facts,&GrammarDialect::Python.kinds(),module);
+        let facts=crate::code_rule_dsl::facts::core::from_tape(root.root().get_doc(),Arc::new(crate::code_rule_dsl::lines::LineTable::new(root.root().get_doc().file_source(),crate::code_rule_dsl::lines::terminators(GrammarDialect::Python)))).unwrap();
+        let core=facts.alone(|f| Imports::from_core(f,&GrammarDialect::Python.kinds(),module));
         assert_eq!(core.bindings,imports.bindings,"core/tape import facts differ");
         assert_eq!(core.opaque,imports.opaque,"core/tape uncertainty differs");
         imports

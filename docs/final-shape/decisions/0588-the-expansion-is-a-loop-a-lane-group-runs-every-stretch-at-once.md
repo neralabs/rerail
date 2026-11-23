@@ -1,9 +1,9 @@
 # 0588. The expansion is a loop a lane group runs, every stretch at once
 
-Status: accepted (2026-11-21, the user: "go ahead", after "do you think this is an intellectual puzzle where you solve
-a programming task without being able to use loops"; the goal, the user: as fast as it can be, "one nanosecond").
-Replaces 0527's level-synchronous rounds for the text's expansion. 0520's pieces, the arena (0468 §3) and the
-tapes read in place stay.
+Status: built (audited 2026-11-23). Accepted (2026-11-21, the user: "go ahead", after "do you think this is an
+intellectual puzzle where you solve a programming task without being able to use loops"; the goal, the user: as fast
+as it can be, "one nanosecond"). Replaces 0527's level-synchronous rounds for the text's expansion. 0520's pieces, the
+arena (0468 §3) and the tapes read in place stay.
 
 ## Intro
 
@@ -183,7 +183,7 @@ These are about equal: inside a run, the time is each unit's own chain, not how 
 a team is slower on the M3 (a group for each 4,096 of a unit's work: 13.7 ms for the last run; for each 1,024:
 20 to 25 ms), since each barrier then costs more. The chain:
 
-- **Its longest serial piece.** The GB10's 4.5 ms run holds one piece of 1,070 steps (libtiff's `tif_ojpeg.c`,
+- **Its longest serial piece.** The GB10's 4.5 ms run holds one piece of 1,070 steps (libtiff's `tif_getimage.c`,
   top tokens 7268..7306) taking 1.9 ms: 1.8 µs a step, each step's lookups dependent loads.
 - **Its barriers.** The largest unit (51k nodes) passes 235 barriers, its P1 iterating 4 times, against 52 for a
   unit with no `#if` left to settle.
@@ -204,7 +204,7 @@ a team is slower on the M3 (a group for each 4,096 of a unit's work: 13.7 ms for
     nearly always another frame's: 10 hits of 386). Collecting from a list a lane an entry (46 looks took 10
     entries: its spans hold the delimiters).
 
-  The slowest piece is now another one (libtiff's `tif_ojpeg.c`, top tokens 7872..7984): 387 steps (from
+  The slowest piece is now another one (libtiff's `tif_getimage.c`, top tokens 7872..7984): 387 steps (from
   1,173) and 1.42 ms. Of that, 224 look aheads take 514 µs (2.3 µs each, one lookup's chain), 138 main steps
   take 433 µs (12 of them macros), and 243 collecting steps take 217 µs. The corpus's first round's run is 3.50
   ms (from 4.45). The look aheads' chain is measured next (below, "A step's cost").
@@ -261,3 +261,22 @@ a team is slower on the M3 (a group for each 4,096 of a unit's work: 13.7 ms for
   group's: 78, 259 and 389 ms a run on the GB10, 207, 730 and 1,083 ms on the M3 Max. P1's second iteration expands
   and evaluates it again, though nothing before it changed. On the mini, with every test running at once, macOS's
   display watchdog stops each of its runs; alone it passes.
+
+## Built: a SIMD group's exchanges through its memory (2026-11-22)
+
+On the CPU backend a SIMD-group operation (a shuffle, a ballot, a sum) is a pass through the group's 32 lanes, each
+a coroutine. So the group's readers cost a pass per word they exchanged. `a_line_past_its_room_runs_again_larger`
+took 4.8 s on a GB10's CPU, against its 1 s bound. Its `#if` line's window took a ballot and four shuffles a token,
+129 passes per 32 tokens. Every exchange of a word that only the thread needs is now a write to the group's memory,
+then one meeting (`ukl_sg_barrier`):
+
+- **The `#if` line's window** (`IfWin`, in `PpTg` beside `LpRun`). Lane 0 runs the evaluation. At each step it
+  writes where the window starts, the lanes write a slot each (a token's operator, value and flags, or not
+  plain), and lane 0 reads them. That is two meetings a step, and one evaluation, not one a lane.
+- **The thread's ask** (`LpRun::q`). The thread writes whether it asks and its query, and the lanes read it past one
+  meeting, against 8 shuffles. On the GB10 the shuffles were 36 µs of the names asks' 121 µs (above).
+- **The window's delimiters** (`LpRun::wc`). Each lane writes its tokens' `(`, `)` or `,`, and the thread makes the
+  three masks after one meeting, against 6 ballots.
+
+The test now takes 0.76 s alone on the GB10's CPU, and 0.81 s with the eval tier's others (37 of 37 within 1 s).
+Not run on a GPU: this branch runs the preprocessor on the CPU backend only.

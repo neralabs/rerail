@@ -2,6 +2,7 @@
 //! name, so each component, interface and helper name (`fl<h>_<head>`, from its content: `helper_name`) is fixed by
 //! the program; each round's program is a version of its own, split again to check the helpers stay file-local.
 
+use rerail_blocks::vector::Vector;
 use super::super::{FileLocal, close_under, push_equal_columns, var_equalities_in};
 use super::{BodyItem, Made, NOwned, Round, lit_vars, name, term_vars, write};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
@@ -263,7 +264,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
             }
             let body: Vec<LitRef<'v>> = rule.body().collect();
             let candidate = |l: LitRef<'_>| matches!(l.view(), L::Atom(a) if !a.neg() && !f.lattice(v.rel_name(a.rel())) && (base(v.rel_name(a.rel())) || local.contains(v.rel_name(a.rel()))));
-            let idx: Vec<usize> = (0..body.len()).filter(|&j| candidate(body[j])).collect();
+            let idx: Vector<usize> = (0..body.len()).filter(|&j| candidate(body[j])).collect();
             let equal: Vec<(String, String)> = var_equalities_in(v, rule).into_iter().map(|(a, b)| (name(v, rule, a), name(v, rule, b))).collect();
             let mut comps: Vec<(BTreeSet<usize>, BTreeSet<String>)> = Vec::new();
             for &j in &idx {
@@ -346,8 +347,13 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                         outside.extend(lit_vars(v, rule, body[j]));
                     }
                 }
+                // The literals in one order whatever the rule's (by their text), and the interface by first sight in
+                // it: two rules that push the same join with their literals written in another order (a recheck and
+                // its original, decision 0575) name one helper.
+                let mut in_order: Vec<usize> = lits.iter().copied().collect();
+                in_order.sort_by_cached_key(|&j| v.show_lit(rule, body[j]));
                 let mut iface: Vec<String> = Vec::new();
-                for &j in &lits {
+                for &j in &in_order {
                     for x in lit_vars(v, rule, body[j]) {
                         if outside.contains(&x) && !iface.contains(&x) {
                             iface.push(x);
@@ -411,7 +417,9 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 };
                 lits.retain(|&j| !reader_test(body[j]));
                 // Named by the join alone, not the rule's head: every rule that pushes the same join reads one helper.
-                let content = format!("({}) :- {}", iface.join(", "), lits.iter().map(|&j| v.show_lit(rule, body[j])).collect::<Vec<_>>().join(", "));
+                let mut shown: Vec<String> = lits.iter().map(|&j| v.show_lit(rule, body[j])).collect();
+                shown.sort();
+                let content = format!("({}) :- {}", iface.join(", "), shown.join(", "));
                 let helper = match by_content.get(&content) {
                     Some(h) => h.clone(),
                     None => {

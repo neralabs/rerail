@@ -82,10 +82,10 @@ pub fn unescape(body: &str) -> Result<String, String> {
                     chars.by_ref().take(4).collect()
                 };
                 let code = u32::from_str_radix(&hex, 16).map_err(|_| format!("bad \\u escape {hex:?}"))?;
-                // A JSON surrogate pair.
+                // A JSON surrogate pair: a high surrogate, then a low one (another escape is its own character).
                 if (0xD800..0xDC00).contains(&code) && chars.peek() == Some(&'\\') {
                     let rest: String = chars.clone().take(6).collect();
-                    if let Some(low) = rest.strip_prefix("\\u").and_then(|h| u32::from_str_radix(h, 16).ok()) {
+                    if let Some(low) = rest.strip_prefix("\\u").and_then(|h| u32::from_str_radix(h, 16).ok()).filter(|low| (0xDC00..0xE000).contains(low)) {
                         chars.by_ref().take(6).for_each(drop);
                         let joined = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
                         out.push(char::from_u32(joined).ok_or("bad surrogate pair")?);
@@ -259,22 +259,27 @@ pub fn lex(src: &str) -> Lexed<'_> {
     Lexed { toks: out, comments, error }
 }
 
+/// The terminators a rule file's lines end at: the rr language's (its adapter's `TERMINATORS`, decision 0612), so a
+/// parser's line is the line a finding in the file names.
+pub const TERMINATORS: rerail_tape_format::newlines::Terminators = rerail_tape_format::newlines::Terminators::Newlines;
+
+/// The line of byte `pos`, from 1.
 pub fn line_of(src: &str, pos: usize) -> usize {
-    src[..pos.min(src.len())].bytes().filter(|&b| b == b'\n').count() + 1
+    Lines::of(src).line(pos)
 }
 
-/// Where each line of a text starts, so a position's line is a binary search, not a count from the start: a parser
-/// asks the line of every statement, and a count from the start made a long file quadratic.
-pub struct Lines(Vec<usize>);
+/// A rule file's lines (decision 0612): its own line index, in the tape's format, read by the tape's reads, so a
+/// position's line is a search of the index, not a count from the start (which made a long file quadratic).
+pub struct Lines(rerail_tape_format::newlines::Lines);
 
 impl Lines {
     pub fn of(src: &str) -> Self {
-        Lines(src.bytes().enumerate().filter(|&(_, b)| b == b'\n').map(|(i, _)| i).collect())
+        Lines(rerail_tape_format::newlines::Lines::of(src.as_bytes(), TERMINATORS))
     }
 
-    /// The line of byte `pos`, from 1, as `line_of` gives it.
+    /// The line of byte `pos`, from 1.
     pub fn line(&self, pos: usize) -> usize {
-        self.0.partition_point(|&newline| newline < pos) + 1
+        self.0.line(pos) + 1
     }
 }
 
@@ -1621,5 +1626,22 @@ mod punct_tests {
                 assert_eq!(super::punct(c, d), scan, "{text:?}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod unescape_tests {
+    /// A high surrogate joins only a low one after it: before another escape (a character, or a second high
+    /// surrogate) it is a code point of its own, which a string cannot hold. Found by the edited corpus
+    /// (`lean_tape_is_the_engines_on_edited_files`): `"\uD800A"` took 0xDC00 from 0x41.
+    #[test]
+    fn a_surrogate_pairs_only_with_a_low_one() {
+        assert_eq!(super::unescape("\\uD83D\\uDE00"), Ok("\u{1F600}".to_owned()));
+        assert!(super::unescape("\\uD800\\u0041").is_err());
+        assert!(super::unescape("\\uD800\\uD800").is_err());
+        assert!(super::unescape("\\uD800\\uE000").is_err());
+        // A high surrogate before a character, or alone at the end.
+        assert!(super::unescape("\\uD83DA").is_err());
+        assert!(super::unescape("\\uD83D").is_err());
     }
 }

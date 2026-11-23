@@ -6,6 +6,7 @@
 //! measurement aids); this is its core, for a program run many times over growing inputs: the cone's rounds
 //! (decision 0145).
 
+use rerail_blocks::vector::Vector;
 use super::{Result, held_rows, lower, maintain, retain};
 use crate::code_rule_dsl::facts::vtab::{Modules, Source, syntax};
 use crate::code_rule_dsl::logic::native::component::{self, InRel};
@@ -257,7 +258,7 @@ pub(in crate::code_rule_dsl) fn run_with(
             Ok((rel.clone(), width, held))
         })
         .collect::<Result<Vec<_>>>()?;
-    let outputs: BTreeMap<String, (std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>, Vec<usize>)> = got.outputs.iter().map(|(rel, rows)| (rel.clone(), (std::sync::Arc::clone(rows), got.nodes[rel].clone()))).collect();
+    let outputs: BTreeMap<String, (std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>, Vector<usize>)> = got.outputs.iter().map(|(rel, rows)| (rel.clone(), (std::sync::Arc::clone(rows), got.nodes[rel].clone()))).collect();
     drop(s);
     let _s = span("retain");
     super::kept_statistics(lazies, &mut measured_kept);

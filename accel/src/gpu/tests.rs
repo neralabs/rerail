@@ -1,5 +1,6 @@
 //! The gpu lane against the reference ([`crate::cpu::run`]), exactly, on random inputs of many shapes.
 
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::exec::{Batch, Executor, Launch, process_cpu};
 use crate::kernel::Kernel;
@@ -20,7 +21,7 @@ impl Rng {
 
 fn bits(rng: &mut Rng, rows: usize, width: usize, density: u64) -> Bits {
     let words = width.div_ceil(64);
-    let mut data = vec![0u64; rows * words];
+    let mut data = rerail_blocks::vector![0u64; rows * words];
     for r in 0..rows {
         for c in 0..width {
             if rng.below(16) < density {
@@ -31,9 +32,9 @@ fn bits(rng: &mut Rng, rows: usize, width: usize, density: u64) -> Bits {
     Bits::new(rows, words, data)
 }
 
-fn parts(rng: &mut Rng, nparts: usize, max: u64, codes: u64) -> (Arc<[u32]>, Arc<[u16]>) {
-    let mut off = vec![0u32];
-    let mut col = Vec::new();
+fn parts(rng: &mut Rng, nparts: usize, max: u64, codes: u64) -> (Arc<rerail_blocks::vector::Vector<u32>>, Arc<rerail_blocks::vector::Vector<u16>>) {
+    let mut off = rerail_blocks::vector![0u32];
+    let mut col = rerail_blocks::vector::Vector::new();
     for _ in 0..nparts {
         for _ in 0..rng.below(max + 1) {
             col.push(rng.below(codes) as u16);
@@ -43,9 +44,9 @@ fn parts(rng: &mut Rng, nparts: usize, max: u64, codes: u64) -> (Arc<[u32]>, Arc
     (off.into(), col.into())
 }
 
-fn graph(rng: &mut Rng, n: usize, deg: u64) -> (Arc<[u32]>, Arc<[u32]>) {
-    let mut off = vec![0u32];
-    let mut dst = Vec::new();
+fn graph(rng: &mut Rng, n: usize, deg: u64) -> (Arc<rerail_blocks::vector::Vector<u32>>, Arc<rerail_blocks::vector::Vector<u32>>) {
+    let mut off = rerail_blocks::vector![0u32];
+    let mut dst = rerail_blocks::vector::Vector::new();
     for _ in 0..n {
         for _ in 0..rng.below(2 * deg + 1) {
             dst.push(rng.below(n as u64) as u32);
@@ -56,10 +57,10 @@ fn graph(rng: &mut Rng, n: usize, deg: u64) -> (Arc<[u32]>, Arc<[u32]>) {
 }
 
 /// A graph whose condensation has about `layers` levels: edges mostly to lower layers, some within a layer.
-fn layered(rng: &mut Rng, n: usize, deg: u64, layers: usize) -> (Arc<[u32]>, Arc<[u32]>) {
+fn layered(rng: &mut Rng, n: usize, deg: u64, layers: usize) -> (Arc<rerail_blocks::vector::Vector<u32>>, Arc<rerail_blocks::vector::Vector<u32>>) {
     let layer = |v: usize| v * layers / n;
-    let mut off = vec![0u32];
-    let mut dst = Vec::new();
+    let mut off = rerail_blocks::vector![0u32];
+    let mut dst = rerail_blocks::vector::Vector::new();
     for v in 0..n {
         let lo = (0..v).find(|&w| layer(w) == layer(v)).unwrap_or(v);
         for _ in 0..rng.below(2 * deg + 1) {
@@ -120,9 +121,9 @@ fn bit_product_counts_and_pairs() {
     for (n, m, width, da, db) in [(1, 1, 1, 8, 8), (37, 23, 200, 5, 3), (64, 64, 64, 4, 4), (65, 129, 513, 6, 2), (200, 7, 1000, 2, 9), (3, 300, 130, 8, 8), (10, 10, 0, 0, 0)] {
         let (a, b) = (bits(&mut rng, n, width, da), bits(&mut rng, m, width, db));
         ks.push(Kernel::BitProduct { a: a.clone(), b: b.clone(), min: None });
-        let min: Vec<u32> = (0..m).map(|_| rng.below(width as u64 / 8 + 2) as u32).collect();
+        let min: Vector<u32> = (0..m).map(|_| rng.below(width as u64 / 8 + 2) as u32).collect();
         ks.push(Kernel::BitProduct { a: a.clone(), b: b.clone(), min: Some(min.into()) });
-        ks.push(Kernel::BitProduct { a, b, min: Some(vec![1; m].into()) });
+        ks.push(Kernel::BitProduct { a, b, min: Some(rerail_blocks::vector![1; m].into()) });
     }
     let s = check(&ks);
     assert_eq!(s.command_buffers, 1);
@@ -153,7 +154,7 @@ fn histogram_counts() {
     }
     check(&ks);
     // A code at or above the width is an error, not a count.
-    let k = Kernel::Histogram { off: vec![0, 2].into(), codes: vec![1, 9].into(), width: 4 };
+    let k = Kernel::Histogram { off: rerail_blocks::vector![0, 2].into(), codes: rerail_blocks::vector![1, 9].into(), width: 4 };
     if let Some(g) = gpu() {
         assert!(g.submit(&[&k]).unwrap_err().contains("not below the width"));
     }
@@ -173,8 +174,8 @@ fn closure_is_the_reference() {
     }
     // A chain: one level per node.
     let n = 300u32;
-    ks.push(Kernel::Closure { n, off: (0..=n).map(|v| v.min(n - 1)).collect::<Vec<_>>().into(), dst: (1..n).collect::<Vec<_>>().into() });
-    ks.push(Kernel::Closure { n: 0, off: vec![0].into(), dst: Vec::<u32>::new().into() });
+    ks.push(Kernel::Closure { n, off: (0..=n).map(|v| v.min(n - 1)).collect::<rerail_blocks::vector::Vector<_>>().into(), dst: (1..n).collect::<rerail_blocks::vector::Vector<_>>().into() });
+    ks.push(Kernel::Closure { n: 0, off: rerail_blocks::vector![0].into(), dst: rerail_blocks::vector::Vector::<u32>::new().into() });
     check(&ks);
 }
 
@@ -185,8 +186,8 @@ fn pairs_past_the_first_buffer_are_rerun_exactly() {
     let (a, b) = (bits(&mut rng, 2100, 64, 4), bits(&mut rng, 2100, 64, 4));
     // One partition of 3,000 x 3,000 rows with one code: 9 M pairs.
     let ks = vec![
-        Kernel::BitProduct { a, b, min: Some(vec![0; 2100].into()) },
-        Kernel::CountTable { loff: vec![0, 3000].into(), left: vec![7; 3000].into(), roff: vec![0, 3000].into(), right: vec![7; 3000].into(), emit: true },
+        Kernel::BitProduct { a, b, min: Some(rerail_blocks::vector![0; 2100].into()) },
+        Kernel::CountTable { loff: rerail_blocks::vector![0, 3000].into(), left: rerail_blocks::vector![7; 3000].into(), roff: rerail_blocks::vector![0, 3000].into(), right: rerail_blocks::vector![7; 3000].into(), emit: true },
     ];
     let s = check(&ks);
     assert_eq!(s.command_buffers, 2);
@@ -202,7 +203,7 @@ fn a_mixed_batch_is_one_command_buffer_through_the_executor() {
     let ks = vec![
         Kernel::Histogram { off: off.clone(), codes: codes.clone(), width: 30 },
         Kernel::BitProduct { a: a.clone(), b: b.clone(), min: None },
-        Kernel::BitProduct { a: a.clone(), b: b.clone(), min: Some(vec![9; 70].into()) },
+        Kernel::BitProduct { a: a.clone(), b: b.clone(), min: Some(rerail_blocks::vector![9; 70].into()) },
         Kernel::CountTable { loff: loff.clone(), left: left.clone(), roff: off.clone(), right: codes.clone(), emit: false },
         Kernel::CountTable { loff, left, roff: off, right: codes, emit: true },
         Kernel::Closure { n: 400, off: goff, dst: gdst },
@@ -248,13 +249,13 @@ fn can_is_honest_about_shapes() {
     let mut rng = Rng(1);
     let (a, b) = (bits(&mut rng, 4, 64, 4), bits(&mut rng, 4, 128, 4));
     assert!(!g.can(&Kernel::BitProduct { a: a.clone(), b, min: None }), "different widths");
-    assert!(!g.can(&Kernel::BitProduct { a: a.clone(), b: a.clone(), min: Some(vec![1; 3].into()) }), "a threshold missing");
-    let k = Kernel::CountTable { loff: vec![0, 1].into(), left: vec![1].into(), roff: vec![0, 0, 1].into(), right: vec![1].into(), emit: false };
+    assert!(!g.can(&Kernel::BitProduct { a: a.clone(), b: a.clone(), min: Some(rerail_blocks::vector![1; 3].into()) }), "a threshold missing");
+    let k = Kernel::CountTable { loff: rerail_blocks::vector![0, 1].into(), left: rerail_blocks::vector![1].into(), roff: rerail_blocks::vector![0, 0, 1].into(), right: rerail_blocks::vector![1].into(), emit: false };
     assert!(!g.can(&k), "different partitions");
     // 70,000 x 70,000 pairs in one partition: more than u32 offsets.
-    let big = Kernel::CountTable { loff: vec![0, 70_000].into(), left: vec![0u16; 70_000].into(), roff: vec![0, 70_000].into(), right: vec![0u16; 70_000].into(), emit: true };
+    let big = Kernel::CountTable { loff: rerail_blocks::vector![0, 70_000].into(), left: rerail_blocks::vector![0u16; 70_000].into(), roff: rerail_blocks::vector![0, 70_000].into(), right: rerail_blocks::vector![0u16; 70_000].into(), emit: true };
     assert!(!g.can(&big));
-    assert!(!g.can(&Kernel::Closure { n: 3, off: vec![0, 0].into(), dst: Vec::<u32>::new().into() }));
+    assert!(!g.can(&Kernel::Closure { n: 3, off: rerail_blocks::vector![0, 0].into(), dst: rerail_blocks::vector::Vector::<u32>::new().into() }));
 }
 
 /// Spike-sized inputs (the shapes of `tools/matrix-offload` W1–W4), each alone and all in one submission: device
@@ -266,7 +267,7 @@ fn timing_on_spike_sized_inputs() {
     let mut rng = Rng(42);
     // W1: 13,088 documents' name bits against 444 rules, 12 words a row.
     let w1 = Kernel::BitProduct { a: bits(&mut rng, 13088, 768, 1), b: bits(&mut rng, 444, 768, 1), min: None };
-    let w1p = Kernel::BitProduct { a: bits(&mut rng, 13088, 768, 1), b: bits(&mut rng, 444, 768, 1), min: Some((0..444).map(|j| 3 + j % 5).collect::<Vec<u32>>().into()) };
+    let w1p = Kernel::BitProduct { a: bits(&mut rng, 13088, 768, 1), b: bits(&mut rng, 444, 768, 1), min: Some((0..444).map(|j| 3 + j % 5).collect::<Vector<u32>>().into()) };
     // W2: 13,088 documents, 5.8 M reads + bindings, local ids below 2,764.
     let (loff, left) = parts(&mut rng, 13088, 540, 2764);
     let (roff, right) = parts(&mut rng, 13088, 350, 2764);
@@ -280,7 +281,7 @@ fn timing_on_spike_sized_inputs() {
     let w3 = Kernel::Closure { n: 12000, off: coff, dst: cdst };
     let all = [w1.clone(), w1p.clone(), w2.clone(), w2e.clone(), w4.clone(), w3.clone()];
     check(&all);
-    let tiny = Kernel::Histogram { off: vec![0, 1].into(), codes: vec![0].into(), width: 1 };
+    let tiny = Kernel::Histogram { off: rerail_blocks::vector![0, 1].into(), codes: rerail_blocks::vector![0].into(), width: 1 };
     let time = |ks: &[&Kernel]| -> (f64, f64, f64, Stats) {
         // A warm-up, then the best of 7.
         let _ = g.run(ks).unwrap();
@@ -359,9 +360,9 @@ fn column_statistics_of_resident_columns_are_read_in_place() {
     // Two columns of one column-major buffer: a node-like key (a narrow span far from zero), and one whose span passes
     // 32 bits (made again, 64 bits wide).
     let n = 20_000;
-    let key: Vec<i64> = (0..n).map(|_| { let r = rng.below(1000); (3_288_784_809_065_000_000 + if r < 600 { rng.below(20) } else { rng.below(5_000) }) as i64 }).collect();
-    let wide: Vec<i64> = (0..n).map(|_| if rng.below(2) == 0 { -(1i64 << 40) + rng.below(30) as i64 } else { (1i64 << 40) + rng.below(30) as i64 }).collect();
-    let all: Vec<i64> = key.iter().chain(&wide).copied().collect();
+    let key: Vector<i64> = (0..n).map(|_| { let r = rng.below(1000); (3_288_784_809_065_000_000 + if r < 600 { rng.below(20) } else { rng.below(5_000) }) as i64 }).collect();
+    let wide: Vector<i64> = (0..n).map(|_| if rng.below(2) == 0 { -(1i64 << 40) + rng.below(30) as i64 } else { (1i64 << 40) + rng.below(30) as i64 }).collect();
+    let all: Vector<i64> = key.iter().chain(&wide).copied().collect();
     let held = join::Held::of(all.into_iter()).expect("the device");
     let cols = [join::StatCol::Device { buffer: &held.buffer, at: 0, rows: n, col: None }, join::StatCol::Device { buffer: &held.buffer, at: n, rows: n, col: None }];
     let got = join::column_stats_of(&cols, 16).expect("the device");
@@ -378,10 +379,10 @@ fn column_statistics_on_the_device_are_the_exact_counts() {
     use std::collections::HashMap;
     let mut rng = Rng(0x5eed_0209);
     // A skewed wide key (node-like ids), a narrow one, one value, and none.
-    let skewed: Vec<i64> = (0..30_000).map(|_| { let r = rng.below(1000); (3_288_784_809_065_000_000 + if r < 600 { rng.below(20) } else { rng.below(5_000) }) as i64 }).collect();
-    let narrow: Vec<i64> = (0..5_000).map(|_| rng.below(7) as i64 - 3).collect();
-    let one: Vec<i64> = vec![42; 300];
-    let none: Vec<i64> = Vec::new();
+    let skewed: Vector<i64> = (0..30_000).map(|_| { let r = rng.below(1000); (3_288_784_809_065_000_000 + if r < 600 { rng.below(20) } else { rng.below(5_000) }) as i64 }).collect();
+    let narrow: Vector<i64> = (0..5_000).map(|_| rng.below(7) as i64 - 3).collect();
+    let one: Vector<i64> = rerail_blocks::vector![42; 300];
+    let none: Vector<i64> = rerail_blocks::vector::Vector::new();
     let cols: Vec<&[i64]> = vec![&skewed, &narrow, &one, &none];
     let got = join::column_stats(&cols, 16).expect("the device");
     for (col, g) in cols.iter().zip(&got) {
@@ -390,7 +391,7 @@ fn column_statistics_on_the_device_are_the_exact_counts() {
         let sq: u64 = counts.values().map(|&n| n * n).sum();
         let cube: u64 = counts.values().map(|&n| n * n * n).sum();
         assert_eq!((g.rows, g.ndv, g.sq, g.cube), (col.len() as u64, counts.len() as u64, sq, cube));
-        let mut by: Vec<u64> = counts.values().copied().collect();
+        let mut by: Vector<u64> = counts.values().copied().collect();
         by.sort_unstable_by(|a, b| b.cmp(a));
         assert_eq!(g.top.iter().map(|t| t.1).collect::<Vec<_>>(), by.iter().take(16).copied().collect::<Vec<_>>());
         for (v, n) in &g.top { assert_eq!(counts.get(v), Some(n), "value {v}"); }
@@ -424,4 +425,130 @@ fn the_device_names_its_memory_domain() {
     assert_eq!(layer.device.domain(), 0, "Apple's unified memory is the host's");
     #[cfg(not(target_os = "macos"))]
     assert!(layer.device.domain() <= 1);
+}
+
+/// A level's seed joins as `setfix::level::prefetch` sends them (decision 0100 §10): many probes in one batch, their
+/// key columns staged and filled after the batch is begun, right sides kept by id across batches, some probes'
+/// pairs past the arena (many keys alike), batch after batch on pooled buffers a batch before used. Every pair is
+/// the host's, each left row inside its left side: the M3's 300-file run once walked a pair whose left row was past
+/// its side (31,379 of 5,735, setfix's paired walk, ab218).
+#[test]
+fn a_levels_staged_probes_are_the_hosts_joins_batch_after_batch() {
+    if !has_device() {
+        return;
+    }
+    // The GPU's lane alone, then every lane as the engine has them (the cores', the caller's own runs of a launch no
+    // lane took, each lane's claims), its launches taken in no order.
+    for (lanes, ex) in [("the gpu's", Executor::with(vec![backend().unwrap()])), ("every", Executor::new())] {
+        level_batches(&ex, 31, lanes);
+    }
+}
+
+/// The same from 4 threads at once through one executor, as a run's strata send their levels' batches while the
+/// lanes' workers and other strata's device waves submit: each its own pairs.
+#[test]
+fn concurrent_levels_staged_probes_are_the_hosts_joins() {
+    if !has_device() {
+        return;
+    }
+    let ex = Executor::new();
+    std::thread::scope(|sc| {
+        for t in 0..4u64 {
+            let ex = &ex;
+            sc.spawn(move || level_batches(ex, 100 + t, "every"));
+        }
+    });
+}
+
+/// `a_levels_staged_probes_...`'s batches through `ex`, from seed `seed`.
+fn level_batches(ex: &Executor, seed: u64, lanes: &str) {
+    let mut rng = Rng(seed);
+    // Kept right sides, reused by later batches under their ids.
+    let mut kept: Vec<(u64, Vec<i64>)> = Vec::new();
+    for batch in 0..60u64 {
+        let (gate, opener) = crate::col::Gate::new();
+        let mut launches = Vec::new();
+        let mut fills: Vec<(crate::col::Writer, Vec<i64>)> = Vec::new();
+        let mut sides: Vec<(Vec<i64>, Vec<i64>)> = Vec::new();
+        for j in 0..(1 + rng.below(12)) {
+            // Left rows from 1 to 40,000, right from 1 to 40,000; keys over a small or a wide range (many alike: pairs
+            // past two a left row, the arena's estimate).
+            let most = if rng.below(4) == 0 { 40_000 } else { 3_000 };
+            let nl = 1 + rng.below(most) as usize;
+            let range = if rng.below(3) == 0 { 1 + rng.below(20) } else { 1 + rng.below(50_000) };
+            let left: Vec<i64> = (0..nl).map(|_| rng.below(range) as i64).collect();
+            let (id, right) = if !kept.is_empty() && rng.below(3) == 0 {
+                let (id, r) = &kept[rng.below(kept.len() as u64) as usize];
+                (*id, r.clone())
+            } else {
+                let most = if rng.below(3) == 0 { 40_000 } else { 2_000 };
+                let nr = 1 + rng.below(most) as usize;
+                let r: Vec<i64> = (0..nr).map(|_| rng.below(range) as i64).collect();
+                // One id names one right side: unique across the threads, as a relation's uid is.
+                let id = seed << 32 | batch << 8 | j;
+                kept.push((id, r.clone()));
+                (id, r)
+            };
+            let (lcol, lw) = gate.column(left.len()).unwrap();
+            let (rcol, rw) = gate.column(right.len()).unwrap();
+            fills.push((lw, left.clone()));
+            fills.push((rw, right.clone()));
+            launches.push(Launch::new(Kernel::Join { left: vec![lcol].into(), right: vec![rcol].into(), right_id: Some(id), by: crate::kernel::JoinBy::Probe }));
+            sides.push((left, right));
+        }
+        let running = ex.begin_as("level joins (test)", Batch(launches)).unwrap();
+        // Filled after the batch is begun, as the level's are.
+        for (w, v) in &mut fills {
+            w.values().copy_from_slice(v);
+        }
+        drop(fills);
+        opener.open();
+        let each = running.each();
+        let mut order: Vec<usize> = (0..sides.len()).collect();
+        for k in (1..order.len()).rev() {
+            order.swap(k, rng.below(k as u64 + 1) as usize);
+        }
+        for i in order {
+            let (left, right) = &sides[i];
+            let got: Vec<(u32, u32)> = each.take(i).unwrap().pairs().expect("a join's pairs");
+            assert!(got.iter().all(|&(l, r)| (l as usize) < left.len() && (r as usize) < right.len()), "{lanes} lanes, batch {batch} join {i}: a pair past its sides ({} x {})", left.len(), right.len());
+            let side = |s: &[i64]| crate::col::Col::from(rerail_blocks::vector::Vector::from(s));
+            let want: Vec<(u32, u32)> = crate::cpu::join(&vec![side(left)].into(), &vec![side(right)].into(), None).iter().map(|&[l, r]| (l, r)).collect();
+            assert_eq!(got.len(), want.len(), "{lanes} lanes, batch {batch} join {i}: pairs");
+            assert!(got == want, "{lanes} lanes, batch {batch} join {i}: the host's pairs, in its order");
+        }
+    }
+}
+
+/// A submission begun on one of the lanes' pool threads is finished on any of them (`exec::Flight::end_on`), while
+/// another begun on that thread may run. Each encodes on its own scratch: the space gives a submission scratch no
+/// other in flight holds, and its slots are the same buffers on whichever thread encodes for it. On each thread's
+/// own two sets, alternated per thread, a submission begun on thread A and one begun on thread B both took set 1,
+/// and the first, finished on B, encoded its second pass (a tile join's sorts) on the second's.
+#[test]
+fn a_submissions_scratch_is_its_own_on_any_thread() {
+    if !has_device() {
+        return;
+    }
+    let mut space = super::space::Space::default();
+    let (x, y) = (space.free_scratch(), space.free_scratch());
+    assert!(!Arc::ptr_eq(&x, &y), "two in flight: each its own");
+    let slot = |s: Option<&Arc<join::Scratch>>| -> usize {
+        let get = || join::scratch(join::FREE, 4096).expect("a scratch buffer").contents() as usize;
+        match s {
+            Some(s) => join::on_scratch(s, get),
+            None => get(),
+        }
+    };
+    let on_a = slot(Some(&x));
+    let (on_b, y_on_b, own_b) = std::thread::scope(|sc| sc.spawn(|| (slot(Some(&x)), slot(Some(&y)), slot(None))).join().unwrap());
+    assert_eq!(on_a, on_b, "a submission's slot is one buffer on every thread");
+    assert_ne!(on_b, y_on_b, "another submission's is not");
+    assert_ne!(on_b, own_b, "nor the thread's own");
+    // Finished (its handle dropped), a submission's scratch is the next one's.
+    drop(y);
+    let z = space.free_scratch();
+    assert!(!Arc::ptr_eq(&x, &z), "x is in flight");
+    assert_eq!(slot(Some(&z)), y_on_b, "the scratch y used, given to z");
+    join::scratch_return();
 }

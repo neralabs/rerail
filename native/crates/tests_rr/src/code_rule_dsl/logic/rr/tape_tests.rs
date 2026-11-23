@@ -1,5 +1,6 @@
 //! `.rerail` tapes (decision 0061): the tree the parser builds, its errors, and its tape.
 
+use rerail_blocks::vector::Vector;
 use super::tape::{FIELD_NAMES, KIND_NAMES, Node};
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -353,7 +354,7 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
     assert_eq!(alone[2], ["ex"]);
     assert_eq!(alone[3], ["pr"]);
     // The three policies of the Python tree were one run; the rr policy its own.
-    let together: Vec<u64> = batch["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
+    let together: Vector<u64> = batch["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
     // Under `RERAIL_BATCH_PACK=off` each runs alone, and this fails.
     assert_eq!(together, [3, 1, 3, 3], "{batch:#}");
     // Each policy's metadata, as its run alone gives it, less the `.global library` settings the reader writes for
@@ -376,10 +377,9 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
 }
 
 /// A policy's findings are its run alone's whatever else shares its pack (RUF060 beside C417; main's #923). `anns`
-/// reads `list_like` from a string annotation, so hiding copies it for the annotation, and folding the copy widens
-/// `list_like` to take the annotations in (`combining::FoldOwn`). `cmps` reads it through `empty_literal` from the file:
-/// beside `anns` it found the annotation's `1 in []` as well, which it does not alone. Its `Cmp` shows `cmp`'s node,
-/// so it reads `cmp` as hiding left it (`rr_narrow_cmp`, `combining::Narrowing`, decision 0165).
+/// reads `list_like` in a string annotation, as a rule of the annotation context (decision 0597): its own instance,
+/// over the annotations' trees. `cmps` reads `list_like` through `empty_literal` from the file: when the pack folded
+/// the annotation's copy into `list_like`, beside `anns` it found the annotation's `1 in []` as well.
 #[test]
 fn a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("corun-annotations");
@@ -453,7 +453,7 @@ fn a_batchs_policies_of_several_dialects_run_as_one_pack_a_dialect() {
         .enumerate()
         .map(|(k, p)| crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(p), &dir, &dir.join(format!("alone{k}")), &serde_json::Value::Null).unwrap())
         .collect();
-    let together: Vec<u64> = batch["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
+    let together: Vector<u64> = batch["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
     // `calls`' findings in its own directory, every dialect's, as the CLI reports them (`tools::diagnostics`).
     let written: Vec<String> = crate::code_rule_dsl::tools::diagnostics(&dir.join("out/2")).unwrap_or_default().iter().map(|d| d.to_string()).collect();
     let _ = std::fs::remove_dir_all(&dir);
@@ -506,7 +506,7 @@ fn a_policy_that_reads_within_finds_in_a_pack_in_either_order_what_it_finds_alon
     assert_eq!(alone, [e("stop", "stop", 2), e("under", "y", 1), e("under", "y", 1), e("under", "z", 1)]);
     assert_eq!(found(&first), alone, "{first:#}");
     assert_eq!(found(&second), alone, "{second:#}");
-    let together = |report: &serde_json::Value| -> Vec<u64> { report["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect() };
+    let together = |report: &serde_json::Value| -> Vector<u64> { report["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect() };
     assert_eq!(together(&first), [2, 2], "one pack: {first:#}");
     assert_eq!(together(&second), [2, 2], "one pack: {second:#}");
 }
@@ -542,8 +542,8 @@ fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
     let batch = crate::code_rule_dsl::tools::run_policies(&paths, &dir, &dir.join("out"), &serde_json::Value::Null).unwrap();
     let alone = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&c408), &dir, &dir.join("alone"), &serde_json::Value::Null).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
-    let lines = |report: &serde_json::Value, policy: &str| -> Vec<u64> {
-        let mut lines: Vec<u64> = report["diagnostics"].as_array().unwrap().iter().filter(|d| d["policy"] == policy).map(|d| d["line"].as_u64().unwrap_or(0)).collect();
+    let lines = |report: &serde_json::Value, policy: &str| -> Vector<u64> {
+        let mut lines: Vector<u64> = report["diagnostics"].as_array().unwrap().iter().filter(|d| d["policy"] == policy).map(|d| d["line"].as_u64().unwrap_or(0)).collect();
         lines.sort_unstable();
         lines
     };
@@ -552,7 +552,7 @@ fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
     assert_eq!(lines(&batch, "ruff-c408-unnecessary-collection-call"), own, "{batch:#}");
     assert_eq!(lines(&batch, "t:c408-twin"), own, "{batch:#}");
     // C408 and its twin ask the same and run as one pack; the policy that includes `ruff-classes.rerail` runs alone.
-    let together: Vec<u64> = batch["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
+    let together: Vector<u64> = batch["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
     assert_eq!(together, [2, 1, 2], "{batch:#}");
 }
 
@@ -633,9 +633,9 @@ fn a_policy_refused_its_kept_inputs_runs_again_over_its_store() {
 #[test]
 fn statements_from_the_tape_are_the_parsers() {
     use super::clause::Reads;
-    use super::from_tape::{RrFile, S, Stmt};
+    use super::from_tape::{RrFile, S, Statements, Stmt};
     use super::syntax::{Item, Statement};
-    fn same(path: &Path, parsed: &[Statement], taped: &[Stmt]) {
+    fn same(path: &Path, parsed: &[Statement], taped: &Statements) {
         assert_eq!(parsed.len(), taped.len(), "{}", path.display());
         for ((item, line), st) in parsed.iter().zip(taped) {
             let at = format!("{}:{line}", path.display());
@@ -654,7 +654,7 @@ fn statements_from_the_tape_are_the_parsers() {
                 (Item::Test { items, .. } | Item::Fixtures { items, .. }, S::Test | S::Fixtures) => {
                     let (t, n) = st.tape();
                     let (_, _, _, body) = t.block(n).unwrap();
-                    same(path, items, &body.into_iter().map(|c| Stmt::at(st.file(), c)).collect::<Vec<_>>());
+                    same(path, items, &body.into_iter().map(|c| Stmt::at(st.file(), c)).collect::<Statements>());
                 }
                 (item, what) => panic!("{at}: parser {item:?}, tape {what:?}"),
             }
@@ -702,6 +702,6 @@ fn ruff_ruf013_finds_an_implicit_optional() {
     let pack = crate::source_tree::native().join("../docs/rule-syntax/packs/python/ruff-ruf013-implicit-optional.rerail");
     let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&pack), &dir, &dir.join("out"), &serde_json::Value::Null).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
-    let lines: Vec<u64> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["line"].as_u64().unwrap_or(0)).collect();
+    let lines: Vector<u64> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["line"].as_u64().unwrap_or(0)).collect();
     assert_eq!(lines, [3], "{report:#}");
 }

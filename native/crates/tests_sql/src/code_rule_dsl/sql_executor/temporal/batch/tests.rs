@@ -391,31 +391,21 @@ fn signed_feedback_child() {
             .unwrap()
             > 0
     );
+    // What is left written, as a run's end writes it (`costs::flush`): the writer holds its store for a whole write,
+    // so once this returns, a report its service thread took before is committed too. Waiting on that thread (10 s of
+    // wall time) failed under a loaded host's full suite: it runs behind the run, every second.
+    crate::code_rule_dsl::logic::costs::flush();
     let path = std::env::var_os("RERAIL_COSTS").unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        let count = rusqlite::Connection::open_with_flags(
-            &path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    let count = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(|db| {
+        db.query_row(
+            "SELECT count(*) FROM sql_plan_observations WHERE operation='apply_changes'
+             AND json_extract(report,'$.stages[0].strategy')='signed_wave_batch'
+             AND json_extract(report,'$.stages[0].gate_statistics[0].signed_rule_results')>0",
+            [],
+            |row| row.get::<_, i64>(0),
         )
-        .and_then(|db| {
-            db.query_row(
-                "SELECT count(*) FROM sql_plan_observations WHERE operation='apply_changes'
-                 AND json_extract(report,'$.stages[0].strategy')='signed_wave_batch'
-                 AND json_extract(report,'$.stages[0].gate_statistics[0].signed_rule_results')>0",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-        });
-        if matches!(count, Ok(1)) {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "signed gate feedback did not reach the cost store"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    });
+    assert!(matches!(count, Ok(1)), "signed gate feedback did not reach the cost store: {count:?}");
 }
 
 #[test]

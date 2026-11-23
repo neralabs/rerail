@@ -11,6 +11,7 @@ const HEADERS: &[(&str, &str)] = &[
     ("mldb/builtin/cuda/ukl/ukl_cuda_shim.h", include_str!("../mldb/builtin/cuda/ukl/ukl_cuda_shim.h")),
     ("mldb/builtin/cpu/ukl/ukl_cpu_shim.h", include_str!("../mldb/builtin/cpu/ukl/ukl_cpu_shim.h")),
     ("mldb/builtin/opencl/ukl/ukl_opencl_shim.h", include_str!("../mldb/builtin/opencl/ukl/ukl_opencl_shim.h")),
+    ("mldb/builtin/vec/ukl/ukl_vec_shim.h", include_str!("../mldb/builtin/vec/ukl/ukl_vec_shim.h")),
 ];
 
 /// The library's headers, by the name a kernel includes them by (`#include <ukl/memory.h>`), each after the ones it
@@ -41,10 +42,9 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/grid.h", include_str!("../lib/ukl/grid.h")),
     ("ukl/clif.h", include_str!("../lib/ukl/clif.h")),
     // The tape's reads for the kernels, written by hand (decisions 0524, 0576): each format's reads, the reads made of
-    // them (included once a format) and the public reads, which `tape.h` (formats 15 and 16) and `tape_z.h` (16z too)
+    // them (included once a format) and the public reads, which `tape.h` (format 16) and `tape_z.h` (16z too)
     // include.
     ("ukl/reads/tape_common.h", include_str!("../lib/ukl/reads/tape_common.h")),
-    ("ukl/reads/tape_f15.h", include_str!("../lib/ukl/reads/tape_f15.h")),
     ("ukl/reads/tape_f16.h", include_str!("../lib/ukl/reads/tape_f16.h")),
     ("ukl/reads/tape_f16z.h", include_str!("../lib/ukl/reads/tape_f16z.h")),
     ("ukl/reads/tape.h", include_str!("../lib/ukl/reads/tape.h")),
@@ -53,6 +53,7 @@ pub const LIBRARY: &[(&str, &str)] = &[
     // so that every kernel finds them as it finds the rest of the library (`rerail-clif`'s tests write them again).
     ("ukl/reads/relation.h", include_str!("../lib/ukl/reads/relation.h")),
     ("ukl/reads/ids.h", include_str!("../lib/ukl/reads/ids.h")),
+    ("ukl/reads/lines.h", include_str!("../lib/ukl/reads/lines.h")),
     ("ukl/reads/view.h", include_str!("../lib/ukl/reads/view.h")),
     ("ukl/body/view_reads.h", include_str!("../lib/ukl/body/view_reads.h")),
     // The tape's writer's ops for the kernels, written by hand (decisions 0434 §6, 0524).

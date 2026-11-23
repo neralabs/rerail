@@ -1,4 +1,5 @@
 //! One retained bag summary for compatible count/sum/min/max lookups.
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::{analysis::scalars, sql::properties};
 pub mod phase;
@@ -9,7 +10,7 @@ pub struct Shared {
     pub owner: bool,
     pub joined: bool,
     pub layout: scalars::Layout,
-    pub members: Vec<usize>,
+    pub members: Vector<usize>,
 }
 
 pub fn plan(
@@ -104,7 +105,7 @@ pub fn share(
     r: &mut Reducer, groups: &str, values: &str, projection: &Query,
     layout: &scalars::Layout, members: &[usize], owner: bool, joined: bool, consumers: usize,
 ) {
-    r.combined = Some(Shared { owner, joined, layout: layout.clone(), members: members.to_vec() });
+    r.combined = Some(Shared { owner, joined, layout: layout.clone(), members: Vector::from(members) });
     r.groups = groups.into(); r.values = values.into(); r.projection = projection.clone();
     r.pool_consumers = consumers;
 }

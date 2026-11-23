@@ -30,7 +30,7 @@ impl Kept for ContentStore {
         self.atom_value(atom).ok().flatten()
     }
 
-    fn intern(&self, texts: &[&str]) -> Option<Vec<u32>> {
+    fn intern(&self, texts: &[&str]) -> Option<rerail_blocks::vector::Vector<u32>> {
         self.intern_atoms(texts).ok()
     }
 

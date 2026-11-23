@@ -1131,6 +1131,86 @@ pub fn process_cpu() -> f64 {
     }
 }
 
+/// Each nameless system thread's dispatch queue, by its port, as it was last seen serving one (`note_dispatch_labels`):
+/// a worker's CPU is spent while it serves a queue, and at the report it may serve none.
+#[cfg(target_os = "macos")]
+static QUEUE_LABELS: LazyLock<Mutex<HashMap<u32, String>>> = LazyLock::new(Default::default);
+
+/// Notes the queue each nameless thread serves now (macOS; the memory sampler calls it as it samples), so the CPU by
+/// thread names it by that queue.
+pub(super) fn note_dispatch_labels() {
+    #[cfg(target_os = "macos")]
+    {
+        let seen: Vec<(u32, String)> = live_threads().into_iter().filter_map(|(port, name)| Some((port, name.strip_prefix("dispatch: ")?.to_owned()))).collect();
+        let mut labels = QUEUE_LABELS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        labels.extend(seen);
+    }
+}
+
+/// The label of the dispatch queue thread `port` serves now, if it serves one with a label (macOS).
+#[cfg(target_os = "macos")]
+fn dispatch_label(port: libc::mach_port_t) -> Option<String> {
+    unsafe extern "C" {
+        fn dispatch_queue_get_label(queue: *const libc::c_void) -> *const libc::c_char;
+    }
+    let mut info: libc::thread_identifier_info = unsafe { std::mem::zeroed() };
+    let mut count = libc::THREAD_IDENTIFIER_INFO_COUNT;
+    // SAFETY: a thread of this task, its identifier info into a struct of the size given.
+    if unsafe { libc::thread_info(port, libc::THREAD_IDENTIFIER_INFO as libc::thread_flavor_t, (&raw mut info).cast(), &mut count) } != 0 || info.dispatch_qaddr == 0 {
+        return None;
+    }
+    // Another thread's memory is read by the kernel, which gives an error where a load would fault: the thread's slot
+    // of its current queue is unmapped with it when it ends (a port's right keeps the port, not the thread's memory),
+    // and a queue it served may be released and its memory reused by the time it is read. So the slot, the queue's
+    // head and the label are each copied, and the label is read from the queue's copy.
+    let mut slot = [0u64; 1];
+    if !read_own(info.dispatch_qaddr, &mut slot) || slot[0] == 0 {
+        return None;
+    }
+    // The queue's head, which holds its label's pointer (`dispatch_queue_get_label` reads that field alone).
+    let mut head = [0u64; 32];
+    if !read_own(slot[0], &mut head) {
+        return None;
+    }
+    // SAFETY: a copy of a queue's head, of which the call reads the label's field.
+    let label = unsafe { dispatch_queue_get_label(head.as_ptr().cast()) } as u64;
+    if label == 0 {
+        return None;
+    }
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut at = label;
+    while bytes.len() < 256 {
+        // Up to the end of the page, which a read never crosses: the next page may be unmapped.
+        let mut chunk = [0u8; 64];
+        let n = (chunk.len() as u64).min(4096 - at % 4096) as usize;
+        if !read_own(at, &mut chunk[..n]) {
+            return None;
+        }
+        match chunk[..n].iter().position(|&b| b == 0) {
+            Some(end) => {
+                bytes.extend_from_slice(&chunk[..end]);
+                return (!bytes.is_empty()).then(|| String::from_utf8_lossy(&bytes).into_owned());
+            }
+            None => bytes.extend_from_slice(&chunk[..n]),
+        }
+        at += n as u64;
+    }
+    None
+}
+
+/// Copies this task's memory at `at` into `out`, by the kernel: false where it is not mapped (macOS).
+#[cfg(target_os = "macos")]
+fn read_own<T: Copy>(at: u64, out: &mut [T]) -> bool {
+    unsafe extern "C" {
+        static mach_task_self_: libc::mach_port_t;
+        fn mach_vm_read_overwrite(task: libc::mach_port_t, address: u64, size: u64, data: u64, out_size: *mut u64) -> libc::kern_return_t;
+    }
+    let size = std::mem::size_of_val(out) as u64;
+    let mut got = 0u64;
+    // SAFETY: the kernel writes at most `size` bytes into `out`, which holds them; plain values of any bytes.
+    unsafe { mach_vm_read_overwrite(mach_task_self_, at, size, out.as_mut_ptr() as u64, &mut got) == 0 && got == size }
+}
+
 /// The live threads' Mach ports (macOS) or thread ids (Linux, Windows), and names; none elsewhere.
 fn live_threads() -> Vec<(u32, String)> {
     #[cfg(target_os = "macos")]
@@ -1158,6 +1238,14 @@ fn live_threads() -> Vec<(u32, String)> {
                     String::new()
                 } else {
                     unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }.to_string_lossy().into_owned()
+                };
+                // A thread the system made with no name (a libdispatch worker: Metal's completion handlers, the
+                // driver's) is named by the queue it serves (2 threads, 0.54 s "unnamed" in the M3's 300-file run).
+                // A worker serving no queue now is named by the one it was seen serving (`note_dispatch_labels`).
+                let name = if name.is_empty() {
+                    dispatch_label(port).or_else(|| QUEUE_LABELS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&port).cloned()).map(|l| format!("dispatch: {l}")).unwrap_or_default()
+                } else {
+                    name
                 };
                 (port, if name.is_empty() { "unnamed".to_owned() } else { name })
             })
@@ -1565,7 +1653,7 @@ const INSIDE: u8 = 2;
 #[derive(Clone, Copy, Default)]
 struct Stage(u8);
 
-pub use rerail_context::{AnyArc, Cores, is_main_thread, cores_scope, cores_spawn, cores_spawn_fifo, cores_threads, on_cores, Bound, Caller, Machine, bind, bind_here, bound, caller, holds, job_run, with_bound, RUN, RunOwn, RunValues, Shared, default_shared, engine_thread, enter, left_run, run_ended, local, local_if_any, machine, misses, run_own, setting, shared, shared_here, shared_object, starter_object, with_local, with_shared, within};
+pub use rerail_context::{var, var_os, vars, Switches, AnyArc, Cores, is_main_thread, cores_scope, cores_spawn, cores_spawn_fifo, cores_threads, on_cores, Bound, Caller, Machine, bind, bind_here, bound, caller, holds, job_run, with_bound, RUN, RunOwn, RunValues, Shared, default_shared, engine_thread, enter, left_run, run_ended, local, local_if_any, machine, misses, run_own, setting, shared, shared_here, shared_object, starter_object, with_local, with_shared, within};
 
 /// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
 /// waves, until the guard drops.
@@ -2827,6 +2915,31 @@ pub fn projection_plan_of(users: impl FnOnce() -> std::collections::BTreeMap<Str
 pub mod tests {
     use super::*;
 
+    /// A thread serving a dispatch queue is named by the queue's label (`dispatch_label`): the system's threads that
+    /// have no name of their own (Metal's completion handlers) were "unnamed" in the CPU by thread.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_thread_serving_a_dispatch_queue_is_named_by_its_label() {
+        unsafe extern "C" {
+            fn dispatch_queue_create(label: *const libc::c_char, attr: *const libc::c_void) -> *mut libc::c_void;
+            fn dispatch_sync_f(queue: *mut libc::c_void, context: *mut libc::c_void, work: extern "C" fn(*mut libc::c_void));
+            fn dispatch_release(object: *mut libc::c_void);
+            fn mach_thread_self() -> libc::mach_port_t;
+        }
+        extern "C" fn work(out: *mut libc::c_void) {
+            // SAFETY: the `Option<String>` the caller passed, which outlives the synchronous call.
+            let out = unsafe { &mut *out.cast::<Option<String>>() };
+            *out = dispatch_label(unsafe { mach_thread_self() });
+        }
+        let queue = unsafe { dispatch_queue_create(c"rerail.test.profile-label".as_ptr(), std::ptr::null()) };
+        let mut seen: Option<String> = None;
+        // A synchronous call on a serial queue runs on this thread, the queue its current one.
+        unsafe { dispatch_sync_f(queue, (&raw mut seen).cast(), work) };
+        unsafe { dispatch_release(queue) };
+        assert_eq!(seen.as_deref(), Some("rerail.test.profile-label"));
+        assert_eq!(dispatch_label(unsafe { mach_thread_self() }), None, "a thread serving no queue has no label");
+    }
+
     /// Each stratum's CPU in the executors' report is its spans' (`stratum <key>`, alone or the last part of a path),
     /// a key of several relations (`a/b`) among them, and no other span's.
     #[test]
@@ -3120,6 +3233,22 @@ pub struct Report {
     pub stages: u32,
     pub submissions: u32,
     pub dispatches: u32,
+    /// Of the dispatches, programs launched again (decision 0603 point 5): a budget's, where a launch spent its
+    /// budget with items left, and an arena's, where a size script parked and the arena's pages were mapped for it;
+    /// the programs' items taken over all their launches; and a launch's budget of items, the least of theirs.
+    pub relaunches: u32,
+    pub remaps: u32,
+    /// Of the remaps, a gate's rooms' (a recursive component's rows mapped as its rounds reach them).
+    pub room_remaps: u32,
+    /// Of those, the ones that grew a lattice head's key map.
+    pub maps_grown: u32,
+    /// Of the dispatches, views expanded into a device relation in the program's own pass (copy 0353 step 4,
+    /// `expand_view`): encoded before the program, they are no launch of its own, and go with the copy.
+    pub expanded: u32,
+    pub taken: u64,
+    pub launch_items: u64,
+    /// Its programs: one a stratum (a wave's first stratum's report, its wave's).
+    pub programs: u32,
     /// Runs again from an overflowing stage.
     pub reruns: u32,
     /// Times it waited for the device's memory before it encoded (`gpu::shared::admit`, Q203), and the seconds.

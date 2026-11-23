@@ -115,7 +115,7 @@ pub struct Inventory {
     pub selection: String,
     /// The memo plans the runs that made it recorded manifests of, under `manifest_root`: a run that reuses it owns
     /// them again for its scope (`own_recorded_manifests`), as it would by running them.
-    pub plans: Vec<[u8; 32]>,
+    pub plans: rerail_blocks::vector::Vector<[u8; 32]>,
     pub manifest_root: String,
 }
 

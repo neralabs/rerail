@@ -28,6 +28,7 @@
 //! Text is a reader: [`lines`] and [`text`] give a relation's rows as the lines its `.csv` file held, sorted; [`to_csv`]
 //! writes the files for scripts that read them.
 
+use rerail_blocks::vector::Vector;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -116,9 +117,9 @@ pub struct Builder {
     flags: u64,
     overlay: bool,
     strings: Vec<u8>,
-    ends: Vec<u32>,
+    ends: Vector<u32>,
     ids: HashMap<String, u32>,
-    rels: Vec<(u32, Vec<u8>, usize, Vec<i64>, u64)>,
+    rels: Vec<(u32, Vec<u8>, usize, Vector<i64>, u64)>,
     docs: std::collections::BTreeMap<i64, (u64, u64)>,
     places: std::collections::BTreeMap<i64, (u64, i64)>,
 }
@@ -126,7 +127,7 @@ pub struct Builder {
 impl Builder {
     /// A base image (`overlay`: false) or an overlay, its nodes shown as `flags` says.
     pub fn new(flags: u64, overlay: bool) -> Self {
-        Builder { flags, overlay, strings: Vec::new(), ends: Vec::new(), ids: HashMap::new(), rels: Vec::new(), docs: Default::default(), places: Default::default() }
+        Builder { flags, overlay, strings: Vec::new(), ends: rerail_blocks::vector::Vector::new(), ids: HashMap::new(), rels: Vec::new(), docs: Default::default(), places: Default::default() }
     }
     /// The index of the string `s`, held once.
     pub fn text(&mut self, s: &str) -> u32 {
@@ -150,20 +151,20 @@ impl Builder {
         self.places.insert(value, (s, line));
     }
     /// A relation of `types` from its rows, flat (text columns as string indexes): sorted, each row once.
-    pub fn rows(&mut self, name: &str, types: &[u8], rows: Vec<i64>) {
+    pub fn rows(&mut self, name: &str, types: &[u8], rows: Vector<i64>) {
         self.entry(name, types, rows, kind::WHOLE);
     }
     /// An entry of `kind` from its rows, flat: sorted, each row once.
-    fn entry(&mut self, name: &str, types: &[u8], mut rows: Vec<i64>, kind: u64) {
+    fn entry(&mut self, name: &str, types: &[u8], mut rows: Vector<i64>, kind: u64) {
         let name = self.text(name);
         let k = types.len();
         if let Some(count) = rows.len().checked_div(k) {
-            let mut order: Vec<usize> = (0..count).collect();
+            let mut order: Vector<usize> = (0..count).collect();
             order.sort_unstable_by(|&a, &b| rows[a * k..a * k + k].cmp(&rows[b * k..b * k + k]));
             order.dedup_by(|a, b| rows[*a * k..*a * k + k] == rows[*b * k..*b * k + k]);
             let n = order.len();
             // Column-major: each column's values, in the rows' order.
-            let mut cols = vec![0i64; n * k];
+            let mut cols = rerail_blocks::vector![0i64; n * k];
             for (i, &r) in order.iter().enumerate() {
                 for c in 0..k {
                     cols[c * n + i] = rows[r * k + c];
@@ -172,20 +173,20 @@ impl Builder {
             rows = cols;
             self.rels.push((name, types.to_vec(), n, rows, kind));
         } else {
-            self.rels.push((name, Vec::new(), usize::from(!rows.is_empty()), Vec::new(), kind));
+            self.rels.push((name, Vec::new(), usize::from(!rows.is_empty()), rerail_blocks::vector::Vector::new(), kind));
         }
     }
     /// A relation of `types` from its rows, flat, in the order and number given (a memo entry's, decision 0240 §4:
     /// replayed as it was made). Readers of the run's outputs ask for `rows`, which sorts them.
-    pub fn rows_as_is(&mut self, name: &str, types: &[u8], rows: Vec<i64>) {
+    pub fn rows_as_is(&mut self, name: &str, types: &[u8], rows: Vector<i64>) {
         let name = self.text(name);
         let k = types.len();
         if k == 0 {
-            self.rels.push((name, Vec::new(), 0, Vec::new(), kind::WHOLE));
+            self.rels.push((name, Vec::new(), 0, rerail_blocks::vector::Vector::new(), kind::WHOLE));
             return;
         }
         let n = rows.len() / k;
-        let mut cols = vec![0i64; n * k];
+        let mut cols = rerail_blocks::vector![0i64; n * k];
         for (i, row) in rows.chunks_exact(k).enumerate() {
             for (c, &v) in row.iter().enumerate() {
                 cols[c * n + i] = v;
@@ -213,10 +214,10 @@ impl Builder {
             .collect();
         if width == 0 {
             let any = parts.iter().any(|p| !p.is_empty());
-            self.rows(name, &[], if any { vec![0] } else { Vec::new() });
+            self.rows(name, &[], if any { rerail_blocks::vector![0] } else { rerail_blocks::vector::Vector::new() });
             return;
         }
-        let mut rows = Vec::with_capacity(parts.iter().map(|p| p.len()).sum::<usize>() * width);
+        let mut rows = rerail_blocks::vector::Vector::with_capacity(parts.iter().map(|p| p.len()).sum::<usize>() * width);
         // Per part, its texts' indexes here: each text held once in the image.
         for p in parts.iter().filter(|p| !p.is_empty()) {
             let mut here: Vec<Option<i64>> = vec![None; p.texts.len()];
@@ -258,16 +259,16 @@ impl Builder {
     }
     /// The hashes of rows gone from relation `name` (`Rel::hash`).
     pub fn gone(&mut self, name: &str, hashes: &[u128]) {
-        let rows: Vec<i64> = hashes.iter().flat_map(|&h| [h as u64 as i64, (h >> 64) as u64 as i64]).collect();
+        let rows: Vector<i64> = hashes.iter().flat_map(|&h| [h as u64 as i64, (h >> 64) as u64 as i64]).collect();
         self.entry(name, &[col::INT, col::INT], rows, kind::GONE);
     }
     /// Rows of other images' relations (all of one, or those `kept`), flat, their strings, documents and places held
     /// again here.
-    fn copied<'a>(&mut self, parts: impl Iterator<Item = (Rel<'a>, Option<&'a [usize]>)>) -> Vec<i64> {
-        let mut rows = Vec::new();
+    fn copied<'a>(&mut self, parts: impl Iterator<Item = (Rel<'a>, Option<&'a [usize]>)>) -> Vector<i64> {
+        let mut rows = rerail_blocks::vector::Vector::new();
         for (rel, kept) in parts {
             let types = rel.types();
-            let all: Vec<usize>;
+            let all: Vector<usize>;
             let kept = match kept {
                 Some(k) => k,
                 None => {
@@ -362,7 +363,7 @@ pub enum Cell<'a> {
 #[derive(Clone, Debug, Default)]
 pub struct Rows {
     types: Vec<u8>,
-    vals: Vec<i64>,
+    vals: Vector<i64>,
     texts: Vec<Box<str>>,
     ids: HashMap<Box<str>, u32>,
     /// Rows of no columns.
@@ -420,7 +421,7 @@ impl Rows {
     }
     /// The rows of their parts as `texts` and `row` give them (a memo entry's): columns typed `types`, `count` rows
     /// of values flat, a text column's each an index of `texts`.
-    pub fn of_parts(types: Vec<u8>, vals: Vec<i64>, texts: Vec<String>, count: usize) -> Result<Rows, String> {
+    pub fn of_parts(types: Vec<u8>, vals: Vector<i64>, texts: Vec<String>, count: usize) -> Result<Rows, String> {
         let k = types.len();
         if (k == 0 && !vals.is_empty()) || (k > 0 && vals.len() != k * count) {
             return Err(format!("{} values, not {count} rows of {k}", vals.len()));
@@ -577,7 +578,7 @@ impl<'a> Rel<'a> {
         &self.image.i64s(R::Cols)[at..at + self.rows]
     }
     /// Row `i`'s values.
-    pub fn row(&self, i: usize) -> Vec<i64> {
+    pub fn row(&self, i: usize) -> Vector<i64> {
         (0..self.width).map(|c| self.col(c)[i]).collect()
     }
     /// Row `i`'s value in column `c`.
@@ -609,7 +610,7 @@ impl<'a> Rel<'a> {
         if self.width == 0 {
             return vec![0; self.rows];
         }
-        let mut seen = Seen { texts: vec![0; self.image.u32s(R::Ends).len()], docs: HashMap::new() };
+        let mut seen = Seen { texts: rerail_blocks::vector![0; self.image.u32s(R::Ends).len()], docs: HashMap::new() };
         (0..self.rows)
             .map(|i| {
                 let mut h = Hash::new(self.width as u64);
@@ -1180,7 +1181,7 @@ impl std::fmt::Debug for Row<'_> {
 /// A relation as a stack reads it: from the last image that holds it whole, through each later image's rows gone and
 /// added. Its parts are entries of the images, each with the rows of it that stand (all, where none went).
 pub struct View<'a> {
-    pub parts: Vec<(Rel<'a>, Option<Vec<usize>>)>,
+    pub parts: Vec<(Rel<'a>, Option<rerail_blocks::vector::Vector<usize>>)>,
 }
 
 impl<'a> View<'a> {
@@ -1199,7 +1200,7 @@ impl<'a> View<'a> {
     }
     /// Its rows' count (a row in two parts counted twice; lines are each once).
     pub fn len(&self) -> usize {
-        self.parts.iter().map(|(r, k)| k.as_ref().map_or(r.rows, Vec::len)).sum()
+        self.parts.iter().map(|(r, k)| k.as_ref().map_or(r.rows, |v| v.len())).sum()
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -1226,13 +1227,13 @@ impl<'a> View<'a> {
 /// A stack's relation `name` as it reads it (`View`), if an image holds it whole.
 pub fn find<'a>(stack: &'a [Image], name: &str) -> Option<View<'a>> {
     let at = stack.iter().rposition(|i| i.rel(name).is_some())?;
-    let mut parts: Vec<(Rel<'a>, Option<Vec<usize>>)> = vec![(stack[at].rel(name).expect("found"), None)];
+    let mut parts: Vec<(Rel<'a>, Option<rerail_blocks::vector::Vector<usize>>)> = vec![(stack[at].rel(name).expect("found"), None)];
     for image in &stack[at + 1..] {
         if let Some(gone) = image.entry(name, kind::GONE).filter(|g| g.rows > 0) {
             let gone: std::collections::HashSet<u128> = (0..gone.rows).map(|i| (gone.col(0)[i] as u64 as u128) | ((gone.col(1)[i] as u64 as u128) << 64)).collect();
             for (r, kept) in &mut parts {
                 let each = r.each_hash();
-                let k: Vec<usize> = match kept.take() {
+                let k: Vector<usize> = match kept.take() {
                     Some(k) => k,
                     None => (0..r.rows).collect(),
                 };
@@ -1249,7 +1250,7 @@ pub fn find<'a>(stack: &'a [Image], name: &str) -> Option<View<'a>> {
 /// The 64-bit hashes of the texts and documents an image's rows name, each made once (0: not yet).
 #[derive(Default)]
 struct Seen {
-    texts: Vec<u64>,
+    texts: Vector<u64>,
     docs: HashMap<i64, u64>,
 }
 

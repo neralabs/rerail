@@ -45,7 +45,8 @@ pub struct ViewDoc {
     pub ends: u32,
     pub source_len: u32,
     /// A guest's placement in its host (`Placement`): 0 none (a file's own tree), `PLACED_COPIED` (host byte = guest
-    /// byte + `delta`, clamped to `within`), `PLACED_AT` (every span at `within`).
+    /// byte + `delta`, clamped to `within`), `PLACED_AT` (every span at `within`), `PLACED_TABLE` (each position's
+    /// host span in `placed`).
     pub placement: u32,
     /// The key of the file the document is part of (decision 0431 §4): its own, or a program's file's. Its
     /// `docof`; its ids keep `key`.
@@ -53,12 +54,25 @@ pub struct ViewDoc {
     pub delta: i64,
     pub within_lo: u32,
     pub within_hi: u32,
+    /// `PLACED_TABLE`'s: by local id (a node, then each position past them), the host span `start << 32 | end` the
+    /// guest's placement gives its span (`Placement::host`; u64s). A placement no word maps (an embedder's segments,
+    /// a string's normalized pieces): its spans placed once, as the host places them.
+    pub placed: Run,
+    /// The tape's rows' derived columns (`tape_rows`), each made on a program's first read of its relation, empty
+    /// before: each row's gap's atom of `structural_before` and `structural_after` (u32s, by row); `rr_token_named`'s
+    /// parent and place among its parent's tape children (`[u32; 2]`s, by row); each node's place in `visit_index`'s
+    /// order and its `tree_digest` atom (u32s, by local id).
+    pub gaps: [Run; 2],
+    pub named: Run,
+    pub visits: Run,
+    pub digests: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 5 + 16 + 24 + 16 * 5);
 
 /// `ViewDoc::placement`'s kinds.
 pub const PLACED_COPIED: u32 = 1;
 pub const PLACED_AT: u32 = 2;
+pub const PLACED_TABLE: u32 = 3;
 
 /// A document of a batch, as an executor finds its views' rows (decision 0353 step 4d, and step 3 on the CPU): its
 /// entry's offset in the batch's block, its tape's and its lines' places (a home of the directory's, `ViewHome`, and
@@ -200,6 +214,7 @@ pub mod at {
     pub const DELTA: i32 = offset_of!(ViewDoc, delta) as i32;
     pub const WITHIN_LO: i32 = offset_of!(ViewDoc, within_lo) as i32;
     pub const WITHIN_HI: i32 = offset_of!(ViewDoc, within_hi) as i32;
+    pub const PLACED: i32 = offset_of!(ViewDoc, placed) as i32;
 }
 
 /// The `node` view's columns (`Viewed::columns`): the document, the node's id, its kind, start and end.
@@ -222,7 +237,7 @@ pub const ORDER_COLUMNS: u32 = 2;
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 17] = [
+    let fields: [(&str, &str, usize); 22] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -240,6 +255,11 @@ pub fn ukl() -> String {
         ("int64_t", "delta", offset_of!(ViewDoc, delta)),
         ("uint32_t", "within_lo", offset_of!(ViewDoc, within_lo)),
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
+        ("Run", "placed", offset_of!(ViewDoc, placed)),
+        ("Run", "gaps[2]", offset_of!(ViewDoc, gaps)),
+        ("Run", "named", offset_of!(ViewDoc, named)),
+        ("Run", "visits", offset_of!(ViewDoc, visits)),
+        ("Run", "digests", offset_of!(ViewDoc, digests)),
     ];
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
@@ -269,6 +289,8 @@ pub fn ukl() -> String {
     s += "} ViewDoc;\n";
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDoc) == {}, \"ViewDoc: size\");\n", std::mem::size_of::<ViewDoc>());
     for (_, name, at) in fields.iter() {
+        // An array's offset is its first element's: its name without the length.
+        let name = name.split('[').next().unwrap_or(name);
         s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, {name}) == {at}, \"ViewDoc.{name}\");\n");
     }
     s
@@ -420,28 +442,6 @@ pub fn core(b: &mut B<'_, '_>) -> Value {
     })
 }
 
-/// `lines_line(at)`: the lines starting at or before byte `at` (`Facts::start_line`: `LineTable::line` + 1), by
-/// bisection of the starts.
-#[cfg(feature = "ir")]
-pub fn lines_line(b: &mut B<'_, '_>) -> Value {
-    let at_ = b.arg(0);
-    let n = b.word_at(I32, b.tape, 0);
-    b.bisect(n, &mut |b, i| {
-        let starts = b.f.ins().iadd_imm(b.tape, 4);
-        let p = b.item(starts, i, 4);
-        let start = b.word_at(I32, p, 0);
-        b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, start, at_)
-    })
-}
-
-/// `lines_word(i)`: word `i` of the lines (`LineTable::words`: their count, then the starts, then the ends).
-#[cfg(feature = "ir")]
-pub fn lines_word(b: &mut B<'_, '_>) -> Value {
-    let i = b.arg(0);
-    let p = b.item(b.tape, i, 4);
-    b.word_at(I32, p, 0)
-}
-
 /// `view_line(l, col)`: column `col` of the `line` view's row of numbered node `l`: its id, the line its start is
 /// on.
 #[cfg(feature = "ir")]
@@ -507,10 +507,14 @@ impl B<'_, '_> {
         let low = self.f.ins().uextend(I64, low);
         self.f.ins().bor(high, low)
     }
-    /// Word `i` of the document's lines (`LineTable`'s `[n, starts[n], ends[n]]`, the view's lines' base: the one
-    /// definition of a line and a place, decision 0612; a guest's are its host's).
-    fn loc_word(&mut self, i: Value) -> Value {
-        self.call_lines("lines_word", &[i])
+    /// The document's lines (`lines_count`), read off its line index at the view's lines' base: the one definition
+    /// of a line and a place (decision 0612); a guest's are its host's.
+    fn loc_count(&mut self) -> Value {
+        self.call_lines("lines_count", &[])
+    }
+    /// Line `k`'s first byte (from 0, `lines_start`).
+    fn loc_start(&mut self, k: Value) -> Value {
+        self.call_lines("lines_start", &[k])
     }
     /// `Loc` position `l`'s byte span, as `start << 32 | end` (`Projected::span`): a node's or token's off the tape,
     /// the whole text, a line's text, or a node's end point.
@@ -538,7 +542,7 @@ impl B<'_, '_> {
                 let j = b.f.ins().isub(i, tokens);
                 // The end points follow the whole text and the lines where the text is the document's own.
                 let own = b.word_at(I32, b.tape, at::OWN_TEXT);
-                let n = b.loc_word_at(0);
+                let n = b.loc_count();
                 let texts = b.f.ins().iadd_imm(n, 1);
                 let zero = b.c32(0);
                 let owned = b.f.ins().icmp_imm(IntCC::NotEqual, own, 0);
@@ -556,20 +560,15 @@ impl B<'_, '_> {
                         let len = b.word_at(I32, b.tape, at::SOURCE_LEN);
                         b.pair(zero, len)
                     }, |b| {
-                        // Line `j`'s text: its start (word `j`) and its end (word `n + j`).
-                        let s = b.loc_word(j);
-                        let n = b.loc_word_at(0);
-                        let at_ = b.f.ins().iadd(n, j);
-                        let e = b.loc_word(at_);
-                        b.pair(s, e)
+                        // Line `j`'s (from 1) place, from its start alone: its text's end is on it (a terminator's
+                        // bytes are the line's they end), so its start stands for both ends here.
+                        let k = b.f.ins().iadd_imm(j, -1);
+                        let s = b.loc_start(k);
+                        b.pair(s, s)
                     })
                 })
             })
         })
-    }
-    fn loc_word_at(&mut self, i: i64) -> Value {
-        let i = self.c32(i);
-        self.loc_word(i)
     }
     /// A guest's span `start << 32 | end` where it stands in its host (`Placement::host`): copied, each end moved by
     /// `delta` and kept within `within`; at `within`. A file's own, as it is.
@@ -618,8 +617,17 @@ impl B<'_, '_> {
             if place == Place::Docof {
                 return b.entry_u32(at::FILE);
             }
-            let span = b.loc_span(l);
-            let span = b.placed(span);
+            // Placed by its table, else its span as read, placed (`Placement::host`).
+            let placement = b.word_at(I32, b.tape, at::PLACEMENT);
+            let tabled = b.f.ins().icmp_imm(IntCC::Equal, placement, i64::from(PLACED_TABLE));
+            let span = b.either(I64, tabled, |b| {
+                let items = b.follow(b.tape, at::PLACED);
+                let p = b.item(items, l, 8);
+                b.word_at(I64, p, 0)
+            }, |b| {
+                let span = b.loc_span(l);
+                b.placed(span)
+            });
             let s = b.f.ins().ushr_imm(span, 32);
             let s = b.f.ins().ireduce(I32, s);
             let e = b.f.ins().ireduce(I32, span);
@@ -629,8 +637,9 @@ impl B<'_, '_> {
                 // The line holding its end offset: a span ending with a terminator ends on the line after it.
                 Place::EndLine => b.loc_line(e),
                 Place::Col => {
-                    // Its line's start: word `line` (the starts from word 1).
-                    let start = b.loc_word(line);
+                    // Its line's start (`line` from 1).
+                    let k = b.f.ins().iadd_imm(line, -1);
+                    let start = b.loc_start(k);
                     b.f.ins().isub(s, start)
                 }
                 Place::Docof => unreachable!(),

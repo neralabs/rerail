@@ -1,4 +1,5 @@
 //! Tuple maintenance over retained checked queries. Positive recursion uses overdelete/rederive.
+use rerail_blocks::vector::Vector;
 use super::super::logic::sql::select::{FromItem, Join, Query, Relation as SqlRelation};
 use super::super::logic::sql::sql_ast::{SqlBinaryOperator as B, SqlExpression as E};
 use super::*;
@@ -117,7 +118,7 @@ impl Work<'_> {
         self.clear(candidates)?;
         Ok(n)
     }
-    pub fn readonly_rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
+    pub fn readonly_rows(&mut self, width: usize, rows: &[Vector<i64>]) -> Result<String> {
         let Some(store) = self.versions else {
             return self.rows(width, rows);
         };
@@ -141,7 +142,7 @@ impl Work<'_> {
         }
         Ok(name)
     }
-    pub fn rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
+    pub fn rows(&mut self, width: usize, rows: &[Vector<i64>]) -> Result<String> {
         let name = self.set_table(width)?;
         if let Some(store) = self.versions.filter(|s| s.owns(&name)) {
             let op = self.profiler.map(|p| {

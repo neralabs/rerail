@@ -1,8 +1,8 @@
 # 0571. A Metal kernel's barriered functions are dynamic libraries of their own
 
-Status: accepted (2026-11-21, the user, on per-function dylibs for pp's Metal kernel: "yes"). The engine's Metal
-compile path (`accel/src/gpu/kernels.rs`) and UKL's source (`rerail_ukl::split`); every backend's source is
-unchanged.
+Status: built (audited 2026-11-23). Accepted (2026-11-21, the user, on per-function dylibs for pp's Metal kernel:
+"yes"). The engine's Metal compile path (`accel/src/gpu/kernels.rs`) and UKL's source (`rerail_ukl::split`); every
+backend's source is unchanged.
 
 ## Intro
 
@@ -55,6 +55,13 @@ per-function build of the same source passes.
    the M3 Max (the system's shader cache).
 6. `RERAIL_METAL_UNITS=off` compiles a split source whole, as before. It is a measurement aid, beside
    `RERAIL_DIAG_MSL_NONCE`.
+7. **A split source that declares the function constant** (`UKL_CONSTANT_U32`, Metal's function constant 0) is a
+   library a value of the constant: the value is baked into its units and its kernel (`constant uint32_t name =
+   value;`), and its functions are made with no constant values. A dynamic library holds no unresolved function
+   constant ("cannot lower module with unresolved function constants"). The JIT's batch kernel is such a source
+   (0576): its barriered step functions read the batch's tape format. The source's split is kept once, and each
+   value's library is made from it (`kernels::library`). A source that does not split keeps one library, its
+   constant given at the pipeline. The test is `kernels::tests::a_split_source_with_a_function_constant_is_a_library_a_value`.
 
 pp's setup splits into 14 units in 6 levels:
 - level 0: `ukl_grid_barrier`, `ukl_group_scan_n`, `ukl_group_seg_scan_n`, `px_r_work`;
