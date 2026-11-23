@@ -147,13 +147,13 @@ fn emulated() -> &'static Program {
 }
 
 /// R1's constants: per type M, N, K, groups, native (f16, bf16, i8); the SIMD width, an owner's lanes, the block;
-/// then b1's five.
+/// then b1's five; then whether each type's tile call is the backend's own (f16, bf16, i8, b1: R9).
 fn consts(p: &Program) -> Vec<u32> {
-    let Some((_, mut q)) = setup() else { return vec![0; 23] };
-    let out = alloc::<u32>(23).unwrap();
+    let Some((_, mut q)) = setup() else { return vec![0; 27] };
+    let out = alloc::<u32>(27).unwrap();
     launch(&q, p.function("t_mma_consts").unwrap()).buffer("out", &out).run(&[1], &[1]).unwrap();
     q.flush().await_().unwrap();
-    read(&out, 23)
+    read(&out, 27)
 }
 
 /// A block's inputs, logically row-major (`a[r * k + kk]`, `b[kk * 64 + c]`), and C's starting value's bits.
@@ -232,13 +232,14 @@ fn elements(ty: Ty, v: &[i32], rows: usize, cols: usize, along_rows: bool, layou
 
 /// One block on the device: C's bits, logically row-major.
 #[allow(clippy::too_many_arguments)]
-fn block(p: &Program, q: &mut ComputeQueue, ty: Ty, inp: &Inputs, layouts: [u32; 3], tile: bool, local: bool, threads: u32) -> Vec<u32> {
+/// `tile`: 0 level 1's loop in the test, 1 the tile call, 2 the tile call's reference.
+fn block(p: &Program, q: &mut ComputeQueue, ty: Ty, inp: &Inputs, layouts: [u32; 3], tile: impl Into<u32>, local: bool, threads: u32) -> Vec<u32> {
     let k = inp.k as usize;
     let [la, lb, lc] = layouts;
     let a = elements(ty, &inp.a, 64, k, false, la);
     let b = elements(ty, &inp.b, k, 64, true, lb);
     let c = buffer_of(&lay(&inp.c, 64, 64, lc)).unwrap();
-    let args = MmaArgs { k: inp.k, la, lb, lc, tile: tile as u32, shared_mem: local as u32 };
+    let args = MmaArgs { k: inp.k, la, lb, lc, tile: tile.into(), shared_mem: local as u32 };
     launch(q, p.function(ty.kernel()).unwrap()).value("args", &args).buffer("A", &a).buffer("B", &b).buffer("Cm", &c).run(&[1], &[threads as u64]).unwrap();
     q.flush().await_().unwrap();
     let got: Vec<u32> = read(&c, 64 * 64);
@@ -418,10 +419,15 @@ fn native_types(c: &[u32]) -> Vec<Ty> {
 }
 
 /// The instruction a native type's product takes, in the backend's text of the compiled kernel: CUDA's PTX, Metal's
-/// AIR intrinsics (`air.`, the 8×8 product into f32).
+/// AIR intrinsics (`air.`, the 8×8 product into f32), Intel's DPAS builtins in its binary (whose kernels' metadata
+/// also says `has_dpas: true`, `unit_marker`).
 fn unit_instruction(ty: Ty) -> &'static str {
     let metal = crate::device::backend() == "Metal";
+    let opencl = crate::device::backend() == "OpenCL";
     match ty {
+        Ty::F16 if opencl => "intel_sub_group_f16_f16_matrix_mad_k16",
+        Ty::Bf16 if opencl => "intel_sub_group_bf16_bf16_matrix_mad_k16",
+        Ty::I8 if opencl => "intel_sub_group_i8_i8_matrix_mad_k32",
         Ty::F16 if metal => "air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64f16.v64f16.v64f32",
         Ty::Bf16 if metal => "air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64bf16.v64bf16.v64f32",
         Ty::F16 => "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32",
@@ -433,7 +439,17 @@ fn unit_instruction(ty: Ty) -> &'static str {
 
 /// A unit's instruction, of any type: what the forced emulation's text holds none of.
 fn unit_marker() -> &'static str {
-    if crate::device::backend() == "Metal" { "multiply_accumulate" } else { "mma.sync" }
+    match crate::device::backend() {
+        "Metal" => "multiply_accumulate",
+        "OpenCL" => "matrix_mad",
+        _ => "mma.sync",
+    }
+}
+
+/// Whether Intel's compiler says a kernel of the binary takes DPAS (its zeinfo's `has_dpas: true`): the instruction
+/// itself, where the builtins' names alone are the source's calls.
+fn intel_has_dpas(code: &str) -> bool {
+    code.lines().any(|l| l.split_whitespace().collect::<Vec<_>>() == ["has_dpas:", "true"])
 }
 
 /// R7: a native type's kernel takes the unit's instruction (its compiled text holds it: CUDA's PTX), and the forced
@@ -463,5 +479,118 @@ fn matrix_native_forms_take_the_units_instruction() {
     }
     let forced = code(&[("UKL_MMA_EMULATED_GROUPS", "1u"), ("UKL_MMA_FORCE_EMULATED", "1")]);
     assert!(!forced.contains(unit_marker()), "{}: the forced emulation takes no unit's instruction", crate::device::backend());
+    if crate::device::backend() == "OpenCL" {
+        assert!(intel_has_dpas(&native) && !intel_has_dpas(&forced), "OpenCL: the compiler's has_dpas is the native form's alone");
+        eprintln!("matrix units on OpenCL: the native form's kernel has_dpas, the forced emulation's not");
+    }
 }
 
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RateArgs {
+    reps: u32,
+    which: u32,
+}
+unsafe impl Pod for RateArgs {}
+
+/// Decision 0617 step 6, a measurement: each type's products a second, on the device's unit where it has one, by
+/// the emulation with the device's dot products (`<ukl/dot.h>`'s native forms), and by the emulation with their
+/// references (`UKL_DOT_REFERENCE`): where the dot products help. The device's time, the median of 5.
+#[test]
+#[ignore = "a measurement: run by name with --nocapture"]
+fn bench_matrix_products() {
+    let Some((_, mut q)) = setup() else { return };
+    let mem = buffer_of(&vec![0x3c00_3c00_3c00_3c00u64; 1024]).unwrap();
+    // The CPU runs a group's lanes one after another: fewer owners there.
+    let (owners, reps) = if crate::device::backend() == "CPU" { (16u32, 16u32) } else { (2048u32, 256u32) };
+    let (_, lanes) = programs(1);
+    let out = alloc::<u32>((256 * owners) as usize).unwrap();
+    let forms: [(&str, Vec<(&str, &str)>); 3] = [
+        ("as compiled", vec![("UKL_MMA_EMULATED_GROUPS", "1u")]),
+        ("emulated, dot products", vec![("UKL_MMA_EMULATED_GROUPS", "1u"), ("UKL_MMA_FORCE_EMULATED", "1")]),
+        ("emulated, references", vec![("UKL_MMA_EMULATED_GROUPS", "1u"), ("UKL_MMA_FORCE_EMULATED", "1"), ("UKL_DOT_REFERENCE", "1")]),
+    ];
+    for (what, defines) in &forms {
+        let p = program_with("matrix_tests.uglykl", TESTS, defines).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+        let c = consts(p);
+        for (which, ty) in [Ty::F16, Ty::Bf16, Ty::I8, Ty::B1].into_iter().enumerate() {
+            let native = c[[4, 9, 14, 22][which]] == 1;
+            let k = c[[2, 7, 12, 20][which]] as f64;
+            let mut t = Vec::new();
+            for i in 0..6 {
+                let args = RateArgs { reps, which: which as u32 };
+                launch(&q, p.function("t_mma_rate").unwrap()).value("args", &args).buffer("mem", &mem).buffer("out", &out).run(&[(owners / 4) as u64], &[(4 * lanes) as u64]).unwrap();
+                let e = q.flush();
+                e.await_().unwrap();
+                if i > 0 {
+                    t.push(e.gpu_seconds());
+                }
+            }
+            t.sort_by(f64::total_cmp);
+            let secs = t[t.len() / 2];
+            // Multiply-adds: 16 x 16 x K a product.
+            let macs = owners as f64 * reps as f64 * 256.0 * k;
+            eprintln!("matrix rate on {}: {what}: {ty:?} ({}) {:.3} ms, {:.1} G multiply-adds/s", crate::device::backend(), if native { "native" } else { "emulated" }, secs * 1e3, macs / secs / 1e9);
+        }
+    }
+    // The tile call against its reference: 256 groups of one owner (4 on the CPU), each a 64×64 block over K 1024 from device memory
+    // (every group the same block: a measure of the reads, not a product).
+    let (p, lanes) = programs(1);
+    let c = consts(p);
+    let mut rng = Rng(5);
+    for ty in [Ty::F16, Ty::Bf16, Ty::I8, Ty::B1] {
+        let inp = Inputs::new(ty, 1024, &mut rng, true);
+        let a = elements(ty, &inp.a, 64, 1024, false, ROW);
+        let b = elements(ty, &inp.b, 1024, 64, true, ROW);
+        let cm = buffer_of(&inp.c).unwrap();
+        let mut ms = [0.0; 2];
+        let groups = if crate::device::backend() == "CPU" { 4 } else { 256 };
+        for (n, tile) in [1u32, 2].into_iter().enumerate() {
+            let args = MmaArgs { k: 1024, la: ROW, lb: ROW, lc: ROW, tile, shared_mem: 0 };
+            let mut t = Vec::new();
+            for i in 0..6 {
+                launch(&q, p.function(ty.kernel()).unwrap()).value("args", &args).buffer("A", &a).buffer("B", &b).buffer("Cm", &cm).run(&[groups], &[lanes as u64]).unwrap();
+                let e = q.flush();
+                e.await_().unwrap();
+                if i > 0 {
+                    t.push(e.gpu_seconds());
+                }
+            }
+            t.sort_by(f64::total_cmp);
+            ms[n] = t[t.len() / 2] * 1e3;
+        }
+        let own = c[23 + ty as usize] == 1;
+        eprintln!("matrix tile on {}: {ty:?}: the tile call ({}) {:.3} ms, its reference {:.3} ms", crate::device::backend(), if own { "the backend's own" } else { "the reference" }, ms[0], ms[1]);
+    }
+}
+
+/// R9 and step 7 (decision 0617): a backend's own tile call equals its reference bit for bit, on R3's random inputs
+/// in every layout, and R2's exact ones; where it has none, the tile call is the reference. CUDA overrides f16's,
+/// bf16's and i8's.
+#[test]
+fn matrix_tile_calls_equal_their_reference() {
+    let Some((_, mut q)) = setup() else { return };
+    let (p, lanes) = programs(1);
+    let c = consts(p);
+    let own: Vec<Ty> = [Ty::F16, Ty::Bf16, Ty::I8, Ty::B1].into_iter().enumerate().filter(|&(i, _)| c[23 + i] == 1).map(|(_, t)| t).collect();
+    eprintln!("matrix tiles on {}: the backend's own for {own:?}", crate::device::backend());
+    if crate::device::backend() == "CUDA" {
+        assert_eq!(own, [Ty::F16, Ty::Bf16, Ty::I8], "CUDA overrides the three types' tile calls");
+    }
+    let mut rng = Rng(61);
+    for ty in [Ty::F16, Ty::Bf16, Ty::I8, Ty::B1] {
+        let k = c[[2, 7, 12, 20][ty as usize]] * 4;
+        for small in [true, false] {
+            let inp = Inputs::new(ty, k, &mut rng, small);
+            for layouts in [[ROW; 3], [ROW, COL, ROW], [COL, ROW, COL], [COL; 3]] {
+                let own = block(p, &mut q, ty, &inp, layouts, 1u32, false, lanes);
+                let reference = block(p, &mut q, ty, &inp, layouts, 2u32, false, lanes);
+                assert!(own == reference, "{} {ty:?} {layouts:?} small {small}: the tile call is its reference's, bit for bit", crate::device::backend());
+                if small {
+                    assert_exact(ty, &inp, &own, &format!("{layouts:?}, the tile call"));
+                }
+            }
+        }
+    }
+}

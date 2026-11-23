@@ -555,7 +555,8 @@ impl ComputeFunctionLibrary {
     pub fn native_code(device: &Device, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Option<String>, String> {
         match device {
             Device::Native(d) => native::Library::native_code(d, preprocessed_source, file_name_to_appear_in_error_messages),
-            Device::Cpu(_) | Device::OpenCl(_) => Ok(None),
+            Device::OpenCl(d) => cl::ClComputeFunctionLibrary::native_code(d, preprocessed_source, file_name_to_appear_in_error_messages, &std::env::var("RERAIL_OPENCL_NATIVE_CODE_OPTIONS").unwrap_or_default()),
+            Device::Cpu(_) => Ok(None),
         }
     }
 

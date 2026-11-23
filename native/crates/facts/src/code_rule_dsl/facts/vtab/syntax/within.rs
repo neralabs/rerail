@@ -530,7 +530,7 @@ impl Within {
     }
 
     /// Whether the axis is solved on the device: the binding is the device's and a solve is registered.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn on_device(&self) -> bool {
         self.binding == Binding::Metal && super::device_chunk::CHUNK_AXIS.try_get().is_some()
     }

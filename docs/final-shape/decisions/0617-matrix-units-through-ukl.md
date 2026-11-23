@@ -214,7 +214,7 @@ emulated form, which is the reference.
 | R4 | `UKL_MMA_EACH` visits each element of C once, at its true coordinates | C filled with `row × 256 + col` through `EACH`, then stored, and compared with the matrix of coordinates |
 | R5 | Owners of several groups run unchanged | the R2 kernel run with threadgroups of 1, 2 and 4 owners; on the CPU the emulation run with `UKL_MMA_GROUPS` forced to 2 and 4, so the multi-group path is tested where no device has it |
 | R6 | Native and emulated forms agree on each device | where `UKL_MMA_NATIVE(T)` is 1, the same kernel run again with the emulation forced, results compared as R2 and R3 |
-| R7 | A native type takes the unit's instruction | the compiled kernel's text holds it: `mma.sync`, `simdgroup_multiply_accumulate`, `matmul2d`, `v_wmma`, DPAS (`matrix_native_forms_take_the_units_instruction`, on the backend's text: CUDA's PTX) |
+| R7 | A native type takes the unit's instruction | the compiled kernel's text holds it: `mma.sync`, `simdgroup_multiply_accumulate`, `matmul2d`, `v_wmma`, DPAS (`matrix_native_forms_take_the_units_instruction`, on the backend's text: CUDA's PTX, Metal's AIR, Intel's binary and its `has_dpas`) |
 | R8 | Loads and stores read and write memory in place | fragments loaded from a relation's column in its block and stored into a relation in a block, with no staging buffer (`check_no_block_copies.py`) |
 | R9 | `ukl_gemm_tile` equals level 1's loop | each type, R2's and R3's inputs |
 
@@ -228,9 +228,10 @@ emulated form, which is the reference.
 3. Metal's `simdgroup_matrix` on M1-M4 (f16; bf16 where present; i8 emulated). R4 is what checks the coordinates
    behind `thread_elements()`. Done 2026-11-23 ("Step 3, built").
 4. The M5's `matmul2d`: the first owner of several groups on a device (R5).
-5. Intel's DPAS on the Arc: R2, R4 and R7, the shape only.
+5. Intel's DPAS on the Arc: R2, R4 and R7, the shape only. Done 2026-11-23 ("Step 5, built").
 6. The Radeon 680M: the emulation, with its dot-product instructions where they help.
-7. `ukl_gemm_tile`, with one backend override (the M5's or CUDA's) to prove the override path.
+7. `ukl_gemm_tile`, with one backend override (the M5's or CUDA's) to prove the override path. Done 2026-11-23,
+   CUDA's ("Step 7, built").
 
 Steps 2-6 each add one section of `backend.h` and change nothing in a kernel.
 
@@ -406,6 +407,51 @@ The user: "yes, please add the 1-bit path and emulation/lowering to popcount on 
 - **Measured:** the seven matrix tests pass on the M1 Max and the M3 Max (f16 and bf16 native, i8 and b1 emulated),
   R7 finding `air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64f16.v64f16.v64f32` and its bf16 form; CUDA's and
   the CPU's pass as before; `accel`'s GPU tests (the bit product on the new layout) pass on the M3.
+
+### Step 5, built (2026-11-23)
+
+- **Intel's Xe2 (the Arc 140V) runs f16, bf16 and i8 on DPAS** (`UKL_MMA_INTEL`), through
+  `cl_intel_subgroup_matrix_multiply_accumulate`:
+  - the host turns it on (`UKL_OPENCL_INTEL_DPAS`) where the device has the extension and the kernels run on its
+    sub-groups at 16 lanes, the width Xe2's functions take (`units`, in `compute_kernel_opencl`);
+  - a product is two calls, C's rows 0-7 and 8-15: `intel_sub_group_f16_f16_matrix_mad_k16`, its bf16 form, and
+    `intel_sub_group_i8_i8_matrix_mad_k32` (K 32, as on CUDA);
+  - A: each lane holds its k of every row (a 16-bit float, or two bytes); B: each lane its column, eight words along
+    K; each element read where it lies, any layout, device or threadgroup memory;
+  - C's layout is DPAS's: a lane holds its column, every row (`UKL_MMA_RB` 16, `UKL_MMA_CB` 1). R4 checks it.
+- **R7 reads Intel's binary** (`native_code` on OpenCL: the program built again and its binary's printable strings):
+  each type's builtin is named in it, and the compiler's own metadata says `has_dpas: true` for the native form's
+  kernel and not for the forced emulation's.
+- **The shape only:** no tuning, and no workaround of Intel's compiler.
+- **Measured:** the nine matrix tests pass on the Arc 140V (Windows, OpenCL 3.0 NEO), every float and i8 native, b1
+  emulated.
+- **Found on the way:** `rerail-facts` did not build on Windows (`Within::on_device`'s `cfg` left Windows out, where
+  every caller had it), so no Windows test could run.
+
+### Step 7, built (2026-11-23)
+
+- **`ukl_gemm_tile_<T>` may be a backend's own.**
+  - Every type has its reference, `ukl_gemm_tile_ref_<T>`: level 1's loop, fragment by fragment.
+  - A backend that overrides the tile call says so, `UKL_MMA_TILE_OWN(T)` 1.
+  - An override sums each element's products in the reference's order, so the two agree bit for bit.
+- **CUDA's own** (f16, bf16 and i8) holds the owner's whole 64×64 block of C in registers: 16 fragments, 128 values
+  a lane. Each K step then reads each of A's four row fragments and B's four column fragments once, where the
+  reference reads each four times. This is the open item of the 1-bit section ("both sides' rows read once for
+  several tiles"), for the tile call.
+- **R9 and the override:** `matrix_tile_calls_equal_their_reference` runs the tile call and its reference on R2's and
+  R3's inputs, in four layouts. They must agree bit for bit, and on R2's inputs be exact. On CUDA the three types
+  must be the backend's own.
+- **Measured** (`bench_matrix_products`; a GB10; 256 owners, each a 64×64 block over K 1024, device time, median of
+  5):
+
+  | Type | Reference | CUDA's own |
+  |---|---|---|
+  | f16 | 0.453 ms | 0.116 ms |
+  | bf16 | 0.455 ms | 0.117 ms |
+  | i8 | 0.310 ms | 0.107 ms |
+
+- **Passing:** the nine matrix tests on CUDA, the CPU, the Arc's OpenCL and Metal (the M1 Max), the tile call being
+  the reference everywhere but CUDA.
 
 ## Open
 

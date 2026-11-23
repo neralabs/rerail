@@ -19,7 +19,7 @@ UKL_REFLECT_STRUCT(MmaArgs, K, la, lb, lc, tile, shared_mem)
 
 // The shapes the backend gives each type, its SIMD width and an emulated owner's lanes (R1).
 DEFINE_KERNEL2(tests, t_mma_consts,
-               RWBUFFER, uint32_t, out, "[23]",
+               RWBUFFER, uint32_t, out, "[27]",
                GID0,     uint32_t, i,   )
 {
     if (i != 0u)
@@ -34,6 +34,8 @@ DEFINE_KERNEL2(tests, t_mma_consts,
     out[k++] = UKL_SIMD_WIDTH; out[k++] = UKL_MMA_LANES; out[k++] = UKL_MMA_BLOCK;
     out[k++] = UKL_MMA_M(b1); out[k++] = UKL_MMA_N(b1); out[k++] = UKL_MMA_K(b1);
     out[k++] = UKL_MMA_GROUPS(b1); out[k++] = UKL_MMA_NATIVE(b1);
+    out[k++] = UKL_MMA_TILE_OWN(f16); out[k++] = UKL_MMA_TILE_OWN(bf16);
+    out[k++] = UKL_MMA_TILE_OWN(i8); out[k++] = UKL_MMA_TILE_OWN(b1);
 }
 
 // C (as it holds) += A · B over one 64×64 block, for type `T` into `C` (`CT` in memory), `ET` A's and B's elements in
@@ -54,7 +56,9 @@ DEFINE_KERNEL2(tests, t_mma_consts,
         uint32_t km = args.K / UKL_MMA_PACK(T);                                                                         \
         uint32_t lda = args.la == UKL_ROW_MAJOR ? km : 64u, ldb = args.lb == UKL_ROW_MAJOR ? 64u : km;                  \
         if (args.tile != 0u) {                                                                                          \
-            if (owner == 0u)                                                                                            \
+            if (owner == 0u && args.tile == 2u)                                                                         \
+                ukl_gemm_tile_ref_##T(Cm, 64u, args.lc, A, lda, args.la, B, ldb, args.lb, args.K, at __UKL_ARGS);       \
+            else if (owner == 0u)                                                                                       \
                 ukl_gemm_tile_##T(Cm, 64u, args.lc, A, lda, args.la, B, ldb, args.lb, args.K, at __UKL_ARGS);           \
             return;                                                                                                     \
         }                                                                                                               \
@@ -117,4 +121,39 @@ DEFINE_KERNEL2(tests, t_mma_each,
         UKL_MMA_EACH(d, at, row, col, v) { v += (int32_t)(row * 16u + col); }
         ukl_mma_store_c_i32(&d, Ci + ci * 64u + cj, 64u, UKL_ROW_MAJOR, at);
     }
+}
+
+// The products' rate (decision 0617 step 6, a measurement): each owner loads its fragment of A once, then takes
+// `reps` products into its C, in registers, each of a fragment of B loaded at another offset (so that no product of
+// the same inputs is folded into the next), and stores C. `which` 0-3:
+// f16, bf16, i8, b1.
+typedef struct RateArgs { uint32_t reps; uint32_t which; } RateArgs;
+UKL_REFLECT_STRUCT(RateArgs, reps, which)
+#define T_RATE(T, C, CT, ET)                                                                                            \
+    {                                                                                                                   \
+        ukl_mma_a_##T a;                                                                                                \
+        ukl_mma_b_##T b;                                                                                                \
+        ukl_mma_c_##C c;                                                                                                \
+        const uint32_t k = UKL_MMA_K(T) / UKL_MMA_PACK(T);                                                              \
+        ukl_mma_load_a_##T(&a, (UKL_GLOBAL const ET*)mem, k, UKL_ROW_MAJOR, at);                                        \
+        ukl_mma_fill_c_##C(&c, 0, at);                                                                                  \
+        for (uint32_t r = 0u; r < args.reps; r++) {                                                                     \
+            ukl_mma_load_b_##T(&b, (UKL_GLOBAL const ET*)mem + 16u * (r & 15u), 16u, UKL_ROW_MAJOR, at);                \
+            ukl_mma_##T(&c, &a, &b, at __UKL_ARGS);                                                                     \
+        }                                                                                                               \
+        ukl_mma_store_c_##C(&c, (UKL_GLOBAL CT*)out + 256u * owner, 16u, UKL_ROW_MAJOR, at);                            \
+    }
+DEFINE_KERNEL2(tests, t_mma_rate,
+               ARGS,     RateArgs, args, ,
+               ROBUFFER, uint64_t, mem,  "[1024]",
+               RWBUFFER, uint32_t, out,  "[256]",
+               GID0,     uint32_t, gid,  ,
+               LID0,     uint32_t, lid,  )
+{
+    UklMmaAt at = ukl_mma_at(lid);
+    const uint32_t owner = gid / UKL_MMA_LANES;
+    if (args.which == 0u) T_RATE(f16, f32, float, uint16_t)
+    if (args.which == 1u) T_RATE(bf16, f32, float, uint16_t)
+    if (args.which == 2u) T_RATE(i8, i32, int32_t, int8_t)
+    if (args.which == 3u) T_RATE(b1, i32, int32_t, uint64_t)
 }
