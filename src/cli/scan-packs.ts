@@ -154,7 +154,7 @@ async function installPublished(published: readonly PublishedPack[], scratch: st
   const home = join(scratch, "declared-packs");
   const specs = published.map(declaredPackLabel);
   try {
-    await storeOf(home).install(specs);
+    await storeOf(home).install(specs, { preferOffline: true });
   } catch (error) {
     throw new Error(`${label} lists ${specs.join(", ")}, which npm could not install: ${fetchProblemReason(specs.join(", "), error)}`);
   }
