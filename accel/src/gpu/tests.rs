@@ -425,3 +425,33 @@ fn the_device_names_its_memory_domain() {
     #[cfg(not(target_os = "macos"))]
     assert!(layer.device.domain() <= 1);
 }
+
+/// The closure's level launches cover each level from 1 once, in order, and number at most `2 * CL_WIDE + 1` at any
+/// depth: a deep chain is one group's run, a wide level its own launch over the groups it fills.
+#[test]
+fn closure_levels_take_bounded_launches() {
+    let cases: Vec<Vec<u32>> = vec![
+        vec![1; 1],
+        vec![1; 2],
+        vec![1; 5000],
+        (0..400).map(|l| if l % 3 == 0 { 500 } else { 2 }).collect(),
+        (0..60).map(|l| 9 + l).collect(),
+    ];
+    for widths in cases {
+        let levels = widths.len();
+        let launches = super::level_launches(levels, |l| widths[l], 8);
+        assert!(launches.len() <= 2 * super::CL_WIDE + 1, "{} launches for {levels} levels", launches.len());
+        let mut next = 1;
+        for &(first, last, groups) in &launches {
+            assert_eq!(first, next, "{launches:?}");
+            assert!(last > first);
+            if last - first > 1 {
+                assert_eq!(groups, 1, "a run of levels is one group's");
+            } else {
+                assert_eq!(groups, widths[first as usize].div_ceil(8).max(1));
+            }
+            next = last;
+        }
+        assert_eq!(next as usize, levels.max(1), "{launches:?}");
+    }
+}
