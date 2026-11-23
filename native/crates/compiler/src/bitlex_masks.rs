@@ -112,6 +112,8 @@ pub struct Compiled {
     /// The provers' answers this compile made (decision 0414): what a later compile is given to
     /// answer the same questions without their proofs (`compile_proved`).
     pub proofs: Vec<(bitlex_prove::Key, bitlex_prove::Answer)>,
+    /// The known answers this compile took (`Proofs::used`): with `proofs`, every answer it read.
+    pub used: Vec<(bitlex_prove::Key, bitlex_prove::Answer)>,
     /// Tier 2 as Rust, written from the tree rules (`bitlex_rust`), or why it is not yet.
     pub rust: Option<Result<String, String>>,
     /// Tier 1 as Rust, written from the lexer's statements (`bitlex_lex_rust`), or why it is not yet.
@@ -362,6 +364,8 @@ pub struct Lowering {
     /// Each token's reader, where it is a token inside a region read in parts, and whether it
     /// closes the region (`TokenRule::Inside`): `row_modes`' reader modes.
     pub inside_of: Vec<Option<(String, bool)>>,
+    /// Each token's scope, where it is a token inside a region read in parts (`TokenRule::Inside`).
+    pub scope_of: Vec<Option<Val>>,
     pub keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, bool)>,
     /// Each row's soft keywords: a word's kind where the grammar takes it, the row's elsewhere.
     pub soft: Vec<(String, Vec<Vec<u8>>)>,
@@ -526,7 +530,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
 /// decision 0414): a question among them is answered without its proof. The program is the same.
 pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>, shape: Shape, known: bitlex_prove::Known) -> Result<Compiled, String> {
     let mut low = Lowering {
-        proofs: bitlex_prove::Proofs { known, made: Vec::new() },
+        proofs: bitlex_prove::Proofs { known, made: Vec::new(), used: Vec::new(), work: bitlex_prove::Budget::new(std::env::var("RERAIL_PROVING_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(bitlex_prove::PROVING_STEPS)) },
         shape,
         program: BlockProgram::default(),
         seen: HashMap::default(),
@@ -555,6 +559,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         read_fills: HashMap::default(),
         inside: Vec::new(),
         inside_of: Vec::new(),
+        scope_of: Vec::new(),
         keywords: Vec::new(),
         skip: None,
         prefix: None,
@@ -876,10 +881,14 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         .map(|(name, x)| Named { name, op: place[usize::from(x.v)] as u16, delay: x.d })
         .collect();
     let fallbacks = labels.iter().filter(|(l, _)| l == FALLBACK).map(|&(_, k)| k).collect();
+    if std::env::var_os("RERAIL_PROVING_TRACE").is_some() {
+        eprintln!("proving: {} steps of {}, {} answers made, {} known", bitlex_prove::PROVING_STEPS - low.proofs.work.left(), bitlex_prove::PROVING_STEPS, low.proofs.made.len(), low.proofs.used.len());
+    }
     let proofs = std::mem::take(&mut low.proofs.made);
+    let used = std::mem::take(&mut low.proofs.used);
     let rust = low.rust.take();
     let lexer_rust = low.lexer_rust.take();
-    Ok(Compiled { rows: rows(&program), program, words, machine, labels, fallbacks, costs, origin, values, proofs, rust, lexer_rust })
+    Ok(Compiled { rows: rows(&program), program, words, machine, labels, fallbacks, costs, origin, values, proofs, used, rust, lexer_rust })
 }
 
 /// The operations the provers read: the prefix's value zero (it is stripped before the passes,
@@ -1048,8 +1057,24 @@ impl Lowering {
                             }
                             if rs.iter().any(resumed) {
                                 let ts: Vec<Option<Expr>> = rs.iter().map(|r| r.or.as_ref().filter(|_| resumed(r)).map(|o| o.0.clone())).collect();
-                                let Some(t) = ts[0].clone().filter(|t| ts.iter().all(|x| x.as_ref().is_some_and(|x| format!("{x:?}") == format!("{t:?}")))) else {
-                                    return Err(format!("token {kind}: regions resumed with different templates, or with ones that are not"));
+                                if ts.iter().any(Option::is_none) {
+                                    return Err(format!("token {kind}: regions resumed with ones that are not"));
+                                }
+                                // One template, or each region's at its own closes (`f_K`'s
+                                // last byte before), as Kotlin's `$` and a `$$"…"` string's `$$`.
+                                let t = if ts.iter().all(|x| format!("{x:?}") == format!("{:?}", ts[0])) {
+                                    ts[0].clone().expect("a template")
+                                } else {
+                                    let name = |x: String| Expr::Name(x);
+                                    let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+                                    rs.iter()
+                                        .zip(&ts)
+                                        .map(|(r, t)| {
+                                            let f = format!("f_{}", r.kind);
+                                            and(t.clone().expect("a template"), and(Expr::Call("prev".into(), vec![Arg::E(name(f.clone()))]), Expr::Not(Box::new(name(f)))))
+                                        })
+                                        .reduce(|a, b| Expr::Or(Box::new(a), Box::new(b)))
+                                        .expect("a region")
                                 };
                                 let t = self.expr(&t)?;
                                 self.token_templates.insert(kind.clone(), t);
@@ -1140,9 +1165,14 @@ impl Lowering {
                     self.tokens.push((kind.clone(), start, through));
                     self.inside.push(matches!(rule, Some(::bitlex::syntax::TokenRule::Inside(..))));
                     self.inside_of.push(match rule {
-                        Some(::bitlex::syntax::TokenRule::Inside(_, reader, closes)) => Some((reader.clone(), *closes)),
+                        Some(::bitlex::syntax::TokenRule::Inside(_, reader, closes, _)) => Some((reader.clone(), *closes)),
                         _ => None,
                     });
+                    let scope = match rule {
+                        Some(::bitlex::syntax::TokenRule::Inside(_, _, _, scope)) => Some(self.expr(scope)?),
+                        _ => None,
+                    };
+                    self.scope_of.push(scope);
                 }
                 Stmt::Keywords { kind, words, soft, required } => {
                     self.keywords.push((kind.clone(), words.clone(), *required));
@@ -1706,7 +1736,7 @@ impl Lowering {
     /// alone: a walk's regions (`block::Walk`) hide each other, as the walk opens a region only past the last
     /// one's closer, so no two of its kinds' fills hold at one place (`NO_WALK_LEMMAS`: not told).
     fn induction(&self, horizon: u32, conflicts: u32) -> bitlex_prove::Induction {
-        let mut settled = bitlex_prove::Induction::new(&self.program.rounds, horizon, conflicts);
+        let mut settled = bitlex_prove::Induction::new(&self.program.rounds, horizon, conflicts).within(&self.proofs.work);
         #[cfg(any(test, feature = "test-hooks"))]
         let told = !NO_WALK_LEMMAS.get();
         #[cfg(not(any(test, feature = "test-hooks")))]
@@ -1738,7 +1768,8 @@ impl Lowering {
         let ops = proof_ops(&self.program, &self.prefix);
         let tables = &self.program.tables;
         let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, "plain never");
-        self.proofs.never(key, || bitlex_prove::never(&ops, tables, x.v, x.d))
+        let work = self.proofs.work.clone();
+        self.proofs.never(key, || bitlex_prove::never_in(&work, &ops, tables, x.v, x.d))
     }
 
     /// The bytes `x` can be at, by the plain search (`bitlex_prove::first_bytes`).
@@ -1746,7 +1777,8 @@ impl Lowering {
         let ops = proof_ops(&self.program, &self.prefix);
         let tables = &self.program.tables;
         let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, "plain first");
-        self.proofs.bytes(key, || bitlex_prove::first_bytes(&ops, tables, x.v, x.d))
+        let work = self.proofs.work.clone();
+        self.proofs.bytes(key, || bitlex_prove::first_bytes_in(&work, &ops, tables, x.v, x.d))
     }
 
     /// Whether `x` is zero everywhere, by `prover` (with the fixed points' equations).
@@ -1771,7 +1803,8 @@ impl Lowering {
         let ops = proof_ops(&self.program, &self.prefix);
         let tables = &self.program.tables;
         let key = bitlex_prove::question_given(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("either never"), prover.given());
-        self.proofs.never(key, || !prover.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never(&ops, tables, x.v, x.d) || prover.never(&ops, tables, x.v, x.d)))
+        let work = self.proofs.work.clone();
+        self.proofs.never(key, || !prover.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never_in(&work, &ops, tables, x.v, x.d) || prover.never(&ops, tables, x.v, x.d)))
     }
 
     /// A prefix's value (`Stmt::Prefix`): the file's first `n` positions, where it starts with
@@ -2053,7 +2086,7 @@ impl Lowering {
         let differ = self.xor(l, sub)?;
         let differ = self.and(a, differ)?;
         let ops = self.proof_ops();
-        if !(bitlex_prove::never(&ops, &self.program.tables, differ.v, differ.d) || bitlex_prove::never_unrolled(&ops, &self.program.tables, &[], differ.v, differ.d, 10, 4000)) {
+        if !(bitlex_prove::never_in(&self.proofs.work, &ops, &self.program.tables, differ.v, differ.d) || bitlex_prove::Induction::new(&[], 10, 4000).within(&self.proofs.work).never(&ops, &self.program.tables, differ.v, differ.d)) {
             return Ok(None);
         }
         let Some(mut ops) = self.local_ops_with(a, true, Some((last.v, L::Const(u64::MAX), 0))) else { return Ok(None) };
@@ -3138,7 +3171,7 @@ fn assumptions(low: &mut Lowering, stmts: &[Stmt], token_rows: &[(String, Val, V
         Ok(Some(at))
     };
     let verbose = std::env::var_os("RERAIL_ASSUMPTIONS").is_some();
-    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000).within(&low.proofs.work);
     // In a kind's tokens: what tier 1 reads, the run rule with the kind's assumptions (`substitute`),
     // proved equal to the rule over each of its tokens' runs and the byte each ends at.
     let mut in_kind: HashMap<String, bool> = HashMap::default();
@@ -3242,7 +3275,7 @@ fn is_keyword_kind(keywords: &[(String, Vec<(Vec<u8>, Option<String>)>, bool)], 
 /// The row whose tokens hold every bit of `a`, proved: `a` at its starts, or inside a
 /// `fill(s, e)` whose runs are its tokens (its start `s`, its last the run's next byte).
 fn token_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows: &[(String, Val, Val)]) -> Result<Option<usize>, String> {
-    let proved = |low: &mut Lowering, x: Val| low.never(x) || low.settled_never(&mut bitlex_prove::Induction::new(&[], 4, 1000), x);
+    let proved = |low: &mut Lowering, x: Val| low.never(x) || low.settled_never(&mut bitlex_prove::Induction::new(&[], 4, 1000).within(&low.proofs.work), x);
     let grammar_rows: Vec<usize> = (0..rows.len()).filter(|&r| !low.extra.contains(&token_rows[r].0) && !row_kinds(&rows[r]).is_empty()).collect();
     // At the row's first bytes, or at its last (a check reads `A` from a token's start to its
     // end: an escape's `u`, its last byte, decision 0399).
@@ -3407,7 +3440,10 @@ fn gap_ends(low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Opt
     let prover = low.induction(8, 100_000);
     let key = bitlex_prove::key_of(&bitlex_prove::question_given(&low.proof_ops(), &low.program.tables, &low.program.rounds, all.v, all.d, &prover.asker("gap ends"), prover.given()));
     let holds = match low.proofs.known.get(&key) {
-        Some(&bitlex_prove::Answer::Never(b)) => b,
+        Some(&bitlex_prove::Answer::Never(b)) => {
+            low.proofs.used.push((key, bitlex_prove::Answer::Never(b)));
+            b
+        }
         _ => {
             let b = gap_claims(low, prover, &claims, all, refused, w0)?;
             low.proofs.made.push((key, bitlex_prove::Answer::Never(b)));
@@ -3425,12 +3461,12 @@ fn gap_claims(low: &mut Lowering, prover: bitlex_prove::Induction, claims: &[Val
     let settled = RefCell::new(prover);
     let never = |low: &Lowering, x: Val| {
         let ops = low.proof_ops();
-        bitlex_prove::never(&ops, &low.program.tables, x.v, x.d) || settled.borrow_mut().never(&ops, &low.program.tables, x.v, x.d) || settled.borrow_mut().never_inductive(&ops, &low.program.tables, x.v, x.d)
+        bitlex_prove::never_in(&low.proofs.work, &ops, &low.program.tables, x.v, x.d) || settled.borrow_mut().never(&ops, &low.program.tables, x.v, x.d) || settled.borrow_mut().never_inductive(&ops, &low.program.tables, x.v, x.d)
     };
     let mut left: Vec<Val> = Vec::new();
     for &c in claims {
         let ops = low.proof_ops();
-        if bitlex_prove::never(&ops, &low.program.tables, c.v, c.d) || settled.borrow_mut().never(&ops, &low.program.tables, c.v, c.d) {
+        if bitlex_prove::never_in(&low.proofs.work, &ops, &low.program.tables, c.v, c.d) || settled.borrow_mut().never(&ops, &low.program.tables, c.v, c.d) {
             continue;
         }
         // A real stream has a bit of it (the bounded solve's, `Witnesses`): no lemma or
@@ -3482,7 +3518,7 @@ fn last_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows: 
     let grammar_rows: Vec<usize> = (0..rows.len()).filter(|&r| !low.extra.contains(&token_rows[r].0) && !row_kinds(&rows[r]).is_empty()).collect();
     for r in grammar_rows {
         let off = low.andnot(a, token_rows[r].2)?;
-        if bitlex_prove::never(&low.proof_ops(), &low.program.tables, off.v, off.d) || bitlex_prove::never_unrolled(&low.proof_ops(), &low.program.tables, &[], off.v, off.d, 4, 1000) {
+        if bitlex_prove::never_in(&low.proofs.work, &low.proof_ops(), &low.program.tables, off.v, off.d) || bitlex_prove::Induction::new(&[], 4, 1000).within(&low.proofs.work).never(&low.proof_ops(), &low.program.tables, off.v, off.d) {
             return Ok(Some(r));
         }
     }
@@ -3794,7 +3830,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let mut pairs = Vec::new();
     // The fixed points' equations prove most apart: one row's tokens in a region, the other's
     // outside it (a string's content and a comment's opener).
-    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000).within(&low.proofs.work);
     // A walk's regions (`block::Walk`): a byte is one kind's at most, as the walk opens a region
     // only outside the others. That holds of all the kinds together, not of two alone (each
     // pair is apart because the others are): one value, any two kinds' places at one byte,
@@ -3822,11 +3858,24 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
     }
+    if walks.is_empty() {
+        regions_apart(low, &mut settled)?;
+    }
     for a in 0..rows.len() {
         for b in a + 1..rows.len() {
             if shares(a, b) {
+                // Their scopes apart first (`TokenRule::Inside`): one question for many pairs.
+                let scope = |r: usize| low.scope_of.get(r).copied().flatten();
+                let scoped = match (scope(a), scope(b)) {
+                    (None, None) => false,
+                    (sa, sb) => {
+                        let both = low.and(sa.unwrap_or(token_rows[a].1), sb.unwrap_or(token_rows[b].1))?;
+                        low.either_never(&mut settled, both)
+                    }
+                };
                 let both = low.and(token_rows[a].1, token_rows[b].1)?;
-                if !low.either_never(&mut settled, both) {
+                let apart = scoped || low.either_never(&mut settled, both);
+                if !apart {
                     low.fallbacks.push(both);
                     pairs.push((a, b));
                 }
@@ -5251,7 +5300,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 for k in (1..8u64).filter(|_| fixed.is_none()) {
                     let at = low.prev(t.1, k)?;
                     let differ = low.xor(at, t.2)?;
-                    if bitlex_prove::never(&low.proof_ops(), &low.program.tables, differ.v, differ.d) {
+                    if bitlex_prove::never_in(&low.proofs.work, &low.proof_ops(), &low.program.tables, differ.v, differ.d) {
                         fixed = Some(k);
                         break;
                     }
@@ -5414,6 +5463,39 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     Ok((grammar::text(&states, &arms), text, takes_last, mark_masks, records))
 }
 
+/// Regions with no walk (Kotlin's, which nest and resume): a byte is in one region's fill at
+/// most, as a region opens only outside the others. As a walk's kinds: one value, any two fills
+/// at one byte, proved never by induction on itself (its answer kept, as every question's); then
+/// each pair a lemma of `settled`'s proofs after, so a question about two regions' bytes needs
+/// no induction of its own.
+fn regions_apart(low: &mut Lowering, settled: &mut bitlex_prove::Induction) -> Result<(), String> {
+    let fills: Vec<Val> = low.region_kinds.iter().filter_map(|r| low.names.get(&format!("f_{}", r.kind)).copied()).collect();
+    let mut pairs = Vec::new();
+    for (i, &a) in fills.iter().enumerate() {
+        for &b in &fills[i + 1..] {
+            pairs.push((a, b, low.and(a, b)?));
+        }
+    }
+    let Some(mut any) = pairs.first().map(|p| p.2) else { return Ok(()) };
+    for p in &pairs[1..] {
+        any = low.or(any, p.2)?;
+    }
+    let ops = low.proof_ops().into_owned();
+    let tables = low.program.tables.clone();
+    let key = bitlex_prove::question_given(&ops, &tables, &low.program.rounds, any.v, any.d, &settled.asker("regions apart"), settled.given());
+    if low.proofs.never(key, || settled.never_inductive(&ops, &tables, any.v, any.d)) {
+        let whole = vec![(any.v, 0, true)];
+        if !settled.given().contains(&whole) {
+            settled.add_lemma(whole);
+        }
+        for (a, b, _) in pairs {
+            let lag = |x: Val| u32::from(any.d - x.d);
+            settled.add_lemma(vec![(a.v, lag(a), true), (b.v, lag(b), true)]);
+        }
+    }
+    Ok(())
+}
+
 /// The rows each state of tier 2 can meet: `meets[s][r]`, whether a token of row `r` can be
 /// the next one in state `s`.
 ///
@@ -5441,6 +5523,9 @@ fn row_modes(
     // With the fixed points' equations (a region's carry is its fills' bytes after the openers)
     // where the plain search does not prove it, as the marks' proofs.
     let mut settled = low.induction(8, 100_000);
+    if low.program.walks.is_empty() {
+        regions_apart(low, &mut settled)?;
+    }
     // A stream a solve found refutes most questions first (`Induction::refutes`): most fail.
     let mut proved = |low: &mut Lowering, v: Val| low.either_never(&mut settled, v);
     // The toggles whose `x` bits are all token starts, at most eight.
@@ -5461,10 +5546,24 @@ fn row_modes(
     }
     // Each row's mode at its start, and its flips: per toggle, `Some(bit)` when fixed. Both proved, the row's
     // start never holds (`s & ~v` and `s & v`): the row is dead, and meets no state.
-    let mut fixed = |low: &mut Lowering, s: Val, v: Val, dead: &mut bool| -> Result<Option<bool>, String> {
-        let off = low.andnot(s, v)?;
-        let on = low.and(s, v)?;
-        Ok(match (proved(low, off), proved(low, on)) {
+    // A row's scope first (`TokenRule::Inside`): its start is in it, so what holds of the scope
+    // holds of the row, one question for its region's rows.
+    let scope_of = low.scope_of.clone();
+    let mut fixed = |low: &mut Lowering, r: usize, s: Val, v: Val, dead: &mut bool| -> Result<Option<bool>, String> {
+        // Whether the start never holds with `v` (`on`) or without it.
+        let mut never = |low: &mut Lowering, on: bool| -> Result<bool, String> {
+            let at = |low: &mut Lowering, x: Val| if on { low.and(x, v) } else { low.andnot(x, v) };
+            if let Some(Some(scope)) = scope_of.get(r) {
+                let wide = at(low, *scope)?;
+                if proved(low, wide) {
+                    return Ok(true);
+                }
+            }
+            let x = at(low, s)?;
+            Ok(proved(low, x))
+        };
+        let (o, n) = (never(low, false)?, never(low, true)?);
+        Ok(match (o, n) {
             (true, false) => Some(true),
             (false, true) => Some(false),
             (true, true) => {
@@ -5483,9 +5582,9 @@ fn row_modes(
             // The mode before the token: the toggle at its start, less `x` there (the toggle's
             // asked only where `x`'s is fixed: else the mode is free). A row whose start never
             // holds is dead (`fixed`): `x` asked first finds it.
-            let xv = fixed(low, *s, x, &mut dead[r])?;
+            let xv = fixed(low, r, *s, x, &mut dead[r])?;
             n.push(match xv {
-                Some(b) => fixed(low, *s, t, &mut dead[r])?.map(|a| a != b),
+                Some(b) => fixed(low, r, *s, t, &mut dead[r])?.map(|a| a != b),
                 None => None,
             });
             f.push(xv);

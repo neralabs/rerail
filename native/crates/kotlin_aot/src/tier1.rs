@@ -3948,7 +3948,9 @@ pub fn lex(src: &[u8]) -> Lexed {
     }
     #[cfg(feature = "test-hooks")]
     if !refused {
-        assert!(code_l == m_code, "code_l is the regions' code");
+        if let Some(q) = (0..nw).find(|&q| code_l[q] != m_code[q]) {
+            panic!("code_l is not the regions' code in word {q} ({:#x} against {:#x}) of {:?}", code_l[q], m_code[q], String::from_utf8_lossy(src));
+        }
     }
     let t100: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i])).collect();
     let t99: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!prev(&t100, i, 1) & lv[i]) & (!prev(&t14, i, 1) & lv[i])).collect();

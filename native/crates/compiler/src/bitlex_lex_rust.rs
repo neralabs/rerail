@@ -294,7 +294,7 @@ pub fn readers(stmts: &[Stmt]) -> Vec<Reader> {
 pub fn piece_kind(stmts: &[Stmt], row_kinds: &[Option<u8>], reader: &str, name: &str, closes: bool) -> Option<u8> {
     let rows = stmts.iter().filter(|s| matches!(s, Stmt::Token { .. }));
     for (i, s) in rows.enumerate() {
-        if let Stmt::Token { kind, rule: Some(TokenRule::Inside(_, of, c)), .. } = s
+        if let Stmt::Token { kind, rule: Some(TokenRule::Inside(_, of, c, _)), .. } = s
             && kind == name
             && of == reader
             && *c == closes
@@ -3810,9 +3810,11 @@ impl Gen<'_> {
                     Some((c2, m)) if *m != r.bytes => format!("if bit(&{c2}, c) {{ c + {} }} else {{ c + {} }}", m - 1, r.bytes - 1),
                     Some(_) | None => format!("c + {}", r.bytes - 1),
                 };
-                // With a nest, a template's level: pushed, its `{` the byte after (`tb`).
+                // With a nest, a template's level: pushed, its `{` the byte after its second
+                // closer's last (`tb`: `or C2 bytes M`, `M` bytes on).
+                let tm = ors[k].as_ref().map_or(1, |(_, m)| *m);
                 let push = |q: usize| match &self.nest {
-                    Some((_, _, d, deep)) => format!("if depth == {d} {{\n                                        set(&mut m_{}, c + 1, c + 2);\n                                    }} else {{\n                                        nest[depth] = {q};\n                                        depth += 1;\n                                    }}\n                                    tb = c + 1;\n                                    template = {q};", ident(deep)),
+                    Some((_, _, d, deep)) => format!("if depth == {d} {{\n                                        set(&mut m_{}, c + {tm}, c + {});\n                                    }} else {{\n                                        nest[depth] = {q};\n                                        depth += 1;\n                                    }}\n                                    tb = c + {tm};\n                                    template = {q};", ident(deep), tm + 1),
                     None => format!("template = {q};"),
                 };
                 let resumed = r.after.first().and_then(|a| ks.iter().position(|q| q.kind == *a)).unwrap_or(usize::MAX);
@@ -4998,7 +5000,7 @@ impl Gen<'_> {
                 let _ = write!(acc_after, "        if open != usize::MAX {{\n            clear(&mut code_l, s, l);\n        }}\n");
             }
             let code = self.names.get("code").cloned().unwrap_or_default();
-            let _ = write!(span_after, "    for (c, v) in code_l.iter_mut().zip(&lv) {{\n        *c &= v;\n    }}\n    #[cfg(feature = \"test-hooks\")]\n    if !refused {{\n        assert!(code_l == {code}, \"code_l is the regions' code\");\n    }}\n{}", self.code_after);
+            let _ = write!(span_after, "    for (c, v) in code_l.iter_mut().zip(&lv) {{\n        *c &= v;\n    }}\n    #[cfg(feature = \"test-hooks\")]\n    if !refused {{\n        if let Some(q) = (0..nw).find(|&q| code_l[q] != {code}[q]) {{\n            panic!(\"code_l is not the regions' code in word {{q}} ({{:#x}} against {{:#x}}) of {{:?}}\", code_l[q], {code}[q], String::from_utf8_lossy(src));\n        }}\n    }}\n{}", self.code_after);
         }
         // The escapes over each stretch of code: at a region token, the stretch before it; after
         // the loop, the last.

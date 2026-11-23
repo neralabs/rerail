@@ -139,7 +139,9 @@ pub enum TokenRule {
     /// A token of a region read in parts (`ReadParts`): `last` its last-byte mask. The reader
     /// starts it, not the token loop: no first byte ends it by a rule. With the reader's kind
     /// (its opener's), and whether it closes the region: its tokens come only between the two.
-    Inside(Expr, String, bool),
+    /// Last, its scope: a mask its starts are all in, its region's fill or its closer's first
+    /// byte. Two rows whose scopes are apart are apart, one question for every such pair.
+    Inside(Expr, String, bool, Expr),
 }
 
 /// A region's parts (`TokenRule::ReadParts`): each part's kind, start mask and bytes, and the
@@ -230,8 +232,10 @@ impl Parts {
         let body = and(f.clone(), not(s.clone()));
         let closer = Self::closer(std::slice::from_ref(r));
         let reader = kind;
-        let closing = |kind: &str, start: Expr, last: Expr, closes: bool| Stmt::Token { kind: kind.to_owned(), start, through: None, last: Some(last.clone()), rule: Some(TokenRule::Inside(last, reader.to_owned(), closes)) };
-        let token = |kind: &str, start: Expr, last: Expr| closing(kind, start, last, false);
+        let row = |kind: &str, start: Expr, last: Expr, closes: bool, scope: &Expr| Stmt::Token { kind: kind.to_owned(), start, through: None, last: Some(last.clone()), rule: Some(TokenRule::Inside(last, reader.to_owned(), closes, scope.clone())) };
+        // A closing row starts at the closer's first byte; the others, in the fill.
+        let closing = |kind: &str, start: Expr, last: Expr, closes: bool| row(kind, start, last, closes, &closer);
+        let token = |kind: &str, start: Expr, last: Expr| row(kind, start, last, false, &f);
         // The reader's own row is its token's, the opener; the closer is its kind's too, but
         // where a `closes` mask holds: that one's kind's, its bytes.
         let mut out = vec![];
@@ -545,6 +549,7 @@ impl Regions {
         let plain: Vec<&Region> = self.kinds.iter().filter(|r| r.after.is_empty() && r.or.is_some()).collect();
         // Each plain kind's closers at its second closer: where a template opens.
         let mut templates: Vec<(String, Expr)> = Vec::new();
+        let mut template_lasts: Vec<(String, Expr)> = Vec::new();
         // Where two kinds open a byte the walk opens the first listed that may: each kind's
         // opener excludes the earlier kinds' taken.
         let mut earlier: Option<Expr> = None;
@@ -638,11 +643,14 @@ impl Regions {
                 let pk = |e: Expr, k: u8| call("prev", vec![Arg::E(e), Arg::N(u64::from(k))]);
                 let c = and(prev(&f, 1), not(name(&f)));
                 let (l, l2) = (and(c.clone(), not(c2.clone())), and(c, c2.clone()));
+                // The template's closer's last byte (`or C2 bytes M`): its code opens after it.
+                let last2 = if *m > 1 { pk(l2.clone(), *m - 1) } else { l2.clone() };
                 if r.after.is_empty() {
                     templates.push((r.kind.clone(), l2.clone()));
+                    template_lasts.push((r.kind.clone(), last2.clone()));
                 }
                 if r.resumes && self.nest.is_some() {
-                    resumed.push((r.after[0].clone(), l2.clone()));
+                    resumed.push((r.after[0].clone(), last2));
                 }
                 if r.resumes {
                     ends = Some(match ends.take() {
@@ -679,10 +687,10 @@ impl Regions {
                 Some(a) => Expr::Or(Box::new(a), Box::new(b)),
                 None => b,
             });
-            // Each string kind's template's `{`: the byte after a close at its `$`.
+            // Each string kind's template's `{`: the byte after a close at its `$`, past its last (`or C2 bytes M`).
             let mut all: Option<Expr> = None;
             for k in &strings {
-                let mut c: Option<Expr> = templates.iter().find(|t| t.0 == *k).map(|t| t.1.clone());
+                let mut c: Option<Expr> = template_lasts.iter().find(|t| t.0 == *k).map(|t| t.1.clone());
                 for (q, e) in &resumed {
                     if q == k {
                         c = or2(c, e.clone());

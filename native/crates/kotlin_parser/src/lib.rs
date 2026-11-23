@@ -90,6 +90,13 @@ fn field(name: &str) -> Option<u16> {
 /// statements (`bitlex_lex_rust`) and the tree rules (`bitlex_rust`), without either tier
 /// compiled.
 pub fn tiers_rust(grammar: &str) -> Result<(String, String), String> {
+    tiers_rust_given(grammar, shipped_answers()).map(|(t1, t2, _)| (t1, t2))
+}
+
+/// [`tiers_rust`] from the answers `known`, and the answers its compile made: the Rust's compile
+/// asks what the grammar's (`compile_timed`) does not, with the symbols and tier 2's shape, so
+/// the shipped answers hold both (`tests::the_shipped_answers_answer_the_grammar`).
+pub fn tiers_rust_given(grammar: &str, known: Proofs) -> Result<(String, String, Vec<(rerail_compiler::bitlex_prove::Key, rerail_compiler::bitlex_prove::Answer)>), String> {
     let stmts = ::bitlex::syntax::parse(grammar)?;
     let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
     let kind = |name: &str| {
@@ -101,10 +108,10 @@ pub fn tiers_rust(grammar: &str) -> Result<(String, String), String> {
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     // The shipped answers: the compile's own, so the same Rust, with no cold proofs.
-    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, shipped_answers())?;
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known)?;
     let tier1 = compiled.lexer_rust.ok_or_else(|| "no tree section".to_owned())??;
     let tier2 = compiled.rust.ok_or_else(|| "no tree section".to_owned())??;
-    Ok((tier1, tier2))
+    Ok((tier1, tier2, compiled.proofs))
 }
 
 /// `grammar` compiled: a Bitlex grammar's text.

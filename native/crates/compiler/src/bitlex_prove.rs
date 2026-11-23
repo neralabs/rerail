@@ -39,6 +39,45 @@ const BEFORE: u16 = 256;
 /// The tries per byte of the position.
 const BUDGET: u32 = 1 << 12;
 
+/// The provers' work left to a compile, shared by every prover it makes (decision 0637): a
+/// count of steps (a search's try, a solver's conflict, a window's variable), so a compile's
+/// answers are the same on any machine and under any load, sized to about a second of proving.
+/// Spent, a prover stops with its sound answer (not proved), as past its own limits.
+#[derive(Clone, Debug)]
+pub struct Budget(std::sync::Arc<std::sync::atomic::AtomicU64>);
+
+impl Budget {
+    pub fn new(steps: u64) -> Self {
+        Budget(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(steps)))
+    }
+
+    /// No limit: a question asked apart from a compile (the provers' own tests).
+    pub fn unlimited() -> Self {
+        Budget::new(u64::MAX)
+    }
+
+    pub fn left(&self) -> u64 {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// `n` steps taken: whether any were left.
+    pub fn spend(&self, n: u64) -> bool {
+        let left = self.left();
+        self.0.store(left.saturating_sub(n), std::sync::atomic::Ordering::Relaxed);
+        left > 0
+    }
+}
+
+impl Default for Budget {
+    fn default() -> Self {
+        Budget::unlimited()
+    }
+}
+
+/// The steps a compile's provers take in all (`Budget`): about a second's, on an M-series core
+/// in a debug build.
+pub const PROVING_STEPS: u64 = 1 << 20;
+
 /// A free value: the byte at a lag, or an operation's value at a lag.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Var {
@@ -69,14 +108,19 @@ struct Proof<'a> {
     /// The position's own byte: the classes its readers tell apart, a byte of each and its
     /// members.
     own: Vec<(u8, ByteSet)>,
+    /// Each `(op, lag)`'s value under the values chosen now, and the first unchosen one it
+    /// turned on: a program shares its values, and a walk as a tree reads each again for every
+    /// reader. Cleared whenever a value is chosen (`zero`).
+    memo: std::cell::RefCell<HashMap<(u16, u32), (Option<bool>, Option<Var>)>>,
+    work: Budget,
 }
 
 impl<'a> Proof<'a> {
-    fn of(ops: &'a [BlockOp], tables: &'a [ClassTable], v: u16, d: u8) -> Proof<'a> {
+    fn of(ops: &'a [BlockOp], tables: &'a [ClassTable], v: u16, d: u8, work: &Budget) -> Proof<'a> {
         let (cone, readers) = cone(ops, v);
         let groups = readers.iter().map(|(&lag, r)| (lag, groups(tables, r))).collect();
         let own = classes(tables, readers.get(&u32::from(d)));
-        Proof { ops, tables, d: u32::from(d), b: 0, bytes: HashMap::default(), vals: HashMap::default(), cone, groups, budget: 0, own }
+        Proof { ops, tables, d: u32::from(d), b: 0, bytes: HashMap::default(), vals: HashMap::default(), cone, groups, budget: 0, own, memo: Default::default(), work: work.clone() }
     }
 
     /// Whether the value is zero with the position's byte `b`.
@@ -127,6 +171,22 @@ impl<'a> Proof<'a> {
     }
 
     fn eval(&self, at: u16, lag: u32, open: &mut Option<Var>) -> Option<bool> {
+        if let Some(&(r, first)) = self.memo.borrow().get(&(at, lag)) {
+            if let Some(v) = first {
+                open.get_or_insert(v);
+            }
+            return r;
+        }
+        let mut first = None;
+        let r = self.eval_op(at, lag, &mut first);
+        self.memo.borrow_mut().insert((at, lag), (r, first));
+        if let Some(v) = first {
+            open.get_or_insert(v);
+        }
+        r
+    }
+
+    fn eval_op(&self, at: u16, lag: u32, open: &mut Option<Var>) -> Option<bool> {
         match self.ops[usize::from(at)] {
             BlockOp::Eq(c) => self.byte(lag, open).map(|x| self.member(Reader::Eq(c), x)),
             BlockOp::Class { table, bits } => self.byte(lag, open).map(|x| self.member(Reader::Class(table, bits), x)),
@@ -231,6 +291,11 @@ impl<'a> Proof<'a> {
 
     /// Whether the value `v` is zero under every way of the values not chosen yet.
     fn zero(&mut self, v: u16) -> bool {
+        // Past the compile's budget: not proved.
+        if !self.work.spend(1) {
+            return false;
+        }
+        self.memo.get_mut().clear();
         let mut open = None;
         let r = self.eval(v, 0, &mut open);
         if r == Some(false) {
@@ -400,7 +465,12 @@ fn group_of(tables: &[ClassTable], readers: Option<&HashSet<Reader>>) -> [u8; 25
 /// The position's byte is read only by its readers (`cone`), so the bytes they cannot tell
 /// apart have one answer: one proof a class (`Proof::own`).
 pub fn first_bytes(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> ByteSet {
-    let mut p = Proof::of(ops, tables, v, d);
+    first_bytes_in(&Budget::unlimited(), ops, tables, v, d)
+}
+
+/// [`first_bytes`] within `work`.
+pub fn first_bytes_in(work: &Budget, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> ByteSet {
+    let mut p = Proof::of(ops, tables, v, d, work);
     let mut out = [0u64; 4];
     for (b, members) in std::mem::take(&mut p.own) {
         if !p.zero_at(v, b) {
@@ -415,7 +485,12 @@ pub fn first_bytes(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> Byt
 /// Whether a value is zero at every byte of every stream, proved: `first_bytes` empty, stopped
 /// at the first class of bytes not proved (most questions fail, and fail early).
 pub fn never(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
-    let mut p = Proof::of(ops, tables, v, d);
+    never_in(&Budget::unlimited(), ops, tables, v, d)
+}
+
+/// [`never`] within `work`.
+pub fn never_in(work: &Budget, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
+    let mut p = Proof::of(ops, tables, v, d, work);
     std::mem::take(&mut p.own).into_iter().all(|(b, _)| p.zero_at(v, b))
 }
 
@@ -476,6 +551,8 @@ pub struct Induction {
     /// The root's hypothesis is made at every lag of the window (`never_inductive`): a value
     /// the window reads at the position only is then assumed at the lags before it too.
     whole_hypothesis: bool,
+    /// The compile's work left (`Budget`).
+    work: Budget,
 }
 
 /// The version of what the provers answer, in every question's key (`Proofs`, decision 0414):
@@ -509,12 +586,16 @@ pub type Known = HashMap<Key, Answer>;
 
 /// The provers' answers by question (decision 0414): `known`, given to a compile, answers a
 /// question without its proof; `made`, each question the compile answered otherwise, for the
-/// caller to keep (as the engine keeps images, 0264). A question is its key (`question`): the
-/// answer depends on nothing else.
+/// caller to keep (as the engine keeps images, 0264); `used`, each known answer the compile took,
+/// so its answers whole (`used` and `made`) can be shipped from a compile that proved few. A
+/// question is its key (`question`): the answer depends on nothing else.
 #[derive(Clone, Debug, Default)]
 pub struct Proofs {
     pub known: Known,
     pub made: Vec<(Key, Answer)>,
+    pub used: Vec<(Key, Answer)>,
+    /// The compile's provers' work left (`Budget`).
+    pub work: Budget,
 }
 
 impl Proofs {
@@ -522,21 +603,35 @@ impl Proofs {
     pub fn ask(&mut self, text: Vec<u8>, f: impl FnOnce() -> Answer) -> Answer {
         let key = key_of(&text);
         if let Some(&a) = self.known.get(&key) {
+            self.used.push((key, a));
             return a;
         }
+        // `RERAIL_PROVING_TRACE`: each question proved, its work and time, on stderr.
+        let trace = std::env::var_os("RERAIL_PROVING_TRACE").is_some();
+        let (before, t) = (self.work.left(), std::time::Instant::now());
         let a = f();
+        if trace {
+            let head = text.iter().position(|&b| b == b'\n').map_or(&text[..text.len().min(80)], |i| &text[..i.min(80)]);
+            eprintln!("ask {:>10} steps {:>9.1} ms {}", before - self.work.left(), t.elapsed().as_secs_f64() * 1e3, String::from_utf8_lossy(head));
+        }
+        // Asked again in this compile (another pair's scopes, say): this answer, not a proof again.
+        self.known.insert(key, a);
         self.made.push((key, a));
         a
     }
 
     /// `ask` for a question answered yes or no.
     pub fn never(&mut self, key: Vec<u8>, f: impl FnOnce() -> bool) -> bool {
-        matches!(self.ask(key, || Answer::Never(f())), Answer::Never(true))
+        // Past the budget: not proved, with no proof begun.
+        let out = self.work.left() == 0;
+        matches!(self.ask(key, || Answer::Never(!out && f())), Answer::Never(true))
     }
 
     /// `ask` for a question answered by bytes.
     pub fn bytes(&mut self, key: Vec<u8>, f: impl FnOnce() -> ByteSet) -> ByteSet {
-        match self.ask(key, || Answer::Bytes(f())) {
+        // Past the budget: every byte, with no proof begun.
+        let out = self.work.left() == 0;
+        match self.ask(key, || Answer::Bytes(if out { [!0; 4] } else { f() })) {
             Answer::Bytes(b) => b,
             Answer::Never(_) => [!0; 4],
         }
@@ -786,7 +881,13 @@ enum Outcome {
 
 impl Induction {
     pub fn new(rounds: &[Vec<(u16, u16)>], horizon: u32, conflicts: u32) -> Self {
-        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), question: 0, solver: Solver::new(0), given: Vec::new(), whole_hypothesis: false }
+        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), question: 0, solver: Solver::new(0), given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited() }
+    }
+
+    /// This prover within the compile's budget `work`.
+    pub fn within(mut self, work: &Budget) -> Self {
+        self.work = work.clone();
+        self
     }
 
     /// This prover and its settings, asking `what`: a part of each question's key (`question`).
@@ -1067,10 +1168,18 @@ impl Induction {
                 u.clauses.push(&c);
             }
         }
+        // Past the compile's budget: not proved. A window's variables and the solve's conflicts
+        // are its steps.
+        if !self.work.spend(u.vars.unsigned_abs().into()) {
+            return Outcome::Unknown;
+        }
         let s = &mut self.solver;
         s.reset(u.vars as usize);
         s.add_all(&u.clauses);
-        match s.solve(self.conflicts) {
+        let before = s.conflicts;
+        let answer = s.solve(self.conflicts.min(u32::try_from(self.work.left()).unwrap_or(u32::MAX)));
+        self.work.spend(s.conflicts - before);
+        match answer {
             Sat::Unsat => Outcome::Proved,
             Sat::Unknown => Outcome::Unknown,
             Sat::Sat => {
@@ -1439,7 +1548,7 @@ mod tests {
         other_version[8] ^= 1;
         assert!(decode(&other_version).is_empty());
         // `ask` keys by the digest of the question it is given.
-        let mut p = Proofs { known, made: Vec::new() };
+        let mut p = Proofs { known, made: Vec::new(), used: Vec::new(), work: Budget::unlimited() };
         assert_eq!(p.ask(key(&a, 2, 0), || Answer::Never(false)), Answer::Never(true));
         assert!(p.made.is_empty(), "a known answer proved again");
     }

@@ -95,6 +95,8 @@ pub struct Solver {
     seen: Vec<bool>,
     /// The clauses given empty, or two units against each other: unsatisfiable at once.
     broken: bool,
+    /// The conflicts its solves met, in all (a caller's work budget reads it).
+    pub conflicts: u64,
 }
 
 impl Solver {
@@ -115,6 +117,7 @@ impl Solver {
             at: Vec::new(),
             seen: Vec::new(),
             broken: false,
+            conflicts: 0,
         };
         s.reset(vars);
         s
@@ -423,6 +426,7 @@ impl Solver {
                     return Answer::Unknown;
                 }
                 left -= 1;
+                self.conflicts += 1;
                 let (learned, back) = self.analyze(c);
                 self.back_to(back);
                 if learned.len() == 1 {
