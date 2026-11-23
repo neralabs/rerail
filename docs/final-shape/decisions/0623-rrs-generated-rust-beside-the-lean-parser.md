@@ -454,3 +454,27 @@ when none follows it. `advance` reads the record after the token once: a comment
 that record is the next token, and nothing is pending (`pend` moves with `i`), so the next take's `flush` is one
 compare instead of a step over the token taken last. Lean's take is `i += 1` beside a separate comment list; this is the
 same work on a token with no comment. On spark1 tier 2 was 30.3 ms (the plain calls' 29.9–31.6 ms); all tests pass.
+
+### A take asks only what can hold at its token
+
+The lean parser asks nothing at a token it takes but whether a comment comes before it: what a mark may change, it
+decides where the mark can be. Tier 2's take (`bump`) asked two things at every token: whether a mark no rule takes
+holds there (`open_mark`), and whether the level open refuses a mark the token has (`refuse M in L`). Each take now asks
+only what can hold, decided where the code is written (`takes`, `take::<M, F>`):
+
+- `M`: `open_mark` can hold only at its marks' words (where every such mark has words, as `.rerail`'s do). A take whose
+  token is a word none of theirs (`word_leaf(w::X, …)`), or of a kind none of those words is of (`tk(self.at_K(), …)`),
+  does not ask it.
+- `F`: a level's refused marks are the level's own, so they can be set only in a level that refuses some and in the
+  rules that are no level its code reaches (`records::refusers`). Everywhere else the take does not test them
+  (`no_refusing`), and a call saves and restores the refused marks only where the level it calls refuses some or a
+  refusing level's code calls it (`.rerail`: 3 calls of 77).
+
+In `.rerail`'s tier 2, 484 of its 540 takes ask neither. Kotlin's grammar has marks that hold at any token
+(`bt_cref`, the labels), so its takes still ask `open_mark`; it refuses no mark.
+
+Side by side on spark1 (1,949 files, 16.0 MB, three rounds in turns), tier 2 went from 40.9–42.8 ms to 38.2–39.6 ms.
+In the same hour the lean parser's parse was 28.4–29.2 ms and its lexer 14.7–15.0 ms (`rr_aot_against_jit`, release);
+tier 1 was 23.7–24.8 ms (`rr-aot-speed`). `rr_aot_against_jit`'s own tier 1 figure (45 ms) is a test build's: with
+`test-hooks` tier 1 also runs stage 1's walk and asserts each region's opener against it, so its tier 1 is no measure of
+the product's.

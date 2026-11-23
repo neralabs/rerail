@@ -38,6 +38,56 @@ struct Rl<'g, 'a> {
     asks: bool,
     word: bool,
     refusing: bool,
+    /// The rules whose code may run while a level refuses a mark (`refuse M in L`): those levels, and the rules that
+    /// are no level their code reaches. The others' code runs with none refused, and takes its tokens without the
+    /// test (`no_refusing`).
+    hot: HashSet<String>,
+    /// The levels whose call saves its caller's refused marks: a level that refuses one, or one a hot rule calls.
+    saves: HashSet<String>,
+}
+
+/// The rules `g` names (`Gram::Sym`), itself and inside.
+fn names<'g>(g: &'g Gram, out: &mut Vec<&'g str>) {
+    match g {
+        Gram::Sym(n) => out.push(n),
+        Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().for_each(|g| names(g, out)),
+        Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => names(a, out),
+        Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => names(body, out),
+        _ => {}
+    }
+}
+
+/// `code`, a rule's that runs with no mark refused: its token takes without the test of the refused marks
+/// (`takes`, the `_nf` calls).
+fn no_refusing(code: &str) -> String {
+    ["tk", "word_leaf", "word_skip", "skip", "merge"].iter().fold(code.to_owned(), |c, t| c.replace(&format!("self.{t}("), &format!("self.{t}_nf(")))
+}
+
+/// What may run while a level refuses a mark (`Rl::hot`), and the levels whose calls save the marks refused
+/// (`Rl::saves`).
+fn refusers(g: &G<'_>) -> (HashSet<String>, HashSet<String>) {
+    let mut hot: HashSet<String> = g.refusing.iter().filter(|(_, b)| **b != 0).map(|(n, _)| n.clone()).collect();
+    let mut saves: HashSet<String> = hot.iter().filter(|n| g.nested(n)).cloned().collect();
+    let mut todo: Vec<String> = hot.iter().cloned().collect();
+    while let Some(r) = todo.pop() {
+        let body = match g.rules.get(r.as_str()) {
+            Some(Stmt::Node { body, .. } | Stmt::Choice { body, .. }) => body,
+            _ => continue,
+        };
+        let mut ns = Vec::new();
+        names(body, &mut ns);
+        for n in ns {
+            if g.mark_of(n).is_some() || g.remember.iter().any(|r| r == n) || !g.rules.contains_key(n) {
+                continue;
+            }
+            if g.nested(n) {
+                saves.insert(n.to_owned());
+            } else if hot.insert(n.to_owned()) {
+                todo.push(n.to_owned());
+            }
+        }
+    }
+    (hot, saves)
 }
 
 /// To place `l`.
@@ -135,7 +185,8 @@ impl Rl<'_, '_> {
     /// a level's call ends its place, and the code after it is a place of its own.
     fn walk(&self, g: &Gram, rest: &[&Gram], rule: &str, k: String) -> Result<String, String> {
         if !self.holds_call(g)? {
-            return Ok(self.g.code(g, rest, rule, "")? + &k);
+            let code = self.g.code(g, rest, rule, "")?;
+            return Ok(if self.hot.contains(rule) { code } else { no_refusing(&code) } + &k);
         }
         Ok(match g {
             Gram::Sym(n) if self.g.nested(n) => {
@@ -149,7 +200,7 @@ impl Rl<'_, '_> {
                 if self.word {
                     out.push_str("self.stack.push(u64::from(self.word));\n");
                 }
-                if self.refusing {
+                if self.refusing && self.saves.contains(n.as_str()) {
                     let _ = write!(out, "self.stack.push(u64::from(self.refusing));\nself.refusing = {:#x};\n", self.g.refusing.get(n.as_str()).copied().unwrap_or(0));
                 }
                 let _ = write!(out, "self.stack.push({ret});\n{}", go(self.level(n)?));
@@ -286,7 +337,7 @@ impl Rl<'_, '_> {
         }
         end.push_str("self.marked = false;\n// The place the call returns to, then what a level's saved of its caller's.\nlet ret = self.stack.pop().unwrap_or(0) as usize;\n");
         // A level's call saved its caller's state too, a rule's that is no level only the place.
-        if nested && self.refusing {
+        if nested && self.refusing && self.saves.contains(n) {
             end.push_str("self.refusing = self.stack.pop().unwrap_or(0) as u32;\n");
         }
         if nested && self.word {
@@ -305,8 +356,9 @@ impl Rl<'_, '_> {
 /// Tier 2 of the grammar as one loop over tier 1's records (the module's doc), or why it is not written.
 pub(super) fn tier2(x: &Input<'_>) -> Result<(String, u32), String> {
     let g = G::new(x);
+    let (hot, saves) = refusers(&g);
     let all = (0..x.marks.len()).filter(|&m| g.asks(m)).count();
-    let rl = Rl { g: &g, places: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), levels: RefCell::new(BTreeMap::new()), calls: RefCell::new(HashMap::new()), busy: RefCell::new(HashSet::new()), asks: all > 0, word: !g.remember.is_empty(), refusing: !g.refusing.is_empty() };
+    let rl = Rl { g: &g, places: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), levels: RefCell::new(BTreeMap::new()), calls: RefCell::new(HashMap::new()), busy: RefCell::new(HashSet::new()), asks: all > 0, word: !g.remember.is_empty(), refusing: !g.refusing.is_empty(), hot, saves };
     // The root: its node, its body, then the file's end, at place 0.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (body, whole, padded) = match g.rules[root] {
@@ -322,7 +374,8 @@ pub(super) fn tier2(x: &Input<'_>) -> Result<(String, u32), String> {
         if *name == root || g.nested(name) || rl.rule_calls(name)? {
             continue;
         }
-        rules.push_str(&g.rule(name)?);
+        let code = g.rule(name)?;
+        rules.push_str(&if rl.hot.contains(*name) { code } else { no_refusing(&code) });
     }
     let mut arms = String::new();
     for (l, code) in rl.places.borrow().iter().enumerate() {
