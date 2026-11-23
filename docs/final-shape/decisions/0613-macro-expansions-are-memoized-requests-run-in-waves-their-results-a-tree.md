@@ -622,6 +622,32 @@ So:
    - Still refused in Boost: `seq.c`. Before stage 5 its run passed the work bound (`LP_WORK`); now the store
      runs out first (its log the largest share of the rows claimed, a row a call, the run's region doubling).
      Its one run reads about 2 M steps serially: posting its calls as requests (§4) is what bounds it.
+
+   **Calls read in an argument's expansion, the design** (2026-11-23). Boost's `seq.c` reads about 2 M steps in
+   one run and passes the work bound. On the CPU backend (one group, so no argument is posted), its second rung
+   read 1.42 M calls inline inside an argument's expansion, 577 K nested in a piece's own reading, and 3 K past
+   the request levels. A call in an argument's expansion is the next to post.
+   - **Where its hole goes.** Into the argument's expansion list (`calls[nc - 1].ocur`), as a request's own-level
+     hole goes into its result. Posting checks what it checks now: flat arguments, and no `(` after the `)`
+     (`RQ_NEXTP`). Inside an argument nothing past its end is read, so the argument's own expansion is right
+     with the hole whatever the result is.
+   - **The rescan reads it as a leaf.** The expansion is substituted into the caller's body and rescanned. A hole
+     there passes through to the output (the caller's list, or the piece's output) as a request's result does,
+     with two exceptions. The serial pass acts on its edges in a rescan only through a `(`:
+     - a function-like name before it, whose look for `(` reaches the hole: the result's first token decides;
+     - a `(` after it (or another hole or node, which may begin with one): the result's last token decides.
+     A hole at neither edge needs nothing of its result, done or not.
+   - **At an edge, the reader reads it again where it was.** The caller's run is read again from the argument's
+     start, with no post in that argument (as a piece reads again, `RQ_*`). It is never read inline in the
+     rescan: there the caller's macro is disabled, and the serial pass expanded the call under the argument's
+     disabled macros.
+   - **Its rows** (stage 5): a hole in an argument logs `LG_OCC` with its raw entries, as a request's own-level
+     post does.
+   - **Tests first.** A call in an argument that becomes a hole, then: the rescan passing it through; a
+     function-like name before it whose `(` the result begins; a result ending in a function-like name with a
+     `(` after the parameter; two holes side by side; the parameter stringized and pasted; the argument read
+     twice in the body; `__COUNTER__` in it. Each the serial pass's, on the CPU backend and Metal, and Boost's
+     `seq.c` under the work bound.
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 
