@@ -2332,11 +2332,12 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
     uint32_t v[29];
     for (uint32_t q = 0u; q < 29u; q++) v[q] = tv[q];
     int64_t r = 0;
-    if (k < 5u) r = (int64_t)clif_view_node(b, d, tt, v, ll, l, k);
-    else if (k < 8u) r = l + 1u < n ? (int64_t)clif_view_child(b, d, tt, v, ll, l, k - 5u) : 0;
-    else if (k < 11u) r = l < nf ? (int64_t)clif_view_field(b, d, tt, v, ll, l, k - 8u) : 0;
-    else if (k < 14u) r = (int64_t)clif_view_core(b, d, tt, v, ll, l, k - 11u);
-    else r = (int64_t)clif_view_line(b, d, tt, v, ll, l, k - 14u);
+    // The lines by their buffer's base and their offset in it (none: a buffer of their own).
+    if (k < 5u) r = (int64_t)clif_view_node(b, d, tt, v, ll, 0u, l, k);
+    else if (k < 8u) r = l + 1u < n ? (int64_t)clif_view_child(b, d, tt, v, ll, 0u, l, k - 5u) : 0;
+    else if (k < 11u) r = l < nf ? (int64_t)clif_view_field(b, d, tt, v, ll, 0u, l, k - 8u) : 0;
+    else if (k < 14u) r = (int64_t)clif_view_core(b, d, tt, v, ll, 0u, l, k - 11u);
+    else r = (int64_t)clif_view_line(b, d, tt, v, ll, 0u, l, k - 14u);
     out[l * 16u + k] = r;
 }
 "#;
