@@ -38,203 +38,211 @@ static HI_3: [u8; 16] = [0x00, 0x00, 0x01, 0x00, 0x00, 0x02, 0x04, 0x08, 0x00, 0
 unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
     let nw = n.div_ceil(64);
     let mut refused = false;
-    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.
+    // The tokens: each block's starts at once, the lean lexer's `lex_blocks`.
     // Room for a record a byte, as the lean lexer's: each token's first byte is after the last's, so the writes need no check.
     let mut recs: Vec<Rec> = Vec::with_capacity(n + 1);
     let out = recs.as_mut_ptr();
     // The comments, apart from the tokens, as the lean lexer's `comments`.
     let mut extras: Vec<Rec> = Vec::new();
     let mut len = 0usize;
+    // No token starts before `at`.
     let mut at = 0usize;
-    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).
-    let mut b = at / 64;
+    let mut b = 0usize;
     'tokens: while b < nw {
         let base = b * 64;
         // The block's masks, from its classes (the lean lexer's `Window`): what its tokens read of it.
         // SAFETY: `base` is in the file.
         let cur = unsafe { block_classes::<S>(src, n, base) };
+        let k_m_ws = cur[0];
+        let k_m_word = cur[1];
+        let k_pair_6 = cur[2];
+        let k_rare = cur[3];
+        // The block's starts from its byte `k` on, as the lean lexer's: a byte `skip` does not hold, not a word's after its
+        // first, not a pair's second (the pairs read left to right); and byte `k`, the byte after a token.
         let lv = valid(n, base as isize);
-        let k_m_line_open = (cur[0] & (cur[0] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], 0x2f)) << 63));
-        let k_m_block_open = (cur[0] & (cur[1] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], 0x2a)) << 63));
-        let k_t16 = (((cur[2] & (!(cur[2] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], 0x60)) << 63) & lv)) | ((cur[2] & (cur[2] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], 0x60)) << 63)) & (!(cur[2] >> 2 | u64::from(base + 64 < n && matches!(src[base + 64], 0x60)) << 62 | u64::from(base + 65 < n && matches!(src[base + 65], 0x60)) << 63) & lv))) | (((cur[2] & (cur[2] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], 0x60)) << 63)) & (cur[2] >> 2 | u64::from(base + 64 < n && matches!(src[base + 64], 0x60)) << 62 | u64::from(base + 65 < n && matches!(src[base + 65], 0x60)) << 63)) & (!(cur[2] >> 3 | u64::from(base + 64 < n && matches!(src[base + 64], 0x60)) << 61 | u64::from(base + 65 < n && matches!(src[base + 65], 0x60)) << 62 | u64::from(base + 66 < n && matches!(src[base + 66], 0x60)) << 63) & lv)));
-        let k_m_word = cur[3];
-        let k_m_num_run = (cur[4] | ((cur[5] & (cur[4] << 1 | u64::from(base >= 1 && matches!(src[base - 1], 0x30..=0x39)))) & (cur[4] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], 0x30..=0x39)) << 63)));
-        let k_m_dot = cur[5];
-        let k_m_digit = cur[4];
-        let k_m_other = cur[6];
-        let k_m_ws = cur[7];
-        let k_pair_6 = cur[8];
-        let mut firsts = !k_m_ws & (!0u64 << at.saturating_sub(base));
-        while firsts != 0 {
-        let s = base + firsts.trailing_zeros() as usize;
-        if s >= n {
-            break 'tokens;
-        }
-        // The token's row (or its first byte's group's tests) and its record kind, by one load (the lean lexer's `TOKEN`).
-        let (pick, kind1, word1) = TOKEN[usize::from(src[s])];
-        let (l, kind, extra, marks, word): (usize, u32, bool, u32, u32) = {
-            // The row: the first whose start holds, of those whose start may be the byte's.
-            let row = match pick {
-                p if usize::from(p) < 8 => usize::from(p),
-                // `/`
-                12 => if ((k_m_line_open >> (s - base) & 1 == 1) || (k_m_block_open >> (s - base) & 1 == 1)) {
-                    1
-                } else {
-                    6
-                },
-                // ```
-                15 => if (k_t16 >> (s - base) & 1 == 1) {
-                    2
-                } else {
-                    usize::MAX
-                },
-                _ => usize::MAX,
-            };
-            match row {
-                0 => {
-                    // `string`: read str
-                    let mut open_bad = false;
-                    let l = match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_q::<S>(src, n, p, esc) }) {
-                        Some(c) => c + 0,
-                        None => {
-                            open_bad = true;
-                            n - 1
+        let starts_from = |k: usize| {
+            let s = !k_m_ws & lv & (!(k_m_word & k_m_word << 1) & (!0u64 << k) | 1u64 << k);
+            s & !(left_to_right(k_pair_6 & s) << 1)
+        };
+        let mut starts = starts_from(at.saturating_sub(base));
+        loop {
+            let rare = starts & k_rare;
+            // The run: the starts before the next rare one, each a word or an operator, by one load (the lean lexer's
+            // `TOKEN`): its kind, its word alone; a word's last byte by its run, an operator's by its pair.
+            let mut run = starts & (rare.wrapping_sub(1) & !rare);
+            while run != 0 {
+                let q = run.trailing_zeros() as usize;
+                run &= run - 1;
+                let s = base + q;
+                let (_, kind1, word1) = TOKEN[usize::from(src[s])];
+                let l = if k_m_word >> q & 1 == 1 { brun_last(n, base, k_m_word, s, |p: isize, esc: &mut u64| unsafe { w_m_word::<S>(src, n, p, esc) }) } else { s + (k_pair_6 >> q & 1) as usize };
+                let word = if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) };
+                debug_assert!(len < n, "a token a byte at most");
+                // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.
+                unsafe { out.add(len).write(Rec { start: s as u32, last: l as u32, code: u32::from(kind1) | word << 8 }) };
+                len += 1;
+                if l + 1 >= base + 64 {
+                    // A token on past the block: the blocks from its end.
+                    at = l + 1;
+                    b = at / 64;
+                    continue 'tokens;
+                }
+            }
+            if rare == 0 {
+                break;
+            }
+            // A rare token, read by its row: the lean lexer's `match` on its first byte.
+            let s = base + rare.trailing_zeros() as usize;
+            // The token's row (or its first byte's group's tests) and its record kind, by one load (the lean lexer's `TOKEN`).
+            let (pick, kind1, word1) = TOKEN[usize::from(src[s])];
+            let (l, kind, extra, marks, word): (usize, u32, bool, u32, u32) = {
+                // The row: the first whose start holds, of those whose start may be the byte's.
+                let row = match pick {
+                    p if usize::from(p) < 8 => usize::from(p),
+                    // `/`
+                    12 => if (((matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2f)))) || ((matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2a))))) {
+                        1
+                    } else {
+                        6
+                    },
+                    // ```
+                    15 => if ((((matches!(src[s], 0x60) && !((s + 1) < n && matches!(src[(s + 1)], 0x60))) || ((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && !((s + 2) < n && matches!(src[(s + 2)], 0x60)))) || (((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && ((s + 2) < n && matches!(src[(s + 2)], 0x60))) && !((s + 3) < n && matches!(src[(s + 3)], 0x60))))) {
+                        2
+                    } else {
+                        usize::MAX
+                    },
+                    _ => usize::MAX,
+                };
+                match row {
+                    0 => {
+                        // `string`: read str
+                        let mut open_bad = false;
+                        let l = match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_q::<S>(src, n, p, esc) }) {
+                            Some(c) => c + 0,
+                            None => {
+                                open_bad = true;
+                                n - 1
+                            }
+                        };
+                        let l = l.max(s);
+                        if !open_bad {
+                            // a \u escape the engine checks
+                            if wcount_in(n, s, l, |p: isize, esc: &mut u64| unsafe { w_t14::<S>(src, n, p, esc) }) >= 1 {
+                                refused = true;
+                                break 'tokens;
+                            }
                         }
-                    };
-                    let l = l.max(s);
-                    if !open_bad {
-                        // a \u escape the engine checks
-                        if wcount_in(n, s, l, |p: isize, esc: &mut u64| unsafe { w_t14::<S>(src, n, p, esc) }) >= 1 {
+                        (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0x0, 0)
+                    },
+                    1 => {
+                        // `comment`: read line | block
+                        let mut open_bad = false;
+                        let l = if ((matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2f)))) {
+                            wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_lf::<S>(src, n, p, esc) }).unwrap_or(n) - 1
+
+                        } else if ((matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2a)))) {
+                            match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_block_end::<S>(src, n, p, esc) }) {
+                                Some(c) => c + 0,
+                                None => {
+                                    open_bad = true;
+                                    n - 1
+                                }
+                            }
+
+                        } else {
+                            refused = true;
+                            break 'tokens;
+                        };
+                        let l = l.max(s);
+                        (l, 0, !open_bad, if open_bad { 0 } else { 0x8000 }, 0)
+                    },
+                    2 => {
+                        // `code_literal`: read t1 | t2 | t3
+                        let mut open_bad = false;
+                        let l = if ((matches!(src[s], 0x60) && !((s + 1) < n && matches!(src[(s + 1)], 0x60)))) {
+                            match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_tick::<S>(src, n, p, esc) }) {
+                                Some(c) => c + 0,
+                                None => {
+                                    open_bad = true;
+                                    n - 1
+                                }
+                            }
+
+                        } else if (((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && !((s + 2) < n && matches!(src[(s + 2)], 0x60)))) {
+                            match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_tt::<S>(src, n, p, esc) }) {
+                                Some(c) => c + 1,
+                                None => {
+                                    s + 1
+                                }
+                            }
+
+                        } else if ((((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && ((s + 2) < n && matches!(src[(s + 2)], 0x60))) && !((s + 3) < n && matches!(src[(s + 3)], 0x60)))) {
+                            match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_ttt::<S>(src, n, p, esc) }) {
+                                Some(c) => c + 2,
+                                None => {
+                                    open_bad = true;
+                                    n - 1
+                                }
+                            }
+
+                        } else {
+                            refused = true;
+                            break 'tokens;
+                        };
+                        let l = l.max(s);
+                        (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0x0, 0)
+                    },
+                    3 => {
+                        // `hash_word`: run word
+                        let l = wrun_last(n, s, |p: isize, esc: &mut u64| unsafe { w_m_word::<S>(src, n, p, esc) });
+                        let l = l.max(s);
+                        (l, u32::from(kind1), false, 0x0, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
+                    },
+                    5 => {
+                        // `number`: run num_run once dot
+                        let l = wrun_once_last(n, s, |p: isize, esc: &mut u64| unsafe { w_m_num_run::<S>(src, n, p, esc) }, |p: isize, esc: &mut u64| unsafe { w_m_dot::<S>(src, n, p, esc) });
+                        let l = l.max(s);
+                        // a number of 19 digits or more
+                        if l + 1 - s >= 19 && wfirst_clear(n, s, l + 1, |p: isize, esc: &mut u64| unsafe { w_m_digit::<S>(src, n, p, esc) }).is_none() {
                             refused = true;
                             break 'tokens;
                         }
-                    }
-                    (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0x0, 0)
-                }
-,
-                1 => {
-                    // `comment`: read line | block
-                    let mut open_bad = false;
-                    let l = if ((matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2f)))) {
-                        wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_lf::<S>(src, n, p, esc) }).unwrap_or(n) - 1
-
-                    } else if ((matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2a)))) {
-                        match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_block_end::<S>(src, n, p, esc) }) {
-                            Some(c) => c + 0,
-                            None => {
-                                open_bad = true;
-                                n - 1
-                            }
-                        }
-
-                    } else {
-                        refused = true;
-                        break 'tokens;
-                    };
-                    let l = l.max(s);
-                    (l, 0, !open_bad, if open_bad { 0 } else { 0x8000 }, 0)
-                }
-,
-                2 => {
-                    // `code_literal`: read t1 | t2 | t3
-                    let mut open_bad = false;
-                    let l = if ((matches!(src[s], 0x60) && !((s + 1) < n && matches!(src[(s + 1)], 0x60)))) {
-                        match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_tick::<S>(src, n, p, esc) }) {
-                            Some(c) => c + 0,
-                            None => {
-                                open_bad = true;
-                                n - 1
-                            }
-                        }
-
-                    } else if (((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && !((s + 2) < n && matches!(src[(s + 2)], 0x60)))) {
-                        match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_tt::<S>(src, n, p, esc) }) {
-                            Some(c) => c + 1,
-                            None => {
-                                s + 1
-                            }
-                        }
-
-                    } else if ((((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && ((s + 2) < n && matches!(src[(s + 2)], 0x60))) && !((s + 3) < n && matches!(src[(s + 3)], 0x60)))) {
-                        match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_ttt::<S>(src, n, p, esc) }) {
-                            Some(c) => c + 2,
-                            None => {
-                                open_bad = true;
-                                n - 1
-                            }
-                        }
-
-                    } else {
-                        refused = true;
-                        break 'tokens;
-                    };
-                    let l = l.max(s);
-                    (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0x0, 0)
-                }
-,
-                3 => {
-                    // `hash_word`: run word
-                    let l = brun_last(n, base, k_m_word, s, |p: isize, esc: &mut u64| unsafe { w_m_word::<S>(src, n, p, esc) });
-                    let l = l.max(s);
-                    (l, u32::from(kind1), false, 0x0, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
-                }
-,
-                4 => {
-                    // `identifier`: run word
-                    let l = brun_last(n, base, k_m_word, s, |p: isize, esc: &mut u64| unsafe { w_m_word::<S>(src, n, p, esc) });
-                    let l = l.max(s);
-                    (l, u32::from(kind1), false, 0x0, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
-                }
-,
-                5 => {
-                    // `number`: run num_run once dot
-                    let l = brun_once_last(n, base, k_m_num_run, k_m_dot, s, |p: isize, esc: &mut u64| unsafe { w_m_num_run::<S>(src, n, p, esc) }, |p: isize, esc: &mut u64| unsafe { w_m_dot::<S>(src, n, p, esc) });
-                    let l = l.max(s);
-                    // a number of 19 digits or more
-                    if l + 1 - s >= 19 && bfirst_clear(n, base, k_m_digit, s, l + 1, |p: isize, esc: &mut u64| unsafe { w_m_digit::<S>(src, n, p, esc) }).is_none() {
+                        (l, u32::from(kind1), false, 0x0, 0)
+                    },
+                    6 => {
+                        // `punct`: pair
+                        let l = s + (k_pair_6 >> (s - base) & 1) as usize;
+                        let l = l.max(s);
+                        (l, u32::from(kind1), false, 0x0, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
+                    },
+                    7 => {
+                        // `bad`: run other
+                        let l = wrun_last(n, s, |p: isize, esc: &mut u64| unsafe { w_m_other::<S>(src, n, p, esc) });
+                        let l = l.max(s);
+                        (l, u32::from(kind1), false, 0x0, 0)
+                    },
+                    _ => {
+                        // A byte no token begins with.
                         refused = true;
                         break 'tokens;
                     }
-                    (l, u32::from(kind1), false, 0x0, 0)
                 }
-,
-                6 => {
-                    // `punct`: pair
-                    let l = s + (k_pair_6 >> (s - base) & 1) as usize;
-                    let l = l.max(s);
-                    (l, u32::from(kind1), false, 0x0, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
-                }
-,
-                7 => {
-                    // `bad`: run other
-                    let l = brun_last(n, base, k_m_other, s, |p: isize, esc: &mut u64| unsafe { w_m_other::<S>(src, n, p, esc) });
-                    let l = l.max(s);
-                    (l, u32::from(kind1), false, 0x0, 0)
-                }
-,
-                _ => {
-                    // A byte no token begins with.
-                    refused = true;
-                    break 'tokens;
-                }
+            };
+            let rec = Rec { start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 };
+            if extra {
+                extras.push(rec);
+            } else {
+                debug_assert!(len < n && l >= s, "a token a byte at most");
+                // SAFETY: as the run's.
+                unsafe { out.add(len).write(rec) };
+                len += 1;
             }
-        }
-;
-        let rec = Rec { start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 };
-        if extra {
-            extras.push(rec);
-        } else {
-            debug_assert!(len < n && l >= s, "a token a byte at most");
-            // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.
-            unsafe { out.add(len).write(rec) };
-            len += 1;
-        }
-        at = l + 1;
-        if at >= base + 64 {
-            b = at / 64;
-            continue 'tokens;
-        }
-        firsts &= !0u64 << (at - base);
+            at = l + 1;
+            if at >= base + 64 {
+                b = at / 64;
+                continue 'tokens;
+            }
+            starts = starts_from(at - base);
         }
         b += 1;
     }
@@ -249,6 +257,25 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
         extras,
         refused,
     }
+}
+
+/// A run of pairs' first bytes (`=>=`), read left to right, as the lean lexer's: one whose first byte is the second of
+/// the one before is none.
+#[inline(always)]
+fn left_to_right(mut m: u64) -> u64 {
+    if m & m << 1 == 0 {
+        return m;
+    }
+    let mut kept = 0;
+    while m != 0 {
+        let i = m.trailing_zeros();
+        kept |= 1 << i;
+        m &= !(1 << i);
+        if i < 63 {
+            m &= !(1 << (i + 1));
+        }
+    }
+    kept
 }
 
 rerail_simd8::dispatch! {
@@ -413,50 +440,6 @@ fn wrun_last(n: usize, s: usize, mut w: impl FnMut(isize, &mut u64) -> u64) -> u
     }
 }
 
-/// Block `base`'s word `k` cut to bytes `a..=b` (`a` in the block), and whether `b` is past the block.
-#[inline(always)]
-fn in_block(base: usize, k: u64, a: usize, b: usize) -> (u64, bool) {
-    let mut bits = k & (!0u64 << (a - base));
-    let past = b >= base + 64;
-    if !past {
-        bits &= !0u64 >> (63 - (b - base));
-    }
-    (bits, past)
-}
-
-/// `wfirst_in` from block `base`'s word `k` where `a` is in the block, then windows past it.
-#[inline(always)]
-fn bfirst_in(n: usize, base: usize, k: u64, a: usize, b: usize, w: impl FnMut(isize, &mut u64) -> u64) -> Option<usize> {
-    if a > b {
-        return None;
-    }
-    if a.wrapping_sub(base) >= 64 {
-        return wfirst_in(n, a, b, w);
-    }
-    let (bits, past) = in_block(base, k, a, b);
-    if bits != 0 {
-        return Some(base + bits.trailing_zeros() as usize);
-    }
-    if past { wfirst_in(n, base + 64, b, w) } else { None }
-}
-
-/// `wfirst_clear` from block `base`'s word `k` where `from` is in the block, then windows past it.
-#[inline(always)]
-fn bfirst_clear(n: usize, base: usize, k: u64, from: usize, to: usize, w: impl FnMut(isize, &mut u64) -> u64) -> Option<usize> {
-    if from >= to {
-        return None;
-    }
-    if from.wrapping_sub(base) >= 64 {
-        return wfirst_clear(n, from, to, w);
-    }
-    let (bits, past) = in_block(base, !k, from, to - 1);
-    if bits != 0 {
-        let i = base + bits.trailing_zeros() as usize;
-        return (i < n).then_some(i);
-    }
-    if past { wfirst_clear(n, base + 64, to, w) } else { None }
-}
-
 /// `wrun_last` from block `base`'s word `k` where the run's first byte is in the block (the lean lexer's
 /// `micro::run`), then windows past it (its `word_end`).
 #[inline(always)]
@@ -472,16 +455,6 @@ fn brun_last(n: usize, base: usize, k: u64, s: usize, w: impl FnMut(isize, &mut 
     wrun_last(n, base + 63, w)
 }
 
-/// `wrun_once_last` from block `base`'s words `kr` and `kd`, then windows past it.
-#[inline(always)]
-fn brun_once_last(n: usize, base: usize, kr: u64, kd: u64, s: usize, r: impl FnMut(isize, &mut u64) -> u64, mut d: impl FnMut(isize, &mut u64) -> u64) -> usize {
-    let l = brun_last(n, base, kr, s, r);
-    match bfirst_in(n, base, kd, s + 1, l, &mut d).and_then(|p| bfirst_in(n, base, kd, p + 1, l, &mut d)) {
-        Some(q) => q - 1,
-        None => l,
-    }
-}
-
 /// The last byte of the run of `r` after byte `s` with one bit of `d` in it at most: the second ends the run before
 /// it, as a lexer reads a number's one `.` and stops at the next.
 #[inline(always)]
@@ -491,42 +464,6 @@ fn wrun_once_last(n: usize, s: usize, r: impl FnMut(isize, &mut u64) -> u64, mut
         Some(q) => q - 1,
         None => l,
     }
-}
-
-/// Class `slash`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_slash<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::eq_mask(v, 0x2f) };
-    padded(b, q, p)
-}
-
-/// Class `star`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_star<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::eq_mask(v, 0x2a) };
-    padded(b, q, p)
-}
-
-/// Class `tick`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_tick<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::eq_mask(v, 0x60) };
-    padded(b, q, p)
 }
 
 /// Class `quote`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -694,6 +631,30 @@ unsafe fn w_m_lf<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
     unsafe { cls_lf::<S>(src, n, p) }
 }
 
+/// Class `slash`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_slash<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x2f) };
+    padded(b, q, p)
+}
+
+/// Class `star`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_star<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x2a) };
+    padded(b, q, p)
+}
+
 /// `m_block_end`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
 ///
 /// # Safety
@@ -702,6 +663,18 @@ unsafe fn w_m_lf<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
 #[allow(unused_variables)]
 unsafe fn w_m_block_end<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
     (unsafe { cls_slash::<S>(src, n, p) } & (unsafe { cls_star::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2a))))
+}
+
+/// Class `tick`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_tick<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x60) };
+    padded(b, q, p)
 }
 
 /// `m_tick`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -895,13 +868,16 @@ unsafe fn w_t15<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: 
 static PAIR_6_0_FIRST: ([u8; 16], [u8; 16]) = ([0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x18, 0x42, 0x20, 0x00], [0x00, 0x00, 0x44, 0x3b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 static PAIR_6_0_SECOND: ([u8; 16], [u8; 16]) = ([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x2d, 0x42, 0x00], [0x00, 0x00, 0x01, 0x7e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
-/// The classes the block's words read (`slash`, `star`, `tick`, `word`, `digit`, `dot`, `other`, `ws`, `pair_6_0`), each's bits in the block at `base`, a byte of the file: one load, and one
+/// The bytes a rare token starts with, part 0: a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
+static RARE_0: ([u8; 16], [u8; 16]) = ([0x2b, 0x0b, 0x0f, 0x0f, 0x0f, 0x0b, 0x0b, 0x0f, 0x0b, 0x0a, 0x02, 0x03, 0x12, 0x02, 0x03, 0x4f], [0x01, 0x02, 0x04, 0x08, 0x00, 0x10, 0x20, 0x40, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02]);
+
+/// The classes the block's words read (`ws`, `word`, `pair_6_0`, `rare_0`), each's bits in the block at `base`, a byte of the file: one load, and one
 /// classify a pair of nibble tables, as the lean lexer's `Window`. None past the file.
 ///
 /// # Safety
 /// The CPU runs `S`'s backend.
 #[inline(always)]
-unsafe fn block_classes<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, base: usize) -> [u64; 9] {
+unsafe fn block_classes<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, base: usize) -> [u64; 4] {
     let block: &[u8; 64] = src[base..base + 64].try_into().expect("the padded source");
     let lv = valid(n, base as isize);
     // SAFETY: the caller's.
@@ -910,7 +886,7 @@ unsafe fn block_classes<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, base: u
         let d = S::shift_in(v, src[base + 64]);
         let c0 = S::classify(v, &LO_0, &HI_0);
         let c1 = S::classify(v, &LO_1, &HI_1);
-        [S::eq_mask(v, 0x2f) & lv, S::eq_mask(v, 0x2a) & lv, S::eq_mask(v, 0x60) & lv, S::to_bitmask(S::test(c1, S::splat(0x0f))) & lv, S::to_bitmask(S::test(c0, S::splat(0x80))) & lv, S::eq_mask(v, 0x2e) & lv, S::to_bitmask(S::test(c0, S::splat(0x7c))) & lv, S::to_bitmask(S::test(c0, S::splat(0x03))) & lv, S::to_bitmask(S::test(S::classify(v, &PAIR_6_0_FIRST.0, &PAIR_6_0_FIRST.1), S::classify(d, &PAIR_6_0_SECOND.0, &PAIR_6_0_SECOND.1))) & lv]
+        [S::to_bitmask(S::test(c0, S::splat(0x03))) & lv, S::to_bitmask(S::test(c1, S::splat(0x0f))) & lv, S::to_bitmask(S::test(S::classify(v, &PAIR_6_0_FIRST.0, &PAIR_6_0_FIRST.1), S::classify(d, &PAIR_6_0_SECOND.0, &PAIR_6_0_SECOND.1))) & lv, S::to_bitmask(S::test(S::classify(v, &RARE_0.0, &RARE_0.1), S::splat(0xff))) & lv]
     }
 }
 

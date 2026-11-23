@@ -107,3 +107,31 @@ after the loop, of the last tokens. The tests are of the windows from the token'
 a window past the end of a source with no padding (tier 2's) is its last bytes and spaces, as the padding's.
 
 JSON's and Kotlin's tier 1 read their masks in stage 1 and keep their hits: their `TESTED` is none.
+
+## Steps 4 and 5: tier 1's loop and its masks in the lean lexer's shape (done)
+
+Where tier 2 asks the marks (step 6), the loop keeps nothing between tokens. `bitlex_lex_rust` then writes the lean
+lexer's loop (`lean_loop`):
+
+- **Four masks a block** (lean's `Window`): the bytes `skip` holds, a word's (the run of the common word row), a rare
+  token's first byte (`k_rare`, nibble tables of its own, `RARE_0`), a pair's first byte. Nothing else is made of the
+  block.
+- **The block's starts at once**: a byte `skip` does not hold, not a word's after its first, not a pair's second (the
+  pairs read left to right, `left_to_right`), as lean's `starts`. After a rare token they are made again from its end
+  (`starts_from`), the byte after it a start where `skip` does not hold it: a word right after a number (`12abc`) starts
+  there, as lean's number reader writes it.
+- **The run of common tokens** before each rare start: one `TOKEN` load for the kind and the word alone, the last byte by
+  the word's run or the pair's bit, the record written. No `match`.
+- **Only the rare starts reach the rows' `match`**: a string, a comment, a backtick literal, `#`, a number, a byte no
+  token takes, and `/`, whose group's test picks a comment or the operator. The rows only the run reads (`identifier`)
+  have no arm. Each arm reads its bytes from the token's first (the next bytes tested where it reads them, the windows
+  from its first byte: `Bytes::rewrite_windows`), not the block's masks: `/` tests the byte after it, a backtick the
+  bytes after it, as lean's arms do.
+
+A common row is a run of one mask whose first byte it holds, a pair, or one byte, with no marks, no region and no test of
+its own, and no byte of a word but the run's. The rest are rare. Where a grammar's rows do not fit, the loop is the one
+before.
+
+Tests: the rr suite (its records against the interpreter's and its tapes against the JIT's on every case) and both
+corpus tests over the repository's 1,949 `.rerail` files (`corpus_tier1s_records_are_the_interpreters`,
+`corpus_tapes_are_the_jits`). JSON's and Kotlin's tier 1 are unchanged.

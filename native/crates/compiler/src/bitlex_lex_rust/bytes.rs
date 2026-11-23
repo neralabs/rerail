@@ -42,6 +42,9 @@ pub(super) struct Bytes<'a> {
     /// The bytes each such mask holds, where it is a class (`escapes`' masks): a row whose first byte none of them may be
     /// starts no escape, so its region's end and tests read in one loop from its opener (`fuse_read`).
     pub(super) escape_bytes: HashMap<String, [bool; 256]>,
+    /// The bytes a rare token starts with (the lean lexer's `rare`, decision 0655 step 4): where set, a block word of its
+    /// own (`k_rare`), of its nibble tables.
+    pub(super) rare: Option<[bool; 256]>,
 }
 
 /// The calls of the loop that read a mask: their name, and how many of their first arguments are masks.
@@ -65,7 +68,7 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new() }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None }
     }
 
     /// `prev(E, k)` and `next(E, k)`: the call's mask and its distance, back (negative) or on.
@@ -230,7 +233,7 @@ impl<'a> Bytes<'a> {
 
     /// The window function of the local `m` (`w_m`), written once; whether it reads escapes (its windows must then
     /// start where the carry is none: a token's first byte, or the one after).
-    fn window_fn(&mut self, m: &str) -> Result<(String, bool), String> {
+    pub(super) fn window_fn(&mut self, m: &str) -> Result<(String, bool), String> {
         let f = format!("w_{m}");
         let e = self.expr(m)?;
         let bits = self.win(&e, 0, 0)?;
@@ -397,7 +400,7 @@ impl<'a> Bytes<'a> {
     }
 
     /// The block's word of mask `m` (`k_m`), made once a block.
-    fn block_word(&mut self, m: &str) -> String {
+    pub(super) fn block_word(&mut self, m: &str) -> String {
         if !self.block.iter().any(|b| b == m) {
             self.block.push(m.to_owned());
         }
@@ -466,6 +469,42 @@ impl<'a> Bytes<'a> {
                 shifted = true;
             }
             words.push((f, if groups.is_empty() { "0u64".to_owned() } else { groups.join(" | ") }));
+        }
+        // The rare tokens' first bytes (lean's `rare`): a byte's nibbles' bits, a set of high nibbles times a set of low
+        // ones a bit, eight a pair of tables.
+        if let Some(set) = self.rare {
+            let mut rects: Vec<(u16, u16)> = Vec::new();
+            for h in 0..16usize {
+                let lows = (0..16usize).filter(|&l| set[h << 4 | l]).fold(0u16, |m, l| m | 1 << l);
+                if lows == 0 {
+                    continue;
+                }
+                match rects.iter_mut().find(|r| r.1 == lows) {
+                    Some(r) => r.0 |= 1 << h,
+                    None => rects.push((1 << h, lows)),
+                }
+            }
+            let mut groups = Vec::new();
+            for (g, chunk) in rects.chunks(8).enumerate() {
+                let (mut lo, mut hi) = ([0u8; 16], [0u8; 16]);
+                for (bit, &(h, l)) in chunk.iter().enumerate() {
+                    for i in 0..16 {
+                        if l >> i & 1 == 1 {
+                            lo[i] |= 1 << bit;
+                        }
+                        if h >> i & 1 == 1 {
+                            hi[i] |= 1 << bit;
+                        }
+                    }
+                }
+                let row = |t: &[u8; 16]| t.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(", ");
+                let _ = write!(statics, "/// The bytes a rare token starts with, part {g}: a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.\nstatic RARE_{g}: ([u8; 16], [u8; 16]) = ([{}], [{}]);\n\n", row(&lo), row(&hi));
+                let c = format!("rare_{g}");
+                self.class_code.insert(c.clone(), format!("S::to_bitmask(S::test(S::classify(v, &RARE_{g}.0, &RARE_{g}.1), S::splat(0xff)))"));
+                used.push(c);
+                groups.push(format!("cur[{}]", used.len() - 1));
+            }
+            words.push(("rare".to_owned(), if groups.is_empty() { "0u64".to_owned() } else { groups.join(" | ") }));
         }
         if used.is_empty() {
             return None;
