@@ -514,7 +514,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
     let mut at = 0usize;
     // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.
     let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);
-    let mut c_depth = 0u32;
     // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).
     let mut b = at / 64;
     // The regions' walk and the masks made of it: only a test build's checks read them.
@@ -754,7 +753,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
         let k_m_word = unsafe { w_m_word::<S>(src, n, base as isize, &mut 0) };
         let k_m_num_run = unsafe { w_m_num_run::<S>(src, n, base as isize, &mut 0) };
         let k_m_dot = unsafe { w_m_dot::<S>(src, n, base as isize, &mut 0) };
-        let k_t11 = unsafe { w_t11::<S>(src, n, base as isize, &mut 0) };
         let k_m_digit = unsafe { w_m_digit::<S>(src, n, base as isize, &mut 0) };
         let k_m_ws = unsafe { w_m_ws::<S>(src, n, base as isize, &mut 0) };
         let mut firsts = !k_m_ws & (!0u64 << at.saturating_sub(base));
@@ -918,20 +916,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     // `number`: run num_run once dot
                     let l = brun_once_last(n, base, k_m_num_run, k_m_dot, s, |p: isize, esc: &mut u64| unsafe { w_m_num_run::<S>(src, n, p, esc) }, |p: isize, esc: &mut u64| unsafe { w_m_dot::<S>(src, n, p, esc) });
                     let l = l.max(s);
-                    // scan depth: its bits in the token's bytes, all of them code
-                    let mut q = s;
-                    while let Some(i) = bfirst_in(n, base, k_t11, q, l, |p: isize, esc: &mut u64| unsafe { w_t11::<S>(src, n, p, esc) }) {
-                        if (((i < n && matches!(src[i], 0x7b)) || (i < n && matches!(src[i], 0x5b)))) {
-                            c_depth += 1;
-                            if c_depth > 127 {
-                                refused = true;
-                                break 'tokens;
-                            }
-                        } else {
-                            c_depth = c_depth.saturating_sub(1);
-                        }
-                        q = i + 1;
-                    }
                     if bcount_in(n, base, k_m_dot, s, l, |p: isize, esc: &mut u64| unsafe { w_m_dot::<S>(src, n, p, esc) }) >= 1 {
                         hits |= 1 << 16;
                     }
@@ -950,20 +934,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     // `punct`: pair
                     let l = pair_6(src, s);
                     let l = l.max(s);
-                    // scan depth: its bits in the token's bytes, all of them code
-                    let mut q = s;
-                    while let Some(i) = bfirst_in(n, base, k_t11, q, l, |p: isize, esc: &mut u64| unsafe { w_t11::<S>(src, n, p, esc) }) {
-                        if (((i < n && matches!(src[i], 0x7b)) || (i < n && matches!(src[i], 0x5b)))) {
-                            c_depth += 1;
-                            if c_depth > 127 {
-                                refused = true;
-                                break 'tokens;
-                            }
-                        } else {
-                            c_depth = c_depth.saturating_sub(1);
-                        }
-                        q = i + 1;
-                    }
                     if l + 1 - s >= 1 && (!(matches!(src[s], 0x2d) && !((s + 1) < n && matches!(src[(s + 1)], 0x30..=0x39)))).then_some(s).is_none() {
                         hits |= 1 << 12;
                     }
@@ -1651,40 +1621,6 @@ unsafe fn w_m_num_run<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize,
 #[allow(unused_variables)]
 unsafe fn w_m_dot<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
     unsafe { cls_dot::<S>(src, n, p) }
-}
-
-/// Class `lbracket`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_lbracket<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::eq_mask(v, 0x5b) };
-    held(b, q, n, p)
-}
-
-/// Class `rbracket`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_rbracket<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::eq_mask(v, 0x5d) };
-    held(b, q, n, p)
-}
-
-/// `t11`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t11<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { cls_lbrace::<S>(src, n, p) } | unsafe { cls_lbracket::<S>(src, n, p) }) | (unsafe { cls_rbrace::<S>(src, n, p) } | unsafe { cls_rbracket::<S>(src, n, p) }))
 }
 
 /// `m_digit`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.

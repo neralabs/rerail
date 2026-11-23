@@ -5937,7 +5937,7 @@ impl Gen<'_> {
                 let mut pieces = Vec::new();
                 let alone = readers(x.stmts).is_empty();
                 for t in [&open_code, &branches, if alone { &token_read } else { &token_code }, &own_code, if alone { &gap_asked } else { &gap_code }, &acc_after] {
-                    let t = by.rewrite(&bytes::strip_pauses(t))?;
+                    let t = by.rewrite(&bytes::strip_scans(&bytes::strip_pauses(t)))?;
                     if uses(&t, "made") || uses(&t, "wait") || t.contains("'pass") {
                         return Err("a pause the loop still reads".into());
                     }
@@ -5956,7 +5956,8 @@ impl Gen<'_> {
         };
         let walk = gate_walk(&self.body, &rest);
         // The counts' words over the tokens.
-        let scan_decl: String = token_scans.iter().map(|(name, ..)| format!("    let mut c_{} = 0u32;\n", ident(name))).collect();
+        // No count where the loop reads the bytes (`strip_scans`).
+        let scan_decl: String = if from_bytes.is_some() { String::new() } else { token_scans.iter().map(|(name, ..)| format!("    let mut c_{} = 0u32;\n", ident(name))).collect() };
         if fused {
             let head = if from_bytes.is_some() {
                 String::from("/// `src`'s records, in one pass over its blocks (decisions 0619, 0623): each block's token starts from its 64 bytes, and\n/// each mask a token reads from the bytes where it reads it, as the lean lexer reads its window's.\n#[inline(always)]\nunsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {\n    let nw = n.div_ceil(64);\n    let mut refused = false;\n")

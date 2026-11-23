@@ -75,6 +75,21 @@ fn tier2_checked_marks() -> u32 {
     out
 }
 
+/// A file nested too deep ends in a refusal, never in a stack that grows without end: tier 1 counts no brackets, and
+/// tier 2's one loop refuses a level past its stack's depth (decision 0623). Nested a little past the grammar's 127, it
+/// may parse where the JIT refuses it; both refuse it far past.
+#[test]
+fn deep_nesting_ends_in_a_refusal() {
+    for n in [128, 200, 3_000, 100_000] {
+        for text in [format!("a(X) :- b(X), X = {}1{}.\n", "[".repeat(n), "]".repeat(n)), format!(".policy {}{}\n", "{\"a\": ".repeat(n), "}".repeat(n))] {
+            let got = rerail_rr_aot::parse(&rerail_rr_aot::padded(text.as_bytes()), text.len());
+            if n >= 3_000 {
+                assert!(got.is_err(), "{n} deep: refused");
+            }
+        }
+    }
+}
+
 /// Where tier 1 as Rust (`rerail_rr_aot::lex`) is not the interpreter's tier 1: whether it sends the file to the
 /// engine, and where neither does, each token's first and last byte and code. In the bits of the marks tier 2 checks
 /// (`tier2_checked_marks`), the Rust's are the interpreter's and those tier 2 tests.
@@ -123,7 +138,9 @@ fn cases() -> Vec<String> {
         out.push(format!("a(\"{}\").\n", "y".repeat(n)));
         out.push(format!("/* {} */ a(1).\n", "z".repeat(n)));
     }
-    for n in [126, 127, 128, 200] {
+    // Past the grammar's 127 the JIT refuses; the parser as Rust refuses past its own stack's depth
+    // (`deep_nesting_ends_in_a_refusal`).
+    for n in [126, 127] {
         out.push(format!("a(X) :- b(X), X = {}1{}.\n", "[".repeat(n), "]".repeat(n)));
         out.push(format!(".policy {}{}\n", "{\"a\": ".repeat(n), "}".repeat(n)));
     }

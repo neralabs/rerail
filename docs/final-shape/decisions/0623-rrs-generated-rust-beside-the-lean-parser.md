@@ -226,3 +226,20 @@ the asked gap marks. Kotlin's files are unchanged but for `UNRECORDED = 0`.
 
 What 0623's list still has for tier 1 is the rest of step 3. A common token is still sent through the dispatch's rows,
 where lean reads its kind and length from one table load (`TOKEN`).
+
+## The depth count: tier 2's stack bounds it (done)
+
+The user (2026-11-22): "Our goal is that we can't recurse infinitely and that we eventually fail on a too-deeply-nested
+structure. It doesn't matter if we do some extra work first."
+
+Tier 2 never recurses. It is one loop over its own stack (0618), and it refuses a level past its `DEPTH`. So where
+tier 1 reads the bytes, it keeps no count of the grammar's `scan … max N` (`strip_scans`). No token counts its
+brackets, and the block makes no word of them. A file nested too deep still ends in a refusal, in tier 2. This takes
+back the part of 0619 step 2 that made the depth count the token loop's, for the bytes form.
+
+The difference from the JIT is a file nested a little past 127. The JIT's tier 1 refuses it, and the parser as Rust may
+parse it. The shared samples keep the depths of 126 and 127, whose tapes are the JIT's. `deep_nesting_ends_in_a_refusal`
+nests brackets and JSON objects 128, 200, 3,000 and 100,000 deep, and checks the last two are refused.
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes and records included. Kotlin's files
+are unchanged.

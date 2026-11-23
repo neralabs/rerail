@@ -393,6 +393,32 @@ fn ident(n: &str) -> String {
     n.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect()
 }
 
+/// `code` without the counts' scans (`scan … max N`, decision 0623): where tier 1 reads the bytes, tier 2 is one loop
+/// over its own stack, which refuses a level past its `DEPTH`. So a file nested too deep still ends in a refusal, and
+/// no token counts its brackets.
+pub(super) fn strip_scans(code: &str) -> String {
+    let mut out = String::new();
+    let mut lines = code.lines();
+    while let Some(line) = lines.next() {
+        if line.trim_start().starts_with("// scan ") {
+            // To the scan loop's end: its `q = i + 1;`, then its closing brace.
+            for l in lines.by_ref() {
+                if l.trim() == "q = i + 1;" {
+                    lines.next();
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !code.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
 /// The loop's own pauses (decision 0619 step 2), where stage 1 made the blocks as the loop came to need them: none
 /// where the loop reads the bytes.
 pub(super) fn strip_pauses(code: &str) -> String {
