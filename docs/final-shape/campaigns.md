@@ -30,16 +30,17 @@ counts. Their origins were not read.
 | [One tape format and one block layout, read in place by CPU and GPU (never copied)](#tape-blocks) | 26 | 6 | 17 / 8 / 1 | |
 | [An edit costs what it changes](#edit-cost) | 22 | 8 | 7 / 14 / 1 | |
 | [The store: caches are facts, writes keep up, growth is bounded](#store) | 29 | 7 | 21 / 6 / 2 | |
-| [Cold runs fast: every core used, the critical path short](#cold-run) | 33 | 2 | 12 / 18 / 3 | |
+| [Cold runs fast: every core used, the critical path short](#cold-run) | 32 | 2 | 12 / 17 / 3 | |
 | [The planner: never costs more than it saves, improves from feedback](#planner) | 17 | 4 | 14 / 1 / 2 | |
 | [Rules on Metal: label walks, device waves, bounded launches, memory budgets](#metal-rules) | 49 | 6 | 16 / 22 / 11 | |
 | [Any GPU, and the CPU's SIMD units: kernels written once in UKL](#any-gpu) | 2 | 2 | 2 / 0 / 0 | |
 | [A C/C++ preprocessor on the CPU and every GPU](#preprocessor) | 17 | 2 | 10 / 7 / 0 | |
-| [Main's rules run directly, as Datalog (.rr), with main's findings and W's speed](#rules-parity) | 45 | 7 | 22 / 21 / 2 | |
-| [Embedded languages: strings parsed as their language, no guest documents](#embedded) | 10 | 2 | 6 / 4 / 0 | |
+| [Main's rules run directly, as Datalog (.rr), with main's findings and W's speed](#rules-parity) | 43 | 7 | 21 / 20 / 2 | |
+| [Embedded languages: strings parsed as their language, no guest documents](#embedded) | 9 | 1 | 5 / 4 / 0 | |
 | [Typing and libraries: cross-file facts as ordinary facts, libraries held once](#typing) | 7 | 4 | 4 / 1 / 2 | |
-| [Programs as flat images and versions, passes over them, never text](#programs) | 13 | 3 | 6 / 5 / 2 | |
-| [A re-entrant engine with bounded memory and no global state; one shape across the worktrees](#hygiene) | 8 | 1 | 4 / 3 / 1 | |
+| [Programs as flat images and versions, passes over them, never text](#programs) | 11 | 2 | 6 / 3 / 2 | |
+| [Work bounded by its readers: nothing widened past what is read, no widened output kept](#widening) | 8 | 2 | 3 / 5 / 0 | |
+| [A re-entrant engine with bounded memory and no global state; one shape across the worktrees](#hygiene) | 6 | 1 | 3 / 2 / 1 | |
 
 <a id="parsers-shape"></a>
 ## Generated parsers in the shape of simdjson and the lean parsers
@@ -168,7 +169,7 @@ counts. Their origins were not read.
 <a id="cold-run"></a>
 ## Cold runs fast: every core used, the critical path short
 
-33 records: 29 built, 2 partly built, 1 superseded, 1 analysis. Origin: 12 a, 18 b, 3 c.
+32 records: 28 built, 2 partly built, 1 superseded, 1 analysis. Origin: 12 a, 17 b, 3 c.
 
 **Your words:**
 
@@ -288,7 +289,7 @@ counts. Their origins were not read.
 <a id="rules-parity"></a>
 ## Main's rules run directly, as Datalog (.rr), with main's findings and W's speed
 
-45 records: 38 built, 7 partly built. Origin: 22 a, 21 b, 2 c.
+43 records: 36 built, 7 partly built. Origin: 21 a, 20 b, 2 c.
 
 **Your words:**
 
@@ -316,20 +317,19 @@ counts. Their origins were not read.
 <a id="embedded"></a>
 ## Embedded languages: strings parsed as their language, no guest documents
 
-10 records: 8 built, 2 partly built. Origin: 6 a, 4 b, 0 c.
+9 records: 8 built, 1 partly built. Origin: 5 a, 4 b, 0 c.
 
 **Your words:**
 
 - "we will need a way to get a normalized string out of a language, so that (for example) SQL in a string with escaped characters can access a non-escaped version that can be actually parsed" (0058)
+- "if the rules say "here is an embedded string, here is its sha and here is its tape", then why can't that be kept in the facts" (0431)
 - "why do we have ANNOTATION_KEYS? SHouldn't this be a more generic mechanism, not Python-only? Rules need to know line numbers and text in the host so that they can report properly" (0512)
-- "I was already thinking about having each language run in a different pass \| this would allow us to do things like scan the code inside f-strings and handle DSLs like vue's html-like code" (0597)
 
 **Open:**
 
 | Record | Left | Origin |
 |---|---|---|
 | [0431](decisions/0431-guests-are-tape-values-the-rules-make-not-documents.md) No guest documents: strings the rules parse are tape values; … | @parse of computed strings checked against packs' use; embed_value placement; queued-tape programs record; publication.rs program count | a |
-| [0597](decisions/0597-a-guest-context-is-a-pass-of-its-own-rules-reading-its-host-explicitly.md) A guest context is a pass of its own rules, reading its host's … | Step 4: remove hiding's annotation range, FoldOwn, narrow copies and one_document (still in the code). Step 5: f-strings and Vue. Step 6: measure. | a |
 
 <a id="typing"></a>
 ## Typing and libraries: cross-file facts as ordinary facts, libraries held once
@@ -359,11 +359,11 @@ counts. Their origins were not read.
 <a id="programs"></a>
 ## Programs as flat images and versions, passes over them, never text
 
-13 records: 8 built, 3 partly built, 2 superseded. Origin: 6 a, 5 b, 2 c.
+11 records: 7 built, 2 partly built, 2 superseded. Origin: 6 a, 3 b, 2 c.
 
 **Your words:**
 
-- "I would prefer rules as much as possible, even if they need to be backed by something generic in Rust" (0174)
+- "design the actual final shape of the loading with (hopefully) one pass" (0246)
 - "tell me what is the archtiecturally-correct version of the replay rebuild" (0269)
 - "I want to complete the workplan, we are getting stuck on micro-optimizing every step" (0377)
 
@@ -371,7 +371,6 @@ counts. Their origins were not read.
 
 | Record | Left | Origin |
 |---|---|---|
-| [0174](decisions/0174-per-node-source-attributes-are-answered-on-request.md) A node's source attributes are answered on request, by rules | step 3: long text on request, removing the twins, rr_long_text_node and text_kind_demand; step 4 measure inline text | b |
 | [0246](decisions/0246-rules-load-in-one-pass-as-module-images.md) Rules load in one pass: each module read once into its image, a pack … | stage 3 linking from module images replacing combine_read; lowering writing clauses into the builder; analyses as rules per module | a |
 | [0281](decisions/0281-program-passes-run-under-a-pass-manager.md) Program passes run under a pass manager: rule rewriters and program … | §3's parallel-by-morsel rule passes (stateless RulePass split across the pool); analyses as rules for program writers' incrementality | a |
 
@@ -380,10 +379,36 @@ counts. Their origins were not read.
 - [0215](decisions/0215-a-maintained-programs-parts-beside-its-version.md) A maintained program's parts are a typed form beside its version (superseded). Served: planner reads every program from a version (t36 item 7), from "okay, go ahead with item 7: plan::run takes a version.".
 - [0241](decisions/0241-a-maintained-form-is-a-derivation.md) A maintained stratum's form is a derivation of the run's version (superseded). Served: planner reads every program from a version (t36 item 7), from "merge with the rr-align branch, and then complete item 7".
 
+<a id="widening"></a>
+## Work bounded by its readers: nothing widened past what is read, no widened output kept
+
+8 records: 6 built, 2 partly built. Origin: 3 a, 5 b, 0 c.
+
+**Your words** (2026-11-09, which became 0099): "Some of the relations should maybe not be materialized. Something which creates a massive expansion in an intermediate join before narrowing down should maybe be recomputed in the intermediate join and not serialized." Then, on 0575's cost: "we certainly can't afford to lose the performance", and on 0462: "limit the widest a rule can get".
+
+**What widens, and what of it is kept.** Several passes widen a program or a relation past what its readers read, and their output is then computed in full and kept:
+
+- Hiding (0058) writes a copy of each library rule a guest can reach: 616 relations and 1,311 rules, 16% of the program on corpus0 (0597).
+- The fold (`FoldOwn`, 0165 §3) widens the originals' bounds to take the copies' rows, so #923's narrow copies write each rule a narrow reader reaches twice, and a twin of a reading rule makes each derivation twice (`pt_vopen`, 0575). The copies are prepared, kept with the program and computed as relations of their own; 0575 computes a narrow copy as its original less the annotations' change, and 0597 step 4 removes the annotation range, the fold and the copies.
+- A request widened as a copy of its reader's body (0174, 0291); one that cannot split by reader keeps the attribute for every node (Q454, `on_request`'s "no, every node").
+- Text made and interned for every node one unnarrowed read reached (0110, 0213); long text still eager (0174 step 3, Q121).
+- Every document of the batch made, read or not (0458).
+
+**Built before the audit, so not counted above:** 0099 (what a relation keeps: recompute in the reader, restrict by demand, or store; its factorized store designed, not built), 0145 (the cone is magic sets), 0167 (computed values wait for narrowing joins), 0213 (intern only what is stored), 0291 (a request asks only for what its readers read), 0575 (a narrow copy is its original less the annotations' change).
+
+**Open elsewhere:** Q121 (`text` on request, 0353 step 3), Q420 (a partial hit's cone that sees annotations only through `FoldOwn`), Q426 (a wildcard node not bounded by hiding), Q454 (requests by reader where the shared one closes a loading cycle), 0458 (documents made when first read, tape-blocks), 0115 (digest-only kept relations, inputs not kept twice, store), 0099 (the factorized store).
+
+**Open:**
+
+| Record | Left | Origin |
+|---|---|---|
+| [0174](decisions/0174-per-node-source-attributes-are-answered-on-request.md) A node's source attributes are answered on request, by rules | step 3: long text on request, removing the twins, rr_long_text_node and text_kind_demand; step 4 measure inline text | b |
+| [0597](decisions/0597-a-guest-context-is-a-pass-of-its-own-rules-reading-its-host-explicitly.md) A guest context is a pass of its own rules, reading its host's … | Step 4: remove hiding's annotation range, FoldOwn, narrow copies and one_document (still in the code). Step 5: f-strings and Vue. Step 6: measure. | a |
+
 <a id="hygiene"></a>
 ## A re-entrant engine with bounded memory and no global state; one shape across the worktrees
 
-8 records: 7 built, 1 partly built. Origin: 4 a, 3 b, 1 c.
+6 records: 5 built, 1 partly built. Origin: 3 a, 2 b, 1 c.
 
 **Your words:**
 
