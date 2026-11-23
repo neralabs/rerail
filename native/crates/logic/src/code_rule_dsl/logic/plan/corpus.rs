@@ -2710,16 +2710,18 @@ fn run_observed_within(
     // A group is determinized where that pays: kept in the image store for later runs, or for a run over many
     // documents. A small run with no store searches few strings, and runs a group on the lazy DFA
     // (O-vocabulary-dfa-reuse).
-    let compiling = crate::code_rule_dsl::logic::profile::span(|| "compile the text tests".into());
-    let groups = crate::code_rule_dsl::logic::rr::ImageDfas(crate::code_rule_dsl::logic::rr::image_store());
-    let dense = groups.0.is_some() || docs.len() >= DENSE_TEXT_DOCS;
-    let compiled = vocabulary.compile(Some(&groups), dense);
-    drop(compiling);
-    if let Some(c) = compiled.filter(|c| c.read + c.built + c.lazy > 0) {
-        crate::code_rule_dsl::logic::profile::decision("text tests compiled (decision 0075)", || format!("groups of automata: {} read (the bundle, the build's image store or this process), {} determinized, {} on the lazy DFA", c.read, c.built, c.lazy));
-    }
-    // The run's text tests, each string tested once: the batches' and every program the run evaluates (`Hooks::texts`).
-    let vocabulary = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the text tests, again for the run".into()); Arc::new(vocabulary.again()) };
+    // Compiled at the run's first string tested, from the images of its groups read here, before the first wave
+    // (`rr::HeldDfas`): a run that tests none (every file a memo hit, every stratum clean) lowers and compiles none.
+    // Which groups they are is a function of the tests, kept with the program.
+    let group_keys = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the text tests' groups of automata".into());
+        super::kept_analyses::kept_value(source, "text tests' groups", 1, &[], || vocabulary.group_keys(), |keys| keys.iter().map(|k| vec![crate::code_rule_dsl::logic::front::Value::Str(k.as_str().into())].into()).collect(), |rows| rows.iter().map(|r| match r.first() { Some(crate::code_rule_dsl::logic::front::Value::Str(k)) => Some(k.to_string()), _ => None }).collect())
+    };
+    let groups = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the groups' images, read".into()); Arc::new(crate::code_rule_dsl::logic::rr::HeldDfas::read(crate::code_rule_dsl::logic::rr::ImageDfas(crate::code_rule_dsl::logic::rr::image_store()), &group_keys)) };
+    let dense = groups.stored() || docs.len() >= DENSE_TEXT_DOCS;
+    // The run's text tests, each string tested once: the batches' and every program the run evaluates (`Hooks::texts`),
+    // compiled at the first string tested.
+    let vocabulary = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the text tests, again for the run".into()); Arc::new(vocabulary.again().compiling_with(groups, dense)) };
     if !demanded.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("demand (magic sets)", || format!("{} negated tests computed only for the nodes their readers bind: {}", demanded.len(), demanded.join(", ")));
     }

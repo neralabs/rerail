@@ -94,6 +94,19 @@ fn group_key(hirs: &[regex_syntax::hir::Hir]) -> String {
     format!("dfa1:{}", crate::code_rule_dsl::prof::lower_hex(&hash.finalize()))
 }
 
+/// The keys of the groups of automata `Searchers::new` makes of `plans` (`group_key`), in its order: the images a
+/// compile of them reads, which a run reads before its first wave (decision 0104) and compiles from at its first test.
+pub(in crate::code_rule_dsl) fn group_keys(plans: &[&Plan]) -> Vec<String> {
+    let automata: Vec<regex_syntax::hir::Hir> = plans
+        .iter()
+        .filter_map(|plan| match plan {
+            Plan::Automaton { anchor, core } => Some(Plan::automaton_hir(*anchor, core)),
+            _ => None,
+        })
+        .collect();
+    automata.chunks(GROUP).map(group_key).collect()
+}
+
 /// `hirs` determinized into one DFA over all of them, if it fits in `DFA_LIMIT`.
 fn determinize(hirs: &[regex_syntax::hir::Hir]) -> Option<Dfa> {
     use regex_automata::dfa::dense;

@@ -960,6 +960,40 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for ImageDfas {
     }
 }
 
+/// The groups of automata a run's text tests compile to, their images read before its first wave (decision 0104:
+/// the image store is SQL), so the tests compile where a string is first tested, inside the waves, from them: a run
+/// that tests no string compiles none. A group not read here (a key the run did not know) is not cached, and is
+/// determinized or run lazily as `Searchers::new` decides; a group's image made is kept as `ImageDfas` keeps it,
+/// behind the run.
+pub struct HeldDfas {
+    read: std::collections::HashMap<String, Option<Vec<u8>>>,
+    store: ImageDfas,
+}
+
+impl HeldDfas {
+    /// The images of groups `keys` in `store`, read now.
+    pub fn read(store: ImageDfas, keys: &[String]) -> Self {
+        use crate::code_rule_dsl::text::vocabulary::DfaCache as _;
+        let read = keys.iter().filter_map(|k| store.get(k).map(|dfa| (k.clone(), dfa))).collect();
+        HeldDfas { read, store }
+    }
+
+    /// Whether a store is behind it (the image store).
+    pub fn stored(&self) -> bool {
+        self.store.0.is_some()
+    }
+}
+
+impl crate::code_rule_dsl::text::vocabulary::DfaCache for HeldDfas {
+    fn get(&self, group: &str) -> Option<Option<Vec<u8>>> {
+        self.read.get(group).cloned()
+    }
+
+    fn put(&self, group: &str, dfa: Option<&[u8]>) {
+        self.store.put(group, dfa);
+    }
+}
+
 /// Phase 0's graphs of seeds `keys` as images (decision 0246), read together, each checked by `phase0::graphs` before
 /// it takes it: the shipped bundle's, else `store`'s,
 /// each read in place in its segment, the segments mapped once for all, their leases renewed together. One by one,
