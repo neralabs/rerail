@@ -66,11 +66,11 @@ enum Pipe {
     CtCount,
     CtScatter,
     ClInit,
-    ClLevel,
+    ClDag,
     ClGather,
 }
 
-const PIPES: [&str; 7] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl_init", "cl_level", "cl_gather"];
+const PIPES: [&str; 7] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl_init", "cl_dag", "cl_gather"];
 
 /// `f`, a compile that is fatal where it fails (decision 0382), as a result: what compiling ahead reports (its use
 /// still stops the run, naming the kernel).
@@ -432,6 +432,12 @@ impl GpuBackend {
             {
                 return Err(format!("launch {i} ({}): a code is not below the width", ks[i].form().name()));
             }
+            if let Some(q) = &j.queue {
+                let c = read::<u32>(q, 4);
+                if c[2] != 0 || c[3] != 0 {
+                    return Err(format!("launch {i} ({}): its work queue ended with {} items not done{}", ks[i].form().name(), c[2], if c[3] != 0 { ", past its room" } else { "" }));
+                }
+            }
             outs.push(match j.read {
                 Read::Ready(o) => o,
                 Read::Counts { rows, cols, buf } => Output::Counts { rows, cols, data: read::<u32>(&buf, rows * cols) },
@@ -534,10 +540,9 @@ struct ClosureArgs {
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct LevelArgs {
-    lo: u32,
-    hi: u32,
+struct DagArgs {
     words: u32,
+    capacity: u32,
 }
 
 #[derive(Clone)]
@@ -675,11 +680,14 @@ struct Job {
     read: Read,
     /// A flag the device sets on invalid input.
     bad: Option<Buffer>,
+    /// A persistent dispatch's queue's control words (ukl/workqueue.h): work left on it at the end (an item pushed and
+    /// not done, or a push past its room) is an error, not a result.
+    queue: Option<Buffer>,
 }
 
 impl Job {
     fn ready(o: Output) -> Self {
-        Job { stages: Vec::new(), read: Read::Ready(o), bad: None }
+        Job { stages: Vec::new(), read: Read::Ready(o), bad: None, queue: None }
     }
 }
 
@@ -783,7 +791,7 @@ impl Planner<'_> {
         };
         let Some(min) = min else {
             let c = self.alloc(n * m * 4);
-            return Ok(Job { stages: vec![Stage::one(tile(&c, &dummy, &dummy, 0))], read: Read::Counts { rows: a.rows, cols: b.rows, buf: c }, bad: None });
+            return Ok(Job { stages: vec![Stage::one(tile(&c, &dummy, &dummy, 0))], read: Read::Counts { rows: a.rows, cols: b.rows, buf: c }, bad: None, queue: None });
         };
         let nw = n * mw;
         let mask = self.alloc(nw * 4);
@@ -795,7 +803,7 @@ impl Planner<'_> {
         let args = move |cap: u32| bytes_of(&ScatterArgs { cap, mw: mw as u32, nw: nw as u32 });
         let scatter = Dispatch::per(Pipe::BpScatter, vec![("mask", Bind::Buf(mask.clone())), ("ex", Bind::Buf(ex)), ("pairs", Bind::Buf(pairs.clone())), ("args", Bind::Bytes(args(cap as u32)))], nw);
         st.push(Stage::one(Step::Kernel(scatter.clone())));
-        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None })
+        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None, queue: None })
     }
 
     fn count_table(&mut self, loff: &[u32], left: &[u16], roff: &[u32], right: &[u16], emit: bool) -> Result<Job, String> {
@@ -814,7 +822,7 @@ impl Planner<'_> {
         let count = Dispatch::new(Pipe::CtCount, vec![("left", Bind::Buf(bl.clone())), ("right", Bind::Buf(br.clone())), ("loff", Bind::Buf(blo.clone())), ("roff", Bind::Buf(bro.clone())), ("counts", Bind::Buf(counts.clone()))], nparts);
         let mut st = vec![Stage::one(Step::Kernel(count))];
         if !emit {
-            return Ok(Job { stages: st, read: Read::PerRow { n: left.len(), buf: counts }, bad: None });
+            return Ok(Job { stages: st, read: Read::PerRow { n: left.len(), buf: counts }, bad: None, queue: None });
         }
         let (ex, total) = self.scan(&mut st, &counts, nl, false);
         let bound: u64 = loff.windows(2).zip(roff.windows(2)).map(|(l, r)| (l[1] - l[0]) as u64 * (r[1] - r[0]) as u64).sum();
@@ -827,7 +835,7 @@ impl Planner<'_> {
             nparts,
         );
         st.push(Stage::one(Step::Kernel(scatter.clone())));
-        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None })
+        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None, queue: None })
     }
 
     fn histogram(&mut self, off: &[u32], codes: &[u16], width: u32) -> Result<Job, String> {
@@ -841,7 +849,7 @@ impl Planner<'_> {
         let h = self.alloc(nparts as u64 * width as u64 * 4);
         let bad = self.upload(&[0u32; 4]);
         let step = Step::Histogram { codes: bc, offsets: bo, parts: nparts as u32, width, h: h.clone(), bad: bad.clone() };
-        Ok(Job { stages: vec![Stage::one(step)], read: Read::Counts { rows: nparts, cols: width as usize, buf: h }, bad: Some(bad) })
+        Ok(Job { stages: vec![Stage::one(step)], read: Read::Counts { rows: nparts, cols: width as usize, buf: h }, bad: Some(bad), queue: None })
     }
 
     fn closure(&mut self, n: u32, off: &[u32], dst: &[u32]) -> Result<Job, String> {
@@ -871,7 +879,6 @@ impl Planner<'_> {
         }
         let (mut soff, mut sdst) = (Vec::with_capacity(ncomp + 1), Vec::new());
         let mut cyclic = vec![0u32; ncomp];
-        let mut level = vec![0u32; ncomp];
         let mut seen = vec![u32::MAX; ncomp];
         for c in 0..ncomp {
             soff.push(sdst.len() as u32);
@@ -886,47 +893,61 @@ impl Planner<'_> {
                     if d as usize != c && seen[d as usize] != c as u32 {
                         seen[d as usize] = c as u32;
                         sdst.push(d);
-                        // Tarjan's numbering puts successors first: their levels are known.
-                        level[c] = level[c].max(level[d as usize] + 1);
                     }
                 }
             }
         }
         soff.push(sdst.len() as u32);
-        let levels = level.iter().copied().max().unwrap_or(0) as usize + 1;
-        let mut lstart = vec![0u32; levels + 1];
-        for &l in &level {
-            lstart[l as usize + 1] += 1;
+        // Each component's successors' count, and its predecessors (the successor CSR's transpose): a finished
+        // component counts its predecessors' down, and the last count pushes one (`cl_dag`).
+        let pending: Vec<u32> = (0..ncomp).map(|c| soff[c + 1] - soff[c]).collect();
+        let mut poff = vec![0u32; ncomp + 1];
+        for &d in &sdst {
+            poff[d as usize + 1] += 1;
         }
-        for l in 0..levels {
-            lstart[l + 1] += lstart[l];
+        for c in 0..ncomp {
+            poff[c + 1] += poff[c];
         }
-        let mut order = vec![0u32; ncomp];
-        let mut lfill = lstart.clone();
-        for (c, &l) in level.iter().enumerate() {
-            order[lfill[l as usize] as usize] = c as u32;
-            lfill[l as usize] += 1;
+        let mut pdst = vec![0u32; sdst.len()];
+        let mut pfill = poff.clone();
+        for c in 0..ncomp {
+            for &d in &sdst[soff[c] as usize..soff[c + 1] as usize] {
+                pdst[pfill[d as usize] as usize] = c as u32;
+                pfill[d as usize] += 1;
+            }
         }
+        // The queue starts with the components of no successors (their rows final after the init). Its room: every
+        // other component is pushed once, and a push takes another slot where a taker gave one up (ukl/workqueue.h),
+        // at most a SIMD group's worth a take, a few for each worker.
+        let sinks: Vec<u32> = (0..ncomp as u32).filter(|&c| pending[c as usize] == 0).collect();
+        let groups = (ncomp as u64).div_ceil(TG);
+        let capacity = 2 * ncomp + 4 * 32 * (groups * TG / 32) as usize;
+        let mut slots = vec![0u32; capacity];
+        for (i, &c) in sinks.iter().enumerate() {
+            slots[i] = c + 1;
+        }
+        let control = self.upload(&[0, sinks.len() as u32, sinks.len() as u32, 0u32]);
         let (boff, bdst) = (self.input(off), self.input(dst));
-        let (bcomp, bcyc, border, bsoff, bsdst) = (self.upload(&comp), self.upload(&cyclic), self.upload(&order), self.upload(&soff), self.upload(&sdst));
+        let (bcomp, bcyc) = (self.upload(&comp), self.upload(&cyclic));
+        let (bsoff, bsdst, bpoff, bpdst, bpend, bslots) = (self.upload(&soff), self.upload(&sdst), self.upload(&poff), self.upload(&pdst), self.upload(&pending), self.upload(&slots));
         let row32 = (ncomp * words * 2) as u64;
         let r = self.alloc(row32 * 4);
         let out = self.alloc((nu * words * 8) as u64);
         let args = Bind::Bytes(bytes_of(&ClosureArgs { n, words: words as u32 }));
-        let mut st = vec![
+        let dag = Bind::Bytes(bytes_of(&DagArgs { words: words as u32, capacity: capacity as u32 }));
+        let total = (nu * words) as u64;
+        let st = vec![
             Stage::one(Step::Zero { buf: r.clone(), words: row32 as usize }),
             Stage::one(Step::Kernel(Dispatch::per(Pipe::ClInit, vec![("off", Bind::Buf(boff)), ("dst", Bind::Buf(bdst)), ("comp", Bind::Buf(bcomp.clone())), ("cyclic", Bind::Buf(bcyc)), ("R", Bind::Buf(r.clone())), ("args", args.clone())], n as u64))),
+            // One launch however deep the DAG: its levels are the queue's continuations, not launches.
+            Stage::one(Step::Kernel(Dispatch::new(
+                Pipe::ClDag,
+                vec![("R", Bind::Buf(r.clone())), ("soff", Bind::Buf(bsoff)), ("sdst", Bind::Buf(bsdst)), ("poff", Bind::Buf(bpoff)), ("pdst", Bind::Buf(bpdst)), ("pending", Bind::Buf(bpend)), ("slots", Bind::Buf(bslots)), ("control", Bind::Buf(control.clone())), ("args", dag)],
+                groups,
+            ))),
+            Stage::one(Step::Kernel(Dispatch::per(Pipe::ClGather, vec![("R", Bind::Buf(r)), ("comp", Bind::Buf(bcomp)), ("out", Bind::Buf(out.clone())), ("args", args)], total))),
         ];
-        // Level 0 has no successors: its rows are final after the init.
-        for l in 1..levels {
-            let (lo, hi) = (lstart[l], lstart[l + 1]);
-            let level = Bind::Bytes(bytes_of(&LevelArgs { lo, hi, words: words as u32 }));
-            let d = Dispatch::new(Pipe::ClLevel, vec![("R", Bind::Buf(r.clone())), ("order", Bind::Buf(border.clone())), ("soff", Bind::Buf(bsoff.clone())), ("sdst", Bind::Buf(bsdst.clone())), ("args", level)], ((hi - lo) as u64).div_ceil(TG / 32));
-            st.push(Stage::one(Step::Kernel(d)));
-        }
-        let total = (nu * words) as u64;
-        st.push(Stage::one(Step::Kernel(Dispatch::per(Pipe::ClGather, vec![("R", Bind::Buf(r)), ("comp", Bind::Buf(bcomp)), ("out", Bind::Buf(out.clone())), ("args", args)], total))));
-        Ok(Job { stages: st, read: Read::Bits { rows: nu, words, buf: out }, bad: None })
+        Ok(Job { stages: st, read: Read::Bits { rows: nu, words, buf: out }, bad: None, queue: Some(control) })
     }
 }
 
