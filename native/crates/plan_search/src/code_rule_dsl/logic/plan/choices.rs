@@ -139,14 +139,30 @@ impl Durable {
             let images = program_text::stored(&s, &digests).unwrap_or_default();
             late.lock().expect("the late sources").extend(images.values().flat_map(|(_, ids)| ids.iter().copied()));
             let images = images.into_iter().map(|(d, (bytes, _))| (d, bytes)).collect();
-            // And the plans of its rules (decision 0116 step 2), for this thread's run to take.
-            let _span = super::super::profile::span(|| "kept plans, read from the store".into());
-            let (plans, ready, analyses) = read_plans(&s, &prepared).unwrap_or_default();
-            super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans, {} versions' prepared plans and {} analyses read from the store", plans.len(), ready.len(), analyses.len()));
-            super::take_stored_plans(Arc::new(plans));
-            super::take_stored_prepared(ready);
-            super::take_stored_analyses(analyses);
-            Arc::new((s, prepared, stored, images))
+            // Whether the store holds the plans: SQL, so asked here, before the run's first wave and its jobs.
+            let holds = { let _s = super::super::profile::span(|| "whether the store holds the kept plans".into()); held(&s, &prepared).unwrap_or(false) };
+            let held = Arc::new((s, prepared, stored, images));
+            // And the plans of its rules (decision 0116 step 2), for this thread's run to take where it first plans
+            // (t33 K4): a run that plans nothing, every file a memo hit and its cross part quiet, reads none. One whose
+            // waves may plan reads them before its first wave (`settle_stored`, decision 0104).
+            let reading = Arc::clone(&held);
+            let analysing = Arc::clone(&held);
+            super::defer_stored(
+                Box::new(move || {
+                    let _span = super::super::profile::span(|| "kept plans, read from the store".into());
+                    let (plans, ready) = if holds { read_plans_alone(&reading.0, &reading.1).unwrap_or_default() } else { Default::default() };
+                    super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans and {} versions' prepared plans read from the store", plans.len(), ready.len()));
+                    (plans, ready)
+                }),
+                // The analyses apart: a run asks for one where it plans nothing (`the base relations' shapes`).
+                Box::new(move || {
+                    let _span = super::super::profile::span(|| "kept analyses, read from the store".into());
+                    let analyses = if holds { read_analyses(&analysing.0, &analysing.1).unwrap_or_default() } else { Default::default() };
+                    super::super::profile::decision("kept analyses (t33 K4)", || format!("{} analyses read from the store", analyses.len()));
+                    analyses
+                }),
+            );
+            held
         });
         Durable { _side: crate::code_rule_dsl::logic::profile::bind(DurableSide(side)) }
     }
@@ -158,6 +174,8 @@ impl Drop for Durable {
     fn drop(&mut self) {
         if let Some(held) = crate::code_rule_dsl::logic::profile::bound::<DurableSide>().0 {
             let (store, prepared) = (&held.0, held.1);
+            // A run that planned merges what it made with what the store kept: read now where it was not (t33 K4).
+            super::settle_if_planned();
             // Decision 0243: a one-shot run serves its waiting join searches here, within a share of its CPU, so their
             // proposals are written with the memo.
             super::joins::drain();
@@ -404,12 +422,32 @@ pub fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<(sup
     if !{ let _s = super::super::profile::span(|| "whether the store holds them".into()); held(store, prepared)? } {
         return Ok(Default::default());
     }
+    read_plans_where(store, prepared, &|_| true)
+}
+
+/// The plans kept under `prepared`, and the join notes, without the analyses: what a run reads where it first plans
+/// (t33 K4, `RunPlans::settle`), maybe inside a wave: no SQL (decision 0104), the store's holding them checked by the
+/// caller before its first wave (`held`).
+fn read_plans_alone(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<(super::StoredPlans, super::prepared::ByVersion)> {
+    read_plans_where(store, prepared, &|rel| rel != ANALYSES_REL).map(|(plans, ready, _)| (plans, ready))
+}
+
+/// The analyses kept under `prepared` alone: what a run reads where it first asks for one (`kept_analyses`), apart
+/// from the plans; checked held as `read_plans_alone` is.
+fn read_analyses(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<super::kept_analyses::ByVersion> {
+    let Some(facts) = PLANS.within(*prepared).get_only(store, 0, &|rel| rel == ANALYSES_REL) else { return Ok(Default::default()) };
+    let analyses: Vec<Vec<Value>> = facts.get(ANALYSES_REL).into_iter().flatten().map(|row| row.as_slice().to_vec()).collect();
+    Ok(super::kept_analyses::of_store_rows(&analyses))
+}
+
+/// The plans entry's relations `rels` keeps, read in one read of the kept facts (no SQL), the store known to hold them.
+fn read_plans_where(store: &ContentStore, prepared: &[u8; 32], rels: &dyn Fn(&str) -> bool) -> StoreResult<(super::StoredPlans, super::prepared::ByVersion, super::kept_analyses::ByVersion)> {
     // The plans' rows are numbers alone: each decoded from the block as it holds them, not through values (t33 K4:
     // their values were most of a warm run's read of the entry).
     let mut plans = super::StoredPlans::default();
     let Some(facts) = ({
         let _s = super::super::profile::span(|| "their entry, read".into());
-        PLANS.within(*prepared).get_numbers(store, 0, PLANS_REL, &mut |row| plans.extend(super::StoredPlan::of_row(row)))
+        PLANS.within(*prepared).get_numbers_only(store, 0, PLANS_REL, &mut |row| plans.extend(super::StoredPlan::of_row(row)), rels)
     }) else {
         return Ok(Default::default());
     };

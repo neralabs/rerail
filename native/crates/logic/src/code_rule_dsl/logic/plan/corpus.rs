@@ -3860,6 +3860,15 @@ fn run_observed_within(
         }
         _ => HashMap::new(),
     });
+    // The store's kept plans (t33 K4) are read where the run first plans. A wave may plan (a file with no entry, a
+    // load's files, a run that looks up nothing here): then they are read now, before the first wave (decision 0104).
+    let waves_plan = !(matches!(memo, Some(memo::Memo::Stored(_))) && looking && loading.is_none() && {
+        let found = before.lock();
+        docs.iter().all(|(_, p)| found.get(p).is_some_and(|b| b.found.is_some()))
+    });
+    if waves_plan {
+        super::settle_stored();
+    }
     // The entries the statistics keeper counted for files changed or gone since (`keptstats`), found before the
     // first wave too: it counts them out in the waves, and reads none of them from SQLite there.
     // A file looked up here and not found is kept as `None`: the waves do not ask SQLite again for what it has not.
@@ -8461,6 +8470,10 @@ fn run_observed_within(
                         && cell.is_some()
                         && bound_outputs.iter().all(|o| cross_inputs.iter().any(|(r, _)| r == o))
                         && cut.derived(&cross_sccs)?.is_empty();
+                    // A cross part that runs plans: the store's kept plans read before it (its loads' waves among it).
+                    if !quiet {
+                        super::settle_stored();
+                    }
                     // A derived relation derived again (no delta: every one of a cold run's, a new build's first) is handed
                     // off once no later stratum reads it, its frame made then, and the engine drops its rows (Q74): only
                     // where the frames are written, and not one the caller reads after the run or a check reads. One

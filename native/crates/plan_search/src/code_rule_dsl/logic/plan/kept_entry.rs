@@ -72,27 +72,38 @@ impl Entries {
 
     /// The entry of partition `part`, as kept; `None` when the store keeps none (or one that no longer reads).
     pub fn get(&self, store: &ContentStore, part: i64) -> Option<Facts> {
-        self.read(store, Some(&[part]), None).remove(&part)
+        self.read(store, Some(&[part]), None, None).remove(&part)
+    }
+
+    /// The entry of partition `part` as `get` reads it, of the relations `rels` keeps alone: the others' rows are not
+    /// read. `None` where it holds no row of them.
+    pub fn get_only(&self, store: &ContentStore, part: i64, rels: &dyn Fn(&str) -> bool) -> Option<Facts> {
+        self.read(store, Some(&[part]), None, Some(rels)).remove(&part)
     }
 
     /// The entries of partitions `parts`, by partition, in one read: those the store keeps (`get`'s).
     pub fn get_many(&self, store: &ContentStore, parts: &[i64]) -> BTreeMap<i64, Facts> {
-        self.read(store, Some(parts), None)
+        self.read(store, Some(parts), None, None)
     }
 
     /// The entry of partition `part` as `get` reads it, but relation `rel`'s rows of numbers alone (every column `i`)
     /// handed to `each` as the block holds them, without their place, in no order, and left out of the facts: a
     /// reader that decodes its own rows reads them in place, not through values (the kept plans, t33 K4).
     pub fn get_numbers(&self, store: &ContentStore, part: i64, rel: &str, each: &mut dyn FnMut(&[i64])) -> Option<Facts> {
-        self.read(store, Some(&[part]), Some((rel, each))).remove(&part)
+        self.read(store, Some(&[part]), Some((rel, each)), None).remove(&part)
+    }
+
+    /// `get_numbers`, of the relations `rels` keeps alone (`rel` among them).
+    pub fn get_numbers_only(&self, store: &ContentStore, part: i64, rel: &str, each: &mut dyn FnMut(&[i64]), rels: &dyn Fn(&str) -> bool) -> Option<Facts> {
+        self.read(store, Some(&[part]), Some((rel, each)), Some(rels)).remove(&part)
     }
 
     /// Every entry of the space, by partition.
     pub fn all(&self, store: &ContentStore) -> BTreeMap<i64, Facts> {
-        self.read(store, None, None)
+        self.read(store, None, None, None)
     }
 
-    fn read(&self, store: &ContentStore, only: Option<&[i64]>, mut numbers: Option<(&str, &mut dyn FnMut(&[i64]))>) -> BTreeMap<i64, Facts> {
+    fn read(&self, store: &ContentStore, only: Option<&[i64]>, mut numbers: Option<(&str, &mut dyn FnMut(&[i64]))>, rels: Option<&dyn Fn(&str) -> bool>) -> BTreeMap<i64, Facts> {
         let mut out: BTreeMap<i64, Facts> = BTreeMap::new();
         let mut placed: BTreeMap<i64, BTreeMap<String, Vec<(i64, Vec<Value>)>>> = BTreeMap::new();
         let mut bad = BTreeSet::new();
@@ -109,6 +120,9 @@ impl Entries {
         for entry in entries.filter(|e| *e.key.ident == self.ident(e.key.rel)) {
             let part = entry.key.part;
             let Some((rel, kinds)) = entry.key.rel.rsplit_once('#') else { continue };
+            if rels.is_some_and(|keep| !keep(rel)) {
+                continue;
+            }
             let kinds = kinds.as_bytes();
             if kinds.len() + 1 != entry.types.len() {
                 bad.insert(part);
