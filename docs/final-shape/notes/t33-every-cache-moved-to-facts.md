@@ -378,6 +378,23 @@ texts 53 (the cutoff's run pays them) and the run's call 288; within it `run_obs
 | The constants (`constants::fold`) | 7 | |
 | The rest | about 160 | diffuse: the combine's name (6), the projection (5), the kept part written (5), the strata kept (4), the unfillable pass (4), … |
 
+2026-11-23, the same 30 files, the profiling build, in instructions (load moves CPU time, not them): the framed run
+0.82–0.86 G, the unframed 2.84 G to 2.67 G. Cut:
+
+- another build's stores swept only when this build's store is new (`build_store` statted 510 files a call);
+- the kept statistics read where the store keeps them (keeper format 3): each relation's header and every column's
+  exact counts and watched values kept apart from its statistics' bytes, so an unchanged run decodes none of them
+  (435 decoded before: an empty watched list read as "watched values here", and the columns that are not symbols kept
+  their exact maps in the bytes), and the bytes are read in place (`statkeep::KeptSource`), not copied out;
+- kept rows decoded a chunk at a time (`ColDec::fill`): a run-encoded column was searched for its run at each cell.
+
+What the unframed run does past the frame's point, all of it with no stratum to run ("0 of 1062 strata run; inputs
+changed: none"): the prepared program found and its split assembled again (`prepared_of`, `assemble`, `crossing`),
+the kept plans and their notes read through values, the cross part's program normalized and planned (`run_native_inputs`
+reaches no stratum), the kept part bound from its frames (345 relations), its changes put, the constants folded, the
+combine named. Each is a few percent; together they are the gap. The way to close it is the one above: each made where
+a stratum first reads it, so a run that reaches none makes none of them.
+
 Phase 0's graph images (22 ms of opens: some 110 segment files, a segment a single-source record) are written as
 one record a call now; most calls keep one text's graph, so the small segments stay until the store's writer places
 a transaction's small sources in one segment.
