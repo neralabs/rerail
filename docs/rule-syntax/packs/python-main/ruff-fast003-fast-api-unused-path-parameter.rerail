@@ -637,12 +637,14 @@ fast003_alt_1(n) :- ref_site(n, b22), (st23 = b22 ; within(b22, st23)),
 //   K: metavariable of the calling rule, passed in (bound by the caller)
 .decl fast003_alt_2(n: node, k: loc)
 fast003_alt_2(n, K) :- node(_, K, _, _, _), kind(n, "identifier"), node(_, n, _, _, _), N = n,
-    text(K, t1), text(N, t1).
+    text(K, t1), text(N, t1), @doc(K) = @doc(N).
 fast003_alt_2(n, K) :- node(_, K, _, _, _), kind(n, "typed_parameter"), child(n, c3, _),
-    kind(c3, "identifier"), node(_, c3, _, _, _), N = c3, text(K, t4), text(N, t4).
+    kind(c3, "identifier"), node(_, c3, _, _, _), N = c3, text(K, t4), text(N, t4),
+    @doc(K) = @doc(N).
 fast003_alt_2(n, K) :- node(_, K, _, _, _),
     (kind(n, "default_parameter") ; kind(n, "typed_default_parameter")),
-    field(n, "name", c6), node(_, c6, _, _, _), N = c6, text(K, t7), text(N, t7).
+    field(n, "name", c6), node(_, c6, _, _, _), N = c6, text(K, t7), text(N, t7),
+    @doc(K) = @doc(N).
 
 // stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl fast003_stop_3(n: node)

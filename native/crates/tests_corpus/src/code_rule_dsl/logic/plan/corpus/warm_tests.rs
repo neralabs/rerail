@@ -17,7 +17,7 @@ use std::path::PathBuf;
 /// Cross-file: identifiers of two files joined on their text, so the cross part reads its base relations (`kind`,
 /// `text`, `docof`) off the corpus batch, every file's documents.
 const PROGRAM: &str = r#"
-.decl named(t: symbol)
+.decl named(t: symbol) cross_file
 named(t) :- kind(a, "identifier"), text(a, t), docof(a, d), kind(b, "identifier"), text(b, t), docof(b, e), d < e, contains("o", t).
 .output named
 "#;
@@ -199,7 +199,7 @@ fn a_warm_edits_own_batch_makes_the_changed_document_alone() {
 /// A JavaScript run over the scripts HTML files hold (`.embedded on`, decision 0470 step 2): each name a script calls
 /// that `d.js` defines, at its line. The cross-file rule reads `line` of a node another file's rule found, so it reads
 /// the corpus batch's base relations, the host files' documents among them.
-const HOSTED: &str = ".language javascript\n.embedded on\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"identifier\"), text(c, x).\n.decl defined(x: symbol)\ndefined(x) :- kind(d, \"function_declaration\"), field(d, \"name\", n), text(n, x).\n.decl named(x: symbol, l: number)\nnamed(x, l) :- called(c, x), defined(x), line(c, l).\n.output named\n";
+const HOSTED: &str = ".language javascript\n.embedded on\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"identifier\"), text(c, x).\n.decl defined(x: symbol)\ndefined(x) :- kind(d, \"function_declaration\"), field(d, \"name\", n), text(n, x).\n.decl named(x: symbol, l: number) cross_file\nnamed(x, l) :- called(c, x), defined(x), line(c, l).\n.output named\n";
 
 /// The host files, HTML files whose scripts call `foo`, and the script of the run's own grammar that defines it.
 const HOSTS: &[(&str, &str)] = &[

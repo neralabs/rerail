@@ -341,6 +341,9 @@ fn print_written(v: &Version) -> Result<String, Error> {
     }
     let lattice = ProgramFields::lattice(v);
     let tapes = ProgramFields::tapes(v);
+    // A relation's qualifiers the source states (`.decl r(…) cross_file`, decision 0652; 0099's `inline`, …), so the
+    // text reads back as the version: the words a pass adds (`strategy`, a part's) are not source and stay out.
+    let qualifiers = ProgramFields::qualifiers(v);
     let inputs = v.input_names();
     let mut lattices = BTreeSet::new();
     // The tree axes' relations are made again from `inside(n, a, set)` and `has(a, n, set)` (`lowering_tail::DeclareAxes`).
@@ -375,6 +378,9 @@ fn print_written(v: &Version) -> Result<String, Error> {
         write!(out, ".decl {}({})", relation(&name), printed.join(", ")).expect("a string");
         if let Some(k) = lattice.and_then(|l| l.widen) {
             write!(out, " widen {k}").expect("a string");
+        }
+        for q in qualifiers.get(&name).into_iter().flatten().filter(|q| crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q.as_str())) {
+            write!(out, " {q}").expect("a string");
         }
         out.push('\n');
     }

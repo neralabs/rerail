@@ -49,7 +49,9 @@ fn vars_of(terms: &[TermRef<'_>]) -> VarSet {
 
 fn filter_term(v: &Version, term: TermRef<'_>) -> bool {
     match term {
-        TermRef::Call(f, args) => matches!(v.text(f), "prefix" | "suffix" | "glob" | "set") && args.into_iter().all(|t| filter_term(v, t)),
+        // `@doc(a) = @doc(b)` keeps a request on its reader's document (decision 0652): left out, the request joined
+        // every file's rows by a value.
+        TermRef::Call(f, args) => matches!(v.text(f), "prefix" | "suffix" | "glob" | "set" | "doc") && args.into_iter().all(|t| filter_term(v, t)),
         _ => plain(term),
     }
 }

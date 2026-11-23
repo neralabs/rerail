@@ -323,7 +323,7 @@ fn base_relations_read_are_inputs() {
 hit(p) :- doc(d, p, _), syntax_error(d), source(d, sp), text(sp, s), contains("ServerPlan", s).
 .decl plain(p: symbol)
 plain(p) :- doc(d, p, _), !syntax_error(d), source(d, sp), text(sp, s), contains("x = 1", s).
-.decl same(p: symbol, q: symbol)
+.decl same(p: symbol, q: symbol) cross_file
 same(p, q) :- doc(d, p, _), source(d, sp), text(sp, s), doc(e, q, _), source(e, sq), text(sq, s).
 .output hit, plain, same
 "#;

@@ -461,7 +461,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
             return Ok(None);
         }
         program.extend(helpers);
-        let round = Round { decls, undeclared: Vec::new(), rules: program, no_inline: Vec::new(), nullary: Vec::new() };
+        let round = Round { decls, undeclared: Vec::new(), rules: program, no_inline: Vec::new(), strategy: Vec::new(), nullary: Vec::new() };
         let split_span = crate::code_rule_dsl::logic::profile::span(|| "the round's program, split again".into());
         let (candidate, split) = super::candidate(v, &round)?;
         drop(split_span);

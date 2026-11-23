@@ -1448,7 +1448,7 @@ fn a_documents_key_compared_with_a_bound_runs_natively() {
     let program = r#"
 .decl ids(n: node)
 ids(n) :- kind(n, "identifier").
-.decl total(c: number)
+.decl total(c: number) cross_file
 total(c) :- c = count : { ids(_) }.
 .decl named(n: node, c: number)
 named(n, c) :- total(c), ids(n), d = @doc(n), d < 1342177280.

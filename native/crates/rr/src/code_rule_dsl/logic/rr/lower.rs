@@ -1839,8 +1839,8 @@ fn spans(p: &SpanProgram<'_>, patterns: bool) -> Result<(SpanPatterns, SpanColum
             ("kind", [Term::Var(y), Term::Str(k)]) if *y == x => Some([SpanIn::Kind(k.to_string())].into()),
             ("rx_span", [Term::Str(p), _, _, Term::Str(g), Term::Var(y)]) if *y == x => Some([SpanIn::Capture(p.to_string(), g.to_string())].into()),
             // A child of a node whose kinds the body gives (a `kind` atom, or a column of nodes of known kinds):
-            // the children of nodes of those kinds.
-            ("child", [Term::Var(par), Term::Var(y), _]) if *y == x && *par != x => {
+            // the children of nodes of those kinds. A field's node is such a child (`field(e, "value", v)`).
+            ("child", [Term::Var(par), Term::Var(y), _]) | ("field", [Term::Var(par), _, Term::Var(y)]) if *y == x && *par != x => {
                 let atoms: BTreeSet<SpanIn> = body.iter().filter(|a| !a.neg && a.rel == "kind").filter_map(|a| match a.args.as_slice() {
                     [Term::Var(z), Term::Str(k)] if z == par => Some(SpanIn::ChildOf(k.to_string())),
                     _ => None,
@@ -1848,7 +1848,7 @@ fn spans(p: &SpanProgram<'_>, patterns: bool) -> Result<(SpanPatterns, SpanColum
                 if !atoms.is_empty() {
                     return Some(atoms);
                 }
-                body.iter().filter(|a| !a.neg && a.rel != "child").find_map(|a| {
+                body.iter().filter(|a| !a.neg && a.rel != "child" && a.rel != "field").find_map(|a| {
                     a.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(z) if z == par).then(|| columns.get(of(a.rel), i)).flatten())
                 }).and_then(|set| set.iter().map(|s| match s { SpanIn::Kind(k) => Some(SpanIn::ChildOf(k.to_string())), _ => None }).collect::<Option<BTreeSet<_>>>())
             }
@@ -4957,11 +4957,15 @@ impl Lowerer {
                 vs
             })
             .collect();
+        // A test (`a != b`, `a < b`) ties nothing: it filters rows the other literals join. Kept where they reach all
+        // its variables; reached through it, a context was the cross product of two groups (SIM109's `SECOND != FIRST`
+        // paired every comparison of the corpus with every node, decision 0652).
+        let test = |l: &LitAt| matches!(self.lit(l), L::Cmp { op, .. } if op != "=");
         let mut keep = vec![false; context.len()];
         loop {
             let mut grew = false;
             for (k, vs) in of.iter().enumerate() {
-                if !keep[k] && !vs.is_disjoint(&reach) {
+                if !keep[k] && !test(&context[k]) && !vs.is_disjoint(&reach) {
                     keep[k] = true;
                     reach.extend(vs.iter().cloned());
                     grew = true;
@@ -4969,6 +4973,11 @@ impl Lowerer {
             }
             if !grew {
                 break;
+            }
+        }
+        for (k, vs) in of.iter().enumerate() {
+            if test(&context[k]) && vs.is_subset(&reach) {
+                keep[k] = true;
             }
         }
         context.into_iter().zip(keep).filter(|(_, k)| *k).map(|(l, _)| l).collect()
