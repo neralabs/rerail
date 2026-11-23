@@ -258,7 +258,19 @@ Now, where tier 1 reads the bytes and the rows' pick opens no region of its own,
 The dispatch keeps each byte's pick (`Picks::by_byte`), and the generator writes the table from it. The nibble tables
 and `KINDS` go where nothing else reads them, as in `.rerail`'s file. Kotlin's file is unchanged.
 
-A word's length is still its run of the block's word bits (`brun_last`), as lean's. An operator's is still `pair_6`'s
-test of its next byte. Lean reads an operator's length from the same load, by a block mask of pairs' first bytes.
+A word's length is its run of the block's word bits (`brun_last`), as lean's.
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes and records included.
+
+## An operator's length from the block's pairs mask (done)
+
+An operator found its length by `pair_6`, a `match` on its first two bytes. Lean reads it from its block's `pair` mask.
+
+Now, where tier 1 reads the bytes, each block makes `k_pair_6` once: the bytes where one of the grammar's pairs
+(`pairs two_start`) begins. It is made from two loads, the block and the block one byte on, one equality test of each
+pair's bytes. An operator's last byte is `s` plus its bit there. The grammar's mask reads a run of pairs left to right
+(`escaped`, lean's `left_to_right`). A token never starts at a pair's second byte, and tokens are taken one after the
+other, so at a token's start the raw mask is that mask. A pairs row with a triple keeps its function. `.rerail`'s
+`pair_6` is gone. Kotlin's file is unchanged.
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes and records included.

@@ -14,16 +14,6 @@ pub struct Lexed {
     pub refused: bool,
 }
 
-/// `punct`'s last byte from its first, `s`: its next where the two are a pair, and the one after where the three are a triple, as the lean lexer reads an operator.
-fn pair_6(src: &[u8], s: usize) -> usize {
-    let at = |i: usize| src.get(i).copied().unwrap_or(0);
-    let (a, b, c) = (at(s), at(s + 1), at(s + 2));
-    match [a, b] {
-        [0x3a, 0x2d] | [0x3d, 0x3e] | [0x21, 0x3d] | [0x3c, 0x3d] | [0x3c, 0x3a] | [0x3e, 0x3d] | [0x2d, 0x3e] => s + 1 + 0,
-        _ => s,
-    }
-}
-
 /// The classes' nibble tables, pair 0 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
 static LO_0: [u8; 16] = [0x36, 0x7c, 0x7c, 0x7c, 0xfc, 0x7c, 0x7c, 0x3c, 0x3c, 0x3d, 0x39, 0x08, 0x09, 0x09, 0x08, 0x18];
 static HI_0: [u8; 16] = [0x01, 0x00, 0x02, 0x04, 0xc8, 0x10, 0xc8, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
@@ -748,6 +738,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
         let k_m_dot = unsafe { w_m_dot::<S>(src, n, base as isize, &mut 0) };
         let k_m_digit = unsafe { w_m_digit::<S>(src, n, base as isize, &mut 0) };
         let k_m_ws = unsafe { w_m_ws::<S>(src, n, base as isize, &mut 0) };
+        let k_pair_6 = unsafe { w_pair_6::<S>(src, base) };
         let mut firsts = !k_m_ws & (!0u64 << at.saturating_sub(base));
         while firsts != 0 {
         let s = base + firsts.trailing_zeros() as usize;
@@ -915,7 +906,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
 ,
                 6 => {
                     // `punct`: pair
-                    let l = pair_6(src, s);
+                    let l = s + (k_pair_6 >> (s - base) & 1) as usize;
                     let l = l.max(s);
                     if l + 1 - s >= 1 && (!(matches!(src[s], 0x2d) && !((s + 1) < n && matches!(src[(s + 1)], 0x30..=0x39)))).then_some(s).is_none() {
                         hits |= 1 << 12;
@@ -1639,6 +1630,29 @@ unsafe fn w_m_ws<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
     unsafe { cls_ws::<S>(src, n, p) }
 }
 
+
+/// `pair_6`'s pairs' first bytes in the block at `base`, as the lean lexer's `pair`: where a pair's two bytes are. A token
+/// never starts at a pair's second byte, so at a token's start this is the grammar's mask of pairs (read left to right).
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn w_pair_6<S: rerail_simd8::Simd8x64>(src: &[u8], base: usize) -> u64 {
+    // The block and the one a byte on: in the padded source.
+    let at: &[u8; 64] = src[base..base + 64].try_into().expect("the padded source");
+    let on: &[u8; 64] = src[base + 1..base + 65].try_into().expect("the padded source");
+    // SAFETY: the caller's.
+    unsafe {
+        let (v, w) = (S::load(at), S::load(on));
+        (S::eq_mask(v, 0x3a) & S::eq_mask(w, 0x2d))
+            | (S::eq_mask(v, 0x3d) & S::eq_mask(w, 0x3e))
+            | (S::eq_mask(v, 0x21) & S::eq_mask(w, 0x3d))
+            | (S::eq_mask(v, 0x3c) & S::eq_mask(w, 0x3d))
+            | (S::eq_mask(v, 0x3c) & S::eq_mask(w, 0x3a))
+            | (S::eq_mask(v, 0x3e) & S::eq_mask(w, 0x3d))
+            | (S::eq_mask(v, 0x2d) & S::eq_mask(w, 0x3e))
+    }
+}
 
 /// Each byte's pick as a token's first byte, and its record kind (the lean lexer's `TOKEN`): the token's row where the
 /// byte picks one, else 7 and its group's index, whose tests pick it; `u8::MAX`, none.

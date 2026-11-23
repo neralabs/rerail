@@ -5114,6 +5114,8 @@ impl Gen<'_> {
         let field_plan = self.plan_fields(x)?;
         // The token loop: each top row's branch.
         let mut pair_fns = String::new();
+        // The pairs rows with no triple: their function, and their pairs' bytes (for the block's mask, `pairs_masks`).
+        let mut pair_rows: Vec<(String, Vec<(u8, u8)>)> = Vec::new();
         let mut checked: Vec<String> = Vec::new();
         // The gap accumulators a row's bytes after its start may hold.
         let mut tails: std::collections::BTreeSet<usize> = Default::default();
@@ -5172,6 +5174,12 @@ impl Gen<'_> {
                             [a, b, c] => three.push(format!("[{a:#04x}, {b:#04x}, {c:#04x}]")),
                             _ => return Err(format!("tier 1 as Rust: `{kind}`'s pair of {} bytes", p.len())),
                         }
+                    }
+                    if three.is_empty() {
+                        pair_rows.push((f.clone(), pairs.iter().filter_map(|p| match p.as_slice() {
+                            [a, b] => Some((*a, *b)),
+                            _ => None,
+                        }).collect()));
                     }
                     let third = if three.is_empty() { "0".to_owned() } else { format!("usize::from(matches!([a, b, c], {}))", three.join(" | ")) };
                     let _ = write!(pair_fns, "/// `{kind}`'s last byte from its first, `s`: its next where the two are a pair, and the one after where the three are a triple, as the lean lexer reads an operator.\nfn {f}(src: &[u8], s: usize) -> usize {{\n    let at = |i: usize| src.get(i).copied().unwrap_or(0);\n    let (a, b, c) = (at(s), at(s + 1), at(s + 2));\n    match [a, b] {{\n        {} => s + 1 + {third},\n        _ => s,\n    }}\n}}\n\n", if two.is_empty() { "[_, _] if false".to_owned() } else { two.join(" | ") });
@@ -5976,20 +5984,23 @@ impl Gen<'_> {
             let mut by = bytes::Bytes::new(x.stmts, locals, class_code);
             let mut go = || -> Result<_, String> {
                 let mut pieces = Vec::new();
+                // An operator's last byte by its bit in the block's pairs mask (`k_pairs_K`).
+                let pairs_read = |t: &str| pair_rows.iter().fold(t.to_owned(), |t, (f, _)| t.replace(&format!("{f}(src, s)"), &format!("s + (k_{f} >> (s - base) & 1) as usize")));
                 let alone = readers(x.stmts).is_empty();
                 let (open_t, branches_t) = match &token_form {
                     Some((o, b, _)) => (o, b),
                     None => (&open_code, &branches),
                 };
                 for t in [open_t, branches_t, if alone { &token_read } else { &token_code }, &own_code, if alone { &gap_asked } else { &gap_code }, &acc_after] {
-                    let t = by.rewrite(&bytes::strip_scans(&bytes::strip_pauses(t)))?;
+                    let t = by.rewrite(&bytes::strip_scans(&bytes::strip_pauses(&pairs_read(t))))?;
                     if uses(&t, "made") || uses(&t, "wait") || t.contains("'pass") {
                         return Err("a pause the loop still reads".into());
                     }
                     pieces.push(t);
                 }
                 let starts = by.starts(&skip)?;
-                Ok((pieces, format!("{}        let mut firsts = {starts}", by.block_words())))
+                let pair_words: String = pair_rows.iter().filter(|(f, _)| pieces.iter().any(|q| q.contains(&format!("k_{f}")))).map(|(f, _)| format!("        let k_{f} = unsafe {{ w_{f}::<S>(src, base) }};\n")).collect();
+                Ok((pieces, format!("{}{pair_words}        let mut firsts = {starts}", by.block_words())))
             };
             go().ok().map(|(p, st)| (p, st, by.code()))
         } else {
@@ -6072,6 +6083,21 @@ impl Gen<'_> {
         }
         if let Some((_, _, code)) = &from_bytes {
             out.push_str(code);
+            for (f, two) in &pair_rows {
+                if !out.contains(&format!("k_{f} >>")) {
+                    continue;
+                }
+                let test: Vec<String> = two.iter().map(|(a, b)| format!("(S::eq_mask(v, {a:#04x}) & S::eq_mask(w, {b:#04x}))")).collect();
+                let _ = write!(out, "\n/// `{f}`'s pairs' first bytes in the block at `base`, as the lean lexer's `pair`: where a pair's two bytes are. A token\n/// never starts at a pair's second byte, so at a token's start this is the grammar's mask of pairs (read left to right).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn w_{f}<S: rerail_simd8::Simd8x64>(src: &[u8], base: usize) -> u64 {{\n    // The block and the one a byte on: in the padded source.\n    let at: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let on: &[u8; 64] = src[base + 1..base + 65].try_into().expect(\"the padded source\");\n    // SAFETY: the caller's.\n    unsafe {{\n        let (v, w) = (S::load(at), S::load(on));\n        {}\n    }}\n}}\n", test.join("\n            | "));
+                // The function the mask replaces, where nothing calls it.
+                if !out.contains(&format!("{f}(src, s)")) {
+                    if let Some(at) = out.find(&format!("`'s last byte from its first, `s`: its next where the two are a pair, and the one after where the three are a triple, as the lean lexer reads an operator.\nfn {f}(")) {
+                        let start = out[..at].rfind("/// `").unwrap_or(at);
+                        let end = at + out[at..].find("\n}\n\n").map_or(0, |e| e + 4);
+                        out.replace_range(start..end, "");
+                    }
+                }
+            }
             if let Some((_, _, by)) = &token_form {
                 let row: Vec<String> = (0..256).map(|c| format!("({}, {})", by[c], x.kinds[c])).collect();
                 let _ = write!(out, "\n/// Each byte's pick as a token's first byte, and its record kind (the lean lexer's `TOKEN`): the token's row where the\n/// byte picks one, else {} and its group's index, whose tests pick it; `u8::MAX`, none.\nstatic TOKEN: [(u8, u8); 256] = [{}];\n", row_arms.len(), row.join(", "));
