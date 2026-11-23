@@ -94,13 +94,20 @@ pub const COMBINING: &[&str] = &[
     "RERAIL_NODE_IDS",
     // Identical relations merged (`same_relations`, in combining and again in preparing).
     "RERAIL_SAME",
+    // The passes combining replays to judge an answer as preparation's own demand leaves it (`demanded`), and runs
+    // again in preparing: `simplify` and the reach index.
+    "RERAIL_EXISTENCE_COUNTS",
+    "RERAIL_INLINE_FILTERS",
+    "RERAIL_JOIN_KEYS",
+    "RERAIL_PROJECT_COLUMNS",
+    "RERAIL_REACH_INDEX",
 ];
 
 /// The engine switches read while a program is lowered and prepared (`run_observed`, before the prepared program is
 /// kept): each changes the prepared program, so each is in its key. The run's other switches are not: the key also
 /// keys a session's kept frames, which a diagnostic switch turned on mid-session must not make cold. A switch read in
-/// lowering or preparation is listed here or as changing none, which a test checks
-/// (`every_switch_lowering_reads_is_classified`).
+/// lowering or preparation is listed here, in `COMBINING` (which the prepared key holds through the combined
+/// program's), or as changing none, which a test checks (`every_switch_lowering_reads_is_classified`).
 pub const PREPARING: &[&str] = &[
     // Lowering and its passes.
     "RERAIL_TEXT_NODES",
@@ -110,12 +117,6 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_FACTORIZE",
     "RERAIL_EXPORT_DEMAND",
     "RERAIL_CROSS_MEMO",
-    "RERAIL_REACH_INDEX",
-    // `simplify`.
-    "RERAIL_EXISTENCE_COUNTS",
-    "RERAIL_INLINE_FILTERS",
-    "RERAIL_JOIN_KEYS",
-    "RERAIL_PROJECT_COLUMNS",
     // `run_observed`'s preparation.
     "RERAIL_TEXT_TESTS",
     "RERAIL_DEMAND",
@@ -896,19 +897,93 @@ pub(in crate::code_rule_dsl) struct Cone {
 /// hold: there `@rr_node_value` answered nothing, without an error, and every reader of `value` saw no value (the
 /// Python pack: `__all__`'s and `exports`' readers ask across modules, so `value` went cross-file, and `1 if a else
 /// 0`'s branches compared the same in RUF034). Until a cross-file answer reads its documents (0174 §6), an attribute a
-/// cross-file reader asks for is eager.
+/// cross-file reader asks for is eager, and so is one whose answer the program's own demand puts in the cross-file part
+/// (`demanded`): preparation applies that demand after combining, so it is judged here as it will run.
 fn answers_where_documents_are(prog: &mut front::Program) {
-    use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST, undo_round};
-    loop {
-        let local = crate::code_rule_dsl::typing::file_local::split(prog);
-        let Some((round, rel)) = ON_REQUEST.iter().find_map(|round| {
-            round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && prog.decls.contains_key(a.req) && !local.contains(a.rel)).map(|a| (*round, a.rel))
-        }) else {
-            return;
-        };
-        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local (a cross-file reader asks), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
-        undo_round(prog, round);
+    while let Some((round, rel, why)) = cross_file_answer(prog) {
+        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local ({why}), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
+        crate::code_rule_dsl::logic::rr::lower::undo_round(prog, round);
     }
+}
+
+/// One round of the attributes answered on request (`rr::lower::ON_REQUEST`).
+type OnRequestRound = &'static [crate::code_rule_dsl::logic::rr::lower::OnRequest];
+
+/// The first round with an attribute answered by a function of the node's document whose answer the split finds
+/// cross-file, that attribute, and why: in the program as written, or else in it as preparation makes it with its own
+/// demand (`demanded`), where the attribute is still answered as preparation's check asks.
+fn cross_file_answer(prog: &front::Program) -> Option<(OnRequestRound, &'static str, &'static str)> {
+    let found = |p: &front::Program| {
+        let local = crate::code_rule_dsl::typing::file_local::split(p);
+        let cross = |a: &&crate::code_rule_dsl::logic::rr::lower::OnRequest| answered_by_function(prog, a) && !local.contains(a.rel) && p.rules.iter().any(|r| r.head.rel == a.rel);
+        crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().find_map(|round| round.iter().find(cross).map(|a| (*round, a.rel)))
+    };
+    if let Some((round, rel)) = found(prog) {
+        return Some((round, rel, "a cross-file reader asks"));
+    }
+    let (round, rel) = found(&demanded(prog)?)?;
+    Some((round, rel, "the program's demand reads across files for its request"))
+}
+
+/// Whether `prog` answers the attribute on request by a function of the node's document.
+fn answered_by_function(prog: &front::Program, a: &crate::code_rule_dsl::logic::rr::lower::OnRequest) -> bool {
+    matches!(a.answer, crate::code_rule_dsl::logic::rr::lower::Answer::Function(_)) && prog.decls.contains_key(a.req)
+}
+
+/// `prog` as preparation makes it up to its own demand (`.pragma "magic-transform"`, decision 0145), demand included,
+/// when that demand can change an attribute's answer by a function (`demand_reaches_an_answer`). The transform leaves
+/// a derived literal out of a demand rule where keeping it would close a negative cycle, and a request reading the
+/// demanded relation can close one through the attribute's readers. RUF034 alone: `rr_value_req` reads `unparen`, whose
+/// demand comes from `same_pair`, which negates `same_leaf`, which reads `value`; without `same_pair`, `unparen`'s
+/// demand joined the two compared nodes by a child's position only, so it, `value`'s request and its answer were
+/// cross-file, and preparation refused the program. The steps are `run_observed`'s before the demand, in its order (the
+/// combined program has none of them yet: on it, the demand made no `unparen` demand rule), then the demand, the
+/// prune after it, and the closures the demand put in cycles made rows again (`reach_form::undo_in_cycles`). Not
+/// `hiding::fold_own`: it folds guests' copies for the run's language, which combining does not know (the prepared key
+/// names it). Nor `RERAIL_DEMAND=off`: the demand is replayed under it too, which can only make an answer eager, so the
+/// combined program is not a function of it. None when the demand cannot change an answer, or when a step fails
+/// (preparation then fails, or leaves the demand out).
+fn demanded(prog: &front::Program) -> Option<front::Program> {
+    if !demand_reaches_an_answer(prog) {
+        return None;
+    }
+    let mut p = prog.clone();
+    cpython_functors(&mut p).ok()?;
+    base_inputs(&mut p);
+    let mut p = front::prune(p);
+    crate::code_rule_dsl::logic::simplify::simplify(&mut p);
+    let mut p = front::prune(p);
+    crate::code_rule_dsl::logic::reach_form::find(&mut p).ok()?;
+    let (p, _) = crate::code_rule_dsl::logic::magic::demand_negated_tests(p);
+    let mut p = front::prune(crate::code_rule_dsl::logic::magic::demand_bound_columns(p, &Default::default()).ok()?);
+    crate::code_rule_dsl::logic::reach_form::undo_in_cycles(&mut p).ok()?;
+    Some(p)
+}
+
+/// Whether `prog` has its own demand, and an attribute answered by a function whose answer reads a demanded relation:
+/// the demand can change only what reads what it demands.
+fn demand_reaches_an_answer(prog: &front::Program) -> bool {
+    if prog.demand.is_empty() {
+        return false;
+    }
+    let reading = reading_demanded(prog);
+    crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|r| r.iter()).any(|a| answered_by_function(prog, a) && reading.contains(a.rel))
+}
+
+/// The relations `prog` demands and those whose rules read one, directly or through others: what its demand can change.
+fn reading_demanded(prog: &front::Program) -> BTreeSet<&str> {
+    let mut readers: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for rule in &prog.rules {
+        for read in rule.body.iter().filter_map(front::Literal::atom) {
+            readers.entry(read.rel.as_str()).or_default().push(rule.head.rel.as_str());
+        }
+    }
+    let mut seen: BTreeSet<&str> = prog.demand.iter().map(String::as_str).collect();
+    let mut todo: Vec<&str> = seen.iter().copied().collect();
+    while let Some(rel) = todo.pop() {
+        todo.extend(readers.get(rel).into_iter().flatten().copied().filter(|h| seen.insert(*h)));
+    }
+    seen
 }
 
 /// A measurement (dev only, `RERAIL_SPLIT_DUMP=<file>`): each cross-file relation of the split, by how its rules read

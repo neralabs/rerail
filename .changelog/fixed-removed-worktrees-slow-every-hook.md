@@ -1,0 +1,1 @@
+Removing Git worktrees while a coding-agent session runs no longer slows that session down. It kept asking Git about every worktree it had seen, removed ones too, so each shell command's result and each turn's end waited longer with every worktree removed, up to the full 10 seconds.
