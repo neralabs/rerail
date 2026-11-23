@@ -65,7 +65,8 @@ export function isNewerVersion(a, b) {
 
 /**
  * The newer Rerail out, from `/healthz.update` (`{ latest, checkedAt }`: the newest version the daemon last found and
- * when), or `null`: when the daemon does not say, when it can't be read, and when the version running is as new.
+ * when, from its daily update check), or `null`: when the daemon has no answer, when it can't be read, and when the
+ * version running is as new.
  */
 export function newerRelease(health) {
   const latest = health?.update?.latest;

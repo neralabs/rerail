@@ -82,7 +82,7 @@ describe("the version in About Rerail and the top bar", () => {
     expect(newerRelease({ version: "0.2.0", update: { latest: "0.3.0", checkedAt: 1 } })).toBe("0.3.0");
     expect(newerRelease({ version: "0.2.0", update: { latest: "0.2.0", checkedAt: 1 } })).toBeNull();
     expect(newerRelease({ version: "0.3.0", update: { latest: "0.2.0", checkedAt: 1 } })).toBeNull();
-    // Today's daemon does not say, and a page that has not heard from it yet has no health.
+    // A daemon that doesn't check, or hasn't had an answer yet, says nothing; a page that has not heard from it has no health.
     expect(newerRelease({ version: "0.2.0" })).toBeNull();
     expect(newerRelease({ version: "0.2.0", update: null })).toBeNull();
     expect(newerRelease(null)).toBeNull();

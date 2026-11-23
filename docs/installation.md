@@ -136,7 +136,10 @@ restart OMP. Set-up cannot replace OMP's copy, so both would load; set-up and `r
 
 ## Update
 
-Rerail updates only when you ask; nothing polls the registry or installs a version in the background.
+Rerail updates only when you ask; nothing installs a version in the background. Once a day the daemon asks npm
+whether a newer version is out, and the dashboard says so in the top bar and in Settings, under About Rerail. Unless
+you add a remote or turn Merge Assist on (internal testing), that check is the only request Rerail makes on its own
+([privacy](privacy.md)); `RERAIL_UPDATE_CHECK=0` set for the daemon turns it off.
 
 ```sh
 rerail update check   # is a newer version on the channel?

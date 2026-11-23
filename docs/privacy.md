@@ -11,6 +11,8 @@ no hosted model.
 - **No sending your work** except to a [remote](remote-sink.md) you add.
 - **No hosted model or LLM API.** Semantic matching runs a bundled model in-process.
 - **No silent updates**, no pack install scripts, no remote Git, no third-party dashboard resources.
+- **One request on its own:** once a day, an update check. Unless you add a remote or turn Merge Assist on, no other
+  network request runs without you asking.
 
 <details>
 <summary>Details and source files</summary>
@@ -27,6 +29,12 @@ no hosted model.
   `minishlab/potion-base-8M`), run in-process after a SHA-256 manifest check. The engine has no HTTP or socket code
   (`native/Cargo.toml`, `native/src/model.rs`).
 - **No silent updates.** Only `rerail update` or `rerail setup` installs a version (`src/setup/updater.ts`).
+- **One request on its own.** Once a day the daemon of an installed Rerail asks npm for the newest `@neralabs/rerail`
+  on your update channel, so the dashboard can say a newer version is out. It installs nothing, and sends nothing
+  about you or your work. `RERAIL_UPDATE_CHECK=0` set for the daemon turns it off (`src/setup/update-check.ts`).
+  Every other network request runs because you ran a command, added a remote or turned Merge Assist on (both in
+  internal testing, below), with one exception: when the SQLite binding fails its load check, starting the daemon
+  rebuilds it with npm (below).
 - **No pack install scripts.** Packs are installed and removed with `npm --ignore-scripts`
   (`src/setup/rule-pack-store.ts`).
 - **No remote Git.** All Git commands are local, with hooks and fsmonitor disabled (`src/engine/git.ts`).
@@ -39,19 +47,21 @@ no hosted model.
 Apart from Merge Assist (below), only `npm` traffic to your configured registry, carrying package names and versions;
 rule evaluation needs no network.
 
-npm runs for updates, set-up, recommending and adding packs, and SQLite rebuilds (`src/runtime/npm.ts`).
+npm runs for the daily update check, updates, set-up, recommending and adding packs, and SQLite rebuilds
+(`src/runtime/npm.ts`).
 
 <details>
 <summary>When npm runs</summary>
 
 | When | What npm fetches |
 | --- | --- |
+| Once a day, in the daemon of an installed Rerail, unless `RERAIL_UPDATE_CHECK=0` | The newest `@neralabs/rerail` version on your channel; nothing is installed |
 | `rerail update`, `rerail update check` | Latest `@neralabs/rerail` on your channel, then that version |
 | `rerail update` | The newest version of each rule pack you installed, asked by its package name on your channel (on `next` for a pack the channel has no version of) |
 | `rerail setup` from a non-managed copy (e.g. `npx`) | The managed `@neralabs/rerail` install |
 | Set-up, `rerail start`, `rerail packs recommend` | Every rule pack, matched to your repository **locally**; nothing about it is sent |
 | `rerail packs add`, packs confirmed in set-up | The chosen packs |
-| SQLite binding fails its load check | `npm rebuild better-sqlite3`; may fetch a prebuilt binary or Node headers through that package's own tooling |
+| SQLite binding fails its load check, when the daemon starts or during an update | `npm rebuild better-sqlite3`; may fetch a prebuilt binary or Node headers through that package's own tooling |
 
 </details>
 

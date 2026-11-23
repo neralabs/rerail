@@ -129,8 +129,9 @@ const releaseLink = (version, label) =>
 /**
  * About Rerail: Version, Installed and, only while the daemon reports a newer version, Update to <version>. Rerail never
  * updates on its own, and the dashboard can't run the update: updating replaces the daemon that serves this page. So
- * the rows give the command. Until the daemon can say a newer version is out, the Version row always says how to
- * update; once it does, the steps move to the Update row, and a Rerail that is up to date shows its version alone.
+ * the rows give the command. Until the daemon's daily update check has answered (and always for a daemon that doesn't
+ * check: a checkout's, or one run with `RERAIL_UPDATE_CHECK=0`), the Version row says how to update; once it has, the
+ * steps move to the Update row, and a Rerail that is up to date shows its version alone.
  */
 function about() {
   const version = data.health?.version ?? null, installed = installedLabel(data.health?.installedAt);
@@ -144,8 +145,8 @@ function about() {
 }
 
 /**
- * Version: how to update while the daemon can't say whether a newer version is out, and only "never updates on its
- * own" once it can, since the Update row then carries the steps. Its release notes show unless a newer one is out.
+ * Version: how to update while `/healthz.update` is null, and only "never updates on its own" once the daily check has
+ * answered, since the Update row then carries the steps. Its release notes show unless a newer one is out.
  */
 function versionRow(version, latest) {
   const knows = typeof data.health?.update?.latest === "string";

@@ -122,7 +122,7 @@ rerail update status
 rerail events          # internal testing; experimental: needs RERAIL_EXPERIMENTAL_EVENT_STREAM=1
 ```
 
-Hooks, the daemon and `rerail events` never contact a registry. A new version arrives only via `rerail update`, and applies to newly started sessions.
+Hooks and `rerail events` never contact a registry. The daemon of an installed Rerail asks npm once a day for the newest version on the channel, only to say an update is out (`update-check.json`; `RERAIL_UPDATE_CHECK=0` turns it off). A new version arrives only via `rerail update`, and applies to newly started sessions.
 
 <details>
 <summary>Rerail home layout and rule packs</summary>
@@ -130,6 +130,7 @@ Hooks, the daemon and `rerail events` never contact a registry. A new version ar
 ```text
 ~/.rerail/
 |- update-state.json
+|- update-check.json
 |- current -> versions/<active>/node_modules/@neralabs/rerail
 |- bin/rerail
 |- daemon.json
@@ -145,6 +146,7 @@ Hooks, the daemon and `rerail events` never contact a registry. A new version ar
 - **Rule packs** are npm packages: Rerail's under `@neralabs`, a third party's as `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` ([rule packs](rule-packs.md#third-parties-packs)). They install with the same npm configuration into `packs/`, beside the versions, so `rerail update` keeps them.
 - **Pack compatibility** is `peerDependencies["@neralabs/rerail"]`. After an update, packs whose range excludes the new version leave the catalog, reported by `rerail packs list`, until a newer pack is installed.
 - **`update-state.json`** is the active-version pointer: selected dist-tag, current and previous known-good installs, last explicit check. It is written via a temporary file and atomic rename.
+- **`update-check.json`** is the daemon's daily update check: the channel, the newest version npm last named on it and when, and when the daemon last asked. It is written the same way, and only ever read to say an update is out.
 
 </details>
 
