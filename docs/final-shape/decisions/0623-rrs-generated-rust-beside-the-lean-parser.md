@@ -497,3 +497,10 @@ record format every executor reads (the JIT, the devices, the generated Rust), a
 beside tokens. Asked whether to split it, the user chose to keep the one stream: a token with no comment after it costs
 one test of the record already read (`advance`), as lean's costs one compare of its next comment's start. What remains
 of tier 2 against lean is looked for in a line profile instead.
+
+### The level open is held, as lean's `top`
+
+The level open (its node, and the node made last in it) was the last entry of `levels`, so each leaf's `set_made`, each
+`field_made`, `wrap` and relabel went through the vector's length to its last entry. It is a field now (`P::top`), as
+the lean parser holds its `top`; `levels` holds only the levels around it, a push at a level's open and a pop at its
+close. Side by side on spark1 (load 3), three rounds in turns: tier 2 35.5–36.3 ms before, 34.5–35.5 ms after.
