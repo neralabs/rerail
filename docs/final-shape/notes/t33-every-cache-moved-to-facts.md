@@ -331,3 +331,25 @@ now as columns, decoded once), the prepared program's passes (0.19 s: the memo's
 measures' keys, the base relations' columns, each made again from the prepared program the store keeps), the
 parse's own (0.03 s), the combine (0.05 s), the cross part's binding (0.05 s). The cutoff goes once an unchanged run
 costs about what it does.
+
+Since (2026-11-22, the same 30 files, CPU over the cutoff's run at the same load): 0.93 s to 0.37–0.40 s, the
+cutoff's run 0.10–0.11 s. Cut: a kept entry's partition read merges its own entries; the library's and each
+program's paths canonicalized once; the parsed program kept as an image (`parse_version`); the text kinds a run
+demands kept with the program's matchers; the corpus shape held per version and walked by relation id; a relation's
+emptiness asked without counting its rows (an axis walked every document's tree for its length) and a view's rows
+its base's held count; a kept entry searched once, by its name's bytes; the split's crossing read by id.
+
+What is left, from a time profile of the warm run's main thread (about 290 ms; each a few ms of fixed cost):
+
+| Part | ms | What it does |
+|---|---|---|
+| The rule files' texts (`program_texts`) | 40 | the cutoff's run pays it too: each rule file read, its graph's image read |
+| The prepared program (`prepared::lookup`) | 26–40 | the split's parts made again as overlays (`assemble`, 13), the text tests lowered and compiled (7: before the waves, since a compile reads the store's automata, decision 0104), the program facts' entry read (8) |
+| Phase 1's run (`phases::sources`) | 30 | a run of its own, with the same fixed costs at its size |
+| The kept statistics (`Keeper::of_kept`) | 12–14 | every relation's statistics decoded out of the block, all of which the run's end reads |
+| The kept plans (`Durable::start`) | 9–14 | every plan of the program read |
+| The kept inputs bound (`kept_inputs`, `bind_kept_named`) | 17 | an entry search per granule of each of 1,181 inputs |
+| The rest | about 100 | some forty steps of 2–7 ms each (the constants, the projection, the strata kept, the combine's name) |
+
+The cutoff goes when these are made only where a stratum reads them: a run whose leaves have no delta then reads
+the rule files, the prepared program's entry and the kept outputs, as the cutoff's run does.
