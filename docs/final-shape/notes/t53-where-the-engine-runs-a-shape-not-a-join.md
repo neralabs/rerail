@@ -105,3 +105,31 @@ practical form of "run W's code" is:
 
 W stays the reference that says what fast looks like (51 s of CPU on `all` against the head's 183 s, t50), and
 each operator is measured against it.
+
+## 4. Where the gap to W is, measured (2026-11-23)
+
+W runs `all` in 51 s of CPU; the head (t50 step 8) in 169 s (161 user, 8 system; m1max). Not reachability: no
+closure here is held as pairs any more (§1). By part: the per-file rules about 69 s, the cross part about 44 s, the
+matcher wave about 15 s, the per-file base counts about 4.5 s.
+
+The per-file rules are flat: 774 strata, 23,364 runs, none over 3.5 s. They derive 62 M rows. By each plan step's
+own time (`native.tsv`, every per-file plan, 53.7 s), the head's writes cost 31 ns a row (1.9 s), and the steps that
+read the tree cost hundreds:
+
+| A step reading | CPU | rows out | a row |
+|---|---|---|---|
+| `text` | 6.2 s | 10.0 M | 617 ns |
+| `kind` | 5.2 s | 21.6 M | 243 ns |
+| `field` | 5.2 s | 10.3 M | 503 ns |
+| `nameref` (a matcher's) | 4.2 s | 8.7 M | 480 ns |
+| the other matchers' | 3.0 s | 9.3 M | 319 ns |
+| `rr_nearest_lscope`, `rr_nearest_fdef` | 3.3 s | 7.5 M | about 440 ns |
+| `child` | 1.4 s | 3.5 M | 401 ns |
+| `docof` | 1.3 s | 5.1 M | 260 ns |
+| comparisons | 2.9 s | 62 M | 47 ns |
+
+W reads a node's kind, field or text as a struct's field, a few ns. So the gap is the views' reads: what a
+node's id costs to turn into its place on the tape (document, granule, slot) and the value decoded there, per row,
+through the general join's probe of a view. That read, written once (0310), is the lever before any shape: at tens
+of ns a row, these steps would cost about a tenth of what they do. Next: where a `kind` read's 243 ns goes
+(dispatch, the id's decoding, the probe's candidate loop), by a sample of one stratum's steps.
