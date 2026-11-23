@@ -627,7 +627,10 @@ fn the_refused_cases_are_the_serial_passes() {
                      c __LINE__ __FILE__ __FILE_NAME__ __BASE_FILE__\n#if 0\n#line 1 \"never.c\"\n#endif\nc2 __LINE__ __FILE__\n\
                      #define L 300\n#define NAME \"other.h\"\n#line L NAME\nd __LINE__ __FILE__\n#include \"h.h\"\ne __LINE__ __FILE__\n\
                      #if __LINE__ > 250\nbig\n#endif\n# 50 \"marker.c\" 1\nf __LINE__ __FILE__\n#line 7 \"a\\\\b\\\"c.h\"\ng __FILE__ __FILE_NAME__\n\
-                     #line 9 \"x/y/\"\nh __FILE__ __FILE_NAME__ __LINE__\n#line\n#line junk\ni __LINE__\n",
+                     #line 9 \"x/y/\"\nh __FILE__ __FILE_NAME__ __LINE__\n\
+                     #line 11 \"/a/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/\\\\b\\\"q.c\"\nk __FILE__ __FILE_NAME__ __LINE__\n\
+                     #line 12 \"spl\\\n/ice.c\"\nl __FILE__ __FILE_NAME__ __LINE__\n\
+                     #line 13 \"/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789/dir0123456789//sp\\\nlit.c\"\nm __FILE__ __FILE_NAME__\n#line\n#line junk\ni __LINE__\n",
                 ),
                 ("h.h", "h1 __LINE__ __FILE__\n#line 7\nh2 __LINE__ __FILE__ __INCLUDE_LEVEL__\n"),
             ],

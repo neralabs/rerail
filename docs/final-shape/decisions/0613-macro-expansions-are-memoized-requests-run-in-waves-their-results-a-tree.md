@@ -615,7 +615,13 @@ So:
      the CPU backend. The eval tests pass on the CPU backend and on Metal, with the corpus and `control`.
    - Posting the chain's calls as requests (§4) would make it parallel; inline readings (a line's, a reread, an
      argument its caller reads) still need the depth.
-   - Still refused in Boost: `debug.c` (an `#if` past the evaluator's room) and `seq.c` (a device error).
+   - Boost's `debug` tests were refused as an `#if` past the evaluator's room: `#line BOOST_PP_LINE(100, __FILE__)`
+     names the file by its absolute path, past the evaluator's 128 bytes (`IF_TOKB`) on a farm host. A `#line`'s
+     name is now read where its token is (`sp_byte`, its line splices passed over), any length; the `#line`
+     case of `the_refused_cases_are_the_serial_passes` names a 180-byte path and names with splices.
+   - Still refused in Boost: `seq.c`. Before stage 5 its run passed the work bound (`LP_WORK`); now the store
+     runs out first (its log the largest share of the rows claimed, a row a call, the run's region doubling).
+     Its one run reads about 2 M steps serially: posting its calls as requests (§4) is what bounds it.
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 
