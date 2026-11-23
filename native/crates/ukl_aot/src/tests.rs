@@ -139,9 +139,12 @@ fn the_kernels_rust_parent_is_the_hosts() {
     let lang = crate::parent::json_lang();
     for d in crate::parent::documents(&lang) {
         let want = crate::parent::scalar(&d);
+        let steps = crate::parent::scalar_steps(&d);
         for block in [8, 20, 32, 36, 256] {
             let group = unsafe { crate::parent::run(crate::parent_group_w8::parent_group_w8, &d, block) };
             let back = unsafe { crate::parent::run_back(crate::parent_back_w8::parent_back_w8, &d, block) };
+            let made = unsafe { crate::parent::run_step(crate::parent_step_w8::parent_step_w8, &d, block) };
+            assert!(made == steps, "step: {}, groups of {block}: not the host's steps", d.name);
             let two = unsafe { crate::parent::run_two(crate::parent_step_w8::parent_step_w8, crate::parent_link_w8::parent_link_w8, &d, block) }
                 .unwrap_or_else(|e| panic!("two: {}, groups of {block}: {e}", d.name));
             for (name, got) in [("two", two), ("group", group), ("back", back)] {

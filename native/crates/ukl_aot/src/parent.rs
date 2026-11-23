@@ -42,6 +42,13 @@ pub fn scalar(d: &Doc) -> Vec<u32> {
     (0..d.nodes()).map(|i| rerail_tape_format::reads::f16::parent(&d.bytes, &d.view, i)).collect()
 }
 
+/// Each node's first step by the host's read, as `parent_step` writes it (its parent, or `LINKED | j`): the
+/// reference for the step alone.
+pub fn scalar_steps(d: &Doc) -> Vec<u32> {
+    use rerail_tape_format::reads::f16::{LINK, parent_step};
+    (0..d.nodes()).map(|i| parent_step(&d.bytes, &d.view, i)).map(|s| if s & LINK != 0 { (1 << 31) | s as u32 } else { s as u32 }).collect()
+}
+
 /// `f16_parent`'s arguments' struct (`ParentArgs`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -80,6 +87,17 @@ pub fn fault(word: u32) -> Result<(), Corrupt> {
 ///
 /// `step` and `link` are kernels of `parent_step`'s and `parent_link`'s arguments.
 pub unsafe fn run_two(step: crate::Kernel, link: crate::Kernel, d: &Doc, block: u32) -> Result<Vec<u32>, Corrupt> {
+    let steps = unsafe { run_step(step, d, block) };
+    unsafe { run_link(link, &steps, block) }
+}
+
+/// `parent_step` alone, as Rust, over `d`'s nodes in groups of `block` threads: each node's step (its parent, or
+/// `LINKED | j`).
+///
+/// # Safety
+///
+/// `step` is a kernel of `parent_step`'s arguments.
+pub unsafe fn run_step(step: crate::Kernel, d: &Doc, block: u32) -> Vec<u32> {
     let mut steps = vec![0u32; d.nodes() as usize];
     let (tp, vp) = (d.bytes.as_ptr(), (&raw const d.view).cast::<u8>());
     let sp = steps.as_mut_ptr().cast::<u8>().cast_const();
@@ -88,7 +106,7 @@ pub unsafe fn run_two(step: crate::Kernel, link: crate::Kernel, d: &Doc, block: 
     let p = |x: &*const u8| (&raw const *x).cast::<u8>();
     let (a, c, f) = ((&raw const args).cast::<u8>(), (&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>());
     unsafe { crate::launch(step, &[p(&tp), p(&vp), p(&sp), a, c, f], d.nodes().div_ceil(block), block) };
-    unsafe { run_link(link, &steps, block) }
+    steps
 }
 
 /// `parent_link` alone, as Rust, over `steps` (each node's step: its parent, or `LINKED | j`) in groups of `block`

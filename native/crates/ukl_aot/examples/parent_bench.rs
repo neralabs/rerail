@@ -49,6 +49,9 @@ fn main() {
     // One version only, 20 times (for a count of its instructions and cycles; `none`: the setup alone).
     if let Ok(only) = std::env::var("PARENT_ONLY") {
         let mut out = vec![0u32; d.nodes() as usize];
+        // The links' input, made before (`link`: the links launch alone).
+        #[cfg(target_arch = "aarch64")]
+        let made = unsafe { parent::run_step(rerail_ukl_aot::parent_step_w8::parent_step_w8, &d, 256) };
         for _ in 0..20 {
             match only.as_str() {
                 "host" => out = parent::scalar(&d),
@@ -58,6 +61,11 @@ fn main() {
                 "scan" => unsafe { rerail_ukl_aot::hand::parent_all_scan(&d.bytes, &d.view, &mut out) },
                 #[cfg(target_arch = "aarch64")]
                 "ukl" => out = unsafe { parent::run(rerail_ukl_aot::parent_group_w8::parent_group_w8, &d, 256) },
+                #[cfg(target_arch = "aarch64")]
+                "step" => out = unsafe { parent::run_step(rerail_ukl_aot::parent_step_w8::parent_step_w8, &d, 256) },
+                #[cfg(target_arch = "aarch64")]
+                "link" => out = unsafe { parent::run_link(rerail_ukl_aot::parent_link_w8::parent_link_w8, &made, 256) }.unwrap(),
+                "hoststep" => out = parent::scalar_steps(&d),
                 #[cfg(target_arch = "aarch64")]
                 "two" => out = unsafe { parent::run_two(rerail_ukl_aot::parent_step_w8::parent_step_w8, rerail_ukl_aot::parent_link_w8::parent_link_w8, &d, 256) }.unwrap(),
                 #[cfg(target_arch = "aarch64")]
