@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync, type FSWatcher, type Stats } from "node:fs";
 import { join } from "node:path";
 import { setImmediate as nextTurn } from "node:timers/promises";
-import { replaceFile } from "../file-replace.js";
+import { replaceFile, sidecarWriter } from "../file-replace.js";
 import { openNoFollowSync } from "../no-follow.js";
 import { processState } from "../process-liveness.js";
 
@@ -436,12 +436,6 @@ async function reportPass(handed: readonly HandedOn[], handler: UntakenHandler):
 }
 
 /**
- * The new file `replaceFile` writes beside an event or a mark before it renames it over the name:
- * `<name>.<writer's pid>.<uuid>.tmp`.
- */
-const SIDECAR = /^.+\.(\d+)\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/u;
-
-/**
  * Removes each sidecar in `home`'s folder whose writer has ended: a hook killed between the sidecar's open and its
  * rename leaves one, holding the scrubbed event, which no pass would take. What decides is whether the process whose
  * pid the sidecar's name holds still runs (`processState`, signal 0): a writer that runs may still be writing, so its
@@ -450,8 +444,8 @@ const SIDECAR = /^.+\.(\d+)\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
  */
 function removeOrphanedSidecars(home: string): void {
   for (const name of folderNames(home)) {
-    const writer = SIDECAR.exec(name)?.[1];
-    if (writer !== undefined && processState(Number(writer)) === "gone") removeQuietly(join(untakenFolder(home), name));
+    const writer = sidecarWriter(name);
+    if (writer !== undefined && processState(writer) === "gone") removeQuietly(join(untakenFolder(home), name));
   }
 }
 
