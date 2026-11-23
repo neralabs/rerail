@@ -65,6 +65,11 @@ describe("release.yml", () => {
     expect(concurrency["cancel-in-progress"]).toBe(false);
   });
 
+  it("writes the promoted Release from main's changelog, so a note or lead corrected on main while the release was tested is what stable users read", () => {
+    const checkout = jobs["promoted-release"].steps.find((step) => String(step.uses ?? "").startsWith("actions/checkout@"));
+    expect(checkout.with.ref).toBe("main");
+  });
+
   it("moves latest only to a released plain version", () => {
     const steps = jobs.promote.steps;
     const guard = steps.findIndex((step) => String(step.run ?? "").includes("^[0-9]+\\.[0-9]+\\.[0-9]+$") && String(step.run ?? "").includes("git/ref/tags/v${VERSION}"));
@@ -103,6 +108,11 @@ describe("release-packs.yml", () => {
     const step = releases.steps.find((candidate) => String(candidate.run ?? "").includes("github-release.mjs"));
     expect(step.env.RELEASED).toBe("${{ needs.promote.outputs.promoted }}");
   });
+
+  it("writes the promoted Releases from main's changelog as it is at approval, not as it was when the promotion was requested", () => {
+    const checkout = jobs["promoted-releases"].steps.find((step) => String(step.uses ?? "").startsWith("actions/checkout@"));
+    expect(checkout.with.ref).toBe("main");
+  });
 });
 
 describe("every release workflow", () => {
@@ -117,3 +127,22 @@ describe("every release workflow", () => {
   });
 });
 
+describe("release-pr.yml", () => {
+  const { jobs } = workflow("release-pr.yml");
+
+  it("runs the released cores in a job that holds no write token, installing them fresh, never from a cache", () => {
+    const check = jobs["core-refusals"];
+    expect(check.permissions).toEqual({ contents: "read" });
+    expect(JSON.stringify(check)).not.toMatch(/secrets\.|app-token|actions\/cache/u);
+    expect(JSON.stringify(workflow("release-pr.yml"))).not.toContain("actions/cache");
+    expect(check.outputs.refusals).toBe("${{ steps.check.outputs.refusals }}");
+  });
+
+  it("hands the Release pull request only the refusals, and versions nothing when the check did not pass", () => {
+    const job = jobs["pull-request"];
+    expect(job.needs).toContain("core-refusals");
+    expect(job.if).toContain("needs.core-refusals.result == 'success'");
+    const version = job.steps.find((step) => String(step.run ?? "").includes("release-version.mjs"));
+    expect(version.env.RELEASE_CORE_REFUSALS).toBe("${{ needs.core-refusals.outputs.refusals }}");
+  });
+});
