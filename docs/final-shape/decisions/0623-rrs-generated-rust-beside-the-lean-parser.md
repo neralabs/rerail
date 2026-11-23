@@ -387,3 +387,12 @@ node's close (`close`: its key read for `UNSET`, its start read, the close) are 
 before the window. The node is closed before its `UNSET` refusal: a refused file's tape is not read. The test above
 covers them. Side by side on spark1 they are neutral (34.5 ms both, the host at a load of 9). With `#[inline]` only
 they were 1.5 ms slower, left as calls.
+
+## The one loop's stack is its own local (done)
+
+Every call and return of the one loop (0618) pushed and popped `self.stack`. After any `&mut self` call between them,
+the Vec's length, room and pointer were read from memory again. Only `run` reads the stack, so it now takes it into a
+local (`std::mem::take`) as it starts, and the code reads `stack`. Side by side on spark1 (at a load of 9), tier 2 went
+from 34.9–35.6 ms to 34.2–34.8 ms. Kotlin's loop is the same.
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.

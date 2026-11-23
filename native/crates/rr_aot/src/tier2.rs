@@ -1637,6 +1637,8 @@ impl<L: Layout> P<'_, L> {
     #[allow(unreachable_code, unused_labels)]
     fn run(&mut self) -> R {
         let mut st: usize = 0;
+        // The stack the loop's own while it runs: its length and room in registers, not read again after each call.
+        let mut stack = std::mem::take(&mut self.stack);
         'run: loop {
             match st {
                 0 => {
@@ -1673,12 +1675,12 @@ impl<L: Layout> P<'_, L> {
                             continue 'run;
                         }
                         1 => {
-                            self.stack.push(2);
+                            stack.push(2);
                             st = 3;
                             continue 'run;
                         }
                         2 => {
-                            self.stack.push(2);
+                            stack.push(2);
                             st = 15;
                             continue 'run;
                         }
@@ -1720,7 +1722,7 @@ impl<L: Layout> P<'_, L> {
                     }
                     match arm {
                         0 => {
-                            self.stack.push(4);
+                            stack.push(4);
                             st = 5;
                             continue 'run;
                         }
@@ -1753,7 +1755,7 @@ impl<L: Layout> P<'_, L> {
                             }
                             match arm {
                                 0 => {
-                                    self.stack.push(4);
+                                    stack.push(4);
                                     st = 5;
                                     continue 'run;
                                 }
@@ -1802,7 +1804,7 @@ impl<L: Layout> P<'_, L> {
                             } else {
                                 match self.word() {
                                     w::LBRACE_20 => {
-                                        self.stack.push(185);
+                                        stack.push(185);
                                         st = 35;
                                         continue 'run;
                                     }
@@ -1870,7 +1872,7 @@ impl<L: Layout> P<'_, L> {
                                     } else {
                                         match self.word() {
                                             w::LBRACE_20 => {
-                                                self.stack.push(185);
+                                                stack.push(185);
                                                 st = 35;
                                                 continue 'run;
                                             }
@@ -1899,13 +1901,13 @@ impl<L: Layout> P<'_, L> {
                     self.close()?;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
+                    let ret = stack.pop().unwrap_or(0) as usize;
                     st = ret;
                     continue 'run;
                 }
                 5 => {
                     if self.m_policy_on() {
-                        self.stack.push(6);
+                        stack.push(6);
                         st = 130;
                         continue 'run;
                     } else {
@@ -1916,7 +1918,7 @@ impl<L: Layout> P<'_, L> {
                                 continue 'run;
                             }
                             w::VIOLATION_66 => {
-                                self.stack.push(6);
+                                stack.push(6);
                                 st = 141;
                                 continue 'run;
                             }
@@ -1926,7 +1928,7 @@ impl<L: Layout> P<'_, L> {
                                 continue 'run;
                             }
                             w::FUNCTOR_68 => {
-                                self.stack.push(6);
+                                stack.push(6);
                                 st = 158;
                                 continue 'run;
                             }
@@ -1936,15 +1938,15 @@ impl<L: Layout> P<'_, L> {
                                 continue 'run;
                             }
                             w::INPUT_55 | w::OUTPUT_56 => {
-                                self.stack.push(u64::from(self.word));
-                                self.stack.push(u64::from(self.refusing));
+                                stack.push(u64::from(self.word));
+                                stack.push(u64::from(self.refusing));
                                 self.refusing = 0x0;
-                                self.stack.push(6);
+                                stack.push(6);
                                 st = 161;
                                 continue 'run;
                             }
                             w::LATTICE_69 => {
-                                self.stack.push(6);
+                                stack.push(6);
                                 st = 171;
                                 continue 'run;
                             }
@@ -1954,12 +1956,12 @@ impl<L: Layout> P<'_, L> {
                                 continue 'run;
                             }
                             w::TEST_60 if self.flags & FLAG_IN_BLOCK == 0 => {
-                                self.stack.push(6);
+                                stack.push(6);
                                 st = 7;
                                 continue 'run;
                             }
                             w::FIXTURES_64 if self.flags & FLAG_IN_BLOCK == 0 => {
-                                self.stack.push(6);
+                                stack.push(6);
                                 st = 129;
                                 continue 'run;
                             }
@@ -1972,7 +1974,7 @@ impl<L: Layout> P<'_, L> {
                 6 => {
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
+                    let ret = stack.pop().unwrap_or(0) as usize;
                     st = ret;
                     continue 'run;
                 }
@@ -2021,7 +2023,7 @@ impl<L: Layout> P<'_, L> {
                             }
                         }
                     }
-                    self.stack.push(6);
+                    stack.push(6);
                     st = 8;
                     continue 'run;
                 }
@@ -2035,7 +2037,7 @@ impl<L: Layout> P<'_, L> {
                     self.word_skip(w::END_63)?;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
+                    let ret = stack.pop().unwrap_or(0) as usize;
                     st = ret;
                     continue 'run;
                 }
@@ -2058,10 +2060,10 @@ impl<L: Layout> P<'_, L> {
                     }
                     match arm {
                         0 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(11);
+                            stack.push(11);
                             st = 12;
                             continue 'run;
                         }
@@ -2107,14 +2109,14 @@ impl<L: Layout> P<'_, L> {
                             continue 'run;
                         }
                         1 => {
-                            self.stack.push(u64::from(self.flags));
+                            stack.push(u64::from(self.flags));
                             self.flags = self.flags | FLAG_IN_BLOCK;
-                            self.stack.push(14);
+                            stack.push(14);
                             st = 3;
                             continue 'run;
                         }
                         2 => {
-                            self.stack.push(13);
+                            stack.push(13);
                             st = 15;
                             continue 'run;
                         }
@@ -2127,20 +2129,20 @@ impl<L: Layout> P<'_, L> {
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
-                    self.refusing = self.stack.pop().unwrap_or(0) as u32;
-                    self.word = self.stack.pop().unwrap_or(0) as u16;
+                    let ret = stack.pop().unwrap_or(0) as usize;
+                    self.refusing = stack.pop().unwrap_or(0) as u32;
+                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
                 14 => {
-                    self.flags = self.stack.pop().unwrap_or(0) as u32;
+                    self.flags = stack.pop().unwrap_or(0) as u32;
                     st = 13;
                     continue 'run;
                 }
                 15 => {
                     self.open(k::CLAUSE);
-                    self.stack.push(126);
+                    stack.push(126);
                     st = 127;
                     continue 'run;
                 }
@@ -2149,7 +2151,7 @@ impl<L: Layout> P<'_, L> {
                     self.close()?;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
+                    let ret = stack.pop().unwrap_or(0) as usize;
                     st = ret;
                     continue 'run;
                 }
@@ -2157,10 +2159,10 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_skip(w::COMMA_12)?;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(18);
+                            stack.push(18);
                             st = 19;
                             continue 'run;
                         }
@@ -2177,7 +2179,7 @@ impl<L: Layout> P<'_, L> {
                 }
                 19 => {
                     self.deeper()?;
-                    self.stack.push(20);
+                    stack.push(20);
                     st = 22;
                     continue 'run;
                 }
@@ -2187,7 +2189,7 @@ impl<L: Layout> P<'_, L> {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.additive()?;
                             self.field_made(f::OPERATOR);
-                            self.stack.push(21);
+                            stack.push(21);
                             st = 22;
                             continue 'run;
                         }
@@ -2204,7 +2206,7 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 22 => {
-                    self.stack.push(23);
+                    stack.push(23);
                     st = 25;
                     continue 'run;
                 }
@@ -2214,7 +2216,7 @@ impl<L: Layout> P<'_, L> {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.multiplicative()?;
                             self.field_made(f::OPERATOR);
-                            self.stack.push(24);
+                            stack.push(24);
                             st = 25;
                             continue 'run;
                         }
@@ -2253,10 +2255,10 @@ impl<L: Layout> P<'_, L> {
                             continue 'run;
                         }
                         1 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(6);
+                            stack.push(6);
                             st = 26;
                             continue 'run;
                         }
@@ -2274,17 +2276,17 @@ impl<L: Layout> P<'_, L> {
                             continue 'run;
                         }
                         w::MINUS_27 => {
-                            self.stack.push(13);
+                            stack.push(13);
                             st = 27;
                             continue 'run;
                         }
                         w::AT_23 => {
-                            self.stack.push(13);
+                            stack.push(13);
                             st = 29;
                             continue 'run;
                         }
                         w::LBRACE_20 => {
-                            self.stack.push(13);
+                            stack.push(13);
                             st = 35;
                             continue 'run;
                         }
@@ -2292,17 +2294,17 @@ impl<L: Layout> P<'_, L> {
                             self.word_leaf(w::COUNT_47, k::VARIABLE)?;
                             match self.word() {
                                 w::COLON_15 => {
-                                    self.stack.push(13);
+                                    stack.push(13);
                                     st = 41;
                                     continue 'run;
                                 }
                                 w::LPAREN_10 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(39);
+                                    stack.push(39);
                                     st = 31;
                                     continue 'run;
                                 }
@@ -2359,7 +2361,7 @@ impl<L: Layout> P<'_, L> {
                             }
                             match arm {
                                 0 => {
-                                    self.stack.push(13);
+                                    stack.push(13);
                                     st = 74;
                                     continue 'run;
                                 }
@@ -2367,20 +2369,20 @@ impl<L: Layout> P<'_, L> {
                                     self.mark_empty_parens()?;
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(39);
+                                    stack.push(39);
                                     st = 31;
                                     continue 'run;
                                 }
                                 2 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(119);
+                                    stack.push(119);
                                     st = 90;
                                     continue 'run;
                                 }
@@ -2391,7 +2393,7 @@ impl<L: Layout> P<'_, L> {
                             }
                         }
                         w::LPAREN_10 => {
-                            self.stack.push(13);
+                            stack.push(13);
                             st = 120;
                             continue 'run;
                         }
@@ -2411,10 +2413,10 @@ impl<L: Layout> P<'_, L> {
                                 w::LPAREN_10 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(39);
+                                    stack.push(39);
                                     st = 31;
                                     continue 'run;
                                 }
@@ -2422,10 +2424,10 @@ impl<L: Layout> P<'_, L> {
                                     self.wrap(k::NAMED_ARGUMENT, f::NAME)?;
                                     self.retype_moved(k::IDENTIFIER);
                                     self.word_skip(w::COLON_15)?;
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(40);
+                                    stack.push(40);
                                     st = 19;
                                     continue 'run;
                                 }
@@ -2471,10 +2473,10 @@ impl<L: Layout> P<'_, L> {
                         1 => {
                             self.wrap(k::UNARY_EXPRESSION, 0)?;
                             self.drop_made()?;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(28);
+                            stack.push(28);
                             st = 26;
                             continue 'run;
                         }
@@ -2494,10 +2496,10 @@ impl<L: Layout> P<'_, L> {
                     self.word_skip(w::AT_23)?;
                     self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
                     self.field_made(f::FUNCTION);
-                    self.stack.push(u64::from(self.word));
-                    self.stack.push(u64::from(self.refusing));
+                    stack.push(u64::from(self.word));
+                    stack.push(u64::from(self.refusing));
                     self.refusing = 0x0;
-                    self.stack.push(30);
+                    stack.push(30);
                     st = 31;
                     continue 'run;
                 }
@@ -2506,7 +2508,7 @@ impl<L: Layout> P<'_, L> {
                     self.close()?;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
+                    let ret = stack.pop().unwrap_or(0) as usize;
                     st = ret;
                     continue 'run;
                 }
@@ -2528,10 +2530,10 @@ impl<L: Layout> P<'_, L> {
                     }
                     match arm {
                         0 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(34);
+                            stack.push(34);
                             st = 19;
                             continue 'run;
                         }
@@ -2547,9 +2549,9 @@ impl<L: Layout> P<'_, L> {
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
-                    self.refusing = self.stack.pop().unwrap_or(0) as u32;
-                    self.word = self.stack.pop().unwrap_or(0) as u16;
+                    let ret = stack.pop().unwrap_or(0) as usize;
+                    self.refusing = stack.pop().unwrap_or(0) as u32;
+                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
@@ -2557,10 +2559,10 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_skip(w::COMMA_12)?;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(34);
+                            stack.push(34);
                             st = 19;
                             continue 'run;
                         }
@@ -2577,10 +2579,10 @@ impl<L: Layout> P<'_, L> {
                 }
                 35 => {
                     self.word_leaf(w::LBRACE_20, k::JSON_OBJECT)?;
-                    self.stack.push(u64::from(self.word));
-                    self.stack.push(u64::from(self.refusing));
+                    stack.push(u64::from(self.word));
+                    stack.push(u64::from(self.refusing));
                     self.refusing = 0x0;
-                    self.stack.push(6);
+                    stack.push(6);
                     st = 36;
                     continue 'run;
                 }
@@ -2594,9 +2596,9 @@ impl<L: Layout> P<'_, L> {
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
-                    self.refusing = self.stack.pop().unwrap_or(0) as u32;
-                    self.word = self.stack.pop().unwrap_or(0) as u16;
+                    let ret = stack.pop().unwrap_or(0) as usize;
+                    self.refusing = stack.pop().unwrap_or(0) as u32;
+                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
@@ -2754,10 +2756,10 @@ impl<L: Layout> P<'_, L> {
                         }
                         w::LBRACE_20 => {
                             self.merge(self.word() == w::LBRACE_20, k::JSON_OBJECT)?;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(38);
+                            stack.push(38);
                             st = 36;
                             continue 'run;
                         }
@@ -2802,14 +2804,14 @@ impl<L: Layout> P<'_, L> {
                 41 => {
                     self.wrap(k::AGGREGATE, 0)?;
                     self.drop_made()?;
-                    self.stack.push(4);
+                    stack.push(4);
                     st = 42;
                     continue 'run;
                 }
                 42 => {
                     self.word_leaf(w::COLON_15, k::COLON)?;
                     self.word_skip(w::LBRACE_20)?;
-                    self.stack.push(43);
+                    stack.push(43);
                     st = 44;
                     continue 'run;
                 }
@@ -2818,17 +2820,17 @@ impl<L: Layout> P<'_, L> {
                     self.word_skip(w::RBRACE_21)?;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
+                    let ret = stack.pop().unwrap_or(0) as usize;
                     st = ret;
                     continue 'run;
                 }
                 44 => {
-                    self.stack.push(u64::from(self.flags));
+                    stack.push(u64::from(self.flags));
                     self.flags = self.flags & !FLAG_NO_NAMED;
-                    self.stack.push(u64::from(self.word));
-                    self.stack.push(u64::from(self.refusing));
+                    stack.push(u64::from(self.word));
+                    stack.push(u64::from(self.refusing));
                     self.refusing = 0x0;
-                    self.stack.push(117);
+                    stack.push(117);
                     st = 48;
                     continue 'run;
                 }
@@ -2841,12 +2843,12 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::SEMI_14 => {
                             self.word_skip(w::SEMI_14)?;
-                            self.stack.push(u64::from(self.flags));
+                            stack.push(u64::from(self.flags));
                             self.flags = self.flags & !FLAG_NO_NAMED;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(47);
+                            stack.push(47);
                             st = 48;
                             continue 'run;
                         }
@@ -2857,7 +2859,7 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 47 => {
-                    self.flags = self.stack.pop().unwrap_or(0) as u32;
+                    self.flags = stack.pop().unwrap_or(0) as u32;
                     self.field_made(f::ALTERNATIVE);
                     st = 46;
                     continue 'run;
@@ -2865,7 +2867,7 @@ impl<L: Layout> P<'_, L> {
                 48 => {
                     self.deeper()?;
                     self.open(k::CONJUNCTION);
-                    self.stack.push(51);
+                    stack.push(51);
                     st = 52;
                     continue 'run;
                 }
@@ -2874,9 +2876,9 @@ impl<L: Layout> P<'_, L> {
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
-                    self.refusing = self.stack.pop().unwrap_or(0) as u32;
-                    self.word = self.stack.pop().unwrap_or(0) as u16;
+                    let ret = stack.pop().unwrap_or(0) as usize;
+                    self.refusing = stack.pop().unwrap_or(0) as u32;
+                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
@@ -2884,7 +2886,7 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_skip(w::COMMA_12)?;
-                            self.stack.push(51);
+                            stack.push(51);
                             st = 52;
                             continue 'run;
                         }
@@ -2933,17 +2935,17 @@ impl<L: Layout> P<'_, L> {
                                     continue 'run;
                                 }
                                 w::MINUS_27 => {
-                                    self.stack.push(62);
+                                    stack.push(62);
                                     st = 27;
                                     continue 'run;
                                 }
                                 w::AT_23 => {
-                                    self.stack.push(62);
+                                    stack.push(62);
                                     st = 29;
                                     continue 'run;
                                 }
                                 w::LBRACE_20 => {
-                                    self.stack.push(62);
+                                    stack.push(62);
                                     st = 35;
                                     continue 'run;
                                 }
@@ -2975,43 +2977,43 @@ impl<L: Layout> P<'_, L> {
                                     self.relabel_field(f::LITERAL)?;
                                     self.wrap(k::ATOM, f::RELATION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(70);
+                                    stack.push(70);
                                     st = 31;
                                     continue 'run;
                                 }
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
-                                    self.stack.push(56);
+                                    stack.push(56);
                                     st = 57;
                                     continue 'run;
                                 }
                                 _ => {
-                                    self.stack.push(56);
+                                    stack.push(56);
                                     st = 57;
                                     continue 'run;
                                 }
                             }
                         }
                         2 => {
-                            self.stack.push(71);
+                            stack.push(71);
                             st = 72;
                             continue 'run;
                         }
                         3 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(96);
+                            stack.push(96);
                             st = 97;
                             continue 'run;
                         }
                         4 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(116);
+                            stack.push(116);
                             st = 106;
                             continue 'run;
                         }
@@ -3024,7 +3026,7 @@ impl<L: Layout> P<'_, L> {
                     self.relabel_field(f::LITERAL)?;
                     match self.word() {
                         w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
-                            self.stack.push(6);
+                            stack.push(6);
                             st = 54;
                             continue 'run;
                         }
@@ -3042,10 +3044,10 @@ impl<L: Layout> P<'_, L> {
                     self.wrap(k::COMPARISON, f::LEFT)?;
                     self.comparison_operator()?;
                     self.field_made(f::OPERATOR);
-                    self.stack.push(u64::from(self.word));
-                    self.stack.push(u64::from(self.refusing));
+                    stack.push(u64::from(self.word));
+                    stack.push(u64::from(self.refusing));
                     self.refusing = 0x0;
-                    self.stack.push(55);
+                    stack.push(55);
                     st = 19;
                     continue 'run;
                 }
@@ -3054,14 +3056,14 @@ impl<L: Layout> P<'_, L> {
                     self.close()?;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
+                    let ret = stack.pop().unwrap_or(0) as usize;
                     st = ret;
                     continue 'run;
                 }
                 56 => {
                     match self.word() {
                         w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
-                            self.stack.push(6);
+                            stack.push(6);
                             st = 53;
                             continue 'run;
                         }
@@ -3081,7 +3083,7 @@ impl<L: Layout> P<'_, L> {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.additive()?;
                             self.field_made(f::OPERATOR);
-                            self.stack.push(59);
+                            stack.push(59);
                             st = 22;
                             continue 'run;
                         }
@@ -3103,7 +3105,7 @@ impl<L: Layout> P<'_, L> {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.multiplicative()?;
                             self.field_made(f::OPERATOR);
-                            self.stack.push(61);
+                            stack.push(61);
                             st = 25;
                             continue 'run;
                         }
@@ -3121,7 +3123,7 @@ impl<L: Layout> P<'_, L> {
                 }
                 62 => {
                     self.field_made(f::BARE);
-                    self.stack.push(56);
+                    stack.push(56);
                     st = 57;
                     continue 'run;
                 }
@@ -3131,7 +3133,7 @@ impl<L: Layout> P<'_, L> {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.multiplicative()?;
                             self.field_made(f::OPERATOR);
-                            self.stack.push(67);
+                            stack.push(67);
                             st = 25;
                             continue 'run;
                         }
@@ -3139,7 +3141,7 @@ impl<L: Layout> P<'_, L> {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.additive()?;
                             self.field_made(f::OPERATOR);
-                            self.stack.push(69);
+                            stack.push(69);
                             st = 22;
                             continue 'run;
                         }
@@ -3154,7 +3156,7 @@ impl<L: Layout> P<'_, L> {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.additive()?;
                             self.field_made(f::OPERATOR);
-                            self.stack.push(65);
+                            stack.push(65);
                             st = 22;
                             continue 'run;
                         }
@@ -3176,7 +3178,7 @@ impl<L: Layout> P<'_, L> {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.multiplicative()?;
                             self.field_made(f::OPERATOR);
-                            self.stack.push(67);
+                            stack.push(67);
                             st = 25;
                             continue 'run;
                         }
@@ -3198,7 +3200,7 @@ impl<L: Layout> P<'_, L> {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.additive()?;
                             self.field_made(f::OPERATOR);
-                            self.stack.push(69);
+                            stack.push(69);
                             st = 22;
                             continue 'run;
                         }
@@ -3224,12 +3226,12 @@ impl<L: Layout> P<'_, L> {
                             self.relabel_kind(k::CALL)?;
                             match self.word() {
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
-                                    self.stack.push(56);
+                                    stack.push(56);
                                     st = 63;
                                     continue 'run;
                                 }
                                 w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
-                                    self.stack.push(6);
+                                    stack.push(6);
                                     st = 53;
                                     continue 'run;
                                 }
@@ -3255,7 +3257,7 @@ impl<L: Layout> P<'_, L> {
                             self.word_leaf(w::COUNT_47, k::VARIABLE)?;
                             match self.word() {
                                 w::COLON_15 => {
-                                    self.stack.push(73);
+                                    stack.push(73);
                                     st = 41;
                                     continue 'run;
                                 }
@@ -3263,20 +3265,20 @@ impl<L: Layout> P<'_, L> {
                                     self.relabel_field(f::LITERAL)?;
                                     self.wrap(k::ATOM, f::RELATION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(70);
+                                    stack.push(70);
                                     st = 31;
                                     continue 'run;
                                 }
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
-                                    self.stack.push(56);
+                                    stack.push(56);
                                     st = 57;
                                     continue 'run;
                                 }
                                 _ => {
-                                    self.stack.push(56);
+                                    stack.push(56);
                                     st = 57;
                                     continue 'run;
                                 }
@@ -3328,7 +3330,7 @@ impl<L: Layout> P<'_, L> {
                             }
                             match arm {
                                 0 => {
-                                    self.stack.push(73);
+                                    stack.push(73);
                                     st = 74;
                                     continue 'run;
                                 }
@@ -3336,20 +3338,20 @@ impl<L: Layout> P<'_, L> {
                                     self.relabel_field(f::LITERAL)?;
                                     self.wrap(k::ATOM, f::RELATION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(95);
+                                    stack.push(95);
                                     st = 90;
                                     continue 'run;
                                 }
                                 2 => {
-                                    self.stack.push(56);
+                                    stack.push(56);
                                     st = 57;
                                     continue 'run;
                                 }
                                 _ => {
-                                    self.stack.push(56);
+                                    stack.push(56);
                                     st = 57;
                                     continue 'run;
                                 }
@@ -3361,24 +3363,24 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 73 => {
-                    self.stack.push(56);
+                    stack.push(56);
                     st = 57;
                     continue 'run;
                 }
                 74 => {
                     self.wrap(k::AGGREGATE, f::OPERATOR)?;
                     self.retype_moved(self.word);
-                    self.stack.push(4);
+                    stack.push(4);
                     st = 75;
                     continue 'run;
                 }
                 75 => {
-                    self.stack.push(u64::from(self.flags));
+                    stack.push(u64::from(self.flags));
                     self.flags = self.flags | FLAG_NO_NAMED;
-                    self.stack.push(u64::from(self.word));
-                    self.stack.push(u64::from(self.refusing));
+                    stack.push(u64::from(self.word));
+                    stack.push(u64::from(self.refusing));
                     self.refusing = 0x0;
-                    self.stack.push(93);
+                    stack.push(93);
                     st = 83;
                     continue 'run;
                 }
@@ -3388,14 +3390,14 @@ impl<L: Layout> P<'_, L> {
                             self.word_leaf(w::SEP_46, k::SEP)?;
                             self.tk(self.at_string(), k::STRING, 0)?;
                             self.field_made(f::SEPARATOR);
-                            self.stack.push(6);
+                            stack.push(6);
                             st = 42;
                             continue 'run;
                         }
                         w::COLON_15 => {
                             self.word_leaf(w::COLON_15, k::COLON)?;
                             self.word_leaf(w::LBRACE_20, k::LBRACE)?;
-                            self.stack.push(77);
+                            stack.push(77);
                             st = 44;
                             continue 'run;
                         }
@@ -3412,7 +3414,7 @@ impl<L: Layout> P<'_, L> {
                 }
                 78 => {
                     self.word_leaf(w::RPAREN_11, k::RPAREN)?;
-                    self.stack.push(6);
+                    stack.push(6);
                     st = 76;
                     continue 'run;
                 }
@@ -3420,12 +3422,12 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_skip(w::COMMA_12)?;
-                            self.stack.push(u64::from(self.flags));
+                            stack.push(u64::from(self.flags));
                             self.flags = self.flags & !FLAG_NO_NAMED;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(80);
+                            stack.push(80);
                             st = 19;
                             continue 'run;
                         }
@@ -3436,7 +3438,7 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 80 => {
-                    self.flags = self.stack.pop().unwrap_or(0) as u32;
+                    self.flags = stack.pop().unwrap_or(0) as u32;
                     self.field_made(f::KEY);
                     st = 79;
                     continue 'run;
@@ -3451,14 +3453,14 @@ impl<L: Layout> P<'_, L> {
                         _ => {
                         }
                     }
-                    self.stack.push(6);
+                    stack.push(6);
                     st = 42;
                     continue 'run;
                 }
                 82 => {
-                    self.flags = self.stack.pop().unwrap_or(0) as u32;
+                    self.flags = stack.pop().unwrap_or(0) as u32;
                     self.field_made(f::KEY);
-                    self.stack.push(6);
+                    stack.push(6);
                     st = 81;
                     continue 'run;
                 }
@@ -3494,12 +3496,12 @@ impl<L: Layout> P<'_, L> {
                                     continue 'run;
                                 }
                                 w::AT_23 => {
-                                    self.stack.push(84);
+                                    stack.push(84);
                                     st = 29;
                                     continue 'run;
                                 }
                                 w::LBRACE_20 => {
-                                    self.stack.push(84);
+                                    stack.push(84);
                                     st = 35;
                                     continue 'run;
                                 }
@@ -3529,10 +3531,10 @@ impl<L: Layout> P<'_, L> {
                                 w::LPAREN_10 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(85);
+                                    stack.push(85);
                                     st = 31;
                                     continue 'run;
                                 }
@@ -3543,18 +3545,18 @@ impl<L: Layout> P<'_, L> {
                             }
                         }
                         2 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(13);
+                            stack.push(13);
                             st = 86;
                             continue 'run;
                         }
                         3 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(13);
+                            stack.push(13);
                             st = 87;
                             continue 'run;
                         }
@@ -3564,7 +3566,7 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 84 => {
-                    self.stack.push(13);
+                    stack.push(13);
                     st = 57;
                     continue 'run;
                 }
@@ -3579,17 +3581,17 @@ impl<L: Layout> P<'_, L> {
                     self.word_leaf(w::COUNT_47, k::VARIABLE)?;
                     match self.word() {
                         w::COLON_15 => {
-                            self.stack.push(84);
+                            stack.push(84);
                             st = 41;
                             continue 'run;
                         }
                         w::LPAREN_10 => {
                             self.wrap(k::CALL, f::FUNCTION)?;
                             self.retype_moved(k::IDENTIFIER);
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(85);
+                            stack.push(85);
                             st = 31;
                             continue 'run;
                         }
@@ -3647,7 +3649,7 @@ impl<L: Layout> P<'_, L> {
                     }
                     match arm {
                         0 => {
-                            self.stack.push(84);
+                            stack.push(84);
                             st = 74;
                             continue 'run;
                         }
@@ -3655,20 +3657,20 @@ impl<L: Layout> P<'_, L> {
                             self.mark_empty_parens()?;
                             self.wrap(k::CALL, f::FUNCTION)?;
                             self.retype_moved(k::IDENTIFIER);
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(85);
+                            stack.push(85);
                             st = 31;
                             continue 'run;
                         }
                         2 => {
                             self.wrap(k::CALL, f::FUNCTION)?;
                             self.retype_moved(k::IDENTIFIER);
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(89);
+                            stack.push(89);
                             st = 90;
                             continue 'run;
                         }
@@ -3690,7 +3692,7 @@ impl<L: Layout> P<'_, L> {
                         w::COLON_15 => {
                             self.wrap(k::AGGREGATE, 0)?;
                             self.reread_aggregate_value()?;
-                            self.stack.push(88);
+                            stack.push(88);
                             st = 42;
                             continue 'run;
                         }
@@ -3719,10 +3721,10 @@ impl<L: Layout> P<'_, L> {
                     }
                     match arm {
                         0 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(92);
+                            stack.push(92);
                             st = 19;
                             continue 'run;
                         }
@@ -3737,10 +3739,10 @@ impl<L: Layout> P<'_, L> {
                         w::COMMA_12 => {
                             self.word_leaf(w::COMMA_12, k::COMMA)?;
                             self.drop_made()?;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(92);
+                            stack.push(92);
                             st = 19;
                             continue 'run;
                         }
@@ -3756,7 +3758,7 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 93 => {
-                    self.flags = self.stack.pop().unwrap_or(0) as u32;
+                    self.flags = stack.pop().unwrap_or(0) as u32;
                     self.field_made(f::VALUE);
                     match self.word() {
                         w::BY_45 => {
@@ -3779,22 +3781,22 @@ impl<L: Layout> P<'_, L> {
                             match arm {
                                 0 => {
                                     self.word_leaf(w::LPAREN_10, k::LPAREN)?;
-                                    self.stack.push(u64::from(self.flags));
+                                    stack.push(u64::from(self.flags));
                                     self.flags = self.flags & !FLAG_NO_NAMED;
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(80);
+                                    stack.push(80);
                                     st = 19;
                                     continue 'run;
                                 }
                                 1 => {
-                                    self.stack.push(u64::from(self.flags));
+                                    stack.push(u64::from(self.flags));
                                     self.flags = self.flags | FLAG_NO_NAMED;
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(82);
+                                    stack.push(82);
                                     st = 83;
                                     continue 'run;
                                 }
@@ -3804,7 +3806,7 @@ impl<L: Layout> P<'_, L> {
                             }
                         }
                         w::SEP_46 | w::COLON_15 => {
-                            self.stack.push(6);
+                            stack.push(6);
                             st = 81;
                             continue 'run;
                         }
@@ -3815,7 +3817,7 @@ impl<L: Layout> P<'_, L> {
                 }
                 94 => {
                     self.close()?;
-                    self.stack.push(56);
+                    stack.push(56);
                     st = 57;
                     continue 'run;
                 }
@@ -3829,12 +3831,12 @@ impl<L: Layout> P<'_, L> {
                             self.relabel_kind(k::CALL)?;
                             match self.word() {
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
-                                    self.stack.push(56);
+                                    stack.push(56);
                                     st = 63;
                                     continue 'run;
                                 }
                                 w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
-                                    self.stack.push(6);
+                                    stack.push(6);
                                     st = 53;
                                     continue 'run;
                                 }
@@ -3847,7 +3849,7 @@ impl<L: Layout> P<'_, L> {
                             self.relabel_field(f::BARE)?;
                             self.wrap(k::AGGREGATE, 0)?;
                             self.reread_aggregate_value()?;
-                            self.stack.push(94);
+                            stack.push(94);
                             st = 42;
                             continue 'run;
                         }
@@ -3866,7 +3868,7 @@ impl<L: Layout> P<'_, L> {
                     self.deeper()?;
                     self.open(k::NEGATION);
                     self.word_skip(w::BANG_19)?;
-                    self.stack.push(98);
+                    stack.push(98);
                     st = 99;
                     continue 'run;
                 }
@@ -3876,9 +3878,9 @@ impl<L: Layout> P<'_, L> {
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
-                    self.refusing = self.stack.pop().unwrap_or(0) as u32;
-                    self.word = self.stack.pop().unwrap_or(0) as u16;
+                    let ret = stack.pop().unwrap_or(0) as usize;
+                    self.refusing = stack.pop().unwrap_or(0) as u32;
+                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
@@ -3916,17 +3918,17 @@ impl<L: Layout> P<'_, L> {
                                     continue 'run;
                                 }
                                 w::MINUS_27 => {
-                                    self.stack.push(101);
+                                    stack.push(101);
                                     st = 27;
                                     continue 'run;
                                 }
                                 w::AT_23 => {
-                                    self.stack.push(101);
+                                    stack.push(101);
                                     st = 29;
                                     continue 'run;
                                 }
                                 w::LBRACE_20 => {
-                                    self.stack.push(101);
+                                    stack.push(101);
                                     st = 35;
                                     continue 'run;
                                 }
@@ -3956,15 +3958,15 @@ impl<L: Layout> P<'_, L> {
                                 w::LPAREN_10 => {
                                     self.wrap(k::ATOM, f::RELATION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(102);
+                                    stack.push(102);
                                     st = 31;
                                     continue 'run;
                                 }
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                                    self.stack.push(100);
+                                    stack.push(100);
                                     st = 57;
                                     continue 'run;
                                 }
@@ -3974,23 +3976,23 @@ impl<L: Layout> P<'_, L> {
                             }
                         }
                         2 => {
-                            self.stack.push(6);
+                            stack.push(6);
                             st = 103;
                             continue 'run;
                         }
                         3 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(6);
+                            stack.push(6);
                             st = 97;
                             continue 'run;
                         }
                         4 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(105);
+                            stack.push(105);
                             st = 106;
                             continue 'run;
                         }
@@ -4005,7 +4007,7 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 101 => {
-                    self.stack.push(100);
+                    stack.push(100);
                     st = 57;
                     continue 'run;
                 }
@@ -4016,7 +4018,7 @@ impl<L: Layout> P<'_, L> {
                         w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
                             self.relabel_inner(f::FUNCTION)?;
                             self.relabel_kind(k::CALL)?;
-                            self.stack.push(100);
+                            stack.push(100);
                             st = 57;
                             continue 'run;
                         }
@@ -4032,22 +4034,22 @@ impl<L: Layout> P<'_, L> {
                             self.word_leaf(w::COUNT_47, k::VARIABLE)?;
                             match self.word() {
                                 w::COLON_15 => {
-                                    self.stack.push(101);
+                                    stack.push(101);
                                     st = 41;
                                     continue 'run;
                                 }
                                 w::LPAREN_10 => {
                                     self.wrap(k::ATOM, f::RELATION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(102);
+                                    stack.push(102);
                                     st = 31;
                                     continue 'run;
                                 }
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                                    self.stack.push(100);
+                                    stack.push(100);
                                     st = 57;
                                     continue 'run;
                                 }
@@ -4102,22 +4104,22 @@ impl<L: Layout> P<'_, L> {
                             }
                             match arm {
                                 0 => {
-                                    self.stack.push(101);
+                                    stack.push(101);
                                     st = 74;
                                     continue 'run;
                                 }
                                 1 => {
                                     self.wrap(k::ATOM, f::RELATION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(102);
+                                    stack.push(102);
                                     st = 31;
                                     continue 'run;
                                 }
                                 2 => {
-                                    self.stack.push(100);
+                                    stack.push(100);
                                     st = 57;
                                     continue 'run;
                                 }
@@ -4135,7 +4137,7 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
                             self.reread_parenthesized()?;
-                            self.stack.push(100);
+                            stack.push(100);
                             st = 63;
                             continue 'run;
                         }
@@ -4153,7 +4155,7 @@ impl<L: Layout> P<'_, L> {
                 105 => {
                     match self.word() {
                         w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                            self.stack.push(6);
+                            stack.push(6);
                             st = 104;
                             continue 'run;
                         }
@@ -4167,7 +4169,7 @@ impl<L: Layout> P<'_, L> {
                     self.deeper()?;
                     self.open(k::GROUP);
                     self.word_skip(w::LPAREN_10)?;
-                    self.stack.push(107);
+                    stack.push(107);
                     st = 108;
                     continue 'run;
                 }
@@ -4178,19 +4180,19 @@ impl<L: Layout> P<'_, L> {
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
-                    self.refusing = self.stack.pop().unwrap_or(0) as u32;
-                    self.word = self.stack.pop().unwrap_or(0) as u16;
+                    let ret = stack.pop().unwrap_or(0) as usize;
+                    self.refusing = stack.pop().unwrap_or(0) as u32;
+                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
                 108 => {
-                    self.stack.push(u64::from(self.flags));
+                    stack.push(u64::from(self.flags));
                     self.flags = self.flags & !FLAG_NO_NAMED;
-                    self.stack.push(u64::from(self.word));
-                    self.stack.push(u64::from(self.refusing));
+                    stack.push(u64::from(self.word));
+                    stack.push(u64::from(self.refusing));
                     self.refusing = 0x0;
-                    self.stack.push(111);
+                    stack.push(111);
                     st = 112;
                     continue 'run;
                 }
@@ -4198,12 +4200,12 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::SEMI_14 => {
                             self.word_skip(w::SEMI_14)?;
-                            self.stack.push(u64::from(self.flags));
+                            stack.push(u64::from(self.flags));
                             self.flags = self.flags & !FLAG_NO_NAMED;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(110);
+                            stack.push(110);
                             st = 48;
                             continue 'run;
                         }
@@ -4214,23 +4216,23 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 110 => {
-                    self.flags = self.stack.pop().unwrap_or(0) as u32;
+                    self.flags = stack.pop().unwrap_or(0) as u32;
                     self.field_made(f::ALTERNATIVE);
                     st = 109;
                     continue 'run;
                 }
                 111 => {
-                    self.flags = self.stack.pop().unwrap_or(0) as u32;
+                    self.flags = stack.pop().unwrap_or(0) as u32;
                     match self.word() {
                         w::SEMI_14 => {
                             self.wrap(k::DISJUNCTION, f::ALTERNATIVE)?;
                             self.word_skip(w::SEMI_14)?;
-                            self.stack.push(u64::from(self.flags));
+                            stack.push(u64::from(self.flags));
                             self.flags = self.flags & !FLAG_NO_NAMED;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(110);
+                            stack.push(110);
                             st = 48;
                             continue 'run;
                         }
@@ -4244,7 +4246,7 @@ impl<L: Layout> P<'_, L> {
                     self.deeper()?;
                     self.open(UNSET);
                     self.retag(k::CONJUNCTION);
-                    self.stack.push(114);
+                    stack.push(114);
                     st = 52;
                     continue 'run;
                 }
@@ -4253,7 +4255,7 @@ impl<L: Layout> P<'_, L> {
                         w::COMMA_12 => {
                             self.word_leaf(w::COMMA_12, k::COMMA)?;
                             self.drop_made()?;
-                            self.stack.push(114);
+                            stack.push(114);
                             st = 52;
                             continue 'run;
                         }
@@ -4275,12 +4277,12 @@ impl<L: Layout> P<'_, L> {
                             match self.word() {
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
                                     self.relabel_field(f::BARE)?;
-                                    self.stack.push(56);
+                                    stack.push(56);
                                     st = 63;
                                     continue 'run;
                                 }
                                 w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
-                                    self.stack.push(6);
+                                    stack.push(6);
                                     st = 54;
                                     continue 'run;
                                 }
@@ -4304,7 +4306,7 @@ impl<L: Layout> P<'_, L> {
                     self.field_made(f::LITERAL);
                     match self.word() {
                         w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
-                            self.stack.push(6);
+                            stack.push(6);
                             st = 115;
                             continue 'run;
                         }
@@ -4315,17 +4317,17 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 117 => {
-                    self.flags = self.stack.pop().unwrap_or(0) as u32;
+                    self.flags = stack.pop().unwrap_or(0) as u32;
                     match self.word() {
                         w::SEMI_14 => {
                             self.wrap(k::DISJUNCTION, f::ALTERNATIVE)?;
                             self.word_skip(w::SEMI_14)?;
-                            self.stack.push(u64::from(self.flags));
+                            stack.push(u64::from(self.flags));
                             self.flags = self.flags & !FLAG_NO_NAMED;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(47);
+                            stack.push(47);
                             st = 48;
                             continue 'run;
                         }
@@ -4347,7 +4349,7 @@ impl<L: Layout> P<'_, L> {
                         w::COLON_15 => {
                             self.wrap(k::AGGREGATE, 0)?;
                             self.reread_aggregate_value()?;
-                            self.stack.push(118);
+                            stack.push(118);
                             st = 42;
                             continue 'run;
                         }
@@ -4360,10 +4362,10 @@ impl<L: Layout> P<'_, L> {
                 120 => {
                     self.open(k::PARENTHESIZED_EXPRESSION);
                     self.word_skip(w::LPAREN_10)?;
-                    self.stack.push(u64::from(self.word));
-                    self.stack.push(u64::from(self.refusing));
+                    stack.push(u64::from(self.word));
+                    stack.push(u64::from(self.refusing));
                     self.refusing = 0x0;
-                    self.stack.push(121);
+                    stack.push(121);
                     st = 19;
                     continue 'run;
                 }
@@ -4373,7 +4375,7 @@ impl<L: Layout> P<'_, L> {
                     self.close()?;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
+                    let ret = stack.pop().unwrap_or(0) as usize;
                     st = ret;
                     continue 'run;
                 }
@@ -4381,10 +4383,10 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::EQ_GT_4 => {
                             self.word_skip(w::EQ_GT_4)?;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(18);
+                            stack.push(18);
                             st = 19;
                             continue 'run;
                         }
@@ -4403,7 +4405,7 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::COLON_MINUS_3 => {
                             self.word_skip(w::COLON_MINUS_3)?;
-                            self.stack.push(123);
+                            stack.push(123);
                             st = 44;
                             continue 'run;
                         }
@@ -4417,7 +4419,7 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_skip(w::COMMA_12)?;
-                            self.stack.push(126);
+                            stack.push(126);
                             st = 127;
                             continue 'run;
                         }
@@ -4452,20 +4454,20 @@ impl<L: Layout> P<'_, L> {
                                 w::LPAREN_10 => {
                                     self.relabel_field(f::RELATION)?;
                                     self.relabel_kind(k::IDENTIFIER)?;
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(128);
+                                    stack.push(128);
                                     st = 31;
                                     continue 'run;
                                 }
                                 _ if self.at_identifier() => {
                                     self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
                                     self.field_made(f::RELATION);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(128);
+                                    stack.push(128);
                                     st = 31;
                                     continue 'run;
                                 }
@@ -4477,10 +4479,10 @@ impl<L: Layout> P<'_, L> {
                         _ if self.at_identifier() => {
                             self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
                             self.field_made(f::RELATION);
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(128);
+                            stack.push(128);
                             st = 31;
                             continue 'run;
                         }
@@ -4500,7 +4502,7 @@ impl<L: Layout> P<'_, L> {
                     self.word_skip(w::FIXTURES_64)?;
                     self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
                     self.field_made(f::NAME);
-                    self.stack.push(6);
+                    stack.push(6);
                     st = 8;
                     continue 'run;
                 }
@@ -4509,10 +4511,10 @@ impl<L: Layout> P<'_, L> {
                     self.drop_made()?;
                     self.retag(k::POLICY_DOCUMENT);
                     self.word_skip(w::POLICY_53)?;
-                    self.stack.push(u64::from(self.word));
-                    self.stack.push(u64::from(self.refusing));
+                    stack.push(u64::from(self.word));
+                    stack.push(u64::from(self.refusing));
                     self.refusing = 0x1000;
-                    self.stack.push(131);
+                    stack.push(131);
                     st = 132;
                     continue 'run;
                 }
@@ -4520,7 +4522,7 @@ impl<L: Layout> P<'_, L> {
                     self.field_made(f::DOCUMENT);
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
+                    let ret = stack.pop().unwrap_or(0) as usize;
                     st = ret;
                     continue 'run;
                 }
@@ -4528,7 +4530,7 @@ impl<L: Layout> P<'_, L> {
                     self.deeper()?;
                     self.word_leaf(w::LBRACE_20, k::JSON_OBJECT)?;
                     if self.at_string() {
-                        self.stack.push(133);
+                        stack.push(133);
                         st = 134;
                         continue 'run;
                     } else {
@@ -4540,7 +4542,7 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::COMMA_12 => {
                             self.merge(self.word() == w::COMMA_12, k::JSON_OBJECT)?;
-                            self.stack.push(133);
+                            stack.push(133);
                             st = 134;
                             continue 'run;
                         }
@@ -4553,7 +4555,7 @@ impl<L: Layout> P<'_, L> {
                 134 => {
                     self.merge(self.at_string(), k::JSON_OBJECT)?;
                     self.merge(self.word() == w::COLON_15, k::JSON_OBJECT)?;
-                    self.stack.push(6);
+                    stack.push(6);
                     st = 135;
                     continue 'run;
                 }
@@ -4581,18 +4583,18 @@ impl<L: Layout> P<'_, L> {
                             continue 'run;
                         }
                         w::LBRACE_20 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x1000;
-                            self.stack.push(6);
+                            stack.push(6);
                             st = 136;
                             continue 'run;
                         }
                         w::LBRACK_25 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x1000;
-                            self.stack.push(6);
+                            stack.push(6);
                             st = 138;
                             continue 'run;
                         }
@@ -4615,7 +4617,7 @@ impl<L: Layout> P<'_, L> {
                     self.deeper()?;
                     self.merge(self.word() == w::LBRACE_20, k::JSON_OBJECT)?;
                     if self.at_string() {
-                        self.stack.push(137);
+                        stack.push(137);
                         st = 134;
                         continue 'run;
                     } else {
@@ -4627,7 +4629,7 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::COMMA_12 => {
                             self.merge(self.word() == w::COMMA_12, k::JSON_OBJECT)?;
-                            self.stack.push(137);
+                            stack.push(137);
                             st = 134;
                             continue 'run;
                         }
@@ -4654,7 +4656,7 @@ impl<L: Layout> P<'_, L> {
                     }
                     match arm {
                         0 => {
-                            self.stack.push(140);
+                            stack.push(140);
                             st = 135;
                             continue 'run;
                         }
@@ -4669,9 +4671,9 @@ impl<L: Layout> P<'_, L> {
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
-                    self.refusing = self.stack.pop().unwrap_or(0) as u32;
-                    self.word = self.stack.pop().unwrap_or(0) as u16;
+                    let ret = stack.pop().unwrap_or(0) as usize;
+                    self.refusing = stack.pop().unwrap_or(0) as u32;
+                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
@@ -4679,7 +4681,7 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::COMMA_12 => {
                             self.merge(self.word() == w::COMMA_12, k::JSON_OBJECT)?;
-                            self.stack.push(140);
+                            stack.push(140);
                             st = 135;
                             continue 'run;
                         }
@@ -4709,13 +4711,13 @@ impl<L: Layout> P<'_, L> {
                         continue 'run;
                     } else if self.m_suppress_on() {
                         self.mark_suppress_on()?;
-                        self.stack.push(143);
+                        stack.push(143);
                         st = 144;
                         continue 'run;
                     } else if self.m_options_on() {
                         self.mark_options_on()?;
                         self.word_skip(w::OPTIONS_44)?;
-                        self.stack.push(150);
+                        stack.push(150);
                         st = 35;
                         continue 'run;
                     } else {
@@ -4765,7 +4767,7 @@ impl<L: Layout> P<'_, L> {
                         } else {
                             match self.word() {
                                 w::LBRACE_20 => {
-                                    self.stack.push(145);
+                                    stack.push(145);
                                     st = 146;
                                     continue 'run;
                                 }
@@ -4786,10 +4788,10 @@ impl<L: Layout> P<'_, L> {
                 }
                 146 => {
                     self.word_leaf(w::LBRACE_20, k::RAW_TEXT)?;
-                    self.stack.push(u64::from(self.word));
-                    self.stack.push(u64::from(self.refusing));
+                    stack.push(u64::from(self.word));
+                    stack.push(u64::from(self.refusing));
                     self.refusing = 0x0;
-                    self.stack.push(6);
+                    stack.push(6);
                     st = 147;
                     continue 'run;
                 }
@@ -4803,9 +4805,9 @@ impl<L: Layout> P<'_, L> {
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
-                    self.refusing = self.stack.pop().unwrap_or(0) as u32;
-                    self.word = self.stack.pop().unwrap_or(0) as u16;
+                    let ret = stack.pop().unwrap_or(0) as usize;
+                    self.refusing = stack.pop().unwrap_or(0) as u32;
+                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
@@ -4963,10 +4965,10 @@ impl<L: Layout> P<'_, L> {
                         }
                         w::LBRACE_20 => {
                             self.merge(self.word() == w::LBRACE_20, k::RAW_TEXT)?;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(149);
+                            stack.push(149);
                             st = 147;
                             continue 'run;
                         }
@@ -5010,12 +5012,12 @@ impl<L: Layout> P<'_, L> {
                 152 => {
                     match self.word() {
                         w::CODE_37 => {
-                            self.stack.push(152);
+                            stack.push(152);
                             st = 153;
                             continue 'run;
                         }
                         w::TAG_39 => {
-                            self.stack.push(152);
+                            stack.push(152);
                             st = 157;
                             continue 'run;
                         }
@@ -5055,7 +5057,7 @@ impl<L: Layout> P<'_, L> {
                             self.relabel_field(f::CODE)?;
                             self.wrap(k::CODE_COLUMN, 0)?;
                             self.drop_made()?;
-                            self.stack.push(154);
+                            stack.push(154);
                             st = 155;
                             continue 'run;
                         }
@@ -5090,7 +5092,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::LBRACE_20 => {
-                                self.stack.push(156);
+                                stack.push(156);
                                 st = 146;
                                 continue 'run;
                             }
@@ -5110,7 +5112,7 @@ impl<L: Layout> P<'_, L> {
                     self.relabel_field(f::TAG)?;
                     self.wrap(k::TAG_COLUMN, 0)?;
                     self.drop_made()?;
-                    self.stack.push(4);
+                    stack.push(4);
                     st = 155;
                     continue 'run;
                 }
@@ -5122,10 +5124,10 @@ impl<L: Layout> P<'_, L> {
                     self.column_list()?;
                     self.field_made(f::COLUMNS);
                     self.word_leaf(w::COLON_15, k::COLON)?;
-                    self.stack.push(u64::from(self.word));
-                    self.stack.push(u64::from(self.refusing));
+                    stack.push(u64::from(self.word));
+                    stack.push(u64::from(self.refusing));
                     self.refusing = 0x0;
-                    self.stack.push(159);
+                    stack.push(159);
                     st = 160;
                     continue 'run;
                 }
@@ -5152,7 +5154,7 @@ impl<L: Layout> P<'_, L> {
                     self.mark_line()?;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
+                    let ret = stack.pop().unwrap_or(0) as usize;
                     st = ret;
                     continue 'run;
                 }
@@ -5187,9 +5189,9 @@ impl<L: Layout> P<'_, L> {
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
-                    self.refusing = self.stack.pop().unwrap_or(0) as u32;
-                    self.word = self.stack.pop().unwrap_or(0) as u16;
+                    let ret = stack.pop().unwrap_or(0) as usize;
+                    self.refusing = stack.pop().unwrap_or(0) as u32;
+                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
@@ -5208,7 +5210,7 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                     if self.at_identifier() {
-                        self.stack.push(163);
+                        stack.push(163);
                         st = 164;
                         continue 'run;
                     } else {
@@ -5220,7 +5222,7 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_skip(w::COMMA_12)?;
-                            self.stack.push(163);
+                            stack.push(163);
                             st = 164;
                             continue 'run;
                         }
@@ -5260,10 +5262,10 @@ impl<L: Layout> P<'_, L> {
                             match arm {
                                 0 => {
                                     self.drop_made()?;
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(165);
+                                    stack.push(165);
                                     st = 166;
                                     continue 'run;
                                 }
@@ -5445,10 +5447,10 @@ impl<L: Layout> P<'_, L> {
                         }
                         w::LPAREN_10 => {
                             self.word_leaf(w::LPAREN_10, k::RAW_TEXT)?;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(167);
+                            stack.push(167);
                             st = 168;
                             continue 'run;
                         }
@@ -5631,10 +5633,10 @@ impl<L: Layout> P<'_, L> {
                         }
                         w::LPAREN_10 => {
                             self.merge(self.word() == w::LPAREN_10, k::RAW_TEXT)?;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(167);
+                            stack.push(167);
                             st = 168;
                             continue 'run;
                         }
@@ -5674,9 +5676,9 @@ impl<L: Layout> P<'_, L> {
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
-                    self.refusing = self.stack.pop().unwrap_or(0) as u32;
-                    self.word = self.stack.pop().unwrap_or(0) as u16;
+                    let ret = stack.pop().unwrap_or(0) as usize;
+                    self.refusing = stack.pop().unwrap_or(0) as u32;
+                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
@@ -5834,10 +5836,10 @@ impl<L: Layout> P<'_, L> {
                         }
                         w::LPAREN_10 => {
                             self.merge(self.word() == w::LPAREN_10, k::RAW_TEXT)?;
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(170);
+                            stack.push(170);
                             st = 168;
                             continue 'run;
                         }
@@ -5882,7 +5884,7 @@ impl<L: Layout> P<'_, L> {
                     self.word_skip(w::GT_18)?;
                     self.word_skip(w::LBRACE_20)?;
                     if self.at_identifier() {
-                        self.stack.push(174);
+                        stack.push(174);
                         st = 175;
                         continue 'run;
                     } else {
@@ -5894,7 +5896,7 @@ impl<L: Layout> P<'_, L> {
                     self.word_skip(w::RBRACE_21)?;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
+                    let ret = stack.pop().unwrap_or(0) as usize;
                     st = ret;
                     continue 'run;
                 }
@@ -5902,7 +5904,7 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_skip(w::COMMA_12)?;
-                            self.stack.push(174);
+                            stack.push(174);
                             st = 175;
                             continue 'run;
                         }
@@ -5922,10 +5924,10 @@ impl<L: Layout> P<'_, L> {
                     self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
                     self.field_made(f::NAME);
                     self.word_skip(w::MINUS_GT_9)?;
-                    self.stack.push(u64::from(self.word));
-                    self.stack.push(u64::from(self.refusing));
+                    stack.push(u64::from(self.word));
+                    stack.push(u64::from(self.refusing));
                     self.refusing = 0x0;
-                    self.stack.push(176);
+                    stack.push(176);
                     st = 177;
                     continue 'run;
                 }
@@ -5934,13 +5936,13 @@ impl<L: Layout> P<'_, L> {
                     self.close()?;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = self.stack.pop().unwrap_or(0) as usize;
+                    let ret = stack.pop().unwrap_or(0) as usize;
                     st = ret;
                     continue 'run;
                 }
                 177 => {
                     self.deeper()?;
-                    self.stack.push(178);
+                    stack.push(178);
                     st = 180;
                     continue 'run;
                 }
@@ -5950,7 +5952,7 @@ impl<L: Layout> P<'_, L> {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.additive()?;
                             self.field_made(f::OPERATOR);
-                            self.stack.push(179);
+                            stack.push(179);
                             st = 22;
                             continue 'run;
                         }
@@ -5989,10 +5991,10 @@ impl<L: Layout> P<'_, L> {
                             continue 'run;
                         }
                         1 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(181);
+                            stack.push(181);
                             st = 183;
                             continue 'run;
                         }
@@ -6007,7 +6009,7 @@ impl<L: Layout> P<'_, L> {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.multiplicative()?;
                             self.field_made(f::OPERATOR);
-                            self.stack.push(182);
+                            stack.push(182);
                             st = 25;
                             continue 'run;
                         }
@@ -6032,17 +6034,17 @@ impl<L: Layout> P<'_, L> {
                             continue 'run;
                         }
                         w::MINUS_27 => {
-                            self.stack.push(13);
+                            stack.push(13);
                             st = 27;
                             continue 'run;
                         }
                         w::AT_23 => {
-                            self.stack.push(13);
+                            stack.push(13);
                             st = 184;
                             continue 'run;
                         }
                         w::LBRACE_20 => {
-                            self.stack.push(13);
+                            stack.push(13);
                             st = 35;
                             continue 'run;
                         }
@@ -6050,17 +6052,17 @@ impl<L: Layout> P<'_, L> {
                             self.word_leaf(w::COUNT_47, k::VARIABLE)?;
                             match self.word() {
                                 w::COLON_15 => {
-                                    self.stack.push(13);
+                                    stack.push(13);
                                     st = 41;
                                     continue 'run;
                                 }
                                 w::LPAREN_10 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(39);
+                                    stack.push(39);
                                     st = 31;
                                     continue 'run;
                                 }
@@ -6117,7 +6119,7 @@ impl<L: Layout> P<'_, L> {
                             }
                             match arm {
                                 0 => {
-                                    self.stack.push(13);
+                                    stack.push(13);
                                     st = 74;
                                     continue 'run;
                                 }
@@ -6125,20 +6127,20 @@ impl<L: Layout> P<'_, L> {
                                     self.mark_empty_parens()?;
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(39);
+                                    stack.push(39);
                                     st = 31;
                                     continue 'run;
                                 }
                                 2 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(119);
+                                    stack.push(119);
                                     st = 90;
                                     continue 'run;
                                 }
@@ -6149,7 +6151,7 @@ impl<L: Layout> P<'_, L> {
                             }
                         }
                         w::LPAREN_10 => {
-                            self.stack.push(13);
+                            stack.push(13);
                             st = 120;
                             continue 'run;
                         }
@@ -6169,10 +6171,10 @@ impl<L: Layout> P<'_, L> {
                                 w::LPAREN_10 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(39);
+                                    stack.push(39);
                                     st = 31;
                                     continue 'run;
                                 }
@@ -6180,10 +6182,10 @@ impl<L: Layout> P<'_, L> {
                                     self.wrap(k::NAMED_ARGUMENT, f::NAME)?;
                                     self.retype_moved(k::IDENTIFIER);
                                     self.word_skip(w::COLON_15)?;
-                                    self.stack.push(u64::from(self.word));
-                                    self.stack.push(u64::from(self.refusing));
+                                    stack.push(u64::from(self.word));
+                                    stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
-                                    self.stack.push(40);
+                                    stack.push(40);
                                     st = 19;
                                     continue 'run;
                                 }
@@ -6206,10 +6208,10 @@ impl<L: Layout> P<'_, L> {
                     self.field_made(f::FUNCTION);
                     match self.word() {
                         w::LPAREN_10 => {
-                            self.stack.push(u64::from(self.word));
-                            self.stack.push(u64::from(self.refusing));
+                            stack.push(u64::from(self.word));
+                            stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
-                            self.stack.push(128);
+                            stack.push(128);
                             st = 31;
                             continue 'run;
                         }
