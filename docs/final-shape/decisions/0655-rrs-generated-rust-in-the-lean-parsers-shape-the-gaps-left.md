@@ -1,6 +1,6 @@
 # 0655: `.rerail`'s generated Rust in the lean parser's shape: the gaps left after 0623
 
-Status: in progress (the user, 2026-11-23: "please implement all of these, evaluating ONLY by how much closer they
+Status: done (the user, 2026-11-23: "please implement all of these, evaluating ONLY by how much closer they
 make the tier 1 and 2 code to the lean Rust code"). Follows 0623 and 0650.
 
 ## Intro
@@ -70,6 +70,42 @@ All tests pass: rr, JSON, Kotlin, clippy.
 Tests: `lattice_values_are_the_engines` holds each executor to the engine on lattices (a named functor, a call, a
 term, a comment after the name, a named argument) and to lean where the engine refuses (`@f * 2`); the generated
 Rust's tapes on the same cases.
+
+## Step 2, second part: a literal and a negation's operand are one rule (done)
+
+Lean has one `literal`: `!` reads a literal again, and the caller sets the field of the node it returns
+(`self.literal()?; self.field(Field::Operand)`, or `Field::Literal` in a conjunction). It refuses a comparison
+under `!` with the kind of the literal it read. The grammar had a second copy of the literal for each place: `negated`,
+`negated_term` and `aggregate_negated`, each with no comparison and no field of its own.
+
+- **`decide`**, a new Bitlex word (`relabel` to `DECIDED`): the node made last at the level has no field of its own
+  now. Its call's field is then set where the call returns, where the node has none: the machine's `NODE_FIELD m=4`
+  (the generated Rust's `field_made`). A literal holds `bare` while it may still be a term, as before. Where it turns
+  out a literal, it is decided, where before it was relabelled `literal`. The machine writes it as `NODE_FIELD m=2` of
+  no field, which the verifier now takes. The generated Rust writes it as `relabel_field(0)`.
+- **The callers say the field**, as lean's: `literal: without negating literal` in a conjunction, and `operand: with
+  negating literal` after a negation's `!`. Under the flag `negating` a comparison has no arm
+  (`unless negating comparison_tail`), as lean's refusal of `Lit::Cmp` under `!`. A literal that ends `bare` there
+  is refused at the statement's end (`provisional bare`), as `negated` refused one with no pattern after it.
+- **A nested choice's field where it returns, in one machine too.** Where a function is a rule, a call of a
+  nested choice that makes one node already took its field where it returned. In one machine the choice was entered
+  at its first token with the field on its first node, which a `decide` inside it then took away. Now the field
+  goes to the return there too (the state it returns to, `returned_field`). The one-node proof (`one_node`) counts
+  a decided node as one with no field of its own. A reread of a node with no field is one node too: a reading renames
+  a field the node has, and none where it has none.
+- `aggregate_literal` holds its own `bare`, as the literal's word does. A `bare` given to the call would be set where
+  it returns, after the `decide` in it.
+
+The tier 2 writer also joins the words under one guard into one arm when their code is the same
+(`w::EQ | w::LT … if self.flags & FLAG_NEGATING == 0`), as lean's `!negated && is_comparison(k)`.
+
+`negated`, `negated_term` and `aggregate_negated` are gone from `tier2.rs`; `literal`, `aggregate_literal` and
+`group_term` read both places, under the flag.
+
+Tests: the rr suite (the interpreter, the JIT and one machine against the engine; the generated Rust's records and
+tapes, and the one loop's, against the interpreter's and the JIT's) and both corpus tests over the 1,949 files.
+JSON's and Kotlin's generated Rust is unchanged, and their suites pass. The loop's check now names the first node
+where its tape differs from the calls' (`node_differs`).
 
 ## Step 3: tier 1 holds no checker (done)
 

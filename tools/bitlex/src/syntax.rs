@@ -885,6 +885,9 @@ pub const IMPLIED: &str = "\u{0}implied";
 const IMPLIED_KIND: &str = "\u{1}";
 /// The kind `drop` gives the node just made at this level (`relabel _ as GONE`): it goes.
 pub const GONE: &str = "\u{0}gone";
+/// The field `decide` gives the node just made at this level: none of its own, the one its call sets where it
+/// returns.
+pub const DECIDED: &str = "\u{0}decided";
 
 /// Each `implied RULE 'A' … K …` of a tree's body, applied: its tokens in `RULE`'s own body
 /// marked `A as IMPLIED`, each written `'A'` or a token kind `K` (a character's content, whose
@@ -1443,6 +1446,15 @@ impl P {
                 let reading = self.ident()?;
                 let body = Box::new(self.gram_seq()?);
                 items.push(Gram::Reread { reading, body });
+                break;
+            }
+            // `decide`: the node just made at this level has no field of its own now, its call's where it returns
+            // (`relabel DECIDED`), as the lean parser's caller sets the field of the node a call made; the rest of the
+            // sequence is its body.
+            if matches!(self.peek(), Some(Tok::Ident(w)) if w == "decide") {
+                self.i += 1;
+                let body = Box::new(self.gram_seq()?);
+                items.push(Gram::Relabel { field: Some(DECIDED.into()), moved: None, inner: None, body });
                 break;
             }
             // `drop`: the node just made at this level goes (a token the grammar implies, made

@@ -60,7 +60,8 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // `m=3` (a field): the node that one, a wrap, holds first. `RETAG m=3`: that node and
         // the nodes inside it, read by reading `operand` (`reread`).
         RETAG => (mode <= 2 && (mode != 0 || operand != REMEMBERED)) || (mode == 3 && usize::from(operand) < program.readings.maps.len()),
-        NODE_FIELD => mode <= 4 && operand != 0,
+        // `m=2` with none: `decide`, the node made last has no field of its own (its call's, where it returns).
+        NODE_FIELD => mode <= 4 && (operand != 0 || mode == 2),
         // `m=1`: the open node's two leaves, one (`fold`).
         MERGE => mode <= 1 && operand != REMEMBERED,
         WRAP => mode == 0 && operand != REMEMBERED,

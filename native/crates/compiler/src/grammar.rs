@@ -197,6 +197,10 @@ pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
     out
 }
 
+/// The field `decide` gives the node made last at a level (`Act::Relabel`): none of its own, its call's where it
+/// returns (`StateRow::returned_field`).
+pub const DECIDED: u16 = u16::MAX;
+
 /// A wrapper on the way to a position: a node, a field of the node inside it, a supertype of
 /// the node inside it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -419,7 +423,7 @@ impl Builder<'_> {
             }
             Gram::Relabel { field, moved, inner, body } => {
                 let w = Wrap::Relabel {
-                    field: field.as_deref().map(|f| (self.ids.field)(f)).transpose()?.unwrap_or(0),
+                    field: field.as_deref().map(|f| if f == bitlex::syntax::DECIDED { Ok(DECIDED) } else { (self.ids.field)(f) }).transpose()?.unwrap_or(0),
                     moved: moved.as_deref().map(|m| self.kind(m)).transpose()?.unwrap_or(0),
                     inner: inner.as_deref().map(|f| (self.ids.field)(f)).transpose()?.unwrap_or(0),
                 };
@@ -660,8 +664,8 @@ fn closes(exits: &[Wrap], acts: &mut Vec<Act>) {
 /// last at the level, where a call of it returns, is that node (`StateRow::returned_field`), and
 /// a field the call sets there where the node has none is the one the node's first would take:
 /// a field of its own, a relabel's, wins either way, and a wrap takes its moved node's. A reread
-/// of the node is the same either way where the node has a field of its own (a reading may
-/// rename it); where the reading drops the node, none is made last, and the call's field
+/// of the node is the same either way: a reading renames a field the node has, and none where
+/// it has none; where the reading drops the node, none is made last, and the call's field
 /// refuses the file (to the fallback, never a different tree). Unsure (a fold at the level, a
 /// relabel naming no field): no.
 fn one_node(levels: &[Level], positions: &[(usize, Pos)], level_of_rule: &HashMap<usize, usize>, marks: &[u16], level: usize, inside: &mut Vec<(usize, (u8, bool, bool), bool)>) -> bool {
@@ -721,11 +725,13 @@ fn level_ways(levels: &[Level], positions: &[(usize, Pos)], level_of_rule: &Hash
                         }
                         Wrap::Field(_) if d == 0 => pending = true,
                         Wrap::Relabel { .. } if d > 0 => {}
+                        // `decide`: the node's field is its call's again.
+                        Wrap::Relabel { field: DECIDED, moved: 0, inner: 0 } if c > 0 => owned = false,
                         Wrap::Relabel { field, .. } if *field != 0 && c > 0 => owned = true,
                         // A kind alone (`relabel _ as K`, not `drop`): the node made last stays
                         // one, its field its own.
                         Wrap::Relabel { field: 0, moved, inner: 0 } if *moved != 0 && *moved != crate::stream_ir::DEAD && c > 0 => {}
-                        Wrap::Reread(_) if d > 0 || (c > 0 && owned) => {}
+                        Wrap::Reread(_) if d > 0 || c > 0 => {}
                         Wrap::Fold(_) if d > 0 => {}
                         Wrap::Field(_) | Wrap::Super(_) | Wrap::Retag(_) | Wrap::Flag { .. } | Wrap::Unless(_) => {}
                         _ => break 'all false,
@@ -1299,6 +1305,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
         push: Vec<usize>,
         depth: usize,
         by_rules: Option<&[u16]>,
+        marks: &[u16],
         returned: &mut HashMap<usize, u16>,
         out: &mut Vec<(u16, Vec<Act>, usize, Vec<usize>, bool)>,
     ) -> Result<(), String> {
@@ -1363,31 +1370,34 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                     // the leaf before. Entered at its first token instead where the call's field
                     // or supertypes go to its first node (a nested choice's, which opens none)
                     // and cannot be set where it returns.
-                    if let Some(marks) = by_rules {
+                    //
+                    // A nested choice called with a field of this level's own (none inherited
+                    // from a level entered at its first token), that makes one node: the field
+                    // set on that node where it returns (`q`'s state), as the lean parser's
+                    // `self.term()?; self.field(..)`. A call where a function is a rule; in one
+                    // machine, entered at its first token as any nested choice, the field not
+                    // on its first node.
+                    let field_after = !levels[child].own
+                        && p.field != 0
+                        && p.supers.is_empty()
+                        && levels[child].supertype.is_none()
+                        // A level refuses its marks from its first token on: a mark at that
+                        // token is the caller's, whose state takes it in at the token.
+                        && levels[child].refuses.is_empty()
+                        && pending.field == 0
+                        && pending.supers.is_empty()
+                        && one_node(levels, positions, level_of_rule, marks, child, &mut Vec::new());
+                    if field_after {
+                        match returned.insert(q, p.field) {
+                            Some(f) if f != p.field => return Err(format!("a call returning to one place with fields {f} and {}", p.field)),
+                            _ => {}
+                        }
+                    }
+                    if by_rules.is_some() {
                         let mut firsts = Vec::new();
-                        arms_from(levels, positions, level_of_rule, child, None, Vec::new(), Pending::default(), Vec::new(), depth + 1, by_rules, returned, &mut firsts)?;
-                        // A nested choice called with a field of this level's own (none
-                        // inherited from a level entered at its first token), that makes one
-                        // node: a call, the field set on that node where it returns (`q`'s
-                        // state), as the lean parser's `self.term()?; self.field(..)`.
-                        let field_after = !levels[child].own
-                            && p.field != 0
-                            && p.supers.is_empty()
-                            && levels[child].supertype.is_none()
-                            // A level refuses its marks from its first token on: a mark at that
-                            // token is the caller's, whose state takes it in at the token.
-                            && levels[child].refuses.is_empty()
-                            && pending.field == 0
-                            && pending.supers.is_empty()
-                            && one_node(levels, positions, level_of_rule, marks, child, &mut Vec::new());
+                        arms_from(levels, positions, level_of_rule, child, None, Vec::new(), Pending::default(), Vec::new(), depth + 1, by_rules, marks, returned, &mut firsts)?;
                         let through = !field_after && !levels[child].own && (p.field != 0 || !p.supers.is_empty() || levels[child].supertype.is_some());
                         if !through {
-                            if field_after {
-                                match returned.insert(q, p.field) {
-                                    Some(f) if f != p.field => return Err(format!("a call returning to one place with fields {f} and {}", p.field)),
-                                    _ => {}
-                                }
-                            }
                             acts.extend(levels[child].own.then(|| Act::Open { kind: levels[child].kind, field: p.field, supers: p.supers.clone() }));
                             let Some(acts) = settled(acts) else { continue };
                             let mut tokens: Vec<u16> = firsts.iter().map(|f| f.0).collect();
@@ -1406,9 +1416,12 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                         Pending::default()
                     } else {
                         p.supers.extend(levels[child].supertype);
+                        if field_after {
+                            p.field = 0;
+                        }
                         p
                     };
-                    arms_from(levels, positions, level_of_rule, child, None, acts, inner, calls, depth + 1, by_rules, returned, out)?;
+                    arms_from(levels, positions, level_of_rule, child, None, acts, inner, calls, depth + 1, by_rules, marks, returned, out)?;
                 }
             }
         }
@@ -1433,7 +1446,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
         let mut arms = Vec::new();
         // The root's start opens the root node first.
         let prefix = if k == 0 && !whole { vec![Act::Open { kind: levels[0].kind, field: 0, supers: vec![] }] } else { vec![] };
-        arms_from(&levels, &positions, &level_of_rule, level, from, prefix, Pending::default(), Vec::new(), 0, marks, &mut returned, &mut arms)?;
+        arms_from(&levels, &positions, &level_of_rule, level, from, prefix, Pending::default(), Vec::new(), 0, marks, ids.marks, &mut returned, &mut arms)?;
         let arms: Vec<_> = arms.into_iter().map(|(t, a, q, push, call)| (t, a, state_of(q), push.into_iter().map(state_of).collect::<Vec<_>>(), call)).collect();
         let end = match from {
             // A whole root that may be empty ends at its start: the file has no token.

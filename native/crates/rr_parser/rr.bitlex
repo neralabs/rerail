@@ -412,30 +412,34 @@ tree rr {
   node agg_argument_list nested = retag argument_list '(' [argument: term (',' drop argument: term)*] ')'
   # A body: a conjunction; a `;` after it wraps it in a disjunction of alternatives.
   choice body           = without no_named conjunction [wrap disjunction alternative (';' alternative: without no_named conjunction)+]
-  node conjunction nested = literal: literal (',' literal: literal)*
+  node conjunction nested = literal: without negating literal (',' literal: without negating literal)*
   node group nested     = '(' body: group_body ')'
   # A group's body: its first conjunction's `,` is written, then dropped, as an aggregate's
   # word's (`agg_argument_list`): a reading of the group as a term, which names no gone node,
   # refuses a second literal as the engine does.
   choice group_body     = without no_named group_conjunction [wrap disjunction alternative (';' alternative: without no_named conjunction)+]
-  node group_conjunction nested = retag conjunction literal: literal (',' drop literal: literal)*
+  node group_conjunction nested = retag conjunction literal: without negating literal (',' drop literal: without negating literal)*
   # A literal: an atom, a comparison of two terms, a pattern match or a negation. A word is a
   # variable, unless a `(` after it makes it an atom's relation. `_` is a term here: a
   # wildcard. A term at a literal's start goes on as one (`more`); a comparison or a pattern
   # after it makes it a literal's (`literal_tail`), else it is `bare`, which only a group a
   # term turns out to be may hold.
   # An operator after an atom: it was a call, its word the function (`relabel … inner`).
-  choice literal        = bare: (numeric | string | code_literal | '_' as wildcard | minus | functor_call | json) more [literal_tail]
-                        | bare: (identifier as variable) (relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)]
+  # A literal decided (`decide`) has no field of its own: its caller's, `literal` or a negation's
+  # `operand`, set where it returns, as the lean parser's `self.literal()?; self.field(..)`. A
+  # negation's operand is a literal read with `negating` set: no comparison there.
+  flag negating
+  choice literal nested = bare: (numeric | string | code_literal | '_' as wildcard | minus | functor_call | json) more [literal_tail]
+                        | bare: (identifier as variable) (decide (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)]
                                                        | unless no_named (wrap named_argument name as identifier ':' value: term) more [literal_tail]
                                                        | more [literal_tail])
-                        | bare: aggregate_literal
-                        | literal: negation
-                        | literal: group [group_term]
-  choice literal_tail   = relabel literal (comparison_tail | pattern_tail)
+                        | aggregate_literal
+                        | negation
+                        | group [group_term]
+  choice literal_tail   = decide (unless negating comparison_tail | pattern_tail)
   # After a group's `)`: an operator or a comparison, it was a term; a `~`, a term too, unless
   # it holds an atom (then the engine keeps the group, which no `~` follows).
-  choice group_term     = reread parenthesized (relabel bare more1 [literal_tail] | comparison_tail)
+  choice group_term     = reread parenthesized (relabel bare more1 [literal_tail] | unless negating comparison_tail)
                         | reread parenthesized_strict pattern_tail
   provisional bare
   # `min (…) : {…}`: the call read again inside the aggregate around it.
@@ -453,14 +457,7 @@ tree rr {
   choice more1          = (wrap binary_expression left operator: multiplicative right: primary)+ (wrap binary_expression left operator: additive right: product)*
                         | (wrap binary_expression left operator: additive right: product)+
   # `!` before an atom, a pattern match or a negation: never a comparison.
-  node negation nested  = '!' operand: negated
-  choice negated        = (numeric | string | code_literal | '_' as wildcard | minus | functor_call | json) more pattern_tail
-                        | identifier as variable ((wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail]
-                                                 | more pattern_tail)
-                        | aggregate_negated
-                        | negation | group [negated_term]
-  choice negated_term   = reread parenthesized more1 pattern_tail
-                        | reread parenthesized_strict pattern_tail
+  node negation nested  = '!' operand: with negating literal
   choice comparison_tail = wrap comparison left operator: comparison_operator right: term
   # A pattern's literal, then `at` and a string: the node kind it selects.
   choice pattern_tail   = wrap pattern_match subject '~' pattern: code_literal [at_on 'at' selector: string]
@@ -491,10 +488,8 @@ tree rr {
   node functor_call     = '@' function: identifier arguments: argument_list
   # An aggregate's word at a literal's start: the aggregate, then the rest of a term and a
   # comparison or a pattern; else the word as any other.
-  choice aggregate_literal = 'count' as variable (count_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)] | more [literal_tail])
-                           | aggregate_word as variable (word_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: agg_argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail) | relabel bare (wrap aggregate _ reread aggregate_value agg_body) more [literal_tail]] | more [literal_tail])
-  choice aggregate_negated = 'count' as variable (count_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
-                           | aggregate_word as variable (word_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+  choice aggregate_literal = bare: ('count' as variable) (count_agg more [literal_tail] | decide (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)] | more [literal_tail])
+                           | bare: (aggregate_word as variable) (word_agg more [literal_tail] | decide (wrap atom relation as identifier arguments: agg_argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail) | relabel bare (wrap aggregate _ reread aggregate_value agg_body) more [literal_tail]] | more [literal_tail])
   # The aggregates' words but `count`: each the word of its level, which a wrap or a reading
   # gives back its own kind (`as aggregate_word`).
   remember aggregate_word

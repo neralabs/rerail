@@ -612,7 +612,7 @@ impl<'a> Parser<'a> {
                     None => None,
                 };
                 if let Some(f) = field {
-                    self.out[c].field = Some(f.clone());
+                    self.out[c].field = (f != crate::syntax::DECIDED).then(|| f.clone());
                 }
                 if let Some(m) = moved {
                     self.out[c].kind = self.kind_of(m)?;

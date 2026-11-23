@@ -48,6 +48,11 @@ fn tape_differs(c: &Compiled, text: &str) -> Option<String> {
     let ours = rerail_rr_aot::parse(&buf, text.len()).ok().map(|i| image_nodes(&i));
     let looped = rerail_rr_aot::parse_loop(&buf, text.len()).ok().map(|i| image_nodes(&i));
     if looped != ours {
+        if let (Some(l), Some(o)) = (&looped, &ours)
+            && let Some(d) = node_differs(text, o, l, "the calls", "the one loop")
+        {
+            return Some(format!("the one loop's tape is not the calls': {d}"));
+        }
         return Some(format!("the one loop's tape is not the calls': {} nodes, {} nodes", looped.map_or(0, |l| l.len()), ours.as_ref().map_or(0, |o| o.len())));
     }
     if let Some(b) = &ours {

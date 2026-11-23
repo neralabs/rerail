@@ -221,28 +221,29 @@ pub mod w {
     pub const MEAN_51: u32 = 51;
     pub const JOIN_52: u32 = 52;
     pub const POLICY_53: u32 = 53;
-    pub const X_54: u32 = 54;
-    pub const PRODUCT_55: u32 = 55;
-    pub const INPUT_56: u32 = 56;
-    pub const OUTPUT_57: u32 = 57;
-    pub const TRUE_58: u32 = 58;
-    pub const FALSE_59: u32 = 59;
-    pub const NULL_60: u32 = 60;
-    pub const TEST_61: u32 = 61;
-    pub const EXACTLY_62: u32 = 62;
-    pub const USES_63: u32 = 63;
-    pub const END_64: u32 = 64;
-    pub const FIXTURES_65: u32 = 65;
-    pub const DECL_66: u32 = 66;
-    pub const VIOLATION_67: u32 = 67;
-    pub const EDIT_68: u32 = 68;
-    pub const FUNCTOR_69: u32 = 69;
-    pub const LATTICE_70: u32 = 70;
-    pub const AT_71: u32 = 71;
+    pub const INPUT_54: u32 = 54;
+    pub const OUTPUT_55: u32 = 55;
+    pub const TRUE_56: u32 = 56;
+    pub const FALSE_57: u32 = 57;
+    pub const NULL_58: u32 = 58;
+    pub const X_59: u32 = 59;
+    pub const PRODUCT_60: u32 = 60;
+    pub const AT_61: u32 = 61;
+    pub const TEST_62: u32 = 62;
+    pub const EXACTLY_63: u32 = 63;
+    pub const USES_64: u32 = 64;
+    pub const END_65: u32 = 65;
+    pub const FIXTURES_66: u32 = 66;
+    pub const DECL_67: u32 = 67;
+    pub const VIOLATION_68: u32 = 68;
+    pub const EDIT_69: u32 = 69;
+    pub const FUNCTOR_70: u32 = 70;
+    pub const LATTICE_71: u32 = 71;
 }
 
 const FLAG_IN_BLOCK: u32 = 1 << 0;
-const FLAG_NO_NAMED: u32 = 1 << 1;
+const FLAG_NEGATING: u32 = 1 << 1;
+const FLAG_NO_NAMED: u32 = 1 << 2;
 /// The word of a piece of record kind `kind`, its bytes `b`: its kind's keywords'.
 fn word_in(kind: u32, b: &[u8]) -> u32 {
     match kind {
@@ -251,36 +252,36 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
             _ => 0,
         },
         5 => match b {
-            b"test" => w::TEST_61,
-            b"fixtures" => w::FIXTURES_65,
-            b"exactly" => w::EXACTLY_62,
-            b"uses" => w::USES_63,
-            b"end" => w::END_64,
-            b"decl" => w::DECL_66,
-            b"violation" => w::VIOLATION_67,
+            b"test" => w::TEST_62,
+            b"fixtures" => w::FIXTURES_66,
+            b"exactly" => w::EXACTLY_63,
+            b"uses" => w::USES_64,
+            b"end" => w::END_65,
+            b"decl" => w::DECL_67,
+            b"violation" => w::VIOLATION_68,
             b"policy" => w::POLICY_53,
-            b"edit" => w::EDIT_68,
-            b"functor" => w::FUNCTOR_69,
+            b"edit" => w::EDIT_69,
+            b"functor" => w::FUNCTOR_70,
             b"type" => w::TYPE_2,
-            b"input" => w::INPUT_56,
-            b"output" => w::OUTPUT_57,
-            b"lattice" => w::LATTICE_70,
+            b"input" => w::INPUT_54,
+            b"output" => w::OUTPUT_55,
+            b"lattice" => w::LATTICE_71,
             b"pragma" => w::PRAGMA_1,
-            b"true" => w::TRUE_58,
-            b"false" => w::FALSE_59,
-            b"null" => w::NULL_60,
-            b"_" => w::X_54,
+            b"true" => w::TRUE_56,
+            b"false" => w::FALSE_57,
+            b"null" => w::NULL_58,
+            b"_" => w::X_59,
             b"must" => w::MUST_35,
             b"may" => w::MAY_36,
             b"count" => w::COUNT_47,
             b"min" => w::MIN_48,
             b"max" => w::MAX_49,
             b"sum" => w::SUM_50,
-            b"product" => w::PRODUCT_55,
+            b"product" => w::PRODUCT_60,
             b"mean" => w::MEAN_51,
             b"join" => w::JOIN_52,
             b"by" => w::BY_45,
-            b"at" => w::AT_71,
+            b"at" => w::AT_61,
             b"sep" => w::SEP_46,
             b"code" => w::CODE_37,
             b"in" => w::IN_38,
@@ -832,16 +833,13 @@ impl<L: Layout> P<'_, L> {
                 self.directive()?;
             } else {
                 match self.word() {
-                    w::DECL_66 | w::VIOLATION_67 | w::EDIT_68 | w::FUNCTOR_69 | w::TYPE_2 | w::INPUT_56 | w::OUTPUT_57 | w::LATTICE_70 | w::PRAGMA_1 => {
+                    w::DECL_67 | w::VIOLATION_68 | w::EDIT_69 | w::FUNCTOR_70 | w::TYPE_2 | w::INPUT_54 | w::OUTPUT_55 | w::LATTICE_71 | w::PRAGMA_1 => {
                         self.directive()?;
                     }
                     w::POLICY_53 => {
                         self.tk_as::<false, false>(true, k::IDENTIFIER, f::NAME)?;
                     }
-                    w::TEST_61 if self.flags & FLAG_IN_BLOCK == 0 => {
-                        self.directive()?;
-                    }
-                    w::FIXTURES_65 if self.flags & FLAG_IN_BLOCK == 0 => {
+                    w::TEST_62 | w::FIXTURES_66 if self.flags & FLAG_IN_BLOCK == 0 => {
                         self.directive()?;
                     }
                     _ if self.at_identifier() => {
@@ -856,7 +854,7 @@ impl<L: Layout> P<'_, L> {
             self.directive()?;
         } else {
             match self.word() {
-                w::DECL_66 | w::VIOLATION_67 | w::EDIT_68 | w::FUNCTOR_69 | w::TYPE_2 | w::INPUT_56 | w::OUTPUT_57 | w::LATTICE_70 | w::PRAGMA_1 => {
+                w::DECL_67 | w::VIOLATION_68 | w::EDIT_69 | w::FUNCTOR_70 | w::TYPE_2 | w::INPUT_54 | w::OUTPUT_55 | w::LATTICE_71 | w::PRAGMA_1 => {
                     self.directive()?;
                 }
                 w::POLICY_53 => {
@@ -937,10 +935,7 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                w::TEST_61 if self.flags & FLAG_IN_BLOCK == 0 => {
-                    self.directive()?;
-                }
-                w::FIXTURES_65 if self.flags & FLAG_IN_BLOCK == 0 => {
+                w::TEST_62 | w::FIXTURES_66 if self.flags & FLAG_IN_BLOCK == 0 => {
                     self.directive()?;
                 }
                 _ if self.at_identifier() => {
@@ -994,12 +989,12 @@ impl<L: Layout> P<'_, L> {
     fn test_tail(&mut self) -> R {
         self.drop_made()?;
         self.retag(k::TEST_BLOCK);
-        self.word_skip_as::<false, false>(w::TEST_61)?;
+        self.word_skip_as::<false, false>(w::TEST_62)?;
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         if self.m_end_on() {
         } else {
             match self.word() {
-                w::EXACTLY_62 => {
+                w::EXACTLY_63 => {
                     self.tk_as::<false, false>(true, k::IDENTIFIER, f::MODIFIER)?;
                 }
                 _ => {
@@ -1010,7 +1005,7 @@ impl<L: Layout> P<'_, L> {
         if self.m_end_on() {
         } else {
             match self.word() {
-                w::USES_63 => {
+                w::USES_64 => {
                     self.skip_as::<false, false>(true)?;
                     self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::ARGUMENT)?;
                     loop {
@@ -1043,7 +1038,7 @@ impl<L: Layout> P<'_, L> {
     fn fixtures_tail(&mut self) -> R {
         self.drop_made()?;
         self.retag(k::FIXTURES_BLOCK);
-        self.word_skip_as::<false, false>(w::FIXTURES_65)?;
+        self.word_skip_as::<false, false>(w::FIXTURES_66)?;
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         self.block_body()?;
         self.marked = false;
@@ -1084,7 +1079,7 @@ impl<L: Layout> P<'_, L> {
         }
         self.mark_end_on()?;
         self.word_skip_as::<true, false>(w::DOT_13)?;
-        self.word_skip_as::<false, false>(w::END_64)?;
+        self.word_skip_as::<false, false>(w::END_65)?;
         self.marked = false;
         Ok(())
     }
@@ -1136,34 +1131,34 @@ impl<L: Layout> P<'_, L> {
             self.policy_tail()?;
         } else {
             match self.word() {
-                w::DECL_66 => {
+                w::DECL_67 => {
                     self.declaration_tail()?;
                 }
-                w::VIOLATION_67 => {
+                w::VIOLATION_68 => {
                     self.violation_tail()?;
                 }
-                w::EDIT_68 => {
+                w::EDIT_69 => {
                     self.edit_tail()?;
                 }
-                w::FUNCTOR_69 => {
+                w::FUNCTOR_70 => {
                     self.functor_tail()?;
                 }
                 w::TYPE_2 => {
                     self.type_tail()?;
                 }
-                w::INPUT_56 | w::OUTPUT_57 => {
+                w::INPUT_54 | w::OUTPUT_55 => {
                     self.io_tail()?;
                 }
-                w::LATTICE_70 => {
+                w::LATTICE_71 => {
                     self.lattice_tail()?;
                 }
                 w::PRAGMA_1 => {
                     self.pragma_tail()?;
                 }
-                w::TEST_61 if self.flags & FLAG_IN_BLOCK == 0 => {
+                w::TEST_62 if self.flags & FLAG_IN_BLOCK == 0 => {
                     self.test_tail()?;
                 }
-                w::FIXTURES_65 if self.flags & FLAG_IN_BLOCK == 0 => {
+                w::FIXTURES_66 if self.flags & FLAG_IN_BLOCK == 0 => {
                     self.fixtures_tail()?;
                 }
                 _ => {
@@ -1179,7 +1174,7 @@ impl<L: Layout> P<'_, L> {
     fn edit_tail(&mut self) -> R {
         self.drop_made()?;
         self.retag(k::EDIT_DECLARATION);
-        self.word_skip_as::<false, false>(w::EDIT_68)?;
+        self.word_skip_as::<false, false>(w::EDIT_69)?;
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         self.column_list()?;
         self.field_made(f::COLUMNS);
@@ -1190,7 +1185,7 @@ impl<L: Layout> P<'_, L> {
     /// `functor_tail`.
     fn functor_tail(&mut self) -> R {
         self.retag(k::FUNCTOR_DECLARATION);
-        self.word_skip_as::<false, false>(w::FUNCTOR_69)?;
+        self.word_skip_as::<false, false>(w::FUNCTOR_70)?;
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         self.column_list()?;
         self.field_made(f::COLUMNS);
@@ -1344,10 +1339,10 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         self.retag(k::IO_DIRECTIVE);
         match self.word() {
-            w::INPUT_56 => {
+            w::INPUT_54 => {
                 self.merge_as::<false, false>(true, k::DOT_INPUT)?;
             }
-            w::OUTPUT_57 => {
+            w::OUTPUT_55 => {
                 self.merge_as::<false, false>(true, k::DOT_OUTPUT)?;
             }
             _ => {
@@ -1518,7 +1513,7 @@ impl<L: Layout> P<'_, L> {
     fn lattice_tail(&mut self) -> R {
         self.drop_made()?;
         self.retag(k::LATTICE_DECLARATION);
-        self.word_skip_as::<false, false>(w::LATTICE_70)?;
+        self.word_skip_as::<false, false>(w::LATTICE_71)?;
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         self.word_skip_as::<false, false>(w::LT_17)?;
         if self.at_identifier() {
@@ -1559,7 +1554,7 @@ impl<L: Layout> P<'_, L> {
             arm = 0;
         } else {
             match self.word() {
-                w::X_54 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 | w::LPAREN_10 => {
+                w::X_59 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 | w::LPAREN_10 => {
                     arm = 1;
                 }
                 _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
@@ -1656,7 +1651,7 @@ impl<L: Layout> P<'_, L> {
                 self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
                 self.merge_as::<false, true>(self.at_number(), k::JSON_OBJECT)?;
             }
-            w::TRUE_58 | w::FALSE_59 | w::NULL_60 => {
+            w::TRUE_56 | w::FALSE_57 | w::NULL_58 => {
                 self.merge_as::<false, true>(true, k::JSON_OBJECT)?;
             }
             w::LBRACE_20 => {
@@ -1713,7 +1708,7 @@ impl<L: Layout> P<'_, L> {
         self.merge_as::<false, true>(self.word() == w::LBRACK_25, k::JSON_OBJECT)?;
         let arm: usize;
         match self.word() {
-            w::MINUS_27 | w::TRUE_58 | w::FALSE_59 | w::NULL_60 | w::LBRACE_20 | w::LBRACK_25 => {
+            w::MINUS_27 | w::TRUE_56 | w::FALSE_57 | w::NULL_58 | w::LBRACE_20 | w::LBRACK_25 => {
                 arm = 0;
             }
             _ if self.at_string() || self.at_number() => {
@@ -1750,7 +1745,7 @@ impl<L: Layout> P<'_, L> {
     /// `declaration_tail`.
     fn declaration_tail(&mut self) -> R {
         self.retag(k::DECLARATION);
-        self.word_skip_as::<false, false>(w::DECL_66)?;
+        self.word_skip_as::<false, false>(w::DECL_67)?;
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         self.column_list()?;
         self.field_made(f::COLUMNS);
@@ -1787,7 +1782,7 @@ impl<L: Layout> P<'_, L> {
     fn violation_tail(&mut self) -> R {
         self.drop_made()?;
         self.retag(k::VIOLATION_DECLARATION);
-        self.word_skip_as::<false, false>(w::VIOLATION_67)?;
+        self.word_skip_as::<false, false>(w::VIOLATION_68)?;
         self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         self.column_list()?;
         self.field_made(f::COLUMNS);
@@ -2193,7 +2188,7 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as::<true, false>(w::LPAREN_10)?;
         let arm: usize;
         match self.word() {
-            w::X_54 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 | w::LPAREN_10 => {
+            w::X_59 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 | w::LPAREN_10 => {
                 arm = 0;
             }
             _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
@@ -2238,7 +2233,7 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as::<true, false>(w::LPAREN_10)?;
         let arm: usize;
         match self.word() {
-            w::X_54 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 | w::LPAREN_10 => {
+            w::X_59 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 | w::LPAREN_10 => {
                 arm = 0;
             }
             _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
@@ -2280,9 +2275,7 @@ impl<L: Layout> P<'_, L> {
     fn body(&mut self) -> R {
         let flags = self.flags;
         self.flags = self.flags & !FLAG_NO_NAMED;
-        let word = self.word;
         self.conjunction()?;
-        self.word = word;
         self.flags = flags;
         match self.word() {
             w::SEMI_14 => {
@@ -2290,9 +2283,7 @@ impl<L: Layout> P<'_, L> {
                 self.word_skip_as::<false, false>(w::SEMI_14)?;
                 let flags = self.flags;
                 self.flags = self.flags & !FLAG_NO_NAMED;
-                let word = self.word;
                 self.conjunction()?;
-                self.word = word;
                 self.flags = flags;
                 self.field_made(f::ALTERNATIVE);
                 loop {
@@ -2301,9 +2292,7 @@ impl<L: Layout> P<'_, L> {
                             self.skip_as::<false, false>(true)?;
                             let flags = self.flags;
                             self.flags = self.flags & !FLAG_NO_NAMED;
-                            let word = self.word;
                             self.conjunction()?;
-                            self.word = word;
                             self.flags = flags;
                             self.field_made(f::ALTERNATIVE);
                         }
@@ -2326,13 +2315,23 @@ impl<L: Layout> P<'_, L> {
     fn conjunction(&mut self) -> R {
         self.deeper()?;
         self.open(k::CONJUNCTION);
+        let flags = self.flags;
+        self.flags = self.flags & !FLAG_NEGATING;
+        let word = self.word;
         self.literal()?;
+        self.word = word;
+        self.flags = flags;
         self.field_made(f::LITERAL);
         loop {
             match self.word() {
                 w::COMMA_12 => {
                     self.skip_as::<false, false>(true)?;
+                    let flags = self.flags;
+                    self.flags = self.flags & !FLAG_NEGATING;
+                    let word = self.word;
                     self.literal()?;
+                    self.word = word;
+                    self.flags = flags;
                     self.field_made(f::LITERAL);
                 }
                 _ => {
@@ -2364,9 +2363,7 @@ impl<L: Layout> P<'_, L> {
     fn group_body(&mut self) -> R {
         let flags = self.flags;
         self.flags = self.flags & !FLAG_NO_NAMED;
-        let word = self.word;
         self.group_conjunction()?;
-        self.word = word;
         self.flags = flags;
         match self.word() {
             w::SEMI_14 => {
@@ -2374,9 +2371,7 @@ impl<L: Layout> P<'_, L> {
                 self.word_skip_as::<false, false>(w::SEMI_14)?;
                 let flags = self.flags;
                 self.flags = self.flags & !FLAG_NO_NAMED;
-                let word = self.word;
                 self.conjunction()?;
-                self.word = word;
                 self.flags = flags;
                 self.field_made(f::ALTERNATIVE);
                 loop {
@@ -2385,9 +2380,7 @@ impl<L: Layout> P<'_, L> {
                             self.skip_as::<false, false>(true)?;
                             let flags = self.flags;
                             self.flags = self.flags & !FLAG_NO_NAMED;
-                            let word = self.word;
                             self.conjunction()?;
-                            self.word = word;
                             self.flags = flags;
                             self.field_made(f::ALTERNATIVE);
                         }
@@ -2411,14 +2404,24 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         self.open(UNSET);
         self.retag(k::CONJUNCTION);
+        let flags = self.flags;
+        self.flags = self.flags & !FLAG_NEGATING;
+        let word = self.word;
         self.literal()?;
+        self.word = word;
+        self.flags = flags;
         self.field_made(f::LITERAL);
         loop {
             match self.word() {
                 w::COMMA_12 => {
                     self.tk_as::<false, false>(true, k::COMMA, 0)?;
                     self.drop_made()?;
+                    let flags = self.flags;
+                    self.flags = self.flags & !FLAG_NEGATING;
+                    let word = self.word;
                     self.literal()?;
+                    self.word = word;
+                    self.flags = flags;
                     self.field_made(f::LITERAL);
                 }
                 _ => {
@@ -2434,12 +2437,13 @@ impl<L: Layout> P<'_, L> {
 
     /// `literal`.
     fn literal(&mut self) -> R {
+        self.deeper()?;
         let arm: usize;
         match self.word() {
-            w::X_54 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 => {
+            w::X_59 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 => {
                 arm = 0;
             }
-            w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 => {
+            w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 => {
                 arm = 2;
             }
             w::BANG_19 => {
@@ -2461,7 +2465,7 @@ impl<L: Layout> P<'_, L> {
         match arm {
             0 => {
                 match self.word() {
-                    w::X_54 => {
+                    w::X_59 => {
                         self.tk_as::<false, false>(true, k::WILDCARD, 0)?;
                     }
                     w::MINUS_27 => {
@@ -2489,7 +2493,10 @@ impl<L: Layout> P<'_, L> {
                 self.field_made(f::BARE);
                 self.more()?;
                 match self.word() {
-                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                    w::TILDE_31 => {
+                        self.literal_tail()?;
+                    }
+                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                         self.literal_tail()?;
                     }
                     _ => {
@@ -2499,16 +2506,46 @@ impl<L: Layout> P<'_, L> {
             }
             1 => {
                 self.tk_as::<false, false>(self.at_identifier(), k::VARIABLE, f::BARE)?;
+                let arm: usize;
                 match self.word() {
                     w::LPAREN_10 => {
-                        self.relabel_field(f::LITERAL)?;
+                        arm = 0;
+                    }
+                    w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
+                        arm = 2;
+                    }
+                    w::COLON_15 if self.flags & FLAG_NO_NAMED == 0 => {
+                        arm = 1;
+                    }
+                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
+                        arm = 2;
+                    }
+                    _ => {
+                        arm = usize::MAX;
+                    }
+                }
+                match arm {
+                    0 => {
+                        self.relabel_field(0)?;
                         self.wrap(k::ATOM, f::RELATION)?;
                         self.retype_moved(k::IDENTIFIER);
                         self.argument_list()?;
                         self.field_made(f::ARGUMENTS);
                         self.close()?;
+                        let arm: usize;
                         match self.word() {
-                            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
+                                arm = 0;
+                            }
+                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
+                                arm = 0;
+                            }
+                            _ => {
+                                arm = usize::MAX;
+                            }
+                        }
+                        match arm {
+                            0 => {
                                 self.relabel_inner(f::FUNCTION)?;
                                 self.relabel_field(f::BARE)?;
                                 self.relabel_kind(k::CALL)?;
@@ -2516,7 +2553,10 @@ impl<L: Layout> P<'_, L> {
                                     w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
                                         self.more1()?;
                                         match self.word() {
-                                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                                            w::TILDE_31 => {
+                                                self.literal_tail()?;
+                                            }
+                                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                                 self.literal_tail()?;
                                             }
                                             _ => {
@@ -2524,7 +2564,10 @@ impl<L: Layout> P<'_, L> {
                                             }
                                         }
                                     }
-                                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                                    w::TILDE_31 => {
+                                        self.literal_tail()?;
+                                    }
+                                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                         self.literal_tail()?;
                                     }
                                     _ => {
@@ -2533,22 +2576,10 @@ impl<L: Layout> P<'_, L> {
                                 }
                             }
                             _ => {
-
                             }
                         }
                     }
-                    w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
-                        self.more()?;
-                        match self.word() {
-                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
-                                self.literal_tail()?;
-                            }
-                            _ => {
-
-                            }
-                        }
-                    }
-                    w::COLON_15 if self.flags & FLAG_NO_NAMED == 0 => {
+                    1 => {
                         if self.flags & FLAG_NO_NAMED == 0 {
                             self.wrap(k::NAMED_ARGUMENT, f::NAME)?;
                             self.retype_moved(k::IDENTIFIER);
@@ -2559,7 +2590,24 @@ impl<L: Layout> P<'_, L> {
                         }
                         self.more()?;
                         match self.word() {
-                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                            w::TILDE_31 => {
+                                self.literal_tail()?;
+                            }
+                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
+                                self.literal_tail()?;
+                            }
+                            _ => {
+
+                            }
+                        }
+                    }
+                    2 => {
+                        self.more()?;
+                        match self.word() {
+                            w::TILDE_31 => {
+                                self.literal_tail()?;
+                            }
+                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                 self.literal_tail()?;
                             }
                             _ => {
@@ -2570,7 +2618,10 @@ impl<L: Layout> P<'_, L> {
                     _ => {
                         self.more()?;
                         match self.word() {
-                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                            w::TILDE_31 => {
+                                self.literal_tail()?;
+                            }
+                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                 self.literal_tail()?;
                             }
                             _ => {
@@ -2582,19 +2633,17 @@ impl<L: Layout> P<'_, L> {
             }
             2 => {
                 self.aggregate_literal()?;
-                self.field_made(f::BARE);
             }
             3 => {
-                let word = self.word;
                 self.negation()?;
-                self.word = word;
-                self.field_made(f::LITERAL);
             }
             4 => {
                 self.group()?;
-                self.field_made(f::LITERAL);
                 match self.word() {
-                    w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                    w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
+                        self.group_term()?;
+                    }
+                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                         self.group_term()?;
                     }
                     _ => {
@@ -2606,19 +2655,20 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
+        self.depth -= 1;
         self.marked = false;
         Ok(())
     }
 
     /// `literal_tail`.
     fn literal_tail(&mut self) -> R {
-        self.relabel_field(f::LITERAL)?;
+        self.relabel_field(0)?;
         match self.word() {
-            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
-                self.comparison_tail()?;
-            }
             w::TILDE_31 => {
                 self.pattern_tail()?;
+            }
+            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
+                self.comparison_tail()?;
             }
             _ => {
                 return self.refuse();
@@ -2630,15 +2680,33 @@ impl<L: Layout> P<'_, L> {
 
     /// `group_term`.
     fn group_term(&mut self) -> R {
+        let arm: usize;
         match self.word() {
-            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
+            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
+                arm = 0;
+            }
+            w::TILDE_31 => {
+                arm = 1;
+            }
+            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
+                arm = 0;
+            }
+            _ => {
+                arm = usize::MAX;
+            }
+        }
+        match arm {
+            0 => {
                 self.reread_parenthesized()?;
                 match self.word() {
                     w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
                         self.relabel_field(f::BARE)?;
                         self.more1()?;
                         match self.word() {
-                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                            w::TILDE_31 => {
+                                self.literal_tail()?;
+                            }
+                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                 self.literal_tail()?;
                             }
                             _ => {
@@ -2646,7 +2714,7 @@ impl<L: Layout> P<'_, L> {
                             }
                         }
                     }
-                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
+                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                         self.comparison_tail()?;
                     }
                     _ => {
@@ -2654,7 +2722,7 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
             }
-            w::TILDE_31 => {
+            1 => {
                 self.reread_parenthesized_strict()?;
                 self.pattern_tail()?;
             }
@@ -2743,144 +2811,15 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         self.open(k::NEGATION);
         self.word_skip_as::<false, false>(w::BANG_19)?;
-        self.negated()?;
+        let flags = self.flags;
+        self.flags = self.flags | FLAG_NEGATING;
+        let word = self.word;
+        self.literal()?;
+        self.word = word;
+        self.flags = flags;
         self.field_made(f::OPERAND);
         self.close()?;
         self.depth -= 1;
-        self.marked = false;
-        Ok(())
-    }
-
-    /// `negated`.
-    fn negated(&mut self) -> R {
-        let arm: usize;
-        match self.word() {
-            w::X_54 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 => {
-                arm = 0;
-            }
-            w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 => {
-                arm = 2;
-            }
-            w::BANG_19 => {
-                arm = 3;
-            }
-            w::LPAREN_10 => {
-                arm = 4;
-            }
-            _ if self.at_number() || self.at_string() || self.at_code_literal() => {
-                arm = 0;
-            }
-            _ if self.at_identifier() => {
-                arm = 1;
-            }
-            _ => {
-                arm = usize::MAX;
-            }
-        }
-        match arm {
-            0 => {
-                match self.word() {
-                    w::X_54 => {
-                        self.tk_as::<false, false>(true, k::WILDCARD, 0)?;
-                    }
-                    w::MINUS_27 => {
-                        self.minus()?;
-                    }
-                    w::AT_23 => {
-                        self.functor_call()?;
-                    }
-                    w::LBRACE_20 => {
-                        self.json()?;
-                    }
-                    _ if self.at_number() => {
-                        self.numeric()?;
-                    }
-                    _ if self.at_string() => {
-                        self.tk_as::<false, false>(true, k::STRING, 0)?;
-                    }
-                    _ if self.at_code_literal() => {
-                        self.tk_as::<false, false>(true, k::CODE_LITERAL, 0)?;
-                    }
-                    _ => {
-                        return self.refuse();
-                    }
-                }
-                self.more()?;
-                self.pattern_tail()?;
-            }
-            1 => {
-                self.tk_as::<false, false>(self.at_identifier(), k::VARIABLE, 0)?;
-                match self.word() {
-                    w::LPAREN_10 => {
-                        self.wrap(k::ATOM, f::RELATION)?;
-                        self.retype_moved(k::IDENTIFIER);
-                        self.argument_list()?;
-                        self.field_made(f::ARGUMENTS);
-                        self.close()?;
-                        match self.word() {
-                            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                                self.relabel_inner(f::FUNCTION)?;
-                                self.relabel_kind(k::CALL)?;
-                                self.more()?;
-                                self.pattern_tail()?;
-                            }
-                            _ => {
-
-                            }
-                        }
-                    }
-                    w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                        self.more()?;
-                        self.pattern_tail()?;
-                    }
-                    _ => {
-                        return self.refuse();
-                    }
-                }
-            }
-            2 => {
-                self.aggregate_negated()?;
-            }
-            3 => {
-                let word = self.word;
-                self.negation()?;
-                self.word = word;
-            }
-            4 => {
-                self.group()?;
-                match self.word() {
-                    w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                        self.negated_term()?;
-                    }
-                    _ => {
-
-                    }
-                }
-            }
-            _ => {
-                return self.refuse();
-            }
-        }
-        self.marked = false;
-        Ok(())
-    }
-
-    /// `negated_term`.
-    fn negated_term(&mut self) -> R {
-        match self.word() {
-            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
-                self.reread_parenthesized()?;
-                self.more1()?;
-                self.pattern_tail()?;
-            }
-            w::TILDE_31 => {
-                self.reread_parenthesized_strict()?;
-                self.pattern_tail()?;
-            }
-            _ => {
-                return self.refuse();
-            }
-        }
         self.marked = false;
         Ok(())
     }
@@ -2904,7 +2843,7 @@ impl<L: Layout> P<'_, L> {
         self.tk_as::<false, false>(self.at_code_literal(), k::CODE_LITERAL, f::PATTERN)?;
         if self.m_at_on() {
             self.mark_at_on()?;
-            self.word_skip_as::<false, false>(w::AT_71)?;
+            self.word_skip_as::<false, false>(w::AT_61)?;
             self.tk_as::<false, false>(self.at_string(), k::STRING, f::SELECTOR)?;
         } else {
         }
@@ -3065,7 +3004,7 @@ impl<L: Layout> P<'_, L> {
     fn primary(&mut self) -> R {
         let arm: usize;
         match self.word() {
-            w::X_54 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 | w::LPAREN_10 => {
+            w::X_59 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 | w::LPAREN_10 => {
                 arm = 1;
             }
             _ if self.at_number() => {
@@ -3112,7 +3051,7 @@ impl<L: Layout> P<'_, L> {
     fn unsigned(&mut self) -> R {
         self.deeper()?;
         match self.word() {
-            w::X_54 => {
+            w::X_59 => {
                 self.tk_as::<false, false>(true, k::WILDCARD, 0)?;
             }
             w::MINUS_27 => {
@@ -3142,7 +3081,7 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
             }
-            w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 => {
+            w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 => {
                 match self.word() {
                     w::MIN_48 => {
                         self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
@@ -3164,7 +3103,7 @@ impl<L: Layout> P<'_, L> {
                         self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
                         self.word = k::JOIN;
                     }
-                    w::PRODUCT_55 => {
+                    w::PRODUCT_60 => {
                         self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
                         self.word = k::IDENTIFIER;
                     }
@@ -3181,7 +3120,7 @@ impl<L: Layout> P<'_, L> {
                     self.close()?;
                 } else {
                     match self.word() {
-                        w::X_54 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 => {
+                        w::X_59 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 => {
                             self.word_agg()?;
                         }
                         w::LPAREN_10 => {
@@ -3257,7 +3196,7 @@ impl<L: Layout> P<'_, L> {
         self.word_leaf_as::<false, false>(w::MINUS_27, k::MINUS)?;
         let arm: usize;
         match self.word() {
-            w::X_54 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 | w::LPAREN_10 => {
+            w::X_59 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 | w::LPAREN_10 => {
                 arm = 1;
             }
             _ if self.at_number() => {
@@ -3324,13 +3263,34 @@ impl<L: Layout> P<'_, L> {
     fn aggregate_literal(&mut self) -> R {
         match self.word() {
             w::COUNT_47 => {
-                self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
+                self.tk_as::<false, false>(true, k::VARIABLE, f::BARE)?;
+                let arm: usize;
                 match self.word() {
                     w::COLON_15 => {
+                        arm = 0;
+                    }
+                    w::LPAREN_10 => {
+                        arm = 1;
+                    }
+                    w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
+                        arm = 2;
+                    }
+                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
+                        arm = 2;
+                    }
+                    _ => {
+                        arm = usize::MAX;
+                    }
+                }
+                match arm {
+                    0 => {
                         self.count_agg()?;
                         self.more()?;
                         match self.word() {
-                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                            w::TILDE_31 => {
+                                self.literal_tail()?;
+                            }
+                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                 self.literal_tail()?;
                             }
                             _ => {
@@ -3338,15 +3298,27 @@ impl<L: Layout> P<'_, L> {
                             }
                         }
                     }
-                    w::LPAREN_10 => {
-                        self.relabel_field(f::LITERAL)?;
+                    1 => {
+                        self.relabel_field(0)?;
                         self.wrap(k::ATOM, f::RELATION)?;
                         self.retype_moved(k::IDENTIFIER);
                         self.argument_list()?;
                         self.field_made(f::ARGUMENTS);
                         self.close()?;
+                        let arm: usize;
                         match self.word() {
-                            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
+                                arm = 0;
+                            }
+                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
+                                arm = 0;
+                            }
+                            _ => {
+                                arm = usize::MAX;
+                            }
+                        }
+                        match arm {
+                            0 => {
                                 self.relabel_inner(f::FUNCTION)?;
                                 self.relabel_field(f::BARE)?;
                                 self.relabel_kind(k::CALL)?;
@@ -3354,7 +3326,10 @@ impl<L: Layout> P<'_, L> {
                                     w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
                                         self.more1()?;
                                         match self.word() {
-                                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                                            w::TILDE_31 => {
+                                                self.literal_tail()?;
+                                            }
+                                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                                 self.literal_tail()?;
                                             }
                                             _ => {
@@ -3362,7 +3337,10 @@ impl<L: Layout> P<'_, L> {
                                             }
                                         }
                                     }
-                                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                                    w::TILDE_31 => {
+                                        self.literal_tail()?;
+                                    }
+                                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                         self.literal_tail()?;
                                     }
                                     _ => {
@@ -3371,14 +3349,16 @@ impl<L: Layout> P<'_, L> {
                                 }
                             }
                             _ => {
-
                             }
                         }
                     }
-                    w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                    2 => {
                         self.more()?;
                         match self.word() {
-                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                            w::TILDE_31 => {
+                                self.literal_tail()?;
+                            }
+                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                 self.literal_tail()?;
                             }
                             _ => {
@@ -3389,7 +3369,10 @@ impl<L: Layout> P<'_, L> {
                     _ => {
                         self.more()?;
                         match self.word() {
-                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                            w::TILDE_31 => {
+                                self.literal_tail()?;
+                            }
+                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                 self.literal_tail()?;
                             }
                             _ => {
@@ -3399,7 +3382,7 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
             }
-            w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 => {
+            w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 => {
                 match self.word() {
                     w::MIN_48 => {
                         self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
@@ -3421,7 +3404,7 @@ impl<L: Layout> P<'_, L> {
                         self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
                         self.word = k::JOIN;
                     }
-                    w::PRODUCT_55 => {
+                    w::PRODUCT_60 => {
                         self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
                         self.word = k::IDENTIFIER;
                     }
@@ -3429,15 +3412,19 @@ impl<L: Layout> P<'_, L> {
                         return self.refuse();
                     }
                 }
+                self.field_made(f::BARE);
                 let arm: usize;
                 match self.word() {
-                    w::X_54 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 => {
+                    w::X_59 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 => {
                         arm = 0;
                     }
                     w::LPAREN_10 => {
                         arm = 1;
                     }
-                    w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                    w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
+                        arm = 2;
+                    }
+                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                         arm = 2;
                     }
                     _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
@@ -3452,7 +3439,10 @@ impl<L: Layout> P<'_, L> {
                         self.word_agg()?;
                         self.more()?;
                         match self.word() {
-                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                            w::TILDE_31 => {
+                                self.literal_tail()?;
+                            }
+                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                 self.literal_tail()?;
                             }
                             _ => {
@@ -3461,14 +3451,29 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                     1 => {
-                        self.relabel_field(f::LITERAL)?;
+                        self.relabel_field(0)?;
                         self.wrap(k::ATOM, f::RELATION)?;
                         self.retype_moved(k::IDENTIFIER);
                         self.agg_argument_list()?;
                         self.field_made(f::ARGUMENTS);
                         self.close()?;
+                        let arm: usize;
                         match self.word() {
-                            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
+                                arm = 0;
+                            }
+                            w::COLON_15 => {
+                                arm = 1;
+                            }
+                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
+                                arm = 0;
+                            }
+                            _ => {
+                                arm = usize::MAX;
+                            }
+                        }
+                        match arm {
+                            0 => {
                                 self.relabel_inner(f::FUNCTION)?;
                                 self.relabel_field(f::BARE)?;
                                 self.relabel_kind(k::CALL)?;
@@ -3476,7 +3481,10 @@ impl<L: Layout> P<'_, L> {
                                     w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
                                         self.more1()?;
                                         match self.word() {
-                                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                                            w::TILDE_31 => {
+                                                self.literal_tail()?;
+                                            }
+                                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                                 self.literal_tail()?;
                                             }
                                             _ => {
@@ -3484,7 +3492,10 @@ impl<L: Layout> P<'_, L> {
                                             }
                                         }
                                     }
-                                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                                    w::TILDE_31 => {
+                                        self.literal_tail()?;
+                                    }
+                                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                         self.literal_tail()?;
                                     }
                                     _ => {
@@ -3492,7 +3503,7 @@ impl<L: Layout> P<'_, L> {
                                     }
                                 }
                             }
-                            w::COLON_15 => {
+                            1 => {
                                 self.relabel_field(f::BARE)?;
                                 self.wrap(k::AGGREGATE, 0)?;
                                 self.reread_aggregate_value()?;
@@ -3500,7 +3511,10 @@ impl<L: Layout> P<'_, L> {
                                 self.close()?;
                                 self.more()?;
                                 match self.word() {
-                                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                                    w::TILDE_31 => {
+                                        self.literal_tail()?;
+                                    }
+                                    w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                         self.literal_tail()?;
                                     }
                                     _ => {
@@ -3509,14 +3523,16 @@ impl<L: Layout> P<'_, L> {
                                 }
                             }
                             _ => {
-
                             }
                         }
                     }
                     2 => {
                         self.more()?;
                         match self.word() {
-                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                            w::TILDE_31 => {
+                                self.literal_tail()?;
+                            }
+                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                 self.literal_tail()?;
                             }
                             _ => {
@@ -3527,140 +3543,16 @@ impl<L: Layout> P<'_, L> {
                     _ => {
                         self.more()?;
                         match self.word() {
-                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
+                            w::TILDE_31 => {
+                                self.literal_tail()?;
+                            }
+                            w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 if self.flags & FLAG_NEGATING == 0 => {
                                 self.literal_tail()?;
                             }
                             _ => {
 
                             }
                         }
-                    }
-                }
-            }
-            _ => {
-                return self.refuse();
-            }
-        }
-        self.marked = false;
-        Ok(())
-    }
-
-    /// `aggregate_negated`.
-    fn aggregate_negated(&mut self) -> R {
-        match self.word() {
-            w::COUNT_47 => {
-                self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                match self.word() {
-                    w::COLON_15 => {
-                        self.count_agg()?;
-                        self.more()?;
-                        self.pattern_tail()?;
-                    }
-                    w::LPAREN_10 => {
-                        self.wrap(k::ATOM, f::RELATION)?;
-                        self.retype_moved(k::IDENTIFIER);
-                        self.argument_list()?;
-                        self.field_made(f::ARGUMENTS);
-                        self.close()?;
-                        match self.word() {
-                            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                                self.relabel_inner(f::FUNCTION)?;
-                                self.relabel_kind(k::CALL)?;
-                                self.more()?;
-                                self.pattern_tail()?;
-                            }
-                            _ => {
-
-                            }
-                        }
-                    }
-                    w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                        self.more()?;
-                        self.pattern_tail()?;
-                    }
-                    _ => {
-                        return self.refuse();
-                    }
-                }
-            }
-            w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 => {
-                match self.word() {
-                    w::MIN_48 => {
-                        self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                        self.word = k::MIN;
-                    }
-                    w::MAX_49 => {
-                        self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                        self.word = k::MAX;
-                    }
-                    w::SUM_50 => {
-                        self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                        self.word = k::SUM;
-                    }
-                    w::MEAN_51 => {
-                        self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                        self.word = k::MEAN;
-                    }
-                    w::JOIN_52 => {
-                        self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                        self.word = k::JOIN;
-                    }
-                    w::PRODUCT_55 => {
-                        self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
-                        self.word = k::IDENTIFIER;
-                    }
-                    _ => {
-                        return self.refuse();
-                    }
-                }
-                let arm: usize;
-                match self.word() {
-                    w::X_54 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 => {
-                        arm = 0;
-                    }
-                    w::LPAREN_10 => {
-                        arm = 1;
-                    }
-                    w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                        arm = 2;
-                    }
-                    _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
-                        arm = 0;
-                    }
-                    _ => {
-                        arm = usize::MAX;
-                    }
-                }
-                match arm {
-                    0 => {
-                        self.word_agg()?;
-                        self.more()?;
-                        self.pattern_tail()?;
-                    }
-                    1 => {
-                        self.wrap(k::ATOM, f::RELATION)?;
-                        self.retype_moved(k::IDENTIFIER);
-                        self.argument_list()?;
-                        self.field_made(f::ARGUMENTS);
-                        self.close()?;
-                        match self.word() {
-                            w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                                self.relabel_inner(f::FUNCTION)?;
-                                self.relabel_kind(k::CALL)?;
-                                self.more()?;
-                                self.pattern_tail()?;
-                            }
-                            _ => {
-
-                            }
-                        }
-                    }
-                    2 => {
-                        self.more()?;
-                        self.pattern_tail()?;
-                    }
-                    _ => {
-                        return self.refuse();
                     }
                 }
             }
@@ -3690,7 +3582,7 @@ impl<L: Layout> P<'_, L> {
             w::JOIN_52 => {
                 self.tk_as::<false, false>(true, k::JOIN, 0)?;
             }
-            w::PRODUCT_55 => {
+            w::PRODUCT_60 => {
                 self.tk_as::<false, false>(true, k::IDENTIFIER, 0)?;
             }
             _ => {
@@ -3736,7 +3628,7 @@ impl<L: Layout> P<'_, L> {
                     w::LPAREN_10 => {
                         arm = 0;
                     }
-                    w::X_54 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 => {
+                    w::X_59 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 => {
                         arm = 1;
                     }
                     _ if self.at_number() || self.at_string() || self.at_code_literal() || self.at_identifier() => {
@@ -3851,13 +3743,13 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         let arm: usize;
         match self.word() {
-            w::X_54 | w::AT_23 | w::LBRACE_20 => {
+            w::X_59 | w::AT_23 | w::LBRACE_20 => {
                 arm = 0;
             }
             w::COUNT_47 => {
                 arm = 2;
             }
-            w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 => {
+            w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 => {
                 arm = 3;
             }
             _ if self.at_number() || self.at_string() || self.at_code_literal() => {
@@ -3873,7 +3765,7 @@ impl<L: Layout> P<'_, L> {
         match arm {
             0 => {
                 match self.word() {
-                    w::X_54 => {
+                    w::X_59 => {
                         self.tk_as::<false, false>(true, k::WILDCARD, 0)?;
                     }
                     w::AT_23 => {
@@ -3979,7 +3871,7 @@ impl<L: Layout> P<'_, L> {
                 self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
                 self.word = k::JOIN;
             }
-            w::PRODUCT_55 => {
+            w::PRODUCT_60 => {
                 self.tk_as::<false, false>(true, k::VARIABLE, 0)?;
                 self.word = k::IDENTIFIER;
             }
@@ -3996,7 +3888,7 @@ impl<L: Layout> P<'_, L> {
             self.close()?;
         } else {
             match self.word() {
-                w::X_54 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_55 => {
+                w::X_59 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::PRODUCT_60 => {
                     self.word_agg()?;
                 }
                 w::LPAREN_10 => {
@@ -4447,7 +4339,7 @@ impl<L: Layout> P<'_, L> {
     /// Mark `at_on` holds at the token, not taken there; once a token (`held`).
     #[inline]
     fn m_at_on(&mut self) -> bool {
-        matches!(self.word(), w::AT_71) && self.taken >> 9 & 1 == 0 && self.held(9, Self::h_at_on)
+        matches!(self.word(), w::AT_61) && self.taken >> 9 & 1 == 0 && self.held(9, Self::h_at_on)
     }
 
     #[inline]
@@ -4478,7 +4370,7 @@ impl<L: Layout> P<'_, L> {
 
     #[inline]
     fn h_no_value(&self) -> bool {
-        (self.pat_no_value_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::MIN_48 || self.word_at(p) == w::MAX_49 || self.word_at(p) == w::SUM_50 || self.word_at(p) == w::PRODUCT_55 || self.word_at(p) == w::MEAN_51 || self.word_at(p) == w::JOIN_52) })
+        (self.pat_no_value_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::MIN_48 || self.word_at(p) == w::MAX_49 || self.word_at(p) == w::SUM_50 || self.word_at(p) == w::PRODUCT_60 || self.word_at(p) == w::MEAN_51 || self.word_at(p) == w::JOIN_52) })
     }
 
     /// Mark `no_value` taken: it and the marks before it passed at this token.
@@ -4751,7 +4643,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_at_on_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_71) && self.pat_at_on_0_1(j + 1, j)
+        (self.word_at(j) == w::AT_61) && self.pat_at_on_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -4787,7 +4679,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_end_on_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::END_64) && true
+        (self.word_at(j) == w::END_65) && true
     }
 
     #[allow(unused_variables)]
@@ -4799,7 +4691,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_io_bare_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::INPUT_56 || self.word_at(j) == w::OUTPUT_57) && self.pat_io_bare_0_2(j + 1, j)
+        (self.word_at(j) == w::INPUT_54 || self.word_at(j) == w::OUTPUT_55) && self.pat_io_bare_0_2(j + 1, j)
     }
 
     #[allow(unused_variables)]

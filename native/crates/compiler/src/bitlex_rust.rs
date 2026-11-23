@@ -311,6 +311,10 @@ impl<'a> G<'a> {
     }
 
     fn field_const(&self, name: &str) -> Result<String, String> {
+        // `decide`'s: none, its call's set where it returns.
+        if name == ::bitlex::syntax::DECIDED {
+            return Ok("0".into());
+        }
         let id = self.field_id(name)?;
         let c = upper(name);
         self.fields.borrow_mut().insert(c.clone(), id);
@@ -1993,7 +1997,8 @@ fn word_arms(lines: &[&str], i: usize) -> Option<(Vec<(String, String)>, usize)>
 }
 
 /// `arms` with each take of its own pattern's token untested, and the word arms of the same code one arm (at the first's
-/// place: the words are distinct, so their order is free), consecutive guards of the same code one guard.
+/// place: the words are distinct, so their order is free), the words under one guard of the same code one arm,
+/// consecutive guards of the same code one guard.
 fn merged_arms(arms: Vec<(String, String)>) -> Vec<(String, String)> {
     let is_word = |p: &str| p.starts_with("w::") && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':');
     let mut out: Vec<(String, String)> = Vec::new();
@@ -2011,6 +2016,16 @@ fn merged_arms(arms: Vec<(String, String)>) -> Vec<(String, String)> {
             && let Some(a) = out.iter_mut().find(|a| a.1 == body && a.0.split(" | ").all(is_word))
         {
             a.0 = format!("{} | {pat}", a.0);
+            continue;
+        }
+        // A word under a guard: with the arm of the same guard and code, where no arm before names the word (then its
+        // place is free too), as the lean parser's `!negated && is_comparison(k)`.
+        if let Some((w, g)) = pat.split_once(" if ").filter(|(w, _)| is_word(w))
+            && !out.iter().any(|a| a.0.split(" if ").next().is_some_and(|ws| ws.split(" | ").any(|x| x == w)))
+            && let Some(a) = out.iter_mut().find(|a| a.1 == body && a.0.split_once(" if ").is_some_and(|(ws, h)| h == g && ws.split(" | ").all(is_word)))
+        {
+            let (ws, _) = a.0.split_once(" if ").expect("a guard");
+            a.0 = format!("{ws} | {w} if {g}");
             continue;
         }
         if let Some(c) = pat.strip_prefix("_ if ")

@@ -610,7 +610,8 @@ impl Emit<'_> {
                         self.push("NODE_FIELD", 3, Arg::Field(inner));
                     }
                     if field != 0 {
-                        self.push("NODE_FIELD", 2, Arg::Field(field));
+                        // `decide`: no field of its own, its call's set where it returns.
+                        self.push("NODE_FIELD", 2, Arg::Field(if field == crate::grammar::DECIDED { 0 } else { field }));
                     }
                     if moved != 0 {
                         self.push("RETAG", 2, Arg::Kind(moved));
