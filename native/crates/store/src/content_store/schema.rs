@@ -6,6 +6,7 @@ use super::{ContentStore, StoreError, StoreResult};
 use crate::content_store::Cached as _;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::LazyLock;
 
 // `user_version` is the compatibility floor: a binary refuses a store whose floor is newer than
@@ -419,70 +420,19 @@ DROP TABLE IF EXISTS cross_blocks;
 DROP TABLE IF EXISTS cross_rows;
 DROP TABLE IF EXISTS cross_components;
 
--- Corpus runs' roots (decision 0053, corpus_runs.rs). Each run of a root records a manifest: the sources it read
--- (delta-varint ids, sorted), the grammar version and tape format of their tapes, and its memo plan. A run whose
--- manifest matches an earlier one of its root only moves that one's `last_run`. `corpus_live` is the union of the
--- kept manifests' (source, grammar version, tape format): collection keeps those sources and tapes. A plan in
--- `corpus_plans` that no kept manifest names (`live` 0) has its memo rows collected. Additive: an older binary's
--- collection ignores these tables, which costs a corpus run a cache miss, never a wrong result.
-CREATE TABLE IF NOT EXISTS corpus_roots (
-    root_id INTEGER PRIMARY KEY,
-    path TEXT NOT NULL UNIQUE
-) STRICT;
-CREATE TABLE IF NOT EXISTS corpus_manifests (
-    manifest_id INTEGER PRIMARY KEY,
-    root_id INTEGER NOT NULL REFERENCES corpus_roots(root_id),
-    last_run INTEGER NOT NULL,
-    last_time INTEGER NOT NULL,
-    grammar_version INTEGER NOT NULL,
-    tape_format INTEGER NOT NULL,
-    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
-    digest BLOB NOT NULL CHECK(length(digest) = 32),
-    sources BLOB NOT NULL,
-    -- What the run was of (`record_corpus_run_lane`): a root's last runs are protected by lane. NULL: the root's one
-    -- lane.
-    lane BLOB CHECK(lane IS NULL OR length(lane) = 32),
-    -- The lane's policy set (`record_corpus_run_policy`, decision 0302): a set's newer lane supersedes its older. NULL:
-    -- a lane of no set. Additive (`ADDED_COLUMNS`): an older binary ignores it.
-    policy BLOB CHECK(policy IS NULL OR length(policy) = 32),
-    UNIQUE (root_id, digest)
-) STRICT;
-CREATE INDEX IF NOT EXISTS corpus_manifests_by_run ON corpus_manifests(last_run);
+-- Corpus runs' roots, manifests, live sources and plans (decision 0053, corpus_runs.rs) are kept facts of the store
+-- (t33 step 3, `corpus_runs::kept`), read through virtual tables of the names their tables had (`prefilter::vtab`).
+-- A scope's memberships of their manifests (decision 0547): a manifest's id is its kept partition, and its
+-- memberships go with it (`keep_corpus_runs`, `release_memberships`), as `ON DELETE CASCADE` took them.
 CREATE TABLE IF NOT EXISTS analysis_scope_manifest (
     scope TEXT NOT NULL,
-    manifest_id INTEGER NOT NULL REFERENCES corpus_manifests(manifest_id) ON DELETE CASCADE,
+    manifest_id INTEGER NOT NULL,
     acquired_at INTEGER NOT NULL DEFAULT 0,
     acquisition INTEGER NOT NULL DEFAULT 0,
     recorded_run INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(scope, manifest_id)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS analysis_scope_manifest_by_manifest ON analysis_scope_manifest(manifest_id);
-CREATE TABLE IF NOT EXISTS corpus_live (
-    source_id INTEGER NOT NULL,
-    grammar_version INTEGER NOT NULL,
-    tape_format INTEGER NOT NULL,
-    PRIMARY KEY (source_id, grammar_version, tape_format)
-) STRICT, WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS corpus_plans (
-    plan_digest BLOB PRIMARY KEY CHECK(length(plan_digest) = 32),
-    live INTEGER NOT NULL
-) STRICT, WITHOUT ROWID;
--- Per memo plan, the relations its entries hold rows of, with their declared columns as a JSON array of
--- [name, type] (docs/sql-access/01-design.md §2): a session reads a run's entries by name. Collected with the plan.
-CREATE TABLE IF NOT EXISTS corpus_plan_relations (
-    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
-    relation TEXT NOT NULL,
-    columns TEXT NOT NULL,
-    PRIMARY KEY (plan_digest, relation)
-) STRICT, WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS corpus_state (
-    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    run INTEGER NOT NULL,
-    history_bytes INTEGER NOT NULL,
-    due INTEGER NOT NULL,
-    archive_due INTEGER NOT NULL DEFAULT 0
-) STRICT;
-INSERT OR IGNORE INTO corpus_state(singleton, run, history_bytes, due) VALUES (1, 0, 0, 0);
 -- The archive (decision 0450 step 4, `archive.rs`): an aged source's or tape's bytes as one zstd frame, its row's `seg`
 -- -2 (its `seg_len` its length). `kind` is `object_pins`' object kind (1 a tape, 2 a source). Placed back in a segment
 -- when read again. `corpus_state.archive_due`: set when a session ends or a keep decision is made, cleared by a pass
@@ -493,27 +443,8 @@ CREATE TABLE IF NOT EXISTS object_archive (
     frame BLOB NOT NULL,
     PRIMARY KEY (kind, id)
 ) STRICT, WITHOUT ROWID;
--- The last keep decision: the run counter and unix second it was made at. A new manifest makes a decision due, but
--- a pass makes one only when it can change something (`CorpusPolicy`): a root past its protected runs since, or
--- enough runs or seconds since. A new root's first runs are protected, so a run of fresh roots decides rarely.
--- Additive: an older binary ignores it. `swept`: the decision whose unreachable memo entries were last collected (decision
--- 0227); the memo sweep is due while `run` is past it (`ADDED_COLUMNS` adds it to an older store).
-CREATE TABLE IF NOT EXISTS corpus_decided (
-    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    run INTEGER NOT NULL,
-    time INTEGER NOT NULL,
-    swept INTEGER NOT NULL DEFAULT 0
-) STRICT;
-INSERT OR IGNORE INTO corpus_decided(singleton, run, time) VALUES (1, 0, 0);
 -- The corpus's stat index went (t33 K2): a corpus file's content is the observer's answer for its path.
 DROP TABLE IF EXISTS corpus_stats;
--- The other memo plans a manifest names (`record_corpus_run_naming`): a prepared program's (decision 0073). They are
--- live while a kept manifest names them. Additive: an older binary ignores it, and collects nothing by it.
-CREATE TABLE IF NOT EXISTS corpus_manifest_plans (
-    manifest_id INTEGER NOT NULL,
-    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
-    PRIMARY KEY (manifest_id, plan_digest)
-) STRICT, WITHOUT ROWID;
 -- The sweep of the corpus memo's retired schemas' rows went with `facts_results` (t33 step 3).
 DROP TABLE IF EXISTS corpus_swept;
 
@@ -629,6 +560,12 @@ impl ContentStore {
                         }
                         apply_schema(&transaction)?;
                         super::analysis_scope::compact_existing_directory_receipts(&transaction)?;
+                        // The corpus runs' tables' rows into their kept form (t33 step 3), before the tables go; and
+                        // the scopes' memberships off the manifests' table, whose drop would cascade into them.
+                        if let Some(path) = transaction.path().filter(|p| !p.is_empty()) {
+                            super::corpus_runs::kept::from_tables(Path::new(path), &transaction)?;
+                        }
+                        unhook_scope_manifests(&transaction)?;
                         let present: HashSet<(String, String)> = schema_object_names(&transaction)?.into_iter().collect();
                         for table in RETIRED_TABLES.iter().filter(|t| present.contains(&("table".to_owned(), (**t).to_owned()))) {
                             transaction.execute_batch(&format!("DROP TABLE {table}"))?;
@@ -650,22 +587,6 @@ impl ContentStore {
                 frames.push(".frames");
                 let _ = std::fs::remove_dir_all(frames);
             }
-        }
-        // The corpus runs' kept form (t33 step 3): what reads them. A store whose tables hold runs and no kept form
-        // (written before it) is mirrored whole, once, by a writer's thread, before anything reads it.
-        if super::corpus_runs::kept::unmirrored(connection)? {
-            rerail_accel::exec::scoped(|scope| {
-                scope
-                    .spawn(|| -> StoreResult<()> {
-                        super::hazards::behind_the_run();
-                        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                        super::corpus_runs::kept::sync_at(&transaction, &super::corpus_runs::kept::Touch::all())?;
-                        transaction.commit()?;
-                        Ok(())
-                    })
-                    .join()
-                    .unwrap_or_else(|p| std::panic::resume_unwind(p))
-            })?;
         }
         let id: Option<i64> = connection
             .query_row_cached(
@@ -777,7 +698,8 @@ fn holds_schema_current(connection: &Connection) -> StoreResult<bool> {
 /// - The prefilter's per-tape access paths, its store-wide counts and its vocabularies, and the text layer's
 ///   vocabulary, and the search index (t33 steps 6 and 7): kept facts (`prefilter::kept`, `prefilter::vocabulary`,
 ///   `search_index`), read through virtual tables of the same names (`prefilter::vtab`; the FTS tables none). The derivation
-///   graph (t33 step 1): kept facts (`derivation`), read through virtual tables of its tables' names too. Children first; their triggers go with them. A name a virtual table
+///   graph (t33 step 1) and the corpus runs (t33 step 3): kept facts (`derivation`, `corpus_runs::kept`), read through
+///   virtual tables of their tables' names too. Children first; their triggers go with them. A name a virtual table
 ///   has is dropped only while the store holds a table of it: SQLite refuses to drop an eponymous virtual table.
 const RETIRED_TABLES: &[&str] = &[
     "frames", "frame_segments", "frame_part_used", "frame_spaces", "frame_confirmed", "frame_used", "frame_program_used",
@@ -803,7 +725,43 @@ const RETIRED_TABLES: &[&str] = &[
     "derivation_inputs",
     "derivations",
     "name_bindings",
+    // The corpus runs (t33 step 3): kept facts (`corpus_runs::kept`), read through virtual tables of these names. Their
+    // runs are written there first (`from_tables`); children first.
+    "corpus_manifest_plans",
+    "corpus_manifests",
+    "corpus_roots",
+    "corpus_live",
+    "corpus_plan_relations",
+    "corpus_plans",
+    "corpus_state",
+    "corpus_decided",
 ];
+
+/// `analysis_scope_manifest` made again without its key into `corpus_manifests` (t33 step 3: a manifest is a kept
+/// partition), its rows kept: with foreign keys on, the table's drop deleted every membership through
+/// `ON DELETE CASCADE`. Nothing where its declaration names no such key.
+fn unhook_scope_manifests(t: &Connection) -> StoreResult<()> {
+    let sql: Option<String> = t.query_row("SELECT sql FROM sqlite_schema WHERE type='table' AND name='analysis_scope_manifest'", [], |r| r.get(0)).optional()?;
+    if !sql.is_some_and(|sql| sql.contains("REFERENCES")) {
+        return Ok(());
+    }
+    t.execute_batch(
+        "CREATE TABLE analysis_scope_manifest_new (
+            scope TEXT NOT NULL,
+            manifest_id INTEGER NOT NULL,
+            acquired_at INTEGER NOT NULL DEFAULT 0,
+            acquisition INTEGER NOT NULL DEFAULT 0,
+            recorded_run INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(scope, manifest_id)
+        ) STRICT, WITHOUT ROWID;
+        INSERT INTO analysis_scope_manifest_new(scope, manifest_id, acquired_at, acquisition, recorded_run)
+            SELECT scope, manifest_id, acquired_at, acquisition, recorded_run FROM analysis_scope_manifest;
+        DROP TABLE analysis_scope_manifest;
+        ALTER TABLE analysis_scope_manifest_new RENAME TO analysis_scope_manifest;
+        CREATE INDEX IF NOT EXISTS analysis_scope_manifest_by_manifest ON analysis_scope_manifest(manifest_id);",
+    )?;
+    Ok(())
+}
 
 /// Whether the store holds a table of `RETIRED_TABLES`.
 #[cfg(test)]
@@ -951,7 +909,7 @@ fn schema_object_names(connection: &Connection) -> StoreResult<Vec<(String, Stri
 mod schema_object_tests {
     use super::*;
 
-    /// A store made before a column of `ADDED_COLUMNS` (here `corpus_decided.swept`, decision 0227) gains it when
+    /// A store made before a column of `ADDED_COLUMNS` (here `store_state.analysis_acquisitions`) gains it when
     /// opened, its rows keeping their values.
     #[test]
     fn an_older_store_gains_the_added_columns() {
@@ -964,9 +922,9 @@ mod schema_object_tests {
             let c = Connection::open(&path).unwrap();
             // The table as an older binary made it.
             c.execute_batch(
-                "DROP TABLE corpus_decided; \
-                 CREATE TABLE corpus_decided (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), run INTEGER NOT NULL, time INTEGER NOT NULL) STRICT; \
-                 INSERT INTO corpus_decided VALUES (1, 7, 0)",
+                "DROP TABLE store_state; \
+                 CREATE TABLE store_state (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), generation INTEGER NOT NULL) STRICT; \
+                 INSERT INTO store_state VALUES (1, 7)",
             )
             .unwrap();
             assert_eq!(missing_columns(&c).unwrap().len(), 1);
@@ -975,7 +933,7 @@ mod schema_object_tests {
         let c = Connection::open(&path).unwrap();
         assert!(missing_columns(&c).unwrap().is_empty());
         assert_eq!(
-            c.query_row("SELECT run, swept FROM corpus_decided", [], |r| Ok((
+            c.query_row("SELECT generation, analysis_acquisitions FROM store_state", [], |r| Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, i64>(1)?
             )))
@@ -1031,7 +989,7 @@ mod schema_object_tests {
         read.sort();
         assert_eq!(read, applied);
         // 95 once the prefilter's tables became kept facts (t33 steps 6 and 7); 87 once the derivation graph did (t33
-        // step 1).
-        assert!(read.len() > 84, "{} objects", read.len());
+        // step 1); 78 once the corpus runs did (t33 step 3).
+        assert!(read.len() > 76, "{} objects", read.len());
     }
 }

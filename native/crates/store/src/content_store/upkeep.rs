@@ -534,9 +534,14 @@ mod tests {
         let path = folder.join("store.sqlite");
         drop(ContentStore::open(&path).unwrap());
         let c = Connection::open(&path).unwrap();
-        c.execute("UPDATE corpus_decided SET run = swept + 1 WHERE singleton = 1", []).unwrap();
-        // As every writer of the table writes its kept form (`corpus_runs::kept`).
-        crate::content_store::corpus_runs::kept::sync_at(&c, &crate::content_store::corpus_runs::kept::Touch::all()).unwrap();
+        // A decision past the last sweep (the corpus runs' kept form, `corpus_runs::kept`).
+        crate::content_store::corpus_runs::kept::write_at(&c, |k, w| {
+            let mut state = k.state();
+            state.decided_run = state.swept + 1;
+            w.state(state);
+            Ok(())
+        })
+        .unwrap();
         drop(c);
         let mut job = MemoSweep::new(&path);
         assert_eq!(job.due(), Due::Urgent, "a decision past the last sweep");

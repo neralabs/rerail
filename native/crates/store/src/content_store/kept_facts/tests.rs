@@ -522,8 +522,7 @@ fn collection_rewrites_without_dead_entries() {
     };
     assert_eq!(records(&c, &SPACE), [(live, vec![mine, shared, asked]), (dead, vec![theirs, shared])], "each program's record: what it put and asked, grown");
     // The keep decision's: one program live, one dead.
-    c.execute("INSERT INTO corpus_plans(plan_digest, live) VALUES (?1, 1), (?2, 0)", rusqlite::params![&live[..], &dead[..]]).unwrap();
-    mirror(&c);
+    set_plans(&c, |_| None, &[(live, true), (dead, false)]);
     let before = read(&path, &c);
     assert_eq!(store.collect_kept_facts().unwrap(), 2, "the space rewritten, the other dropped");
     let after = read(&path, &c);
@@ -538,17 +537,25 @@ fn collection_rewrites_without_dead_entries() {
     // Nothing dead is left to collect: a second pass rewrites nothing.
     assert_eq!(store.collect_kept_facts().unwrap(), 0);
     // The live program dies too: what only it read goes; what no record names stays.
-    c.execute("UPDATE corpus_plans SET live=0", []).unwrap();
-    mirror(&c);
+    set_plans(&c, |_| Some(false), &[]);
     assert_eq!(store.collect_kept_facts().unwrap(), 1);
     assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["l"]);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// The corpus runs' kept form of what a test wrote to their tables with `c` (`corpus_runs::kept`), as every writer
-/// writes it.
-fn mirror(c: &Connection) {
-    crate::content_store::corpus_runs::kept::sync_at(c, &crate::content_store::corpus_runs::kept::Touch::all()).unwrap();
+/// The keep decision's marks, by a test, with `c` (the corpus runs' kept form, `corpus_runs::kept`): each recorded
+/// plan as `all` says (none: as it was), then each of `plans`.
+fn set_plans(c: &Connection, all: impl Fn(&[u8; 32]) -> Option<bool>, plans: &[([u8; 32], bool)]) {
+    crate::content_store::corpus_runs::kept::write_at(c, |k, w| {
+        for (p, live) in k.plans() {
+            w.plan(p, Some(all(&p).unwrap_or(live)));
+        }
+        for &(p, live) in plans {
+            w.plan(p, Some(live));
+        }
+        Ok(())
+    })
+    .unwrap();
 }
 
 /// t33 step 3: a partition kept under a holder (`HOLDER`, a source's SHA-256 key) lives as long as the store keeps that
@@ -573,11 +580,9 @@ fn a_held_partition_goes_with_its_holder() {
     let kept = store.put_source_hashed(text, key, &[]).unwrap();
     store.queue_kept(SPACE, vec![put("planned", 9, 3, flat(&[3, 3])), holder_put(9, holder, Some(plan))]);
     store.written().unwrap();
-    c.execute("INSERT INTO corpus_plans(plan_digest, live) VALUES (?1, 1)", [&plan[..]]).unwrap();
-    mirror(&c);
+    set_plans(&c, |_| None, &[(plan, true)]);
     assert_eq!(store.collect_kept_facts().unwrap(), 0, "its plan live, its source kept");
-    c.execute("UPDATE corpus_plans SET live=0", []).unwrap();
-    mirror(&c);
+    set_plans(&c, |_| Some(false), &[]);
     assert_eq!(store.collect_kept_facts().unwrap(), 1);
     assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["free"], "the plan's partition gone");
     assert!(store.source_by_hash(key).unwrap() == Some(kept), "its source stays");
@@ -585,12 +590,10 @@ fn a_held_partition_goes_with_its_holder() {
     let alone = [0x44u8; 32];
     store.queue_kept(SPACE, vec![put("alone", 10, 4, flat(&[4, 4])), crate::content_store::kept_facts::plan_holder_put(10, alone)]);
     store.written().unwrap();
-    c.execute("INSERT INTO corpus_plans(plan_digest, live) VALUES (?1, 1)", [&alone[..]]).unwrap();
-    mirror(&c);
+    set_plans(&c, |_| None, &[(alone, true)]);
     assert_eq!(store.collect_kept_facts().unwrap(), 0, "its plan live");
     assert!(read(&path, &c).iter().any(|e| e.0 == "alone"));
-    c.execute("UPDATE corpus_plans SET live=0 WHERE plan_digest=?1", [&alone[..]]).unwrap();
-    mirror(&c);
+    set_plans(&c, |_| None, &[(alone, false)]);
     assert_eq!(store.collect_kept_facts().unwrap(), 1);
     assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["free"], "the plan's partition gone");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());

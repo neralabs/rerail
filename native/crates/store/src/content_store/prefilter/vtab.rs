@@ -17,6 +17,13 @@
 //!   `derivation_inputs(output_atom, ordinal, name_atom, digest)`: the derivation graph (`content_store::derivation`),
 //!   one unit a name (a derivation's output); `name_atom` is null for an unnamed input.
 //!
+//! - `corpus_roots(root_id, path)`, `corpus_manifests(manifest_id, root_id, last_run, last_time, grammar_version,
+//!   tape_format, plan_digest, digest, sources, lane, policy)`, `corpus_manifest_plans(manifest_id, plan_digest)`,
+//!   `corpus_live(source_id, grammar_version, tape_format)`, `corpus_plans(plan_digest, live)`,
+//!   `corpus_plan_relations(plan_digest, relation, columns)`, `corpus_state(singleton, run, history_bytes, due,
+//!   archive_due)` and `corpus_decided(singleton, run, time, swept)`: the corpus runs (`content_store::corpus_runs::
+//!   kept`), one unit a root, a manifest or a source; `sources` delta-varint ids, as the table's were.
+//!
 //! `tape_id = ?` (and `kind = ?`, `term = ?`, `lang = ?`) choose the rows; a table without `tape_id` reads every
 //! tape, one at a time. SQLite rechecks every constraint. Values are as the store numbers them: a term is the store's
 //! atom, as the `atoms` table answers. The space is read as the statement's transaction finds it (`facts_chain`),
@@ -50,6 +57,14 @@ enum Which {
     Bindings,
     Derivations,
     Inputs,
+    Roots,
+    Manifests,
+    ManifestPlans,
+    Live,
+    Plans,
+    PlanRelations,
+    State,
+    Decided,
 }
 
 impl Which {
@@ -68,6 +83,14 @@ impl Which {
             Which::Bindings => c"CREATE TABLE x(name_atom INTEGER, digest BLOB, revision INTEGER)",
             Which::Derivations => c"CREATE TABLE x(output_atom INTEGER, producer BLOB, status INTEGER, cost INTEGER)",
             Which::Inputs => c"CREATE TABLE x(output_atom INTEGER, ordinal INTEGER, name_atom INTEGER, digest BLOB)",
+            Which::Roots => c"CREATE TABLE x(root_id INTEGER, path TEXT)",
+            Which::Manifests => c"CREATE TABLE x(manifest_id INTEGER, root_id INTEGER, last_run INTEGER, last_time INTEGER, grammar_version INTEGER, tape_format INTEGER, plan_digest BLOB, digest BLOB, sources BLOB, lane BLOB, policy BLOB)",
+            Which::ManifestPlans => c"CREATE TABLE x(manifest_id INTEGER, plan_digest BLOB)",
+            Which::Live => c"CREATE TABLE x(source_id INTEGER, grammar_version INTEGER, tape_format INTEGER)",
+            Which::Plans => c"CREATE TABLE x(plan_digest BLOB, live INTEGER)",
+            Which::PlanRelations => c"CREATE TABLE x(plan_digest BLOB, relation TEXT, columns TEXT)",
+            Which::State => c"CREATE TABLE x(singleton INTEGER, run INTEGER, history_bytes INTEGER, due INTEGER, archive_due INTEGER)",
+            Which::Decided => c"CREATE TABLE x(singleton INTEGER, run INTEGER, time INTEGER, swept INTEGER)",
         }
     }
 
@@ -75,6 +98,8 @@ impl Which {
     fn keys(self) -> &'static [(c_int, f64)] {
         match self {
             Which::Sets | Which::Covers | Which::SearchSets | Which::Bindings | Which::Derivations | Which::Inputs => &[(0, 10_000.0)],
+            Which::Roots | Which::Manifests | Which::ManifestPlans | Which::Live => &[(0, 10_000.0)],
+            Which::Plans | Which::PlanRelations | Which::State | Which::Decided => &[],
             Which::Kinds => &[(0, 10_000.0), (1, 100.0)],
             Which::Terms => &[(2, 10_000.0), (1, 1000.0), (0, 2.0)],
             Which::KindSize | Which::TermKindFreq => &[(0, 1000.0)],
@@ -89,6 +114,9 @@ impl Which {
             Which::Vocabulary => super::vocabulary::space(),
             Which::SearchSets => super::super::search_index::space(),
             Which::Bindings | Which::Derivations | Which::Inputs => super::super::derivation::space(),
+            Which::Roots | Which::Manifests | Which::ManifestPlans | Which::Live | Which::Plans | Which::PlanRelations | Which::State | Which::Decided => {
+                super::super::corpus_runs::kept::space()
+            }
             _ => kept::space(),
         }
     }
@@ -114,6 +142,14 @@ pub(in crate::content_store) fn install(connection: &Connection, store: &Path) -
         (c"name_bindings", Which::Bindings),
         (c"derivations", Which::Derivations),
         (c"derivation_inputs", Which::Inputs),
+        (c"corpus_roots", Which::Roots),
+        (c"corpus_manifests", Which::Manifests),
+        (c"corpus_manifest_plans", Which::ManifestPlans),
+        (c"corpus_live", Which::Live),
+        (c"corpus_plans", Which::Plans),
+        (c"corpus_plan_relations", Which::PlanRelations),
+        (c"corpus_state", Which::State),
+        (c"corpus_decided", Which::Decided),
     ] {
         connection.create_module(name, &MODULE, Some((store.to_path_buf(), which)))?;
     }
@@ -226,7 +262,10 @@ fn int(v: &Option<Value>) -> Option<Option<i64>> {
 
 impl Cursor {
     fn per_tape(&self) -> bool {
-        matches!(self.which, Which::Sets | Which::Kinds | Which::Terms | Which::Covers | Which::SearchSets | Which::Bindings | Which::Derivations | Which::Inputs)
+        matches!(
+            self.which,
+            Which::Sets | Which::Kinds | Which::Terms | Which::Covers | Which::SearchSets | Which::Bindings | Which::Derivations | Which::Inputs | Which::Roots | Which::Manifests | Which::ManifestPlans | Which::Live
+        )
     }
 
     /// The key slot's integer constraint: `Some(None)` none given, `None` one that matches nothing.
@@ -238,7 +277,14 @@ impl Cursor {
     fn fill(&mut self) {
         self.rows.clear();
         self.row = 0;
-        let Some(space) = self.space.clone() else { return };
+        let Some(space) = self.space.clone() else {
+            // No runs kept: the state's one row, as a new store's (zeros).
+            if self.unit < self.units.len() && matches!(self.which, Which::State | Which::Decided) {
+                self.unit = self.units.len();
+                self.rows = corpus_rows(self.which, &super::super::corpus_runs::kept::Corpus::none(), 0);
+            }
+            return;
+        };
         let view = space.view();
         while self.rows.is_empty() && self.unit < self.units.len() {
             let unit = self.units[self.unit];
@@ -250,6 +296,9 @@ impl Cursor {
     fn unit_rows(&self, view: &rerail_blocks::kept::KeptChain<'_>, unit: i64) -> Vec<Vec<Value>> {
         let blob = |t: &kept::Tape<'_>, at: i64, len: i64| Value::Blob(t.bytes(at, len));
         match self.which {
+            Which::Roots | Which::Manifests | Which::ManifestPlans | Which::Live | Which::Plans | Which::PlanRelations | Which::State | Which::Decided => {
+                corpus_rows(self.which, &super::super::corpus_runs::kept::Corpus::of(view), unit)
+            }
             Which::SearchSets => super::super::search_index::set(view, unit).map(|s| vec![std::iter::once(unit).chain(s).map(Value::Integer).collect()]).unwrap_or_default(),
             Which::Bindings => derivation::bound(view, unit).map(|(d, revision)| vec![vec![Value::Integer(unit), Value::Blob(d.to_vec()), Value::Integer(revision)]]).unwrap_or_default(),
             Which::Derivations => derivation::stored(view, unit)
@@ -363,6 +412,49 @@ impl Cursor {
     }
 }
 
+/// A corpus table's rows of `unit` (a root, a manifest or a source; 0 for the others), as the table had them.
+fn corpus_rows(which: Which, c: &super::super::corpus_runs::kept::Corpus<'_>, unit: i64) -> Vec<Vec<Value>> {
+    let blob = |d: &[u8; 32]| Value::Blob(d.to_vec());
+    match which {
+        Which::Roots => c.roots().into_iter().filter(|r| r.0 == unit).map(|(id, path)| vec![Value::Integer(id), Value::Text(path)]).collect(),
+        Which::Manifests => c
+            .manifest(unit)
+            .map(|m| {
+                vec![vec![
+                    Value::Integer(m.id),
+                    Value::Integer(m.root),
+                    Value::Integer(m.last_run),
+                    Value::Integer(m.last_time),
+                    Value::Integer(m.grammar_version),
+                    Value::Integer(m.tape_format),
+                    blob(&m.plan),
+                    blob(&m.digest),
+                    Value::Blob(super::super::corpus_runs::encode_ids(&c.sources(m.id))),
+                    m.lane.as_ref().map_or(Value::Null, blob),
+                    m.policy.as_ref().map_or(Value::Null, blob),
+                ]]
+            })
+            .unwrap_or_default(),
+        Which::ManifestPlans => c.named(unit).iter().map(|p| vec![Value::Integer(unit), blob(p)]).collect(),
+        Which::Live => c.live_of(unit).into_iter().map(|(g, f)| vec![Value::Integer(unit), Value::Integer(g), Value::Integer(f)]).collect(),
+        Which::Plans => c.plans().into_iter().map(|(p, live)| vec![blob(&p), Value::Integer(i64::from(live))]).collect(),
+        Which::PlanRelations => c
+            .plans()
+            .into_iter()
+            .flat_map(|(p, _)| c.relations(&p).into_iter().map(move |(r, cols)| vec![blob(&p), Value::Text(r), Value::Text(cols)]))
+            .collect(),
+        Which::State => {
+            let s = c.state();
+            vec![[1, s.run, s.history_bytes, s.due, s.archive_due].into_iter().map(Value::Integer).collect()]
+        }
+        Which::Decided => {
+            let s = c.state();
+            vec![[1, s.decided_run, s.decided_time, s.swept].into_iter().map(Value::Integer).collect()]
+        }
+        _ => Vec::new(),
+    }
+}
+
 // SAFETY: SQLite's base is first; the cursor owns its rows and holds its space mapped.
 unsafe impl VTabCursor for Cursor {
     fn filter(&mut self, idx_num: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
@@ -382,6 +474,7 @@ unsafe impl VTabCursor for Cursor {
         self.space = open_cached(&self.opened, &connection, &self.store, &self.which.space())?;
         self.counts = if self.which == Which::Vocabulary { open_cached(&self.counts_opened, &connection, &self.store, &kept::space())? } else { None };
         self.units = match (self.per_tape(), self.space.as_ref()) {
+            (false, None) if matches!(self.which, Which::State | Which::Decided) => vec![0],
             (_, None) => Vec::new(),
             (false, Some(_)) => vec![0],
             (true, Some(space)) => {
@@ -392,6 +485,9 @@ unsafe impl VTabCursor for Cursor {
                     Some(None) if self.which == Which::SearchSets => super::super::search_index::tapes(&space.view()).collect(),
                     Some(None) if self.which == Which::Bindings => derivation::names(&space.view()).collect(),
                     Some(None) if matches!(self.which, Which::Derivations | Which::Inputs) => derivation::outputs(&space.view()).collect(),
+                    Some(None) if self.which == Which::Roots => super::super::corpus_runs::kept::Corpus::of(&space.view()).roots().into_iter().map(|r| r.0).collect(),
+                    Some(None) if matches!(self.which, Which::Manifests | Which::ManifestPlans) => super::super::corpus_runs::kept::Corpus::of(&space.view()).manifest_ids(),
+                    Some(None) if self.which == Which::Live => super::super::corpus_runs::kept::Corpus::of(&space.view()).live_sources(),
                     Some(None) => kept::tapes(&space.view()).collect(),
                 }
             }

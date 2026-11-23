@@ -1,9 +1,9 @@
-//! The corpus runs' tables as kept facts of the store (t33 step 3, the manifest tables; user, 2026-11-23: "move them
-//! in stages: write both forms first, check collection agrees on every test store, then switch the readers, then drop
-//! the tables"). This is the first stage: each write transaction on the eight tables also writes the partitions it
-//! touched, read back from the tables, into one space of the store, in the same transaction (`sync`). `agree` says
-//! where the two forms differ; collection asks it in a test build (`check`), so every test store that collects checks
-//! the kept form against the tables.
+//! The corpus runs as kept facts of the store (t33 step 3, the manifest tables; user, 2026-11-23: "move them in
+//! stages: write both forms first, check collection agrees on every test store, then switch the readers, then drop
+//! the tables"). The eight `corpus_*` tables are gone: every writer writes this space, in its write's transaction
+//! (`Write`, `write_with`), every reader reads it as its connection finds it (`Corpus`, `with_corpus`), and SQL reads
+//! it through virtual tables of the tables' names and columns (`prefilter::vtab`). A store that kept its runs in the
+//! tables has them written here by the schema's upgrade, before they are dropped (`from_tables`).
 //!
 //! One relation a table, keyed as the table is:
 //!
@@ -17,8 +17,8 @@
 //! - `corpus_plan`, a plan's own entry (its identity the plan, partition 0): one row, `live`.
 //! - `corpus_plan_relation`, a plan's own entry: its relations and their columns, as bytes, each `relation\0columns\0`,
 //!   by relation.
-//! - `corpus_state`, partition 0: `run, history_bytes, due, archive_due`, then `corpus_decided`'s `run, time, swept`.
-//!   Always put once mirrored: a space without it was never mirrored, and its first sync mirrors every table.
+//! - `corpus_state`, partition 0: `run, history_bytes, due, archive_due`, then `corpus_decided`'s `run, time, swept`;
+//!   none read as zeros (a new store's).
 //!
 //! A digest is four words, little-endian.
 
@@ -54,26 +54,6 @@ fn words(d: &[u8]) -> [i64; 4] {
 
 fn digest(d: &[u8]) -> StoreResult<[u8; 32]> {
     d.try_into().map_err(|_| StoreError::Corrupt("a corpus digest is not 32 bytes".into()))
-}
-
-/// What a write touched: the partitions `sync` reads back from the tables. `all`: every one.
-#[derive(Default)]
-pub(in crate::content_store) struct Touch {
-    pub all: bool,
-    pub roots: Vec<i64>,
-    pub manifests: Vec<i64>,
-    pub plans: Vec<[u8; 32]>,
-    pub sources: Vec<i64>,
-}
-
-impl Touch {
-    pub fn all() -> Touch {
-        Touch { all: true, ..Touch::default() }
-    }
-
-    pub fn plans(plans: impl IntoIterator<Item = [u8; 32]>) -> Touch {
-        Touch { plans: plans.into_iter().collect(), ..Touch::default() }
-    }
 }
 
 /// One partition as the tables have it: its key, its rows (flat, `width` a row; none: gone), how they are kept.
@@ -219,25 +199,22 @@ fn ids(t: &Connection, sql: &str) -> StoreResult<BTreeSet<i64>> {
     Ok(t.prepare(sql)?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?)
 }
 
-/// The partitions of `touch`, as the tables have them; with `all`, every partition of either form.
-fn wants(t: &Connection, view: Option<&dyn KeptRead>, touch: &Touch) -> StoreResult<Vec<Want>> {
-    let (mut roots, mut manifests, mut plans, mut sources): (BTreeSet<i64>, BTreeSet<i64>, BTreeSet<[u8; 32]>, BTreeSet<i64>) =
-        (touch.roots.iter().copied().collect(), touch.manifests.iter().copied().collect(), touch.plans.iter().copied().collect(), touch.sources.iter().copied().collect());
-    if touch.all {
-        roots.extend(ids(t, "SELECT root_id FROM corpus_roots")?);
-        manifests.extend(ids(t, "SELECT manifest_id FROM corpus_manifests")?);
-        sources.extend(ids(t, "SELECT DISTINCT source_id FROM corpus_live")?);
-        for sql in ["SELECT plan_digest FROM corpus_plans", "SELECT DISTINCT plan_digest FROM corpus_plan_relations"] {
-            for p in t.prepare(sql)?.query_map([], |r| r.get::<_, Vec<u8>>(0))? {
-                plans.insert(digest(&p?)?);
-            }
+/// Every partition of either form, as the tables have them (an old store's, `from_tables`).
+fn wants(t: &Connection, view: Option<&dyn KeptRead>) -> StoreResult<Vec<Want>> {
+    let mut roots = ids(t, "SELECT root_id FROM corpus_roots")?;
+    let mut manifests = ids(t, "SELECT manifest_id FROM corpus_manifests")?;
+    let mut sources = ids(t, "SELECT DISTINCT source_id FROM corpus_live")?;
+    let mut plans: BTreeSet<[u8; 32]> = BTreeSet::new();
+    for sql in ["SELECT plan_digest FROM corpus_plans", "SELECT DISTINCT plan_digest FROM corpus_plan_relations"] {
+        for p in t.prepare(sql)?.query_map([], |r| r.get::<_, Vec<u8>>(0))? {
+            plans.insert(digest(&p?)?);
         }
-        if let Some(view) = view {
-            roots.extend(view.of(ROOT).map(|e| e.key.part));
-            manifests.extend([MANIFEST, SOURCE, NAMED].iter().flat_map(|rel| view.of(rel).map(|e| e.key.part).collect::<Vec<_>>()));
-            sources.extend(view.of(LIVE).map(|e| e.key.part));
-            plans.extend([PLAN, RELATIONS].iter().flat_map(|rel| view.of(rel).map(|e| *e.key.ident).collect::<Vec<_>>()));
-        }
+    }
+    if let Some(view) = view {
+        roots.extend(view.of(ROOT).map(|e| e.key.part));
+        manifests.extend([MANIFEST, SOURCE, NAMED].iter().flat_map(|rel| view.of(rel).map(|e| e.key.part).collect::<Vec<_>>()));
+        sources.extend(view.of(LIVE).map(|e| e.key.part));
+        plans.extend([PLAN, RELATIONS].iter().flat_map(|rel| view.of(rel).map(|e| *e.key.ident).collect::<Vec<_>>()));
     }
     let mut out = vec![state_want(t)?];
     for root in roots {
@@ -264,65 +241,30 @@ fn kept<'v>(view: Option<&'v dyn KeptRead>, w: &Want) -> Option<Kept<'v>> {
     view?.get(&FactKey { rel: w.rel, ident: &w.ident, part: w.part }).filter(|e| *e.key.ident == w.ident)
 }
 
-/// Writes the partitions `touch` names as the tables now have them, in `t` (the write's transaction): those that
-/// differ from the space. A space never mirrored (no `corpus_state`) is mirrored whole.
-pub(in crate::content_store) fn sync(store: &Path, t: &Connection, touch: &Touch) -> StoreResult<Option<ChainRows>> {
-    let old = open(store, t)?;
-    let view = old.as_ref().map(KeptSpace::view);
-    let view = view.as_ref().map(|v| v as &dyn KeptRead);
-    let whole;
-    let touch = if view.is_none_or(|v| v.get(&FactKey { rel: STATE, ident: &ident(STATE), part: 0 }).is_none()) {
-        whole = Touch::all();
-        &whole
-    } else {
-        touch
-    };
-    let puts = wants(t, view, touch)?.into_iter().filter(|w| !w.kept_as(kept(view, w))).map(Want::put).collect::<StoreResult<Vec<_>>>()?;
-    drop(old);
-    if puts.is_empty() { Ok(None) } else { write_space(store, t, &space(), puts, None) }
-}
+/// The tables the kept form replaced (`schema::RETIRED_TABLES`), each a relation of the space.
+pub(in crate::content_store) const TABLES: [&str; 8] =
+    ["corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations", "corpus_state", "corpus_decided"];
 
-/// `sync` on the store `t` is a connection to (its main database): for a writer with no store handle. Its write is
-/// noted once a store handle next writes or reads the space.
-pub(in crate::content_store) fn sync_at(t: &Connection, touch: &Touch) -> StoreResult<()> {
-    match t.path().filter(|p| !p.is_empty()) {
-        Some(path) => sync(Path::new(path), t, touch).map(drop),
-        None => Ok(()),
-    }
-}
-
-/// Whether the store `t` is a connection to holds runs in its tables and no kept form of them: one written before
-/// the kept form was.
-pub(in crate::content_store) fn unmirrored(t: &Connection) -> StoreResult<bool> {
-    Ok(t.query_row(
-        "SELECT NOT EXISTS (SELECT 1 FROM facts_chain WHERE space = ?1) \
-         AND (EXISTS (SELECT 1 FROM corpus_roots) OR EXISTS (SELECT 1 FROM corpus_plans) OR coalesce((SELECT run FROM corpus_state WHERE singleton = 1), 0) > 0)",
-        [&space()[..]],
+/// An old store's runs, from the tables they were kept in before their kept form, into it (in `t`, the schema's
+/// upgrade, before the tables are dropped): every partition that differs. Nothing where the store has no such tables.
+pub(in crate::content_store) fn from_tables(store: &Path, t: &Connection) -> StoreResult<()> {
+    let held: i64 = t.query_row(
+        "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name IN (SELECT value FROM json_each(?1))",
+        [serde_json::to_string(&TABLES).expect("names")],
         |r| r.get(0),
-    )?)
-}
-
-/// Where the kept form differs from the tables, a line each (empty: they agree). A store whose tables are as a new
-/// store's, never mirrored, agrees.
-pub(in crate::content_store) fn agree(store: &Path, t: &Connection) -> StoreResult<Vec<String>> {
+    )?;
+    if held != TABLES.len() as i64 {
+        return Ok(());
+    }
     let old = open(store, t)?;
     let view = old.as_ref().map(KeptSpace::view);
     let view = view.as_ref().map(|v| v as &dyn KeptRead);
-    let wants = wants(t, view, &Touch::all())?;
-    if view.is_none_or(|v| v.get(&FactKey { rel: STATE, ident: &ident(STATE), part: 0 }).is_none())
-        && wants.len() == 1
-        && wants[0].rows.iter().all(|v| *v == 0)
-    {
-        return Ok(Vec::new());
+    let puts = wants(t, view)?.into_iter().filter(|w| !w.kept_as(kept(view, w))).map(Want::put).collect::<StoreResult<Vec<_>>>()?;
+    drop(old);
+    if !puts.is_empty() {
+        write_space(store, t, &space(), puts, None)?;
     }
-    Ok(wants
-        .iter()
-        .filter(|w| !w.kept_as(kept(view, w)))
-        .map(|w| {
-            let had = kept(view, w).map(|k| (0..k.rows.len()).map(|r| k.row(r)).collect::<Vec<_>>());
-            format!("{} {:02x?} {}: tables {:?}, kept {:?}", w.rel, &w.ident[..4], w.part, w.rows, had)
-        })
-        .collect())
+    Ok(())
 }
 
 fn of_words(row: &[i64]) -> [u8; 32] {
@@ -372,51 +314,81 @@ pub(in crate::content_store) struct KeptState {
 /// The corpus runs' kept form, as a transaction finds it (none: a store that keeps none).
 pub(in crate::content_store) struct Corpus<'v>(Option<&'v dyn KeptRead>);
 
-impl Corpus<'_> {
+impl<'v> Corpus<'v> {
+    /// The kept form `view` holds (the space's).
+    pub fn of(view: &'v dyn KeptRead) -> Corpus<'v> {
+        Corpus(Some(view))
+    }
+
+    /// No runs kept (a store with none).
+    pub fn none() -> Corpus<'v> {
+        Corpus(None)
+    }
+
     fn entry(&self, rel: &str, ident: &[u8; 32], part: i64) -> Option<Kept<'_>> {
         self.0?.get(&FactKey { rel, ident, part }).filter(|e| e.key.ident == ident)
     }
 
-    fn of(&self, rel: &'static str) -> Vec<Kept<'_>> {
+    fn all_of(&self, rel: &'static str) -> Vec<Kept<'_>> {
         let id = ident(rel);
         self.0.map(|v| v.of(rel).filter(|e| *e.key.ident == id).collect()).unwrap_or_default()
     }
 
     /// Every root, by id, with its path.
     pub fn roots(&self) -> Vec<(i64, String)> {
-        self.of(ROOT).iter().map(|e| (e.key.part, String::from_utf8_lossy(&bytes_of(e)).into_owned())).collect()
+        self.all_of(ROOT).iter().map(|e| (e.key.part, String::from_utf8_lossy(&bytes_of(e)).into_owned())).collect()
     }
 
     /// The root of `path`.
     pub fn root(&self, path: &str) -> Option<i64> {
-        self.of(ROOT).iter().find(|e| bytes_of(e) == path.as_bytes()).map(|e| e.key.part)
+        self.all_of(ROOT).iter().find(|e| bytes_of(e) == path.as_bytes()).map(|e| e.key.part)
+    }
+
+    fn manifest_of(e: &Kept<'_>) -> Option<KeptManifest> {
+        if e.rows.len() != 1 || e.rows.arity != 23 {
+            return None;
+        }
+        let r = e.row(0);
+        let opt = |at: usize| (r[at] != 0).then(|| of_words(&r[at + 1..at + 5]));
+        Some(KeptManifest {
+            id: e.key.part,
+            root: r[0],
+            last_run: r[1],
+            last_time: r[2],
+            grammar_version: r[3],
+            tape_format: r[4],
+            plan: of_words(&r[5..9]),
+            digest: of_words(&r[9..13]),
+            lane: opt(13),
+            policy: opt(18),
+        })
     }
 
     /// Every manifest, newest run first.
     pub fn manifests(&self) -> Vec<KeptManifest> {
-        let mut out: Vec<KeptManifest> = self
-            .of(MANIFEST)
-            .iter()
-            .filter(|e| e.rows.len() == 1)
-            .map(|e| {
-                let r = e.row(0);
-                let opt = |at: usize| (r[at] != 0).then(|| of_words(&r[at + 1..at + 5]));
-                KeptManifest {
-                    id: e.key.part,
-                    root: r[0],
-                    last_run: r[1],
-                    last_time: r[2],
-                    grammar_version: r[3],
-                    tape_format: r[4],
-                    plan: of_words(&r[5..9]),
-                    digest: of_words(&r[9..13]),
-                    lane: opt(13),
-                    policy: opt(18),
-                }
-            })
-            .collect();
+        let mut out: Vec<KeptManifest> = self.all_of(MANIFEST).iter().filter_map(Self::manifest_of).collect();
         out.sort_by_key(|m| std::cmp::Reverse(m.last_run));
         out
+    }
+
+    /// Manifest `id`.
+    pub fn manifest(&self, id: i64) -> Option<KeptManifest> {
+        self.entry(MANIFEST, &ident(MANIFEST), id).as_ref().and_then(Self::manifest_of)
+    }
+
+    /// Every manifest's id, ascending.
+    pub fn manifest_ids(&self) -> Vec<i64> {
+        self.all_of(MANIFEST).iter().map(|e| e.key.part).collect()
+    }
+
+    /// Every source `corpus_live` holds, ascending.
+    pub fn live_sources(&self) -> Vec<i64> {
+        self.all_of(LIVE).iter().map(|e| e.key.part).collect()
+    }
+
+    /// Source `source`'s live tapes' `(grammar_version, tape_format)`.
+    pub fn live_of(&self, source: i64) -> Vec<(i64, i64)> {
+        self.entry(LIVE, &ident(LIVE), source).map(|e| (0..e.rows.len()).map(|r| (e.rows.get(r, 0), e.rows.get(r, 1))).collect()).unwrap_or_default()
     }
 
     /// `root`'s manifests, newest run first.
@@ -449,16 +421,103 @@ impl Corpus<'_> {
         parts.chunks_exact(2).map(|p| (String::from_utf8_lossy(p[0]).into_owned(), String::from_utf8_lossy(p[1]).into_owned())).collect()
     }
 
-    /// The source ids `corpus_live` holds, each with its tapes' `(grammar_version, tape_format)`.
-    pub fn live(&self) -> Vec<(i64, i64, i64)> {
-        self.of(LIVE).iter().flat_map(|e| (0..e.rows.len()).map(move |r| (e.key.part, e.rows.get(r, 0), e.rows.get(r, 1)))).collect()
-    }
-
     pub fn state(&self) -> KeptState {
         let Some(e) = self.entry(STATE, &ident(STATE), 0).filter(|e| e.rows.len() == 1) else { return KeptState::default() };
         let r = e.row(0);
         KeptState { run: r[0], history_bytes: r[1], due: r[2], archive_due: r[3], decided_run: r[4], decided_time: r[5], swept: r[6] }
     }
+}
+
+/// A write of the corpus runs' kept form, in a write's transaction: each partition it names replaced whole by what
+/// it gives (none: gone), as the tables' rows were replaced by their statements.
+#[derive(Default)]
+pub(in crate::content_store) struct Write {
+    puts: std::collections::BTreeMap<(&'static str, [u8; 32], i64), Want>,
+}
+
+impl Write {
+    fn put(&mut self, w: Want) {
+        self.puts.insert((w.rel, w.ident, w.part), w);
+    }
+
+    /// Root `id`'s path (none: the root gone).
+    pub fn root(&mut self, id: i64, path: Option<&str>) {
+        self.put(Want::text(ROOT, ident(ROOT), id, path.map(str::as_bytes)));
+    }
+
+    /// Manifest `m` (by its id), or manifest `id` gone with its sources and named plans.
+    pub fn manifest(&mut self, id: i64, m: Option<&KeptManifest>) {
+        let mut row = Vec::new();
+        if let Some(m) = m {
+            row.extend([m.root, m.last_run, m.last_time, m.grammar_version, m.tape_format]);
+            row.extend(words(&m.plan));
+            row.extend(words(&m.digest));
+            for d in [m.lane, m.policy] {
+                row.push(i64::from(d.is_some()));
+                row.extend(words(&d.unwrap_or([0; 32])));
+            }
+        } else {
+            self.sources(id, &[]);
+            self.named(id, &[]);
+        }
+        self.put(Want::sorted(MANIFEST, ident(MANIFEST), id, 23, row));
+    }
+
+    /// The sources manifest `id` read.
+    pub fn sources(&mut self, id: i64, sources: &[i64]) {
+        self.put(Want::sorted(SOURCE, ident(SOURCE), id, 1, sources.to_vec()));
+    }
+
+    /// The other plans manifest `id` names.
+    pub fn named(&mut self, id: i64, plans: &[[u8; 32]]) {
+        self.put(Want::sorted(NAMED, ident(NAMED), id, 4, plans.iter().flat_map(|p| words(p)).collect()));
+    }
+
+    /// Source `source`'s live tapes.
+    pub fn live(&mut self, source: i64, tapes: &[(i64, i64)]) {
+        self.put(Want::sorted(LIVE, ident(LIVE), source, 2, tapes.iter().flat_map(|&(g, f)| [g, f]).collect()));
+    }
+
+    /// Plan `plan`, live or dead (none: forgotten, with its relations).
+    pub fn plan(&mut self, plan: [u8; 32], live: Option<bool>) {
+        if live.is_none() {
+            self.relations(plan, &[]);
+        }
+        self.put(Want::sorted(PLAN, plan, 0, 1, live.map(i64::from).into_iter().collect()));
+    }
+
+    /// Plan `plan`'s relations and their columns.
+    pub fn relations(&mut self, plan: [u8; 32], relations: &[(String, String)]) {
+        let mut sorted: Vec<&(String, String)> = relations.iter().collect();
+        sorted.sort();
+        let text: Vec<u8> = sorted.iter().flat_map(|(r, c)| [r.as_bytes(), b"\0", c.as_bytes(), b"\0"].concat()).collect();
+        self.put(Want::text(RELATIONS, plan, 0, (!relations.is_empty()).then_some(&text[..])));
+    }
+
+    pub fn state(&mut self, s: KeptState) {
+        self.put(Want::sorted(STATE, ident(STATE), 0, 7, vec![s.run, s.history_bytes, s.due, s.archive_due, s.decided_run, s.decided_time, s.swept]));
+    }
+}
+
+/// `f` over the kept form as `t` (a write's transaction on the store at `store`) finds it, then its write, in `t`:
+/// what to note once `t` commits (`ContentStore::note_kept`).
+pub(in crate::content_store) fn write_with<T>(store: &Path, t: &Connection, f: impl FnOnce(&Corpus<'_>, &mut Write) -> StoreResult<T>) -> StoreResult<(T, Option<ChainRows>)> {
+    let kept = open(store, t)?;
+    let view = kept.as_ref().map(KeptSpace::view);
+    let mut w = Write::default();
+    let out = f(&Corpus(view.as_ref().map(|v| v as &dyn KeptRead)), &mut w)?;
+    let puts = w.puts.into_values().filter(|p| !p.kept_as(view.as_ref().and_then(|v| v.get(&FactKey { rel: p.rel, ident: &p.ident, part: p.part }).filter(|e| *e.key.ident == p.ident)))).map(Want::put).collect::<StoreResult<Vec<_>>>()?;
+    drop(view);
+    drop(kept);
+    let written = if puts.is_empty() { None } else { write_space(store, t, &space(), puts, None)? };
+    Ok((out, written))
+}
+
+/// `write_with` on the store `t` is a connection to (for a writer with no store handle; its write noted once a store
+/// handle next reads the space).
+pub(in crate::content_store) fn write_at<T>(t: &Connection, f: impl FnOnce(&Corpus<'_>, &mut Write) -> StoreResult<T>) -> StoreResult<T> {
+    let store = std::path::PathBuf::from(t.path().unwrap_or_default());
+    Ok(write_with(&store, t, f)?.0)
 }
 
 /// `f` over the kept form of the corpus runs as `t` (a connection to the store at `store`) finds it.
@@ -469,32 +528,28 @@ pub(in crate::content_store) fn with_corpus<T>(store: &Path, t: &Connection, f: 
 }
 
 impl ContentStore {
+    /// `write_with` in `t`, a write's transaction of this store.
+    pub(in crate::content_store) fn corpus_write<T>(&self, t: &Connection, f: impl FnOnce(&Corpus<'_>, &mut Write) -> StoreResult<T>) -> StoreResult<(T, Option<ChainRows>)> {
+        write_with(&self.database_path, t, f)
+    }
+
+    /// Changes the corpus runs' state alone, in a transaction of its own.
+    pub(in crate::content_store) fn corpus_state_with(&self, f: impl Fn(&mut KeptState)) -> StoreResult<()> {
+        let ((), written) = self.immediate_transaction(|t| {
+            self.corpus_write(t, |c, w| {
+                let mut s = c.state();
+                f(&mut s);
+                w.state(s);
+                Ok(())
+            })
+        })?;
+        self.note_kept(&space(), written);
+        Ok(())
+    }
+
     /// `with_corpus` on the store's connection.
     pub(in crate::content_store) fn corpus_kept<T>(&self, f: impl FnOnce(&Corpus<'_>) -> T) -> StoreResult<T> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
         with_corpus(&self.database_path, &connection, f)
-    }
-
-    /// Mirrors what `touch` names into the kept form, in `t` (`sync`), and returns what to note once committed.
-    pub(in crate::content_store) fn mirror_corpus(&self, t: &Connection, touch: &Touch) -> StoreResult<Option<ChainRows>> {
-        sync(&self.database_path, t, touch)
-    }
-
-    /// Where the corpus runs' kept form differs from their tables (`agree`).
-    /// Both read in one transaction, as no writer's commit can fall between them.
-    pub fn corpus_kept_differences(&self) -> StoreResult<Vec<String>> {
-        self.immediate_transaction(|t| agree(&self.database_path, t))
-    }
-
-    /// In a test build, refuses a collection whose kept form of the corpus runs differs from their tables (stage 2 of
-    /// the move: every test store that collects checks it).
-    pub(in crate::content_store) fn check_corpus_kept(&self) -> StoreResult<()> {
-        if cfg!(any(test, feature = "test-hooks")) {
-            let differences = self.corpus_kept_differences()?;
-            if !differences.is_empty() {
-                return Err(StoreError::Corrupt(format!("the corpus runs' kept facts differ from their tables: {}", differences.join("; "))));
-            }
-        }
-        Ok(())
     }
 }

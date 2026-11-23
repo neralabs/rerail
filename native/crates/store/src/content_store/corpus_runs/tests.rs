@@ -35,50 +35,68 @@ fn sizes(n: i64, bytes: u64) -> Sizes {
     s
 }
 
-/// The corpus runs' tables and their kept form agree through a root's life (the manifest tables' move, stage 1):
-/// runs recorded, moved and naming other plans, a plan's relations and hold, a keep decision that evicts and marks
-/// plans dead, and the passes that collect them. A store mirrored before (its tables but no kept form) is mirrored
-/// whole by its next write.
+/// t33 step 3: a store that kept its runs in the eight `corpus_*` tables has them as kept facts once opened: read by
+/// the store's readers and, the tables gone, through virtual tables of their names; a scope's membership of a
+/// manifest stays (the table's drop would have cascaded into it).
 #[test]
-fn the_corpus_runs_kept_form_agrees_with_their_tables() {
-    let (_path, store) = store("corpus-kept-mirror");
-    let agree = |what: &str| assert_eq!(store.corpus_kept_differences().unwrap(), Vec::<String>::new(), "{what}");
-    agree("a new store");
-    let root = "/virtual/mirror";
-    let sources: Vec<SourceId> = (1..=5).map(SourceId).collect();
-    for (i, plan) in [[1u8; 32], [2; 32], [3; 32]].into_iter().enumerate() {
-        store.record_corpus_run_naming(root, &sources[i..i + 3], 1, 1, plan, &[[9; 32]], 100 + i as i64).unwrap();
-        agree("a run recorded");
-    }
-    store.record_corpus_run_naming(root, &sources[2..5], 1, 1, [3; 32], &[[9; 32]], 110).unwrap();
-    agree("a run moved");
-    store.record_corpus_run_lane("/virtual/other", &sources[..1], 1, 2, [4; 32], &[], Some([7; 32]), 111).unwrap();
-    agree("a lane's run");
-    store.record_corpus_relations([3; 32], &[("rel_a".into(), "[\"x\"]".into()), ("rel_b".into(), "[]".into())]).unwrap();
-    agree("a plan's relations");
-    store.hold_corpus_plan([5; 32], "mirror-owner", 10_000).unwrap();
-    agree("a plan held");
-    let policy = CorpusPolicy { protected_runs: 1, protected_lanes: 1, backstop_secs: 0, missing_secs: 0, ..CorpusPolicy::default() };
-    let kept = store.keep_corpus_runs(&policy, 200).unwrap();
-    assert!(kept.evicted > 0, "the decision evicts a manifest: {kept:?}");
-    agree("a keep decision");
-    for _ in 0..4 {
-        store.collect_corpus_pass(&policy, 200).unwrap();
-        agree("a collection pass");
-    }
-    store.sweep_memo(|| false).unwrap();
-    agree("a sweep");
-    // A store whose tables were written before the kept form: its next write mirrors every table.
-    store
-        .immediate_transaction(|t| {
-            let rows = super::super::kept_facts::chain_rows(t, &kept::space())?;
-            assert!(!rows.is_empty(), "the space is written");
-            t.execute("DELETE FROM facts_chain WHERE space=?1", [&kept::space()[..]])?;
-            Ok(())
-        })
-        .unwrap();
-    store.record_corpus_run_naming(root, &sources[..2], 1, 1, [6; 32], &[], 300).unwrap();
-    agree("a store mirrored whole by its next write");
+fn an_old_stores_corpus_tables_become_kept_facts() {
+    let (path, store) = store("corpus-tables-upgrade");
+    drop(store);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch(
+        "PRAGMA foreign_keys=OFF;
+         CREATE TABLE corpus_roots (root_id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE) STRICT;
+         CREATE TABLE corpus_manifests (manifest_id INTEGER PRIMARY KEY, root_id INTEGER NOT NULL REFERENCES corpus_roots(root_id),
+             last_run INTEGER NOT NULL, last_time INTEGER NOT NULL, grammar_version INTEGER NOT NULL, tape_format INTEGER NOT NULL,
+             plan_digest BLOB NOT NULL, digest BLOB NOT NULL, sources BLOB NOT NULL, lane BLOB, policy BLOB, UNIQUE (root_id, digest)) STRICT;
+         CREATE TABLE corpus_live (source_id INTEGER NOT NULL, grammar_version INTEGER NOT NULL, tape_format INTEGER NOT NULL,
+             PRIMARY KEY (source_id, grammar_version, tape_format)) STRICT, WITHOUT ROWID;
+         CREATE TABLE corpus_plans (plan_digest BLOB PRIMARY KEY, live INTEGER NOT NULL) STRICT, WITHOUT ROWID;
+         CREATE TABLE corpus_plan_relations (plan_digest BLOB NOT NULL, relation TEXT NOT NULL, columns TEXT NOT NULL,
+             PRIMARY KEY (plan_digest, relation)) STRICT, WITHOUT ROWID;
+         CREATE TABLE corpus_state (singleton INTEGER PRIMARY KEY, run INTEGER NOT NULL, history_bytes INTEGER NOT NULL,
+             due INTEGER NOT NULL, archive_due INTEGER NOT NULL DEFAULT 0) STRICT;
+         CREATE TABLE corpus_decided (singleton INTEGER PRIMARY KEY, run INTEGER NOT NULL, time INTEGER NOT NULL,
+             swept INTEGER NOT NULL DEFAULT 0) STRICT;
+         CREATE TABLE corpus_manifest_plans (manifest_id INTEGER NOT NULL, plan_digest BLOB NOT NULL,
+             PRIMARY KEY (manifest_id, plan_digest)) STRICT, WITHOUT ROWID;
+         DROP TABLE analysis_scope_manifest;
+         CREATE TABLE analysis_scope_manifest (scope TEXT NOT NULL,
+             manifest_id INTEGER NOT NULL REFERENCES corpus_manifests(manifest_id) ON DELETE CASCADE,
+             acquired_at INTEGER NOT NULL DEFAULT 0, acquisition INTEGER NOT NULL DEFAULT 0, recorded_run INTEGER NOT NULL DEFAULT 0,
+             PRIMARY KEY(scope, manifest_id)) STRICT, WITHOUT ROWID;
+         INSERT INTO corpus_roots VALUES (4, '/old/root');
+         INSERT INTO corpus_live VALUES (3, 1, 1), (5, 1, 1), (9, 1, 1);
+         INSERT INTO corpus_state VALUES (1, 5, 0, 1, 0);
+         INSERT INTO corpus_decided VALUES (1, 3, 100, 3);
+         INSERT INTO analysis_scope_manifest VALUES ('named:old', 2, 0, 0, 5);",
+    )
+    .unwrap();
+    let (plan, named) = ([7u8; 32], [8u8; 32]);
+    db.execute(
+        "INSERT INTO corpus_manifests VALUES (2, 4, 5, 200, 1, 1, ?1, ?2, ?3, NULL, NULL)",
+        rusqlite::params![&plan[..], &[6u8; 32][..], encode_ids(&[3, 5, 9])],
+    )
+    .unwrap();
+    db.execute("INSERT INTO corpus_manifest_plans VALUES (2, ?1)", [&named[..]]).unwrap();
+    db.execute("INSERT INTO corpus_plans VALUES (?1, 1), (?2, 1), (?3, 0)", rusqlite::params![&plan[..], &named[..], &[9u8; 32][..]]).unwrap();
+    db.execute("INSERT INTO corpus_plan_relations VALUES (?1, 'rel_a', '[]')", [&plan[..]]).unwrap();
+    drop(db);
+    let store = ContentStore::open(&path).unwrap();
+    assert_eq!(store.corpus_run_of("/old/root").unwrap(), Some((plan, vec![3, 5, 9], vec![("rel_a".to_owned(), "[]".to_owned())])));
+    assert_eq!(store.corpus_run_also("/old/root").unwrap(), vec![named]);
+    assert_eq!(store.live_plans().unwrap(), HashSet::from([plan, named]));
+    assert!(store.corpus_collection_due().unwrap(), "its state kept");
+    let c = store.connection.lock().unwrap();
+    let one = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(one("SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name GLOB 'corpus_*'"), 0, "the tables gone");
+    assert_eq!(one("SELECT run FROM corpus_state"), 5);
+    assert_eq!(one("SELECT swept FROM corpus_decided"), 3);
+    assert_eq!(one("SELECT count(*) FROM corpus_live"), 3);
+    assert_eq!(one("SELECT count(*) FROM corpus_manifests m JOIN corpus_roots r USING (root_id) WHERE r.path = '/old/root'"), 1);
+    assert_eq!(one("SELECT count(*) FROM corpus_plans WHERE live = 0"), 1);
+    assert_eq!(one("SELECT count(*) FROM analysis_scope_manifest WHERE manifest_id = 2"), 1, "the scope's membership kept");
+    assert!(!c.query_row("SELECT sql FROM sqlite_schema WHERE name = 'analysis_scope_manifest'", [], |r| r.get::<_, String>(0)).unwrap().contains("REFERENCES"));
 }
 
 #[test]
@@ -825,7 +843,8 @@ fn migrating_directory_membership_freezes_the_existing_manifest_order() {
     }
     drop(store);
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.execute_batch("CREATE TEMP TABLE old_rows AS SELECT scope,manifest_id,acquired_at FROM analysis_scope_manifest;
+    db.execute_batch("PRAGMA foreign_keys=OFF;
+        CREATE TEMP TABLE old_rows AS SELECT scope,manifest_id,acquired_at FROM analysis_scope_manifest;
         DROP TABLE analysis_scope_manifest;
         CREATE TABLE analysis_scope_manifest (
             scope TEXT NOT NULL, manifest_id INTEGER NOT NULL REFERENCES corpus_manifests(manifest_id) ON DELETE CASCADE,

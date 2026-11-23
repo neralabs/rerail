@@ -52,6 +52,8 @@ const FACT_STORE: &[&str] = &[
     "object_archive",
     "workspace_overlay",
     "analysis_scope_manifest",
+    // The same table, rebuilt once without its key to the corpus runs' retired manifests table (t33 step 3).
+    "analysis_scope_manifest_new",
     "analysis_scope_snapshot",
     "analysis_scope_generation",
     "analysis_directory_acquisition",
@@ -129,16 +131,7 @@ const SCRATCH: &[&str] = &[
     "facts",
 ];
 /// Caches between runs not yet facts: (table, the 0104 step that moves it).
-const NOT_YET_TABLES: &[(&str, &str)] = &[
-    ("corpus_plans", "3"),
-    ("corpus_plan_relations", "3"),
-    ("corpus_manifests", "3"),
-    ("corpus_manifest_plans", "3"),
-    ("corpus_roots", "3"),
-    ("corpus_live", "3"),
-    ("corpus_state", "3"),
-    ("corpus_decided", "3"),
-];
+const NOT_YET_TABLES: &[(&str, &str)] = &[];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
 /// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take; back to 61 once a
 /// merge took one out (2026-11-12); 58 when the cross-file memo's three tables went (decision 0450 §3, 2026-11-19); 57 when `local_check_results`, which nothing wrote, went (0450 step 2); 56 when
@@ -158,8 +151,10 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// answers, the constants, the whole-run cutoff) became kept facts of the observer's space (t33 step 1); 9 when the
 /// derivation graph (names' bindings, derivations and their inputs) became kept facts of the store, read through virtual
 /// tables of their names (t33 step 1); 8 when the cost model saved per machine became a kept fact of the statistics' store
-/// (`costs::models`, t33 step 6).
-const NOT_YET_TABLES_PIN: usize = 8;
+/// (`costs::models`, t33 step 6); 0 when the corpus runs' eight tables (roots, manifests and their plans, live
+/// tapes, plans and their relations, the state and the last decision) became kept facts of the store, read through
+/// virtual tables of their names (t33 step 3).
+const NOT_YET_TABLES_PIN: usize = 0;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
