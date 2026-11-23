@@ -7,7 +7,7 @@ import { getHeapStatistics } from "node:v8";
  * collection, read as its entry is delivered, once `memoryRoom` watches full collections, else the heap's count now.
  * `available` is what the system says other programs can still have; undefined where its figure does not count what the
  * system would free: on macOS libuv reads only the free pages, and the system keeps most of its memory as cache it gives
- * back on demand, so the figure is low on an idle Mac.
+ * back on demand, so the figure is low on an idle Mac. Without it the daemon reads as short of room (`needsRoom`).
  */
 export interface MemoryReading {
   readonly heapUsed: number;
@@ -73,12 +73,15 @@ export function readMemory(platform: NodeJS.Platform = process.platform): Memory
  * Whether the daemon needs the room that what no session uses takes (a checkout's runtime with its compiled rules and
  * source walk): its heap is past `HEAP_ROOM_RATIO` of its limit, it holds more than `RESIDENT_SHARE` of the machine's
  * memory, or the machine has less than `AVAILABLE_FLOOR` of it left. Otherwise keeping it costs nobody memory they need,
- * and a session that comes back to its checkout finds its rules compiled.
+ * and a session that comes back to its checkout finds its rules compiled. Where the machine's free memory is not read
+ * (`available` undefined: macOS), nothing shows that other programs have room, so it always does: what no session uses
+ * goes there 15 minutes after its last session left, as it always did.
  */
 export function needsRoom(reading: MemoryReading): boolean {
+  if (reading.available === undefined) return true;
   if (reading.heapUsed > reading.heapLimit * HEAP_ROOM_RATIO) return true;
   if (reading.resident > reading.total * RESIDENT_SHARE) return true;
-  return reading.available !== undefined && reading.available < reading.total * AVAILABLE_FLOOR;
+  return reading.available < reading.total * AVAILABLE_FLOOR;
 }
 
 /**

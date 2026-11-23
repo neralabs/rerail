@@ -30,9 +30,11 @@ describe("whether the daemon needs the room what no session uses takes", () => {
     expect(needsRoom({ ...roomy, available: 1.59 * GB })).toBe(true);
   });
 
-  it("judges a machine whose free memory does not count its cache by the daemon's own figures alone", () => {
-    expect(needsRoom({ ...roomy, available: undefined })).toBe(false);
-    expect(needsRoom({ ...roomy, available: undefined, resident: 4.01 * GB })).toBe(true);
+  // A machine whose free memory is not read (macOS) shows no room to spare, so what no session uses goes at main's 15
+  // minutes there, however little the daemon holds.
+  it("needs the room wherever the machine's free memory is not read", () => {
+    expect(needsRoom({ ...roomy, available: undefined })).toBe(true);
+    expect(memoryRoom("darwin")()).toBe(true);
   });
 
   // macOS reports only its free pages, which an idle Mac keeps low by caching: read there, every unused runtime would go.

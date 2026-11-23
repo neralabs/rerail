@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { folderRemoved, KeptRuntimes, type KeptRuntimesOptions } from "../../../src/runtime/memory/kept-runtimes.js";
+import { memoryRoom } from "../../../src/runtime/memory/memory-room.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const MINUTE = 60_000;
@@ -82,6 +83,20 @@ describe("the runtimes no session uses, kept for their checkout's next session",
     clock.now += 15 * MINUTE;
     await runtimes.sweep();
     expect(closed).toEqual(["a", "b", "c"]);
+  });
+
+  // macOS does not say what memory other programs can still have, only its free pages: a 16 GB Mac would keep up to
+  // 4 GB of rules no session uses for as long as the daemon runs, where `main` freed them after 15 minutes.
+  it("closes on macOS each runtime kept 15 minutes, as main did, though the daemon's own memory leaves room", async () => {
+    const { runtimes, closed, clock } = kept(["a"], { needsRoom: memoryRoom("darwin") });
+    runtimes.left("a");
+    clock.now += 15 * MINUTE - 1;
+    await runtimes.sweep();
+    expect(closed).toEqual([]);
+
+    clock.now += 1;
+    await runtimes.sweep();
+    expect(closed).toEqual(["a"]);
   });
 
   it("reads no memory at a sweep while no runtime has been kept 15 minutes", async () => {

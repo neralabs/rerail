@@ -4,8 +4,9 @@ import { stat } from "node:fs/promises";
  * How long a runtime no session uses stays open before anything but the heap watch's relief or the daemon's stop may
  * close it: the 15 minutes every such runtime stayed open whatever the memory or its folder, so that a /clear, or a
  * session back after a short break, finds its checkout's rules compiled as it did. Past it, the runtime closes while the
- * daemon is short of room, so none is held longer than it was then, and with room once its checkout folder was removed:
- * a folder gone for a moment, moved and moved back or on a share that dropped, costs nobody the rules kept for it within
+ * daemon is short of room, so none is held longer than it was then; on macOS, whose free memory is not read, the daemon
+ * is always short of it (`needsRoom` in memory-room.ts). With room it closes once its checkout folder was removed: a
+ * folder gone for a moment, moved and moved back or on a share that dropped, costs nobody the rules kept for it within
  * the time they always were.
  */
 export const UNUSED_KEEP_MS = 15 * 60_000;
