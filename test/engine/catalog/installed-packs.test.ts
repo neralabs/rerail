@@ -29,6 +29,7 @@ import {
   temporaryDirectory,
 } from "../../support/rule-configuration-builders.js";
 import { CheckoutCatalogs } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { physicalPath } from "../../../src/engine/catalog/checkout-control.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 import { experimentOffMessage } from "../../../src/engine/experimental-features.js";
@@ -253,7 +254,8 @@ describe("the installed-pack catalog", () => {
     expect(summary(catalog)).toEqual({ packs: ["complexity"], skipped: [] });
     expect(catalog.documents.has(PYTHON_RULE)).toBe(true);
 
-    const root = await temporaryDirectory();
+    // The daemon asks for a checkout's catalog by its physical path: on macOS the temporary folder is reached by a link.
+    const root = physicalPath(await temporaryDirectory());
     execFileSync("git", ["init", "--quiet"], { cwd: root });
     const databasePath = join(root, ".rerail", "rerail.sqlite");
     setUpTestRepository(root, { packs: ["complexity"] }, databasePath);
@@ -290,7 +292,7 @@ describe("the installed-pack catalog", () => {
     const catalog = loadRuleCatalog();
 
     expect(summary(catalog)).toEqual({ packs: ["complexity"], skipped: [] });
-    const root = await temporaryDirectory();
+    const root = physicalPath(await temporaryDirectory());
     execFileSync("git", ["init", "--quiet"], { cwd: root });
     const databasePath = join(root, ".rerail", "rerail.sqlite");
     setUpTestRepository(root, { packs: ["complexity"] }, databasePath);
