@@ -557,18 +557,26 @@ So:
      differ, and the device's rows say nothing more.
    - **Each entry carries its expansion** (`pxp`, a fifth column beside `psrc`, `pst`, `pn` and `pexp`). It is
      written where a body's token or piece enters a list, and copied with the entry wherever the entry goes.
-   - **A run's rows are relative to the run.**
-     - A piece's run makes absolute rows, from the unit's counter.
-     - A request's run (a call's, or an argument's) makes local rows `L(i)`. Its own call is `SELF`. An entry
-       from its raw arguments carries `ARG(j)`, raw entry `j`'s expansion in the holder's frame.
-     - A memoized result stores its rows as a template in the same terms. A hit instantiates the template where
-       it is used: `SELF` becomes the hit's call row, `ARG(j)` becomes the hit's raw entry `j`'s `pxp`, and each
-       `L(i)` becomes a row of the hit's frame.
-   - **A hole is an occurrence.** Its holder makes the posted call's row (its parent is the name's `pxp`) and keeps
-     its raw entries' `pxp`, so a request's result shared by holders in other contexts is resolved by each
-     holder's own arguments. The roll-up (`lp_roll_place`, `lp_leaves`) walks the occurrences top down. It gives
-     each one its result's rows at the occurrence's base, resolving `SELF` and `ARG` through the path, and writes
-     them to the unit's `EXPANSION` store. The host reads that store into `ExpansionRow`s.
+   - **A run's rows are its own log.** Each run (a piece's, a request's, an argument's) logs its events in a region
+     of its own. An entry's `pxp` is a reference in its run's terms: 0 for the text (the name's position is its
+     origin), `L(i)` for the log's row `i`, and in a request's run `L(0)` for its own call and `ARG(j)` for its raw
+     entry `j`. An event is a call, which is a row whose parent is its name's `pxp`, or an occurrence of another
+     result.
+   - **A memo capture is a template.** While a capture is open, its call's raw entries carry `ARG(j)` marks; their
+     own references are kept with the capture's copy of them in region 4. When the capture closes:
+     - the rows logged in it become the memo entry's template, relative to its first row, with its call `L(0)`
+       and its arguments `ARG(j)`. A top call's text positions are relative to its `(`, as its pieces' are;
+     - the run's own log and the entries written in the capture get the marks back as the kept references.
+   - **A hit is the template's rows copied into the run's log** at a base `B`, with `L(0)` its call's row and
+     `ARG(j)` its raw entry `j`'s reference. These are rows the run makes, written once where they are computed:
+     not a block copy. A node read by reference is read in a frame that carries its `B`, so its tokens'
+     `L(i)` are the run's `L(B + i)`. Nested nodes of the same result take the same `B`.
+   - **A hole is an occurrence.** Its holder logs it with its call's row and its raw entries' references, since
+     a request's result can be shared by holders in other contexts. A taken argument's node is logged the same
+     way. After the loop, the roll-up walks each piece's log top down. A call becomes a row of the unit's
+     `EXPANSION` store, and an occurrence walks its result's log with its call and arguments resolved in the
+     holder's terms; the walk's depth is bounded, as `lp_leaves`'s is. The host reads the store into
+     `ExpansionRow`s.
 
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
