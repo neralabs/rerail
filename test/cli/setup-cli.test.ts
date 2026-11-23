@@ -65,6 +65,8 @@ import {
 import { POSIX_MODES } from "../support/platform/file-mode.js";
 import { stubUserHome } from "../support/user-home.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { installPackDirectory, withOlderTokenRule } from "../support/installed-packs.js";
+import { fixturesPath } from "../support/oracles.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -792,6 +794,17 @@ describe("rerail install --refresh", () => {
 
     expect(output.stdout()).toContain("Coding agents up to date: OMP");
     expect(output.stdout()).toContain("note: OMP also loads Rerail from its plugin install, so two copies run");
+  });
+
+  // Every update ends with this refresh, run by the version it activated, which keeps the installed packs' versions.
+  it("names the installed packs whose rules this Rerail does not run", async () => {
+    const { context } = await fixture();
+    installPackDirectory(withOlderTokenRule(fixturesPath("packs", "valid"), join(context.home, "copy"), "pass-statement"), "valid", context.home);
+    const output = captureOutput();
+
+    expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+    expect(output.stdout()).toContain("This Rerail does not run 1 rule of Valid 0.1.0 (1): it tests a token parsed files now leave out. The pack's next version runs it again; rerail packs list names it.\n");
   });
 
   it("says so and writes nothing when no coding agent is connected", async () => {

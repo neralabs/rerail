@@ -1,0 +1,18 @@
+.policy "rr-sample-assert" revision 1
+.description "Raise an exception instead of asserting, since Python strips asserts when it runs with optimization."
+.language python
+.mode steer
+.scope include "**/*.py"
+// A fixture rule (fixtures/packs/README.md): one file, including nothing.
+
+.violation A001(at: node) code "A001" "Raise an exception here; Python strips asserts when it runs with -O."
+A001(a) :- kind(a, "assert_statement").
+
+.test asserts_are_reported exactly
+    .fixture "app/views.py" ```
+        def view(user):
+            assert user.is_admin
+            return user
+        ```
+    .expect A001 at "app/views.py":2
+.end

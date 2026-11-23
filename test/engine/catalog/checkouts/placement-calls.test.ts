@@ -83,10 +83,10 @@ function placementCalls(root: string, folder: string): Calls {
  */
 const CALLS: Readonly<Partial<Record<NodeJS.Platform, Readonly<Record<"first" | "fromFiles" | "kept" | "main", Calls>>>>> = {
   linux: {
-    first: { access: 2, lstat: 10, open: 6, readlink: 0, realpath: 4, realpathNative: 8, stat: 0, git: 1 },
-    fromFiles: { access: 2, lstat: 5, open: 5, readlink: 0, realpath: 2, realpathNative: 5, stat: 0, git: 0 },
+    first: { access: 2, lstat: 10, open: 6, readlink: 0, realpath: 2, realpathNative: 10, stat: 0, git: 1 },
+    fromFiles: { access: 2, lstat: 5, open: 5, readlink: 0, realpath: 0, realpathNative: 7, stat: 0, git: 0 },
     kept: { access: 2, lstat: 4, open: 4, readlink: 0, realpath: 0, realpathNative: 3, stat: 0, git: 0 },
-    main: { access: 4, lstat: 12, open: 5, readlink: 0, realpath: 4, realpathNative: 4, stat: 0, git: 1 },
+    main: { access: 4, lstat: 12, open: 5, readlink: 0, realpath: 2, realpathNative: 6, stat: 0, git: 1 },
   },
   win32: {
     first: { access: 2, lstat: 8, open: 6, readlink: 0, realpath: 0, realpathNative: 11, stat: 0, git: 1 },

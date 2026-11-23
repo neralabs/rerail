@@ -1,0 +1,213 @@
+.policy "django-practice-select-for-update-outside-atomic" revision 1
+.description "Evaluate a select_for_update() queryset inside transaction.atomic(), in the function or in every caller chain that reaches it."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. In autocommit mode a select_for_update() queryset raises TransactionManagementError
+// on PostgreSQL, MySQL and Oracle; TestCase wraps every test in a transaction, so the tests pass and production
+// raises. It matches `<qs>.select_for_update(…)` in a def f (outside tests), not inside `with transaction.atomic()`
+// or an atomic def (`@transaction.atomic`, `@method_decorator(transaction.atomic)`, or a method of a class decorated
+// `@method_decorator(transaction.atomic, name="dispatch")` or with its name), when f may run outside a transaction
+// (sfu_exposed):
+//   - f is an entry point: no call in the run reaches it (python/calls), no call of unknown target has its name,
+//     and it is not a view of a project with ATOMIC_REQUESTS (a dict entry, `DATABASES[...]["ATOMIC_REQUESTS"] =
+//     True`, `ATOMIC_REQUESTS=True` as a keyword);
+//   - or a function that may run outside a transaction calls f, and that call is not inside an atomic region.
+// A function some caller calls inside `with transaction.atomic()` is covered on that path only. A lock switched on
+// by a parameter or by a test on atomicity (`if lock:`, `if self.is_atomic:`) is left to its callers.
+//   @shared_task def expire(pk): Hold.objects.select_for_update().get(pk=pk)              reported: a task, no transaction
+//   def lock(pk): return Hold.objects.select_for_update().get(pk=pk)
+//   def view(request): lock(1)                                                             reported in lock: view calls it bare
+//   def view(request): with transaction.atomic(): lock(1)                                  not reported
+//   def expire(pk): with transaction.atomic(): Hold.objects.select_for_update().get(pk=pk) not reported
+
+#include "lib/django.rerail"
+
+.violation SelectForUpdateOutsideAtomic(at: node, f: symbol, why: symbol) "`select_for_update()` in `{f}` runs outside transaction.atomic(): {why}. In autocommit mode Django raises TransactionManagementError here on PostgreSQL, MySQL and Oracle, though a TestCase (which wraps each test in a transaction) passes. Wrap the locking read and the writes that depend on it in `transaction.atomic()`, and give any try/except of a DatabaseError inside it its own nested `atomic()`."
+SelectForUpdateOutsideAtomic(c, x, why) :- sfu_site(c, f), def_name(f, x), sfu_exposed(f), sfu_why(f, why).
+
+// sfu_site(c, f): call c is `<qs>.select_for_update(…)` in def f, outside tests and outside an atomic region.
+.decl sfu_site(c: node, f: node)
+sfu_site(c, f) :- kind(c, "call"), field(c, "function", e), attr_of(e, _, "select_for_update"), owner(c, f),
+    !sfu_in_atomic(c), !sfu_guarded(c), !sfu_built_for_atomic(c), docof(c, d), !dj_test_doc(d).
+// sfu_built_for_atomic(c): `qs = qs.select_for_update(…)` whose name the same function reads inside an atomic region:
+// the queryset is built first and evaluated in the transaction (`with transaction.atomic(): list(qs[:n])`).
+.decl sfu_built_for_atomic(c: node)
+sfu_built_for_atomic(c) :- kind(a, "assignment"), field(a, "right", r), (unparen(r, c) ; within(c, r)),
+    field(a, "left", l), kind(l, "identifier"), text(l, v), def_frame(c, fr), kind(i, "identifier"), text(i, v),
+    def_frame(i, fr), i != l, earlier(l, i), !bind_only(i), sfu_in_atomic(i).
+// sfu_guarded(c): c runs only when a test on atomicity holds: `if self.is_atomic: qs = qs.select_for_update()`,
+// `qs.select_for_update() if connection.in_atomic_block else qs`. The same flag opens the transaction.
+.decl sfu_guarded(c: node)
+sfu_guarded(c) :- kind(i, "if_statement"), field(i, "condition", t), text(t, s), contains("atomic", s),
+    field(i, "consequence", b), within(c, b).
+sfu_guarded(c) :- kind(x, "conditional_expression"), child(x, b, 0), child(x, t, 1), text(t, s), contains("atomic", s),
+    (c = b ; within(c, b)).
+// An early exit on atomicity before it, in the same function: `if not connection.in_atomic_block: return` (or
+// `raise RuntimeError(...)`).
+sfu_guarded(c) :- owner(c, f), kind(i, "if_statement"), nearest(i, f, dj_region_stop), field(i, "condition", t),
+    text(t, s), contains("atomic", s), field(i, "consequence", b), body_len(b, k), j = k - 1, body_stmt(b, x, j),
+    (kind(x, "return_statement") ; kind(x, "raise_statement")), earlier(i, c).
+// A lock its caller switches on with a parameter (`if lock_message: qs = qs.select_for_update()`, `else:` of
+// `if for_read:`): the call sites decide, and those passing the flag are the ones that must hold a transaction, which
+// this rule cannot tell from the argument values.
+sfu_guarded(c) :- owner(c, f), kind(i, "if_statement"), field(i, "condition", t), sfu_reads_param(t, f), within(c, i),
+    !within(c, t).
+sfu_guarded(c) :- owner(c, f), kind(x, "conditional_expression"), child(x, t, 1), sfu_reads_param(t, f), within(c, x),
+    !within(c, t).
+// sfu_reads_param(t, f): expression t reads a parameter of def f other than self/cls.
+.decl sfu_reads_param(t: node, f: node)
+sfu_reads_param(t, f) :- param(f, x, _), x != "self", x != "cls", look(n, x, f), kind(n, "identifier"), text(n, x),
+    (t = n ; within(n, t)).
+
+// sfu_in_atomic(n): n runs in a transaction: inside an atomic region or the body of a with whose item calls a wrapper
+// named like atomic (label-studio's `conditional_atomic(...)`; lib/django's dj_in_transaction), in an atomic def
+// of the run's kinds (sfu_atomic_def), in a with-item after a `transaction.atomic()` item of the same with statement
+// (`with transaction.atomic(), self.lock_rows(qs):`), or in the body of a with whose item calls a context manager of
+// the run that yields inside a transaction (Weblate's `source_operation(component)`, whose `source_project_gate`
+// yields in `with transaction.atomic()`).
+.decl sfu_in_atomic(n: node)
+sfu_in_atomic(n) :- dj_in_transaction(n).
+sfu_in_atomic(n) :- sfu_atomic_def(f), field(f, "body", b), within_stop(n, b, dj_region_stop).
+sfu_in_atomic(n) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wa, i),
+    kind(wa, "with_item"), field(wa, "value", v), (unparen(v, e) ; kind(v, "as_pattern"), child(v, v0, 0), unparen(v0, e)),
+    dj_atomic(e), child(wc, wb, j), i < j, kind(wb, "with_item"), within_stop(n, wb, dj_region_stop).
+sfu_in_atomic(n) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
+    kind(wi, "with_item"), field(wi, "value", v), (unparen(v, e) ; kind(v, "as_pattern"), child(v, v0, 0), unparen(v0, e)),
+    kind(e, "call"), call_target(e, g), sfu_atomic_cm(g), field(w, "body", b), within_stop(n, b, dj_region_stop).
+// sfu_atomic_cm(g): def g (a `@contextmanager`) has a `yield` that runs in a transaction.
+.decl sfu_atomic_cm(g: node)
+sfu_atomic_cm(g) :- kind(y, "yield"), sfu_in_atomic(y), nearest(y, g, dj_region_stop), kind(g, "function_definition").
+// sfu_atomic_def(f): def f runs in a transaction it opens: `@transaction.atomic`, `@method_decorator(
+// transaction.atomic)`, a method of a class decorated `@method_decorator(transaction.atomic, name=x)` where x is
+// `dispatch` (it calls every handler) or f's name, or a decorator of the run whose wrapper calls the decorated function
+// in a transaction (Weblate's `@source_operation_method`: `with source_operation(component): return method(...)`), or
+// a context manager used as a decorator that opens one (saleor's `@traced_atomic_transaction()`).
+.decl sfu_atomic_def(f: node)
+sfu_atomic_def(f) :- dj_atomic_def(f).
+sfu_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), sfu_method_atomic(e).
+sfu_atomic_def(f) :- kind(f, "function_definition"), nearest(f, k, scope), kind(k, "class_definition"), decorator(k, e),
+    sfu_method_atomic(e), call_arg(e, -1, "name", nv), str(nv, x), sfu_wrapped_name(f, x).
+sfu_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), sym_of(m, q), qualname(d, q),
+    sfu_atomic_wrapper(d).
+sfu_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), kind(m, "call"),
+    call_target(m, g), sfu_atomic_cm(g).
+// sfu_atomic_wrapper(d): decorator d calls the function it receives (its first parameter) in a transaction.
+.decl sfu_atomic_wrapper(d: node)
+sfu_atomic_wrapper(d) :- kind(d, "function_definition"), param(d, x, 0), kind(c, "call"), field(c, "function", fn),
+    kind(fn, "identifier"), text(fn, x), look(fn, x, d), sfu_in_atomic(c).
+.decl sfu_wrapped_name(f: node, x: symbol)
+sfu_wrapped_name(f, "dispatch") :- kind(f, "function_definition").
+sfu_wrapped_name(f, x) :- def_name(f, x).
+.decl sfu_method_atomic(e: node)
+sfu_method_atomic(e) :- kind(e, "call"), field(e, "function", mf), sym_of(mf, "django.utils.decorators.method_decorator"),
+    posarg(e, 0, a), unparen(a, m), dj_atomic(m).
+
+// sfu_up(f): def f holds a site, or calls a sfu_up def outside any atomic region: the only defs whose exposure
+// matters. (An atomic call site, or an atomic def, ends the walk up the callers.)
+.decl sfu_up(f: node)
+sfu_up(f) :- sfu_site(_, f), sfu_plain(f).
+sfu_up(g) :- sfu_up(f), call_target(c, f), owner(c, g), !sfu_in_atomic(c), sfu_plain(g).
+// sfu_exposed(f): def f may run with no transaction open.
+.decl sfu_exposed(f: node)
+sfu_exposed(f) :- sfu_entry(f).
+sfu_exposed(f) :- sfu_bare_call(_, f).
+// sfu_bare_call(c, f): call c, in a def that may run with no transaction open (or at module level), reaches f and
+// is not inside an atomic region.
+.decl sfu_bare_call(c: node, f: node)
+sfu_bare_call(c, f) :- sfu_up(f), call_target(c, f), owner(c, g), sfu_exposed(g), !sfu_in_atomic(c).
+sfu_bare_call(c, f) :- sfu_up(f), call_target(c, f), !owner(c, _), docof(c, d), !dj_test_doc(d).
+// sfu_plain(f): def f, outside tests, does not open a transaction around its whole body.
+.decl sfu_plain(f: node)
+sfu_plain(f) :- kind(f, "function_definition"), !sfu_atomic_def(f), docof(f, d), !dj_test_doc(d).
+// sfu_entry(f): no code outside tests calls f, by a known or an unknown target, so a framework (a URL route, a task
+// queue, a command, a signal) does; a view is in a transaction when the project sets ATOMIC_REQUESTS. Test callers
+// do not count: they run in TestCase's transaction, and a task a test calls directly is still an entry point. f has
+// a shape a framework calls (sfu_framework_shape): an uncalled plain function is dead code or a helper for callers
+// outside the project, whose transaction is theirs.
+.decl sfu_entry(f: node)
+sfu_entry(f) :- sfu_up(f), !sfu_called(f), def_name(f, x), !sfu_open_name(x), !sfu_run_passed(x), !sfu_atomic_view(f),
+    !sfu_property(f), sfu_framework_shape(f).
+// sfu_property(f): f is a `@property` or `@cached_property`: read as an attribute, never called, so "no caller" says
+// nothing (saleor's `Reordering.ordered_node_map`).
+.decl sfu_property(f: node)
+sfu_property(f) :- sfu_up(f), decorator(f, e), unparen(e, m), leaf_name(m, x), (x = "property" ; x = "cached_property").
+.decl sfu_called(f: node)
+sfu_called(f) :- sfu_up(f), call_target(c, f), docof(c, d), !dj_test_doc(d).
+// sfu_open_name(x): a call outside tests whose target is unknown or unresolved is spelled `x(…)` or `<obj>.x(…)`, x a
+// sfu_up def's name.
+.decl sfu_open_name(x: symbol)
+sfu_open_name(x) :- sfu_up(f), def_name(f, x), call_open(c), field(c, "function", e),
+    (attr_of(e, _, x) ; kind(e, "identifier"), text(e, x)), docof(c, d), !dj_test_doc(d).
+sfu_open_name(x) :- sfu_up(f), def_name(f, x), kind(c, "call"), field(c, "function", e),
+    (attr_of(e, _, x) ; kind(e, "identifier"), text(e, x)), !call_target(c, _), docof(c, d), !dj_test_doc(d).
+// sfu_run_passed(x) / sfu_framework_passed(x): a sfu_up def's name x (`f` or `<obj>.f`) is passed, outside tests,
+// as an argument to a function of the run, which then calls it (pontoon's `self.run_import(import_uploaded_file,
+// …)`), or to one outside the run (`path("x/", views.f)`, `app.task(f)`, `signal.connect(f)`): a framework entry.
+.decl sfu_passed(k: node, x: symbol)
+sfu_passed(k, x) :- sfu_up(f), def_name(f, x), call_arg(k, _, _, a), (kind(a, "identifier"), text(a, x) ; attr_of(a, _, x)),
+    docof(k, d), !dj_test_doc(d).
+.decl sfu_run_passed(x: symbol)
+sfu_run_passed(x) :- sfu_passed(k, x), call_target(k, _).
+.decl sfu_framework_passed(x: symbol)
+sfu_framework_passed(x) :- sfu_passed(k, x), !call_target(k, _).
+// sfu_framework_shape(f): f can be called by a framework: it is decorated (a task, a receiver, a view decorator), it
+// takes `request`, it is a method of a class other than a model or a model's mixin (a view's or a command's handler;
+// a model method nobody calls is an API for callers that hold the transaction, pretix's `LockModel.
+// refresh_for_update`), or its name is handed to a call outside the run.
+.decl sfu_framework_shape(f: node)
+sfu_framework_shape(f) :- sfu_up(f), decorator(f, _).
+sfu_framework_shape(f) :- sfu_up(f), param(f, "request", _).
+sfu_framework_shape(f) :- sfu_up(f), nearest(f, k, scope), kind(k, "class_definition"), !sfu_model_side(k).
+sfu_framework_shape(f) :- sfu_up(f), def_name(f, x), sfu_framework_passed(x).
+// sfu_model_side(k): class k is a model, or a base of one of the run's models.
+.decl sfu_model_side(k: node)
+sfu_model_side(k) :- dj_model(k).
+sfu_model_side(k) :- class_def(k, kq), class_def(m, mq), dj_model(m), subclass(mq, kq).
+// sfu_atomic_view(f): the project wraps requests in transactions (lib/django's dj_atomic_requests) and f is a
+// view: it takes `request`, or it is a method of a view class.
+.decl sfu_atomic_view(f: node)
+sfu_atomic_view(f) :- dj_atomic_requests(), (param(f, "request", _) ; dj_view_class(k), nearest(f, k, scope)).
+
+// sfu_why(f, why): how f runs outside a transaction.
+.decl sfu_why(f: node, why: symbol)
+sfu_why(f, "no code in the project calls it, so it is an entry point (a view, task, command or receiver) and nothing opens a transaction around it") :-
+    sfu_entry(f).
+sfu_why(f, cat("`", cat(g, cat("` calls it outside a transaction at ", cat(p, cat(":", to_string(l))))))) :-
+    sfu_bare_call(c, f), !sfu_entry(f), l = min m : { sfu_bare_call(b, f), line(b, m) }, line(c, l), owner(c, h), def_name(h, g),
+    docof(c, d), doc(d, p, _).
+
+// The cases, `cases/django-practice-select-for-update-outside-atomic/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "backend/__init__.py" from "../cases/django-practice-select-for-update-outside-atomic/backend/__init__.py"
+    .fixture "backend/plates/__init__.py" from "../cases/django-practice-select-for-update-outside-atomic/backend/plates/__init__.py"
+    .fixture "backend/plates/gate.py" from "../cases/django-practice-select-for-update-outside-atomic/backend/plates/gate.py"
+    .fixture "backend/plates/models.py" from "../cases/django-practice-select-for-update-outside-atomic/backend/plates/models.py"
+    .fixture "backend/plates/rebuild.py" from "../cases/django-practice-select-for-update-outside-atomic/backend/plates/rebuild.py"
+    .fixture "shop/__init__.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/__init__.py"
+    .fixture "shop/checkout/__init__.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/checkout/__init__.py"
+    .fixture "shop/checkout/complete.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/checkout/complete.py"
+    .fixture "shop/core/__init__.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/core/__init__.py"
+    .fixture "shop/core/tracing.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/core/tracing.py"
+    .fixture "shop/core/transactions.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/core/transactions.py"
+    .fixture "shop/gates.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/gates.py"
+    .fixture "shop/jobs.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/jobs.py"
+    .fixture "shop/locks.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/locks.py"
+    .fixture "shop/models.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/models.py"
+    .fixture "shop/services.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/services.py"
+    .fixture "shop/settings.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/settings.py"
+    .fixture "shop/tasks.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/tasks.py"
+    .fixture "shop/tests/__init__.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/tests/__init__.py"
+    .fixture "shop/tests/test_holds.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/tests/test_holds.py"
+    .fixture "shop/transactions.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/transactions.py"
+    .fixture "shop/views.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/views.py"
+    .expect _ at "shop/gates.py":60
+    .expect _ at "shop/jobs.py":58
+    .expect _ at "shop/locks.py":13
+    .expect _ at "shop/services.py":8
+    .expect _ at "shop/services.py":33
+    .expect _ at "shop/services.py":69
+    .expect _ at "shop/tasks.py":9
+    .expect _ at "shop/views.py":57
+.end

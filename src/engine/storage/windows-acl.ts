@@ -278,9 +278,10 @@ export const WINDOWS_ACL: WindowsAcl = {
     await icacls([...ownerOnlyArguments(path, true), "/l"]);
   },
   otherReaders(path) {
-    // The path goes in the environment, so no quoting of it reaches PowerShell's parser.
+    // The path goes in the environment, so no quoting of it reaches PowerShell's parser. The cmdlet is named with its
+    // module, so PowerShell reads no other installed module to find it (`windowsStartedAt` in process-liveness.ts).
     const sddl = execFileSync(windowsPowerShell(), [
-      "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "(Get-Acl -LiteralPath $env:RERAIL_ACL_PATH).Sddl",
+      "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", String.raw`(Microsoft.PowerShell.Security\Get-Acl -LiteralPath $env:RERAIL_ACL_PATH).Sddl`,
     ], { encoding: "utf8", env: { ...process.env, RERAIL_ACL_PATH: path }, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 });
     return sddlOtherReaders(sddl.trim(), currentUserSid());
   },

@@ -59,6 +59,17 @@ export function stableJsonText(value: unknown): string | undefined {
 }
 
 /**
+ * What a rule document's digest covers: a JSON rule's body, and for a `.rerail` rule its id, its text and the bytes of
+ * every file it includes (their SHA-256 each), wherever it is installed, so that a change to an included file, core's
+ * library after an update among them, moves the digest.
+ */
+function digested(document: RuleDocument): unknown {
+  if (document.kind !== "rerail") return { kind: document.kind, rule: document.rule };
+  const { id, source, includes } = document.rule;
+  return { kind: document.kind, rule: { id, source, includes: includes.map(file => file.sha256).sort(compareDeterministicStrings) } };
+}
+
+/**
  * Each rule document's digest, by the document: a document is never changed once read, and the daemon's one rule
  * catalog hands the same pack documents to every checkout's catalog, which digests each at every build.
  */
@@ -68,7 +79,7 @@ const documentDigests = new WeakMap<RuleDocument, string>();
 export function ruleDocumentDigest(document: RuleDocument): string {
   const known = documentDigests.get(document);
   if (known !== undefined) return known;
-  const canonical = stableJsonText({ kind: document.kind, rule: document.rule });
+  const canonical = stableJsonText(digested(document));
   if (canonical === undefined) throw new TypeError(`rule ${document.rule.id} is not JSON representable`);
   const digest = `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
   documentDigests.set(document, digest);
