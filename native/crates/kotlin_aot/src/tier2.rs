@@ -1256,6 +1256,7 @@ impl<L: Layout> P<'_, L> {
                     self.package_header()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -1266,6 +1267,7 @@ impl<L: Layout> P<'_, L> {
                     self.import_list()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -1298,7 +1300,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::SEMI_33 => {
-                                self.word_skip_as::<true, false>(w::SEMI_33)?;
+                                self.skip_as::<true, false>(true)?;
                             }
                             _ => {
                                 return self.refuse();
@@ -1320,20 +1322,11 @@ impl<L: Layout> P<'_, L> {
             w::CONSTRUCTOR_36 | w::EXPECT_107 | w::DATA_52 | w::INNER_85 | w::VALUE_86 | w::ACTUAL_108 | w::SET_35 | w::GET_34 | w::OVERRIDE_87 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_84 | w::LATEINIT_88 | w::TAILREC_94 | w::OPERATOR_95 | w::INFIX_96 | w::INLINE_97 | w::EXTERNAL_98 | w::PUBLIC_89 | w::PRIVATE_90 | w::INTERNAL_91 | w::PROTECTED_92 | w::ABSTRACT_100 | w::FINAL_101 | w::OPEN_102 | w::CONST_99 | w::FIELD_109 | w::PROPERTY_110 | w::RECEIVER_111 | w::PARAM_112 | w::SETPARAM_113 | w::DELEGATE_114 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_57 | w::FINALLY_58 | w::ENUM_16 => {
                 self.soft_name()?;
             }
-            w::FILE_3 => {
-                self.word_leaf_as::<true, false>(w::FILE_3, k::SIMPLE_IDENTIFIER)?;
+            w::FILE_3 | w::OUT_93 | w::BY_25 => {
+                self.tk_as::<true, false>(true, k::SIMPLE_IDENTIFIER, 0)?;
             }
-            w::OUT_93 => {
-                self.word_leaf_as::<true, false>(w::OUT_93, k::SIMPLE_IDENTIFIER)?;
-            }
-            w::BY_25 => {
-                self.word_leaf_as::<true, false>(w::BY_25, k::SIMPLE_IDENTIFIER)?;
-            }
-            _ if self.at_simple_identifier() => {
-                self.tk_as::<true, false>(self.at_simple_identifier(), k::SIMPLE_IDENTIFIER, 0)?;
-            }
-            _ if self.at_backtick_name() => {
-                self.tk_as::<true, false>(self.at_backtick_name(), k::SIMPLE_IDENTIFIER, 0)?;
+            _ if self.at_simple_identifier() || self.at_backtick_name() => {
+                self.tk_as::<true, false>(true, k::SIMPLE_IDENTIFIER, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -1360,13 +1353,10 @@ impl<L: Layout> P<'_, L> {
                 self.soft_type_name()?;
             }
             w::FILE_3 => {
-                self.word_leaf_as::<true, false>(w::FILE_3, k::TYPE_IDENTIFIER)?;
+                self.tk_as::<true, false>(true, k::TYPE_IDENTIFIER, 0)?;
             }
-            _ if self.at_simple_identifier() => {
-                self.tk_as::<true, false>(self.at_simple_identifier(), k::TYPE_IDENTIFIER, 0)?;
-            }
-            _ if self.at_backtick_name() => {
-                self.tk_as::<true, false>(self.at_backtick_name(), k::TYPE_IDENTIFIER, 0)?;
+            _ if self.at_simple_identifier() || self.at_backtick_name() => {
+                self.tk_as::<true, false>(true, k::TYPE_IDENTIFIER, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -1390,121 +1380,121 @@ impl<L: Layout> P<'_, L> {
     fn soft_word(&mut self) -> R {
         match self.word() {
             w::CONSTRUCTOR_36 => {
-                self.word_leaf_as::<true, false>(w::CONSTRUCTOR_36, k::CONSTRUCTOR)?;
+                self.tk_as::<true, false>(true, k::CONSTRUCTOR, 0)?;
             }
             w::EXPECT_107 => {
-                self.word_leaf_as::<true, false>(w::EXPECT_107, k::EXPECT)?;
+                self.tk_as::<true, false>(true, k::EXPECT, 0)?;
             }
             w::DATA_52 => {
-                self.word_leaf_as::<true, false>(w::DATA_52, k::DATA)?;
+                self.tk_as::<true, false>(true, k::DATA, 0)?;
             }
             w::INNER_85 => {
-                self.word_leaf_as::<true, false>(w::INNER_85, k::INNER)?;
+                self.tk_as::<true, false>(true, k::INNER, 0)?;
             }
             w::VALUE_86 => {
-                self.word_leaf_as::<true, false>(w::VALUE_86, k::VALUE)?;
+                self.tk_as::<true, false>(true, k::VALUE, 0)?;
             }
             w::ACTUAL_108 => {
-                self.word_leaf_as::<true, false>(w::ACTUAL_108, k::ACTUAL)?;
+                self.tk_as::<true, false>(true, k::ACTUAL, 0)?;
             }
             w::SET_35 => {
-                self.word_leaf_as::<true, false>(w::SET_35, k::SET)?;
+                self.tk_as::<true, false>(true, k::SET, 0)?;
             }
             w::GET_34 => {
-                self.word_leaf_as::<true, false>(w::GET_34, k::GET)?;
+                self.tk_as::<true, false>(true, k::GET, 0)?;
             }
             w::OVERRIDE_87 => {
-                self.word_leaf_as::<true, false>(w::OVERRIDE_87, k::OVERRIDE)?;
+                self.tk_as::<true, false>(true, k::OVERRIDE, 0)?;
             }
             w::SUSPEND_24 => {
-                self.word_leaf_as::<true, false>(w::SUSPEND_24, k::SUSPEND)?;
+                self.tk_as::<true, false>(true, k::SUSPEND, 0)?;
             }
             w::ANNOTATION_1 => {
-                self.word_leaf_as::<true, false>(w::ANNOTATION_1, k::ANNOTATION)?;
+                self.tk_as::<true, false>(true, k::ANNOTATION, 0)?;
             }
             w::SEALED_84 => {
-                self.word_leaf_as::<true, false>(w::SEALED_84, k::SEALED)?;
+                self.tk_as::<true, false>(true, k::SEALED, 0)?;
             }
             w::LATEINIT_88 => {
-                self.word_leaf_as::<true, false>(w::LATEINIT_88, k::LATEINIT)?;
+                self.tk_as::<true, false>(true, k::LATEINIT, 0)?;
             }
             w::TAILREC_94 => {
-                self.word_leaf_as::<true, false>(w::TAILREC_94, k::TAILREC)?;
+                self.tk_as::<true, false>(true, k::TAILREC, 0)?;
             }
             w::OPERATOR_95 => {
-                self.word_leaf_as::<true, false>(w::OPERATOR_95, k::OPERATOR)?;
+                self.tk_as::<true, false>(true, k::OPERATOR, 0)?;
             }
             w::INFIX_96 => {
-                self.word_leaf_as::<true, false>(w::INFIX_96, k::INFIX)?;
+                self.tk_as::<true, false>(true, k::INFIX, 0)?;
             }
             w::INLINE_97 => {
-                self.word_leaf_as::<true, false>(w::INLINE_97, k::INLINE)?;
+                self.tk_as::<true, false>(true, k::INLINE, 0)?;
             }
             w::EXTERNAL_98 => {
-                self.word_leaf_as::<true, false>(w::EXTERNAL_98, k::EXTERNAL)?;
+                self.tk_as::<true, false>(true, k::EXTERNAL, 0)?;
             }
             w::PUBLIC_89 => {
-                self.word_leaf_as::<true, false>(w::PUBLIC_89, k::PUBLIC)?;
+                self.tk_as::<true, false>(true, k::PUBLIC, 0)?;
             }
             w::PRIVATE_90 => {
-                self.word_leaf_as::<true, false>(w::PRIVATE_90, k::PRIVATE)?;
+                self.tk_as::<true, false>(true, k::PRIVATE, 0)?;
             }
             w::INTERNAL_91 => {
-                self.word_leaf_as::<true, false>(w::INTERNAL_91, k::INTERNAL)?;
+                self.tk_as::<true, false>(true, k::INTERNAL, 0)?;
             }
             w::PROTECTED_92 => {
-                self.word_leaf_as::<true, false>(w::PROTECTED_92, k::PROTECTED)?;
+                self.tk_as::<true, false>(true, k::PROTECTED, 0)?;
             }
             w::ABSTRACT_100 => {
-                self.word_leaf_as::<true, false>(w::ABSTRACT_100, k::ABSTRACT)?;
+                self.tk_as::<true, false>(true, k::ABSTRACT, 0)?;
             }
             w::FINAL_101 => {
-                self.word_leaf_as::<true, false>(w::FINAL_101, k::FINAL)?;
+                self.tk_as::<true, false>(true, k::FINAL, 0)?;
             }
             w::OPEN_102 => {
-                self.word_leaf_as::<true, false>(w::OPEN_102, k::OPEN)?;
+                self.tk_as::<true, false>(true, k::OPEN, 0)?;
             }
             w::CONST_99 => {
-                self.word_leaf_as::<true, false>(w::CONST_99, k::CONST)?;
+                self.tk_as::<true, false>(true, k::CONST, 0)?;
             }
             w::FIELD_109 => {
-                self.word_leaf_as::<true, false>(w::FIELD_109, k::FIELD)?;
+                self.tk_as::<true, false>(true, k::FIELD, 0)?;
             }
             w::PROPERTY_110 => {
-                self.word_leaf_as::<true, false>(w::PROPERTY_110, k::PROPERTY)?;
+                self.tk_as::<true, false>(true, k::PROPERTY, 0)?;
             }
             w::RECEIVER_111 => {
-                self.word_leaf_as::<true, false>(w::RECEIVER_111, k::RECEIVER)?;
+                self.tk_as::<true, false>(true, k::RECEIVER, 0)?;
             }
             w::PARAM_112 => {
-                self.word_leaf_as::<true, false>(w::PARAM_112, k::PARAM)?;
+                self.tk_as::<true, false>(true, k::PARAM, 0)?;
             }
             w::SETPARAM_113 => {
-                self.word_leaf_as::<true, false>(w::SETPARAM_113, k::SETPARAM)?;
+                self.tk_as::<true, false>(true, k::SETPARAM, 0)?;
             }
             w::DELEGATE_114 => {
-                self.word_leaf_as::<true, false>(w::DELEGATE_114, k::DELEGATE)?;
+                self.tk_as::<true, false>(true, k::DELEGATE, 0)?;
             }
             w::COMPANION_30 => {
-                self.word_leaf_as::<true, false>(w::COMPANION_30, k::COMPANION)?;
+                self.tk_as::<true, false>(true, k::COMPANION, 0)?;
             }
             w::INIT_29 => {
-                self.word_leaf_as::<true, false>(w::INIT_29, k::INIT)?;
+                self.tk_as::<true, false>(true, k::INIT, 0)?;
             }
             w::DYNAMIC_39 => {
-                self.word_leaf_as::<true, false>(w::DYNAMIC_39, k::DYNAMIC)?;
+                self.tk_as::<true, false>(true, k::DYNAMIC, 0)?;
             }
             w::WHERE_28 => {
-                self.word_leaf_as::<true, false>(w::WHERE_28, k::WHERE)?;
+                self.tk_as::<true, false>(true, k::WHERE, 0)?;
             }
             w::CATCH_57 => {
-                self.word_leaf_as::<true, false>(w::CATCH_57, k::CATCH)?;
+                self.tk_as::<true, false>(true, k::CATCH, 0)?;
             }
             w::FINALLY_58 => {
-                self.word_leaf_as::<true, false>(w::FINALLY_58, k::FINALLY)?;
+                self.tk_as::<true, false>(true, k::FINALLY, 0)?;
             }
             w::ENUM_16 => {
-                self.word_leaf_as::<true, false>(w::ENUM_16, k::ENUM)?;
+                self.tk_as::<true, false>(true, k::ENUM, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -1525,7 +1515,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::SEMI_33 => {
-                    self.word_skip_as::<true, false>(w::SEMI_33)?;
+                    self.skip_as::<true, false>(true)?;
                 }
                 _ => {
                     return self.refuse();
@@ -1548,7 +1538,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::DOT_32 => {
-                        self.word_leaf_as::<true, false>(w::DOT_32, k::DOT)?;
+                        self.tk_as::<true, false>(true, k::DOT, 0)?;
                         self.name()?;
                     }
                     _ => {
@@ -1602,6 +1592,7 @@ impl<L: Layout> P<'_, L> {
                     self.import_alias()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -1611,7 +1602,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::SEMI_33 => {
-                    self.word_skip_as::<true, false>(w::SEMI_33)?;
+                    self.skip_as::<true, false>(true)?;
                 }
                 _ => {
                     return self.refuse();
@@ -1635,7 +1626,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::DOT_32 => {
-                        self.word_skip_as::<true, false>(w::DOT_32)?;
+                        self.skip_as::<true, false>(true)?;
                         self.name()?;
                     }
                     _ => {
@@ -1752,6 +1743,7 @@ impl<L: Layout> P<'_, L> {
                             self.assign_tail()?;
                         }
                         _ => {
+
                         }
                     }
                 }
@@ -1786,7 +1778,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::SEMI_33 => {
-                        self.word_skip_as::<true, false>(w::SEMI_33)?;
+                        self.skip_as::<true, false>(true)?;
                         self.ask_semi(false)?;
                         let arm: usize;
                         if self.m_semi() || self.m_semi_close() {
@@ -1952,6 +1944,7 @@ impl<L: Layout> P<'_, L> {
                     self.control_structure_body()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -2021,22 +2014,22 @@ impl<L: Layout> P<'_, L> {
     fn assignment_operator(&mut self) -> R {
         match self.word() {
             w::EQ_12 => {
-                self.word_leaf_as::<true, false>(w::EQ_12, k::EQ)?;
+                self.tk_as::<true, false>(true, k::EQ, 0)?;
             }
             w::PLUS_EQ_64 => {
-                self.word_leaf_as::<true, false>(w::PLUS_EQ_64, k::PLUS_EQ)?;
+                self.tk_as::<true, false>(true, k::PLUS_EQ, 0)?;
             }
             w::MINUS_EQ_65 => {
-                self.word_leaf_as::<true, false>(w::MINUS_EQ_65, k::MINUS_EQ)?;
+                self.tk_as::<true, false>(true, k::MINUS_EQ, 0)?;
             }
             w::STAR_EQ_66 => {
-                self.word_leaf_as::<true, false>(w::STAR_EQ_66, k::STAR_EQ)?;
+                self.tk_as::<true, false>(true, k::STAR_EQ, 0)?;
             }
             w::SLASH_EQ_67 => {
-                self.word_leaf_as::<true, false>(w::SLASH_EQ_67, k::SLASH_EQ)?;
+                self.tk_as::<true, false>(true, k::SLASH_EQ, 0)?;
             }
             w::PERCENT_EQ_68 => {
-                self.word_leaf_as::<true, false>(w::PERCENT_EQ_68, k::PERCENT_EQ)?;
+                self.tk_as::<true, false>(true, k::PERCENT_EQ, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -2073,6 +2066,7 @@ impl<L: Layout> P<'_, L> {
                     self.modifiers()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -2157,6 +2151,7 @@ impl<L: Layout> P<'_, L> {
                     self.type_parameters()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -2181,6 +2176,7 @@ impl<L: Layout> P<'_, L> {
                     self.type_parameters()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -2195,13 +2191,14 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::COLON_4 => {
-                    self.word_leaf_as::<true, false>(w::COLON_4, k::COLON)?;
+                    self.tk_as::<true, false>(true, k::COLON, 0)?;
                     let asks = self.asks;
                     self.asks = asks & 0x0 | 0x8;
                     self.r_type()?;
                     self.asks = asks;
                 }
                 _ => {
+
                 }
             }
         }
@@ -2213,6 +2210,7 @@ impl<L: Layout> P<'_, L> {
                     self.type_constraints()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -2224,6 +2222,7 @@ impl<L: Layout> P<'_, L> {
                     self.function_body()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -2243,6 +2242,7 @@ impl<L: Layout> P<'_, L> {
                     self.type_parameters()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -2272,6 +2272,7 @@ impl<L: Layout> P<'_, L> {
                     self.type_constraints()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -2357,6 +2358,7 @@ impl<L: Layout> P<'_, L> {
                         self.type_parameters()?;
                     }
                     _ => {
+
                     }
                 }
             }
@@ -2376,6 +2378,7 @@ impl<L: Layout> P<'_, L> {
                         self.primary_constructor()?;
                     }
                     _ => {
+
                     }
                 }
             }
@@ -2384,7 +2387,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::COLON_4 => {
-                        self.word_skip_as::<true, false>(w::COLON_4)?;
+                        self.skip_as::<true, false>(true)?;
                         self.delegation_specifier()?;
                         loop {
                             self.ask_semi(false)?;
@@ -2393,7 +2396,7 @@ impl<L: Layout> P<'_, L> {
                             } else {
                                 match self.word() {
                                     w::COMMA_20 => {
-                                        self.word_skip_as::<true, false>(w::COMMA_20)?;
+                                        self.skip_as::<true, false>(true)?;
                                         self.delegation_specifier()?;
                                     }
                                     _ => {
@@ -2404,6 +2407,7 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                     _ => {
+
                     }
                 }
             }
@@ -2415,6 +2419,7 @@ impl<L: Layout> P<'_, L> {
                         self.enum_class_body()?;
                     }
                     _ => {
+
                     }
                 }
             }
@@ -2433,6 +2438,7 @@ impl<L: Layout> P<'_, L> {
                         self.type_parameters()?;
                     }
                     _ => {
+
                     }
                 }
             }
@@ -2452,6 +2458,7 @@ impl<L: Layout> P<'_, L> {
                         self.primary_constructor()?;
                     }
                     _ => {
+
                     }
                 }
             }
@@ -2460,7 +2467,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::COLON_4 => {
-                        self.word_skip_as::<true, false>(w::COLON_4)?;
+                        self.skip_as::<true, false>(true)?;
                         self.delegation_specifier()?;
                         loop {
                             self.ask_semi(false)?;
@@ -2469,7 +2476,7 @@ impl<L: Layout> P<'_, L> {
                             } else {
                                 match self.word() {
                                     w::COMMA_20 => {
-                                        self.word_skip_as::<true, false>(w::COMMA_20)?;
+                                        self.skip_as::<true, false>(true)?;
                                         self.delegation_specifier()?;
                                     }
                                     _ => {
@@ -2480,6 +2487,7 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                     _ => {
+
                     }
                 }
             }
@@ -2491,6 +2499,7 @@ impl<L: Layout> P<'_, L> {
                         self.class_body()?;
                     }
                     _ => {
+
                     }
                 }
             }
@@ -2499,10 +2508,10 @@ impl<L: Layout> P<'_, L> {
                 w::CLASS_13 | w::INTERFACE_15 => {
                     match self.word() {
                         w::CLASS_13 => {
-                            self.word_leaf_as::<true, false>(w::CLASS_13, k::CLASS)?;
+                            self.tk_as::<true, false>(true, k::CLASS, 0)?;
                         }
                         w::INTERFACE_15 => {
-                            self.word_leaf_as::<true, false>(w::INTERFACE_15, k::INTERFACE)?;
+                            self.tk_as::<true, false>(true, k::INTERFACE, 0)?;
                         }
                         _ => {
                             return self.refuse();
@@ -2519,6 +2528,7 @@ impl<L: Layout> P<'_, L> {
                                 self.type_parameters()?;
                             }
                             _ => {
+
                             }
                         }
                     }
@@ -2538,6 +2548,7 @@ impl<L: Layout> P<'_, L> {
                                 self.primary_constructor()?;
                             }
                             _ => {
+
                             }
                         }
                     }
@@ -2546,7 +2557,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::COLON_4 => {
-                                self.word_skip_as::<true, false>(w::COLON_4)?;
+                                self.skip_as::<true, false>(true)?;
                                 self.delegation_specifier()?;
                                 loop {
                                     self.ask_semi(false)?;
@@ -2555,7 +2566,7 @@ impl<L: Layout> P<'_, L> {
                                     } else {
                                         match self.word() {
                                             w::COMMA_20 => {
-                                                self.word_skip_as::<true, false>(w::COMMA_20)?;
+                                                self.skip_as::<true, false>(true)?;
                                                 self.delegation_specifier()?;
                                             }
                                             _ => {
@@ -2566,6 +2577,7 @@ impl<L: Layout> P<'_, L> {
                                 }
                             }
                             _ => {
+
                             }
                         }
                     }
@@ -2577,6 +2589,7 @@ impl<L: Layout> P<'_, L> {
                                 self.type_constraints()?;
                             }
                             _ => {
+
                             }
                         }
                     }
@@ -2588,6 +2601,7 @@ impl<L: Layout> P<'_, L> {
                                 self.class_body()?;
                             }
                             _ => {
+
                             }
                         }
                     }
@@ -2630,7 +2644,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::COMMA_20 => {
-                                self.word_skip_as::<true, false>(w::COMMA_20)?;
+                                self.skip_as::<true, false>(true)?;
                                 self.ask_semi(false)?;
                                 if self.m_semi() {
                                     self.mark_semi()?;
@@ -2676,7 +2690,7 @@ impl<L: Layout> P<'_, L> {
                 }
                 match self.word() {
                     w::SEMI_33 => {
-                        self.word_skip_as::<true, false>(w::SEMI_33)?;
+                        self.skip_as::<true, false>(true)?;
                         self.ask_semi(false)?;
                         if self.m_semi() {
                             self.mark_semi()?;
@@ -2727,7 +2741,7 @@ impl<L: Layout> P<'_, L> {
                                             } else {
                                                 match self.word() {
                                                     w::SEMI_33 => {
-                                                        self.word_skip_as::<true, false>(w::SEMI_33)?;
+                                                        self.skip_as::<true, false>(true)?;
                                                     }
                                                     _ => {
                                                         return self.refuse();
@@ -2757,6 +2771,7 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                     _ => {
+
                     }
                 }
                 self.word_skip_as::<true, false>(w::RBRACE_18)?;
@@ -2781,6 +2796,7 @@ impl<L: Layout> P<'_, L> {
                     self.value_arguments()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -2791,6 +2807,7 @@ impl<L: Layout> P<'_, L> {
                     self.class_body()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -2808,7 +2825,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::COLON_4 => {
-                    self.word_skip_as::<true, false>(w::COLON_4)?;
+                    self.skip_as::<true, false>(true)?;
                     self.delegation_specifier()?;
                     loop {
                         self.ask_semi(false)?;
@@ -2817,7 +2834,7 @@ impl<L: Layout> P<'_, L> {
                         } else {
                             match self.word() {
                                 w::COMMA_20 => {
-                                    self.word_skip_as::<true, false>(w::COMMA_20)?;
+                                    self.skip_as::<true, false>(true)?;
                                     self.delegation_specifier()?;
                                 }
                                 _ => {
@@ -2828,6 +2845,7 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 _ => {
+
                 }
             }
         }
@@ -2839,6 +2857,7 @@ impl<L: Layout> P<'_, L> {
                     self.class_body()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -2851,10 +2870,10 @@ impl<L: Layout> P<'_, L> {
         self.open(k::BINDING_PATTERN_KIND);
         match self.word() {
             w::VAL_22 => {
-                self.word_leaf_as::<true, false>(w::VAL_22, k::VAL)?;
+                self.tk_as::<true, false>(true, k::VAL, 0)?;
             }
             w::VAR_23 => {
-                self.word_leaf_as::<true, false>(w::VAR_23, k::VAR)?;
+                self.tk_as::<true, false>(true, k::VAR, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -2874,13 +2893,14 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::COLON_4 => {
-                    self.word_leaf_as::<true, false>(w::COLON_4, k::COLON)?;
+                    self.tk_as::<true, false>(true, k::COLON, 0)?;
                     let asks = self.asks;
                     self.asks = asks & 0x0 | 0x8;
                     self.r_type()?;
                     self.asks = asks;
                 }
                 _ => {
+
                 }
             }
         }
@@ -2897,7 +2917,7 @@ impl<L: Layout> P<'_, L> {
         loop {
             match self.word() {
                 w::COMMA_20 => {
-                    self.word_skip_as::<true, false>(w::COMMA_20)?;
+                    self.skip_as::<true, false>(true)?;
                     self.variable_declaration()?;
                 }
                 _ => {
@@ -2940,7 +2960,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::COMMA_20 => {
-                                self.word_skip_as::<true, false>(w::COMMA_20)?;
+                                self.skip_as::<true, false>(true)?;
                                 self.function_value_parameter()?;
                             }
                             _ => {
@@ -2960,7 +2980,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::RPAREN_21 => {
-                    self.word_skip_as::<true, false>(w::RPAREN_21)?;
+                    self.skip_as::<true, false>(true)?;
                 }
                 _ => {
                     return self.refuse();
@@ -2979,6 +2999,7 @@ impl<L: Layout> P<'_, L> {
                 self.parameter_modifiers()?;
             }
             _ => {
+
             }
         }
         self.parameter()?;
@@ -2986,13 +3007,14 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::EQ_12 => {
-                    self.word_skip_as::<true, false>(w::EQ_12)?;
+                    self.skip_as::<true, false>(true)?;
                     let asks = self.asks;
                     self.asks = asks & 0x0 | 0x0;
                     self.r_expression()?;
                     self.asks = asks;
                 }
                 _ => {
+
                 }
             }
         }
@@ -3060,7 +3082,7 @@ impl<L: Layout> P<'_, L> {
                 self.r_block()?;
             }
             w::EQ_12 => {
-                self.word_skip_as::<true, false>(w::EQ_12)?;
+                self.skip_as::<true, false>(true)?;
                 let asks = self.asks;
                 self.asks = asks & 0x0 | 0x8;
                 self.r_expression()?;
@@ -3101,6 +3123,7 @@ impl<L: Layout> P<'_, L> {
                             self.modifiers()?;
                         }
                         _ => {
+
                         }
                     }
                 }
@@ -3137,7 +3160,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::COMMA_20 => {
-                                self.word_skip_as::<true, false>(w::COMMA_20)?;
+                                self.skip_as::<true, false>(true)?;
                                 self.class_parameter()?;
                             }
                             _ => {
@@ -3157,7 +3180,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::RPAREN_21 => {
-                    self.word_skip_as::<true, false>(w::RPAREN_21)?;
+                    self.skip_as::<true, false>(true)?;
                 }
                 _ => {
                     return self.refuse();
@@ -3180,6 +3203,7 @@ impl<L: Layout> P<'_, L> {
                     self.class_parameter_modifiers()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -3188,6 +3212,7 @@ impl<L: Layout> P<'_, L> {
                 self.binding_pattern_kind()?;
             }
             _ => {
+
             }
         }
         self.name()?;
@@ -3200,13 +3225,14 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::EQ_12 => {
-                    self.word_skip_as::<true, false>(w::EQ_12)?;
+                    self.skip_as::<true, false>(true)?;
                     let asks = self.asks;
                     self.asks = asks & 0x0 | 0x0;
                     self.r_expression()?;
                     self.asks = asks;
                 }
                 _ => {
+
                 }
             }
         }
@@ -3316,7 +3342,7 @@ impl<L: Layout> P<'_, L> {
                                 } else {
                                     match self.word() {
                                         w::QUEST_40 => {
-                                            self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
+                                            self.tk_as::<true, false>(true, k::QUEST, 0)?;
                                         }
                                         _ => {
                                             break;
@@ -3327,6 +3353,7 @@ impl<L: Layout> P<'_, L> {
                             self.close()?;
                         }
                         _ => {
+
                         }
                     }
                 }
@@ -3347,6 +3374,7 @@ impl<L: Layout> P<'_, L> {
                             self.close()?;
                         }
                         _ => {
+
                         }
                     }
                 }
@@ -3395,7 +3423,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::SEMI_33 => {
-                                self.word_skip_as::<true, false>(w::SEMI_33)?;
+                                self.skip_as::<true, false>(true)?;
                                 self.ask_semi(false)?;
                                 let arm: usize;
                                 if self.m_semi() || self.m_semi_close() {
@@ -3455,6 +3483,7 @@ impl<L: Layout> P<'_, L> {
                     self.modifiers()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -3541,22 +3570,24 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::LPAREN_19 => {
-                    self.word_skip_as::<true, false>(w::LPAREN_19)?;
+                    self.skip_as::<true, false>(true)?;
                     self.word_skip_as::<true, false>(w::RPAREN_21)?;
                     match self.word() {
                         w::COLON_4 => {
-                            self.word_leaf_as::<true, false>(w::COLON_4, k::COLON)?;
+                            self.tk_as::<true, false>(true, k::COLON, 0)?;
                             let asks = self.asks;
                             self.asks = asks & 0x0 | 0x0;
                             self.r_type()?;
                             self.asks = asks;
                         }
                         _ => {
+
                         }
                     }
                     self.function_body()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -3572,23 +3603,25 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::LPAREN_19 => {
-                    self.word_skip_as::<true, false>(w::LPAREN_19)?;
+                    self.skip_as::<true, false>(true)?;
                     self.parameter_with_optional_type()?;
                     self.word_skip_as::<true, false>(w::RPAREN_21)?;
                     match self.word() {
                         w::COLON_4 => {
-                            self.word_leaf_as::<true, false>(w::COLON_4, k::COLON)?;
+                            self.tk_as::<true, false>(true, k::COLON, 0)?;
                             let asks = self.asks;
                             self.asks = asks & 0x0 | 0x0;
                             self.r_type()?;
                             self.asks = asks;
                         }
                         _ => {
+
                         }
                     }
                     self.function_body()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -3602,13 +3635,14 @@ impl<L: Layout> P<'_, L> {
         self.name()?;
         match self.word() {
             w::COLON_4 => {
-                self.word_leaf_as::<true, false>(w::COLON_4, k::COLON)?;
+                self.tk_as::<true, false>(true, k::COLON, 0)?;
                 let asks = self.asks;
                 self.asks = asks & 0x0 | 0x0;
                 self.r_type()?;
                 self.asks = asks;
             }
             _ => {
+
             }
         }
         self.close()?;
@@ -3631,6 +3665,7 @@ impl<L: Layout> P<'_, L> {
                     self.type_name()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -3639,7 +3674,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::COLON_4 => {
-                    self.word_skip_as::<true, false>(w::COLON_4)?;
+                    self.skip_as::<true, false>(true)?;
                     self.delegation_specifier()?;
                     loop {
                         self.ask_semi(false)?;
@@ -3648,7 +3683,7 @@ impl<L: Layout> P<'_, L> {
                         } else {
                             match self.word() {
                                 w::COMMA_20 => {
-                                    self.word_skip_as::<true, false>(w::COMMA_20)?;
+                                    self.skip_as::<true, false>(true)?;
                                     self.delegation_specifier()?;
                                 }
                                 _ => {
@@ -3659,6 +3694,7 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 _ => {
+
                 }
             }
         }
@@ -3670,6 +3706,7 @@ impl<L: Layout> P<'_, L> {
                     self.class_body()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -3694,10 +3731,11 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::COLON_4 => {
-                    self.word_skip_as::<true, false>(w::COLON_4)?;
+                    self.skip_as::<true, false>(true)?;
                     self.constructor_delegation_call()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -3744,10 +3782,10 @@ impl<L: Layout> P<'_, L> {
         self.open(k::CONSTRUCTOR_DELEGATION_CALL);
         match self.word() {
             w::THIS_37 => {
-                self.word_leaf_as::<true, false>(w::THIS_37, k::THIS)?;
+                self.tk_as::<true, false>(true, k::THIS, 0)?;
             }
             w::SUPER_38 => {
-                self.word_leaf_as::<true, false>(w::SUPER_38, k::SUPER)?;
+                self.tk_as::<true, false>(true, k::SUPER, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -3774,7 +3812,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::COMMA_20 => {
-                        self.word_skip_as::<true, false>(w::COMMA_20)?;
+                        self.skip_as::<true, false>(true)?;
                         self.type_parameter()?;
                     }
                     _ => {
@@ -3788,7 +3826,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::GT_27 => {
-                    self.word_skip_as::<true, false>(w::GT_27)?;
+                    self.skip_as::<true, false>(true)?;
                 }
                 _ => {
                     return self.refuse();
@@ -3808,6 +3846,7 @@ impl<L: Layout> P<'_, L> {
                 self.type_parameter_modifiers()?;
             }
             _ => {
+
             }
         }
         self.type_name()?;
@@ -3815,13 +3854,14 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::COLON_4 => {
-                    self.word_leaf_as::<true, false>(w::COLON_4, k::COLON)?;
+                    self.tk_as::<true, false>(true, k::COLON, 0)?;
                     let asks = self.asks;
                     self.asks = asks & 0x0 | 0x0;
                     self.r_type()?;
                     self.asks = asks;
                 }
                 _ => {
+
                 }
             }
         }
@@ -3842,7 +3882,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::COMMA_20 => {
-                        self.word_skip_as::<true, false>(w::COMMA_20)?;
+                        self.skip_as::<true, false>(true)?;
                         self.type_constraint()?;
                     }
                     _ => {
@@ -4072,19 +4112,19 @@ impl<L: Layout> P<'_, L> {
         self.open(k::CLASS_MODIFIER);
         match self.word() {
             w::SEALED_84 => {
-                self.word_leaf_as::<true, false>(w::SEALED_84, k::SEALED)?;
+                self.tk_as::<true, false>(true, k::SEALED, 0)?;
             }
             w::ANNOTATION_1 => {
-                self.word_leaf_as::<true, false>(w::ANNOTATION_1, k::ANNOTATION)?;
+                self.tk_as::<true, false>(true, k::ANNOTATION, 0)?;
             }
             w::DATA_52 => {
-                self.word_leaf_as::<true, false>(w::DATA_52, k::DATA)?;
+                self.tk_as::<true, false>(true, k::DATA, 0)?;
             }
             w::INNER_85 => {
-                self.word_leaf_as::<true, false>(w::INNER_85, k::INNER)?;
+                self.tk_as::<true, false>(true, k::INNER, 0)?;
             }
             w::VALUE_86 => {
-                self.word_leaf_as::<true, false>(w::VALUE_86, k::VALUE)?;
+                self.tk_as::<true, false>(true, k::VALUE, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -4100,10 +4140,10 @@ impl<L: Layout> P<'_, L> {
         self.open(k::MEMBER_MODIFIER);
         match self.word() {
             w::OVERRIDE_87 => {
-                self.word_leaf_as::<true, false>(w::OVERRIDE_87, k::OVERRIDE)?;
+                self.tk_as::<true, false>(true, k::OVERRIDE, 0)?;
             }
             w::LATEINIT_88 => {
-                self.word_leaf_as::<true, false>(w::LATEINIT_88, k::LATEINIT)?;
+                self.tk_as::<true, false>(true, k::LATEINIT, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -4119,16 +4159,16 @@ impl<L: Layout> P<'_, L> {
         self.open(k::VISIBILITY_MODIFIER);
         match self.word() {
             w::PUBLIC_89 => {
-                self.word_leaf_as::<true, false>(w::PUBLIC_89, k::PUBLIC)?;
+                self.tk_as::<true, false>(true, k::PUBLIC, 0)?;
             }
             w::PRIVATE_90 => {
-                self.word_leaf_as::<true, false>(w::PRIVATE_90, k::PRIVATE)?;
+                self.tk_as::<true, false>(true, k::PRIVATE, 0)?;
             }
             w::INTERNAL_91 => {
-                self.word_leaf_as::<true, false>(w::INTERNAL_91, k::INTERNAL)?;
+                self.tk_as::<true, false>(true, k::INTERNAL, 0)?;
             }
             w::PROTECTED_92 => {
-                self.word_leaf_as::<true, false>(w::PROTECTED_92, k::PROTECTED)?;
+                self.tk_as::<true, false>(true, k::PROTECTED, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -4144,22 +4184,22 @@ impl<L: Layout> P<'_, L> {
         self.open(k::FUNCTION_MODIFIER);
         match self.word() {
             w::TAILREC_94 => {
-                self.word_leaf_as::<true, false>(w::TAILREC_94, k::TAILREC)?;
+                self.tk_as::<true, false>(true, k::TAILREC, 0)?;
             }
             w::OPERATOR_95 => {
-                self.word_leaf_as::<true, false>(w::OPERATOR_95, k::OPERATOR)?;
+                self.tk_as::<true, false>(true, k::OPERATOR, 0)?;
             }
             w::INFIX_96 => {
-                self.word_leaf_as::<true, false>(w::INFIX_96, k::INFIX)?;
+                self.tk_as::<true, false>(true, k::INFIX, 0)?;
             }
             w::INLINE_97 => {
-                self.word_leaf_as::<true, false>(w::INLINE_97, k::INLINE)?;
+                self.tk_as::<true, false>(true, k::INLINE, 0)?;
             }
             w::EXTERNAL_98 => {
-                self.word_leaf_as::<true, false>(w::EXTERNAL_98, k::EXTERNAL)?;
+                self.tk_as::<true, false>(true, k::EXTERNAL, 0)?;
             }
             w::SUSPEND_24 => {
-                self.word_leaf_as::<true, false>(w::SUSPEND_24, k::SUSPEND)?;
+                self.tk_as::<true, false>(true, k::SUSPEND, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -4184,13 +4224,13 @@ impl<L: Layout> P<'_, L> {
         self.open(k::INHERITANCE_MODIFIER);
         match self.word() {
             w::ABSTRACT_100 => {
-                self.word_leaf_as::<true, false>(w::ABSTRACT_100, k::ABSTRACT)?;
+                self.tk_as::<true, false>(true, k::ABSTRACT, 0)?;
             }
             w::FINAL_101 => {
-                self.word_leaf_as::<true, false>(w::FINAL_101, k::FINAL)?;
+                self.tk_as::<true, false>(true, k::FINAL, 0)?;
             }
             w::OPEN_102 => {
-                self.word_leaf_as::<true, false>(w::OPEN_102, k::OPEN)?;
+                self.tk_as::<true, false>(true, k::OPEN, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -4206,13 +4246,13 @@ impl<L: Layout> P<'_, L> {
         self.open(k::PARAMETER_MODIFIER);
         match self.word() {
             w::VARARG_103 => {
-                self.word_leaf_as::<true, false>(w::VARARG_103, k::VARARG)?;
+                self.tk_as::<true, false>(true, k::VARARG, 0)?;
             }
             w::NOINLINE_104 => {
-                self.word_leaf_as::<true, false>(w::NOINLINE_104, k::NOINLINE)?;
+                self.tk_as::<true, false>(true, k::NOINLINE, 0)?;
             }
             w::CROSSINLINE_105 => {
-                self.word_leaf_as::<true, false>(w::CROSSINLINE_105, k::CROSSINLINE)?;
+                self.tk_as::<true, false>(true, k::CROSSINLINE, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -4228,10 +4268,10 @@ impl<L: Layout> P<'_, L> {
         self.open(k::PLATFORM_MODIFIER);
         match self.word() {
             w::EXPECT_107 => {
-                self.word_leaf_as::<true, false>(w::EXPECT_107, k::EXPECT)?;
+                self.tk_as::<true, false>(true, k::EXPECT, 0)?;
             }
             w::ACTUAL_108 => {
-                self.word_leaf_as::<true, false>(w::ACTUAL_108, k::ACTUAL)?;
+                self.tk_as::<true, false>(true, k::ACTUAL, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -4263,6 +4303,7 @@ impl<L: Layout> P<'_, L> {
                     self.close()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -4283,28 +4324,28 @@ impl<L: Layout> P<'_, L> {
         self.open(k::USE_SITE_TARGET);
         match self.word() {
             w::FIELD_109 => {
-                self.word_leaf_as::<true, false>(w::FIELD_109, k::FIELD)?;
+                self.tk_as::<true, false>(true, k::FIELD, 0)?;
             }
             w::PROPERTY_110 => {
-                self.word_leaf_as::<true, false>(w::PROPERTY_110, k::PROPERTY)?;
+                self.tk_as::<true, false>(true, k::PROPERTY, 0)?;
             }
             w::GET_34 => {
-                self.word_leaf_as::<true, false>(w::GET_34, k::GET)?;
+                self.tk_as::<true, false>(true, k::GET, 0)?;
             }
             w::SET_35 => {
-                self.word_leaf_as::<true, false>(w::SET_35, k::SET)?;
+                self.tk_as::<true, false>(true, k::SET, 0)?;
             }
             w::RECEIVER_111 => {
-                self.word_leaf_as::<true, false>(w::RECEIVER_111, k::RECEIVER)?;
+                self.tk_as::<true, false>(true, k::RECEIVER, 0)?;
             }
             w::PARAM_112 => {
-                self.word_leaf_as::<true, false>(w::PARAM_112, k::PARAM)?;
+                self.tk_as::<true, false>(true, k::PARAM, 0)?;
             }
             w::SETPARAM_113 => {
-                self.word_leaf_as::<true, false>(w::SETPARAM_113, k::SETPARAM)?;
+                self.tk_as::<true, false>(true, k::SETPARAM, 0)?;
             }
             w::DELEGATE_114 => {
-                self.word_leaf_as::<true, false>(w::DELEGATE_114, k::DELEGATE)?;
+                self.tk_as::<true, false>(true, k::DELEGATE, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -4333,6 +4374,7 @@ impl<L: Layout> P<'_, L> {
                     self.close()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -4354,6 +4396,7 @@ impl<L: Layout> P<'_, L> {
                     self.type_modifiers()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -4407,7 +4450,7 @@ impl<L: Layout> P<'_, L> {
                                 } else {
                                     match self.word() {
                                         w::QUEST_40 => {
-                                            self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
+                                            self.tk_as::<true, false>(true, k::QUEST, 0)?;
                                         }
                                         _ => {
                                             break;
@@ -4418,6 +4461,7 @@ impl<L: Layout> P<'_, L> {
                             self.close()?;
                         }
                         _ => {
+
                         }
                     }
                 }
@@ -4442,7 +4486,7 @@ impl<L: Layout> P<'_, L> {
                                 } else {
                                     match self.word() {
                                         w::QUEST_40 => {
-                                            self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
+                                            self.tk_as::<true, false>(true, k::QUEST, 0)?;
                                         }
                                         _ => {
                                             break;
@@ -4453,6 +4497,7 @@ impl<L: Layout> P<'_, L> {
                             self.close()?;
                         }
                         _ => {
+
                         }
                     }
                 }
@@ -4508,6 +4553,7 @@ impl<L: Layout> P<'_, L> {
                     self.type_arguments()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -4517,7 +4563,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::DOT_32 => {
-                        self.word_skip_as::<true, false>(w::DOT_32)?;
+                        self.skip_as::<true, false>(true)?;
                         self.type_name()?;
                         if self.m_ft_dot_at() {
                         } else if self.m_generic() {
@@ -4528,6 +4574,7 @@ impl<L: Layout> P<'_, L> {
                                     self.type_arguments()?;
                                 }
                                 _ => {
+
                                 }
                             }
                         }
@@ -4637,7 +4684,7 @@ impl<L: Layout> P<'_, L> {
                 loop {
                     match self.word() {
                         w::QUEST_40 => {
-                            self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
+                            self.tk_as::<true, false>(true, k::QUEST, 0)?;
                         }
                         _ => {
                             break;
@@ -4647,6 +4694,7 @@ impl<L: Layout> P<'_, L> {
                 self.close()?;
             }
             _ => {
+
             }
         }
         self.close()?;
@@ -4668,6 +4716,7 @@ impl<L: Layout> P<'_, L> {
                     self.type_arguments()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -4685,6 +4734,7 @@ impl<L: Layout> P<'_, L> {
                             self.type_arguments()?;
                         }
                         _ => {
+
                         }
                     }
                 }
@@ -4711,6 +4761,7 @@ impl<L: Layout> P<'_, L> {
                     self.type_arguments()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -4721,7 +4772,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::DOT_32 => {
-                        self.word_skip_as::<true, false>(w::DOT_32)?;
+                        self.skip_as::<true, false>(true)?;
                         self.type_name()?;
                         self.ask_semi(false)?;
                         if self.m_by_lf() || self.m_ann_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
@@ -4733,6 +4784,7 @@ impl<L: Layout> P<'_, L> {
                                     self.type_arguments()?;
                                 }
                                 _ => {
+
                                 }
                             }
                         }
@@ -4763,7 +4815,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::COMMA_20 => {
-                        self.word_skip_as::<true, false>(w::COMMA_20)?;
+                        self.skip_as::<true, false>(true)?;
                         self.type_projection()?;
                     }
                     _ => {
@@ -4777,7 +4829,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::GT_27 => {
-                    self.word_skip_as::<true, false>(w::GT_27)?;
+                    self.skip_as::<true, false>(true)?;
                 }
                 _ => {
                     return self.refuse();
@@ -4820,6 +4872,7 @@ impl<L: Layout> P<'_, L> {
                             self.type_projection_modifiers()?;
                         }
                         _ => {
+
                         }
                     }
                 }
@@ -4868,10 +4921,10 @@ impl<L: Layout> P<'_, L> {
         self.open(k::VARIANCE_MODIFIER);
         match self.word() {
             w::IN_43 => {
-                self.word_leaf_as::<true, false>(w::IN_43, k::IN)?;
+                self.tk_as::<true, false>(true, k::IN, 0)?;
             }
             w::OUT_93 => {
-                self.word_leaf_as::<true, false>(w::OUT_93, k::OUT)?;
+                self.tk_as::<true, false>(true, k::OUT, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -4927,7 +4980,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::COMMA_20 => {
-                                self.word_skip_as::<true, false>(w::COMMA_20)?;
+                                self.skip_as::<true, false>(true)?;
                                 self.ft_parameter()?;
                             }
                             _ => {
@@ -4947,7 +5000,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::RPAREN_21 => {
-                    self.word_skip_as::<true, false>(w::RPAREN_21)?;
+                    self.skip_as::<true, false>(true)?;
                 }
                 _ => {
                     return self.refuse();
@@ -5111,13 +5164,13 @@ impl<L: Layout> P<'_, L> {
         self.wrap(k::MULTIPLICATIVE_EXPRESSION, 0)?;
         match self.word() {
             w::STAR_9 => {
-                self.word_leaf_as::<true, false>(w::STAR_9, k::STAR)?;
+                self.tk_as::<true, false>(true, k::STAR, 0)?;
             }
             w::SLASH_78 => {
-                self.word_leaf_as::<true, false>(w::SLASH_78, k::SLASH)?;
+                self.tk_as::<true, false>(true, k::SLASH, 0)?;
             }
             w::PERCENT_79 => {
-                self.word_leaf_as::<true, false>(w::PERCENT_79, k::PERCENT)?;
+                self.tk_as::<true, false>(true, k::PERCENT, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -5142,7 +5195,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::AS_10 => {
-                    self.word_leaf_as::<true, false>(w::AS_10, k::AS)?;
+                    self.tk_as::<true, false>(true, k::AS, 0)?;
                 }
                 _ => {
                     return self.refuse();
@@ -5167,6 +5220,7 @@ impl<L: Layout> P<'_, L> {
                     self.type_modifiers()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -5219,7 +5273,7 @@ impl<L: Layout> P<'_, L> {
                                 } else {
                                     match self.word() {
                                         w::QUEST_40 => {
-                                            self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
+                                            self.tk_as::<true, false>(true, k::QUEST, 0)?;
                                         }
                                         _ => {
                                             break;
@@ -5230,6 +5284,7 @@ impl<L: Layout> P<'_, L> {
                             self.close()?;
                         }
                         _ => {
+
                         }
                     }
                 }
@@ -5254,7 +5309,7 @@ impl<L: Layout> P<'_, L> {
                                 } else {
                                     match self.word() {
                                         w::QUEST_40 => {
-                                            self.word_leaf_as::<true, false>(w::QUEST_40, k::QUEST)?;
+                                            self.tk_as::<true, false>(true, k::QUEST, 0)?;
                                         }
                                         _ => {
                                             break;
@@ -5265,6 +5320,7 @@ impl<L: Layout> P<'_, L> {
                             self.close()?;
                         }
                         _ => {
+
                         }
                     }
                 }
@@ -5291,7 +5347,7 @@ impl<L: Layout> P<'_, L> {
                 } else {
                     match self.word() {
                         w::DOT_32 => {
-                            self.word_skip_as::<true, false>(w::DOT_32)?;
+                            self.skip_as::<true, false>(true)?;
                             self.type_name()?;
                         }
                         _ => {
@@ -5315,7 +5371,7 @@ impl<L: Layout> P<'_, L> {
                         } else {
                             match self.word() {
                                 w::DOT_32 => {
-                                    self.word_skip_as::<true, false>(w::DOT_32)?;
+                                    self.skip_as::<true, false>(true)?;
                                     self.type_name()?;
                                 }
                                 _ => {
@@ -5333,7 +5389,7 @@ impl<L: Layout> P<'_, L> {
                         } else {
                             match self.word() {
                                 w::DOT_32 => {
-                                    self.word_skip_as::<true, false>(w::DOT_32)?;
+                                    self.skip_as::<true, false>(true)?;
                                     self.type_name()?;
                                 }
                                 _ => {
@@ -5384,10 +5440,10 @@ impl<L: Layout> P<'_, L> {
         self.wrap(k::ADDITIVE_EXPRESSION, 0)?;
         match self.word() {
             w::PLUS_76 => {
-                self.word_leaf_as::<true, false>(w::PLUS_76, k::PLUS)?;
+                self.tk_as::<true, false>(true, k::PLUS, 0)?;
             }
             w::MINUS_77 => {
-                self.word_leaf_as::<true, false>(w::MINUS_77, k::MINUS)?;
+                self.tk_as::<true, false>(true, k::MINUS, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -5407,10 +5463,10 @@ impl<L: Layout> P<'_, L> {
         self.wrap(k::RANGE_EXPRESSION, 0)?;
         match self.word() {
             w::DOT_DOT_46 => {
-                self.word_leaf_as::<true, false>(w::DOT_DOT_46, k::DOT_DOT)?;
+                self.tk_as::<true, false>(true, k::DOT_DOT, 0)?;
             }
             w::DOT_DOT_LT_47 => {
-                self.word_leaf_as::<true, false>(w::DOT_DOT_LT_47, k::DOT_DOT_LT)?;
+                self.tk_as::<true, false>(true, k::DOT_DOT_LT, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -5456,21 +5512,22 @@ impl<L: Layout> P<'_, L> {
         self.wrap(k::CHECK_EXPRESSION, 0)?;
         match self.word() {
             w::BANG_49 => {
-                self.word_leaf_as::<true, false>(w::BANG_49, k::BANG)?;
+                self.tk_as::<true, false>(true, k::BANG, 0)?;
             }
             _ => {
+
             }
         }
         match self.word() {
             w::IN_43 => {
-                self.word_leaf_as::<true, false>(w::IN_43, k::IN)?;
+                self.tk_as::<true, false>(true, k::IN, 0)?;
                 let asks = self.asks;
                 self.asks = asks & 0x0 | 0x8;
                 self.check_operand()?;
                 self.asks = asks;
             }
             w::IS_75 => {
-                self.word_leaf_as::<true, false>(w::IS_75, k::IS)?;
+                self.tk_as::<true, false>(true, k::IS, 0)?;
                 let asks = self.asks;
                 self.asks = asks & 0x0 | 0x8;
                 self.r_type()?;
@@ -5495,13 +5552,13 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::LT_26 => {
-                    self.word_leaf_as::<true, false>(w::LT_26, k::LT)?;
+                    self.tk_as::<true, false>(true, k::LT, 0)?;
                 }
                 w::GT_27 => {
-                    self.word_leaf_as::<true, false>(w::GT_27, k::GT)?;
+                    self.tk_as::<true, false>(true, k::GT, 0)?;
                 }
                 w::LT_EQ_73 => {
-                    self.word_leaf_as::<true, false>(w::LT_EQ_73, k::LT_EQ)?;
+                    self.tk_as::<true, false>(true, k::LT_EQ, 0)?;
                 }
                 _ => {
                     return self.refuse();
@@ -5522,16 +5579,16 @@ impl<L: Layout> P<'_, L> {
         self.wrap(k::EQUALITY_EXPRESSION, 0)?;
         match self.word() {
             w::EQ_EQ_71 => {
-                self.word_leaf_as::<true, false>(w::EQ_EQ_71, k::EQ_EQ)?;
+                self.tk_as::<true, false>(true, k::EQ_EQ, 0)?;
             }
             w::BANG_EQ_69 => {
-                self.word_leaf_as::<true, false>(w::BANG_EQ_69, k::BANG_EQ)?;
+                self.tk_as::<true, false>(true, k::BANG_EQ, 0)?;
             }
             w::EQ_EQ_EQ_72 => {
-                self.word_leaf_as::<true, false>(w::EQ_EQ_EQ_72, k::EQ_EQ_EQ)?;
+                self.tk_as::<true, false>(true, k::EQ_EQ_EQ, 0)?;
             }
             w::BANG_EQ_EQ_70 => {
-                self.word_leaf_as::<true, false>(w::BANG_EQ_EQ_70, k::BANG_EQ_EQ)?;
+                self.tk_as::<true, false>(true, k::BANG_EQ_EQ, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -6105,19 +6162,19 @@ impl<L: Layout> P<'_, L> {
                 w::BANG_49 | w::MINUS_77 | w::PLUS_76 | w::PLUS_PLUS_80 | w::MINUS_MINUS_81 => {
                     match self.word() {
                         w::BANG_49 => {
-                            self.word_leaf_as::<true, false>(w::BANG_49, k::BANG)?;
+                            self.tk_as::<true, false>(true, k::BANG, 0)?;
                         }
                         w::MINUS_77 => {
-                            self.word_leaf_as::<true, false>(w::MINUS_77, k::MINUS)?;
+                            self.tk_as::<true, false>(true, k::MINUS, 0)?;
                         }
                         w::PLUS_76 => {
-                            self.word_leaf_as::<true, false>(w::PLUS_76, k::PLUS)?;
+                            self.tk_as::<true, false>(true, k::PLUS, 0)?;
                         }
                         w::PLUS_PLUS_80 => {
-                            self.word_leaf_as::<true, false>(w::PLUS_PLUS_80, k::PLUS_PLUS)?;
+                            self.tk_as::<true, false>(true, k::PLUS_PLUS, 0)?;
                         }
                         w::MINUS_MINUS_81 => {
-                            self.word_leaf_as::<true, false>(w::MINUS_MINUS_81, k::MINUS_MINUS)?;
+                            self.tk_as::<true, false>(true, k::MINUS_MINUS, 0)?;
                         }
                         _ => {
                             return self.refuse();
@@ -6182,13 +6239,13 @@ impl<L: Layout> P<'_, L> {
                 self.wrap(k::POSTFIX_EXPRESSION, 0)?;
                 match self.word() {
                     w::PLUS_PLUS_80 => {
-                        self.word_leaf_as::<true, false>(w::PLUS_PLUS_80, k::PLUS_PLUS)?;
+                        self.tk_as::<true, false>(true, k::PLUS_PLUS, 0)?;
                     }
                     w::MINUS_MINUS_81 => {
-                        self.word_leaf_as::<true, false>(w::MINUS_MINUS_81, k::MINUS_MINUS)?;
+                        self.tk_as::<true, false>(true, k::MINUS_MINUS, 0)?;
                     }
                     w::BANG_BANG_82 => {
-                        self.word_leaf_as::<true, false>(w::BANG_BANG_82, k::BANG_BANG)?;
+                        self.tk_as::<true, false>(true, k::BANG_BANG, 0)?;
                     }
                     _ => {
                         return self.refuse();
@@ -6331,7 +6388,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::LBRACE_17 => {
-                    self.word_skip_as::<true, false>(w::LBRACE_17)?;
+                    self.skip_as::<true, false>(true)?;
                     let arm: usize;
                     if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                         arm = 0;
@@ -6385,7 +6442,7 @@ impl<L: Layout> P<'_, L> {
         loop {
             match self.word() {
                 w::COMMA_20 => {
-                    self.word_skip_as::<true, false>(w::COMMA_20)?;
+                    self.skip_as::<true, false>(true)?;
                     self.lambda_parameter()?;
                 }
                 _ => {
@@ -6408,13 +6465,14 @@ impl<L: Layout> P<'_, L> {
                 self.multi_variable_declaration()?;
                 match self.word() {
                     w::COLON_4 => {
-                        self.word_leaf_as::<true, false>(w::COLON_4, k::COLON)?;
+                        self.tk_as::<true, false>(true, k::COLON, 0)?;
                         let asks = self.asks;
                         self.asks = asks & 0x0 | 0x0;
                         self.r_type()?;
                         self.asks = asks;
                     }
                     _ => {
+
                     }
                 }
             }
@@ -6439,10 +6497,10 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::DOT_32 => {
-                    self.word_leaf_as::<true, false>(w::DOT_32, k::DOT)?;
+                    self.tk_as::<true, false>(true, k::DOT, 0)?;
                 }
                 w::COLON_COLON_63 => {
-                    self.word_leaf_as::<true, false>(w::COLON_COLON_63, k::COLON_COLON)?;
+                    self.tk_as::<true, false>(true, k::COLON_COLON, 0)?;
                 }
                 _ => {
                     return self.refuse();
@@ -6451,7 +6509,7 @@ impl<L: Layout> P<'_, L> {
         }
         match self.word() {
             w::CLASS_13 => {
-                self.word_leaf_as::<true, false>(w::CLASS_13, k::CLASS)?;
+                self.tk_as::<true, false>(true, k::CLASS, 0)?;
             }
             w::CONSTRUCTOR_36 | w::EXPECT_107 | w::DATA_52 | w::INNER_85 | w::VALUE_86 | w::ACTUAL_108 | w::SET_35 | w::GET_34 | w::OVERRIDE_87 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_84 | w::LATEINIT_88 | w::TAILREC_94 | w::OPERATOR_95 | w::INFIX_96 | w::INLINE_97 | w::EXTERNAL_98 | w::PUBLIC_89 | w::PRIVATE_90 | w::INTERNAL_91 | w::PROTECTED_92 | w::ABSTRACT_100 | w::FINAL_101 | w::OPEN_102 | w::CONST_99 | w::FIELD_109 | w::PROPERTY_110 | w::RECEIVER_111 | w::PARAM_112 | w::SETPARAM_113 | w::DELEGATE_114 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_57 | w::FINALLY_58 | w::ENUM_16 | w::FILE_3 | w::OUT_93 | w::BY_25 => {
                 self.name()?;
@@ -6482,7 +6540,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::COMMA_20 => {
-                        self.word_skip_as::<true, false>(w::COMMA_20)?;
+                        self.skip_as::<true, false>(true)?;
                         let asks = self.asks;
                         self.asks = asks & 0x0 | 0x0;
                         self.r_expression()?;
@@ -6499,7 +6557,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::RBRACK_6 => {
-                    self.word_skip_as::<true, false>(w::RBRACK_6)?;
+                    self.skip_as::<true, false>(true)?;
                 }
                 _ => {
                     return self.refuse();
@@ -6547,7 +6605,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::COMMA_20 => {
-                                self.word_skip_as::<true, false>(w::COMMA_20)?;
+                                self.skip_as::<true, false>(true)?;
                                 let flags = self.flags;
                                 self.flags = self.flags & !FLAG_NO_LAMBDA;
                                 self.value_argument()?;
@@ -6570,7 +6628,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::RPAREN_21 => {
-                    self.word_skip_as::<true, false>(w::RPAREN_21)?;
+                    self.skip_as::<true, false>(true)?;
                 }
                 _ => {
                     return self.refuse();
@@ -6802,7 +6860,7 @@ impl<L: Layout> P<'_, L> {
             } else {
                 match self.word() {
                     w::COMMA_20 => {
-                        self.word_skip_as::<true, false>(w::COMMA_20)?;
+                        self.skip_as::<true, false>(true)?;
                         let asks = self.asks;
                         self.asks = asks & 0x0 | 0x0;
                         self.r_expression()?;
@@ -6819,7 +6877,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::RBRACK_6 => {
-                    self.word_skip_as::<true, false>(w::RBRACK_6)?;
+                    self.skip_as::<true, false>(true)?;
                 }
                 _ => {
                     return self.refuse();
@@ -6842,7 +6900,7 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as::<true, false>(w::COLON_COLON_63)?;
         match self.word() {
             w::CLASS_13 => {
-                self.word_skip_as::<true, false>(w::CLASS_13)?;
+                self.skip_as::<true, false>(true)?;
             }
             w::CONSTRUCTOR_36 | w::EXPECT_107 | w::DATA_52 | w::INNER_85 | w::VALUE_86 | w::ACTUAL_108 | w::SET_35 | w::GET_34 | w::OVERRIDE_87 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_84 | w::LATEINIT_88 | w::TAILREC_94 | w::OPERATOR_95 | w::INFIX_96 | w::INLINE_97 | w::EXTERNAL_98 | w::PUBLIC_89 | w::PRIVATE_90 | w::INTERNAL_91 | w::PROTECTED_92 | w::ABSTRACT_100 | w::FINAL_101 | w::OPEN_102 | w::CONST_99 | w::FIELD_109 | w::PROPERTY_110 | w::RECEIVER_111 | w::PARAM_112 | w::SETPARAM_113 | w::DELEGATE_114 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_57 | w::FINALLY_58 | w::ENUM_16 | w::FILE_3 | w::OUT_93 | w::BY_25 => {
                 self.name()?;
@@ -6897,10 +6955,10 @@ impl<L: Layout> P<'_, L> {
         self.open(k::BOOLEAN_LITERAL);
         match self.word() {
             w::TRUE_116 => {
-                self.word_leaf_as::<true, false>(w::TRUE_116, k::TRUE)?;
+                self.tk_as::<true, false>(true, k::TRUE, 0)?;
             }
             w::FALSE_117 => {
-                self.word_leaf_as::<true, false>(w::FALSE_117, k::FALSE)?;
+                self.tk_as::<true, false>(true, k::FALSE, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -6966,17 +7024,8 @@ impl<L: Layout> P<'_, L> {
                 w::U_119 | w::U_120 | w::UL_121 | w::UL_122 => {
                     self.wrap(k::UNSIGNED_LITERAL, 0)?;
                     match self.word() {
-                        w::U_119 => {
-                            self.word_skip_as::<true, false>(w::U_119)?;
-                        }
-                        w::U_120 => {
-                            self.word_skip_as::<true, false>(w::U_120)?;
-                        }
-                        w::UL_121 => {
-                            self.word_skip_as::<true, false>(w::UL_121)?;
-                        }
-                        w::UL_122 => {
-                            self.word_skip_as::<true, false>(w::UL_122)?;
+                        w::U_119 | w::U_120 | w::UL_121 | w::UL_122 => {
+                            self.skip_as::<true, false>(true)?;
                         }
                         _ => {
                             return self.refuse();
@@ -7013,7 +7062,7 @@ impl<L: Layout> P<'_, L> {
                 self.soft_interp()?;
             }
             _ if self.at_interpolated_identifier() => {
-                self.tk_as::<true, false>(self.at_interpolated_identifier(), k::INTERPOLATED_IDENTIFIER, 0)?;
+                self.tk_as::<true, false>(true, k::INTERPOLATED_IDENTIFIER, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -7037,136 +7086,136 @@ impl<L: Layout> P<'_, L> {
     fn interp_soft(&mut self) -> R {
         match self.word() {
             w::EXPECT_107 => {
-                self.word_leaf_as::<true, false>(w::EXPECT_107, k::EXPECT)?;
+                self.tk_as::<true, false>(true, k::EXPECT, 0)?;
             }
             w::DATA_52 => {
-                self.word_leaf_as::<true, false>(w::DATA_52, k::DATA)?;
+                self.tk_as::<true, false>(true, k::DATA, 0)?;
             }
             w::INNER_85 => {
-                self.word_leaf_as::<true, false>(w::INNER_85, k::INNER)?;
+                self.tk_as::<true, false>(true, k::INNER, 0)?;
             }
             w::VALUE_86 => {
-                self.word_leaf_as::<true, false>(w::VALUE_86, k::VALUE)?;
+                self.tk_as::<true, false>(true, k::VALUE, 0)?;
             }
             w::ACTUAL_108 => {
-                self.word_leaf_as::<true, false>(w::ACTUAL_108, k::ACTUAL)?;
+                self.tk_as::<true, false>(true, k::ACTUAL, 0)?;
             }
             w::SET_35 => {
-                self.word_leaf_as::<true, false>(w::SET_35, k::SET)?;
+                self.tk_as::<true, false>(true, k::SET, 0)?;
             }
             w::GET_34 => {
-                self.word_leaf_as::<true, false>(w::GET_34, k::GET)?;
+                self.tk_as::<true, false>(true, k::GET, 0)?;
             }
             w::OVERRIDE_87 => {
-                self.word_leaf_as::<true, false>(w::OVERRIDE_87, k::OVERRIDE)?;
+                self.tk_as::<true, false>(true, k::OVERRIDE, 0)?;
             }
             w::SUSPEND_24 => {
-                self.word_leaf_as::<true, false>(w::SUSPEND_24, k::SUSPEND)?;
+                self.tk_as::<true, false>(true, k::SUSPEND, 0)?;
             }
             w::ANNOTATION_1 => {
-                self.word_leaf_as::<true, false>(w::ANNOTATION_1, k::ANNOTATION)?;
+                self.tk_as::<true, false>(true, k::ANNOTATION, 0)?;
             }
             w::SEALED_84 => {
-                self.word_leaf_as::<true, false>(w::SEALED_84, k::SEALED)?;
+                self.tk_as::<true, false>(true, k::SEALED, 0)?;
             }
             w::LATEINIT_88 => {
-                self.word_leaf_as::<true, false>(w::LATEINIT_88, k::LATEINIT)?;
+                self.tk_as::<true, false>(true, k::LATEINIT, 0)?;
             }
             w::TAILREC_94 => {
-                self.word_leaf_as::<true, false>(w::TAILREC_94, k::TAILREC)?;
+                self.tk_as::<true, false>(true, k::TAILREC, 0)?;
             }
             w::OPERATOR_95 => {
-                self.word_leaf_as::<true, false>(w::OPERATOR_95, k::OPERATOR)?;
+                self.tk_as::<true, false>(true, k::OPERATOR, 0)?;
             }
             w::INFIX_96 => {
-                self.word_leaf_as::<true, false>(w::INFIX_96, k::INFIX)?;
+                self.tk_as::<true, false>(true, k::INFIX, 0)?;
             }
             w::INLINE_97 => {
-                self.word_leaf_as::<true, false>(w::INLINE_97, k::INLINE)?;
+                self.tk_as::<true, false>(true, k::INLINE, 0)?;
             }
             w::EXTERNAL_98 => {
-                self.word_leaf_as::<true, false>(w::EXTERNAL_98, k::EXTERNAL)?;
+                self.tk_as::<true, false>(true, k::EXTERNAL, 0)?;
             }
             w::PUBLIC_89 => {
-                self.word_leaf_as::<true, false>(w::PUBLIC_89, k::PUBLIC)?;
+                self.tk_as::<true, false>(true, k::PUBLIC, 0)?;
             }
             w::PRIVATE_90 => {
-                self.word_leaf_as::<true, false>(w::PRIVATE_90, k::PRIVATE)?;
+                self.tk_as::<true, false>(true, k::PRIVATE, 0)?;
             }
             w::INTERNAL_91 => {
-                self.word_leaf_as::<true, false>(w::INTERNAL_91, k::INTERNAL)?;
+                self.tk_as::<true, false>(true, k::INTERNAL, 0)?;
             }
             w::PROTECTED_92 => {
-                self.word_leaf_as::<true, false>(w::PROTECTED_92, k::PROTECTED)?;
+                self.tk_as::<true, false>(true, k::PROTECTED, 0)?;
             }
             w::ABSTRACT_100 => {
-                self.word_leaf_as::<true, false>(w::ABSTRACT_100, k::ABSTRACT)?;
+                self.tk_as::<true, false>(true, k::ABSTRACT, 0)?;
             }
             w::FINAL_101 => {
-                self.word_leaf_as::<true, false>(w::FINAL_101, k::FINAL)?;
+                self.tk_as::<true, false>(true, k::FINAL, 0)?;
             }
             w::OPEN_102 => {
-                self.word_leaf_as::<true, false>(w::OPEN_102, k::OPEN)?;
+                self.tk_as::<true, false>(true, k::OPEN, 0)?;
             }
             w::CONST_99 => {
-                self.word_leaf_as::<true, false>(w::CONST_99, k::CONST)?;
+                self.tk_as::<true, false>(true, k::CONST, 0)?;
             }
             w::VARARG_103 => {
-                self.word_leaf_as::<true, false>(w::VARARG_103, k::VARARG)?;
+                self.tk_as::<true, false>(true, k::VARARG, 0)?;
             }
             w::NOINLINE_104 => {
-                self.word_leaf_as::<true, false>(w::NOINLINE_104, k::NOINLINE)?;
+                self.tk_as::<true, false>(true, k::NOINLINE, 0)?;
             }
             w::CROSSINLINE_105 => {
-                self.word_leaf_as::<true, false>(w::CROSSINLINE_105, k::CROSSINLINE)?;
+                self.tk_as::<true, false>(true, k::CROSSINLINE, 0)?;
             }
             w::REIFIED_106 => {
-                self.word_leaf_as::<true, false>(w::REIFIED_106, k::REIFIED)?;
+                self.tk_as::<true, false>(true, k::REIFIED, 0)?;
             }
             w::FIELD_109 => {
-                self.word_leaf_as::<true, false>(w::FIELD_109, k::FIELD)?;
+                self.tk_as::<true, false>(true, k::FIELD, 0)?;
             }
             w::PROPERTY_110 => {
-                self.word_leaf_as::<true, false>(w::PROPERTY_110, k::PROPERTY)?;
+                self.tk_as::<true, false>(true, k::PROPERTY, 0)?;
             }
             w::RECEIVER_111 => {
-                self.word_leaf_as::<true, false>(w::RECEIVER_111, k::RECEIVER)?;
+                self.tk_as::<true, false>(true, k::RECEIVER, 0)?;
             }
             w::PARAM_112 => {
-                self.word_leaf_as::<true, false>(w::PARAM_112, k::PARAM)?;
+                self.tk_as::<true, false>(true, k::PARAM, 0)?;
             }
             w::SETPARAM_113 => {
-                self.word_leaf_as::<true, false>(w::SETPARAM_113, k::SETPARAM)?;
+                self.tk_as::<true, false>(true, k::SETPARAM, 0)?;
             }
             w::DELEGATE_114 => {
-                self.word_leaf_as::<true, false>(w::DELEGATE_114, k::DELEGATE)?;
+                self.tk_as::<true, false>(true, k::DELEGATE, 0)?;
             }
             w::COMPANION_30 => {
-                self.word_leaf_as::<true, false>(w::COMPANION_30, k::COMPANION)?;
+                self.tk_as::<true, false>(true, k::COMPANION, 0)?;
             }
             w::CONSTRUCTOR_36 => {
-                self.word_leaf_as::<true, false>(w::CONSTRUCTOR_36, k::CONSTRUCTOR)?;
+                self.tk_as::<true, false>(true, k::CONSTRUCTOR, 0)?;
             }
             w::INIT_29 => {
-                self.word_leaf_as::<true, false>(w::INIT_29, k::INIT)?;
+                self.tk_as::<true, false>(true, k::INIT, 0)?;
             }
             w::DYNAMIC_39 => {
-                self.word_leaf_as::<true, false>(w::DYNAMIC_39, k::DYNAMIC)?;
+                self.tk_as::<true, false>(true, k::DYNAMIC, 0)?;
             }
             w::WHERE_28 => {
-                self.word_leaf_as::<true, false>(w::WHERE_28, k::WHERE)?;
+                self.tk_as::<true, false>(true, k::WHERE, 0)?;
             }
             w::CATCH_57 => {
-                self.word_leaf_as::<true, false>(w::CATCH_57, k::CATCH)?;
+                self.tk_as::<true, false>(true, k::CATCH, 0)?;
             }
             w::FINALLY_58 => {
-                self.word_leaf_as::<true, false>(w::FINALLY_58, k::FINALLY)?;
+                self.tk_as::<true, false>(true, k::FINALLY, 0)?;
             }
             w::ENUM_16 => {
-                self.word_leaf_as::<true, false>(w::ENUM_16, k::ENUM)?;
+                self.tk_as::<true, false>(true, k::ENUM, 0)?;
             }
             w::OUT_93 => {
-                self.word_leaf_as::<true, false>(w::OUT_93, k::OUT)?;
+                self.tk_as::<true, false>(true, k::OUT, 0)?;
             }
             _ => {
                 return self.refuse();
@@ -7224,7 +7273,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::THIS_37 => {
-                    self.word_skip_as::<true, false>(w::THIS_37)?;
+                    self.skip_as::<true, false>(true)?;
                 }
                 _ => {
                     return self.refuse();
@@ -7255,7 +7304,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::COLON_4 => {
-                    self.word_leaf_as::<true, false>(w::COLON_4, k::COLON)?;
+                    self.tk_as::<true, false>(true, k::COLON, 0)?;
                     let flags = self.flags;
                     self.flags = self.flags | FLAG_NO_LAMBDA;
                     self.delegation_specifier()?;
@@ -7267,7 +7316,7 @@ impl<L: Layout> P<'_, L> {
                         } else {
                             match self.word() {
                                 w::COMMA_20 => {
-                                    self.word_skip_as::<true, false>(w::COMMA_20)?;
+                                    self.skip_as::<true, false>(true)?;
                                     let flags = self.flags;
                                     self.flags = self.flags | FLAG_NO_LAMBDA;
                                     self.delegation_specifier()?;
@@ -7281,6 +7330,7 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 _ => {
+
                 }
             }
         }
@@ -7292,6 +7342,7 @@ impl<L: Layout> P<'_, L> {
                     self.class_body()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -7333,7 +7384,7 @@ impl<L: Layout> P<'_, L> {
             self.mark_jump_at()?;
             match self.word() {
                 w::RETURN_60 => {
-                    self.word_leaf_as::<true, false>(w::RETURN_60, k::RETURN)?;
+                    self.tk_as::<true, false>(true, k::RETURN, 0)?;
                     self.merge_as::<true, false>(self.word() == w::AT_2, k::RETURN_AT)?;
                     self.tk_as::<true, false>(self.at_simple_identifier(), k::LABEL, 0)?;
                     self.ask_semi(false)?;
@@ -7369,12 +7420,12 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 w::BREAK_62 => {
-                    self.word_leaf_as::<true, false>(w::BREAK_62, k::BREAK)?;
+                    self.tk_as::<true, false>(true, k::BREAK, 0)?;
                     self.merge_as::<true, false>(self.word() == w::AT_2, k::BREAK_AT)?;
                     self.tk_as::<true, false>(self.at_simple_identifier(), k::LABEL, 0)?;
                 }
                 w::CONTINUE_61 => {
-                    self.word_leaf_as::<true, false>(w::CONTINUE_61, k::CONTINUE)?;
+                    self.tk_as::<true, false>(true, k::CONTINUE, 0)?;
                     self.merge_as::<true, false>(self.word() == w::AT_2, k::CONTINUE_AT)?;
                     self.tk_as::<true, false>(self.at_simple_identifier(), k::LABEL, 0)?;
                 }
@@ -7385,7 +7436,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::RETURN_60 => {
-                    self.word_leaf_as::<true, false>(w::RETURN_60, k::RETURN)?;
+                    self.tk_as::<true, false>(true, k::RETURN, 0)?;
                     self.ask_semi(false)?;
                     let arm: usize;
                     if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
@@ -7419,17 +7470,17 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 w::THROW_59 => {
-                    self.word_leaf_as::<true, false>(w::THROW_59, k::THROW)?;
+                    self.tk_as::<true, false>(true, k::THROW, 0)?;
                     let asks = self.asks;
                     self.asks = asks & 0x0 | 0x8;
                     self.r_expression()?;
                     self.asks = asks;
                 }
                 w::BREAK_62 => {
-                    self.word_leaf_as::<true, false>(w::BREAK_62, k::BREAK)?;
+                    self.tk_as::<true, false>(true, k::BREAK, 0)?;
                 }
                 w::CONTINUE_61 => {
-                    self.word_leaf_as::<true, false>(w::CONTINUE_61, k::CONTINUE)?;
+                    self.tk_as::<true, false>(true, k::CONTINUE, 0)?;
                 }
                 _ => {
                     return self.refuse();
@@ -7497,6 +7548,7 @@ impl<L: Layout> P<'_, L> {
                     self.finally_block()?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -7599,6 +7651,7 @@ impl<L: Layout> P<'_, L> {
                 self.mark_blk()?;
             }
             _ => {
+
             }
         }
         self.word_skip_as::<true, false>(w::LBRACE_17)?;
@@ -7633,11 +7686,12 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::VAL_22 => {
-                    self.word_skip_as::<true, false>(w::VAL_22)?;
+                    self.skip_as::<true, false>(true)?;
                     self.variable_declaration()?;
                     self.word_skip_as::<true, false>(w::EQ_12)?;
                 }
                 _ => {
+
                 }
             }
         }
@@ -7682,7 +7736,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::COMMA_20 => {
-                                self.word_skip_as::<true, false>(w::COMMA_20)?;
+                                self.skip_as::<true, false>(true)?;
                                 self.when_condition()?;
                             }
                             _ => {
@@ -7778,7 +7832,7 @@ impl<L: Layout> P<'_, L> {
         self.word_leaf_as::<true, false>(w::BANG_49, k::BANG)?;
         match self.word() {
             w::IN_43 => {
-                self.word_leaf_as::<true, false>(w::IN_43, k::IN)?;
+                self.tk_as::<true, false>(true, k::IN, 0)?;
                 let asks = self.asks;
                 self.asks = asks & 0x0 | 0x0;
                 self.r_expression()?;
@@ -7852,11 +7906,12 @@ impl<L: Layout> P<'_, L> {
         } else {
             match self.word() {
                 w::ELSE_54 => {
-                    self.word_leaf_as::<true, false>(w::ELSE_54, k::ELSE)?;
+                    self.tk_as::<true, false>(true, k::ELSE, 0)?;
                     self.control_structure_body()?;
                     self.field_made(f::ALTERNATIVE);
                 }
                 _ => {
+
                 }
             }
         }

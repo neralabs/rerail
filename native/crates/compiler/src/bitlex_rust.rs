@@ -1805,7 +1805,7 @@ impl<'a> G<'a> {
             }
         }
         // The leaves' fields, then each take's tests (`takes`), before the helpers no code calls are dropped.
-        out = takes(&leaf_fields(&out), self.mark_words.borrow().as_ref());
+        out = one_arm_a_take(&takes(&leaf_fields(&out), self.mark_words.borrow().as_ref()));
         // No region read in parts (decision 0619, as 0586's): tier 1 gives no mask, and tier 2 holds none, splits no
         // record, and writes only the helpers its code calls.
         if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() {
@@ -1931,6 +1931,121 @@ fn takes(code: &str, marks: Option<&(HashSet<String>, HashSet<String>)>) -> Stri
     }
     out.push_str(rest);
     out
+}
+
+/// `code` with a decision's tokens taken as the lean parser takes a class of them (`raw_line`'s loop, `is_p`): an arm
+/// whose take tests the very token its pattern matched takes it with no test (`true`), and the arms whose code is then
+/// the same are one arm, `w::A | w::B` (a kind's guards `_ if a || b`). A choice of tokens (`any`, `punctuation`) is
+/// one arm a leaf kind, not one a token.
+fn one_arm_a_take(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let mut out = String::with_capacity(code.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let l = lines[i];
+        if l.trim_start() == "match self.word() {"
+            && let Some((arms, next)) = word_arms(&lines, i)
+        {
+            let p = &l[..l.len() - l.trim_start().len()];
+            let q = format!("{p}    ");
+            let _ = writeln!(out, "{l}");
+            for (pat, body) in merged_arms(arms) {
+                let _ = writeln!(out, "{q}{pat} => {{\n{body}{q}}}");
+            }
+            let _ = writeln!(out, "{p}}}");
+            i = next;
+            continue;
+        }
+        out.push_str(l);
+        out.push('\n');
+        i += 1;
+    }
+    if !code.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+/// The arms of the `match self.word()` at line `i`: each its pattern and its code (its lines, each ended, the nested
+/// decisions in it made one arm a take too); and the line after the match. None where a line is not an arm's.
+fn word_arms(lines: &[&str], i: usize) -> Option<(Vec<(String, String)>, usize)> {
+    let l = lines[i];
+    let p = &l[..l.len() - l.trim_start().len()];
+    let (q, close_m) = (format!("{p}    "), format!("{p}}}"));
+    let close_a = format!("{q}}}");
+    let mut arms = Vec::new();
+    let mut j = i + 1;
+    while *lines.get(j)? != close_m {
+        let pat = lines[j].strip_prefix(q.as_str())?.strip_suffix(" => {")?;
+        if pat.starts_with(' ') {
+            return None;
+        }
+        let from = j + 1;
+        j = from;
+        while *lines.get(j)? != close_a {
+            j += 1;
+        }
+        let body = one_arm_a_take(&(lines[from..j].join("\n") + "\n"));
+        arms.push((pat.to_owned(), body));
+        j += 1;
+    }
+    Some((arms, j + 1))
+}
+
+/// `arms` with each take of its own pattern's token untested, and the word arms of the same code one arm (at the first's
+/// place: the words are distinct, so their order is free), consecutive guards of the same code one guard.
+fn merged_arms(arms: Vec<(String, String)>) -> Vec<(String, String)> {
+    let is_word = |p: &str| p.starts_with("w::") && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':');
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (pat, body) in arms {
+        let cond = if is_word(&pat) {
+            Some(format!("self.word() == {pat}"))
+        } else {
+            pat.strip_prefix("_ if ").filter(|c| !c.contains("||") && !c.contains(" && ")).map(str::to_owned)
+        };
+        let body = match &cond {
+            Some(c) => untested(&body, c, is_word(&pat).then_some(pat.as_str())),
+            None => body,
+        };
+        if is_word(&pat)
+            && let Some(a) = out.iter_mut().find(|a| a.1 == body && a.0.split(" | ").all(is_word))
+        {
+            a.0 = format!("{} | {pat}", a.0);
+            continue;
+        }
+        if let Some(c) = pat.strip_prefix("_ if ")
+            && let Some(last) = out.last_mut()
+            && last.1 == body
+            && last.0.starts_with("_ if ")
+        {
+            last.0 = format!("{} || {c}", last.0);
+            continue;
+        }
+        out.push((pat, body));
+    }
+    out
+}
+
+/// `body` whose first line takes the token `cond` tests (or word `word`'s): that test `true`, the arm's pattern having
+/// made it.
+fn untested(body: &str, cond: &str, word: Option<&str>) -> String {
+    let Some((first, rest)) = body.split_once('\n') else { return body.to_owned() };
+    let pad = &first[..first.len() - first.trim_start().len()];
+    let t = first.trim_start();
+    let Some(after) = t.strip_prefix("self.") else { return body.to_owned() };
+    let Some((name, args)) = after.split_once("_as::<") else { return body.to_owned() };
+    let Some((generics, args)) = args.split_once(">(") else { return body.to_owned() };
+    let new = match (name, word) {
+        ("word_leaf", Some(w)) => args.strip_prefix(&format!("{w}, ")).map(|k| format!("self.tk_as::<{generics}>(true, {}", k.replacen(")?;", ", 0)?;", 1))),
+        ("word_skip", Some(w)) => args.strip_prefix(&format!("{w})?;")).map(|_| format!("self.skip_as::<{generics}>(true)?;")),
+        _ => args.strip_prefix(&format!("{cond}, ")).or_else(|| args.strip_prefix(&format!("{cond})"))).map(|r| {
+            if args.starts_with(&format!("{cond})")) { format!("self.{name}_as::<{generics}>(true){r}") } else { format!("self.{name}_as::<{generics}>(true, {r}") }
+        }),
+    };
+    match new {
+        Some(n) => format!("{pad}{n}\n{rest}"),
+        None => body.to_owned(),
+    }
 }
 
 /// `code` with each leaf given its field as it is written: a leaf (`tk`, `word_leaf`) of no field, then the field set
