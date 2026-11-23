@@ -1,0 +1,1 @@
+An installed rule pack's rule that this Rerail does not run, because it tests punctuation or a keyword the grammar implies, is marked not running in the dashboard, `rerail packs list` and `rerail rules show`, and no longer makes the session's audit fail. Set-up and `rerail update` name the installed packs that have such rules.
