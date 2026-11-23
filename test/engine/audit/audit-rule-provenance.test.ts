@@ -1794,6 +1794,24 @@ describe("an audit whose other stored lists do not read", () => {
     }
   });
 
+  it("answers the session's summary when the stored rule provenance its latest audit names does not read, with the counts of its record", async () => {
+    const path = await temporaryDatabase();
+    threeAudits(path);
+    const latest = new SqliteAuditStore(path);
+    const latestId = latest.list({ limit: 1 }).audits[0]!.auditId;
+    latest.close();
+    damageStoredCopy(path, latestId, BROKEN);
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    try {
+      expect(store.get(latestId)).toMatchObject({ ruleProvenance: [], violations: [VIOLATION], failureCount: 2 });
+      expect(store.latestSummary("session-a")).toMatchObject({ violationCount: 1, failureCount: 2 });
+    } finally {
+      store.close();
+      stderr.restore();
+    }
+  });
+
   it("names in its log, once for each damaged list, two of one audit among them, the audit that read it with none and the column that holds it", async () => {
     const path = await temporaryDatabase();
     const auditIds = threeAudits(path);
