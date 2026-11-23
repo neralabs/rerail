@@ -662,6 +662,40 @@ fn the_cone_of_requests_is_kept_while_its_reads_and_answers_are() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The cone's strata are kept for every root (`kept_strata::cone_space_shared`, unless `RERAIL_CONE_SPACE=root`): a
+/// corpus's first run finds clean the strata another corpus's run over the same libraries kept, and loads what a run
+/// with nothing kept loads.
+#[test]
+fn a_corpus_first_run_reads_the_cone_strata_another_root_kept() {
+    if std::env::var("RERAIL_CONE_SPACE").is_ok_and(|v| v == "root") {
+        return;
+    }
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cone-shared");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (a, b) = (dir.join("a"), dir.join("b"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(a.join("main.py"), "import os\n").unwrap();
+    std::fs::write(b.join("tool.py"), "import os\nx = 1\n").unwrap();
+    let rule = dir.join("p.rerail");
+    std::fs::write(&rule, "#include \"python/modules.rerail\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |root: &std::path::Path, store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut loaded = crate::code_rule_dsl::logic::plan::output::shown(&out, "n_loaded").unwrap();
+        loaded.sort();
+        (report.cone_kept, loaded)
+    };
+    run(&a, "kept.sqlite");
+    let (kept, loaded) = run(&b, "kept.sqlite");
+    let (evaluated, of) = kept.expect("a run with a store keeps its cone");
+    assert!(evaluated < of, "b's first run evaluates only the strata a's left unclean: {evaluated} of {of}");
+    assert_eq!(loaded, run(&b, "fresh.sqlite").1, "b's loads are a run's with nothing kept");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0145: the cone run as rounds from the last run's final round finds what the gated fixpoint over
 /// nothing kept finds, edit after edit: a new import, a library's own import, an import taken away (its load is
 /// not asked again), and a library file that goes.
