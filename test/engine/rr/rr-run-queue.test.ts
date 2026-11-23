@@ -40,7 +40,7 @@ class Owner implements RrRunOwner {
     if (this.#written.length === 0) return undefined;
     this.claimed.push(this.#written);
     this.#written = [];
-    return { policies: () => [this.#policy], settle: outcome => this.outcomes.push(outcome) };
+    return { policies: [this.#policy], settle: outcome => this.outcomes.push(outcome) };
   }
 }
 
@@ -116,6 +116,47 @@ describe("a checkout's queue of .rerail runs after edits", () => {
     expect(owner.claimed).toEqual([["a.py"], ["a.py", "b.py"]]);
   });
 
+  it("claims the owners' writes when the run's turn comes: a write while the run waits for the slot joins it, and no run carries a superseded write", async () => {
+    const runner = heldRunner();
+    // Another run of the process holds the slot, as a scan's run does.
+    const holding = runner.slots.run({ start: () => ({ root: "/elsewhere", policies: ["/rules/scan.rerail"] }) });
+    await vi.advanceTimersByTimeAsync(0);
+    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
+    const owner = new Owner("/rules/a.rerail");
+    owner.write(queue, "a.py");
+    await vi.advanceTimersByTimeAsync(QUIET_MS);
+    // The checkout went quiet: the run asked for its turn, and claimed nothing yet.
+    expect(owner.claimed).toEqual([]);
+    owner.write(queue, "a.py");
+    runner.runs[0]!.end(COMPLETED);
+    await holding;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(owner.claimed).toEqual([["a.py", "a.py"]]);
+    expect(runner.runs.map(({ run }) => run.root)).toEqual(["/elsewhere", "/repo"]);
+    runner.runs[1]!.end(COMPLETED);
+    await vi.advanceTimersByTimeAsync(QUIET_MS * 2);
+    // Nothing was left over for a second run.
+    expect(runner.runs).toHaveLength(2);
+  });
+
+  it("lets an owner that leaves while the run waits for its turn out of it", async () => {
+    const runner = heldRunner();
+    const holding = runner.slots.run({ start: () => ({ root: "/elsewhere", policies: ["/rules/scan.rerail"] }) });
+    await vi.advanceTimersByTimeAsync(0);
+    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
+    const leaving = new Owner("/rules/a.rerail");
+    leaving.write(queue, "a.py");
+    queue.flush();
+    await vi.advanceTimersByTimeAsync(0);
+    queue.leave(leaving);
+    runner.runs[0]!.end(COMPLETED);
+    await holding;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(leaving.claimed).toEqual([]);
+    expect(leaving.outcomes).toEqual([]);
+    expect(runner.runs).toHaveLength(1);
+  });
+
   it("kills the run a leaving owner was alone in, and settles a claim at once when another owner is still in the run", async () => {
     const runner = heldRunner();
     const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
@@ -139,7 +180,7 @@ describe("a checkout's queue when an owner fails", () => {
   it("settles every other owner's claim when one owner's settle throws, and leaves no rejection unhandled", async () => {
     const runner = heldRunner();
     const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
-    const failing: RrRunOwner = { claim: () => ({ policies: () => ["/rules/a.rerail"], settle: () => { throw new Error("the audit store is closed"); } }) };
+    const failing: RrRunOwner = { claim: () => ({ policies: ["/rules/a.rerail"], settle: () => { throw new Error("the audit store is closed"); } }) };
     const other = new Owner("/rules/b.rerail");
     const unhandled = vi.fn();
     process.on("unhandledRejection", unhandled);

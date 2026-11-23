@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import type { AuditInput, AuditRecorder, AuditResult, AuditScope } from "../../../src/engine/audit/audit.js";
 import type { CodeRulePlacement } from "../../../src/engine/catalog/repository-model.js";
@@ -89,8 +89,12 @@ function session(rules: RerailRuleEntry[], scope: AuditScope = "touched-files") 
   return { runs, started, finished, steers, edits, write, slots };
 }
 
-const written = (path: string, generatedText = "x = 1\n", previousText?: string): CodeRuleEdit =>
-  ({ path, language: "python", generatedText, ...(previousText === undefined ? {} : { previousText }) });
+/** An edit of `path` that wrote `generatedText`, written to the checkout as a tool writes it. */
+function written(path: string, generatedText = "x = 1\n", previousText?: string): CodeRuleEdit {
+  mkdirSync(dirname(join(root, path)), { recursive: true });
+  writeFileSync(join(root, path), generatedText);
+  return { path, language: "python", generatedText, ...(previousText === undefined ? {} : { previousText }) };
+}
 
 describe("a session's .rerail runs after its edits", () => {
   it("records each finding at the mode its rule's placement gives the path, drops those where the rule is off, and steers only what steers", async () => {
@@ -184,13 +188,13 @@ describe("a session's .rerail runs after its edits", () => {
     const holding = slots.run({ start: () => ({ root, policies: ["/rules/held.rerail"] }) });
     await vi.waitFor(() => expect(runs).toHaveLength(1));
     write(1, written("a.py"));
-    // The edit's run is queued with both rules (its audit carries them) and waits for the slot.
-    await vi.waitFor(() => expect(started).toHaveLength(1));
-    expect(started[0]!.ruleProvenance?.map(entry => entry.ruleId)).toEqual(["rr-edited-while-waiting", "rr-sample-assert"]);
+    // The edit's run waits for the slot; the rule's file is edited meanwhile.
     writeFileSync(library, "// edited while the run waited\n");
     runs[0]!.end(completed([]));
     await holding;
     await vi.waitFor(() => expect(runs).toHaveLength(2));
+    // Its audit carries both rules the file takes; its child runs the one whose files are as the catalog read them.
+    expect(started[0]!.ruleProvenance?.map(entry => entry.ruleId)).toEqual(["rr-edited-while-waiting", "rr-sample-assert"]);
     expect(runs[1]!.run.policies).toEqual([assert.path]);
     runs[1]!.end(completed([]));
     await vi.waitFor(() => expect(finished).toHaveLength(1));
@@ -237,6 +241,61 @@ describe("a session's .rerail runs when the session or its rules change", () => 
     runs[1]!.end(completed([finding("rr-sample-assert", "a.py", 0, 0, 5)]));
     await vi.waitFor(() => expect(finished).toHaveLength(2));
     expect(finished[1]!.violations?.map(violation => violation.path)).toEqual(["a.py"]);
+  });
+
+  it("keeps a run going when only rules that take none of its files change", async () => {
+    const assert = rule("rr-sample-assert", [{ folder: "", mode: "steer" }]);
+    const templates = { ...rule("rr-templates", [{ folder: "", mode: null }]), scope: { include: ["**/*.html"], exclude: [] } };
+    const rules = [assert, templates];
+    const { runs, finished, edits, write } = session(rules);
+    write(1, written("a.py"));
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    // A rule for templates is turned on: it takes no file the run carries.
+    rules[1] = { ...templates, placement: [{ folder: "", mode: "steer" }] };
+    edits.rulesChanged();
+    expect(runs[0]!.run.signal?.aborted).toBe(false);
+    runs[0]!.end(completed([finding("rr-sample-assert", "a.py", 0, 0, 5)]));
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]).toMatchObject({ status: "completed", violations: [expect.objectContaining({ path: "a.py" })] });
+    expect(runs).toHaveLength(1);
+  });
+});
+
+describe("a session's .rerail runs when another writer changes a written file", () => {
+  it("runs no file another writer changed between its edit and the run, and runs it with the session's next edit of it", async () => {
+    const assert = rule("rr-sample-assert", [{ folder: "", mode: "steer" }]);
+    const { runs, started, finished, steers, edits, write } = session([assert], "ai-output");
+    const views = written("shop/views.py", "assert user\n", "");
+    const other = written("shop/other.py", "x = 1\n", "");
+    // Another session, a formatter or the person's editor puts 20 lines on top before the run reads the file.
+    writeFileSync(join(root, "shop", "views.py"), `${"# header\n".repeat(20)}assert user\n`);
+    edits.gather([views, other], 1, "ai-output", "steer");
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    expect(started[0]!.paths).toEqual(["shop/other.py"]);
+    runs[0]!.end(completed([finding("rr-sample-assert", "shop/views.py", 20, 180, 191)]));
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]!.violations).toEqual([]);
+    expect(steers).toEqual([]);
+    // The session's next edit of the file runs it, measured from the text the session saw before its first edit.
+    write(2, written("shop/views.py", `${"# header\n".repeat(20)}assert user\nassert other\n`, `${"# header\n".repeat(20)}assert user\n`));
+    await vi.waitFor(() => expect(runs).toHaveLength(2));
+    expect(started[1]!.paths).toEqual(["shop/views.py"]);
+  });
+
+  it("records and steers nothing for a file another writer changed while the run read it, and runs it with the session's next edit", async () => {
+    const assert = rule("rr-sample-assert", [{ folder: "", mode: "steer" }]);
+    const { runs, started, finished, steers, write } = session([assert], "ai-output");
+    write(1, written("shop/views.py", "assert user\n", ""));
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    // During the run, another writer puts 20 lines on top: the run's spans are in that text, not the edit's.
+    writeFileSync(join(root, "shop", "views.py"), `${"# header\n".repeat(20)}assert user\n`);
+    runs[0]!.end(completed([finding("rr-sample-assert", "shop/views.py", 0, 0, 11)]));
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]!.violations).toEqual([]);
+    expect(steers).toEqual([]);
+    write(2, written("shop/views.py", `${"# header\n".repeat(20)}assert user\nx = 1\n`, `${"# header\n".repeat(20)}assert user\n`));
+    await vi.waitFor(() => expect(runs).toHaveLength(2));
+    expect(started[1]!.paths).toEqual(["shop/views.py"]);
   });
 });
 
