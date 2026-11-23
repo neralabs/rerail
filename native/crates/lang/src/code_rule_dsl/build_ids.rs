@@ -61,7 +61,7 @@ fn set_for_tests() {
     use std::hash::{Hash, Hasher};
     let exe = std::env::current_exe().unwrap_or_default();
     let built = std::fs::metadata(&exe).and_then(|m| m.modified()).ok();
-    let sources = sources_stamp();
+    let sources = run_sources_stamp();
     let id = |salt: &str| {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         (salt, &exe, built, sources).hash(&mut h);
@@ -69,6 +69,44 @@ fn set_for_tests() {
     };
     let hex = |salt: &str| format!("{:016x}{:016x}", id(salt), id(&format!("{salt}+")));
     set(Box::leak(hex("engine").into_boxed_str()), Box::leak(hex("grammar").into_boxed_str()));
+}
+
+/// `sources_stamp`, walked once per nextest run (`NEXTEST_RUN_ID`) and read by the run's other test processes of the
+/// same binary from a file in the temporary directory: each process walked the sources (6,017 files on spark2, 0.018 s
+/// of kernel time each, 4 s of the corpus suite's 35). One run's processes see one checkout; an edit while it runs
+/// races its tests either way. Outside nextest, or where the file cannot be read or written, a process walks them.
+#[cfg(any(test, feature = "test-hooks"))]
+fn run_sources_stamp() -> u64 {
+    use std::hash::{Hash, Hasher};
+    let Some(run) = std::env::var("NEXTEST_RUN_ID").ok().filter(|r| !r.is_empty()) else {
+        return sources_stamp();
+    };
+    let dir = std::env::temp_dir().join("rerail-source-stamps");
+    let name = {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (&run, std::env::current_exe().unwrap_or_default()).hash(&mut h);
+        format!("{:016x}", h.finish())
+    };
+    let path = dir.join(&name);
+    if let Some(stamp) = std::fs::read_to_string(&path).ok().and_then(|s| u64::from_str_radix(s.trim(), 16).ok()) {
+        return stamp;
+    }
+    let stamp = sources_stamp();
+    if std::fs::create_dir_all(&dir).is_ok() {
+        // Written whole (a rename), so no process reads half of one. Other runs' stamps a day old are swept.
+        let staged = dir.join(format!("{name}.{}", std::process::id()));
+        if std::fs::write(&staged, format!("{stamp:016x}")).is_ok() && std::fs::rename(&staged, &path).is_err() {
+            let _ = std::fs::remove_file(&staged);
+        }
+        let now = std::time::SystemTime::now();
+        for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let age = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| now.duration_since(t).ok());
+            if age.is_some_and(|a| a.as_secs() > 86_400) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    stamp
 }
 
 /// The engine's sources as a test build reads them: each file's path, size and modification time under what
@@ -113,4 +151,20 @@ fn sources_stamp() -> u64 {
 /// The grammars' build identity as a number: its first 15 hex digits.
 pub fn grammar_version() -> i64 {
     i64::from_str_radix(&grammar()[..15], 16).expect("grammar build identity is hex")
+}
+
+#[cfg(test)]
+mod tests {
+    /// Under nextest, a run's sources are walked once (`run_sources_stamp`): the stamp its processes read is the walk's,
+    /// kept for the run's other processes.
+    #[test]
+    fn a_nextest_runs_processes_share_one_walk_of_the_sources() {
+        if std::env::var_os("NEXTEST_RUN_ID").is_none() {
+            return;
+        }
+        let shared = super::run_sources_stamp();
+        assert_eq!(shared, super::sources_stamp(), "the run's stamp is its sources' walk");
+        let kept = std::fs::read_dir(std::env::temp_dir().join("rerail-source-stamps")).unwrap().flatten().any(|e| std::fs::read_to_string(e.path()).is_ok_and(|s| s.trim() == format!("{shared:016x}")));
+        assert!(kept, "the stamp is kept for the run's other processes");
+    }
 }
