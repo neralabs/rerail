@@ -198,8 +198,8 @@ fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
         inside = made.keys().any(|(t, x)| t == "the base relations' old documents (decision 0458)" && x.contains("listed inside the waves"));
         made.into_keys().filter(|(t, _)| t == "the base relations' statistics (decision 0458)").map(|(_, x)| x).collect::<BTreeSet<String>>()
     };
-    // Each relation's statistics, as the run took them: all the same way, `how`; a semi-join's at its held nodes
-    // (`held_counted`), `held`.
+    // Each relation's statistics, as the run took them: all the same way, `how`. A semi-join's are its kept rows' at the
+    // held nodes (`retain::semijoin_rows`), a decision of their own.
     let all = |made: &BTreeSet<String>, how: &str, held: &str| !made.is_empty() && made.iter().all(|x| x.ends_with(&format!(": {how}")) || x.ends_with(&format!(": {held} at the held nodes")));
     let cold = how(&mut c);
     let warm = how(&mut c);
@@ -210,10 +210,8 @@ fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
     assert!(all(&cold, "counted", "counted"), "a cold run counts them: {cold:?}");
     assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
     assert!(edit.iter().any(patched), "an edit patches them: {edit:?}");
-    assert!(edit.iter().any(|x| x.ends_with(": patched at the held nodes by the changed documents")) || inside, "an edit patches a semi-join's kept statistics at the held nodes: {edit:?}");
-    // A semi-join's held rows are patched by the changed documents at the nodes the exports held and hold
-    // (`held_counted`), or counted again over the documents the run holds where none were kept.
-    assert!(edit.iter().all(|x| patched(x) || x.ends_with(": patched at the held nodes by the changed documents") || x.ends_with(": counted at the held nodes")) || inside, "counted again after an edit only inside another run's waves: {edit:?}");
+    // After an edit every base relation's are patched, unless the run is inside another run's waves.
+    assert!(edit.iter().all(|x| patched(x) || x.ends_with(": counted at the held nodes")) || inside, "counted again after an edit only inside another run's waves: {edit:?}");
 }
 
 /// A session (0077) holds its corpus batch from run to run, its changed files' documents replaced (decision 0458), and

@@ -28,7 +28,7 @@
         source
             .match_indices("useEffect(")
             .filter(|(at, _)| !suppressions.suppresses(&rules(&[rule]), *at..at + 12))
-            .map(|(at, _)| source[..at].matches('\n').count())
+            .map(|(at, _)| crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::JavaScript, at) - 1)
             .collect()
     }
 
@@ -341,7 +341,7 @@ let c;
                 .filter(|(at, _)| {
                     !suppressions.suppresses(&rules(&["lint/suspicious/noDebugger"]), *at..at + 9)
                 })
-                .map(|(at, _)| source[..at].matches('\n').count())
+                .map(|(at, _)| crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::JavaScript, at) - 1)
                 .collect()
         };
         let source = "\

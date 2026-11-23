@@ -26,8 +26,7 @@ pub const EXTRA: u8 = 1;
 pub const ERROR: u8 = 2;
 pub const MISSING: u8 = 4;
 
-/// A kind: its name and whether it is named.
-pub type Kind = (String, bool);
+pub use crate::ids::Kind;
 
 /// A code by names: kind, field ("" for none), flags, memberships sorted by name.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -58,17 +57,43 @@ fn sources(tag: u8) -> Option<(PathBuf, Option<PathBuf>)> {
     };
     let vendored = |dir: &str| Some((native.join("grammars").join(dir).join("src/grammar.json"), None));
     let shipped = |dir: &str| registry().map(|r| (r.join(dir).join("grammar.json"), Some(r.join(dir).join("node-types.json"))));
-    match tag {
+    // The versions the engine's lock pins (the workspace's `Cargo.lock`).
+    match ids_tag(tag) {
         1 => vendored("tree-sitter-python"),
         2 => vendored("tree-sitter-typescript/typescript"),
         3 => vendored("tree-sitter-typescript/tsx"),
         6 => vendored("tree-sitter-javascript"),
         10 => vendored("tree-sitter-sql"),
         12 => vendored("tree-sitter-vue"),
-        7 => shipped("tree-sitter-php-0.24.2/php/src"),
+        22 => vendored("tree-sitter-markdown/markdown"),
+        23 => vendored("tree-sitter-markdown/markdown-inline"),
+        // ast-grep's PHP, the engine's (`LANGUAGE_PHP_ONLY`): no HTML around it.
+        7 => shipped("tree-sitter-php-0.24.2/php_only/src"),
         9 => shipped("tree-sitter-rust-0.24.2/src"),
         14 => shipped("tree-sitter-json-0.24.8/src"),
+        18 => shipped("tree-sitter-java-0.23.5/src"),
+        19 => shipped("tree-sitter-c-sharp-0.23.5/src"),
+        20 => shipped("tree-sitter-html-0.23.2/src"),
+        21 => shipped("tree-sitter-css-0.25.0/src"),
+        24 => shipped("tree-sitter-kotlin-sg-0.4.1/src"),
+        25 => shipped("tree-sitter-swift-0.7.4/src"),
+        26 => shipped("tree-sitter-scala-0.26.2/src"),
+        27 => shipped("tree-sitter-go-0.25.0/src"),
+        28 => shipped("tree-sitter-c-0.24.2/src"),
+        29 => shipped("tree-sitter-cpp-0.23.4/src"),
         _ => None,
+    }
+}
+
+/// The tag whose grammar and ids a tag's tapes use: a fragment's (decision 0466: `annotation` and `python-pattern`
+/// are Python's kinds, `jsx` JavaScript's, `html-element` HTML's) is its dialect's; any other tag is its own. A
+/// fragment's codes are its dialect's: its start kind as the root, with no field, is among the codes under an ERROR.
+pub fn ids_tag(tag: u8) -> u8 {
+    match tag {
+        30 | 34 => 1,
+        31 => 6,
+        32 => 20,
+        t => t,
     }
 }
 
@@ -236,27 +261,7 @@ pub fn allowed(grammar: &Value, types: &Value) -> Allowed {
     Allowed { tuples, kinds: kinds.len(), fields: fields.len(), supertypes: subtypes.len() }
 }
 
-/// `kinds.tsv` by id: (tag, id) to (name, named), (tag, field id) to name.
-pub struct Ids {
-    pub kinds: HashMap<(u8, u16), Kind>,
-    pub fields: HashMap<(u8, u8), String>,
-}
-
-impl Ids {
-    pub fn load() -> Ids {
-        let (mut kinds, mut fields) = (HashMap::new(), HashMap::new());
-        for line in include_str!("../kinds.tsv").lines() {
-            let c: Vec<&str> = line.split('\t').collect();
-            let Ok(tag) = c[0].parse::<u8>() else { continue };
-            if let Some(id) = c[1].strip_prefix("field ") {
-                fields.insert((tag, id.parse().unwrap()), c[2].to_string());
-            } else if let Ok(id) = c[1].parse::<u16>() {
-                kinds.insert((tag, id), (c[2].to_string(), c.get(3) == Some(&"1")));
-            }
-        }
-        Ids { kinds, fields }
-    }
-}
+pub use crate::ids::Ids;
 
 #[derive(Default)]
 pub struct Report {

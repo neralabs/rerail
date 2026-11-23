@@ -115,6 +115,8 @@ pub struct Compiled {
     pub rust: Option<Result<String, String>>,
     /// Tier 1 as Rust, written from the lexer's statements (`bitlex_lex_rust`), or why it is not yet.
     pub lexer_rust: Option<Result<String, String>>,
+    /// Tier 2 as Rust in one loop, written from the tree rules (`bitlex_rust::tier2_loop`), or why it is not yet.
+    pub rust_loop: Option<Result<String, String>>,
 }
 
 /// A named value of the block program (`Compiled::values`): its operation, and its delay (bit
@@ -372,6 +374,8 @@ pub struct Lowering {
     pub mask_exprs: HashMap<String, Expr>,
     /// The tree section's rules (`node`, `choice`), in order, and its extra kinds.
     pub tree: Vec<Stmt>,
+    /// `tree` as the build reads it (`grammar::desugared`): tier 2 as Rust is written from it.
+    pub tree_desugared: Vec<Stmt>,
     pub extra: Vec<String>,
     /// Each `mark`, in order: its kind, its bits and whether the file's end has it; and the
     /// hidden ones' kinds.
@@ -430,6 +434,8 @@ pub struct Lowering {
     pub rust: Option<Result<String, String>>,
     /// Tier 1 as Rust (`Compiled::lexer_rust`).
     pub lexer_rust: Option<Result<String, String>>,
+    /// Tier 2 as Rust in one loop (`Compiled::rust_loop`).
+    pub rust_loop: Option<Result<String, String>>,
     /// The tree section's tables tier 2 as Rust reads (`bitlex_rust`).
     pub rust_tables: Option<RustTables>,
 }
@@ -477,6 +483,8 @@ pub struct Symbols<'a> {
     /// A node kind's id (named first, then anonymous), or a supertype's.
     pub kind: &'a dyn Fn(&str) -> Option<u16>,
     pub field: &'a dyn Fn(&str) -> Option<u16>,
+    /// The line terminators of the grammar's language (decision 0612): tier 1's line ends, the tape's line index's.
+    pub terminators: rerail_tape_format::newlines::Terminators,
 }
 
 /// Compile `stmts`, with `outputs` (mask names, or `FALLBACK`) as the block program's first
@@ -543,6 +551,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         ahead: false,
         mask_exprs: HashMap::default(),
         tree: Vec::new(),
+        tree_desugared: Vec::new(),
         extra: Vec::new(),
         marks: Vec::new(),
         mark_exprs: Vec::new(),
@@ -568,6 +577,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         costs: Vec::new(),
         rust: None,
         lexer_rust: None,
+        rust_loop: None,
         rust_tables: None,
     };
     // Every class's products first: the tables come before the operations.
@@ -652,11 +662,11 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         for &m in mark_masks {
             vals.push((STREAM_MARK.to_owned(), m));
         }
-        // The stream's newlines, for the tape's newline index (`BlockProgram::newlines`).
-        let mut nl = [0u64; 4];
-        nl[0] = 1 << b'\n';
-        vals.push((STREAM_NEWLINE.to_owned(), low.class_set(nl)));
-        newline_at = Some(vals.len() - 1);
+        // The stream's candidate line ends, for the tape's line index (`BlockProgram::newlines`): the bytes a
+        // terminator the grammar's language reads (decision 0612) can end with.
+        let set = symbols.map(|s| s.terminators).ok_or("a tree section needs the grammar's ids")?;
+        vals.push((STREAM_NEWLINE.to_owned(), line_ends(&mut low, set)));
+        newline_at = Some((vals.len() - 1, set));
     }
     let mut delay = vals.iter().map(|x| x.1.d).max().unwrap_or(0);
     // Each output once, at one delay: its value's (`outputs`, the masks and the records find an
@@ -702,7 +712,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     if let Some((text, lowered, _, mark_masks, records)) = tier2 {
         let (s, l) = stream.expect("a tree section's stream");
         low.program.extracts = vec![at[s], at[l]];
-        low.program.newlines = newline_at.map(|k| at[k]);
+        low.program.newlines = newline_at.map(|(k, set)| (at[k], set));
         low.program.records = Some(records);
         // Each mark's mask: `MARK`'s operand.
         low.program.masks = (0..mark_masks.len()).map(|k| at[l + 1 + k]).collect();
@@ -782,9 +792,10 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                     }
                 })
                 .collect();
-            let x = crate::bitlex_rust::Input { tree: &low.tree, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds };
+            let x = crate::bitlex_rust::Input { tree: &low.tree_desugared, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds };
             let rust = crate::bitlex_rust::tier2(&x);
             low.rust = Some(rust);
+            low.rust_loop = Some(crate::bitlex_rust::tier2_loop(&x));
             // Tier 1 as Rust, from the lexer's statements and the tables (`bitlex_lex_rust`).
             let mark_bits: Vec<Option<u8>> = t.mark_bits.iter().map(|b| b.0).collect();
             let lexer = if t.mark_bits.iter().any(|b| b.0.is_some() && b.1 != 0) {
@@ -843,7 +854,8 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     let proofs = std::mem::take(&mut low.proofs.made);
     let rust = low.rust.take();
     let lexer_rust = low.lexer_rust.take();
-    Ok(Compiled { rows: rows(&program), program, words, machine, labels, fallbacks, costs, origin, values, proofs, rust, lexer_rust })
+    let rust_loop = low.rust_loop.take();
+    Ok(Compiled { rows: rows(&program), program, words, machine, labels, fallbacks, costs, origin, values, proofs, rust, lexer_rust, rust_loop })
 }
 
 /// The operations the provers read: the prefix's value zero (it is stripped before the passes,
@@ -2849,6 +2861,17 @@ impl Lowering {
 
 /// The products whose union is the class `ranges`: high nibbles grouped by their set of low
 /// nibbles.
+/// The bytes a line terminator of `set` can end with (`Terminators::last_bytes`), one class: the candidates the tape's
+/// line index keeps where they end one (`Terminators::ends_at`), as simdjson's structurals are a class its stage 2
+/// reads. A test of the bytes around each in the loop (a `\r` not before a `\n`) would hold registers the hot loop needs.
+fn line_ends(low: &mut Lowering, set: rerail_tape_format::newlines::Terminators) -> Val {
+    let mut s = [0u64; 4];
+    for &b in set.last_bytes() {
+        s[usize::from(b >> 6)] |= 1 << (b & 63);
+    }
+    low.class_set(s)
+}
+
 pub fn products(ranges: &[(u32, u32)]) -> Vec<Product> {
     let mut out: Vec<Product> = Vec::new();
     for h in 0..16u32 {
@@ -2930,7 +2953,7 @@ pub fn live_of(program: &BlockProgram, keep: &[bool]) -> BlockProgram {
     out.extracts = program.extracts.iter().map(|&v| n(v)).collect();
     out.totals = program.totals.iter().map(|&v| n(v)).collect();
     out.masks = program.masks.iter().map(|&v| n(v)).collect();
-    out.newlines = program.newlines.map(n);
+    out.newlines = program.newlines.map(|(v, set)| (n(v), set));
     let kept_groups: Vec<usize> = (0..program.rounds.len()).filter(|&g| keep[usize::from(program.rounds[g][0].0)]).collect();
     out.rounds = kept_groups.iter().map(|&g| program.rounds[g].iter().map(|&(c, x)| (n(c), n(x))).collect()).collect();
     out.walks = program
@@ -3416,7 +3439,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             _ => {}
         }
     }
-    let (states, mut arms, whole, by_rules) = {
+    let (states, mut arms, whole, by_rules, desugared) = {
         let is_token = |name: &str| {
             token_rows.iter().any(|t| t.0 == name && !required.contains(&t.0))
                 || is_keyword_kind(&low.keywords, name)
@@ -3444,8 +3467,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             Shape::Auto => machine.0.len() > MACHINE_STATES,
         };
         let (st, ar, wh) = if rules { grammar::build_shaped(&low.tree, &ids, true)? } else { machine };
-        (st, ar, wh, rules)
+        (st, ar, wh, rules, grammar::desugared(&low.tree, &tokens))
     };
+    low.tree_desugared = desugared;
     low.shape = if by_rules { Shape::Rules } else { Shape::Machine };
     let settling: Vec<u16> = low.settles.iter().map(|&k| mark_kinds[k]).collect();
     grammar::without_mark_leaves(&mut arms, &mark_kinds, &settling)?;

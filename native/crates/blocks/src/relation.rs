@@ -74,8 +74,17 @@ structure! {
         /// The bytes of the chunks a sorted order's `rows`, `fences`, `tags` and `prints` keep, given back when it is
         /// forgotten; 0 for a span it does not own.
         pub held: [u64; 4],
+        /// A hashed index's first row: it holds rows `from..from + rows.len()` (a recursive head's delta, its rows past
+        /// those it held, read in place: decision 0353 step 6), 0 for one of every row.
+        pub from: u32,
+        /// `DEAD` once given back (`give_back_index`): its room is the block's again, and the next reservation takes
+        /// its entry.
+        pub state: u32,
     }
 }
+
+/// An index entry given back (`Relation::give_back_index`): no reader finds it, and a reservation takes it.
+pub const DEAD: u32 = 1;
 
 /// `Index::ordered`: a hashed index (buckets of rows).
 pub const HASHED: u32 = 0;
@@ -182,6 +191,8 @@ pub struct IndexRoom {
     /// Its key's columns: `ncols` of `key`.
     pub key: [u16; MAX_KEY],
     pub ncols: usize,
+    /// Its first row (`Index::from`).
+    pub from: u32,
 }
 
 /// What a relation is: its columns' widths, and what freeze builds for its readers.
@@ -505,11 +516,16 @@ impl Relation {
     /// The index whose key is `cols` over its rows `0..rows` (a hashed one: an ordered index holds no buckets), built.
     /// An index of fewer rows (built before the relation grew) is not it.
     pub fn find_index(&self, cols: &[u16], rows: u32) -> Option<usize> {
+        self.find_index_from(cols, 0, rows)
+    }
+
+    /// `find_index` of its rows `from..from + rows` (a recursive head's delta read in place).
+    pub fn find_index_from(&self, cols: &[u16], from: u32, rows: u32) -> Option<usize> {
         let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
         let ix = self.indexes.as_slice();
         // SAFETY: an entry's `ncols` is written once, last (`index_built`); read as written, then the index after it.
         let built = |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
-        let found = (0..n).find(|&i| ix[i].ordered == 0 && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].rows.len() == rows as usize);
+        let found = (0..n).find(|&i| ix[i].ordered == 0 && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].from == from && ix[i].rows.len() == rows as usize);
         std::sync::atomic::fence(Acquire);
         found
     }
@@ -621,8 +637,58 @@ impl Relation {
             unsafe { Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES) };
             self.flags.fetch_or(ADDED, Release);
         }
-        let i = self.nindex.load(Relaxed) as usize;
-        (i < self.indexes.len()).then_some(i)
+        let n = (self.nindex.load(Relaxed) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // An entry given back is taken first (`give_back_index`) when its room is the block's already; one that keeps
+        // its room (a block of no free list) is left for an index that fits it (`dead_room`), and taken last.
+        let dead = |i: usize, room: bool| ix[i].state == DEAD && (ix[i].offs.len() != 0) == room;
+        // Its taker marks it live (`state` 0) once its room is had.
+        (0..n).find(|&i| dead(i, false)).or((n < ix.len()).then_some(n)).or_else(|| (0..n).find(|&i| dead(i, true)))
+    }
+
+    /// A dead entry whose room (kept: its block has no free list) holds `buckets` buckets and `n` rows: its number.
+    fn dead_room(&self, buckets: usize, n: usize) -> Option<usize> {
+        let ix = self.indexes.as_slice();
+        let m = (self.nindex.load(Relaxed) as usize).min(ix.len());
+        (0..m).find(|&i| ix[i].state == DEAD && ix[i].offs.len() >= buckets && ix[i].rows.len() >= n.max(1))
+    }
+
+    /// Gives back index `room`, reserved and not marked built (`index_built`), or built and no longer read: its buckets
+    /// and rows go back to the block's free list, and its entry to the directory, for the next reservation. In a block
+    /// of no free list (whose chunks given back are never taken again) the entry keeps them, for the next index that
+    /// fits them (`dead_room`). For an index a batch built that another built meanwhile (both found none, each in its
+    /// own batch), and one whose builder failed.
+    ///
+    /// # Safety
+    /// `room` is this relation's, in `block`; nothing reads it now or after (its builder is done), and no other thread
+    /// adds an index to this relation meanwhile (its owner's lock).
+    pub unsafe fn give_back_index(&self, block: &Block, room: &IndexRoom) {
+        let ix = std::ptr::from_ref(&self.indexes.as_slice()[room.index]).cast_mut();
+        // SAFETY: the caller's; `find_index` skips an entry whose `ncols` is 0.
+        unsafe {
+            std::ptr::write_volatile(&raw mut (*ix).ncols, 0);
+            assert!((*ix).ordered == 0 && (*ix).state != DEAD, "a hashed index given back once");
+            (*ix).key = [0; MAX_KEY];
+            if !block.has_free_list() {
+                (*ix).state = DEAD;
+                return;
+            }
+            let (offs, rows) = (4 * (*ix).offs.len(), 4 * (*ix).rows.len().max(1));
+            let (o, r) = (block.offset_of((*ix).offs.as_ptr()), block.offset_of((*ix).rows.as_ptr()));
+            if self.flags.load(Acquire) & REWRITTEN != 0 {
+                block.free_chunk_resident(o, offs);
+                block.free_chunk_resident(r, rows);
+            } else {
+                block.free_chunk_fit_resident(o, block.fit_kept(offs));
+                block.free_chunk_fit_resident(r, block.fit_kept(rows));
+            }
+            for s in [&(*ix).offs, &(*ix).rows] {
+                s.off.store(0, Relaxed);
+                s.len.store(0, Relaxed);
+            }
+            (*ix).key = [0; MAX_KEY];
+            (*ix).state = DEAD;
+        }
     }
 
     /// Gives this relation a sorted order on `cols` (decision 0478 step 5b): `order`'s rows, and its fences, tags
@@ -641,6 +707,8 @@ impl Relation {
             let i = self.next_entry(block)?;
             let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
             (*ix).ncols = 0;
+            (*ix).from = 0;
+            (*ix).state = 0;
             let mut key = [0u16; MAX_KEY];
             key[..cols.len()].copy_from_slice(cols);
             (*ix).key = key;
@@ -679,7 +747,7 @@ impl Relation {
             set(block, &raw mut (*ix).tags, tags);
             set(block, &raw mut (*ix).prints, prints);
             (*ix).held = [ids.kept as u64, fences.kept as u64, tags.kept as u64, prints.kept as u64];
-            self.nindex.store(i as u32 + 1, Release);
+            self.nindex.fetch_max(i as u32 + 1, Release);
             std::sync::atomic::fence(Release);
             std::ptr::write_volatile(&raw mut (*ix).ncols, cols.len() as u32);
             Some(i)
@@ -698,6 +766,20 @@ impl Relation {
         unsafe { self.try_reserve_index_buckets(block, cols, n, n as usize) }
     }
 
+    /// `try_reserve_index` of its rows `from..from + n` (`Index::from`): a recursive head's delta read in place.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s, its rows `from..from + n` written.
+    pub unsafe fn try_reserve_index_from(&self, block: &Block, cols: &[u16], from: u32, n: u32) -> Option<IndexRoom> {
+        // SAFETY: the caller's.
+        let mut room = unsafe { self.try_reserve_index_buckets(block, cols, n, n as usize) }?;
+        let ix = std::ptr::from_ref(&self.indexes.as_slice()[room.index]).cast_mut();
+        // SAFETY: the entry is the caller's, not yet built.
+        unsafe { (*ix).from = from };
+        room.from = from;
+        Some(room)
+    }
+
     /// `try_reserve_index` with room for `keys` distinct keys: `keys`' power of two buckets (at most `n`'s), about
     /// one key a bucket. A key of few values (a kind) is a few buckets, not one a row: its index is about 4 bytes a
     /// row and 4 a key.
@@ -708,12 +790,24 @@ impl Relation {
         assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
-            let i = self.next_entry(block)?;
             let cap = keys.min(n as usize).next_power_of_two().max(1);
             // Chunks the block's free list takes back when the index is forgotten (`forget_indexes`), zeroed as an
             // allocation is.
             let (ob, rb) = (4 * (cap + 1), 4 * (n as usize).max(1));
-            let (offs_at, rows_at) = if self.flags.load(Acquire) & REWRITTEN != 0 {
+            // In a block of no free list, an index given back keeps its room for one that fits it (`give_back_index`).
+            let reused = if block.has_free_list() || self.indexes.is_empty() { None } else { self.dead_room(cap + 1, n as usize) };
+            let i = match reused {
+                Some(i) => i,
+                None => self.next_entry(block)?,
+            };
+            let (offs_at, rows_at) = if let Some(d) = reused {
+                let d = &self.indexes.as_slice()[d];
+                let (o, r) = (block.offset_of(d.offs.as_ptr()), block.offset_of(d.rows.as_ptr()));
+                // Zeroed, as a new chunk is (the builders count into the buckets).
+                block.ptr::<u8>(o).write_bytes(0, ob);
+                block.ptr::<u8>(r).write_bytes(0, rb);
+                (o, r)
+            } else if self.flags.load(Acquire) & REWRITTEN != 0 {
                 let o = block.try_alloc_chunk(ob, 8)?;
                 let Some(r) = block.try_alloc_chunk(rb, 8) else {
                     block.free_chunk(o, ob);
@@ -732,14 +826,17 @@ impl Relation {
             let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
             (*ix).ncols = 0;
             (*ix).ordered = 0;
+            (*ix).from = 0;
+            (*ix).held = [0; 4];
+            (*ix).state = 0;
             let mut key = [0u16; MAX_KEY];
             key[..cols.len()].copy_from_slice(cols);
             (*ix).key = key;
             (*ix).mask = (cap - 1) as u64;
             Span::set(&raw mut (*ix).offs, offs, cap + 1);
             Span::set(&raw mut (*ix).rows, rows, n as usize);
-            self.nindex.store(i as u32 + 1, Release);
-            Some(IndexRoom { index: i, offs: block.offset_of(offs), rows: block.offset_of(rows), mask: (cap - 1) as u64, rows_n: n, key: (*ix).key, ncols: cols.len() })
+            self.nindex.fetch_max(i as u32 + 1, Release);
+            Some(IndexRoom { index: i, offs: block.offset_of(offs), rows: block.offset_of(rows), mask: (cap - 1) as u64, rows_n: n, key: (*ix).key, ncols: cols.len(), from: 0 })
         }
     }
 
@@ -818,6 +915,12 @@ impl Relation {
         for ix in &self.indexes.as_slice()[..n] {
             // SAFETY: the caller's; `find_index` skips an entry whose `ncols` is 0.
             unsafe { std::ptr::write_volatile(&raw mut (*std::ptr::from_ref(ix).cast_mut()).ncols, 0) };
+            if ix.state == DEAD {
+                // Given back already (`give_back_index`): its room is the block's.
+                // SAFETY: the caller's.
+                unsafe { (*std::ptr::from_ref(ix).cast_mut()).state = 0 };
+                continue;
+            }
             if ix.ordered == ORDER || ix.ordered == ORDER_ROWS {
                 // A sorted order's chunks, each as it was given (`try_add_order`).
                 let spans = [(ix.rows.as_ptr().cast::<u8>(), ix.held[0]), (ix.fences.as_ptr().cast(), ix.held[1]), (ix.tags.as_ptr().cast(), ix.held[2]), (ix.prints.as_ptr().cast(), ix.held[3])];
@@ -1720,6 +1823,66 @@ mod tests {
             assert!(unsafe { rel.try_reserve_index(&block, &[c], n) }.is_some());
         }
         assert!(unsafe { rel.try_reserve_index(&block, &[0, 1], n) }.is_none(), "the directory is full");
+    }
+
+    /// An index of rows `from..` (a delta read in place) is found by its first row as well as its count, never for
+    /// the relation's first rows; an index given back (`give_back_index`) is found no more, its room and its entry
+    /// taken by the next reservation, and the directory's count does not shrink.
+    #[test]
+    fn an_index_is_of_its_rows_from_and_one_given_back_is_taken_again() {
+        let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
+        let lock = Mutex::new(());
+        let spec = Spec { widths: vec![8; 2], order: Vec::new(), indexes: Vec::new(), min_log: 4 };
+        let rel = Relation::create(&block, &spec, None);
+        let rows: Vec<i64> = (0..2_000i64).flat_map(|i| [i % 37, i]).collect();
+        RelW { block: &block, rel, lock: &lock }.extend(&rows);
+        // SAFETY: one thread; the rows are written. Built as the device builds them: rows `from + t`.
+        let full = unsafe { rel.try_reserve_index(&block, &[0], 1_000) }.expect("room");
+        unsafe { rel.index_built(&full) };
+        let delta = unsafe { rel.try_reserve_index_from(&block, &[0], 1_000, 1_000) }.expect("room");
+        unsafe { rel.index_built(&delta) };
+        assert_eq!(rel.find_index(&[0], 1_000), Some(full.index), "the first rows' index");
+        assert_eq!(rel.find_index_from(&[0], 1_000, 1_000), Some(delta.index), "the delta's, not the first rows'");
+        assert_eq!(rel.find_index_from(&[0], 500, 1_000), None);
+        let (count, used) = (rel.nindex.load(Relaxed), block.used());
+        // SAFETY: one thread; no reader holds it.
+        unsafe { rel.give_back_index(&block, &full) };
+        assert_eq!(rel.find_index(&[0], 1_000), None, "given back");
+        assert_eq!(rel.find_index_from(&[0], 1_000, 1_000), Some(delta.index), "the other kept");
+        let again = unsafe { rel.try_reserve_index(&block, &[1], 1_000) }.expect("room");
+        assert_eq!(again.index, full.index, "the entry given back is taken");
+        assert_eq!(block.used(), used, "and its room");
+        assert_eq!(rel.nindex.load(Relaxed), count, "the directory's count kept");
+        unsafe { rel.index_built(&again) };
+        assert_eq!(rel.find_index(&[1], 1_000), Some(again.index));
+        // Forgotten, every entry, the dead one too, goes; none is given back twice.
+        unsafe { rel.give_back_index(&block, &again) };
+        unsafe { rel.forget_indexes(&block) };
+        assert_eq!(rel.find_index_from(&[0], 1_000, 1_000), None);
+
+        // A block of no free list (a relation alone in its block): the entry keeps its room, and an index that fits
+        // takes it, the block's bytes as they were; one that does not fit takes new room.
+        let block = Block::anon(kind::FACTS, 16 << 20);
+        let rel = Relation::create(&block, &spec, None);
+        RelW { block: &block, rel, lock: &lock }.extend(&rows);
+        let twice = unsafe { rel.try_reserve_index(&block, &[0, 1], 1_000) }.expect("room");
+        unsafe { rel.index_built(&twice) };
+        let used = block.used();
+        unsafe { rel.give_back_index(&block, &twice) };
+        assert_eq!(rel.find_index(&[0, 1], 1_000), None, "given back");
+        let other = unsafe { rel.try_reserve_index(&block, &[0], 900) }.expect("room");
+        assert_eq!((other.index, other.offs, other.rows), (twice.index, twice.offs, twice.rows), "its room taken again");
+        assert_eq!(block.used(), used);
+        unsafe {
+            rel.build_index(&other);
+            rel.index_built(&other);
+        }
+        let i = rel.find_index(&[0], 900).expect("built");
+        let got: Vec<u32> = rel.group(i, crate::key_hash(&[5])).iter().copied().filter(|&r| rel.rows.get(r, 0) == 5).collect();
+        assert_eq!(got, (0..900).filter(|r| r % 37 == 5).collect::<Vec<u32>>(), "read right from the room taken again");
+        let bigger = unsafe { rel.try_reserve_index(&block, &[1], 2_000) }.expect("room");
+        assert_ne!(bigger.index, twice.index);
+        assert!(block.used() > used);
     }
 
     /// Freeze keeps a set in canonical order, a delta's set being its base's less its kills plus its own rows; the

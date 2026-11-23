@@ -2,7 +2,14 @@
 //! project configurations and ignore files beside them, and the server graphs of the manifests that name `next`,
 //! from which the workspace gives an ECMA file the host sent no `package` its nearest manifest.
 
-use super::*;
+use crate::code_rule_dsl::file_input::FileInput;
+use crate::code_rule_dsl::language::adapter::package_manifests;
+use crate::code_rule_dsl::module_graph;
+use crate::code_rule_dsl::language::adapter::project::{
+    ProjectFiles, ProjectState, RepositoryContext, WireFile, path_is_below,
+};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::sync::Arc;
 use crate::code_rule_dsl::package_manifest::{
     GITIGNORE, Manifest, Manifests, NPMIGNORE, ignore_file_directory, manifest_directory, manifest_in,
 };
@@ -58,7 +65,7 @@ impl ProjectState for EcmaProject {
     }
     fn refresh(
         &self,
-        state: &WorkspaceState,
+        state: &dyn ProjectFiles,
         inputs: &mut Vec<FileInput>,
         unhosted: &HashSet<String>,
         removed: &[String],
@@ -141,7 +148,7 @@ impl ContextChanges {
 /// authoritative. The changes are the workspace's once the request applies (`ContextChanges`).
 fn refresh_manifest_context(
     project: &EcmaProject,
-    state: &WorkspaceState,
+    state: &dyn ProjectFiles,
     inputs: &mut [FileInput],
     unhosted: &HashSet<String>,
     removed: &[String],
@@ -227,11 +234,7 @@ fn refresh_manifest_context(
     }
     let mut graph_entries = GraphEntryChanges::new();
     let mut server_graph_directories = BTreeMap::new();
-    if state
-        .code_rules
-        .iter()
-        .any(|code_rule| code_rule.reads_server_graph())
-    {
+    if state.reads_server_graph() {
         for path in removed {
             graph_entries.insert(path.clone(), None);
         }
@@ -276,17 +279,7 @@ fn refresh_manifest_context(
         .collect::<HashSet<_>>();
     let mut paths = BTreeSet::new();
     for directory in changes.keys() {
-        let start = if directory.is_empty() {
-            String::new()
-        } else {
-            format!("{directory}/")
-        };
-        let resident = state.files.range(start.clone()..).map(|(path, _)| path);
-        let evicted = state.evicted_inputs.range(start..).map(|(path, _)| path);
-        for path in resident
-            .take_while(|path| path_is_below(path, directory))
-            .chain(evicted.take_while(|path| path_is_below(path, directory)))
-        {
+        for (path, _) in state.below(directory) {
             if !requested.contains(path) && !removed.contains(path) {
                 paths.insert(path.clone());
             }
@@ -294,10 +287,9 @@ fn refresh_manifest_context(
     }
     let mut stale = Vec::new();
     for path in paths {
-        let input = match state.files.get(&path) {
-            Some(file) => &file.input,
-            None => &state.evicted_inputs[&path],
-        };
+        let input = state
+            .input(&path)
+            .expect("a file below a directory has an input");
         if !package_manifests(&input.language) || input.package != manifest_in(&path, before) {
             continue;
         }
@@ -330,7 +322,7 @@ fn refresh_manifest_context(
 /// the directories joining (`true`) or leaving `server_graph_directories`.
 fn refresh_server_graphs(
     project: &EcmaProject,
-    state: &WorkspaceState,
+    state: &dyn ProjectFiles,
     inputs: &[FileInput],
     unhosted: &HashSet<String>,
     removed: &[String],
@@ -446,26 +438,11 @@ fn refresh_server_graphs(
 
 /// Whether the workspace holds a file below `directory` whose `package` it derived from its own
 /// manifests (no host `package`), rather than one a host sent.
-fn derives_package_below(project: &EcmaProject, state: &WorkspaceState, directory: &str) -> bool {
-    let start = if directory.is_empty() {
-        String::new()
-    } else {
-        format!("{directory}/")
-    };
-    let derived = |path: &String, input: &FileInput| {
+fn derives_package_below(project: &EcmaProject, state: &dyn ProjectFiles, directory: &str) -> bool {
+    state.below(directory).any(|(path, input)| {
         package_manifests(&input.language)
             && input.package == manifest_in(path, |folder| project.manifests.get(folder))
-    };
-    state
-        .files
-        .range(start.clone()..)
-        .take_while(|(path, _)| path_is_below(path, directory))
-        .any(|(path, file)| derived(path, &file.input))
-        || state
-            .evicted_inputs
-            .range(start..)
-            .take_while(|(path, _)| path_is_below(path, directory))
-            .any(|(path, input)| derived(path, input))
+    })
 }
 
 /// The text of the project configuration at `path` once the request applies (`request_text`

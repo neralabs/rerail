@@ -15,7 +15,7 @@ use crate::code_rule_dsl::eval::file_language;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::model::{CompiledClause, CompiledCodeRule, FileInput, Metrics};
 use crate::code_rule_dsl::tape;
-use crate::content_store::{HashKey, LocalResultPublication, StoredLocalResult};
+use crate::content_store::{CandidateClause, HashKey, StoredLocalResult};
 use napi::Result;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -102,7 +102,7 @@ impl CrossFileScheduler {
             .map(|stamp| calls_state::calls_context(context, stamp))
     }
 
-    pub(super) fn summary_publication(file: &FileState) -> Result<Option<LocalResultPublication>> {
+    pub(super) fn summary_publication(file: &FileState) -> Result<Option<(CandidateClause, HashKey, Vec<u8>)>> {
         calls_state::summary_publication(file)
     }
 

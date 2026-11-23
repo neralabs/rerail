@@ -12,11 +12,7 @@ fn oracle_root() -> PathBuf {
 }
 
 fn line_of(source: &str, offset: usize) -> u64 {
-    source[..offset]
-        .bytes()
-        .filter(|byte| *byte == b'\n')
-        .count() as u64
-        + 1
+    crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::Php, offset) as u64
 }
 
 fn try_table(source: &str) -> Result<ScopeTable, crate::code_rule_dsl::scope::BuildError> {

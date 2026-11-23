@@ -2919,31 +2919,23 @@ fn paged_results_equal_complete_results_for_each_violations_and_capture_anchors(
     workspace.close();
 }
 
-/// Every stored local result as `(path, clause, bytes)`, in that order: its bytes read where its segment holds
-/// them (decision 0450 step 2).
-fn stored_local_results(store: &std::path::Path) -> Vec<(String, String, Vec<u8>)> {
-    let connection = rusqlite::Connection::open(store).unwrap();
-    let mut maps = crate::content_store::ObjectMaps::new(store);
-    let mut statement = connection
-        .prepare(
-            "SELECT ps.value,cs.value,r.seg,r.seg_at,r.seg_len FROM context_check_results r \
-             JOIN workspace_overlay o ON o.source_id=r.source_id \
-             JOIN paths p ON p.path_id=o.path_id JOIN strings ps ON ps.string_id=p.string_id \
-             JOIN candidate_checks c ON c.check_id=r.check_id \
-             JOIN strings cs ON cs.string_id=c.check_string_id ORDER BY 1,2",
-        )
-        .unwrap();
-    let rows: Vec<(String, String, [i64; 3])> = statement
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, [row.get(2)?, row.get(3)?, row.get(4)?])))
+/// Every stored local result as `(path, clause, bytes)`, in that order: its bytes read where its entry holds them
+/// (t33 step 8). `files` names each content's path.
+fn stored_local_results(store: &ContentStore, files: &Value) -> Vec<(String, String, Vec<u8>)> {
+    let paths: HashMap<HashKey, String> = files
+        .as_array()
         .unwrap()
-        .collect::<rusqlite::Result<_>>()
-        .unwrap();
-    rows.into_iter()
-        .map(|(path, clause, [seg, at, len])| {
-            let frame = maps.frame(seg, at, len).expect("a stored result's segment");
-            (path, clause, frame.segment().bytes().to_vec())
-        })
-        .collect()
+        .iter()
+        .map(|f| (HashKey::sha256(f["source"].as_str().unwrap().as_bytes()), f["path"].as_str().unwrap().to_owned()))
+        .collect();
+    let mut rows: Vec<_> = store
+        .all_workspace_results()
+        .unwrap()
+        .into_iter()
+        .map(|(source, clause, bytes)| (paths[&source].clone(), clause, bytes))
+        .collect();
+    rows.sort();
+    rows
 }
 
 #[test]
@@ -2975,7 +2967,7 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
     let workspace = stored_workspace(&store, "/round-trips", &code_rule);
     let cold = apply_json(&workspace, 1, files.clone())["evaluation"]["violations"].clone();
     assert!(cold.as_array().unwrap().len() >= 3, "{cold}");
-    let stored = stored_local_results(&directory.store());
+    let stored = stored_local_results(&store, &files);
     for clause in ["call", "print"] {
         assert!(
             stored.iter().any(|row| row.0 == "a.py" && row.1 == clause),
@@ -3007,7 +2999,7 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
             "revision {revision} reads the store"
         );
         assert_eq!(
-            stored_local_results(&directory.store()),
+            stored_local_results(&store, &files),
             stored,
             "revision {revision}"
         );
@@ -3015,14 +3007,14 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
     workspace.close();
 
     let restarted = stored_workspace(&store, "/round-trips", &code_rule);
-    let warm = apply_json(&restarted, 1, files);
+    let warm = apply_json(&restarted, 1, files.clone());
     assert_eq!(warm["evaluation"]["violations"], cold, "after restart");
     assert!(
         restored_results(&restarted) > 0,
         "a restart reads the store"
     );
     assert_eq!(
-        stored_local_results(&directory.store()),
+        stored_local_results(&store, &files),
         stored,
         "after restart"
     );

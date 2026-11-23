@@ -1203,7 +1203,7 @@ fn rust() {
     kit::<Rust>(&Expect {
         family: Family::Rust,
         label: "rust",
-        terminators: Terminators::Newlines,
+        terminators: Terminators::Lf,
         dialect: GrammarDialect::Rust,
         semantic: GrammarDialect::Rust,
         name: "ﬁle",

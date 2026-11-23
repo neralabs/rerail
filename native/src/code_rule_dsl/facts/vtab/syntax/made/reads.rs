@@ -125,7 +125,7 @@ impl Docs {
         }
         let nodes = p.len() > 0;
         // The `Loc` rows are the reads' where the positions are a file's own tree's or a placement in the block.
-        let locs = p.extra.is_some() && (p.locs() == 0 || ViewEntry::locs(b, p).is_some());
+        let locs = p.extra.is_some() && (p.locs() == 0 || ViewEntry::locs(p).is_some());
         if !locs && p.locs() > 0 {
             let why = match p.extra.as_ref().and_then(|x| x.host.as_ref()).map(|(_, place)| place) {
                 Some(crate::code_rule_dsl::facts::vtab::syntax::Placement::Copied { .. }) => "views.refused.locs.guest_copied",
@@ -160,10 +160,10 @@ impl Docs {
             }
         };
         let tape_home = placed::home_of(tape.image().room(), bytes);
-        let table = &p.facts.lines;
-        let words = table.words();
-        // SAFETY: the words as bytes, their own range.
-        let line_bytes = unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), 4 * words.len()) };
+        // Its lines, read where they lie (its places' lines: a guest's are its host's, `Locs::place_lines`): the lines'
+        // index (decision 0612), in the document's tape or in a slab's room beside it.
+        let table = p.extra.as_deref().map_or(&p.facts.lines, |x| x.place_lines());
+        let line_bytes = table.index();
         let lines_home = placed::home_of(table.room(), line_bytes);
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         let (tape_gpu, lines_gpu) = (tape_home.device.as_ref().map_or(0, |d| d.0), lines_home.device.as_ref().map_or(0, |d| d.0));
@@ -239,9 +239,10 @@ impl Docs {
             let base = self.context.block.ptr::<u8>(0).cast_const();
             let entry = &*base.add(row.entry as usize).cast::<ViewDoc>();
             let tape = std::slice::from_raw_parts(((*homes.add(row.homes[0] as usize)).host + row.tape) as *const u8, row.bytes as usize);
-            let lines = ((*homes.add(row.homes[1] as usize)).host + row.lines) as *const u32;
-            // Its words: `[n, starts[n], ends[n]]` (`LineTable::words`).
-            let lines = std::slice::from_raw_parts(lines, 1 + 2 * *lines as usize);
+            let lines = ((*homes.add(row.homes[1] as usize)).host + row.lines) as *const u8;
+            // Its line index (decision 0612), its length from its head, and its word's room after it.
+            let head = std::slice::from_raw_parts(lines, rerail_tape_format::newlines::HEAD);
+            let lines = std::slice::from_raw_parts(lines, rerail_tape_format::newlines::len_of(head)? + 8);
             let cache = match (*dir).cache {
                 0 => std::ptr::null(),
                 k => (*homes.add(k as usize - 1)).host as *const u8,

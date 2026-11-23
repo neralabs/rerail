@@ -362,7 +362,7 @@ fn metal_outer_capture_runs_bound_generations_and_preserve_complete_values() {
     assert!(
         trace
             .iter()
-            .all(|r| r.encoded && r.submitted && r.completed)
+            .all(|r| r.submitted && r.completed)
     );
     assert!(
         trace.len() <= 260,

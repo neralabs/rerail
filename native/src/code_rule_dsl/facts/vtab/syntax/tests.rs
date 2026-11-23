@@ -665,6 +665,24 @@ fn within_with_both_given_is_an_interval_test() {
             assert_eq!(within.lookup_all(&eq).unwrap().len(), usize::from(within.holds(&eq).unwrap()), "{format:?}: {n} below {a}");
         }
     }
+    // As a chunk binds it (`values::Layered`, every source of a chunk's run): the same test, no row made.
+    {
+        let within = Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Tree));
+        let layered = super::values::Layered::new("within", Arc::clone(&within) as Arc<dyn Source>, Default::default());
+        for n in (0..nodes).step_by(97) {
+            for a in (0..nodes).step_by(13) {
+                let eq = [(0, batch.id(n, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO })), (1, batch.id(a, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO }))];
+                assert_eq!(layered.holds(&eq), within.holds(&eq), "layered: node rows {n} below {a}");
+            }
+        }
+        assert!(within.made_rows() == 0, "layered: the test made no row");
+        // Probed by both columns at once, as the base is: the step's index is composite, which asks the test.
+        assert!(layered.composite(), "layered: both columns at once");
+        for (n, a) in [(nodes - 1, 0), (1, 0), (0, 1)] {
+            let eq = [(0, batch.id(n, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO })), (1, batch.id(a, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO }))];
+            assert_eq!(layered.lookup_all(&eq), within.lookup_all(&eq), "layered: {n} below {a}");
+        }
+    }
 }
 
 /// `within` and `span_within` (decision 0050) hold exactly the pairs that comparing every pair of one document's
@@ -1033,8 +1051,7 @@ fn projection_axes_and_token_spans_are_read_without_renumbering() {
     expected.sort_unstable();
     let tokens = expected.len();
     expected.push([0,f.source.len() as u32]);
-    let lines = core_rr::Lines::new(&f.source,true);
-    expected.extend((1..=lines.count()).map(|l|lines.span(l)));
+    expected.extend((1..=f.lines.count()).map(|l|f.lines.text_of(l, f.source.as_bytes())));
     assert_eq!(p.extra.as_ref().unwrap().tokens as usize,tokens);
     assert_eq!(p.locs(),p.len()+expected.len() as u32);
     for (i,&span) in expected.iter().enumerate() { assert_eq!(p.span(p.len()+i as u32),span); }
@@ -1063,7 +1080,7 @@ fn projection_axes_and_token_spans_are_read_without_renumbering() {
 #[test]
 fn definition_slots_stay_below_the_span_bit() {
     use granules::{ExtraSpan, INDEX, extra_low, span_of};
-    let kinds = [ExtraSpan::Line, ExtraSpan::Lf, ExtraSpan::Tape, ExtraSpan::Comment, ExtraSpan::Match];
+    let kinds = [ExtraSpan::Line, ExtraSpan::Comment, ExtraSpan::Match];
     let mut extra = BTreeSet::new();
     for kind in kinds {
         assert_eq!(extra_low(kind, kind.capacity()), None, "{kind:?} past its capacity");
@@ -1106,15 +1123,15 @@ fn span_ids_census() {
         regexes.iter().map(|re| re.captures_iter(text).map(|c| c.iter().skip(1).flatten().count() + 1).sum::<usize>()).sum()
     };
     for corpus in crate::code_rule_dsl::cpython::parity::corpora() {
-        // (value, file) maxima: positions, lines, lf lines, tape lines, comments, matches.
+        // (value, file) maxima: positions, lines, comments, matches.
         let files = &corpus.files;
         let threads = 16;
-        let maxima: Vec<[(usize, String); 6]> = std::thread::scope(|s| {
+        let maxima: Vec<[(usize, String); 4]> = std::thread::scope(|s| {
             (0..threads)
                 .map(|t| {
                     let count = &count;
                     s.spawn(move || {
-                        let mut most: [(usize, String); 6] = Default::default();
+                        let mut most: [(usize, String); 4] = Default::default();
                         for (path, shown) in files.iter().skip(t).step_by(threads) {
                             let Ok(src) = std::fs::read_to_string(path) else { continue };
                             let Ok(file) = FileInput::new(shown.clone(), "python".to_owned(), Arc::new(src.clone().into()), None, None, "core") else { continue };
@@ -1123,12 +1140,10 @@ fn span_ids_census() {
                             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
                             let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
                             let f = &*facts;
-                            let lines = physical_lines(&src, true);
-                            let lf = physical_lines(&src, false);
-                            let tape: Vec<std::ops::Range<usize>> = (0..f.lines.starts().len()).map(|i| f.lines.start(i)..f.lines.end(i)).collect();
+                            let lines: Vec<std::ops::Range<usize>> = (1..=f.lines.count()).map(|l| f.lines.text_of(l, f.source.as_bytes())).map(|[a, b]| a as usize..b as usize).collect();
                             let comments = (0..f.len() as u32).filter(|&id| f.named(id) && crate::code_rule_dsl::language::adapter::is_comment_kind(dialect.name(f, id))).count();
-                            let matches = count(&src) + [&lines, &lf, &tape].iter().flat_map(|ls| ls.iter()).map(|r| count(&src[r.clone()])).sum::<usize>();
-                            let now = [(p.locs() - p.len()) as usize, lines.len() + 1, lf.len(), tape.len(), comments, matches];
+                            let matches = count(&src) + lines.iter().map(|r| count(&src[r.clone()])).sum::<usize>();
+                            let now = [(p.locs() - p.len()) as usize, lines.len() + 1, comments, matches];
                             for (m, v) in most.iter_mut().zip(now) {
                                 if v > m.0 {
                                     *m = (v, shown.clone());
@@ -1143,8 +1158,8 @@ fn span_ids_census() {
                 .map(|h| h.join().unwrap())
                 .collect()
         });
-        let capacity = [granules::POSITIONS, u64::from(ExtraSpan::Line.capacity()), u64::from(ExtraSpan::Lf.capacity()), u64::from(ExtraSpan::Tape.capacity()), u64::from(ExtraSpan::Comment.capacity()), u64::from(ExtraSpan::Match.capacity())];
-        for (k, name) in ["positions", "source and physical lines", "\\n lines", "tape lines", "comments", "matches and groups"].into_iter().enumerate() {
+        let capacity = [granules::POSITIONS, u64::from(ExtraSpan::Line.capacity()), u64::from(ExtraSpan::Comment.capacity()), u64::from(ExtraSpan::Match.capacity())];
+        for (k, name) in ["positions", "source and lines", "comments", "matches and groups"].into_iter().enumerate() {
             let (v, at) = maxima.iter().map(|m| m[k].clone()).max().unwrap_or_default();
             eprintln!("census {}: {} files: {name}: at most {v} per document ({at}), capacity {}", corpus.name, files.len(), capacity[k]);
         }
@@ -1712,7 +1727,7 @@ fn definition_ids_are_pinned() {
         return;
     }
     use sha2::{Digest, Sha256};
-    let ruff = crate::source_tree::native().join("../packs/python/upstream/ruff/fixtures");
+    let ruff = crate::code_rule_dsl::test_support::pack_test_data("packs/python/upstream/ruff/fixtures");
     let mut files: Vec<(&str, String, String)> = [
         ("python", "a.py", "import os\nLIMIT = 3\n\ndef f(a):\n    return a + 1\n\n@dataclass\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n"),
         ("tsx", "a.tsx", "import React from 'react';\ntype Props = { title: string };\nexport const Header = ({ title }: Props) => <h1>{title}</h1>;\nexport function Footer() {\n  return <footer>ft</footer>;\n}\n"),
@@ -1736,8 +1751,10 @@ fn definition_ids_are_pinned() {
     let got: String = h.finalize()[..16].iter().map(|b| format!("{b:02x}")).collect();
     // Moved once by decision 0353 step 2: a granule's tokens are numbered in preorder of the tokens, not by their
     // nodes' order, so the granule table counts them off a rank index (was f280acef04fbe4f44e98f401f7f7d4f8; the
-    // nodes' and spans' ids are unchanged).
-    assert_eq!(got, "a181683bc9d837ac82beba26e6ff7057", "the definition ids moved");
+    // nodes' and spans' ids are unchanged). Moved again by decision 0612: a file's lines are its facts' (`LineTable`),
+    // the empty line after its final terminator one of them, so each file has one more line position (was
+    // a181683bc9d837ac82beba26e6ff7057; the nodes' ids are unchanged).
+    assert_eq!(got, "0c858a2fb1fb44c99224f605ef3cbea9", "the definition ids moved");
 }
 
 /// What a kind is to the granules (a definition, a wrapper, a body, a container's owner) is a table by kind code,
@@ -1765,7 +1782,7 @@ fn granule_kinds_are_a_table_by_kind_code() {
 /// `Table::node` inverts it; the scan gives the same ids in preorder; and no other tape node has one.
 #[test]
 fn node_ids_in_place_equal_the_numbered_ones() {
-    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::lines::LineTable;
     use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
     use ranks::Item;
     if !definition_ids() {
@@ -1793,7 +1810,7 @@ fn node_ids_in_place_equal_the_numbered_ones() {
         let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
         let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
-            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
             let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
             let f = &*facts;
             let dialect = Dialect::new(core::facts_tag(f)).unwrap();
@@ -1952,6 +1969,120 @@ fn an_axis_counts_its_rows_without_its_solve() {
     }
 }
 
+/// A solved axis probed by `n` reads each row's values off its solve as it finds them (`lookup_read`): the rows and
+/// values `lookup` and `value` give, for every node, with no list of rows made. Unsolved, it gives nothing, and the
+/// probe takes `lookup`'s rows made per lookup.
+#[test]
+fn a_solved_axis_reads_a_nodes_rows_as_it_finds_them() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-read")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = batch.nodes().total();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag(), batch.dialects[p.tag()].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    for (name, axis) in [("nearest", within::Axis::Nearest), ("inside", within::Axis::Inside)] {
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set, Binding::Cpu);
+        let id = batch.id(nodes / 2, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
+        assert!(!source.lookup_read(0, id, &[0, 1], &mut |_, _| panic!("{name}: read before its solve")), "{name}: unsolved, nothing read");
+        let _ = (0..source.len()).count();
+        let _ = source.value(0, 0);
+        assert!(source.is_solved(), "{name}");
+        let mut read_rows = 0;
+        for r in 0..nodes {
+            let n = batch.id(r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
+            let want: Vec<(usize, i64, i64)> = source.lookup(0, &[n]).unwrap().into_iter().map(|row| (row, source.value(row, 0), source.value(row, 1))).collect();
+            let mut got = Vec::new();
+            assert!(source.lookup_read(0, n, &[1, 0], &mut |row, v| got.push((row, v[1], v[0]))), "{name}");
+            assert_eq!(got, want, "{name}: node row {r}");
+            read_rows += got.len();
+        }
+        assert!(read_rows > 0, "{name}: some node has a member ancestor");
+        assert!(!source.lookup_read(1, id, &[0], &mut |_, _| ()), "{name}: by `a`, the solve's rows are searched as before");
+    }
+}
+
+/// A measurement (t50, `wstart`'s nearest step at ~375 ns a probe): ns per call of a solved axis's probe by `n`, by
+/// its parts, over every node of a few documents.
+#[test]
+#[ignore]
+fn an_axis_probes_cost() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-cost")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(8).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = batch.nodes().total();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag(), batch.dialects[p.tag()].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    let source = within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, &set, Binding::Cpu);
+    let _ = source.value(0, 0);
+    let ids: Vec<i64> = (0..nodes).map(|r| batch.id(r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO })).collect();
+    let reps = (2_000_000 / nodes.max(1)).max(1);
+    let time = |what: &str, f: &mut dyn FnMut(i64) -> i64| {
+        let t = std::time::Instant::now();
+        let mut sum = 0i64;
+        for _ in 0..reps {
+            for &n in &ids {
+                sum = sum.wrapping_add(f(n));
+            }
+        }
+        let ns = t.elapsed().as_nanos() as f64 / (reps * ids.len()) as f64;
+        eprintln!("{what:<40} {ns:7.1} ns a probe ({} probes, sum {sum})", reps * ids.len());
+    };
+    time("Batch::node", &mut |n| batch.node(n, &mut 0).map_or(0, |(d, l)| d as i64 + i64::from(l)));
+    time("Within::lookup, then value", &mut |n| source.lookup(0, &[n]).unwrap().into_iter().map(|r| source.value(r, 1)).sum());
+    time("Within::lookup_read", &mut |n| {
+        let mut s = 0;
+        source.lookup_read(0, n, &[1], &mut |_, v| s += v[0]);
+        s
+    });
+    // The same probes through the set engine's join: a table of (node, repetition) probing the axis held as an input,
+    // against the same join without the axis.
+    use crate::code_rule_dsl::logic::native::{self as native, component as c};
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let path = crate::code_rule_dsl::fixtures::temp();
+    drop(crate::code_rule_dsl::fixtures::open(&path));
+    let db = rusqlite::Connection::open(path).unwrap();
+    native::register(&db).unwrap();
+    c::hold_source(&db, "ax", Arc::new(source), b"ii".to_vec());
+    db.execute_batch("CREATE TABLE probes(c0, c1); BEGIN").unwrap();
+    {
+        let mut ins = db.prepare("INSERT INTO probes VALUES (?1, ?2)").unwrap();
+        for k in 0..reps as i64 {
+            for &n in &ids {
+                ins.execute([n, k]).unwrap();
+            }
+        }
+    }
+    db.execute_batch("COMMIT").unwrap();
+    let probes = format!("t:b:{}:{}:ii", hex("probes"), hex("c0, c1"));
+    let joined = |name: &str, body: &str| {
+        c::open_spec(&db, &c::spec::ComponentSpec::parse(&format!("name {name}\nrel {name}_out i empty\nnowrite\nseed 0 {}", hex(body))).unwrap()).unwrap();
+        let _ = c::run(&db, name, 0).unwrap();
+        c::close(&db, name).unwrap();
+        c::open_spec(&db, &c::spec::ComponentSpec::parse(&format!("name {name}\nrel {name}_out i empty\nnowrite\nseed 0 {}", hex(body))).unwrap()).unwrap();
+        let t = std::time::Instant::now();
+        let report = c::run(&db, name, 0).unwrap();
+        let s = t.elapsed().as_secs_f64();
+        c::close(&db, name).unwrap();
+        (s, report)
+    };
+    let (plain, _) = joined("plain", &format!("pos {probes} v0 v2\nhead v0"));
+    let (axis, report) = joined("axis", &format!("pos {probes} v0 v2\npos r:{} v0 v1\nhead v1", hex("ax")));
+    let n = (reps * ids.len()) as f64;
+    eprintln!("join: scan alone {:.1} ns a row, with the axis's probe {:.1} ns a row: the probe {:.1} ns ({report})", plain * 1e9 / n, axis * 1e9 / n, (axis - plain) * 1e9 / n);
+}
+
 /// Decision 0353 step 5: a solvable axis's answer is one relation of ids in a block, written once: each row's two
 /// ids, as `value` reads them, in its order, every column at its place, which the device reads where it lies
 /// (`Source::in_block`), with room for an index on each column. Asked again, it is the same relation. Span
@@ -1993,7 +2124,7 @@ fn a_solved_axis_is_one_relation_of_ids_in_a_block() {
 /// The numbering reads' cases: a projection of each source, in each format, whole, as T and narrowed, with the tape
 /// nodes to read (every one, and 64 past the last).
 fn id_read_cases() -> Vec<(String, Projected, u32)> {
-    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::lines::LineTable;
     use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
     let mut out = Vec::new();
     let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
@@ -2009,7 +2140,7 @@ fn id_read_cases() -> Vec<(String, Projected, u32)> {
         let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
         let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
-            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
             let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
             for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
@@ -2163,7 +2294,7 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_view_reads_are_the_hosts_rows() {
-    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::lines::LineTable;
     use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
     use ranks::Item;
     use rerail_clif::view::TapeView;
@@ -2231,8 +2362,9 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
         let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
         let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
-            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
-            let words: Vec<u32> = lines.words().to_vec();
+            let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
+            // The lines' index and a word of room past it, as the device reads them: the test's buffer of them.
+            let words: Vec<u8> = [lines.index(), &[0u8; 8]].concat();
             let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
             let (tape, view) = facts.tape.as_ref().unwrap().in_place().unwrap();
@@ -2273,7 +2405,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     .collect();
                 let e = entry.desc();
                 let t = tape.as_ptr();
-                let ll = words.as_ptr().cast::<u8>();
+                let ll = words.as_ptr();
                 let jitted: Vec<i64> = (0..n)
                     .flat_map(|l| {
                         let mut row: Vec<i64> = (0..5).map(|c| node(e, t, v, ll, l, c)).collect();
@@ -2334,7 +2466,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     bytes.resize(tape.len() + 16, 0);
                     let tt = buffer_of(&bytes).unwrap();
                     let out = alloc::<i64>(n.max(1) as usize * WIDE).unwrap();
-                    // Its lines where the device reads them: a test's buffer of their words.
+                    // Its lines where the device reads them: a test's buffer of their index.
                     let lb = buffer_of(&words).unwrap();
                     let (tt_at, lb_at) = (tt.device_address().unwrap(), lb.device_address().unwrap());
                     // A 16z tape's blocks through a cache every thread shares (0353 step 4b): one of a block a
@@ -2423,6 +2555,27 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
         assert_eq!(rows(&**s), eager[name], "{name}, made by probes then a scan");
     }
     assert_eq!(probed.groups(), 3, "the scan made the rest as one group");
+}
+
+/// Decision 0353: `rr_long_text_node`'s statistics are counted on the tape, with no group made: the planner's measure
+/// of it made every document's rows of every relation before (a 158 MB block at the M3's 300-file peak). They are
+/// what its rows, once made, measure.
+#[test]
+fn long_text_nodes_are_measured_on_the_tape_with_no_row_made() {
+    let store = ContentStore::open(&temp("long-text-stats")).unwrap();
+    let long = "x".repeat(core_rr::TEXT_INLINE + 5);
+    let docs = || -> Vec<Document> {
+        (1..=3).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return \"{long}\" + \"s{k}\"\n"))).collect()
+    };
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "rr_long_text_node", "doc"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let batch = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let texts = Arc::clone(&sources.iter().find(|(n, _, _)| *n == LONG_TEXT_NODES).unwrap().2);
+    let got = texts.statistics().expect("counted on the tape");
+    assert_eq!(batch.groups(), 0, "the statistics made no group");
+    let want = measured(&*texts);
+    assert!(want[0].1 >= 6, "each document's long string and the nodes holding it: {want:?}");
+    assert_eq!(got, want, "the tape's count, as the rows measure");
 }
 
 /// Decision 0494 (Q396): reads of a batch side by side make each document once. Each thread reads a relation whole;
@@ -2595,11 +2748,52 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
     assert_eq!(seen, ["m1.py", "m2.py"], "the started files matched once, and none again when a value is admitted");
 }
 
+/// Q216 (decision 0353 step 3): where a program reads spans, a node's and a token's places are the `Loc` view's, and
+/// the place rows made are the spans' alone. The bound relation is the view's rows, then the spans', and a span's
+/// place is read by its id: a line's own line, its start's column 0.
+#[test]
+fn a_span_reader_s_places_are_the_view_s_then_the_spans() {
+    let store = ContentStore::open(&temp("span-places")).unwrap();
+    let docs = || vec![document(1, "a.py", "python", "x = 1\n# c\ny = 2\n")];
+    let projection = |reads: &[&str]| Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let places = ["line", "end_line", "col", "docof"];
+    let spans = projection(&["node", "line", "end_line", "col", "docof", "source", "src_line"]);
+    let batch = Batch::new(&store, docs(), &spans, &[], &[], false, None, &HashMap::new()).unwrap();
+    let mut made: HashMap<&str, usize> = HashMap::new();
+    for (name, _, s) in made_sources(&batch) {
+        if places.contains(&name) {
+            assert!(s.len() > 0, "{name}: the spans' places are made");
+            assert!((0..s.len()).all(|r| granules::is_extra(s.value(r, 0) as u32)), "{name}: no node's or token's place is made");
+            made.insert(name, s.len());
+        }
+    }
+    let out = shaped(&store, docs(), &spans).unwrap();
+    let views = shaped(&store, docs(), &projection(&["node", "line", "end_line", "col", "docof"])).unwrap();
+    let bound = |name: &str| Arc::clone(&out.iter().find(|(n, _)| *n == name).unwrap().1);
+    for name in places {
+        let (whole, view) = (bound(name), Arc::clone(&views.iter().find(|(n, _)| *n == name).unwrap().1));
+        assert_eq!(whole.len(), view.len() + made[name], "{name}: the view's rows, then the spans'");
+        assert!((0..view.len()).all(|r| whole.value(r, 0) == view.value(r, 0) && whole.value(r, 1) == view.value(r, 1)), "{name}: the view's rows first");
+        let node = view.value(0, 0);
+        assert_eq!(whole.lookup(0, &[node]).unwrap(), view.lookup(0, &[node]).unwrap(), "{name}: a node's place is the view's");
+    }
+    let src_line = bound("src_line");
+    assert_eq!(src_line.len(), 4, "every line, the empty last one too");
+    for r in 0..src_line.len() {
+        let (l, sp) = (src_line.value(r, 1), src_line.value(r, 2));
+        for (name, want) in [("line", l), ("end_line", l), ("col", 0)] {
+            let s = bound(name);
+            let rows = s.lookup(0, &[sp]).unwrap();
+            assert_eq!(rows.iter().map(|&row| s.value(row, 1)).collect::<Vec<_>>(), [want], "{name} of line {l}'s span");
+        }
+    }
+}
+
 /// Decision 0353, step 3 on the CPU (step 1): a batch's views' directory is made with or without a device, and
 /// self-relative. Read from its offset in the batch's block, at the host's bases of its homes, each document's row
 /// names that document's entry, its tape's bytes and its lines' words where they lie. The device's address of it is
 /// given only where the device reads every home.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_views_directory_is_the_hosts_too() {
     use rerail_clif::view_reads::{ViewDir, ViewDoc, ViewHome, ViewRow};
@@ -2621,7 +2815,7 @@ fn the_views_directory_is_the_hosts_too() {
         let (bytes, view) = p.facts.tape.as_ref().unwrap().in_place().unwrap();
         assert_eq!(homes[row.homes[0] as usize].host + row.tape, bytes.as_ptr() as u64, "document {}'s tape, where it lies", p.key());
         assert_eq!((row.view.format, row.view.nodes), (view.format, view.nodes));
-        assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.words().as_ptr() as u64, "document {}'s lines", p.key());
+        assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.index().as_ptr() as u64, "document {}'s line index, in its tape or its own", p.key());
     }
     // The homes its rows name (fixed: a row's tape in `2i`, its lines in `2i + 1`), and the 16z cache's where it has one.
     assert_eq!(dir.nhomes as usize, 2 * rows.len() + 1, "two homes a row, and the cache's");
@@ -2656,7 +2850,7 @@ fn the_views_read_through_the_directory_are_the_projections() {
                     let grammar = Grammar::new(lang).unwrap();
                     let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
                     let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
-                    let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+                    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
                     let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.in_format(format, source.as_bytes()), lines).unwrap());
                     Document { key: k as u32 + 1, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: None, guest: None, module: None, unpackaged: false }
                 })
@@ -2679,7 +2873,7 @@ fn the_views_read_through_the_directory_are_the_projections() {
 /// `doc_of_key`) answer what their CLIF answers, by the JIT, for every row of every view, every key and a key of
 /// none, with a memo of the right document, of a wrong one, and of none. Documents of no rows in a view (a module's
 /// docstring alone) are among them.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_directorys_searches_are_the_jits() {
     use rerail_clif::view_reads::{NO_DOC, VIEWS, ViewDir};
@@ -2733,7 +2927,7 @@ fn the_directorys_searches_are_the_jits() {
 /// `clif_dir_doc_of_key`, the UKL of their CLIF), over the directory where it lies in its batch's block, answer what
 /// the host's answer: every row of every view, every key and keys of none, with each memo. The kernel is UKL, on the
 /// process's device (decision 0440 step C).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_kernels_directory_searches_are_the_hosts() {
     use rerail_clif::view_reads::{NO_DOC, VIEWS, ViewDir};

@@ -191,7 +191,7 @@ impl Code {
 /// its code (`number`): `None` where the run stores format 15, or the language has no format 16 table (said once).
 fn sixteen(language: GrammarDialect, number: impl Fn(&'static Lang, u32) -> Option<u32> + Send + Sync + 'static) -> Option<rerail_tape_format::Sixteen> {
     let (lang, tag, z) = run_16(language)?;
-    Some(rerail_tape_format::Sixteen { lang, tag, z, blocks: true, number: Arc::new(move |key| number(lang, key)) })
+    Some(rerail_tape_format::Sixteen { lang, terminators: crate::code_rule_dsl::lines::terminators(language), tag, z, blocks: true, number: Arc::new(move |key| number(lang, key)) })
 }
 
 /// The language's format 16 table, its tag and whether the run stores 16z: `None` where the run stores format 15, or
@@ -231,7 +231,7 @@ impl TreeOps {
     /// run stores format 15 (`run_16`).
     pub(super) fn of_run(language: GrammarDialect, source: &[u8], nodes: usize) -> Option<Self> {
         let (lang, tag, z) = run_16(language)?;
-        let w = f16::Writer::new(lang, source, tag, z, true, nodes);
+        let w = f16::Writer::new(lang, source, crate::code_rule_dsl::lines::terminators(language), tag, z, true, nodes);
         Some(TreeOps { language, lang, tag, w, ends: Vec::with_capacity(64), numbers: Default::default(), aliases: Vec::new(), bad: None })
     }
 
@@ -319,16 +319,35 @@ pub struct Lean<'a> {
     source: &'a str,
     budget: &'a dyn Fn() -> bool,
     code_of: Arc<dyn Fn(&u32) -> Result<Code, String> + Send + Sync>,
+    alias_of: Arc<dyn Fn(u32) -> Option<(String, bool)> + Send + Sync>,
     target: Option<rerail_tape_format::Sixteen>,
     /// `finish` asks for the parse again, in format 15 (`Sink::again`).
     again: bool,
 }
 
 pub fn lean<'a>(grammar: &'a Grammar, source: &'a str, budget: &'a dyn Fn() -> bool, code_of: impl Fn(&u32) -> Result<Code, String> + Send + Sync + 'static) -> Lean<'a> {
+    lean_aliased(grammar, source, budget, code_of, |_| None)
+}
+
+/// [`lean`] for a parser whose keys may name a kind by a contextual alias (`alias_of`): a node whose type is named
+/// otherwise than its public symbol (Scala's `(`, whose public symbol is named `arguments`), as tree-sitter's
+/// encoding gives it (`encode_node`'s `kind_alias`). Its number is its entry's with that alias.
+pub fn lean_aliased<'a>(
+    grammar: &'a Grammar,
+    source: &'a str,
+    budget: &'a dyn Fn() -> bool,
+    code_of: impl Fn(&u32) -> Result<Code, String> + Send + Sync + 'static,
+    alias_of: impl Fn(u32) -> Option<(String, bool)> + Send + Sync + 'static,
+) -> Lean<'a> {
     let code_of: Arc<dyn Fn(&u32) -> Result<Code, String> + Send + Sync> = Arc::new(code_of);
-    let codes = code_of.clone();
-    let target = sixteen(grammar.lang, move |lang, key| codes(&key).ok().and_then(|c| lang.number(&c.entry())));
-    Lean { grammar, source, budget, code_of, target, again: false }
+    let alias_of: Arc<dyn Fn(u32) -> Option<(String, bool)> + Send + Sync> = Arc::new(alias_of);
+    let (codes, aliases) = (code_of.clone(), alias_of.clone());
+    let target = sixteen(grammar.lang, move |lang, key| {
+        let mut entry = codes(&key).ok()?.entry();
+        entry.alias = aliases(key);
+        lang.number(&entry)
+    });
+    Lean { grammar, source, budget, code_of, alias_of, target, again: false }
 }
 
 impl rerail_tape_format::Sink<Result<TapeImage, String>> for Lean<'_> {
@@ -355,6 +374,9 @@ impl rerail_tape_format::Sink<Result<TapeImage, String>> for Lean<'_> {
             }
         }
         let columns = w.finish_columns()?;
+        if let Some(alias) = columns.keys.iter().find_map(|&k| (self.alias_of)(k)) {
+            return Ok(Err(format!("a node named {alias:?} by a contextual alias, which the lean parser writes to format 16 alone")));
+        }
         let codes: Result<Vec<Code>, String> = columns.keys.iter().map(|k| (self.code_of)(k)).collect();
         Ok(codes.and_then(|codes| TapeImage::written(columns.code, columns.size, columns.base, columns.off, columns.tail, columns.widths, codes, None, self.grammar, self.source, self.budget)))
     }
@@ -388,7 +410,7 @@ impl TapeImage {
         // One pass over format 15's columns, to format 16 or straight to 16z's blocks.
         #[cfg(any(test, feature = "test-hooks"))]
         CONVERTED.set(CONVERTED.get() + 1);
-        let f = match f16::write_from_with_presence(lang, &F15::over(c.laid_out().0, c.view(self.source_len), table), &number, source, tag, format == Format::F16Z) {
+        let f = match f16::write_from_with_presence(lang, &F15::over(c.laid_out().0, c.view(self.source_len), table), &number, source, crate::code_rule_dsl::lines::terminators(self.language), tag, format == Format::F16Z) {
             Ok(f) => f,
             Err(e) => {
                 keeps_15(self.language, tag, &e);

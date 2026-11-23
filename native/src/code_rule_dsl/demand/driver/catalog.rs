@@ -9,19 +9,19 @@
 //! filtering and deterministic extraction. No host callback or semantic matcher is an execution
 //! dependency.
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[path = "catalog/plan/render/compact_output_sql.rs"]
-mod compact_output_sql;
-mod plan;
+pub mod compact_output_sql;
+pub mod plan;
 #[path = "catalog/plan/render/relational.rs"]
-mod relational;
+pub mod relational;
 #[path = "catalog/plan/render/relational_ir.rs"]
-mod relational_ir;
+pub mod relational_ir;
 // N's backend, with the fact producers demand::vtab's adaptation removed.
-pub(in crate::code_rule_dsl) mod sql_backend;
+pub mod sql_backend;
 
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::model::CompiledCodeRule;
 use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
 use crate::code_rule_dsl::tape::TapeDoc;
@@ -38,14 +38,14 @@ type ClauseId = (usize, usize);
 
 /// One file's immutable input to the packed batch. `tasks` contains only demanded clauses; an
 /// empty roots vector is a demanded task with a complete negative result.
-pub(super) struct PackedFileInput {
-    pub(super) tape: TapeDoc,
-    pub(super) language: GrammarDialect,
-    pub(super) path: String,
-    pub(super) module: Option<crate::code_rule_dsl::module_path::ModulePath>,
-    pub(super) tasks: BTreeMap<ClauseId, Vec<u32>>,
-    pub(super) document_maps: Vec<DocumentMapSpan>,
-    pub(super) syntax_failure: Option<String>,
+pub struct PackedFileInput {
+    pub tape: TapeDoc,
+    pub language: GrammarDialect,
+    pub path: String,
+    pub module: Option<crate::code_rule_dsl::module_path::ModulePath>,
+    pub tasks: BTreeMap<ClauseId, Vec<u32>>,
+    pub document_maps: Vec<DocumentMapSpan>,
+    pub syntax_failure: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -56,7 +56,7 @@ struct SqlFixRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct SqlViolationRow {
+pub struct SqlViolationRow {
     rule_id: String,
     clause_id: String,
     code: String,
@@ -162,7 +162,7 @@ impl SqlViolationRow {
         })
     }
 
-    pub(super) fn to_value(&self) -> Value {
+    pub fn to_value(&self) -> Value {
         let mut id = crate::code_rule_dsl::eval::violation_id(
             &self.rule_id,
             &self.clause_id,
@@ -201,30 +201,30 @@ impl SqlViolationRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct SqlFailureRow {
-    pub(super) rule_id: String,
-    pub(super) clause_id: String,
-    pub(super) path: String,
-    pub(super) code: String,
-    pub(super) message: Option<String>,
+pub struct SqlFailureRow {
+    pub rule_id: String,
+    pub clause_id: String,
+    pub path: String,
+    pub code: String,
+    pub message: Option<String>,
 }
 
 /// Rows returned by SQL after completion filtering and stable ordering.
-pub(super) struct QueryOutcome {
-    pub(super) rows: Vec<PackedRow>,
-    pub(super) violations: Vec<SqlViolationRow>,
-    pub(super) failures: Vec<SqlFailureRow>,
+pub struct QueryOutcome {
+    pub rows: Vec<PackedRow>,
+    pub violations: Vec<SqlViolationRow>,
+    pub failures: Vec<SqlFailureRow>,
 }
 
 /// The immutable SQL route for one catalog. Lowering failures are retained in source order and
 /// fail the apply before registration; they never select another executor.
-pub(super) struct SqlPlans {
+pub struct SqlPlans {
     plan: Result<relational::SqlCatalogPlan, String>,
     clause_keys: BTreeMap<ClauseId, (String, String)>,
 }
 
 impl SqlPlans {
-    pub(super) fn compile(code_rules: &[Arc<CompiledCodeRule>]) -> Self {
+    pub fn compile(code_rules: &[Arc<CompiledCodeRule>]) -> Self {
         let clause_keys = code_rules
             .iter()
             .enumerate()
@@ -253,12 +253,12 @@ impl SqlPlans {
 
     /// Executes a completed relational catalog plan. Phase 1 creates the plan but does not yet
     /// pack its terminal descriptors into the expanded virtual-table relation.
-    pub(super) fn execute(&self, files: Vec<PackedFileInput>) -> Result<QueryOutcome, String> {
+    pub fn execute(&self, files: Vec<PackedFileInput>) -> Result<QueryOutcome, String> {
         self.execute_with_statement(files, None)
     }
 
-    #[cfg(test)]
-    pub(super) fn execute_statement(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn execute_statement(
         &self,
         files: Vec<PackedFileInput>,
         sql: &str,
@@ -425,7 +425,7 @@ impl SqlPlans {
             file_metadata.push(serde_json::json!({
                 "path": file.path,
                 "source": source,
-                "lineStarts": LineTable::new(source, Terminators::of(file.language)).starts(),
+                "lineStarts": LineTable::new(source, crate::code_rule_dsl::lines::terminators(file.language)).starts().collect::<Vec<_>>(),
                 "syntaxFailures": syntax_failures,
             }));
             file_paths.push(file.path);
@@ -726,7 +726,3 @@ thread_local! {
     static CONNECTION: Slot = Slot::default();
 }
 
-#[cfg(test)]
-mod policy_lowering_tests;
-#[cfg(test)]
-mod production_contract_tests;

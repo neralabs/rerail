@@ -10,7 +10,7 @@
 //! its plan is live and a kept manifest names its content. No run marks what it used.
 
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::{ContentStore, StoreResult};
 use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};

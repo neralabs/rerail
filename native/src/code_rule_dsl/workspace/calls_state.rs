@@ -18,9 +18,7 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, FileInput, Metrics, Query, Terms};
 use crate::code_rule_dsl::tape;
-use crate::content_store::{
-    CandidateClause, HashKey, LocalResultPublication, StoredLocalResult,
-};
+use crate::content_store::{CandidateClause, HashKey, StoredLocalResult};
 use ast_grep_core::AstGrep as Root;
 use napi::Result;
 use rayon::prelude::*;
@@ -642,18 +640,13 @@ fn share_summary(file: &FileState, summary: Summary) -> Arc<Summary> {
     summary
 }
 
-/// `file`'s call summary as a stored result, unless the store holds it already.
-pub(super) fn summary_publication(file: &FileState) -> Result<Option<LocalResultPublication>> {
-    let Some((_, summary)) = file.crossfile.summary.as_ref().filter(|(revision, _)| {
-        *revision == file.source_revision && !file.crossfile.summary_stored
-    }) else {
+/// `file`'s current call summary as a stored result (its clause, its context and its bytes): kept in the file's entry
+/// beside its clause results, which is written whole, so a summary the store held already is written again with it.
+pub(super) fn summary_publication(file: &FileState) -> Result<Option<(CandidateClause, HashKey, Vec<u8>)>> {
+    let Some((_, summary)) = file.crossfile.summary.as_ref().filter(|(revision, _)| *revision == file.source_revision) else {
         return Ok(None);
     };
-    Ok(Some(LocalResultPublication {
-        candidate: summary_candidate(),
-        context: file_context(&file.input),
-        bytes: summary.encode(),
-    }))
+    Ok(Some((summary_candidate(), file_context(&file.input), summary.encode())))
 }
 
 /// Summaries extracted (not restored from the store), in any workspace of the process.
@@ -739,9 +732,10 @@ pub(super) fn summarize_file(
                     Arc::clone(&file.input.source),
                     grammar,
                     image,
-                    Arc::new(LineTable::new(
+                    Arc::new(image.primary.lines(
                         &file.input.source,
-                        Terminators::of(language),
+                        crate::code_rule_dsl::lines::terminators(language),
+                        false,
                     )),
                     &matcher_budget_exhausted,
                 ),

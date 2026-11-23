@@ -113,105 +113,52 @@ fn capture_oldest(
     )
 }
 
-/// Line `address`'s start (a word of the document's own line starts, read on its tape: `TapeDoc::transducer_rows`),
-/// in the batch's numbering: the file's `source_base` added.
-fn line_start_at(
+/// The task's document's line index (decision 0612: its language's, `LineTable::index`), read where it lies.
+fn lines(function: &mut FunctionBuilder<'_>, task: cranelift_codegen::ir::Value) -> cranelift_codegen::ir::Value {
+    pointer(function, task, mem::offset_of!(NativeTaskContext, lines))
+}
+
+/// The task's `source_base`: the batch's numbering of its document's source bytes starts there.
+fn source_base(function: &mut FunctionBuilder<'_>, task: cranelift_codegen::ir::Value) -> cranelift_codegen::ir::Value {
+    function.ins().load(types::I32, MemFlags::trusted(), task, mem::offset_of!(NativeTaskContext, source_base) as i32)
+}
+
+/// Line `row`'s (from 0) first byte, in the batch's numbering: the lines' read written once (`lines_start`), on the
+/// document's line index, `source_base` added.
+fn line_start(
     function: &mut FunctionBuilder<'_>,
+    reads: &ReadIds,
     task: cranelift_codegen::ir::Value,
-    address: cranelift_codegen::ir::Value,
+    row: cranelift_codegen::ir::Value,
 ) -> cranelift_codegen::ir::Value {
-    let start = function.ins().load(types::I32, MemFlags::trusted(), address, 0);
-    let base = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        task,
-        mem::offset_of!(NativeTaskContext, source_base) as i32,
-    );
+    let index = lines(function, task);
+    let callee = reads.func_ref("lines_start", function.func);
+    let call = function.ins().call(callee, &[index, row]);
+    let start = function.inst_results(call)[0];
+    let base = source_base(function, task);
     function.ins().iadd(start, base)
 }
 
-/// The line (from 0) source byte `byte` lies in (the batch's numbering): a search of the task's line starts.
+/// The line (from 0) source byte `byte` lies in (the batch's numbering): the lines' read written once
+/// (`lines_line`, from 1), on the document's line index.
 pub(super) fn line_for(
     function: &mut FunctionBuilder<'_>,
+    reads: &ReadIds,
     task: cranelift_codegen::ir::Value,
     byte: cranelift_codegen::ir::Value,
 ) -> cranelift_codegen::ir::Value {
-    let low_high = function.create_block();
-    function.append_block_param(low_high, types::I32);
-    function.append_block_param(low_high, types::I32);
-    let inspect = function.create_block();
-    function.append_block_param(inspect, types::I32);
-    function.append_block_param(inspect, types::I32);
-    let move_low = function.create_block();
-    function.append_block_param(move_low, types::I32);
-    function.append_block_param(move_low, types::I32);
-    function.append_block_param(move_low, types::I32);
-    let move_high = function.create_block();
-    function.append_block_param(move_high, types::I32);
-    function.append_block_param(move_high, types::I32);
-    function.append_block_param(move_high, types::I32);
-    let finish = function.create_block();
-    function.append_block_param(finish, types::I32);
-    let zero = function.ins().iconst(types::I32, 0);
-    let count = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        task,
-        mem::offset_of!(NativeTaskContext, line_count) as i32,
-    );
-    function.ins().jump(low_high, &[zero.into(), count.into()]);
-    function.switch_to_block(low_high);
-    let values = function.block_params(low_high).to_vec();
-    let done = function
-        .ins()
-        .icmp(IntCC::UnsignedGreaterThanOrEqual, values[0], values[1]);
-    let result = function.ins().iadd_imm(values[0], -1);
-    function.ins().brif(
-        done,
-        finish,
-        &[result.into()],
-        inspect,
-        &[values[0].into(), values[1].into()],
-    );
-    function.switch_to_block(inspect);
-    let values = function.block_params(inspect).to_vec();
-    let distance = function.ins().isub(values[1], values[0]);
-    let half = function.ins().ushr_imm(distance, 1);
-    let middle = function.ins().iadd(values[0], half);
-    let starts = pointer(
-        function,
-        task,
-        mem::offset_of!(NativeTaskContext, line_starts),
-    );
-    let address = indexed::<u32>(function, starts, middle);
-    let start = line_start_at(function, task, address);
-    let before = function
-        .ins()
-        .icmp(IntCC::UnsignedLessThanOrEqual, start, byte);
-    function.ins().brif(
-        before,
-        move_low,
-        &[values[0].into(), values[1].into(), middle.into()],
-        move_high,
-        &[values[0].into(), values[1].into(), middle.into()],
-    );
-    function.switch_to_block(move_low);
-    let values = function.block_params(move_low).to_vec();
-    let low = function.ins().iadd_imm(values[2], 1);
-    function
-        .ins()
-        .jump(low_high, &[low.into(), values[1].into()]);
-    function.switch_to_block(move_high);
-    let values = function.block_params(move_high).to_vec();
-    function
-        .ins()
-        .jump(low_high, &[values[0].into(), values[2].into()]);
-    function.switch_to_block(finish);
-    function.block_params(finish)[0]
+    let base = source_base(function, task);
+    let local = function.ins().isub(byte, base);
+    let index = lines(function, task);
+    let callee = reads.func_ref("lines_line", function.func);
+    let call = function.ins().call(callee, &[index, local]);
+    let line = function.inst_results(call)[0];
+    function.ins().iadd_imm(line, -1)
 }
 
 fn byte_for(
     function: &mut FunctionBuilder<'_>,
+    reads: &ReadIds,
     task: cranelift_codegen::ir::Value,
     row: cranelift_codegen::ir::Value,
     column: cranelift_codegen::ir::Value,
@@ -246,21 +193,14 @@ fn byte_for(
     let valid_position = function.ins().band(nonnegative, in_range);
     function.ins().brif(valid_position, valid, &[], reject, &[]);
     function.switch_to_block(valid);
-    let starts = pointer(
-        function,
-        task,
-        mem::offset_of!(NativeTaskContext, line_starts),
-    );
-    let start_address = indexed::<u32>(function, starts, row);
-    let start = line_start_at(function, task, start_address);
+    let start = line_start(function, reads, task, row);
     let next_row = function.ins().iadd_imm(row, 1);
     let has_next = function
         .ins()
         .icmp(IntCC::UnsignedLessThan, next_row, count);
     function.ins().brif(has_next, next_end, &[], file_end, &[]);
     function.switch_to_block(next_end);
-    let next_address = indexed::<u32>(function, starts, next_row);
-    let end = line_start_at(function, task, next_address);
+    let end = line_start(function, reads, task, next_row);
     let end = function.ins().iadd_imm(end, -1);
     function.ins().jump(check, &[start.into(), end.into()]);
     function.switch_to_block(file_end);
@@ -992,7 +932,7 @@ pub(super) fn define(
                         target_capture,
                         mem::offset_of!(FinalCaptureRecord, start) as i32,
                     );
-                    let target_row = line_for(&mut function, task, target_start);
+                    let target_row = line_for(&mut function, &reads, task, target_start);
                     function.ins().jump(
                         adjacent_reverse,
                         &[values[3].into(), values[3].into(), target_row.into()],
@@ -1052,7 +992,7 @@ pub(super) fn define(
                         found,
                         mem::offset_of!(FinalCaptureRecord, end) as i32,
                     );
-                    let end_row = line_for(&mut function, task, end);
+                    let end_row = line_for(&mut function, &reads, task, end);
                     let adjacent_limit = function.ins().iadd_imm(end_row, 1);
                     let separated =
                         function
@@ -1074,7 +1014,7 @@ pub(super) fn define(
                         found,
                         mem::offset_of!(FinalCaptureRecord, start) as i32,
                     );
-                    let next_start = line_for(&mut function, task, start);
+                    let next_start = line_for(&mut function, &reads, task, start);
                     function.ins().jump(
                         adjacent_reverse,
                         &[reverse[0].into(), reverse[0].into(), next_start.into()],
@@ -1266,17 +1206,10 @@ pub(super) fn define(
                         found,
                         mem::offset_of!(FinalCaptureRecord, end) as i32,
                     );
-                    let start_row = line_for(&mut function, task, start);
-                    let end_row = line_for(&mut function, task, end);
-                    let starts = pointer(
-                        &mut function,
-                        task,
-                        mem::offset_of!(NativeTaskContext, line_starts),
-                    );
-                    let start_line_address = indexed::<u32>(&mut function, starts, start_row);
-                    let end_line_address = indexed::<u32>(&mut function, starts, end_row);
-                    let start_line = line_start_at(&mut function, task, start_line_address);
-                    let end_line = line_start_at(&mut function, task, end_line_address);
+                    let start_row = line_for(&mut function, &reads, task, start);
+                    let end_row = line_for(&mut function, &reads, task, end);
+                    let start_line = line_start(&mut function, &reads, task, start_row);
+                    let end_line = line_start(&mut function, &reads, task, end_row);
                     let start_column = function.ins().isub(start, start_line);
                     let end_column = function.ins().isub(end, end_line);
                     let new_start_row = function.ins().iadd_imm(start_row, i64::from(offsets[0]));
@@ -1284,8 +1217,8 @@ pub(super) fn define(
                         function.ins().iadd_imm(start_column, i64::from(offsets[1]));
                     let new_end_row = function.ins().iadd_imm(end_row, i64::from(offsets[2]));
                     let new_end_column = function.ins().iadd_imm(end_column, i64::from(offsets[3]));
-                    let new_start = byte_for(&mut function, task, new_start_row, new_start_column);
-                    let new_end = byte_for(&mut function, task, new_end_row, new_end_column);
+                    let new_start = byte_for(&mut function, &reads, task, new_start_row, new_start_column);
+                    let new_end = byte_for(&mut function, &reads, task, new_end_row, new_end_column);
                     let start_valid =
                         function
                             .ins()

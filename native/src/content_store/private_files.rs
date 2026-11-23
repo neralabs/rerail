@@ -21,7 +21,7 @@ pub fn check_mapped_folder(dir: &Path) -> io::Result<()> {
 }
 
 /// Prepares a database at a caller-supplied path. Only new parent directories get a mode here.
-pub(super) fn prepare(path: &Path) -> io::Result<()> {
+pub fn prepare(path: &Path) -> io::Result<()> {
     // SQLite maps the database (`mmap_size`): its folder the user's alone, refused otherwise (`rerail_blocks::mapped`).
     match path.parent().filter(|folder| !folder.as_os_str().is_empty()) {
         Some(folder) => rerail_blocks::mapped::make_folder(folder)?,

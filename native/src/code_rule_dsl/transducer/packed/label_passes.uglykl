@@ -36,44 +36,20 @@ UKL_INLINE void mark(UKL_GLOBAL uint32_t* bits,uint32_t node){ukl_atomic_or(&bit
 // A window's words of a row (64 nodes from `b`), for a window that starts at a node of the batch.
 #define MARK_WINDOW(row,b,out) {uint32_t window_b=(b);uint64_t window_out=(out);if(NODE_OK(window_b)){uint32_t w0=(uint32_t)(window_out),w1=(uint32_t)(window_out>>32u);if(w0!=0u)ukl_atomic_or(&(row)[window_b/32u],w0);if(w1!=0u)ukl_atomic_or(&(row)[window_b/32u+1u],w1);}else NODE_PAST}
 
-DEFINE_KERNEL2(label_passes, label_sink,
-               ROBUFFER, Arena,        arenas,   "[arenas]",
-               ROBUFFER, Result,       results,  "[results]",
-               ROBUFFER, FinalCapture, captures, "[captures]",
-               ROBUFFER, Status,       statuses, "[shape.taskCount]",
-               ROBUFFER, Route,        routes,   "[tasks]",
-               RWBUFFER, uint32_t,     scratch,  "[rows * shape.words]",
-               RWBUFFER, uint32_t,     counts,   "[slots * shape.nodeCount]",
-               RWBUFFER, uint32_t,     flags,    "[6]",
-               ARGS,     Shape,        shape,    ,
-               GID0,     uint32_t,     tid,      )
-{
-  if(ukl_atomic_load(&flags[2])!=0u)return;
-  // Bit 1: a task failed. Decision 0334: bit 4, a task ran over its budget below the ceiling (status 8); bit 8, a
-  // task stopped at the ceiling (status 4). Its evaluation says which (`Runner::unfinished`). Status 9: a mark or a
-  // tally of a node past the batch's, not written (decision 0463): `NODE_PAST`'s flags.
-  if(tid<shape.taskCount&&statuses[tid].error!=0u){uint32_t error=statuses[tid].error;ukl_atomic_or(&flags[0],error==8u?4u:error==4u?8u:error==9u?258u:1u);}
-  Arena arena=arenas[shape.resultArena];
-  if(tid>=arena.cursor)return;
-  Result result=results[arena.start+tid];
-  Route route=routes[result.taskOrdinal];
-  UKL_GLOBAL uint32_t* bits=scratch+route.slot*shape.words;
-  UKL_GLOBAL uint32_t* tally=counts+route.slot*shape.nodeCount;
-  if(route.mode==0u){MARK(bits,result.start);return;}
-  if(route.mode==2u){TALLY(tally,result.start);return;}
-  for(uint32_t at=0u;at<result.captureCount;at++){uint32_t node=captures[result.captureStart+at].node;if(route.mode==1u)MARK(bits,node)else TALLY(tally,node)}
-}
-
 // Each of the level's targets takes its new bits: a complement's or a count's computed here (per
-// word), the others' from scratch. A change sets flags[1]; scratch is cleared.
+// word), the others' from scratch. A change sets flags[1]; scratch is cleared. The level's programs
+// marked scratch and the tallies as they ran (`packed_batch::MARKS`, `run_task_in`); their lanes'
+// statuses (`shape.taskCount` of them, none at a level without programs) are folded into flags[0]
+// here, so the programs need no launch of their own after them (decision 0540 step 7).
 DEFINE_KERNEL2(label_passes, label_settle,
-               RWBUFFER, uint32_t, head,    "[2 + labels * shape.words]",
-               RWBUFFER, uint32_t, scratch, "[rows * shape.words]",
-               RWBUFFER, uint32_t, flags,   "[6]",
-               ROBUFFER, Op,       ops,     "[shape.targetCount]",
-               RWBUFFER, uint32_t, counts,  "[slots * shape.nodeCount]",
-               ARGS,     Shape,    shape,   ,
-               GID0,     uint32_t, tid,     )
+               RWBUFFER, uint32_t, head,     "[2 + labels * shape.words]",
+               RWBUFFER, uint32_t, scratch,  "[rows * shape.words]",
+               RWBUFFER, uint32_t, flags,    "[6]",
+               ROBUFFER, Op,       ops,      "[shape.targetCount]",
+               RWBUFFER, uint32_t, counts,   "[slots * shape.nodeCount]",
+               ROBUFFER, Status,   statuses, "[shape.taskCount]",
+               ARGS,     Shape,    shape,    ,
+               GID0,     uint32_t, tid,      )
 {
   // The labels after the prefix's head (bound whole: OpenCL binds a region at 4,096 bytes).
   UKL_GLOBAL uint32_t* labels=head+2;
@@ -89,6 +65,11 @@ DEFINE_KERNEL2(label_passes, label_settle,
     if(ukl_atomic_load(&flags[previous])==0u){ukl_atomic_store(&flags[2],own);ukl_atomic_or(&head[0],0x80000000u);}
     ukl_atomic_store(&flags[previous],0u);
   }
+  // A lane's first error (it ran this round: a settled round's programs return at once, as this settle does). Bit 1:
+  // a task failed. Decision 0334: bit 4, a task ran over its budget below the ceiling (status 8); bit 8, a task
+  // stopped at the ceiling (status 4). Its evaluation says which (`Runner::unfinished`). Status 9: a mark or a tally of
+  // a node past the batch's, not written (decision 0463): `NODE_PAST`'s flags.
+  if(tid<shape.taskCount&&statuses[tid].error!=0u){uint32_t error=statuses[tid].error;ukl_atomic_or(&flags[0],error==8u?4u:error==4u?8u:error==9u?258u:1u);}
   if(tid>=shape.targetCount*shape.words)return;
   Op op=ops[tid/shape.words];uint32_t index=tid%shape.words;
   uint32_t at=op.target*shape.words+index,row=op.row*shape.words+index;
@@ -161,13 +142,10 @@ typedef struct MicroFrame { uint32_t pc,node,resume,named,next,end,cursors[8],ca
 typedef struct MicroQ { UKL_GLOBAL uint32_t* slots; UKL_GLOBAL uint32_t* control; UKL_GLOBAL uint32_t* items; uint32_t capacity; uint32_t pass; uint32_t doc; UKL_GLOBAL const uint32_t* roots; } MicroQ;
 // (`roots`: the batch's pass roots, `label_passes::Roots`, where a walk may test another node for its pass's start: a
 // sibling pass's leader, `scan_marks`. Null: none tested.)
-// Only the first `MICRO_STANDBY` threads of a dispatch wait for spilled frames (`MICRO_POLLS`
-// polls between items); the rest exit once the queue is empty. Every thread polling while a long
-// walk ran was 10^8 contended loads a dispatch. A thread that spilled still takes its own frames.
+// A thread that finds the queue empty ends (<ukl/workqueue.h>, decision 0540 step 7): none waits for spilled frames.
+// A thread that spilled still takes its own frames, and threads that start later take what is queued then.
 #define MICRO_ITEM 20u
 #define MICRO_CHUNK 64u
-#define MICRO_POLLS 4096u
-#define MICRO_STANDBY 512u
 
 UKL_INLINE bool micro_class(Tree t,UKL_GLOBAL const uint32_t* head,uint32_t node,uint32_t kind){
   if(kind>=16384u){uint32_t words=head[1];UKL_GLOBAL const uint32_t* bits=head+2;return ((bits[(kind-16384u)*words+node/32u]>>(node%32u))&1u)!=0u;}
@@ -175,7 +153,7 @@ UKL_INLINE bool micro_class(Tree t,UKL_GLOBAL const uint32_t* head,uint32_t node
 }
 
 // A test of the node alone, as a walk's word reads it (kind, field, flags, class, text).
-UKL_COLD bool micro_test(Tree t,UKL_GLOBAL const uint32_t* head,UKL_GLOBAL const uint32_t* texts,uint32_t textStart,uint32_t labelWords,uint32_t word,uint32_t node){
+UKL_LARGE bool micro_test(Tree t,UKL_GLOBAL const uint32_t* head,UKL_GLOBAL const uint32_t* texts,uint32_t textStart,uint32_t labelWords,uint32_t word,uint32_t node){
   uint32_t op=word&255u,mode=(word>>8u)&255u,arg=word>>16u;
   switch(op){
     case 1u:return tape_kind(t.s,t.d,tree_local(t,node))==arg;
@@ -232,7 +210,7 @@ WALK_NEXT(walk_next_micro,MicroFrame)
 UKL_INLINE void micro_from(uint32_t FRAMES,Tree t,UKL_GLOBAL const uint32_t* head,MicroPass pass,UKL_GLOBAL const uint32_t* words,uint32_t start,UKL_GLOBAL uint32_t* scratch,UKL_GLOBAL uint32_t* flags,UKL_GLOBAL const uint32_t* texts,UKL_GLOBAL uint32_t* counts,Shape shape,UKL_GLOBAL MicroFrame* stack,UKL_PRIVATE uint32_t* steps,MicroQ q,uint32_t depth0);
 
 // A thread's walks: its items' roots, then the queue's spilled frames (`MicroQ`), each walked from its frame, until
-// none is left or the worker has polled its limit for nothing (`wq_idle`: `MICRO_POLLS` a standby thread's, else 1).
+// it finds none to take.
 // One loop calls the walk (`micro_from`) once for both: the compiler inlines the walk at every call, and two calls
 // held two copies of it and of every tape read under it (work queue Q181).
 //
@@ -249,7 +227,7 @@ UKL_INLINE void micro_run(uint32_t FRAMES,UKL_GLOBAL const DocView* docs,UKL_GLO
   SimdRoots r=simd_roots(0ul,lane __UKL_ARGS);
   bool walking=true,fresh=true;
   UklWorkQueue wq={q.slots,q.control,q.capacity,0u,0u};
-  uint32_t polls=0u,idle=tid<MICRO_STANDBY?MICRO_POLLS:1u,turn=0u;
+  uint32_t turn=0u;
   while(true){
     uint32_t p=0u,f=0u,start=0u,depth0=0u;
     if(walking){
@@ -276,7 +254,7 @@ UKL_INLINE void micro_run(uint32_t FRAMES,UKL_GLOBAL const DocView* docs,UKL_GLO
       turn++;
       if(ukl_atomic_load(&flags[2])!=0u)return;
       uint32_t at;
-      if(!ukl_wq_take(wq,&at)){if(ukl_wq_idle(wq,&polls,idle))return;continue;}
+      if(!ukl_wq_take(wq,&at))return;
       ukl_fence_device();
       UKL_GLOBAL uint32_t* spilled=q.items+at*MICRO_ITEM;
       uint32_t w[MICRO_ITEM];
@@ -291,7 +269,7 @@ UKL_INLINE void micro_run(uint32_t FRAMES,UKL_GLOBAL const DocView* docs,UKL_GLO
     micro_from(FRAMES,t,head,passes[p],words,start,scratch,flags,texts,counts,shape,stack,&steps,q,depth0);
     // Profiling (`RERAIL_GPU_WALK_STEPS`): the pass's walks, their steps, its longest walk's.
     if(shape.profile!=0u){UKL_GLOBAL uint32_t* s=wstats+3u*(shape.profile-1u+p);ukl_atomic_add(&s[0],1u);ukl_atomic_add(&s[1],steps);ukl_atomic_max(&s[2],steps);}
-    if(!walking){ukl_wq_done(wq);polls=0u;}
+    if(!walking)ukl_wq_done(wq);
   }
 }
 
@@ -437,7 +415,7 @@ UKL_INLINE uint32_t sibling_pass(Tree t,UKL_PRIVATE MicroFrame* f,WalkRead r,Sca
 // budgets of nodes (2,048 at the budget of 512) is halved into the work queue (`scan_cut`) before it starts, until
 // its piece fits, so its pieces run side by side. A step is a window. 0: the scan is done; 1: the walk is (its start marked, as every emit's in the pass);
 // 2: past the step bound, or a load of a node never saved.
-UKL_COLD uint32_t scan_marks(Tree t,UKL_PRIVATE MicroFrame* f,WalkRead r,MicroPass pass,UKL_GLOBAL uint32_t* scratch,UKL_GLOBAL uint32_t* counts,UKL_GLOBAL uint32_t* flags,Shape shape,uint32_t start,UKL_PRIVATE uint32_t* fired,UKL_PRIVATE uint32_t* steps,MicroQ q,bool straight){
+UKL_LARGE uint32_t scan_marks(Tree t,UKL_PRIVATE MicroFrame* f,WalkRead r,MicroPass pass,UKL_GLOBAL uint32_t* scratch,UKL_GLOBAL uint32_t* counts,UKL_GLOBAL uint32_t* flags,Shape shape,uint32_t start,UKL_PRIVATE uint32_t* fired,UKL_PRIVATE uint32_t* steps,MicroQ q,bool straight){
   ScanTail x;scan_tail(r,pass,f->pc,&x);
   bool pack=(pass.targets&4u)!=0u,named=(f->named&1u)!=0u;
   uint32_t label=r.words[x.emit]>>16u;
@@ -596,7 +574,7 @@ UKL_INLINE void micro_from(uint32_t FRAMES,Tree t,UKL_GLOBAL const uint32_t* hea
         case 48u:{if(depth==FRAMES)MICRO_FAIL MicroFrame frame=path;frame.pc=arg;frame.resume=0u;stack[depth++]=frame;}break;
         case 49u:path.pc=arg;continue;
         case 64u:
-          // As label_sink routes: 0 the start (once), 1 the captured nodes, 2 a tally by start,
+          // As a program marks (`packed_batch::MARKS`): 0 the start (once), 1 the captured nodes, 2 a tally by start,
           // 3 a tally by captured node, one each path.
           // A pack (bit 2, `fusion::Fused`): the emit's row, by its label, follows the emit count
           // after the words; the walk ends once every emit marked its start.
@@ -966,7 +944,7 @@ DEFINE_KERNEL2(label_passes, label_leaves,
 #undef LEAF_BLOCK
 
 // A level's formulas as phases (decisions 0474, 0475): a threadgroup a block of `PHASE_WORDS` words of the batch's
-// region and a formula, a thread a word; a dispatch a phase. A formula is compiled on the host (`phase_program`) into
+// region and a formula, a thread a word; a phase an item of the launch's queue (`label_phase`). A formula is compiled on the host (`phase_program`) into
 // instructions `[code, dst, src, extra]` over slots of the region's words (`scratch`, `shape.queue` words a formula,
 // `shape.recursive` a slot):
 //   PHASE_ROW dst word: a set, a label's row, a leaf's row, a text test's row (the formula's own word);
@@ -985,7 +963,9 @@ DEFINE_KERNEL2(label_passes, label_leaves,
 //   PHASE_COVER dst src extra: this word's nodes that a member before them covers (proper descendants), from the
 //     blocks' ends before this one (`b`, extra >> 16), the block's words' before this word (`w`, extra & 0xffff),
 //     and this word's members in order;
-//   PHASE_CHECK src: a member left in `src` (a chain with more levels than compiled) fails the run (flags bit 512);
+//   PHASE_LOOP target src: the phase's last; a member left in `src` (a chain's next level) runs the phases from
+//     `target` again (the phase's loop word, after its phase starts: `target` + 1, and the most times it runs again
+//     << 16, past which the run fails, flags bit 512);
 //   PHASE_CLIMB dst src extra: from each (named, extra bit 0) member, its ancestors set in `dst` (a push), a climb
 //     stopping at one another climb set (whose climb went on); with extra bit 1 a chain: on only through ancestors in
 //     the slot `extra >> 8` (whole from an earlier phase), named where bit 0 says;
@@ -1007,7 +987,7 @@ DEFINE_KERNEL2(label_passes, label_leaves,
 #define PHASE_BLOCKERS 13u
 #define PHASE_ANDNOT 14u
 #define PHASE_COPY 15u
-#define PHASE_CHECK 16u
+#define PHASE_LOOP 16u
 #define PHASE_CLIMB 17u
 // A threadgroup's words (its threads), so `up` holds 32 times as many nodes.
 #define PHASE_WORDS 64u
@@ -1107,39 +1087,17 @@ UKL_INLINE uint32_t phase_group_max(uint32_t v,uint32_t lane,UKL_LOCAL uint32_t*
   return m;
 }
 
-DEFINE_KERNEL2(label_passes, label_phase,
-               ROBUFFER, DocView,       docs,         "[shape.fileCount]",
-               ROBUFFER, uint32_t,      head,         "[2 + labels * words]",
-               ROBUFFER, Formula,       formulas,     "[formulas]",
-               ROBUFFER, uint32_t,      words,        "[words]",
-               RWBUFFER, uint32_t,      roots,        "[rules * words]",
-               RWBUFFER, uint32_t,      scratch,      "[formulas * shape.queue]",
-               ARGS,     Shape,         shape,        ,
-               ROBUFFER, uint32_t,      leaves,       "[leaves * shape.recursive]",
-               ROBUFFER, uint32_t,      program,      "[program]",
-               ROBUFFER, FormulaTarget, targets,      "[targets]",
-               RWBUFFER, uint32_t,      labelScratch, "[rows * words]",
-               ROBUFFER, uint32_t,      rules,        "[rules]",
-               ROBUFFER, uint32_t,      texts,        "[texts * words]",
-               RWBUFFER, uint32_t,      flags,        "[4]",
-               ROBUFFER, uint32_t,      parents,      "[32 * shape.recursive]",
-               ROBUFFER, uint8_t,       chunk,        "[block]",
-               SHARED,   uint32_t,      part,         64,
-               GID0,     uint32_t,      gid,          ,
-               GID1,     uint32_t,      y,            ,
-               TGID0,    uint32_t,      block,        ,
-               LID0,     uint32_t,      lane,         )
-{
-  // The same for the whole threadgroup (one formula): it leaves together.
-  if(shape.fileCount==0u||y>=shape.targetCount)return;
+// One phase (`round`) of one formula (`y`, of the dispatch's) over one block of the region's words (`block`), a thread a
+// word: the group's 64 threads take every instruction together (its barriers are the group's).
+UKL_INLINE void phase_item(UKL_GLOBAL const DocView* docs,UKL_GLOBAL const uint32_t* head,UKL_GLOBAL const Formula* formulas,UKL_GLOBAL uint32_t* roots,UKL_GLOBAL uint32_t* scratch,Shape shape,UKL_GLOBAL const uint32_t* leaves,UKL_GLOBAL const uint32_t* program,UKL_GLOBAL const FormulaTarget* targets,UKL_GLOBAL uint32_t* labelScratch,UKL_GLOBAL const uint32_t* rules,UKL_GLOBAL const uint32_t* texts,UKL_GLOBAL uint32_t* flags,UKL_GLOBAL const uint32_t* parents,UKL_GLOBAL const uint8_t* chunk,UKL_GLOBAL uint32_t* left,uint32_t y,uint32_t block,uint32_t round,uint32_t lane,UKL_LOCAL uint32_t* part __UKL_PARAMS){
   // The formula's program: its instructions' first word, their count, its result's slot, its phases; after its
   // instructions, each phase's first.
   uint32_t at=program[4u*y],count=program[4u*y+1u],result=program[4u*y+2u],phases=program[4u*y+3u];
-  if(shape.round>=phases)return;
+  if(round>=phases)return;
   // From here every thread takes every instruction (the barriers are the group's); a word not live does none of
   // its own work. The file whose region holds word `gw`: the last whose region starts at or before it, searched
   // between the files of the block's first and last words (two threads search the whole list).
-  uint32_t gw=gid;
+  uint32_t gw=block*PHASE_WORDS+lane;
   if(lane<2u){
     uint32_t w=block*PHASE_WORDS+lane*(PHASE_WORDS-1u),f=0u,l=shape.fileCount;
     while(l-f>1u){uint32_t middle=(f+l)/2u;if(FORMULA_REGION(docs[middle],middle)<=w)f=middle;else l=middle;}
@@ -1164,10 +1122,14 @@ DEFINE_KERNEL2(label_passes, label_phase,
     if(i+1u==formula.targetCount)live=false;
   }
   uint32_t valid=!live?0u:(lw*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-lw*32u))-1u));
+  // Plain reads and writes of the slots are coherent: another group's, before a barrier, are read after it
+  // (<ukl/grid.h>). Atomics go through `base`.
   UKL_GLOBAL uint32_t* base=scratch+y*shape.queue;
-  #define PHASE_SLOT(i) (base+(i)*shape.recursive)
+  UKL_COHERENT uint32_t* cbase=(UKL_COHERENT uint32_t*)base;
+  #define PHASE_SLOT(i) (cbase+(i)*shape.recursive)
+  #define PHASE_ATOMIC(i) (base+(i)*shape.recursive)
   // The phase's first instruction: the program's phase starts follow its instructions.
-  for(uint32_t i=program[at+4u*count+shape.round];i<count;i++){
+  for(uint32_t i=program[at+4u*count+round];i<count;i++){
     uint32_t code=program[at+4u*i],dst=program[at+4u*i+1u],src=program[at+4u*i+2u],extra=program[at+4u*i+3u];
     if(code==PHASE_END)return;
     if(code==PHASE_SPAN){
@@ -1209,10 +1171,10 @@ DEFINE_KERNEL2(label_passes, label_phase,
     if(code==PHASE_BLOCKERS){PHASE_SLOT(dst)[gw]=~PHASE_SLOT(src)[gw]&~PHASE_SLOT(extra)[gw]&valid;continue;}
     if(code==PHASE_ZERO){PHASE_SLOT(dst)[gw]=0u;continue;}
     if(code==PHASE_ZERO32){for(uint32_t b=0u;b<32u;b++)PHASE_SLOT(dst)[gw*32u+b]=0u;continue;}
-    if(code==PHASE_CHECK){if((PHASE_SLOT(src)[gw]&valid)!=0u)ukl_atomic_or(&flags[0],512u);continue;}
+    if(code==PHASE_LOOP){if((PHASE_SLOT(src)[gw]&valid)!=0u)ukl_atomic_or(&left[y],1u);continue;}
     if(code==PHASE_DOWN||code==PHASE_BEFORE){
       // A pull: each of the word's nodes reads its parent (`up`), then the parent's bit or entry.
-      UKL_GLOBAL uint32_t* in=PHASE_SLOT(src);
+      UKL_COHERENT uint32_t* in=PHASE_SLOT(src);
       uint32_t bits=0u;
       for(uint32_t rest=valid;rest!=0u;rest&=rest-1u){
         uint32_t k=ukl_ctz32(rest),p=parents[gw*32u+k],n=lw*32u+k;
@@ -1227,7 +1189,7 @@ DEFINE_KERNEL2(label_passes, label_phase,
     }
     if(code==PHASE_CLIMB){
       bool named=(extra&1u)!=0u,chain=(extra&2u)!=0u;
-      UKL_GLOBAL uint32_t* out=PHASE_SLOT(dst);UKL_GLOBAL uint32_t* through=PHASE_SLOT(extra>>8u);
+      UKL_GLOBAL uint32_t* out=PHASE_ATOMIC(dst);UKL_COHERENT uint32_t* through=PHASE_SLOT(extra>>8u);
       for(uint32_t rest=PHASE_SLOT(src)[gw]&valid;rest!=0u;rest&=rest-1u){
         uint32_t k=ukl_ctz32(rest);
         if(named&&(tape_flags(chunk,d,lw*32u+k)&1u)==0u)continue;
@@ -1243,7 +1205,7 @@ DEFINE_KERNEL2(label_passes, label_phase,
     // A push, from this word's members: `UP` their parents' bits, `LAST` their parents' array entries. A `dst` word's
     // bits gather here and go out in one atomic when the next falls in another word (siblings share a parent).
     bool named=(extra&1u)!=0u,firstOf=(extra&2u)!=0u;
-    UKL_GLOBAL uint32_t* out=PHASE_SLOT(dst);
+    UKL_GLOBAL uint32_t* out=PHASE_ATOMIC(dst);
     uint32_t held=0xffffffffu,bits=0u;
     for(uint32_t rest=PHASE_SLOT(src)[gw]&valid;rest!=0u;rest&=rest-1u){
       uint32_t k=ukl_ctz32(rest),n=lw*32u+k,p=parents[gw*32u+k];
@@ -1261,6 +1223,7 @@ DEFINE_KERNEL2(label_passes, label_phase,
   if(!live)return;
   uint32_t anchor=PHASE_SLOT(result)[gw],sh=d.node_base%32u,row_at=(d.node_base+lw*32u)/32u;
   #undef PHASE_SLOT
+  #undef PHASE_ATOMIC
   for(uint32_t t=0u;t<formula.targetCount;t++){
     FormulaTarget target=targets[formula.targetStart+t];
     UKL_GLOBAL uint32_t* row=(target.mode>=2u?labelScratch:roots)+target.row;
@@ -1274,5 +1237,101 @@ DEFINE_KERNEL2(label_passes, label_phase,
       ukl_atomic_and(&row[row_at],~(valid<<sh)|(bits<<sh));
       if(sh!=0u)ukl_atomic_and(&row[row_at+1u],~(valid>>(32u-sh))|(bits>>(32u-sh)));
     }
+  }
+}
+// A level's formulas, every phase in one launch (decision 0540 step 6), as a work queue (<ukl/workqueue.h>): an item
+// is a phase of a formula over a block of the region's words, a group of 64 threads an item. Every formula's phase 0
+// is there from the start (the seeds, taken from a counter). The group that finishes a formula's phase's last block
+// pushes its next phase's blocks, the continuation, and takes items on: a pushed item has a worker that is running.
+// A group that finds nothing to take ends. No group waits for another, so the groups that run at once are not this
+// kernel's concern, and each that runs does what work there is.
+//
+// A phase that ends in a loop (`PHASE_LOOP`, a chain's levels) is followed by its loop's first phase again while a
+// member is left, at most the loop word's times: the formula's phases are run as its data needs, in the one launch.
+//
+// `phasequeue`: 0-3 the queue's control (head, tail, active, overflow), 4 the seeds taken, 5 the queue's capacity (the
+// continuations: each formula's phases past its first and its loops' phases run again, its blocks each), 6 on three
+// words a formula: its items done, whether its loop's phase left a member, and its loops' runs again; then the queue's
+// slots. An item: ((phase * formulas) + formula) * blocks + block.
+DEFINE_KERNEL2(label_passes, label_phase,
+               ROBUFFER, DocView,       docs,         "[shape.fileCount]",
+               ROBUFFER, uint32_t,      head,         "[2 + labels * words]",
+               ROBUFFER, Formula,       formulas,     "[formulas]",
+               ROBUFFER, uint32_t,      words,        "[words]",
+               RWBUFFER, uint32_t,      roots,        "[rules * words]",
+               RWBUFFER, uint32_t,      scratch,      "[formulas * shape.queue]",
+               ARGS,     Shape,         shape,        ,
+               ROBUFFER, uint32_t,      leaves,       "[leaves * shape.recursive]",
+               ROBUFFER, uint32_t,      program,      "[program]",
+               ROBUFFER, FormulaTarget, targets,      "[targets]",
+               RWBUFFER, uint32_t,      labelScratch, "[rows * words]",
+               ROBUFFER, uint32_t,      rules,        "[rules]",
+               ROBUFFER, uint32_t,      texts,        "[texts * words]",
+               RWBUFFER, uint32_t,      flags,        "[4]",
+               ROBUFFER, uint32_t,      parents,      "[32 * shape.recursive]",
+               ROBUFFER, uint8_t,       chunk,        "[block]",
+               RWBUFFER, uint32_t,      phasequeue,   "[6 + 3 * formulas + capacity]",
+               SHARED,   uint32_t,      part,         64,
+               SHARED,   uint32_t,      took,         2,
+               LID0,     uint32_t,      lane,         )
+{
+  if(shape.fileCount==0u)return;
+  uint32_t blocks=(shape.recursive+PHASE_WORDS-1u)/PHASE_WORDS,count=shape.targetCount,seeds=blocks*count;
+  UKL_GLOBAL uint32_t* done=phasequeue+6u;
+  UKL_GLOBAL uint32_t* left=done+count;
+  UKL_GLOBAL uint32_t* again=left+count;
+  UklWorkQueue q;
+  q.control=phasequeue;q.slots=phasequeue+6u+3u*count;q.capacity=phasequeue[5];q.ring=0u;q.budget=0u;
+  // Bounded: each turn does an item or ends the group.
+  for(uint32_t turn=0u;turn<UKL_WQ_TURNS;turn++){
+    if(lane==0u){
+      // A seed while any are left, else a continuation; else none (0).
+      uint32_t got=0u,item=0u;
+      if(ukl_atomic_poll(&phasequeue[4])<seeds){
+        item=ukl_atomic_add(&phasequeue[4],1u);
+        got=item<seeds?1u:0u;
+      }
+      if(got==0u&&ukl_wq_take(q,&item))got=2u;
+      // What the phase before wrote, seen after the take (the pusher's fence before its push).
+      ukl_fence_device();
+      took[0]=got;took[1]=item;
+    }
+    ukl_tg_barrier();
+    uint32_t got=took[0],item=took[1];
+    ukl_tg_barrier();
+    if(got==0u)return;
+    uint32_t block=item%blocks,at=item/blocks,y=at%count,round=at/count;
+    phase_item(docs,head,formulas,roots,scratch,shape,leaves,program,targets,labelScratch,rules,texts,flags,parents,chunk,left,y,block,round,lane,part __UKL_ARGS);
+    // The group's writes, then the item counted: the last of its phase's blocks pushes the next phase's (a phase's
+    // blocks are pushed once the phase before is done, so its last is the one that brings the count to a multiple of
+    // the blocks). After a loop's phase, the next is its first again while a member is left.
+    ukl_tg_barrier_device();
+    if(lane==0u){
+      ukl_fence_device();
+      uint32_t finished=ukl_atomic_add(&done[y],1u)+1u,next=0u;
+      if(finished%blocks==0u){
+        uint32_t at=program[4u*y],instructions=program[4u*y+1u],phases=program[4u*y+3u];
+        uint32_t loop=program[at+4u*instructions+phases+round];
+        next=round+1u;
+        // Each loop's runs again counted apart: the count starts over when a loop ends.
+        if(loop!=0u){
+          if(ukl_atomic_exchange(&left[y],0u)!=0u){
+            if(ukl_atomic_add(&again[y],1u)<(loop>>16))next=(loop&0xffffu)-1u;
+            else ukl_atomic_or(&flags[0],512u);
+          }else ukl_atomic_store(&again[y],0u);
+        }
+        next=next<phases?next+1u:0u;
+      }
+      took[0]=next;
+      ukl_fence_device();
+    }
+    ukl_tg_barrier();
+    if(took[0]!=0u){
+      uint32_t next=took[0]-1u;
+      for(uint32_t b=lane;b<blocks;b+=PHASE_WORDS)
+        if(!ukl_wq_push(q,(next*count+y)*blocks+b))ukl_atomic_or(&flags[0],1u);
+    }
+    ukl_tg_barrier_device();
+    if(lane==0u&&got==2u)ukl_wq_done(q);
   }
 }

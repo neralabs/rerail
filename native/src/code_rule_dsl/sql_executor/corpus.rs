@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 const PROBE: usize = 1 << 62;
 
 /// The run's documents: each frame, its key, and its entry once decoded.
-pub(super) struct Run {
+pub struct Run {
     frames: Vec<memo::Frame>,
     keys: Vec<i64>,
     by_key: HashMap<i64, usize>,
@@ -69,13 +69,13 @@ impl Run {
 
 /// Whether an entry holds the relation's rows or its rendered lines.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Form {
+pub enum Form {
     Rows,
     Lines,
 }
 
 /// One relation of the run, decoded per document on demand.
-pub(super) struct Corpus {
+pub struct Corpus {
     run: Arc<Run>,
     name: String,
     columns: Vec<String>,

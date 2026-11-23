@@ -11,8 +11,8 @@ use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{ScopeName, Unresolved};
-use crate::code_rule_dsl::model::ViolationSpec;
+use crate::code_rule_dsl::scope::ScopeName;
+use crate::code_rule_dsl::matcher::Unresolved;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::usage::{Steps, Usage};
@@ -40,7 +40,7 @@ fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
 impl Adapter for Csharp {
     const FAMILY: Family = Family::Csharp;
     const LABEL: &'static str = "csharp";
-    const TERMINATORS: Terminators = Terminators::Newlines;
+    const TERMINATORS: Terminators = Terminators::Roslyn;
     const PACKAGES: bool = false;
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
@@ -70,7 +70,7 @@ impl Adapter for Csharp {
 
     /// No suppression comments are read for C# yet.
     fn suppresses<D: Doc>(
-        _: &ViolationSpec,
+        _: &str,
         _: &Suppress,
         _: &Node<'_, D>,
         _: &str,

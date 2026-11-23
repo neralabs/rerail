@@ -63,7 +63,7 @@ pub fn run(p: &Placed, db: &Connection, mut inputs: Inputs, lowered: Option<lowe
         let got=component::kept_rel(db,root).zip(provenance.remove(root).flatten()).and_then(|(rel,reads)| {
             let atoms=crate::content_store::atoms::Atoms::for_connection(db);
             let cells=crate::code_rule_dsl::logic::plan::Cells::new(&atoms,&crate::code_rule_dsl::logic::plan::stored_types(f,root,rel.types().to_vec()));
-            let d=crate::code_rule_dsl::logic::plan::held_digest(&cells,&rel)?;
+            let d=crate::code_rule_dsl::logic::plan::source_rows::held_digest(&cells,&rel)?;
             Some((d,rel.types().to_vec(),crate::code_rule_dsl::logic::plan::RanRows::Held(Arc::clone(&rel)),rel.rows(),reads))
         });
         ks.ran(root,got);

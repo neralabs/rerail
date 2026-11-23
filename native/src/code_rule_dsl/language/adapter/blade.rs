@@ -48,7 +48,7 @@ impl Adapter for Blade {
 
     /// No linter reads a template's `{{-- --}}` comments for directives.
     fn suppresses<D: Doc>(
-        _: &ViolationSpec,
+        _: &str,
         _: &Suppress,
         _: &Node<'_, D>,
         _: &str,

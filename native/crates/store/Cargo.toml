@@ -3,7 +3,7 @@ name = "rerail-store"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The engine's content store (SQLite): sources, tapes, memos, run records; and the git workspace it reads."
+description = "The engine's content store (SQLite): sources, tapes, memos, run records, with its observer and git reads, over its base (rerail-store-base)."
 
 # The sources stay where they were (`native/src/content_store`, `native/src/git_workspace.rs`): this crate
 # compiles them in place (`#[path]`), so the engine builds them once, not with every change of its own.
@@ -12,9 +12,10 @@ description = "The engine's content store (SQLite): sources, tapes, memos, run r
 # The store's test hooks (busy-wait overrides, write counters, test-only writers), for the engine's tests. The
 # engine turns it on always, not only for its tests: a feature that differed between its test and bin builds
 # would rebuild the engine at each switch. The hooks do nothing unless a test sets them.
-test-hooks = ["rerail-blocks/test-hooks", "rerail-prof/test-hooks", "rerail-clif/test-hooks", "rerail-tape-format/test-hooks"]
+test-hooks = ["rerail-store-base/test-hooks", "rerail-blocks/test-hooks", "rerail-prof/test-hooks", "rerail-clif/test-hooks", "rerail-tape-format/test-hooks"]
 
 [dependencies]
+rerail-store-base = { path = "../store_base" }
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"
 rerail-prof = { path = "../prof" }
@@ -50,6 +51,7 @@ tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 onig = { version = "=6.5.3", default-features = false }
+# A store file's identity (volume serial, file index) where Unix has its device and inode (`atoms.rs`).
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }
 
 [target.'cfg(unix)'.dev-dependencies]

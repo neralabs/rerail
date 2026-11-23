@@ -69,8 +69,8 @@ fn stored_of(bound: Option<&Arc<Bound>>, rels: &[KeptRel], part: i64) -> HashMap
 }
 
 /// An entry of `n` rows, flat, of `types`' columns.
-fn flat_put(rel: &KeptRel, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>, n: usize) -> KeptPut {
-    KeptPut { rel: rel.name.clone(), ident: rel.ident, part: 0, digest, reads, what: KeptWhat::Flat { widths: vec![8; types.len()], rows, n, levels: None, given: false }, types }
+fn flat_put(rel: &KeptRel, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Box<dyn crate::content_store::kept_facts::KeptPicked>) -> KeptPut {
+    KeptPut { rel: rel.name.clone(), ident: rel.ident, part: 0, digest, reads, what: KeptWhat::Picked(rows), types }
 }
 
 pub(in crate::code_rule_dsl) struct Kept<'s> {
@@ -207,7 +207,7 @@ impl KeptStrata for Kept<'_> {
                 self.values += n * types.len();
                 self.written_rows += n;
                 self.puts.push(match rows {
-                    crate::code_rule_dsl::logic::plan::RanRows::Flat(rows) => flat_put(&frame, digest, reads, types, rows, n),
+                    crate::code_rule_dsl::logic::plan::RanRows::Picked(rows) => flat_put(&frame, digest, reads, types, rows),
                     // The engine's relation, lent where its rows lie (decision 0353 step 8).
                     crate::code_rule_dsl::logic::plan::RanRows::Held(held) => super::retain::kept_put(&frame, digest, reads, types, &held),
                 });
@@ -407,11 +407,9 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         let w = source.columns().len();
         // Its symbols typed, so the writer maps them; an input of no declared width is not kept.
         let Some(types) = part.types.get(rel).filter(|t| t.len() == w).cloned() else { continue };
-        let n = source.len();
-        // Its rows read where they lie as the writer packs them (decision 0353 step 8).
-        written += n;
-        let what = KeptWhat::Read { rows: super::retain::source_rows(source, w), levels: None, given: false };
-        puts.push(KeptPut { rel: f.name.clone(), ident: f.ident, part: 0, digest, reads: Vec::new(), what, types });
+        // Its rows read where they lie by the writer as it packs them (`SourceRows`, decision 0353 step 8).
+        written += source.len();
+        puts.push(flat_put(f, digest, Vec::new(), types, Box::new(super::retain::SourceRows::new(Arc::clone(source)))));
     }
     for (rel, width, held) in rels {
         let Some((f, was)) = part.frames.get(rel) else { continue };

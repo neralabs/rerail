@@ -26,6 +26,7 @@
 //! comments are nodes, `text` is every node's, `op` every anonymous token's, and the source-text, token and literal
 //! relations are made. T's `op` is `op_t` in both.
 
+use crate::code_rule_dsl::facts::rows::BlockVec;
 use super::{Modules, Relation, Source};
 use crate::code_rule_dsl::facts::Graph;
 use crate::code_rule_dsl::facts::core::{Facts, NONE, TEXT, kind_atom, kind_code};
@@ -38,6 +39,7 @@ use std::sync::{Arc, OnceLock};
 use cells::{Block, Cells};
 
 pub mod within;
+pub mod places;
 pub mod values;
 
 /// The language's `within(n, a)`, `n` strictly below `a` (`within::Within`, tree mode).
@@ -320,12 +322,30 @@ pub struct LongTexts {
     batch: Arc<Batch>,
     /// Each document key's place in `batch.docs`.
     docs: HashMap<u32, usize>,
+    /// Its rows, counted on the tape (`statistics`).
+    counted: std::sync::OnceLock<usize>,
 }
 
 impl LongTexts {
     fn new(nodes: Arc<dyn Source>, batch: &Arc<Batch>) -> Self {
         let docs = batch.docs.keys().enumerate().map(|(i, k)| (k, i)).collect();
-        Self { nodes, batch: Arc::clone(batch), docs }
+        Self { nodes, batch: Arc::clone(batch), docs, counted: std::sync::OnceLock::new() }
+    }
+
+    /// How many rows it has, counted on the tape as the batch's rows are made (each node of a document of a grammar
+    /// whose text is past the inline bound), with no row made: its group's rows are made only where they are read.
+    fn tape_len(&self) -> usize {
+        *self.counted.get_or_init(|| {
+            (0..self.batch.docs.len())
+                .map(|i| {
+                    let p = &self.batch.docs[i];
+                    if p.tag() == TEXT || self.batch.dialects.get(p.tag()).is_none() {
+                        return 0;
+                    }
+                    p.node_ids().filter(|&(_, id, _)| (p.facts.end(id) - p.facts.start(id)) as usize > core_rr::TEXT_INLINE).count()
+                })
+                .sum()
+        })
     }
 
     /// Node `n`'s text when it is past `text`'s inline bound (`core_rr::TEXT_INLINE`); none for a shorter node
@@ -412,34 +432,20 @@ impl LongTexts {
             },
         }
     }
-
-    /// Node `n`'s text or value as function `name` reads it (`NODE_READS`) through `source`, a binding of
-    /// `rr_long_text_node`; none for another source or function.
-    pub fn of(source: &dyn Source, name: &str, n: i64) -> Option<String> {
-        // A chunk's layered binding (decision 0431 §8): a node is read through the batch that holds its document, the
-        // chunk's or a tape value's.
-        if let Some(layered) = source.as_any()?.downcast_ref::<values::Layered>() {
-            let key = (n >> 32) as u32;
-            return layered
-                .sources_of(n)
-                .into_iter()
-                .find(|s| s.as_any().and_then(|a| a.downcast_ref::<Self>()).is_some_and(|t| t.docs.contains_key(&key)))
-                .and_then(|s| Self::of(&*s, name, n));
-        }
-        let texts = source.as_any()?.downcast_ref::<Self>()?;
-        match name {
-            "rr_node_text" => texts.long_text(n),
-            "rr_node_text_any" => texts.text_any(n),
-            "rr_node_value" => texts.value_any(n),
-            "rr_node_str" => texts.str_any(n),
-            _ => None,
-        }
-    }
 }
 
 impl Source for LongTexts {
-    fn python_batch(&self) -> Option<Arc<Batch>> {
-        Some(Arc::clone(&self.batch))
+    fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        Some(Arc::clone(&self.batch) as _)
+    }
+    fn node_read(&self, name: &str, n: i64) -> Option<String> {
+        match name {
+            "rr_node_text" => self.long_text(n),
+            "rr_node_text_any" => self.text_any(n),
+            "rr_node_value" => self.value_any(n),
+            "rr_node_str" => self.str_any(n),
+            _ => None,
+        }
     }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
         self.nodes.rows_of_documents(docs)
@@ -455,6 +461,20 @@ impl Source for LongTexts {
     }
     fn len(&self) -> usize {
         self.nodes.len()
+    }
+    /// The nodes' estimate, made of no rows (`Source::estimated_len`'s default is `len`, which makes them).
+    fn estimated_len(&self) -> usize {
+        self.nodes.estimated_len()
+    }
+    /// Its one column's statistics, of its rows counted on the tape (decision 0353): one row a node, so each of its
+    /// counts is its rows. Measured as rows (`sampled_statistics_unanswered`), the measure made its whole group's
+    /// rows, every relation's of every document's (the M3's 300-file peak held 77 MB of them, and a 158 MB block).
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        if let Some(known) = self.nodes.statistics() {
+            return Some(known);
+        }
+        let n = self.tape_len() as i64;
+        Some(self.nodes.columns().into_iter().map(|c| (c, n, n, n, n)).collect())
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.nodes.estimated_matches(column, batch)
@@ -497,13 +517,19 @@ pub fn made_sources(batch: &Arc<Batch>) -> Vec<(&str, Option<&'static str>, Arc<
         .collect()
 }
 
-/// The relation of the nodes whose text `@rr_node_text` reads, bound with the batch every node read goes through
-/// (`LongTexts`).
-pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
+// The node reads' relation and functions are the virtual tables' (`vtab.rs`), which the string functions read.
+pub use super::{LONG_TEXT_NODES, NODE_READS};
 
-/// The functions that read a node's text or value from the run's batch (`LongTexts::of`): their values are the run's,
-/// so `functions::eval` gives none.
-pub const NODE_READS: [&str; 4] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str"];
+/// A source's syntax batch (`Source::syntax_batch`) as the syntax table's `Batch`.
+pub trait PythonBatch {
+    fn python_batch(&self) -> Option<Arc<Batch>>;
+}
+
+impl<S: Source + ?Sized> PythonBatch for S {
+    fn python_batch(&self) -> Option<Arc<Batch>> {
+        self.syntax_batch()?.downcast::<Batch>().ok()
+    }
+}
 
 /// The request relation of `value` (decision 0174): a batch reads W's values off its documents' tapes where a program
 /// derives it.
@@ -1087,7 +1113,7 @@ pub fn numbering(doc: &Document, shape: Shape) -> StoreResult<Numbering> {
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
     let dialect = Dialect::kept(tag)?;
     // In `core.rerail`'s shape a guest's nodes are its root's subtree; in T's, its whole tree (`Batch::build`).
-    let guest = doc.guest.as_deref().filter(|_| shape == Shape::Core).map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
+    let guest = doc.guest.as_deref().filter(|_| shape == Shape::Core).map(|g| (g, Arc::clone(&doc.facts.lines)));
     let p = Projected::new(doc.key, Arc::clone(&doc.facts), Some(&*dialect), shape, false, guest);
     Ok(Numbering { p: Some((p, dialect)) })
 }
@@ -1126,11 +1152,16 @@ pub fn module(rel: &str) -> String {
     m.strip_suffix(".__init__").map(str::to_owned).unwrap_or(m)
 }
 
+/// The last segment of `path`: a library document is named as the engine has the file, with `\` on Windows.
+pub(crate) fn file_name(path: &str) -> &str {
+    path.rsplit(|c| c == '/' || (cfg!(windows) && c == '\\')).next().unwrap_or(path)
+}
+
 /// The package relative imports resolve against (`__package__`): a package's own name, else its
 /// module's parent.
 /// The package of module `m`, the file at `path`: `m` itself for a package's `__init__`, else `m`'s parent.
 pub(crate) fn package_of(path: &str, m: &str) -> String {
-    let name = path.rsplit('/').next().unwrap_or(path);
+    let name = file_name(path);
     if name.starts_with("__init__.") { m.to_owned() } else { m.rsplit_once('.').map(|(p, _)| p.to_owned()).unwrap_or_default() }
 }
 
@@ -1400,7 +1431,8 @@ impl DefIds {
 /// (`tokens` of them, in preorder), then its whole text, then each line. Not `Extra`'s spans (`SPAN`), which the
 /// relations core.rerail's programs read beyond T's are made over.
 pub struct Locs {
-    lines: Arc<core_rr::Lines>,
+    /// The facts' lines (`Facts::lines`): the one definition of a place, the language's (decision 0612).
+    lines: Arc<crate::code_rule_dsl::lines::LineTable>,
     pub tokens: u32,
     /// Each node's end point (`end_point`, where a program reads it): a zero-width span at its end offset, after the
     /// lines, one per node in local order. 0 where no program reads them.
@@ -1409,7 +1441,7 @@ pub struct Locs {
     own_text: bool,
     /// A guest's host lines and placement: its places are the host's (decision 0055). A guest has no source-text
     /// spans of its own (`source`, `src_line`): those are its file's.
-    host: Option<(Arc<core_rr::Lines>, Placement)>,
+    host: Option<(Arc<crate::code_rule_dsl::lines::LineTable>, Placement)>,
 }
 
 impl Locs {
@@ -1417,6 +1449,10 @@ impl Locs {
     fn positions(&self) -> u32 { self.ends_from() + self.ends }
     /// The first end point's position: past the tokens, the whole source and the lines.
     fn ends_from(&self) -> u32 { self.tokens + if self.own_text { 1 + self.lines.count() as u32 } else { 0 } }
+    /// The lines its places are read in: its host's for a guest, else its own (`ViewRow::lines`).
+    pub(super) fn place_lines(&self) -> &Arc<crate::code_rule_dsl::lines::LineTable> {
+        self.host.as_ref().map_or(&self.lines, |(lines, _)| lines)
+    }
     /// A span's first line, last line and start column, in its file.
     fn place(&self, span: [u32; 2]) -> (u32, u32, u32) {
         match &self.host {
@@ -1428,8 +1464,8 @@ impl Locs {
     fn file_line(&self, l: u32) -> u32 {
         match &self.host {
             Some((lines, place)) => {
-                let at = if self.lines.count() == 0 { 0 } else { self.lines.span((l as usize).clamp(1, self.lines.count()))[0] };
-                lines.line(place.host([at, at])[0])
+                let at = self.lines.start((l as usize).clamp(1, self.lines.count()) - 1) as u32;
+                lines.line(place.host([at, at])[0] as usize) as u32 + 1
             }
             None => l,
         }
@@ -1464,14 +1500,14 @@ impl Projected {
     /// node). A `withheld` document (`core.rerail`: one that does not parse) has no nodes and no spans: no facts. A guest's
     /// nodes are its root's subtree, placed in its host's lines (`host`).
     /// Its arrays are in a block of its own; a batch's documents' are in the batch's (`narrowed`).
-    pub fn new(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>) -> Self {
+    pub fn new(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<crate::code_rule_dsl::lines::LineTable>)>) -> Self {
         let block = cells::block(Self::bytes(&facts));
-        Self::narrowed(key, facts, dialect, shape, withheld, guest, None, None, &block)
+        Self::narrowed(key, facts, dialect, shape, withheld, guest, None, &block)
     }
     /// `new`, narrowed to `anchors` (`narrowed`): the root and each outermost anchor's subtree.
     pub fn anchored(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, anchors: &BTreeSet<String>) -> Self {
         let block = cells::block(Self::bytes(&facts));
-        Self::narrowed(key, facts, dialect, shape, false, None, None, Some(anchors), &block)
+        Self::narrowed(key, facts, dialect, shape, false, None, Some(anchors), &block)
     }
 
     /// What a projection's arrays can take in a block: `core`, `local`, `up`, `low`, the ordinals and the fielded
@@ -1491,8 +1527,7 @@ impl Projected {
     /// root's child here; the program reads no node outside the subtrees, nor an anchor's parent or place among its
     /// siblings, and its node ids stay inside its phase.
     #[allow(clippy::too_many_arguments)]
-    /// `known`: the document's own lines where a guest of it was projected first and built them (decision 0470 step 2).
-    pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>, known: Option<Arc<core_rr::Lines>>, anchors: Option<&BTreeSet<String>>, block: &Arc<Block>) -> Self {
+    pub fn narrowed(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<crate::code_rule_dsl::lines::LineTable>)>, anchors: Option<&BTreeSet<String>>, block: &Arc<Block>) -> Self {
         let identity_span = crate::code_rule_dsl::logic::profile::span(|| "identity maps".into());
         let f = &*facts;
         let (first, last) = match guest {
@@ -1609,9 +1644,7 @@ impl Projected {
         };
         drop(identity_span);
         if shape == Shape::Core {
-            let lines_span = crate::code_rule_dsl::logic::profile::span(|| "line index".into());
-            let lines = known.unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&f.source), dialect.is_some_and(|d| d.family == Family::Python), p.block())));
-            drop(lines_span);
+            let lines = Arc::clone(&f.lines);
             let _ids_span = crate::code_rule_dsl::logic::profile::span(|| "definition ids".into());
             if definition_ids() && let Some(dialect) = dialect {
                 // Each token's node, in preorder of the tokens (`token_order`).
@@ -1841,7 +1874,7 @@ impl Projected {
                 } else if i == x.tokens {
                     [0, self.facts.source.len() as u32]
                 } else {
-                    x.lines.span((i - x.tokens) as usize)
+                    x.lines.text_of((i - x.tokens) as usize, self.facts.source.as_bytes())
                 }
             }),
         }
@@ -2042,7 +2075,7 @@ pub struct Growth {
     block: Option<Arc<Block>>,
     shared: Arc<parking_lot::Mutex<Shared>>,
     /// The files' lines, by key, that their guests are placed by.
-    lines_of: Arc<parking_lot::RwLock<HashMap<u32, Arc<core_rr::Lines>>>>,
+    lines_of: Arc<parking_lot::RwLock<HashMap<u32, Arc<crate::code_rule_dsl::lines::LineTable>>>>,
     /// Each tape value admitted (decision 0431 §8): its batch, the places it has rows of, and whether it is withheld
     /// (no root). One given more places adds their rows alone (`GuestRows::places_added`).
     values: std::collections::BTreeMap<u32, (Arc<Batch>, usize, bool)>,
@@ -2115,8 +2148,7 @@ impl Batch {
 
 /// A span's id (core.rerail's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
 /// its kind's past every node of its document, so no node view has a row of it (`Batch::node`). `ExtraSpan::Line` `0`
-/// is the whole source (`source`), `Line` `l` physical line `l` (`src_line`), `Lf` `l` the `\n`-line `l`
-/// (`src_line_lf`), `Tape` `l` the tape's line `l` (`tape_line`), `Comment` `k` the document's `k`-th comment from 1,
+/// is the whole source (`source`), `Line` `l` line `l` (`src_line`), `Comment` `k` the document's `k`-th comment from 1,
 /// in source order, of those no node is (`comment`: T's nodes leave out a grammar's `comment` kind, as Python's, but
 /// keep Rust's `line_comment`, which is then the comment's id) and `Match` `i` the document's `i`th match or group of
 /// a `match_all`, `match_group` or `rx_span` regex. A document with more of a kind than its capacity fails, named.
@@ -2124,33 +2156,6 @@ fn extra_span(key: i64, kind: granules::ExtraSpan, i: u32) -> StoreResult<i64> {
     granules::extra_low(kind, i).map(|low| key << 32 | i64::from(low)).ok_or_else(|| {
         StoreError::Invalid(format!("document {key} has more than {} {kind:?} spans (core.rerail's span ids)", kind.capacity()))
     })
-}
-
-/// The physical lines of `source`, as byte ranges without their terminators: as Python's `str.splitlines()`
-/// splits (`splitlines`: `\r\n`, `\n`, `\r`, `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028, U+2029; W's `lines`
-/// regexes), else at `\n` only. A terminator at the end ends the last line: no empty line follows it, and an empty
-/// source has none.
-pub fn physical_lines(source: &str, splitlines: bool) -> Vec<std::ops::Range<usize>> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    let mut chars = source.char_indices().peekable();
-    while let Some((at, ch)) = chars.next() {
-        let ends = ch == '\n'
-            || splitlines && matches!(ch, '\r' | '\u{b}' | '\u{c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}');
-        if !ends {
-            continue;
-        }
-        out.push(start..at);
-        start = at + ch.len_utf8();
-        if ch == '\r' && chars.peek().is_some_and(|&(_, c)| c == '\n') {
-            chars.next();
-            start += 1;
-        }
-    }
-    if start < source.len() {
-        out.push(start..source.len());
-    }
-    out
 }
 
 /// A family's relations over a batch's documents of its dialect, made on their first read (Python's `py.*`),
@@ -2327,7 +2332,7 @@ pub enum View {
     /// row a node after a sibling (`Item::Sibling`), as `field`'s are its fielded nodes.
     Sibling,
     /// `core.rerail`'s place of a node or span (`loc`): `line(n, l)`, `end_line(n, l)`, `col(n, c)`, `docof(n, d)`,
-    /// read from the document's lines (`core_rr::Lines`), rows laid out over `Projected::locs`. A batch that makes
+    /// read from the document's lines (`LineTable::place`), rows laid out over `Projected::locs`. A batch that makes
     /// one of them as rows (`Extra`, whose spans have places too) binds those rows instead (`Batch::made`).
     Loc(Place),
 }
@@ -2345,19 +2350,17 @@ pub enum Place {
 /// had none of them, so a program that reads none does no work and interns no text:
 ///
 /// ```text
-/// source(d, sp)          src_line(d, l, sp)     src_line_lf(d, l, sp)  tape_line(d, l, sp)
-/// line_count(d, k)       node_text(n, s)        end_line(n, l)         col(n, c)
-/// docof(n, d)
+/// source(d, sp)          src_line(d, l, sp)     line_count(d, k)       node_text(n, s)
+/// end_line(n, l)         col(n, c)              docof(n, d)
 /// ```
 ///
-/// with `sp` a span (`SPAN`); `src_line` split as `physical_lines` does (Python's `str.splitlines()`; other
-/// languages at `\n`), `src_line_lf` at `\n` only (W's `terminators: "lf"`), and `tape_line` the lines `line(n, l)`
-/// numbers (the tape's `LineTable`: `\r\n`, `\r` and `\n` for Python; W's `layout`), the empty line after a final
-/// terminator included; `line_count` counts `src_line`'s lines. Spans have rows in `text` (their text, terminators
-/// left out), `line`, `end_line` and `col` (0): a line span's line is its number; the source's first line is 1 and
-/// its end line the line holding its end offset (`src_line`'s numbering). A node's `end_line` is the line holding its
-/// end offset, as W's `layout` counts (its last byte's, but where the node ends with a line terminator, as a module
-/// may), and its `col` its start's byte column, both on the tape's lines; `node_text` is its source text, exactly.
+/// with `sp` a span (`SPAN`). A file's lines are its facts' (`LineTable`, its language's line ends, decision 0612):
+/// `src_line` each of them, the empty line after a final terminator included, and `line_count` the lines a linter
+/// counts (that empty line left out). Every node, token and span is placed by its bytes on those lines
+/// (`LineTable::place`): `line` the line of its start, `end_line` the line holding its end offset (a node ending with a
+/// line terminator, as a module may, ends on the line after it), `col` its start's byte column. Spans have rows in
+/// `text` (their text, terminators left out), `line`, `end_line` and `col`; `node_text` is a node's source text,
+/// exactly.
 /// `value(n, v)` is W's value of expression node `n` as a string (`matcher::file_values`: a clause's `value` in its
 /// per-file context; Python's `str(v)` of a str, int, float, bool, None or Ellipsis), read off the document's tape
 /// (`Document::tape`), no row where W does not know it or it is no scalar; `static_value(n, v)` the same with names
@@ -2377,8 +2380,7 @@ pub enum Place {
 /// And each `matchall_<k>(sp, m)` read (`preparation::text::TextRelations`, core.rerail's `match_all`): `m` each match of
 /// regex `k` in span `sp`'s text, leftmost-first and non-overlapping (Rust's `find_iter`, as W's `regex` reads a
 /// file), over every span above. A match is a span (`MATCH`) with rows in `text` (what it matched), `line`,
-/// `end_line` and `col`, as W's finding of that regex is placed: in a line span, that line and the byte column in it
-/// (W's `lines` regexes); in the source, the lines and column of the tape's line table (W's content regex).
+/// `end_line` and `col`, placed by its bytes as every span is (in a line, that line and the byte column in it).
 ///
 /// And in `core.rerail`'s shape, `rx_span(p, c, j, g, m)` where read (`rr::lower`'s `match_all` and `match` over a span):
 /// group `g` of match `j` (from 0) of regex `p` in span `c` is span `m` (`MATCH`, numbered with `match_all`'s), placed
@@ -2389,8 +2391,6 @@ pub enum Place {
 struct Extra {
     source: bool,
     src_line: bool,
-    src_line_lf: bool,
-    tape_line: bool,
     line_count: bool,
     text: bool,
     /// `text` of the `source` and `src_line` spans: core.rerail's programs make it where a rule reads a copy of such a
@@ -2402,6 +2402,9 @@ struct Extra {
     col: bool,
     node_text: bool,
     docof: bool,
+    /// Whether the nodes' and tokens' places (`line`, `end_line`, `col`, `docof`) are made as rows: in core.rerail's
+    /// shape they are the `Loc` view's, and only the spans' are rows (`places`, decision 0353).
+    node_places: bool,
     value: bool,
     /// `rr_value_lit`: the literal values of documents W reads no values of, where `value` is answered on request
     /// (decision 0174): kept eager, as they are few.
@@ -2412,8 +2415,6 @@ struct Extra {
     comment: bool,
     sources: Vec<[i64; 2]>,
     src_lines: Vec<[i64; 3]>,
-    src_lines_lf: Vec<[i64; 3]>,
-    tape_lines: Vec<[i64; 3]>,
     line_counts: Vec<[i64; 2]>,
     lines: Vec<[i64; 2]>,
     end_lines: Vec<[i64; 2]>,
@@ -2451,8 +2452,8 @@ struct Found {
     group_rows: Vec<[i64; 4]>,
 }
 
-/// A span made for a document: its id, its bytes, and its line where it is one line (else the source).
-type MadeSpan = (i64, std::ops::Range<usize>, Option<usize>);
+/// A span made for a document: its id and its bytes.
+type MadeSpan = (i64, std::ops::Range<usize>);
 
 impl Extra {
     fn new(reads: &BTreeSet<String>, matches: &[Arc<regex::Regex>], shape: Shape, [source_text, line_text]: [bool; 2]) -> Self {
@@ -2472,8 +2473,6 @@ impl Extra {
         Self {
             source: read("source"),
             src_line: read("src_line"),
-            src_line_lf: read("src_line_lf"),
-            tape_line: read("tape_line"),
             line_count: read("line_count"),
             text: read("text"),
             source_text: read("text") && source_text,
@@ -2490,6 +2489,7 @@ impl Extra {
             value_type: read("value_type"),
             comment: shape == Shape::T && read("comment"),
             rx_span: shape == Shape::Core && read("rx_span"),
+            node_places: shape != Shape::Core,
             matches: matches
                 .iter()
                 .enumerate()
@@ -2509,10 +2509,11 @@ impl Extra {
 
     /// Whether spans are made (their matches' too), with places in `line`, `end_line` and `col`.
     fn spans(&self) -> bool {
-        self.source || self.src_line || self.src_line_lf || self.tape_line || self.comment || self.rx_span
+        self.source || self.src_line || self.comment || self.rx_span
     }
 
-    /// Whether `line` is made as rows rather than read off the node view: spans have lines too.
+    /// Whether `line` is made as rows rather than read off the node view: spans have lines too (in core.rerail's shape
+    /// the spans' alone, after the `Loc` view's rows: `places::Places`).
     fn line_rows(&self) -> bool {
         self.line && self.spans()
     }
@@ -2544,73 +2545,43 @@ impl Extra {
         let f = &*p.facts;
         let ends = p.extra.as_ref().map_or(0..0, |x| p.len() + x.ends_from()..p.len() + x.ends_from() + x.ends);
         let guest = p.extra.as_deref().filter(|x| x.host.is_some());
-        if self.line_rows() || self.end_line || self.col || self.node_text {
+        // Every place by its bytes (`LineTable::place`): a guest's in its host's lines.
+        let place = |span: [u32; 2]| match guest {
+            Some(x) => x.place(span),
+            None => f.lines.place(span),
+        };
+        // In core.rerail's shape a node's place is the `Loc` view's (`places`): only its text is a row here.
+        let (line, end_line, col) = (self.line_rows() && self.node_places, self.end_line && self.node_places, self.col && self.node_places);
+        let mut placed = |n: i64, span: [u32; 2]| {
+            let (first, last, c) = place(span);
+            if line {
+                self.lines.push([n, i64::from(first)]);
+            }
+            if end_line {
+                self.end_lines.push([n, i64::from(last)]);
+            }
+            if col {
+                self.cols.push([n, i64::from(c)]);
+            }
+        };
+        if line || end_line || col {
             for (_, id, n) in p.node_ids() {
-                let (start, end) = (f.start(id) as usize, f.end(id) as usize);
-                if self.node_text {
-                    self.node_texts.push([n, string(f.text(id)) as i64]);
-                }
-                if let Some(x) = guest {
-                    let (first, last, col) = x.place([start as u32, end as u32]);
-                    if self.line_rows() {
-                        self.lines.push([n, i64::from(first)]);
-                    }
-                    if self.end_line {
-                        self.end_lines.push([n, i64::from(last)]);
-                    }
-                    if self.col {
-                        self.cols.push([n, i64::from(col)]);
-                    }
-                    continue;
-                }
-                if self.line_rows() {
-                    self.lines.push([n, i64::from(f.start_line(id))]);
-                }
-                if self.end_line {
-                    self.end_lines.push([n, f.lines.line(end) as i64 + 1]);
-                }
-                if self.col {
-                    self.cols.push([n, (start - f.lines.start(f.lines.line(start))) as i64]);
-                }
+                placed(n, [f.start(id), f.end(id)]);
             }
             for (local, _, n) in p.token_ids() {
-                let [start, end] = p.span(local).map(|at| at as usize);
-                if self.line_rows() {
-                    self.lines.push([n, f.lines.line(start) as i64 + 1]);
-                }
-                if self.end_line {
-                    self.end_lines.push([n, f.lines.line(end) as i64 + 1]);
-                }
-                if self.col {
-                    self.cols.push([n, (start - f.lines.start(f.lines.line(start))) as i64]);
-                }
+                placed(n, p.span(local));
             }
             // Each node's end point (`end_point`, where a program reads it): placed where the node ends.
             for local in ends.clone() {
-                let n = p.global(local);
-                let at = p.span(local)[0];
-                let (line, col) = match guest {
-                    Some(x) => {
-                        let (first, _, col) = x.place([at, at]);
-                        (i64::from(first), i64::from(col))
-                    }
-                    None => {
-                        let l = f.lines.line(at as usize);
-                        (l as i64 + 1, (at as usize - f.lines.start(l)) as i64)
-                    }
-                };
-                if self.line_rows() {
-                    self.lines.push([n, line]);
-                }
-                if self.end_line {
-                    self.end_lines.push([n, line]);
-                }
-                if self.col {
-                    self.cols.push([n, col]);
-                }
+                placed(p.global(local), p.span(local));
             }
         }
-        if self.docof {
+        if self.node_text {
+            for (_, id, n) in p.node_ids() {
+                self.node_texts.push([n, string(f.text(id)) as i64]);
+            }
+        }
+        if self.docof && self.node_places {
             let key = i64::from(p.file());
             self.docofs.extend(p.node_ids().chain(p.token_ids()).map(|(_, _, n)| n).chain(ends.map(|local| p.global(local))).map(|n| [n, key]));
         }
@@ -2684,11 +2655,11 @@ impl Extra {
     }
 
     /// Document `p`'s rows (its `Document` `d`, its grammar's kinds `dialect`, none for a text-only document);
-    /// `splitlines`: its lines split as Python's `str.splitlines()` does; `rx`: `rx_span`'s patterns, the spans each
+    /// `rx`: `rx_span`'s patterns, the spans each
     /// runs over and its block program, and `ends` (by pattern) the bytes of the document's source a match can end
     /// after, where the batch ran the pattern's block program (decision 0081 §3).
     #[allow(clippy::too_many_arguments)]
-    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, splitlines: bool, rx: &[core_rr::SpanPattern<'_>], ends: &[Option<Vec<u64>>], text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, rx: &[core_rr::SpanPattern<'_>], ends: &[Option<Vec<u64>>], text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let f = &*p.facts;
         self.values(p, d, dialect, string)?;
         self.nodes(p, string);
@@ -2710,9 +2681,8 @@ impl Extra {
                     NONE => {
                         k += 1;
                         let c = span(ExtraSpan::Comment, k)?;
-                        let (start, end) = (f.start(id) as usize, f.end(id) as usize);
-                        let col = start - f.lines.start(f.lines.line(start));
-                        self.span(c, f.start_line(id) as usize, f.lines.line(end) + 1, col, whole, true, text, string);
+                        let (first, last, col) = f.lines.place([f.start(id), f.end(id)]);
+                        self.span(c, first as usize, last as usize, col as usize, whole, true, text, string);
                         if self.node_text {
                             self.node_texts.push([c, string(whole) as i64]);
                         }
@@ -2726,9 +2696,10 @@ impl Extra {
         if !(self.spans() || self.line_count) {
             return Ok(());
         }
-        let physical = physical_lines(source, splitlines);
+        // Its lines are the facts' (`LineTable`, the language's): the one definition of a line and of a place.
+        let lines = &f.lines;
         if self.line_count {
-            self.line_counts.push([key, physical.len() as i64]);
+            self.line_counts.push([key, lines.counted() as i64]);
         }
         let mut made: Vec<MadeSpan> = Vec::new();
         // `rx_span`'s containers among them: the source's and the lines' (indexes in `made`).
@@ -2736,37 +2707,21 @@ impl Extra {
         if self.source {
             let sp = span(ExtraSpan::Line, 0)?;
             self.sources.push([key, sp]);
-            let terminated = physical.last().map_or(!source.is_empty(), |r| r.end < source.len());
-            self.span(sp, 1, (physical.len() + usize::from(terminated)).max(1), 0, source, self.source_text, text, string);
+            let (first, last, col) = lines.place([0, source.len() as u32]);
+            self.span(sp, first as usize, last as usize, col as usize, source, self.source_text, text, string);
             source_at = Some(made.len());
-            made.push((sp, 0..source.len(), None));
+            made.push((sp, 0..source.len()));
         }
         if self.src_line {
             lines_at.start = made.len();
-            for (i, r) in physical.iter().enumerate() {
-                let (l, sp) = (i + 1, span(ExtraSpan::Line, i + 1)?);
+            for l in 1..=lines.count() {
+                let sp = span(ExtraSpan::Line, l)?;
+                let [a, b] = lines.text_of(l, source.as_bytes()).map(|at| at as usize);
                 self.src_lines.push([key, l as i64, sp]);
-                self.span(sp, l, l, 0, &source[r.clone()], self.line_text, text, string);
-                made.push((sp, r.clone(), Some(l)));
+                self.span(sp, l, l, 0, &source[a..b], self.line_text, text, string);
+                made.push((sp, a..b));
             }
             lines_at.end = made.len();
-        }
-        if self.src_line_lf {
-            for (i, r) in physical_lines(source, false).into_iter().enumerate() {
-                let (l, sp) = (i + 1, span(ExtraSpan::Lf, i + 1)?);
-                self.src_lines_lf.push([key, l as i64, sp]);
-                self.span(sp, l, l, 0, &source[r.clone()], true, text, string);
-                made.push((sp, r, Some(l)));
-            }
-        }
-        if self.tape_line {
-            for i in 0..f.lines.starts().len() {
-                let (l, sp) = (i + 1, span(ExtraSpan::Tape, i + 1)?);
-                let r = f.lines.start(i)..f.lines.end(i);
-                self.tape_lines.push([key, l as i64, sp]);
-                self.span(sp, l, l, 0, &source[r.clone()], true, text, string);
-                made.push((sp, r, Some(l)));
-            }
         }
         // Each regex's matches in each span, and their named groups, numbered through the document.
         let mut next: usize = 0;
@@ -2774,25 +2729,21 @@ impl Extra {
             next += 1;
             span(ExtraSpan::Match, next - 1)
         };
-        // A piece of span `r` (`at` within it) placed as W places a regex's finding there: in a line (its number and
-        // its start), that line and the byte column in it; else on the tape's lines.
-        let place = |r: &std::ops::Range<usize>, line: Option<(usize, usize)>, at: std::ops::Range<usize>| match line {
-            Some((l, start)) => (l, l, r.start + at.start - start),
-            None => {
-                let s = f.lines.span(r.start + at.start, r.start + at.end);
-                (s.start_line + 1, s.end_line + 1, s.start_column)
-            }
+        // A piece of span `r` (`at` within it): placed by its bytes, as every span is.
+        let place = |r: &std::ops::Range<usize>, at: std::ops::Range<usize>| {
+            let (first, last, col) = lines.place([(r.start + at.start) as u32, (r.start + at.end) as u32]);
+            (first as usize, last as usize, col as usize)
         };
         for k in 0..self.matches.len() {
             let (regex, groups) = (Arc::clone(&self.matches[k].regex), self.matches[k].groups);
             let names: Vec<&str> = regex.capture_names().flatten().collect();
-            for (sp, r, line) in &made {
+            for (sp, r) in &made {
                 let body = &source[r.clone()];
                 for captures in regex.captures_iter(body) {
                     let found = captures.get(0).expect("group 0 always matches");
                     let m = id(p)?;
                     self.matches[k].rows.push([*sp, m]);
-                    let (first, last, col) = place(r, line.map(|l| (l, r.start)), found.range());
+                    let (first, last, col) = place(r, found.range());
                     self.span(m, first, last, col, found.as_str(), true, text, string);
                     if !groups {
                         continue;
@@ -2802,23 +2753,22 @@ impl Extra {
                         let Some(group) = captures.name(name) else { continue };
                         let g = id(p)?;
                         self.matches[k].group_rows.push([*sp, m, string(name) as i64, g]);
-                        let (first, last, col) = place(r, line.map(|l| (l, r.start)), group.range());
+                        let (first, last, col) = place(r, group.range());
                         self.span(g, first, last, col, group.as_str(), true, text, string);
                     }
                 }
             }
         }
         // `rx_span`: each pattern over its spans, `j` each match in one (decision 0081). A container is a span made
-        // here, a node (a comment, a node of a kind) or a span an earlier pattern's group captured: (its id, its bytes,
-        // its line and the line's start where it lies in one line span).
-        type Container = (i64, std::ops::Range<usize>, Option<(usize, usize)>);
+        // here, a node (a comment, a node of a kind) or a span an earlier pattern's group captured: its id and its bytes.
+        type Container = (i64, std::ops::Range<usize>);
         let rx = if self.rx_span { rx } else { &[] };
         let nodes_of = |test: &dyn Fn(&str) -> bool| -> Vec<Container> {
             match dialect {
                 Some(dialect) => p
                     .node_ids()
                     .filter(|&(_, x, _)| test(dialect.name(f, x)))
-                    .map(|(_, x, n)| (n, f.start(x) as usize..f.end(x) as usize, None))
+                    .map(|(_, x, n)| (n, f.start(x) as usize..f.end(x) as usize))
                     .collect(),
                 None => Vec::new(),
             }
@@ -2830,7 +2780,7 @@ impl Extra {
                     .walk_up()
                     .zip(p.node_ids())
                     .filter(|&((_, _, up), _)| up.is_some_and(|(_, q)| dialect.name(f, q) == kind))
-                    .map(|((_, x, _), (_, _, n))| (n, f.start(x) as usize..f.end(x) as usize, None))
+                    .map(|((_, x, _), (_, _, n))| (n, f.start(x) as usize..f.end(x) as usize))
                     .collect(),
                 None => Vec::new(),
             }
@@ -2858,12 +2808,11 @@ impl Extra {
                 }
                 done[i] = true;
                 progressed = true;
-                let line_of = |(sp, r, line): &MadeSpan| -> Container { (*sp, r.clone(), line.map(|l| (l, r.start))) };
                 // The source is scanned once per pattern (decision 0042 §3); a line's, node's or capture's text once
                 // per distinct text in the batch (0042 §2, `rx_memo`), its matches placed at each span holding it.
                 let (containers, memo): (Vec<Container>, bool) = match within {
-                    SpanIn::Source => (source_at.map(|i| line_of(&made[i])).into_iter().collect(), false),
-                    SpanIn::Line => (made[lines_at.clone()].iter().map(line_of).collect(), true),
+                    SpanIn::Source => (source_at.map(|i| made[i].clone()).into_iter().collect(), false),
+                    SpanIn::Line => (made[lines_at.clone()].to_vec(), true),
                     SpanIn::Comment => (nodes_of(&core_rr::is_comment), true),
                     SpanIn::Kind(k) => (nodes_of(&|name| name == k.as_str()), true),
                     SpanIn::ChildOf(k) => (children_of(k.as_str()), true),
@@ -2878,7 +2827,7 @@ impl Extra {
                     (None, Some(f)) => Some(std::borrow::Cow::Owned(f.ends(source.as_bytes()))),
                     (None, None) => None,
                 };
-                for (c, r, line) in &containers {
+                for (c, r) in &containers {
                     if let Some(ends) = &ends
                         && !crate::code_rule_dsl::facts::span_prefilter::any_in(ends, r.start, r.end)
                     {
@@ -2904,9 +2853,9 @@ impl Extra {
                         let at = s0 as usize..e0 as usize;
                         let m = id(p)?;
                         self.rx_spans.push([pat, *c, i64::from(j), string(name) as i64, m]);
-                        let (first, last, col) = place(r, *line, at.clone());
+                        let (first, last, col) = place(r, at.clone());
                         self.span(m, first, last, col, &body[at.clone()], true, text, string);
-                        captured.entry((*pattern, name)).or_default().push((m, r.start + at.start..r.start + at.end, *line));
+                        captured.entry((*pattern, name)).or_default().push((m, r.start + at.start..r.start + at.end));
                     }
                 }
             }
@@ -2927,12 +2876,6 @@ impl Extra {
         }
         if self.src_line {
             out.push(("src_line", relation(&["d", "l", "sp"], &mut self.src_lines.iter().map(|r| r.to_vec()))));
-        }
-        if self.src_line_lf {
-            out.push(("src_line_lf", relation(&["d", "l", "sp"], &mut self.src_lines_lf.iter().map(|r| r.to_vec()))));
-        }
-        if self.tape_line {
-            out.push(("tape_line", relation(&["d", "l", "sp"], &mut self.tape_lines.iter().map(|r| r.to_vec()))));
         }
         if self.line_count {
             out.push(("line_count", relation(&["d", "k"], &mut self.line_counts.iter().map(|r| r.to_vec()))));
@@ -3472,10 +3415,8 @@ impl Batch {
         let wants_text = core && projection.wants("text");
         let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Source);
         let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Line);
-        let wants_split_lines = core && projection.wants("split_line");
         // Asked once for the batch, not per node (a lookup in the program's set of read relations).
         let (wants_parts, wants_part_starts, wants_words) = (projection.wants("str_part"), projection.wants("str_part_start"), projection.wants("str_part_word"));
-        let wants_lf_lines = core && projection.wants("lf_line");
         let wants_tokens = core && ["first_token", "last_token", "token_before", "token_after"].iter().any(|r| projection.wants(r));
         // Only a program that reads it: every node's hash is a symbol.
         let wants_trees = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
@@ -3644,10 +3585,10 @@ impl Batch {
             copying.done((rows.bytes() + c.bytes()).saturating_sub(rows_before));
             drop(nodes_span);
             let document_span = crate::code_rule_dsl::logic::profile::span(|| "document rows".into());
-            // A text-only document has core.rerail's text rows too (its lines, `split_line`), and no tokens.
+            // A text-only document has core.rerail's text rows too (its lines), and no tokens.
             if core && (!withheld || guest.is_none()) {
                 let s = crate::code_rule_dsl::logic::profile::span(|| "core document rows".into());
-                c.document(p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none(), projection);
+                c.document(p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_source_text, wants_line_text, guest.is_none(), projection);
                 drop(s);
                 if let Some(dialect) = dialect
                     && wants_digests
@@ -3663,7 +3604,7 @@ impl Batch {
                 let rx = if withheld { &[][..] } else { &rx_spans[..] };
                 {
                     let _s = crate::code_rule_dsl::logic::profile::span(|| "extra document rows".into());
-                    extra.document(p, d, dialect, python == Some(tag) || tag == TEXT, rx, &span_ends[j], &mut rows.text, &mut string)?;
+                    extra.document(p, d, dialect, rx, &span_ends[j], &mut rows.text, &mut string)?;
                 }
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "tree document rows".into());
                 tree.document(p, dialect, python == Some(tag), &mut string);
@@ -3790,6 +3731,12 @@ impl Batch {
             }
             _ => Vec::new(),
         };
+        // What each of the batch's relations holds (0353 step 3's row 7 is these rows): its bytes of values, by name.
+        if crate::code_rule_dsl::logic::profile::on() {
+            for (name, r) in &relations {
+                crate::code_rule_dsl::prof::count_named(format!("batch relation {name} (bytes of values)"), 8 * Source::len(r) * Source::columns(r).len());
+            }
+        }
         Ok(made::Made { relations, matched, waved, read: made, strings_from })
     }
 
@@ -4032,7 +3979,7 @@ pub fn node_column_counted(column: usize) -> bool {
 }
 
 impl Source for Viewed {
-    fn python_batch(&self)->Option<Arc<Batch>> {Some(Arc::clone(&self.batch))}
+    fn syntax_batch(&self)->Option<Arc<dyn std::any::Any + Send + Sync>> {Some(Arc::clone(&self.batch) as _)}
     /// A view's rows are in document order (decision 0494): a document's lie at its offset, counted.
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
         let offsets = self.batch.firsts(self.view);
@@ -4058,7 +4005,9 @@ impl Source for Viewed {
             crate::code_rule_dsl::prof::count(["views.refused.not_on_device.node", "views.refused.not_on_device.child", "views.refused.not_on_device.field", "views.refused.not_on_device.core", "views.refused.not_on_device.axis", "views.refused.not_on_device.line", "views.refused.not_on_device.end_line", "views.refused.not_on_device.col", "views.refused.not_on_device.docof", "views.refused.not_on_device.tline", "views.refused.not_on_device.tape", "views.refused.not_on_device.depth", "views.refused.not_on_device.order"].get(view as usize).copied().unwrap_or("views.refused.not_on_device.other"), 1);
             return None;
         };
-        let home = self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()).clone()?;
+        // Room for an index at every entry of its directory, found again by every later binding (with room for one, each
+        // binding probing it by another key made a fresh home of its own, never found again: ab138).
+        let home = self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, self.len(), rerail_blocks::relation::ADDED_INDEXES).ok()).clone()?;
         Some(crate::code_rule_dsl::facts::vtab::DeviceView { view, rows: self.len(), in_place, home })
     }
     fn columns(&self) -> Vec<String> {
@@ -4767,6 +4716,7 @@ pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Proje
     let batch = Batch::new(store, documents, projection, &[], &[], false, None, &HashMap::new())?;
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = made_sources(&batch).into_iter().filter_map(|(_, name, source)| Some((name?, source))).collect();
     out.extend(views(&batch));
+    places::join(&mut out, &batch);
     Ok(out)
 }
 
@@ -5110,6 +5060,7 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
     let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
     let viewing = crate::code_rule_dsl::logic::profile::span(|| "views".into());
     out.extend(views(&batch).into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, source)| (name.to_owned(), source)));
+    places::join(&mut out, &batch);
     drop(viewing);
     // The kind-set axes, made per looked-up node like containment (decision 0050): a set no join reads, and the nodes
     // no join binds, cost nothing. Their statistics come from the tree.

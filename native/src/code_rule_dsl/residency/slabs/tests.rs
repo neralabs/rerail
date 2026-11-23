@@ -18,11 +18,6 @@ fn grammar(id: i64) -> Result<Arc<Grammar>, String> {
     Grammar::new(lang)
 }
 
-#[allow(dead_code)]
-fn u32s(document: &Resident, offset: u32, count: usize) -> Vec<u32> {
-    document.bytes_at(offset, 4 * count).as_chunks::<4>().0.iter().map(|word| u32::from_le_bytes(*word)).collect()
-}
-
 use std::sync::Mutex;
 
 /// The residency is process-wide: the tests that admit and drop take turns. Other tests' label
@@ -66,9 +61,13 @@ fn stored_tapes_of_format_15_are_admitted() {
             assert_eq!(offset % 16, 0, "every part at 16 bytes in its slab");
         }
         assert_eq!(document.view.nodes as usize, tape.transducer_len());
-        let lines = u32s(document, document.view.lines, document.view.line_count as usize);
-        let expected = std::iter::once(0).chain(source.bytes().enumerate().filter(|(_, byte)| *byte == b'\n').map(|(at, _)| at as u32 + 1)).collect::<Vec<_>>();
-        assert_eq!(lines, expected);
+        // Its line index, its language's (decision 0612): each line's start read off it where it is placed is the
+        // document's.
+        let head = document.bytes_at(document.view.lines, rerail_tape_format::newlines::HEAD);
+        let index = document.bytes_at(document.view.lines, rerail_tape_format::newlines::len_of(head).unwrap() + 8);
+        let view = rerail_clif::view::TapeView::default();
+        let starts: Vec<u32> = (0..document.view.line_count).map(|k| rerail_tape_format::reads::f16::line_start(index, &view, k)).collect();
+        assert_eq!(starts, tape.line_table().starts().collect::<Vec<_>>());
     }
     // Admitted again: the same documents, read from the residency, not the store.
     let again = admit(&store, &digests, &grammar).unwrap();
@@ -361,7 +360,7 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
         // SAFETY: the kernel wrote `nodes * FIELDS` u32s, and the command finished.
         let read = unsafe { std::slice::from_raw_parts(out.contents().cast::<u32>(), table.nodes * FIELDS) };
         for (doc, (tape, view)) in docs.iter().zip(&table.views).enumerate() {
-            let source = sources[doc].0.as_bytes();
+            let lines = crate::code_rule_dsl::lines::LineTable::new(&sources[doc].0, crate::code_rule_dsl::lines::terminators(sources[doc].1));
             let global = |node: Option<u32>| node.map_or(u32::MAX, |node| node + view.node_base);
             let mut classes = vec![0u32; tape.transducer_len()];
             for (node, _) in tape.transducer_supertypes() {
@@ -382,9 +381,9 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
                     span.end as u32,
                     global(tape.transducer_children(node).next()),
                     classes[node as usize],
-                    // The line of the node's start, and that line's first byte: from the source's newlines.
-                    source[..span.start].iter().filter(|&&byte| byte == b'\n').count() as u32,
-                    source[..span.start].iter().rposition(|&byte| byte == b'\n').map_or(0, |at| at as u32 + 1),
+                    // The line of the node's start, and that line's first byte: the language's lines.
+                    lines.line(span.start) as u32,
+                    lines.start(lines.line(span.start)) as u32,
                 ];
                 let g = (view.node_base + node) as usize;
                 assert_eq!(&read[g * FIELDS..][..FIELDS], &expected, "{format:?}, over two slabs {split}: document {doc} node {node}");

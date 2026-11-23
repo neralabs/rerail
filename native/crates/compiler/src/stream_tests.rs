@@ -398,8 +398,8 @@ fn edits_of_nodes_passed_reach_the_ops() {
         let number = f16::numbers(&lang, &table).expect("numbers");
         let numbers = sixteen.numbers(&lang);
         for z in [false, true] {
-            let want = f16::write_from(&lang, &t, &number, src, native.tag, z).expect("the writer's tape");
-            let got = sixteen.image16_on(src, &t1, &lang, &numbers, z).unwrap_or_else(|e| panic!("{src:?} 16z {z}: {e}"));
+            let want = f16::write_from(&lang, &t, &number, src, rerail_tape_format::newlines::Terminators::Newlines, native.tag, z).expect("the writer's tape");
+            let got = sixteen.image16_on(src, rerail_tape_format::newlines::Terminators::Newlines, &t1, &lang, &numbers, z).unwrap_or_else(|e| panic!("{src:?} 16z {z}: {e}"));
             assert!(bytes_of(&got) == bytes_of(&want), "{src:?} 16z {z}: the writer's tape of the image");
         }
     }

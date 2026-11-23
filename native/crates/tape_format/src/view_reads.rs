@@ -111,13 +111,13 @@ pub enum Place {
     Report,
 }
 
-/// A document as its views' reads take it: its entry, its tape, and its lines (`LineTable::words`: the line count,
-/// then the starts), where its directory row places them.
+/// A document as its views' reads take it: its entry, its tape, and its line index (decision 0612: its language's
+/// one, `newlines`, with its word's room after it), where its directory row places them.
 #[derive(Clone, Copy)]
 pub struct Doc<'a> {
     pub entry: &'a ViewDoc,
     pub tape: Tape<'a>,
-    pub lines: &'a [u32],
+    pub lines: &'a [u8],
 }
 
 impl<'a> Doc<'a> {
@@ -340,10 +340,16 @@ impl<'a> Doc<'a> {
         };
         (i64::from(e.key) << 32) | i64::from(low)
     }
-    /// A word of core.rerail's lines (`ViewDoc::lines`).
+    /// The document's lines (`lines_count`), read off its line index: the one definition of a line and a place
+    /// (decision 0612); a guest's are its host's.
     #[inline(always)]
-    fn loc_word(&self, i: u32) -> u32 {
-        self.items(&self.entry.lines)[i as usize]
+    fn loc_count(&self) -> u32 {
+        crate::newlines::count(self.lines).expect("a line index") + 1
+    }
+    /// Line `k`'s first byte (from 0, `lines_start`).
+    #[inline(always)]
+    fn loc_start(&self, k: u32) -> u32 {
+        f16::line_start(self.lines, &TapeView::default(), k)
     }
     /// `Loc` position `l`'s byte span: a node's or token's off the tape, the whole text, a line's text, or a node's
     /// end point.
@@ -361,16 +367,17 @@ impl<'a> Doc<'a> {
         }
         let j = i - e.tokens;
         // The end points follow the whole text and the lines where the text is the document's own.
-        let ns = self.loc_word(0);
-        let ends_from = if e.own_text != 0 { self.loc_word(ns.wrapping_add(1)).wrapping_add(1) } else { 0 };
+        let ends_from = if e.own_text != 0 { self.loc_count() + 1 } else { 0 };
         if j >= ends_from {
             let end = self.tape.end(self.tape_node(j - ends_from));
             (end, end)
         } else if j == 0 {
             (0, e.source_len)
         } else {
-            // Line `j`'s text: its start (word `j`) and its end (word `ns + 1 + j`).
-            (self.loc_word(j), self.loc_word(ns.wrapping_add(j).wrapping_add(1)))
+            // Line `j`'s (from 1) place, from its start alone: its text's end is on it (a terminator's bytes are the
+            // line's they end), so its start stands for both ends here.
+            let s = self.loc_start(j - 1);
+            (s, s)
         }
     }
     /// A guest's span where it stands in its host: copied, each end moved by `delta` and kept within `within`; at
@@ -388,10 +395,10 @@ impl<'a> Doc<'a> {
             }
         }
     }
-    /// The 1-based line of core.rerail's lines holding byte `at`.
+    /// The 1-based line holding byte `at` (`LineTable::line` + 1: the `line` view's read, `lines_line`).
     #[inline]
     fn loc_line(&self, at: u32) -> u32 {
-        lines_line(self.items(&self.entry.lines), at).max(1)
+        lines_line(self.lines, at)
     }
     /// A `Loc` view's row `l`: the id, then its place (`view_loc_line`, `view_loc_end`, `view_loc_col`,
     /// `view_loc_docof`; `rr_report_location`'s four).
@@ -407,19 +414,14 @@ impl<'a> Doc<'a> {
         if place == Place::Report {
             let at = if col <= 2 { s } else { e };
             let line = self.loc_line(at);
-            return i64::from(if col % 2 == 1 { line } else { at.wrapping_sub(self.loc_word(line)).wrapping_add(1) });
+            return i64::from(if col % 2 == 1 { line } else { at.wrapping_sub(self.loc_start(line - 1)).wrapping_add(1) });
         }
         let line = self.loc_line(s);
         i64::from(match place {
             Place::Line => line,
-            Place::EndLine => {
-                if e > s {
-                    self.loc_line(e - 1)
-                } else {
-                    line
-                }
-            }
-            _ => s.wrapping_sub(self.loc_word(line)),
+            // The line holding its end offset: a span ending with a terminator ends on the line after it.
+            Place::EndLine => self.loc_line(e),
+            _ => s.wrapping_sub(self.loc_start(line - 1)),
         })
     }
 
@@ -469,10 +471,9 @@ impl<'a> Doc<'a> {
     }
 }
 
-/// The lines starting at or before byte `at` (`lines_line`: `LineTable::line` + 1), by bisection of the starts:
-/// `words` the line count, then the starts.
+/// The 1-based line holding byte `at` (`lines_line`: `LineTable::line` + 1), by a line index (`newlines`, decision
+/// 0612) at the start of `index`.
 #[inline]
-pub fn lines_line(words: &[u32], at: u32) -> u32 {
-    let n = words[0] as usize;
-    words[1..=n].partition_point(|&start| start <= at) as u32
+pub fn lines_line(index: &[u8], at: u32) -> u32 {
+    crate::newlines::line(index, at) + 1
 }

@@ -46,7 +46,7 @@ pub mod wire;
 pub mod tokens;
 mod token_automata;
 // tokens_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
-// cratify: `token_readers` is rerail-classic's (it mounts it)
+// cratify: `token_readers` is rerail-workspace's (it mounts it)
 pub mod resident;
 pub mod validated;
 /// A document's tape through one API, in the run's format (decision 0293).
@@ -2039,6 +2039,19 @@ impl TapeImage {
         Ok(Self::of15([&code, &size, &base, &off, &tail], widths, codes, kind_aliases, grammar.lang, source.len(), Some(source_digest(source, budget)?)))
     }
 
+    /// `source`'s lines as `terminators` end them (decision 0612): the tape's line index, read where it lies, where
+    /// the tape is format 16's made with those terminators (its language's); else an index of their own, placed
+    /// where the device reads tapes when `placed`.
+    pub fn lines(&self, source: &str, terminators: crate::code_rule_dsl::lines::Terminators, placed: bool) -> LineTable {
+        let same = crate::code_rule_dsl::lines::terminators(self.language) == terminators && self.source_len == source.len();
+        match &self.held {
+            Held::F16(t) if same => LineTable::of_f16(t),
+            Held::F16Z(t) if same => LineTable::of_f16z(t),
+            _ if placed => LineTable::placed(source, terminators),
+            _ => LineTable::new(source, terminators),
+        }
+    }
+
     /// The format it is held in.
     pub fn format(&self) -> formats::Format {
         match self.held {
@@ -2629,7 +2642,7 @@ impl Points {
         let byte = byte as usize;
         let (row, column) = self
             .rows
-            .get_or_init(|| LineTable::tree_sitter(&self.source))
+            .get_or_init(|| LineTable::new(&self.source, crate::code_rule_dsl::lines::Terminators::Lf))
             .point(byte);
         Position::new(row, column, byte)
     }
@@ -2745,7 +2758,7 @@ impl TapeDoc {
         // Positions read through the segments slice both texts: a map that does not fit them is
         // refused here, so the tape is encoded again, never read wrong.
         guest.source_map.check(&guest.text, &host.source)?;
-        let lines = Arc::new(LineTable::new(&guest.text, Terminators::of(grammar.lang)));
+        let lines = Arc::new(guest.tape.lines(&guest.text, crate::code_rule_dsl::lines::terminators(grammar.lang), false));
         let mut doc =
             Self::restore_tree(Arc::clone(&guest.text), grammar, &guest.tape, lines, budget)?;
         checked(budget)?;
@@ -2902,13 +2915,18 @@ impl TapeDoc {
         image: &impl Documents,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
-        let lines = Arc::new(LineTable::new(&source, Terminators::of(grammar.lang)));
+        let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(grammar.lang)));
         Self::restore_with_lines(source, grammar, &image.file_image(), lines, budget)
     }
 
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     pub fn index_source_digest(&self) -> &[u8; 32] {
         &self.source_digest
+    }
+
+    /// The tree-sitter row (`TSPoint`'s, from 0) holding `byte`, as a native tree's node positions give it.
+    pub fn row(&self, byte: usize) -> usize {
+        self.points.point(byte as u32).line()
     }
 
     /// The source's line table, shared with the evaluator that restored this document.
@@ -3131,11 +3149,6 @@ impl TapeDoc {
         self.source.as_bytes()
     }
 
-    /// Tree-sitter's rows' starts (only `\n` ends one), from 0: the positions' line table, made once and held with
-    /// the document, which the transducer reads in place (decision 0353 step 7).
-    pub fn transducer_rows(&self) -> &[u32] {
-        self.points.rows.get_or_init(|| LineTable::tree_sitter(&self.points.source)).starts()
-    }
 
     /// A node's source slice. Restoring the tape validates every span as a UTF-8 boundary.
     pub fn transducer_text_str(&self, node: u32) -> &str {
@@ -3659,7 +3672,7 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
         stack.extend(kept.into_iter().rev());
     }
     let source = Arc::new(Text::from(source));
-    let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
     let doc = TapeDoc::restore_tree(source, grammar, &image, lines, &|| false)?;
     if ends.len() != doc.transducer_len() {
         return Err("a pattern's records disagree with its tree".into());

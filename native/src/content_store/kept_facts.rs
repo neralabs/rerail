@@ -35,21 +35,189 @@ pub trait KeptRows: Send + Sync {
     fn levels(&self) -> &[u32];
 }
 
+/// Rows a put reads where they lie (an input's granule, read from the input in place; a view's rows, read from its
+/// source; rows written in a block of their own, `BlockFlat`), which the writer's packer reads by row and column as it
+/// writes them (`RowsIn`, decision 0353 step 8): nothing is filled into columns or a scratch first. `given`: kept in
+/// the order given, every row (read by position); else in canonical order, as a relation's.
+pub trait KeptPicked: RowsIn + Send {
+    fn given(&self) -> bool {
+        true
+    }
+    /// Each row's level (decision 0090), where its rows have them.
+    fn levels(&self) -> Option<std::borrow::Cow<'_, [u32]>> {
+        None
+    }
+    /// The bytes it holds until written (a block of its own), not what it lends.
+    fn held(&self) -> usize {
+        0
+    }
+}
+
+/// Rows written in a block of their own, never on the heap (blocks are never copied, decision 0353): `n` rows of
+/// `width` 8-byte values, column-major, as the writer reads them (`KeptPicked`). An entry's small rows (a documents'
+/// table, statistics' words, a digest's entry) are made here as they are found.
+pub struct BlockFlat {
+    block: rerail_blocks::block::Block,
+    at: usize,
+    n: usize,
+    width: usize,
+    levels: Option<usize>,
+    given: bool,
+}
+
+impl BlockFlat {
+    /// `n` rows of `width` columns, every value 0, kept as given (`given`) or in canonical order.
+    pub fn new(n: usize, width: usize, given: bool) -> BlockFlat {
+        Self::with_levels(n, width, given, false)
+    }
+
+    /// `new`, with each row's level (0 until `put_level`) where `levels`.
+    pub fn with_levels(n: usize, width: usize, given: bool, levels: bool) -> BlockFlat {
+        let values = n * width * 8;
+        let level_bytes = if levels { n * 4 } else { 0 };
+        let block = rerail_blocks::block::Block::anon(rerail_blocks::block::kind::FACTS, values + level_bytes + 4096);
+        let at = block.alloc(values.max(8), 8);
+        let levels = levels.then(|| block.alloc(level_bytes.max(4), 4));
+        BlockFlat { block, at, n, width, levels, given }
+    }
+
+    /// One row of these values, kept as given.
+    pub fn of_row(row: &[i64]) -> BlockFlat {
+        Self::of_rows(row, row.len(), true)
+    }
+
+    /// `bytes` as one column of words, kept as given: their length, then the bytes, 8 a word, little-endian, the
+    /// last word's high bytes zero.
+    pub fn of_bytes(bytes: &[u8]) -> BlockFlat {
+        let mut f = Self::new(1 + bytes.len().div_ceil(8), 1, true);
+        f.put(0, 0, bytes.len() as i64);
+        for (i, c) in bytes.chunks(8).enumerate() {
+            let mut w = [0u8; 8];
+            w[..c.len()].copy_from_slice(c);
+            f.put(1 + i, 0, i64::from_le_bytes(w));
+        }
+        f
+    }
+
+    /// One row of values, as given, row-major: `rows.len() / width` rows.
+    pub fn of_rows(rows: &[i64], width: usize, given: bool) -> BlockFlat {
+        let n = rows.len().checked_div(width).unwrap_or(0);
+        let mut f = Self::new(n, width, given);
+        for (r, row) in rows.chunks_exact(width.max(1)).take(n).enumerate() {
+            for (c, &v) in row.iter().enumerate() {
+                f.put(r, c, v);
+            }
+        }
+        f
+    }
+
+    pub fn len(&self) -> usize {
+        self.n
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    fn cols(&self) -> &[i64] {
+        // SAFETY: `n * width` values allocated at `at`, written only through `&mut self`.
+        unsafe { std::slice::from_raw_parts(self.block.ptr::<i64>(self.at), self.n * self.width) }
+    }
+
+    fn cols_mut(&mut self) -> &mut [i64] {
+        // SAFETY: as `cols`; `&mut self` is the only writer.
+        unsafe { std::slice::from_raw_parts_mut(self.block.ptr::<i64>(self.at), self.n * self.width) }
+    }
+
+    fn level_words(&self) -> Option<&[u32]> {
+        // SAFETY: `n` levels allocated at `l`.
+        self.levels.map(|l| unsafe { std::slice::from_raw_parts(self.block.ptr::<u32>(l), self.n) })
+    }
+
+    pub fn put(&mut self, r: usize, c: usize, v: i64) {
+        let n = self.n;
+        self.cols_mut()[c * n + r] = v;
+    }
+
+    pub fn get(&self, r: usize, c: usize) -> i64 {
+        self.cols()[c * self.n + r]
+    }
+
+    /// A writer of its values row by row, each row's in column order, from row 0 on (`FlatWriter`).
+    pub fn writer(&mut self) -> FlatWriter<'_> {
+        FlatWriter { flat: self, at: 0 }
+    }
+
+    pub fn put_level(&mut self, r: usize, level: u32) {
+        if let Some(l) = self.levels {
+            // SAFETY: `n` levels allocated at `l`, `r` below `n` (checked).
+            assert!(r < self.n);
+            unsafe { *self.block.ptr::<u32>(l).add(r) = level };
+        }
+    }
+}
+
+/// Values written into a `BlockFlat` row by row (`BlockFlat::writer`): the `k`-th value pushed is row `k / width`'s
+/// column `k % width`.
+pub struct FlatWriter<'a> {
+    flat: &'a mut BlockFlat,
+    at: usize,
+}
+
+impl FlatWriter<'_> {
+    pub fn push(&mut self, v: i64) {
+        let w = self.flat.width;
+        self.flat.put(self.at / w, self.at % w, v);
+        self.at += 1;
+    }
+
+    pub fn extend(&mut self, vs: impl IntoIterator<Item = i64>) {
+        for v in vs {
+            self.push(v);
+        }
+    }
+
+    /// The values written: `rows * width` when every row is whole.
+    pub fn written(&self) -> usize {
+        self.at
+    }
+}
+
+impl RowsIn for BlockFlat {
+    fn n(&self) -> usize {
+        self.n
+    }
+    fn arity(&self) -> usize {
+        self.width
+    }
+    #[inline]
+    fn get(&self, r: usize, c: usize) -> i64 {
+        BlockFlat::get(self, r, c)
+    }
+}
+
+impl KeptPicked for BlockFlat {
+    fn given(&self) -> bool {
+        self.given
+    }
+    fn levels(&self) -> Option<std::borrow::Cow<'_, [u32]>> {
+        self.level_words().map(std::borrow::Cow::Borrowed)
+    }
+    fn held(&self) -> usize {
+        self.n * (self.width * 8 + if self.levels.is_some() { 4 } else { 0 })
+    }
+}
+
 /// What a put is.
 pub enum KeptWhat {
     /// A relation the run derived: its live rows, packed.
     Rows(Box<dyn KeptRows>),
-    /// Rows not held as a relation (an input's granule): `n` rows of `widths.len()` columns, flat; each row's level
-    /// (decision 0090) where its relation has them. `given`: kept in the order given, every row (an input's granule
-    /// or documents' table, read by position); else in canonical order, as a relation's.
-    Flat { widths: Vec<u32>, rows: Vec<i64>, n: usize, levels: Option<Vec<u32>>, given: bool },
-    /// Rows read where they lie (decision 0353 step 8: an input's granule in its source, a view's rows in theirs),
-    /// which the writer packs as it reads them; `given` as `Flat`'s.
-    Read { rows: Box<dyn RowsIn + Send>, levels: Option<Vec<u32>>, given: bool },
-    /// A documents' table (`document_places`): `n` rows as the run gives them (`DOCUMENT_WORDS` each), kept in that
+    /// Rows read where they lie (`KeptPicked`): an input's granule, a view's rows, rows in a block of their own.
+    Picked(Box<dyn KeptPicked>),
+    /// A documents' table (`document_places`): its rows as the run gives them (`DOCUMENT_WORDS` each), kept in that
     /// order with each document's places, which the writer finds as it writes them (decision 0494 step 4 part 2).
     /// `tape`: the grammar its tapes are found in (grammar id, grammar version, tape format version).
-    Documents { rows: Vec<i64>, n: usize, tape: Option<[i64; 3]> },
+    Documents { rows: BlockFlat, tape: Option<[i64; 3]> },
     /// The kept entry's rows as they are, with these reads (a frame's retag).
     Reads,
     /// No longer kept.
@@ -80,17 +248,59 @@ impl KeptPut {
 /// a live program's record names (`collect_kept_facts`). No relation's name starts with a NUL.
 pub const READERS: &str = "\0readers";
 
+/// The relation a partition's holder is kept under (t33 step 3): one row, the SHA-256 key of the source that holds
+/// the space's entries of that partition, and the plan they were made under (zeros for none), four words each.
+/// Collection drops a held partition once the store keeps no source of that key, or once its plan is dead
+/// (`collect_kept_facts`), as the facts memo's rows died with their source or their plan: a memo entry kept as kept
+/// facts lives exactly as long as the memo row it replaced would have.
+///
+/// A holder is put with its partition's whole entry: the writer drops what else the partition kept (`write_chain`),
+/// and a wave's earlier puts of it (`KeptGather::add`), so its user writes an entry without reading what it was.
+pub const HOLDER: &str = "\0holder";
+
+fn holder_ident() -> [u8; 32] {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(b"rerail.kept-facts/holder/v1").into()
+}
+
+/// The put that makes the source of SHA-256 key `source`, and `plan`, partition `part`'s holder in its space.
+pub fn holder_put(part: i64, source: [u8; 32], plan: Option<[u8; 32]>) -> KeptPut {
+    let mut row = BlockFlat::new(1, 8, true);
+    for (c, w) in source.as_chunks::<8>().0.iter().chain(plan.unwrap_or([0; 32]).as_chunks::<8>().0).enumerate() {
+        row.put(0, c, i64::from_le_bytes(*w));
+    }
+    let digest = u64::from_le_bytes(source[..8].try_into().expect("8 bytes")) ^ plan.map_or(0, |p| u64::from_le_bytes(p[..8].try_into().expect("8 bytes")));
+    KeptPut { rel: HOLDER.into(), ident: holder_ident(), part, digest, reads: Vec::new(), types: b"iiiiiiii".to_vec(), what: KeptWhat::Picked(Box::new(row)) }
+}
+
+/// The source key and plan a holder entry names.
+fn holder_of(entry: &rerail_blocks::kept::Kept<'_>) -> Option<([u8; 32], Option<[u8; 32]>)> {
+    if entry.rows.len() != 1 || entry.types.len() != 8 {
+        return None;
+    }
+    let digest = |at: usize| {
+        let mut d = [0u8; 32];
+        for (c, w) in d.as_chunks_mut::<8>().0.iter_mut().enumerate() {
+            *w = entry.rows.get(0, at + c).to_le_bytes();
+        }
+        d
+    };
+    let plan = digest(4);
+    Some((digest(0), (plan != [0; 32]).then_some(plan)))
+}
+
 /// A reader record's put: program `key`'s `idents`, sorted, as rows of four words, digested.
 fn readers_put(key: [u8; 32], idents: &BTreeSet<[u8; 32]>) -> KeptPut {
     use sha2::Digest as _;
-    let mut rows = Vec::with_capacity(idents.len() * 4);
+    let mut rows = BlockFlat::new(idents.len(), 4, true);
+    let mut w = rows.writer();
     let mut hash = sha2::Sha256::new();
     for id in idents {
         hash.update(id);
-        rows.extend(id.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
+        w.extend(id.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
     }
     let digest = u64::from_le_bytes(hash.finalize()[..8].try_into().expect("8 bytes"));
-    KeptPut { rel: READERS.into(), ident: key, part: 0, digest, reads: Vec::new(), types: b"iiii".to_vec(), what: KeptWhat::Flat { widths: vec![8; 4], rows, n: idents.len(), levels: None, given: true } }
+    KeptPut { rel: READERS.into(), ident: key, part: 0, digest, reads: Vec::new(), types: b"iiii".to_vec(), what: KeptWhat::Picked(Box::new(rows)) }
 }
 
 /// The identities a kept reader record names.
@@ -104,19 +314,17 @@ pub fn record_idents<'a>(record: &'a rerail_blocks::kept::Kept<'_>) -> impl Iter
     })
 }
 
-/// The identities a reader record's put names (`readers_put`).
-fn put_idents(p: &KeptPut) -> impl Iterator<Item = [u8; 32]> + '_ {
-    let rows: &[i64] = match &p.what {
-        KeptWhat::Flat { rows, n, .. } => &rows[..4 * *n],
-        _ => &[],
-    };
-    rows.as_chunks::<4>().0.iter().map(|r| {
+/// The identities a reader record's put names (`readers_put`): its rows, read where they lie.
+fn put_idents(p: &KeptPut) -> Vec<[u8; 32]> {
+    let KeptWhat::Picked(rows) = &p.what else { return Vec::new() };
+    (0..rows.n()).map(|r| {
         let mut id = [0u8; 32];
-        for (w, v) in id.as_chunks_mut::<8>().0.iter_mut().zip(r) {
-            *w = v.to_le_bytes();
+        for (c, w) in id.as_chunks_mut::<8>().0.iter_mut().enumerate() {
+            *w = rows.get(r, c).to_le_bytes();
         }
         id
     })
+    .collect()
 }
 
 /// What a run's program asked or put of each space's entries (decision 0401 step 8), bound in the run's context
@@ -234,38 +442,126 @@ impl KeptSpace {
 
 /// Removes the files of `dir` that `rows` (read in the write transaction) do not name: the files a committed write
 /// replaced, a rolled-back write's, a crashed maker's under its making name. A process mapping one keeps reading it.
+/// A file this process staged (`KeptStage`) is kept until a chain row names it: its wave has not committed yet.
 fn sweep(dir: &Path, rows: &ChainRows) {
     let named: HashSet<&str> = rows.iter().map(|(_, n, _)| n.as_str()).collect();
     let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let staging = staging();
+    let mut pending = staging.0.lock().expect("the staged kept files");
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if !named.contains(name.as_str()) {
-            let _ = std::fs::remove_file(e.path());
+        let path = e.path();
+        if named.contains(name.as_str()) {
+            pending.remove(&path);
+        } else if !pending.contains(&path) {
+            let _ = std::fs::remove_file(path);
         }
     }
 }
 
-/// A put's rows read where they lie, for the packer (decision 0353 step 8: nothing is read into columns): a
-/// relation's live rows (neither its own dead nor the run's), down its chain for a continuation; a flat put's rows,
-/// row-major where its vector lies; or the rows a put reads (`KeptWhat::Read`). Their levels, where they have them.
+/// The kept files this process wrote ahead of their wave's commit (`KeptStage`), by path: until a chain row names
+/// one, no sweep removes it. Another process's (or a crashed one's) are removed as any unnamed file.
+#[derive(Default)]
+struct Staging(std::sync::Mutex<HashSet<PathBuf>>);
+
+fn staging() -> std::sync::Arc<Staging> {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<Staging>()
+}
+
+/// A space's puts written to a file of their own ahead of their wave (`KeptStage`): what its commit links.
+#[derive(Clone)]
+struct StagedFile {
+    space: [u8; 32],
+    name: String,
+    tag: u64,
+}
+
+/// Where a gather's stage job leaves its files for the gather's commit job: `None` until it ran.
+type StagedSlot = std::sync::Arc<std::sync::Mutex<Option<Result<Vec<StagedFile>, String>>>>;
+
+/// Whether `p` is written ahead of its wave (`KeptStage`): its rows are columns as they are, no atom column that a
+/// forked process maps to the store's ids at its commit, and no documents' places the commit's transaction finds.
+/// Not a reader record: it only grows (decision 0401 step 8), the record the chain holds joined in the commit's
+/// transaction (`write_chain`); staged alone, the newest wave's record hid every earlier one's, and the next run asked
+/// their entries again and wrote its record, a write in a warm run.
+fn stages(p: &KeptPut) -> bool {
+    p.rel != READERS && matches!(p.what, KeptWhat::Rows(_) | KeptWhat::Picked(_)) && !p.types.contains(&b's')
+}
+
+/// A kept gather's rows, written as it closes (`Gather::close`'s `now`): each space's in a file of its own, on the
+/// writer's thread, outside any transaction, and let go. Its wave's commit (`KeptWrite`) only links the files into
+/// their chains. Held until the wave sealed, a cold run's kept puts were 2.3 GB of the writer's queue at the cross
+/// part's peak (3,089 files).
+pub(super) struct KeptStage {
+    spaces: Vec<([u8; 32], Vec<KeptPut>)>,
+    slot: StagedSlot,
+}
+
+impl KeptStage {
+    pub(super) fn run(&mut self, store: &super::ContentStore) -> StoreResult<()> {
+        let spaces = std::mem::take(&mut self.spaces);
+        let flush = store.connection.lock().map_or(rerail_blocks::block::Flush::Os, |c| super::connection::flush_of(&c));
+        let made = spaces.into_iter().map(|(space, puts)| stage_space(&store.database_path, &space, &puts, flush)).collect::<StoreResult<Vec<_>>>();
+        let outcome = made.as_ref().map(|_| ()).map_err(|e| StoreError::Invalid(format!("kept facts staged: {e}")));
+        *self.slot.lock().expect("the staged slot") = Some(made.map_err(|e| e.to_string()));
+        outcome
+    }
+}
+
+/// `puts` (all `stages`) of `space` written to a new file of the space's directory, named by its tag alone: its
+/// chain row, and so its place in the chain, is the commit's.
+fn stage_space(store: &Path, space: &[u8; 32], puts: &[KeptPut], flush: rerail_blocks::block::Flush) -> StoreResult<StagedFile> {
+    let io = |e: std::io::Error| StoreError::Io(e);
+    let _span = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: a gather's rows staged".into());
+    let dir = space_dir(store, space);
+    private_dir(&dir).map_err(io)?;
+    let tag = loop {
+        let t = new_tag();
+        if t != 0 {
+            break t;
+        }
+    };
+    let name = format!("s-{tag:016x}.blk");
+    let path = dir.join(&name);
+    staging().0.lock().expect("the staged kept files").insert(path.clone());
+    let reserve = puts.iter().map(|p| room_of(&p.what)).sum::<usize>() + (64 << 20);
+    let mut w = KeptW::create(&path, tag, reserve).map_err(io)?;
+    for p in puts {
+        let reads: Vec<(&str, u64)> = p.reads.iter().map(|(r, d)| (r.as_str(), *d)).collect();
+        let meta = Meta { key: p.key(), digest: p.digest, reads: &reads, types: &p.types };
+        put_rows(&mut w, meta, p, None)?;
+    }
+    w.finish(flush).map_err(io)?;
+    sync_dir(&dir, flush).map_err(io)?;
+    Ok(StagedFile { space: *space, name, tag })
+}
+
+/// Links `f` as the newest file of its space's chain, in the commit's transaction.
+fn link_staged(t: &Connection, f: &StagedFile) -> StoreResult<()> {
+    let seq = chain_rows(t, &f.space)?.last().map_or(1, |r| r.0 + 1);
+    t.prepare_cached("INSERT INTO main.facts_chain(space, seq, name, tag) VALUES (?1, ?2, ?3, ?4)")?.execute(rusqlite::params![&f.space[..], seq, f.name, f.tag as i64])?;
+    Ok(())
+}
+
+/// A put's rows read where they lie, for the packer (decision 0353 step 8: nothing is read into columns or a
+/// scratch first): a relation's live rows (neither its own dead nor the run's), down its chain for a continuation; or
+/// the rows a picked put reads where they lie (`KeptPicked`).
 enum PutRows<'a> {
     Rel { rel: &'a Relation, ids: Option<Vec<u32>>, n: usize },
-    Flat { rows: &'a [i64], n: usize, a: usize },
-    Read(&'a dyn RowsIn),
+    Picked(&'a dyn KeptPicked),
 }
 
 impl RowsIn for PutRows<'_> {
     fn n(&self) -> usize {
         match self {
-            PutRows::Rel { n, .. } | PutRows::Flat { n, .. } => *n,
-            PutRows::Read(r) => r.n(),
+            PutRows::Rel { n, .. } => *n,
+            PutRows::Picked(r) => r.n(),
         }
     }
     fn arity(&self) -> usize {
         match self {
             PutRows::Rel { rel, .. } => rel.arity as usize,
-            PutRows::Flat { a, .. } => *a,
-            PutRows::Read(r) => r.arity(),
+            PutRows::Picked(r) => r.arity(),
         }
     }
     #[inline]
@@ -276,8 +572,7 @@ impl RowsIn for PutRows<'_> {
                 // A continuation (decision 0384 steps 7 and 8) is kept with every row it reads, its base's first.
                 if rel.continues() { rel.get(id, c) } else { rel.rows.get(id, c) }
             }
-            PutRows::Flat { rows, a, .. } => rows[r * a + c],
-            PutRows::Read(rows) => rows.get(r, c),
+            PutRows::Picked(rows) => rows.get(r, c),
         }
     }
 }
@@ -324,7 +619,8 @@ impl<'a> Mapped<'a> {
 }
 
 /// A put's rows (`PutRows`) and their levels.
-fn put_rows<'a>(what: &'a KeptWhat) -> (PutRows<'a>, Option<Vec<u32>>) {
+fn rows_of<'a>(what: &'a KeptWhat) -> (PutRows<'a>, Option<std::borrow::Cow<'a, [u32]>>) {
+    use std::borrow::Cow;
     match what {
         KeptWhat::Rows(r) => {
             let rel = r.relation();
@@ -335,18 +631,34 @@ fn put_rows<'a>(what: &'a KeptWhat) -> (PutRows<'a>, Option<Vec<u32>>) {
             let levels = r.levels();
             let levels = (levels.len() == total && total > 0).then_some(levels);
             if (0..total).all(live) {
-                (PutRows::Rel { rel, ids: None, n: total }, levels.map(<[u32]>::to_vec))
+                (PutRows::Rel { rel, ids: None, n: total }, levels.map(Cow::Borrowed))
             } else {
                 let ids: Vec<u32> = (0..total).filter(|&id| live(id)).map(|id| id as u32).collect();
-                let lv = levels.map(|l| ids.iter().map(|&id| l[id as usize]).collect());
+                let lv = levels.map(|l| Cow::Owned(ids.iter().map(|&id| l[id as usize]).collect()));
                 (PutRows::Rel { rel, n: ids.len(), ids: Some(ids) }, lv)
             }
         }
-        KeptWhat::Flat { widths, rows, n, levels, .. } => (PutRows::Flat { rows, n: *n, a: widths.len() }, levels.clone().filter(|l| l.len() == *n)),
-        KeptWhat::Read { rows, levels, .. } => (PutRows::Read(rows.as_ref()), levels.clone().filter(|l| l.len() == rows.n())),
+        KeptWhat::Picked(rows) => {
+            let n = rows.n();
+            (PutRows::Picked(rows.as_ref()), rows.levels().filter(|l| l.len() == n && n > 0))
+        }
         KeptWhat::Reads | KeptWhat::Gone => unreachable!("a put with rows"),
         KeptWhat::Documents { .. } => unreachable!("a documents' table is resolved first (`write_space`)"),
     }
+}
+
+/// Writes `p`'s rows (`KeptWhat::Rows` or `Picked`) into `w`, the packer reading them where they lie (`PutRows`): a
+/// relation's live rows in its block, a picked put's in its source or block; atom columns (`types` `s`) mapped as they
+/// are read through `map` (a forked process's ids to the store's, `Mapped`). Nothing is gathered into columns or the
+/// writer's scratch first: that was a second copy of every kept row, at eight bytes a value (blocks are never copied,
+/// decision 0353).
+fn put_rows(w: &mut KeptW, meta: Meta, p: &KeptPut, map: Option<MapIds>) -> StoreResult<()> {
+    let given = if matches!(&p.what, KeptWhat::Picked(k) if k.given()) { rerail_blocks::packed::Order::AsGiven } else { rerail_blocks::packed::Order::Canonical };
+    let (rows, levels) = rows_of(&p.what);
+    let mapped = map.map(|m| Mapped::of(&rows, &p.types, m)).transpose()?;
+    let rows: &dyn RowsIn = match &mapped { Some(m) => m, None => &rows };
+    w.put_rows(meta, rows, levels.as_deref(), given).map_err(StoreError::Io)?;
+    Ok(())
 }
 
 /// The most bytes a put's packed rows take (8 a value, the sort's duplicates included), and their descriptors.
@@ -356,9 +668,8 @@ fn room_of(what: &KeptWhat) -> usize {
             let rel = r.relation();
             (rel.len_all() as usize) * (rel.arity as usize * 8 + 8) + (rel.arity as usize + 2) * 256
         }
-        KeptWhat::Flat { widths, n, .. } => n * widths.len() * 8 + (widths.len() + 2) * 256,
-        KeptWhat::Read { rows, .. } => rows.n() * rows.arity() * 8 + (rows.arity() + 2) * 256,
-        KeptWhat::Documents { n, .. } => n * super::PLACED_WORDS * 8 + (super::PLACED_WORDS + 2) * 256,
+        KeptWhat::Picked(p) => p.n() * p.arity() * 8 + (p.arity() + 2) * 256,
+        KeptWhat::Documents { rows, .. } => rows.len() * super::PLACED_WORDS * 8 + (super::PLACED_WORDS + 2) * 256,
         KeptWhat::Reads | KeptWhat::Gone => 0,
     }
 }
@@ -372,9 +683,8 @@ const MERGE_FLOOR: usize = 1 << 16;
 fn expected_bytes(what: &KeptWhat) -> usize {
     match what {
         KeptWhat::Rows(r) => r.relation().len_all() as usize * r.relation().arity as usize * 3,
-        KeptWhat::Flat { widths, n, .. } => n * widths.len() * 3,
-        KeptWhat::Read { rows, .. } => rows.n() * rows.arity() * 3,
-        KeptWhat::Documents { n, .. } => n * super::PLACED_WORDS * 3,
+        KeptWhat::Picked(p) => p.n() * p.arity() * 3,
+        KeptWhat::Documents { rows, .. } => rows.len() * super::PLACED_WORDS * 3,
         KeptWhat::Reads | KeptWhat::Gone => 0,
     }
 }
@@ -413,9 +723,9 @@ fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut
     let mut puts = puts
         .into_iter()
         .map(|mut p| {
-            if let KeptWhat::Documents { rows, n, tape } = &p.what {
-                let rows = super::document_places::resolve(t, rows, *n, *tape)?;
-                p.what = KeptWhat::Flat { widths: vec![8; super::PLACED_WORDS], rows, n: *n, levels: None, given: true };
+            if let KeptWhat::Documents { rows, tape } = &p.what {
+                let rows = super::document_places::resolve(t, rows, *tape)?;
+                p.what = KeptWhat::Picked(Box::new(rows));
             }
             Ok(p)
         })
@@ -448,6 +758,17 @@ fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut
             t.prepare_cached("DELETE FROM main.facts_chain WHERE space = ?1")?.execute([&space[..]])?;
             return Ok(Some(Vec::new()));
         }
+    }
+    // A held partition is put whole (`HOLDER`): what else it kept goes.
+    let held: BTreeSet<i64> = puts.iter().filter(|p| p.rel == HOLDER && !matches!(p.what, KeptWhat::Gone)).map(|p| p.part).collect();
+    if !held.is_empty() {
+        let named: HashSet<(&str, [u8; 32], i64)> = puts.iter().map(|p| (p.rel.as_str(), p.ident, p.part)).collect();
+        let gone: Vec<KeptPut> = chain
+            .all()
+            .filter(|e| held.contains(&e.key.part) && e.key.rel != READERS && !named.contains(&(e.key.rel, *e.key.ident, e.key.part)))
+            .map(|e| KeptPut { rel: e.key.rel.to_owned(), ident: *e.key.ident, part: e.key.part, digest: 0, reads: Vec::new(), types: e.types.to_vec(), what: KeptWhat::Gone })
+            .collect();
+        puts.extend(gone);
     }
     let put_keys: HashSet<FactKey<'_>> = puts.iter().map(KeptPut::key).collect();
     // The files merged into this one: the newest ones, each weighing no more than twice the bytes joining it.
@@ -502,12 +823,8 @@ fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut
         let reads: Vec<(&str, u64)> = p.reads.iter().map(|(r, d)| (r.as_str(), *d)).collect();
         let meta = Meta { key: p.key(), digest: p.digest, reads: &reads, types: &p.types };
         match &p.what {
-            KeptWhat::Rows(_) | KeptWhat::Flat { .. } | KeptWhat::Read { .. } => {
-                let (rows, levels) = put_rows(&p.what);
-                let given = if matches!(p.what, KeptWhat::Flat { given: true, .. } | KeptWhat::Read { given: true, .. }) { rerail_blocks::packed::Order::AsGiven } else { rerail_blocks::packed::Order::Canonical };
-                let mapped = map.map(|m| Mapped::of(&rows, &p.types, m)).transpose()?;
-                let rows: &dyn RowsIn = match &mapped { Some(m) => m, None => &rows };
-                w.put_rows(meta, rows, levels.as_deref(), given).map_err(io)?;
+            KeptWhat::Rows(_) | KeptWhat::Picked(_) => {
+                put_rows(&mut w, meta, p, map)?;
             }
             KeptWhat::Documents { .. } => unreachable!("a documents' table is resolved first (above)"),
             KeptWhat::Reads => {
@@ -529,7 +846,7 @@ fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut
     drop(putting);
     let finishing = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the block finished and synced".into());
     // Written back as the store's flush mode says (decision 0481): by default the OS writes it at its own pace.
-    let flush = crate::content_store::connection::flush_of(t);
+    let flush = crate::content_store::flush_of(t);
     w.finish(flush).map_err(io)?;
     std::fs::rename(&making, dir.join(&name)).map_err(io)?;
     sync_dir(&dir, flush).map_err(io)?;
@@ -547,19 +864,35 @@ fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut
 /// together, appended as one file in the wave's transaction.
 pub(super) struct KeptWrite {
     spaces: Vec<([u8; 32], Vec<KeptPut>)>,
+    /// The files its gather's rows were staged in (`KeptStage`), linked before its own puts are written.
+    staged: Option<StagedSlot>,
 }
 
 impl KeptWrite {
     pub(super) fn run(&mut self, store: &super::ContentStore) -> StoreResult<()> {
         let spaces = std::mem::take(&mut self.spaces);
+        let staged: Vec<StagedFile> = match self.staged.as_ref().map(|s| s.lock().expect("the staged slot").clone()) {
+            None => Vec::new(),
+            Some(Some(Ok(files))) => files,
+            Some(Some(Err(e))) => return Err(StoreError::Invalid(format!("kept facts staged: {e}"))),
+            Some(None) => return Err(StoreError::Invalid("kept facts: the gather's rows were not staged before its wave".into())),
+        };
         let path = store.database_path.clone();
         let written = store.immediate_transaction_once(|t| {
             // Forked (decision 0170): the puts' atom columns are mapped to the store's ids in this transaction.
             let map = |v: &mut [i64]| store.atoms.to_store(t, super::ProcessIds::of_process(v)).map(drop);
+            for f in &staged {
+                link_staged(t, f)?;
+            }
             let mut written = Vec::new();
             for (space, puts) in spaces {
                 if let Some(row) = write_space(&path, t, &space, puts, store.atoms.forked().then_some(&map as &dyn Fn(&mut [i64]) -> StoreResult<()>))? {
                     written.push((space, row));
+                }
+            }
+            for f in &staged {
+                if !written.iter().any(|(s, _)| *s == f.space) {
+                    written.push((f.space, chain_rows(t, &f.space)?));
                 }
             }
             Ok(written)
@@ -589,30 +922,49 @@ struct KeptGather {
 /// The bytes a put holds until written: a flat put's rows, and a little for the rest (a relation is lent, not held).
 fn held_bytes(p: &KeptPut) -> usize {
     64 + match &p.what {
-        KeptWhat::Flat { rows, .. } | KeptWhat::Documents { rows, .. } => rows.len() * 8,
+        KeptWhat::Picked(k) => k.held(),
+        KeptWhat::Documents { rows, .. } => rows.held(),
         _ => 0,
     }
 }
 
 impl KeptGather {
+    /// `puts` of `space` folded as one wave's are (`add`): each key once.
+    fn folded(space: [u8; 32], puts: Vec<KeptPut>) -> Vec<KeptPut> {
+        let mut g = KeptGather::default();
+        g.add(space, puts);
+        g.spaces.remove(&space).map(|(list, _)| list).unwrap_or_default()
+    }
+
     /// `space`'s puts, each key once: a later put replaces an earlier one of its key, but a retag (`Reads`) keeps the
     /// rows an earlier put of this wave gave it, and their digest, with its reads. A retag has no digest of its own
     /// (its rows are the entry's): taken over, it gave a relation handed off with its rows (its digest known then) and
-    /// retagged at the run's end digest 0, and every reader of it ran again in the next run.
+    /// retagged at the run's end digest 0, and every reader of it ran again in the next run. A program's reader record
+    /// joins its earlier one, as the space's record only grows (decision 0401 step 8): each names what its own puts
+    /// did, and replaced, the wave's last record was the program's, so the next run asked the others' entries again,
+    /// and wrote its record (a warm run's write). A held partition is put whole (`HOLDER`): its earlier puts of this
+    /// wave go with it, its reader records kept.
     fn add(&mut self, space: [u8; 32], puts: Vec<KeptPut>) {
         let (list, at) = self.spaces.entry(space).or_default();
+        let held: BTreeSet<i64> = puts.iter().filter(|p| p.rel == HOLDER && !matches!(p.what, KeptWhat::Gone)).map(|p| p.part).collect();
+        if !held.is_empty() && list.iter().any(|p| held.contains(&p.part) && p.rel != READERS) {
+            let (kept, dropped): (Vec<KeptPut>, Vec<KeptPut>) = std::mem::take(list).into_iter().partition(|p| !held.contains(&p.part) || p.rel == READERS);
+            self.bytes -= dropped.iter().map(held_bytes).sum::<usize>();
+            *list = kept;
+            *at = list.iter().enumerate().map(|(i, p)| ((p.rel.clone(), p.ident, p.part), i)).collect();
+        }
         for p in puts {
             self.bytes += held_bytes(&p);
             let key = (p.rel.clone(), p.ident, p.part);
             match at.get(&key) {
                 Some(&i) => {
                     let was = &mut list[i];
-                    if matches!(p.what, KeptWhat::Reads) && !matches!(was.what, KeptWhat::Reads | KeptWhat::Gone) {
-                        was.reads = p.reads;
-                    } else if p.rel == READERS {
+                    if p.rel == READERS {
                         // A reader record only grows (decision 0401 step 8): two of a wave are one, naming both's.
-                        let all: BTreeSet<[u8; 32]> = put_idents(was).chain(put_idents(&p)).collect();
+                        let all: BTreeSet<[u8; 32]> = put_idents(was).into_iter().chain(put_idents(&p)).collect();
                         *was = readers_put(p.ident, &all);
+                    } else if matches!(p.what, KeptWhat::Reads) && !matches!(was.what, KeptWhat::Reads | KeptWhat::Gone) {
+                        was.reads = p.reads;
                     } else {
                         *was = p;
                     }
@@ -652,12 +1004,28 @@ impl super::write_back::Gather for KeptGather {
         if spaces.is_empty() {
             return None;
         }
+        let keys = spaces.iter().map(|(s, _)| (space_key(s), None)).collect();
+        // Its rows staged now (`KeptStage`); the rest, and the links, at its wave's commit.
+        let (mut staged, mut rest, mut staged_bytes) = (Vec::new(), Vec::new(), 0);
+        for (space, puts) in spaces {
+            let (now, later): (Vec<KeptPut>, Vec<KeptPut>) = puts.into_iter().partition(stages);
+            staged_bytes += now.iter().map(held_bytes).sum::<usize>();
+            if !now.is_empty() {
+                staged.push((space, now));
+            }
+            if !later.is_empty() {
+                rest.push((space, later));
+            }
+        }
+        let slot = (!staged.is_empty()).then(StagedSlot::default);
+        let now = slot.clone().map(|slot| (staged_bytes, super::write_back::Work(super::write_back::Kind::KeptStage(Box::new(KeptStage { spaces: staged, slot })))));
         Some(super::write_back::Closed {
             what: "kept facts",
-            bytes: self.bytes,
-            keys: spaces.iter().map(|(s, _)| (space_key(s), None)).collect(),
+            bytes: self.bytes - staged_bytes,
+            keys,
             syms: super::write_back::Syms::Mapped,
-            job: super::write_back::Work(super::write_back::Kind::Kept(Box::new(KeptWrite { spaces }))),
+            job: super::write_back::Work(super::write_back::Kind::Kept(Box::new(KeptWrite { spaces: rest, staged: slot }))),
+            now,
         })
     }
 }
@@ -683,11 +1051,33 @@ impl super::ContentStore {
         if self.gather("kept facts", KeptGather::default, |g| g.add(space, puts.take().expect("the puts"))) {
             return;
         }
-        // Outside a run's waves (or with no writer): its own job.
-        let puts = puts.take().expect("the puts");
+        // Outside a run's waves (or with no writer): its own job, its puts folded as a wave's are (a later put of a key
+        // replaces an earlier one, `KeptGather::add`), as the writer refuses a key put twice.
+        let puts = KeptGather::folded(space, puts.take().expect("the puts"));
         let held: usize = puts.iter().map(held_bytes).sum();
-        let write = KeptWrite { spaces: vec![(space, puts)] };
+        let write = KeptWrite { spaces: vec![(space, puts)], staged: None };
         self.write_back_syms(super::write_back::Syms::Mapped, "kept facts", held, vec![(space_key(&space), None)], super::write_back::Work(super::write_back::Kind::Kept(Box::new(write))));
+    }
+
+    /// [`Self::queue_kept`] as a job of its own called `what`: a write a warm run may make
+    /// (`profile::WARM_WRITES_ALLOWED`, the journal's aged cursor) is so named, not gathered with the run's others.
+    pub fn queue_kept_as(&self, space: [u8; 32], puts: Vec<KeptPut>, what: &'static str) {
+        if what == "kept facts" {
+            return self.queue_kept(space, puts);
+        }
+        if puts.is_empty() {
+            return;
+        }
+        let puts = KeptGather::folded(space, puts);
+        let held: usize = puts.iter().map(held_bytes).sum();
+        let write = KeptWrite { spaces: vec![(space, puts)], staged: None };
+        self.write_back_syms(super::write_back::Syms::Mapped, what, held, vec![(space_key(&space), None)], super::write_back::Work(super::write_back::Kind::Kept(Box::new(write))));
+    }
+
+    /// Waits until every kept write this process queued for `space` is written, reading nothing: so it may be asked
+    /// as a thread ends, its connection gone.
+    pub fn settle_kept(&self, space: &[u8; 32]) {
+        self.settle(&space_key(space));
     }
 
     /// The rows of `space`'s chain once every kept write this process queued for it is written (`settle`): what a
@@ -738,7 +1128,8 @@ impl super::ContentStore {
     /// program (a plan the keep decision marked dead, `corpus_plans.live = 0`) written again as one base without the
     /// entries only dead programs' records name, nor those records; a space left with none is dropped. An entry no
     /// record names (an older build's, a session's) stays; so does one a live program's record names, and one of a
-    /// program the store has not decided on. Run under the collection's lease, before the dead plans' rows go. The
+    /// program the store has not decided on. Each partition whose holder (`HOLDER`) the store no longer keeps, or whose
+    /// plan is dead, goes too, with its holder. Run under the collection's lease, before the dead plans' rows go. The
     /// spaces rewritten or dropped.
     pub fn collect_kept_facts(&self) -> StoreResult<usize> {
         let (dead, spaces): (HashSet<[u8; 32]>, Vec<[u8; 32]>) = {
@@ -747,27 +1138,51 @@ impl super::ContentStore {
             let spaces = connection.prepare("SELECT DISTINCT space FROM facts_chain")?.query_map([], |r| r.get::<_, Vec<u8>>(0))?.filter_map(|s| s.ok().and_then(|s| <[u8; 32]>::try_from(s.as_slice()).ok())).collect();
             (dead, spaces)
         };
-        if dead.is_empty() {
-            return Ok(0);
-        }
         let path = self.database_path.clone();
         let mut done = 0;
         for space in spaces {
+            // A space with neither holders nor, while plans are dead, reader records has nothing to collect: no write
+            // transaction for it.
+            if let Some(kept) = self.kept_space(&space)? {
+                let chain = kept.view();
+                if chain.of(HOLDER).next().is_none() && (dead.is_empty() || chain.of(READERS).next().is_none()) {
+                    continue;
+                }
+            }
             let written = self.immediate_transaction(|t| {
                 let rows = chain_rows(t, &space)?;
                 let old = KeptSpace::open(&path, &space, &rows)?;
                 let chain = old.view();
+                // The partitions whose holder the store no longer keeps (`HOLDER`).
+                let mut unheld = HashSet::new();
+                for entry in chain.of(HOLDER) {
+                    let held = match holder_of(&entry) {
+                        Some((_, Some(plan))) if dead.contains(&plan) => false,
+                        Some((key, _)) => super::objects::source_id_by_hash(t, super::HashKey::from_sha256_digest(key))?.is_some(),
+                        None => false,
+                    };
+                    if !held {
+                        unheld.insert(entry.key.part);
+                    }
+                }
                 let (mut live, mut gone) = (HashSet::new(), HashSet::new());
                 let mut any_dead = false;
-                for record in chain.of(READERS) {
-                    let is_dead = dead.contains(record.key.ident);
-                    any_dead |= is_dead;
-                    (if is_dead { &mut gone } else { &mut live }).extend(record_idents(&record));
+                if !dead.is_empty() {
+                    for record in chain.of(READERS) {
+                        let is_dead = dead.contains(record.key.ident);
+                        any_dead |= is_dead;
+                        (if is_dead { &mut gone } else { &mut live }).extend(record_idents(&record));
+                    }
                 }
-                if !any_dead {
+                if !any_dead && unheld.is_empty() {
                     return Ok(None);
                 }
-                let keep = |k: &FactKey<'_>| if k.rel == READERS { !dead.contains(k.ident) } else { live.contains(k.ident) || !gone.contains(k.ident) };
+                let keep = |k: &FactKey<'_>| {
+                    if k.rel == READERS {
+                        return !dead.contains(k.ident);
+                    }
+                    !unheld.contains(&k.part) && (live.contains(k.ident) || !gone.contains(k.ident))
+                };
                 rewrite_space(&path, t, &space, &keep)
             })?;
             let Some(rows) = written else { continue };

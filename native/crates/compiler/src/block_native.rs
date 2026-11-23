@@ -22,8 +22,9 @@ pub struct BlockNative {
     pub totals: Vec<usize>,
     /// The outputs (indexes into `outputs`) tier 2 reads as masks (`block::BlockProgram::masks`).
     pub masks: Vec<usize>,
-    /// The output (an index into `outputs`) of the stream's newlines (`block::BlockProgram::newlines`).
-    pub newlines: Option<usize>,
+    /// The output (an index into `outputs`) of the stream's line ends, and their terminators
+    /// (`block::BlockProgram::newlines`).
+    pub newlines: Option<(usize, rerail_tape_format::newlines::Terminators)>,
     /// How many bytes past the stream the program runs (`block::BlockProgram::delay`).
     pub delay: u8,
     /// Each output's delay (`block::BlockProgram::output_delay`).
@@ -50,7 +51,7 @@ pub enum BlockInst {
     /// bitmask; on Metal SWAR over the lane's `uint4`s.
     EqByte(u8),
     /// The block's bytes in any class of `bits` of table `table`: on the CPU two table lookups
-    /// per 16 bytes (`tbl`); on Metal, see `metal_block_program::ClassStrategy`.
+    /// per 16 bytes (`tbl`); on Metal the forward carry runs its planes form (`planes_form`).
     Class { table: u16, bits: u8 },
     /// Bit `k` of every byte of the block: one bit-plane (`BlockNative::planes_form`).
     Plane(u8),
@@ -358,7 +359,13 @@ impl BlockNative {
         // does not set itself): a token mark's mask is the starts (`tokens K …`).
         let stored = self.marks_stored();
         let walked = self.walked_starts().filter(|o| !stored.contains(o));
-        self.ruled_lasts().into_iter().chain(walked).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).chain(self.blank_masks()).collect()
+        self.ruled_lasts().into_iter().chain(walked).chain(self.loops_errors()).chain(self.readers_tags()).chain(self.read_at_tokens()).chain(self.blank_masks()).chain(self.loops_line_ends()).collect()
+    }
+
+    /// The line ends' output where the CPU's token loop runs (0177): it makes no mask of its own, as the lean lexer
+    /// makes none, and the tape's line index is the scan's (`newlines::index_into`), not a class its body makes.
+    fn loops_line_ends(&self) -> Option<usize> {
+        self.newlines.filter(|_| self.records.as_ref().is_some_and(|r| r.skip.is_some() || r.fetched_in_tier2())).map(|(o, _)| o)
     }
 
     /// The masks of the marks the CPU's token loop reads from the blanks (`blank_marks`,

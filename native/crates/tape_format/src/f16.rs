@@ -41,6 +41,8 @@ pub struct Lang {
     revision: u8,
     /// Each number's kind and field: what a presence's bits are (decision 0434 §4).
     kind_field: Vec<(u16, u16)>,
+    /// `presence_words`, counted once: a tape's reader checks its presence against it at every read.
+    presence_words: (usize, usize),
 }
 
 impl Lang {
@@ -56,14 +58,15 @@ impl Lang {
         let cut = if n <= 256 { 256 } else { 255 };
         let per = if cut >= 256 { 1 } else { n - cut };
         let index = table.entries().iter().enumerate().map(|(k, e)| (e.clone(), k as u32)).collect();
-        let kind_field = table.entries().iter().map(|e| (e.kind, e.field)).collect();
-        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field })
+        let kind_field: Vec<(u16, u16)> = table.entries().iter().map(|e| (e.kind, e.field)).collect();
+        let kinds = kind_field.iter().map(|&(k, _)| usize::from(k) + 1).max().unwrap_or(0);
+        let fields = kind_field.iter().map(|&(_, f)| usize::from(f) + 1).max().unwrap_or(0);
+        let presence_words = (kinds.div_ceil(64), fields.div_ceil(64));
+        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field, presence_words })
     }
     /// The words of a presence's kinds' and fields' bitmaps: one bit a kind and a field the table names.
     pub fn presence_words(&self) -> (usize, usize) {
-        let kinds = self.kind_field.iter().map(|&(k, _)| usize::from(k) + 1).max().unwrap_or(0);
-        let fields = self.kind_field.iter().map(|&(_, f)| usize::from(f) + 1).max().unwrap_or(0);
-        (kinds.div_ceil(64), fields.div_ceil(64))
+        self.presence_words
     }
     pub fn table(&self) -> &CodeTable {
         &self.table
@@ -279,6 +282,10 @@ impl Tape16 {
     /// Where its bytes are.
     pub fn home(&self) -> &crate::home::Home {
         &self.buf
+    }
+    /// Where its line index starts in its home (`extent`): the document's lines, read there (decision 0612).
+    pub fn lines_at(&self) -> usize {
+        self.p.lines
     }
     /// Where its parts lie.
     pub fn placement(&self) -> &Placement {
@@ -659,16 +666,8 @@ DEFINE_KERNEL2(tests, t_random,
 /// (`rerail_gpu::kernels::program`; this crate is below the device layer, so its callers compile it).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn device_reads_kernel(header: &str) -> (String, String) {
-    // Formats 15's and 16's reads use no SIMD group; 16z's block decode is a SIMD group's (`UKL_SIMD_GROUP_FREE`,
-    // ukl/backend.h).
-    let free = if header == "tape.h" { SIMD_GROUP_FREE } else { "" };
-    (format!("tape_reads_{header}"), format!("{free}{}", DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>"))))
+    (format!("tape_reads_{header}"), DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>")))
 }
-
-/// What a source says first when its kernels use no SIMD group (ukl/backend.h, decision 0576 §14): on OpenCL they
-/// then require no sub-group size, and a kernel that reaches a SIMD-group operation is refused at its build.
-#[cfg(any(test, feature = "test-hooks"))]
-const SIMD_GROUP_FREE: &str = "#define UKL_SIMD_GROUP_FREE 1\n";
 
 /// The tape format's kernels, by name and text (`rerail_gpu::kernels::program` compiles each): its tests' (the
 /// writer's replay, the reads' two programs), which the engine's `kernels compile` compiles ahead of them.
@@ -956,8 +955,8 @@ writer_ops!(reference::Writer<'_>);
 #[cfg(test)]
 writer_ops!(ops::device::DeviceOps, all);
 
-pub fn write(lang: &Lang, n: usize, source: &[u8], tag: u8, z: bool, node: impl FnMut(usize) -> Node) -> Result<Written, String> {
-    write_with(Writer::new(lang, source, tag, z, false, n), n, node).map(|f| f.tape)
+pub fn write(lang: &Lang, n: usize, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, node: impl FnMut(usize) -> Node) -> Result<Written, String> {
+    write_with(Writer::new(lang, source, terminators, tag, z, false, n), n, node).map(|f| f.tape)
 }
 
 /// `write` by `w`'s ops.
@@ -986,13 +985,13 @@ const NONE: u32 = u32::MAX;
 
 /// Format 16 (or 16z where `z`) written from another tape `t`, each node's code mapped to the language's number
 /// (`number`, by `t`'s code), in one pass (`write`): a tape a parser did not write in format 16 (decision 0293).
-pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Written, String> {
-    write(lang, t.len(), source, tag, z, nodes_of(t, number))
+pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Written, String> {
+    write(lang, t.len(), source, terminators, tag, z, nodes_of(t, number))
 }
 
 /// `write_from`, with the tape's presence, the document's and each block's (§4).
-pub fn write_from_with_presence<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Finished, String> {
-    write_with(Writer::new(lang, source, tag, z, true, t.len()), t.len(), nodes_of(t, number))
+pub fn write_from_with_presence<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Finished, String> {
+    write_with(Writer::new(lang, source, terminators, tag, z, true, t.len()), t.len(), nodes_of(t, number))
 }
 
 /// `t`'s nodes in preorder, as `write` takes them.
@@ -1310,6 +1309,10 @@ impl Tape16Z {
     /// Where its bytes are.
     pub fn home(&self) -> &crate::home::Home {
         &self.buf
+    }
+    /// Where its line index starts in its home (`Tape16::lines_at`): a 16z tape stores it as it is.
+    pub fn lines_at(&self) -> usize {
+        self.zat[ZLINES]
     }
 
     /// The stored tape, held as it is: its header, its regions and its piece index are checked against its length,
@@ -1766,8 +1769,8 @@ mod tests {
     /// Format 16 written from `t` in one pass, and 16z written the same way, which is the format 16 tape's blocks.
     fn sixteen<T: Tape>(lang: &Lang, t: &T, number: &[u32], source_len: u64) -> Tape16 {
         let source = source_of(source_len);
-        let Ok(Written::F16(plain)) = write_from(lang, t, number, &source, 0, false) else { panic!("format 16") };
-        let Ok(Written::F16Z(z)) = write_from(lang, t, number, &source, 0, true) else { panic!("16z") };
+        let Ok(Written::F16(plain)) = write_from(lang, t, number, &source, crate::newlines::Terminators::Lf, 0, false) else { panic!("format 16") };
+        let Ok(Written::F16Z(z)) = write_from(lang, t, number, &source, crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
         // The writer's blocks finish as their nodes close (the root's last); `blocks` stores them in order. Both are
         // the format 16 tape's blocks.
         let blocks = plain.blocks();
@@ -1844,10 +1847,10 @@ mod tests {
         let span = f15.end(0);
         for mut source in crate::newlines::tests::sources() {
             source.resize(source.len().max(span as usize), b'y');
-            let Ok(Written::F16(t)) = write_from(&lang, &f15, &number, &source, 0, false) else { panic!("format 16") };
+            let Ok(Written::F16(t)) = write_from(&lang, &f15, &number, &source, crate::newlines::Terminators::Lf, 0, false) else { panic!("format 16") };
             let back = Tape16::from_bytes(t.as_bytes().to_vec()).unwrap();
             lines_answer(&back.reader(&lang).unwrap(), &source);
-            let Ok(Written::F16Z(z)) = write_from(&lang, &f15, &number, &source, 0, true) else { panic!("16z") };
+            let Ok(Written::F16Z(z)) = write_from(&lang, &f15, &number, &source, crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
             let z = Tape16Z::from_bytes(z.as_bytes().to_vec()).unwrap();
             let mut decoded = vec![0u8; z.decoded_len()];
             z.decode_into(&mut decoded).unwrap();
@@ -2089,7 +2092,7 @@ mod tests {
         let v = placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
         same_reads(&reads, &t.reader(&lang).unwrap(), t.as_bytes(), &v);
         // 16z, the same nodes in blocks (decision 0353 step 4b): each read decodes its block into the reader's slot.
-        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
         assert!(z.len() > 3 * Z, "the tape spans blocks");
         let reader = rerail_clif::view::Reader::new(&z.view(&lang).unwrap(), z.as_bytes().as_ptr());
         // SAFETY: the reader's view, which this thread alone reads.
@@ -2172,7 +2175,7 @@ mod tests {
         let lang = lang_of(&table);
         let (nodes, pos) = escaped_nodes();
         let plain = Plain(&nodes, &table);
-        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
         let mut view = z.view(&lang).unwrap();
         let blocks = z.p.block_count();
         assert!(blocks > 2, "more blocks than a cache's generation holds");
@@ -2268,15 +2271,18 @@ mod tests {
                         reads.two("tape_next_in", bytes, v, i as usize, u32::MAX);
                     }
                 }
-                // Bytes past the source, lines past the last.
-                for x in [view.source_len, view.source_len + 1, view.source_len + 4096] {
-                    ask(format!("{format}: tape_line({x}) of a source of {} bytes", view.source_len));
-                    reads.one("tape_line", bytes, view, x as usize);
-                }
-                let lines = reads.one("tape_line", bytes, view, view.source_len.saturating_sub(1) as usize);
-                for k in [lines + 1, lines + 2, lines + 1000] {
-                    ask(format!("{format}: tape_line_start({k}) of {} lines", lines + 1));
-                    reads.one("tape_line_start", bytes, view, k as usize);
+                // Bytes past the source, lines past the last: a format 16 tape's own line index. A format 15 image
+                // holds none (decision 0612: its slab places its language's index beside it).
+                if *format == "format 16" {
+                    for x in [view.source_len, view.source_len + 1, view.source_len + 4096] {
+                        ask(format!("{format}: tape_line({x}) of a source of {} bytes", view.source_len));
+                        reads.one("tape_line", bytes, view, x as usize);
+                    }
+                    let lines = reads.one("tape_line", bytes, view, view.source_len.saturating_sub(1) as usize);
+                    for k in [lines + 1, lines + 2, lines + 1000] {
+                        ask(format!("{format}: tape_line_start({k}) of {} lines", lines + 1));
+                        reads.one("tape_line_start", bytes, view, k as usize);
+                    }
                 }
                 // The same walks by the reads written directly in Rust (decision 0534), on the same views and nodes.
                 let f16_tape = *format == "format 16";
@@ -2330,7 +2336,7 @@ mod tests {
         let lang = lang_of(&table);
         let (nodes, pos) = escaped_nodes();
         let plain = Plain(&nodes, &table);
-        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
         let (n, blocks) = (z.len(), z.len().div_ceil(Z));
         // A piece that states more bytes decoded than its stored bytes can give: refused. Its decoded length is
         // its column's and its side part's, which size every cache entry (decision 0463).
@@ -2499,12 +2505,12 @@ mod tests {
         // Written over the whole source, then read with a shorter one stated: a tape held with the wrong source, or
         // corrupt. (Its header's length is checked against its newline index when it is read in; the view's is
         // what the reads hold spans to.)
-        let Ok(Written::F16(t)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, false) else { panic!("16") };
+        let Ok(Written::F16(t)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), crate::newlines::Terminators::Lf, 0, false) else { panic!("16") };
         let mut view = placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
         assert_eq!(u64::from(view.source_len), pos + 2);
         view.source_len = source as u32;
         check(t.as_bytes().as_ptr(), &raw const view, t.len());
-        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
         let mut view = z.view(&lang).unwrap();
         view.source_len = source as u32;
         let reader = rerail_clif::view::Reader::new(&view, z.as_bytes().as_ptr());
@@ -2631,7 +2637,7 @@ mod tests {
             same_device_reads(reads, what, &t.reader(&lang).unwrap(), t.as_bytes(), &v);
         }
         // 16z: the tape, then its cache (each block decoded once into it), the view naming the cache by its offset.
-        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
         let mut view = z.view(&lang).unwrap();
         let blocks = z.p.block_count() as u32;
         let spec = cache::Spec::new(3, blocks + 1, view.columns[3] as usize);
@@ -2664,7 +2670,7 @@ mod tests {
         let lang = lang_of(&table);
         let (nodes, pos) = escaped_nodes();
         let plain = Plain(&nodes, &table);
-        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
         let t = z.reader(&lang).unwrap();
         let n = t.len();
         let want: Vec<[u32; 4]> = (0..n).map(|i| [t.code(i), t.start(i) as u32, t.end(i) as u32, t.parent(i).map_or(u32::MAX, |p| p as u32)]).collect();
@@ -2739,7 +2745,7 @@ mod tests {
         let lang = lang_of(&table);
         let (nodes, pos) = escaped_nodes();
         let plain = Plain(&nodes, &table);
-        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
         let t = z.reader(&lang).unwrap();
         let n = t.len();
         assert!(z.p.block_count() > 2, "a tape of more blocks than a generation holds");
@@ -2857,10 +2863,10 @@ mod tests {
         let (nodes, pos) = escaped_nodes();
         let source = source_of(pos + 2);
         let number: Vec<u32> = (0..600).collect();
-        let Ok(Written::F16(want)) = write_from(&lang, &Plain(&nodes, &table), &number, &source, 0, false) else { panic!("format 16") };
+        let Ok(Written::F16(want)) = write_from(&lang, &Plain(&nodes, &table), &number, &source, crate::newlines::Terminators::Lf, 0, false) else { panic!("format 16") };
         let mut in_place = 0;
         for (z, every) in [(false, 1), (false, 1_000_000), (true, 1), (true, 97)] {
-            let mut w = Writer::new(&lang, &source, 0, z, true, nodes.len());
+            let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
             by_ops(&mut w, &nodes, every);
             let room = w.buffer(rerail_clif::writer::part::OUT);
             let (room, cap) = (room.as_ptr(), room.len());
@@ -2921,7 +2927,7 @@ mod tests {
         plain.insert(0, (0, 0, 4 * n as u64, n));
         let source = source_of(4 * n as u64);
         for every in [1, 1_000_000] {
-            let mut w = Writer::new(&lang, &source, 0, false, false, plain.len());
+            let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, false, false, plain.len());
             by_ops(&mut w, &plain, every);
             let room = w.buffer(rerail_clif::writer::part::OUT).as_ptr();
             let Ok(Finished { tape: Written::F16(t), .. }) = w.finish() else { panic!("format 16") };
@@ -2940,9 +2946,9 @@ mod tests {
         let (nodes, pos) = escaped_nodes();
         let source = source_of(pos + 2);
         let number: Vec<u32> = (0..600).collect();
-        let Ok(Written::F16(want)) = write_from(&lang, &Plain(&nodes, &table), &number, &source, 0, false) else { panic!("format 16") };
+        let Ok(Written::F16(want)) = write_from(&lang, &Plain(&nodes, &table), &number, &source, crate::newlines::Terminators::Lf, 0, false) else { panic!("format 16") };
         for z in [false, true] {
-            let mut w = Writer::new(&lang, &source, 0, z, false, nodes.len());
+            let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, z, false, nodes.len());
             let mut ends: Vec<(usize, u64)> = Vec::new();
             // The inner node whose first child is next: its code and start, given late.
             let mut late: Option<(usize, u32, u64)> = None;
@@ -2990,7 +2996,7 @@ mod tests {
         let lang = lang_of(&table);
         let n = 3 * Z + 5;
         let source = source_of(4 * n as u64);
-        let mut w = reference::Writer::new(&lang, &source, 0, true, false, n);
+        let mut w = reference::Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, true, false, n);
         w.open(0, 0);
         for i in 1..n {
             w.leaf(1 + (i % 3) as u32, 4 * i as u64, 4 * i as u64 + 2);
@@ -3039,7 +3045,7 @@ mod tests {
             },
         ];
         for (k, case) in cases.into_iter().enumerate() {
-            let mut w = Writer::new(&lang, &source, 0, false, false, 4);
+            let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, false, false, 4);
             case(&mut w);
             assert!(w.finish().is_err(), "case {k}");
         }
@@ -3092,7 +3098,7 @@ mod tests {
         let lang = lang_of(&table);
         let (nodes, pos) = escaped_nodes();
         let source = source_of(pos + 2);
-        let mut w = Writer::new(&lang, &source, 0, false, false, 4);
+        let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, false, false, 4);
         w.open(1, 10);
         w.leaf(2, 5, 6);
         assert_eq!(w.failure(), Some((fail::BOUNDS, 1)), "a start before the one before it, at node 1");
@@ -3103,7 +3109,7 @@ mod tests {
                 Written::F16(t) => t.as_bytes().to_vec(),
                 Written::F16Z(t) => t.as_bytes().to_vec(),
             };
-            let got = bytes(write_from(&lang, &Plain(&nodes, &table), &number, &source, 0, z).unwrap());
+            let got = bytes(write_from(&lang, &Plain(&nodes, &table), &number, &source, crate::newlines::Terminators::Lf, 0, z).unwrap());
             let want = bytes(reference::write_from(&lang, &Plain(&nodes, &table), &number, &source, 0, z).unwrap());
             assert!(got == want, "16z {z}: the writer's tape is the reference's");
         }
@@ -3114,7 +3120,7 @@ mod tests {
     /// and `set_start`, a presence a block; and a tape of one node, and of none.
     #[test]
     fn the_clif_ops_write_the_references_tape() {
-        writes_the_references_tape(|lang, source, z, blocks, nodes| Writer::new(lang, source, 3, z, blocks, nodes / 3));
+        writes_the_references_tape(|lang, source, z, blocks, nodes| Writer::new(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3));
     }
 
     /// One writer, used again for every case of `writes_the_references_tape` in turn (`ops::Writer::begin`): its
@@ -3159,10 +3165,10 @@ mod tests {
             let w = match home.borrow_mut().take() {
                 Some(mut w) => {
                     used.set(used.get() + 1);
-                    w.begin(lang, source, 3, z, blocks, nodes / 3);
+                    w.begin(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3);
                     w
                 }
-                None => Writer::new(lang, source, 3, z, blocks, nodes / 3),
+                None => Writer::new(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3),
             };
             Again { w: Some(w), home: home.clone() }
         });
@@ -3178,13 +3184,13 @@ mod tests {
         let lang = lang_of(&table);
         let (nodes, pos) = escaped_nodes();
         let source = source_of(pos + 2);
-        let mut w = Writer::new(&lang, &source, 0, false, true, nodes.len());
+        let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, false, true, nodes.len());
         by_ops(&mut w, &nodes, 1);
         let first = Writer::finish(&mut w).expect("the first tape").tape;
         let want = first.extent().to_vec();
         let at = first.extent().as_ptr();
         w.recycle(first);
-        w.begin(&lang, &source, 0, false, true, nodes.len());
+        w.begin(&lang, &source, crate::newlines::Terminators::Lf, 0, false, true, nodes.len());
         by_ops(&mut w, &nodes, 1);
         let again = Writer::finish(&mut w).expect("the second tape").tape;
         assert_eq!(again.extent(), &want[..], "the tape written in the room given back");
@@ -3197,7 +3203,7 @@ mod tests {
     fn the_jit_ops_write_the_references_tape() {
         let jit = ops::Jit::leaked();
         writes_the_references_tape(|lang, source, z, blocks, nodes| {
-            let mut w = Writer::new(lang, source, 3, z, blocks, nodes / 3);
+            let mut w = Writer::new(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3);
             w.jit = Some(jit);
             w
         });
@@ -3211,7 +3217,7 @@ mod tests {
             eprintln!("no device: the writer's ops in UKL did not run");
             return;
         }
-        writes_the_references_tape_together(|lang, source, z, blocks, nodes| ops::device::DeviceOps::new(lang, source, 3, z, blocks, nodes / 3));
+        writes_the_references_tape_together(|lang, source, z, blocks, nodes| ops::device::DeviceOps::new(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3));
     }
 
     /// R13's cases: `make(lang, source, z, blocks, nodes)`'s writer and the reference, from the same ops, each case's
@@ -3276,7 +3282,7 @@ mod tests {
                 if late && nodes.len() < 2 {
                     continue;
                 }
-                let mut r = reference::Writer::new(&lang, source, 3, z, blocks, nodes.len());
+                let mut r = reference::Writer::new(&lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes.len());
                 by_ops_of(&mut r, nodes, every, late);
                 let mut c = make(&lang, source, z, blocks, nodes.len());
                 by_ops_of(&mut c, nodes, every, late);
@@ -3342,8 +3348,8 @@ mod tests {
             }, fail::FINAL),
         ];
         for (k, (case, code)) in cases.into_iter().enumerate() {
-            let mut r = reference::Writer::new(&lang, &source, 0, false, false, 4);
-            let mut c = Writer::new(&lang, &source, 0, false, false, 4);
+            let mut r = reference::Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, false, false, 4);
+            let mut c = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, false, false, 4);
             // 0 open, 1 leaf, 2 close, 3 commit, 4 retag.
             case(&mut |op, a, b| match op {
                 0 => { r.open(1, a); c.open(1, a); }
@@ -3372,7 +3378,7 @@ mod tests {
         let source = source_of(pos + 2);
         let mut cases = 0;
         for (k, cap) in [(part::OUT, 5000), (part::OUT, 30_000), (part::OPEN, 24), (part::TABLE, 16), (part::LAID, 100), (part::LAID_AT, 0), (part::FREE, 0)] {
-            let mut c = Writer::new(&lang, &source, 0, false, false, 0);
+            let mut c = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, false, false, 0);
             c.fix(k, cap, 0xa5);
             by_ops_of(&mut c, &nodes, 1, false);
             let failure = c.failure();
@@ -3395,7 +3401,7 @@ mod tests {
         let (nodes, pos) = escaped_nodes();
         let source = source_of(pos + 2);
         let number: Vec<u32> = (0..600).collect();
-        let Ok(Written::F16(tape)) = write_from(&lang, &Plain(&nodes, &table), &number, &source, 0, false) else { panic!("format 16") };
+        let Ok(Written::F16(tape)) = write_from(&lang, &Plain(&nodes, &table), &number, &source, crate::newlines::Terminators::Lf, 0, false) else { panic!("format 16") };
         let mut x = 0x9e37_79b9_7f4a_7c15u64;
         let mut random = |n: usize, alphabet: u64| -> Vec<u8> {
             (0..n)
@@ -3498,5 +3504,156 @@ mod tests {
             assert!(n < raw.len(), "case {case}: a piece cut short decodes less");
             assert_eq!(jits(&buf[..cut], 5, cut, raw.len()), dst[..n], "case {case}: the JIT's decode of the piece cut short");
         }
+    }
+
+    /// The ops at constant widths (`writer16::Fixed`) write the bytes the state's widths do (`Run`, the methods), in
+    /// format 16 and 16z: values past each width (escapes and side lists), codes past the cut, many blocks. So does a
+    /// walk's hold on the writer (`writer16::Cursor`, as generated tier 2s write), each node final as written: its
+    /// stores through the held block, and the state's ops at a block's first node and a close of a block before.
+    #[test]
+    fn the_ops_at_constant_widths_write_the_state_widths_bytes() {
+        use crate::tape::Entry;
+        use crate::writer16::{CellWidths, Cursor, Fixed, w_close_with, w_commit, w_leaf_in_with, w_leaf_with, w_open_with};
+        #[derive(Clone, Copy)]
+        enum Op {
+            Open(u32, u64),
+            Leaf(u32, u64, u64),
+            /// A node and its one leaf child: number, child's, start, the child's start and end, end.
+            LeafIn(u32, u32, u64, u64, u64, u64),
+            Close(u64),
+        }
+        // A tree over `len` bytes: gaps and lengths of every size, numbers up to `kinds`.
+        fn tree(len: u64, kinds: u32, seed: u64) -> Vec<Op> {
+            let mut x = seed;
+            let mut next = move || {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x
+            };
+            let (mut ops, mut at, mut open) = (vec![Op::Open(0, 0)], 0u64, 1usize);
+            while at < len {
+                let r = next();
+                // The long steps and lengths rare, so a tree is many blocks of nodes; a leaf past two bytes each 3000.
+                let long = |r: u64| if r.is_multiple_of(64) { 0x3ff } else { 7 };
+                let step = r >> 8 & if r % 3 == 0 { long(r >> 3) } else { 3 };
+                at = (at + step).min(len);
+                let number = (r >> 40) as u32 % kinds;
+                match r >> 4 & 3 {
+                    0 if open < 40 => {
+                        ops.push(Op::Open(number, at));
+                        open += 1;
+                    }
+                    1 if open > 1 => {
+                        ops.push(Op::Close(at));
+                        open -= 1;
+                    }
+                    2 if r >> 6 & 1 == 1 => {
+                        let cs = (at + (r >> 12 & 3)).min(len);
+                        let ce = (cs + (r >> 20 & long(r >> 30))).min(len);
+                        let end = (ce + (r >> 14 & 1)).min(len);
+                        ops.push(Op::LeafIn(number, (r >> 50) as u32 % kinds, at, cs, ce, end));
+                        at = end;
+                    }
+                    _ => {
+                        let end = (at + if ops.len() % 3000 == 1500 { 0x1_0400 } else { r >> 20 & long(r >> 30) }).min(len);
+                        ops.push(Op::Leaf(number, at, end));
+                        at = end;
+                    }
+                }
+            }
+            ops.extend(std::iter::repeat_n(Op::Close(len), open));
+            ops
+        }
+        fn both<X: CellWidths>(widths: [usize; 3]) -> [usize; 4] {
+            let entries = (0..300).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+            let lang = Lang::new(CodeTable::new(entries), widths, 1).unwrap();
+            let source = source_of(300_000);
+            // The block edges the cursor meets (`Z` rows a block): an open, a leaf and a node of one leaf at a
+            // block's first row, and a node of one leaf whose child is at it.
+            let mut edges = [0usize; 4];
+            for seed in [1, 2, 3, 4, 5, 6, 7, 8] {
+                let ops = tree(source.len() as u64, 300, seed);
+                let mut n = 0u32;
+                for o in &ops {
+                    let at = n % crate::writer16::Z;
+                    match o {
+                        Op::Open(..) | Op::Leaf(..) if n != 0 && at == 0 => edges[usize::from(matches!(o, Op::Leaf(..)))] += 1,
+                        Op::LeafIn(..) if at == 0 => edges[2] += 1,
+                        Op::LeafIn(..) if at == crate::writer16::Z - 1 => edges[3] += 1,
+                        _ => {}
+                    }
+                    n += match o {
+                        Op::Close(_) => 0,
+                        Op::LeafIn(..) => 2,
+                        _ => 1,
+                    };
+                }
+                assert!(ops.iter().any(|o| matches!(*o, Op::Leaf(_, s, e) if e - s > 0xffff)), "a length past two bytes");
+                assert!(ops.len() > 4 * 1024 && ops.iter().filter(|o| matches!(o, Op::LeafIn(..))).count() > 1000, "many blocks, and nodes of one leaf: {} ops, {} of one leaf", ops.len(), ops.iter().filter(|o| matches!(o, Op::LeafIn(..))).count());
+                for z in [false, true] {
+                    let mut a = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, 2 * ops.len());
+                    for &op in &ops {
+                        match op {
+                            Op::Open(n, s) => _ = a.open(n, s),
+                            Op::Leaf(n, s, e) => _ = a.leaf(n, s, e),
+                            Op::LeafIn(n, c, s, cs, ce, e) => {
+                                _ = a.open(n, s);
+                                _ = a.leaf(c, cs, ce);
+                                a.close(e);
+                            }
+                            Op::Close(e) => a.close(e),
+                        }
+                        a.commit();
+                    }
+                    let mut b = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, 2 * ops.len());
+                    b.reserve_run(2 * ops.len(), 41);
+                    let d = b.state_address();
+                    for &op in &ops {
+                        // SAFETY: `d` is `b`'s state, its room reserved for every node and level.
+                        let r = unsafe {
+                            match op {
+                                Op::Open(n, s) => w_open_with::<X>(d, n, s),
+                                Op::Leaf(n, s, e) => w_leaf_with::<X>(d, n, s, e),
+                                Op::LeafIn(n, c, s, cs, ce, e) => w_leaf_in_with::<X>(d, n, c, s, cs, ce, e),
+                                Op::Close(e) => w_close_with::<X>(d, e),
+                            }
+                        };
+                        assert_eq!(r, 0, "widths {widths:?}: the op, its room reserved");
+                        // SAFETY: as the op's.
+                        assert_eq!(unsafe { w_commit(d) }, 0);
+                    }
+                    let mut c = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, 2 * ops.len());
+                    c.reserve_run(2 * ops.len(), 41);
+                    c.final_as_written();
+                    {
+                        // SAFETY: `c`'s state, its room reserved for every node and level, written by the cursor alone.
+                        let mut cur = unsafe { Cursor::<X>::begin(c.state_address()) };
+                        for &op in &ops {
+                            // SAFETY: as `begin`'s; each close is an open's.
+                            unsafe {
+                                match op {
+                                    Op::Open(n, s) => cur.open(n, s),
+                                    Op::Leaf(n, s, e) => cur.leaf(n, s, e),
+                                    Op::LeafIn(n, k, s, cs, ce, e) => cur.leaf_in(n, k, s, cs, ce, e),
+                                    Op::Close(e) => cur.close(e),
+                                }
+                            }
+                        }
+                    }
+                    assert!(c.failure().is_none(), "widths {widths:?}: the cursor's ops, the room reserved");
+                    let (a, b, c) = (a.finish().unwrap(), b.finish().unwrap(), c.finish().unwrap());
+                    assert!(a.tape.extent() == b.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the constant widths' bytes");
+                    assert!(a.tape.extent() == c.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the cursor's bytes");
+                }
+            }
+            edges
+        }
+        let edges = both::<Fixed<1, 1, 1>>([1, 1, 1]);
+        assert!(edges.iter().all(|&e| e > 0), "every block edge met (an open, a leaf, a node of one leaf, its child): {edges:?}");
+        _ = both::<Fixed<2, 1, 4>>([2, 1, 4]);
+        _ = both::<Fixed<1, 2, 2>>([1, 2, 2]);
+        _ = both::<Fixed<4, 4, 8>>([4, 4, 8]);
+        _ = both::<Fixed<3, 1, 1>>([3, 1, 1]);
     }
 }

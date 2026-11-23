@@ -9,14 +9,11 @@ pub mod nearest;
 pub mod span_prefilter;
 pub mod connection;
 pub mod grammar_shape;
-#[allow(dead_code)]
-pub mod families;
-#[allow(dead_code)]
-pub mod memo;
+// cratify: `families` is rerail-facts' (it mounts it, over the base)
 /// M's layered map as copied; `overlay` is its adaptation (open item O19).
 #[allow(dead_code)]
 pub mod lmap;
-// cratify: `facts_a` is rerail-classic's (it mounts it)
+// cratify: `facts_a` is rerail-workspace's (it mounts it)
 /// D's projection batches as copied; `runs` is their adaptation (open item O19).
 #[cfg(test)]
 #[allow(dead_code)]
@@ -25,8 +22,6 @@ pub mod d_projection;
 pub mod observe;
 #[allow(dead_code)]
 pub mod overlay;
-#[allow(dead_code)]
-pub mod pages;
 #[allow(dead_code)]
 pub mod producers;
 #[allow(dead_code)]
@@ -40,11 +35,9 @@ pub mod runs;
 pub mod vtab;
 /// `core.rerail`'s repository inputs (decision 0046).
 pub mod repository;
-/// M's Y1 reference graph as copied (05 Phase 1 row 2's source; open item O19).
-#[allow(dead_code, unused_imports, clippy::all)]
-// Unix only (not the browser build, not Windows): it forks its checks and reads macOS' and Linux' memory counters.
+/// M's Y1 reference graph as copied (05 Phase 1 row 2's source; open item O19): rerail-ygraph's. Unix only.
 #[cfg(unix)]
-pub mod ygraph;
+pub use rerail_ygraph::code_rule_dsl::facts::ygraph;
 
 /// The derivation graph as the push path reads and writes it: the store itself (every write a
 /// transaction) or the overlay over it (writes in memory, written back in the background).

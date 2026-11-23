@@ -114,6 +114,24 @@ fn a_cache_is_facts_and_a_version_bump_derives_it_again() {
     steps(&mut c, "kept.sqlite", &mut |c, i| c.run(&format!("fresh-{i}.sqlite")));
 }
 
+/// A key column may be a `digest` (decision 0103 §3): stored as a symbol, its 64 hex digits, and kept and read as any
+/// column. Here the key is each imported function's body's digest, and the output carries it.
+#[test]
+fn a_cache_keyed_by_a_digest_keeps_it_as_a_symbol() {
+    let program = PROGRAM
+        .replace(".decl key(q: symbol, v: symbol)\nkey(q, \"V\") :- imp(q), def(_, q).", ".decl key(q: symbol, h: digest, v: symbol)\nkey(q, h, \"v1\") :- imp(q), body(q, b), h = @sha256(b).")
+        .replace(".decl info(q: symbol, v: symbol, b: symbol)\ninfo(q, v, b) :- key(q, v), body(q, b).", ".decl info(q: symbol, h: digest, b: symbol)\ninfo(q, h, b) :- key(q, h, _), body(q, b).");
+    assert!(program.contains("h: digest, v: symbol") && program.contains("info(q, h, b)"), "{program}");
+    let c = Corpus::of("cache-digest", &program);
+    c.write("a.py", "def f():\n    pass\n");
+    c.write("b.py", "from a import f\n");
+    let rows = c.run("digest.sqlite");
+    use sha2::Digest as _;
+    let body = rows.first().and_then(|r| r.get(2)).cloned().unwrap_or_default();
+    let want: String = sha2::Sha256::digest(body.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+    assert!(rows.len() == 1 && rows[0][1] == want && body.contains("pass"), "{rows:?}");
+}
+
 /// In a session: the same, by the session's maintenance of ordinary relations; a run with nothing kept is a full
 /// run over a store of its own.
 #[test]

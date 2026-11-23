@@ -1840,7 +1840,7 @@ fn combine<'index>(
 /// prepared roots by its plan's address, so every caller on the `p-anchor-corpus` path (open item
 /// O20) reaches the same `Arc` through W's.
 #[cfg(feature = "p-anchor-corpus")]
-pub(in crate::code_rule_dsl) fn plan_for(grammar: &super::GrammarMatcher) -> Arc<AnchorPlan> {
+pub fn plan_for(grammar: &super::GrammarMatcher) -> Arc<AnchorPlan> {
     type Plans = std::collections::HashMap<usize, (Arc<super::AnchorPlan>, Arc<AnchorPlan>)>;
     #[derive(Default)]
     struct AnchorPlans(std::sync::Mutex<Plans>);

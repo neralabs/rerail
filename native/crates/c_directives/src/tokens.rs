@@ -218,13 +218,13 @@ mod lowering_time {
             let parse = t.elapsed();
             let kind = |name: &str| super::KINDS.iter().position(|&k| k == name).map(|i| i as u16).or(Some(900));
             let field = |_: &str| None;
-            let symbols = bc::Symbols { kind: &kind, field: &field };
+            let symbols = bc::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
             let t = std::time::Instant::now();
             let compiled = bc::compile_shaped(&stmts, &[bc::FALLBACK], Some(&symbols), bc::Shape::Rules).unwrap();
             let compile = t.elapsed();
             let t = std::time::Instant::now();
             let text = compiled.text();
-            let program = rerail_compiler::rir_asm::assemble(&text).unwrap();
+            let program = rerail_rir::rir_asm::assemble(&text).unwrap();
             let assemble = t.elapsed();
             let t = std::time::Instant::now();
             let _native = rerail_compiler::native_ir::lower(&program, 0, 0).unwrap();

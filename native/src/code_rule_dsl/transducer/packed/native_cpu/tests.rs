@@ -658,7 +658,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 1,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -763,7 +763,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 1,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -875,7 +875,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 2,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: final_captures.as_mut_ptr(),
             final_capture_capacity: final_captures.len() as u32,
@@ -1062,7 +1062,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1204,7 +1204,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -1327,7 +1327,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1429,7 +1429,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 2,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1549,7 +1549,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 1,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1730,7 +1730,7 @@
             repeat_quota_limit: 0,
             results: std::ptr::null_mut(),
             result_quota_limit: 0,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -2000,7 +2000,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -2232,7 +2232,7 @@
             repeat_quota_limit: repeats.len() as u32,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: final_captures.as_mut_ptr(),
             final_capture_capacity: final_captures.len() as u32,
@@ -2443,7 +2443,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -2818,7 +2818,8 @@
             source_end: source.len() as u32,
             ..MetalNode::default()
         }];
-        let line_starts = [0_u32];
+        // The source's lines, its line index as a document's (decision 0612).
+        let lines = rerail_tape_format::newlines::Lines::of(source, rerail_tape_format::newlines::Terminators::Lf);
         let mut captures = [LinkRecord::default(); 1];
         let mut final_captures = [FinalCaptureRecord::default(); 1];
         let mut results = [ResultRecord::default(); 1];
@@ -2836,7 +2837,7 @@
         context.capture_quota_limit = 1;
         context.results = results.as_mut_ptr();
         context.result_quota_limit = 1;
-        context.line_starts = line_starts.as_ptr();
+        context.lines = lines.bytes().as_ptr();
         context.line_count = 1;
         context.final_captures = final_captures.as_mut_ptr();
         context.final_capture_capacity = 1;
@@ -2873,7 +2874,8 @@
             source_end: source.len() as u32,
             ..MetalNode::default()
         }];
-        let line_starts = [0_u32];
+        // The source's lines, its line index as a document's (decision 0612).
+        let lines = rerail_tape_format::newlines::Lines::of(source, rerail_tape_format::newlines::Terminators::Lf);
         let mut captures = [LinkRecord::default(); 1];
         let mut final_captures = [FinalCaptureRecord::default(); 1];
         let mut results = [ResultRecord::default(); 1];
@@ -2891,7 +2893,7 @@
         context.capture_quota_limit = 1;
         context.results = results.as_mut_ptr();
         context.result_quota_limit = 1;
-        context.line_starts = line_starts.as_ptr();
+        context.lines = lines.bytes().as_ptr();
         context.line_count = 1;
         context.final_captures = final_captures.as_mut_ptr();
         context.final_capture_capacity = 1;
@@ -2949,7 +2951,8 @@
         nodes[3].parent = 0;
         nodes[3].source_start = 5;
         nodes[3].source_end = 6;
-        let line_starts = [0_u32, 2, 3];
+        // The source's lines, its line index as a document's (decision 0612).
+        let lines = rerail_tape_format::newlines::Lines::of(source, rerail_tape_format::newlines::Terminators::Lf);
         let mut pending = [PendingRecord::default(); 4];
         let mut captures = [LinkRecord::default(); 8];
         let mut final_captures = [FinalCaptureRecord::default(); 3];
@@ -2969,8 +2972,8 @@
         context.capture_quota_limit = captures.len() as u32;
         context.results = results.as_mut_ptr();
         context.result_quota_limit = 1;
-        context.line_starts = line_starts.as_ptr();
-        context.line_count = line_starts.len() as u32;
+        context.lines = lines.bytes().as_ptr();
+        context.line_count = lines.count() as u32;
         context.final_captures = final_captures.as_mut_ptr();
         context.final_capture_capacity = final_captures.len() as u32;
         context.status = &mut status;
@@ -3418,7 +3421,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -3523,7 +3526,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -3639,7 +3642,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -3755,7 +3758,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -3852,7 +3855,7 @@
             repeat_quota_limit: 0,
             results: std::ptr::null_mut(),
             result_quota_limit: 0,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,

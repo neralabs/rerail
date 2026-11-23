@@ -33,7 +33,7 @@ fn verifies(public_key: &str, message: &str, signature: &str) -> bool {
     key.verify_strict(message.as_bytes(), &signature).is_ok()
 }
 
-pub(super) fn register(db: &Connection) -> rusqlite::Result<()> {
+pub fn register(db: &Connection) -> rusqlite::Result<()> {
     db.create_scalar_function(
         "sha256",
         1,

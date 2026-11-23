@@ -187,4 +187,4 @@ the stack. So the lists' count is one a level, and every other store is flat.
 |---|---|---|
 | R1 | Every store but the output's, the scratch's and the lists' is flat in a chain's length, at 25, 50 and 100 levels: plain, through a scanned argument, through an exit. The lists grow by at most one a level (the serial pass's frames). | `a_chains_use_is_flat_in_its_length` |
 | R2 | Every eval test equals the serial pass after each step. | the eval tests |
-| R3 | A unit refused for work is refused as `X_WORK`, and grows no rung. | `a_unit_past_its_room_runs_again_larger` (unchanged), the work bound's reason in `against_serial` |
+| R3 | A unit refused for work is refused as `X_WORK`, and grows no rung. | `a_unit_past_its_token_room_runs_again_larger`, `a_unit_past_its_scratch_room_runs_again_larger`, `a_line_past_its_room_runs_again_larger` (unchanged), the work bound's reason in `against_serial` |

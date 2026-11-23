@@ -1,9 +1,7 @@
 use super::calls::{Mode, SeedScope, TermId};
 use super::json::invalid;
 use super::matcher::{GrammarMatcher, Transform};
-use super::module_path::ModulePath;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
-use crate::code_rule_dsl::language::{GrammarDialect, PackageType};
+use crate::code_rule_dsl::language::GrammarDialect;
 use ast_grep_core::replacer::TemplateFix;
 use globset::GlobSet;
 use napi::Result;
@@ -16,22 +14,22 @@ use std::sync::Arc;
 /// The failure code of an output cap: a clause found more witnesses (or regex matches) than
 /// `maxWitnesses` lets it report. Apart from `budget-exceeded`, which is running out of work: the
 /// clause did read the file, so the file is not blind and the failure is not a coverage gap.
-pub(super) const WITNESS_LIMIT: &str = "witness-limit";
+pub const WITNESS_LIMIT: &str = "witness-limit";
 /// The failure code of a clause the file's work stopped, not its own: the file's shared work
 /// (parsing, its tape, its anchor index) ran out before the clause ran, or the clauses before it
 /// spent the file's clause-work ceiling. Apart from `budget-exceeded` (the clause ran out of its
 /// own allowance): it depends on the other rules, so no rule is told to simplify itself for it.
-pub(super) const FILE_BUDGET_EXCEEDED: &str = "file-budget-exceeded";
+pub const FILE_BUDGET_EXCEEDED: &str = "file-budget-exceeded";
 /// The failure code of a clause skipped because the file is past the rule's input limits
 /// (`maxSourceBytes`, or `maxFiles` of 0): it never ran on the file, and a rule's configured limit
 /// is no work it ran out of, so this fails the audit and is no coverage gap.
-pub(super) const INPUT_LIMIT: &str = "input-limit";
+pub const INPUT_LIMIT: &str = "input-limit";
 
 #[derive(Clone)]
 pub struct Limits {
-    pub(super) max_ast_pattern_bytes: usize,
+    pub max_ast_pattern_bytes: usize,
     pub max_files: usize,
-    pub(super) max_regex_pattern_bytes: usize,
+    pub max_regex_pattern_bytes: usize,
     pub max_source_bytes: usize,
     pub max_visited_nodes: usize,
     /// `maxVisitsPerNode` (optional, 0 without it): in the indexed workspace a file's node and
@@ -53,7 +51,7 @@ impl Limits {
 
 #[derive(Clone)]
 pub struct Capabilities {
-    pub(super) raw: Value,
+    pub raw: Value,
     pub limits: Limits,
 }
 
@@ -63,7 +61,7 @@ pub struct CodeRuleScope {
     pub(super) exclude: GlobSet,
     /// Where a workspace places its resident copy of the code rule, per folder of the checkout;
     /// `None` places it everywhere its globs match, at its rule mode.
-    pub(super) placement: Option<Placement>,
+    pub placement: Option<Placement>,
 }
 
 impl CodeRuleScope {
@@ -98,18 +96,18 @@ impl CodeRuleScope {
 /// linter's suppression comment (`// eslint-disable-next-line`, `# noqa`, ...) silences a violation
 /// in the folder, as the violation's `suppress` names it.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct PlacementEntry {
-    pub(super) folder: String,
-    pub(super) mode: Option<RuleMode>,
-    pub(super) honour_suppressions: bool,
+pub struct PlacementEntry {
+    pub folder: String,
+    pub mode: Option<RuleMode>,
+    pub honour_suppressions: bool,
 }
 
 /// A placement's entries, sorted by folder, no folder twice.
-pub(super) type Placement = Arc<[PlacementEntry]>;
+pub type Placement = Arc<[PlacementEntry]>;
 
 /// The entry that decides `path`: the deepest folder that contains it, if any. `web` contains
 /// `web` and `web/x`, never `web2/x`.
-pub(super) fn placed<'a>(
+pub fn placed<'a>(
     placement: &'a [PlacementEntry],
     path: &str,
 ) -> Option<&'a PlacementEntry> {
@@ -475,12 +473,12 @@ pub enum ProjectionSource {
 #[derive(Clone)]
 pub struct FactQuery {
     pub(super) alias: String,
-    pub(super) predicate: Option<Value>,
+    pub predicate: Option<Value>,
     /// Rows projected from an AST query's matches in every file of the code rule's scope.
     pub ast: Arc<AstRelation>,
     /// Consumer columns are independent of the shared matcher and file domain.
     pub project: Arc<[Projection]>,
-    pub(super) closure: Vec<NameClosure>,
+    pub closure: Vec<NameClosure>,
     pub(super) each: Option<String>,
     pub anchor: Anchor,
 }
@@ -514,7 +512,7 @@ pub struct AstRelation {
     /// A `Query::Ast`.
     pub query: Query,
     /// The files the relation reads, within the code rule's scope; `None` reads all of it.
-    pub(super) domain: Option<CodeRuleScope>,
+    pub domain: Option<CodeRuleScope>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -628,7 +626,7 @@ impl Query {
 
     /// Whether an AST query here reads `importTarget`, whose answer depends on files besides the
     /// one matched (`import_target::fs::View`).
-    pub(super) fn reads_import_targets(&self) -> bool {
+    pub fn reads_import_targets(&self) -> bool {
         match self {
             Query::Ast { matchers, .. } => matchers.iter().any(|matcher| matcher.import_target),
             Query::SelectWhen { select, exists } => {
@@ -665,10 +663,10 @@ pub struct CallsTerm {
     /// Identifies the term's semantics: equal keys have equal seeds.
     pub key: Arc<str>,
     /// Identifies its seed query: terms differing only in `through` share it.
-    pub(super) seed_key: Arc<str>,
+    pub seed_key: Arc<str>,
     pub through: Mode,
     /// Which definitions the seed query's witnesses stand for.
-    pub(super) seed_scope: SeedScope,
+    pub seed_scope: SeedScope,
     /// `{ all: [{ kind: function_definition }, <inner rule>] }` with the query's utilities: its
     /// witnesses are the definitions that match.
     pub seed: Query,
@@ -676,14 +674,14 @@ pub struct CallsTerm {
 
 /// Every workspace's `calls` terms, by key.
 #[derive(Default)]
-pub(super) struct Terms {
-    pub(super) terms: Vec<Arc<CallsTerm>>,
+pub struct Terms {
+    pub terms: Vec<Arc<CallsTerm>>,
     ids: HashMap<Arc<str>, TermId>,
 }
 
 impl Terms {
     /// Adds `term` unless an equal one is known: its id when new.
-    pub(super) fn add(&mut self, term: &Arc<CallsTerm>) -> Option<TermId> {
+    pub fn add(&mut self, term: &Arc<CallsTerm>) -> Option<TermId> {
         if self.ids.contains_key(&term.key) {
             return None;
         }
@@ -693,16 +691,16 @@ impl Terms {
         Some(id)
     }
 
-    pub(super) fn id(&self, key: &str) -> Option<TermId> {
+    pub fn id(&self, key: &str) -> Option<TermId> {
         self.ids.get(key).copied()
     }
 
-    pub(super) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.terms.is_empty()
     }
 
     /// Each term's key and mode, by id: what a `CallsView` asks.
-    pub(super) fn questions(&self) -> Vec<(Arc<str>, Mode)> {
+    pub fn questions(&self) -> Vec<(Arc<str>, Mode)> {
         self.terms
             .iter()
             .map(|term| (Arc::clone(&term.key), term.through))
@@ -747,10 +745,10 @@ pub struct CompiledClause {
     pub id: String,
     pub violation: ViolationSpec,
     pub kind: ClauseKind,
-    pub(super) synthetic: bool,
+    pub synthetic: bool,
     /// A synthetic leaf under a `select_when`'s `exists` side: one witness answers it, so a file's
     /// evaluation stops at its first witness.
-    pub(super) decision: bool,
+    pub decision: bool,
     /// D's plan for a relational clause, compiled by D's compiler beside P's (test-only, O19).
     #[cfg(any(test, feature = "test-hooks"))]
     pub data_layer: Option<std::sync::Arc<crate::code_rule_dsl::waves::relational::Plan>>,
@@ -808,7 +806,7 @@ pub enum RuleMode {
 }
 
 impl RuleMode {
-    pub(super) fn parse(mode: &str) -> Option<Self> {
+    pub fn parse(mode: &str) -> Option<Self> {
         match mode {
             "log" => Some(Self::Log),
             "steer" => Some(Self::Steer),
@@ -876,7 +874,7 @@ impl CompiledCodeRule {
 
     /// Whether any clause reads text (`Query::reads_text`): files no code-rule language lists are
     /// read, as text, for such a code rule alone.
-    pub(super) fn reads_text(&self) -> bool {
+    pub fn reads_text(&self) -> bool {
         self.clauses.iter().any(|clause| match &clause.kind {
             ClauseKind::Forbid(query) => query.reads_text(),
             ClauseKind::RequireEach { subject, evidence } => {
@@ -900,153 +898,9 @@ impl CompiledCodeRule {
     }
 }
 
-#[derive(Clone)]
-pub struct FileInput {
-    pub path: String,
-    pub language: String,
-    pub source: Arc<crate::code_rule_dsl::tape::Text>,
-    /// A Python file's module path: the host's (`module`), else the file's stem.
-    pub module: Option<Arc<ModulePath>>,
-    /// An ECMA file's nearest `package.json` (`package`); `None` without one.
-    pub package: Option<crate::code_rule_dsl::language::FileManifest>,
-}
-
-/// A request file as facts read it.
-impl crate::code_rule_dsl::facts::core::SourceFile for FileInput {
-    fn language(&self) -> &str {
-        &self.language
-    }
-    fn source(&self) -> &Arc<crate::code_rule_dsl::tape::Text> {
-        &self.source
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
-
-impl FileInput {
-    /// `module` is the module path a host derived for a Python file (Ruff's package walk): a
-    /// dotted string, or a list of names when one keeps a dot (`["json.d", "__init__"]`). Without
-    /// it a Python file is named by its stem, as Ruff names a file outside any package; a file set
-    /// that holds package markers derives it first (`python_module_in`). `package` is the ECMA
-    /// file's nearest `package.json` (`Manifest::from_wire`, `Manifests`); without it the file
-    /// has none.
-    pub fn new(
-        path: String,
-        language: String,
-        source: Arc<crate::code_rule_dsl::tape::Text>,
-        module: Option<&Value>,
-        package: Option<crate::code_rule_dsl::language::FileManifest>,
-        at: &str,
-    ) -> Result<Self> {
-        let module = match module {
-            Some(module) => Some(module_path(module).ok_or_else(|| {
-                invalid(format!(
-                    "{at}/module must be a dotted module path (non-empty names joined by `.`) or a list of names"
-                ))
-            })?),
-            None => crate::code_rule_dsl::language::dialect_by_label(&language).and_then(|dialect| {
-                let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(dialect));
-                pack.scope_unpackaged_module(&path)
-            }),
-        };
-        Ok(Self {
-            path,
-            language,
-            source,
-            module: module.map(Arc::new),
-            package,
-        })
-    }
-
-    /// The `type` of the file's nearest `package.json`, which decides a `.js` file's module system.
-    pub(super) fn package_type(&self) -> Option<PackageType> {
-        self.package
-            .as_deref()
-            .map(|package| package.package_type())
-    }
-}
-
-fn module_path(value: &Value) -> Option<ModulePath> {
-    match value {
-        Value::String(module) => ModulePath::dotted(module),
-        Value::Array(names) => ModulePath::names(
-            &names
-                .iter()
-                .map(Value::as_str)
-                .collect::<Option<Vec<_>>>()?,
-        ),
-        _ => None,
-    }
-}
-
-/// Ruff's module path for a Python file (`detect_package_root`), in the shape hosts send as
-/// `module`: the package root is the highest directory reached from the file's own by climbing
-/// while each holds an `__init__.py`. The module is the names from that root's parent down, the
-/// file's by its stem (`pkg/__init__.py` is `pkg.__init__`): dotted, or a list when a name keeps a
-/// dot (`["json.d", "__init__"]`), since N999 reads such names whole. `None` outside a package,
-/// where the engine names the module by the file's stem. Every ingestion path derives it here.
-pub(crate) fn python_module_path(
-    file: &std::path::Path,
-    is_package: impl Fn(&std::path::Path) -> bool,
-) -> Option<Value> {
-    let mut root = None;
-    let mut directory = file.parent()?;
-    while is_package(directory) {
-        root = Some(directory);
-        match directory.parent() {
-            Some(parent) if parent != directory => directory = parent,
-            _ => break,
-        }
-    }
-    let relative = file.strip_prefix(root?.parent()?).ok()?;
-    let mut names = relative
-        .components()
-        .map(|component| component.as_os_str().to_str().map(str::to_owned))
-        .collect::<Option<Vec<_>>>()?;
-    let name = names.pop()?;
-    let stem = match name.rfind('.') {
-        Some(dot) if dot > 0 => &name[..dot],
-        _ => name.as_str(),
-    };
-    names.push(stem.to_owned());
-    if names.iter().any(String::is_empty) {
-        return None;
-    }
-    Some(if names.iter().any(|name| name.contains('.')) {
-        Value::Array(names.into_iter().map(Value::String).collect())
-    } else {
-        Value::String(names.join("."))
-    })
-}
-
-/// `python_module_path` over the files on disk.
-pub fn python_module_path_on_disk(file: &std::path::Path) -> Option<Value> {
-    python_module_path(file, |directory| {
-        let marker = directory.join("__init__.py");
-        if crate::git_workspace::snapshot::contains(file) {
-            crate::git_workspace::snapshot::is_file(marker)
-        } else {
-            marker.exists()
-        }
-    })
-}
-
-/// The directory a file set's path marks as a Python package (`pkg` for `pkg/__init__.py`, `""`
-/// for a root `__init__.py`), if any.
-pub fn package_marker_directory(path: &str) -> Option<&str> {
-    path.strip_suffix("/__init__.py")
-        .or_else(|| (path == "__init__.py").then_some(""))
-}
-
-/// `python_module_path` of a relative `path` in a file set (a workspace, a repository snapshot)
-/// whose package markers `is_package` reads: the module a host walking the same files on disk
-/// would send.
-pub fn python_module_in(path: &str, is_package: impl Fn(&str) -> bool) -> Option<Value> {
-    python_module_path(std::path::Path::new(path), |directory| {
-        is_package(directory.to_string_lossy().as_ref())
-    })
-}
+pub use super::file_input::{
+    FileInput, package_marker_directory, python_module_in, python_module_path, python_module_path_on_disk,
+};
 
 #[derive(Clone)]
 pub struct Snapshot {
@@ -1057,46 +911,46 @@ pub struct Snapshot {
 #[derive(Clone, Default)]
 
 pub struct Metrics {
-    pub(super) files: usize,
+    pub files: usize,
     pub visited_nodes: usize,
-    pub(super) witnesses: usize,
-    pub(super) python_ast_parses: usize,
-    pub(super) python_ast_module_walks: usize,
-    pub(super) syntax_loads: usize,
-    pub(super) relational_materializations: std::collections::BTreeMap<String, usize>,
-    pub(super) line_index_nanoseconds: u64,
-    pub(super) regex_nanoseconds: u64,
-    pub(super) ast_parse_nanoseconds: u64,
-    pub(super) ast_match_nanoseconds: u64,
-    pub(super) ast_matcher_calls: usize,
-    pub(super) storage_retries: usize,
-    pub(super) storage_retry_wait_nanoseconds: u64,
-    pub(super) storage_unpublished_files: usize,
-    pub(super) storage_released_files: usize,
-    pub(super) storage_transaction_nanoseconds: u64,
-    pub(super) storage_object_transaction_nanoseconds: u64,
-    pub(super) storage_relationship_transaction_nanoseconds: u64,
-    pub(super) storage_read_data_statements: usize,
-    pub(super) storage_data_statements: usize,
-    pub(super) storage_max_data_statements_per_pass: usize,
-    pub(super) storage_transaction_statements: usize,
-    pub(super) storage_reconciliation_passes: usize,
-    pub(super) storage_read_nanoseconds: u64,
-    pub(super) storage_manifest_nanoseconds: u64,
-    pub(super) storage_write_nanoseconds: u64,
-    pub(super) reused_sources: usize,
-    pub(super) reused_tapes: usize,
-    pub(super) written_sources: usize,
-    pub(super) written_tapes: usize,
-    pub(super) restored_tapes: usize,
-    pub(super) restored_candidate_files: usize,
-    pub(super) avoided_tape_reads: usize,
-    pub(super) tapes_from_store: usize,
-    pub(super) restored_local_results: usize,
+    pub witnesses: usize,
+    pub python_ast_parses: usize,
+    pub python_ast_module_walks: usize,
+    pub syntax_loads: usize,
+    pub relational_materializations: std::collections::BTreeMap<String, usize>,
+    pub line_index_nanoseconds: u64,
+    pub regex_nanoseconds: u64,
+    pub ast_parse_nanoseconds: u64,
+    pub ast_match_nanoseconds: u64,
+    pub ast_matcher_calls: usize,
+    pub storage_retries: usize,
+    pub storage_retry_wait_nanoseconds: u64,
+    pub storage_unpublished_files: usize,
+    pub storage_released_files: usize,
+    pub storage_transaction_nanoseconds: u64,
+    pub storage_object_transaction_nanoseconds: u64,
+    pub storage_relationship_transaction_nanoseconds: u64,
+    pub storage_read_data_statements: usize,
+    pub storage_data_statements: usize,
+    pub storage_max_data_statements_per_pass: usize,
+    pub storage_transaction_statements: usize,
+    pub storage_reconciliation_passes: usize,
+    pub storage_read_nanoseconds: u64,
+    pub storage_manifest_nanoseconds: u64,
+    pub storage_write_nanoseconds: u64,
+    pub reused_sources: usize,
+    pub reused_tapes: usize,
+    pub written_sources: usize,
+    pub written_tapes: usize,
+    pub restored_tapes: usize,
+    pub restored_candidate_files: usize,
+    pub avoided_tape_reads: usize,
+    pub tapes_from_store: usize,
+    pub restored_local_results: usize,
 }
 
 impl Metrics {
-    pub(super) fn observe_native_work(&mut self, other: &Self) {
+    pub fn observe_native_work(&mut self, other: &Self) {
         self.python_ast_parses += other.python_ast_parses;
         self.python_ast_module_walks += other.python_ast_module_walks;
         self.syntax_loads += other.syntax_loads;
@@ -1107,7 +961,7 @@ impl Metrics {
                 .or_default() += count;
         }
     }
-    pub(super) fn merge(&mut self, other: Self) {
+    pub fn merge(&mut self, other: Self) {
         self.files += other.files;
         self.visited_nodes += other.visited_nodes;
         self.witnesses += other.witnesses;
@@ -1156,8 +1010,8 @@ impl Metrics {
 pub struct Evaluation {
     pub violations: Vec<Value>,
     pub failures: Vec<Value>,
-    pub(super) metrics: Metrics,
+    pub metrics: Metrics,
     /// The clauses the result covers, as (rule id, clause id): the rule id is given where the
     /// result spans several code rules, as its failures give it. Each has a `coverage` entry.
-    pub(super) clauses: Vec<(Option<String>, String)>,
+    pub clauses: Vec<(Option<String>, String)>,
 }

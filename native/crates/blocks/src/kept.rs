@@ -239,8 +239,15 @@ impl<B: Borrow<Block>> KeptFacts<B> {
         }
     }
 
+    /// An entry's relation name as bytes: what a search compares (`str`'s order is its bytes'), not checked as UTF-8
+    /// at each probe (`str_at` is, for the key it gives).
+    fn rel_bytes(&self, e: &KeptEntry) -> &[u8] {
+        &self.strings()[e.rel_at as usize..(e.rel_at + e.rel_len) as usize]
+    }
+
     fn find(&self, key: &FactKey) -> Option<(FactKey<'_>, Found<'_>)> {
-        let i = self.entries().binary_search_by(|e| self.key_of(e).cmp(key)).ok()?;
+        let rel = key.rel.as_bytes();
+        let i = self.entries().binary_search_by(|e| self.rel_bytes(e).cmp(rel).then_with(|| e.ident.cmp(key.ident)).then_with(|| e.part.cmp(&key.part))).ok()?;
         let e = &self.entries()[i];
         Some((self.key_of(e), self.entry(e)))
     }
@@ -248,8 +255,9 @@ impl<B: Borrow<Block>> KeptFacts<B> {
     /// The entries of `rel`, by a binary search for their range.
     fn range(&self, rel: &str) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
         let es = self.entries();
-        let lo = es.partition_point(|e| str_at(self.strings(), e.rel_at, e.rel_len) < rel);
-        let hi = lo + es[lo..].partition_point(|e| str_at(self.strings(), e.rel_at, e.rel_len) == rel);
+        let r = rel.as_bytes();
+        let lo = es.partition_point(|e| self.rel_bytes(e) < r);
+        let hi = lo + es[lo..].partition_point(|e| self.rel_bytes(e) == r);
         es[lo..hi].iter().map(move |e| (self.key_of(e), self.entry(e)))
     }
 

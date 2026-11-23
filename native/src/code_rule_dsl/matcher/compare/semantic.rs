@@ -7,38 +7,7 @@ use crate::code_rule_dsl::value::structure::Equality;
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
 
-/// The text modes that read what the captures mean rather than their text.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SemanticText {
-    /// The captured expressions' values, in the language's sense: Python `==` and order, or
-    /// JavaScript `Object.is` and its relational operators' order (IsLessThan, converting
-    /// primitives: `null <= 0`, `'1' < 2`). Strings compare under the collation.
-    Value,
-    /// The static property name of a key or of what holds one: TypeScript's as ESLint's
-    /// `getStaticPropertyName` reads it; PHP's property, method, class constant, array key or
-    /// named argument, a constant computed name folded (`value/php_compare.rs`). A key without
-    /// one equals no key and has no order.
-    Key,
-    /// Python or PHP expressions or statements compared structurally: Ruff's equalities
-    /// (`structure`, `structure-hash`, `structure-parts`), PHP-Parser's trees and PHP's array key
-    /// identity (`structure`, `structure-hash`); `eq`/`ne` only.
-    Structure(Equality),
-    /// The name of a key or of what holds one, following bindings: as typescript-eslint's
-    /// `getStaticMemberAccessValue` reads it (TypeScript): a non-computed identifier's or private
-    /// name's (without `#`), or `String(v)` of what the key folds to; PHP's key with a computed
-    /// name's variables followed. Unknown where that is not known.
-    Member,
-    /// What a node names: ESTree's name (TypeScript), an identifier's name, escapes decoded (a
-    /// private name's without `#`), or a string literal's value; the name PHP looks a symbol up
-    /// by, or a string literal's value. A node without one equals no name and has no order, as
-    /// `key`'s nameless keys.
-    Name,
-    /// The same reference: ESLint's `isSameReference` (TypeScript), parentheses and optional
-    /// chains aside, the same `this`, name, literal value or member access; with `static_keys`,
-    /// `a.b` and `a['b']` are the same. PHP's variables, constants and access chains likewise
-    /// (`value/php_compare.rs`). `eq`/`ne` only.
-    Reference { static_keys: bool },
-}
+pub use crate::code_rule_dsl::language::adapter::value::SemanticText;
 
 /// The verdict where a side is not a bound node: `Some` for the modes that read such a side
 /// themselves, `None` to compare it as text.

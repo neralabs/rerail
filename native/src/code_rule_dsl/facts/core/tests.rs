@@ -86,7 +86,7 @@ fn the_digest_is_of_the_content_not_the_path() {
 /// an image alone: every node's answers, the kind and class scans, and the lines.
 #[test]
 fn every_format_reads_the_same_facts_off_the_tape() {
-    use crate::code_rule_dsl::{lines::{LineTable, Terminators}, tape::{Grammar, TapeDoc, TapeImage, formats::Format}};
+    use crate::code_rule_dsl::{lines::LineTable, tape::{Grammar, TapeDoc, TapeImage, formats::Format}};
     for (label, source) in [
         ("python", "é = f(1)\r\nclass A:\r def f(self):\n  return 'x'\n"),
         ("python", "def broken(:\n    pass\n"),
@@ -105,7 +105,7 @@ fn every_format_reads_the_same_facts_off_the_tape() {
         let grammar = Grammar::new(lang).unwrap();
         let image = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
         let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
-        let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+        let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
         let doc = TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &image.primary, &|| false).unwrap();
         let old = from_tape(&doc, Arc::clone(&lines)).unwrap();
         let same = from_image(Arc::clone(&source), &grammar, image.primary.clone(), Arc::clone(&lines)).unwrap();

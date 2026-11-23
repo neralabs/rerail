@@ -37,9 +37,9 @@
 //!   program); otherwise the assembled program's digest must equal it, and a stated `caps` must
 //!   be the program's.
 
-// The assembler's reader and the word program's rows, the compiler crate's (`rerail_compiler::rir_asm`).
-use rerail_compiler::rir_asm::{Line, NameTable, Token, block_programs_rows, head_rows, index, tokens, word_row, word_rows};
-pub use rerail_compiler::rir_asm::IR;
+// The assembler's reader and the word program's rows, the compiler crate's (`rerail_rir::rir_asm`).
+use rerail_rir::rir_asm::{Line, NameTable, Token, block_programs_rows, head_rows, index, tokens, word_row, word_rows};
+pub use rerail_rir::rir_asm::IR;
 use super::*;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
@@ -555,7 +555,7 @@ pub fn assemble_all(text: &str) -> Result<Vec<(Program, Option<Names>)>, String>
 /// entry test, `fusion::entry_key`, and where its branch starts past the shared prefix) and where
 /// its captures start; its emit table (each fused label's member and the member's own label);
 /// then the fused program.
-pub(in crate::code_rule_dsl) fn fused(pack: &super::fusion::Fused, members: &[&Program], names: Option<&Names>) -> String {
+pub fn fused(pack: &super::fusion::Fused, members: &[&Program], names: Option<&Names>) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "group members={} prefix={}", members.len(), pack.prefix);
     for (at, member) in members.iter().enumerate() {

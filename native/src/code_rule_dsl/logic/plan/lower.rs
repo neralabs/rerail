@@ -318,7 +318,7 @@ impl Lowered {
 /// domains, and the dialect its kinds are of.
 #[derive(Clone, Copy)]
 pub struct Lowering<'l> {
-    pub(in crate::code_rule_dsl) domains: &'l Domains,
+    pub domains: &'l Domains,
     pub dialect: GrammarDialect,
 }
 

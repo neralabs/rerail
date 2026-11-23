@@ -104,9 +104,9 @@ impl Writer {
     /// A writer of a document of `source` in `lang`, of about `nodes` nodes, in 16z where `z`, with each block's
     /// presence where `blocks`. Its parts' room is reserved for `nodes` nodes, their side lists' usual share and the
     /// source's newline index: more nodes grow them.
-    pub fn new(lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+    pub fn new(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
         let mut w = Writer::empty();
-        w.begin(lang, source, tag, z, blocks, nodes);
+        w.begin(lang, source, terminators, tag, z, blocks, nodes);
         w
     }
 
@@ -119,8 +119,9 @@ impl Writer {
     /// where it is short, so a writer used again zeroes no room), as simdjson's parser keeps its tape from one document to
     /// the next. A buffer's bytes are the last document's: the ops write each byte before they read it (in tests every
     /// part kept is filled with `FRESH`, so a byte read before it is written shows).
-    pub fn begin(&mut self, lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) {
-        self.begin_with(&Document { lang, source, tag, z, blocks, nodes }, |out| crate::newlines::index_into(out, source));
+    /// The line index is of the source's lines as its language's `terminators` end them (decision 0612).
+    pub fn begin(&mut self, lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) {
+        self.begin_with(&Document { lang, source, tag, z, blocks, nodes }, |out| crate::newlines::index_into(out, source, terminators));
     }
 
     /// `begin`, the newline index written into its part by `lines` (`newlines::index_of`), in the part's own buffer: a
@@ -324,7 +325,9 @@ impl Writer {
         let (laid, free) = (self.len_of(part::LAID), self.len_of(part::FREE));
         self.reserve(part::LAID, laid + blocks * LAID_MAX);
         self.reserve(part::FREE, free + 4 * blocks);
-        let count = self.state.blocks as usize;
+        // Each block's entry by its number: the blocks made, and the `blocks` more a run (`reserve_run`) may make
+        // before it lays them.
+        let count = self.state.blocks as usize + blocks;
         self.reserve(part::LAID_AT, count * LAID_AT as usize);
         if self.z {
             let (out, rooms) = (self.len_of(part::OUT), self.len_of(part::ROOM_FREE));
@@ -376,6 +379,12 @@ impl Writer {
             self.reserve(part::PRESENCE, (count + 1) * words);
         }
         self.reserve_final(count);
+    }
+
+    /// Each node final as it is written: no commit is needed, and no node is changed after (`w::FINAL_AS_WRITTEN`).
+    /// The blocks settle as they would with a commit after each node, so the tape is the same.
+    pub fn final_as_written(&mut self) {
+        self.state.flags |= w::FINAL_AS_WRITTEN;
     }
 
     /// The state's address: what code that calls the ops itself passes them (`reserve_run` first).
@@ -583,8 +592,6 @@ impl Lz {
 /// `finish`. A writer's ops are one thread's, in a group of its own; the writers are many groups.
 #[cfg(any(test, feature = "test-hooks"))]
 pub const REPLAY: &str = r#"
-// Its kernel uses no SIMD group (ukl/backend.h, decision 0576 §14).
-#define UKL_SIMD_GROUP_FREE 1
 #include <ukl/writer.h>
 
 typedef struct ReplayArgs {
@@ -652,8 +659,8 @@ pub(super) mod device {
     }
 
     impl DeviceOps {
-        pub(in crate::f16) fn new(lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
-            DeviceOps { host: Writer::new(lang, source, tag, z, blocks, nodes), made: Writer::new(lang, source, tag, z, blocks, nodes), calls: Vec::new() }
+        pub(in crate::f16) fn new(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+            DeviceOps { host: Writer::new(lang, source, terminators, tag, z, blocks, nodes), made: Writer::new(lang, source, terminators, tag, z, blocks, nodes), calls: Vec::new() }
         }
         pub(in crate::f16) fn open(&mut self, number: u32, start: u64) -> usize {
             self.calls.push([0, number.into(), start, 0]);

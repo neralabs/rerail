@@ -25,6 +25,7 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/body/lz4_decode.h", include_str!("../lib/ukl/body/lz4_decode.h")),
     ("ukl/body/histogram_part.h", include_str!("../lib/ukl/body/histogram_part.h")),
     ("ukl/body/radix_tile.h", include_str!("../lib/ukl/body/radix_tile.h")),
+    ("ukl/body/scan_tile.h", include_str!("../lib/ukl/body/scan_tile.h")),
     ("ukl/body/tape_f16.h", include_str!("../lib/ukl/body/tape_f16.h")),
     ("ukl/body/tape_api.h", include_str!("../lib/ukl/body/tape_api.h")),
     ("ukl/body/tape_read.h", include_str!("../lib/ukl/body/tape_read.h")),
@@ -35,7 +36,6 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/radix.h", include_str!("../lib/ukl/radix.h")),
     ("ukl/hash.h", include_str!("../lib/ukl/hash.h")),
     ("ukl/workqueue.h", include_str!("../lib/ukl/workqueue.h")),
-    ("ukl/pool.h", include_str!("../lib/ukl/pool.h")),
     ("ukl/grid.h", include_str!("../lib/ukl/grid.h")),
     ("ukl/clif.h", include_str!("../lib/ukl/clif.h")),
     // The tape's reads for the kernels, written by hand (decisions 0524, 0576): each format's reads, the reads made of
@@ -51,6 +51,7 @@ pub const LIBRARY: &[(&str, &str)] = &[
     // so that every kernel finds them as it finds the rest of the library (`rerail-clif`'s tests write them again).
     ("ukl/reads/relation.h", include_str!("../lib/ukl/reads/relation.h")),
     ("ukl/reads/ids.h", include_str!("../lib/ukl/reads/ids.h")),
+    ("ukl/reads/lines.h", include_str!("../lib/ukl/reads/lines.h")),
     ("ukl/reads/view.h", include_str!("../lib/ukl/reads/view.h")),
     ("ukl/body/view_reads.h", include_str!("../lib/ukl/body/view_reads.h")),
     // The tape's writer's ops for the kernels, written by hand (decisions 0434 §6, 0524).

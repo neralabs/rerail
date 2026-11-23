@@ -14,6 +14,7 @@ pub use rerail_device::compute_kernel_cuda;
 pub use rerail_device::compute_kernel_metal;
 pub mod kernels;
 pub mod library;
+pub mod vec;
 #[cfg(test)]
 mod device_tests;
 #[cfg(test)]

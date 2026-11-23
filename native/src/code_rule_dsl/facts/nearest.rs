@@ -32,7 +32,7 @@ pub fn install_nearest(solve: Nearest) {
 }
 
 /// The registered solve of `nearest` over `trees`.
-pub(crate) fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
+pub fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
     match NEAREST.get() {
         Some(solve) => solve(trees, sets, binding),
         None => Err(StoreError::Invalid("no nearest solve is registered".to_owned())),
@@ -56,17 +56,12 @@ pub struct SolvedOnDevice {
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub type AxisSolve = fn(&crate::code_rule_dsl::facts::vtab::ViewInPlace, usize, &rerail_blocks::Block, usize, Option<&[u32]>, bool) -> Result<SolvedOnDevice, String>;
 
+/// The device's solve of an axis (registered once, at load: the device crate's).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-static AXIS_SOLVE: std::sync::OnceLock<AxisSolve> = std::sync::OnceLock::new();
-
-/// Registers the device's solve of an axis (once, at load: the Metal device's).
-#[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub fn install_axis_solve(solve: AxisSolve) {
-    let _ = AXIS_SOLVE.set(solve);
-}
+pub static AXIS_SOLVE: rerail_registry::Slot<AxisSolve> = rerail_registry::Slot::new("the device's solve of an axis, its views read in place (facts::nearest::AXIS_SOLVE)");
 
 /// The device's solve of an axis, when one is registered.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub(crate) fn axis_solve() -> Option<AxisSolve> {
-    AXIS_SOLVE.get().copied()
+pub fn axis_solve() -> Option<AxisSolve> {
+    AXIS_SOLVE.try_get()
 }

@@ -869,11 +869,8 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
     );
     assert_eq!(second["evaluation"]["violations"][0]["path"], "second.py");
     let complete = tape_test_apply(&workspace, 3, Vec::new());
+    // Without a repository a completion records nothing: only a repository's clean directories are reused.
     workspace.completion_task().compute().unwrap();
-    assert_eq!(
-        store.completed_workspace_revision(workspace_id).unwrap(),
-        Some(3)
-    );
     assert!(complete["replacedPaths"].is_null());
     assert_eq!(
         complete["evaluation"]["violations"]

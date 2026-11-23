@@ -21,6 +21,8 @@ pub mod scope;
 pub mod syntax;
 // The language pack interface the core asks (generated from the traits above: tools/cratify/packgen.py).
 pub mod pack;
+// A workspace's project context, as a family keeps it (ECMAScript's manifests).
+pub mod project;
 pub mod value;
 // cratify: `vue` is rerail-lang-ecma's (it mounts it)
 
@@ -38,7 +40,7 @@ use crate::code_rule_dsl::identifier::{ecma_name, python_name};
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::file_index;
-use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
+use crate::code_rule_dsl::file_input::python_module_path_on_disk;
 use crate::code_rule_dsl::suppress::{Suppress, root};
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
@@ -60,7 +62,7 @@ pub trait Adapter: 'static {
     const FAMILY: Family;
     /// The family's name in diagnostics.
     const LABEL: &'static str;
-    /// The line terminators of the linter the family's ports follow.
+    /// The line terminators of the family's ecosystem (its compiler's, linters' and editors', decision 0612).
     const TERMINATORS: Terminators;
     /// Whether the family names a file's module from the package markers around it (Python's
     /// `__init__.py`): a file without a host module gets the markers' module.
@@ -110,11 +112,11 @@ pub trait Adapter: 'static {
     /// A file's module, from package markers on disk, in the shape hosts send as `module`
     /// (Python only).
     fn module_path(file: &Path) -> Option<serde_json::Value>;
-    /// Whether the family's inline suppression comments suppress `violation` (whose `suppress`
-    /// is `suppress`) anchored over the bytes `anchored` of `source` (most linters read only its
+    /// Whether the family's inline suppression comments suppress a violation of the code rule `code`
+    /// (whose `suppress` is `suppress`) anchored over the bytes `anchored` of `source` (most linters read only its
     /// start), `node` placing the file and `witness` its byte span.
     fn suppresses<D: Doc>(
-        violation: &ViolationSpec,
+        code: &str,
         suppress: &Suppress,
         node: &Node<'_, D>,
         source: &str,
@@ -162,7 +164,7 @@ pub(crate) fn source_type(
 
 /// Whether files of the dialect labelled `label` take their module from package markers
 /// (`Adapter::PACKAGES`); `false` for a label no dialect has.
-pub(crate) fn packages(label: &str) -> bool {
+pub fn packages(label: &str) -> bool {
     super::dialect_by_label(label)
         .is_some_and(|dialect| super::base(Family::of(dialect)).packages())
 }
@@ -229,7 +231,7 @@ pub fn package_manifests(label: &str) -> bool {
 
 /// Whether files of the dialect labelled `label` are read past a leading byte order mark
 /// (`Adapter::STRIPS_BOM`); `false` for a label no dialect has.
-pub(crate) fn strips_bom(label: &str) -> bool {
+pub fn strips_bom(label: &str) -> bool {
     super::dialect_by_label(label)
         .is_some_and(|dialect| super::base(Family::of(dialect)).strips_bom())
 }

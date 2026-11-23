@@ -127,7 +127,7 @@ impl Structure for StoreTapes {
 }
 
 /// `nera_tree` and `nera_size(tape, pre)` over the store's tapes, on a store connection.
-pub(crate) fn install(db: &Connection) -> Result<()> {
+pub fn install(db: &Connection) -> Result<()> {
     // SAFETY: the modules and functions are dropped with `db`, before its handle is freed.
     let tapes: Shared = Arc::new(parking_lot::Mutex::new(StoreTapes { database: unsafe { db.handle() }, held: VecDeque::new(), grammars: HashMap::new(), maps: None }));
     super::tree::install(db, Arc::clone(&tapes))?;

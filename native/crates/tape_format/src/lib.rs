@@ -30,11 +30,6 @@ pub mod view_reads;
 pub mod writer16;
 
 
-/// **Deprecated** (decision 0550): only `rust_stream`, itself deprecated, reads it.
-/// The writer as Rust source (`writer16`, the host's own): a tier 2 generated ahead of time that writes format 16
-/// holds it as its module `w` (`rerail_rust_stream::rust_stream`).
-pub const WRITER_RUST: &str = include_str!("writer16.rs");
-
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:
 /// named-only at rest, no stored source digest (RER-131); 14: the tokens the grammar implies
@@ -298,11 +293,13 @@ pub enum Target {
     F16(Sixteen),
 }
 
-/// A format 16 target: the language's table, its tag, 16z where `z`, each block's presence where `blocks`, and each
-/// key's number in the table (`None`: a code the table lacks, and the writer's tape is format 15's).
+/// A format 16 target: the language's table, the line terminators of its ecosystem (its line index's, decision
+/// 0612), its tag, 16z where `z`, each block's presence where `blocks`, and each key's number in the table (`None`: a
+/// code the table lacks, and the writer's tape is format 15's).
 #[derive(Clone)]
 pub struct Sixteen {
     pub lang: &'static f16::Lang,
+    pub terminators: newlines::Terminators,
     pub tag: u8,
     pub z: bool,
     pub blocks: bool,
@@ -492,7 +489,7 @@ impl<L: Layout> Writer<L> {
     pub fn to(mut self, target: Target, src: &[u8]) -> Self {
         assert_eq!(self.n, 0, "a target before the first node");
         if let Target::F16(t) = target {
-            let w = f16::Writer::new(t.lang, src, t.tag, t.z, t.blocks, self.cap);
+            let w = f16::Writer::new(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap);
             self.sixteen = Some(Box::new(Passing { w, number: t.number, numbers: Vec::new(), open: Vec::new(), bad: None, lost: Default::default() }));
             // The columns hold the window: the nodes since the last commit (more grow it).
             if self.cap > WINDOW {
@@ -1766,7 +1763,7 @@ mod tests {
         for (z, commit) in [(false, false), (true, false), (false, true), (true, true)] {
             let keys = keys.clone();
             let number = move |k: u32| keys.iter().position(|&x| x == k).map(|p| p as u32).or((k == key(2, 0, 0)).then_some(4));
-            let target = Target::F16(Sixteen { lang, tag: 1, z, blocks: false, number: std::sync::Arc::new(number) });
+            let target = Target::F16(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z, blocks: false, number: std::sync::Arc::new(number) });
             let mut w = make(target, commit);
             let written = w.finish_16().unwrap().unwrap().tape;
             let check = |t: &dyn Fn(usize) -> (u32, usize, Option<usize>, u64, u64), n: usize| {
@@ -1828,7 +1825,7 @@ mod tests {
         let f15 = F15::new(&image, columns, &table).unwrap();
         let lang: &'static f16::Lang = Box::leak(Box::new(f16::Lang::new(CodeTable::new(table.entries().to_vec()), [1, 1, 1], 1).unwrap()));
         let number = std::sync::Arc::new(move |k: u32| keys.iter().position(|&x| x == k).map(|p| p as u32));
-        let target = |z| Target::F16(Sixteen { lang, tag: 1, z, blocks: true, number: number.clone() });
+        let target = |z| Target::F16(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: number.clone() });
         // A large file's guess is cut to the window.
         assert_eq!(Writer::new(1, Widths::guess(1 << 20), 1 << 16).to(target(false), &src).cap, WINDOW);
         for z in [false, true] {

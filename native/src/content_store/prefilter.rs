@@ -19,7 +19,7 @@
 //!   under `RESIDUE_CAP`.
 
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::bounded_insert::insert;
 use super::postings::{append_delta, pack_edges};
 use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId};

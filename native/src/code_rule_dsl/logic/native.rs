@@ -18,11 +18,10 @@
 //! Not kept: T's `tape_load`/`tape_nearest` and per-kind seeds (`<p>_kseed`), which read a per-run copy of one
 //! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
 //! as seed rows.
-pub mod setfix;
+// cratify: `setfix` is rerail-setfix's (it mounts it), with its re-exports here (`forget_engine`, `register_symbols`,
+// `symbol_text`, ..., the set engine's component calls, `component`) and the registration of its SQL functions
+// (`register`, over `register_lattices`)
 pub mod width;
-#[cfg(any(test, feature = "test-hooks"))]
-pub use setfix::Derivations;
-pub use setfix::{forget_engine, forget_scope};
 pub mod aggregation;
 /// The native lattices' algebra as SQL functions, for the SQL lattice folds.
 pub mod lattices;
@@ -34,23 +33,7 @@ pub mod rank;
 /// The reach index (decision 0119): a transitive closure as one bitmap per start.
 pub mod reach;
 pub mod match_all;
-/// T's loadable extension as copied (8934168d `lib.rs`); this module is its adaptation (O19).
-#[cfg(any(test, feature = "test-hooks"))]
-#[allow(dead_code)]
-pub mod extension;
-pub use setfix::{flush_symbols, wave0_changes, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
-/// A connection's identity for the state a run leaves with it (`setfix::scope`).
-pub use setfix::scope as setfix_scope;
-pub use setfix::{symbol_text, symbol_texts};
-/// The set engine's component calls, made in process by the planner (no SQL statement each).
-pub mod component {
-    pub use super::setfix::lab;
-    pub use super::setfix::spec;
-    pub use super::setfix::{DeviceReport, device_report};
-    pub use super::setfix::probed;
-    pub use super::setfix::{CutReport, TrialRun, symbol_id, cut_counts, cut_step, keep_trial_rows, set_budgets, take_cut, thread_cpu, trial, trial_ids, trial_over, trial_own};
-    pub use super::setfix::{InRel, Live, Ver, LIVE_BATCH, RelMark, add, cat_symbols, prime, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, held_rows, each_held_batch, hold_as, hold_maintained, hold_empty, hold_source, hold_view_in_place, held_source, hold_bound, is_dead, live, give_versions, take_versions, materialize, open_spec, pending, defer, retain_with, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, maint_step_counts, driver_step_counts, step_cpu, step_histograms, unindex, hold_rows, kept_rel, Asked, live_changed, table_source, tables_built, output_rows, source_rows, finding_rows, key_breaks};
-}
+// cratify: `extension` is rerail-setfix's (it mounts it: T's extension, test-only, runs setfix)
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
 use rusqlite::vtab::{Context as VContext, CreateVTab, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConnection, VTabCursor, VTabKind};
@@ -132,7 +115,7 @@ impl Lattice for Max {
 }
 
 /// The least value seen (the order is reversed: smaller is higher); unbounded, so it widens to its top, -TOP.
-pub(in crate::code_rule_dsl) struct Min;
+pub struct Min;
 impl Lattice for Min {
     fn reduction(&self) -> aggregation::Reduction { aggregation::Reduction::Min }
     fn lub(&self, a: i64, b: i64) -> i64 { self.reduction().combine(a, b).unwrap() }
@@ -276,7 +259,7 @@ fn lattice_fixpoint(conn: &Connection, results: &Results, p: &str, target: Optio
         x
     };
     // The device work queue (one persistent dispatch, a cell an item) where it solves the same system.
-    if let Some(dev) = crate::code_rule_dsl::logic::device::solver().filter(|_| binding == Binding::Metal && flat && widen.is_none() && !absorb) {
+    if let Some(dev) = crate::code_rule_dsl::logic::device::device().filter(|_| binding == Binding::Metal && flat && widen.is_none() && !absorb) {
         let copies = copies.iter().map(|&(a, b)| (a as u32, b as u32)).collect::<Vec<_>>();
         let bins = bins.iter().map(|&(c, o, l, r)| (c as u32, o, l as u32, r as u32)).collect::<Vec<_>>();
         let system = crate::code_rule_dsl::logic::device::lattice::System { seeds: &seed, copies: &copies, bins: &bins };
@@ -420,9 +403,10 @@ unsafe impl VTabCursor for ResultCursor {
     fn rowid(&self) -> Result<i64> { Ok(self.pos as i64) }
 }
 
-/// Registers the functions and virtual tables on `db`, `atoms` among them (decision 0049; its opener registered the
-/// store's commit hook, `Atoms::install`).
-pub fn register(db: &Connection) -> Result<()> {
+/// Registers the lattices' functions and virtual tables on `db`, `atoms` among them (decision 0049; its opener
+/// registered the store's commit hook, `Atoms::install`). Setfix's are registered over these (`setfix::register`,
+/// the logic's `native::register`).
+pub fn register_lattices(db: &Connection) -> Result<()> {
     crate::content_store::atoms::Atoms::attach(db)?;
     let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
     db.create_scalar_function(c"flat_bin", 3, det, |ctx| {
@@ -452,49 +436,6 @@ pub fn register(db: &Connection) -> Result<()> {
             lattice_fixpoint(&conn, &results, &p, target.as_deref(), &*lat, name == "flat", widen.map(|k| k.max(0) as u32), binding)
         })?;
     }
-    db.create_scalar_function(c"set_fixpoint_open", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
-        let spec: String = ctx.get(0)?;
-        let conn = unsafe { ctx.get_connection()? };
-        setfix::open(&conn, &spec)
-    })?;
-    for n in [1, 2] {
-        db.create_scalar_function(c"set_fixpoint_run", n, FunctionFlags::SQLITE_UTF8, |ctx| {
-            let name: String = ctx.get(0)?;
-            let max_waves: i64 = if ctx.len() > 1 { ctx.get(1)? } else { 0 };
-            let conn = unsafe { ctx.get_connection()? };
-            setfix::run(&conn, &name, max_waves as u32)
-        })?;
-    }
-    db.create_scalar_function(c"set_fixpoint_materialize", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
-        let table: String = ctx.get(0)?;
-        let conn = unsafe { ctx.get_connection()? };
-        setfix::materialize(&conn, &table)
-    })?;
-    db.create_scalar_function(c"set_fixpoint_steps", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
-        let name: String = ctx.get(0)?;
-        let conn = unsafe { ctx.get_connection()? };
-        setfix::steps(&conn, &name)
-    })?;
-    db.create_scalar_function(c"set_fixpoint_loads", 0, FunctionFlags::SQLITE_UTF8, |_| Ok(setfix::loads()))?;
-    db.create_scalar_function(c"set_fixpoint_stats", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
-        let name: String = ctx.get(0)?;
-        let conn = unsafe { ctx.get_connection()? };
-        setfix::stats(&conn, &name)
-    })?;
-    db.create_scalar_function(c"set_fixpoint_reprobe", 4, FunctionFlags::SQLITE_UTF8, |ctx| {
-        let (name, i, kind, body): (String, i64, String, String) = (ctx.get(0)?, ctx.get(1)?, ctx.get(2)?, ctx.get(3)?);
-        let conn = unsafe { ctx.get_connection()? };
-        setfix::reprobe(&conn, &name, i as usize, &kind, &body).map(|_| 1i64)
-    })?;
-    db.create_scalar_function(c"set_fixpoint_close", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
-        let name: String = ctx.get(0)?;
-        let conn = unsafe { ctx.get_connection()? };
-        setfix::close(&conn, &name).map(|_| 1i64)
-    })?;
-    const SETREL: Module<setfix::RelTab> = Module::read_only_module();
-    db.create_module(c"set_rel", &SETREL, None)?;
-    const DERIVED: Module<setfix::DerivedTab> = Module::eponymous_only_module();
-    db.create_module(c"set_derived", &DERIVED, None)?;
     const RESULT: Module<ResultTab> = Module::read_only_module();
     db.create_module(c"lattice_result", &RESULT, Some(results))?;
     Ok(())

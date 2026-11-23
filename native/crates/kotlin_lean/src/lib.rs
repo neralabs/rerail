@@ -55,6 +55,15 @@ pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
     parse::parse(src)
 }
 
+/// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 15's columns (`tape`), or
+/// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0434).
+pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
+    if src.len() >= u32::MAX as usize / 2 {
+        return Err(Refusal::TooLarge);
+    }
+    parse::parse_into(src, finish)
+}
+
 /// A tape as plain text, as the engine's `python_tape_plain` writes one (the oracle's form): a node
 /// a line, indented by depth, its kind, field, flags, supertypes and span.
 pub fn tape_text(tape: &Tape) -> String {

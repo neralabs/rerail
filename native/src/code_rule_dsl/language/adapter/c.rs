@@ -11,8 +11,8 @@ use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{ScopeName, Unresolved};
-use crate::code_rule_dsl::model::ViolationSpec;
+use crate::code_rule_dsl::scope::ScopeName;
+use crate::code_rule_dsl::matcher::Unresolved;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::usage::{Steps, Usage};
@@ -52,7 +52,8 @@ fn lone_expression<'t>(root: &tree_sitter::Node<'t>) -> Option<tree_sitter::Node
 impl Adapter for C {
     const FAMILY: Family = Family::C;
     const LABEL: &'static str = "c";
-    const TERMINATORS: Terminators = Terminators::Newlines;
+    // The preprocessor's tape's, one constant: `__LINE__` counts the lines a finding is on.
+    const TERMINATORS: Terminators = rerail_c_pp::tape::LINE_ENDS;
     const PACKAGES: bool = false;
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
@@ -82,7 +83,7 @@ impl Adapter for C {
 
     /// No suppression comments are read for C and C++ yet.
     fn suppresses<D: Doc>(
-        _: &ViolationSpec,
+        _: &str,
         _: &Suppress,
         _: &Node<'_, D>,
         _: &str,

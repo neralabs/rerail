@@ -674,17 +674,11 @@ fn the_slice_finds_ws_findings_on_real_files() {
         Some(at)
     };
     let doc = run.paths.iter().map(|(d, p)| (p.clone(), *d)).collect::<BTreeMap<_, _>>();
-    let shifted = {
-        let entered = rules.backing.enter(&store);
-        let lease = entered.pool().take().unwrap();
-        keys(&run).iter().filter(|k| k.3 > 0).find_map(|(_, _, path, line)| {
-            let start = line_start(path, *line).filter(|&s| s > 0)?;
-            let moved = lease
-                .execute("UPDATE slice_span SET c2 = c2 - 1 WHERE scope = ?1 AND c0 = ?2 AND c2 = ?3", rusqlite::params![WS, doc[path], start as i64])
-                .unwrap();
-            (moved > 0).then(|| format!("{path} byte {start} ({moved} spans)"))
-        })
-    };
+    let shifted = keys(&run).iter().filter(|k| k.3 > 0).find_map(|(_, _, path, line)| {
+        let start = line_start(path, *line).filter(|&s| s > 0)?;
+        let moved = super::kept::shift_spans(&store, WS, i64::from(doc[path]), start as i64);
+        (moved > 0).then(|| format!("{path} byte {start} ({moved} spans)"))
+    });
     let shifted = shifted.expect("a finding whose anchor starts its line");
     let mutated = apply(&store, WS, root, &mut rules).unwrap();
     assert!(mutated.evaluated.is_empty(), "the layer runs over the kept, shifted spans");
@@ -863,6 +857,9 @@ fn documents_seen_before_take_their_rows_from_the_content_memo() {
     let back = apply(&store, WS, directory_root(&store, &one).unwrap(), &mut rules).unwrap();
     assert_eq!((back.evaluated.len(), back.reused.as_slice()), (0, &["b.py".to_owned()][..]));
     assert_eq!(keys(&back), keys(&first));
+    // The memo's entries are kept facts (t33 step 3): the store has no facts memo to hold one.
+    let tables = store.query_rows("SELECT count(*) FROM sqlite_schema WHERE name = 'facts_results'", [], |row| row.get::<_, i64>(0)).unwrap()[0];
+    assert_eq!(tables, 0);
 }
 
 #[test]
@@ -879,25 +876,27 @@ fn the_statistics_loop_runs_on_the_slices_path() {
     assert_eq!(keys(&first), keys(&cold(&one, &policies)), "gated sets keep every finding");
     // The gates are compiled plans with the statistics they read, and each batch's selectivity
     // is fed back.
-    let plans = count("SELECT count(*) FROM compiled_plans");
+    // They are kept facts of the store (t33 step 6): no SQLite table keeps them.
+    let kept = crate::code_rule_dsl::stats::plans::kept_plans(&store);
+    let plans = kept.plans.len();
     assert!(plans > 0);
-    assert!(count("SELECT count(*) FROM compiled_plan_reads") > 0);
-    assert!(count("SELECT count(*) FROM plan_feedback") > 0);
-    // The kept rows' column statistics, and SQLite's from them.
-    let matches = count("SELECT count(*) FROM slice_match");
-    assert_eq!(count("SELECT rows FROM fact_stats WHERE tbl = 'slice_match' AND col = 'c0'"), matches);
-    assert_eq!(count("SELECT count(*) FROM sqlite_stat1 WHERE tbl IN ('slice_match', 'slice_span')"), 2);
-    // An edit: the statistics move by the edited document, and match a cold build's.
+    assert!(kept.reads > 0);
+    assert!(!kept.samples.is_empty());
+    assert_eq!(count("SELECT count(*) FROM sqlite_master WHERE name IN ('compiled_plans', 'compiled_plan_reads', 'plan_feedback')"), 0);
+    // The wave's rows are kept facts of the scope (t33 step 3), read through `kept_facts`; no SQLite table keeps them.
+    let matches = super::kept::count(&store, WS, "slice_match");
+    assert!(matches > 0 && super::kept::count(&store, WS, "slice_span") > 0);
+    assert_eq!(count("SELECT count(*) FROM sqlite_master WHERE name IN ('slice_match', 'slice_span')"), 0);
+    // An edit: the edited document's rows alone are written again (an `assert` the less), and the findings match a
+    // cold build's.
     write(&one, "b.py", "def f():\n    return 1\n");
     let edited = apply(&store, WS, directory_root(&store, &one).unwrap(), &mut rules).unwrap();
     assert_eq!(keys(&edited), keys(&cold(&one, &policies)));
-    let matches = count("SELECT count(*) FROM slice_match");
-    assert_eq!(count("SELECT rows FROM fact_stats WHERE tbl = 'slice_match' AND col = 'c0'"), matches);
-    let distinct = count("SELECT count(DISTINCT c0) FROM slice_match");
-    assert_eq!(count("SELECT ndv FROM fact_stats WHERE tbl = 'slice_match' AND col = 'c0'"), distinct);
+    assert!(super::kept::count(&store, WS, "slice_match") < matches, "the edited document's matches went with its assert");
     // Unchanged statistics keep their compiled gates.
-    assert_eq!(count("SELECT count(*) FROM compiled_plans"), plans);
-    assert!(count("SELECT max(samples) FROM plan_feedback") >= 2);
+    let kept = crate::code_rule_dsl::stats::plans::kept_plans(&store);
+    assert_eq!(kept.plans.len(), plans);
+    assert!(kept.samples.iter().max().is_some_and(|&n| n >= 2));
 }
 
 mod data_layer;

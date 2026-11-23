@@ -134,7 +134,7 @@ pub fn for_file(
             };
             let grammar = grammar_matcher(matchers, file)?;
             (grammar.admits_source(&file.source, &errors, &mut searched)
-                && gates.admit(grammar)
+                && grammar.admits(&gates)
                 && seen.insert(Arc::as_ptr(&grammar.anchors) as usize))
             .then(|| Arc::new(AnchorPlan::compile(&grammar.matcher)))
         })

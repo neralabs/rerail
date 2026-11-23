@@ -30,9 +30,6 @@ pub struct Options {
     pub optimize_tier2: std::sync::atomic::AtomicBool,
     /// A class's lane is the bit test itself, not its complement (`native_cpu_lanes`).
     pub bit_test: std::sync::atomic::AtomicBool,
-    /// Keep each tier 2 function's IR (`CompiledStream::ir`), for an ahead-of-time build of the same code
-    /// (`clif_rust`).
-    pub keep_ir: std::sync::atomic::AtomicBool,
     /// Runs again on the bound's tape (`CompiledStream::call`), for the profile.
     pub room_retries: std::sync::atomic::AtomicU64,
 }
@@ -43,7 +40,6 @@ impl Default for Options {
             optimize_tier1: Default::default(),
             optimize_tier2: Default::default(),
             bit_test: std::sync::atomic::AtomicBool::new(BIT_TEST_DEFAULT),
-            keep_ir: Default::default(),
             room_retries: Default::default(),
         }
     }
@@ -64,7 +60,7 @@ pub fn tier1_builder() -> Result<cranelift_jit::JITBuilder, Box<ModuleError>> {
 /// backend emits every jump table with a speculation barrier (`csel`, then `csdb`, in
 /// `JTSequence`, whatever the settings), and the jump waits for its index. In the C
 /// preprocessing words' return dispatches that barrier was most of their cycles (work queue
-/// Q184, Q186). The IR `clif_rust` is given keeps its tables: LLVM's carry no barrier.
+/// Q184, Q186).
 ///
 /// The index is tested against the table's length (the default past it), then a balanced
 /// tree over the table's runs of one target finds the entry: a 256-entry table of few targets
@@ -275,8 +271,7 @@ pub const SWITCH_TREE_RUNS: usize = 32;
 /// and `csdb` before the indirect branch, always (a Spectre guard, no flag): the barrier keeps
 /// the core from running ahead into the arm, so each token waits for its entry's load. Tier
 /// 1's numbers took 75 cycles a token by the JIT against 17 by the AOT, most samples at the
-/// table's load. The IR keeps the table, as lean keeps its `match` (`clif_rust` writes it as
-/// one, and rustc lowers it so); only the JIT's copy is rewritten, before Cranelift lowers it.
+/// table's load. The function is rewritten just before Cranelift lowers it.
 /// A table whose targets take arguments, or of more runs, is a balanced tree of compares
 /// (`balanced_trees`, Q186): no `br_table` reaches Cranelift's code.
 /// Each integer constant a block reads but another made, made again in the block, before its
@@ -404,9 +399,8 @@ pub fn switch_trees(func: &mut cranelift_codegen::ir::Function) {
 #[path = "native_cpu_codegen_tests.rs"]
 mod tests;
 
-/// The backend tests a vector's bits against a mask in one instruction (NEON's `vtst`, which
-/// `clif_rust`'s Rust has, and the vendored Cranelift's aarch64 lowering since 0381: `cmtst`): a
-/// class's lane is then the test itself, not its complement. On by default where the vendored
+/// The backend tests a vector's bits against a mask in one instruction (NEON's `cmtst`, the vendored Cranelift's
+/// aarch64 lowering since 0381): a class's lane is then the test itself, not its complement. On by default where the vendored
 /// Cranelift is built for aarch64 (`cranelift_clmul`, its mark); upstream's has no `cmtst`.
 pub const BIT_TEST_DEFAULT: bool = cfg!(all(cranelift_clmul, target_arch = "aarch64"));
 

@@ -8,7 +8,7 @@ use super::{
     STRING_REPOSITORY, SnapshotId, SourceId, StoreError, StoreResult, StoredPathObjects,
     StoredSourceObjects, TapeId, WorkspaceId, WorkspaceRegistration,
 };
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 #[cfg(any(test, feature = "test-hooks"))]
 use rusqlite::OptionalExtension;
 use rusqlite::{Connection, TransactionBehavior, params};

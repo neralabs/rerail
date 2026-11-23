@@ -12,7 +12,7 @@ pub mod owner {
 #[path = "waves/relational"]
 pub(in crate::code_rule_dsl) mod relational {
     pub mod shared {
-        pub use rerail_classic::code_rule_dsl::waves::relational::shared::*;
+        pub use rerail_workspace::code_rule_dsl::waves::relational::shared::*;
         #[cfg(test)]
         pub mod identity_tests;
             #[allow(unused_imports)]
@@ -30,7 +30,7 @@ pub(in crate::code_rule_dsl) mod relational {
     }
     pub mod producer {
         pub mod layout {
-            pub use rerail_classic::code_rule_dsl::waves::relational::producer::layout::*;
+            pub use rerail_workspace::code_rule_dsl::waves::relational::producer::layout::*;
             #[cfg(test)]
             pub mod tests;
                 #[allow(unused_imports)]
@@ -38,10 +38,10 @@ pub(in crate::code_rule_dsl) mod relational {
                 #[allow(unused_imports)]
                 use std::{collections::HashSet, sync::Arc};
         }
-        pub use rerail_classic::code_rule_dsl::waves::relational::producer::*;
+        pub use rerail_workspace::code_rule_dsl::waves::relational::producer::*;
     }
     pub mod pool {
-        pub use rerail_classic::code_rule_dsl::waves::relational::pool::*;
+        pub use rerail_workspace::code_rule_dsl::waves::relational::pool::*;
         #[cfg(test)]
         pub mod tests;
             #[allow(unused_imports)]
@@ -51,10 +51,10 @@ pub(in crate::code_rule_dsl) mod relational {
             #[allow(unused_imports)]
             use std::{ cell::{OnceCell, RefCell}, ops::Deref, rc::Rc, sync::{Arc, atomic::AtomicUsize}, };
     }
-    pub use rerail_classic::code_rule_dsl::waves::relational::*;
+    pub use rerail_workspace::code_rule_dsl::waves::relational::*;
     #[path = "batch"]
     pub mod batch {
-        pub use rerail_classic::code_rule_dsl::waves::relational::batch::*;
+        pub use rerail_workspace::code_rule_dsl::waves::relational::batch::*;
         #[cfg(test)]
         pub mod tests;
         #[allow(unused_imports)]
@@ -69,7 +69,7 @@ pub(in crate::code_rule_dsl) mod relational {
     pub mod execution;
     #[path = "inputs"]
     pub mod inputs {
-        pub use rerail_classic::code_rule_dsl::waves::relational::inputs::*;
+        pub use rerail_workspace::code_rule_dsl::waves::relational::inputs::*;
         #[cfg(test)]
         pub mod tests;
         #[allow(unused_imports)]

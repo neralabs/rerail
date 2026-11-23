@@ -32,6 +32,7 @@ use offsets::Decoded;
 use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
+use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A sub-grammar `parse` can apply, as the crate that reads its host's literals declares it: the engine registers
@@ -121,12 +122,12 @@ impl Grammar {
     }
 
     /// Every grammar the engine registered, in the order error messages list them.
-    pub(crate) fn all() -> &'static [Grammar] {
+    pub fn all() -> &'static [Grammar] {
         GRAMMARS.get().map_or(&[], Vec::as_slice)
     }
 
     /// The language of this grammar's trees.
-    pub(crate) fn lang(self) -> SubLang {
+    pub fn lang(self) -> SubLang {
         SubLang(self)
     }
 
@@ -163,7 +164,7 @@ impl Grammar {
     }
 
     /// The host node kinds the grammar parses.
-    pub(crate) fn host_kinds(self) -> &'static [&'static str] {
+    pub fn host_kinds(self) -> &'static [&'static str] {
         self.0.host_kinds()
     }
 
@@ -171,11 +172,11 @@ impl Grammar {
         self.0.reads_comments()
     }
 
-    pub(crate) fn of_host_syntax(self) -> bool {
+    pub fn of_host_syntax(self) -> bool {
         self.0.of_host_syntax()
     }
 
-    pub(crate) fn item_resolves(self) -> bool {
+    pub fn item_resolves(self) -> bool {
         self.0.item_resolves()
     }
 
@@ -185,7 +186,7 @@ impl Grammar {
 
     /// Whether a tree depends on the literal alone, so a syntax error elsewhere cannot change it:
     /// whether a string is a type definition depends on the names the file binds.
-    pub(crate) fn reads_only_the_node(self) -> bool {
+    pub fn reads_only_the_node(self) -> bool {
         self.0.reads_only_the_node()
     }
 
@@ -422,7 +423,7 @@ impl SubTree {
         let tree = NEXT_TREE.fetch_add(1, Ordering::Relaxed) & TREE_MASK;
         Self {
             lang: SubLang(grammar),
-            source: SubSource { text, offset },
+            source: SubSource { rows: Arc::new(LineTable::new(&text, Terminators::Lf)), text, offset },
             nodes,
             values,
             map,
@@ -557,6 +558,8 @@ pub struct PreNode {
 pub struct SubSource {
     text: String,
     offset: usize,
+    /// Its rows, as tree-sitter's `TSPoint` counts them (only `\n` ends one): `Lf`'s lines (decision 0612).
+    rows: Arc<LineTable>,
 }
 
 impl Content for SubSource {
@@ -577,7 +580,7 @@ impl Content for SubSource {
     }
     fn get_char_column(&self, _column: usize, offset: usize) -> usize {
         let end = offset.saturating_sub(self.offset).min(self.text.len());
-        let line = self.text[..end].rfind('\n').map_or(0, |at| at + 1);
+        let line = self.rows.start(self.rows.line(end));
         self.text[line..end].chars().count()
     }
 }
@@ -651,9 +654,7 @@ impl SubNode<'_> {
         (index != NONE).then_some(Self { index, ..*self })
     }
     fn position(&self, at: u32) -> Position {
-        let text = &self.tree.source.text[..at as usize];
-        let row = text.matches('\n').count();
-        let column = text.len() - text.rfind('\n').map_or(0, |line| line + 1);
+        let (row, column) = self.tree.source.rows.point(at as usize);
         Position::new(row, column, at as usize + self.tree.source.offset)
     }
 }

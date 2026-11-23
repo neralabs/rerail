@@ -19,7 +19,7 @@ use super::results::{
     serialize_result_page,
 };
 use super::secret_names::{SecretNamePatterns, SecretNames};
-use super::storage::{Attached, StorageContext, attach_storage, unix_seconds};
+use super::storage::{Attached, StorageContext, attach_storage};
 use super::{
     CLAUSE_WORK_BUDGET, CandidateSets, STORED_RESULT_UNAVAILABLE, WorkspaceState, check_closed,
 };
@@ -36,7 +36,7 @@ use crate::code_rule_dsl::prof::release_allocator_memory;
 use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::{matcher::GrammarMatcher, profile};
-use crate::content_store::{OperationDeadline, StoreError, WorkspaceCompletion};
+use crate::content_store::{OperationDeadline, StoreError};
 use crate::content_store::analysis_scope::{self, AnalysisOwner, AnalysisRun};
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Result, Task};
@@ -1956,7 +1956,7 @@ impl Task for WorkspaceCompletionTask {
             // One deadline for the publication under the lock and the completion write after it,
             // so an apply waiting on the lock waits at most one.
             let _deadline = OperationDeadline::enter();
-            let (storage, catalog, revision, server_graph) = {
+            let (storage, catalog, server_graph) = {
                 let mut state = self.lock_state()?;
                 let Some(storage) = state.storage.clone() else {
                     return Ok(());
@@ -1975,33 +1975,18 @@ impl Task for WorkspaceCompletionTask {
                     .code_rules
                     .iter()
                     .any(|code_rule| code_rule.reads_server_graph());
-                (storage, catalog, i64::from(state.revision), server_graph)
+                (storage, catalog, server_graph)
             };
-            let completed_at = unix_seconds()?;
-            let written = if let Some(repository) = &storage.repository {
-                let mut manifests = super::ingest::repository_context(
-                    repository.worktree_root.join(&storage.repository_prefix),
-                    server_graph,
-                );
-                let directories =
-                    reusable_directories(repository, &storage.repository_prefix, &mut *manifests);
-                storage.store.complete_directories(
-                    WorkspaceCompletion {
-                        workspace_id: storage.workspace_id,
-                        revision,
-                        completed_at,
-                    },
-                    catalog,
-                    &directories,
-                )
-            } else {
-                storage.store.complete_workspace_revision(
-                    storage.workspace_id,
-                    revision,
-                    catalog,
-                    completed_at,
-                )
+            let Some(repository) = &storage.repository else {
+                return Ok(());
             };
+            let mut manifests = super::ingest::repository_context(
+                repository.worktree_root.join(&storage.repository_prefix),
+                server_graph,
+            );
+            let directories =
+                reusable_directories(repository, &storage.repository_prefix, &mut *manifests);
+            let written = storage.store.complete_directories(catalog, &directories);
             if matches!(written, Err(StoreError::Busy)) {
                 self.lock_state()?
                     .note_store_busy("while recording repository reuse");

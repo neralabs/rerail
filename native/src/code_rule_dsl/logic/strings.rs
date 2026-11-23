@@ -65,7 +65,7 @@ pub const GROUPS: &str = "matchgroup_";
 
 /// The relations a text test's string can come from, and their text columns: the batch interns these strings, so a
 /// test over them is answered from the batch's vocabulary (`facts::vtab::syntax`).
-pub const TEXT_COLUMNS: [(&str, &[usize]); 33] = [
+pub const TEXT_COLUMNS: [(&str, &[usize]); 31] = [
     ("text", &[1]),
     ("name", &[1]),
     ("str", &[1]),
@@ -97,8 +97,6 @@ pub const TEXT_COLUMNS: [(&str, &[usize]); 33] = [
     ("dump_sha256", &[1]),
     ("body_sha256", &[1]),
     ("signature_sha256", &[1]),
-    ("split_line", &[2]),
-    ("lf_line", &[2]),
 ];
 
 /// One test over a set of patterns, compiled once: each pattern lowered by the text layer to its canonical plan (an
@@ -246,6 +244,31 @@ impl Vocabulary {
         if self.tests.is_empty() {
             return out;
         }
+        let seen = self.learn(strings, symbols);
+        for &sym in symbols {
+            let bits = &seen[&sym];
+            for (k, rows) in out.iter_mut().enumerate() {
+                if bits[k / 64] >> (k % 64) & 1 == 1 {
+                    rows.push(i64::from(sym));
+                }
+            }
+        }
+        out
+    }
+
+    /// The symbols among `strings` that pass test `k`: `rows`' `k`th, the others not read. A batch's text test sized
+    /// or scanned one at a time (`TextTest::whole`) read every test's bits of every string and kept one test's: of
+    /// N tests, N² bits a string (1.3 s of ep2's cold run, in `sampled_statistics_unanswered`).
+    pub fn rows_of(&self, k: usize, strings: &[String], symbols: &[u32]) -> Vec<i64> {
+        if k >= self.tests.len() {
+            return Vec::new();
+        }
+        let seen = self.learn(strings, symbols);
+        symbols.iter().filter(|sym| seen[*sym][k / 64] >> (k % 64) & 1 == 1).map(|&sym| i64::from(sym)).collect()
+    }
+
+    /// `strings` not tested before, tested by every test at once: each string's bits, kept (`seen`), held.
+    fn learn(&self, strings: &[String], symbols: &[u32]) -> std::sync::MutexGuard<'_, HashMap<u32, Box<[u64]>>> {
         let words = self.tests.len().div_ceil(64);
         let (mut tested, t0) = (0, crate::code_rule_dsl::prof::thread_usage());
         // The strings not seen before, tested by every test's plans at once (the text layer's vocabulary engine).
@@ -278,22 +301,15 @@ impl Vocabulary {
             }
             learned.extend(fresh.iter().map(|(sym, _)| *sym).zip(bits));
         }
+        let t1 = crate::code_rule_dsl::prof::thread_usage();
+        {
+            let mut total = self.tested.lock().unwrap();
+            total.0 += tested;
+            total.1 += (t1.0 - t0.0) + (t1.1 - t0.1);
+        }
         let mut seen = self.seen.lock().unwrap();
         seen.extend(learned);
-        for &sym in symbols {
-            let bits = &seen[&sym];
-            for (k, rows) in out.iter_mut().enumerate() {
-                if bits[k / 64] >> (k % 64) & 1 == 1 {
-                    rows.push(i64::from(sym));
-                }
-            }
-        }
-        drop(seen);
-        let t1 = crate::code_rule_dsl::prof::thread_usage();
-        let mut total = self.tested.lock().unwrap();
-        total.0 += tested;
-        total.1 += (t1.0 - t0.0) + (t1.1 - t0.1);
-        out
+        seen
     }
 
     /// Of `strings` (distinct), the positions of those that pass test `k`: a test over strings the run answered
@@ -301,7 +317,7 @@ impl Vocabulary {
     /// once, each string once a run. Without (a run whose symbols are text) they are tested, every test at once.
     pub fn passing(&self, k: usize, strings: &[String], symbols: Option<&[u32]>) -> Vec<usize> {
         if let Some(symbols) = symbols.filter(|s| s.len() == strings.len()) {
-            let passed: HashSet<i64> = self.rows(strings, symbols).swap_remove(k).into_iter().collect();
+            let passed: HashSet<i64> = self.rows_of(k, strings, symbols).into_iter().collect();
             return symbols.iter().enumerate().filter(|(_, s)| passed.contains(&i64::from(**s))).map(|(i, _)| i).collect();
         }
         let (tested, t0) = (strings.len(), crate::code_rule_dsl::prof::thread_usage());

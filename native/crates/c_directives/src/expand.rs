@@ -3,7 +3,7 @@
 //! preprocessor (`rerail-c-pp`).
 
 use crate::tokens::{self, BOL, SPACE};
-use rerail_compiler::pp_words::{self, Bounds, File, Tok};
+use rerail_rir::pp_words::{self, Bounds, File, Tok};
 use rerail_compiler::program::Words;
 
 pub const EXPAND: &str = include_str!("../expand/expand.rir");
@@ -13,7 +13,7 @@ static PROGRAM: std::sync::OnceLock<Result<Words, String>> = std::sync::OnceLock
 /// The process's expansion program, assembled and verified the first time: one for C and C++,
 /// the dialect a run's (`pp_words::Env::cpp`).
 pub fn program() -> Result<&'static Words, &'static str> {
-    PROGRAM.get_or_init(|| rerail_compiler::rir_asm::assemble(EXPAND)).as_ref().map_err(String::as_str)
+    PROGRAM.get_or_init(|| rerail_rir::rir_asm::assemble(EXPAND)).as_ref().map_err(String::as_str)
 }
 
 /// A token tape's kind, as the words know it.
@@ -94,7 +94,8 @@ pub fn compiled_grammars() -> Grammars<'static> {
 struct Unit {
     path: String,
     src: Vec<u8>,
-    lines: Vec<u32>,
+    /// Its lines, C's (`tape::LINE_ENDS`, decision 0612): its own line index, in the tape's format.
+    lines: rerail_tape_format::newlines::Lines,
     found_by: Option<u32>,
     /// Its directives, tape and chains: `None` for a file only embedded (data, never lexed).
     lexed: Option<Lexed>,
@@ -150,12 +151,7 @@ impl<F: rerail_c_pp::files::Files> Tu<'_, F> {
 
     /// A unit of `src`, not lexed yet.
     fn unit(&mut self, path: String, src: Vec<u8>, found_by: Option<u32>) -> usize {
-        let mut lines = Vec::new();
-        let mut i = 0;
-        while let Some(k) = rerail_simd8::micro::find(&src, i, b'\n') {
-            lines.push(k as u32);
-            i = k + 1;
-        }
+        let lines = rerail_tape_format::newlines::Lines::of(&src, rerail_c_pp::tape::LINE_ENDS);
         self.units.push(Unit { path, src, lines, found_by, lexed: None, includes: Vec::new(), named: Vec::new(), resolved: false });
         self.units.len() - 1
     }
@@ -222,29 +218,12 @@ pub fn expand_tu<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp: bool
     expand_tu_with(main, io, cpp, g, &native)
 }
 
-/// **Deprecated** (decision 0550): `rerail-pp-aot` is Rust from the JIT's IR; its use goes with it.
-/// Whether the ahead-of-time build (`rerail_pp_aot::BUILD`) is the words this process has: made
-/// from the same text (its `words` fingerprint, `EXPAND`'s) for the harness's interface now
-/// (`native_cpu_pp::ABI`), checked once.
-pub fn aot_build() -> Option<rerail_pp_aot::Build> {
-    static SAME: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let b = rerail_pp_aot::BUILD?;
-    SAME.get_or_init(|| b.words == rerail_cpu_stream::clif_rust::fingerprint(EXPAND) && b.abi == rerail_cpu_pp::native_cpu_pp::ABI).then_some(b)
-}
-
-/// The words' CPU path: rustc's build of their compiled code (`rerail-pp-aot`, decision 0348 and
-/// t44: 0.44× the interpreter's cycles on the corpus), else, without a build of these words,
-/// Cranelift's code of the same IR, compiled once a thread. Words other than the process's
+/// The words' CPU path: Cranelift's code of their IR, compiled once a thread. Words other than the process's
 /// (`program`) run on the interpreter.
 pub fn native(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bounds) -> Result<pp_words::Expanded, pp_words::Refused> {
     let ours = self::program().is_ok_and(|p| std::ptr::eq(p, program));
     if !ours {
         return pp_words::run(program, files, env, bounds);
-    }
-    if let Some(b) = aot_build() {
-        // SAFETY: `b.run` is `rust_source`'s `pp_run` for `program`: the build was made from
-        // `EXPAND`'s text (`aot_build`), and `program` is `EXPAND` assembled (`program()`).
-        return unsafe { rerail_cpu_pp::native_cpu_pp::run_aot(b.run, program, files, env, bounds) };
     }
     thread_local! {
         static JIT: std::cell::OnceCell<Option<rerail_cpu_pp::native_cpu_pp::CompiledPp>> = const { std::cell::OnceCell::new() };
@@ -342,7 +321,7 @@ pub fn expand_tus_with<F: rerail_c_pp::files::Files>(tus: &mut [(&str, &mut F, b
                 .zip(&tapes)
                 .map(|(&i, tapes)| {
                     let tu = &states[i];
-                    let mut files: Vec<File> = tu.units.iter().zip(tapes).map(|(u, t)| File { path: u.path.as_bytes(), bytes: &u.src, lines: &u.lines, toks: t, chains: u.lexed.as_ref().map_or(&[][..], |l| &l.chains), includes: &u.includes, named: &u.named }).collect();
+                    let mut files: Vec<File> = tu.units.iter().zip(tapes).map(|(u, t)| File { path: u.path.as_bytes(), bytes: &u.src, lines: u.lines.bytes(), toks: t, chains: u.lexed.as_ref().map_or(&[][..], |l| &l.chains), includes: &u.includes, named: &u.named }).collect();
                     files.push(File { bytes: &tu.spelled, ..File::default() });
                     files
                 })

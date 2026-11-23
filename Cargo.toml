@@ -1,5 +1,5 @@
 [workspace]
-members = ["native", "accel", "forest", "gpu", "gpu/device", "native/crates/compiler", "native/crates/bitlex", "native/crates/cpu_block", "native/crates/cpu_pp", "native/crates/cpu_stream", "native/crates/rust_stream", "native/crates/rr_syntax", "native/crates/tape_format", "native/crates/parser_tests", "native/crates/prof", "native/crates/metal", "native/crates/rr_parser", "native/crates/store", "native/crates/device_metal", "native/crates/facts", "native/crates/lang", "native/crates/lang_ecma", "native/crates/lang_json", "native/crates/lang_php", "native/crates/lang_python", "native/crates/lang_rust", "native/crates/lang_sql", "native/crates/logic_core", "native/crates/setfix", "native/crates/planner", "native/crates/typing", "native/crates/corpus_memo", "native/crates/corpus_prep", "native/crates/logic", "native/crates/rr", "native/crates/program_image", "native/crates/sessions", "native/crates/transducer", "native/crates/classic", "native/crates/rr_aot", "native/crates/simdjson", "native/crates/simdjson_native", "native/crates/python_lean", "native/crates/simd8", "native/crates/tree_watch", "native/crates/ecma_lean", "native/crates/rust_lean", "native/crates/java_lean", "native/crates/csharp_lean", "native/crates/php_lean", "native/crates/html_lean", "native/crates/css_lean", "native/crates/markdown_lean", "native/crates/markdown_inline_lean", "native/crates/sql_lean", "native/crates/vue_lean", "native/crates/kotlin_lean", "native/crates/swift_lean", "native/crates/scala_lean", "native/crates/blocks", "native/crates/go_lean", "native/crates/c_lean", "native/crates/clif", "native/crates/json_lean", "native/crates/kotlin_parser", "native/crates/c_directives", "native/crates/context", "native/crates/pp_aot", "native/crates/ukl", "native/crates/kotlin_aot", "native/crates/registry", "native/crates/boot", "native/crates/tests_demand", "native/crates/tests_transducer", "native/crates/tests_logic", "native/crates/tests_compile", "native/crates/tests_matcher", "native/crates/tests_lang"]
+members = ["native", "accel", "forest", "gpu", "gpu/device", "native/crates/compiler", "native/crates/rir", "native/crates/bitlex", "native/crates/cpu_block", "native/crates/cpu_pp", "native/crates/cpu_stream", "native/crates/json_aot", "native/crates/rr_syntax", "native/crates/tape_format", "native/crates/parser_tests", "native/crates/prof", "native/crates/metal", "native/crates/rr_parser", "native/crates/store_base", "native/crates/store", "native/crates/device_metal", "native/crates/ygraph", "native/crates/facts_base", "native/crates/facts", "native/crates/lang", "native/crates/lang_ecma", "native/crates/lang_json", "native/crates/forte", "native/crates/lang_php", "native/crates/cpython", "native/crates/lang_python", "native/crates/lang_rust", "native/crates/lang_sql", "native/crates/logic_core", "native/crates/run", "native/crates/setfix", "native/crates/plan_base", "native/crates/plan_search", "native/crates/planner", "native/crates/typing", "native/crates/corpus_memo", "native/crates/corpus_prep", "native/crates/json_rules", "native/crates/rr_root", "native/crates/logic", "native/crates/rr", "native/crates/program_image", "native/crates/sessions_base", "native/crates/sessions", "native/crates/transducer_base", "native/crates/transducer_cpu", "native/crates/transducer", "native/crates/adapters", "native/crates/matcher", "native/crates/rules_base", "native/crates/rules", "native/crates/workspace", "native/crates/rr_aot", "native/crates/simdjson", "native/crates/simdjson_native", "native/crates/python_lean", "native/crates/simd8", "native/crates/tree_watch", "native/crates/ecma_lean", "native/crates/rust_lean", "native/crates/java_lean", "native/crates/csharp_lean", "native/crates/php_lean", "native/crates/html_lean", "native/crates/css_lean", "native/crates/markdown_lean", "native/crates/markdown_inline_lean", "native/crates/sql_lean", "native/crates/vue_lean", "native/crates/kotlin_lean", "native/crates/swift_lean", "native/crates/scala_lean", "native/crates/blocks", "native/crates/go_lean", "native/crates/c_lean", "native/crates/clif", "native/crates/json_lean", "native/crates/kotlin_parser", "native/crates/c_directives", "native/crates/context", "native/crates/ukl", "native/crates/kotlin_aot", "native/crates/registry", "native/crates/prefilter", "native/crates/boot", "native/crates/demand_catalog", "native/crates/tests_demand", "native/crates/tests_conformance", "native/crates/tests_cpu", "native/crates/tests_admission", "native/crates/tests_transducer", "native/crates/tests_corpus", "native/crates/tests_rr", "native/crates/tests_sql", "native/crates/tests_logic", "native/crates/tests_resolve", "native/crates/tests_scope", "native/crates/tests_value", "native/crates/tests_calls", "native/crates/tests_compile", "native/crates/tests_anchors", "native/crates/tests_workspace", "native/crates/tests_findings", "native/crates/tests_matcher", "native/crates/tests_tape", "native/crates/tests_lang", "native/crates/ukl_vec"]
 # The Bitlex evaluator keeps its own workspace (its tree-sitter oracle); the engine uses its library.
 exclude = ["scripts/profiling/reachability", "scripts/profiling/preparation", "tools/bitlex"]
 resolver = "2"
@@ -70,6 +70,11 @@ opt-level = 3
 
 # The lean Go parser (`rerail-go-lean`), the same: a step per token of every Go file.
 [profile.dev.package.rerail-go-lean]
+opt-level = 3
+
+# The UKL interpreter (`rerail-ukl-vec`, decision 0567): a step per node of a kernel per thread of every launch on
+# the CPU's interpreted path, optimized as the lean parsers are, so the library's tests run in seconds.
+[profile.dev.package.rerail-ukl-vec]
 opt-level = 3
 
 # The lean C and C++ parser (`rerail-c-lean`), the same: a step per token of every C and C++ file.
@@ -146,23 +151,19 @@ overflow-checks = false
 incremental = true
 codegen-units = 256
 
-# The parser's generated code (`rerail-rr-aot`) nests blocks deeper than LLVM's debug info
-# walks without overflowing its stack; its code is the same without.
+# The parsers' generated code (`rerail-rr-aot`, written from the grammar): no debug info, as
+# its earlier lowering of the IR, whose nesting overflowed LLVM's debug info walk, needed; its
+# code is the same without.
 [profile.profiling.package.rerail-rr-aot]
-debug = false
-
-# The preprocessing words' generated code (`rerail-pp-aot`), the same; and optimized in a test
-# build too, as the code the comparison is of (LLVM's best against Cranelift's).
-[profile.profiling.package.rerail-pp-aot]
 debug = false
 
 # Kotlin's parser's generated code (`rerail-kotlin-aot`), as `rerail-rr-aot`'s.
 [profile.profiling.package.rerail-kotlin-aot]
 debug = false
 
-[profile.dev.package.rerail-pp-aot]
+# JSON's parser's generated code (`rerail-json-aot`), as Kotlin's.
+[profile.profiling.package.rerail-json-aot]
 debug = false
-opt-level = 3
 
 [profile.release]
 lto = "thin"
@@ -220,7 +221,4 @@ opt-level = 1
 opt-level = 3
 
 [profile.test-o1.package.rerail-rr-aot]
-debug = false
-
-[profile.test-o1.package.rerail-pp-aot]
 debug = false

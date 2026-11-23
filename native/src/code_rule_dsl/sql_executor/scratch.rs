@@ -3,7 +3,8 @@ use super::*;
 
 #[derive(Clone, Default)]
 pub struct Pool {
-    pub batch_runtime: Arc<parking_lot::Mutex<Option<temporal::BatchRuntime>>>,
+    /// The SQL wave batches' runtime (`temporal::BatchRuntime`, rerail-sessions'), made on first use.
+    pub batch_runtime: Arc<parking_lot::Mutex<Option<Box<dyn std::any::Any + Send>>>>,
     pub worker_accounting: Option<Arc<work_graph::Accounting>>,
     pub worker_plan:Arc<parking_lot::Mutex<Option<Value>>>,
     tables: BTreeMap<(String, bool, bool), Vec<String>>,

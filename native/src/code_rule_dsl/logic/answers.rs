@@ -20,7 +20,7 @@
 //! Both passes are made on the program's version (decision 0241's form), reading its rules by their handles and its
 //! fields, never a tree.
 
-use super::front::{Edges, tarjan};
+use super::front::{Edges, path, tarjan};
 use super::front::ast::Gate;
 use super::plan::body::Placed;
 use super::plan::fields::{Fields, FieldsData};
@@ -97,7 +97,7 @@ fn write<'b, 'p>(v: &Version, r: RuleRef<'_>, lits: &[LitRef<'_>], rb: RuleBuild
 /// negation is gated, an overlay of the answers alone (`SetAnswers`).
 pub fn gate(p: &Placed, answers: &BTreeMap<String, Vec<String>>) -> Result<Arc<Version>, String> {
     let mut pipe = Pipeline::new("gate", p.v.clone());
-    let mut rules = GateRules { answers, produced: BTreeMap::new(), sccs: Vec::new(), comp: BTreeMap::new(), answered: BTreeSet::new(), fields: None, made: Vec::new() };
+    let mut rules = GateRules { answers, produced: BTreeMap::new(), sccs: Vec::new(), comp: BTreeMap::new(), answered: BTreeSet::new(), edges: Edges::new(), fields: None, made: Vec::new(), shown: BTreeSet::new() };
     if !answers.is_empty() {
         if !p.whole {
             return Err("the requests of a version of rules alone".into());
@@ -123,8 +123,31 @@ struct GateRules<'a> {
     comp: BTreeMap<String, usize>,
     /// The components that hold a request and what answers it.
     answered: BTreeSet<usize>,
+    /// What each relation reads (and each produced relation's request): the graph the components are of.
+    edges: Edges,
     fields: Option<Arc<FieldsData>>,
     made: Vec<Made>,
+    /// The (head, negated relation) pairs whose cycle the profile was given.
+    shown: BTreeSet<(String, String)>,
+}
+
+impl GateRules<'_> {
+    /// Why `rel` is in component `c`, which loads: its reads to the component's request and the request's back to
+    /// it, then each step with a rule that makes it.
+    fn cycle(&self, v: &Version, rel: &str, c: usize) -> String {
+        let name = |r: super::program_image::RelId| v.rel_name(r);
+        let request = self.answers.keys().find(|q| self.comp.get(q.as_str()) == Some(&c)).map_or("?", String::as_str);
+        let (out_path, back_path) = (path(&self.edges, rel, request), path(&self.edges, request, rel));
+        let mut steps = Vec::new();
+        for p in [&out_path, &back_path] {
+            for w in p.windows(2) {
+                let (x, y) = (w[0].trim_start_matches('!'), w[1].trim_start_matches('!'));
+                let rule = v.rules().find(|rr| name(rr.head().rel()) == x && rr.body().any(|l| l.atom().is_some_and(|a| name(a.rel()) == y)));
+                steps.push(format!("\n  {x} -> {y}: {}", rule.map_or_else(|| format!("{x} is {y}'s answer"), |rr| v.show_rule(rr))));
+            }
+        }
+        format!("the component of {} relations: {} ... {}{}", self.sccs[c].len(), out_path.join(" -> "), back_path.join(" -> "), steps.concat())
+    }
 }
 
 impl RulePass for GateRules<'_> {
@@ -148,6 +171,7 @@ impl RulePass for GateRules<'_> {
             edges.entry(q.clone()).or_default().insert((req.clone(), false));
         }
         self.sccs = tarjan(&nodes, &edges);
+        self.edges = edges.clone();
         self.comp = self.sccs.iter().enumerate().flat_map(|(i, s)| s.iter().map(move |r| (r.clone(), i))).collect();
         let (comp, sccs, produced) = (&self.comp, &self.sccs, &self.produced);
         self.answered = self.answers.keys().filter_map(|r| comp.get(r.as_str()).copied()).filter(|&c| sccs[c].iter().any(|r| produced.contains_key(r.as_str()))).collect();
@@ -185,6 +209,10 @@ impl RulePass for GateRules<'_> {
                 continue;
             };
             let rel = name(a.rel());
+            // Why it is gated: the cycle through the request that puts its relation in the component.
+            if self.shown.insert((name(r.head().rel()).to_owned(), rel.to_owned())) {
+                crate::code_rule_dsl::logic::profile::decision("gated negations (decision 0065 §2a)", || format!("{} {} {rel} inside a component that loads: {}", name(r.head().rel()), if agg { "aggregates" } else { "negates" }, self.cycle(v, rel, c)));
+            }
             // The key: a negated atom's columns that are not wild, all bound by the literals before it; an
             // aggregate's that they bind (a constant's too), its group.
             let at: Vec<usize> = a

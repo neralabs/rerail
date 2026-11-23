@@ -229,7 +229,9 @@ pub struct NativeTaskContext {
     pub repeat_quota_limit: u32,
     pub results: *mut ResultRecord,
     pub result_quota_limit: u32,
-    pub line_starts: *const u32,
+    /// Its document's line index (decision 0612: `LineTable::index`, its language's lines), read where it lies by
+    /// the lines' reads (`lines_line`, `lines_start`).
+    pub lines: *const u8,
     pub line_count: u32,
     pub final_captures: *mut FinalCaptureRecord,
     pub final_capture_capacity: u32,
@@ -2983,8 +2985,8 @@ fn build_task_contexts(
                 .add(totals.candidates as usize + arena_starts[ArenaKind::Result as usize] as usize)
         };
         context.result_quota_limit = batch.evaluation_limit(task, ArenaKind::Result);
-        // Its line starts, the document's own (`line_start_at` adds `source_base`).
-        context.line_starts = doc.transducer_rows().as_ptr();
+        // Its lines, the document's own line index, read where it lies (`line_start` adds `source_base`).
+        context.lines = doc.line_table().index().as_ptr();
         context.line_count = file.line_count;
         context.final_captures = unsafe {
             final_captures
@@ -3334,3 +3336,29 @@ fn rebase_property_text(property: &mut PropertyRecord, byte_base: u32) -> Result
 }
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+
+/// The compiled CPU executor, as the transducer's dispatch reads it (`packed::CPU`).
+pub struct Executor;
+
+impl super::CpuExecutor for Executor {
+    fn execute_packed(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: super::Budget) -> Result<PackedExecution, Error> {
+        execute_batch_packed_budgeted(programs, files, anchors, result_limits, budget)
+    }
+    fn execute_outcomes(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) -> Result<BatchOutcome, Error> {
+        execute_batch_outcomes(programs, files, anchors)
+    }
+    fn warm(&self, program: &Program) -> Result<(), Error> {
+        warm_jit(program)
+    }
+    fn compiled(&self, programs: &[Program]) -> Result<bool, Error> {
+        compiled(programs)
+    }
+    fn compile(&self, program: &Program) -> Result<(), Error> {
+        compile_cached(program).map(|_| ())
+    }
+}
+
+/// Registers the compiled CPU executor (`packed::CPU`): boot does, and each test binary below it that runs `CpuJit`.
+pub fn register() {
+    super::CPU.register("rerail-transducer-cpu", &Executor);
+}

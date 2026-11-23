@@ -9,7 +9,8 @@
 //! it does not read) goes to the lean scan, so a row is never wrong.
 
 use rerail_bitlex::bitlex_masks as bitlex_compile;
-use rerail_compiler::{native_ir, rir_asm as rir};
+use rerail_compiler::native_ir;
+use rerail_rir::rir_asm as rir;
 use rerail_compiler::native_cpu_clusters;
 use rerail_cpu_stream::native_cpu_stream;
 
@@ -102,7 +103,7 @@ pub(crate) fn lower_kinds(grammar: &str, kinds: &[&str], fields: &[&str]) -> Res
         })
     };
     let field = |name: &str| fields.iter().position(|&f| f == name).map(|i| i as u16 + 1);
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let compiled = bitlex_compile::compile_shaped(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules)?;
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;

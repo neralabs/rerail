@@ -131,7 +131,7 @@ pub struct LanguageOptions {
     /// (`SourceType::of_file`, Node's syntax detection where `type` is unset, a module without a
     /// manifest). The readers below take whichever the query reads as `file`
     /// (`file_source_type_for`).
-    pub(crate) package_type_module_system: bool,
+    pub package_type_module_system: bool,
     /// The ecmaVersion builtins and the configured `globals`; CommonJS's are added by
     /// `declares` for a CommonJS file (no builtin shares a name with them).
     pub(crate) globals: HashMap<String, GlobalSetting>,
@@ -143,9 +143,9 @@ pub struct LanguageOptions {
     pub(crate) implied_strict: bool,
     /// typescript-eslint's `jsxPragma` (default `React`): the first JSX element or fragment whose
     /// scope sees a variable of this name reads it. `None` references nothing.
-    pub(crate) jsx_pragma: Option<String>,
+    pub jsx_pragma: Option<String>,
     /// typescript-eslint's `jsxFragmentName` (default none): the same for fragments.
-    pub(crate) jsx_fragment_name: Option<String>,
+    pub jsx_fragment_name: Option<String>,
     /// typescript-eslint's `lib` globals (default none), each with the namespaces it is valid in.
     pub(crate) lib: HashMap<Box<str>, u8>,
 }
@@ -185,7 +185,7 @@ impl LanguageOptions {
 
     /// Whether the top level is eslint-scope's global scope: a script's, unless `globalReturn`
     /// makes it a function.
-    pub(crate) fn global_top_level(&self, file: SourceType) -> bool {
+    pub fn global_top_level(&self, file: SourceType) -> bool {
         self.source_type(file) == SourceType::Script && !self.global_return
     }
 

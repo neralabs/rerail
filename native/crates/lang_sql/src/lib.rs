@@ -21,18 +21,15 @@ extern crate self as rerail_lang_sql;
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;
-    pub use rerail_classic::code_rule_dsl::calls;
-    pub use rerail_classic::code_rule_dsl::compile;
-    pub use rerail_classic::code_rule_dsl::crypto;
+    pub use rerail_rules::code_rule_dsl::calls;
+    pub use rerail_rules::code_rule_dsl::compile;
+    pub use rerail_rules::code_rule_dsl::crypto;
     pub use rerail_lang::code_rule_dsl::embed;
-    pub use rerail_classic::code_rule_dsl::eval;
+    pub use rerail_rules::code_rule_dsl::eval;
     pub mod facts {
         pub use rerail_facts::code_rule_dsl::facts::*;
-        pub use rerail_classic::code_rule_dsl::facts::facts_a;
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
-            #[cfg(any(test, feature = "test-hooks"))]
-            pub use rerail_classic::code_rule_dsl::facts::vtab::p_table;
             #[allow(unused_imports)]
             use fallible_iterator::FallibleIterator;
             #[allow(unused_imports)]
@@ -60,11 +57,11 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, StoreResult};
     }
-    pub use rerail_classic::code_rule_dsl::findings;
+    pub use rerail_rules::code_rule_dsl::file_input;
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;
-    pub use rerail_classic::code_rule_dsl::hooks;
-    pub use rerail_classic::code_rule_dsl::identifier;
+    pub use rerail_rules::code_rule_dsl::hooks;
+    pub use rerail_rules::code_rule_dsl::identifier;
     pub use rerail_lang::code_rule_dsl::json;
     pub use rerail_lang::code_rule_dsl::regexes;
     #[path = "language"]
@@ -72,7 +69,7 @@ pub mod code_rule_dsl {
         pub use rerail_lang::code_rule_dsl::language::*;
         #[path = "adapter"]
         pub mod adapter {
-            pub use rerail_classic::code_rule_dsl::language::adapter::*;
+            pub use rerail_rules::code_rule_dsl::language::adapter::*;
             pub mod sql;
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::language::adapter::arguments::{ArgumentFeature, ArgumentRules};
@@ -99,7 +96,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::matcher::{file_index};
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
+            use crate::code_rule_dsl::file_input::python_module_path_on_disk;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::suppress::{Suppress, root};
             #[allow(unused_imports)]
@@ -147,7 +144,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use serde::{Deserialize, Serialize};
     }
-    pub use rerail_classic::code_rule_dsl::literal;
+    pub use rerail_rules::code_rule_dsl::literal;
     pub mod logic {
         pub mod front {
             pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
@@ -187,7 +184,7 @@ pub mod code_rule_dsl {
     }
     #[path = "matcher"]
     pub mod matcher {
-        pub use rerail_classic::code_rule_dsl::matcher::*;
+        pub use rerail_rules::code_rule_dsl::matcher::*;
         pub mod arguments_sql;
         #[allow(unused_imports)]
         #[cfg(any(test, feature = "test-hooks"))]
@@ -312,30 +309,28 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::matcher::term::{LanguageTerm, TermCompiler, install_terms};
     }
-    pub use rerail_classic::code_rule_dsl::model;
+    pub use rerail_rules::code_rule_dsl::model;
     pub use rerail_lang::code_rule_dsl::module_path;
-    pub use rerail_classic::code_rule_dsl::origin;
+    pub use rerail_rules::code_rule_dsl::origin;
     pub use rerail_prof::code_rule_dsl::phase_clock;
-    pub use rerail_classic::code_rule_dsl::placement;
     pub use rerail_facts::code_rule_dsl::producers;
     pub use rerail_prof::code_rule_dsl::prof;
     #[cfg(feature="code-rule-profile")]
-    pub use rerail_classic::code_rule_dsl::profile;
-    pub use rerail_classic::code_rule_dsl::query;
+    pub use rerail_rules::code_rule_dsl::profile;
+    pub use rerail_rules::code_rule_dsl::query;
     pub mod residency {
-        pub use rerail_classic::code_rule_dsl::residency::admission;
+        pub use rerail_rules::code_rule_dsl::residency::admission;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::residency::admission::relational::ast_stage::install_ast_producer;
     }
-    pub use rerail_classic::code_rule_dsl::resolution;
-    pub use rerail_classic::code_rule_dsl::rule_api;
+    pub use rerail_rules::code_rule_dsl::resolution;
     #[path = "scope"]
     pub mod scope {
-        pub use rerail_classic::code_rule_dsl::scope::*;
+        pub use rerail_rules::code_rule_dsl::scope::*;
         pub mod sql;
         #[path = "usage"]
         pub mod usage {
-            pub use rerail_classic::code_rule_dsl::scope::usage::*;
+            pub use rerail_rules::code_rule_dsl::scope::usage::*;
             pub mod lang_sql;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::scope::{
@@ -385,13 +380,12 @@ pub mod code_rule_dsl {
     }
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
-    pub use rerail_classic::code_rule_dsl::soundness;
+    pub use rerail_rules::code_rule_dsl::soundness;
     pub use rerail_facts::code_rule_dsl::sql_profile;
     pub use rerail_facts::code_rule_dsl::sql_admission;
-    pub use rerail_classic::code_rule_dsl::stats;
     #[path = "suppress"]
     pub mod suppress {
-        pub use rerail_classic::code_rule_dsl::suppress::*;
+        pub use rerail_rules::code_rule_dsl::suppress::*;
         pub mod sqlfluff;
         #[allow(unused_imports)]
         use ast_grep_core::{Doc, Node};
@@ -437,7 +431,7 @@ pub mod code_rule_dsl {
     }
     pub use rerail_facts::code_rule_dsl::text;
     pub mod transducer {
-        pub use rerail_classic::code_rule_dsl::transducer::semantic_facts;
+        pub use rerail_rules::code_rule_dsl::transducer::semantic_facts;
         #[allow(unused_imports)]
         #[cfg(any(test, feature = "test-hooks"))]
         use crate::code_rule_dsl::tape::TapeDoc;
@@ -463,7 +457,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::tree;
     #[path = "value"]
     pub mod value {
-        pub use rerail_classic::code_rule_dsl::value::*;
+        pub use rerail_rules::code_rule_dsl::value::*;
         pub mod sql;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::language::{Family, GrammarDialect};
@@ -486,14 +480,13 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::value::text_regex::MAX_STRING_BYTES;
     }
-    pub use rerail_classic::code_rule_dsl::violations;
+    pub use rerail_rules::code_rule_dsl::violations;
     #[cfg(any(test, feature = "test-hooks"))]
-    pub use rerail_classic::code_rule_dsl::walks;
+    pub use rerail_rules::code_rule_dsl::walks;
     pub mod waves {
         #[cfg(any(test, feature = "test-hooks"))]
-        pub use rerail_classic::code_rule_dsl::waves::relational;
+        pub use rerail_rules::code_rule_dsl::waves::relational;
     }
-    pub use rerail_classic::code_rule_dsl::workspace;
     #[allow(unused_imports)]
     use crate::code_rule_dsl::residency::admission::relational;
     #[allow(unused_imports)]
@@ -513,14 +506,7 @@ pub mod code_rule_dsl {
     use serde_json::Value;
     #[allow(unused_imports)]
     use std::sync::Arc;
-    #[allow(unused_imports)]
-    pub use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
-    #[allow(unused_imports)]
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) use crate::code_rule_dsl::rule_api::CodeRuleDslEditor;
 }
-pub use rerail_classic::git_ignore;
-pub use rerail_classic::panic_boundary;
 // cratify: mounts end
 
 // The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a

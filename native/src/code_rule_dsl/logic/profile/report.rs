@@ -4,7 +4,7 @@ use super::*;
 
 /// The engine stratum `key` ran on, and why (the first reason given; one loop per call).
 /// Records where native stratum `key` ran (`plan::placement`), its shape, the work it did and the CPU it took.
-pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logic::plan::placement::Placement, shape: &crate::code_rule_dsl::logic::plan::placement::Shape, work: u64, cpu: f64, device: Option<&DeviceReport>) {
+pub fn placed(key: &str, p: &crate::code_rule_dsl::logic::plan::placement::Placement, shape: &crate::code_rule_dsl::logic::plan::placement::Shape, work: u64, cpu: f64, device: Option<&DeviceReport>) {
     if !on() {
         return;
     }
@@ -35,7 +35,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 made: d.made,
                 waved: u64::from(d.waved),
                 arena_reruns: u64::from(d.arena_reruns),
-                sized: u64::from(d.sized),
+                levels: u64::from(d.levels),
                 screened: u64::from(d.screened),
             });
             true

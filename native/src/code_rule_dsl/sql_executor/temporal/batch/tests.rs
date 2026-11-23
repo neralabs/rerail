@@ -28,7 +28,7 @@ fn wide_budgeted_lattice_and_scalar_feedback_replays_atomically() {
     bind(&mut e, json!([[0, 0], [1, 3]]));
     e.run(program.clone(), "python".into(), Some(32)).unwrap();
     let before = rows(&mut e, "SELECT * FROM amount ORDER BY c0");
-    assert!(e.executions[0].temporal[&0].batch.is_some());
+    assert!(crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0]).batch.is_some());
     let edit = json!([{"name":"seed","delete":[[1,3]],"insert":[[0,9]]}]).to_string();
     e.set_limits(json!({"max_submissions":100,"max_steps":1}).to_string())
         .unwrap();
@@ -45,7 +45,7 @@ fn wide_budgeted_lattice_and_scalar_feedback_replays_atomically() {
         let sql = format!("SELECT * FROM {relation} ORDER BY 1,2");
         assert_eq!(rows(&mut e, &sql), rows(&mut oracle, &sql), "{relation}");
     }
-    let history = e.executions[0].temporal[&0].batch.as_ref().unwrap();
+    let history = crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0]).batch.as_ref().unwrap();
     assert_eq!(history.explain()["scope"], "warm");
     assert_eq!(history.explain()["planned_submissions"], 1);
     assert!(e.db.admission().snapshot()["executed"].as_u64().unwrap() <= 100);
@@ -93,7 +93,7 @@ fn projected_fixture(groups: i64) -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     .unwrap();
     e.run(projection_program(), "python".into(), Some(32))
         .unwrap();
-    assert!(e.executions[0].temporal[&0].batch.is_some());
+    assert!(crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0]).batch.is_some());
     (dir, e)
 }
 
@@ -126,7 +126,7 @@ fn signed_batches_preserve_duplicate_supports_simultaneous_edits_and_rollback() 
             };
             assert_eq!(rows(&mut e, &sql), rows(&mut full, &sql), "{edit}");
         }
-        let history = e.executions[0].temporal[&0].batch.as_ref().unwrap();
+        let history = crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0]).batch.as_ref().unwrap();
         assert!(
             history.explain()["signed_rule_results"].as_u64().unwrap() > 0,
             "{}",
@@ -291,7 +291,7 @@ fn signed_cpython_replays_match_full_batches_within_the_session_cap() {
             assert_eq!(normalized_state(&sparse), normalized_state(&full));
             assert!(sparse.db.admission().counters().0 <= 100);
             assert!(full.db.admission().counters().0 <= 100);
-            let batch = sparse.executions[0].temporal[&0]
+            let batch = crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*sparse.executions[0].temporal[&0])
                 .batch
                 .as_ref()
                 .unwrap()
@@ -433,12 +433,12 @@ fn sparse_folds_scalars_and_cached_statements_replay_with_stable_schemas() {
         )
         .unwrap();
     }
-    let explain = e.executions[0].temporal[&0]
+    let explain = crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0])
         .batch
         .as_ref()
         .unwrap()
         .explain();
-    let history = e.executions[0].temporal[&0].batch.as_ref().unwrap();
+    let history = crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0]).batch.as_ref().unwrap();
     assert!(
         history
             .plan
@@ -471,7 +471,7 @@ fn positive_cte_candidates_keep_signed_reconciliation() {
     };
     let (_dir, mut e) = projected_fixture(128);
     e.set_limits("{}".into()).unwrap();
-    let mut trace = e.executions[0].temporal[&0].clone();
+    let mut trace = crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0]).clone();
     let steps = Arc::make_mut(&mut trace.steps);
     let mut constant = true;
     for (step, query) in steps {
@@ -552,7 +552,7 @@ fn positive_cte_candidates_keep_signed_reconciliation() {
         .unwrap();
     work.cleanup().unwrap();
     e.scratch = work.pool;
-    e.executions[0].temporal.get_mut(&0).unwrap().batch = Some(history);
+    crate::code_rule_dsl::sql_executor::temporal::Trace::of_mut(&mut **e.executions[0].temporal.get_mut(&0).unwrap()).batch = Some(history);
     e.apply_changes(
         json!([{"name":"seed","delete":[[7,0,40],[7,1,40]],"insert":[[7,2,41]]}]).to_string(),
         Some(32),
@@ -566,7 +566,7 @@ fn positive_cte_candidates_keep_signed_reconciliation() {
         rows(&mut e, "SELECT * FROM item WHERE c0=7"),
         json!([[7, 41]])
     );
-    let explain = e.executions[0].temporal[&0]
+    let explain = crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0])
         .batch
         .as_ref()
         .unwrap()

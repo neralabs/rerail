@@ -327,7 +327,10 @@ pub fn assemble(
     // overlay over it (decision 0244).
     let local_outputs: Vec<String> = f.outputs().filter(|o| is_local(o)).map(str::to_owned).chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
     let local_inputs: Vec<String> = f.inputs().map(str::to_owned).collect();
-    let cross_outputs: Vec<String> = f.outputs().filter(|o| !is_local(o)).map(str::to_owned).collect();
+    // An output the cross part reads too (an export: a pack's `rr_found_through` over a file-local finding) is handed
+    // on by it, read where its input is bound: the file-local part keeps its exports in the engine for the cross part,
+    // not decoded, so an exported output is the cross part's to write.
+    let cross_outputs: Vec<String> = f.outputs().filter(|o| !is_local(o) || exports.iter().any(|x| x == o)).map(str::to_owned).collect();
     let cross_inputs: Vec<String> = base_read.into_iter().chain(exports.iter().cloned()).collect();
     let versions = {
         use crate::code_rule_dsl::logic::program_image::PartFields;

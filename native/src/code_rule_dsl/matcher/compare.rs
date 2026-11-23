@@ -26,7 +26,7 @@ pub struct Comparison {
     pub text: CompareText,
     /// How the semantic modes read the captures (`SemanticText`); set per grammar at compile
     /// time.
-    pub(crate) reading: Option<Reading>,
+    pub reading: Option<Reading>,
     /// The query's `transform`, where a side names one of its variables: that side is its text.
     pub transform: Option<Arc<Transform>>,
     /// `tokens` only: binary operators whose operands compare in either order (ESLint
@@ -35,7 +35,7 @@ pub struct Comparison {
     /// `tokens` only: the grammar of the tape's implied tokens (RER-131), which says which leaves
     /// stand for a node whose tokens the tape left out (`[]`, `()`); set per grammar at compile
     /// time, `None` for a parsed tree, which keeps its tokens.
-    pub(crate) implied: Option<Arc<crate::code_rule_dsl::tape::tokens::TokenGrammar>>,
+    pub implied: Option<Arc<crate::code_rule_dsl::tape::tokens::TokenGrammar>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

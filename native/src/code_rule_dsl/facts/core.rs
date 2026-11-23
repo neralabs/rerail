@@ -57,6 +57,11 @@ pub trait ValueReader: Send + Sync {
     );
 }
 
+/// The columns of a registered family's lazy relation (`facts::vtab::syntax::family_columns`, rerail-facts'), which
+/// the boot registers with the families; none registered: no family relation.
+pub static FAMILY_COLUMNS: rerail_registry::Slot<fn(&str) -> Option<&'static [&'static str]>> =
+    rerail_registry::Slot::new("a family's relation's columns (facts::core::FAMILY_COLUMNS)");
+
 static VALUE_READER: std::sync::OnceLock<&'static dyn ValueReader> = std::sync::OnceLock::new();
 
 /// Registers the reader of values (once, at load).
@@ -65,7 +70,7 @@ pub fn install_value_reader(reader: &'static dyn ValueReader) {
 }
 
 /// The registered reader of values; `None` where no engine registered one.
-pub(crate) fn value_reader() -> Option<&'static dyn ValueReader> {
+pub fn value_reader() -> Option<&'static dyn ValueReader> {
     VALUE_READER.get().copied()
 }
 
@@ -251,7 +256,7 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     let Some(image) = TapeImage::parse(&grammar, file.source(), &|| false) else { return Ok((Built::Unparsed, None)); };
     let image = image?;
     drop(parse);
-    let (built, doc) = facts_of_image(file, &grammar, image.primary, Terminators::of(language), keep)?;
+    let (built, doc) = facts_of_image(file, &grammar, image.primary, crate::code_rule_dsl::lines::terminators(language), keep)?;
     Ok((with_programs(built, &grammar, image.derived)?, doc))
 }
 
@@ -305,7 +310,7 @@ pub fn build_fragment(file: &dyn SourceFile, fragment: Fragment) -> Result<Built
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
     let grammar = Grammar::embedded(language)?;
     let Some(image) = TapeImage::parse_from(&grammar, file.source(), fragment.start, &|| false) else { return Ok(Built::Unparsed) };
-    facts_of_image(file, &grammar, image?.primary, Terminators::of(language), false).map(|(built, _)| built)
+    facts_of_image(file, &grammar, image?.primary, crate::code_rule_dsl::lines::terminators(language), false).map(|(built, _)| built)
 }
 
 /// [`build_with_tape`] of an embedded program (decision 0431 §4), read off the tape or tree its embedder parsed
@@ -318,7 +323,7 @@ pub fn build_parsed(file: &dyn SourceFile, parse: crate::code_rule_dsl::embed::P
         crate::code_rule_dsl::embed::Parse::Tape(image) => image,
         crate::code_rule_dsl::embed::Parse::Tree(tree) => TapeImage::encode_tree_image(tree.root_node(), &grammar, file.source(), None, &|| false)?,
     };
-    facts_of_image(file, &grammar, primary, Terminators::of(language), keep)
+    facts_of_image(file, &grammar, primary, crate::code_rule_dsl::lines::terminators(language), keep)
 }
 
 /// The facts of `file` read off its parsed tape `primary`, with the tape where `keep`.
@@ -326,7 +331,7 @@ fn facts_of_image(file: &dyn SourceFile, grammar: &Arc<crate::code_rule_dsl::tap
     // Where the device reads tapes, the parse's in a slab's room too (decision 0353 step 4a): a guest's, a run's
     // without a store.
     let primary = placed_where_read(primary, grammar)?;
-    let lines = Arc::new(LineTable::placed(file.source(), terminators));
+    let lines = Arc::new(primary.lines(file.source(), terminators, true));
     let doc = kept_tape(keep, file, grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = read_off(doc.as_ref(), file, grammar, primary, lines)?;
@@ -411,7 +416,7 @@ pub fn restore_tape(file: &dyn SourceFile, cache: &crate::content_store::Content
     };
     let grammar = Arc::new(Grammar::new(language).map_err(StoreError::Invalid)?);
     let primary = TapeImage::from_bytes(&bytes, &grammar).map_err(StoreError::Invalid)?;
-    let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
+    let lines = Arc::new(primary.lines(file.source(), crate::code_rule_dsl::lines::terminators(language), false));
     kept_tape(true, file, &grammar, &primary, &lines).map_err(StoreError::Invalid)
 }
 
@@ -549,7 +554,7 @@ fn build_in_wave_as(
             primary
         }
     };
-    let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
+    let lines = Arc::new(primary.lines(file.source(), crate::code_rule_dsl::lines::terminators(language), true));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;
@@ -635,7 +640,7 @@ pub fn build_cached_with_tape(
             let held = held.map_err(|e| e.to_string())?;
             let grammar = tape::Grammar::embedded(language)?;
             let primary = queued_image(&held, &grammar)?;
-            let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
+            let lines = Arc::new(primary.lines(file.source(), crate::code_rule_dsl::lines::terminators(language), true));
             let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
             return Ok((Built::Facts(read_off(doc.as_ref(), file, &grammar, primary, lines)?), known, doc));
         }
@@ -690,7 +695,7 @@ pub fn build_cached_with_tape(
             primary
         }
     };
-    let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
+    let lines = Arc::new(primary.lines(file.source(), crate::code_rule_dsl::lines::terminators(language), true));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;
@@ -743,9 +748,9 @@ fn holding(tape: Arc<crate::code_rule_dsl::tape::formats::DocTape>, source: Arc<
 pub const TEXT: u8 = u8::MAX;
 
 /// The facts of a file read as text only (core.rerail's `.scope text`): its source and lines, no tree. Its lines are W's
-/// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
+/// for a file with no language (`lines::terminators_of(None)`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
 pub fn text(source: Arc<crate::code_rule_dsl::tape::Text>) -> Facts {
-    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Eslint));
+    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators_of(None)));
     Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(Vec::new()), held: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
@@ -1177,8 +1182,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "rr_report_location" => &["n", "line", "column", "end_line", "end_column"],
         "docof" => &["n", "d"],
         "source" => &["d", "sp"],
-        "src_line" | "src_line_lf" | "tape_line" => &["d", "l", "sp"],
-        "split_line" | "lf_line" => &["d", "l", "t"],
+        "src_line" => &["d", "l", "sp"],
         "str_part" => &["lit", "i", "v", "at", "spec"],
         "str_part_word" => &["lit", "i", "w", "at", "spec"],
         "str_part_start" => &["lit", "i", "l", "c"],
@@ -1230,7 +1234,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::MATCHES) => &["sp", "m"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::GROUPS) => &["sp", "m", "g", "gsp"],
         // A registered family's lazy relations (`facts::vtab::syntax::Families`: Python's `py.*`).
-        rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::family_columns(rel)?,
+        rel if rel.starts_with("py_") => FAMILY_COLUMNS.try_get()?(rel)?,
         _ => return None,
     })
 }

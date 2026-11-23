@@ -13,8 +13,8 @@ use std::ops::Range;
 /// A count's bounds, inclusive; `eq` is `min == max`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LineCount {
-    pub(crate) min: u64,
-    pub(crate) max: Option<u64>,
+    pub min: u64,
+    pub max: Option<u64>,
 }
 
 impl LineCount {
@@ -38,36 +38,36 @@ pub enum Neighbour {
 /// `before` or `after`: the lines between the node and its neighbour on that side.
 #[derive(Clone, Debug)]
 pub struct Gap {
-    pub(crate) to: Neighbour,
+    pub to: Neighbour,
     /// Whether a comment counts as the neighbouring token or sibling (else it is passed over).
-    pub(crate) comments: bool,
+    pub comments: bool,
     /// Whether the file's start (`before`) or end (`after`) stands in for a missing neighbour.
-    pub(crate) edge: bool,
+    pub edge: bool,
     /// Line breaks between the neighbour and the node.
-    pub(crate) breaks: Option<LineCount>,
+    pub breaks: Option<LineCount>,
     /// Lines between them that hold no token or comment.
-    pub(crate) blank: Option<LineCount>,
+    pub blank: Option<LineCount>,
 }
 
 #[derive(Clone, Debug)]
 pub struct Layout {
     /// Line breaks inside the node.
-    pub(crate) span: Option<LineCount>,
+    pub span: Option<LineCount>,
     /// The node's first byte.
-    pub(crate) start: Option<LineCount>,
-    pub(crate) before: Option<Gap>,
-    pub(crate) after: Option<Gap>,
-    pub(crate) line: Option<regex::Regex>,
-    pub(crate) previous_line: Option<regex::Regex>,
-    pub(crate) context: Option<LineContext>,
+    pub start: Option<LineCount>,
+    pub before: Option<Gap>,
+    pub after: Option<Gap>,
+    pub line: Option<regex::Regex>,
+    pub previous_line: Option<regex::Regex>,
+    pub context: Option<LineContext>,
 }
 
 #[derive(Clone, Debug)]
 pub struct LineContext {
-    pub(crate) before: usize,
-    pub(crate) after: usize,
-    pub(crate) through: Option<regex::Regex>,
-    pub(crate) regex: regex::Regex,
+    pub before: usize,
+    pub after: usize,
+    pub through: Option<regex::Regex>,
+    pub regex: regex::Regex,
 }
 
 impl Layout {
@@ -118,12 +118,12 @@ impl Layout {
         if self
             .line
             .as_ref()
-            .is_some_and(|regex| !regex.is_match(&source[lines.start(at)..lines.end(at)]))
+            .is_some_and(|regex| !regex.is_match(&source[lines.start(at)..lines.end(at, source.as_bytes())]))
         {
             return None;
         }
         if let Some(regex) = &self.previous_line
-            && (at == 0 || !regex.is_match(&source[lines.start(at - 1)..lines.end(at - 1)]))
+            && (at == 0 || !regex.is_match(&source[lines.start(at - 1)..lines.end(at - 1, source.as_bytes())]))
         {
             return None;
         }
@@ -135,7 +135,7 @@ impl Layout {
                     if !spend_util_step() {
                         return None;
                     }
-                    if through.is_match(&source[lines.start(line)..lines.end(line)]) {
+                    if through.is_match(&source[lines.start(line)..lines.end(line, source.as_bytes())]) {
                         last = line;
                         break;
                     }
@@ -143,7 +143,7 @@ impl Layout {
             }
             if !context
                 .regex
-                .is_match(&source[lines.start(first)..lines.end(last)])
+                .is_match(&source[lines.start(first)..lines.end(last, source.as_bytes())])
             {
                 return None;
             }
@@ -248,7 +248,7 @@ fn blank_lines<D: Doc>(
         (first + 1..last)
             .filter(|&line| {
                 source
-                    .get(lines.start(line)..lines.end(line))
+                    .get(lines.start(line)..lines.end(line, source.as_bytes()))
                     .is_some_and(|text| text.chars().all(is_space))
             })
             .count()

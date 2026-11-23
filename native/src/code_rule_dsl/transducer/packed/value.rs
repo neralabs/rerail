@@ -320,14 +320,14 @@ impl ValueProgram {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LuaProgram {
-    pub(super) anchored: bool,
-    pub(super) end_anchored: bool,
-    pub(super) capture_count: u32,
-    pub(super) items: Vec<LuaInstruction>,
+    pub anchored: bool,
+    pub end_anchored: bool,
+    pub capture_count: u32,
+    pub items: Vec<LuaInstruction>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum LuaInstruction {
+pub enum LuaInstruction {
     Atom {
         matcher: ValueMatcher,
         repetition: u8,

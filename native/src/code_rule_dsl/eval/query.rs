@@ -1,7 +1,7 @@
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::json::meta_name;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
-use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::matcher::{
     FileGates, FileScopeSlot, GrammarMatcher, UtilLimit, WITNESS_NODE, export_text, exported_span,
     is_span_variable,
@@ -498,9 +498,7 @@ impl<'a> Leaf<'a> {
                 let lines = matches!(source, RegexSource::Content).then(|| {
                     LineTable::new(
                         &file.source,
-                        file_language(file)
-                            .map(Terminators::of)
-                            .unwrap_or(Terminators::Eslint),
+                        crate::code_rule_dsl::lines::terminators_of(file_language(file)),
                     )
                 });
                 let span = |start: usize, end: usize| {
@@ -648,7 +646,7 @@ impl<'a> Leaf<'a> {
                 };
                 // A file the query's file gates exclude matches nothing, errors or not, as
                 // `run_clause` reads it without them.
-                if gated && !read.is_empty() && !FileGates::new(file, target.root()).admit(grammar)
+                if gated && !read.is_empty() && !grammar.admits(&FileGates::new(file, target.root()))
                 {
                     return Ok(FileStep::Read {
                         witnesses,
@@ -676,7 +674,7 @@ impl<'a> Leaf<'a> {
                 // Admission must also bypass matching; an omitted SQL plan is not a request
                 // to fall back to a full root walk for a known-empty file.
                 if !grammar.admits_source(&file.source, read, &mut rustc_hash::FxHashMap::default())
-                    || !FileGates::new(file, target.root()).admit(grammar)
+                    || !grammar.admits(&FileGates::new(file, target.root()))
                 {
                     return Ok(FileStep::Read {
                         witnesses,
@@ -918,7 +916,7 @@ impl TapeCacheSlot {
 
     // Read by P's relational workspace path (test-only, open item O18).
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-    pub(crate) fn seed(
+    pub fn seed(
         language: GrammarDialect,
         file: &FileInput,
         image: &crate::code_rule_dsl::tape::FileImage,
@@ -999,7 +997,7 @@ fn restore_file_tape(
     use crate::code_rule_dsl::tape;
     let never = || false;
     let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
-    let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
+    let lines = Arc::new(image.primary.lines(&file.source, crate::code_rule_dsl::lines::terminators(language), false));
     #[cfg(any(test, feature = "test-hooks"))]
     crate::code_rule_dsl::matcher::note_line_table_construction();
     let doc = tape::TapeDoc::restore_with_lines(

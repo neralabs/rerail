@@ -162,9 +162,10 @@ fn build_views(batch: &Batch) -> Option<ViewsInPlace> {
             crate::code_rule_dsl::prof::count(if z { "views.refused.unplaced_16z" } else { "views.refused.unplaced" }, 1);
             if r.nodes { on_device = false } else { locs = false }
         }
-        if !r.lines_device && lines && device.is_some() {
+        // The `Loc` views read the lines' words too (decision 0612): lines the device cannot reach refuse both.
+        if !r.lines_device && (lines || locs) && device.is_some() {
             crate::code_rule_dsl::prof::count("views.refused.lines_unplaced", 1);
-            lines = false;
+            (lines, locs) = (false, false);
         }
         for slab in &r.slabs {
             if !slabs.iter().any(|s| s.device_address() == slab.device_address()) {

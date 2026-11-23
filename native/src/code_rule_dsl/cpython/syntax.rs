@@ -30,10 +30,10 @@ use ruff_text_size::{Ranged, TextRange, TextSize};
 /// CPython's `SyntaxError`: its `lineno` (1 where CPython gives none, for a null byte), `msg`, and where it is (`at`:
 /// none for a null byte, where CPython's attributes are all `None`).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SyntaxError {
-    pub(crate) line: usize,
-    pub(crate) msg: String,
-    pub(crate) at: Option<Located>,
+pub struct SyntaxError {
+    pub line: usize,
+    pub msg: String,
+    pub at: Option<Located>,
 }
 
 /// A `SyntaxError`'s `lineno`, `offset`, `text`, `end_lineno` and `end_offset`, as CPython 3.13 sets them: offsets in
@@ -41,12 +41,12 @@ pub(crate) struct SyntaxError {
 /// else without), `end_offset` -1 where the token has no end (an `INDENT`, the end of the file) and 0 at a bracket
 /// never closed.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Located {
-    pub(crate) lineno: usize,
-    pub(crate) offset: i64,
-    pub(crate) text: String,
-    pub(crate) end_lineno: usize,
-    pub(crate) end_offset: i64,
+pub struct Located {
+    pub lineno: usize,
+    pub offset: i64,
+    pub text: String,
+    pub end_lineno: usize,
+    pub end_offset: i64,
 }
 
 /// Where CPython puts an error, by how it raises it (byte offsets in the source).
@@ -211,13 +211,13 @@ fn chars_to(text: &str, bytes: usize) -> i64 {
 /// `UnicodeDecodeError` the parser's action lets through as it is. W's worker catches only `SyntaxError`: its batch
 /// fails.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Raised {
-    pub(crate) class: &'static str,
-    pub(crate) message: String,
+pub struct Raised {
+    pub class: &'static str,
+    pub message: String,
 }
 
 /// `ast.parse(source)`'s verdict: `Ok(None)` where it parses, its `SyntaxError`, or another exception it raises.
-pub(crate) fn syntax_error(source: &str) -> Result<Option<SyntaxError>, Raised> {
+pub fn syntax_error(source: &str) -> Result<Option<SyntaxError>, Raised> {
     if source.contains('\0') {
         return Ok(Some(SyntaxError { line: 1, msg: "source code string cannot contain null bytes".into(), at: None }));
     }
@@ -286,48 +286,38 @@ pub(crate) fn syntax_error(source: &str) -> Result<Option<SyntaxError>, Raised> 
     Ok(Some(SyntaxError { line: chosen.line, at: Some(chosen.span.locate(&cx)), msg: chosen.msg }))
 }
 
-/// Line starts, at CPython's terminators (`\r\n`, `\r`, `\n`).
+/// The file's lines, Python's (`\r\n`, `\r`, `\n`, as CPython's tokenizer ends them): its `LineTable` (decision
+/// 0612), read here from 1.
 struct Lines {
-    starts: Vec<usize>,
+    table: crate::code_rule_dsl::lines::LineTable,
     len: usize,
 }
 
 impl Lines {
     fn new(source: &str) -> Self {
-        let bytes = source.as_bytes();
-        let mut starts = vec![0];
-        let mut i = 0;
-        while i < bytes.len() {
-            match bytes[i] {
-                b'\r' if bytes.get(i + 1) == Some(&b'\n') => {
-                    starts.push(i + 2);
-                    i += 2;
-                    continue;
-                }
-                b'\r' | b'\n' => starts.push(i + 1),
-                _ => {}
-            }
-            i += 1;
-        }
-        Self { starts, len: bytes.len() }
+        let terminators = crate::code_rule_dsl::lines::terminators(crate::code_rule_dsl::language::GrammarDialect::Python);
+        Self { table: crate::code_rule_dsl::lines::LineTable::new(source, terminators), len: source.len() }
     }
 
     /// The 1-based line of byte offset `at`.
     fn line(&self, at: TextSize) -> usize {
-        self.starts.partition_point(|&s| s <= at.to_usize())
+        self.table.line(at.to_usize().min(self.len)) + 1
     }
 
-    /// The byte offset line `line` starts at.
+    /// The byte offset line `line` starts at (the text's end past its last line).
     fn start(&self, line: usize) -> usize {
-        self.starts.get(line.saturating_sub(1)).copied().unwrap_or(self.len)
+        let l = line.saturating_sub(1);
+        if l < self.table.count() { self.table.start(l) } else { self.len }
     }
 
     /// Line `line`'s text without its terminator, and the terminator ("" on a last line without one).
     fn text<'s>(&self, source: &'s str, line: usize) -> (&'s str, &'s str) {
-        let (start, end) = (self.start(line), self.starts.get(line).copied().unwrap_or(self.len));
-        let all = &source[start..end.max(start)];
-        let body = all.strip_suffix("\r\n").or_else(|| all.strip_suffix(['\n', '\r'])).unwrap_or(all);
-        (body, &all[body.len()..])
+        let l = line.saturating_sub(1);
+        if l >= self.table.count() {
+            return ("", "");
+        }
+        let (start, body, end) = (self.table.start(l), self.table.end(l, source.as_bytes()), self.table.full_end(l));
+        (&source[start..body], &source[body..end])
     }
 
     /// The line the tokenizer is on at the end of the text: its last character's.
@@ -824,7 +814,7 @@ fn expr_name(e: &Expr) -> &'static str {
 
 /// Ruff's errors on `source` and the brackets left open, for a difference report.
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) fn explain(source: &str) -> String {
+pub fn explain(source: &str) -> String {
     let parsed = parse_unchecked(source, ParseOptions::from(Mode::Module).with_target_version(super::VERSION));
     let lines = Lines::new(source);
     let mut out: Vec<String> = parsed.errors().iter().map(|e| format!("L{} {:?}", lines.line(e.location.start()), e.error)).collect();

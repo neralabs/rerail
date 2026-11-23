@@ -6,7 +6,7 @@
 //! The warm tier, these with the warm-run tests elsewhere (`.config/nextest.toml`'s `warm` profile):
 //!
 //! ```text
-//! cargo nextest run -p rerail-tests-logic --lib --profile warm
+//! cargo nextest run -p rerail-tests-corpus --lib --profile warm
 //! ```
 
 use super::CorpusDocs;

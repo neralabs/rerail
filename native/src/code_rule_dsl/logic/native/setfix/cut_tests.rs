@@ -149,6 +149,25 @@ fn a_whole_plans_step_histograms_are_read_in_its_whole_join() {
     close(&db, "whist").unwrap();
 }
 
+/// A histogram's counts lie in a block of the run's (`Counts`, decision 0353): each key's count as added, through its
+/// table's growth, scaled for a strided read, and 0 for a key no row has.
+#[test]
+fn a_histograms_counts_are_each_keys_through_growth() {
+    let mut c = super::Counts::new();
+    for k in 0..5000u64 {
+        for _ in 0..(k % 3 + 1) {
+            c.add(k.wrapping_mul(0x1000_0001) ^ 7, 1);
+        }
+    }
+    assert_eq!(c.len(), 5000);
+    c.scale(4);
+    for k in (0..5000u64).step_by(37) {
+        assert_eq!(c.get(k.wrapping_mul(0x1000_0001) ^ 7), 4 * (k % 3 + 1), "key {k}");
+    }
+    assert_eq!(c.get(u64::MAX), 0);
+    assert_eq!(c.iter().map(|(_, n)| n).sum::<u64>(), 4 * (0..5000u64).map(|k| k % 3 + 1).sum::<u64>());
+}
+
 /// Decision 0206, a first step fused with its filters (`rowcode`): a cut inside a chunk stops the chunk at the row it
 /// is at, so the rows after it are left and read by the wave going on. Before, the chunk's loop went on naming each
 /// row it passed over as reached: the cut left one row, and the fixpoint lost what the rest derive.
@@ -432,4 +451,51 @@ fn a_fused_step_past_the_bound_head_stops_at_its_first_witness() {
     assert_eq!(n, 20, "a row a document");
     let into_l = counts[0].last().expect("the steps").0;
     assert!(into_l <= 40, "one witness a document reaches `l`, not each of its nodes: {:?}", counts[0]);
+}
+
+/// Decisions 0206 and 0098 §1: a component run as its closure runs its seeds first, and a seed that spends its budget
+/// is cut there as any seed is: the run returns `5`, and the next goes on from the rows it left, then runs the
+/// closure. Its seeds ran unlimited before: corpus0 (2026-11-21), `open_tuple`'s seed (a cross product, 41 M rows a
+/// stratum under a budget of 100,000) was never cut, so decision 0203 never checked it against its price.
+#[test]
+fn a_closures_seed_is_cut_at_its_budget_and_goes_on_from_its_rows_left() {
+    let setup = |db: &Connection| {
+        let seeds: Vec<String> = (0..2_000).map(|i| format!("({}, {i})", i % 50)).collect();
+        let edges: Vec<String> = (0..60).map(|i| format!("({i}, {})", i + 1)).collect();
+        db.execute_batch(&format!("CREATE TABLE s(c0, c1); INSERT INTO s VALUES {};\nCREATE TABLE e(c0, c1); INSERT INTO e VALUES {};\nCREATE TABLE r(c0, c1);", seeds.join(", "), edges.join(", "))).unwrap();
+    };
+    let src = |t: &str| format!("t:b:{}:{}:ii", hex(t), hex("c0, c1"));
+    let seed = format!("pos {} v0 v1\nhead v0 v1", src("s"));
+    let walk = format!("pos d0 v0 v1\npos {} v0 v2\nhead v2 v1", src("e"));
+    let spec = format!("name cutc\nrel r ii empty\nseed 0 {}\njoin 0 0 {}", hex(&seed), hex(&walk));
+    let rows = |db: &Connection| -> Vec<(i64, i64)> { pairs(db, "SELECT DISTINCT c0, c1 FROM r ORDER BY c0, c1") };
+    let whole = {
+        let db = connection();
+        setup(&db);
+        open(&db, &spec).unwrap();
+        assert_eq!(run(&db, "cutc", 0).unwrap().split_whitespace().last(), Some("1"));
+        close(&db, "cutc").unwrap();
+        rows(&db)
+    };
+    let db = connection();
+    setup(&db);
+    open(&db, &spec).unwrap();
+    assert!(component(&db, "cutc").unwrap().lock().unwrap().closure.is_some(), "the component runs as its closure");
+    let (mut cuts, mut done, mut last) = (0, false, String::new());
+    for _ in 0..1_000 {
+        set_budgets(&db, "cutc", &[(0, Some(300))]).unwrap();
+        last = run(&db, "cutc", 0).unwrap();
+        match last.split_whitespace().last() {
+            Some("1") => { done = true; break }
+            Some("5") => {
+                cuts += 1;
+                let cut = take_cut(&db, "cutc").unwrap().expect("a cut");
+                assert!(cut.probe == 0 && cut.led && cut.left > 0, "the seed, cut at a row of its first atom: {cut:?}");
+            }
+            _ => {}
+        }
+    }
+    close(&db, "cutc").unwrap();
+    assert!(done && cuts > 1, "to the fixpoint, the seed cut on the way: {cuts} cuts, last {last}");
+    assert_eq!(rows(&db), whole, "the fixpoint is the unlimited run's");
 }

@@ -13,7 +13,7 @@
 //! - The readers of a name are found through `derivation_inputs_by_name`: the next wave's frontier.
 
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::{ContentStore, StoreError, StoreResult, Sym, bounded_insert};
 use rusqlite::{Connection, OptionalExtension, params, types::Value};
 use std::collections::{BTreeSet, HashMap};

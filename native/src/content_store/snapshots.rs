@@ -1,7 +1,7 @@
 //! Git tree and snapshot storage.
 
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::object_segments::Placing;
 use super::objects::{put_source_tx, put_tape_tx, validate_tape_payload};
 #[cfg(any(test, feature = "test-hooks"))]
@@ -15,7 +15,7 @@ use super::{
     StoredFile, TapeId, WorkspaceId, WorkspaceRegistration,
 };
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 #[cfg(any(test, feature = "test-hooks"))]

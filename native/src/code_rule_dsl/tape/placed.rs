@@ -54,9 +54,8 @@ pub struct HomeOf {
 
 pub fn home_of(room: Option<&std::sync::Arc<dyn Room>>, bytes: &[u8]) -> HomeOf {
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    if let Some(r) = room
-        && let Some(slab) = r.as_any().downcast_ref::<SlabRoom>().map(|r| &r.slab)
-    {
+    if let Some(r) = room.and_then(|r| r.as_any().downcast_ref::<SlabRoom>()) {
+        let slab = &r.slab;
         let host = slab.host() as usize;
         // Bytes outside the room are no slab's: a home of their own.
         let held = r.bytes().as_ptr_range();

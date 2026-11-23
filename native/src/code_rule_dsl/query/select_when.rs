@@ -21,10 +21,10 @@ use crate::code_rule_dsl::model::Query;
 #[derive(Clone, Copy, Debug)]
 pub struct LeafRow {
     /// The leaf could not answer in this file: its witnesses there are unknown.
-    pub(in crate::code_rule_dsl) failed: bool,
+    pub failed: bool,
     /// The file was read around syntax errors; reported `source-partial` if the answer uses it.
-    pub(in crate::code_rule_dsl) partial: bool,
-    pub(in crate::code_rule_dsl) witnesses: usize,
+    pub partial: bool,
+    pub witnesses: usize,
 }
 
 /// The rows of a plan's leaves.
@@ -36,15 +36,15 @@ pub trait Leaves {
 
 /// A leaf of a plan: the query it reads, whether it is read for a decision, and whether its
 /// witnesses may be reported (no `exists` side above it) or only decide a condition.
-pub(in crate::code_rule_dsl) struct Leaf<L> {
-    pub(in crate::code_rule_dsl) id: L,
-    pub(in crate::code_rule_dsl) decision: bool,
+pub struct Leaf<L> {
+    pub id: L,
+    pub decision: bool,
     pub(in crate::code_rule_dsl) reported: bool,
 }
 
 /// A query's shape and its leaves.
 pub struct Plan<L> {
-    pub(in crate::code_rule_dsl) leaves: Vec<Leaf<L>>,
+    pub leaves: Vec<Leaf<L>>,
     /// The query's nodes in pre-order: a `select_when`'s `exists` side follows it directly.
     nodes: Vec<Node>,
 }
@@ -59,9 +59,9 @@ enum Node {
 
 /// What a plan answered, where known: the witnesses reported, as `(leaf, row, how many of the
 /// row's witnesses)` in order, and the partially read rows it relied on.
-pub(in crate::code_rule_dsl) struct Answer {
-    pub(in crate::code_rule_dsl) witnesses: Vec<(usize, usize, usize)>,
-    pub(in crate::code_rule_dsl) partial: Vec<(usize, usize)>,
+pub struct Answer {
+    pub witnesses: Vec<(usize, usize, usize)>,
+    pub partial: Vec<(usize, usize)>,
 }
 
 /// Where a plan's answer is unknown: the failed `(leaf, row)` it could not do without, the first
@@ -71,7 +71,7 @@ pub(in crate::code_rule_dsl) type Unknown = (usize, usize);
 impl<L> Plan<L> {
     /// `query`'s plan; `decision` when a single witness answers it. `leaf` names each regex, AST
     /// or file query, given whether its witnesses may be reported.
-    pub(in crate::code_rule_dsl) fn new<'q>(
+    pub fn new<'q>(
         query: &'q Query,
         decision: bool,
         mut leaf: impl FnMut(&'q Query, bool) -> L,
@@ -182,7 +182,7 @@ impl<L> Plan<L> {
 
 /// Answers `plan` over `leaves`' rows with a witness budget of `cap`: `Err` at the failed row
 /// where the answer is unknown. Only a reported leaf not read for a decision counts the budget.
-pub(in crate::code_rule_dsl) fn answer<L>(
+pub fn answer<L>(
     plan: &Plan<L>,
     cap: usize,
     leaves: &dyn Leaves,

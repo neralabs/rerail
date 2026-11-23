@@ -48,7 +48,7 @@ fn retained_sql_loop_keeps_intermediate_frontiers_and_warm_supports() {
         ),
     );
     e.run(PROGRAM.into(), "python".into(), Some(128)).unwrap();
-    let trace = &e.executions[0].temporal[&0];
+    let trace = crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0]);
     assert!(trace.frames.len() > 18);
     assert_eq!(
         trace.frames.iter().map(|f| f.phase_batches).sum::<usize>(),
@@ -192,7 +192,7 @@ fn compare_complete_cold_sessions() {
         let totals = before
             .zip(e.sql_profile_totals())
             .map(|(before, after)| std::array::from_fn::<_, 6, _>(|i| after[i] - before[i]));
-        let trace = &e.executions[0].temporal[&0];
+        let trace = crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0]);
         let phases = trace.frames.iter().map(|f| f.phase_batches).sum::<usize>();
         if !host {
             if strategy == "sql" {
@@ -252,7 +252,7 @@ fn snapshot_edits_replay_the_sql_trajectory_and_restore_publication_failure() {
         .unwrap();
     e.run(program.into(), "python".into(), Some(64)).unwrap();
     assert_eq!(
-        e.executions[0].temporal[&0].frames[0].observation["sql_version_loop"]["planned_submissions"],
+        crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0]).frames[0].observation["sql_version_loop"]["planned_submissions"],
         1
     );
     for source in ["third = 3\n", "", source] {
@@ -299,7 +299,7 @@ fn adaptive_handoff_reuses_prefix_contexts_and_keeps_warm_edits_correct() {
         json!((0..64).map(|n| [0, n, (n + 1) % 64]).collect::<Vec<_>>()),
     );
     e.run(PROGRAM.into(), "python".into(), Some(256)).unwrap();
-    let trace = &e.executions[0].temporal[&0];
+    let trace = crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0]);
     assert_eq!(
         trace.frames.iter().map(|f| f.phase_batches).sum::<usize>(),
         HOST_PHASE_LIMIT + 1
@@ -332,7 +332,7 @@ fn short_recursions_keep_the_host_sql_schedule() {
         json!((0..8).map(|n| [0, n, (n + 1) % 8]).collect::<Vec<_>>()),
     );
     e.run(PROGRAM.into(), "python".into(), Some(256)).unwrap();
-    let trace = &e.executions[0].temporal[&0];
+    let trace = crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0]);
     assert!(
         trace
             .frames
@@ -344,7 +344,7 @@ fn short_recursions_keep_the_host_sql_schedule() {
 }
 
 fn loop_reports(e: &CodeRuleSqlExecutor) -> Vec<Value> {
-    e.executions[0].temporal[&0]
+    crate::code_rule_dsl::sql_executor::temporal::Trace::of(&*e.executions[0].temporal[&0])
         .frames
         .iter()
         .map(|f| f.observation["sql_version_loop"].clone())

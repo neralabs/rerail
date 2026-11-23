@@ -1,4 +1,5 @@
     use rusqlite::Connection;
+    use crate::code_rule_dsl::facts::vtab::syntax::PythonBatch as _;
 
     fn hex(s: &str) -> String {
         s.bytes().map(|b| format!("{b:02x}")).collect()
@@ -327,8 +328,10 @@
             let u = mj::Table::of_rows(2, &rows).unwrap();
             let changed = mj::Table::new(2, n).unwrap();
             let counters = mj::Words::zeroed(2).unwrap();
+            // A round is a stratum's evaluation (`in_device`): its launches its budget's.
+            let _evaluation_round = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = super::direct_batch(None).unwrap();
-            batch.lattice_fold(&u, n, &r_rel, had, 1, lat, super::map_at(m), first, &counters, &changed, None, None).unwrap();
+            batch.lattice_fold(&u, n, &r_rel, had, 1, lat, super::map_at(m), first, &counters, &changed, None, None, None).unwrap();
             batch.finish().unwrap();
             drop(old);
             let added = counters.get(1) as usize;
@@ -1043,12 +1046,15 @@
         let src: std::sync::Arc<dyn Source> = std::sync::Arc::new(r);
         assert!(src.in_block().is_some_and(|b| b.rows as usize == n), "the source's rows are one relation in a block");
         let rel = InRel::over_source(std::sync::Arc::clone(&src), vec![b'i'; 3]);
+        let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
         let mut rep = super::Report::default();
         let (dev, _, place, _) = super::resident(&rel, &[1, 2], &[], crate::code_rule_dsl::transducer::packed::metal_join::JOIN, &mut batch, &mut rep).expect("resident");
         assert_eq!(rep.in_place, 1, "read in place: {rep:?}");
         assert_eq!((dev.rows, dev.cols), (n, 3));
         assert_eq!(place, [0, 1, 2], "each column at its own place");
+        // The statistics are evaluations of their own (`column_stats_of`), not the batch's.
+        drop(_evaluation_batch);
         let cols = [StatColumn::Rel(&rel, 1), StatColumn::Rel(&rel, 2)];
         let (read, in_place) = super::column_stats(&cols, 8).expect("the device");
         assert_eq!(in_place, 2);
@@ -1233,9 +1239,9 @@
         let grammar = Arc::new(crate::code_rule_dsl::tape::Grammar::new(lang).unwrap());
         let docs: Vec<Document> = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a):\n        return a\n"].iter().enumerate().map(|(at, source)| {
             let path = format!("r{at}.py");
-            let source = Arc::new(crate::code_rule_dsl::tape::Text::from((*source)));
+            let source = Arc::new(crate::code_rule_dsl::tape::Text::from(*source));
             let image = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
-            let lines = Arc::new(crate::code_rule_dsl::lines::LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::of(lang)));
+            let lines = Arc::new(crate::code_rule_dsl::lines::LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
             let facts = Arc::new(core::from_image(source, &grammar, image, lines).unwrap());
             Document { key: (5 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
         }).collect();
@@ -1246,6 +1252,7 @@
         let src = Arc::clone(&all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).expect("node").1);
         assert!(src.device_view().is_none(), "not read in place, and not made");
         let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
+        let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut batch = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
         let Err(why) = super::resident(&rel, &[0, 1], &[], mj::JOIN, &mut batch, &mut rep) else { panic!("a view not read in place has no device form") };
@@ -1284,6 +1291,7 @@
         let src = Arc::clone(&all.iter().find(|(n, s)| *n == "child" && s.python_batch().is_some()).expect("child").1);
         let rel = InRel::over_filtered(Arc::clone(&src), vec![1, 0], vec![(2, 0)], vec![b'i'; 2]);
         for mode in [mj::JOIN, mj::SEMI, mj::ANTI] {
+            let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = mj::Batch::new().expect("the device");
             let mut rep = super::Report::default();
             // Probed by its parent (the view's column 1).
@@ -1298,6 +1306,7 @@
             assert_eq!((d.nkeys, d.key_kind[0], d.key_const[0], d.key_rcol[0]), (1, mj::CONST, 0, 2), "{mode}: a constant key");
         }
         // A filter's stage checks no keys: refused, nothing uploaded.
+        let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
         let mut batch = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
         let Err(why) = super::resident(&rel, &[0, 1], &[], mj::FILTER, &mut batch, &mut rep) else { panic!("a filter's filtered view has no device form") };
@@ -1335,6 +1344,7 @@
         assert!(src.device_view().is_some(), "read in place");
         let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
         let probe = |rel: &Arc<InRel>| {
+            let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = mj::Batch::new().expect("the device");
             let mut rep = super::Report::default();
             let (dev, ix, _, _) = super::resident(rel, &[], &[2], mj::JOIN, &mut batch, &mut rep).expect("resident");
@@ -1395,6 +1405,7 @@
                 let v = d.in_place.clone();
                 let view = mj::DevRel::view(k, n, v.clone()).unwrap();
                 let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
                 let mut batch = mj::Batch::new().expect("the device");
                 let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
                 batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
@@ -1455,6 +1466,7 @@
                     assert!(n > 0, "{name}: rows");
                     for cols in [vec![0, 1], vec![1]] {
                         let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                        let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
                         let mut batch = mj::Batch::new().expect("the device");
                         let view = mj::DevRel::view(2, n, d.in_place.clone()).unwrap();
                         let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
@@ -1465,6 +1477,36 @@
                             assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
                         }
                     }
+                }
+            }
+            // Where the program reads spans (Q216, `places::Places`): each place relation is the view's rows, then the
+            // spans' (`source`, `src_line`), read in place as one relation: the view through the views' reads, the
+            // spans' rows where they lie in their block. Copied out and indexed by id on the device, as a stage reads it.
+            let projection = |reads: &[&str]| Projection { shape: crate::code_rule_dsl::facts::vtab::syntax::Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+            let span_views = shaped(&store, make(), &projection(&["node", "line", "end_line", "col", "docof", "source", "src_line"])).unwrap();
+            let loc_views = shaped(&store, make(), &projection(&["node", "line", "end_line", "col", "docof"])).unwrap();
+            for name in ["line", "end_line", "col", "docof"] {
+                let src = &span_views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
+                let views = loc_views.iter().find(|(n, _)| *n == name).unwrap().1.len();
+                let n = src.len();
+                assert!(n > views, "{name}: the spans' rows ({n}) past the view's ({views})");
+                let Some(d) = src.device_view() else {
+                    assert!(!device.has_addresses(), "{name}: read in place where buffers have addresses");
+                    continue;
+                };
+                assert_eq!(d.rows, n, "{name}: the view's rows and the spans'");
+                let (v, home) = (d.in_place.clone(), d.home.clone());
+                let placed = mj::DevRel::view_in(home, 2, n, v).unwrap();
+                let out = mj::DevRel::empty(2, n).unwrap();
+                let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
+                let mut batch = mj::Batch::new().expect("the device");
+                batch.copy_rows(mj::Rows::Rel(&placed), n, &[mj::Col::From(0), mj::Col::From(1)], mj::Rows::Rel(&out), 0).unwrap();
+                let index = batch.index(&placed, &[0]).unwrap();
+                batch.finish().unwrap();
+                assert!(index.built, "{name}: an index by id, built over the view's rows and the spans'");
+                for c in 0..2 {
+                    let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                    assert_eq!(out.column(c), &host[..], "{name}: column {c}, the view's rows then the spans', read in place");
                 }
             }
         }
@@ -1488,6 +1530,7 @@
             assert_eq!(ib.rows as usize, n, "{name}");
             let rel = mj::DevRel::in_block(&ib, 2).unwrap();
             let out = mj::DevRel::empty(cols.len(), n).unwrap();
+            let _evaluation_batch = rerail_accel::gpu::launch::LaunchScope::enter();
             let mut batch = mj::Batch::new().expect("the device");
             let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
             batch.copy_rows(mj::Rows::Rel(&rel), n, &from, mj::Rows::Rel(&out), 0).unwrap();
@@ -1674,6 +1717,81 @@
             }
             assert_eq!(got[0], want, "by column {col:?}: the CPU's rows are the host's lookups");
             assert_eq!(got[1], want, "by column {col:?}: the device's rows are the CPU's");
+        }
+    }
+
+    /// A view chosen by a constant (`child … WHERE idx = 0`) is its source read in place, the constant a key of the
+    /// stage's (decision 0353 step 6, `reads_source`): nothing uploaded, scanned (an index of the constant's column)
+    /// or probed by its parent (its children walked on the tape, each checked against it), the CPU's rows.
+    #[test]
+    fn a_view_chosen_by_constants_is_read_in_place() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
+        use crate::code_rule_dsl::model::FileInput;
+        use std::sync::Arc;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        crate::test_languages();
+        let texts = ["import os\nx = f(1, y=[2, g(3)])\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "", "@d\ndef g():\n    try:\n        h(1, 2)\n    except E as e:\n        raise\n"];
+        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("d{at}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned().into()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let content = crate::content_store::ContentStore::open(&std::env::temp_dir().join(format!("rerail-filtered-view-{}-{nonce}.sqlite", std::process::id()))).unwrap();
+        let all = sources(&content, docs).unwrap();
+        let child = Arc::clone(&all.iter().find(|(n, s)| *n == "child" && s.python_batch().is_some()).unwrap().1);
+        assert!(child.device_view().is_some(), "the batch's views are read in place");
+        let names = child.columns();
+        assert_eq!(names, ["p", "c", "idx"]);
+        // The host's rows: each first child, with its parent.
+        let mut want: Vec<(i64, i64)> = (0..child.len()).filter(|&r| child.value(r, 2) == 0).map(|r| (child.value(r, 0), child.value(r, 1))).collect();
+        want.sort_unstable();
+        assert!(want.len() > 20 && want.len() < child.len(), "{} of {} rows", want.len(), child.len());
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
+        modules.bind(&db, "child_t", Arc::clone(&child)).unwrap();
+        db.execute_batch("CREATE TEMP TABLE q (c0);").unwrap();
+        let mut parents: Vec<i64> = want.iter().map(|r| r.0).collect();
+        parents.dedup();
+        for &p in &parents {
+            db.execute("INSERT INTO q VALUES (?1)", [p]).unwrap();
+        }
+        let q = format!("t:d:{}:{}:i", hex("temp.q"), hex("c0"));
+        let firsts = format!("t:d:{}:{}:ii", hex("main.child_t WHERE idx = 0"), hex("p, c"));
+        // Scanned: h0(p, c) :- child(p, c, 0). Probed by the parent: h0(p, c) :- q(p), child(p, c, 0).
+        for (how, rule) in [("scanned", format!("pos {firsts} v0 v1\nhead v0 v1")), ("by its parent", format!("pos {q} v0\npos {firsts} v0 v1\nhead v0 v1"))] {
+            let mut got = Vec::new();
+            for device in [false, true] {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                let mut spec = vec!["name filtered_test".to_owned()];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 ii empty".into());
+                spec.push(format!("seed 0 {}", hex(&rule)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, "filtered_test", 0).unwrap();
+                let report = super::take_report();
+                super::super::close(&db, "filtered_test").unwrap();
+                if device {
+                    let r = report.as_ref().expect("a device run");
+                    assert!(r.refused.is_none(), "{how}: {r:?}");
+                    // Nothing is uploaded: the device has no upload of a relation (decision 0353 step 6, row 5).
+                }
+                let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                rows.sort_unstable();
+                got.push(rows);
+            }
+            assert_eq!(got[0], want, "{how}: the CPU's rows are the host's");
+            assert_eq!(got[1], want, "{how}: the device's rows are the CPU's");
         }
     }
 

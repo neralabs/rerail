@@ -45,8 +45,17 @@ fn install_with(ids: Option<BuildIds>) {
         }
         install_devices();
         install_languages(ids.is_none());
+        // The retained traces, which the SQL executor's parts below them read (`maintenance::TEMPORAL`).
+        sql_executor::temporal::register();
         logic::plan::corpus::install_git_inventory();
         logic::run_state::CARRIERS.register("boot", logic::CARRIERS);
+        logic::plan::corpus::RUNNER.register("boot", &logic::plan::corpus::Corpus);
+        // A workspace index task's run (decision 0441) and what writes its profile (0442).
+        workspace::index::TASK_RUN.register("boot", workspace::index::TaskRun {
+            scope: || Box::new(logic::run::scope(logic::native::width::Settings::from_env)),
+            report: logic::profile::report::write,
+        });
+        residency::admission::relational::ADMISSION.register("boot", &residency::admission::relational::Relational);
         logic::plan::keeps::CORE_NAMES.register("boot", logic::rr::core_names);
         #[cfg(target_os = "macos")]
         logic::costs::join_steps::register_install(logic::plan::joins::model::install);
@@ -60,6 +69,12 @@ fn install_with(ids: Option<BuildIds>) {
 
 /// The engine's language packs, into the core's registry (`language::adapter::pack`). Called as the library
 /// loads, before any run: the core asks a family's questions of the pack registered here.
+/// The families' relations' columns, for the facts' base (`facts::core::FAMILY_COLUMNS`), which reads them as an
+/// input's (`input_columns`) and cannot name the syntax table that registers the families.
+fn register_family_columns() {
+    facts::core::FAMILY_COLUMNS.register("rerail-facts (the syntax table's families)", facts::vtab::syntax::family_columns);
+}
+
 pub fn install_languages(tests: bool) {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
@@ -157,6 +172,7 @@ pub fn install_languages(tests: bool) {
     ]);
     // The families' lazy relations over a batch (Python's `py.*`).
     facts::vtab::syntax::install_families(vec![&facts::vtab::syntax::py_families::Families]);
+    register_family_columns();
     // The families' tables over a bound `node` relation (Python's semantic producers).
     facts::vtab::install_node_tables(vec![facts::vtab::python::register]);
     // The semantic facts a program's native steps demand (Python's).
@@ -227,11 +243,6 @@ pub fn install_languages(tests: bool) {
     workspace::index::install_source_classifier(|root, store, owner, paths, registry| {
         logic::plan::corpus::source_languages::classify(root, store, owner, paths, registry)
             .map_err(|error| error.to_string())
-    });
-    // A workspace index task's run (decision 0441) and what writes its profile (0442).
-    workspace::index::install_task_run(workspace::index::TaskRun {
-        scope: || Box::new(logic::run::scope(logic::native::width::Settings::from_env)),
-        report: logic::profile::report::write,
     });
     // A snapshot's files, as an SQL session binds them.
     sql_executor::documents::install_snapshot_files(|json| {
@@ -386,8 +397,10 @@ pub fn install_languages(tests: bool) {
 }
 
 /// The engine's devices, into the logic's and the transducer's registries (`logic::device`,
-/// `transducer::packed::device`). Called as the library loads, before any run.
+/// `transducer::packed::device`), and the transducer's compiled CPU executor (`transducer::packed::CPU`). Called as
+/// the library loads, before any run.
 pub fn install_devices() {
+    transducer::packed::native_cpu::register();
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     device_metal::register();
 }

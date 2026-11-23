@@ -23,8 +23,8 @@ use crate::code_rule_dsl::violations::{Captures, Span, Witness};
 use crate::code_rule_dsl::{language, tape};
 use crate::content_store::{
     BusyRetries, CandidateCatalogIdentity, CandidateClause, DocumentPayload, HashKey,
-    LocalResultPublication, OverlayFilePublication, PublicationResult, StoreError, StoredFile,
-    TapePayload,
+    OverlayFilePublication, PublicationResult, StoreError, StoredFile, TapePayload,
+    WorkspaceResults,
 };
 use napi::Result;
 use rayon::prelude::*;
@@ -682,20 +682,13 @@ pub(super) fn persist_files(
     };
     // Each file's payloads (tape bytes, encoded local results, blob alias) are
     // independent of every other file's, so they are built on the worker pool.
-    let prepared = crate::code_rule_dsl::logic::profile::on_cores(|| {
+    let mut prepared = crate::code_rule_dsl::logic::profile::on_cores(|| {
         paths
             .par_iter()
             .map(|path| {
                 let file = files
                     .get(path)
                     .ok_or_else(|| invalid(format!("missing file for persistence: {path}")))?;
-                let candidates = file
-                    .candidates
-                    .regex
-                    .iter()
-                    .chain(&file.candidates.ast)
-                    .map(candidate)
-                    .collect::<Vec<_>>();
                 let tape_bytes = {
                     #[cfg(feature = "code-rule-profile")]
                     let _timer = profile::PhaseTimer::start(profile::Phase::TapeSerialize);
@@ -724,53 +717,48 @@ pub(super) fn persist_files(
                     .collect::<BTreeSet<_>>();
                 let context = file_context(&file.input);
                 let stamped = CrossFileScheduler::stamped_context(file, context);
-                let mut local_results = local_result_ids
-                    .iter()
-                    .filter(|id| {
-                        !file.transient_failure
-                            && !file.restored_result_ids.contains(id)
-                            && !file.unstored.contains(id)
-                    })
-                    .filter_map(|id| {
-                        let context = if consumers.contains_key(id) {
-                            stamped?
-                        } else {
-                            context
+                // The file's results under each of its contexts, each one entry written whole (`results.rs`): its
+                // restored results too. None when the evaluation was transient, or every result was restored.
+                let summary = if file.transient_failure { None } else { CrossFileScheduler::summary_publication(file)? };
+                let stored = local_result_ids.iter().filter(|id| !file.unstored.contains(id));
+                let fresh = !file.transient_failure
+                    && (stored.clone().any(|id| !file.restored_result_ids.contains(id))
+                        || (summary.is_some() && !file.crossfile.summary_stored));
+                let mut groups = BTreeMap::<HashKey, Vec<(CandidateClause, Vec<u8>)>>::new();
+                if fresh {
+                    for id in stored {
+                        let Some(context) = (if consumers.contains_key(id) { stamped } else { Some(context) }) else {
+                            continue;
                         };
-                        Some((id, context))
-                    })
-                    .map(|(id, context)| {
                         let witnesses = file.witnesses.get(id).map(Vec::as_slice).unwrap_or(&[]);
                         let bytes = encode_local_result(
                             witnesses,
                             file.failures.get(id).copied(),
                             file.syntax.as_deref(),
                         )?;
-                        Ok(LocalResultPublication { candidate: candidate(id), context, bytes })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                if !file.transient_failure {
-                    local_results.extend(CrossFileScheduler::summary_publication(file)?);
+                        groups.entry(context).or_default().push((candidate(id), bytes));
+                    }
+                    if let Some((clause, context, bytes)) = summary {
+                        groups.entry(context).or_default().push((clause, bytes));
+                    }
                 }
+                let source = HashKey::from_sha256_digest(file.source_digest);
+                let local_results = groups
+                    .into_iter()
+                    .map(|(context, results)| WorkspaceResults { source, context, results })
+                    .collect::<Vec<_>>();
                 let grammar_id = file_language(&file.input).map_or(0, grammar_id);
                 let aliases = clean_blob_alias(storage, file)
                     .into_iter()
                     .collect::<Vec<_>>();
-                Ok((
-                    file,
-                    candidates,
-                    tape_bytes,
-                    grammar_id,
-                    aliases,
-                    local_results,
-                ))
+                Ok((file, tape_bytes, grammar_id, aliases, local_results))
             })
             .collect::<Result<Vec<_>>>()
     })?;
     // Each file's derived documents, borrowing the bytes built above and the texts its image holds.
     let documents = prepared
         .iter()
-        .map(|(file, _, tape_bytes, _, _, _)| {
+        .map(|(file, tape_bytes, _, _, _)| {
             let (Some((_, image)), Some((_, derived))) = (&file.tape, tape_bytes) else {
                 return Vec::new();
             };
@@ -796,7 +784,7 @@ pub(super) fn persist_files(
         .iter()
         .zip(&documents)
         .map(
-            |((file, candidates, tape_bytes, grammar_id, aliases, local_results), documents)| {
+            |((file, tape_bytes, grammar_id, aliases, _), documents)| {
                 OverlayFilePublication {
                     path: &file.input.path,
                     state_id: i64::from(file.source_revision),
@@ -809,10 +797,6 @@ pub(super) fn persist_files(
                         bytes,
                         documents,
                     }),
-                    catalog,
-                    candidates,
-                    local_results,
-                    candidates_current: false,
                 }
             },
         )
@@ -833,6 +817,16 @@ pub(super) fn persist_files(
     if closed.load(Ordering::Acquire) {
         return Err(invalid("policy workspace is closed"));
     }
+    // The files' results, beside their sources: a store that stays busy keeps none, and the files stay resident as
+    // if unpublished (their results stand; a later apply publishes them again, their objects reused).
+    let results = prepared.iter_mut().flat_map(|(_, _, _, _, results)| std::mem::take(results)).collect::<Vec<_>>();
+    if !results.is_empty() {
+        match storage.store.put_workspace_results(catalog, &results) {
+            Ok(()) => {}
+            Err(StoreError::Busy) => return Ok(Persisted::Busy { retries: busy }),
+            Err(error) => return Err(super::api::store_unavailable(error)),
+        }
+    }
     #[cfg(any(test, feature = "test-hooks"))]
     if let Some(published) = AFTER_FILES_PUBLISHED.take() {
         published();
@@ -849,8 +843,8 @@ pub(super) fn persist_files(
         };
     let clean_paths = prepared
         .iter()
-        .filter(|(_, _, _, _, aliases, _)| !aliases.is_empty())
-        .map(|(file, _, _, grammar, _, _)| (file.input.path.as_str(), *grammar))
+        .filter(|(_, _, _, aliases, _)| !aliases.is_empty())
+        .map(|(file, _, grammar, _, _)| (file.input.path.as_str(), *grammar))
         .collect::<Vec<_>>();
     let mut busy_during = busy_store(
         storage.store.promote_overlay_files_to_snapshot(

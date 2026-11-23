@@ -196,7 +196,7 @@ impl CodeRuleSqlExecutor {
                 if let Some(eval) = &mut evaluation {
                     let strategy = run.temporal.get(&0).map_or(
                         planning::Strategy::GroupedMaintenance,
-                        temporal::Trace::planning_strategy,
+                        |trace| trace.planning_strategy(),
                     );
                     eval.choose(strategy, run.emitted.program.steps.len() > 32);
                 }

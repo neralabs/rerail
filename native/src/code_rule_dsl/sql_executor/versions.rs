@@ -963,6 +963,49 @@ impl Drop for Transaction<'_> {
     }
 }
 
+/// The native version difference: `new` against `old`, as two scratch tables (`plus`, `minus`).
+pub fn delta(
+    w: &mut super::scratch::Work<'_>,
+    old: &Version,
+    new: &Version,
+) -> Result<super::maintenance::Delta> {
+    use super::maintenance::Delta;
+    let operation = w.profiler.map(|p| {
+        p.operation(
+            "native version difference",
+            ("sql-extension", 0),
+            0,
+            vec![
+                ("old".into(), old.len() as i64),
+                ("new".into(), new.len() as i64),
+            ],
+        )
+    });
+    let _cpu = crate::code_rule_dsl::logic::profile::span(|| "native version difference".into());
+    // Empty and identical versions have an exact difference without a row walk.
+    // Share the immutable roots instead of decoding, hashing and indexing them again.
+    if old.len() == 0 || new.len() == 0 || old.same(new) {
+        let plus = w.output_table(old.columns().len())?;
+        let minus = w.output_table(old.columns().len())?;
+        let same = old.same(new);
+        let empty = old.empty_like();
+        let added = if same { &empty } else { new };
+        let removed = if same { &empty } else { old };
+        let store = w.versions.ok_or_else(|| error("temporal rows require native storage"))?;
+        if store.clone_scratch(&plus, added)? && store.clone_scratch(&minus, removed)? {
+            w.version_nodes += 1;
+            if let Some(operation) = operation { operation.finish(added.len()+removed.len()); }
+            return Ok(Delta {plus,minus,inserted:added.len() as u64,deleted:removed.len() as u64});
+        }
+    }
+    let plus=w.output_table(old.columns().len())?;
+    let minus=w.output_table(old.columns().len())?;
+    let (inserted,deleted,visited)=w.versions.ok_or_else(||error("temporal rows require native storage"))?.difference_scratch(&plus,&minus,old,new)?;
+    w.version_nodes+=visited;
+    if let Some(operation)=operation {operation.finish(inserted+deleted);}
+    Ok(Delta{plus,minus,inserted:inserted as u64,deleted:deleted as u64})
+}
+
 #[cfg(test)]
 pub mod bulk_tests;
 // operators: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

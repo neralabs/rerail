@@ -403,8 +403,8 @@ pub struct GpuTotal {
     pub waved: u64,
     /// Batches run again because their text arena filled.
     pub arena_reruns: u64,
-    /// Stages whose grids the device sized.
-    pub sized: u64,
+    /// Levels launched, each kernel once for their jobs (decision 0601).
+    pub levels: u64,
     /// Stages screened by their relation's kept filter (decision 0488).
     pub screened: u64,
 }
@@ -432,7 +432,7 @@ impl GpuTotal {
         self.made += o.made;
         self.waved += o.waved;
         self.arena_reruns += o.arena_reruns;
-        self.sized += o.sized;
+        self.levels += o.levels;
         self.screened += o.screened;
     }
 
@@ -2213,8 +2213,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
     let ms = |s: f64| s * 1e3;
     let _ = writeln!(r, "Strata run on the GPU: {} strata, {} runs, {} rules in {} stages; those runs' CPU {:.2} s (the whole run: planning its replans, the store, the device's host part); the same strata's other {} runs, on the CPU: {:.2} s",
         ran.len(), sum.runs, sum.rules, sum.stages, cpu, all_runs - sum.runs, elsewhere);
-    let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow, {} after the text arena filled); {} runs sent in their level's wave; {} stages' grids sized on the device; {} stages screened by their relation's kept filter",
-        ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized, sum.screened);
+    let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow, {} after the text arena filled); {} runs sent in their level's wave; {} levels, each kernel launched once for their jobs; {} stages screened by their relation's kept filter",
+        ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.levels, sum.screened);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
     let _ = writeln!(r, "  relations read in place {}; sorts made {}, found in their blocks {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
@@ -2713,8 +2713,8 @@ pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     memory::sampled_report(r);
 }
 
-/// CPU (user + system) of the thread with Mach port (macOS) or thread id (Linux, Windows) `port`, read from another thread;
-/// `None` for a thread that has ended, and elsewhere.
+/// CPU (user + system) of the thread with Mach port (macOS) or thread id (Linux, Windows) `port`, read from another
+/// thread; `None` for a thread that has ended, and elsewhere.
 fn thread_cpu(port: u32) -> Option<f64> {
     #[cfg(target_os = "macos")]
     {
@@ -3084,8 +3084,9 @@ pub struct Report {
     pub waved: u32,
     /// Batches run again because their text arena filled (in one as big as their texts asked).
     pub arena_reruns: u32,
-    /// Stages whose grids were sized on the device, from the rows before them (not the host's guess of their space).
-    pub sized: u32,
+    /// Levels launched (`metal_join::Batch::flush`, decision 0601): each kernel once for the stages, maps, text rows
+    /// and dedups queued between two dependencies.
+    pub levels: u32,
     /// Stages screened by their relation's kept filter (decision 0488).
     pub screened: u32,
     /// Text functions made once per distinct symbol (`mapped_text`, chunked), and the names they made.

@@ -363,10 +363,7 @@ impl PolicyInvocation {
                 PolicySource::Directory(root) => analysis_scope::RunSource::directory(root),
                 PolicySource::Revision { snapshot, .. } => snapshot.run_source(),
             };
-            // The scope's acquisition (and its release, `finish`) is the store's own record around the run, before
-            // its first wave and after its last: behind the run, as the store writer's (decision 0104's strict mode).
-            let begun = super::logic::profile::behind(|| ContentStore::open(&path).and_then(|store| AnalysisRun::begin_batch(store, &scope, source)));
-            match begun {
+            match ContentStore::open(&path).and_then(|store| AnalysisRun::begin_batch(store, &scope, source)) {
                 Ok(run) => invocation.analysis = Some(run),
                 Err(error) => invocation.warning = Some(error.to_string()),
             }
@@ -399,8 +396,7 @@ impl PolicyInvocation {
 
     fn finish(&mut self, succeeded: bool) -> Option<String> {
         if let Some(mut run) = self.analysis.take() {
-            let clean = succeeded && self.warning.is_none();
-            if let Err(error) = super::logic::profile::behind(|| run.finish(clean)) {
+            if let Err(error) = run.finish(succeeded && self.warning.is_none()) {
                 self.warning.get_or_insert_with(|| error.to_string());
             }
             if let Some(warning) = run.publication_warning() {
@@ -670,6 +666,8 @@ pub fn run_policies(
     invocation.evaluate(|_| { prepare_policy_graphs(paths); Ok(()) })?;
     // What the batch's runs share is kept while it runs (phase 1's runs, by their inputs), and nothing past it.
     let _batch = super::logic::plan::corpus::phases::Batch::enter();
+    // The image store, opened once for the batch's runs.
+    let _images = super::logic::rr::HoldImages::enter();
     // The policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated once
     // (decisions 0051, 0089), each policy's findings split back by its id. The rest run alone.
     // `RERAIL_BATCH_PACK=off` runs each policy alone. With `strict`, a failed group returns its error.
@@ -1927,6 +1925,15 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
         }
         Some("compile") => {
             let rest = &args[1..];
+            // A machine with no device (a Linux host without a GPU) has no form of a fixed kernel to make: there is
+            // nothing to compile, and nextest's setup script (`kernels compile`) goes on to the tests.
+            #[cfg(target_os = "macos")]
+            let metal = rerail_accel::gpu::shared::get().is_some();
+            #[cfg(not(target_os = "macos"))]
+            let metal = false;
+            if device().is_none() && !metal {
+                return Ok(format!("no device ({}): no kernels to compile\n", rerail_gpu::device::backend()));
+            }
             if rest.iter().any(|a| a == "--idle") {
                 rerail_accel::upkeep::lower_this_thread();
             }
@@ -2143,6 +2150,21 @@ fn kind_names_command(args: &[String]) -> Result<String, String> {
     use crate::code_rule_dsl::language::{from_tape_tag, tape_tag};
     use crate::code_rule_dsl::language::GrammarDialect;
     let [out] = args else { return Err("usage: rerail-engine kind-names <out file>".to_owned()) };
+    // A name escaped, so each kind and field is one line of four cells: C's and Go's tokens hold a newline and a NUL.
+    let escaped = |name: &str| {
+        let mut s = String::with_capacity(name.len());
+        for c in name.chars() {
+            match c {
+                '\\' => s.push_str("\\\\"),
+                '\n' => s.push_str("\\n"),
+                '\r' => s.push_str("\\r"),
+                '\t' => s.push_str("\\t"),
+                '\0' => s.push_str("\\0"),
+                c => s.push(c),
+            }
+        }
+        s
+    };
     let mut text = String::new();
     let mut tags = 0;
     for &lang in GrammarDialect::all() {
@@ -2151,15 +2173,20 @@ fn kind_names_command(args: &[String]) -> Result<String, String> {
             continue;
         }
         tags += 1;
+        // Each kind's public symbol: the id a node of its name and kind has (`ts_node_symbol`). A grammar's symbols of
+        // one name and kind share one; an own parser's kinds are their own.
+        let grammar = lang.kinds().grammar();
         for id in 0..lang.kind_count() {
             let id = id as u16;
             if let Some(name) = lang.kind_name(id) {
-                text.push_str(&format!("{tag}\t{id}\t{name}\t{}\n", u8::from(lang.kinds().kind_is_named(id))));
+                let named = lang.kinds().kind_is_named(id);
+                let public = grammar.map_or(id, |g| g.id_for_node_kind(name, named));
+                text.push_str(&format!("{tag}\t{id}\t{}\t{}\t{public}\n", escaped(name), u8::from(named)));
             }
         }
         for id in 1..=lang.kinds().field_count() {
             if let Some(name) = lang.kinds().field_name(id as u16) {
-                text.push_str(&format!("{tag}\tfield {id}\t{name}\t\n"));
+                text.push_str(&format!("{tag}\tfield {id}\t{}\t\n", escaped(name)));
             }
         }
     }
@@ -2472,7 +2499,7 @@ Seen(@place("a.py", 1), "json", value) :- title(value).
 Seen(@place("a.py", 1), "dirinput", value) :- allowed("allow/one.txt", 1, value).
 Seen(@place("a.py", 1), "line", value) :- file_line("allow/one.txt", 1, value).
 Seen(@place("a.py", 1), "listing", value) :- dir_entry("allow", value, 0).
-Seen(@place("a.py", 1), "source", value) :- doc(d, "a.py", _), split_line(d, 1, value).
+Seen(@place("a.py", 1), "source", value) :- doc(d, "a.py", _), src_line(d, 1, sp), text(sp, value).
 "#).unwrap();
         let options = serde_json::json!({"revision": commit, "analysisScope": "review"});
         let report = run_rr(&policy, &root, &fixture.path().join("out"), &options).unwrap();
@@ -2521,7 +2548,7 @@ git_revision_request(r, "HEAD") :- git_root_repo(r).
 git_object_request(r, h) :- git_revision(r, "HEAD", h).
 git_object_request(r, p) :- git_parent(r, _, _, p).
 .violation Seen(at: span, text: symbol, message: symbol, email: symbol, head: symbol) "{text}"
-Seen(@place(p, l), text, message, email, head) :- doc(d, p, _), split_line(d, l, text),
+Seen(@place(p, 1), text, message, email, head) :- doc(d, p, _), src_line(d, 1, sp), text(sp, text),
     git_source_commit(r, c), git_message(r, c, message), git_author(r, c, _, email, _, _),
     git_revision(r, "HEAD", h), git_parent(r, h, 0, c), git_subject(r, h, head).
 "#).unwrap();
@@ -2541,7 +2568,7 @@ Seen(@place(p, l), text, message, email, head) :- doc(d, p, _), split_line(d, l,
 .policy "git-tree" revision 1
 .language python
 .violation Seen(at: span, text: symbol, tree: symbol) "{text}"
-Seen(@place(p, l), text, tree) :- doc(d, p, _), split_line(d, l, text), git_rev("tree", tree).
+Seen(@place(p, 1), text, tree) :- doc(d, p, _), src_line(d, 1, sp), text(sp, text), git_rev("tree", tree).
 "#).unwrap();
         let result = run_rr(&policy, &root, &fixture.path().join("tree-out"), &serde_json::json!({"revision": tree, "analysisScope": "review"})).unwrap();
         let diagnostics = result["diagnostics"].as_array().unwrap();

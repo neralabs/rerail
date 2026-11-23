@@ -29,7 +29,7 @@
 //! the next run misses and recomputes, as when the write never happened. Its error is reported at
 //! `written`.
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::{ContentStore, StoreError, StoreResult};
 use std::any::Any;
 use std::collections::HashMap;
@@ -105,6 +105,8 @@ pub(super) enum Kind {
     Memo(Box<super::held::memo_pack::MemoWrite>),
     /// A space's next kept file (`queue_kept`, decisions 0401 F6, 0456 K4).
     Kept(Box<super::kept_facts::KeptWrite>),
+    /// A kept gather's rows written to files of their own as it closes, ahead of its wave (`kept_facts::KeptStage`).
+    KeptStage(Box<super::kept_facts::KeptStage>),
     /// Sources and tapes gathered into segments, or each in its own rows where no segment could be placed.
     Objects(Box<super::object_segments::ObjectsWrite>),
     /// The pending atoms; `queued` clears the flag that keeps a second flush from being queued meanwhile.
@@ -135,6 +137,7 @@ impl Work {
             Kind::Record { text, bytes } => super::record::apply(store, text, bytes),
             Kind::Memo(w) => w.run(store),
             Kind::Kept(w) => w.run(store),
+            Kind::KeptStage(w) => w.run(store),
             Kind::Objects(w) => w.run(store),
             Kind::Atoms { queued } => {
                 if *queued {
@@ -183,6 +186,10 @@ pub struct Closed {
     pub keys: Vec<(Key, Option<Held>)>,
     pub syms: Syms,
     pub job: Work,
+    /// What the writer runs as the gather closes, outside its wave (its bytes, the work): the bulk written to disk
+    /// ahead of the wave's commit, so a wave still being written holds only what its commit needs (decision 0259: the
+    /// write-behind on disk, the commit a wave's). The job reads what it wrote.
+    pub now: Option<(usize, Work)>,
 }
 
 /// The bytes a gather holds in memory before it is closed: 16 MB of the default 1 GB budget, scaled with it.
@@ -233,6 +240,10 @@ pub enum Boundary {
     /// The file-local part done, before the cross part: what it left queued (the files' stats) is written while the
     /// cross part runs (decision 0296).
     Local,
+    /// The cross part's inputs' frames, made before it runs where it lets its inputs go (Q74): written while it runs.
+    /// Left in the wave its rows' end seals, every input's frames were held through the cross part's peak (1.7 GB of
+    /// heap and 2.3 GB queued on 3,089 files).
+    CrossInputs,
     /// The cross part's rows derived: its new atoms (names it made) are written while its kept part is framed
     /// (decision 0296).
     CrossDerived,
@@ -460,7 +471,9 @@ impl Writer {
         let mut lane = self.lane.lock().expect("the writer");
         // The run's gathers first, each placed and made one job of the wave; its record last, at its end.
         let gathers = self.shared.state.lock().expect("the writer's state").take_gathers(run, None, how != Seal::Wave);
-        self.close_gathers(run, gathers);
+        for now in self.close_gathers(run, gathers) {
+            self.send(&mut lane, now);
+        }
         let finished = how == Seal::Finished;
         let jobs = {
             let mut s = self.shared.state.lock().expect("the writer's state");
@@ -505,10 +518,25 @@ impl Writer {
     /// Closes `gathers` (taken by `State::take_gathers`, their keys queued) and queues each in `run`'s wave still being
     /// written, as one job. Called under the lane's lock, so a seal of the run takes them in its wave. A gather that
     /// gathered nothing lets its keys go.
-    fn close_gathers(&self, run: u64, gathers: Vec<(Vec<Key>, Box<dyn Gather>)>) {
+    fn close_gathers(&self, run: u64, gathers: Vec<(Vec<Key>, Box<dyn Gather>)>) -> Vec<Wave> {
+        let mut now = Vec::new();
         for (keys, g) in gathers {
             match g.close() {
                 Some(c) => {
+                    // Its bulk, sent to the writer now as a wave of its own, alone (no transaction): counted as a
+                    // sealed wave is, so a run's end waits for it.
+                    if let Some((bytes, work)) = c.now {
+                        let mut s = self.shared.state.lock().expect("the writer's state");
+                        s.bytes += bytes;
+                        s.jobs += 1;
+                        s.peak = s.peak.max(s.bytes);
+                        s.sealed_bytes += bytes;
+                        s.sealed += 1;
+                        let entry = s.by_what.entry(c.what).or_default();
+                        entry.0 += 1;
+                        entry.1 += bytes;
+                        now.push(Wave { jobs: vec![(accounted(c.what, bytes, work.into_job()), bytes, Vec::new(), Run::Alone, c.what)], alone: true, run, finished: false });
+                    }
                     let job = accounted(c.what, c.bytes, guarded(c.syms, c.job.into_job()));
                     let mut s = self.shared.state.lock().expect("the writer's state");
                     s.bytes += c.bytes;
@@ -538,6 +566,19 @@ impl Writer {
             }
         }
         self.shared.changed.notify_all();
+        now
+    }
+
+    /// Sends `wave` down the writer's lane (held by the caller), or fails it where the writer is gone.
+    fn send(&self, lane: &mut Option<Lane>, wave: Wave) {
+        match lane.as_mut() {
+            Some(lane) => {
+                if let Err(mpsc::SendError(wave)) = lane.tx.send(wave) {
+                    self.failed(wave);
+                }
+            }
+            None => self.failed(wave),
+        }
     }
 
     /// A wave the writer cannot take (its thread is gone, though it catches each job's panic): failed, each job, as
@@ -731,8 +772,10 @@ impl ContentStore {
             if g.bytes() >= gather_cap() { s.take_gathers(run, Some(kind), true) } else { Vec::new() }
         };
         if !full.is_empty() {
-            let _lane = w.lane.lock().expect("the writer");
-            w.close_gathers(run, full);
+            let mut lane = w.lane.lock().expect("the writer");
+            for now in w.close_gathers(run, full) {
+                w.send(&mut lane, now);
+            }
         }
         true
     }

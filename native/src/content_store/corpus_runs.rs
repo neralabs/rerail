@@ -14,7 +14,7 @@
 //! can be churned whole many times a day.
 
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::{CollectionReport, ContentStore, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId, StoreError, StoreResult};
 use super::rows::intern_string;
 use super::bounded_insert;
@@ -112,25 +112,6 @@ impl CorpusPass {
         let c = &self.collection;
         self.kept.as_ref().is_some_and(|k| k.evicted > 0 || k.unlived > 0) || self.plan_rows > 0 || c.tapes > 0 || c.sources > 0 || c.snapshots > 0 || c.snapshot_files > 0
     }
-}
-
-/// The corpus memo's schemas before 4 (logic/plan/corpus/memo.rs): their rows were written before decision 0053, under
-/// plans no manifest names, so only a sweep collects them, by number alone (a content-pure row, empty path, is never
-/// the corpus's). So no other user of `facts_results` may take one: each declares its schema through
-/// `live_fact_schema`. The plan choices (3) and kept plans (2) once did, and a new store's first collection swept
-/// the first run's entries (O-kept-strata-flake). The text tests' compiled groups (103) were kept in the facts memo
-/// until decision 0264 made them images of the engine's build.
-pub const RETIRED_CORPUS_MEMO_SCHEMAS: &[u32] = &[2, 3, 103];
-
-/// `schema`, refused at compile time when the sweep of `RETIRED_CORPUS_MEMO_SCHEMAS` would delete its rows: every
-/// `facts_results` user's fact schema is declared through this.
-pub const fn live_fact_schema(schema: u32) -> u32 {
-    let mut i = 0;
-    while i < RETIRED_CORPUS_MEMO_SCHEMAS.len() {
-        assert!(RETIRED_CORPUS_MEMO_SCHEMAS[i] != schema, "a retired corpus memo schema: the collector sweeps its rows");
-        i += 1;
-    }
-    schema
 }
 
 fn lapsed_plan_hold(connection: &rusqlite::Connection, now: i64) -> StoreResult<bool> {
@@ -247,101 +228,7 @@ impl<'m> Protection<'m> {
     }
 }
 
-/// A file's stat when its source was read: what the stat index keeps of it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct FileStat {
-    pub size: i64,
-    pub mtime_ns: i64,
-    pub inode: i64,
-}
-
-impl FileStat {
-    /// The stat of `metadata`.
-    #[cfg(unix)]
-    pub fn of(metadata: &std::fs::Metadata) -> FileStat {
-        use std::os::unix::fs::MetadataExt as _;
-        FileStat { size: metadata.len() as i64, mtime_ns: metadata.mtime().saturating_mul(1_000_000_000).saturating_add(metadata.mtime_nsec()), inode: metadata.ino() as i64 }
-    }
-
-    /// The stat of `metadata` where there are no inode numbers (Windows, wasm32): size and modification time.
-    #[cfg(not(unix))]
-    pub fn of(metadata: &std::fs::Metadata) -> FileStat {
-        let mtime_ns = metadata.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as i64);
-        FileStat { size: metadata.len() as i64, mtime_ns, inode: 0 }
-    }
-}
-
-/// How long before its recording an entry's mtime must be for the entry to be trusted (git's racy rule, with margin
-/// for file systems whose mtime is coarse).
-pub const RACY_NS: i64 = 2_000_000_000;
-
-/// A root's stat index as loaded: by path, the stat recorded and its source, for entries a run may trust.
-#[derive(Debug, Default)]
-pub struct StatIndex {
-    entries: HashMap<String, (FileStat, SourceId)>,
-}
-
-impl StatIndex {
-    /// The source of the file at `path` when its stat is `now` and the index holds the same: else `None`, and the file
-    /// is to be read.
-    pub fn source(&self, path: &str, now: FileStat) -> Option<SourceId> {
-        self.entries.get(path).filter(|(stat, _)| *stat == now).map(|(_, id)| *id)
-    }
-    /// The source last read at `path`, whatever the file's stat is now.
-    pub fn recorded(&self, path: &str) -> Option<SourceId> {
-        self.entries.get(path).map(|(_, id)| *id)
-    }
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-}
-
 impl ContentStore {
-    /// The stat index of `root`: entries whose mtime is over [`RACY_NS`] before their recording and whose source is
-    /// still stored.
-    pub fn corpus_stats(&self, root: &str) -> StoreResult<StatIndex> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let mut statement = connection.prepare_cached(
-            "SELECT st.path, st.size, st.mtime_ns, st.inode, st.source_id FROM corpus_stats st \
-             JOIN corpus_roots r ON r.root_id=st.root_id JOIN source_objects s ON s.source_id=st.source_id \
-             WHERE r.path=?1 AND st.mtime_ns < st.recorded_ns - ?2",
-        )?;
-        let rows = statement.query_map(params![root, RACY_NS], |r| {
-            Ok((r.get::<_, String>(0)?, FileStat { size: r.get(1)?, mtime_ns: r.get(2)?, inode: r.get(3)? }, SourceId(r.get(4)?)))
-        })?;
-        let mut entries = HashMap::new();
-        for row in rows {
-            let (path, stat, id) = row?;
-            entries.insert(path, (stat, id));
-        }
-        Ok(StatIndex { entries })
-    }
-
-    /// Records in `root`'s stat index each (path, stat, source) of `read`, the files a run read, at `now_ns`.
-    pub fn record_corpus_stats(&self, root: &str, read: &[(String, FileStat, SourceId)], now_ns: i64) -> StoreResult<()> {
-        if read.is_empty() {
-            return Ok(());
-        }
-        self.immediate_transaction(|tx| {
-            tx.execute_cached("INSERT OR IGNORE INTO corpus_roots(path) VALUES (?1)", [root])?;
-            let root_id: i64 = tx.query_row_cached("SELECT root_id FROM corpus_roots WHERE path=?1", [root], |r| r.get(0))?;
-            // A few statements whatever the files' number.
-            bounded_insert::insert(
-                tx,
-                "INSERT INTO corpus_stats(root_id, path, size, mtime_ns, inode, source_id, recorded_ns)",
-                "ON CONFLICT(root_id, path) DO UPDATE SET size=excluded.size, mtime_ns=excluded.mtime_ns, inode=excluded.inode, \
-                 source_id=excluded.source_id, recorded_ns=excluded.recorded_ns",
-                read.iter().map(|(path, stat, id)| {
-                    [Value::Integer(root_id), Value::Text(path.clone()), Value::Integer(stat.size), Value::Integer(stat.mtime_ns), Value::Integer(stat.inode), Value::Integer(id.0), Value::Integer(now_ns)]
-                }),
-            )?;
-            Ok(())
-        })
-    }
-
     /// Keeps memo plan `plan`'s statistics (decision 0096 §2): one blob, written by the run that counted them.
     pub fn put_stat_blob(&self, plan: [u8; 32], blob: &[u8]) -> StoreResult<()> {
         self.immediate_transaction(|tx| {
@@ -686,9 +573,6 @@ impl ContentStore {
         if self.analysis_snapshot_due(now)? {
             return Ok(true);
         }
-        if self.retired_memo_rows_left()? {
-            return Ok(true);
-        }
         let due = match self.corpus_due()? {
             0 if self.lapsed_plan_hold(now)? => 1,
             due => due,
@@ -747,12 +631,6 @@ impl ContentStore {
     fn lapsed_plan_hold(&self, now: i64) -> StoreResult<bool> {
         let connection = self.connection.lock().expect("content store connection unavailable");
         lapsed_plan_hold(&connection, now)
-    }
-
-    /// Whether the retired corpus memo schemas' rows are still being swept.
-    fn retired_memo_rows_left(&self) -> StoreResult<bool> {
-        let connection = self.connection.lock().expect("content store connection unavailable");
-        Ok(connection.query_row_cached("SELECT 1 FROM corpus_swept WHERE singleton=1 AND done=0", [], |r| r.get::<_, i64>(0)).optional()?.is_some())
     }
 
     /// `corpus_state.due`: 0 nothing, 1 a new manifest (a decision is due), 2 a decision's rows being collected.
@@ -942,7 +820,6 @@ impl ContentStore {
             tx.prepare_cached("UPDATE corpus_plans SET live = (plan_digest IN (SELECT unhex(value) FROM json_each(?1)))")?
                 .execute([serde_json::to_string(&live_plans).expect("text")])?;
             let gone_json = serde_json::to_string(&gone_roots).expect("integers");
-            tx.prepare_cached("DELETE FROM corpus_stats WHERE root_id IN (SELECT value FROM json_each(?1))")?.execute([&gone_json])?;
             tx.prepare_cached("DELETE FROM corpus_roots WHERE root_id IN (SELECT value FROM json_each(?1))")?.execute([&gone_json])?;
             tx.execute_cached("UPDATE corpus_decided SET run=(SELECT run FROM corpus_state WHERE singleton=1), time=?1 WHERE singleton=1", [now])?;
             // Collection stays due until a pass finds nothing (`collect_corpus_pass`), unless a new manifest came first.
@@ -991,26 +868,6 @@ impl ContentStore {
     fn collect_corpus_pass_unmapped(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<CorpusPass> {
         let Some(_lease) = self.try_collect()? else { return Ok(CorpusPass::default()) };
         let mut pass = CorpusPass::default();
-        // Rows of the corpus memo's retired schemas (before decision 0053 named plans): no plan collects them.
-        let swept = self.immediate_transaction(|tx| {
-            let left: Option<i64> = tx.query_row_cached("SELECT 1 FROM corpus_swept WHERE singleton=1 AND done=0", [], |r| r.get(0)).optional()?;
-            if left.is_none() {
-                return Ok(0);
-            }
-            let schemas = RETIRED_CORPUS_MEMO_SCHEMAS.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
-            let n = tx.execute(
-                &format!(
-                    "DELETE FROM facts_results WHERE (source_id, fact_schema, path, plan_digest) IN (\
-                     SELECT source_id, fact_schema, path, plan_digest FROM facts_results WHERE fact_schema IN ({schemas}) AND path<>'' LIMIT ?1)"
-                ),
-                [PLAN_ROWS_PER_PASS],
-            )?;
-            if (n as i64) < PLAN_ROWS_PER_PASS {
-                tx.execute_cached("UPDATE corpus_swept SET done=1 WHERE singleton=1", [])?;
-            }
-            Ok(n)
-        })?;
-        pass.plan_rows = swept;
         // Holds of runs whose process is gone are released: their plans may be dead now, so a decision is due.
         let orphans = {
             let connection = self.connection.lock().expect("content store connection unavailable");
@@ -1030,9 +887,6 @@ impl ContentStore {
                 // Nothing a decision could change: no root went past its protected runs, and the last decision is
                 // recent. The sweep waits for the next decision too; a new manifest makes collection due again.
                 self.immediate_transaction(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=1", [])?))?;
-                if swept > 0 {
-                    pass.collection = self.collect_held(now, MAX_COLLECTION_BATCH)?;
-                }
                 return Ok(pass);
             }
             pass.kept = Some(self.keep_corpus_runs_held(policy, now)?);
@@ -1042,30 +896,21 @@ impl ContentStore {
         }
         // The kept spaces' entries only dead programs read (decision 0401 F4), while their plans are still known dead.
         pass.plan_rows += self.collect_kept_facts()?;
-        // Dead plans, one transaction each, until the pass's budget of rows is spent: a dead build's memo is its
-        // entries' rows (one statement), and one plan a pass left a store's dead builds for as many runs.
+        // Dead plans, one transaction each, until the pass's budget is spent: a dead build's per-file memo is its
+        // entries' space (decision 0146), and its kept entries went with it above (`collect_kept_facts`).
         let mut budget = PLAN_ROWS_PER_PASS as usize;
         while budget > 0 {
             let n = self.immediate_transaction(|tx| {
                 let dead: Option<Vec<u8>> = tx.query_row_cached("SELECT plan_digest FROM corpus_plans WHERE live=0 LIMIT 1", [], |r| r.get(0)).optional()?;
                 let Some(plan) = dead else { return Ok(0) };
-                let n = tx.execute_cached(
-                    "DELETE FROM facts_results WHERE (source_id, fact_schema, path, plan_digest) IN (\
-                     SELECT source_id, fact_schema, path, plan_digest FROM facts_results WHERE plan_digest=?1 LIMIT ?2)",
-                    params![plan, PLAN_ROWS_PER_PASS],
-                )?;
-                if (n as i64) < PLAN_ROWS_PER_PASS {
-                    // The plan's per-file memo (decision 0146): its entries' space.
-                    let mut memo_gone = 0;
-                    if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
-                        memo_gone = super::held::drop_memo_space(tx, &super::held::local_space(&digest))?;
-                    }
-                    tx.execute_cached("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
-                    tx.execute_cached("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
-                    // A dead plan collected is work done, though its memo is entries in segments (decision 0240 §4), not rows.
-                    return Ok(n + memo_gone + 1);
+                let mut memo_gone = 0;
+                if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
+                    memo_gone = super::held::drop_memo_space(tx, &super::held::local_space(&digest))?;
                 }
-                Ok(n)
+                tx.execute_cached("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
+                tx.execute_cached("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
+                // A dead plan collected is work done, though its memo is entries in segments (decision 0240 §4), not rows.
+                Ok(memo_gone + 1)
             })?;
             pass.plan_rows += n;
             if n == 0 {

@@ -42,7 +42,7 @@ pub enum Side {
 
 /// The violation spec an evidence producer's witnesses use: its projection, enumeration, anchor
 /// and same-node regex groups, without fixes, and the comments its `side` answers to.
-pub(crate) fn producer_violation(
+pub fn producer_violation(
     clause: &CompiledClause,
     relation: &FactQuery,
     side: Side,
@@ -152,7 +152,7 @@ pub(super) fn project<D: Doc>(
                         Input::Integer(
                             crate::code_rule_dsl::matcher::file_lines(
                                 &file.source,
-                                crate::code_rule_dsl::lines::Terminators::Newlines,
+                                crate::code_rule_dsl::lines::terminators_of(super::query::file_language(file)),
                             )
                             .span(r.start, r.end)
                             .start_line as i64,
@@ -272,7 +272,7 @@ fn incomplete(clause: &CompiledClause, paths: &BTreeSet<String>, message: &str) 
 /// `require_each` over evidence: a subject without evidence is a violation at the subject's
 /// witness when the evidence is complete, and unknown (`source-incomplete`) when it is not. Subjects
 /// in files whose rows are unknown are unknown too.
-pub(crate) fn require_each(
+pub fn require_each(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     (subject_query, subject): (&FactQuery, Rows),

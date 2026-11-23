@@ -31,8 +31,63 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-/// A stage's rows: each a tuple of texts.
-type Rows = BTreeSet<Vec<String>>;
+/// A stage's rows, each a tuple of texts held as its 128-bit digest: `all`'s ten million rows as texts were 3 GB a
+/// side, most of the run's peak. A row's text is kept only where it may be shown (`KEEP_TEXT`).
+#[derive(Default, Clone)]
+pub(super) struct Rows {
+    keys: HashSet<u128>,
+    text: HashMap<u128, Box<str>>,
+}
+
+/// Whether rows keep their texts: the small tests show the rows that differ, and `reference_stages_timed` only with
+/// `RERAIL_STAGE_DIFFS`.
+static KEEP_TEXT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+impl PartialEq for Rows {
+    fn eq(&self, o: &Rows) -> bool {
+        self.keys == o.keys
+    }
+}
+
+impl Rows {
+    fn insert<S: AsRef<str>>(&mut self, cells: impl IntoIterator<Item = S>) {
+        let mut joined = String::new();
+        for (i, c) in cells.into_iter().enumerate() {
+            if i > 0 {
+                joined.push('\u{1f}');
+            }
+            joined.push_str(c.as_ref());
+        }
+        let key = digest(&joined);
+        if self.keys.insert(key) && KEEP_TEXT.load(std::sync::atomic::Ordering::Relaxed) {
+            self.text.insert(key, joined.into());
+        }
+    }
+    pub(super) fn len(&self) -> usize {
+        self.keys.len()
+    }
+    pub(super) fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+    /// The rows not in `other`, as their texts (cells joined by `|`), or their digests where no text is kept.
+    fn only(&self, other: &Rows) -> Vec<String> {
+        let mut v: Vec<String> = self.keys.iter().filter(|k| !other.keys.contains(k)).map(|k| self.text.get(k).map_or_else(|| format!("#{k:032x}"), |t| t.replace('\u{1f}', "|"))).collect();
+        v.sort();
+        v
+    }
+}
+
+/// A row's digest: two SipHashes of its text, apart.
+fn digest(text: &str) -> u128 {
+    use std::hash::{Hash, Hasher};
+    let half = |salt: u8| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        salt.hash(&mut h);
+        text.hash(&mut h);
+        h.finish()
+    };
+    u128::from(half(0)) << 64 | u128::from(half(1))
+}
 
 /// The stages, in order.
 pub(super) const STAGES: [&str; 4] = ["scope", "lookup", "summary", "link"];
@@ -44,8 +99,8 @@ pub(super) struct Side {
     pub cpu: BTreeMap<&'static str, f64>,
 }
 
-fn row<const N: usize>(cells: [String; N]) -> Vec<String> {
-    cells.into()
+fn row<const N: usize>(cells: [String; N]) -> [String; N] {
+    cells
 }
 
 /// W's side over `files` (path, source): every stage, as W's evaluation runs it for the reference graph (the deleted
@@ -60,6 +115,8 @@ pub(super) fn w_side(files: &[(String, String)]) -> Side {
     };
     let mut rows: BTreeMap<&'static str, Rows> = BTreeMap::new();
     let mut summaries = Vec::new();
+    // The `ref` rows' names, for the links of each (`link`, `open_name`).
+    let mut ref_names: BTreeSet<String> = BTreeSet::new();
     for (path, source) in files.iter().filter(|(p, _)| p.ends_with(".py") || p.ends_with(".pyi")) {
         let (tape, _) = crate::code_rule_dsl::fixtures::document(source, GrammarDialect::Python);
         let module = (!packages.is_empty()).then(|| python_module_in(path, |d| packages.contains(d))).flatten();
@@ -85,14 +142,10 @@ pub(super) fn w_side(files: &[(String, String)]) -> Side {
             });
             for (start, end, found) in &resolved {
                 let load = row([path.clone(), start.to_string(), end.to_string()]);
-                rows.entry("load").or_default().insert(load.clone());
+                rows.entry("load").or_default().insert(&load);
                 let scope = found.map(|(s, _)| &table.scopes[s as usize]).filter(|s| s.kind != ScopeKind::TypeParams);
-                let mut looked = load;
-                match scope {
-                    Some(s) => looked.extend([s.range.start.to_string(), s.range.end.to_string()]),
-                    None => looked.extend(["-1".to_owned(), "-1".to_owned()]),
-                }
-                rows.entry("look").or_default().insert(looked);
+                let (a, b) = scope.map_or(("-1".to_owned(), "-1".to_owned()), |s| (s.range.start.to_string(), s.range.end.to_string()));
+                rows.entry("look").or_default().insert(load.iter().cloned().chain([a, b]));
             }
         }
         let mut summary = None;
@@ -107,6 +160,7 @@ pub(super) fn w_side(files: &[(String, String)]) -> Side {
         for (owner, name) in &summary.references {
             let def = &summary.defs[*owner as usize];
             rows.entry("ref").or_default().insert(row([path.clone(), def.start.to_string(), def.end.to_string(), summary.name(*name).to_owned()]));
+            ref_names.insert(summary.name(*name).to_owned());
         }
         summaries.push((Arc::<str>::from(path.as_str()), Arc::new(summary)));
     }
@@ -135,7 +189,7 @@ pub(super) fn w_side(files: &[(String, String)]) -> Side {
         rows.entry("open").or_default().insert(row([path.to_string(), def.start.to_string()]));
     }
     // What each `name`-form reference links to, and whether it is open.
-    let names: BTreeSet<String> = rows.get("ref").into_iter().flatten().map(|r| r[3].clone()).filter(|n| calls::closure::reference_via(n) == "name").collect();
+    let names: BTreeSet<String> = ref_names.into_iter().filter(|n| calls::closure::reference_via(n) == "name").collect();
     for text in names {
         let Some(name) = Name::get(Family::Python, &text) else { continue };
         let (defs, open) = graph.link_of(&name);
@@ -156,36 +210,36 @@ const PROGRAM: &str = r#"
 .language python
 .scope include "**/*.py", "**/*.pyi"
 #include "python/references.rerail"
-.decl st_pos(n: node, p: symbol, s: number, e: number)
-st_pos(n, p, s, e) :- node(d, n, _, s, e), doc(d, p, _).
+// A node's (path, start, end) is read from the tape where a rule needs it (`node` keyed by the node, then `doc`),
+// not made as a relation of every node: a view's rows are never made (decision 0353).
 // A load: a name read in its file's code (not of a string parsed as code: `guest_of`, decision 0431), no `del` target.
 .decl st_read(n: node, x: symbol)
 st_read(n, x) :- nameref(n, x), !bind_only(n), !rf_deleted(n), !guest_of(n, _).
 .decl st_load(p: symbol, s: number, e: number)
-st_load(p, s, e) :- st_read(n, _), st_pos(n, p, s, e).
+st_load(p, s, e) :- st_read(n, _), node(d_n, n, _, s, e), doc(d_n, p, _).
 .decl st_look(p: symbol, s: number, e: number, ss: number, se: number)
-st_look(p, s, e, ss, se) :- st_read(n, x), look(n, x, c), st_pos(n, p, s, e), st_pos(c, _, ss, se).
-st_look(p, s, e, -1, -1) :- st_read(n, x), !look(n, x, _), st_pos(n, p, s, e).
+st_look(p, s, e, ss, se) :- st_read(n, x), look(n, x, c), node(d_n, n, _, s, e), doc(d_n, p, _), node(d_c, c, _, ss, se), doc(d_c, _, _).
+st_look(p, s, e, -1, -1) :- st_read(n, x), !look(n, x, _), node(d_n, n, _, s, e), doc(d_n, p, _).
 .decl st_def(p: symbol, s: number, e: number, q: symbol, k: symbol)
-st_def(p, s, e, q, k) :- rf_qn(f, q), kind(f, k), st_pos(f, p, s, e).
+st_def(p, s, e, q, k) :- rf_qn(f, q), kind(f, k), node(d_f, f, _, s, e), doc(d_f, p, _).
 .decl st_ref(p: symbol, s: number, e: number, name: symbol)
-st_ref(p, s, e, q) :- rf_ref(t, "name", q, _, _), st_pos(t, p, s, e).
-st_ref(p, s, e, @concat(m, ".<bare>.", x, "=>", q)) :- rf_ref(t, "bare", m, x, q), st_pos(t, p, s, e).
+st_ref(p, s, e, q) :- rf_ref(t, "name", q, _, _), node(d_t, t, _, s, e), doc(d_t, p, _).
+st_ref(p, s, e, @concat(m, ".<bare>.", x, "=>", q)) :- rf_ref(t, "bare", m, x, q), node(d_t, t, _, s, e), doc(d_t, p, _).
 st_ref(p, s, e, @concat(c, ".<unqualified>.", x, "=>", m, ".<bare>.", x, "=>", q)) :- rf_ref(t, "unq", c, x, q),
-    rf_unq_bare(t, c, x, m), m != "", st_pos(t, p, s, e).
-st_ref(p, s, e, @concat(c, ".<unqualified>.", x, "=>", q)) :- rf_ref(t, "unq", c, x, q), rf_unq_bare(t, c, x, ""), st_pos(t, p, s, e).
-st_ref(p, s, e, @concat(c, ".<self>.", f)) :- rf_ref(t, "self", c, f, _), st_pos(t, p, s, e).
-st_ref(p, s, e, @concat(c, ".<super>.", f)) :- rf_ref(t, "super", c, f, _), st_pos(t, p, s, e).
-st_ref(p, s, e, @concat(c, ".<field>.", x, ".", f)) :- rf_ref(t, "field", c, x, f), st_pos(t, p, s, e).
-st_ref(p, s, e, @concat(m, ".<type>.", ty, ".", f)) :- rf_ref(t, "type", m, ty, f), st_pos(t, p, s, e).
+    rf_unq_bare(t, c, x, m), m != "", node(d_t, t, _, s, e), doc(d_t, p, _).
+st_ref(p, s, e, @concat(c, ".<unqualified>.", x, "=>", q)) :- rf_ref(t, "unq", c, x, q), rf_unq_bare(t, c, x, ""), node(d_t, t, _, s, e), doc(d_t, p, _).
+st_ref(p, s, e, @concat(c, ".<self>.", f)) :- rf_ref(t, "self", c, f, _), node(d_t, t, _, s, e), doc(d_t, p, _).
+st_ref(p, s, e, @concat(c, ".<super>.", f)) :- rf_ref(t, "super", c, f, _), node(d_t, t, _, s, e), doc(d_t, p, _).
+st_ref(p, s, e, @concat(c, ".<field>.", x, ".", f)) :- rf_ref(t, "field", c, x, f), node(d_t, t, _, s, e), doc(d_t, p, _).
+st_ref(p, s, e, @concat(m, ".<type>.", ty, ".", f)) :- rf_ref(t, "type", m, ty, f), node(d_t, t, _, s, e), doc(d_t, p, _).
 .decl st_link(q: symbol, p: symbol, s: number)
-st_link(q, p, s) :- rf_ref(_, "name", q, _, _), rf_link(q, d), st_pos(d, p, s, _).
+st_link(q, p, s) :- rf_ref(_, "name", q, _, _), rf_link(q, d), node(d_d, d, _, s, _), doc(d_d, p, _).
 .decl st_open_name(q: symbol)
 st_open_name(q) :- rf_ref(_, "name", q, _, _), rf_open_name(q).
 .decl st_edge(sp: symbol, ss: number, tp: symbol, ts: number, via: symbol)
-st_edge(sp, ss, tp, ts, v) :- reference_edge(s, t, v), st_pos(s, sp, ss, _), st_pos(t, tp, ts, _).
+st_edge(sp, ss, tp, ts, v) :- reference_edge(s, t, v), node(d_s, s, _, ss, _), doc(d_s, sp, _), node(d_t, t, _, ts, _), doc(d_t, tp, _).
 .decl st_open(p: symbol, s: number)
-st_open(p, s) :- reference_open(n), st_pos(n, p, s, _).
+st_open(p, s) :- reference_open(n), node(d_n, n, _, s, _), doc(d_n, p, _).
 .output st_load, st_look, st_def, st_ref, st_link, st_open_name, st_edge, st_open
 "#;
 
@@ -241,6 +295,8 @@ pub(super) fn rules_side_in(dir: &std::path::Path, chunk_nodes: usize) -> Side {
     let (local, cross) = (heads(before), heads(after));
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("reference-stages-out");
     let _ = std::fs::remove_dir_all(&out);
+    // The run's records are its scope's (decision 0442): read after it, in it.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let profile = crate::code_rule_dsl::logic::profile::on();
     crate::code_rule_dsl::logic::profile::set(true);
     crate::code_rule_dsl::logic::profile::reset();
@@ -289,7 +345,11 @@ pub(super) fn rules_side_in(dir: &std::path::Path, chunk_nodes: usize) -> Side {
     }
     for (ours, rel) in RELATIONS {
         let shown = crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
-        side.rows.insert(ours, shown.into_iter().collect());
+        let mut rows = Rows::default();
+        for r in shown {
+            rows.insert(r);
+        }
+        side.rows.insert(ours, rows);
     }
     let _ = std::fs::remove_dir_all(&out);
     side
@@ -299,10 +359,11 @@ pub(super) fn rules_side_in(dir: &std::path::Path, chunk_nodes: usize) -> Side {
 pub(super) fn differences(w: &Side, ours: &Side, shown: usize) -> Vec<String> {
     let mut out = Vec::new();
     for (name, _) in RELATIONS {
-        let (a, b) = (w.rows.get(name).cloned().unwrap_or_default(), ours.rows.get(name).cloned().unwrap_or_default());
+        let none = Rows::default();
+        let (a, b) = (w.rows.get(name).unwrap_or(&none), ours.rows.get(name).unwrap_or(&none));
         if a != b {
-            let missing: Vec<_> = a.difference(&b).take(shown).collect();
-            let extra: Vec<_> = b.difference(&a).take(shown).collect();
+            let missing: Vec<_> = a.only(b).into_iter().take(shown).collect();
+            let extra: Vec<_> = b.only(a).into_iter().take(shown).collect();
             out.push(format!("{name}: W {} rules {}; only W's {missing:?}; only the rules' {extra:?}", a.len(), b.len()));
         }
     }
@@ -320,7 +381,7 @@ pub(super) fn report(w: &Side, ours: &Side) -> String {
         s += &format!("{stage:<9} {:>8}  {cpu:>10.3}\n", "");
     }
     for (name, _) in RELATIONS {
-        s += &format!("rows {name}: W {} rules {}\n", w.rows.get(name).map_or(0, BTreeSet::len), ours.rows.get(name).map_or(0, BTreeSet::len));
+        s += &format!("rows {name}: W {} rules {}\n", w.rows.get(name).map_or(0, Rows::len), ours.rows.get(name).map_or(0, Rows::len));
     }
     s
 }
@@ -574,6 +635,7 @@ fn each_stage_of_ws_reference_graph_is_the_rules_on_the_cases() {
 fn reference_stages_timed() {
     let root = std::path::PathBuf::from(std::env::var("RERAIL_STAGE_CORPUS").expect("RERAIL_STAGE_CORPUS"));
     let files = files_under(&root);
+    KEEP_TEXT.store(std::env::var_os("RERAIL_STAGE_DIFFS").is_some(), std::sync::atomic::Ordering::Relaxed);
     let w = w_side(&files);
     // `RERAIL_STAGE_CHUNK=<nodes>`: the run's chunk size (2^18 by default).
     let chunk = std::env::var("RERAIL_STAGE_CHUNK").ok().and_then(|c| c.parse().ok()).unwrap_or(1 << 18);
@@ -585,12 +647,13 @@ fn reference_stages_timed() {
     // `RERAIL_STAGE_DIFFS=1`: every differing row, a line each: `diff <relation> <side> <row>`.
     if std::env::var_os("RERAIL_STAGE_DIFFS").is_some() {
         for (name, _) in RELATIONS {
-            let (a, b) = (w.rows.get(name).cloned().unwrap_or_default(), ours.rows.get(name).cloned().unwrap_or_default());
-            for r in a.difference(&b) {
-                println!("diff {name} w {}", r.join("|"));
+            let none = Rows::default();
+            let (a, b) = (w.rows.get(name).unwrap_or(&none), ours.rows.get(name).unwrap_or(&none));
+            for r in a.only(b) {
+                println!("diff {name} w {r}");
             }
-            for r in b.difference(&a) {
-                println!("diff {name} rules {}", r.join("|"));
+            for r in b.only(a) {
+                println!("diff {name} rules {r}");
             }
         }
     }

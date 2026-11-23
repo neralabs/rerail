@@ -444,10 +444,17 @@ pub(crate) fn niced_self() -> std::process::Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
-        /// `IDLE_PRIORITY_CLASS`: the process runs when nothing else on the machine wants the CPU.
-        const IDLE_PRIORITY_CLASS: u32 = 0x40;
+        use windows_sys::Win32::System::Threading::{BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass, IDLE_PRIORITY_CLASS};
         let mut c = std::process::Command::new(exe);
-        c.creation_flags(IDLE_PRIORITY_CLASS);
+        // Windows' classes are strict where Unix's nice is a share: a child in a class below the tests beside it
+        // (the farm runs them below normal) gets no core while they run (a 15 s graph took 37 s under the quick
+        // tier). A test already below normal hands its class on (a child inherits it); one at normal or above starts
+        // its child below normal.
+        // SAFETY: the process's pseudo-handle; no arguments otherwise.
+        let mine = unsafe { GetPriorityClass(GetCurrentProcess()) };
+        if mine != BELOW_NORMAL_PRIORITY_CLASS && mine != IDLE_PRIORITY_CLASS {
+            c.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
+        }
         c
     }
     #[cfg(not(any(unix, windows)))]
