@@ -194,9 +194,9 @@ export function changesetNotes(changesets, name) {
 }
 
 /**
- * What the pending `changesets` bump past a patch on a pack below 1.0.0. A pack is pre-release until 1.0.0, so every
- * change to it is a patch (docs/pack-format.md, "Versioning and release"); `changeset version` would otherwise take
- * 0.1.x to 0.2.0 on a minor and to 1.0.0 on a major.
+ * What the pending `changesets` bump by a major on a pack below 1.0.0: `changeset version` would release it as 1.0.0,
+ * which declares the pack stable, a step taken on purpose and not by a changeset. A minor, 0.1.x to 0.2.0, is how a
+ * pack below 1.0.0 marks a release that breaks it for people upgrading (docs/pack-format.md, "Versioning and release").
  */
 export function changesetBumpFailures(changesets, packs) {
   const versions = new Map(packs.map((pack) => [pack.name, pack.version]));
@@ -204,8 +204,8 @@ export function changesetBumpFailures(changesets, packs) {
   for (const { file, text } of changesets) {
     for (const { name, bump } of changesetEntries(text)) {
       const version = versions.get(name);
-      if (version === undefined || bump === "patch" || !version.startsWith("0.")) continue;
-      failures.push(`${file}: ${name} is ${version}, below 1.0.0, so its bump is patch, not ${bump}`);
+      if (version === undefined || bump !== "major" || !version.startsWith("0.")) continue;
+      failures.push(`${file}: ${name} is ${version}, below 1.0.0, so a major bump would release it as 1.0.0: use minor or patch`);
     }
   }
   return failures;

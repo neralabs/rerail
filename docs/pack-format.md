@@ -846,7 +846,10 @@ and 4 skip it until core reads the language. Any other compile error still fails
 
 Packs version with changesets and release from `main` through a reviewed Release pull request.
 
-Packs are pre-release until 1.0.0: below it, every change is a `patch`. From 1.0.0:
+Packs are pre-release until 1.0.0. Below it, a change is a `patch`, unless it breaks the pack for people upgrading,
+such as rules only a newer core loads: that is a `minor`, 0.1.x to 0.2.0, the digit npm's `^` and Cargo read as
+breaking below 1.0.0. A `major` would release 1.0.0, which declares the pack stable, so no changeset below 1.0.0 takes
+one. From 1.0.0:
 
 | Change | Version bump from 1.0.0 |
 |---|---|
@@ -873,12 +876,13 @@ changesets and bumps each pack, and the Release pull request writes its `CHANGEL
   candidates and `CHANGELOG.md` don't.
 - **Enforced:** the **Changesets** job of `release-packs.yml` fails such a pull request with no changeset of its own
   naming that pack (`missingChangesets` in `scripts/release/packs.mjs`); the Release pull request is exempt. `npm test`
-  refuses a pending `minor` or `major` changeset for a pack below 1.0.0 (`changesetBumpFailures`, same file), which
-  `changeset version` would turn into 0.2.0 or 1.0.0.
+  refuses a pending `major` changeset for a pack below 1.0.0 (`changesetBumpFailures`, same file), which
+  `changeset version` would release as 1.0.0.
 - **Packs only:** a changeset naming `@neralabs/rerail` is refused. Core, at the repository root, is bumped by the same
   Release pull request when what it ships changes, with notes pending in `.changelog/` ([release](release.md#release)).
 - **New pack:** its first pull request adds it at `0.1.0` with a `patch` changeset for its initial rules, so its first
-  release is `0.1.1`.
+  release is `0.1.1`; a pack whose rules only a newer core loads, such as `.rerail` rules, takes a `minor`, so its first
+  release is `0.2.0`.
 - **Private pack:** never versioned (`privatePackages` in `.changeset/config.json` is pinned to
   `{ "version": false, "tag": false }`), so it needs no changeset and none may name it: one naming only private packs
   stays pending for ever, and one naming a private pack beside a published one makes `changeset version` fail. The
