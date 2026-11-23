@@ -889,6 +889,41 @@ impl<L: Layout> Writer<L> {
         }
     }
 
+    /// `node` closed at `end`, or at its start where that is later (a node of no token), as `close`: its key, read before.
+    /// `key`, `start` and `close` at once.
+    #[inline(always)]
+    pub fn close_from(&mut self, node: usize, end: u32) -> u32 {
+        if node == self.chain_at || node < self.base {
+            let k = self.key(node);
+            let e = end.max(self.start(node));
+            self.close(node, e);
+            return k;
+        }
+        let c = self.cell(node);
+        let (k, s) = (self.keys[c], self.starts[c]);
+        self.close_at(node, end.max(s), self.n);
+        k
+    }
+
+    /// A node of key `key` put over node `at`, open (an operator found after its left operand, as `insert`): it takes
+    /// `at`'s key's bits `mask`, and those become `bits` (the wrapped node's field). `key`, `set_key`, `start` and
+    /// `insert` at once.
+    #[inline(always)]
+    pub fn wrap(&mut self, at: usize, mask: u32, bits: u32, key: u32) {
+        if at == self.chain_at || at < self.base {
+            let k = self.key(at);
+            self.set_key(at, k & !mask | bits);
+            let start = self.start(at);
+            self.insert(at, key | (k & mask), start);
+            return;
+        }
+        let c = self.cell(at);
+        let (k, start) = (self.keys[c], self.starts[c]);
+        self.uncode_from(at);
+        self.keys[c] = k & !mask | bits;
+        self.insert_node(at, key | (k & mask), start);
+    }
+
     /// `node`'s key changed (a field set after it was made, a kind found later).
     #[inline]
     pub fn set_key(&mut self, node: usize, key: u32) {
@@ -1718,8 +1753,9 @@ mod tests {
         }
     }
 
-    /// A leaf written at once (`push_leaf`) and a field set where there is none (`set_field`) give the tape `push` and
-    /// `close`, and `key` and `set_key`, give: wide tails among the leaves, a field set where one is and where none is.
+    /// A leaf written at once (`push_leaf`), a field set where there is none (`set_field`), a wrap (`wrap`) and its close
+    /// (`close_from`) give the tape the calls they join give: wide tails among the leaves, a field set where one is and
+    /// where none is, a wrap closed past its leaf and at its start.
     #[test]
     fn a_leaf_at_once_and_a_field_are_the_calls_they_join() {
         let src = vec![b' '; 200_000];
@@ -1744,6 +1780,22 @@ mod tests {
                     } else if o.key(x) >> 10 & 0x3f == 0 {
                         let k = o.key(x);
                         o.set_key(x, k | field);
+                    }
+                    // A wrap over the leaf, closed past it or at its start (a later end, an earlier one).
+                    if i % 3 == 1 {
+                        let wk = key(9, 0, 0);
+                        let end = if i % 2 == 0 { e + 4 } else { s };
+                        if joined {
+                            o.wrap(x, 0x3f << 10, 5 << 10, wk);
+                            let _ = o.close_from(x, end);
+                        } else {
+                            let k = o.key(x);
+                            o.set_key(x, k & !(0x3f << 10) | 5 << 10);
+                            let st = o.start(x);
+                            o.insert(x, wk | (k & (0x3f << 10)), st);
+                            let e2 = end.max(o.start(x));
+                            o.close(x, e2);
+                        }
                     }
                 }
                 o.close(r, 199_999);

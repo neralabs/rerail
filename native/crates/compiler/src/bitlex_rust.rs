@@ -1603,7 +1603,7 @@ impl<'a> G<'a> {
             for (a, b) in [
                 ("    gone: Vec<usize>,\n", "    gone: Vec<usize>,\n    /// The nodes a `drop` took out, each by the node it was in: a reading that reaches one refuses (`read_dead`).\n    dead: Vec<u32>,\n"),
                 ("gone: Vec::new(), lost: None,", "gone: Vec::new(), dead: Vec::new(), lost: None,"),
-                ("        self.w.insert(at, u32::from(kind) | (k & (0x3f << 10)), start);\n", "        self.w.insert(at, u32::from(kind) | (k & (0x3f << 10)), start);\n        for o in &mut self.dead {\n            if *o != NONE && *o as usize >= at {\n                *o += 1;\n            }\n        }\n"),
+                ("        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));\n", "        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));\n        for o in &mut self.dead {\n            if *o != NONE && *o as usize >= at {\n                *o += 1;\n            }\n        }\n"),
                 ("        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.key(i), self.w.start(i), self.w.end(i), self.w.size(i) as usize)).collect();\n", "        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.key(i), self.w.start(i), self.w.end(i), self.w.size(i) as usize)).collect();\n        if self.dead.iter().any(|&o| (o as usize).wrapping_sub(at) < n) {\n            self.read_dead(&nodes, at, root, way)?;\n        }\n"),
             ] {
                 if out.matches(a).count() != 1 {
@@ -2220,12 +2220,11 @@ impl<'a, L: Layout> P<'a, L> {
     #[inline(always)]
     fn close(&mut self) -> R {
         let at = self.open.pop().expect("a node open") as usize;
-        if self.w.key(at) & 0x3ff == u32::from(UNSET) {
+        // Closed before the refusal: a refused file's tape is not read.
+        if self.w.close_from(at, self.last_end) & 0x3ff == u32::from(UNSET) {
             return self.refuse();
         }
         self.made.pop();
-        let e = self.last_end.max(self.w.start(at));
-        self.w.close(at, e);
         self.set_made(at as u32);
         Ok(())
     }
@@ -2254,10 +2253,7 @@ impl<'a, L: Layout> P<'a, L> {
             return self.refuse();
         }
         let at = at as usize;
-        let k = self.w.key(at);
-        self.w.set_key(at, k & !(0x3f << 10) | u32::from(field) << 10);
-        let start = self.w.start(at);
-        self.w.insert(at, u32::from(kind) | (k & (0x3f << 10)), start);
+        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));
         self.open.push(at as u32);
         self.made.push(at as u32 + 1);
         Ok(())

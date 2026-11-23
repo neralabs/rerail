@@ -380,3 +380,10 @@ Built side by side on spark1 and run in turns, three rounds each, tier 2 went fr
 JIT's: 32.9 ms). Kotlin's file uses them the same way.
 
 `rr_parser`'s 52 library tests, `kotlin_parser`'s 70 and `rerail-tape-format`'s 43 pass.
+
+A wrap (`wrap`: the wrapped node's key read and its field moved to the wrap, its start read, the wrap inserted) and a
+node's close (`close`: its key read for `UNSET`, its start read, the close) are now one writer call each too
+(`Writer::wrap`, `Writer::close_from`, `#[inline(always)]` as `close` is), with the same fallback at a chain's node or
+before the window. The node is closed before its `UNSET` refusal: a refused file's tape is not read. The test above
+covers them. Side by side on spark1 they are neutral (34.5 ms both, the host at a load of 9). With `#[inline]` only
+they were 1.5 ms slower, left as calls.

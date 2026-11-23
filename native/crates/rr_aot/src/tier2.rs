@@ -676,12 +676,11 @@ impl<'a, L: Layout> P<'a, L> {
     #[inline(always)]
     fn close(&mut self) -> R {
         let at = self.open.pop().expect("a node open") as usize;
-        if self.w.key(at) & 0x3ff == u32::from(UNSET) {
+        // Closed before the refusal: a refused file's tape is not read.
+        if self.w.close_from(at, self.last_end) & 0x3ff == u32::from(UNSET) {
             return self.refuse();
         }
         self.made.pop();
-        let e = self.last_end.max(self.w.start(at));
-        self.w.close(at, e);
         self.set_made(at as u32);
         Ok(())
     }
@@ -710,10 +709,7 @@ impl<'a, L: Layout> P<'a, L> {
             return self.refuse();
         }
         let at = at as usize;
-        let k = self.w.key(at);
-        self.w.set_key(at, k & !(0x3f << 10) | u32::from(field) << 10);
-        let start = self.w.start(at);
-        self.w.insert(at, u32::from(kind) | (k & (0x3f << 10)), start);
+        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));
         for o in &mut self.dead {
             if *o != NONE && *o as usize >= at {
                 *o += 1;
