@@ -15,9 +15,13 @@
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
+// The store's interface (`content_store::FactStore`) and records; the tests open the store itself (crate split 10b-2).
+#[cfg(not(test))]
+pub use rerail_observe::content_store;
+#[cfg(test)]
 pub use rerail_store::content_store;
-pub use rerail_store::git_access;
-pub use rerail_store::git_workspace;
+pub use rerail_observe::git_access;
+pub use rerail_observe::git_workspace;
 extern crate self as rerail_facts;
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {

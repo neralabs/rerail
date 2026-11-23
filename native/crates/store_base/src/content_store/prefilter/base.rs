@@ -3,6 +3,12 @@
 use crate::content_store::TapeId;
 use std::collections::BTreeMap;
 
+/// The image a tape's rows were built by. 2: ERROR nodes are kind code 0 in both postings.
+/// 3: term postings carry their node count, which the planner statistics sum. 4: kind sizes and
+/// edges (`kind_size`, `edge_freq`). 5: terms are atoms. 6: kind postings are container segments
+/// (`postings::segment_positions`, decision 0045).
+pub const PREFILTER_VERSION: i64 = 8;
+
 /// One tape's prefilter rows, built from the tape alone (`code_rule_dsl::prefilter::image`), so
 /// publication holds the write lock only to write.
 #[derive(Clone, Debug)]

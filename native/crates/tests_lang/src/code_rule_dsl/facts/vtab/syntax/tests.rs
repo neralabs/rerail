@@ -2051,7 +2051,7 @@ fn an_axis_probes_cost() {
     use crate::code_rule_dsl::logic::native::{self as native, component as c};
     let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = rusqlite::Connection::open(path).unwrap();
     native::register(&db).unwrap();
     c::hold_source(&db, "ax", Arc::new(source), b"ii".to_vec());
@@ -2214,7 +2214,7 @@ fn the_jits_id_reads_are_the_hosts() {
 /// Decision 0353 step 2: the numbering's reads as UKL (`<ukl/reads/ids.h>`, written once in CLIF), run on the device
 /// over a projection's descriptor where it lies in its block, answer what the host's reads (written directly) answer: for
 /// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
-/// and back. In all three formats, whole and narrowed, a document of more nodes than a granule's slot holds. The
+/// and back. In every format, whole and narrowed, a document of more nodes than a granule's slot holds. The
 /// kernel is UKL, on the process's device (decision 0440 step C).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
@@ -2283,7 +2283,7 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
         }
         tried += 1;
     }
-    assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
+    assert_eq!(tried, 3 * crate::code_rule_dsl::tape::formats::Format::ALL.len() * 3, "every case, format and shape");
 }
 
 /// Decision 0353 step 4c: the `node`, `child`, `field`, `core_node` and `line` views' rows read through the views' reads (written once in CLIF), by the JIT on
@@ -2812,7 +2812,7 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
             tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
             _: &[Option<&Projected>],
             _: crate::code_rule_dsl::facts::nearest::Binding,
-            _: &crate::content_store::atoms::Atoms,
+            _: &dyn crate::content_store::AtomTable,
         ) -> StoreResult<Vec<(String, Relation)>> {
             self.0.lock().unwrap().extend(tapes.iter().map(|(_, _, path)| path.clone()));
             // A node of each document matched: its key (the test's path `m{key}.py`) above its local id.

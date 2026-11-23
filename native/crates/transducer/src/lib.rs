@@ -16,7 +16,8 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
-pub use rerail_transducer_cpu::{content_store, git_access, git_workspace};
+pub use rerail_transducer_cpu::{git_access, git_workspace};
+pub use rerail_store::content_store;
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_transducer_cpu::code_rule_dsl::*;

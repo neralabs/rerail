@@ -26,6 +26,7 @@ pub use connection::sqlite_on_jemalloc;
 pub use connection::{flush_of, store_flush};
 pub use rerail_blocks::block::Flush;
 mod derivation;
+mod as_fact_store;
 mod document_places;
 pub use document_places::{DOCUMENT_WORDS, DocumentPlaces, PLACED_WORDS};
 mod held;

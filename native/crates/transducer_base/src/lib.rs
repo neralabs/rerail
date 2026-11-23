@@ -16,9 +16,9 @@
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
-pub use rerail_store::content_store;
-pub use rerail_store::git_access;
-pub use rerail_store::git_workspace;
+pub use rerail_observe::content_store;
+pub use rerail_observe::git_access;
+pub use rerail_observe::git_workspace;
 extern crate self as rerail_transducer;
 extern crate self as rerail_transducer_base;
 #[path = "code_rule_dsl"]
@@ -55,7 +55,7 @@ pub mod code_rule_dsl {
             };
         }
         #[allow(unused_imports)]
-        use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, StoreResult};
+        use crate::content_store::{Binding, Derivation, DerivationRecord, FactStore, StoreResult};
     }
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;

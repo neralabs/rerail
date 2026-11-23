@@ -17,7 +17,7 @@
 
 use super::plan::{Anchor, Compiled, Plan, literal_searcher};
 use super::{Key, Lowered};
-use crate::content_store::{ContentStore, StoreResult};
+use crate::content_store::{FactStore, StoreResult};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -425,7 +425,7 @@ pub(in crate::code_rule_dsl) fn evaluate(plans: &[&Plan], terms: &[&[u8]]) -> (V
 /// seen for the first time is evaluated over the whole vocabulary, and a known key over the terms
 /// added since it last read the log (`text_pending`). Exact sets are looked up by value, never
 /// evaluated or kept.
-pub fn fill(store: &ContentStore, lang: u32, lowered: &[Arc<Lowered>]) -> StoreResult<HashMap<Key, Vec<i64>>> {
+pub fn fill(store: &dyn FactStore, lang: u32, lowered: &[Arc<Lowered>]) -> StoreResult<HashMap<Key, Vec<i64>>> {
     let lang = i64::from(lang);
     store.candidate_transaction(true, |db| {
         let _stage = crate::code_rule_dsl::prof::Stage::start("text.vocabulary");

@@ -1330,6 +1330,27 @@ dropped the `--timings` runs (2026-11-22).
       positional search index and lookups, and a queued write's `Key` are now in `rerail-store-base`. The store
       re-exports each at its old path. `ObjectFrame::of` and `TapeFrame::set_programs` replace the private fields the
       store wrote.
-    - **10b-2, the store's calls**: a trait in store-base that `ContentStore` implements. facts-base holds the store
-      through it.
-    - **10b-3, the atoms**: the interner as a crate of its own below the store, for facts, run and setfix.
+    - **10b-2, the store's calls.** `content_store::FactStore` (store-base) is what the crates below the store call
+      of an open one, 39 calls. `ContentStore` implements it (`as_fact_store.rs`), each call its method of the same
+      name:
+      - the derivations;
+      - sources and tapes, with the working set and a reader's collection lease;
+      - prefilters, the search indexes and Git trees;
+      - the atoms: `AtomTable`, the three a batch makes (`intern`, `intern_all`, `value`).
+      The SQL transaction is a `dyn FnMut` call, and `dyn FactStore`'s `candidate_transaction` returns its value.
+      - facts-base, facts and transducer-base hold `&dyn FactStore`. `Graph::store` returns one, and every
+        `FactStore` is a `Graph`. boot, the composition root, reads the rest of the store from it
+        (`ContentStore::of`).
+      - `upkeep::SqliteFile` (any SQLite file's upkeep, which logic-core registers for the cost statistics) and
+        `PREFILTER_VERSION` are in store-base too.
+      - The store leaves the dependencies of lang, facts-base, facts, adapters, rr, transducer-base, logic-core,
+        matcher, transducer-cpu, rules-base and rules: their facades are observe's. facts-base and facts keep it for
+        their tests (`#[cfg(test)]`, a dev-dependency). lang's `fixtures::open` went: its callers open the store, and
+        the prefilter's fixtures, which have the store, keep an `open`.
+      - Then: crates above an edit to the store, 63 to 48, its chain up 21 to 16. The longest chain is 34.
+      - Found on the way: `the_kernels_id_reads_are_the_hosts` counted three tape formats where there are two. It
+        counts `Format::ALL` now, as the test beside it does.
+      - Checks: the workspace with `--tests` is clean on Linux and macOS. Tests (Linux): the moved records' and
+        upkeep's, the overlay's, the observer's and propagation's, 41; facts' syntax and family tests, 70 (one needs
+        pack data the host lacks).
+    - **10b-3, the atoms**: the interner as a crate of its own below the store, for run and setfix.

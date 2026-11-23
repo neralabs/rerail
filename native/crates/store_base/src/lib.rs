@@ -59,6 +59,14 @@ pub mod content_store {
         pub mod base;
         pub use base::*;
     }
+    /// The content store as the facts reach it (`FactStore`), which the store implements.
+    pub mod fact_store;
+    pub use fact_store::{AtomTable, FactStore};
+    /// A SQLite file's upkeep job (`SqliteFile`).
+    pub mod upkeep {
+        pub mod base;
+        pub use base::*;
+    }
     pub mod bounded_insert;
     pub mod compression;
     pub use compression::{compress, decompress, decompress_chunks, decompress_head, decompress_into};

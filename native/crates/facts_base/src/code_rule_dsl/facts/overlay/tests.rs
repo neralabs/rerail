@@ -1,6 +1,6 @@
 use super::*;
 use crate::code_rule_dsl::facts::propagate::{Work, propagate};
-use crate::content_store::DerivationInput;
+use crate::content_store::{ContentStore, DerivationInput};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn store(label: &str) -> (Arc<ContentStore>, PathBuf) {
@@ -40,7 +40,7 @@ fn spilled_files(spill: &std::path::Path) -> usize {
 #[test]
 fn writes_are_read_back_before_they_reach_sqlite() {
     let (store, spill) = store("unwritten");
-    let overlay = Overlay::new(Arc::clone(&store), limits(spill, usize::MAX, usize::MAX, usize::MAX, false)).unwrap();
+    let overlay = Overlay::new(store.clone(), limits(spill, usize::MAX, usize::MAX, usize::MAX, false)).unwrap();
     assert_eq!(overlay.bind_names(&[binding("a", 1)]).unwrap(), ["a"]);
     assert_eq!(overlay.record_derivations(&[record("x", &[("a", 1)], 5)]).unwrap(), ["x"]);
     assert_eq!(overlay.binding("x").unwrap(), Some(d(5)));
@@ -59,7 +59,7 @@ fn writes_are_read_back_before_they_reach_sqlite() {
 fn a_full_top_freezes_spills_and_merges_into_sqlite() {
     let (store, spill) = store("spill");
     // Every write freezes a layer and every frozen layer spills.
-    let overlay = Overlay::new(Arc::clone(&store), limits(spill.clone(), 0, 0, usize::MAX, false)).unwrap();
+    let overlay = Overlay::new(store.clone(), limits(spill.clone(), 0, 0, usize::MAX, false)).unwrap();
     overlay.bind_names(&[binding("a", 1), binding("b", 2)]).unwrap();
     overlay.record_derivations(&[record("x", &[("a", 1)], 5), record("y", &[("a", 1), ("b", 2)], 6)]).unwrap();
     overlay.bind_names(&[binding("a", 3)]).unwrap();
@@ -85,7 +85,7 @@ fn a_full_top_freezes_spills_and_merges_into_sqlite() {
 #[test]
 fn a_writer_that_falls_behind_is_caught_up_by_the_push_path() {
     let (store, spill) = store("behind");
-    let overlay = Overlay::new(Arc::clone(&store), limits(spill, 0, usize::MAX, 2, false)).unwrap();
+    let overlay = Overlay::new(store.clone(), limits(spill, 0, usize::MAX, 2, false)).unwrap();
     for n in 1..=5 {
         overlay.bind_names(&[binding(&format!("n{n}"), n)]).unwrap();
         assert!(overlay.behind() <= 2);
@@ -100,7 +100,7 @@ fn a_writer_that_falls_behind_is_caught_up_by_the_push_path() {
 #[test]
 fn a_rerecorded_derivation_stops_reading_what_it_dropped_across_layers() {
     let (store, spill) = store("reread");
-    let overlay = Overlay::new(Arc::clone(&store), limits(spill, usize::MAX, usize::MAX, usize::MAX, false)).unwrap();
+    let overlay = Overlay::new(store.clone(), limits(spill, usize::MAX, usize::MAX, usize::MAX, false)).unwrap();
     overlay.bind_names(&[binding("a", 1), binding("b", 1)]).unwrap();
     overlay.record_derivations(&[record("x", &[("a", 1)], 5)]).unwrap();
     overlay.flush().unwrap();
@@ -156,7 +156,7 @@ fn propagation_over_the_overlay_matches_propagation_over_the_store() {
     let expected = run(&*direct);
     assert_eq!(expected.0, [vec!["t"], vec!["f"]]);
     let (store, spill) = store("background");
-    let overlay = Overlay::new(Arc::clone(&store), limits(spill, 64, 128, 4, true)).unwrap();
+    let overlay = Overlay::new(store.clone(), limits(spill, 64, 128, 4, true)).unwrap();
     assert_eq!(run(&overlay), expected);
     overlay.flush().unwrap();
     for output in ["t", "f", "r", "s"] {
@@ -170,7 +170,7 @@ fn propagation_over_the_overlay_matches_propagation_over_the_store() {
 #[test]
 fn a_rerun_that_reproduces_its_derivation_is_backdated() {
     let (store, spill) = store("backdate");
-    let overlay = Overlay::new(Arc::clone(&store), limits(spill, usize::MAX, usize::MAX, usize::MAX, false)).unwrap();
+    let overlay = Overlay::new(store.clone(), limits(spill, usize::MAX, usize::MAX, usize::MAX, false)).unwrap();
     overlay.bind_names(&[binding("a", 1), binding("b", 1)]).unwrap();
     overlay.record_derivations(&[record("x", &[("a", 1)], 5)]).unwrap();
     overlay.flush().unwrap();

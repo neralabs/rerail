@@ -66,7 +66,7 @@ fn search_index_document(
 
 /// Build query-independent kind streams. The stream preserves preorder positions.
 pub fn persist_search_index_batch(
-    store: &crate::content_store::ContentStore,
+    store: &dyn crate::content_store::FactStore,
     tape_ids: &[crate::content_store::TapeId],
     files: &[TapeDoc],
 ) -> crate::content_store::StoreResult<()> {

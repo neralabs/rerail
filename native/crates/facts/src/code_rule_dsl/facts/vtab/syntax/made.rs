@@ -1425,7 +1425,7 @@ pub(super) struct TextTest {
 /// (`Vocabulary::rows`), and each test's passing strings kept in its own rows.
 pub(super) struct Tested {
     tests: Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
-    atoms: Arc<crate::content_store::atoms::Atoms>,
+    atoms: Arc<dyn crate::content_store::AtomTable>,
     state: parking_lot::Mutex<TestedState>,
 }
 
@@ -1442,7 +1442,7 @@ struct Passed {
 }
 
 impl Tested {
-    pub(super) fn new(tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>, atoms: Arc<crate::content_store::atoms::Atoms>) -> Self {
+    pub(super) fn new(tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>, atoms: Arc<dyn crate::content_store::AtomTable>) -> Self {
         let passed = (0..tests.tests.len()).map(|_| Passed::default()).collect();
         Self { tests: Arc::clone(tests), atoms, state: parking_lot::Mutex::new(TestedState { tested: HashSet::new(), passed }) }
     }

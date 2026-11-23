@@ -187,7 +187,7 @@ struct Prefixes<'a> {
 }
 
 impl Graph for Prefixes<'_> {
-    fn store(&self) -> &ContentStore {
+    fn store(&self) -> &dyn crate::content_store::FactStore {
         self.store
     }
     fn bind_names(&self, bindings: &[Binding]) -> StoreResult<Vec<String>> {
@@ -243,7 +243,7 @@ fn an_overlay_push_that_crashes_leaves_a_write_prefix_and_is_recovered_to_the_cl
             let dir = directory(case);
             let store = Arc::new(seeded(&dir));
             let limits = Limits { top: 0, resident, behind, spill: dir.join("spill"), background };
-            let overlay = Overlay::new(Arc::clone(&store), limits).unwrap();
+            let overlay = Overlay::new(store.clone(), limits).unwrap();
             assert!(push_root(&overlay, WS, hash(V2), 8, recompute(&overlay, Some(crash))).is_err());
             let counters = overlay.crash();
             assert_eq!(counters.frozen, u64::from(crash), "{case} at wave {crash}");

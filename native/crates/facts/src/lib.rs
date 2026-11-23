@@ -15,7 +15,12 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
-pub use rerail_facts_base::{content_store, git_access, git_workspace};
+pub use rerail_facts_base::{git_access, git_workspace};
+// The store's interface (`content_store::FactStore`) and records; the tests open the store itself (crate split 10b-2).
+#[cfg(not(test))]
+pub use rerail_observe::content_store;
+#[cfg(test)]
+pub use rerail_store::content_store;
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_facts_base::code_rule_dsl::*;

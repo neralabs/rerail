@@ -38,7 +38,7 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-rr/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-rr/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-rr/metal-tests"]
-test-hooks = ["rerail-blocks/test-hooks", "rerail-program-image/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rr/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-program-image/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rr/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-observe/test-hooks"]
 
 [dependencies]
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
@@ -99,7 +99,8 @@ rerail-prof = { path = "../prof" }
 rerail-rr = { path = "../rr", default-features = false }
 rerail-program-image = { path = "../program_image" }
 rerail-rr-syntax = { path = "../rr_syntax" }
-rerail-store = { path = "../store" }
+# The store's records and interface (rerail-store-base, re-exported), and git.
+rerail-observe = { path = "../observe" }
 rerail-accel = { path = "../../../accel" }
 # Blocks (decision 0266): the outputs file's images are frozen blocks (0295 step 3); setfix's relations are measured
 # against blocks' (`setfix::blocks_compare_tests`).

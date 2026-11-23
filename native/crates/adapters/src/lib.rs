@@ -13,9 +13,9 @@
 // signatures and tuple types are the sources' own.
 #![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
-pub use rerail_store::content_store;
-pub use rerail_store::git_access;
-pub use rerail_store::git_workspace;
+pub use rerail_observe::content_store;
+pub use rerail_observe::git_access;
+pub use rerail_observe::git_workspace;
 extern crate self as rerail_adapters;
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {

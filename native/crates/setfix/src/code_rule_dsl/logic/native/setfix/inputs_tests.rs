@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn a_connection_reads_its_own_input_while_another_on_its_database_loads_one() {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let open = |rows: Vec<i64>| {
         let db = Connection::open(&path).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();

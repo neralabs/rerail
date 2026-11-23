@@ -17,7 +17,7 @@
 use super::Graph;
 use super::runs::{self, Builder, Run};
 use crate::content_store::{
-    ABSENT, Binding, ContentStore, Derivation, DerivationRecord, StoreError, StoreResult, StoredDerivation, Sym,
+    ABSENT, Binding, FactStore, Derivation, DerivationRecord, StoreError, StoreResult, StoredDerivation, Sym,
 };
 use rustc_hash::FxHashMap;
 use std::collections::{BTreeSet, VecDeque};
@@ -187,9 +187,9 @@ struct State {
 
 /// The overlay's store: shared, or borrowed for `Overlay::scoped`'s call.
 enum StoreHandle {
-    Shared(Arc<ContentStore>),
+    Shared(Arc<dyn FactStore>),
     /// Valid while the scoped call runs: the overlay (and its writer) ends before it returns.
-    Scoped(std::ptr::NonNull<ContentStore>),
+    Scoped(std::ptr::NonNull<dyn FactStore>),
 }
 
 // The store is Send and Sync (the shared form crosses threads); the scoped pointer is used only
@@ -198,10 +198,10 @@ unsafe impl Send for StoreHandle {}
 unsafe impl Sync for StoreHandle {}
 
 impl std::ops::Deref for StoreHandle {
-    type Target = ContentStore;
-    fn deref(&self) -> &ContentStore {
+    type Target = dyn FactStore;
+    fn deref(&self) -> &dyn FactStore {
         match self {
-            Self::Shared(store) => store,
+            Self::Shared(store) => &**store,
             Self::Scoped(store) => unsafe { store.as_ref() },
         }
     }
@@ -221,13 +221,13 @@ pub struct Overlay {
 }
 
 impl Overlay {
-    pub fn new(store: Arc<ContentStore>, limits: Limits) -> StoreResult<Self> {
+    pub fn new(store: Arc<dyn FactStore>, limits: Limits) -> StoreResult<Self> {
         Self::with(StoreHandle::Shared(store), limits)
     }
 
     /// `run` over an overlay of `store`, borrowed: the overlay is flushed and its writer joined
     /// before this returns (or unwinds), so the borrow outlives every use of it.
-    pub fn scoped<T>(store: &ContentStore, limits: Limits, run: impl FnOnce(&Overlay) -> StoreResult<T>) -> StoreResult<T> {
+    pub fn scoped<T>(store: &(dyn FactStore + 'static), limits: Limits, run: impl FnOnce(&Overlay) -> StoreResult<T>) -> StoreResult<T> {
         let overlay = Self::with(StoreHandle::Scoped(std::ptr::NonNull::from(store)), limits)?;
         let result = run(&overlay);
         let flushed = overlay.flush();
@@ -377,8 +377,8 @@ impl Drop for Overlay {
 }
 
 impl Graph for Overlay {
-    fn store(&self) -> &ContentStore {
-        &self.shared.store
+    fn store(&self) -> &dyn FactStore {
+        &*self.shared.store
     }
 
     fn bind_names(&self, bindings: &[Binding]) -> StoreResult<Vec<String>> {

@@ -9,7 +9,7 @@ description = "The adapter frameworks (scopes, values, literals, calls, suppress
 [features]
 default = ["rerail-facts/default", "rerail-lang/default"]
 headless = ["napi-derive/noop", "rerail-facts/headless", "rerail-lang/headless"]
-test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks"]
+test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-observe/test-hooks"]
 
 [dependencies]
 ast-grep-core = "=0.51.0"
@@ -32,7 +32,8 @@ rerail-facts = { path = "../facts", default-features = false }
 rerail-lang = { path = "../lang", default-features = false }
 rerail-prof = { path = "../prof" }
 rerail-rr-syntax = { path = "../rr_syntax" }
-rerail-store = { path = "../store" }
+# The store's records and interface (rerail-store-base, re-exported), and git.
+rerail-observe = { path = "../observe" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.189"

@@ -17,7 +17,7 @@
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -144,7 +144,7 @@
     /// CPU's.
     fn closure(sizes: &[(&str, &str)]) -> super::Report {
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -285,7 +285,7 @@
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -433,7 +433,7 @@
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -542,7 +542,7 @@
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -581,7 +581,7 @@
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -652,7 +652,7 @@
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -691,7 +691,7 @@
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -764,7 +764,7 @@
         }
         use crate::code_rule_dsl::logic::lanes::wave;
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -904,7 +904,7 @@
     /// A store with `temp.n` of `rows` rows (`s<k % 37>`, k), the native module registered: the wave tests' input.
     fn wave_db(rows: i64) -> Connection {
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -937,7 +937,7 @@
         }
         use crate::code_rule_dsl::logic::lanes::wave;
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1005,7 +1005,7 @@
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1229,7 +1229,7 @@
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1720,7 +1720,7 @@
             rows
         };
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1795,7 +1795,7 @@
         want.sort_unstable();
         assert!(want.len() > 20 && want.len() < child.len(), "{} of {} rows", want.len(), child.len());
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();

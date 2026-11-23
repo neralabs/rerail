@@ -10,7 +10,7 @@ use super::*;
 #[test]
 fn a_maintained_relation_starts_from_its_kept_rows_without_copying_them() {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     db.execute_batch("CREATE TABLE gun8_s(c0, c1); CREATE TABLE gun8_kept(c0, c1); CREATE TABLE gun8_next(c0, c1);").unwrap();
@@ -46,7 +46,7 @@ fn a_maintained_relation_starts_from_its_kept_rows_without_copying_them() {
 #[test]
 fn a_start_from_a_relation_read_from_the_frames_shares_its_rows() {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     db.execute_batch("CREATE TABLE gun8f_kept(c0, c1); CREATE TABLE gun8f_gone(c0, c1); CREATE TABLE gun8f_next(c0, c1);").unwrap();

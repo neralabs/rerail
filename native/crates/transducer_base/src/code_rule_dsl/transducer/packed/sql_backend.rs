@@ -193,7 +193,7 @@ impl MatchRegistry {
     /// SQL-owned relational composition through `tempo_matches(batch)`.
     pub fn register_indexed_batch(
         &self,
-        store: &crate::content_store::ContentStore,
+        store: &dyn crate::content_store::FactStore,
         tape_ids: &[crate::content_store::TapeId],
         programs: &[Program],
         files: &[TapeDoc],

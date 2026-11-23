@@ -389,7 +389,7 @@ impl Wave {
         if documents.is_empty() {
             return Ok(None);
         }
-        let mut demanded = crate::code_rule_dsl::prof::time("demand.magic", || self.demanded(lease, graph.store(), documents))?;
+        let mut demanded = crate::code_rule_dsl::prof::time("demand.magic", || self.demanded(lease, crate::content_store::ContentStore::of(graph.store()), documents))?;
         let tapes = crate::code_rule_dsl::prof::time("demand.tapes", || {
             documents
                 .iter()
@@ -405,7 +405,7 @@ impl Wave {
         // Each read at its path, which a `filePath` test inside a matcher tests.
         let docs = tapes.iter().zip(documents).map(|(tape, document)| tape.doc.with_path(&document.path)).collect::<Vec<_>>();
         // The walks' text tests from the term index (`R[tid]`, list step 17).
-        let docs = crate::code_rule_dsl::prof::time("demand.texts", || self.texts(graph.store(), &tapes, docs))?;
+        let docs = crate::code_rule_dsl::prof::time("demand.texts", || self.texts(crate::content_store::ContentStore::of(graph.store()), &tapes, docs))?;
         let metal = cfg!(any(target_os = "macos", target_os = "linux", windows))
             && matches!(self.backend, ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground);
         let programs = self.lowered.programs();
@@ -423,7 +423,7 @@ impl Wave {
             // from the store in one query and decompressed into slabs; the label run then finds
             // every document resident.
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-            crate::code_rule_dsl::prof::time("demand.residency", || prepare(graph.store(), &docs))?;
+            crate::code_rule_dsl::prof::time("demand.residency", || prepare(crate::content_store::ContentStore::of(graph.store()), &docs))?;
             crate::code_rule_dsl::prof::peak("2b.residency");
             let active = vec![vec![true; docs.len()]; self.plans.len()];
             let views = crate::code_rule_dsl::prof::time("demand.labels", || {
@@ -511,7 +511,7 @@ impl Wave {
         let plans = self.plans.iter().map(Arc::as_ref).collect::<Vec<_>>();
         if self.route == Candidates::Sql {
             let rows = crate::code_rule_dsl::prof::time("candidates.sql", || {
-                crate::code_rule_dsl::prefilter::fallback(graph.store(), self.lang, &plans, &ids)
+                crate::code_rule_dsl::prefilter::fallback(crate::content_store::ContentStore::of(graph.store()), self.lang, &plans, &ids)
             })?;
             // Rows are (file, preorder), ascending: each file's starts stay in order.
             return Ok(rows
@@ -537,7 +537,7 @@ impl Wave {
             _ => Device::Cpu,
         };
         let (space, sets) = crate::code_rule_dsl::prof::time("candidates.select", || {
-            crate::code_rule_dsl::prefilter::select_sets(graph.store(), self.lang, &plans, &ids, device)
+            crate::code_rule_dsl::prefilter::select_sets(crate::content_store::ContentStore::of(graph.store()), self.lang, &plans, &ids, device)
         })?;
         crate::code_rule_dsl::prof::peak("2a3.selected");
         let _compact = crate::code_rule_dsl::prof::Stage::start("candidates.compact");

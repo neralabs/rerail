@@ -98,14 +98,10 @@ fn sweep() {
     }
 }
 
-/// The store at `path`, opened (created if it is not there).
-pub fn open(path: &std::path::Path) -> crate::content_store::ContentStore {
-    crate::content_store::ContentStore::open(path).unwrap()
-}
 /// The repository's root, found as the test runs (`source_tree::root`: above the test binary, `CARGO_MANIFEST_DIR`, the
 /// working directory), so a test reads the same files whichever crate compiles it. Not written into the build (decision
 /// 0224): this module is in every test build of `rerail-lang`, and with its checkout's path in, that crate and every
 /// crate above it were a different crate in every checkout.
 pub fn repository() -> PathBuf {
-    rerail_store::source_tree::root().expect("no directory above the test, CARGO_MANIFEST_DIR or the working directory holds native/Cargo.toml and docs/rule-syntax")
+    rerail_observe::source_tree::root().expect("no directory above the test, CARGO_MANIFEST_DIR or the working directory holds native/Cargo.toml and docs/rule-syntax")
 }

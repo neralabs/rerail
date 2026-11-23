@@ -149,7 +149,7 @@ pub fn search_index_document(
 /// Build query-independent kind, bounded exact-value, and source-word FTS streams. The kind stream
 /// preserves preorder positions. The value stream stores one term per distinct file value.
 pub fn persist_search_index_batch(
-    store: &crate::content_store::ContentStore,
+    store: &dyn crate::content_store::FactStore,
     tape_ids: &[crate::content_store::TapeId],
     files: &[TapeDoc],
 ) -> crate::content_store::StoreResult<()> {
@@ -170,7 +170,7 @@ pub fn persist_search_index_batch(
 }
 
 pub fn load_literal_eligibility_batch(
-    store: &crate::content_store::ContentStore,
+    store: &dyn crate::content_store::FactStore,
     tape_ids: &[crate::content_store::TapeId],
     programs: &[Program],
 ) -> crate::content_store::StoreResult<Vec<Vec<Option<bool>>>> {
@@ -211,7 +211,7 @@ pub fn load_literal_eligibility_batch(
 /// Bulk-load exact-value file eligibility. `None` means candidate or unknown and widens to terminal
 /// scanning. `Some([])` is a complete file rejection. Values outside the bounded domain stay unknown.
 pub fn load_literal_anchor_batch(
-    store: &crate::content_store::ContentStore,
+    store: &dyn crate::content_store::FactStore,
     tape_ids: &[crate::content_store::TapeId],
     programs: &[Program],
 ) -> crate::content_store::StoreResult<Vec<Vec<Option<Vec<u32>>>>> {
@@ -292,7 +292,7 @@ pub fn widen_anchor_candidates(
 /// Load positional kind roots for structural programs. Missing indexes stay unknown. The matcher
 /// can use extra roots, but it must not infer a negative result from an unknown index.
 pub fn load_kind_anchor_batch(
-    store: &crate::content_store::ContentStore,
+    store: &dyn crate::content_store::FactStore,
     tape_ids: &[crate::content_store::TapeId],
     kinds: &[u16],
 ) -> crate::content_store::StoreResult<Vec<Vec<Option<Vec<u32>>>>> {
@@ -332,7 +332,7 @@ pub fn load_kind_anchor_batch(
 /// Select files from required literal words before a regex terminal batch. A true value remains a
 /// candidate, a false value is a complete rejection, and `None` widens to terminal scanning.
 pub fn load_text_candidate_batch(
-    store: &crate::content_store::ContentStore,
+    store: &dyn crate::content_store::FactStore,
     tape_ids: &[crate::content_store::TapeId],
     required_words: &[String],
 ) -> crate::content_store::StoreResult<Vec<Option<bool>>> {

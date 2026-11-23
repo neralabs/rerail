@@ -4,7 +4,7 @@ use rusqlite::Connection;
 /// A connection to a new content store, whose `atoms` table holds the symbols.
 fn connection() -> Connection {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     register(&db).unwrap();
     db
