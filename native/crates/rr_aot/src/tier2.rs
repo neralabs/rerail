@@ -805,8 +805,7 @@ impl<L: Layout> P<'_, L> {
     fn include(&mut self) -> R {
         self.open(k::INCLUDE);
         self.word_skip(w::HASH_INCLUDE_34)?;
-        self.tk(self.at_string(), k::STRING, 0)?;
-        self.field_made(f::PATH);
+        self.tk(self.at_string(), k::STRING, f::PATH)?;
         self.close()?;
         self.marked = false;
         Ok(())
@@ -830,8 +829,7 @@ impl<L: Layout> P<'_, L> {
         self.drop_made()?;
         self.retag(k::EDIT_DECLARATION);
         self.word_skip(w::EDIT_67)?;
-        self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-        self.field_made(f::NAME);
+        self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         self.column_list()?;
         self.field_made(f::COLUMNS);
         self.marked = false;
@@ -843,8 +841,7 @@ impl<L: Layout> P<'_, L> {
         self.drop_made()?;
         self.retag(k::TYPE_DECLARATION);
         self.word_skip(w::TYPE_2)?;
-        self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-        self.field_made(f::NAME);
+        self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         let arm: usize;
         if self.m_line() {
             arm = 1;
@@ -1124,8 +1121,7 @@ impl<L: Layout> P<'_, L> {
         self.word_skip(w::PRAGMA_1)?;
         loop {
             if self.at_string() {
-                self.tk(self.at_string(), k::STRING, 0)?;
-                self.field_made(f::ARGUMENT);
+                self.tk(self.at_string(), k::STRING, f::ARGUMENT)?;
             } else {
                 break;
             }
@@ -1138,8 +1134,7 @@ impl<L: Layout> P<'_, L> {
     fn declaration_tail(&mut self) -> R {
         self.retag(k::DECLARATION);
         self.word_skip(w::DECL_65)?;
-        self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-        self.field_made(f::NAME);
+        self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         self.column_list()?;
         self.field_made(f::COLUMNS);
         loop {
@@ -1173,24 +1168,19 @@ impl<L: Layout> P<'_, L> {
             w::SAFE_41 => {
                 self.word_leaf(w::SAFE_41, k::SAFE)?;
                 if self.at_identifier() {
-                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                    self.field_made(f::RELATION);
-                    self.tk(self.at_string(), k::STRING, 0)?;
-                    self.field_made(f::DESCRIPTION);
+                    self.tk(self.at_identifier(), k::IDENTIFIER, f::RELATION)?;
+                    self.tk(self.at_string(), k::STRING, f::DESCRIPTION)?;
                 } else if self.at_string() {
                     self.relabel_field(f::RELATION)?;
                     self.relabel_kind(k::IDENTIFIER)?;
-                    self.tk(self.at_string(), k::STRING, 0)?;
-                    self.field_made(f::DESCRIPTION);
+                    self.tk(self.at_string(), k::STRING, f::DESCRIPTION)?;
                 } else {
                     return self.refuse();
                 }
             }
             _ if self.at_identifier() => {
-                self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                self.field_made(f::RELATION);
-                self.tk(self.at_string(), k::STRING, 0)?;
-                self.field_made(f::DESCRIPTION);
+                self.tk(self.at_identifier(), k::IDENTIFIER, f::RELATION)?;
+                self.tk(self.at_string(), k::STRING, f::DESCRIPTION)?;
             }
             _ => {
                 return self.refuse();
@@ -1231,8 +1221,7 @@ impl<L: Layout> P<'_, L> {
     /// `column`.
     fn column(&mut self) -> R {
         self.open(k::COLUMN);
-        self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-        self.field_made(f::NAME);
+        self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         self.word_skip(w::COLON_15)?;
         self.r_type()?;
         self.field_made(f::TYPE);
@@ -1244,8 +1233,7 @@ impl<L: Layout> P<'_, L> {
     /// `type`.
     fn r_type(&mut self) -> R {
         self.open(k::TYPE);
-        self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-        self.field_made(f::NAME);
+        self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
         match self.word() {
             w::LT_17 => {
                 self.word_leaf(w::LT_17, k::LT)?;
@@ -1255,8 +1243,7 @@ impl<L: Layout> P<'_, L> {
                     }
                     _ if self.at_identifier() => {
                         self.drop_made()?;
-                        self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                        self.field_made(f::ARGUMENT);
+                        self.tk(self.at_identifier(), k::IDENTIFIER, f::ARGUMENT)?;
                         self.word_skip(w::GT_18)?;
                     }
                     _ => {
@@ -1291,8 +1278,7 @@ impl<L: Layout> P<'_, L> {
     fn pattern_tail(&mut self) -> R {
         self.wrap(k::PATTERN_MATCH, f::SUBJECT)?;
         self.word_skip(w::TILDE_31)?;
-        self.tk(self.at_code_literal(), k::CODE_LITERAL, 0)?;
-        self.field_made(f::PATTERN);
+        self.tk(self.at_code_literal(), k::CODE_LITERAL, f::PATTERN)?;
         self.close()?;
         self.marked = false;
         Ok(())
@@ -1755,14 +1741,12 @@ impl<L: Layout> P<'_, L> {
                                     continue 'run;
                                 }
                                 1 => {
-                                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                                    self.field_made(f::NAME);
+                                    self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                                     st = 4;
                                     continue 'run;
                                 }
                                 2 => {
-                                    self.word_leaf(w::POLICY_53, k::IDENTIFIER)?;
-                                    self.field_made(f::NAME);
+                                    self.tk(self.word() == w::POLICY_53, k::IDENTIFIER, f::NAME)?;
                                     st = 4;
                                     continue 'run;
                                 }
@@ -1772,8 +1756,7 @@ impl<L: Layout> P<'_, L> {
                             }
                         }
                         2 => {
-                            self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                            self.field_made(f::NAME);
+                            self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                             loop {
                                 if self.m_newline() {
                                     break;
@@ -1810,8 +1793,7 @@ impl<L: Layout> P<'_, L> {
                             }
                         }
                         3 => {
-                            self.word_leaf(w::POLICY_53, k::IDENTIFIER)?;
-                            self.field_made(f::NAME);
+                            self.tk(self.word() == w::POLICY_53, k::IDENTIFIER, f::NAME)?;
                             let arm: usize;
                             if self.m_newline() {
                                 arm = 1;
@@ -1977,14 +1959,12 @@ impl<L: Layout> P<'_, L> {
                     self.drop_made()?;
                     self.retag(k::TEST_BLOCK);
                     self.word_skip(w::TEST_60)?;
-                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                    self.field_made(f::NAME);
+                    self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                     if self.m_end_on() {
                     } else {
                         match self.word() {
                             w::EXACTLY_61 => {
-                                self.word_leaf(w::EXACTLY_61, k::IDENTIFIER)?;
-                                self.field_made(f::MODIFIER);
+                                self.tk(self.word() == w::EXACTLY_61, k::IDENTIFIER, f::MODIFIER)?;
                             }
                             _ => {
                             }
@@ -1995,8 +1975,7 @@ impl<L: Layout> P<'_, L> {
                         match self.word() {
                             w::USES_62 => {
                                 self.word_skip(w::USES_62)?;
-                                self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                                self.field_made(f::ARGUMENT);
+                                self.tk(self.at_identifier(), k::IDENTIFIER, f::ARGUMENT)?;
                                 loop {
                                     if self.m_end_on() {
                                         break;
@@ -2004,8 +1983,7 @@ impl<L: Layout> P<'_, L> {
                                         match self.word() {
                                             w::COMMA_12 => {
                                                 self.word_skip(w::COMMA_12)?;
-                                                self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                                                self.field_made(f::ARGUMENT);
+                                                self.tk(self.at_identifier(), k::IDENTIFIER, f::ARGUMENT)?;
                                             }
                                             _ => {
                                                 break;
@@ -2489,8 +2467,7 @@ impl<L: Layout> P<'_, L> {
                 29 => {
                     self.open(k::FUNCTOR_CALL);
                     self.word_skip(w::AT_23)?;
-                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                    self.field_made(f::FUNCTION);
+                    self.tk(self.at_identifier(), k::IDENTIFIER, f::FUNCTION)?;
                     stack.push(u64::from(self.word));
                     stack.push(u64::from(self.refusing));
                     self.refusing = 0x0;
@@ -2965,8 +2942,7 @@ impl<L: Layout> P<'_, L> {
                             }
                         }
                         1 => {
-                            self.tk(self.at_identifier(), k::VARIABLE, 0)?;
-                            self.field_made(f::BARE);
+                            self.tk(self.at_identifier(), k::VARIABLE, f::BARE)?;
                             match self.word() {
                                 w::LPAREN_10 => {
                                     self.relabel_field(f::LITERAL)?;
@@ -3383,8 +3359,7 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::SEP_46 => {
                             self.word_leaf(w::SEP_46, k::SEP)?;
-                            self.tk(self.at_string(), k::STRING, 0)?;
-                            self.field_made(f::SEPARATOR);
+                            self.tk(self.at_string(), k::STRING, f::SEPARATOR)?;
                             stack.push(6);
                             st = 42;
                             continue 'run;
@@ -3442,8 +3417,7 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::SEP_46 => {
                             self.word_leaf(w::SEP_46, k::SEP)?;
-                            self.tk(self.at_string(), k::STRING, 0)?;
-                            self.field_made(f::SEPARATOR);
+                            self.tk(self.at_string(), k::STRING, f::SEPARATOR)?;
                         }
                         _ => {
                         }
@@ -4457,8 +4431,7 @@ impl<L: Layout> P<'_, L> {
                                     continue 'run;
                                 }
                                 _ if self.at_identifier() => {
-                                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                                    self.field_made(f::RELATION);
+                                    self.tk(self.at_identifier(), k::IDENTIFIER, f::RELATION)?;
                                     stack.push(u64::from(self.word));
                                     stack.push(u64::from(self.refusing));
                                     self.refusing = 0x0;
@@ -4472,8 +4445,7 @@ impl<L: Layout> P<'_, L> {
                             }
                         }
                         _ if self.at_identifier() => {
-                            self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                            self.field_made(f::RELATION);
+                            self.tk(self.at_identifier(), k::IDENTIFIER, f::RELATION)?;
                             stack.push(u64::from(self.word));
                             stack.push(u64::from(self.refusing));
                             self.refusing = 0x0;
@@ -4495,8 +4467,7 @@ impl<L: Layout> P<'_, L> {
                     self.drop_made()?;
                     self.retag(k::FIXTURES_BLOCK);
                     self.word_skip(w::FIXTURES_64)?;
-                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                    self.field_made(f::NAME);
+                    self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                     stack.push(6);
                     st = 8;
                     continue 'run;
@@ -4690,8 +4661,7 @@ impl<L: Layout> P<'_, L> {
                     self.drop_made()?;
                     self.retag(k::VIOLATION_DECLARATION);
                     self.word_skip(w::VIOLATION_66)?;
-                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                    self.field_made(f::NAME);
+                    self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                     self.column_list()?;
                     self.field_made(f::COLUMNS);
                     st = 152;
@@ -4728,10 +4698,8 @@ impl<L: Layout> P<'_, L> {
                 144 => {
                     self.open(k::SUPPRESS_LINE);
                     self.word_skip(w::SUPPRESS_42)?;
-                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                    self.field_made(f::TOOL);
-                    self.tk(self.at_string(), k::STRING, 0)?;
-                    self.field_made(f::RULE);
+                    self.tk(self.at_identifier(), k::IDENTIFIER, f::TOOL)?;
+                    self.tk(self.at_string(), k::STRING, f::RULE)?;
                     loop {
                         if self.m_over_on() {
                             break;
@@ -4739,8 +4707,7 @@ impl<L: Layout> P<'_, L> {
                             match self.word() {
                                 w::COMMA_12 => {
                                     self.word_skip(w::COMMA_12)?;
-                                    self.tk(self.at_string(), k::STRING, 0)?;
-                                    self.field_made(f::RULE);
+                                    self.tk(self.at_string(), k::STRING, f::RULE)?;
                                 }
                                 _ => {
                                     break;
@@ -4754,8 +4721,7 @@ impl<L: Layout> P<'_, L> {
                         if self.m_one_name() {
                             self.mark_one_name()?;
                             self.word_skip(w::LBRACE_20)?;
-                            self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                            self.field_made(f::OVER);
+                            self.tk(self.at_identifier(), k::IDENTIFIER, f::OVER)?;
                             self.word_skip(w::RBRACE_21)?;
                             st = 4;
                             continue 'run;
@@ -4999,8 +4965,7 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 151 => {
-                    self.tk(self.at_string(), k::STRING, 0)?;
-                    self.field_made(f::MESSAGE);
+                    self.tk(self.at_string(), k::STRING, f::MESSAGE)?;
                     st = 142;
                     continue 'run;
                 }
@@ -5043,8 +5008,7 @@ impl<L: Layout> P<'_, L> {
                     match arm {
                         0 => {
                             self.drop_made()?;
-                            self.tk(self.at_string(), k::STRING, 0)?;
-                            self.field_made(f::CODE);
+                            self.tk(self.at_string(), k::STRING, f::CODE)?;
                             st = 6;
                             continue 'run;
                         }
@@ -5065,8 +5029,7 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::IN_38 => {
                             self.word_skip(w::IN_38)?;
-                            self.tk(self.at_string(), k::STRING, 0)?;
-                            self.field_made(f::CODES);
+                            self.tk(self.at_string(), k::STRING, f::CODES)?;
                         }
                         _ => {
                         }
@@ -5079,8 +5042,7 @@ impl<L: Layout> P<'_, L> {
                     if self.m_one_name() {
                         self.mark_one_name()?;
                         self.word_skip(w::LBRACE_20)?;
-                        self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                        self.field_made(f::COLUMN);
+                        self.tk(self.at_identifier(), k::IDENTIFIER, f::COLUMN)?;
                         self.word_skip(w::RBRACE_21)?;
                         st = 6;
                         continue 'run;
@@ -5114,8 +5076,7 @@ impl<L: Layout> P<'_, L> {
                 158 => {
                     self.retag(k::FUNCTOR_DECLARATION);
                     self.word_skip(w::FUNCTOR_68)?;
-                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                    self.field_made(f::NAME);
+                    self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                     self.column_list()?;
                     self.field_made(f::COLUMNS);
                     self.word_leaf(w::COLON_15, k::COLON)?;
@@ -5157,8 +5118,7 @@ impl<L: Layout> P<'_, L> {
                     self.deeper()?;
                     self.open(UNSET);
                     self.retag(k::TYPE);
-                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                    self.field_made(f::NAME);
+                    self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                     match self.word() {
                         w::LT_17 => {
                             self.word_leaf(w::LT_17, k::LT)?;
@@ -5168,8 +5128,7 @@ impl<L: Layout> P<'_, L> {
                                 }
                                 _ if self.at_identifier() => {
                                     self.drop_made()?;
-                                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                                    self.field_made(f::ARGUMENT);
+                                    self.tk(self.at_identifier(), k::IDENTIFIER, f::ARGUMENT)?;
                                     self.word_skip(w::GT_18)?;
                                 }
                                 _ => {
@@ -5234,8 +5193,7 @@ impl<L: Layout> P<'_, L> {
                 }
                 164 => {
                     self.open(k::IO_RELATION);
-                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                    self.field_made(f::NAME);
+                    self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                     match self.word() {
                         w::LPAREN_10 => {
                             self.word_leaf(w::LPAREN_10, k::LPAREN)?;
@@ -5868,12 +5826,10 @@ impl<L: Layout> P<'_, L> {
                     self.drop_made()?;
                     self.retag(k::LATTICE_DECLARATION);
                     self.word_skip(w::LATTICE_69)?;
-                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                    self.field_made(f::NAME);
+                    self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                     self.word_skip(w::LT_17)?;
                     if self.at_identifier() {
-                        self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                        self.field_made(f::BASE);
+                        self.tk(self.at_identifier(), k::IDENTIFIER, f::BASE)?;
                     } else {
                     }
                     self.word_skip(w::GT_18)?;
@@ -5916,8 +5872,7 @@ impl<L: Layout> P<'_, L> {
                 }
                 175 => {
                     self.open(k::LATTICE_OPERATION);
-                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                    self.field_made(f::NAME);
+                    self.tk(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                     self.word_skip(w::MINUS_GT_9)?;
                     stack.push(u64::from(self.word));
                     stack.push(u64::from(self.refusing));
@@ -6199,8 +6154,7 @@ impl<L: Layout> P<'_, L> {
                     self.open(UNSET);
                     self.retag(k::FUNCTOR_CALL);
                     self.word_skip(w::AT_23)?;
-                    self.tk(self.at_identifier(), k::IDENTIFIER, 0)?;
-                    self.field_made(f::FUNCTION);
+                    self.tk(self.at_identifier(), k::IDENTIFIER, f::FUNCTION)?;
                     match self.word() {
                         w::LPAREN_10 => {
                             stack.push(u64::from(self.word));

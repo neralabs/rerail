@@ -415,3 +415,14 @@ first: `(self.taken >> 11 & 1 == 0 && self.h_end_on())`. The tests (`h_*`) are `
 tier 2 went from 32.4–32.9 ms to 31.6–32.5 ms. Kotlin's `open_mark` asks its token-only marks the same way.
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
+
+## A leaf takes its field as it is written (done)
+
+A leaf in a field (`path: string`) was written with no field (`tk(…, 0)`), then labelled by `field_made`: the node
+made last read from the levels, its key read and set again. Lean writes a token's field with the token. Now a pass at
+the end of tier 2's code (`leaf_fields`) folds a leaf of no field (`tk`, `word_leaf`) followed by `field_made(F)` into
+one `tk(…, F)`: the node made last after a leaf is that leaf, and its field is none. In `.rerail`'s file 46 of the 128
+`field_made` calls go. Kotlin's has no such pair and is unchanged. Side by side on the M3 Max, four rounds in turns,
+tier 2 went from 41.1–41.4 ms to 40.2–40.6 ms (spark1, at a load of 9, could not tell them apart).
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
