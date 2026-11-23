@@ -1247,11 +1247,13 @@ fn mf_def_is_the_climb_through_classes() {
         odef(n, f) :- oup(n, k), kind(k, \"class_definition\"), odef(k, f).\n\
         .decl gap(side: symbol, k: symbol, l: number, lf: number)\n\
         gap(\"new\", k, l, lf) :- mf_def(n, f), !odef(n, f), kind(n, k), line(n, l), line(f, lf).\n\
-        gap(\"old\", k, l, lf) :- odef(n, f), !mf_def(n, f), kind(n, k), line(n, l), line(f, lf).\n.output gap\n\
+        gap(\"old\", k, l, lf) :- odef(n, f), !mf_def(n, f), kind(n, k), line(n, l), line(f, lf).\n\
+        gap(\"new up\", k, l, lf) :- mf_up(n, f), !oup(n, f), kind(n, k), line(n, l), line(f, lf).\n\
+        gap(\"old up\", k, l, lf) :- oup(n, f), !mf_up(n, f), kind(n, k), line(n, l), line(f, lf).\n.output gap\n\
         .decl rows(k: number)\nrows(k) :- k = count : { mf_def(_, _) }.\n.output rows\n\
         .decl decorated(l: number, lf: number)\n\
-        decorated(l, lf) :- mf_def(n, f), kind(n, \"identifier\"), text(n, x), (x = \"w\" ; x = \"v\" ; x = \"arg\" ; x = \"q\"), line(n, l), line(f, lf).\n.output decorated\n";
-    let py = "@top(lambda q: q)\ndef f(a=lambda: 1):\n    class B:\n        x = 1\n        @staticmethod\n        def m(self):\n            def g():\n                return h(1)\n            return g\n        @deco(arg(2))\n        class Inner:\n            y = 2\n    return B\n@cls_deco(z)\nclass C:\n    def n(self):\n        @wrap(w)\n        class D:\n            @d2(v)\n            class E:\n                pass\n        return D\nu = 3\n";
+        decorated(l, lf) :- mf_def(n, f), kind(n, \"identifier\"), text(n, x), (x = \"w\" ; x = \"v\" ; x = \"arg\" ; x = \"q\" ; x = \"p\" ; x = \"c\"), line(n, l), line(f, lf).\n.output decorated\n";
+    let py = "@top(lambda q: q)\ndef f(a=lambda: 1):\n    class B:\n        x = 1\n        @staticmethod\n        def m(self):\n            def g():\n                return h(1)\n            return g\n        @deco(arg(2))\n        class Inner:\n            y = 2\n    return B\n@cls_deco(z)\nclass C:\n    def n(self):\n        @wrap(w)\n        class D:\n            @d2(v)\n            class E:\n                pass\n        return D\nu = 3\ndef outer():\n    @wrap2(p)\n    def inner():\n        return p2\n    if p:\n        @a\n        @b(c)\n        def k(): pass\n    return inner\n";
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mf-def");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), py).unwrap();
@@ -1266,10 +1268,12 @@ fn mf_def_is_the_climb_through_classes() {
     let n: usize = rows.first().and_then(|r| r.first()).and_then(|k| k.parse().ok()).unwrap_or(0);
     assert!(n > 40, "mf_def's rows: {rows:?}");
     // `q` (top's lambda, f's decorator) is f's (line 2); `arg` (Inner's decorator) is f's, through B and Inner;
-    // `w` (D's decorator) is n's (line 16); `v` (E's, a class decorating inside a decorated class) is n's too.
+    // `w` (D's decorator) is n's (line 16); `v` (E's, a class decorating inside a decorated class) is n's too. In a
+    // function's body, `p` (inner's decorator, line 25) is inner's (26); `if p` (28) is outer's (24); `c` (k's
+    // second decorator, 30) is k's (31).
     let mut got: Vec<(String, String)> = decorated.iter().map(|r| (r[0].clone(), r[1].clone())).collect();
     got.sort();
-    let want: Vec<(String, String)> = [("1", "2"), ("10", "2"), ("17", "16"), ("19", "16")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+    let want: Vec<(String, String)> = [("1", "2"), ("10", "2"), ("17", "16"), ("19", "16"), ("25", "26"), ("28", "24"), ("30", "31")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
     assert_eq!(got, want);
 }
 

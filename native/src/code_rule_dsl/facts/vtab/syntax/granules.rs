@@ -242,7 +242,9 @@ pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32], reference: Optio
             r.low = reference_low(&cut, tokens);
             r.order = order(&cut.of);
         }
-        return Table::new(p, &cut, &nodes, tokens);
+        let mut table = Table::new(p, &cut, &nodes, tokens);
+        table.whole = fold == Fold::All;
+        return table;
     }
 }
 
@@ -309,8 +311,9 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
             } else if in_container && fold == Fold::None {
                 start[l] = Some(Start::Stmt);
             }
-            // A wrapper claims its first definition child, which then starts no granule of its own.
-            if start[l].is_some() && is(l, WRAPPER)
+            // A wrapper claims its first definition child, which then starts no granule of its own: wherever it is,
+            // so a definition's decorators are its granule's in a function's body too (`units`).
+            if is(l, WRAPPER)
                 && let Some(c) = p.children(l as u32).find(|&c| is(c as usize, DEF)) {
                     claimed[c as usize] = true;
                     start[l] = Some(Start::Def);
@@ -574,6 +577,9 @@ pub struct Table {
     run_at: Cells<[u32; 2]>,
     /// The order keys are preorder indexes: the runs or a granule's nodes outgrow the key's bits (`order`).
     preorder_keys: bool,
+    /// Every granule folded into the root (`Fold::All`): no definition starts one, so a node's definition unit is
+    /// climbed on the tree (`units`).
+    whole: bool,
     /// Each granule's start and end as ranks, by item (`[nodes, tokens]`): the numbered items before its start and
     /// before its subtree's end. With them a numbered item's id is read from its number alone, no select.
     rank_starts: [Cells<u32>; 2],
@@ -691,6 +697,7 @@ impl Table {
             runs: placed(b, &runs),
             run_at: placed(b, &run_at),
             preorder_keys,
+            whole: false,
             rank_starts: [placed(b, &rs0), placed(b, &rs1)],
             rank_ends: [placed(b, &re0), placed(b, &re1)],
             jumps: [placed(b, &jumps[0]), placed(b, &jumps[1])],
@@ -763,6 +770,27 @@ impl Table {
             g = up as usize + 1;
         }
         0
+    }
+
+    /// The innermost granule whose subtree holds tape node `x`, its start included (`None` outside the document's).
+    pub fn granule_of(&self, x: u32) -> Option<usize> {
+        let mut g = self.starts.partition_point(|&s| s <= x).checked_sub(1)?;
+        while self.ends[g] <= x {
+            let up = self.parents[g];
+            if up == u32::MAX {
+                return None;
+            }
+            g = up as usize;
+        }
+        Some(g)
+    }
+    /// Granule `g`'s start (a tape node) and its parent granule (`None` for the root's).
+    pub fn start_up(&self, g: usize) -> (u32, Option<usize>) {
+        (self.starts[g], (self.parents[g] != u32::MAX).then_some(self.parents[g] as usize))
+    }
+    /// Whether every granule is folded into the root (`Fold::All`): no definition starts one.
+    pub fn whole(&self) -> bool {
+        self.whole
     }
 
     /// The item whose id's low 32 bits are `low` (`low_of`'s inverse): what it is and its number (`num_number_of`).

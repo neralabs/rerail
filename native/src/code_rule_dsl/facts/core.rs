@@ -1157,6 +1157,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "visit_index" => &["n", "i"],
         "node_order" => &["n", "k"],
         "ast_depth" => &["n", "k"],
+        "def_unit" => &["n", "u"],
         "line_count" => &["d", "k"],
         "end_line" => &["n", "l"],
         "col" => &["n", "c"],

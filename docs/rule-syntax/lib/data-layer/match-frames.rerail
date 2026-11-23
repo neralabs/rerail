@@ -23,37 +23,28 @@
 #include "python/ast.rerail"     // unparen
 
 // mf_up(n, o): o is the innermost def or class around n; a decorator stands for the definition it decorates.
-.decl mf_mark(k: symbol)
-mf_mark("function_definition"). mf_mark("class_definition"). mf_mark("decorator").
+// That is n's definition unit (core.rerail's `def_unit`, read off the definition ids' granules: no relation of every
+// node's nearest def is made), the document's root left out. Held equal to the climb over the decorators
+// (`nearest(n, o, {def, class, decorator})`) by `mf_def_is_the_climb_through_classes` (plan::corpus::tests).
 .decl mf_up(n: node, o: node)
-mf_up(n, o) :- nearest(n, o, mf_mark), !kind(o, "decorator").
-mf_up(n, o) :- nearest(n, dc, mf_mark), kind(dc, "decorator"), child(dd, dc, _), field(dd, "definition", o).
+mf_up(n, o) :- def_unit(n, o), kind(o, "function_definition").
+mf_up(n, o) :- def_unit(n, o), kind(o, "class_definition").
 
 // mf_class(n, k): e.g. in `class A: def m(self): x`, mf_class(<x>, A).
 .decl mf_class(n: node, k: node)
 mf_class(n, k) :- mf_up(n, k), kind(k, "class_definition").
 mf_class(n, k) :- mf_up(n, f), kind(f, "function_definition"), mf_class(f, k).
 // mf_def(n, f): e.g. in `def f(): class B: x = 1`, mf_def(<x = 1>, f).
-// The innermost def or decorator around n, the classes between passed over (`mf_dmark`), read off the tree per node:
-// mf_up's climb through the classes, which was a relation of every node inside a def (676 K rows over the data
-// layer's 334 files) recursing over itself. Only a class a decorator decorates climbs again (`mf_defk`), from the
-// class. Held equal to the climb by `mf_def_is_the_climb_through_classes` (plan::corpus::tests).
-.decl mf_dmark(k: symbol)
-mf_dmark("function_definition"). mf_dmark("decorator").
-// mf_dec(n, o): n's innermost def or decorator is a decorator of definition o.
-.decl mf_dec(n: node, o: node)
-mf_dec(n, o) :- nearest(n, dc, mf_dmark), kind(dc, "decorator"), child(dd, dc, _), field(dd, "definition", o).
+// n's definition unit where it is a def; where it is a class, the class's own mf_def (`mf_defk`, a relation of the
+// classes alone). No relation of every node is made: `def_unit` is read where it is asked. Held equal to the climb
+// through the classes by `mf_def_is_the_climb_through_classes` (plan::corpus::tests).
 .decl mf_def(n: node, f: node)
-mf_def(n, f) :- nearest(n, f, mf_dmark), kind(f, "function_definition").
-mf_def(n, f) :- mf_dec(n, f), kind(f, "function_definition").
-mf_def(n, f) :- mf_dec(n, k), kind(k, "class_definition"), mf_defk(k, f).
-// mf_defk(k, f): mf_def of a class k some decorator decorates.
-.decl mf_dclass(k: node)
-mf_dclass(k) :- kind(dc, "decorator"), child(dd, dc, _), field(dd, "definition", k), kind(k, "class_definition").
+mf_def(n, f) :- def_unit(n, f), kind(f, "function_definition").
+mf_def(n, f) :- def_unit(n, k), kind(k, "class_definition"), mf_defk(k, f).
+// mf_defk(k, f): class k's innermost def, the classes between passed over.
 .decl mf_defk(k: node, f: node)
-mf_defk(k, f) :- mf_dclass(k), nearest(k, f, mf_dmark), kind(f, "function_definition").
-mf_defk(k, f) :- mf_dclass(k), mf_dec(k, f), kind(f, "function_definition").
-mf_defk(k, f) :- mf_dclass(k), mf_dec(k, j), kind(j, "class_definition"), mf_defk(j, f).
+mf_defk(k, f) :- kind(k, "class_definition"), def_unit(k, f), kind(f, "function_definition").
+mf_defk(k, f) :- kind(k, "class_definition"), def_unit(k, j), kind(j, "class_definition"), mf_defk(j, f).
 
 // mf_walk(n, o): e.g. in `@d(y)` / `def f(a=z): w`, mf_walk(<y>, f), mf_walk(<z>, f), mf_walk(<w>, f).
 .decl mf_walk(n: node, o: node)

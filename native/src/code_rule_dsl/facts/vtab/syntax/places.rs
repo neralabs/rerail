@@ -199,3 +199,17 @@ pub(super) fn join<N: AsRef<str>>(out: &mut [(N, Arc<dyn Source>)], batch: &Arc<
         }
     }
 }
+
+/// `out`'s `op` (core.rerail's shape), made as rows only for what the tape does not number (`core_rr`: a zero-width
+/// anonymous child, Python's two-word operators), bound with the `op` view of its tokens before them
+/// (`View::Op`): the batch makes no token's `op` row. The view's rows first, then the made ones', as a place
+/// relation's.
+pub(super) fn join_ops<N: AsRef<str>>(out: &mut [(N, Arc<dyn Source>)], batch: &Arc<super::Batch>) {
+    if batch.shape != super::Shape::Core {
+        return;
+    }
+    if let Some((_, source)) = out.iter_mut().find(|(n, _)| n.as_ref() == "op") {
+        let view: Arc<dyn Source> = Arc::new(super::Viewed { batch: Arc::clone(batch), view: super::View::Op, home: std::sync::OnceLock::new() });
+        *source = Arc::new(Places::new(view, Arc::clone(source)));
+    }
+}

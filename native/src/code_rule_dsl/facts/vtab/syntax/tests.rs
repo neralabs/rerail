@@ -1863,6 +1863,61 @@ fn granule_kinds_are_a_table_by_kind_code() {
     }
 }
 
+/// A node's definition unit (`def_unit`, `units`) read off the granule table is the one climbed on the tree, for every
+/// node, in each format and shape, whole and narrowed to anchors; a unit's nodes (`each_of_unit`) are exactly those
+/// whose unit it is. The cases hold decorated functions and classes at module level, in a class body and in a
+/// function's body (where a wrapper claims its definition too), a decorator's lambda, classes between defs, and a
+/// document folded past the slots.
+#[test]
+fn units_on_granules_are_the_climb() {
+    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
+    let many: String = (0..17_000).map(|i| format!("@d{i}\ndef f{i}():\n    return {i}\n")).collect();
+    let cases: &[(&str, &str)] = &[
+        ("python", "@top(lambda q: q)\ndef f(a=lambda: 1):\n    class B:\n        x = 1\n        @staticmethod\n        def m(self):\n            def g():\n                return h(1)\n            return g\n        @deco(arg(2))\n        class Inner:\n            y = 2\n    return B\n@cls_deco(z)\nclass C:\n    def n(self):\n        @wrap(w)\n        class D:\n            @d2(v)\n            class E:\n                pass\n        return D\nu = 3\ndef outer():\n    @wrap2(p)\n    def inner():\n        return p2\n    if p:\n        @a\n        @b(c)\n        def k(): pass\n    return inner\n"),
+        ("python", &many),
+        ("typescript", "export function A() { class K { m() { return 1; } } return K; }\nexport class Z { @dec() f() {} }\n"),
+        ("rust", "impl S { fn a(&self) { fn b() {} } }\nmod m { pub fn g() -> u32 { 1 } }\n"),
+    ];
+    let mut checked = 0;
+    for &(label, source) in cases {
+        let lang = dialect_by_label(label).unwrap_or_else(|| panic!("no dialect {label}"));
+        let grammar = Grammar::new(lang).unwrap();
+        let source = Arc::new(source.to_owned());
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+        for format in Format::ALL {
+            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
+            let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+            let anchors: BTreeSet<String> = ["call", "function_definition", "class_definition", "decorator", "function_item"].iter().map(|s| (*s).to_owned()).collect();
+            for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
+                let p = if narrowed {
+                    Projected::anchored(1, Arc::clone(&facts), Some(&dialect), shape, &anchors)
+                } else {
+                    Projected::new(1, Arc::clone(&facts), Some(&dialect), shape, false, None)
+                };
+                let on_table = p.table().is_some_and(|t| !t.whole());
+                let mut of: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+                for l in 1..p.len() {
+                    let u = p.unit_of(&dialect, l).expect("a unit below the root");
+                    if on_table {
+                        assert_eq!(u, p.unit_on_tree(&dialect, l), "{label} {format:?} {shape:?} narrowed {narrowed}: local {l}'s unit");
+                        checked += 1;
+                    }
+                    of.entry(u).or_default().push(l);
+                }
+                assert_eq!(p.unit_of(&dialect, 0), None, "the root has no unit");
+                for (&u, want) in &of {
+                    let mut got = Vec::new();
+                    p.each_of_unit(&dialect, u, |l| got.push(l));
+                    assert_eq!(&got, want, "{label} {format:?} {shape:?} narrowed {narrowed}: unit {u}'s nodes");
+                }
+            }
+        }
+    }
+    assert!(checked > 1000, "too few nodes checked on the table: {checked}");
+}
+
 /// Decision 0353 step 2: the granule table answers every node's and token's id, equal to `DefIds::low`'s, in formats
 /// 15, 16 and 16z, in both shapes, for every language with a granule rule and a document folded past the slots;
 /// `Table::node` inverts it; the scan gives the same ids in preorder; and no other tape node has one.

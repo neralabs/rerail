@@ -102,7 +102,7 @@ fn domains(name: &str) -> (&'static [usize], &'static [usize]) {
     match name {
         "node" => (&[1], &[0]),
         "core_node" => (&[2], &[0]),
-        "child" | "within" | "span_within" | "next_sibling" => (&[0, 1], &[]),
+        "child" | "within" | "span_within" | "next_sibling" | "def_unit" => (&[0, 1], &[]),
         "field" => (&[0, 2], &[]),
         "tape" => (&[0, 1], &[]),
         "docof" => (&[0], &[1]),

@@ -636,7 +636,10 @@ impl CoreRows {
         let op_read = !self.skip.ops && self.reads_op(p, dialect, id);
         for &c in children.iter().filter(|&&c| op_read && !f.named(c)) {
             let t = dialect.name(f, c);
-            self.op.push([n, string(t) as i64]);
+            // A token the projection numbers is the `op` view's row (`View::Op`, `places::join_ops`): none is made.
+            if !p.ranks().is(super::ranks::Item::Token, c) {
+                self.op.push([n, string(t) as i64]);
+            }
             if !is_punct(t) {
                 let two = dialect.family == Family::Python && matches!((ops.last().map(String::as_str), t), (Some("not"), "in") | (Some("is"), "not"));
                 match ops.last_mut() {

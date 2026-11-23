@@ -5396,6 +5396,7 @@ pub fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "token_before" | "token_after" => &[&["x"]],
         "end_point" => &[&["n"], &["p"]],
         "next_sibling" => &[&["a"], &["b"]],
+        "def_unit" => &[&["n"], &["u"]],
         "str_part" | "str_part_start" | "str_part_word" => &[&["lit"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
         // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0050).
