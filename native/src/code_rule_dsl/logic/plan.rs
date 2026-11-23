@@ -971,9 +971,16 @@ impl<'a> Run<'a, '_> {
     /// columns (`SourceView`). Counted at once, a view no plan reads made every document of a batch's relation.
     fn hold_view_in_place(&mut self, base: &str, rel: &str, src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: &[usize], types: Vec<u8>) -> i64 {
         let batch = src.python_batch().filter(|_| src.columns().len() == 5 && cols.iter().all(|&c| crate::code_rule_dsl::facts::vtab::syntax::node_column_counted(c)));
-        let n = src.len() as i64;
+        // The view's rows are its base's: the count the run holds of them where it holds one (an axis's length walks
+        // every document's tree; 10 ms of a warm run that ran no rule), else the source's.
+        let names = src.columns();
+        let held: Option<Vec<i64>> = cols.iter().map(|&c| Some(self.model.stats.col.get(&(base.to_owned(), names.get(c)?.clone()))?[0])).collect();
+        let n = match held.as_deref() {
+            Some([first, rest @ ..]) if rest.iter().all(|r| r == first) => *first,
+            _ => src.len() as i64,
+        };
         super::native::component::hold_view_in_place(self.db, rel, Arc::clone(src), cols.to_vec(), types);
-        if let Some(live) = self.view_stats_held(base, &src.columns(), cols, n, batch.is_some()) {
+        if let Some(live) = self.view_stats_held(base, &names, cols, n, batch.is_some()) {
             self.model.stats.lazy.0.remove(rel);
             live_stats(&mut self.model, rel, live);
             super::profile::decision("a view held in place: its statistics (Q332)", || format!("{rel}: {base}'s, held"));
@@ -2412,7 +2419,7 @@ impl<'a> Run<'a, '_> {
             if scc.contains(rel) {
                 return false;
             }
-            self.native_rels.contains(rel) && super::native::component::held(self.db, rel).is_some_and(|h| h.rows() == 0)
+            self.native_rels.contains(rel) && super::native::component::held(self.db, rel).is_some_and(|h| h.holds_none())
         };
         rules.iter().copied().filter(|&r| {
             let (v, rule) = self.versions.rule_at(r);
@@ -3180,7 +3187,7 @@ impl<'a> Run<'a, '_> {
                 if let Some(&e) = empty.get(rel) {
                     return e;
                 }
-                let e = super::native::component::held(self.db, rel).is_some_and(|h| h.rows() == 0);
+                let e = super::native::component::held(self.db, rel).is_some_and(|h| h.holds_none());
                 empty.insert(rel.to_owned(), e);
                 e
             };
