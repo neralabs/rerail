@@ -176,8 +176,48 @@ pub fn library_root() -> PathBuf {
 /// A program's `.rerail` text. Its `#include`s name library files (decision 0089), read as `parse_file_version` reads
 /// them: `core.rerail` first unless the text is in T's shape, each file once, includes first. A text that includes nothing
 /// is read as it is, without `core.rerail`.
+///
+/// Kept as an image (decision 0246) under its text and its library files' digests (`parsed_key`), read as a base
+/// version where the engine build's image store holds it: a phase's program (`sources.rerail`, read by every run's
+/// phase 1) was lowered with every library file it includes in each process (13 ms of a warm run).
 pub fn parse_version(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    super::contexts::passes(&read_text(src)?.lower_version(true)?)
+    let text = read_text(src)?;
+    let key = parsed_key(src, &text);
+    let store = image_store();
+    if let Some((bytes, id)) = images::read_image(store.as_deref(), key)
+        && let Ok(version) = super::program_image::Version::open_shared(bytes)
+    {
+        if let (Some(store), Some(id)) = (store.as_deref(), id) {
+            renew_image(store, id);
+        }
+        crate::code_rule_dsl::prof::count("rr.parsed_program_read", 1);
+        return Ok(version);
+    }
+    let version = super::contexts::passes(&text.lower_version(true)?)?;
+    // A base, as its image reads back: the same program, its atom and relation ids kept.
+    let version = if version.base_bytes().is_some() { version } else { version.fold().map_err(Error::Syntax)? };
+    if let Some(image) = version.own_image().filter(|_| version.base_bytes().is_some()) {
+        keep_image(store.as_deref(), "a parsed program's image", key, image.clone());
+    }
+    Ok(version)
+}
+
+/// The alias a parsed program's image is kept under (`parse_version`): its text and each library file it includes,
+/// by its path and its bytes' digest.
+fn parsed_key(src: &str, text: &Text) -> crate::content_store::HashKey {
+    let digest = crate::content_store::HashKey::sha256(src.as_bytes()).sha256_bytes().unwrap_or_default();
+    let mut bytes = format!("rerail parsed program image {}\0{}\0", super::program_image::FORMAT, crate::code_rule_dsl::build_ids::engine()).into_bytes();
+    switched(&mut bytes);
+    bytes.extend_from_slice(&digest);
+    bytes.push(0);
+    if let Read::Modular { files, .. } = &text.0 {
+        for (path, file, _) in files.iter() {
+            bytes.extend_from_slice(path.as_os_str().as_encoded_bytes());
+            bytes.push(0);
+            bytes.extend_from_slice(file);
+        }
+    }
+    crate::content_store::HashKey::sha256(&bytes)
 }
 
 /// A program's `.rerail` text as `parse_version` reads it, but with only its libraries' declarations, not their clauses:

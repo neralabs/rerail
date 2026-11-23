@@ -18,6 +18,11 @@ pub type Matchers = [(String, String, Vec<String>)];
 /// `Projection::with_long_text_parts`).
 pub fn projection(v: &Version, reads: BTreeSet<String>, matchers: &Matchers) -> Projection {
     let demand = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the text kinds demanded".into()); text_kind_demand(v, matchers) };
+    projection_with(v, reads, matchers, demand)
+}
+
+/// `projection`, with the text kinds demanded found by the caller (`text_kind_demand`'s, kept: `plan::kept_analyses`).
+pub fn projection_with(v: &Version, reads: BTreeSet<String>, matchers: &Matchers, demand: TextDemand) -> Projection {
     let anchors = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the node anchors".into()); if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|x| x == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(v, &v.settings().expect("a version's settings are read"), matchers) } };
     let p = projection_of(v, reads);
     let _s = crate::code_rule_dsl::logic::profile::span(|| "the long text's parts".into());
@@ -218,6 +223,63 @@ fn fold(columns: &[Vec<Kinds>], fixes: &[Fix]) -> Kinds {
 /// positive or negated, then demands `v`'s kinds (`core_rr::TEXT_INLINE` holds below them only). Fixed by the same body only,
 /// `text(w, t)` over `classes(c, _), child(w, c, _), kind(w, "decorated_definition")` was demanded, but a rule reading
 /// `text(n, t)` of `nodes(n)` was not, and saw no text past the bound.
+/// `text_kind_demand`'s answer as rows, to keep with a run's kept plans (t33 K4): tagged `long`, `any`, `negated`,
+/// `read` (its sets', each tagged by its set; no `read` row: every node) and `wide`.
+pub fn demand_rows(d: &TextDemand) -> Vec<crate::code_rule_dsl::logic::program_image::manager::Row> {
+    use crate::code_rule_dsl::logic::front::Value;
+    let s = |x: &str| Value::Str(x.into());
+    let mut out: Vec<crate::code_rule_dsl::logic::program_image::manager::Row> = vec![vec![s("negated"), Value::Int(d.negated_any as i64)]];
+    out.extend(d.long.iter().map(|k| vec![s("long"), s(k)]));
+    out.extend(d.any.iter().map(|&(r, p)| vec![s("any"), Value::Int(r as i64), Value::Int(p as i64)]));
+    if let Some(n) = &d.read {
+        out.push(vec![s("read")]);
+        for (set, names) in [("kind", &n.kinds), ("field", &n.fields), ("parent", &n.parents), ("parent field", &n.parent_fields), ("value", &n.values)] {
+            out.extend(names.iter().map(|x| vec![s("read"), s(set), s(x)]));
+        }
+    }
+    out.extend(d.wide.iter().map(|w| vec![s("wide"), s(w)]));
+    out
+}
+
+/// `demand_rows`' rows read back.
+pub fn demand_of_rows(rows: &[crate::code_rule_dsl::logic::program_image::manager::Row]) -> Option<TextDemand> {
+    use crate::code_rule_dsl::logic::front::Value;
+    let text = |v: &Value| match v {
+        Value::Str(x) => Some(x.to_string()),
+        _ => None,
+    };
+    let int = |v: &Value| match v {
+        Value::Int(x) => usize::try_from(*x).ok(),
+        _ => None,
+    };
+    let mut d = TextDemand { long: BTreeSet::new(), any: Vec::new(), negated_any: 0, read: None, wide: None };
+    for r in rows {
+        match (text(r.first()?)?.as_str(), &r[1..]) {
+            ("negated", [n]) => d.negated_any = int(n)?,
+            ("long", [k]) => {
+                d.long.insert(text(k)?);
+            }
+            ("any", [r, p]) => d.any.push((int(r)?, int(p)?)),
+            ("read", []) => d.read = Some(TextNodes { kinds: BTreeSet::new(), fields: BTreeSet::new(), parents: BTreeSet::new(), parent_fields: BTreeSet::new(), values: BTreeSet::new() }),
+            ("read", [set, x]) => {
+                let n = d.read.as_mut()?;
+                let names = match text(set)?.as_str() {
+                    "kind" => &mut n.kinds,
+                    "field" => &mut n.fields,
+                    "parent" => &mut n.parents,
+                    "parent field" => &mut n.parent_fields,
+                    "value" => &mut n.values,
+                    _ => return None,
+                };
+                names.insert(text(x)?);
+            }
+            ("wide", [w]) => d.wide = Some(text(w)?),
+            _ => return None,
+        }
+    }
+    Some(d)
+}
+
 pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
     // A node's kinds to a fixpoint, on numbers: each kind name interned, a set of kinds a sorted vector of them, each
     // derived relation's columns a vector by its number, and each rule head variable's constraints found once

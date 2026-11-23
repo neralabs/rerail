@@ -2755,7 +2755,23 @@ fn run_observed_within(
     // itself (decision 0046); relations no rule reads are not made. Made before the memo's identities: an entry's
     // rows are its relations' only under the projection they were made under (`Projection::rows_digest`).
     let read: BTreeSet<String> = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the relations read".into()); prepared_placed.v.rules().flat_map(|r| r.reads().map(|a| prepared_placed.v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>()).collect() };
-    let projection = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the tree's projection".into()); super::text_demand::projection(source, read.clone(), matchers) };
+    let projection = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the tree's projection".into());
+        // The text kinds demanded, a function of the program and its matchers, kept by them (t33 K4).
+        let demand = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the text kinds demanded".into());
+            let mut given: Vec<u8> = Vec::new();
+            for (rel, text, names) in matchers.iter() {
+                for part in std::iter::once(rel).chain(std::iter::once(text)).chain(names) {
+                    given.extend_from_slice(part.as_bytes());
+                    given.push(0);
+                }
+                given.push(1);
+            }
+            super::kept_analyses::kept_value(source, "text kinds demanded", 1, &[&given], || super::text_demand::text_kind_demand(source, matchers), super::text_demand::demand_rows, super::text_demand::demand_of_rows)
+        };
+        super::text_demand::projection_with(source, read.clone(), matchers, demand)
+    };
     let base_rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the projection's digest".into()); projection.rows_digest() };
     let memo_ids = {
         let rels: BTreeSet<String> = split.exports.iter().cloned().chain(local_v.outputs().map(|o| local_v.text(o).to_owned())).collect();
