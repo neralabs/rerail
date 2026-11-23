@@ -68,7 +68,7 @@ const core = { ...JSON.parse(readFileSync("package.json", "utf8")), version: "0.
 for (const enginePackage of ENGINE_PACKAGES) {
   const folder = join(out, enginePackage.suffix);
   mkdirSync(folder, { recursive: true });
-  writeFileSync(join(folder, "package.json"), `${JSON.stringify(enginePackageJson(enginePackage, core), null, 2)}\n`);
+  writeFileSync(join(folder, "package.json"), `${JSON.stringify({ ...enginePackageJson(enginePackage, core), description: "A placeholder that reserves this name: it holds no engine." }, null, 2)}\n`);
   writeFileSync(join(folder, "README.md"), `# ${enginePackage.name}\n\nA placeholder that reserves this name: it holds no engine. Install [\`${core.name}\`](https://www.npmjs.com/package/${core.name}), which depends on the engine package of its own version.\n`);
 }
 writeFileSync(join(out, "names.txt"), `${ENGINE_PACKAGES.map(({ name }) => name).join("\n")}\n`);
@@ -83,7 +83,7 @@ on the two Linux packages, and `repository` naming `neralabs/rerail`.
 
 `/tmp/rerail-engine-placeholders/<suffix>/` holds a `package.json` and a `README.md`, and `names.txt` lists the six
 names for the later steps. The `package.json` is the one a real version gets (`enginePackageJson`), at version
-`0.0.0`: no scripts, no dependencies, and `publishConfig.access` set to `public`.
+`0.0.0` and with its own description: no scripts, no dependencies, and `publishConfig.access` set to `public`.
 
 </details>
 
