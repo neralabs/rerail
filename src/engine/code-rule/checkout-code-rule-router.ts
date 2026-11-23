@@ -64,6 +64,9 @@ interface Lane {
   refreshed: number;
 }
 
+/** How many repositories' rules a session builds ahead as it opens (`#aheadRoots`): each may hold hundreds of MB compiled. */
+const BUILT_AHEAD_REPOSITORIES = 8;
+
 function merged(revision: number, responses: readonly CodeRuleResponse[]): CodeRuleResponse {
   return {
     revision,
@@ -110,6 +113,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
+  /** The build of the rules `openWorkspace` builds ahead. */
+  #builtAhead: Promise<void> = Promise.resolve();
 
   constructor(options: CheckoutCodeRuleRouterOptions) {
     this.#options = options;
@@ -118,7 +123,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     this.#gitIgnoreMatchers = options.gitIgnoreMatchers ?? new GitIgnoreMatchers();
   }
 
-  /** Interrupts the session's earlier runs once, then opens the starting checkout's lane. */
+  /**
+   * Interrupts the session's earlier runs once, then opens the starting checkout's lane, its rules compiled off the
+   * daemon's thread. Beside it, without holding the open, builds ahead the rules of the checkouts the session most
+   * likely edits next (`#aheadRoots`; `rulesBuiltAhead` settles once they are built), so its first edit there finds
+   * them compiled.
+   */
   async openWorkspace(sessionId: string): Promise<void> {
     if (this.#sessionId !== undefined || this.#closing) throw new Error("Checkout code-rule router cannot be reopened");
     this.#sessionId = sessionId;
@@ -127,7 +137,100 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     } catch (error) {
       process.stderr.write(`rerail: policy execution recording failed: ${error instanceof Error ? error.message : String(error)}\n`);
     }
+    // Started first: its compiles take a line of their own, so they run beside the starting checkout's.
+    this.#builtAhead = this.#buildAhead(sessionId);
+    await this.#prepare(this.#options.startingCheckout);
     await this.#lane(this.#options.startingCheckout)?.opening;
+  }
+
+  /**
+   * Builds the rules of each checkout that owns one of `paths` (a tool call's files) and has no lane yet, compiling off
+   * the daemon's thread each rule no live catalog holds; settles once they are built. The call waits for its own rules
+   * as before, while every other session's events run. A build that fails here is left to the lane's own open, which
+   * reports it as before.
+   */
+  async prepareRules(paths: readonly string[]): Promise<void> {
+    if (this.#closing) return;
+    const roots = new Set(paths.flatMap(path => this.#owner(resolve(this.#sessionRoot, path))?.checkoutRoot ?? []));
+    await Promise.all([...roots].map(async root => await this.#prepare(root)));
+  }
+
+  /** Settles once the rules `openWorkspace` builds ahead are built, or their build ended. */
+  async rulesBuiltAhead(): Promise<void> {
+    await this.#builtAhead;
+  }
+
+  /** One repository at a time, so the daemon's thread reads one rule set between other sessions' events. */
+  async #buildAhead(sessionId: string): Promise<void> {
+    let roots: string[];
+    try {
+      roots = this.#aheadRoots(sessionId);
+    } catch (error) {
+      this.#notBuiltAhead(`session ${sessionId}`, error);
+      return;
+    }
+    for (const root of roots) {
+      if (this.#closing) return;
+      await this.#prepare(root, this);
+    }
+  }
+
+  /**
+   * The checkouts whose rules the session most likely needs next besides its own, one per repository and at most
+   * `BUILT_AHEAD_REPOSITORIES`: those its earlier checks ran in, newest first (`checkoutsEditedBy`), then the started
+   * repositories nested in its checkout, such as a clone kept in an ignored folder. The session's own repository is left
+   * out: its rules are built as the session opens, and its other worktrees share them.
+   */
+  #aheadRoots(sessionId: string): string[] {
+    const starting = this.#options.startingCheckout;
+    const nested = this.#nestedCheckoutsOf(starting).map(path => join(starting, path));
+    const repositories = new Set([this.#repositoryOf(starting)]);
+    const roots: string[] = [];
+    for (const root of [...this.#options.catalogs.checkoutsEditedBy(sessionId), ...nested]) {
+      const repository = this.#aheadRepositoryOf(root);
+      if (repository === undefined || repositories.has(repository) || roots.length >= BUILT_AHEAD_REPOSITORIES) continue;
+      repositories.add(repository);
+      roots.push(root);
+    }
+    return roots;
+  }
+
+  /** `#repositoryOf(root)`, or undefined when its record cannot be read: that checkout is left out, the others still build. */
+  #aheadRepositoryOf(root: string): string | undefined {
+    try {
+      return this.#repositoryOf(root);
+    } catch (error) {
+      this.#notBuiltAhead(root, error);
+      return undefined;
+    }
+  }
+
+  /**
+   * Says on stderr why the rules of `where` were not built ahead, so a first edit there that compiles them can be
+   * traced. Nothing once the session closes, which lets go of its rules still waiting (`interrupt`).
+   */
+  #notBuiltAhead(where: string, error: unknown): void {
+    if (this.#closing) return;
+    process.stderr.write(`rerail: rules not built ahead for ${where}: ${error instanceof Error ? error.message : String(error)}\n`);
+  }
+
+  /** The repository `root` is a checkout of, or `root` itself while it is not recorded. */
+  #repositoryOf(root: string): string {
+    return this.#options.catalogs.checkout(root)?.repositoryKey ?? root;
+  }
+
+  /**
+   * `root`'s catalog built off the thread, while it may run rules and has no lane. `aheadFor` (this router): built for
+   * this session before any call asks, and let go of when the session closes (`interrupt`).
+   */
+  async #prepare(root: string, aheadFor?: object): Promise<void> {
+    try {
+      if (this.#closing || this.#lanes.has(root) || !this.#mayRun(root)) return;
+      await this.#options.catalogs.prepare(root, aheadFor);
+    } catch (error) {
+      // A call's build that fails is left to its lane's open, which builds the catalog on the thread and reports it there.
+      if (aheadFor !== undefined) this.#notBuiltAhead(root, error);
+    }
   }
 
   /**
@@ -545,12 +648,14 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * Stops every lane. A lane no walk or tool call used since the last refresh reads its rules once more first: a rule a
    * file written in its checkout's `.rerail/rules` leaves unrunnable there is recorded as skipped when the session ends,
-   * if not before.
+   * if not before. The rules the session built ahead that no lane took are let go of, and those still waiting to compile
+   * for it alone never do (`CheckoutCatalogs.releaseAhead`).
    */
   interrupt(options?: AuditorCloseOptions): void {
     if (this.#closing) return;
     for (const lane of [...this.#lanes.values()]) if (lane.refreshed !== this.#refreshes) this.#readRulesAgain(lane);
     this.#closing = true;
+    this.#options.catalogs.releaseAhead(this);
     for (const lane of this.#lanes.values()) lane.enforcer.interrupt(options);
   }
 

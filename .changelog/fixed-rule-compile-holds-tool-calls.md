@@ -1,0 +1,1 @@
+A session's first edit in a repository whose rules no other repository uses no longer holds every other session's hooks while those rules compile. A session that opens has the rules of the repositories it edited, and of started repositories inside its folder, compiled ahead, off the daemon's thread, so its first edit there rarely waits.

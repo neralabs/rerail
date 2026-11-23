@@ -340,6 +340,11 @@ export interface NativeCodeRuleDslRuntimeConstructor {
   pythonAstBatch(documentsJson: string): string;
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
   /**
+   * `compile` on a thread of Node's worker pool, so the JS thread runs other work while a rule compiles. An engine built
+   * before it lacks it.
+   */
+  compileAsync?(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): Promise<NativeCompiledCodeRuleDsl>;
+  /**
    * The tests the `.rerail` files under `pathsJson` (a JSON array of files and directories) carry, each run: a JSON array of
    * `NativeRrTestResult` (`rerail-engine test-rr`).
    */
