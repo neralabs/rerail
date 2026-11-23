@@ -178,14 +178,15 @@ describe("runCommand", () => {
   }, 20_000);
 
   it("answers with what the command printed after it exited, through a process it left running", async () => {
-    // The command exits at once; the process it started writes to the same output a moment later.
-    const script = "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => process.stdout.write(\\'late\\'), 300)'], { stdio: 'inherit' }).unref(); process.stdout.write('early ')";
+    // The command exits at once; the process it started writes to the same output a moment later. On Windows Node
+    // kills a child that is not `detached` when its parent exits (libuv's job object), so these tests detach it.
+    const script = "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => process.stdout.write(\\'late\\'), 300)'], { stdio: 'inherit', detached: true }).unref(); process.stdout.write('early ')";
 
     await expect(runCommand(process.execPath, ["-e", script])).resolves.toEqual({ stdout: "early late", stderr: "" });
   });
 
   it("answers soon after the command exits when a process it left running keeps its output open", async () => {
-    const script = "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 12_000)'], { stdio: 'inherit' }).unref(); process.stdout.write('done')";
+    const script = "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 12_000)'], { stdio: 'inherit', detached: true }).unref(); process.stdout.write('done')";
     const started = Date.now();
 
     await expect(runCommand(process.execPath, ["-e", script])).resolves.toEqual({ stdout: "done", stderr: "" });
