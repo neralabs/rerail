@@ -251,11 +251,12 @@ impl Values {
             }
         }
         self.parts.store(Arc::new(parts));
-        self.admitted.fetch_add(1, Ordering::Relaxed);
+        // Released after the parts: a reader that sees the count sees them (`has_parts`).
+        self.admitted.fetch_add(1, Ordering::Release);
     }
     /// The values admitted.
     pub fn admitted(&self) -> usize {
-        self.admitted.load(Ordering::Relaxed)
+        self.admitted.load(Ordering::Acquire)
     }
     /// The source of relation `name` that holds rows of node `n`'s document: an admitted value's.
     pub fn source_of(&self, name: &str, n: i64) -> Option<Arc<dyn Source>> {
@@ -376,10 +377,17 @@ impl Layered {
         self.values.source_of(&self.name, n).unwrap_or_else(|| Arc::clone(&self.base))
     }
     fn parts<T>(&self, f: impl FnOnce(&Parts) -> T) -> Option<T> {
+        // No value admitted: no parts, and no load of them (`has_parts`).
+        if self.values.admitted() == 0 {
+            return None;
+        }
         self.values.parts.load().get(&self.name).filter(|p| !p.list.is_empty()).map(|p| f(p))
     }
+    /// With no value admitted, no relation has parts: a probe of a chunk with none (most of them) reads only the
+    /// count, where the parts' load (`arc_swap`'s, a thread-local each) and the name's lookup took about 600 samples
+    /// of a 15 s sample of `all`.
     fn has_parts(&self) -> bool {
-        self.values.total(&self.name) > 0
+        self.values.admitted() != 0 && self.values.total(&self.name) > 0
     }
 }
 
