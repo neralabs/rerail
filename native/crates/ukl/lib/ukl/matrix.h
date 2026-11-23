@@ -78,6 +78,19 @@
 #define UKL_MMA_CUDA 0
 #endif
 
+// Apple's units (M1-M4: `simdgroup_matrix`, 8×8×8; f16, and bf16 from Metal 3.1, where `bfloat` came): one SIMD group
+// an owner, a 16×16 fragment four of its matrices. (`__HAVE_BFLOAT__` is not defined at 3.1: the version is the test.)
+#if defined(UKL_METAL) && !defined(UKL_MMA_FORCE_EMULATED) && UKL_SIMD_WIDTH == 32 && UKL_MMA_EMULATED_GROUPS == 1
+#define UKL_MMA_APPLE 1
+#else
+#define UKL_MMA_APPLE 0
+#endif
+#if UKL_MMA_APPLE && __METAL_VERSION__ >= 310
+#define UKL_MMA_APPLE_BF16 1
+#else
+#define UKL_MMA_APPLE_BF16 0
+#endif
+
 #define UKL_MMA_M(T) UKL_MMA_M_##T
 #define UKL_MMA_N(T) UKL_MMA_N_##T
 #define UKL_MMA_K(T) UKL_MMA_K_##T
@@ -89,13 +102,13 @@
 #define UKL_MMA_N_f16 16u
 #define UKL_MMA_K_f16 16u
 #define UKL_MMA_GROUPS_f16 UKL_MMA_EMULATED_GROUPS
-#define UKL_MMA_NATIVE_f16 UKL_MMA_CUDA
+#define UKL_MMA_NATIVE_f16 (UKL_MMA_CUDA || UKL_MMA_APPLE)
 #define UKL_MMA_PACK_f16 1u
 #define UKL_MMA_M_bf16 16u
 #define UKL_MMA_N_bf16 16u
 #define UKL_MMA_K_bf16 16u
 #define UKL_MMA_GROUPS_bf16 UKL_MMA_EMULATED_GROUPS
-#define UKL_MMA_NATIVE_bf16 UKL_MMA_CUDA
+#define UKL_MMA_NATIVE_bf16 (UKL_MMA_CUDA || UKL_MMA_APPLE_BF16)
 #define UKL_MMA_PACK_bf16 1u
 #define UKL_MMA_M_i8 16u
 #define UKL_MMA_N_i8 16u
@@ -129,7 +142,7 @@
 #define UKL_MMA_KW_b1 (UKL_MMA_K_b1 / 64u)
 
 // C's rows (`RB`) and columns (`CB`) a lane.
-#if UKL_MMA_CUDA
+#if UKL_MMA_CUDA || UKL_MMA_APPLE
 #define UKL_MMA_RB 2u
 #define UKL_MMA_CB 4u
 #elif UKL_SIMD_WIDTH >= 16
@@ -175,6 +188,9 @@ UKL_INLINE uint32_t ukl_mma_row(uint32_t i, UklMmaAt at)
 {
 #if UKL_MMA_CUDA
     return (at.lane >> 2) + 8u * i;
+#elif UKL_MMA_APPLE
+    // `thread_elements()`'s: a lane's two elements of an 8×8 matrix lie in one row, side by side.
+    return ((at.lane >> 2) & 4u) + ((at.lane >> 1) & 3u) + 8u * i;
 #elif UKL_SIMD_WIDTH >= 16
     return (at.part * UKL_SIMD_WIDTH + at.lane) / (16u / UKL_MMA_CB) + (16u / UKL_MMA_RB) * i;
 #else
@@ -185,6 +201,8 @@ UKL_INLINE uint32_t ukl_mma_col(uint32_t j, UklMmaAt at)
 {
 #if UKL_MMA_CUDA
     return 8u * (j >> 1) + 2u * (at.lane & 3u) + (j & 1u);
+#elif UKL_MMA_APPLE
+    return 8u * (j >> 1) + ((at.lane >> 2) & 2u) * 2u + (at.lane & 1u) * 2u + (j & 1u);
 #elif UKL_SIMD_WIDTH < 16 && UKL_MMA_LANES < 16
     return UKL_MMA_LANES * j + at.part * UKL_SIMD_WIDTH + at.lane;
 #elif UKL_SIMD_WIDTH >= 16
@@ -205,10 +223,21 @@ typedef struct ukl_mma_b_bf16 { uint32_t w[4]; } ukl_mma_b_bf16;
 typedef struct ukl_mma_a_i8 { uint32_t w[4]; } ukl_mma_a_i8;
 typedef struct ukl_mma_b_i8 { uint32_t w[4]; } ukl_mma_b_i8;
 #else
+// Apple's: A's 8×8 matrices row tile by k tile (`2 · ti + tk`), B's k tile by column tile (`2 · tk + tj`).
+#if UKL_MMA_APPLE
+typedef struct ukl_mma_a_f16 { simdgroup_half8x8 m[4]; } ukl_mma_a_f16;
+typedef struct ukl_mma_b_f16 { simdgroup_half8x8 m[4]; } ukl_mma_b_f16;
+#else
 typedef struct ukl_mma_a_f16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_a_f16;
 typedef struct ukl_mma_b_f16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_b_f16;
+#endif
+#if UKL_MMA_APPLE_BF16
+typedef struct ukl_mma_a_bf16 { simdgroup_bfloat8x8 m[4]; } ukl_mma_a_bf16;
+typedef struct ukl_mma_b_bf16 { simdgroup_bfloat8x8 m[4]; } ukl_mma_b_bf16;
+#else
 typedef struct ukl_mma_a_bf16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_a_bf16;
 typedef struct ukl_mma_b_bf16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_b_bf16;
+#endif
 typedef struct ukl_mma_a_i8 { uint32_t w[UKL_MMA_WORDS_8]; } ukl_mma_a_i8;
 typedef struct ukl_mma_b_i8 { uint32_t w[UKL_MMA_WORDS_8]; } ukl_mma_b_i8;
 #endif
@@ -496,22 +525,95 @@ UKL_INLINE void ukl_mma_b1(UKL_PRIVATE ukl_mma_c_i32* c, UKL_PRIVATE const ukl_m
                          : "r"(a->w[0]), "r"(a->w[1]), "r"(a->w[2]), "r"(a->w[3]), "r"(b->w[2u * h]), "r"(b->w[2u * h + 1u])); \
     }
 
-#define UKL_MMA_TYPE(T, C, CT, ET, UT, P, BITS, WORDS, DOT, SHAPE, TYPES, R)                                            \
+#define UKL_MMA_CUDA_TYPE(T, C, CT, ET, UT, P, BITS, SHAPE, TYPES, R)                                                \
     UKL_MMA_CUDA_LOADS(T, ET, UT, P, BITS, UKL_MMA_K_##T / 2u, UKL_GLOBAL, )                                            \
     UKL_MMA_CUDA_LOADS(T, ET, UT, P, BITS, UKL_MMA_K_##T / 2u, UKL_LOCAL, _local)                                       \
     UKL_MMA_CUDA_PRODUCT(T, C, SHAPE, TYPES, R)                                                                         \
     UKL_MMA_TILE(T, C, CT, ET)
-#else
-#define UKL_MMA_TYPE(T, C, CT, ET, UT, P, BITS, WORDS, DOT, SHAPE, TYPES, R)                                            \
+#endif
+
+#if UKL_MMA_APPLE
+// ---- Apple's f16 and bf16: four 8×8 `simdgroup_matrix` a fragment of A or B (`MT` its type, `ST` an element's),
+// each loaded where it lies, a column-major one transposed as it loads. ----
+
+#define UKL_MMA_APPLE_LOADS(T, ST, SPACE, SUF)                                                                          \
+    UKL_INLINE void ukl_mma_load_a_##T##SUF(UKL_PRIVATE ukl_mma_a_##T* a, SPACE const uint16_t* p, uint32_t stride,     \
+                                            uint32_t layout, UklMmaAt at)                                               \
+    {                                                                                                                   \
+        (void)at;                                                                                                       \
+        SPACE const ST* e = (SPACE const ST*)p;                                                                         \
+        for (uint32_t ti = 0u; ti < 2u; ti++)                                                                           \
+            for (uint32_t tk = 0u; tk < 2u; tk++) {                                                                     \
+                if (layout == UKL_ROW_MAJOR)                                                                            \
+                    simdgroup_load(a->m[2u * ti + tk], e + 8u * ti * stride + 8u * tk, stride, ulong2(0, 0), false);    \
+                else                                                                                                    \
+                    simdgroup_load(a->m[2u * ti + tk], e + 8u * tk * stride + 8u * ti, stride, ulong2(0, 0), true);     \
+            }                                                                                                           \
+    }                                                                                                                   \
+    UKL_INLINE void ukl_mma_load_b_##T##SUF(UKL_PRIVATE ukl_mma_b_##T* b, SPACE const uint16_t* p, uint32_t stride,     \
+                                            uint32_t layout, UklMmaAt at)                                               \
+    {                                                                                                                   \
+        (void)at;                                                                                                       \
+        SPACE const ST* e = (SPACE const ST*)p;                                                                         \
+        for (uint32_t tk = 0u; tk < 2u; tk++)                                                                           \
+            for (uint32_t tj = 0u; tj < 2u; tj++) {                                                                     \
+                if (layout == UKL_ROW_MAJOR)                                                                            \
+                    simdgroup_load(b->m[2u * tk + tj], e + 8u * tk * stride + 8u * tj, stride, ulong2(0, 0), false);    \
+                else                                                                                                    \
+                    simdgroup_load(b->m[2u * tk + tj], e + 8u * tj * stride + 8u * tk, stride, ulong2(0, 0), true);     \
+            }                                                                                                           \
+    }
+
+// Each of C's four 8×8 matrices: its two elements this lane holds (`thread_elements()`, at `ukl_mma_row` and
+// `ukl_mma_col`) into a `simdgroup_float8x8`, two products along K, and back: registers, no memory.
+#define UKL_MMA_APPLE_PRODUCT(T)                                                                                        \
+    UKL_INLINE void ukl_mma_##T(UKL_PRIVATE ukl_mma_c_f32* c, UKL_PRIVATE const ukl_mma_a_##T* a,                       \
+                                UKL_PRIVATE const ukl_mma_b_##T* b, UklMmaAt at __UKL_PARAMS)                           \
+    {                                                                                                                   \
+        (void)at;                                                                                                       \
+        for (uint32_t i = 0u; i < 2u; i++)                                                                              \
+            for (uint32_t j = 0u; j < 2u; j++) {                                                                        \
+                simdgroup_float8x8 acc;                                                                                 \
+                acc.thread_elements()[0] = c->x[4u * i + 2u * j];                                                       \
+                acc.thread_elements()[1] = c->x[4u * i + 2u * j + 1u];                                                  \
+                for (uint32_t kk = 0u; kk < 2u; kk++)                                                                   \
+                    simdgroup_multiply_accumulate(acc, a->m[2u * i + kk], b->m[2u * kk + j], acc);                      \
+                c->x[4u * i + 2u * j] = acc.thread_elements()[0];                                                       \
+                c->x[4u * i + 2u * j + 1u] = acc.thread_elements()[1];                                                  \
+            }                                                                                                           \
+    }
+
+#define UKL_MMA_APPLE_TYPE(T, ST)                                                                                       \
+    UKL_MMA_APPLE_LOADS(T, ST, UKL_GLOBAL, )                                                                            \
+    UKL_MMA_APPLE_LOADS(T, ST, UKL_LOCAL, _local)                                                                       \
+    UKL_MMA_APPLE_PRODUCT(T)                                                                                            \
+    UKL_MMA_TILE(T, f32, float, uint16_t)
+#endif
+
+// The emulation: the reference form, and every type a device's unit does not run.
+#define UKL_MMA_EMULATED_TYPE(T, C, CT, ET, UT, P, BITS, WORDS, DOT)                                                    \
     UKL_MMA_AB_LOADS(T, ET, UT, P, BITS, WORDS, UKL_GLOBAL, )                                                           \
     UKL_MMA_AB_LOADS(T, ET, UT, P, BITS, WORDS, UKL_LOCAL, _local)                                                      \
     UKL_MMA_PRODUCT(T, C, CT, 16u / P, WORDS, DOT)                                                                      \
     UKL_MMA_TILE(T, C, CT, ET)
-#endif
 
-UKL_MMA_TYPE(f16, f32, float, uint16_t, uint16_t, 2u, 16u, UKL_MMA_WORDS_16, ukl_dot2_f16, "m16n8k16", "f32.f16.f16.f32", "+f")
-UKL_MMA_TYPE(bf16, f32, float, uint16_t, uint16_t, 2u, 16u, UKL_MMA_WORDS_16, ukl_dot2_bf16, "m16n8k16", "f32.bf16.bf16.f32", "+f")
-UKL_MMA_TYPE(i8, i32, int32_t, int8_t, uint8_t, 4u, 8u, UKL_MMA_WORDS_8, ukl_dot4_i8, "m16n8k32", "s32.s8.s8.s32", "+r")
+#if UKL_MMA_CUDA
+UKL_MMA_CUDA_TYPE(f16, f32, float, uint16_t, uint16_t, 2u, 16u, "m16n8k16", "f32.f16.f16.f32", "+f")
+UKL_MMA_CUDA_TYPE(bf16, f32, float, uint16_t, uint16_t, 2u, 16u, "m16n8k16", "f32.bf16.bf16.f32", "+f")
+UKL_MMA_CUDA_TYPE(i8, i32, int32_t, int8_t, uint8_t, 4u, 8u, "m16n8k32", "s32.s8.s8.s32", "+r")
+#else
+#if UKL_MMA_APPLE
+UKL_MMA_APPLE_TYPE(f16, half)
+#else
+UKL_MMA_EMULATED_TYPE(f16, f32, float, uint16_t, uint16_t, 2u, 16u, UKL_MMA_WORDS_16, ukl_dot2_f16)
+#endif
+#if UKL_MMA_APPLE_BF16
+UKL_MMA_APPLE_TYPE(bf16, bfloat)
+#else
+UKL_MMA_EMULATED_TYPE(bf16, f32, float, uint16_t, uint16_t, 2u, 16u, UKL_MMA_WORDS_16, ukl_dot2_bf16)
+#endif
+UKL_MMA_EMULATED_TYPE(i8, i32, int32_t, int8_t, uint8_t, 4u, 8u, UKL_MMA_WORDS_8, ukl_dot4_i8)
+#endif
 UKL_MMA_B1_LOADS(UKL_GLOBAL, )
 UKL_MMA_B1_LOADS(UKL_LOCAL, _local)
 UKL_MMA_TILE(b1, i32, int32_t, uint64_t)

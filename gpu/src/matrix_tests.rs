@@ -10,6 +10,38 @@ use crate::Pod;
 
 const TESTS: &str = include_str!("matrix_tests.uglykl");
 
+/// R7's program: one kernel that runs each type's product once, from device memory, the code a test reads (its
+/// compiled text) apart from the other tests' kernels. (Metal's compiler failed the whole test program as a dynamic
+/// library, which is how its text is read: "Compiler encountered an internal error".)
+const UNITS: &str = r#"
+#include <ukl/matrix.h>
+#define T_UNIT(T, C, ET, CT, MEM)                                                                                        \
+    {                                                                                                                   \
+        ukl_mma_a_##T a;                                                                                                \
+        ukl_mma_b_##T b;                                                                                                \
+        ukl_mma_c_##C c;                                                                                                \
+        const uint32_t k = UKL_MMA_K(T) / UKL_MMA_PACK(T);                                                              \
+        ukl_mma_load_a_##T(&a, (UKL_GLOBAL const ET*)MEM, k, UKL_ROW_MAJOR, at);                                        \
+        ukl_mma_load_b_##T(&b, (UKL_GLOBAL const ET*)MEM, 16u, UKL_ROW_MAJOR, at);                                      \
+        ukl_mma_load_c_##C(&c, (UKL_GLOBAL const CT*)out, 16u, UKL_ROW_MAJOR, at);                                      \
+        ukl_mma_##T(&c, &a, &b, at __UKL_ARGS);                                                                         \
+        ukl_mma_store_c_##C(&c, (UKL_GLOBAL CT*)out, 16u, UKL_ROW_MAJOR, at);                                           \
+    }
+DEFINE_KERNEL2(tests, t_mma_units,
+               ROBUFFER, uint64_t, mem, "[1024]",
+               RWBUFFER, uint32_t, out, "[256]",
+               ROBUFFER, uint32_t, sel, "[1]",
+               LID0,     uint32_t, lid, )
+{
+    UklMmaAt at = ukl_mma_at(lid);
+    const uint32_t which = sel[0];
+    if (which == 0u) T_UNIT(f16, f32, uint16_t, float, mem)
+    if (which == 1u) T_UNIT(bf16, f32, uint16_t, float, mem)
+    if (which == 2u) T_UNIT(i8, i32, int8_t, int32_t, mem)
+    if (which == 3u) T_UNIT(b1, i32, uint64_t, int32_t, mem)
+}
+"#;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct MmaArgs {
@@ -385,14 +417,23 @@ fn native_types(c: &[u32]) -> Vec<Ty> {
     [(Ty::F16, 4), (Ty::Bf16, 9), (Ty::I8, 14), (Ty::B1, 22)].into_iter().filter(|&(_, i)| c[i] == 1).map(|(t, _)| t).collect()
 }
 
-/// The instruction a native type's product takes, in the backend's text of the compiled kernel (CUDA's PTX).
+/// The instruction a native type's product takes, in the backend's text of the compiled kernel: CUDA's PTX, Metal's
+/// AIR intrinsics (`air.`, the 8×8 product into f32).
 fn unit_instruction(ty: Ty) -> &'static str {
+    let metal = crate::device::backend() == "Metal";
     match ty {
+        Ty::F16 if metal => "air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64f16.v64f16.v64f32",
+        Ty::Bf16 if metal => "air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64bf16.v64bf16.v64f32",
         Ty::F16 => "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32",
         Ty::Bf16 => "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32",
         Ty::I8 => "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32",
         Ty::B1 => "mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.and.popc",
     }
+}
+
+/// A unit's instruction, of any type: what the forced emulation's text holds none of.
+fn unit_marker() -> &'static str {
+    if crate::device::backend() == "Metal" { "multiply_accumulate" } else { "mma.sync" }
 }
 
 /// R7: a native type's kernel takes the unit's instruction (its compiled text holds it: CUDA's PTX), and the forced
@@ -410,7 +451,7 @@ fn matrix_native_forms_take_the_units_instruction() {
         return;
     }
     let code = |defines: &[(&str, &str)]| {
-        crate::kernels::native_code("matrix_tests.uglykl", TESTS, defines)
+        crate::kernels::native_code("matrix_units.uglykl", UNITS, defines)
             .unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()))
             .unwrap_or_else(|| panic!("{}: native {types:?}, and no compiled text to read (R7)", crate::device::backend()))
     };
@@ -421,5 +462,6 @@ fn matrix_native_forms_take_the_units_instruction() {
         assert!(n > 0, "{} {ty:?}: the compiled kernels hold {}", crate::device::backend(), unit_instruction(ty));
     }
     let forced = code(&[("UKL_MMA_EMULATED_GROUPS", "1u"), ("UKL_MMA_FORCE_EMULATED", "1")]);
-    assert!(!forced.contains("mma.sync"), "{}: the forced emulation takes no unit's instruction", crate::device::backend());
+    assert!(!forced.contains(unit_marker()), "{}: the forced emulation takes no unit's instruction", crate::device::backend());
 }
+

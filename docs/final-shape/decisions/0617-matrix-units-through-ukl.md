@@ -226,7 +226,7 @@ emulated form, which is the reference.
    the Sparks 2026-11-23: b1's form, and C in `mma.sync`'s layout for every type ("The 1-bit type, built"); f16, bf16
    and i8 ("Step 2 on the Sparks, built").
 3. Metal's `simdgroup_matrix` on M1-M4 (f16; bf16 where present; i8 emulated). R4 is what checks the coordinates
-   behind `thread_elements()`.
+   behind `thread_elements()`. Done 2026-11-23 ("Step 3, built").
 4. The M5's `matmul2d`: the first owner of several groups on a device (R5).
 5. Intel's DPAS on the Arc: R2, R4 and R7, the shape only.
 6. The Radeon 680M: the emulation, with its dot-product instructions where they help.
@@ -379,6 +379,33 @@ The user: "yes, please add the 1-bit path and emulation/lowering to popcount on 
 - **Measured:** the seven matrix tests pass on CUDA (a GB10: every type native), and on the same host's CPU and
   OpenCL backends (every type emulated); UKL's own tests (the header for every backend) and `accel`'s GPU tests on
   CUDA pass.
+
+### Step 3, built (2026-11-23)
+
+- **Apple's M1-M4 run f16 and bf16 on `simdgroup_matrix`** (`UKL_MMA_APPLE`): a 16×16 fragment of A or B is four
+  8×8 matrices, each loaded where it lies with `simdgroup_load` (a column-major one transposed as it loads), from
+  device or threadgroup memory. A product takes each of C's four 8×8 matrices into a `simdgroup_float8x8` through
+  `thread_elements()`, two `simdgroup_multiply_accumulate` along K, and back: registers only. K stays 16, the
+  fragment 16×16, so every kernel's loop is unchanged.
+- **C's layout on Metal is the unit's:** a lane's two elements of each 8×8 matrix, side by side in one row
+  (`thread_elements()`, row `(q & 4) + (lane / 2) % 4`, columns `(q & 2) · 2 + (lane % 2) · 2` and one on, `q` the
+  lane's quad). Apple does not publish it; R4 checks it, and passes on the M1 and the M3. i8 and b1, emulated, take
+  the same layout.
+- **bf16 is native from Metal 3.1** (`__METAL_VERSION__ >= 310`): `bfloat` and `simdgroup_bfloat8x8` came then.
+  `__HAVE_BFLOAT__`, which the headers might have suggested, is not defined at 3.1 on macOS 15. On the M1 (no bf16 in
+  its hardware) the compiler takes the same intrinsic, and the products agree with the emulation (R6); how its back
+  end runs them is the compiler's.
+- **R7 on Metal reads the AIR the device's compiler makes:** `native_code` compiles the program as a dynamic library,
+  serializes it, and lists the `air.` names in its bitcode. The farm's Macs have no Metal toolchain for `xcrun metal`
+  (one has no Xcode). Two things on the way:
+  - metal-rs's `URL::new_with_string` owns an autoreleased `NSURL`; its release with the pool's crashed the process.
+    The serialization sends `serializeToURL:error:` with an `NSURL` the pool owns.
+  - Metal's compiler failed the whole test program as a dynamic library ("Compiler encountered an internal error"),
+    though each construct in it compiles alone; R7 reads a program of its own, one kernel running each type's
+    product from device memory.
+- **Measured:** the seven matrix tests pass on the M1 Max and the M3 Max (f16 and bf16 native, i8 and b1 emulated),
+  R7 finding `air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64f16.v64f16.v64f32` and its bf16 form; CUDA's and
+  the CPU's pass as before; `accel`'s GPU tests (the bit product on the new layout) pass on the M3.
 
 ## Open
 
