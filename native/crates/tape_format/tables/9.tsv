@@ -2408,3 +2408,8 @@ class	238	_expression
 class	294	_pattern
 class	308	_literal
 class	309	_literal_pattern
+supertype	_type	216
+supertype	_expression	238
+supertype	_pattern	294
+supertype	_literal	308
+supertype	_literal_pattern	309

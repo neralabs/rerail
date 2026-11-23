@@ -214,8 +214,8 @@ impl super::TreeOut for TreeOps {
 
 /// The sink a lean parser's writer is given (`rerail_*_lean::tape_into`; decisions 0293, 0434): the tape in the run's
 /// format, 16 or 16z. The writer passes its nodes to format 16's ops as the parse commits them, each key numbered in
-/// the language's table through its code (`code_of`). A code the table lacks, or nodes past format 16's bounds, are
-/// an error.
+/// the language's table by the names its crate gives it (`lean_named`). A key the table lacks, or nodes past format
+/// 16's bounds, are an error.
 pub struct Lean<'a> {
     grammar: &'a Grammar,
     source: &'a str,
@@ -223,25 +223,10 @@ pub struct Lean<'a> {
     target: Result<rerail_tape_format::Sixteen, String>,
 }
 
-pub fn lean<'a>(grammar: &'a Grammar, source: &'a str, budget: &'a dyn Fn() -> bool, code_of: impl Fn(&u32) -> Result<Code, String> + Send + Sync + 'static) -> Lean<'a> {
-    lean_aliased(grammar, source, budget, code_of, |_| None)
-}
-
-/// [`lean`] for a parser whose keys may name a kind by a contextual alias (`alias_of`): a node whose type is named
-/// otherwise than its public symbol (Scala's `(`, whose public symbol is named `arguments`), as tree-sitter's
-/// encoding gives it (`encode_node`'s `kind_alias`). Its number is its entry's with that alias.
-pub fn lean_aliased<'a>(
-    grammar: &'a Grammar,
-    source: &'a str,
-    budget: &'a dyn Fn() -> bool,
-    code_of: impl Fn(&u32) -> Result<Code, String> + Send + Sync + 'static,
-    alias_of: impl Fn(u32) -> Option<(String, bool)> + Send + Sync + 'static,
-) -> Lean<'a> {
-    let target = sixteen(grammar.lang, move |lang, key| {
-        let mut entry = code_of(&key).ok()?.entry();
-        entry.alias = alias_of(key);
-        lang.number(&entry)
-    });
+/// The sink for a lean parser whose crate names its keys (`names`, decision 0626): each numbered in the language's
+/// table by the grammar's names the table carries (`Lang::number_named`), as the crate's own tapes are (its `sink`).
+pub fn lean_named<'a>(grammar: &'a Grammar, source: &'a str, budget: &'a dyn Fn() -> bool, names: fn(u32) -> Option<rerail_tape_format::KeyNames>) -> Lean<'a> {
+    let target = sixteen(grammar.lang, move |lang, key| lang.number_named(&names(key)?));
     Lean { grammar, source, budget, target }
 }
 

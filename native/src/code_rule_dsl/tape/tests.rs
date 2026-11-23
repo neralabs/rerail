@@ -7498,6 +7498,8 @@ fn scala_tapes_from_the_lean_parser_are_tree_sitters() {
             "val xs = List(1, 2).map(_ * 2).filter { x => x > 1 }\n",
             "def g(a: Any) = a match {\n  case s: String => s.length\n  case _ => 0\n}\n",
             "trait T {\n  val s = s\"$x ${y + 1}\"\n  lazy val n = 0x1FL\n}\n",
+            // A constructor annotation's `(`: id 40, named `arguments`, under its contextual alias `(` (decision 0626).
+            "class A @Inject() (x: Int)\n",
         ],
         &["class A {\n", "def f( = 1\n", "val x = (1,\n"],
     );

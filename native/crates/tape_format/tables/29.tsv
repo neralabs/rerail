@@ -3698,3 +3698,10 @@ class	274	_abstract_declarator
 class	299	type_specifier
 class	313	statement
 class	334	expression
+supertype	_declarator	271
+supertype	_field_declarator	272
+supertype	_type_declarator	273
+supertype	_abstract_declarator	274
+supertype	type_specifier	299
+supertype	statement	313
+supertype	expression	334

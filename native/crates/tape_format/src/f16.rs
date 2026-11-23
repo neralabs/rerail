@@ -61,6 +61,9 @@ pub struct Names {
     pub fields: Vec<(u16, String)>,
     /// Each supertype id the codes name as a class, with its name: a hidden symbol, no node's kind.
     pub classes: Vec<(u16, String)>,
+    /// Each class name with the id it looks up as a named kind (`id_for_node_kind(name, true)`): the supertype a
+    /// parser names (C#'s `type` is a token, 24, and a supertype, 294).
+    pub supertypes: Vec<(String, u16)>,
 }
 
 impl Names {
@@ -71,9 +74,9 @@ impl Names {
         }
         self.lookups.iter().find(|(n, s, _)| *n == named && s == name).map(|a| a.2)
     }
-    /// The supertype named `name`: the first id of that name the codes name as a class.
+    /// The supertype named `name`: its name's lookup as a named kind.
     pub fn class_of(&self, name: &str) -> Option<u16> {
-        self.classes.iter().find(|(_, s)| s == name).map(|c| c.0)
+        self.supertypes.iter().find(|(s, _)| s == name).map(|c| c.1)
     }
     /// Field `name`'s id (0: no field).
     pub fn field_of(&self, name: &str) -> Option<u16> {
@@ -202,7 +205,7 @@ impl Lang {
     /// The choices as text, as the lab writes them and the crate ships them (`tables/<tag>.tsv`): the revision, the
     /// widths, then each code in number order: kind, field, flags, alias (`-`, or `named:name`), classes (`-`, or
     /// ids joined by commas); then the names (`Names`): `kind id named name`, `lookup named name id`, `field id name`,
-    /// `class id name`, each name escaped.
+    /// `class id name`, `supertype name id`, each name escaped.
     pub fn to_text(&self, comment: &str) -> String {
         let mut out = String::new();
         for line in comment.lines() {
@@ -227,6 +230,9 @@ impl Lang {
         }
         for (id, name) in &self.names.classes {
             out.push_str(&format!("class\t{id}\t{}\n", escaped(name)));
+        }
+        for (name, id) in &self.names.supertypes {
+            out.push_str(&format!("supertype\t{}\t{id}\n", escaped(name)));
         }
         out
     }
@@ -259,6 +265,7 @@ impl Lang {
                 "lookup" if c.len() == 4 => names.lookups.push((c[1] == "1", unescaped(c[2]).ok_or_else(bad)?, num(c[3])? as u16)),
                 "field" if c.len() == 3 => names.fields.push((num(c[1])? as u16, unescaped(c[2]).ok_or_else(bad)?)),
                 "class" if c.len() == 3 => names.classes.push((num(c[1])? as u16, unescaped(c[2]).ok_or_else(bad)?)),
+                "supertype" if c.len() == 3 => names.supertypes.push((unescaped(c[1]).ok_or_else(bad)?, num(c[2])? as u16)),
                 _ => return Err(bad()),
             }
         }
@@ -2926,11 +2933,13 @@ mod tests {
                 };
                 assert_eq!(n.kind_of(kind, named), Some(e.kind), "tag {tag}: {kind:?} looks up another id");
                 assert!(n.field_name(e.field).is_some() || e.field == 0, "tag {tag}: field {} has no name", e.field);
-                assert!(e.classes.iter().all(|&c| n.kind_name(c).is_some_and(|name| n.class_of(name).is_some())), "tag {tag}: a class of {e:?} has no name");
+                assert!(e.classes.iter().all(|&c| n.kind_name(c).is_some()), "tag {tag}: a class of {e:?} has no name");
             }
         }
         assert_eq!(lang(26).unwrap().names().kind_of("(", false), Some(40), "Scala's `(` is its `arguments`'s alias");
         assert_eq!(lang(1).unwrap().names().kind_of("ERROR", true), Some(crate::ERROR_CODE));
+        assert_eq!(lang(19).unwrap().names().class_of("type"), Some(294), "C#'s supertype `type`, not its token (24)");
+        assert_eq!(lang(1).unwrap().names().class_of("parameter"), Some(178), "Python's hidden supertype `parameter`");
         assert!(lang(255).is_none());
     }
 

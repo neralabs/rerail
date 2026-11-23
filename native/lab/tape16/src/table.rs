@@ -114,7 +114,7 @@ pub fn run(tag: u8, scratch: &Path, out: &Path) -> Result<Report, String> {
 /// Language `of`'s names, as tree-sitter's lookups give them: each name and namedness with the id its lookup gives
 /// (its public symbol, `id_for_node_kind`), in id order of the names' first symbols; each id a lookup gives, with its
 /// own name; each field by id; each supertype id the codes name as a class (a hidden symbol, no node's kind), with
-/// its name.
+/// its name; and each class name's lookup as a named kind (the supertype a parser names), where the codes have it.
 fn names_of(of: u8, ids: &Ids, table: &[Entry]) -> Names {
     let mut names = Names::default();
     let mut kinds: Vec<(u16, &(String, bool))> = ids.kinds.iter().filter(|((t, _), _)| *t == of).map(|((_, id), k)| (*id, k)).collect();
@@ -136,7 +136,15 @@ fn names_of(of: u8, ids: &Ids, table: &[Entry]) -> Names {
     fields.sort_unstable();
     names.fields = fields;
     let classes: BTreeSet<u16> = table.iter().flat_map(|e| e.classes.iter().copied()).collect();
-    names.classes = classes.into_iter().map(|id| (id, ids.kinds[&(of, id)].0.clone())).collect();
+    names.classes = classes.iter().map(|&id| (id, ids.kinds[&(of, id)].0.clone())).collect();
+    let mut supertypes: Vec<(String, u16)> = Vec::new();
+    for &id in &classes {
+        let (name, at) = (&ids.kinds[&(of, id)].0, ids.as_named[&(of, id)]);
+        if classes.contains(&at) && !supertypes.iter().any(|s| &s.0 == name) {
+            supertypes.push((name.clone(), at));
+        }
+    }
+    names.supertypes = supertypes;
     names
 }
 

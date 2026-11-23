@@ -1840,3 +1840,7 @@ class	119	_simple_type
 class	138	_statement
 class	140	_simple_statement
 class	169	_expression
+supertype	_simple_type	119
+supertype	_statement	138
+supertype	_simple_statement	140
+supertype	_expression	169

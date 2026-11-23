@@ -114,3 +114,4 @@ lookup	1	string	20
 field	1	key
 field	2	value
 class	16	_value
+supertype	_value	16

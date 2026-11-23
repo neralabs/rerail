@@ -2903,3 +2903,8 @@ class	154	statement
 class	184	expression
 class	185	primary_expression
 class	239	pattern
+supertype	declaration	145
+supertype	statement	154
+supertype	expression	184
+supertype	primary_expression	185
+supertype	pattern	239

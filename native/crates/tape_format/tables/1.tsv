@@ -2510,3 +2510,7 @@ class	178	parameter
 class	179	pattern
 class	188	expression
 class	189	primary_expression
+supertype	parameter	178
+supertype	pattern	179
+supertype	expression	188
+supertype	primary_expression	189

@@ -4,52 +4,13 @@
 //! to, node for node (the crate's oracle; `ecma_tapes_from_the_lean_parser_are_tree_sitters`).
 //!
 //! The parser's keys name kinds, fields and supertypes by their names in the grammars
-//! (`rerail_ecma_lean::{KINDS, FIELDS, CLASSES}`), one list for the three; here they are the
-//! dialect's ids. A kind one grammar lacks (TypeScript's in JavaScript) has none, and the parser
+//! (`rerail_ecma_lean::{KINDS, FIELDS, CLASSES}`), one list for the three; its language's table numbers them by those names
+//! (`names`, decision 0626). A kind one grammar lacks (TypeScript's in JavaScript) has none, and the parser
 //! never writes it there. A file the parser refuses (any syntax error, which tree-sitter recovers
 //! from; a construct it does not read) goes to tree-sitter.
 
-use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::tape::{CODE_EXTRA, Code, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, TapeImage, TemplateError, TreeParser};
+use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser};
 use rerail_ecma_lean::Dialect;
-
-/// A dialect's ids of the parser's kinds, fields and supertype sets (`None`: not in its grammar).
-struct Ids {
-    kinds: Vec<Option<u16>>,
-    fields: Vec<Option<u16>>,
-    classes: Vec<Option<Vec<u16>>>,
-}
-
-fn grammar_dialect(dialect: Dialect) -> GrammarDialect {
-    match dialect {
-        Dialect::JavaScript => GrammarDialect::JavaScript,
-        Dialect::TypeScript => GrammarDialect::TypeScript,
-        Dialect::Tsx => GrammarDialect::Tsx,
-    }
-}
-
-fn ids(dialect: Dialect) -> &'static Ids {
-    static IDS: [std::sync::OnceLock<Ids>; 3] = [const { std::sync::OnceLock::new() }; 3];
-    IDS[dialect as usize].get_or_init(|| {
-        use ast_grep_language::LanguageExt;
-        let language = grammar_dialect(dialect).get_ts_language();
-        let id = |name: &str, named: bool| Some(language.id_for_node_kind(name, named)).filter(|&k| k != 0 && (k as usize) < KIND_LIMIT);
-        let kinds = rerail_ecma_lean::KINDS.iter().map(|&(name, named)| id(name, named)).collect();
-        let fields = rerail_ecma_lean::FIELDS
-            .iter()
-            .map(|&name| if name.is_empty() { Some(0) } else { language.field_id_for_name(name).map(|f| f.get()).filter(|&f| (f as usize) < FIELD_LIMIT) })
-            .collect();
-        let classes = rerail_ecma_lean::CLASSES
-            .iter()
-            .map(|set| {
-                let mut ids = set.iter().map(|name| id(name, true)).collect::<Option<Vec<_>>>()?;
-                ids.sort_unstable();
-                Some(ids)
-            })
-            .collect();
-        Ids { kinds, fields, classes }
-    })
-}
 
 /// `source`'s tape from the lean parser in `dialect`: `Err` where it refuses the file; `Ok(Err)`
 /// where the tape cannot be made.
@@ -59,20 +20,7 @@ pub fn encode(dialect: Dialect, grammar: &Grammar, source: &str, budget: &dyn Fn
 
 /// [`encode`] from the node kind `start` (decision 0466): `None` for a kind the parser does not start at.
 pub fn encode_from(dialect: Dialect, grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<Result<TapeImage, String>, rerail_ecma_lean::Refusal>> {
-    let ids = ids(dialect);
-    let lacks = move |what: &str, i: usize| format!("{dialect:?}'s grammar lacks the lean parser's {what} {i}");
-    let code_of = move |&key: &u32| -> Result<Code, String> {
-        let (kind, field, class, extra) = rerail_ecma_lean::unkey(key);
-        let kind = ids.kinds[usize::from(kind)].ok_or_else(|| lacks("kind", usize::from(kind)))?;
-        let field = ids.fields[usize::from(field)].ok_or_else(|| lacks("field", usize::from(field)))?;
-        let classes: &[u16] = if extra { &[] } else { ids.classes[usize::from(class)].as_deref().ok_or_else(|| lacks("supertype set", usize::from(class)))? };
-        let mut code = Code::plain(kind, field, classes)?;
-        if extra {
-            code.flags |= CODE_EXTRA;
-        }
-        Ok(code)
-    };
-    rerail_ecma_lean::tape_from_into(source.as_bytes(), dialect, start, &mut super::formats::lean(grammar, source, budget, code_of))
+    rerail_ecma_lean::tape_from_into(source.as_bytes(), dialect, start, &mut super::formats::lean_named(grammar, source, budget, rerail_ecma_lean::names))
 }
 
 /// A dialect's tree parser: the lean parser, standing in for tree-sitter where it reads the file.

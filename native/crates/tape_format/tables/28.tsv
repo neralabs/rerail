@@ -2302,3 +2302,10 @@ class	218	_abstract_declarator
 class	245	type_specifier
 class	262	statement
 class	283	expression
+supertype	_declarator	214
+supertype	_field_declarator	216
+supertype	_type_declarator	217
+supertype	_abstract_declarator	218
+supertype	type_specifier	245
+supertype	statement	262
+supertype	expression	283

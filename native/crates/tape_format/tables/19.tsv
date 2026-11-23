@@ -4532,3 +4532,12 @@ class	364	expression
 class	365	non_lvalue_expression
 class	366	lvalue_expression
 class	444	literal
+supertype	type	294
+supertype	type_declaration	231
+supertype	declaration	259
+supertype	statement	311
+supertype	pattern	344
+supertype	expression	364
+supertype	non_lvalue_expression	365
+supertype	lvalue_expression	366
+supertype	literal	444

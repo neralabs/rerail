@@ -2174,3 +2174,4 @@ field	33	type_arguments
 field	34	type_parameters
 field	35	value
 class	308	expression
+supertype	expression	308

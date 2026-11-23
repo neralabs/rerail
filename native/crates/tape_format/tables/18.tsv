@@ -3422,3 +3422,11 @@ class	216	declaration
 class	219	module_directive
 class	263	_type
 class	264	_unannotated_type
+supertype	_literal	140
+supertype	expression	147
+supertype	primary_expression	157
+supertype	statement	185
+supertype	declaration	216
+supertype	module_directive	219
+supertype	_type	263
+supertype	_unannotated_type	264

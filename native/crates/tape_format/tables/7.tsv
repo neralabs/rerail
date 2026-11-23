@@ -3393,3 +3393,8 @@ class	250	type
 class	267	literal
 class	303	expression
 class	308	primary_expression
+supertype	statement	196
+supertype	type	250
+supertype	literal	267
+supertype	expression	303
+supertype	primary_expression	308

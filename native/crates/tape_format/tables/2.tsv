@@ -4664,3 +4664,10 @@ class	217	primary_expression
 class	265	pattern
 class	318	type
 class	325	primary_type
+supertype	type	318
+supertype	declaration	178
+supertype	statement	187
+supertype	expression	216
+supertype	primary_expression	217
+supertype	pattern	265
+supertype	primary_type	325

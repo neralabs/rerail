@@ -42,20 +42,24 @@ pub const fn tape_tag(dialect: Dialect) -> u8 {
 /// The line terminators of the language's ecosystem (decision 0612).
 pub const TERMINATORS: rerail_tape_format::newlines::Terminators = rerail_tape_format::newlines::Terminators::Eslint;
 
-/// The crate's own sink (decision 0626): format 16, each key numbered in the language's table by its names, as the
-/// engine numbers it by the grammar's ids (`rerail_engine`'s `formats::lean`), so the tapes are the same.
-pub fn sink(dialect: Dialect) -> rerail_tape_format::Named {
-    rerail_tape_format::Named::new(tape_tag(dialect), TERMINATORS, |key| {
-        let (kind, field, class, extra) = unkey(key);
-        let (kind, named) = *KINDS.get(usize::from(kind))?;
-        Some(rerail_tape_format::KeyNames {
-            kind,
-            named,
-            field: FIELDS.get(usize::from(field)).copied()?,
-            flags: if extra { rerail_tape_format::CODE_EXTRA } else { 0 },
-            classes: if extra { &[] } else { CLASSES.get(usize::from(class)).copied()? },
-        })
+/// Key `key`'s names, as the grammar names them: what its number in its language's table is found by (decision
+/// 0626; `sink`, and the engine's `formats::lean_named`). `None` for a key the parser does not write.
+pub fn names(key: u32) -> Option<rerail_tape_format::KeyNames> {
+    let (kind, field, class, extra) = unkey(key);
+    let (kind, named) = *KINDS.get(usize::from(kind))?;
+    Some(rerail_tape_format::KeyNames {
+        kind,
+        named,
+        field: FIELDS.get(usize::from(field)).copied()?,
+        flags: if extra { rerail_tape_format::CODE_EXTRA } else { 0 },
+        classes: if extra { &[] } else { CLASSES.get(usize::from(class)).copied()? },
     })
+}
+
+/// The crate's own sink (decision 0626): format 16, each key numbered in the language's table by its names (`names`),
+/// as the engine numbers the parser's keys (its `formats::lean_named`): one numbering, so the tapes are the same.
+pub fn sink(dialect: Dialect) -> rerail_tape_format::Named {
+    rerail_tape_format::Named::new(tape_tag(dialect), TERMINATORS, names)
 }
 
 /// `sink`'s tape: its tree is the language's (a code its table lacks is the parser's bug).
