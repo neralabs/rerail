@@ -193,15 +193,42 @@ stderr, with what to install, where to get it, and the variable that names an in
   - On the M5 Max: `--targets all` shipped the device layer's programs for both tiers, and `accel`'s relational
     library as AIR for both (a split library ships no AIR: decision 0571).
   - Size: about 12 MB a CUDA target (11.7 MB sm_121, 11.2 MB sm_70, 12.8 MB compute_80; 2 MB a target
-    compressed), so about 130 MB for CUDA's 11; AMD's not measured.
+    compressed), so about 130 MB for CUDA's 11. Metal's two tiers: 2.0 MB each, 2.4 MB compressed together.
+    AMD's 18 targets, shipped from Linux: 60 MB (2.9 to 3.5 MB a target, 20 programs each), 19.6 MB compressed.
+
+### Checked against the release's inputs (2026-11-23)
+
+- **The V100:** on a Tesla V100 (sm_70), a kernel compiled for `sm_70` and `compute_70` without the GPU is loaded
+  and run, with CUDA 12.9 (`a_kernel_shipped_for_a_target_the_device_runs_is_loaded`; the matrix tests pass
+  there). With only NVRTC 13.5 in reach (NVIDIA's wheel), the device is refused and the user is told: "This
+  machine's NVIDIA GPU is sm_70, and its CUDA Toolkit's NVRTC (13.5) compiles for sm_75 to sm_121, not for it ...
+  Install an older CUDA Toolkit that still compiles for it (12.x for sm_70, the Tesla V100)".
+- **CUDA's kernels compiled on Windows** from NVIDIA's wheels (13.5 and 12.9, unpacked without Python), which
+  found two faults, fixed: the 12.x wheel holds an alternate NVRTC (`nvrtc64_120_0.alt.dll`) without its builtins
+  library, and the search took it; and NVRTC loads its builtins library by name, which Windows finds only on
+  `PATH`, where a wheel is not. `every_shipped_cuda_and_amd_target_compiles_without_a_gpu` compiles each CUDA
+  and AMD target of the table, on Windows and on Linux.
+- **The Linux job's inputs** (in an Ubuntu 24.04 container): the wheels install (`nvidia/cu13/lib/libnvrtc.so.13`,
+  `nvidia/cuda_nvrtc/lib/libnvrtc.so.12`); ROCm 7.2's `hip-runtime-amd`, `comgr` and `rocm-device-libs` install
+  from AMD's apt repository, with `libhiprtc.so` in `/opt/rocm/lib`; its hiprtc compiles every exact target of
+  the table, and refuses the generic ones as the HIP SDK does. The macOS-15 image holds Xcode 26.0.1 to 26.3
+  (16.4 its default); the job selects the newest 26.
+- **AMD's kernels from Linux** had never compiled: the AMD GPU on the farm is Windows', where `uint64_t` is
+  `unsigned long long`. Two faults, fixed: HIP's 64-bit intrinsics have a signed and an unsigned overload, which
+  Linux's `uint64_t` matches equally (`__ffsll`, ambiguous: no kernel compiled); and `ukl_clock_ns` took PTX's
+  `globaltimer` asm on HIP (the preprocessor's kernels, on every AMD target and OS). HIP reads AMD's 100 MHz
+  counter (`the_device_clock_counts_nanoseconds`: 201.27 ms on the Radeon over the host's 201.78).
+- **An AMD GPU hiprtc does not compile for** is asked at the device's open (one small compile, its answer kept in
+  the store), and the user is told to install ROCm, or the HIP SDK on Windows, with hiprtc's reason.
+- **accel's lower tier on the M5:** a library's `apple7` AIR is taken where its text is the M5's, and refused for a
+  source taking the matrix header, whose `apple10` text holds the M5's unit
+  (`a_lower_tiers_air_is_taken_only_for_the_same_text`).
 
 ## Open
 
-- **The release job has not run.** The wheels' names and versions (`nvidia-cuda-nvrtc==13.*`,
-  `nvidia-cuda-nvrtc-cu12==12.9.*`), ROCm 7.2's packages on Ubuntu 24.04, and Xcode 26 on the macOS runner are
-  checked at its first run.
-- **The package's size:** about 130 MB of CUDA's kernels and AMD's besides, in every platform's install.
-- **HIP's architectures:** hiprtc lists none; a GPU it does not compile for fails at its first compile, with
-  hiprtc's log, not with `needs`.
+- **The release job has not run.** Its inputs are checked one by one (above); whether the Metal Toolchain is on the
+  macOS runner, or downloaded by the job, is seen at its first run.
+- **The package's size:** about 130 MB of CUDA's kernels a platform, and AMD's besides: decision 0651 proposes a
+  package per backend family and platform.
 - **A target ships only once its tests pass on a device of it (§5):** the release ships the whole table; the farm
   has no device of most of it.
