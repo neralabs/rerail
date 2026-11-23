@@ -596,6 +596,11 @@ impl Drop for MemoryArena {
 pub(super) fn key(path: &Path) -> PathBuf {
     #[derive(Default)]
     struct CanonicalPaths(Mutex<HashMap<PathBuf, PathBuf>>);
+    // A key asked with no run on the thread (an arena's drop as a run's last holder lets it go, on the job that held
+    // it: `enter`'s guard has put the thread's own state back) is resolved, not remembered: there is no run's to read.
+    if rerail_prof::code_rule_dsl::logic::profile::starter_object().is_none() {
+        return dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    }
     let held_ = rerail_prof::code_rule_dsl::logic::profile::shared::<CanonicalPaths>();
     if let Some(key) = held_.0.lock().get(path) {
         return key.clone();
