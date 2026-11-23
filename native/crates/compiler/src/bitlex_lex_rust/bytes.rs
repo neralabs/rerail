@@ -171,7 +171,19 @@ impl<'a> Bytes<'a> {
                             if bits.is_empty() { "0".to_owned() } else { bits.join(" | ") }
                         );
                     }
-                    format!("unsafe {{ {f}::<S>(src, n, {p}) }}")
+                    let here = format!("unsafe {{ {f}::<S>(src, n, p) }}");
+                    // (A neighbour byte is in the padded source: before the file's end, or `PADDING` past it.)
+                    // A byte on or back: the window's own bits shifted, the neighbour's one byte tested where it is, as the
+                    // lean lexer derives its masks from its window's one classify (`shift_in`), not a window loaded again.
+                    // Further, the window there (as the block's form: a shift of more than a byte reads its neighbour's).
+                    let rs = self.classes[n.as_str()];
+                    let test = |bound: String, q: String| format!("u64::from({bound} && matches!(unsafe {{ *src.get_unchecked({q} as usize) }}, {}))", rs.iter().map(|&(lo, hi)| if lo == hi { format!("{lo:#04x}") } else { format!("{lo:#04x}..={hi:#04x}") }).collect::<Vec<_>>().join(" | "));
+                    match off {
+                        0 => here,
+                        1 if !rs.is_empty() => format!("({here} >> 1 | {} << 63)", test("p + 64 < n as isize".into(), "(p + 64)".into())),
+                        -1 if !rs.is_empty() => format!("({here} << 1 | {})", test("p >= 1".into(), "(p - 1)".into())),
+                        _ => format!("unsafe {{ {f}::<S>(src, n, {p}) }}"),
+                    }
                 } else if let Some(d) = self.defs.get(n).cloned() {
                     self.win(&d, off, depth + 1)?
                 } else {

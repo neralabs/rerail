@@ -1411,7 +1411,7 @@ unsafe fn cls_hex<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> 
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t12<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = (escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, esc) & unsafe { cls_u::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!(((unsafe { cls_hex::<S>(src, n, (p + 1)) } & unsafe { cls_hex::<S>(src, n, (p + 2)) }) & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & valid(n, p)) } }
+    { let a = (escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, esc) & unsafe { cls_u::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!((((unsafe { cls_hex::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 63) & unsafe { cls_hex::<S>(src, n, (p + 2)) }) & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & valid(n, p)) } }
 }
 
 /// `w_t12` given its window's escaped bytes (`escaped`).
@@ -1421,7 +1421,7 @@ unsafe fn w_t12<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: 
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn e_t12<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, escaped: u64) -> u64 {
-    { let a = (escaped & unsafe { cls_u::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!(((unsafe { cls_hex::<S>(src, n, (p + 1)) } & unsafe { cls_hex::<S>(src, n, (p + 2)) }) & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & valid(n, p)) } }
+    { let a = (escaped & unsafe { cls_u::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!((((unsafe { cls_hex::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 63) & unsafe { cls_hex::<S>(src, n, (p + 2)) }) & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & valid(n, p)) } }
 }
 
 /// Class `c_d`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1505,7 +1505,7 @@ unsafe fn cls_one<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> 
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t13<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    { let a = (escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, esc) & unsafe { cls_u::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!((((((unsafe { cls_hex::<S>(src, n, (p + 1)) } & unsafe { cls_hex::<S>(src, n, (p + 2)) }) & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & (!(unsafe { cls_c_d::<S>(src, n, (p + 1)) } & unsafe { cls_upper_hex::<S>(src, n, (p + 2)) }) & valid(n, p))) & (!unsafe { cls_lbrace::<S>(src, n, (p + 1)) } & valid(n, p))) | { let a = unsafe { cls_lbrace::<S>(src, n, (p + 1)) }; if a == 0 { 0 } else { a & ((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_rbrace::<S>(src, n, (p + 3)) }) | ((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 4)) })) | (((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 5)) })) | (((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 6)) }) & (!(unsafe { cls_c_d::<S>(src, n, (p + 2)) } & unsafe { cls_upper_hex::<S>(src, n, (p + 3)) }) & valid(n, p)))) | ((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_hex::<S>(src, n, (p + 6)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 7)) }) & (!unsafe { cls_zero::<S>(src, n, (p + 2)) } & valid(n, p)))) | ((((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_hex::<S>(src, n, (p + 6)) }) & unsafe { cls_hex::<S>(src, n, (p + 7)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 8)) }) & unsafe { cls_one::<S>(src, n, (p + 2)) }) & unsafe { cls_zero::<S>(src, n, (p + 3)) })) } }) & valid(n, p)) } }
+    { let a = (escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, esc) & unsafe { cls_u::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!(((((((unsafe { cls_hex::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 63) & unsafe { cls_hex::<S>(src, n, (p + 2)) }) & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & (!((unsafe { cls_c_d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x64 | 0x44)) << 63) & unsafe { cls_upper_hex::<S>(src, n, (p + 2)) }) & valid(n, p))) & (!(unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63) & valid(n, p))) | { let a = (unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63); if a == 0 { 0 } else { a & ((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_rbrace::<S>(src, n, (p + 3)) }) | ((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 4)) })) | (((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 5)) })) | (((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 6)) }) & (!(unsafe { cls_c_d::<S>(src, n, (p + 2)) } & unsafe { cls_upper_hex::<S>(src, n, (p + 3)) }) & valid(n, p)))) | ((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_hex::<S>(src, n, (p + 6)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 7)) }) & (!unsafe { cls_zero::<S>(src, n, (p + 2)) } & valid(n, p)))) | ((((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_hex::<S>(src, n, (p + 6)) }) & unsafe { cls_hex::<S>(src, n, (p + 7)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 8)) }) & unsafe { cls_one::<S>(src, n, (p + 2)) }) & unsafe { cls_zero::<S>(src, n, (p + 3)) })) } }) & valid(n, p)) } }
 }
 
 /// `w_t13` given its window's escaped bytes (`escaped`).
@@ -1515,7 +1515,7 @@ unsafe fn w_t13<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: 
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn e_t13<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, escaped: u64) -> u64 {
-    { let a = (escaped & unsafe { cls_u::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!((((((unsafe { cls_hex::<S>(src, n, (p + 1)) } & unsafe { cls_hex::<S>(src, n, (p + 2)) }) & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & (!(unsafe { cls_c_d::<S>(src, n, (p + 1)) } & unsafe { cls_upper_hex::<S>(src, n, (p + 2)) }) & valid(n, p))) & (!unsafe { cls_lbrace::<S>(src, n, (p + 1)) } & valid(n, p))) | { let a = unsafe { cls_lbrace::<S>(src, n, (p + 1)) }; if a == 0 { 0 } else { a & ((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_rbrace::<S>(src, n, (p + 3)) }) | ((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 4)) })) | (((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 5)) })) | (((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 6)) }) & (!(unsafe { cls_c_d::<S>(src, n, (p + 2)) } & unsafe { cls_upper_hex::<S>(src, n, (p + 3)) }) & valid(n, p)))) | ((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_hex::<S>(src, n, (p + 6)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 7)) }) & (!unsafe { cls_zero::<S>(src, n, (p + 2)) } & valid(n, p)))) | ((((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_hex::<S>(src, n, (p + 6)) }) & unsafe { cls_hex::<S>(src, n, (p + 7)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 8)) }) & unsafe { cls_one::<S>(src, n, (p + 2)) }) & unsafe { cls_zero::<S>(src, n, (p + 3)) })) } }) & valid(n, p)) } }
+    { let a = (escaped & unsafe { cls_u::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!(((((((unsafe { cls_hex::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46)) << 63) & unsafe { cls_hex::<S>(src, n, (p + 2)) }) & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & (!((unsafe { cls_c_d::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x64 | 0x44)) << 63) & unsafe { cls_upper_hex::<S>(src, n, (p + 2)) }) & valid(n, p))) & (!(unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63) & valid(n, p))) | { let a = (unsafe { cls_lbrace::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x7b)) << 63); if a == 0 { 0 } else { a & ((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_rbrace::<S>(src, n, (p + 3)) }) | ((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 4)) })) | (((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 5)) })) | (((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 6)) }) & (!(unsafe { cls_c_d::<S>(src, n, (p + 2)) } & unsafe { cls_upper_hex::<S>(src, n, (p + 3)) }) & valid(n, p)))) | ((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_hex::<S>(src, n, (p + 6)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 7)) }) & (!unsafe { cls_zero::<S>(src, n, (p + 2)) } & valid(n, p)))) | ((((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_hex::<S>(src, n, (p + 6)) }) & unsafe { cls_hex::<S>(src, n, (p + 7)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 8)) }) & unsafe { cls_one::<S>(src, n, (p + 2)) }) & unsafe { cls_zero::<S>(src, n, (p + 3)) })) } }) & valid(n, p)) } }
 }
 
 /// Class `lf`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1571,7 +1571,7 @@ unsafe fn cls_star<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) ->
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_m_block_end<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (unsafe { cls_slash::<S>(src, n, p) } & unsafe { cls_star::<S>(src, n, (p - 1)) })
+    (unsafe { cls_slash::<S>(src, n, p) } & (unsafe { cls_star::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2a))))
 }
 
 /// `t14`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -1581,7 +1581,7 @@ unsafe fn w_m_block_end<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isiz
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t14<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { cls_slash::<S>(src, n, p) } & unsafe { cls_slash::<S>(src, n, (p + 1)) }) | (unsafe { cls_slash::<S>(src, n, p) } & unsafe { cls_star::<S>(src, n, (p + 1)) }))
+    ((unsafe { cls_slash::<S>(src, n, p) } & (unsafe { cls_slash::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2f)) << 63)) | (unsafe { cls_slash::<S>(src, n, p) } & (unsafe { cls_star::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2a)) << 63)))
 }
 
 /// Class `tick`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1613,7 +1613,7 @@ unsafe fn w_m_tick<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, es
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_m_tt<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (unsafe { cls_tick::<S>(src, n, p) } & unsafe { cls_tick::<S>(src, n, (p + 1)) })
+    (unsafe { cls_tick::<S>(src, n, p) } & (unsafe { cls_tick::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x60)) << 63))
 }
 
 /// `m_ttt`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -1623,7 +1623,7 @@ unsafe fn w_m_tt<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_m_ttt<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { cls_tick::<S>(src, n, p) } & unsafe { cls_tick::<S>(src, n, (p + 1)) }) & unsafe { cls_tick::<S>(src, n, (p + 2)) })
+    ((unsafe { cls_tick::<S>(src, n, p) } & (unsafe { cls_tick::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x60)) << 63)) & unsafe { cls_tick::<S>(src, n, (p + 2)) })
 }
 
 /// Class `word`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1681,7 +1681,7 @@ unsafe fn cls_dot<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> 
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_m_num_run<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (unsafe { cls_digit::<S>(src, n, p) } | ((unsafe { cls_dot::<S>(src, n, p) } & unsafe { cls_digit::<S>(src, n, (p - 1)) }) & unsafe { cls_digit::<S>(src, n, (p + 1)) }))
+    (unsafe { cls_digit::<S>(src, n, p) } | ((unsafe { cls_dot::<S>(src, n, p) } & (unsafe { cls_digit::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39)))) & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)))
 }
 
 /// `m_dot`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.

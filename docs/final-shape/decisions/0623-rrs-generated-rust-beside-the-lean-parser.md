@@ -668,3 +668,16 @@ lexer, which still finds its words. So the loop's core (the blocks, the starts, 
 lean's count, and the rest of the gap is that work: the marks most (each grammar token's `tested` bits, the number's
 and the operator's tests), then the words (the hash of a word run, as lean's), then a string's tests (lean's tests only
 a `\u`).
+
+## A window's class a byte on or back is its own bits shifted (done)
+
+The window readers (a region's end, a run past its block) read a class a byte on or back as the window loaded there
+and classified again (`cls_X(p + 1)`): a comment's `*/`, a tick fence's second tick, a number's digit about its dot.
+Now a class at one byte's distance is the window's own bits shifted, with the one neighbour byte tested where it is, as
+the block's form reads its neighbours (and the lean lexer derives its masks from its window's one classify). Further
+off (a `\u` escape's four digits), it still reads the window there, as the block's form does past a byte.
+
+Tried first with every distance shifted, each neighbour byte tested: slower by 1–2 ms, though those reads run rarely
+(the digits only after a `\u`): putting back either the digits' reads or the fences' alone restored the time, so it was
+the token loop's code, not their work. With one byte, the same as before (20.5–21.1 ms against 20.5–20.7 ms, in
+turns). All tests pass.
