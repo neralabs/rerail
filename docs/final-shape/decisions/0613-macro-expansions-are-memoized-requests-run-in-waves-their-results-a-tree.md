@@ -441,6 +441,77 @@ So:
      take 3 and 2 take 4. The front and the definitions over the files round 1 read are under 0.1 ms of a
      round-2 unit's 1.3 ms setup.
 
+   **The plan for §4 and §6** (2026-11-23). Each stage keeps the eval tests, the corpus and Boost.Preprocessor
+   the serial pass's, token for token:
+   - **Stage 1: a top call is a request.** At the top, a call whose `)` (or an object-like name) is read posts a
+     request, and the piece writes a hole into its output and reads on:
+     - the request is its definition, its raw arguments and their table where the piece read them (the piece's
+       regions move past them, so they stay where they are), its name's space and its `)`'s origin;
+     - the memo's table keys it, so a key already posted, or done, is a hole for that request, not a second one
+       (§2's pending entries);
+     - a SIMD group takes a request from the unit's queue (`ukl/workqueue.h`), and runs today's loop over it in
+       isolation: its arguments expanded, its substitution read to its end, the result's entries a node;
+     - its edges are checked when it ends. An open tail (a function-like name whose look for `(` reached the
+       request's end, or a call whose arguments do) and a `(` after the hole in the piece, or a result the
+       loop cannot make in isolation (a pragma), make the piece read again from its start, inline (today's
+       loop), as a continuation;
+     - a piece is done when its holes are; then its counts are final.
+   - **Stage 2: the roll-up** (§6). The output's order is made through the holes: each result's tokens and
+     output pieces counted bottom up, as it completes; each occurrence's places top down (the pieces' scans,
+     then a hole's places from its piece's); `ORDER` over the occurrences, an occurrence's place its own (a
+     result used at k places has k). `Ov` and the host's `read` read a leaf where it is.
+   - **Stage 3: calls in a request are requests.** A call a request reads where nothing but its own list is
+     open posts a child request, whose context is the macros disabled there. A child's open tail with a `(`
+     after it makes its parent read again inline; a tail at the parent's end is the parent's.
+   - **Stage 4: arguments as references.** A call's arguments used plainly are requests posted with it, and its
+     substitution holds their holes. Its reading waits on a hole, by continuation, only when it reaches it.
+   - **Stage 5: provenance.** The device's `Expansion` rows: each occurrence of a result, its parent the
+     occurrence it is read in.
+
+   **Stages 1 to 3, built** (2026-11-23):
+   - **A call followed by `(` is not posted.** Its tail could only be guessed, and a wrong guess read the whole
+     piece again (117 calls a level, `a_done_calls`). A tail at its holder's end (`RQ_ATEND`) is the holder's.
+   - **A request's result reads what its holes read.** A hole whose result reads a place's built-in (`RQ_OWN`)
+     makes its holder's result its place's own too, so it is not shared. Without that, a `tensorflow` test
+     printed another line's `__LINE__` (`place_builtins_are_not_memoized`, the nested `L()` and `K()` shapes).
+   - **A request's record names its root piece** (row 6). A reread of that piece voids what the request recorded
+     (its `#pragma` rows, its `__COUNTER__` uses), as it voids the piece's own.
+   - **A claim given up.** A poster out of room marks its table entry void, so a call of the same key does not
+     wait on it. The wait on an entry being written is bounded by `LP_CLAIM_POLLS`, far more than its writer's
+     few stores.
+   - **A request's run reuses its group's blocks.** Each run claims its regions from the store, which never
+     takes them back. Requests made this 3 to 10 times the store's use: 443,000 rows against 40,000 for one
+     corpus unit, `nodes 9925` with 2,116 requests. The unit's first run was refused for room, and its batch's
+     GPU time went from 70 to 580 ms. Now:
+     - a region's first room is 8 rows, not 64;
+     - a request run's lists' block (region 0) is scratch: its sub-requests copy their arguments into their
+       records. So the group keeps it for its next request;
+     - a block a request's run moves out of, and its result's room past its end, are the group's spare. The
+       next request's region takes it when it is large enough;
+     - a request's run claims at least `LP_RQ_CHUNK` (64) rows, so the room left after a result serves the
+       group's next ones.
+
+     That unit's claims went from about 450,000 rows to 270,000. What is left: a request's first lists block
+     (its raw arguments, copied there as a region's growth moves them) and its record. Of the record's rows,
+     16 are its looked-up set.
+   - **Measured on m3** (Metal, load 5 to 7). Every corpus unit is the serial pass's. GPU time per slice, the
+     work against the commit before it:
+
+     | Slice (`RERAIL_PP_FIRST`/`COUNT`) | Before | Stages 1 to 3 |
+     |---|---|---|
+     | 0/500 (1,000 units) | 218 ms | 187 ms |
+     | 500/600 (1,200 units) | 242 ms | 272 ms |
+     | 1100/all (935 units) | 499 ms | 359 ms |
+
+     The eval tests pass on the CPU backend, on CUDA and on Metal. Boost.Preprocessor's `control` passes on the
+     CPU backend. In its slowest piece (45,434 steps), 25 requests are posted: its calls' arguments are still
+     read inline, which is stage 4's work.
+   - **A line's expansion posts no requests.** The `#if` evaluator reads a line's output flat. So
+     `a_line_past_its_room_runs_again_larger`'s 8⁴ fan-out is one serial piece: 25,747 steps and 131,073
+     tokens out, about 1 s of GPU a run. Under load, m3's GPU watchdog sometimes stops it as a hang, and the
+     commit before this one does the same. It is fixed when the evaluator reads the results' tree (stage 2's
+     roll-up, on the device).
+
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 

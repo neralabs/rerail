@@ -20,7 +20,7 @@
 // The output is 0520's pieces, written once, where a piece makes them (`lp_flush`'s chunks), with
 // their tokens' places and each top token's (`LOB`) the piece's own; the piece counts its pieces
 // and tokens (`V`, `OPV` at its head token), the scans place the pieces, and the output's order
-// (`ORDER`) and places are made from them (`lp_place`, `lp_obase`). A run is split into pieces of about
+// (`ORDER`) and places are made from them (`lp_roll_place`, `lp_obase`). A run is split into pieces of about
 // `LP_CHUNK` tokens, a thread each; where one piece's text goes on into the next's, the two make one
 // output piece (`lp_join`).
 //
@@ -77,6 +77,66 @@
 #define LN_BALANCED (2u)
 #define LN_COMMA (4u)
 
+// Requests (decision 0613 §4). A top call is posted (`lp_rq_post`), its record four entries of the tokens'
+// store: its definition, arguments' count, name's space and `)`'s origin; its raw arguments' place and count, its
+// table's place, the furthest top token read; its result's place, entries and flags, the table's offset; its
+// result's tokens and leaves (`lp_leaves`), its piece; its waiters (`RQ_DONEW` once it is done) and its `(`'s place.
+// A SIMD group of the unit's queue reads it in isolation
+// (`lp_piece`): its result is the entries its reading writes. The piece's output holds its hole: an output
+// piece of the source `LP_HOLESRC`, `st` the record.
+#define LP_HOLESRC (0x3ffffffdu)
+#define RQ_ENTRIES (7u)
+#define RQ_DONEW (0xfffffffeu)
+// A request's holder (the piece or the request its hole is in): a piece's start, or a request's record with
+// this bit. A request posts the calls it reads at its own level (not in an argument) to `LP_RQ_LEVELS` deep.
+#define LP_HOLDRQ (0x80000000u)
+#define LP_RQ_LEVELS (4u)
+// A requests' table entry claimed and given up (its poster out of room): a key's first word has its top bit.
+#define LP_RQ_VOID (2u)
+// A result's flags: the token after its call is `(` (the piece's); its reading looked for a `(` past its end
+// (a function-like name last: an open tail); it could not be read in isolation (a call's arguments past its
+// end, a pragma). An open tail with a `(` after it, or the last, makes its piece read again inline (today's
+// loop), once its holes are done.
+#define RQ_NEXTP (1u)
+#define RQ_TAIL (2u)
+#define RQ_INLINE (4u)
+// It read a built-in (`__LINE__`, `__COUNTER__`: its place's): another call of its key is read again inline,
+// and its definition's calls are not keyed again (`lp_rq_own`).
+#define RQ_OWN (8u)
+// It has an entry in the requests' table: done with none of the three flags above (`RQ_SHARED`), it is a kept
+// result (`trn[29]`), and each waiter it serves without a reread a hit (`trn[28]`).
+#define RQ_KEYED (16u)
+// Its hole is its holder's last (the look for a `(` after it went past the holder's end): its open tail is its
+// holder's (`lp_rq_finish`).
+#define RQ_ATEND (32u)
+#define RQ_SHARED (RQ_TAIL | RQ_INLINE | RQ_OWN)
+// The queue's items (`LPQ`, `ukl/workqueue.h`'s protocol): a piece's start, a request's record, a piece read
+// again inline.
+#define LQ_PIECE (0u << 30)
+#define LQ_REQ (1u << 30)
+#define LQ_AGAIN (2u << 30)
+// A request whose reading and holes are done: its result's counts, its holder and waiters told (`lp_rq_finish`).
+#define LQ_FIN (3u << 30)
+#define LQ_KIND (3u << 30)
+// `LPQ`'s words: the queue's control (`ukl/workqueue.h`'s, then the requests posted, the pieces read again,
+// the requests' steps), its slots, then each piece's (by its start) holes pending (and 1 while it reads),
+// flags (1: read again) and first chunk (`LpOut`'s).
+#define LPQ_CTL (16u)
+UKL_INLINE uint32_t lpq_cap(Ar a) { return 3u * a.lpq_top + 64u + a.tok_cap / 3u; }
+UKL_INLINE UklWorkQueue lp_wq(Ar a) {
+    UklWorkQueue q;
+    q.slots = (UKL_GLOBAL uint32_t*)(a.lpq + LPQ_CTL); q.control = (UKL_GLOBAL uint32_t*)a.lpq;
+    q.capacity = lpq_cap(a); q.ring = 0u; q.budget = 0u;
+    return q;
+}
+UKL_INLINE PP_GLOBAL uint32_t* lp_preq(Ar a) { return a.lpq + LPQ_CTL + lpq_cap(a); }
+UKL_INLINE PP_GLOBAL uint32_t* lp_pflag(Ar a) { return lp_preq(a) + a.lpq_top; }
+UKL_INLINE PP_GLOBAL uint32_t* lp_pchunk(Ar a) { return lp_preq(a) + 2u * a.lpq_top; }
+// An idle worker's polls before it ends (each yields: `ukl_wq_idle`).
+#define LP_IDLE_POLLS (1u << 22)
+// A requests' table entry being written: polls before the reader goes on (its writer's few stores take far fewer).
+#define LP_CLAIM_POLLS (1u << 16)
+
 // A frame: its kind, its macro (disabled while it is live), its tokens' range, region 0's top to
 // go back to when it ends, and (an object-like body read in place) its first token's space: the
 // name's (`enter`).
@@ -110,9 +170,9 @@ typedef struct LpMem { uint32_t base, cap, top; } LpMem;
 // table (`OUT`'s seventh column, three words a chunk: the piece's start, its first, its count);
 // their tokens' places are the piece's own (from 0). Once the pieces are counted and placed, each
 // chunk's entries are put in the output's order (`ORDER`, the sixth column) and their places made
-// the output's (`lp_place`): nothing is written twice, and no pass runs again to place them.
+// the output's (`lp_roll_place`): nothing is written twice, and no pass runs again to place them.
 // A piece's first piece of top text from its start (`head`, its length) may be its predecessor's
-// last's continuation: then it is that one's (`lp_join`, `lp_place`), which grows by its length
+// last's continuation: then it is that one's (`lp_join`, `lp_roll_place`), which grows by its length
 // (`lp_extend`, from the piece's last entry `last`).
 // `fl`: the open piece's flags (`PF_NOEXP`, `PF_SPSET`, `PF_SP`: `pc_tok_in`'s).
 #define LP_OCHUNK (8u)
@@ -122,6 +182,8 @@ typedef struct LpOut {
     // The chunks taken (`hn`) and the last four (`h0` the one taken when `hn` was 0 mod 4, ...): the memo's
     // results find theirs (`lp_memo_end`).
     uint32_t hn, h0, h1, h2, h3;
+    // The first chunk taken (`LP_NONE` none): the roll-up's walk starts there.
+    uint32_t c0;
     PP_GLOBAL uint32_t* out; PP_GLOBAL uint32_t* front; uint32_t cap;
 } LpOut;
 
@@ -151,6 +213,10 @@ typedef struct LpRun {
     // captures' raw arguments (`LpMemo::ra`).
     LpMem mem[5];
     uint32_t sp, nc, last, s0;
+    // The group's blocks for its requests' runs: its lists' (region 0, scratch: the last run's, the next
+    // run's), and a spare (`lp_alloc`) one gave up (a region's old block, its result's room past it), the next
+    // region's room of a request's run on the group.
+    uint32_t sc_base, sc_cap, sp_base, sp_cap;
     // Region 0's lowest mark of a frame left while a call's arguments are read: what is above it is
     // that call's, and its substitution gives it back.
     uint32_t cfree;
@@ -193,47 +259,75 @@ typedef struct LpRun {
     uint32_t cl_sp;
     // 0 going on; else why the run stopped (`LP_*`).
     uint32_t stop;
+    // A request's run: its record (`LP_NONE`: a piece's), and whether its look for a `(` reached its end
+    // (`RQ_TAIL`). A piece's: whether it posts its top calls (`rq_on`, the text's, not a piece read again).
+    // A request's: its record, its holder code (`LP_HOLDRQ`), its looked-up definitions (`LP_LB_ENTRIES` rows), its
+    // level, whether it posts the calls at its level (`rq_sub`).
+    uint32_t rq, rq_me, rq_lb, rq_lvl;
+    bool rq_on, rq_tail, rq_own, rq_sub;
 } LpRun;
 #define LP_ROOM (1u)
 // The frames' or the calls' stacks full (refused for depth, `X_DEPTH`).
 #define LP_DEEP (2u)
 // Refused (a reason of the expansion's set, `px_refuse`): the unit is the serial pass's.
 #define LP_REFUSED (3u)
+// A request that cannot be read in isolation (`RQ_INLINE`): its piece is read again inline.
+#define LP_INLINE (4u)
 
 // A call's arguments read to an argument's end (`at_stop`: `expand_list` reads it in isolation) or
 // to its scope's end: refused (the serial pass's).
 UKL_INLINE void lp_unclosed(UKL_LOCAL LpRun* r, Ar a, bool at_stop) {
     if (r->stop != 0u) return;
+    // A request's call whose arguments go on past its end: its piece's to read.
+    if (at_stop && r->rq != LP_NONE && r->sp == 1u) { r->stop = LP_INLINE; return; }
     px_refuse(a.ctl, at_stop ? X_PAST_END : X_ACROSS);
     r->stop = LP_REFUSED;
 }
 
+// A chunk's words in the chunks' table (`OUT`'s seventh column): its piece's start, its first piece's
+// number, its count, and the piece's next chunk (`LP_NONE` none): the roll-up walks a piece's chunks
+// in order (`lp_roll_count`).
+#define LP_CHW (4u)
 UKL_INLINE void lp_flush(UKL_PRIVATE LpOut* o) {
-    if (o->len == 0u) return;
+    bool hole = o->src == (P_SPAN | LP_HOLESRC);
+    if (o->len == 0u && !hole) return;
     bool first = o->nf++ == 0u;
     if (first && (o->src & P_KIND) == P_TOP && o->st == o->s0 && o->fl == 0u) o->head = o->len;
     uint32_t c = o->cap;
     if (o->cb == LP_NONE || o->cf == LP_OCHUNK) {
+        uint32_t prev = o->cb;
         o->cb = ukl_atomic_add(o->front, 1u); o->cf = 0u;
+        if (o->c0 == LP_NONE) o->c0 = o->cb;
         uint32_t hk = o->hn & 3u;
         if (hk == 0u) o->h0 = o->cb; else if (hk == 1u) o->h1 = o->cb; else if (hk == 2u) o->h2 = o->cb; else o->h3 = o->cb;
         o->hn++;
         if (o->cb < c / LP_OCHUNK) {
-            PP_GLOBAL uint32_t* ch = o->out + 6u * c + 3u * o->cb;
-            ch[0] = o->s0; ch[1] = o->np; ch[2] = 0u;
+            PP_GLOBAL uint32_t* ch = o->out + 6u * c + LP_CHW * o->cb;
+            ch[0] = o->s0; ch[1] = o->np; ch[2] = 0u; ch[3] = LP_NONE;
         }
+        if (prev != LP_NONE && prev < c / LP_OCHUNK) o->out[6u * c + LP_CHW * prev + 3u] = o->cb;
     }
     // Past the room: counted on (`CTL` 20), the unit refused for room (`lp_loop`).
     if (o->cb < c / LP_OCHUNK) {
         uint32_t w = o->cb * LP_OCHUNK + o->cf;
         o->out[w] = o->src; o->out[c + w] = o->len | o->fl; o->out[2u * c + w] = o->st;
         o->out[3u * c + w] = o->nv - o->len; o->out[4u * c + w] = 0u;
-        o->out[6u * c + 3u * o->cb + 2u] = o->cf + 1u;
+        o->out[6u * c + LP_CHW * o->cb + 2u] = o->cf + 1u;
         o->last = w;
     }
     o->cf++;
     o->np++;
     o->len = 0u;
+    if (hole) o->src = 0u;
+}
+// Request `rq`'s hole written into the output (decision 0613 §4): an output piece of its own, its place the
+// tokens before it (the roll-up adds the holes' tokens: `lp_roll_place`), its length word the shift of the
+// result's tokens of the text (`lp_rq_post`).
+UKL_INLINE void lp_hole_out(UKL_PRIVATE LpOut* o, uint32_t rq, uint32_t delta) {
+    lp_flush(o);
+    o->src = P_SPAN | LP_HOLESRC; o->st = rq; o->len = 0u; o->fl = delta;
+    lp_flush(o);
+    o->fl = 0u;
 }
 
 // Whether a token has white space before it (`T_SPACE`): set, or its source's (a text token's in
@@ -271,17 +365,40 @@ UKL_INLINE uint32_t lp_ref(Ux u, LpTok t) {
 }
 
 
+// A region's first room: small, as a request's run has its own regions and most read a few tokens (a run's
+// regions are claimed from the store and kept, so a larger first room is taken by every request).
+#define LP_REGION_MIN (8u)
+#define LP_RQ_CHUNK (64u)
+// Whether block `base` of region `x` is a request's run's own: its lists' and its expansions' blocks, but not
+// its raw arguments where its record has them (row 1's, its poster's or its own). None reads a request's own
+// block once it moves or the run ends: its result's entries are tokens, pieces of the text or a body, nodes
+// (placed apart, `lp_node`) and holes (records), and a request it posts has its own copies (`lp_rq_post`).
+UKL_INLINE bool lp_rq_owns(UKL_LOCAL const LpRun* r, Ar a, uint32_t x, uint32_t base) {
+    return x == 1u || (x == 0u && base != a.psrc[r->rq + 1u]);
+}
+// A block given up by a request's run: the group's spare if larger.
+UKL_INLINE void lp_spare(UKL_LOCAL LpRun* r, uint32_t base, uint32_t cap) {
+    if (cap > r->sp_cap) { r->sp_base = base; r->sp_cap = cap; }
+}
 // `n` tokens of region `x`: their offset there, or `LP_NONE` where the store has no room (the run
 // stops, refused for room). A region past its room moves to one twice as large.
 UKL_INLINE uint32_t lp_alloc(UKL_LOCAL LpRun* r, Ar a, uint32_t x, uint32_t n) {
     UKL_LOCAL LpMem* m = &r->mem[x];
     if (m->top + n > m->cap) {
-        uint32_t cap = ukl_max(ukl_max(2u * m->cap, m->top + n), 64u);
-        uint32_t nb = ukl_atomic_add(&a.ctl[0], cap);
-        if (nb + cap > a.tok_cap || nb + cap < nb) { r->stop = LP_ROOM; return LP_NONE; }
+        uint32_t cap = ukl_max(ukl_max(2u * m->cap, m->top + n), LP_REGION_MIN), nb;
+        bool rq = r->rq != LP_NONE;
+        if (rq && r->sp_cap >= cap) {
+            nb = r->sp_base; cap = r->sp_cap; r->sp_cap = 0u;
+        } else {
+            // A request's run claims a chunk at least: its room past what it keeps is its group's next ones'.
+            if (rq) cap = ukl_max(cap, LP_RQ_CHUNK);
+            nb = ukl_atomic_add(&a.ctl[0], cap);
+            if (nb + cap > a.tok_cap || nb + cap < nb) { r->stop = LP_ROOM; return LP_NONE; }
+        }
         for (uint32_t k = 0u; k < m->top; k++) {
             a.psrc[nb + k] = a.psrc[m->base + k]; a.pst[nb + k] = a.pst[m->base + k]; a.pn[nb + k] = a.pn[m->base + k]; a.pexp[nb + k] = a.pexp[m->base + k];
         }
+        if (rq && lp_rq_owns(r, a, x, m->base)) lp_spare(r, m->base, m->cap);
         m->base = nb; m->cap = cap;
     }
     uint32_t at = m->top;
@@ -297,7 +414,7 @@ UKL_INLINE PP_GLOBAL uint32_t* lp_word(UKL_LOCAL const LpRun* r, Ar a, uint32_t 
 UKL_INLINE bool lp_words(UKL_LOCAL LpRun* r, Ar a, uint32_t n) {
     UKL_LOCAL LpMem* m = &r->mem[2];
     if (n <= 3u * m->cap) return true;
-    uint32_t used = (m->top + 2u) / 3u, cap = ukl_max(ukl_max(2u * m->cap, (n + 2u) / 3u), 64u);
+    uint32_t used = (m->top + 2u) / 3u, cap = ukl_max(ukl_max(2u * m->cap, (n + 2u) / 3u), LP_REGION_MIN);
     uint32_t nb = ukl_atomic_add(&a.ctl[0], cap);
     if (nb + cap > a.tok_cap || nb + cap < nb) { r->stop = LP_ROOM; return false; }
     for (uint32_t k = 0u; k < used; k++) {
@@ -451,6 +568,13 @@ UKL_INLINE void lp_memo_look(UKL_LOCAL LpRun* r, Ar a, uint32_t m) {
     for (uint32_t j = 0u; j < r->mon; j++) if (!r->mo[j].cold) lp_lb_or(a, r->mem[4].base + r->mo[j].lbw, b >> 5, 1u << (b & 31u));
 }
 UKL_INLINE void lp_memo_looks(UKL_LOCAL LpRun* r, Ar a, uint32_t at) {
+    // A request's set as well (`lp_rq_look`).
+    if (r->rq_lb != LP_NONE) {
+        for (uint32_t w = 0u; w < 4u * LP_LB_ENTRIES; w++) {
+            uint32_t v = at == LP_NONE ? 0xffffffffu : lp_lb_get(a, at, w), e = r->rq_lb + (w >> 2), f = w & 3u;
+            if (v != 0u) ukl_atomic_or(f == 0u ? &a.psrc[e] : f == 1u ? &a.pst[e] : f == 2u ? &a.pn[e] : &a.pexp[e], v);
+        }
+    }
     for (uint32_t j = 0u; j < r->mon; j++) {
         if (r->mo[j].cold) continue;
         for (uint32_t w = 0u; w < 4u * LP_LB_ENTRIES; w++) lp_lb_or(a, r->mem[4].base + r->mo[j].lbw, w, at == LP_NONE ? 0xffffffffu : lp_lb_get(a, at, w));
@@ -498,6 +622,8 @@ UKL_ONCE bool lp_next_is_lparen(UKL_LOCAL LpRun* r, Ux u, Ar a) {
             if (f.kind == FK_TOP && lp_after_directive(u, r->s0, f.at)) return false;
             return ref_is(u, lp_ref(u, lp_frame_tok(r, a, f, f.at)), '(');
         }
+        // A request's end: what follows is its piece's (an open tail, `RQ_TAIL`).
+        if (k == 1u && r->rq != LP_NONE) r->rq_tail = true;
         if (f.kind == FK_STOP || f.kind == FK_TOP) return false;
     }
     return false;
@@ -1091,7 +1217,8 @@ UKL_INLINE uint32_t lp_counter(UKL_LOCAL LpRun* r, Ux u, Ar a) {
     }
     a.sbytes[base] = ((uint8_t)('0'));
     a.stoks[id].start = base; a.stoks[id].end = base + 1u; a.stoks[id].kind = K_NUMBER;
-    a.cnt[2u + 2u * k] = LP_NONE;
+    // Its piece's start: a piece read again voids its first reading's uses (`lp_void`).
+    a.cnt[2u + 2u * k] = r->s0;
     a.cnt[3u + 2u * k] = id;
     uint32_t s = r->last, p = pb_item_of(u.gat, u.n_gaps, s), e = (r->line ? a.tf.cap : 0u) + k;
     // A line not read counts nothing.
@@ -1240,7 +1367,7 @@ UKL_INLINE void lp_pragma_text(UKL_LOCAL LpRun* r, Ux u, Ar a, Span x) {
     if (k >= a.tf.cap) { px_refuse(a.ctl, X_ROOM); return; }
     a.tf.sk[k] = (key & 0xffffffff00000000ul) | ((uint64_t)(slot));
     a.tf.nk[k] = key;
-    a.tf.ty[k] = push ? RT_PUSH : RT_POP;
+    a.tf.ty[k] = (push ? RT_PUSH : RT_POP) | ((r->s0 + 1u) << 2);
 }
 
 // `_Pragma ( … )` (`px_pragma`): its operand read raw; with a name in it, expanded first, as a call's
@@ -1395,7 +1522,7 @@ UKL_INLINE uint32_t lp_memo_size(uint32_t nt, uint32_t cap) {
     return 4u * LP_MEMO_STRIDE * t <= cap / 4u ? t : 0u;
 }
 #define LP_MEMO_DONE (0x80000000u)
-UKL_INLINE uint64_t lp_memo_key(UKL_LOCAL LpRun* r, Ux u, Ar a, uint32_t m, uint32_t nargs, uint32_t tab, uint32_t stretch, uint32_t floor, uint32_t nsp, bool top, UKL_PRIVATE bool* ok) {
+UKL_INLINE uint64_t lp_memo_key(UKL_LOCAL LpRun* r, Ux u, Ar a, uint32_t m, uint32_t nargs, uint32_t tab, uint32_t stretch, uint32_t floor, uint32_t nsp, bool top, uint32_t opn, UKL_PRIVATE bool* ok) {
     KeyAcc k = ka_new(m ^ (r->nc != 0u ? 0x40000000u : 0u));
     k.h = key_mix(k.h, (((uint64_t)(stretch)) << 32) | ((uint64_t)(floor)));
     k.h = key_mix(k.h, (((uint64_t)(nsp)) << 33) | (top ? (1ul << 32) : 0ul) | ((uint64_t)(nargs)));
@@ -1420,6 +1547,9 @@ UKL_INLINE uint64_t lp_memo_key(UKL_LOCAL LpRun* r, Ux u, Ar a, uint32_t m, uint
                 KeyAcc none = ka_new(0u);
                 uint32_t len = ka_span(&none, s, true);
                 k.h = key_mix(k.h, (((uint64_t)(s.kind)) << 40) | (((uint64_t)(lp_space(u, t) | (t.flags & T_NOEXP))) << 32) | ((uint64_t)(len)));
+                // A request's call's token of the text: its place from its root call's `(` (`opn`), a hit's
+                // the same from its own (`lp_rq_post`).
+                if (opn != LP_NONE && (t.src & P_KIND) == P_TOP) k.h = key_mix(k.h, 0x7f4a7c159e3779b9ul ^ (uint64_t)(t.st - opn));
                 ka_span(&k, s, false);
             }
         }
@@ -1528,7 +1658,7 @@ UKL_INLINE bool lp_memo_close(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar
         if (r->sl_base != stretch) return false;
     }
     bool ok = true;
-    uint64_t key = lp_memo_key(r, u, a, r->cl_m, nargs, tab, stretch, lp_floor(r, u, slot), r->cl_nsp, top, &ok);
+    uint64_t key = lp_memo_key(r, u, a, r->cl_m, nargs, tab, stretch, lp_floor(r, u, slot), r->cl_nsp, top, LP_NONE, &ok);
     if (!ok) return false;
     uint32_t open = top ? r->cl_name.st + 1u : 0u;
     // Its raw arguments: region 0's entries from its table's first (contiguous, its arguments' in order).
@@ -1679,6 +1809,412 @@ UKL_INLINE void lp_memo_end(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar a
 }
 // The `)` read: the call on the call stack, its first argument's expansion begun (`lp_call_next`).
 // False for the wrong count of arguments (its tokens given back), or no room.
+// --- Requests and the roll-up (decision 0613 §4, §6) ---------------------------------------------------
+//
+// A result's entries from `at` (`n` of them): each a leaf where it is a token or a piece, a node's entries
+// read through (its tokens stay where they are). Their tokens and leaves counted, and (`order` not
+// `write`) each leaf's place in the output's order from `slot` written: `cap` past its entry's (the
+// output's own pieces are below `cap`), and its occurrence's shift of the text's tokens (`delta`, the
+// eighth column: a hit's tokens are its own call's, `lp_rq_post`). False past `LP_ROLL_DEPTH` nodes deep.
+#define LP_ROLL_DEPTH (LP_CALLS + 8u)
+UKL_INLINE bool lp_leaves(Ar a, uint32_t at, uint32_t n, PP_GLOBAL uint32_t* order, uint32_t cap, uint32_t slot, uint32_t delta, bool write, UKL_PRIVATE uint32_t* toks, UKL_PRIVATE uint32_t* leaves) {
+    uint32_t sat[LP_ROLL_DEPTH], send[LP_ROLL_DEPTH], sdel[LP_ROLL_DEPTH];
+    uint32_t d = 0u, t = 0u, l = 0u;
+    sat[0] = at; send[0] = at + n; sdel[0] = delta;
+    for (;;) {
+        if (sat[d] == send[d]) {
+            if (d == 0u) break;
+            d--;
+            continue;
+        }
+        uint32_t i = sat[d]++;
+        LpTok e = lp_gget(a, i);
+        if (lp_is_node(e)) {
+            if (d + 1u == LP_ROLL_DEPTH) return false;
+            d++;
+            sat[d] = e.st + LN_ENTRIES; send[d] = sat[d] + a.psrc[e.st]; sdel[d] = sdel[d - 1u];
+            continue;
+        }
+        // A request's hole in a result (decision 0613 §4): its result's leaves, their tokens of the text `org` on.
+        if (e.src == (P_SPAN | LP_HOLESRC)) {
+            if (d + 1u == LP_ROLL_DEPTH) return false;
+            uint32_t q = e.st, qa = a.psrc[q + 2u];
+            d++;
+            sat[d] = qa == LP_NONE ? 0u : qa; send[d] = qa == LP_NONE ? 0u : qa + a.pst[q + 2u]; sdel[d] = sdel[d - 1u] + e.org;
+            continue;
+        }
+        if (write && slot + l < cap) { order[slot + l] = cap + i; order[2u * cap + slot + l] = sdel[d]; }
+        l++;
+        t += lp_is_span(e) ? lp_span_len(e) : 1u;
+    }
+    *toks = t; *leaves = l;
+    return true;
+}
+// Piece `s0` read again inline (decision 0613 §4): what its first reading and its requests recorded is
+// voided first, its `__COUNTER__` uses (they count nothing) and its pragma rows (their type bits 0), so its
+// second reading's alone count. Every request of the first reading is done (`lp_piece_done`).
+UKL_INLINE void lp_void(Ar a, uint32_t s0) {
+    uint32_t nu = ukl_min(ukl_atomic_load(&a.cnt[1]), ukl_min(a.cnt_cap, a.tf.cap));
+    for (uint32_t k = 0u; k < nu; k++) if (a.cnt[2u + 2u * k] == s0) a.tf.cslot[k] = PP_NONE;
+    uint32_t nr = ukl_min(ukl_atomic_load(&a.tf.n[0]), a.tf.cap);
+    for (uint32_t k = 0u; k < nr; k++) if ((a.tf.ty[k] >> 2) == s0 + 1u) a.tf.ty[k] = 0u;
+    ukl_fence_device();
+}
+// A piece's holes all done and its reading too (its count 0): read again inline where a result asks it
+// (`RQ_*`), once.
+UKL_INLINE void lp_piece_done(Ar a, uint32_t s0) {
+    ukl_fence_device();
+    if (ukl_atomic_sub(&lp_preq(a)[s0], 1u) != 1u) return;
+    ukl_fence_device();
+    if ((ukl_atomic_load(&lp_pflag(a)[s0]) & 1u) == 0u) return;
+    ukl_atomic_add(&a.lpq[6], 1u);
+    if (!ukl_wq_push(lp_wq(a), LQ_AGAIN | s0)) px_refuse(a.ctl, X_ROOM);
+}
+// A request's count of what it waits on (its reading, its holes) down: the last pushes its end (`LQ_FIN`,
+// `lp_rq_finish`), a worker's item like any other (finished results wake their waiters through the queue).
+UKL_INLINE void lp_rq_dec(Ar a, uint32_t rq) {
+    ukl_fence_device();
+    if (ukl_atomic_sub(&a.pexp[rq + 3u], 1u) != 1u) return;
+    ukl_fence_device();
+    if (!ukl_wq_push(lp_wq(a), LQ_FIN | rq)) px_refuse(a.ctl, X_ROOM);
+}
+// A holder (`LP_HOLDRQ`: a piece or a request) waits on one more hole, one less (never its last: its own
+// reading holds one), is told one is done, or is to be read again inline (a request: `RQ_INLINE`, which its
+// own holder reads again in turn).
+UKL_INLINE void lp_hold_add(Ar a, uint32_t h) {
+    if ((h & LP_HOLDRQ) != 0u) ukl_atomic_add(&a.pexp[(h & ~LP_HOLDRQ) + 3u], 1u);
+    else ukl_atomic_add(&lp_preq(a)[h], 1u);
+}
+UKL_INLINE void lp_hold_sub(Ar a, uint32_t h) {
+    if ((h & LP_HOLDRQ) != 0u) ukl_atomic_sub(&a.pexp[(h & ~LP_HOLDRQ) + 3u], 1u);
+    else ukl_atomic_sub(&lp_preq(a)[h], 1u);
+}
+UKL_INLINE void lp_hold_done(Ar a, uint32_t h) {
+    if ((h & LP_HOLDRQ) != 0u) lp_rq_dec(a, h & ~LP_HOLDRQ);
+    else lp_piece_done(a, h);
+}
+// A holder's open tail (a request's: its last hole's result ends in a function-like name), or its place's own
+// result (a hole's read a built-in, `RQ_OWN`: so does its holder's).
+UKL_INLINE void lp_hold_tail(Ar a, uint32_t h) {
+    if ((h & LP_HOLDRQ) != 0u) ukl_atomic_or(&a.pn[(h & ~LP_HOLDRQ) + 2u], RQ_TAIL);
+}
+UKL_INLINE void lp_hold_own(Ar a, uint32_t h) {
+    if ((h & LP_HOLDRQ) != 0u) ukl_atomic_or(&a.pn[(h & ~LP_HOLDRQ) + 2u], RQ_OWN);
+}
+UKL_INLINE void lp_hold_again(Ar a, uint32_t h) {
+    if ((h & LP_HOLDRQ) != 0u) ukl_atomic_or(&a.pn[(h & ~LP_HOLDRQ) + 2u], RQ_INLINE);
+    else ukl_atomic_or(&lp_pflag(a)[h], 1u);
+}
+// A looked-up set's word `w` (`lp_lb_get`'s), read and or'd as atomics: a request's set takes its holes' as they end.
+UKL_INLINE PP_GLOBAL uint32_t* lp_lb_word(Ar a, uint32_t at, uint32_t w) {
+    uint32_t e = at + (w >> 2), f = w & 3u;
+    return f == 0u ? &a.psrc[e] : f == 1u ? &a.pst[e] : f == 2u ? &a.pn[e] : &a.pexp[e];
+}
+UKL_INLINE void lp_rq_look(Ar a, uint32_t lb, uint32_t m) {
+    if (lb == LP_NONE) return;
+    uint32_t b = lp_look_bit(m);
+    ukl_atomic_or(lp_lb_word(a, lb, b >> 5), 1u << (b & 31u));
+}
+// What a result looked up (its set at `lb`) its holder looked up too (a piece's is none).
+UKL_INLINE void lp_hold_looks(Ar a, uint32_t h, uint32_t lb) {
+    if ((h & LP_HOLDRQ) == 0u || lb == LP_NONE) return;
+    uint32_t to = a.pn[(h & ~LP_HOLDRQ) + 5u];
+    for (uint32_t w = 0u; w < 4u * LP_LB_ENTRIES; w++) {
+        uint32_t v = ukl_atomic_load(lp_lb_word(a, lb, w));
+        if (v != 0u) ukl_atomic_or(lp_lb_word(a, to, w), v);
+    }
+}
+// A list of macros (`n` words from row `at`, three a row: region 2's format, `lp_word`): the hash of those
+// the set at `lb` looked up (`lp_off_hash`'s), folded to a word. A result is shared where it is the same for
+// its waiter's disabled macros as for its own (decision 0613 §1: those its expansion looks up).
+UKL_INLINE PP_GLOBAL uint32_t* lp_dword(Ar a, uint32_t at, uint32_t i) {
+    uint32_t e = at + i / 3u, c = i % 3u;
+    return c == 0u ? &a.psrc[e] : (c == 1u ? &a.pst[e] : &a.pn[e]);
+}
+UKL_INLINE uint32_t lp_dead_hash(Ar a, uint32_t at, uint32_t n, uint32_t lb) {
+    uint64_t off = 0ul;
+    for (uint32_t i = 0u; i < n; i++) {
+        uint32_t w = *lp_dword(a, at, i);
+        if (lp_looked(a, lb, w)) off += key_mix(0x2545f4914f6cdd1dul, (uint64_t)(w));
+    }
+    return ((uint32_t)(off)) ^ ((uint32_t)(off >> 32));
+}
+// The macros disabled where a run reads (its frames', `lp_disabled`'s): their count, and (`at` not `LP_NONE`)
+// each written from row `at` in region 2's format.
+UKL_INLINE uint32_t lp_dead_list(UKL_LOCAL LpRun* r, Ar a, uint32_t at) {
+    uint32_t n = 0u;
+    for (uint32_t j = 1u; j < r->sp; j++) {
+        LpFrame f = r->fr[(j) & (LP_DEPTH - 1u)];
+        if (f.kind == FK_BODY || f.kind == FK_LIST) { if (at != LP_NONE) *lp_dword(a, at, n) = f.def; n++; }
+        if (f.kind == FK_DEAD) {
+            for (uint32_t i = 0u; i < f.nsp; i++) { if (at != LP_NONE) *lp_dword(a, at, n) = *lp_word(r, a, f.def + i); n++; }
+        }
+    }
+    return n;
+}
+// The requests' table (decision 0613 §2): a quarter of the memo's entries (`lp_rq_size`: its top calls, of all
+// its calls), past the memo's table and its two sets of bits (`LP_MEMO_HOT` words each: the dear definitions',
+// then those whose requests read a built-in, `RQ_OWN`), within the memo's room (`lp_memo_size`). An entry's claim
+// (0 free, 1 being written, its key's first word with the top bit once written), its key's second word, its
+// definition, its request.
+UKL_INLINE uint32_t lp_rq_table(uint32_t mt) { return LP_MEMO_STRIDE * mt + 2u * LP_MEMO_HOT; }
+UKL_INLINE uint32_t lp_rq_size(uint32_t mt) { return mt / 4u; }
+UKL_INLINE bool lp_rq_own(Ar a, uint32_t mt, uint32_t m) {
+    uint32_t w = ukl_atomic_load(&a.psrc[LP_MEMO_STRIDE * mt + LP_MEMO_HOT + ((m >> 5) & (LP_MEMO_HOT - 1u))]);
+    return ((w >> (m & 31u)) & 1u) != 0u;
+}
+// Whether a waiter of a result with flags `fl` reads its holder again: an open tail with a `(` after its hole
+// (`np`), a result not read in isolation, or (`other`: not its first call's) one of its place's own.
+UKL_INLINE bool lp_rq_again(uint32_t fl, bool np, bool other) {
+    return (fl & RQ_INLINE) != 0u || ((fl & RQ_TAIL) != 0u && np) || (other && (fl & RQ_OWN) != 0u);
+}
+// What follows a call about to be posted (`lp_next_is_lparen`, its look not the poster's tail): `RQ_NEXTP`, and
+// `RQ_ATEND` where the look went past the poster's end (a request's).
+UKL_INLINE uint32_t lp_rq_edge(UKL_LOCAL LpRun* r, Ux u, Ar a) {
+    bool t0 = r->rq_tail;
+    r->rq_tail = false;
+    uint32_t e = lp_next_is_lparen(r, u, a) ? RQ_NEXTP : 0u;
+    if (r->rq_tail) e |= RQ_ATEND;
+    r->rq_tail = t0;
+    return e;
+}
+// A call posted (decision 0613 §4): definition `m`, its `nargs` arguments' table at `tab` in region 1 and their
+// raw entries in region 0 from `cstart`, its name's space `nsp`, its end's origin `org`, its name's token `name`.
+// A top call of a piece's text, or (`r->rq` not `LP_NONE`) a call a request reads at its own level: its
+// arguments' entries then the request's own (moved into its record, as a region's growth moves them), and what
+// the poster read them into given back. Its key (its arguments' spelling, their tokens of the text as far from
+// the root call's `(`: a hit's are its own root's, that distance on) found in the requests' table: its hole is
+// that request's, its holder one of its waiters. Else posted. Its hole goes where the call was: an output piece
+// (a piece's), or an entry of its holder's result (a request's), its `org` the shift of its tokens of the text.
+UKL_INLINE bool lp_rq_post(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar a, PP_GLOBAL uint32_t* trn, uint32_t m, uint32_t nargs, uint32_t tab, uint32_t cstart, uint32_t nsp, uint32_t org, uint32_t name, uint32_t edge) {
+    bool sub = r->rq != LP_NONE;
+    uint32_t nextp = edge;
+    uint32_t open = sub ? a.pst[r->rq + 4u] : name + 1u, me = sub ? r->rq_me : r->s0;
+    uint32_t nd = sub ? lp_dead_list(r, a, LP_NONE) : 0u, ndr = (nd + 2u) / 3u;
+    uint32_t mt = trn[30], eb = LP_NONE, rid = LP_NONE;
+    uint64_t key = 0ul;
+    if (mt != 0u && !lp_rq_own(a, mt, m)) {
+        uint32_t slot = lp_slot_of(r, u, r->last), stretch = r->sl_base;
+        bool ok = true;
+        if (!sub) {
+            lp_slot_of(r, u, name);
+            ok = r->sl_base == stretch;
+            slot = lp_slot_of(r, u, r->last);
+        }
+        if (ok) key = lp_memo_key(r, u, a, m, nargs, tab, stretch, lp_floor(r, u, slot), nsp, true, sub ? open : LP_NONE, &ok);
+        uint32_t k1 = ((uint32_t)(key)) | LP_MEMO_DONE, k2 = (uint32_t)(key >> 32), tb = lp_rq_table(mt);
+        for (uint32_t p = 0u; p < LP_MEMO_PROBES && ok; p++) {
+            uint32_t b = tb + ((((uint32_t)(key >> 40)) + p) & (lp_rq_size(mt) - 1u));
+            uint32_t c = ukl_atomic_load(&a.psrc[b]);
+            if (c == 0u) {
+                c = ukl_atomic_cas(&a.psrc[b], 0u, 1u);
+                if (c == 0u) { eb = b; break; }
+            }
+            // An entry being written (its poster between its claim and its mark: a few stores) read once it is
+            // marked, so two calls of one key posted at once are one request.
+            for (uint32_t t = 0u; c == 1u && t < LP_CLAIM_POLLS; t++) {
+                ukl_poll_yield();
+                c = ukl_atomic_poll(&a.psrc[b]);
+            }
+            if (c != k1) continue;
+            ukl_fence_device();
+            if (ukl_atomic_load(&a.pst[b]) != k2 || ukl_atomic_load(&a.pn[b]) != m) continue;
+            // A hit: the holder one of its waiters (`RQ_DONEW`: it is done, its flags read), with its disabled macros.
+            uint32_t q = ukl_atomic_load(&a.pexp[b]);
+            uint32_t h = ukl_atomic_add(&a.ctl[0], 2u + ndr);
+            if (h + 2u + ndr > a.tok_cap) { r->stop = LP_ROOM; return false; }
+            a.psrc[h] = me; a.pst[h] = edge; a.pexp[h] = h + 2u; a.psrc[h + 1u] = nd;
+            if (sub) lp_dead_list(r, a, h + 2u);
+            bool waits = false, done = false;
+            lp_hold_add(a, me);
+            for (uint32_t t = 0u; t < LP_IDLE_POLLS && !waits && !done; t++) {
+                uint32_t old = ukl_atomic_load(&a.psrc[q + 4u]);
+                done = old == RQ_DONEW;
+                if (done) break;
+                a.pn[h] = old;
+                ukl_fence_device();
+                waits = ukl_atomic_cas(&a.psrc[q + 4u], old, h) == old;
+            }
+            if (!waits) {
+                lp_hold_sub(a, me);
+                if (!done) break;
+                ukl_fence_device();
+                uint32_t fl = ukl_atomic_load(&a.pn[q + 2u]), lb = a.pn[q + 5u];
+                // Its result not this call's (a tail it reads past, its place's own, other disabled macros it
+                // looks up): the call is its own request.
+                if (lp_rq_again(fl, (nextp & RQ_NEXTP) != 0u, true) || lp_dead_hash(a, h + 2u, nd, lb) != a.pexp[q + 4u]) break;
+                if ((fl & RQ_SHARED) == 0u) ukl_atomic_add(&trn[28], 1u);
+                // Last in its holder: the result's open tail its holder's.
+                if ((fl & RQ_TAIL) != 0u && (edge & RQ_ATEND) != 0u) r->rq_tail = true;
+                lp_hold_looks(a, me, lb);
+            }
+            rid = q;
+            break;
+        }
+    }
+    uint32_t delta = 0u;
+    bool posted = rid == LP_NONE;
+    if (!posted) {
+        delta = open - ukl_atomic_load(&a.pst[rid + 4u]);
+    } else {
+        // Its record (`RQ_ENTRIES` rows), a request's call's arguments' entries and table, its disabled macros,
+        // its looked-up set.
+        uint32_t rn = r->mem[0].top - cstart, own = sub ? rn + nargs + 1u + ndr : 0u;
+        uint32_t rq = ukl_atomic_add(&a.ctl[0], RQ_ENTRIES + own + LP_LB_ENTRIES);
+        if (rq + RQ_ENTRIES + own + LP_LB_ENTRIES > a.tok_cap || rq + RQ_ENTRIES < rq) {
+            // Its claim given up (`LP_RQ_VOID`: no key's), so no other call waits on it.
+            if (eb != LP_NONE) ukl_atomic_store(&a.psrc[eb], LP_RQ_VOID);
+            r->stop = LP_ROOM;
+            return false;
+        }
+        uint32_t rb = r->mem[0].base + cstart, tb = r->mem[1].base + tab, off = cstart, d0 = LP_NONE;
+        if (sub) {
+            rb = rq + RQ_ENTRIES; tb = rb + rn; d0 = tb + nargs + 1u; off = 0u;
+            for (uint32_t k = 0u; k < rn; k++) {
+                uint32_t f = r->mem[0].base + cstart + k;
+                a.psrc[rb + k] = a.psrc[f]; a.pst[rb + k] = a.pst[f]; a.pn[rb + k] = a.pn[f]; a.pexp[rb + k] = a.pexp[f];
+            }
+            for (uint32_t k = 0u; k <= nargs; k++) a.psrc[tb + k] = a.psrc[r->mem[1].base + tab + k] - cstart;
+            lp_dead_list(r, a, d0);
+        }
+        uint32_t lb = rq + RQ_ENTRIES + own;
+        for (uint32_t k = 0u; k < LP_LB_ENTRIES; k++) { a.psrc[lb + k] = 0u; a.pst[lb + k] = 0u; a.pn[lb + k] = 0u; a.pexp[lb + k] = 0u; }
+        a.psrc[rq] = m; a.pst[rq] = nargs; a.pn[rq] = nsp; a.pexp[rq] = org;
+        a.psrc[rq + 1u] = rb; a.pst[rq + 1u] = rn; a.pn[rq + 1u] = tb; a.pexp[rq + 1u] = r->last;
+        a.psrc[rq + 2u] = LP_NONE; a.pst[rq + 2u] = 0u; a.pn[rq + 2u] = edge | (eb != LP_NONE ? RQ_KEYED : 0u); a.pexp[rq + 2u] = off;
+        a.psrc[rq + 3u] = 0u; a.pst[rq + 3u] = 0u; a.pn[rq + 3u] = me; a.pexp[rq + 3u] = 1u;
+        a.psrc[rq + 4u] = 0u; a.pst[rq + 4u] = open; a.pn[rq + 4u] = 0u; a.pexp[rq + 4u] = 0u;
+        a.psrc[rq + 5u] = d0; a.pst[rq + 5u] = nd; a.pn[rq + 5u] = lb; a.pexp[rq + 5u] = sub ? r->rq_lvl + 1u : 1u;
+        // Its root piece (its run's `s0`: what it records, a reread of that piece voids, `lp_void`).
+        a.psrc[rq + 6u] = r->s0; a.pst[rq + 6u] = 0u; a.pn[rq + 6u] = 0u; a.pexp[rq + 6u] = 0u;
+        // Its entry in the requests' table, claimed above: written, then marked (a reader sees all of it or none).
+        if (eb != LP_NONE) {
+            a.pst[eb] = (uint32_t)(key >> 32); a.pn[eb] = m; a.pexp[eb] = rq;
+            ukl_fence_device();
+            ukl_atomic_store(&a.psrc[eb], ((uint32_t)(key)) | LP_MEMO_DONE);
+        }
+        lp_hold_add(a, me);
+        ukl_atomic_add(&a.lpq[5], 1u);
+        ukl_fence_device();
+        if (!ukl_wq_push(lp_wq(a), LQ_REQ | rq)) { px_refuse(a.ctl, X_ROOM); r->stop = LP_REFUSED; return false; }
+        rid = rq;
+    }
+    if (!sub) {
+        // A piece's regions past what the request reads (where it reads them): they stay where they are.
+        if (posted) {
+            for (uint32_t x = 0u; x < 2u; x++) { r->mem[x].base += r->mem[x].top; r->mem[x].cap -= r->mem[x].top; r->mem[x].top = 0u; }
+            r->cfree = 0u;
+        }
+        lp_hole_out(o, rid, delta);
+        return true;
+    }
+    // A request's: what its call read given back (the request has its own), its hole an entry of its result.
+    r->mem[0].top = ukl_min(cstart, r->cfree); r->mem[1].top = r->cl_o1;
+    LpTok e; e.src = P_SPAN | LP_HOLESRC; e.st = rid; e.flags = 0u; e.org = delta;
+    return lp_push(r, a, 1u, r->calls[(r->nc - 1u) & (LP_CALLS - 1u)].ocur, e);
+}
+// A request's run begun (`lp_piece`'s): its call's table and raw arguments (where its poster read them, or its
+// record's own), its disabled macros (a dead frame below its reading, `lp_disabled`'s), its looked-up set; a
+// no-macro output call (calls[0]) whose output is region 1 from 1; its call (calls[1]) or its object-like
+// macro's body (a frame).
+UKL_INLINE void lp_rq_begin(UKL_LOCAL LpRun* r, Ux u, Ar a, uint32_t rq) {
+    uint32_t m = a.psrc[rq], nargs = a.pst[rq], nsp = a.pn[rq], org = a.pexp[rq];
+    uint32_t rb = a.psrc[rq + 1u], rn = a.pst[rq + 1u], tb = a.pn[rq + 1u], off = a.pexp[rq + 2u];
+    uint32_t d0 = a.psrc[rq + 5u], nd = a.pst[rq + 5u];
+    r->last = a.pexp[rq + 1u];
+    r->rq_me = rq | LP_HOLDRQ; r->rq_lb = a.pn[rq + 5u]; r->rq_lvl = a.pexp[rq + 5u]; r->rq_sub = r->rq_lvl < LP_RQ_LEVELS;
+    r->mem[0].base = rb; r->mem[0].cap = rn; r->mem[0].top = rn;
+    // Its lists past its raw arguments: in the group's lists' block where it has room (its raw arguments the
+    // block's first entries, as a region's growth moves them), else at its first list's growth.
+    if (r->sc_cap >= rn + LP_REGION_MIN) {
+        uint32_t nb = r->sc_base;
+        for (uint32_t k = 0u; k < rn; k++) { a.psrc[nb + k] = a.psrc[rb + k]; a.pst[nb + k] = a.pst[rb + k]; a.pn[nb + k] = a.pn[rb + k]; a.pexp[nb + k] = a.pexp[rb + k]; }
+        r->mem[0].base = nb; r->mem[0].cap = r->sc_cap; r->sc_cap = 0u;
+    }
+    if (nd != 0u) {
+        r->mem[2].base = d0; r->mem[2].cap = (nd + 2u) / 3u; r->mem[2].top = nd;
+        UKL_LOCAL LpFrame* g = &r->fr[1];
+        g->kind = FK_DEAD; g->def = 0u; g->nsp = nd; g->at = 0u; g->end = 0u; g->mark = rn; g->org = LP_NONE;
+        r->sp = 2u;
+    }
+    PpDef d = u.defs[m];
+    bool fn = (d.flags & D_FNLIKE) != 0u;
+    uint32_t nt = fn ? nargs + 1u : 0u;
+    if (lp_alloc(r, a, 1u, 1u + nt) == LP_NONE) return;
+    for (uint32_t q = 0u; q < nt; q++) {
+        uint32_t e = r->mem[1].base + 1u + q;
+        a.psrc[e] = a.psrc[tb + q] - off; a.pst[e] = LP_NONE; a.pn[e] = 0u; a.pexp[e] = LP_NONE;
+    }
+    UKL_LOCAL LpCall* s = &r->calls[0];
+    s->def = LP_NONE; s->nargs = 0u; s->tab = 0u; s->cstart = 0u; s->o1 = 0u; s->p = 0u; s->ocur = 1u; s->nsp = 0u; s->cfree = 0u; s->org = LP_NONE; s->bi = 0u;
+    a.pn[r->mem[1].base] = 0u;
+    r->nc = 1u;
+    bool pastes = false;
+    for (uint32_t i = 0u; i < d.n_body && !fn; i++) pastes = pastes || (u.items[d.ifirst + i] & I_PASTE) != 0u;
+    if (fn || pastes) {
+        UKL_LOCAL LpCall* c = &r->calls[1];
+        c->def = m; c->nargs = fn ? nargs : 0u; c->tab = 1u; c->cstart = 0u; c->o1 = 1u; c->p = LP_NONE; c->ocur = 0u; c->nsp = nsp; c->cfree = rn; c->org = org; c->bi = 0u;
+        r->nc = 2u;
+        if (fn) lp_call_next(r, u, a);
+        else lp_substitute(r, u, a, nsp);
+        return;
+    }
+    UKL_LOCAL LpFrame* f = &r->fr[(r->sp++) & (LP_DEPTH - 1u)];
+    f->kind = FK_BODY; f->def = m; f->at = 0u; f->end = d.n_body; f->mark = r->mem[0].top; f->nsp = nsp; f->org = org;
+}
+// A request's run ended: its result's entries (region 1's from 1) and its flags; then its count down (its
+// holes may still be read: `lp_rq_finish` once the last is done).
+UKL_INLINE void lp_rq_end(UKL_LOCAL LpRun* r, Ar a, uint32_t step) {
+    uint32_t rq = r->rq, fl = (r->rq_tail ? RQ_TAIL : 0u) | (r->stop == LP_INLINE ? RQ_INLINE : 0u) | (r->rq_own ? RQ_OWN : 0u);
+    if (r->stop == 0u) { a.psrc[rq + 2u] = r->mem[1].base + 1u; a.pst[rq + 2u] = r->mem[1].top - 1u; }
+    // Its lists' block, the group's next request's; its result's room past it, the group's spare.
+    if (r->mem[0].cap != 0u && lp_rq_owns(r, a, 0u, r->mem[0].base)) { r->sc_base = r->mem[0].base; r->sc_cap = r->mem[0].cap; }
+    if (r->mem[1].cap > r->mem[1].top) lp_spare(r, r->mem[1].base + r->mem[1].top, r->mem[1].cap - r->mem[1].top);
+    ukl_atomic_or(&a.pn[rq + 2u], fl);
+    a.pn[rq + 4u] = step;
+    ukl_atomic_add(&a.lpq[7], step);
+    lp_rq_dec(a, rq);
+}
+// A request done, its reading and its holes (`LQ_FIN`): its result's tokens and leaves (`lp_leaves`, its holes'
+// in them), the hash of its disabled macros it looked up; its holder told (its flags, its looked-up set), then
+// its waiters (their holders: a reread where the result is not theirs), their list closed (`RQ_DONEW`).
+UKL_INLINE void lp_rq_finish(Ar a, PP_GLOBAL uint32_t* trn, uint32_t rq) {
+    ukl_fence_device();
+    uint32_t fl = ukl_atomic_load(&a.pn[rq + 2u]), at = a.psrc[rq + 2u], lb = a.pn[rq + 5u];
+    bool ok = at != LP_NONE && (fl & RQ_INLINE) == 0u;
+    if (ok) {
+        uint32_t t = 0u, l = 0u;
+        if (!lp_leaves(a, at, a.pst[rq + 2u], a.out, a.out_cap, 0u, 0u, false, &t, &l)) px_refuse(a.ctl, X_DEPTH);
+        a.psrc[rq + 3u] = t; a.pst[rq + 3u] = l;
+    }
+    uint32_t hf = lp_dead_hash(a, a.psrc[rq + 5u], a.pst[rq + 5u], lb);
+    a.pexp[rq + 4u] = hf;
+    bool kept = (fl & RQ_KEYED) != 0u && (fl & RQ_SHARED) == 0u && ok;
+    if (kept) ukl_atomic_add(&trn[29], 1u);
+    uint32_t m = a.psrc[rq], mt = trn[30];
+    if ((fl & RQ_OWN) != 0u && mt != 0u) ukl_atomic_or(&a.psrc[LP_MEMO_STRIDE * mt + LP_MEMO_HOT + ((m >> 5) & (LP_MEMO_HOT - 1u))], 1u << (m & 31u));
+    ukl_fence_device();
+    uint32_t hd = a.pn[rq + 3u];
+    if (!ok || lp_rq_again(fl, (fl & RQ_NEXTP) != 0u, false)) lp_hold_again(a, hd);
+    else if ((fl & RQ_TAIL) != 0u && (fl & RQ_ATEND) != 0u) lp_hold_tail(a, hd);
+    if ((fl & RQ_OWN) != 0u) lp_hold_own(a, hd);
+    lp_hold_looks(a, hd, lb);
+    lp_hold_done(a, hd);
+    uint32_t h = ukl_atomic_exchange(&a.psrc[rq + 4u], RQ_DONEW);
+    for (uint32_t k = 0u; h != 0u && h != RQ_DONEW && k < a.tok_cap; k++) {
+        ukl_fence_device();
+        uint32_t w = a.psrc[h], next = a.pn[h];
+        if (!ok || lp_rq_again(fl, (a.pst[h] & RQ_NEXTP) != 0u, true) || lp_dead_hash(a, a.pexp[h], a.psrc[h + 1u], lb) != hf) lp_hold_again(a, w);
+        else {
+            if (kept) ukl_atomic_add(&trn[28], 1u);
+            if ((fl & RQ_TAIL) != 0u && (a.pst[h] & RQ_ATEND) != 0u) lp_hold_tail(a, w);
+        }
+        lp_hold_looks(a, w, lb);
+        lp_hold_done(a, w);
+        h = next;
+    }
+}
+
 UKL_INLINE bool lp_collect_close(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar a, PP_GLOBAL uint32_t* trn, uint32_t step) {
     r->cl_on = false;
     r->collecting = false;
@@ -1703,6 +2239,14 @@ UKL_INLINE bool lp_collect_close(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u,
     if (!ok) {
         r->mem[0].top = ukl_min(r->cl_cstart, r->cfree); r->mem[1].top = r->cl_o1;
         return false;
+    }
+    // A top call of the text: a request (decision 0613 §4).
+    // A call a request reads at its own level (not in an argument, its arguments in one frame): a request too.
+    // Not one a `(` follows: its tail (a function-like name last) would make its holder read it again.
+    // A piece's call whose name is the text's (as the memo's: one a result's last name begins reads past that result).
+    if ((r->rq_on && r->nc == 0u && r->sp == 1u && (r->cl_name.src & P_KIND) == P_TOP) || (r->rq_sub && r->nc == 1u && r->cl_sp == r->sp)) {
+        uint32_t edge = lp_rq_edge(r, u, a);
+        if ((edge & RQ_NEXTP) == 0u) return lp_rq_post(r, o, u, a, trn, r->cl_m, nargs, tab, r->cl_cstart, r->cl_nsp, r->cl_org, r->cl_name.st, edge);
     }
     // A top call's result found in the memo: what it read is given back, its result written.
     if (lp_memo_close(r, o, u, a, trn, nargs, tab, step)) return true;
@@ -1760,20 +2304,49 @@ UKL_INLINE void lp_join(PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL const uint32
     opv[e] -= 1u;
 }
 
-// Chunk `c` of the output's (`lp_flush`): each entry at its place in the output's order (`ORDER`,
-// the sixth column: its piece's first place, `opbase`, and its number in the piece, less the
-// piece's first where it is its predecessor's), its tokens' place the output's (its piece's
-// first token's, `obase`, the scan's: past it the piece's own). A thread a chunk.
-UKL_INLINE void lp_place(PP_GLOBAL uint32_t* out, uint32_t cap, PP_GLOBAL const uint32_t* front, PP_GLOBAL const uint32_t* joined, PP_GLOBAL const uint32_t* obase, PP_GLOBAL const uint32_t* opbase, uint32_t c) {
-    if (c >= front[0] || c >= cap / LP_OCHUNK) return;
-    PP_GLOBAL const uint32_t* ch = out + 6u * cap + 3u * c;
-    uint32_t s0 = ch[0], li = ch[1], n = ch[2];
-    uint32_t drop = joined[s0] != 0u ? 1u : 0u, vb = obase[s0], pb = opbase[s0];
-    for (uint32_t j = 0u; j < n; j++) {
-        uint32_t e = c * LP_OCHUNK + j, l = li + j;
-        if (l < drop) continue;
-        if (pb + l - drop < cap) out[5u * cap + pb + l - drop] = e;
-        out[3u * cap + e] += vb;
+// The roll-up (decision 0613 §6), a thread a piece: its chunks walked in order (`LP_CHW`'s link), its holes'
+// results' tokens and leaves (`lp_rq_end`'s) added to its counts (`v`, `opv`: a hole is a piece of none).
+UKL_INLINE void lp_roll_count(Ar a, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL const uint32_t* start, PP_GLOBAL uint32_t* v, PP_GLOBAL uint32_t* opv, uint32_t s) {
+    if (s >= n_toks[0] || start[s] == 0u) return;
+    uint32_t cap = a.out_cap, nc = cap / LP_OCHUNK, dv = 0u, dp = 0u;
+    for (uint32_t c = lp_pchunk(a)[s], k = 0u; c < nc && k < nc; k++) {
+        PP_GLOBAL const uint32_t* ch = a.out + 6u * cap + LP_CHW * c;
+        for (uint32_t j = 0u; j < ch[2]; j++) {
+            uint32_t w = c * LP_OCHUNK + j;
+            if (a.out[w] != (P_SPAN | LP_HOLESRC)) continue;
+            uint32_t rq = a.out[2u * cap + w];
+            dv += a.psrc[rq + 3u]; dp += a.pst[rq + 3u];
+            dp -= 1u;
+        }
+        c = ch[3];
+    }
+    v[s] += dv; opv[s] += dp;
+}
+// Each of piece `s`'s output pieces at its place in the output's order (`ORDER`, the sixth column: the
+// piece's first place, `opbase`, and its number in the piece, less the piece's first where it is its
+// predecessor's), its tokens' place the output's (its piece's first token's, `obase`, and the holes'
+// tokens before it); a hole's leaves in order (`lp_leaves`, `cap` past their entries'), a thread a piece.
+UKL_INLINE void lp_roll_place(Ar a, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL const uint32_t* start, PP_GLOBAL const uint32_t* joined, PP_GLOBAL const uint32_t* obase, PP_GLOBAL const uint32_t* opbase, uint32_t s) {
+    if (s >= n_toks[0] || start[s] == 0u) return;
+    uint32_t cap = a.out_cap, nc = cap / LP_OCHUNK;
+    uint32_t drop = joined[s] != 0u ? 1u : 0u, vb = obase[s], slot = opbase[s], l = 0u, hv = 0u;
+    for (uint32_t c = lp_pchunk(a)[s], k = 0u; c < nc && k < nc; k++) {
+        PP_GLOBAL const uint32_t* ch = a.out + 6u * cap + LP_CHW * c;
+        for (uint32_t j = 0u; j < ch[2]; j++, l++) {
+            uint32_t w = c * LP_OCHUNK + j;
+            if (l < drop) continue;
+            if (a.out[w] == (P_SPAN | LP_HOLESRC)) {
+                uint32_t rq = a.out[2u * cap + w], t = 0u, n = 0u;
+                lp_leaves(a, a.psrc[rq + 2u], a.pst[rq + 2u], a.out + 5u * cap, cap, slot, a.out[cap + w], true, &t, &n);
+                a.out[3u * cap + w] += vb + hv;
+                slot += n; hv += t;
+                continue;
+            }
+            if (slot < cap) { a.out[5u * cap + slot] = w; a.out[7u * cap + slot] = 0u; }
+            a.out[3u * cap + w] += vb + hv;
+            slot++;
+        }
+        c = ch[3];
     }
 }
 // A piece whose last piece the next pieces' heads continue (`lp_join`): that piece grows by their
@@ -2062,7 +2635,8 @@ UKL_INLINE void lp_list_take(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar 
 // and the tokens before the first that may act are the thread's next steps without a lookup.
 UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint32_t* state, PP_GLOBAL const uint32_t* lookups, PP_GLOBAL const uint32_t* start, PP_GLOBAL uint32_t* v, PP_GLOBAL uint32_t* opv, PP_GLOBAL uint32_t* lob, PP_GLOBAL uint32_t* plast,
                          PP_GLOBAL uint32_t* pend, PP_GLOBAL uint32_t* pjoin, PP_GLOBAL uint32_t* joined, PP_GLOBAL uint32_t* trn, PP_GLOBAL uint32_t* ovr, PP_GLOBAL uint32_t* grid, uint32_t s0,
-                         UKL_LOCAL LpRun* rp, bool me, uint32_t ln, uint32_t lead __UKL_PARAMS) {
+                         uint32_t rq, bool again, UKL_LOCAL LpRun* rp, bool me, uint32_t ln, uint32_t lead __UKL_PARAMS) {
+    // A request's run (`rq` its record, decision 0613 §4), or a piece's (read again inline: `again`).
     // The piece reads to the next piece's start `e`; a call it reads past `e` (a body's call left open,
     // `#define C F(`, its arguments in the text after it) goes on, and the piece ends at the first
     // start it reaches back at the top (`ee`): the pieces between are its (`lp_swallow`).
@@ -2073,13 +2647,23 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
         re = lp_run_end(u, s0); e = s0 + 1u; ee = re;
         while (e < re && start[e] == 0u) e++;
         o.src = 0u; o.st = 0u; o.len = 0u; o.fl = 0u; o.np = 0u; o.nv = 0u; o.nf = 0u; o.head = 0u; o.s0 = s0;
-        o.cb = LP_NONE; o.cf = 0u; o.last = LP_NONE; o.hn = 0u; o.h0 = 0u; o.h1 = 0u; o.h2 = 0u; o.h3 = 0u; o.out = a.out; o.front = &a.ctl[20]; o.cap = a.out_cap;
+        o.cb = LP_NONE; o.cf = 0u; o.last = LP_NONE; o.hn = 0u; o.c0 = LP_NONE; o.h0 = 0u; o.h1 = 0u; o.h2 = 0u; o.h3 = 0u; o.out = a.out; o.front = &a.ctl[20]; o.cap = a.out_cap;
         rp->fr[(0) & (LP_DEPTH - 1u)].kind = FK_TOP; rp->fr[(0) & (LP_DEPTH - 1u)].def = LP_NONE; rp->fr[(0) & (LP_DEPTH - 1u)].at = s0; rp->fr[(0) & (LP_DEPTH - 1u)].end = re; rp->fr[(0) & (LP_DEPTH - 1u)].mark = 0u; rp->fr[(0) & (LP_DEPTH - 1u)].nsp = 0u; rp->fr[(0) & (LP_DEPTH - 1u)].org = LP_NONE;
         rp->sp = 1u; rp->nc = 0u; rp->last = s0; rp->s0 = s0; rp->collecting = false; rp->stop = 0u;
         rp->line = u.sc.runs == 0u; rp->state = state; rp->ops = ops; rp->raw = 0u; rp->clast = LP_NONE; rp->crank = 0u;
         rp->cfree = 0u; rp->mon = 0u; rp->cl_sp = 0u;
         rp->sl_lo = 1u; rp->sl_hi = 0u; rp->sl_base = 0u; rp->fl_lo = 1u; rp->fl_hi = 0u; rp->run = 0u; rp->noask = false; rp->cl_on = false; rp->w_src = LP_NONE; rp->w_at = 0u; rp->w_end = 0u;
         for (uint32_t x = 0u; x < 5u; x++) { rp->mem[x].base = 0u; rp->mem[x].cap = 0u; rp->mem[x].top = 0u; }
+        rp->rq = rq; rp->rq_me = s0; rp->rq_lb = LP_NONE; rp->rq_lvl = 0u; rp->rq_sub = false; rp->rq_tail = false; rp->rq_own = false; rp->rq_on = rq == LP_NONE && !again && !rp->line;
+        if (rq != LP_NONE) {
+            // Its end ends its reading (`STOP`): what follows its call is its piece's.
+            rp->fr[0].kind = FK_STOP; rp->fr[0].at = 0u; rp->fr[0].end = 0u; rp->line = false;
+            lp_rq_begin(rp, u, a, rq);
+        } else if (!again) {
+            lp_preq(a)[s0] = 1u; lp_pflag(a)[s0] = 0u;
+        } else {
+            lp_void(a, s0);
+        }
     }
     bool live = me;
     for (;;) {
@@ -2219,6 +2803,8 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                 LpTok t; bool at_stop = false;
                 if (!lp_lex(rp, a, lob, o.nv, &t, &at_stop)) {
                     if (!at_stop) break;
+                    // A request's end: its result is read.
+                    if (rp->rq != LP_NONE && rp->sp == 1u) break;
                     // An argument's end: its expansion is the call's, and the call goes on.
                     UKL_LOCAL LpCall* c = &rp->calls[(rp->nc - 1u) & (LP_CALLS - 1u)];
                     uint32_t e1 = rp->mem[1].base + c->tab + c->p, live = a.pn[e1];
@@ -2275,8 +2861,9 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     // A built-in (`Pp::builtin`): one token, a configuration's test, or `_Pragma`; any other the
                     // device does not know is refused.
                     plain = true;
-                    // A top call's expansion that reads one is not kept (its place is the call's).
-                    rp->mon = 0u; rp->mem[4].top = 0u;
+                    // A top call's expansion that reads one is not kept (its place is the call's), nor a request's
+                    // shared (`RQ_OWN`).
+                    rp->mon = 0u; rp->mem[4].top = 0u; rp->rq_own = true;
                     if (m == L_BUILTIN) {
                         px_refuse(a.ctl, X_BUILTIN);
                     } else if (px_one_token(m)) {
@@ -2284,6 +2871,10 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     } else if (lp_next_is_lparen(rp, u, a)) {
                         if (m == L_FEATURE) {
                             t = lp_feature(rp, u, a, lob, o.nv, t);
+                        } else if (rp->rq != LP_NONE) {
+                            // A pragma's row is placed by the output's: its piece reads it.
+                            rp->stop = LP_INLINE;
+                            break;
                         } else {
                             lp_pragma(rp, u, a, lob, o.nv, lp_space(u, t));
                             if (rp->stop != 0u) break;
@@ -2292,7 +2883,7 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     }
                     if (rp->stop != 0u) break;
                 }
-                if (!plain) lp_memo_look(rp, a, m);
+                if (!plain) { lp_memo_look(rp, a, m); lp_rq_look(a, rp->rq_lb, m); }
                 if (!plain && lp_disabled(rp, a, m)) { t.flags |= T_NOEXP; plain = true; }
                 PpDef d = u.defs[0];
                 if (!plain) {
@@ -2318,6 +2909,14 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     }
                     continue;
                 }
+                // A top object-like macro of the text: a request (decision 0613 §4).
+                if (rp->rq_on && rp->nc == 0u && rp->sp == 1u) {
+                    uint32_t edge = lp_rq_edge(rp, u, a);
+                    if ((edge & RQ_NEXTP) == 0u) {
+                        if (!lp_rq_post(rp, &o, u, a, trn, m, 0u, 0u, rp->mem[0].top, nsp, t.org, t.st, edge)) break;
+                        continue;
+                    }
+                }
                 // An object-like macro: its body read in place, or, with a `##`, substituted (its pastes).
                 bool pastes = false;
                 for (uint32_t i = 0u; i < d.n_body; i++) pastes = pastes || (u.items[d.ifirst + i] & I_PASTE) != 0u;
@@ -2332,7 +2931,17 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                 UKL_LOCAL LpFrame* f = &rp->fr[(rp->sp++) & (LP_DEPTH - 1u)];
                 f->kind = FK_BODY; f->def = m; f->at = 0u; f->end = d.n_body; f->mark = rp->mem[0].top; f->nsp = nsp; f->org = t.org;
             }
-            if (!ask) {
+            if (!ask && rp->rq != LP_NONE) {
+                if (rp->stop == LP_ROOM) px_refuse(a.ctl, X_ROOM);
+                if (rp->stop == LP_DEEP) px_refuse(a.ctl, X_DEPTH);
+                uint64_t dt = ukl_clock_ns() - t0;
+                uint32_t ns = dt > 0xffffffffull ? 0xffffffffu : (uint32_t)dt;
+                if (ukl_atomic_max(&trn[16], step) < step) { trn[17] = s0; trn[18] = LP_NONE; trn[19] = 0u; }
+                if (ukl_atomic_max(&trn[20], ns) < ns) { trn[21] = s0; trn[22] = step; trn[23] = LP_NONE; }
+                ukl_atomic_add(&trn[24], ns / 1000u); ukl_atomic_add(&trn[25], step);
+                lp_rq_end(rp, a, step);
+                live = false;
+            } else if (!ask) {
                 // The last piece top text to the end, inside the run: the next pieces' heads may continue it.
                 bool tail = rp->stop == 0u && o.len != 0u && (o.src & P_KIND) == P_TOP && (o.fl & PF_NOEXP) == 0u && o.st + o.len == ee && ee < re;
                 lp_flush(&o);
@@ -2340,7 +2949,8 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                 if (rp->stop == LP_DEEP) px_refuse(a.ctl, X_DEPTH);
                 {
                     pend[s0] = ee; pjoin[s0] = o.head | (tail ? LJ_TAIL : 0u); joined[s0] = 0u; plast[s0] = o.last;
-                    ukl_atomic_add(&trn[13], 1u);
+                    lp_pchunk(a)[s0] = o.c0;
+                    if (!again) ukl_atomic_add(&trn[13], 1u);
                     // The longest piece's steps (`TRN` 16), its start, its end read and its tokens out (17 to 19), for measurements.
                     if (ukl_atomic_max(&trn[16], step) < step) { trn[17] = s0; trn[18] = ee; trn[19] = o.nv; }
                     // The longest by the device's clock (where it has one, `ukl_clock_ns`): its ns, start, steps, end.
@@ -2354,6 +2964,8 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     ovr[s0] = ee > e ? 1u : 0u;
                     if (ee > e) ukl_atomic_add(&trn[15], 1u);
                 }
+                // Its holes' results may still be read; the last of them, or this, ends it (`lp_piece_done`).
+                if (!again) lp_piece_done(a, s0);
                 live = false;
             }
         }
@@ -2469,20 +3081,46 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
 UKL_INLINE void lp_run(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint32_t* state, PP_GLOBAL const uint32_t* lookups, PP_GLOBAL const uint32_t* start, PP_GLOBAL uint32_t* v, PP_GLOBAL uint32_t* opv, PP_GLOBAL uint32_t* lob, PP_GLOBAL uint32_t* plast,
                        PP_GLOBAL uint32_t* pend, PP_GLOBAL uint32_t* pjoin, PP_GLOBAL uint32_t* joined, PP_GLOBAL uint32_t* trn, PP_GLOBAL uint32_t* ovr, PP_GLOBAL uint32_t* grid, PP_GLOBAL const uint32_t* list, uint32_t ln,
                        UKL_LOCAL LpRun* rp __UKL_PARAMS) {
-    // The pieces claimed from the list of starts (`lp_queue`), the next one a SIMD group's lane 0 takes
-    // (`TRN` 26) while one is left: a group that ends a short piece takes another, so the team's groups
-    // end together whatever the pieces' lengths and places (a group a window of 32 tokens ran 1.5 times
-    // the even share on `tif_getimage.c`, 2026-11-22). `ln` is the lane.
+    // The items taken from the unit's queue (`lp_wq`, decision 0613 §4): its pieces, then the requests they
+    // post and the pieces read again, a SIMD group's lane 0 taking the next while one is left: a group that
+    // ends a short item takes another, so the team's groups end together whatever the items' lengths (a
+    // group a window of 32 tokens ran 1.5 times the even share on `tif_getimage.c`, 2026-11-22). An idle
+    // group polls while any item is being read (it may post more), at most `LP_IDLE_POLLS` times. `ln` is
+    // the lane.
+    (void)list;
+    UklWorkQueue q = lp_wq(a);
+    uint32_t polls = 0u;
+    if (ln == 0u) { rp->sc_cap = 0u; rp->sp_cap = 0u; }
     for (;;) {
-        uint32_t k = 0u;
-        if (ln == 0u) k = ukl_atomic_add(&trn[26], 1u);
-        k = ukl_sg_shuffle(k, 0u __UKL_ARGS);
-        if (k >= trn[27]) break;
-        uint32_t at = ukl_sg_shuffle(ln == 0u ? list[k] : 0u, 0u __UKL_ARGS);
-        lp_piece(u, a, ops, state, lookups, start, v, opv, lob, plast, pend, pjoin, joined, trn, ovr, grid, at, rp, ln == 0u, ln, 0u __UKL_ARGS);
+        uint32_t item = 0u;
+        bool got = false;
+        if (ln == 0u) got = ukl_wq_take(q, &item);
+        got = ukl_sg_shuffle(got ? 1u : 0u, 0u __UKL_ARGS) != 0u;
+        if (!got) {
+            bool idle = false;
+            if (ln == 0u) {
+                idle = ukl_wq_idle(q, &polls, LP_IDLE_POLLS);
+                if ((polls & 255u) == 255u) ukl_grid_beat(grid);
+            }
+            if (ukl_sg_shuffle(idle ? 1u : 0u, 0u __UKL_ARGS) != 0u) break;
+            continue;
+        }
+        polls = 0u;
+        // What its poster wrote before the push (a request's record, its arguments' entries; a piece read again,
+        // its requests' results) seen by every lane: the take's acquire.
+        ukl_fence_device();
+        item = ukl_sg_shuffle(item, 0u __UKL_ARGS);
+        uint32_t kind = item & LQ_KIND, x = item & ~LQ_KIND;
+        uint32_t s0 = kind == LQ_REQ ? (ln == 0u ? a.psrc[x + 6u] : 0u) : x;
+        if (kind == LQ_FIN) {
+            if (ln == 0u) lp_rq_finish(a, trn, x);
+        } else {
+            lp_piece(u, a, ops, state, lookups, start, v, opv, lob, plast, pend, pjoin, joined, trn, ovr, grid, s0, kind == LQ_REQ ? x : LP_NONE, kind == LQ_AGAIN, rp, ln == 0u, ln, 0u __UKL_ARGS);
+        }
+        if (ln == 0u) ukl_wq_done(q);
     }
 }
-// The starts in order (`lp_run`'s list): a start `s` at its rank among them (`at`, their scan).
-UKL_INLINE void lp_queue(PP_GLOBAL const uint32_t* start, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL uint32_t* list, uint32_t s) {
-    if (s < n_toks[0] && start[s] != 0u) list[at[s]] = s;
+// The pieces into the unit's queue (`lp_run`'s items): a start `s`.
+UKL_INLINE void lp_queue(Ar a, PP_GLOBAL const uint32_t* start, PP_GLOBAL const uint32_t* n_toks, uint32_t s) {
+    if (s < n_toks[0] && start[s] != 0u && !ukl_wq_push(lp_wq(a), LQ_PIECE | s)) px_refuse(a.ctl, X_ROOM);
 }

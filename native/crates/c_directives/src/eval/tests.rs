@@ -53,7 +53,8 @@ fn the_evaluator_copies_no_tape() {
 
 /// §5 of decision 0468: the evaluator is UKL, launched through the lane: its source has no MSL
 /// (no Metal kernel, attribute, address space or SIMD function of its own) and takes UKL's grid.
-/// Its expansion is a loop a thread a piece (decision 0588): no work queue, no rounds, no pool.
+/// Its expansion is the loop's (decision 0588: no rounds, no pool), its pieces and requests items of one
+/// work queue in the block (decision 0613 §4: UKL's), taken by the SIMD groups.
 #[test]
 fn the_evaluator_is_ukl() {
     let src = rerail_metal::pp_arena::source();
@@ -62,7 +63,7 @@ fn the_evaluator_is_ukl() {
         assert!(code.is_empty(), "the evaluator's source has MSL `{msl}`: {code:?}");
     }
     assert!(src.contains("#include <ukl/grid.h>"), "UKL's grid");
-    assert!(!src.contains("#include <ukl/workqueue.h>") && !src.contains("ukl_wq_"), "no work queue (decision 0588)");
+    assert!(src.contains("#include <ukl/workqueue.h>") && src.contains("ukl_wq_take"), "the requests' queue is UKL's (decision 0613 §4)");
     for rounds in ["px_drain", "PX_DRAIN", "px_item", "ukl_pool_", "<ukl/pool.h>", "PxList"] {
         assert!(!src.contains(rounds), "the rounds' `{rounds}` (decision 0588: the loop alone)");
     }
@@ -1314,7 +1315,8 @@ fn a_definition_changed_between_uses_is_expanded_again() {
 }
 
 /// Decision 0613 §1: a result that reads a place's built-in (`__LINE__`, `__COUNTER__`) or the text
-/// past its `)` (a function-like name at its end) is not kept.
+/// past its `)` (a function-like name at its end) is not kept; nor (§4) one whose call inside it, a request
+/// of its own, reads one (`C`'s `L()`, on four lines: a tensorflow test printed another line's `__LINE__`).
 #[test]
 fn place_builtins_are_not_memoized() {
     let src = "#define L(x) x __LINE__\nL(a)\nL(a)\nL(a) L(a)\n";
@@ -1325,7 +1327,11 @@ fn place_builtins_are_not_memoized() {
     let (got, want, (hits, kept)) = expanded_memo(&[("main.c", src)], false);
     same(show(&got.expect("refused")), show(&want), "an open tail");
     same((hits, kept), (0, 0), "the memo's hits and results");
-    let shapes: &[&[(&str, &str)]] = &[&[("main.c", "#define C(x) x __COUNTER__\nC(a) C(a)\nC(a)\n")]];
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define C(x) x __COUNTER__\nC(a) C(a)\nC(a)\n")],
+        &[("main.c", "#define L() __LINE__\n#define C(x) [x L()]\nC(a)\nC(a)\n\nC(a) C(a)\n")],
+        &[("main.c", "#define K() __COUNTER__\n#define C(x) [x K()] x\nC(a)\nC(a) C(a)\nC(a)\n")],
+    ];
     shapes_agree(shapes);
 }
 

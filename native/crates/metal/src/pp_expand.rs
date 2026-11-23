@@ -1066,6 +1066,9 @@ pub const X_QUEUE: u32 = 64;
 const P_TOP: u32 = 0;
 const P_BODY: u32 = 1 << 30;
 const P_KIND: u32 = 3 << 30;
+/// A piece of a source in the tokens' store (`pp_loop.uglykl`'s `P_SPAN`), the top text's (`LP_TOPSRC`).
+const P_SPAN: u32 = 3 << 30;
+const LP_TOPSRC: u32 = 0x3fff_ffff;
 const PN_LEN: u32 = 0xff_ffff;
 pub const X_HASH: u32 = 128;
 pub const X_ACROSS: u32 = 256;
@@ -1125,6 +1128,9 @@ pub struct Exp {
     /// The tokens' columns, `tok_cap` words each: the source, the length and flags, the start and
     /// the origin (decision 0520).
     tokens: Buf,
+    /// The loop's queue and its pieces' words (`LPQ`, decision 0613 §4), for tops of `lpq_top` tokens.
+    lpq: Buf,
+    lpq_top: u32,
     pub ctl: Buf,
     // `__COUNTER__`'s uses and their room.
     cnt: Buf,
@@ -1221,6 +1227,10 @@ impl Exp {
             opbase: zeroed(top)?,
             opscan: Scan::new(arena)?,
             tokens: zeroed(tok * 4)?,
+            // The queue's slots (`lpq_cap`: the pieces', the requests' and their ends', a request's record
+            // `RQ_ENTRIES` of the tokens' rows), then the pieces' three words.
+            lpq: zeroed(16 + 3 * top + 64 + tok / 3 + 3 * top)?,
+            lpq_top: top as u32,
             ctl: arena.from_slice(&ctl)?,
             cnt: zeroed(2 + 2 * cnt_cap)?,
             tr_sk: arena.zeroed::<u64>(cnt_cap)?,
@@ -1237,7 +1247,7 @@ impl Exp {
             lb_cap: lb_cap as u32,
             // The output's pieces: five columns, `out` words each (decision 0520 §3), their order and
             // the loop's chunks (`lp_flush`).
-            out: zeroed(7 * out)?,
+            out: zeroed(8 * out)?,
             sc_tok: [(); 6].map(|()| zeroed(sc)).into_iter().collect::<Result<Vec<_>, _>>()?.try_into().map_err(|_| crate::pp_arena::failure(concat!(file!(), ":", line!())))?,
             sc_ckeys: arena.zeroed::<u64>(sc)?,
             sc_sort: Sort::new(arena, sc)?,
@@ -1253,6 +1263,7 @@ impl Exp {
         l.at("XPOS", &self.xpos).at("V", &self.v).at("OBASE", &self.obase).at("LOB", &self.lob).at("PLAST", &self.plast).at("VTOTAL", &self.vscan.total);
         l.at("OPV", &self.opv).at("OPBASE", &self.opbase).at("OPTOTAL", &self.opscan.total);
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
+        l.at("LPQ", &self.lpq).word("LPQ_TOP", self.lpq_top);
         l.word("OUT_CAP", self.out_cap);
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
         l.at("TR_SK", &self.tr_sk).at("TR_NK", &self.tr_nk).at("TR_TY", &self.tr_ty).at("TO_F", &self.to_f).at("TO_S", &self.to_s);
@@ -1390,7 +1401,7 @@ impl Exp {
         let n = *words(&self.vscan.total).first().ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))? as usize;
         let cap = self.out_cap as usize;
         let np = (*words(&self.opscan.total).first().ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))? as usize).min(cap);
-        let o = words(&self.out).get(..6 * cap).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
+        let o = words(&self.out).get(..8 * cap).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
         let n_gaps = *words(&vis.n_gaps).first().ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))? as usize;
         let gat = words(&vis.gat).get(..n_gaps).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
         let firsts = words(&vis.gfirsts);
@@ -1399,13 +1410,31 @@ impl Exp {
         let d = unsafe { std::slice::from_raw_parts(defs.defs.host().cast::<PpDef>(), defs.defs.byte_length() / std::mem::size_of::<PpDef>()) };
         let mut out = Vec::with_capacity(n);
         let show = std::env::var_os("RERAIL_PP_PIECES").is_some();
+        // The tokens' store: its columns (`Ar`'s), the leaves of the requests' results among its entries.
+        let tw = words(&self.tokens);
+        let tc = tw.len() / 4;
         for i in 0..np {
-            // The loop's order of its pieces (`lp_place`).
+            // The loop's order of its pieces (`lp_roll_place`): an output piece of its own, or (`cap` past its
+            // entry's) a leaf of a request's result in the tokens' store (decision 0613 §6), read in place.
             let e = o[5 * cap + i] as usize;
-            if e >= cap {
-                return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
-            }
-            let (src, len, st) = (o[e], o[cap + e] & PN_LEN, o[2 * cap + e]);
+            let (src, len, st) = if e < cap {
+                (o[e], o[cap + e] & PN_LEN, o[2 * cap + e])
+            } else {
+                let x = e - cap;
+                if x >= tc {
+                    return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
+                }
+                // A hit's leaves of the text are its own call's tokens, its `(` this far past the first's (the
+                // order's eighth column, `lp_rq_post`).
+                let (src, fl, st) = (tw[x], tw[tc + x], tw[2 * tc + x]);
+                let (src, len) = if src & P_KIND == P_SPAN {
+                    let sub = src & !P_KIND;
+                    (if sub == LP_TOPSRC { P_TOP } else { P_BODY | sub }, fl >> 4)
+                } else {
+                    (src, 1)
+                };
+                (src, len, if src & P_KIND == P_TOP { st.wrapping_add(o[7 * cap + i]) } else { st })
+            };
             if show {
                 eprintln!("piece {i}: kind {} def {} start {st} len {len} at {}", src >> 30, src & !P_KIND, o[3 * cap + e]);
             }
@@ -1762,7 +1791,10 @@ impl<'u> Runs<'u> {
         if std::env::var_os("RERAIL_PP_LOOP_LOG").is_some() {
             // SAFETY: the device finished; `trn` holds 32 words, 16 to 19 the longest piece's, 20 to 23 the slowest's.
             let w = |k: usize| unsafe { *exp.trn.host().cast::<u32>().add(k) };
-            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29));
+            // SAFETY: as `w`: the queue's control words (`LPQ`, 16), 5 to 7 the requests posted, the pieces read
+            // again and the requests' steps.
+            let q = |k: usize| unsafe { *exp.lpq.host().cast::<u32>().add(k) };
+            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept; requests {}, {} steps, pieces read again {}; tokens {:?} rung {} top {}", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29), q(5), q(7), q(6), exp.room()[0], x.rung, p1.top);
         }
         // The loop's work, where the run reached the text (a round that ends at its requests did not): the
         // unit's, kept for its next run and its next evaluation.
@@ -1828,7 +1860,7 @@ impl<'u> Runs<'u> {
         // out, its items read what was never written (a list cut short reads as a call past its
         // end), so its other refusals are the larger run's to give.
         if refused & X_ROOM != 0 && self.x_tries + 1 < EXP_RUNGS {
-            why("the expansion");
+            why(&format!("the expansion: {:?} (tok, sb, st, out: used, room)", exp.room()));
             if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
                 eprintln!("expansion room at rung {rung}: (used, cap) {:?} {:?}", ROOM_STORES, exp.room());
             }

@@ -70,6 +70,7 @@
               AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP), AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), \
               AT(uint32_t, CNT), W(CNT_CAP), AT(const uint32_t, LDELTA), AT(const uint32_t, LCTL)[0], &xu, &xa); \
     xu.vai = AT(const uint32_t, VAI); xu.irows = AT(const uint32_t, IROWS); xu.trows = AT(const uint32_t, TROWS);                         \
+    xa.lpq = AT(uint32_t, LPQ); xa.lpq_top = W(LPQ_TOP);                                               \
     xu.tnode = is_if ? AT(const uint32_t, IF_NODES) : AT(const uint32_t, TOPNODE)
 
 // The arena made ready for another top: its fronts back to the file literals' (`CTL` 6 and 7 keep
@@ -267,16 +268,23 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
             }
             BARRIER();
         }
-        // The pieces' starts in order (`lp_queue`), the list the SIMD groups claim from (`TRN` 26 the next, 27
-        // the count). `XAT` and `XPOS` are the overruns' only in a pass run again, before this.
-        SCAN(nt, XFLAG, XAT, XTOTAL);
-        EACH(s, nt) lp_queue(AT(const uint32_t, XFLAG), AT(const uint32_t, XAT), toks, AT(uint32_t, XPOS), s);
+        // The unit's queue emptied (`LPQ`: its control and slots), then its pieces pushed (`lp_queue`), the items
+        // the SIMD groups take (decision 0613 §4).
+        ONE(x) for (uint32_t i = 0u; i < LPQ_CTL; i++) AT(uint32_t, LPQ)[i] = 0u;
+        // Its slots (`lpq_cap`: `WORDS[1]` the tokens' room).
+        EACH(i, 3u * W(LPQ_TOP) + 64u + AT(const uint32_t, WORDS)[1] / 3u) AT(uint32_t, LPQ)[LPQ_CTL + i] = 0u;
         // The memo's table (`lp_memo_*`): the tokens' store's first pairs, free (the store is empty here: its
-        // front is 0), and its definitions' hot bits (`LP_MEMO_HOT`); the front past them.
+        // front is 0), its definitions' hot and own bits (`LP_MEMO_HOT` each), the requests' table (`lp_rq_table`,
+        // `lp_rq_size`); the front past them.
         uint32_t mt = lp_memo_size(nt, AT(const uint32_t, WORDS)[1]);
         EACH(i, mt) AT(uint32_t, TOKENS)[LP_MEMO_STRIDE * i] = 0u;
-        EACH(i, mt != 0u ? LP_MEMO_HOT : 0u) AT(uint32_t, TOKENS)[LP_MEMO_STRIDE * mt + i] = 0u;
-        ONE(x) { AT(uint32_t, TRN)[26] = 0u; AT(uint32_t, TRN)[27] = AT(const uint32_t, XTOTAL)[0]; AT(uint32_t, TRN)[30] = mt; AT(uint32_t, CTL)[0] = mt != 0u ? LP_MEMO_STRIDE * mt + LP_MEMO_HOT : 0u; }
+        EACH(i, mt != 0u ? 2u * LP_MEMO_HOT + lp_rq_size(mt) : 0u) AT(uint32_t, TOKENS)[LP_MEMO_STRIDE * mt + i] = 0u;
+        ONE(x) { AT(uint32_t, TRN)[30] = mt; AT(uint32_t, CTL)[0] = mt != 0u ? lp_rq_table(mt) + lp_rq_size(mt) : 0u; }
+        BARRIER();
+        {
+            PX_UA(DR);
+            EACH(s, nt) lp_queue(xa, AT(const uint32_t, XFLAG), toks, s);
+        }
         BARRIER();
         {
             PX_UA(DR);
@@ -289,7 +297,15 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
                        g.lid & (UKL_SIMD_WIDTH - 1u), &tg->lp[(g.lid / UKL_SIMD_WIDTH) % LP_SLOTS] __UKL_ARGS);
         }
         BARRIER();
+        // Items left (an idle bound reached) or the queue past its room: refused.
+        ONE(x) if (AT(const uint32_t, LPQ)[2] != 0u || AT(const uint32_t, LPQ)[3] != 0u) px_refuse(AT(uint32_t, CTL), X_ROOM);
     }
+    // The roll-up (decision 0613 §6): each piece's holes' tokens and leaves in its counts (`lp_roll_count`).
+    {
+        PX_UA(DR);
+        EACH(s, nt) lp_roll_count(xa, toks, AT(const uint32_t, XFLAG), AT(uint32_t, V), AT(uint32_t, OPV), s);
+    }
+    BARRIER();
     // The pieces' joins (`lp_join`): their ends and join words, in the stores the marks no longer need.
     EACH(s, nt) lp_join(toks, AT(const uint32_t, XFLAG), AT(const uint32_t, DELTA), AT(const uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, OPV), s);
     BARRIER();
@@ -304,9 +320,12 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
         c_[14] = ukl_max(c_[14], need);
         if (need > W(OUT_CAP)) px_refuse(c_, X_ROOM);
     }
-    // The output's order and places (`lp_place`), the joins' lengths (`lp_extend`), then each top
-    // token's place (`lp_obase`: `lp_place` reads its piece's first's, the scan's).
-    EACH(c, ukl_min(chunks, W(OUT_CAP) / LP_OCHUNK)) lp_place(AT(uint32_t, OUT), W(OUT_CAP), AT(const uint32_t, CTL) + 20, AT(const uint32_t, THEADS), AT(const uint32_t, OBASE), AT(const uint32_t, OPBASE), c);
+    // The output's order and places (`lp_roll_place`), the joins' lengths (`lp_extend`), then each top
+    // token's place (`lp_obase`: `lp_roll_place` reads its piece's first's, the scan's).
+    {
+        PX_UA(DR);
+        EACH(s, nt) lp_roll_place(xa, toks, AT(const uint32_t, XFLAG), AT(const uint32_t, THEADS), AT(const uint32_t, OBASE), AT(const uint32_t, OPBASE), s);
+    }
     EACH(s, nt) lp_extend(AT(uint32_t, OUT), W(OUT_CAP), toks, AT(const uint32_t, XFLAG), AT(const uint32_t, DELTA), AT(const uint32_t, DEPTH), AT(const uint32_t, THEADS), AT(const uint32_t, OPV), AT(const uint32_t, PLAST), s);
     BARRIER();
     EACH(s, nt) lp_obase(toks, AT(const uint32_t, LOB), AT(uint32_t, OBASE), s);
