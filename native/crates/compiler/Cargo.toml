@@ -11,6 +11,8 @@ test-hooks = ["rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "rerail
 
 [dependencies]
 rerail-context = { path = "../context" }
+# Its error, which the device's runtime returns too.
+rerail-error = { path = "../error" }
 # The engine's tape, which tier 2 writes (decision 0140).
 rerail-tape-format = { path = "../tape_format" }
 # Bitlex's parser, for the grammar's state machine (`grammar`). No dependencies of its own.

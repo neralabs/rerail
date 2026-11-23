@@ -1,0 +1,8 @@
+[package]
+name = "rerail-error"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The error a program's compile and a device's run return (rerail_compiler::Error, rerail_metal::Error)."
+
+[dependencies]

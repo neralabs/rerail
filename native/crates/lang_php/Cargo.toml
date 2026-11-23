@@ -39,7 +39,7 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-rules/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-rules/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests"]
-test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rules/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks", "rerail-forte/test-hooks"]
+test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rules/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-forte/test-hooks"]
 
 [dependencies]
 base64 = "=0.22.1"
@@ -95,8 +95,6 @@ rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-store = { path = "../store" }
 rerail-rules = { path = "../rules", default-features = false }
 rerail-accel = { path = "../../../accel" }
-rerail-compiler = { path = "../compiler" }
-rerail-rr-parser = { path = "../rr_parser" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
