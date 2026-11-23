@@ -97,6 +97,39 @@ fn watched_values_are_counted_exactly_past_the_exact_map() {
     assert_eq!(s.watched(2, 7), None, "a value not watched");
 }
 
+/// Each chunk's documents counted where its rows lie (`documents_scanned_range`, a range of whole documents of a
+/// source holding others too) and the chunks' counts merged (`merge`) are the count of all their documents: the
+/// statistics the run's stats phase takes from its chunks (decision 0458) are those it counted off the batch.
+#[test]
+fn chunks_counts_merged_are_the_count_of_all_their_documents() {
+    let docs: Vec<Vec<i64>> = (1..=24).map(|d| doc(d, 20 + d * 5, d % 4)).collect();
+    let names = || vec!["n".to_owned(), "kind".to_owned(), "name".to_owned()];
+    let from = [0usize, 1, 2];
+    let source = |rows: &[i64]| crate::code_rule_dsl::facts::vtab::Relation::from_rows(&["n", "kind", "name"], &mut rows.as_chunks::<3>().0.iter().map(|r| r.to_vec()));
+    let mut whole = RelStats::new(names());
+    whole.documents_scanned(&source(&docs.concat()), &from, 1);
+    // Three chunks, each of every third document, its rows counted where they lie in a source of all of them.
+    let all = source(&docs.concat());
+    let starts: Vec<usize> = docs.iter().scan(0, |at, d| Some(std::mem::replace(at, *at + d.len() / 3))).collect();
+    let mut merged: Option<RelStats> = None;
+    for chunk in 0..3 {
+        let mut k = RelStats::new(names());
+        for (i, d) in docs.iter().enumerate().filter(|(i, _)| i % 3 == chunk) {
+            k.documents_scanned_range(&all, starts[i], starts[i] + d.len() / 3, &from, 1);
+        }
+        match &mut merged {
+            None => merged = Some(k),
+            Some(m) => assert!(m.merge(&k)),
+        }
+    }
+    let merged = merged.expect("three chunks");
+    assert_eq!(merged.statistics(&|_| true), whole.statistics(&|_| true));
+    assert_eq!(merged.rows(), whole.rows());
+    // Columns that differ are not merged.
+    let mut other = RelStats::new(vec!["n".to_owned()]);
+    assert!(!other.merge(&merged));
+}
+
 /// Kept by delta, the statistics are those of the documents counted in, whatever came and went before: node
 /// and few-valued columns exactly as measured, a many-valued one within the planner's margin. The blob reads
 /// back the same.

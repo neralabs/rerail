@@ -56,10 +56,10 @@ impl<'a> Rows<'a> {
     }
 }
 
-pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within) -> (Rows<'a>, Cands<'a>) {
+pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within, report: bool) -> (Rows<'a>, Cands<'a>) {
     match src {
         Src::In(rel, ix) => {
-            if !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
+            if report && !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
             if keys.is_empty() { (Rows::In(rel), Cands::Range(0, rel.len() as u32)) }
             else if let Some(index) = ix.runs(rel) {
                 // An order answering the key's columns, or leading with some of them (`chain_lead`: every key
@@ -70,7 +70,7 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
                 let found = index.find_at(&rel.rows, rel.k, permuted(&index.cols[..m], at, &mut buf), None, hints);
                 let found = match within {
                     Some((c, lo, hi)) if m == keys.len() && index.cols.get(m) == Some(&c) => {
-                        if probed::on() { probed::note(&format!("{} range", rel.name.get().map_or("?input", String::as_str)), std::iter::once(c)); }
+                        if report { probed::note(&format!("{} range", rel.name.get().map_or("?input", String::as_str)), std::iter::once(c)); }
                         found.within(&rel.rows, rel.k, c, lo, hi)
                     }
                     _ => found,
@@ -132,7 +132,7 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
         }
         Src::FullMulti(r, cols) => {
             let rel = &store.rels[*r];
-            probed::note(&rel.table, cols.iter().copied());
+            if report { probed::note(&rel.table, cols.iter().copied()); }
             (Rows::Comp(rel), rel.probe_at(cols, key, false, hints, within).0)
         }
         Src::Delta(r) | Src::Full(r) => {
@@ -141,7 +141,7 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
             if keys.is_empty() {
                 (Rows::Comp(rel), if delta { Cands::Range(rel.lo as u32, rel.hi as u32) } else { Cands::Range(0, rel.n as u32) })
             } else {
-                if probed::on() { probed::note(&if delta { format!("{}+delta", rel.table) } else { rel.table.clone() }, keys.iter().map(|&(c, _)| c)); }
+                if report { probed::note(&if delta { format!("{}+delta", rel.table) } else { rel.table.clone() }, keys.iter().map(|&(c, _)| c)); }
                 let mut cols = [0usize; MAX_KEY];
                 for (j, &(c, _)) in keys.iter().enumerate() { cols[j] = c; }
                 (Rows::Comp(rel), rel.probe_at(&cols[..keys.len()], key, delta, hints, within).0)
@@ -185,8 +185,28 @@ pub(super) fn holds(step: &Step, store: &Store, slots: &[i64], asked: &mut Asked
         _ => 0,
     };
     let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
-    let (rows, cands) = candidates(src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None);
+    // A whole key of a derived input's index: its sorted hash's candidates (t50 step 5), each checked against its row.
+    if let Src::In(rel, ix) = src
+        && rel.view.is_none()
+        && !keys.is_empty()
+        && keys.len() == ix.cols.len()
+        && ix.runs_kind()
+        && sorted_hash_on()
+    {
+        let h = super::sorted_hash::hash_key(ix.cols.iter().map(|&c| keys.iter().find(|&&(kc, _)| kc == c).map_or(i64::MIN, |&(_, k)| val(k))));
+        return ix.hashed(rel).candidates(h).iter().any(|&id| {
+            let row = rel.at(id as usize);
+            !is_dead(&rel.dead, id) && keys.iter().all(|&(c, k)| row.at(c) == val(k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
+        });
+    }
+    let (rows, cands) = candidates(src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None, probed::on());
     rows.each(cands, need, |id, row| {
         !rows.dead(id) && keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
     })
+}
+
+/// Whether a test of a derived input's whole key asks its sorted hash: `RERAIL_SORTED_HASH=off` (a measurement aid,
+/// the run's setting) asks its index runs, as before.
+fn sorted_hash_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SORTED_HASH").map_or(true, |v| v != "off"))
 }

@@ -33,7 +33,7 @@ pub struct Found {
 /// The text passes on `p`, for a program of `dialect`, as `plan::corpus`'s preparation runs them.
 pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::GrammarDialect) -> Result<Found> {
     if dialect == crate::code_rule_dsl::language::GrammarDialect::Python && !std::env::var("RERAIL_AST_PARTS").is_ok_and(|v| v == "off") {
-        p.rules(&mut Absorb { capture: !std::env::var("RERAIL_AST_PART_CAPTURES").is_ok_and(|v| v == "off"), rewritten: 0 });
+        p.rules(&mut Absorb { capture: !std::env::var("RERAIL_AST_PART_CAPTURES").is_ok_and(|v| v == "off"), parents: !std::env::var("RERAIL_AST_PART_PARENTS").is_ok_and(|v| v == "off"), rewritten: 0 });
     }
     let mut lowering = MatcherRelations::default();
     p.rules(&mut lowering);
@@ -57,7 +57,7 @@ pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::Gra
 /// rule reads further captured: that version and the number of rules rewritten.
 pub fn tree_parts_as_matchers(v: Arc<Version>, capture: bool) -> Result<(Arc<Version>, usize)> {
     let mut p = Pipeline::new("tree-shaped parts as matchers", v);
-    let mut absorb = Absorb { capture, rewritten: 0 };
+    let mut absorb = Absorb { capture, parents: true, rewritten: 0 };
     p.rules(&mut absorb);
     Ok((p.finish()?.0, absorb.rewritten))
 }
@@ -162,16 +162,20 @@ fn fresh(held: &mut HashSet<String>, count: &mut usize, stem: &str) -> String {
 /// `capture`, a field the rule reads further is part of it too, its node the matcher's capture (`"pattern": "$C1"`,
 /// `C1: x`: decision 0107). Only a field a node of kind `K` holds at most one of ([`single_field`]): a matcher's
 /// `field` is the field's first node, where `field(r, "F", x)` is each of them (`import os, sys`'s two names). A field
-/// tested without a kind stays a join. `rewritten` counts the rules rewritten.
+/// tested without a kind stays a join. With `parents`, a negated parent edge of the root, `!field(_, "F", r)` (the
+/// root is no parent's field `F`, whatever the parent's kind), is the matcher's `{"not": {"inside": {"pattern":
+/// "$_P", "field": "F", "stopBy": "neighbor"}}}`, tested in its pass rather than probed per row as an anti-join (t50
+/// step 6), where the rule is a matcher for its fields anyway. `rewritten` counts the rules rewritten.
 struct Absorb {
     capture: bool,
+    parents: bool,
     rewritten: usize,
 }
 
 impl RulePass for Absorb {
     const NAME: &'static str = "tree patterns as matchers";
     fn settings(&self) -> Vec<u8> {
-        vec![self.capture as u8]
+        vec![self.capture as u8, self.parents as u8]
     }
     fn rule(&mut self, cx: &Cx<'_>, r: RuleRef<'_>, out: &mut RuleOut<'_, '_>) -> Result<Step> {
         let v = cx.v();
@@ -195,6 +199,10 @@ impl RulePass for Absorb {
         }
         let mut drop: BTreeSet<usize> = BTreeSet::new();
         let mut added: Vec<(Slot, String, Vec<(String, Slot)>)> = Vec::new();
+        // A program that binds a guest's nodes (`guest_of`, decision 0431) can take a root of only a kind and its parent
+        // edges: the matcher answers the tape's nodes, and the rule as written, led by `guest_of(r, _)`, a guest's.
+        let guests = v.rel("guest_of").is_some();
+        let mut guest_roots: Vec<Slot> = Vec::new();
         for (ri, l) in body.iter().enumerate() {
             let Some(root) = positive(v, *l, "kind") else { continue };
             let root = args(root);
@@ -233,8 +241,30 @@ impl RulePass for Absorb {
                 }
                 taken.extend([fi, ki]);
             }
+            // The root's negated parent edges: `!field(_, "F", r)`, its first argument a wildcard. A matcher runs over
+            // a file's tape, not a guest's (a quoted annotation's nodes have no tape in the wave): a rule of only a kind
+            // and its parent edges (`nameref`'s) made a matcher alone lost every read inside a guest
+            // (`quoted_annotations_are_read_as_their_code`). So such a root is taken only where the program binds a
+            // guest's nodes, and its rule is kept too, led by `guest_of(r, _)` (t50 step 6).
+            let fielded = parts.len() >= 2;
+            if self.parents && (fielded || guests) {
+                for (ni, nl) in body.iter().enumerate() {
+                    let Lit::Atom(a) = nl.view() else { continue };
+                    if !a.neg() || v.rel_name(a.rel()) != "field" || drop.contains(&ni) || taken.contains(&ni) {
+                        continue;
+                    }
+                    let a = args(a);
+                    if let ([TermRef::Wild, f, n], Some(fname)) = (a.as_slice(), str_of(a.get(1))) && matches!(f, TermRef::Str(_)) && var_of(Some(n)) == Some(rv) {
+                        parts.push(serde_json::json!({"not": {"inside": {"pattern": "$_P", "field": fname, "stopBy": "neighbor"}}}));
+                        taken.push(ni);
+                    }
+                }
+            }
             if parts.len() < 2 || captures.len() > MOST_CAPTURES {
                 continue;
+            }
+            if !fielded {
+                guest_roots.push(rv);
             }
             drop.extend(taken);
             let matcher = serde_json::json!({"language": "python", "rule": {"all": parts}}).to_string();
@@ -256,6 +286,14 @@ impl RulePass for Absorb {
             }
         }
         w.finish()?;
+        // A guest's nodes, which the matcher does not see: the rule as written, from the guest relation that binds them.
+        for &rv in &guest_roots {
+            let mut g = out.rule().head_from(v, r, r.head()).atom("guest_of", &[T::Var(name(v, r, rv)), T::Wild]);
+            for l in &body {
+                g = g.lit(v, r, *l);
+            }
+            g.finish()?;
+        }
         Ok(Step::Written)
     }
     fn finish(&mut self, cx: &Cx<'_>, _b: &mut Builder<'_>) -> Result<()> {

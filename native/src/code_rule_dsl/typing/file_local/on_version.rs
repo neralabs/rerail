@@ -680,8 +680,12 @@ pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>) -> 
             && !f.lattice(rel)
             && rules.all(|r| {
                 let mut body = r.body();
+                // Not over a matcher's relation (`rr_ast_<k>`): its rows are made by a wave over each document's tape,
+                // which the chunks run already; read in the cross part, the corpus batch ran the wave again over every
+                // file and made every document's rows for it (`raw_all_name` on t50's product run, 24 s of CPU).
+                // Its projection is exported instead.
                 match (body.next().map(|l| l.view()), body.next()) {
-                    (Some(L::Atom(a)), None) => !a.neg() && f.is_input(v.rel_name(a.rel())),
+                    (Some(L::Atom(a)), None) => !a.neg() && f.is_input(v.rel_name(a.rel())) && !v.rel_name(a.rel()).starts_with(crate::code_rule_dsl::facts::core::ast_matches::PREFIX),
                     _ => false,
                 }
             })

@@ -203,9 +203,14 @@ mod on {
     /// The comparison of a model trained on all but the newest fifth of `samples` (oldest first), on that fifth;
     /// and the model.
     pub fn compare(samples: &[Sample], config: &CostConfig) -> Result<(Comparison, CostModel), String> {
+        compare_unless(samples, config, &|| false)?.ok_or_else(|| "stopped".into())
+    }
+
+    /// `compare`, `None` once `stop` says so between its model's forests.
+    pub fn compare_unless(samples: &[Sample], config: &CostConfig, stop: &dyn Fn() -> bool) -> Result<Option<(Comparison, CostModel)>, String> {
         let cut = samples.len() - samples.len() / 5;
         let (train, test) = samples.split_at(cut);
-        let model = CostModel::train(&train.iter().map(sample).collect::<Vec<_>>(), config)?;
+        let Some(model) = CostModel::train_unless(&train.iter().map(sample).collect::<Vec<_>>(), config, stop)? else { return Ok(None) };
         let rates = crate::price::fit_rates(train);
         let prices = crate::price::Prices::default();
         let test: Vec<&Sample> = test.iter().filter(|s| s.ok && !s.cold && s.wall > 0.0).collect();
@@ -242,12 +247,12 @@ mod on {
             cpu_model: Errors::of(&cpu.0),
             cpu_recorded: Errors::of(&cpu.1),
         };
-        Ok((c, model))
+        Ok(Some((c, model)))
     }
 }
 
 #[cfg(target_os = "macos")]
-pub use on::{compare, current, install, sample};
+pub use on::{compare, compare_unless, current, install, sample};
 
 #[cfg(target_os = "macos")]
 pub use rerail_forest::cost_model::{CostConfig, CostModel};
@@ -292,11 +297,11 @@ pub fn train(samples: &[Sample], config: &CostConfig, min: usize) -> Result<Trai
 /// upkeep's retraining yields to a run that begins (`upkeep::Slice::stopper`). Nothing is put in place then.
 #[cfg(target_os = "macos")]
 pub fn train_until(samples: &[Sample], config: &CostConfig, min: usize, stop: &dyn Fn() -> bool) -> Result<Trained, String> {
-    const STOPPED: &str = "stopped: a run began";
+    const STOPPED: &str = "stopped: a run began, or one is finishing";
     if samples.len() < min {
         return Err(format!("{} samples, fewer than {min}", samples.len()));
     }
-    let (comparison, _) = compare(samples, config)?;
+    let Some((comparison, _)) = compare_unless(samples, config, stop)? else { return Err(STOPPED.into()) };
     if !comparison.model_wins() {
         return Ok(Trained { comparison, model: None });
     }
@@ -304,7 +309,8 @@ pub fn train_until(samples: &[Sample], config: &CostConfig, min: usize, stop: &d
         return Err(STOPPED.into());
     }
     let all: Vec<_> = samples.iter().map(sample).collect();
-    let model = std::sync::Arc::new(CostModel::train(&all, config)?);
+    let Some(model) = CostModel::train_unless(&all, config, stop)? else { return Err(STOPPED.into()) };
+    let model = std::sync::Arc::new(model);
     if stop() {
         return Err(STOPPED.into());
     }

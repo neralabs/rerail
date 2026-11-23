@@ -242,6 +242,12 @@ pub trait Source: Send + Sync {
     fn estimated_len(&self) -> usize {
         self.len()
     }
+    /// Whether it may hold a row: `false` only where it holds none. A test for an empty input (a rule over one is
+    /// not run) asks this, not `len`, so a source whose rows are made when read (a batch's, decision 0494) answers
+    /// without making them, and is taken as holding rows.
+    fn may_hold_rows(&self) -> bool {
+        self.len() > 0
+    }
     /// The rows whose column `g` holds a node `owned` names, where the source finds them without reading every row
     /// (a view over a batch's documents, by its nodes): `None` when it cannot, and the caller reads them all.
     fn rows_owned(&self, _g: usize, _owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
@@ -1695,18 +1701,15 @@ impl Relation {
     pub fn ordered(&self, column: usize) -> bool {
         self.ordered[column].is_some()
     }
-    /// The rows with values in `lo..=hi` of a column pushed in order (`ordered`): a search of the cells.
+    /// The rows with values in `lo..=hi` of a column pushed in order (`ordered`): the start by the cells' own search
+    /// (`Rows::lower_bound`: its parts, its chunks, then the chunk's encoding), then the end galloped from it. A probe
+    /// of one value (a key's, `text(n, s)`'s) reads a row or two past the start where a second bisection read about
+    /// log n, each through a segment search and a decode. (A gallop of the start from this thread's last probe was
+    /// measured too, on `all`: the probes are not near each other, and it cost 23 G instructions more.)
     fn ordered_between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
-        let first = |below: &dyn Fn(i64) -> bool| -> usize {
-            let (mut a, mut b) = (0, self.len());
-            while a < b {
-                let m = a + (b - a) / 2;
-                if below(self.value(m, column)) { a = m + 1 } else { b = m }
-            }
-            a
-        };
-        let start = first(&|v| v < lo);
-        start..first(&|v| v <= hi).max(start)
+        let n = self.len();
+        let start = (self.cells().lower_bound(column, lo) as usize).min(n);
+        start..first_from(n, start, |m| self.value(m, column) <= hi).max(start)
     }
     /// The rows with values in `lo..=hi`, in value order.
     fn rows_between(&self, column: usize, lo: i64, hi: i64) -> Vec<usize> {
@@ -1730,9 +1733,37 @@ impl Relation {
             from + index.rows[from..to].partition_point(|&r| below(self.value(r as usize, column)))
         };
         let start = first(&|v| v < lo);
-        let end = first(&|v| v <= hi);
-        start..end.max(start)
+        // The end from the start (`first_from`): no second search of the fence and its span.
+        start..first_from(index.rows.len(), start, |m| self.value(index.rows[m] as usize, column) <= hi).max(start)
     }
+}
+
+/// The first of `0..n` for which `below` is false (`below` true before it, false from it; `n` where none is),
+/// galloping from `from` (any of `0..=n`): forward when `from` is below, else back. A search near `from` reads a few
+/// rows, one far off about 2 log n.
+fn first_from(n: usize, from: usize, below: impl Fn(usize) -> bool) -> usize {
+    let (mut a, mut b) = if from < n && below(from) {
+        // Rows `..=from` are below: double forward until a row is not.
+        let (mut a, mut step) = (from + 1, 1);
+        while a + step <= n && below(a + step - 1) {
+            a += step;
+            step *= 2;
+        }
+        (a, (a + step).min(n))
+    } else {
+        // Rows `from..` are not below: double back until a row is.
+        let (mut b, mut step) = (from.min(n), 1);
+        while b >= step && !below(b - step) {
+            b -= step;
+            step *= 2;
+        }
+        (b.saturating_sub(step), b)
+    };
+    while a < b {
+        let m = a + (b - a) / 2;
+        if below(m) { a = m + 1 } else { b = m }
+    }
+    a
 }
 impl Source for Relation {
     fn revision(&self)->Option<u64> {Some(0)}
@@ -1794,6 +1825,27 @@ impl Source for Relation {
         }
         Some(&self.index(column).rows[self.between(column, value, value)])
     }
+    /// The rows of `value` with their values of `columns`, read from the column's order where they lie: no list of
+    /// ids made a probe (`lookup`'s), which the join's view probe made for every relation a chunk binds (t50 step 6).
+    fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        if columns.len() > 8 {
+            return false;
+        }
+        let mut row = [0i64; 8];
+        let cells = self.cells();
+        let mut give = |r: usize| {
+            for (j, &c) in columns.iter().enumerate() {
+                row[j] = cells.get(r as u32, c);
+            }
+            each(r, &row[..columns.len()]);
+        };
+        if self.ordered[column].is_some() {
+            self.ordered_between(column, value, value).for_each(&mut give);
+        } else {
+            self.index(column).rows[self.between(column, value, value)].iter().for_each(|&r| give(r as usize));
+        }
+        true
+    }
     /// A column pushed in order of the rows' ids: its rows a range, no identity list made.
     fn sorted_range(&self, column: usize, value: i64) -> Option<Range<u32>> {
         self.ordered[column].is_some().then(|| {
@@ -1827,3 +1879,20 @@ pub mod s_relation;
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod lookup_spike;
+
+#[cfg(test)]
+mod first_from_tests {
+    /// `first_from` finds `partition_point`'s answer from any start, for every split of every short run.
+    #[test]
+    fn first_from_is_partition_point_from_anywhere() {
+        for n in 0..40usize {
+            let values: Vec<usize> = (0..n).map(|i| i / 3).collect();
+            for t in 0..=n / 3 + 1 {
+                let want = values.partition_point(|&v| v < t);
+                for from in 0..=n {
+                    assert_eq!(super::first_from(n, from, |m| values[m] < t), want, "n {n}, t {t}, from {from}");
+                }
+            }
+        }
+    }
+}

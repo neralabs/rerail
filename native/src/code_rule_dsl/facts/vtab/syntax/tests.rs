@@ -2609,7 +2609,8 @@ fn reads_side_by_side_make_each_document_once() {
     assert_eq!(batch.makes(), batch.groups(), "no group made again and set aside");
 }
 
-/// Decision 0494, R2: a probe of a relation by a node makes that node's document alone, its projection and its rows.
+/// Decision 0494, R2: a probe of a relation by a node makes that node's document alone, its projection and its rows
+/// (`text`'s, its projection alone: its row is read off the tape).
 #[test]
 fn a_probe_makes_the_document_it_names_alone() {
     let store = ContentStore::open(&temp("probe-one")).unwrap();
@@ -2624,7 +2625,12 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert!(!found.is_empty(), "the node's text");
     assert!(found.iter().all(|&r| text.value(r, 0) == n));
     assert_eq!(batch.docs.made_count(), 1, "only the probed document is made");
-    assert_eq!(batch.groups(), 1);
+    // `text` by node is read off the tape (decision 0353 step 3): its document projected, no rows made.
+    assert_eq!(batch.groups(), 0);
+    let op = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "op").unwrap().2);
+    let _ = op.lookup(0, &[batch.docs[2].global(0)]).unwrap();
+    assert_eq!(batch.docs.made_count(), 1, "only the probed document is made");
+    assert_eq!(batch.groups(), 1, "a probe of another relation makes its document's rows");
     assert!(text.failure().is_none());
 }
 
@@ -3002,4 +3008,60 @@ DEFINE_KERNEL2(syntax_tests, dir_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, D
         assert_eq!(g, w, "ask {:?}", asks[i]);
     }
     assert!(m > 100);
+
+/// A batch with no counts given (a cold run's corpus batch): whether a relation may hold rows is answered making no
+/// document (a rule over an empty input is left out by it, `plan::native_stratum_`), and a probe of a group's node
+/// column reads the group's rows by value (`Group::rows_with`), the rows a filter of the group finds.
+#[test]
+fn a_batch_answers_may_hold_rows_and_probes_by_value_making_only_what_is_probed() {
+    let store = ContentStore::open(&temp("may-hold")).unwrap();
+    let source = (0..40).map(|i| format!("def f{i}(x, y):\n    return g(x, y, {i})\n")).collect::<String>();
+    let docs = || -> Vec<Document> { (1..=3).map(|k| document(k, &format!("m{k}.py"), "python", &source)).collect() };
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "doc"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let eager = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let counts: HashMap<u32, made::ViewCounts> = eager.view_counts().into_iter().collect();
+    let lazy = Batch::new(&store, docs(), &projection, &[], &[], false, None, &counts).unwrap();
+    let text = Arc::clone(&made_sources(&lazy).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
+    assert!(text.may_hold_rows(), "a batch with documents may hold rows");
+    assert_eq!(lazy.docs.made_count(), 0, "asked whether it may hold rows, it made no document");
+    let whole = Arc::clone(&made_sources(&eager).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
+    let nodes: Vec<i64> = (1..60).map(|i| lazy.docs[1].global(i)).collect();
+    let want: BTreeSet<(i64, i64)> = whole.lookup(0, &nodes).unwrap().into_iter().map(|r| (whole.value(r, 0), whole.value(r, 1))).collect();
+    assert!(whole.len() / 3 > 64, "a document's rows are past the bound a filter reads alone: {}", whole.len() / 3);
+    assert!(!want.is_empty());
+    let rows = text.lookup(0, &nodes).unwrap();
+    assert!(rows.windows(2).all(|w| w[0] < w[1]), "in row order, each once");
+    let got: BTreeSet<(i64, i64)> = rows.into_iter().map(|r| (text.value(r, 0), text.value(r, 1))).collect();
+    assert_eq!(got, want, "a probe by value reads the rows a filter of the group finds");
+    assert_eq!(lazy.docs.made_count(), 1, "the probe made its document alone");
+}
+
+/// Decision 0353 step 3: `text` probed by node, its document not made, is read off the tape (`Batch::tape_text`):
+/// each node's row is the one its document's node rows hold (none where they hold none), and no document is made.
+#[test]
+fn text_probed_by_node_is_read_off_the_tape_as_its_rows_hold_it() {
+    let store = ContentStore::open(&temp("tape-text")).unwrap();
+    let source = "# a comment\nclass C:\n    \"\"\"Doc.\"\"\"\n    def f(self, x=f\"{y}\", z=b'raw'):\n        return x.attr + 0x1F - \"a\" \"b\"\n".repeat(3)
+        + &format!("s = \"{}\"\n", "long ".repeat(60));
+    let docs = || -> Vec<Document> { (1..=2).map(|k| document(k, &format!("m{k}.py"), "python", &source)).collect() };
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "doc"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let eager = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let counts: HashMap<u32, made::ViewCounts> = eager.view_counts().into_iter().collect();
+    let lazy = Batch::new(&store, docs(), &projection, &[], &[], false, None, &counts).unwrap();
+    let text = Arc::clone(&made_sources(&lazy).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
+    let whole = Arc::clone(&made_sources(&eager).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
+    let nodes: Vec<i64> = (0..eager.docs[1].len()).map(|l| eager.docs[1].global(l)).collect();
+    assert!(nodes.len() > 50, "{}", nodes.len());
+    for &n in &nodes {
+        let want: Vec<i64> = whole.lookup(0, &[n]).unwrap().into_iter().map(|r| whole.value(r, 1)).collect();
+        let rows = text.lookup(0, &[n]).unwrap();
+        // Past every row a relation holds (`made::TAPE_ROWS`): read off the tape, its document's rows not made.
+        assert!(rows.iter().all(|&r| r >= 1 << 30), "read off the tape");
+        let got: Vec<i64> = rows.iter().map(|&r| text.value(r, 1)).collect();
+        assert_eq!(got, want, "node {n:#x}'s text");
+        let mut read = Vec::new();
+        assert!(text.lookup_read(0, n, &[0, 1], &mut |_, row| read.push(row[1])));
+        assert_eq!(read, want, "node {n:#x}'s text, read");
+    }
+    assert_eq!(lazy.docs.made_count(), 1, "its document projected, once");
 }

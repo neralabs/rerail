@@ -116,7 +116,7 @@ impl Sketch {
     }
 
     /// `other`'s rows in too (`sign` −1: out).
-    pub(in crate::code_rule_dsl) fn merge(&mut self, other: &Sketch, sign: i64) {
+    pub fn merge(&mut self, other: &Sketch, sign: i64) {
         for (x, y) in self.words[..D * W].iter_mut().zip(&other.words[..D * W]) {
             *x += sign * y;
         }
@@ -243,6 +243,16 @@ impl Moments {
         let at = (g >> (64 - HLL_P)) as usize;
         let rank = ((g << HLL_P) | 1 << (HLL_P - 1)).leading_zeros() as u8 + 1;
         self.regs[at] = self.regs[at].max(rank);
+    }
+
+    /// `other`'s rows in too: the AMS counters add, each register takes the larger rank.
+    pub fn merge(&mut self, other: &Moments) {
+        for (x, y) in self.ams.as_flattened_mut().iter_mut().zip(other.ams.as_flattened()) {
+            *x += y;
+        }
+        for (x, y) in self.regs.iter_mut().zip(other.regs.iter()) {
+            *x = (*x).max(*y);
+        }
     }
 
     /// The estimated sum of squared postings.

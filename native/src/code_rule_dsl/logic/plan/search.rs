@@ -344,7 +344,8 @@ impl Fielded {
     fn is_empty(&self) -> bool {
         self.field.is_empty()
     }
-    fn of(edges: impl IntoIterator<Item = (String, String, String, f64)>) -> Fielded {
+    /// Of the tree's fielded edges: (parent kind, child kind, field, count).
+    pub fn of(edges: impl IntoIterator<Item = (String, String, String, f64)>) -> Fielded {
         let mut f = Fielded::default();
         for (p, c, field, n) in edges {
             *f.joint.entry((p.clone(), c.clone(), field.clone())).or_default() += n;
@@ -5839,3 +5840,37 @@ pub fn left_on(db: &Connection) -> std::sync::Arc<parking_lot::Mutex<Left>> {
     crate::code_rule_dsl::facts::vtab::connection_data(db).get::<parking_lot::Mutex<Left>>()
 }
 
+/// Relation `rel`'s one rule `rule` as a filter its source's rows can stand for (decision 0611): `filter_of`, its head
+/// a plain relation. A lattice's rows are its groups' merges, a gate's and a native operator's are made otherwise.
+pub fn plain_filter(f: &Fields<'_>, rel: &str, v: &Version, rule: super::super::program_image::RuleRef<'_>) -> Option<(String, Vec<(usize, i64)>)> {
+    if f.lattice(rel) || f.gate(rel) || f.native(rel).is_some() {
+        return None;
+    }
+    filter_of(v, rule)
+}
+
+/// Rule `rule` as a filter of one relation (t52 step 3): `h(v0, …) :- x(v0, …), $vi < b, …`, the head the atom's
+/// distinct variables in order, every other literal one of them compared under a constant. `x`, and each compared
+/// column with its bound.
+pub fn filter_of(v: &Version, rule: super::super::program_image::RuleRef<'_>) -> Option<(String, Vec<(usize, i64)>)> {
+    let head: Vec<VarSlot> = rule.head().args().map(|t| t.var()).collect::<Option<_>>()?;
+    if head.iter().enumerate().any(|(i, x)| head[..i].contains(x)) {
+        return None;
+    }
+    let mut atom = None;
+    let mut cmps = Vec::new();
+    for l in rule.body() {
+        match l.view() {
+            Lit::Atom(a) if !a.neg() && atom.is_none() => atom = Some(a),
+            Lit::Cmp { op: CmpOp::Lt, l: TermRef::Var(x), r: TermRef::Int(b) } => cmps.push((x, b)),
+            _ => return None,
+        }
+    }
+    let a = atom?;
+    let args: Vec<VarSlot> = a.args().map(|t| t.var()).collect::<Option<_>>()?;
+    if args != head {
+        return None;
+    }
+    let bounds = cmps.into_iter().map(|(x, b)| args.iter().position(|y| *y == x).map(|c| (c, b))).collect::<Option<Vec<_>>>()?;
+    Some((v.rel_name(a.rel()).to_owned(), bounds))
+}

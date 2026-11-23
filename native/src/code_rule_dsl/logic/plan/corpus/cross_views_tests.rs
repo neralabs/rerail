@@ -207,7 +207,9 @@ fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
     let edit = how(&mut c);
     profile::set(false);
     let patched = |x: &String| x.ends_with(": patched by the changed documents");
-    assert!(all(&cold, "counted", "counted"), "a cold run counts them: {cold:?}");
+    // A cold run's are counted: by its chunks where their rows lay (decision 0458's statistics), or off the batch.
+    let counted = |made: &BTreeSet<String>| !made.is_empty() && made.iter().all(|x| [": counted", ": counted at the held nodes", ": counted by the chunks, where their rows lay", ": counted by the chunks at their held nodes"].iter().any(|how| x.ends_with(how)));
+    assert!(counted(&cold), "a cold run counts them: {cold:?}");
     assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
     assert!(edit.iter().any(patched), "an edit patches them: {edit:?}");
     // After an edit every base relation's are patched, unless the run is inside another run's waves.
@@ -242,7 +244,8 @@ fn a_session_holds_its_corpus_batch_and_keeps_its_base_statistics() {
     c.write("d.py", "from c import h\nfrom a import f\n\ndef i():\n    h()\n");
     let (edit, edit_batch, rows) = run(&mut c);
     profile::set(false);
-    assert!(all(&cold, "counted", "counted"), "a session's first run counts them: {cold:?}");
+    let counted = |made: &BTreeSet<String>| !made.is_empty() && made.iter().all(|x| [": counted", ": counted at the held nodes", ": counted by the chunks, where their rows lay", ": counted by the chunks at their held nodes"].iter().any(|how| x.ends_with(how)));
+    assert!(counted(&cold), "a session's first run counts them: {cold:?}");
     assert_eq!(cold_batch, BTreeSet::from(["4 documents made, none held".to_owned()]), "and makes every document");
     assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
     assert_eq!(warm_batch, BTreeSet::from(["0 documents made, 4 held from the session's last run".to_owned()]), "and makes none");

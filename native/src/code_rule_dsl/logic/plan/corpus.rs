@@ -130,6 +130,7 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_PUSH_EQUAL_COLUMNS",
     "RERAIL_AST_PARTS",
     "RERAIL_AST_PART_CAPTURES",
+    "RERAIL_AST_PART_PARENTS",
     "RERAIL_RULE_ORDER",
     // Guests' copies kept unfolded (`combining::FoldOwn`).
     "RERAIL_SHOWN_COPIES",
@@ -3278,6 +3279,8 @@ fn run_observed_within(
     // chunks' (`Evaluated::documents`, their guests' with them), and the memo hits', each made from its stored tape
     // once the chunks are done (`CorpusHit`).
     let mut corpus_docs: Vec<syntax::Document> = Vec::new();
+    // The chunks' counts of the base relations the cross part reads (decision 0458's statistics), merged as filed.
+    let mut chunk_counts = ChunkCounts::default();
     let mut corpus_hits: Vec<CorpusHit> = Vec::new();
     // The base rows as sources, once made (`columns_source`): measured and bound as one, so they keep their statistics.
     let mut base_sources: BTreeMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = BTreeMap::new();
@@ -3295,6 +3298,11 @@ fn run_observed_within(
     // value of a column of few, `ValTotals`).
     let tested_values: rustc_hash::FxHashSet<i64> = constants_tested_in(&prepared_placed.v).into_values().flatten().map(|(_, v)| v).collect();
     let mut totals = Totals::new(tested_values.clone());
+    // The tested values, for the totals each chunk's job measures its exports into (`Evaluated::export_totals`).
+    let tested_shared = Arc::clone(&totals.tested);
+    // The documents a chunk's base counts are of (`Evaluated::base_counts`), claimed as counted: a guest made in two
+    // chunks is the same text parsed alike, its rows counted once, by the chunk that claims it first.
+    let counted_docs_claimed = parking_lot::Mutex::new(rustc_hash::FxHashSet::<i64>::default());
     let (mut nodes, mut native, mut chunks) = (0, BTreeSet::new(), 0);
     let (mut memo_hits, mut memo_unattributed) = (0usize, 0usize);
     // Why a chunk's rows were not memoised: the relation, and what its row named.
@@ -5100,6 +5108,12 @@ fn run_observed_within(
         answered: Vec<memo::Answered>,
         totals_add: Vec<(String, usize, Vec<(String, i64, i64, i64, i64)>)>,
         export_rows: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>,
+        /// Its exports' rows measured on its worker (`Totals::measure_rows`), their counts left to the main thread,
+        /// which holds them: absorbed into the run's totals there, not measured on its thread.
+        export_totals: Totals,
+        /// The base relations the cross part reads, counted over its own files' rows (`chunk_base_count`,
+        /// `chunk_held_count`; `None`: not countable here), and how many own files it counted.
+        base_counts: Option<ChunkCounted>,
         /// Its documents, its guests' with them, for the corpus batch the cross part reads its base relations off
         /// (decision 0458); none where the cross part reads none.
         documents: Vec<syntax::Document>,
@@ -5134,6 +5148,10 @@ fn run_observed_within(
         // else made here, and kept for the chunks after as the earliest chunk's that made it.
         let once_seen = |by: usize| by + plan_window <= seq;
         let chunk_docs_n = documents.len();
+        // The chunk's own files (not their guests): the documents its base counts are of.
+        let own_files: rustc_hash::FxHashSet<i64> = documents.iter().filter(|d| d.guest.is_none()).map(|d| i64::from(d.key)).collect();
+        // The base relations the cross part reads, as the chunk binds them: counted below, once its exports are known.
+        let mut cross_bound: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
         // Guests (decision 0055): a file's programs are made with the batch; a string a rule parses and a value a
         // rule makes are asked inside the fixpoint (decision 0431 §8, Q325).
         let mut host_of: HashMap<i64, i64> = HashMap::new();
@@ -5168,6 +5186,11 @@ fn run_observed_within(
         let mut totals_add: Vec<(String, usize, Vec<(String, i64, i64, i64, i64)>)> = Vec::new();
         let mut bound: BTreeSet<String> = BTreeSet::new();
         for (rel, source) in sources {
+            // Not one whose source answers its statistics from its structure (`within`, a nearest axis): the stats
+            // phase reads them there, no row made (walking its rows here took 10 s of the chunks' CPU on t50's run).
+            if memoised && cone.is_none() && stored.iter().any(|(r, _)| *r == rel) && source.statistics().is_none() {
+                cross_bound.push((rel.clone(), Arc::clone(&source)));
+            }
             // A relation no rule reads is bound unmeasured: measuring reads every row, and a `py.*`
             // family's first read makes them (decision 0029).
             if !read.contains(&rel) {
@@ -5257,7 +5280,7 @@ fn run_observed_within(
                 answered.push(asked.clone());
                 let doc = docs.iter().find(|d| d.key == key).cloned().ok_or_else(|| Error::Plan(format!("tape value {key} is not the chunk's")))?;
                 let made_rows = grower.admit(store, doc, sets, &vocabulary, binding, admit_projection.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
-                values.add(&[Some(key), owner].into_iter().flatten().collect::<Vec<u32>>(), made_rows);
+                values.add(&[key], &owner.into_iter().collect::<Vec<u32>>(), made_rows);
             }
         }
         let mut parse_answer = |req: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
@@ -5270,6 +5293,9 @@ fn run_observed_within(
             let _span = crate::code_rule_dsl::logic::profile::span(|| "tape values admitted".into());
             let text = |a: i64| atoms.value(a as _).map_err(|e| Error::Plan(e.to_string()));
             let mut given_rows: BTreeMap<String, Vec<Vec<i64>>> = given.iter().map(|g| (g.clone(), Vec::new())).collect();
+            // The round's values, admitted together once each is made (`Grower::admit_many`): their documents, each
+            // once, and the keys of the documents their places are in (`Values::add`).
+            let (mut admit_keys, mut held_keys): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
             for row in rows.iter() {
                 // The value asked, and the keys of the nodes its rows hold: its own, and its place's or its node's
                 // document's (`Values::add`).
@@ -5305,15 +5331,28 @@ fn run_observed_within(
                     }
                     _ => continue,
                 };
-                let doc = docs.iter().find(|d| d.key == key).cloned().ok_or_else(|| Error::Plan(format!("tape value {key} is not the chunk's")))?;
-                let made_rows = grower.admit(store, doc, sets, &vocabulary, binding, admit_projection.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
-                // `parsed` is an input too (a program's rows, the batch's): its rows are bound as the value's part, as
+                if !admit_keys.contains(&key) {
+                    admit_keys.push(key);
+                }
+                if let Some(k) = owner
+                    && !held_keys.contains(&k)
+                {
+                    held_keys.push(k);
+                }
+            }
+            if !admit_keys.is_empty() {
+                let round: Vec<syntax::Document> = admit_keys
+                    .iter()
+                    .map(|&key| docs.iter().find(|d| d.key == key).cloned().ok_or_else(|| Error::Plan(format!("tape value {key} is not the chunk's"))))
+                    .collect::<Result<_>>()?;
+                let made_rows = grower.admit_many(store, round, sets, &vocabulary, binding, admit_projection.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
+                // `parsed` is an input too (a program's rows, the batch's): its rows are bound as the values' part, as
                 // every relation's are, and given as the answer, which a stratum above the request leaves to the binding.
                 for (name, p) in made_rows.iter().filter(|(name, _)| given.contains(name)) {
                     let width = p.columns().len();
                     given_rows.entry(name.clone()).or_default().extend((0..p.len()).map(|r| (0..width).map(|c| p.value(r, c)).collect()));
                 }
-                values.add(&[Some(key), owner].into_iter().flatten().collect::<Vec<u32>>(), made_rows);
+                values.add(&admit_keys, &held_keys, made_rows);
             }
             Ok(std::mem::take(&mut given_rows).into_iter().collect())
         };
@@ -5357,6 +5396,74 @@ fn run_observed_within(
             };
             export_rows.push((rel.clone(), rows));
         }
+        // Each export's rows measured here, on the chunk's worker, as they lie.
+        let mut export_totals = Totals::new_sharing(&tested_shared);
+        {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the exports measured".into());
+            for (rel, rows) in &export_rows {
+                export_totals.measure_rows(rel, rows.as_ref(), &pf.types(rel));
+            }
+        }
+        // The base relations the cross part reads, counted over the chunk's own files where its rows lie (decision
+        // 0458's statistics): the run's stats phase merges them, and walks no corpus batch for them.
+        let base_counts = (!cross_bound.is_empty()).then(|| {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations counted".into());
+            // The documents handed on to the corpus batch that this chunk counts: its files, and each guest no chunk
+            // counted before it.
+            let mine: rustc_hash::FxHashSet<i64> = documents.iter().map(|d| i64::from(d.key)).collect();
+            let counting: rustc_hash::FxHashSet<i64> = {
+                let mut claimed = counted_docs_claimed.lock();
+                documents.iter().map(|d| i64::from(d.key)).filter(|k| claimed.insert(*k)).collect()
+            };
+            // The nodes its exports hold (`exported`, handed on: the run's held nodes are every chunk's), and of them
+            // those of the documents it counts, where it walks a semi-join's rows.
+            let (exported, held_nodes): (Vec<i64>, rustc_hash::FxHashSet<i64>) = if cross_bound.iter().any(|(r, _)| semijoin.contains(r)) {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "the nodes its exports hold".into());
+                let mut exported = rustc_hash::FxHashSet::default();
+                for (_, rows) in &export_rows {
+                    let width = rows.columns().len();
+                    rows.for_rows(&(0..width).collect::<Vec<_>>(), &mut |_, row| {
+                        exported.extend(row.iter().copied().filter(|v| *v >= 1 << 32));
+                    });
+                }
+                let held = exported.iter().copied().filter(|v| counting.contains(&(v >> 32))).collect();
+                (exported.into_iter().collect(), held)
+            } else {
+                Default::default()
+            };
+            // A text test's rows are strings, which name no document: its distinct values, unioned as chunks are filed.
+            let unions: Vec<(String, Vec<i64>)> = cross_bound
+                .iter()
+                .filter(|(rel, source)| rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) && source.columns().len() == 1)
+                .map(|(rel, source)| {
+                    let mut values: Vec<i64> = Vec::with_capacity(source.len());
+                    source.for_rows(&[0], &mut |_, row| values.push(row[0]));
+                    values.sort_unstable();
+                    values.dedup();
+                    (rel.clone(), values)
+                })
+                .collect();
+            // A semi-join's rows at its held nodes, walked here (`chunk_held_rows`), and handed on to be counted and
+            // kept (`retain::SemijoinRows`); its keyed walk refused, every row of the chunk's documents counted, as the
+            // run counts it whole.
+            let mut held_rows: Vec<(String, Option<Vec<i64>>)> = Vec::new();
+            let mut counts: Vec<(String, Option<super::statkeep::RelStats>)> = Vec::new();
+            for (rel, source) in cross_bound.iter().filter(|(rel, _)| !unions.iter().any(|(u, _)| u == rel)) {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
+                if semijoin.contains(rel) {
+                    let rows = chunk_held_rows(rel, source.as_ref(), &held_nodes);
+                    if rows.is_none() {
+                        counts.push((rel.clone(), chunk_base_count(source.as_ref(), &source.columns(), &mine, &counting)));
+                    }
+                    held_rows.push((rel.clone(), rows));
+                } else {
+                    let names = stored.iter().find(|(r, _)| r == rel).map(|(_, n)| n.clone()).unwrap_or_default();
+                    counts.push((rel.clone(), chunk_base_count(source.as_ref(), &names, &mine, &counting)));
+                }
+            }
+            (own_files.len(), counts, unions, ChunkHeld { exported, rows: held_rows })
+        });
+        drop(cross_bound);
         // The chunk's native relations are forgotten, and its sources dropped before the connection's next chunk.
         crate::code_rule_dsl::logic::native::component::forget_derived(db);
         for rel in &bound {
@@ -5366,7 +5473,7 @@ fn run_observed_within(
         }
         crate::code_rule_dsl::logic::native::forget_inputs(db);
         let held = crate::code_rule_dsl::facts::rows::chunk_held_most().unwrap_or(0);
-        Ok(Evaluated { got, host_of, askers, answered, totals_add, export_rows, documents, held, written: Default::default() })
+        Ok(Evaluated { got, host_of, askers, answered, totals_add, export_rows, export_totals, base_counts, documents, held, written: Default::default() })
     };
     // A chunk's relations go in blocks of its own, given back with it (Q58): not in blocks every chunk at once
     // shares, which a few rows of each kept whole and the memory line counted whole.
@@ -5610,7 +5717,10 @@ fn run_observed_within(
         phase("wait", statements.count());
         statements.enter("local");
         let Ctx { chunk_nodes_built, chunk_docs, chunk_own, at_once, mut chunk_partials, cone } = ctx;
-        let Evaluated { got, host_of, askers, answered, totals_add, export_rows, documents, held, written } = ev;
+        let Evaluated { got, host_of, askers, answered, totals_add, export_rows, export_totals, base_counts, documents, held, written } = ev;
+        chunk_counts.add(base_counts);
+        totals.absorb(&export_totals);
+        drop(export_totals);
         corpus_docs.extend(documents);
         for (rel, rows, measured) in &totals_add {
             totals.add(rel, *rows, measured);
@@ -5761,18 +5871,16 @@ fn run_observed_within(
         }
         native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("local:{k}")));
         let _export = crate::code_rule_dsl::logic::profile::span(|| "export to cross".into());
-        let mut attribute = |rel: &str, rows: &dyn crate::code_rule_dsl::facts::vtab::Source| {
-            if !attributable {
-                return;
-            }
+        // The chunk's own files: their documents' rows no other chunk gives.
+        let own_docs: rustc_hash::FxHashSet<i64> = chunk_docs.iter().map(|(d, ..)| *d).collect();
+        // Each export's rows by file, for the entries (`attribute`): found on the pool, an export a job, rows coming in
+        // runs of one document, so a run's owners are found once. `Err` names why the chunk's rows cannot be
+        // attributed.
+        let by_file_of = |rel: &str, rows: &dyn crate::code_rule_dsl::facts::vtab::Source| -> std::result::Result<HashMap<i64, Vec<i64>>, String> {
             let Some(&at) = split.locations.get(rel).and_then(|l| l.first()) else {
-                memo_why.insert(format!("export {rel}: no location column"));
-                attributable = false;
-                return;
+                return Err(format!("export {rel}: no location column"));
             };
             let width = rows.columns().len();
-            // The rows by file, gathered here and handed to the entries once: rows come in runs of one document,
-            // so a run's owners are found once.
             let mut by_file: HashMap<i64, Vec<i64>> = HashMap::new();
             let mut run: Option<(i64, Vec<i64>)> = None;
             let mut row = Vec::with_capacity(width);
@@ -5782,9 +5890,7 @@ fn run_observed_within(
                 if run.as_ref().is_none_or(|(rd, _)| *rd != d) {
                     let files = owners(v);
                     if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
-                        memo_why.insert(format!("export {rel}: {}", if files.is_empty() { "a row naming no document" } else { "a row naming another chunk's document" }));
-                        attributable = false;
-                        return;
+                        return Err(format!("export {rel}: {}", if files.is_empty() { "a row naming no document" } else { "a row naming another chunk's document" }));
                     }
                     run = Some((d, files));
                 }
@@ -5794,17 +5900,45 @@ fn run_observed_within(
                     by_file.entry(*f).or_default().extend_from_slice(&row);
                 }
             }
-            for (f, values) in by_file {
-                entries.get_mut(&f).expect("checked").rows.entry(rel.to_owned()).or_insert_with(|| (width, Vec::new())).1.extend(values);
-            }
+            Ok(by_file)
         };
         // Exports remain in native memory; this boundary performs no SQL writes. Rows another chunk wrote too (a
         // file-local relation without a location column) are kept once; a kept export is measured in place.
         for (rel, rows) in &export_rows {
             let types: Vec<&str> = pf.types(rel);
-            let inserted = { let _s = crate::code_rule_dsl::logic::profile::span(|| "hold the export".into()); exports.borrow_mut().add(rel, types.len(), rows.as_ref()) };
-            { let _s = crate::code_rule_dsl::logic::profile::span(|| "totals".into()); totals.add_rows(rel, inserted, rows.as_ref(), &types); }
-            { let _s = crate::code_rule_dsl::logic::profile::span(|| "attribute to files".into()); attribute(rel, rows.as_ref()); }
+            // A row of one of the chunk's own files no other chunk gives: held unchecked.
+            let own_at = split.locations.get(rel).and_then(|l| l.first().copied());
+            let mine = |d: i64| own_docs.contains(&d);
+            let inserted = { let _s = crate::code_rule_dsl::logic::profile::span(|| "hold the export".into()); exports.borrow_mut().add_owned(rel, types.len(), rows.as_ref(), own_at.map(|at| (at, &mine as &dyn Fn(i64) -> bool))) };
+            // Measured on the chunk's worker (`export_totals`, absorbed above): only the rows it added are counted here.
+            totals.rels.entry(rel.clone()).or_default().0 += inserted;
+        }
+        // The rows by file, every export's side by side on the pool, then handed to the entries in the exports' order.
+        if attributable {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "attribute to files".into());
+            use rayon::prelude::*;
+            let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
+            let found: Vec<std::result::Result<HashMap<i64, Vec<i64>>, String>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+                export_rows.par_iter().map(|(rel, rows)| {
+                    let _in = carry.enter();
+                    by_file_of(rel, rows.as_ref())
+                }).collect()
+            });
+            for ((rel, rows), found) in export_rows.iter().zip(found) {
+                match found {
+                    Ok(by_file) => {
+                        let width = rows.columns().len();
+                        for (f, values) in by_file {
+                            entries.get_mut(&f).expect("checked").rows.entry(rel.clone()).or_insert_with(|| (width, Vec::new())).1.extend(values);
+                        }
+                    }
+                    Err(why) => {
+                        memo_why.insert(why);
+                        attributable = false;
+                        break;
+                    }
+                }
+            }
         }
         // A partial hit's relations its chunk did not derive: its entry's rows and lines, handed on as an evaluated
         // file's are, and kept in its new entry (decision 0225 §2).
@@ -7234,6 +7368,18 @@ fn run_observed_within(
         }
         _ => Versions::new(),
     };
+    // Each text test's passing strings, as the chunks found them over every file (`ChunkCounts::unions`): the corpus
+    // batch answers a whole read of the test by them, and makes no document for its vocabulary (every file's node
+    // rows and annotations, 4 s on one core on t50's product run).
+    if let Some(batch) = &corpus_batch
+        && std::env::var("RERAIL_CHUNK_COUNTS").map_or(true, |v| v != "off")
+    {
+        for (rel, (n, set)) in &chunk_counts.unions {
+            if let (true, Some(set), Some(k)) = (*n == docs.len(), set, cross_vocabulary.tests.iter().position(|(t, _)| t == rel)) {
+                batch.give_passed(k, set.iter().copied().collect());
+            }
+        }
+    }
     // Each base relation's rows, as its kept statistics count them (decision 0494): kept of these documents, or of
     // the table's and patched by the changed documents' old and new rows. The corpus batch answers its `len` by them,
     // and fails a relation whose made rows are not them.
@@ -7633,7 +7779,7 @@ fn run_observed_within(
         // One relation's statistics, of its kept ones (`kept`, taken from the table's) or counted: what they are, how
         // they were had, and the counts to keep beside the table when counted or patched. Reads only what it is given
         // and the batch, so relations are counted side by side (below).
-        let base_counted = |rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, held: &BTreeSet<&str>, kept: Option<(u64, super::statkeep::RelStats)>| -> (Vec<Stat>, &'static str, Option<super::statkeep::RelStats>) {
+        let base_counted = |rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, held: &BTreeSet<&str>, kept: Option<(u64, super::statkeep::RelStats)>, chunked: Option<super::statkeep::RelStats>| -> (Vec<Stat>, &'static str, Option<super::statkeep::RelStats>) {
             let columns = source.columns();
             let width = columns.len();
             let from: Vec<usize> = (0..width).filter(|&c| held.contains(columns[c].as_str())).collect();
@@ -7683,6 +7829,18 @@ fn run_observed_within(
                 let st = columns.iter().map(|c| by_name.get(c.as_str()).map_or_else(|| (c.clone(), rows, rows, rows, rows), |m| (*m).clone())).collect();
                 return (st, "the source's own, from its structure (no row made)", keeps.then(|| super::statkeep::RelStats::of_statistics(names.clone(), &known)));
             }
+            // Counted by the chunks, each over its own files' rows where they lay (`chunk_base_count`): the corpus batch
+            // is not walked for them.
+            let counted = counted.or_else(|| chunked.filter(|k| k.columns() == names.as_slice()).map(|k| (k, "counted by the chunks, where their rows lay", true)));
+            // A check (`RERAIL_CHUNK_COUNTS_CHECK`): the chunks' counts against the corpus batch's.
+            if std::env::var_os("RERAIL_CHUNK_COUNTS_CHECK").is_some()
+                && let Some((k, "counted by the chunks, where their rows lay", _)) = &counted
+            {
+                let mut whole = super::statkeep::RelStats::new(names.clone());
+                whole.documents_scanned(source, &from, 1);
+                let (a, b) = (k.statistics(&|c| held.contains(c)), whole.statistics(&|c| held.contains(c)));
+                eprintln!("RERAIL_CHUNK_COUNTS_CHECK {rel}: {}", if a == b { "same".to_owned() } else { format!("chunks {a:?} batch {b:?}") });
+            }
             let (counted, how, keep) = counted.unwrap_or_else(|| {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}'s statistics off the corpus batch"));
                 let mut k = super::statkeep::RelStats::new(names.clone());
@@ -7726,18 +7884,28 @@ fn run_observed_within(
         // The held nodes are the exports' values: of exports of the digest kept rows were taken of, those rows' held
         // nodes, where visiting every export's rows took 1.6 s of ep2's edit (every node held).
         let held_kept = exports_now.and_then(|e| semijoin_rels.iter().find_map(|r| semijoin_kept.get(*r).map(|(_, k)| k).filter(|k| k.exports == Some(e))));
+        // The chunks' counts are of every file the batch holds where their files are its documents' (a run with memo
+        // hits counts as before, `ChunkCounts`).
+        let chunk_files = docs.len();
+        let chunk_exported = chunk_counts.exported(chunk_files);
         let held_nodes: rustc_hash::FxHashSet<i64> = match held_kept {
             _ if semijoin_rels.is_empty() => rustc_hash::FxHashSet::default(),
             Some(k) => {
                 crate::code_rule_dsl::logic::profile::decision("the nodes the exports hold", || format!("{} nodes, kept with the semi-joins' rows of exports of this digest", k.held_len()));
                 k.held().collect()
             }
+            // Of every file, the chunks' (each chunk's exports' nodes, `ChunkCounts::exported`): no export walked.
+            None if let Some(exported) = chunk_exported => {
+                crate::code_rule_dsl::logic::profile::decision("the nodes the exports hold", || format!("{} nodes, the chunks' exports'", exported.len()));
+                exported.clone()
+            }
             None => {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "the nodes the exports hold".into());
                 let mut held = rustc_hash::FxHashSet::default();
                 let exports = exports.borrow();
                 for rel in &split.exports {
-                    exports.visit(rel, pf.width(rel), |row| held.extend(row.iter().copied()));
+                    // A node (a document's key in its high word): a semi-join's rows are walked at nodes.
+                    exports.visit(rel, pf.width(rel), |row| held.extend(row.iter().copied().filter(|v| *v >= 1 << 32)));
                 }
                 held
             }
@@ -7763,6 +7931,8 @@ fn run_observed_within(
             kept: Option<(u64, super::statkeep::RelStats)>,
             /// A kept base relation with its delta (`layered_counted`): bound as it is.
             layered: bool,
+            /// The chunks' counts of it (`ChunkCounts`), where they are of every file.
+            chunked: Option<super::statkeep::RelStats>,
         }
         let mut counts: Vec<Count> = Vec::new();
         for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
@@ -7773,7 +7943,7 @@ fn run_observed_within(
                 if layered_counted.contains(&rel) {
                     let columns = source.columns();
                     let kept = kept_stats.remove(&rel);
-                    counts.push(Count { rel, columns, held, source, kept, layered: true });
+                    counts.push(Count { rel, columns, held, source, kept, layered: true, chunked: None });
                     continue;
                 }
                 let statistics = if semijoin.contains(&rel) {
@@ -7781,7 +7951,7 @@ fn run_observed_within(
                     kept_input_stats.get(&rel).map(|(_, st)| st.clone()).unwrap_or_default()
                 } else {
                     let held: BTreeSet<&str> = held.iter().map(String::as_str).collect();
-                    let (st, how, keep) = base_counted(&rel, source.as_ref(), &held, kept_stats.remove(&rel));
+                    let (st, how, keep) = base_counted(&rel, source.as_ref(), &held, kept_stats.remove(&rel), None);
                     crate::code_rule_dsl::logic::profile::decision("the base relations' statistics (decision 0458)", || format!("{rel}: {how}"));
                     if let Some(k) = keep {
                         base_stats_out.push((rel.clone(), base_digest(&rel), k));
@@ -7798,9 +7968,9 @@ fn run_observed_within(
             let source = Arc::clone(corpus_sources.get(&rel).ok_or_else(|| Error::Plan(format!("{rel} is not in the corpus batch (it holds {:?})", corpus_sources.keys().collect::<BTreeSet<_>>())))?);
             // The source's columns, in its rows' order: the keyed walk's positions are of these.
             let columns = source.columns();
-            // A semi-join's too: where its keyed walk is refused, it is counted as a base relation is (`Measured`).
             let kept = kept_stats.remove(&rel);
-            counts.push(Count { rel, columns, held, source, kept, layered: false });
+            let chunked = chunk_counts.of(&rel, chunk_files);
+            counts.push(Count { rel, columns, held, source, kept, layered: false, chunked });
         }
         // Each relation counted on the pool, side by side: they read the batch alone, which makes a document once,
         // for whichever reads it first (0494). On the run's thread they took 0.6 s of hogql's cold run, one at a time.
@@ -7823,7 +7993,7 @@ fn run_observed_within(
                 let source = c.source.as_ref();
                 if !semijoin.contains(&c.rel) {
                     let held: BTreeSet<&str> = c.held.iter().map(String::as_str).collect();
-                    let (st, how, keep) = base_counted(&c.rel, source, &held, c.kept.clone());
+                    let (st, how, keep) = base_counted(&c.rel, source, &held, c.kept.clone(), c.chunked.clone());
                     return Counted::Base(st, how, keep);
                 }
                 // A semi-join's relation is read by the cross part only at the nodes the exports hold: its statistics
@@ -7849,9 +8019,18 @@ fn run_observed_within(
                     let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{}'s rows at the held nodes, counted", c.rel));
                     let mut counts = keptstats::SemijoinCounts::default();
                     let mut rows: Vec<i64> = Vec::new();
-                    // The held nodes the kept rows answer for, their rows counted; the others walked.
+                    // Walked by the chunks at their exports' nodes, of every file (`chunk_held_rows`): their rows counted,
+                    // none walked here. Else the held nodes the kept rows answer for, their rows counted; the others
+                    // walked.
                     let mut walk = held_nodes.clone();
-                    if let Some((k, changed)) = semijoin_given(&c.rel).filter(|(k, _)| k.width == at.len()) {
+                    if let Some(parts) = chunk_counts.held_rows(&c.rel, chunk_files) {
+                        for row in parts.iter().flat_map(|p| p.chunks_exact(at.len())) {
+                            if held_nodes.contains(&row[n_at]) && counts.row(row[n_at], n_at, row) {
+                                rows.extend_from_slice(row);
+                            }
+                        }
+                        walk.clear();
+                    } else if let Some((k, changed)) = semijoin_given(&c.rel).filter(|(k, _)| k.width == at.len()) {
                         let answered: rustc_hash::FxHashSet<i64> = k.held().filter(|n| held_nodes.contains(n) && changed.is_none_or(|ch| !ch.contains(&memo::document_of(*n)))).collect();
                         k.each_row(&mut |row| {
                             if answered.contains(&row[n_at]) && counts.row(row[n_at], n_at, row) {
@@ -7885,7 +8064,7 @@ fn run_observed_within(
                 })();
                 looked.unwrap_or_else(|| {
                     let held: BTreeSet<&str> = c.held.iter().map(String::as_str).collect();
-                    let (st, how, keep) = base_counted(&c.rel, source, &held, c.kept.clone());
+                    let (st, how, keep) = base_counted(&c.rel, source, &held, c.kept.clone(), c.chunked.clone());
                     Counted::Measured(st, how, keep)
                 })
             };
@@ -7897,7 +8076,7 @@ fn run_observed_within(
             const ROW_BYTES: usize = 48;
             let allowance = rerail_accel::budget::share(256 << 20);
             let bytes = |c: &Count| match () {
-                () if c.kept.is_some() => 0,
+                () if c.kept.is_some() || c.chunked.is_some() => 0,
                 () if semijoin.contains(&c.rel) => held_nodes.len() * ROW_BYTES,
                 // Answered by the source from its structure (`base_counted`): no row is listed, and `len` would make them.
                 () if c.source.statistics().is_some() => 0,
@@ -7934,7 +8113,7 @@ fn run_observed_within(
                     // run's kept route (`kept_input_stats`): kept of these rows, a warm run reads them and measures
                     // nothing. Its rows are kept beside the documents' table, for a run of another program's
                     // (`semijoin_kept`).
-                    crate::code_rule_dsl::logic::profile::decision("a semi-join's rows at the held nodes", || format!("{rel}: {answered} of {} nodes answered by kept rows, {}", held_nodes.len(), if kept.is_some() { "the rest walked" } else { "their statistics kept" }));
+                    crate::code_rule_dsl::logic::profile::decision("a semi-join's rows at the held nodes", || format!("{rel}: {answered} of {} nodes answered by kept rows or the chunks' walks, {}", held_nodes.len(), if kept.is_some() { "the rest walked" } else { "their statistics kept" }));
                     semijoin_stats.insert(rel.clone(), st.clone());
                     // Kept again when walked, or of other documents or nodes; else when of other exports, which off the
                     // kept route are digested only when bound (`exports_now` none), so they are compared as written.
@@ -9895,6 +10074,30 @@ impl ValTotals {
             }
         }
     }
+    /// Another chunk's totals of the same column in too: as if its values had been added here.
+    fn merge(&mut self, other: &ValTotals) {
+        self.moments.merge(&other.moments);
+        self.sqd += other.sqd;
+        for (v, n) in &other.tested {
+            *self.tested.entry(*v).or_default() += n;
+        }
+        if other.many {
+            self.few = None;
+            self.many = true;
+        }
+        if !self.many
+            && let Some(theirs) = &other.few
+        {
+            let few = self.few.get_or_insert_with(HashMap::new);
+            for (v, n) in theirs {
+                *few.entry(*v).or_default() += n;
+            }
+            if few.len() as i64 > super::SMALL_NDV {
+                self.few = None;
+                self.many = true;
+            }
+        }
+    }
     /// (ndv, sq): exact while the column has few values, else the sketch's.
     fn moments(&self) -> (i64, i64) {
         match &self.few {
@@ -9908,6 +10111,10 @@ impl Totals {
     /// Totals that count `tested`'s values exactly (`ValTotals`).
     fn new(tested: rustc_hash::FxHashSet<i64>) -> Self {
         Totals { tested: Arc::new(tested), ..Default::default() }
+    }
+    /// Empty totals counting the same tested values as `tested` (a chunk's own, `measure_rows`).
+    fn new_sharing(tested: &Arc<rustc_hash::FxHashSet<i64>>) -> Self {
+        Totals { tested: Arc::clone(tested), ..Default::default() }
     }
     /// Drops `rel`'s measurements (to measure it again).
     fn forget(&mut self, rel: &str) {
@@ -9946,12 +10153,17 @@ impl Totals {
     }
     /// A chunk's rows of `rel` (`inserted` of them new to `x`), with its columns' declared types.
     pub fn add_rows(&mut self, rel: &str, inserted: usize, rows: &dyn crate::code_rule_dsl::facts::vtab::Source, types: &[&str]) {
+        self.rels.entry(rel.to_owned()).or_default().0 += inserted;
+        self.measure_rows(rel, rows, types);
+    }
+    /// A chunk's rows of `rel` measured, their count left to the caller (`add_rows`, or `held` once the export is
+    /// held): a chunk's job measures its exports on its worker into totals of its own (`absorb`).
+    fn measure_rows(&mut self, rel: &str, rows: &dyn crate::code_rule_dsl::facts::vtab::Source, types: &[&str]) {
         let n = rows.len();
         // A row's document: its first node column's (`d << 32 | index`), or one document for a relation without one.
         let doc_col = types.iter().position(|t| *t == "node");
         let doc = |r: usize| doc_col.map_or(-1, |c| rows.value(r, c) >> 32);
         let entry = self.rels.entry(rel.to_owned()).or_default();
-        entry.0 += inserted;
         for (c, name) in rows.columns().iter().enumerate() {
             if types.get(c) == Some(&"node") {
                 let measured = column_moments(rows, c, &doc);
@@ -9967,6 +10179,26 @@ impl Totals {
                 vals.add(&self.tested, v, count);
                 vals.sqd += docs.iter().map(|k| k * k).sum::<i64>();
             });
+        }
+    }
+    /// A chunk's own totals (`measure_rows` on its worker) in: each relation's measured columns, each value column's
+    /// totals. Rows are counted by the caller as each export is held.
+    fn absorb(&mut self, other: &Totals) {
+        for (rel, (rows, measured)) in &other.rels {
+            let entry = self.rels.entry(rel.clone()).or_default();
+            entry.0 += rows;
+            for (col, m) in measured {
+                let t = entry.1.entry(col.clone()).or_default();
+                for (a, b) in t.iter_mut().zip(m) {
+                    *a += b;
+                }
+            }
+        }
+        for (key, v) in &other.vals {
+            self.vals.entry(key.clone()).or_default().merge(v);
+        }
+        for (rel, consts) in &other.consts {
+            self.consts.entry(rel.clone()).or_default().extend(consts.iter().cloned());
         }
     }
     /// The totals as the planner's statistics (T's `stats.py` definitions), over `stats`. Per value, only what the
@@ -10020,6 +10252,161 @@ fn value_runs(rows: &dyn crate::code_rule_dsl::facts::vtab::Source, c: usize, do
         f(v, (end - at) as i64, &per_doc);
         at = end;
     }
+}
+
+/// The chunks' statistics of the base relations the cross part reads (decision 0458), merged as each chunk is filed:
+/// each relation's counts, and how many files they are of. Read for a relation only where they are of every file the
+/// cross part's batch holds (a run with memo hits counts as before).
+#[derive(Default)]
+struct ChunkCounts {
+    by: HashMap<String, (usize, Option<super::statkeep::RelStats>)>,
+    /// A text test's rows (`strtest_<k>(s)`): the distinct strings of the batch that pass it, the union of the chunks'
+    /// (an atom is the store's, the same in every chunk), not their sum. `None` past `UNION_MOST`.
+    unions: HashMap<String, (usize, Option<rustc_hash::FxHashSet<i64>>)>,
+    /// The nodes the chunks' exports hold: the files they are of, and the nodes.
+    exported: (usize, rustc_hash::FxHashSet<i64>),
+    /// Each semi-join's rows at the held nodes, each chunk's as it walked them (`chunk_held_rows`), in its input's
+    /// columns: the files they are of, and the chunks' rows (`None`: a chunk's keyed walk refused).
+    held_rows: HashMap<String, (usize, Option<Vec<Vec<i64>>>)>,
+}
+/// One chunk's held nodes and a semi-join's rows at them (`ChunkCounts::exported`, `ChunkCounts::held_rows`).
+struct ChunkHeld {
+    exported: Vec<i64>,
+    rows: Vec<(String, Option<Vec<i64>>)>,
+}
+/// One chunk's counts (`Evaluated::base_counts`): the files counted, each relation's counts, and each text test's
+/// distinct values.
+type ChunkCounted = (usize, Vec<(String, Option<super::statkeep::RelStats>)>, Vec<(String, Vec<i64>)>, ChunkHeld);
+/// The most strings a text test's union holds before it is given up (counted off the batch instead).
+const UNION_MOST: usize = 1 << 16;
+impl ChunkCounts {
+    fn add(&mut self, counts: Option<ChunkCounted>) {
+        let Some((files, counts, unions, held)) = counts else { return };
+        self.exported.0 += files;
+        self.exported.1.extend(held.exported);
+        for (rel, rows) in held.rows {
+            let (n, have) = self.held_rows.entry(rel).or_insert_with(|| (0, Some(Vec::new())));
+            *n += files;
+            match (have.as_mut(), rows) {
+                (Some(all), Some(rows)) => all.push(rows),
+                _ => *have = None,
+            }
+        }
+        for (rel, values) in unions {
+            let (n, have) = self.unions.entry(rel).or_insert_with(|| (0, Some(Default::default())));
+            *n += files;
+            if let Some(set) = have {
+                set.extend(values);
+                if set.len() > UNION_MOST {
+                    *have = None;
+                }
+            }
+        }
+        for (rel, k) in counts {
+            match self.by.entry(rel) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert((files, k));
+                }
+                std::collections::hash_map::Entry::Occupied(mut e) => {
+                    let (n, have) = e.get_mut();
+                    *n += files;
+                    let merged = match (have.as_mut(), &k) {
+                        (Some(a), Some(b)) => a.merge(b),
+                        _ => false,
+                    };
+                    if !merged {
+                        *have = None;
+                    }
+                }
+            }
+        }
+    }
+    /// Whether the chunks' counts are read (`RERAIL_CHUNK_COUNTS=off`, a measurement aid: counted off the corpus batch).
+    fn on() -> bool {
+        !std::env::var("RERAIL_CHUNK_COUNTS").is_ok_and(|v| v == "off")
+    }
+    /// The nodes the chunks' exports hold, where they are of all `files` files.
+    fn exported(&self, files: usize) -> Option<&rustc_hash::FxHashSet<i64>> {
+        (Self::on() && self.exported.0 == files).then_some(&self.exported.1)
+    }
+    /// Semi-join `rel`'s rows at the held nodes, each chunk's, where they are of all `files` files.
+    fn held_rows(&self, rel: &str, files: usize) -> Option<&[Vec<i64>]> {
+        self.held_rows.get(rel).filter(|(n, _)| Self::on() && *n == files).and_then(|(_, rows)| rows.as_deref())
+    }
+    /// `rel`'s counts, where they are of all `files` files.
+    fn of(&self, rel: &str, files: usize) -> Option<super::statkeep::RelStats> {
+        if !Self::on() {
+            return None;
+        }
+        // A text test's: its union counted as the batch counts its rows, one row a string.
+        if let Some((n, Some(set))) = self.unions.get(rel)
+            && *n == files
+        {
+            let mut flat: Vec<i64> = set.iter().copied().collect();
+            flat.sort_unstable();
+            let mut k = super::statkeep::RelStats::new(vec!["s".to_owned()]);
+            k.documents(&flat, 1, 1);
+            return Some(k);
+        }
+        self.by.get(rel).filter(|(n, _)| *n == files).and_then(|(_, k)| k.clone())
+    }
+}
+
+/// One chunk's statistics of a base relation the cross part reads (decision 0458), counted over its own files' rows
+/// where its batch holds them, at the columns the cross part's rules read (`held`, in the source's column order).
+/// `None` when a document's rows do not lie together (a count reads whole documents at a time), or a row names none
+/// of the chunk's documents (`mine`): a text test's rows are strings, which other chunks hold too. Of the chunk's
+/// documents, those it counts are `own`'s.
+fn chunk_base_count(source: &dyn crate::code_rule_dsl::facts::vtab::Source, held: &[String], mine: &rustc_hash::FxHashSet<i64>, own: &rustc_hash::FxHashSet<i64>) -> Option<super::statkeep::RelStats> {
+    let columns = source.columns();
+    let from: Vec<usize> = (0..columns.len()).filter(|&c| held.contains(&columns[c])).collect();
+    let names: Vec<String> = from.iter().map(|&c| columns[c].clone()).collect();
+    let mut k = super::statkeep::RelStats::new(names);
+    // Each run of one document's rows, by the document its first column names.
+    let mut runs: Vec<(usize, usize, i64)> = Vec::new();
+    source.for_rows(&[0], &mut |r, row| {
+        let d = memo::document_of(row[0]);
+        match runs.last_mut() {
+            Some(run) if run.2 == d && run.1 == r => run.1 = r + 1,
+            _ => runs.push((r, r + 1, d)),
+        }
+    });
+    let mut seen: rustc_hash::FxHashSet<i64> = Default::default();
+    for &(_, _, d) in &runs {
+        if !seen.insert(d) || !mine.contains(&d) {
+            return None;
+        }
+    }
+    for &(lo, hi, d) in &runs {
+        if own.contains(&d) {
+            k.documents_scanned_range(source, lo, hi, &from, 1);
+        }
+    }
+    Some(k)
+}
+
+/// One chunk's rows of a semi-join's base relation (Q396) at the nodes the chunk's exports hold, of the documents it
+/// counts (`held_nodes`), each node's row once, in the relation's input columns: the run counts every chunk's
+/// (`keptstats::SemijoinCounts`) and keeps them (`retain::SemijoinRows`). `None` where the run would not walk the
+/// relation by its node column.
+fn chunk_held_rows(rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, held_nodes: &rustc_hash::FxHashSet<i64>) -> Option<Vec<i64>> {
+    let columns = source.columns();
+    let input = super::super::sql::select::input_columns(rel)?;
+    let at: Vec<usize> = input.iter().map(|n| columns.iter().position(|h| h == n)).collect::<Option<_>>()?;
+    let n_at = input.iter().position(|n| *n == "n")?;
+    if columns.first().map(String::as_str) != input.first().copied() {
+        return None;
+    }
+    let (mut flat, mut seen): (Vec<i64>, rustc_hash::FxHashSet<i64>) = Default::default();
+    source
+        .for_rows_keyed(at[n_at], held_nodes, &at, &mut |_, row| {
+            if seen.insert(row[n_at]) {
+                flat.extend_from_slice(row);
+            }
+            true
+        })
+        .then_some(())?;
+    Some(flat)
 }
 
 /// A chunk's rows of a relation (columns `c0`, `c1`, …), read once to measure them.

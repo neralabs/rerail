@@ -37,7 +37,8 @@ fn compiled(matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usi
                     .clone()
             };
             let (lowered, gates, captor) = got.map_err(|why| format!("{rel}: the matcher {text} does not lower: {why}"))?;
-            Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor, demanded_by: demand.get(k).cloned().flatten() })
+            let direct = field_captures(text, captures);
+            Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor, demanded_by: demand.get(k).cloned().flatten(), direct })
         })
         .collect::<Result<Vec<_>, String>>()
         .and_then(Wave::new)
@@ -57,6 +58,71 @@ pub(crate) struct Matcher {
     /// The matchers (by place in the wave) whose roots hold every node this one's rows are read at
     /// (`matchers::demanded_by_roots`, decision 0459): its rows are made only there. `None`: at every root.
     pub(crate) demanded_by: Option<Vec<usize>>,
+    /// Where every capture is a field child of the root, `{"has": {"field": F, "kind": K, "pattern": "$C", "stopBy":
+    /// "neighbor"}}` in the rule's top `all` (as `Absorb` writes them, decision 0106 §4): each capture's field and
+    /// kind. Its rows are then read from the tape at each root the transducer matched, not by W's matcher there.
+    pub(crate) direct: Option<Vec<(String, String)>>,
+}
+
+/// A matcher's captures as its root's field children ([`Matcher::direct`]), where its text has them so: every
+/// capture bound once, by a `has` of a field and a kind and nothing more, in the rule's top `all`; the matcher with
+/// no `transform`, `constraints` or `utils`.
+fn field_captures(text: &str, captures: &[String]) -> Option<Vec<(String, String)>> {
+    if captures.is_empty() || std::env::var("RERAIL_AST_DIRECT_CAPTURES").is_ok_and(|v| v == "off") {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    let top = v.as_object()?;
+    if top.keys().any(|k| !matches!(k.as_str(), "language" | "rule" | "syntax")) {
+        return None;
+    }
+    let all = top.get("rule")?.as_object().filter(|r| r.len() == 1)?.get("all")?.as_array()?;
+    captures
+        .iter()
+        .map(|c| {
+            let name = format!("${c}");
+            let binding = |part: &serde_json::Value| -> Option<(String, String)> {
+                let has = part.as_object().filter(|p| p.len() == 1)?.get("has")?.as_object()?;
+                if has.keys().any(|k| !matches!(k.as_str(), "field" | "kind" | "pattern" | "stopBy")) || has.get("pattern")?.as_str()? != name || has.get("stopBy")?.as_str()? != "neighbor" {
+                    return None;
+                }
+                Some((has.get("field")?.as_str()?.to_owned(), has.get("kind")?.as_str()?.to_owned()))
+            };
+            let bound: Vec<(String, String)> = all.iter().filter_map(binding).collect();
+            // Bound once, and named nowhere else in the rule.
+            (bound.len() == 1 && text.matches(name.as_str()).count() == 1).then(|| bound.into_iter().next()).flatten()
+        })
+        .collect()
+}
+
+/// A [`Matcher::direct`] matcher's rows at the transducer's `roots` of the tape: the root and each capture's first
+/// child in its field, of its kind. A node the projection leaves out has no row, as `captured_rows`'.
+fn field_captured_rows(fields: &[(String, String)], tape: &crate::code_rule_dsl::tape::TapeDoc, p: &Projected, roots: &BTreeSet<u32>, out: &mut Relation) -> u64 {
+    let grammar = tape.grammar();
+    let Some(codes) = fields.iter().map(|(f, _)| grammar.field_code(f)).collect::<Option<Vec<u16>>>() else { return 0 };
+    let global = |core: u32| {
+        let local = p.local_of_node(core);
+        (local != NONE).then(|| p.global(local))
+    };
+    let mut rows = 0;
+    let mut row = Vec::with_capacity(fields.len() + 1);
+    for &root in roots {
+        row.clear();
+        let Some(r) = global(root) else { continue };
+        row.push(r);
+        for (code, (_, kind)) in codes.iter().zip(fields) {
+            let child = tape.transducer_children(root).find(|&c| tape.transducer_field(c) == *code && grammar.kind_name(tape.transducer_kind(c)) == Some(kind.as_str()));
+            match child.and_then(global) {
+                Some(g) => row.push(g),
+                None => break,
+            }
+        }
+        if row.len() == fields.len() + 1 {
+            out.push(&row);
+            rows += 1;
+        }
+    }
+    rows
 }
 
 /// A program's matchers (decision 0106) and the wave they run as: every matcher's labels and roots in one run per
@@ -132,11 +198,49 @@ const WAVE_GPU_HOST_PER_NODE_PASS: f64 = 4e-9;
 
 impl MatcherWave {
     fn on(&self, backend: crate::code_rule_dsl::transducer::packed::MatcherBackend) -> WaveFound {
+        use crate::code_rule_dsl::transducer::packed::MatcherBackend;
         let started = std::time::Instant::now();
-        let (found, run) = self.wave.roots_batch(backend, &self.tapes, &self.active).map_err(|e| format!("{e:?}"))?;
+        // On the cores, parts of the tapes side by side: a tape's labels and roots read that tape alone, so each part's
+        // roots are the whole's at its tapes (a corpus batch's wave over every file ran on one core, 8 s on t50's
+        // product run). Each part's limited roots are placed back at their tapes.
+        let grain = self.tapes.len().div_ceil(crate::code_rule_dsl::logic::profile::on_cores(rayon::current_num_threads) * 4).max(WAVE_PART_TAPES);
+        if !matches!(backend, MatcherBackend::Cpu) || self.tapes.len() <= grain {
+            let (found, run) = self.wave.roots_batch(backend, &self.tapes, &self.active).map_err(|e| format!("{e:?}"))?;
+            return Ok((found, run, started.elapsed().as_secs_f64()));
+        }
+        use rayon::prelude::*;
+        let starts: Vec<usize> = (0..self.tapes.len()).step_by(grain).collect();
+        let parts: Vec<Result<_, String>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            starts
+                .par_iter()
+                .map(crate::code_rule_dsl::logic::profile::carried("ast matcher wave part (pool)", |&at: &usize| {
+                    let end = (at + grain).min(self.tapes.len());
+                    let active: Vec<Vec<bool>> = self.active.iter().map(|a| a[at..end].to_vec()).collect();
+                    self.wave.roots_batch(backend, &self.tapes[at..end], &active).map_err(|e| format!("{e:?}"))
+                }))
+                .collect()
+        });
+        let mut found: Vec<Vec<std::collections::BTreeSet<u32>>> = vec![Vec::with_capacity(self.tapes.len()); self.active.len()];
+        let mut run = crate::code_rule_dsl::transducer::packed::WaveRun::default();
+        for (&at, part) in starts.iter().zip(parts) {
+            let (part_found, part_run) = part?;
+            for (all, theirs) in found.iter_mut().zip(part_found) {
+                all.extend(theirs);
+            }
+            run.limited.extend(part_run.limited.into_iter().map(|(c, t)| (c, t + at)));
+            run.roots_cpu.resize(part_run.roots_cpu.len().max(run.roots_cpu.len()), 0);
+            for (all, theirs) in run.roots_cpu.iter_mut().zip(&part_run.roots_cpu) {
+                *all += theirs;
+            }
+        }
         Ok((found, run, started.elapsed().as_secs_f64()))
     }
 }
+
+/// The fewest tapes a part of a CPU wave has: a part labels its tapes as one pass, whose setup a few would not carry
+/// (parts of 16 tapes took a chunk's wave from one pass to several, and the waves' CPU from 12 s to 24 s on t50's
+/// product run). A chunk's wave is one part; a corpus batch's, of every file, is split.
+const WAVE_PART_TAPES: usize = 256;
 
 impl rerail_accel::kernel::Program for MatcherWave {
     fn name(&self) -> &'static str {
@@ -198,6 +302,7 @@ fn matched(
     // Each tape's document in the batch (`at`, the caller's); the tapes outside it take no part.
     let held: Vec<usize> = (0..tapes.len()).filter(|&i| at[i].is_some()).collect();
     // A matcher runs where its gates hold and W admits the file: its `syntax` (valid or invalid) and text literals.
+    let gates = profile::span(|| "ast matcher gates".into());
     let errors: Vec<crate::code_rule_dsl::soundness::SyntaxErrors> = held.iter().map(|&i| crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(&tapes[i].1)).collect();
     let active: Vec<Vec<bool>> = matchers
         .list
@@ -215,6 +320,8 @@ fn matched(
     // Each read at its path, which a `filePath` test inside a matcher tests.
     let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = held.iter().map(|&i| tapes[i].1.with_path(&tapes[i].2)).collect();
     let nodes: u64 = docs.iter().map(|d| d.transducer_len() as u64).sum();
+    drop(gates);
+    let run_span = profile::span(|| "ast matcher wave run".into());
     let (found, limited) = if docs.is_empty() || active.iter().all(|a| !a.iter().any(|&on| on)) {
         (vec![vec![BTreeSet::new(); docs.len()]; matchers.len()], Vec::new())
     } else {
@@ -242,12 +349,22 @@ fn matched(
             profile::device("ast matcher wave", run.command_buffers as u64, run.device, wall, nodes);
         }
         profile::decision("ast matcher wave lane", || (if run.metal { "metal" } else { "cpu" }).to_owned());
+        if crate::code_rule_dsl::prof::on() {
+            for (m, ns) in matchers.list.iter().zip(&run.roots_cpu) {
+                crate::code_rule_dsl::prof::count_named(format!("wave.roots_us.{}", m.rel), (*ns / 1000) as usize);
+            }
+            for (m, per) in matchers.list.iter().zip(&found) {
+                crate::code_rule_dsl::prof::count_named(format!("wave.roots_n.{}", m.rel), per.iter().map(BTreeSet::len).sum());
+            }
+        }
         if !run.limited.is_empty() {
             profile::decision("ast matcher roots over the work limit (confirmed by W)", || format!("{} matcher-files", run.limited.len()));
         }
         (found, run.limited)
     };
     profile::work(profile::Unit::Node, nodes);
+    drop(run_span);
+    let _rows_span = profile::span(|| "ast matcher rows".into());
     // A matcher read only where other matchers' roots are (decision 0459): its roots there alone, before any capture.
     let mut demanded: Vec<Option<Vec<BTreeSet<u32>>>> = matchers
         .list
@@ -289,7 +406,12 @@ fn matched(
                 rows += 1;
             }
         }
-        if m.captures.is_empty() && !m.captor.verify {
+        if let (Some(fields), false, true) = (&m.direct, m.captor.verify, over.is_empty()) {
+            let _direct = profile::span(|| "ast captures read as field children".into());
+            for (&i, found) in held.iter().zip(&found) {
+                rows += field_captured_rows(fields, &tapes[i].1, at[i].expect("held"), found, &mut r);
+            }
+        } else if m.captures.is_empty() && !m.captor.verify {
             for (t, (&i, found)) in held.iter().zip(found).enumerate() {
                 if over.contains(&t) {
                     continue;
@@ -310,6 +432,7 @@ fn matched(
             let (found_rows, limited, cpu) = captured_rows(m, &held, &found, at, tapes, atoms, Some(wave.w_key(c)))?;
             // What the host's confirmation costs each relation: its roots, the rows kept and the pool's CPU.
             if crate::code_rule_dsl::prof::on() {
+                crate::code_rule_dsl::prof::count_named(format!("wave.captures_us.{}", m.rel), (cpu / 1000) as usize);
                 profile::decision("ast captures by W at each root: roots, rows, captures, CPU ms", || {
                     format!("{}: {roots} roots, {} rows, {} captures, {:.1} ms", m.rel, found_rows.len(), m.captures.len(), cpu as f64 / 1e6)
                 });

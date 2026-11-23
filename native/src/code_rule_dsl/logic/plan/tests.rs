@@ -102,6 +102,46 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
     assert_eq!(outputs[1]["result"],[["1","99","3","17","3","7"],["2","99","1","-2","-2","-2"],["4","99","3","9223372036854775807","-1","9223372036854775807"]]);
 }
 
+/// t52 step 3: a filter of one relation every row of which passes is that relation (`filter_of`): held as its rows
+/// under its own name, not derived (hiding's narrow twins in a run with no annotation document). Where a row fails,
+/// it is derived as before. Either way its rows are SQL's.
+#[test]
+fn a_filter_every_row_passes_is_read_as_its_relation() {
+    let p = parse_version(".decl x(a:number,b:number)\nx(1,2).\nx(3,4).\n.decl d(a:number,b:number)\nd(a,b) :- x(a,b).\n.decl all_in(a:number,b:number)\nall_in(a,b) :- d(a,b), a < 10.\n.decl some_in(a:number,b:number)\nsome_in(a,b) :- d(a,b), a < 2.\n.output all_in\n.output some_in\n").unwrap();
+    struct Off;
+    impl Drop for Off {
+        fn drop(&mut self) {
+            crate::code_rule_dsl::logic::profile::set(false);
+        }
+    }
+    let _one = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let _off = Off;
+    let mut outputs = Vec::new();
+    for modes in ["", "program"] {
+        crate::code_rule_dsl::logic::profile::set(true);
+        crate::code_rule_dsl::logic::profile::reset();
+        let path = crate::code_rule_dsl::fixtures::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), modes).unwrap();
+        let bound: Vec<String> = crate::code_rule_dsl::logic::profile::decisions().into_keys().filter(|(t, _)| t.starts_with("filters every row passes")).map(|(_, x)| x).collect();
+        if modes.is_empty() {
+            assert!(bound.is_empty(), "SQL derives every filter: {bound:?}");
+        } else {
+            assert!(bound.iter().any(|x| x.contains("all_in as d")), "the filter every row passes is d: {bound:?}");
+            assert!(!bound.iter().any(|x| x.contains("some_in")), "a filter a row fails is derived: {bound:?}");
+        }
+        outputs.push(got.shown().clone());
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[1]["all_in"], [["1", "2"], ["3", "4"]]);
+    assert_eq!(outputs[1]["some_in"], [["1", "2"]]);
+}
+
 /// Two rules of one recursive stratum with one body and different heads (a magic relation and its reader's, as
 /// decision 0145's demand writes them) each run their whole plan in the first wave: the plans are kept apart by
 /// head, so neither head loses the rows the first wave derives.
@@ -2852,6 +2892,25 @@ fn within_read_from_a_fields_part_is_priced_by_that_fields_children() {
     assert_eq!(order.last().map(String::as_str), Some("within($n, $b)"), "{order:?}");
     // Each function's parameters' descendants: 10 × 4, not 10 × 400.
     assert!(work < 10.0 * 50.0, "work {work}: {order:?}");
+}
+
+/// t50, `pre_401`: a part by a named field is priced at that field's children's own size where the tree's fielded
+/// edges know their kinds. A function's `parameters` is a few nodes, not the function's 400, so the plan reads them
+/// from the part rather than leaving `within` last behind the whole function.
+#[test]
+fn within_read_from_a_named_part_is_priced_by_the_parts_own_size() {
+    let src = ".decl kind(n: number, k: symbol)\n.decl field(p: number, f: symbol, c: number)\n.decl within(n: number, a: number)\n.decl r(n: number)\nr(n) :- kind(g, \"fdef\"), field(g, \"parameters\", b), within(n, b).\n.output r\n";
+    let p = parse(src).unwrap();
+    let mut model = bare_model(&p);
+    model.stats.size = std::sync::Arc::new(HashMap::from([("fdef".to_owned(), 400.0), ("params".to_owned(), 6.0), ("x".to_owned(), 3.0)]));
+    model.stats.kfreq = std::sync::Arc::new([("fdef".to_owned(), 10), ("params".to_owned(), 10), ("x".to_owned(), 2_000)].into_iter().collect());
+    model.stats.nodes = 6_020.0;
+    model.stats.fields = std::sync::Arc::new(super::Fielded::of([("fdef".to_owned(), "params".to_owned(), "parameters".to_owned(), 10.0)]));
+    assert_eq!(model.stats.fields.part_size("fdef", "parameters", &model.stats.size), Some(6.0));
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order.last().map(String::as_str), Some("within($n, $b)"), "{order:?}");
+    // Each function's parameters' descendants: about 10 × 6, not 10 × 400.
+    assert!(work < 10.0 * 400.0, "work {work}: {order:?}");
 }
 
 /// Decision 0299: a relation of the program's facts alone has its rows, distinct values and counts before it is

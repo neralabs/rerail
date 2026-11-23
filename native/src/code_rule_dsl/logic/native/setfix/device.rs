@@ -1751,9 +1751,11 @@ impl<'p> Run<'p> {
         if self.plan.stages.iter().zip(&self.counter).any(|(s, c)| s.desc.mode == mj::TEXTOP && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_HOST != 0)) {
             return Some("a text test of a bound pattern holding the set separator (a set of patterns)".to_owned());
         }
-        // A 16z view's blocks: a read that found no room in its batch's cache read the dead entry (0353 step 4b).
+        // A 16z view's blocks: a read that found no room in its batch's cache read the dead entry (0353 step 4b). A
+        // witness stage's views (`probes`) as much as a scanned one's: a membership whose read found no room would fail
+        // its row, and the stratum's rows go missing with nothing refused.
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-        if self.rels.iter().flatten().filter_map(|(r, _)| r.view.as_ref()).any(|v| v.cache_failed() > v.failed) {
+        if self.rels.iter().flatten().map(|(r, _)| r).chain(self.probes.iter().flatten().flatten().map(|(r, ..)| r)).filter_map(|r| r.view.as_ref()).any(|v| v.cache_failed() > v.failed) {
             return Some("a 16z block found no room in its batch's cache".to_owned());
         }
         None

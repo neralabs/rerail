@@ -1306,6 +1306,9 @@ impl Source for Renamed {
     fn estimated_len(&self) -> usize {
         self.0.estimated_len()
     }
+    fn may_hold_rows(&self) -> bool {
+        self.0.may_hold_rows()
+    }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.0.estimated_matches(column, batch)
     }
@@ -2689,6 +2692,9 @@ impl Source for Traced {
     }
     fn estimated_len(&self) -> usize {
         self.inner.estimated_len()
+    }
+    fn may_hold_rows(&self) -> bool {
+        self.inner.may_hold_rows()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.inner.estimated_matches(column, batch)

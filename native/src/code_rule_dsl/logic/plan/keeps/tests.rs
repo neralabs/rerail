@@ -313,6 +313,30 @@
         assert!(!why.contains_key("s"), "{why:?}");
     }
 
+    /// A relation a filter reads is stored (decision 0611): where every row passes, the filter is read as it, so it
+    /// must have rows. Inlined, the filter is its rules under the bound, derived with nothing beside it. A relation of
+    /// the same shape read by a join stays a candidate.
+    #[test]
+    fn a_filters_source_is_stored() {
+        let prog = super::super::super::rr::parse_version(
+            ".decl b(x: number, y: number)\n.decl c(x: number)\n.input b\n.input c\n\
+             .decl s(x: number, y: number)\ns(x, y) :- b(x, y), c(x).\n\
+             .decl t(x: number, y: number)\nt(x, y) :- s(x, y), x < 10.\n\
+             .decl u(x: number, y: number)\nu(x, y) :- b(x, y), c(y).\n\
+             .decl o(x: number, y: number)\no(x, y) :- t(x, y), u(y, x).\n.output o\n",
+        )
+        .unwrap();
+        let placed = Placed::whole(prog);
+        let f = Fields::of(&placed).unwrap();
+        let mut rules_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for k in 0..placed.len() {
+            rules_of.entry(placed.v.rel_name(placed.rule(k).head().rel())).or_default().push(k);
+        }
+        let why = refusals(&f, &placed, placed.len(), &rules_of, &[]);
+        assert_eq!(why.get("s").copied(), Some("a filter reads it (decision 0611)"), "{why:?}");
+        assert!(!why.contains_key("u"), "{why:?}");
+    }
+
     /// A model of `prog` whose inputs have the rows and distinct values by column given.
     fn model_with(prog: &Arc<Version>, inputs: &[(&str, f64, &[f64])]) -> Model {
         use super::super::{Inputs, Stats};
