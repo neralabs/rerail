@@ -80,20 +80,16 @@ DEFINE_KERNEL2(ukl, ukl_scan_u32_size,
     }
 }
 
-// Value `i` as the scan counts it; zero past `n`.
-UKL_INLINE uint32_t ukl_scan_load(UKL_GLOBAL const uint32_t* in, uint64_t i, UklScanArgs args)
-{
-    if (i >= args.n)
-        return 0u;
-    uint32_t v = in[i];
-    return args.popcount != 0u ? ukl_popcount32(v) : v;
-}
-
 // A thread's values: `UKL_SCAN_ITEMS` in a row from its first; zero past `n`.
 UKL_INLINE uint64_t ukl_scan_first(uint32_t tile, uint32_t lid, uint32_t lsz)
 {
     return ((uint64_t)tile * lsz + lid) * UKL_SCAN_ITEMS;
 }
+
+// The tile passes over the device's memory (`ukl/body/scan_tile.h`).
+#define UKL_SCAN_NAME(f) f##_global
+#define UKL_SCAN_SPACE UKL_GLOBAL
+#include <ukl/body/scan_tile.h>
 
 DEFINE_KERNEL2(ukl, ukl_scan_u32_tile_sums,
                ARGS,     UklScanArgs, args,    ,
@@ -105,14 +101,7 @@ DEFINE_KERNEL2(ukl, ukl_scan_u32_tile_sums,
                LID0,     uint32_t,    lid,     ,
                LSZ0,     uint32_t,    lsz,     )
 {
-    UklScanArgs a = ukl_scan_sized(args, sizes);
-    uint64_t first = ukl_scan_first(tile, lid, lsz);
-    uint32_t s = 0u;
-    for (uint32_t k = 0u; k < UKL_SCAN_ITEMS; k++)
-        s += ukl_scan_load(in, first + k, a);
-    uint32_t t = ukl_tg_sum(s, lid, lsz, scratch __UKL_ARGS);
-    if (lid == 0u)
-        sums[tile] = t;
+    ukl_scan_tile_sum_global(in, sums, ukl_scan_sized(args, sizes), scratch, tile, lid, lsz __UKL_ARGS);
 }
 
 DEFINE_KERNEL2(ukl, ukl_scan_u32_tiles,
@@ -126,25 +115,5 @@ DEFINE_KERNEL2(ukl, ukl_scan_u32_tiles,
                LID0,     uint32_t,    lid,     ,
                LSZ0,     uint32_t,    lsz,     )
 {
-    UklScanArgs a = ukl_scan_sized(args, sizes);
-    uint64_t first = ukl_scan_first(tile, lid, lsz);
-    uint32_t v[UKL_SCAN_ITEMS];
-    uint32_t s = 0u;
-    for (uint32_t k = 0u; k < UKL_SCAN_ITEMS; k++) {
-        v[k] = ukl_scan_load(in, first + k, a);
-        s += v[k];
-    }
-    UklScan r = ukl_tg_exclusive_sum(s, lid, lsz, scratch __UKL_ARGS);
-    uint32_t base = a.hasOffsets != 0u ? offsets[tile] : 0u;
-    uint32_t run = base + r.exclusive;
-    for (uint32_t k = 0u; k < UKL_SCAN_ITEMS; k++) {
-        if (first + k < a.n)
-            out[first + k] = run;
-        run += v[k];
-    }
-    // The total, from the last tile's last thread (tile 0 when there are no values).
-    uint32_t tileValues = lsz * UKL_SCAN_ITEMS;
-    uint32_t lastTile = a.n == 0u ? 0u : (a.n - 1u) / tileValues;
-    if (tile == lastTile && lid == lsz - 1u)
-        out[a.n] = base + r.total;
+    ukl_scan_tile_global(in, out, offsets, ukl_scan_sized(args, sizes), scratch, tile, lid, lsz __UKL_ARGS);
 }

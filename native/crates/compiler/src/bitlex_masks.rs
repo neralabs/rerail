@@ -374,6 +374,8 @@ pub struct Lowering {
     pub mask_exprs: HashMap<String, Expr>,
     /// The tree section's rules (`node`, `choice`), in order, and its extra kinds.
     pub tree: Vec<Stmt>,
+    /// `tree` as the build reads it (`grammar::desugared`): tier 2 as Rust is written from it.
+    pub tree_desugared: Vec<Stmt>,
     pub extra: Vec<String>,
     /// Each `mark`, in order: its kind, its bits and whether the file's end has it; and the
     /// hidden ones' kinds.
@@ -547,6 +549,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         ahead: false,
         mask_exprs: HashMap::default(),
         tree: Vec::new(),
+        tree_desugared: Vec::new(),
         extra: Vec::new(),
         marks: Vec::new(),
         mark_exprs: Vec::new(),
@@ -787,7 +790,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                     }
                 })
                 .collect();
-            let x = crate::bitlex_rust::Input { tree: &low.tree, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds };
+            let x = crate::bitlex_rust::Input { tree: &low.tree_desugared, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds };
             let rust = crate::bitlex_rust::tier2(&x);
             low.rust = Some(rust);
             low.rust_loop = Some(crate::bitlex_rust::tier2_loop(&x));
@@ -3423,7 +3426,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             _ => {}
         }
     }
-    let (states, mut arms, whole, by_rules) = {
+    let (states, mut arms, whole, by_rules, desugared) = {
         let is_token = |name: &str| {
             token_rows.iter().any(|t| t.0 == name && !required.contains(&t.0))
                 || is_keyword_kind(&low.keywords, name)
@@ -3451,8 +3454,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             Shape::Auto => machine.0.len() > MACHINE_STATES,
         };
         let (st, ar, wh) = if rules { grammar::build_shaped(&low.tree, &ids, true)? } else { machine };
-        (st, ar, wh, rules)
+        (st, ar, wh, rules, grammar::desugared(&low.tree, &tokens))
     };
+    low.tree_desugared = desugared;
     low.shape = if by_rules { Shape::Rules } else { Shape::Machine };
     let settling: Vec<u16> = low.settles.iter().map(|&k| mark_kinds[k]).collect();
     grammar::without_mark_leaves(&mut arms, &mark_kinds, &settling)?;

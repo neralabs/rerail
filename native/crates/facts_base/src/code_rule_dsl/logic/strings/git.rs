@@ -1,0 +1,380 @@
+//! `@git_commit(sha)` and `@git_has(sha, path)`: questions about Git objects, answered in process from the
+//! object store of the repository that holds the run's root, through gix. Never a `git` subprocess.
+//!
+//! Each run observes the requested objects and index. The whole-run cutoff checks those observations
+//! before it reuses an answer. Paths are relative to the run root.
+
+use crate::git_workspace::snapshot::{physical_objects, resolve_revision, revision_failure_reason, verified_object};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use rusqlite::types::Value;
+use gix::bstr::ByteSlice;
+
+struct Repo {
+    repo: gix::Repository,
+    /// The run root's path inside the work tree.
+    prefix: PathBuf,
+    snapshot: Option<(gix::ObjectId, Option<gix::ObjectId>)>,
+}
+
+#[derive(Default)]
+struct State {
+    root: Option<PathBuf>,
+    repo: Option<Option<Repo>>,
+    answers: HashMap<(&'static str, String, String), Option<bool>>,
+    /// The index as this run read it, with the digest of its paths: read at most once per run.
+    index: Option<Option<(gix::index::File, String)>>,
+}
+
+#[derive(Clone)]
+pub struct Evaluation(Arc<Mutex<State>>);
+
+/// The Git evaluation the run reads, in the run's context (decision 0442): its jobs read it too.
+#[derive(Clone, Default)]
+struct GitEvaluation(Option<Evaluation>);
+
+pub fn current() -> Option<Evaluation> {
+    crate::code_rule_dsl::logic::profile::bound::<GitEvaluation>().0
+}
+
+/// A run's Git evaluation, for the run's length: calls answer from the repository that holds its root. A run inside
+/// another (phase 0's `bootstrap.rerail` run, a phase) binds its own, and the outer run's is back when it ends.
+pub struct Scope {
+    _bound: crate::code_rule_dsl::logic::profile::Bound,
+}
+
+pub fn scope(root: &Path) -> Scope {
+    let state = State { root: Some(root.to_owned()), ..State::default() };
+    Scope { _bound: crate::code_rule_dsl::logic::profile::bind(GitEvaluation(Some(Evaluation(Arc::new(Mutex::new(state)))))) }
+}
+
+/// Tracking observes the paths of the decoded effective index, including shared split-index entries.
+fn tracking_index(repo: &Repo) -> Option<(gix::index::File, String)> {
+    let file = repo.repo.open_index().ok()?;
+    use sha2::Digest as _;
+    let mut digest = sha2::Sha256::new();
+    for entry in file.entries() {
+        let path = entry.path(&file);
+        digest.update((path.len() as u64).to_le_bytes());
+        digest.update(path.as_bytes());
+    }
+    Some((file, crate::content_store::observe::hex(&digest.finalize().into())))
+}
+
+/// What a kept part's Git functors (`@git_tracked`, `@git_commit`, `@git_has`) read, as an input of the strata that
+/// call them (`retain::GIT`): the rows `consulted` gives (the index, each object predicate asked), each with its
+/// answer. The answers move between runs (the index is written, an object is damaged or fetched), so the strata are
+/// kept by their digest: the last run's rows asked again now (`again`) give the digest the last run recorded only if
+/// every answer is as it was.
+#[derive(Default)]
+pub struct Answers(std::collections::BTreeMap<(String, String), String>);
+
+impl Answers {
+    /// `rows` (a last run's, `rows`), each answered now.
+    pub fn again(root: &Path, rows: Vec<(String, String, String)>) -> Answers {
+        Answers(rows.into_iter().map(|(what, key, _)| {
+            let now = now(root, &what, &key);
+            ((what, key), now)
+        }).collect())
+    }
+    /// With what this run's evaluation asked and answered (`consulted`).
+    pub fn and_this_run(mut self, root: &Path) -> Answers {
+        self.0.extend(consulted(root).into_iter().map(|(what, key, value)| ((what, key), value)));
+        self
+    }
+    pub fn digest(&self) -> u64 {
+        use sha2::Digest as _;
+        let mut digest = sha2::Sha256::new();
+        for ((what, key), value) in &self.0 {
+            for part in [what, key, value] {
+                digest.update((part.len() as u64).to_le_bytes());
+                digest.update(part.as_bytes());
+            }
+        }
+        u64::from_le_bytes(digest.finalize()[..8].try_into().expect("eight bytes"))
+    }
+    pub fn rows(&self) -> Vec<(String, String, String)> {
+        self.0.iter().map(|((what, key), value)| (what.clone(), key.clone(), value.clone())).collect()
+    }
+}
+
+/// A `consulted` row's answer now: the index's paths' digest, or an object predicate's value.
+fn now(root: &Path, what: &str, key: &str) -> String {
+    match what {
+        "git_tracking_index" => open(root).and_then(|repo| tracking_index(&repo)).map(|(_, digest)| digest).unwrap_or_default(),
+        _ => predicate_now(root, key),
+    }
+}
+
+fn tracked(state: &mut State, path: &str) -> Option<bool> {
+    let root = state.root.as_deref();
+    let repo = state.repo.get_or_insert_with(|| root.and_then(open)).as_ref()?;
+    let full = repo.prefix.join(path);
+    let full = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(full).ok()?);
+    let (index, _) = state.index.get_or_insert_with(|| tracking_index(repo)).as_ref()?;
+    Some(index.entry_by_path(full.as_ref()).is_some())
+}
+
+fn open(root: &Path) -> Option<Repo> {
+    if let Some((repo, prefix, tree, commit)) = crate::git_workspace::snapshot::repository(root) {
+        return Some(Repo { repo, prefix, snapshot: Some((tree, commit)) });
+    }
+    let repo = physical_objects(crate::git_access::opener::open(root).ok()?);
+    if repo.workdir().is_none() {
+        return Some(Repo { repo, prefix: PathBuf::new(), snapshot: None });
+    }
+    let workdir = dunce::canonicalize(repo.workdir()?).ok()?;
+    let prefix = dunce::canonicalize(root).ok()?.strip_prefix(&workdir).ok()?.to_path_buf();
+    Some(Repo { repo, prefix, snapshot: None })
+}
+
+/// The object a full or abbreviated (at least 4 digits) hex id names, if exactly one does.
+fn resolve(repo: &gix::Repository, sha: &str) -> Option<gix::ObjectId> {
+    if let Ok(id) = gix::ObjectId::from_hex(sha.as_bytes()) {
+        return repo.has_object(id).then_some(id);
+    }
+    let prefix = gix::hash::Prefix::from_hex(sha).ok()?;
+    match repo.objects.lookup_prefix(prefix, None) {
+        Ok(Some(Ok(id))) => Some(id),
+        _ => None,
+    }
+}
+
+fn commit(repo: &Repo, sha: &str) -> Option<bool> {
+    let Some(id) = resolve(&repo.repo, sha) else { return Some(false) };
+    let object = verified_object(&repo.repo, id).ok()?;
+    if object.kind != gix::object::Kind::Commit { return Some(false); }
+    crate::git_workspace::snapshot::decoded_commit(&object.into_commit()).ok()?;
+    Some(true)
+}
+
+fn has(repo: &Repo, sha: &str, path: &str) -> Option<bool> {
+    let Some(id) = resolve(&repo.repo, sha) else { return Some(false) };
+    let object = verified_object(&repo.repo, id).ok()?;
+    if !matches!(object.kind, gix::object::Kind::Commit | gix::object::Kind::Tree) {
+        return Some(false);
+    }
+    let full = repo.prefix.join(path);
+    let relative = full.to_str()?.replace(std::path::MAIN_SEPARATOR, "/");
+    match resolve_revision(&repo.repo, &format!("{id}:{relative}"), Some(Path::new(""))) {
+        Ok(_) => Some(true),
+        Err(error) if matches!(revision_failure_reason(&error), "missing-path" | "wrong-object-kind") => Some(false),
+        Err(_) => None,
+    }
+}
+
+fn answer(name: &'static str, sha: &str, path: &str) -> Value {
+    let Some(evaluation) = current() else { return Value::Null };
+    let mut state = evaluation.0.lock().unwrap_or_else(|e| e.into_inner());
+    let key = (name, sha.to_owned(), path.to_owned());
+    if name == "git_tracked" && let Some(known) = state.answers.get(&key) {
+        return known.map_or(Value::Null, |b| Value::Integer(b.into()));
+    }
+    let found = if name == "git_tracked" {
+        tracked(&mut state, path)
+    } else {
+        let root = state.root.clone();
+        let repo = state.repo.get_or_insert_with(|| root.as_deref().and_then(open));
+        repo.as_ref().and_then(|repo| if name == "git_commit" { commit(repo, sha) } else { has(repo, sha, path) })
+    };
+    state.answers.insert(key, found);
+    found.map_or(Value::Null, |b| Value::Integer(b.into()))
+}
+
+/// `@git_commit(sha)`: 1 when `sha` names a commit of the repository, else 0.
+pub(super) fn git_commit(sha: &str) -> Value {
+    answer("git_commit", sha, "")
+}
+
+/// `@git_has(sha, path)`: 1 when the commit `sha` names has `path` (a file or a directory) in its tree, else 0.
+pub(super) fn git_has(sha: &str, path: &str) -> Value {
+    answer("git_has", sha, path)
+}
+
+/// `@git_tracked(path)`: 1 when `path` is a file in the index (`git ls-files`: staged additions count, a file only on
+/// disk does not), else 0.
+pub(super) fn git_tracked(path: &str) -> Value {
+    answer("git_tracked", "", path)
+}
+
+/// Observations made by this evaluation and its workers.
+pub fn consulted(root: &Path) -> Vec<(String, String, String)> {
+    let Some(evaluation) = current() else { return Vec::new() };
+    let state = evaluation.0.lock().unwrap_or_else(|e| e.into_inner());
+    if state.root.as_deref() != Some(root) { return Vec::new(); }
+    let mut rows = Vec::new();
+    if let Some(index) = &state.index {
+        rows.push(("git_tracking_index".to_owned(), String::new(), index.as_ref().map(|i| i.1.clone()).unwrap_or_default()));
+    }
+    for ((name, sha, path), value) in &state.answers {
+        if *name != "git_tracked" {
+            let key = serde_json::to_string(&(name, sha, path)).expect("string tuple");
+            rows.push(("git_object_predicate".to_owned(), key, serde_json::to_string(value).expect("optional boolean")));
+        }
+    }
+    rows
+}
+
+pub fn predicate_still(root: &Path, key: &str, expected: &str) -> bool {
+    serde_json::from_str::<(&str, &str, &str)>(key).is_ok() && predicate_now(root, key) == expected
+}
+
+/// An object predicate's value now (`consulted`'s `git_object_predicate` row, by its key).
+fn predicate_now(root: &Path, key: &str) -> String {
+    let value = serde_json::from_str::<(&str, &str, &str)>(key).ok().and_then(|(name, sha, path)| open(root).and_then(|repo| match name {
+        "git_commit" => commit(&repo, sha),
+        "git_has" => has(&repo, sha, path),
+        _ => None,
+    }));
+    serde_json::to_string(&value).expect("optional boolean")
+}
+
+/// The commit `rev` names: a revision spec (`HEAD~1`, `origin/main`, an id).
+fn commit_of(repo: &gix::Repository, rev: &str) -> Result<gix::ObjectId, String> {
+    let id = repo.rev_parse_single(rev).map_err(|e| format!("{rev}: {e}"))?;
+    let object = id.object().map_err(|e| format!("{rev}: {e}"))?;
+    Ok(object.peel_to_commit().map_err(|e| format!("{rev}: {e}"))?.id)
+}
+
+/// `git_rev`'s rows for the repository holding `root`: `("head", HEAD)`, and with a base reference, `("base", the
+/// merge base of HEAD and it)`, the revision a change is compared against. Also the root's path in the work tree.
+pub fn revisions(root: &Path, base: Option<&str>) -> Result<(Vec<(String, String)>, PathBuf), String> {
+    let repo = open(root).ok_or_else(|| format!("no Git work tree holds {}", root.display()))?;
+    let head = match repo.snapshot {
+        Some((_, commit)) => commit,
+        None => Some(commit_of(&repo.repo, "HEAD")?),
+    };
+    let mut rows = head.map(|head| vec![("head".to_owned(), head.to_string())]).unwrap_or_default();
+    if let Some((tree, _)) = repo.snapshot { rows.push(("tree".to_owned(), tree.to_string())); }
+    if let Some(base) = base {
+        let head = head.ok_or("a tree snapshot has no commit for --base")?;
+        let other = commit_of(&repo.repo, base)?;
+        let merge = repo.repo.merge_base(head, other).map_err(|e| format!("the merge base of HEAD and {base}: {e}"))?;
+        // gix 0.90 answers no common ancestor as none, where 0.84 gave an error.
+        let merge = merge.ok_or_else(|| format!("HEAD and {base} have no merge base"))?;
+        rows.push(("base".to_owned(), merge.detach().to_string()));
+    }
+    Ok((rows, repo.prefix))
+}
+
+/// Whether what `consulted` recorded (and `git_rev`'s reads, `("git_rev", "REV", id)`) reads the same now.
+pub fn still(root: &Path, what: &str, path: &str, digest: &str) -> bool {
+    match what {
+        "git_tracking_index" => open(root).and_then(|repo| tracking_index(&repo)).map(|(_, digest)| digest).unwrap_or_default() == digest,
+        "git_revision_rows" => {
+            let rows = match revisions(root, (!path.is_empty()).then_some(path)) {
+                Ok((rows, _)) => rows,
+                Err(error) => return digest == format!("error:{error}"),
+            };
+            rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",") == digest
+        }
+        _ => false,
+    }
+}
+
+/// Repository and prefix used by object-backed inputs, including runs over an isolated snapshot.
+pub fn repository(root: &Path) -> Result<(gix::Repository, PathBuf), String> {
+    open(root).map(|r| (r.repo, r.prefix)).ok_or_else(|| format!("no Git repository holds {}", root.display()))
+}
+
+pub use crate::git_workspace::snapshot::Snapshot;
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn commits_and_paths_are_answered_from_the_object_store() {
+        // A run of its own (decision 0442): the root is the run's (`GitState`), and outside a run each read is fresh.
+        let _run = crate::code_rule_dsl::logic::profile::test_run();
+        let dir = std::env::temp_dir().join(format!("rerail-git-fn-{}", std::process::id()));
+        let root = dir.join("sub");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(&dir).args(args).output().unwrap();
+            assert!(out.status.success(), "git {args:?}");
+            String::from_utf8(out.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "-q"]);
+        std::fs::write(root.join("docs/a.md"), "a\n").unwrap();
+        git(&["add", "sub/docs/a.md"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "one"]);
+        let head = git(&["rev-parse", "HEAD"]);
+        let blob = git(&["rev-parse", "HEAD:sub/docs/a.md"]);
+        let _scope = scope(&root);
+        assert_eq!(git_commit(&head), Value::Integer(1));
+        assert_eq!(git_commit(&head[..7]), Value::Integer(1), "an abbreviated id");
+        assert_eq!(git_commit(&blob), Value::Integer(0), "a blob is not a commit");
+        assert_eq!(git_commit("0000000000000000000000000000000000000000"), Value::Integer(0));
+        assert_eq!(git_commit("not hex"), Value::Integer(0));
+        assert_eq!(git_has(&head, "docs/a.md"), Value::Integer(1), "paths are the root's");
+        assert_eq!(git_has(&head, "docs"), Value::Integer(1));
+        assert_eq!(git_has(&head, "docs/b.md"), Value::Integer(0));
+        // The index: a committed file, a staged addition, a file only on disk.
+        assert_eq!(git_tracked("docs/a.md"), Value::Integer(1));
+        std::fs::write(root.join("docs/b.md"), "b\n").unwrap();
+        std::fs::write(root.join("docs/c.md"), "c\n").unwrap();
+        assert_eq!(git_tracked("docs/b.md"), Value::Integer(0), "only on disk");
+        git(&["add", "sub/docs/b.md"]);
+        let _scope = scope(&root);
+        assert_eq!(git_tracked("docs/b.md"), Value::Integer(1), "staged, read again in the next run");
+        assert_eq!(git_tracked("docs/c.md"), Value::Integer(0));
+        let recorded = consulted(&root);
+        assert!(consulted(Path::new("/elsewhere")).is_empty());
+        assert!(still(&root, &recorded[0].0, &recorded[0].1, &recorded[0].2), "the index as it was");
+        git(&["add", "sub/docs/c.md"]);
+        assert!(!still(&root, &recorded[0].0, &recorded[0].1, &recorded[0].2), "the index moved");
+        // git_rev: HEAD, and the merge base of HEAD and a branch that moved on.
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "two"]);
+        let two = git(&["rev-parse", "HEAD"]);
+        git(&["checkout", "-q", "-b", "side", &head]);
+        std::fs::write(root.join("docs/d.md"), "d\n").unwrap();
+        git(&["add", "sub/docs/d.md"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "three"]);
+        let three = git(&["rev-parse", "HEAD"]);
+        let (rows, prefix) = revisions(&root, Some(&two)).unwrap();
+        assert_eq!(rows, [("head".to_owned(), three), ("base".to_owned(), head.clone())]);
+        assert_eq!(prefix, Path::new("sub"));
+        // A run inside a run (phase 0's) answers from its own root, and the outer run's comes back after it.
+        {
+            let _outer = scope(&root);
+            {
+                let _inner = scope(&std::env::temp_dir().join("rerail-no-repo-here"));
+                assert_eq!(git_commit(&head), Value::Null, "the inner run's root: no repository");
+            }
+            assert_eq!(git_commit(&head), Value::Integer(1), "the outer run's root again");
+        }
+        // A selected commit ignores the current branch, staged files and dirty contents.
+        std::fs::write(root.join("docs/a.md"), "dirty\n").unwrap();
+        let snapshot = Snapshot::new(&root, &head).unwrap();
+        let snapshot_root = snapshot.root().to_path_buf();
+        assert_eq!(crate::git_workspace::snapshot::read(snapshot.root().join("docs/a.md")).unwrap(), b"a\n");
+        assert!(!snapshot.root().exists(), "no source directory is materialized");
+        assert!(!crate::git_workspace::snapshot::is_file(snapshot.root().join("docs/d.md")));
+        let _selected = scope(snapshot.root());
+        assert_eq!(git_tracked("docs/a.md"), Value::Integer(1));
+        assert_eq!(git_tracked("docs/d.md"), Value::Integer(1), "the tracked predicate still reads the current index");
+        assert_eq!(consulted(snapshot.root())[0].0, "git_tracking_index");
+        let (selected, prefix) = revisions(snapshot.root(), Some(&two)).unwrap();
+        assert_eq!(selected[0], ("head".to_owned(), head.clone()));
+        assert_eq!(selected.last().unwrap(), &("base".to_owned(), head.clone()));
+        assert_eq!(prefix, Path::new("sub"));
+        assert_eq!(git_has(&git(&["rev-parse", "HEAD^{tree}"]), "docs/a.md"), Value::Integer(1));
+        drop(snapshot);
+        assert!(!snapshot_root.exists());
+        let tree = git(&["rev-parse", "HEAD^{tree}"]);
+        let snapshot = Snapshot::new(&dir, &tree).unwrap();
+        assert_eq!(crate::git_workspace::snapshot::read(snapshot.root().join("sub/docs/a.md")).unwrap(), b"a\n");
+        let (selected, _) = revisions(snapshot.root(), None).unwrap();
+        assert_eq!(selected, [("tree".to_owned(), tree)]);
+        assert!(revisions(snapshot.root(), Some(&head)).is_err());
+        assert!(Snapshot::new(&dir, &blob).is_err());
+        assert!(Snapshot::new(&dir, "missing-revision").is_err());
+        drop(snapshot);
+        let _missing = scope(&std::env::temp_dir().join("rerail-no-repo-here"));
+        assert_eq!(git_commit(&head), Value::Null, "no repository: no value");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

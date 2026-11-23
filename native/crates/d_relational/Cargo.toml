@@ -1,0 +1,40 @@
+# Written by the crate split (step 8a) and kept by hand: its sources are where they were, mounted in place (src/lib.rs).
+[package]
+name = "rerail-d-relational"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "D's relational waves (test-only copies), over the code rules (rerail-rules-base) and P's anchor corpus (rerail-p-anchors)."
+
+[features]
+default = ["rerail-rules-base/default", "rerail-p-anchors/default"]
+headless = ["napi-derive/noop", "rerail-rules-base/headless", "rerail-p-anchors/headless"]
+code-rule-profile = ["rerail-rules-base/code-rule-profile", "rerail-p-anchors/code-rule-profile"]
+p-anchor-corpus = ["rerail-rules-base/p-anchor-corpus", "rerail-p-anchors/p-anchor-corpus"]
+test-hooks = ["rerail-rules-base/test-hooks", "rerail-prof/test-hooks", "dep:tempfile", "rerail-p-anchors/test-hooks"]
+
+[dependencies]
+ast-grep-core = "=0.51.0"
+ast-grep-language = { version = "=0.51.0", default-features = false }
+foldhash = "=0.2.0"
+fallible-iterator = "0.3"
+napi = { version = "3.0", default-features = false, features = ["napi8", "dyn-symbols"] }
+napi-derive = "3.0"
+parking_lot = { version = "0.12", features = ["arc_lock"] }
+regex = "=1.13.1"
+regex-syntax = "=0.8.11"
+rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
+rustc-hash = "=2.1.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.11"
+tree-sitter = "=0.27.1"
+tempfile = { version = "=3.27.0", optional = true }
+rerail-p-anchors = { path = "../p_anchors", default-features = false }
+rerail-prof = { path = "../prof" }
+rerail-registry = { path = "../registry" }
+rerail-rules-base = { path = "../rules_base", default-features = false }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-d-relational = { path = ".", features = ["test-hooks"] }

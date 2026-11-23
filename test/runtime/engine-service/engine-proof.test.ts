@@ -114,6 +114,19 @@ const PROBER = `
 const { engineCapabilityProof } = await import(process.argv[1]);
 process.stdout.write(JSON.stringify({ answer: await engineCapabilityProof(process.argv[2], "capability", 1000) }) + "\\n");`;
 /**
+ * {@link PROBER} whose proof's limit is `process.argv[3]` ms, so its answer is the listener's however late, within that,
+ * the listener writes it. The one timer the proof sets is its limit: this process counts the timers it sets, still
+ * setting each, and prints `asked` as the proof sets it, once the proof has connected and made its request; then the
+ * answer and how many timers the proof set. A limit the proof left pending after its verdict keeps the process alive.
+ */
+const HELD_LIMIT_PROBER = `
+const { engineCapabilityProof } = await import(process.argv[1]);
+const set = globalThis.setTimeout;
+let limits = 0;
+globalThis.setTimeout = (...args) => { limits += 1; process.stdout.write("asked\\n"); return set(...args); };
+const answer = await engineCapabilityProof(process.argv[2], "capability", Number(process.argv[3]));
+process.stdout.write(JSON.stringify({ answer, limits }) + "\\n");`;
+/**
  * A process that asks the engine on a pipe for one proof with a 2 s limit, and prints the answer, how many tries the
  * proof made (one more than the waits it asked for) and how many folders it read meanwhile: `readdirSync` is counted
  * before the proof's module loads, and Node hands the counted one to every module that imports it.
@@ -253,18 +266,22 @@ async function answerOrWait(answered: Promise<string>, waits: HeldWaits): Promis
 /**
  * A holder of the pipe `name` that is not an engine, as any local user can create an engine pipe's name first: one
  * instance with no input buffer, which takes one client and never reads, so a write to it waits until the holder ends,
- * which it does once the test ends. With an `answer`, it writes that to the client first. Returns once the instance
- * exists. Its pipe is made as `oneInstancePipeLines` makes it, through .NET calls alone, so the case's wait for
- * `listening` waits on no module.
+ * which it does once the test ends. With an `answer`, it writes that to its client when the test calls `answer()`,
+ * which returns once the holder says it has written it: the test decides when the holder answers, never PowerShell's
+ * speed. Returns once the instance exists. Its pipe is made as `oneInstancePipeLines` makes it, through .NET calls
+ * alone, so the case's wait for `listening` waits on no module.
  */
-async function holderThatNeverReads(name: string, answer?: string): Promise<void> {
+async function holderThatNeverReads(name: string, answer?: string): Promise<{ answer: () => Promise<void> }> {
   const script = [
     ...oneInstancePipeLines(name, { options: "None", outBufferSize: 4096 }),
     "[Console]::Out.WriteLine('listening'); [Console]::Out.Flush()",
     "$pipe.WaitForConnection()",
     ...(answer === undefined ? [] : [
       `$answer = [Convert]::FromBase64String('${Buffer.from(answer, "latin1").toString("base64")}')`,
+      // Answers once the test writes a line to its input.
+      "[void][Console]::In.ReadLine()",
       "$pipe.Write($answer, 0, $answer.Length); $pipe.Flush()",
+      "[Console]::Out.WriteLine('answered'); [Console]::Out.Flush()",
     ]),
     // Lives until its input closes: the test's end, or the kill after it.
     "[void][Console]::In.ReadLine()",
@@ -273,7 +290,16 @@ async function holderThatNeverReads(name: string, answer?: string): Promise<void
     stdio: ["pipe", "pipe", "inherit"], windowsHide: true,
   });
   children.push(holder);
-  expect(await firstLine(holder)).toMatch(/^listening/u);
+  // The write in `answer()` can meet a holder that is exiting and fail with EPIPE; `line()` then says it ended.
+  holder.stdin!.on("error", () => undefined);
+  const line = linesOf(holder);
+  expect(await line()).toMatch(/^listening/u);
+  return {
+    answer: async () => {
+      holder.stdin!.write("answer\n");
+      expect(await line(), "the holder's word once it has written its answer").toMatch(/^answered/u);
+    },
+  };
 }
 
 /**
@@ -287,6 +313,22 @@ async function proveInAnotherProcess(path: string): Promise<{ answer: unknown; r
   const answeredAt = Date.now();
   await Promise.race([closed, delay(HELD_MS)]);
   return { answer: (JSON.parse(line) as { answer: unknown }).answer, ranOnMs: Date.now() - answeredAt };
+}
+
+/**
+ * Runs {@link HELD_LIMIT_PROBER} against `path` and lets `holder` answer once the proof has asked: what the prober
+ * printed, and how long its process ran on after it answered, up to {@link HELD_MS}.
+ */
+async function proveOnceAsked(path: string, holder: { answer: () => Promise<void> }): Promise<{ printed: unknown; ranOnMs: number }> {
+  const prober = startNode(HELD_LIMIT_PROBER, [PROOF_MODULE, path, String(HELD_LIMIT_MS)], true);
+  const closed = once(prober, "close");
+  const line = linesOf(prober);
+  expect(await line(), "the prober's word once its proof has asked").toBe("asked");
+  await holder.answer();
+  const printed: unknown = JSON.parse(await line());
+  const answeredAt = Date.now();
+  await Promise.race([closed, delay(HELD_MS)]);
+  return { printed, ranOnMs: Date.now() - answeredAt };
 }
 
 /**
@@ -401,13 +443,15 @@ describe.runIf(process.platform === "win32")("the engine proof, against a pipe's
     expect(ranOnMs).toBeLessThan(SLACK_MS);
   }, 45_000);
 
-  // A holder that answers at once leaves the request's write pending: only destroying the request at the verdict
-  // cancels it.
+  // A holder that answers leaves the request's write pending: only destroying the request at the verdict cancels it,
+  // and only clearing the limit at the verdict leaves no timer to hold the process. The holder answers only once the
+  // proof has asked, within a limit no case reaches, so the verdict is the holder's answer however long PowerShell
+  // takes to write it: a 1 s limit running beside the holder would answer silent whenever PowerShell wrote after it.
   it("leaves its process free to end once it has a verdict, also when the holder answers before it reads the request", async () => {
     const name = pipeName("answered");
-    await holderThatNeverReads(name, "HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n");
-    const { answer, ranOnMs } = await proveInAnotherProcess(String.raw`\\.\pipe` + "\\" + name);
-    expect(answer, `the process ended ${ranOnMs} ms after its answer`).toBe("refused");
+    const holder = await holderThatNeverReads(name, "HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n");
+    const { printed, ranOnMs } = await proveOnceAsked(String.raw`\\.\pipe` + "\\" + name, holder);
+    expect(printed, `the process ended ${ranOnMs} ms after its answer`).toEqual({ answer: "refused", limits: 1 });
     expect(ranOnMs).toBeLessThan(SLACK_MS);
   }, 45_000);
 });

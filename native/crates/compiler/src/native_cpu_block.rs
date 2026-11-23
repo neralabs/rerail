@@ -123,10 +123,6 @@ pub struct CompiledBlock {
     /// bytes after it, and `Batch` brings what they wrote back to the file's positions
     /// (`strip_prefix`, 0389). Empty where there is none, or the passes make it themselves.
     pub prefix: Vec<u8>,
-    /// With `native_cpu_codegen::Options::keep_ir`: each function's IR as Cranelift was given it (its
-    /// `FuncId`), and the entries' ids in order, for an ahead-of-time build (`clif_rust`).
-    pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
-    pub entry_ids: Vec<u32>,
 }
 
 /// A pass's function, as its checks read it: backward or forward, its Cranelift IR, and (a
@@ -188,15 +184,6 @@ pub struct Outlined {
 }
 
 impl CompiledBlock {
-    /// Runs another build of the same code from now on: one entry a pass, as `entries`.
-    ///
-    /// # Safety
-    /// `entries` must be this program's code , in `entry_ids`' order.
-    pub unsafe fn set_entries(&mut self, entries: Vec<Entry>) {
-        assert_eq!(entries.len(), self.entries.len(), "one entry a pass");
-        self.entries = entries;
-    }
-
     /// Feeds tier 2 from now on (`Feed`, decision 0496): `Batch::call` makes each file's feed, not its records.
     ///
     /// # Safety
@@ -220,17 +207,6 @@ impl CompiledBlock {
     /// (`RecordTables::punct_in_entry`).
     pub fn punct_in_entry(&self) -> bool {
         self.records.as_ref().is_some_and(|t| t.punct_in_entry.is_some())
-    }
-
-    /// The record pass's tables' words, as its code reads them.
-    pub fn tables_words(&self) -> Option<&[u64]> {
-        self.records.as_ref().map(|t| &t.words[..])
-    }
-
-    /// The record pass's tables: their address and bytes. Its code holds addresses inside them
-    /// as constants (the slots' keys and meta, say).
-    pub fn tables_span(&self) -> Option<(i64, i64)> {
-        self.records.as_ref().map(|t| (t.words.as_ptr() as i64, 8 * t.words.len() as i64))
     }
 
     /// The calls in the passes' IR: each of a function the same lowering made from the same
@@ -359,7 +335,7 @@ impl Batch {
     }
 
     /// Each extract's stream ended in two entries of its file's length, past its count, as simdjson's stage 1 ends
-    /// its index: tier 2 takes a token with one load (`rust_stream`'s `take`), the end's start the file's length,
+    /// its index: tier 2 takes a token with one load, the end's start the file's length,
     /// whose byte (padding) no switch takes. The extract's slack (`capacity`) holds them.
     fn end_streams(&mut self, program: &CompiledBlock) {
         let fields: Option<[u64; 3]> = program.records.as_ref().map(|t| [u64::from(t.starts), u64::from(t.lasts), program.extracts.len() as u64]);
@@ -2769,19 +2745,15 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         t.layout = record_layout(native, t);
     }
     let merged = tables.is_some() && matches!(passes.passes.last(), Some(Pass::Forward { .. }));
-    let mut ir = Vec::new();
     // Each function's constants folded (`clif_fold`) before either backend is given it, with
     // what the functions defined before it return known of their calls' results (a callee is
     // defined before its callers).
     let sums = std::cell::RefCell::new(crate::clif_fold::Summaries::new());
-    let keep = |ir: &mut Vec<(u32, cranelift_codegen::ir::Function)>, id: cranelift_module::FuncId, func: &mut cranelift_codegen::ir::Function| {
+    let keep = |id: cranelift_module::FuncId, func: &mut cranelift_codegen::ir::Function| {
         let mut s = sums.borrow_mut();
         crate::clif_fold::fold_with(func, &s);
         let r = crate::clif_fold::returns(func, &s);
         s.insert(id.as_u32(), r);
-        if crate::native_cpu_codegen::options().keep_ir.load(std::sync::atomic::Ordering::Relaxed) {
-            ir.push((id.as_u32(), func.clone()));
-        }
     };
     let mut ids = Vec::with_capacity(passes.passes.len());
     let mut disassembly = String::new();
@@ -2816,7 +2788,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 let clif = general_context.func.display().to_string();
                 // The general body where the pass still calls it (none without a block loop).
                 if calls_of(&context.func).contains(&general_id.as_u32()) {
-                    { keep(&mut ir, general_id, &mut general_context.func); crate::native_cpu_codegen::define_function(&mut module, general_id, &mut general_context) }.map_err(|_| Error::BackendFailure)?;
+                    { keep(general_id, &mut general_context.func); crate::native_cpu_codegen::define_function(&mut module, general_id, &mut general_context) }.map_err(|_| Error::BackendFailure)?;
                     let code = general_context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
                     shape.outlined.push(Outlined { clif, disassembly: code });
                     shape.general = true;
@@ -2828,7 +2800,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     region_context.set_disasm(true);
                     region_context.func.srclocs.clear();
                     let clif = region_context.func.display().to_string();
-                    { keep(&mut ir, id, &mut region_context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut region_context) }.map_err(|_| Error::BackendFailure)?;
+                    { keep(id, &mut region_context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut region_context) }.map_err(|_| Error::BackendFailure)?;
                     let code = region_context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
                     shape.outlined.push(Outlined { clif, disassembly: code });
                     module.clear_context(&mut region_context);
@@ -2844,7 +2816,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         shape.pressure = crate::native_cpu_pressure::measure(&context.func, &passes.origins[k], &hot);
         context.func.srclocs.clear();
         shape.clif = context.func.display().to_string();
-        { keep(&mut ir, id, &mut context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut context) }.map_err(|_| Error::BackendFailure)?;
+        { keep(id, &mut context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut context) }.map_err(|_| Error::BackendFailure)?;
         shape.disassembly = context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
         disassembly.push_str(&shape.disassembly);
         for o in &shape.outlined {
@@ -2863,7 +2835,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             context.func.signature = signature.clone();
             context.set_disasm(true);
             record_pass(&mut context, r, &t, native.extracts.len(), native.outputs.len())?;
-            { keep(&mut ir, id, &mut context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut context) }.map_err(|_| Error::BackendFailure)?;
+            { keep(id, &mut context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut context) }.map_err(|_| Error::BackendFailure)?;
             disassembly.push_str(&context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default());
             module.clear_context(&mut context);
             ids.push(id);
@@ -2873,7 +2845,6 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     };
     module.finalize_definitions().map_err(|_| Error::BackendFailure)?;
     // SAFETY: each function was declared and defined with `Entry`'s signature.
-    let entry_ids = ids.iter().map(|id| id.as_u32()).collect();
     let entries = ids.iter().map(|&id| unsafe { std::mem::transmute::<*const u8, Entry>(module.get_finalized_function(id)) }).collect();
     let last = shapes.last().expect("a forward pass at least").clone();
     Ok(CompiledBlock {
@@ -2896,8 +2867,6 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         disassembly,
         records,
         prefix,
-        ir,
-        entry_ids,
     })
 }
 

@@ -148,29 +148,23 @@
 // ---- source text (every document, parsed or not) ------------------------------------------------------------
 // Checks that count lines, scan comments or read files with no grammar (Markdown, Rust read as text) need the
 // raw bytes, comments and blank lines included. A document in `.scope text "**/*.md"` has doc, path_part and these
-// relations, and no tree; its lines (tape_line, a match's) end at \r\n, \r, \n, U+2028 and U+2029, as the linter's
-// do in a file of no language.
+// relations, and no tree.
+//
+// A file's lines have one definition, its language's ecosystem's (its compiler's, linters' and editors', decision
+// 0612): \r\n, \r and \n for Python (CPython, Ruff), the JVM languages, PHP, C and C++, Swift, HTML, Markdown and
+// the others; U+2028 and U+2029 too for JavaScript and TypeScript (ESLint) and a file of no language; \n alone for
+// Rust and Go (rustc, go/token: a lone \r is inside a line, one before a \n out of its text); U+0085, U+2028 and
+// U+2029 too for C# (Roslyn); a form feed too for CSS. A \n\r is two line ends wherever \r is one. src_line and every
+// place (line, end_line, col of a node, token, comment, match or line) are read off those lines.
 // source(d, sp): the whole file as one span. match_all over it gives spans with lines.
 .decl source(d: number, sp: span)
-// src_line(d, 12, sp): physical line 12, without its terminator. Python and text-only documents split as
-// str.splitlines() does (\r, \v, \f, \x1c-\x1e, \x85 and the Unicode separators also end a line), as the linter's
-// `lines` regexes do; others split at \n only.
-// A Datalog version over match_all would be exact for \n only, so it is native.
+// src_line(d, 12, sp): line 12, without its terminator, the empty line after a final terminator included: the
+// lines line(n, l) numbers. A script's own splitting is a rule's over them (lib/data-layer/pub-lines.rerail's
+// py_line: Python's str.splitlines()).
 .decl src_line(d: number, l: number, sp: span)
-// src_line_lf(d, 12, sp): line 12 split at \n only, a \r kept (a regex rule's `terminators: "lf"`).
-.decl src_line_lf(d: number, l: number, sp: span)
-// tape_line(d, 12, sp): line 12 as line(n, l) numbers lines (\r\n, \r and \n for Python, the linter's), the empty
-// line after a final terminator included: the lines a `layout` rule reads.
-.decl tape_line(d: number, l: number, sp: span)
-// split_line follows Python str.splitlines(), for text scanners: CRLF is one boundary;
-// LF, CR, VT, FF, FS, GS, RS, NEL, U+2028 and U+2029 also split. Empty input has no rows.
-// A terminal boundary adds no extra row. Text is complete, including lines longer than 256 bytes.
-// These logical line numbers are separate from AST coordinates. Prepared only when demanded.
-.decl split_line(d: number, l: number, t: symbol)
-// LF-only lines, as Python str.split('\n'): preserve CR and other Unicode separators.
-// Empty input and a terminal LF each retain an empty line. Made only when demanded.
-.decl lf_line(d: number, l: number, t: symbol)
-.decl line_count(d: number, k: number)                   // number of physical lines, as src_line counts them
+// line_count(d, k): the lines a linter counts (ESLint's max-lines, pylint's too-many-lines): src_line's, the empty
+// line after a final terminator left out, so an empty file has none.
+.decl line_count(d: number, k: number)
 // end_line(n, l): the line holding n's end offset, as `layout` counts: its last character's, except that a node
 // ending with a line terminator (a module) ends on the line after it.
 .decl end_line(n: loc, l: number)
@@ -203,7 +197,7 @@
 // nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
 // (`.on syntax_error`, at the end).
 .decl syntax_error(d: number, l: number, msg: symbol)
-.input source, src_line, src_line_lf, tape_line, split_line, lf_line, line_count, end_line, col, node_text, op_at, prev_token, token
+.input source, src_line, line_count, end_line, col, node_text, op_at, prev_token, token
 .input syntax_error
 // Tokens: the leaves of the parse tree, named or anonymous, in source order. Comments are not tokens, as in
 // ESLint's token store (getTokenBefore, getFirstToken, …), so rules that reason about tokens port directly.
@@ -326,6 +320,12 @@
 .decl file_digest(path: symbol, c: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol) extensible
 .decl loaded(path: symbol, module: symbol, grammar: symbol)
+// Each answered by a native step (t33 K3): the request, then what its answer adds rows to. A file system request is
+// derived from the literals that bind its key (`rr::lower`).
+.answer rr_dir_req -> dir_entry
+.answer rr_file_req -> file_line
+.answer rr_digest_req -> file_digest
+.answer load -> loaded
 // ---- a coding agent's tool calls (`tool-calls.md`) ----
 // tool_call(c, tool): a tool call the run is given (the `toolCalls` option, `run-policies --tool-calls`), by its id c,
 // and the tool's name (`Bash`, `shell`). tool_input(c, key, value): each string argument of call c, by its key, a
@@ -617,6 +617,10 @@
 .decl git_revision_of(repo: symbol, expression: symbol, oid: symbol, status: symbol)
 .decl git_view_revision_of(view: symbol, expression: symbol, oid: symbol, status: symbol)
 .decl git_object_of(repo: symbol, oid: symbol, field: symbol, position: number, first: symbol, second: symbol, value: number, offset: number)
+// Answered by native steps (t33 K3), their requests made by `git.rerail`'s rules.
+.answer git_revision_request -> git_revision_of
+.answer git_view_revision_request -> git_view_revision_of
+.answer git_object_request -> git_object_of
 .decl source_grammar_suffix(grammar: symbol, suffix: symbol, order: number, built: number)
 .decl source_grammar_registry(version: symbol)
 .decl source_tape_version(grammar_build: symbol, tape_format: number)

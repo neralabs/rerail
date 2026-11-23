@@ -125,7 +125,7 @@ fn generate_languages(omitted: &[String]) -> Vec<(String, Vec<u8>)> {
 /// The Unicode names table `include_bytes!` embeds (`value/names.rs`): it must be the table, not
 /// its Git LFS pointer, or every Python `\N{...}` escape fails at run time.
 fn check_names_table(manifest: &Path) {
-    let relative = "src/code_rule_dsl/value/names/names.bin";
+    let relative = "crates/adapters/src/code_rule_dsl/value/names/names.bin";
     let path = manifest.join(relative);
     println!("cargo:rerun-if-changed={}", path.display());
     let bytes = std::fs::read(&path).unwrap_or_else(|error| {
@@ -291,16 +291,19 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     // registry and how the view is built are part of the tape, as is the view a PHP file is
     // parsed from (`php_view`, which reads with Forte's scanners and `php_literal`, as Blade's
     // view does). Their tests are not.
+    // Their crates hold them now: Forte's (the port and its registry) and the PHP language's (the views).
     let mut view_sources = Vec::new();
-    collect_sources(&manifest.join("src/code_rule_dsl/blade"), &mut view_sources);
-    view_sources.push(manifest.join("src/code_rule_dsl/php_view.rs"));
-    view_sources.push(manifest.join("src/code_rule_dsl/php_literal.rs"));
+    for krate in ["crates/forte", "crates/lang_php"] {
+        collect_sources(&manifest.join(krate).join("src/code_rule_dsl/blade"), &mut view_sources);
+    }
+    view_sources.push(manifest.join("crates/lang_php/src/code_rule_dsl/php_view.rs"));
+    view_sources.push(manifest.join("crates/lang_php/src/code_rule_dsl/php_literal.rs"));
     // A `.rerail` tape is the tree the rule engine's parser builds, numbered by its kinds table (decision 0061).
     view_sources.push(manifest.join("crates/rr_syntax/src/syntax.rs"));
     view_sources.push(manifest.join("crates/rr_syntax/src/tape.rs"));
     // A named-only tape (RER-131) leaves out the tokens its grammar's automata recognize: the
     // automata, and the grammars they are built from, decide what a stored tape means.
-    view_sources.push(manifest.join("src/code_rule_dsl/tape/tokens.rs"));
+    view_sources.push(manifest.join("crates/lang/src/code_rule_dsl/tape/tokens.rs"));
     view_sources.push(manifest.join("grammars/token-grammars/rust/grammar.json"));
     view_sources.push(manifest.join("grammars/token-grammars/php/grammar.json"));
     view_sources.push(manifest.join("grammars/token-grammars/java/grammar.json"));
@@ -320,19 +323,26 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
             .to_string_lossy()
             .ends_with("tests.rs")
     });
-    view_sources.sort();
-    let view_sources = view_sources
+    // A source is named by its path under its crate (`src/code_rule_dsl/...`), as it was under native/src before the
+    // crate split moved it into its crate: where a file is kept does not change what a tape means.
+    let mut view_sources = view_sources
         .into_iter()
         .map(|path| {
+            println!("cargo:rerun-if-changed={}", path.display());
             let relative = path
                 .strip_prefix(&manifest)
                 .expect("source under manifest")
                 .to_string_lossy()
                 .into_owned();
+            let relative = match relative.split_once("/src/code_rule_dsl/") {
+                Some((krate, rest)) if krate.starts_with("crates/") => format!("src/code_rule_dsl/{rest}"),
+                _ => relative,
+            };
             let bytes = std::fs::read(&path).expect("view source is readable");
             (relative, bytes)
         })
         .collect::<Vec<_>>();
+    view_sources.sort_by(|(a, _), (b, _)| Path::new(a).cmp(Path::new(b)));
     println!(
         "cargo:rustc-env=RERAIL_ENGINE_BUILD_ID={}",
         hex(&engine.finalize())

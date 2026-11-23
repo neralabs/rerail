@@ -13,6 +13,8 @@ UKL_INLINE uint64_t clif_f16_ld(CLIF_T_ARGS, uint32_t base, uint32_t off, uint32
 #define CLIF_16(name) clif_f16_##name
 #define CLIF_16_ARGS CLIF_T_ARGS
 #define CLIF_16_PASS t, v
+// The side read, the rare case (`UKL_RARE`: a call, but on OpenCL, ukl/backend.h).
+#define CLIF_16_RARE UKL_RARE
 #include <ukl/body/tape_f16.h>
 
 // The node's parent, or NONE at the root: the node before is the parent (an inner node), or a leaf naming the

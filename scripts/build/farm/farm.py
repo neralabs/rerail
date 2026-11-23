@@ -63,7 +63,7 @@ COPY_SECONDS = 120
 COMPILE_SECONDS = 900
 # What a crate's build reads as a path must be hashed as it is, not with its checkout stripped. Not
 # RERAIL_FIXTURES_DIR: the tests read it as they run, and as they compile only to embed a fixture's
-# text (`oracle!`, native/src/code_rule_dsl/fixtures.rs), which the key holds; hashed as it is, it made
+# text (`oracle!`, native/crates/lang/src/code_rule_dsl/fixtures.rs), which the key holds; hashed as it is, it made
 # every test binary of every checkout its own (scripts/check/ci/path-free-builds.mjs keeps it so). A
 # hit from another checkout names this checkout's fixtures in its dep-info: sccache writes the
 # dep-info from its own `--emit=dep-info` run of this compile, never from the cache (upstream 81c2834,
@@ -1285,7 +1285,7 @@ def probe(host, cfg, fell_back=False, recovered=False):
               " echo \"$(sysctl -n vm.loadavg) busy=$(ps -A -o %cpu= | awk -v n=$(sysctl -n hw.logicalcpu) '{s+=$1} END {print int(s/n)}')\";"
               " mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
     if host.get("fleet"):
-        # A nera-fleet node (`"fleet": true`): the fleet's jobs are containers carrying `fleet.job`.
+        # A node of Nera's job fleet (`"fleet": true`): the fleet's jobs are containers carrying `fleet.job`.
         # Counted first; docker may be outside a plain ssh command's PATH on a Mac.
         script = ('echo "fleet $(PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin '
                   'docker ps -q --filter label=fleet.job 2>/dev/null | wc -l)"; ' + script)
@@ -1386,7 +1386,7 @@ def probe(host, cfg, fell_back=False, recovered=False):
         return probe(host, cfg, fell_back=fell_back, recovered=True)
     h["route"] = route(name)
     if fleet_jobs:
-        h["why"] = (f"running {fleet_jobs} nera-fleet job{'s' * (fleet_jobs > 1)}: the farm and the fleet are equals there, "
+        h["why"] = (f"running {fleet_jobs} fleet job{'s' * (fleet_jobs > 1)}: the farm and the fleet are equals there, "
                     "and the farm starts nothing more until they end")
     elif link and arrival != link:
         h["why"] = f"not on its link: reached over its {arrival or '?'}, not {link}"
