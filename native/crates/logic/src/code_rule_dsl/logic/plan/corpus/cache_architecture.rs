@@ -96,10 +96,9 @@ fn every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved() {
 /// The tests of freshness written outside the form, and the most call sites each may still have.
 const FRESHNESS_CALLS: &[(&str, &str, usize)] = &[
     ("code_rule_dsl/logic/plan/corpus/base.rs", "inputs::still(", 1),
-    ("code_rule_dsl/logic/plan/corpus/reuse.rs", "unchanged(programs", 1),
     ("code_rule_dsl/logic/plan/corpus/combined.rs", "file.unchanged(", 1),
     ("code_rule_dsl/facts.rs", "derivation_valid(", 1),
-    ("code_rule_dsl/logic/plan/corpus/constants.rs", ".still(", 2),
+    ("code_rule_dsl/logic/plan/corpus/constants.rs", ".changed(&consulted)", 1),
 ];
 
 #[test]

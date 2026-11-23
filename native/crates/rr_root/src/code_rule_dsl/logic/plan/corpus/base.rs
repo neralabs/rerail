@@ -181,15 +181,6 @@ pub struct Report {
     pub run: Option<crate::code_rule_dsl::logic::run::Record>,
 }
 
-/// Whether a run of `programs` over `root` that consulted `consulted` (`Report::consulted`) would consult the same
-/// now: the same workspace documents with the same bytes, and every request answered alike (decision 0083 §2). It
-/// reads what the run read, and derives nothing. A program whose inputs come from elsewhere too (declarations,
-/// earlier phases, an explicit batch) is never judged unchanged.
-/// `graphs`: each program text's include graph's digest, as the run found it (`run_handed`).
-pub fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], summary: Option<Summary>) -> Result<bool> {
-    Ok(changes_of(programs, graphs, read, root, typing, options, consulted, summary)?.is_some_and(|c| c.is_empty()))
-}
-
 /// The parts of a run's combined program that `changes` reads, and nothing else: whether it reads `declared_ret`,
 /// its settings (its language, its artifacts), its scopes and text globs, its JSON policies (their scopes), and its
 /// `env` facts (the world's roots). A function of the texts and the rule files they read: the whole-run cutoff's

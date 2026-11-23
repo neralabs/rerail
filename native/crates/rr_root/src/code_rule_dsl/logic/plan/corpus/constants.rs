@@ -312,7 +312,7 @@ fn kept(key: &str, root: &Path, prog: &Version) -> Result<Option<(Derived, Vec<[
     let Some(consulted) = super::reuse::decode_consulted(&consulted) else { return Ok(None) };
     let (plans, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "plan");
     let plans: Vec<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
-    if !super::world::World::new(root, prog).still(&consulted) {
+    if !super::world::World::new(root, prog).changed(&consulted).is_none() {
         return Ok(None);
     }
     Ok(Some(((rows, consulted), plans)))

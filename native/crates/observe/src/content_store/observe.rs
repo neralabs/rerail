@@ -2188,7 +2188,8 @@ type KeptRoot = (String, PathBuf, PathBuf, Option<(u8, u64)>);
 /// - an answer, a canonical form or a Git file list under no root kept: every path the observer reads is under a
 ///   root (`watch_above`), so one under none is of a name no run uses;
 /// - a revision constant after the last manifest that owns its derivation goes away;
-/// - other planned records (including constants, cone rounds and cutoffs) once none of their plans is live.
+/// - other planned records (including constants, cone rounds and runs' frames) once none of their plans is live;
+///   a run's record under the whole-run cutoff's old prefix (`cutoff:`, before t33 K4's frame) always.
 /// - a row of the observer's own journal (decision 0400) under no root kept, or `LIST_KEEP` generations old: the
 ///   floor moves up with it, and a record from before it is not answered (`changed_since`).
 ///
@@ -2252,11 +2253,15 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
                 if let Some(path) = key.strip_prefix("git-files:") {
                     return !held(Path::new(path));
                 }
-                // A record of what a run kept goes with its plans (decision 0252): a whole-run cutoff's consulted list
+                // The whole-run cutoff's records, before the run's frame took their place (t33 K4): no run reads them.
+                if key.starts_with("cutoff:") {
+                    return true;
+                }
+                // A record of what a run kept goes with its plans (decision 0252): a run's frame's consulted list
                 // (`reuse::encode_consulted`), the constants' too, and the cone's rounds' third list: kind, path and
                 // digest by turns, a plan's path empty and its digest the plan's in hex. One that names none is from
                 // before they did.
-                if key.starts_with(CUTOFF) || PLANNED.iter().any(|p| key.starts_with(p)) {
+                if key.starts_with(FRAME) || PLANNED.iter().any(|p| key.starts_with(p)) {
                     let lists = decode_lists(consulted).unwrap_or_default();
                     // A revision's constants are kept by their owner's plan (`constants::keep_revision`).
                     if key.starts_with("constants:") && let Some(owner) = lists.iter().flat_map(|l| l.as_chunks::<3>().0).find(|c| c[0] == "constants-owner") {
@@ -2264,7 +2269,7 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
                     }
                     return !lists.iter().flat_map(|l| l.as_chunks::<3>().0).filter(|c| c[0] == "plan" && c[1].is_empty()).filter_map(|c| unhex(&c[2])).any(|plan| live(&plan));
                 }
-                // A cutoff's record from before they were prefixed: its key alone, a digest.
+                // A run's record from before they were prefixed: its key alone, a digest.
                 key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit())
             })
             .map(|(key, _)| key)
@@ -2358,10 +2363,10 @@ pub fn decode_lists(bytes: &[u8]) -> Option<Vec<Vec<String>>> {
     (at == bytes.len()).then_some(lists)
 }
 
-/// The prefix of a whole-run cutoff's record (`reuse::CUTOFF`, in the engine).
-const CUTOFF: &str = "cutoff:";
+/// The prefix of a run's frame (`reuse::FRAME`, in the engine).
+const FRAME: &str = "frame:";
 
-/// The prefixes of the other records that name the plans they are kept for (`plan` entries, as a cutoff's): the run's
+/// The prefixes of the other records that name the plans they are kept for (`plan` entries, as a run's frame's): the run's
 /// constants (`corpus::constants`) and the cone's rounds (`corpus`, decision 0145).
 const PLANNED: &[&str] = &["constants:", "cone-rounds:"];
 
@@ -3513,12 +3518,14 @@ mod tests {
         put_answer(&store, &fresh.join("d.py"), now_ns());
         put_form(&store, &fresh, &fresh, now_ns());
         let (live, dead) = ([1u8; 32], [2u8; 32]);
-        // A cutoff's consulted list as the engine keeps it (`reuse::encode_consulted`): kind, path, digest by turns.
+        // A run's frame's consulted list as the engine keeps it (`reuse::encode_consulted`): kind, path, digest by turns.
         let cutoff = |key: &str, flat: &[&str]| put_record(&store, key, &[flat], b"");
         put_form(&store, &root.join("a.py"), &root.join("a.py"), 0);
         put_form(&store, &real.join("elsewhere"), &real.join("elsewhere"), 0);
-        cutoff("cutoff:kept", &["rule", "x.rerail", "ab", "plan", "", &hex(&dead), "plan", "", &hex(&live)]);
-        cutoff("cutoff:dead", &["plan", "", &hex(&dead)]);
+        cutoff("frame:kept", &["rule", "x.rerail", "ab", "plan", "", &hex(&dead), "plan", "", &hex(&live)]);
+        cutoff("frame:dead", &["plan", "", &hex(&dead)]);
+        // One under the whole-run cutoff's old prefix: nothing reads it, so it goes whatever its plans.
+        cutoff("cutoff:kept", &["plan", "", &hex(&live)]);
         cutoff(&"ab".repeat(32), &["rule", "x.rerail", "ab"]);
         // The constants' and the cone's rounds' records go with their plans too; one naming none is from before.
         cutoff("constants:k", &[]);
@@ -3544,13 +3551,13 @@ mod tests {
         assert_eq!(roots, want, "root: inner is under it, gone is gone, dotted and the alias are other names with older cursors; listed and same: one directory's two names of one run");
         let answers = kept_answers(&store);
         assert_eq!(answers, [s(&fresh.join("d.py")), s(&root.join("a.py"))]);
-        assert_eq!(kept_records(&store), ["cone-rounds:live", "constants:live", "cutoff:kept"]);
+        assert_eq!(kept_records(&store), ["cone-rounds:live", "constants:live", "frame:kept"]);
         assert_eq!(kept_forms(&store), [s(&fresh), s(&root.join("a.py"))]);
         let n = usize::from(alias.is_some());
         assert_eq!(meta_keys(&store, OWN_OUTPUT), [format!("{OWN_OUTPUT}{}", s(&inner))]);
         // Without the link (not Unix), `same` names nothing and its cursor goes too.
         let unlinked = usize::from(!cfg!(unix));
-        assert_eq!(swept, Swept { cursors: 4 + n + unlinked, answers: 3 + n, records: 5, outputs: 1, changes: 0 });
+        assert_eq!(swept, Swept { cursors: 4 + n + unlinked, answers: 3 + n, records: 6, outputs: 1, changes: 0 });
         assert_eq!(std::fs::metadata(real.join("store.files-wal")).map_or(0, |m| m.len()), 0, "the WAL folded in");
         drop(db);
         let _ = std::fs::remove_dir_all(&given);
