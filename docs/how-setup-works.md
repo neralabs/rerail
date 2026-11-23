@@ -393,12 +393,15 @@ only on Windows and where you had a status line of your own, which Node runs fir
 ([how Claude Code draws it](in-session-surfaces.md#how-claude-code-draws-it)). On Windows Claude Code runs it through
 Git Bash, so its `sh -c` fallback works there.
 Claude Code's hooks on Windows start through `cmd.exe`, which runs the recorded Node itself while it exists and
-`node.exe` from `PATH` once it is gone, so each hook event runs one Node whatever `PATH` Claude Code has. Set-up
-writes the `node` entry instead where it finds no `cmd.exe` by its full System32 path, or where `cmd.exe` would split
-a path of the entry: one that holds `%`, `!` or `"`, or one with no space that holds any of `& ( ) ^ | < > , ; =`.
-Claude Code finds that `node` on its own `PATH`, and where that is another Node than the recorded one, the launcher
-starts the recorded one as a second process on each event. Set-up reads no `PATH` to choose the entry. Where the recorded Node is there but cannot start, or the launcher ends in a native crash, the `cmd.exe` entry
-exits 0 with no answer, as the launcher answers for a hook that fails, so Claude Code shows no hook error.
+`node.exe` from `PATH` once it is gone: each hook event runs two processes, `cmd.exe` and one Node, whatever `PATH`
+Claude Code has. Set-up writes the `node` entry instead where it finds no `cmd.exe` by its full System32 path, where
+that `cmd.exe` runs no command (`cmd.exe /d /c exit 0` does not end with exit 0, as under the `DisableCMD` policy at
+1: [what such a policy does to hooks](windows.md#each-coding-agents-shell)), or where `cmd.exe` would split a path of
+the entry: one that holds `%`, `!` or `"`, or one with no space that holds any of `& ( ) ^ | < > , ; =`. Claude Code
+finds that `node` on its own `PATH`, and where that is another Node than the recorded one, the launcher starts the
+recorded one as a second process on each event. Set-up reads no `PATH` to choose the entry. Where the recorded Node is
+there but cannot start, or the launcher ends in a native crash, the `cmd.exe` entry exits 0 with no answer, as the
+launcher answers for a hook that fails, so Claude Code shows no hook error.
 Rerail 0.2.0 and earlier wrote the `node` entry wherever set-up's `PATH` found the recorded Node, though Claude Code's
 `PATH` may find another; `rerail update` writes the `cmd.exe` entry over it, and `rerail status` and the dashboard
 count Claude Code as connected with either.

@@ -414,7 +414,7 @@ its exact text, so `src/setup/harness-registration.ts` writes and reads those it
 
 | Agent | Hook command | Commands it runs |
 | --- | --- | --- |
-| Claude Code | Exec form, no shell: `cmd.exe` runs `<recorded node> <hook launcher> <recorded node> <hook>`, with exit 0 where that node cannot start or crashes while the launcher is there, or `node.exe` from PATH once that node is gone, one Node a hook event whatever PATH Claude Code has; `node <hook launcher> <recorded node> <hook>` where set-up finds no `cmd.exe` by its full System32 path, or where `cmd.exe` would split a path of the entry (one that holds `%`, `!` or `"`, or one with no space that holds `& ( ) ^ \| < > , ; =`) | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
+| Claude Code | Exec form, no shell: `cmd.exe` runs `<recorded node> <hook launcher> <recorded node> <hook>`, with exit 0 where that node cannot start or crashes while the launcher is there, or `node.exe` from PATH once that node is gone, one Node a hook event, in two processes with `cmd.exe`, whatever PATH Claude Code has; `node <hook launcher> <recorded node> <hook>` where set-up finds no `cmd.exe` by its full System32 path, where that `cmd.exe` runs no command (`cmd.exe /d /c exit 0` started at set-up does not end with exit 0), or where `cmd.exe` would split a path of the entry (one that holds `%`, `!` or `"`, or one with no space that holds `& ( ) ^ \| < > , ; =`) | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
 | Codex | PowerShell: `$LASTEXITCODE = 1; if (Test-Path -LiteralPath '<node>') { & '<node>' '<hook>' } else { node '<hook>' }; exit $LASTEXITCODE` | PowerShell: `& '<node>' '<cli.js>'` |
 | Cursor | PowerShell, the event piped in: `Invoke-Command -ScriptBlock { if (Test-Path -LiteralPath '<node>') { $input \| & '<node>' '<hook>' } else { $input \| node '<hook>' } }` | PowerShell: `& '<node>' '<cli.js>'` |
 
@@ -427,6 +427,20 @@ cache is on whatever node PATH has and the hook gets no environment variable it 
 a Node that loads the hook's script of over 2 MB; with the cache, V8 reads the code it compiled at an earlier event
 instead of parsing and compiling the script again. `NODE_DISABLE_COMPILE_CACHE=1` keeps it off. Codex's and Cursor's
 entries start the hook without the launcher, so they compile it at each event.
+
+A company policy can leave `cmd.exe` in System32 and keep it from running commands, so set-up starts
+`cmd.exe /d /c exit 0` once before it writes Claude Code's `cmd.exe` entry, and writes the `node` entry where that
+start fails or ends with another exit code. Under the `DisableCMD` policy at 1 ("Prevent access to the command prompt",
+with script processing disabled too), `cmd.exe` answers every command within about 30 ms with exit 255 and "The
+command prompt has been disabled by your administrator." On a Windows 11 test machine, a `cmd.exe` entry written before
+the policy then failed every hook event of a Claude Code 2.1.322 session that way: Claude Code recorded each as a hook
+error that does not block, showed "Stop hook error occurred" in print mode, and ran every tool call; no hook reached
+Rerail. Set-up run under the policy wrote the `node` entry, and the same session ran every hook with no error. At 2,
+which leaves scripts on, `cmd.exe /c` runs commands as it does without the policy, and set-up keeps the `cmd.exe`
+entry. A policy set after set-up leaves the `cmd.exe` entry failing until set-up, `rerail install --refresh` or
+`rerail update` runs again; until then the check behind `rerail status` and the dashboard counts Claude Code as not
+connected, and `rerail status` prints no line for it. An AppLocker or WDAC rule that refuses `cmd.exe` was not tried;
+set-up reads a start that fails as it reads one that ends with another exit code.
 
 Claude Code on Windows needs Git Bash. Claude Code itself runs without it, running commands in PowerShell instead.
 But `windowsCommandShell` is fixed per agent, not per machine, so Rerail's status line, command files and set-up's
