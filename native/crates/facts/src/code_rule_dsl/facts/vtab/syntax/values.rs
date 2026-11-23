@@ -242,7 +242,8 @@ impl Values {
             }
         }
         self.parts.store(Arc::new(parts));
-        self.admitted.fetch_add(1, Ordering::Relaxed);
+        // After the parts: a reader that counts a value admitted finds its parts (`Layered::lookup_read_at`).
+        self.admitted.fetch_add(1, Ordering::Release);
     }
     /// The values admitted.
     pub fn admitted(&self) -> usize {
@@ -422,10 +423,13 @@ impl Layered {
         self.values.source_of(&self.name, n).unwrap_or_else(|| Arc::clone(&self.base))
     }
     fn parts<T>(&self, f: impl FnOnce(&Parts) -> T) -> Option<T> {
+        if self.values.admitted.load(Ordering::Acquire) == 0 {
+            return None;
+        }
         self.values.parts.load().get(&self.name).filter(|p| !p.list.is_empty()).map(|p| f(p))
     }
     fn has_parts(&self) -> bool {
-        self.values.total(&self.name) > 0
+        self.values.admitted.load(Ordering::Acquire) > 0 && self.values.total(&self.name) > 0
     }
     /// Made on lookup, with values admitted: the scan's rows of the values (`Scan`), made up to the parts admitted
     /// now; `f` reads them.
@@ -637,6 +641,10 @@ impl Source for Layered {
     }
     /// The cursor is the base's: a part's reads keep none (a value's rows are few).
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        // No value admitted (a chunk's first run): the base's read, with no load of the parts.
+        if self.values.admitted.load(Ordering::Acquire) == 0 {
+            return self.base.lookup_read_at(column, value, columns, cursor, each);
+        }
         // The relation's parts, loaded and found once a probe (`has_parts`' and `parts`' one lookup by name).
         let all = self.values.parts.load();
         let Some(p) = all.get(&self.name).filter(|p| p.total > 0) else {

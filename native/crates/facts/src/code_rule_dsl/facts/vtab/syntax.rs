@@ -4653,9 +4653,32 @@ impl Viewed {
     /// probe did not bring, then fills each slot from its op.
     fn read_matches(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         use read_op::*;
+        // A place's row by its node or position (`line`, `col`, `docof`, by `n`): its values read off its span, into
+        // an array, no vector a probe. By another column (`docof` by file), refused.
+        if let View::Loc(place) = self.view {
+            let b = &*self.batch;
+            if column != 0 || columns.len() > 8 {
+                return false;
+            }
+            if let Some((doc, local)) = b.loc(value)
+                && let Some(row) = b.row(self.view, doc, local)
+            {
+                let p = &b.docs[doc];
+                let mut vals = [0i64; 8];
+                for (o, &c) in vals.iter_mut().zip(columns) {
+                    *o = match (c, place) {
+                        (0, _) => value,
+                        (_, Place::Docof) => i64::from(p.file),
+                        _ => Self::loc_value(p, place, 0, p.span(local), c),
+                    };
+                }
+                each(row, &vals[..columns.len()]);
+            }
+            return true;
+        }
         // A field's rows are its fielded nodes: a probe's match without a field has no row (`row_of_node`), and is
-        // passed over. A place's and the token order's values are no slot op of the plan.
-        if matches!(self.view, View::Loc(_) | View::Tok(_)) {
+        // passed over. The token order's values are no slot op of the plan.
+        if matches!(self.view, View::Tok(_)) {
             return false;
         }
         if !cursor.plan.is_for(column, columns) {

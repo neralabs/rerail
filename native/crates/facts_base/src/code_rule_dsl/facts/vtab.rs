@@ -1777,6 +1777,11 @@ impl Relation {
         self.indexes.iter_mut().for_each(|i| *i = OnceLock::new());
         self.identity = OnceLock::new();
     }
+    /// Column `c` of rows `range`, resolved once where they lie in one part (`Rows::range_reader`).
+    #[inline]
+    pub fn range_reader(&self, range: Range<usize>, c: usize) -> Option<super::rows::RangeRead<'_>> {
+        self.cells().range_reader(range.start as u32, range.end as u32, c)
+    }
     /// The rows in their block: the staged ones written there at the first read, in one relation of their size.
     #[inline]
     fn cells(&self) -> &super::rows::Rows {

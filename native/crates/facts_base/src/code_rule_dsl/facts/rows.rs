@@ -1153,6 +1153,22 @@ pub struct Part {
     end: u32,
 }
 
+/// Column of a range of rows in one part (`Rows::range_reader`): row `id`'s value is one load.
+#[derive(Clone, Copy)]
+pub struct RangeRead<'a> {
+    col: ColRead,
+    add: u32,
+    _rows: std::marker::PhantomData<&'a Rows>,
+}
+
+impl RangeRead<'_> {
+    /// Row `id`'s value, `id` in the range it was made for.
+    #[inline(always)]
+    pub fn get(&self, id: u32) -> i64 {
+        self.col.get(id.wrapping_add(self.add))
+    }
+}
+
 /// A part's relation, where it lies.
 pub struct Held {
     facts: Arc<Facts>,
@@ -2607,6 +2623,19 @@ impl Rows {
     pub fn get(&self, id: u32, c: usize) -> i64 {
         let (p, i) = self.part_of(id);
         p.get(i, c)
+    }
+
+    /// Column `c` of rows `from..to`, resolved once where they lie in one part (a made group's rows, decision 0494):
+    /// a reader of many of them pays one load a row, not the part's search and the column's resolution each time.
+    /// `None` when the rows span parts, or are none.
+    #[inline]
+    pub fn range_reader(&self, from: u32, to: u32, c: usize) -> Option<RangeRead<'_>> {
+        if to <= from || to > self.rows() as u32 {
+            return None;
+        }
+        let (p, i) = self.part_of(from);
+        let (q, _) = self.part_of(to - 1);
+        std::ptr::eq(p, q).then(|| RangeRead { col: p.cols[c], add: (p.skip + i).wrapping_sub(from), _rows: std::marker::PhantomData })
     }
 
     /// The relation holding row `id`, and the row's place in it.
