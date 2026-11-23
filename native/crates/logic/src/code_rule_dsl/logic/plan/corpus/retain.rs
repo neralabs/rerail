@@ -424,6 +424,10 @@ pub(in crate::code_rule_dsl) struct Cut {
     /// The relations the program derives as a view of an input's columns (Q37, `input_view_shape`), by its rules:
     /// never kept as rows, whatever form a run held them in (`after`, Q421).
     pub(in crate::code_rule_dsl) views: BTreeSet<String>,
+    /// The views no stratum that runs reads, and no output is (t33 K4): not made. A view is never kept, so `clean`
+    /// leaves it out, and it was made again every run (a view of a tape's axis read every document's tape) though
+    /// every reader of it was clean.
+    pub(in crate::code_rule_dsl) idle: BTreeSet<String>,
 }
 
 /// The relations a `nearest` literal reads.
@@ -534,7 +538,25 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
             clean.extend(scc.iter().cloned());
         }
     }
-    Ok(Cut { clean, strata: (ran, sccs.len()), changed, views: views.into_keys().collect() })
+    // What the strata that run read, and the outputs not kept, from the last stratum back (a stratum's reads come
+    // before it): a view that none of them reads is idle. A clean stratum's reads are none's: its rows are kept.
+    let mut needed: BTreeSet<String> = prog.v.outputs().map(|a| prog.v.text(a).to_owned()).filter(|o| !clean.contains(o)).collect();
+    needed.extend(sccs.iter().flatten().filter(|r| !clean.contains(*r) && !views.contains_key(*r)).cloned());
+    let mut idle = BTreeSet::new();
+    for scc in sccs.iter().rev() {
+        if scc.iter().any(|r| needed.contains(r) && !clean.contains(r)) {
+            needed.extend(reads.of_scc(scc));
+        } else if scc.iter().all(|r| views.contains_key(r)) {
+            idle.extend(scc.iter().cloned());
+        }
+    }
+    if !views.is_empty() {
+        crate::code_rule_dsl::logic::profile::decision("views not made (t33 K4)", || {
+            let made: Vec<&String> = views.keys().filter(|v| !idle.contains(*v)).take(8).collect();
+            format!("{} of {} views read by no stratum that runs, nor an output; made: {made:?}", idle.len(), views.len())
+        });
+    }
+    Ok(Cut { clean, strata: (ran, sccs.len()), changed, views: views.into_keys().collect(), idle })
 }
 
 impl Cut {
@@ -544,7 +566,7 @@ impl Cut {
     /// The cut is a part of `cross`'s version (decision 0244), read and made by its handles.
     pub(in crate::code_rule_dsl) fn program(&self, cross: &lower::Lowered) -> super::Result<lower::Lowered> {
         use crate::code_rule_dsl::logic::program_image::PartFields;
-        let (dirty, all, none) = (|rel: &str| !self.clean.contains(rel), |_: &str| true, |_: &str| false);
+        let (dirty, all, none) = (|rel: &str| !self.clean.contains(rel) && !self.idle.contains(rel), |_: &str| true, |_: &str| false);
         let gates: &dyn Fn(&str) -> bool = if self.strata.0 == 0 { &none } else { &all };
         let v = &cross.version;
         {
@@ -587,7 +609,7 @@ impl Cut {
     /// The relations this run derives, in stratum order: kept for the next run, as far as the budget goes.
     /// `sccs`: the program's strata, as `cut` was given them.
     pub(in crate::code_rule_dsl) fn derived(&self, sccs: &[BTreeSet<String>]) -> Result<Vec<String>> {
-        Ok(sccs.iter().flatten().filter(|r| !self.clean.contains(*r)).cloned().collect())
+        Ok(sccs.iter().flatten().filter(|r| !self.clean.contains(*r) && !self.idle.contains(*r)).cloned().collect())
     }
 }
 
@@ -1566,11 +1588,12 @@ pub mod tests {
         let lowered=lower::Lowered {version:p.clone(),domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python,normal:Default::default()};
         let reused=result.program(&lowered).unwrap();
         let placed=reused.placed().unwrap();
-        // A view of an input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _).`) is never kept: its rule stays, to
-        // hold it again. Nothing else runs.
+        // A view of an input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _).`) is never kept, and every reader
+        // of these is clean: not made (`Cut::idle`, t33 K4). Nothing runs.
         let left:BTreeSet<String>=placed.v.rules().map(|r| placed.v.rel_name(r.head().rel()).to_owned()).collect();
-        assert_eq!(left,BTreeSet::from(["docof".to_owned(),"kind".to_owned()]));
-        assert!(placed.v.rules().all(|r| crate::code_rule_dsl::logic::plan::input_view_shape(&placed.v,r,|n| p.input_names().iter().any(|i| i==n)).is_some()));
+        assert!(left.is_empty(),"{left:?}");
+        assert_eq!(result.idle,BTreeSet::from(["docof".to_owned(),"kind".to_owned()]));
+        assert!(result.views.iter().all(|v| result.idle.contains(v)));
         assert!(placed.fields().unwrap().gates().is_empty());
         let mut changed=inputs.clone();
         *changed.values_mut().next().unwrap()=8;
@@ -1578,7 +1601,7 @@ pub mod tests {
             assert_eq!(cut(Some(&kept),candidate,&Placed::whole(p.clone()),&strata,&rows).unwrap().strata,(strata.len(),strata.len()));
         }
         // A kept relation missing (not a view's: those are not kept, so their absence changes nothing).
-        let missing=kept.rels.keys().find(|r| !left.contains(r.as_str())).unwrap().clone();
+        let missing=kept.rels.keys().find(|r| !result.idle.contains(r.as_str())).unwrap().clone();
         kept.rels.remove(&missing);
         assert_eq!(cut(Some(&kept),key,&Placed::whole(p.clone()),&strata,&inputs).unwrap().strata,(strata.len(),strata.len()));
     }
