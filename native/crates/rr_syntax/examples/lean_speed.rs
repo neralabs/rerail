@@ -40,7 +40,7 @@ fn main() {
     }
     let mb = bytes as f64 / 1e6;
     let row = |name: &str, d: Duration| println!("  {name:<44} {:>9.3} ms  {:>8.1} MB/s  {:>6.2} ns/byte", d.as_secs_f64() * 1e3, mb / d.as_secs_f64(), d.as_secs_f64() * 1e9 / bytes as f64);
-    println!("{} files, {mb:.2} MB; the least wall time of {rounds} rounds", files.len());
+    println!("{} files, {mb:.2} MB, {} tokens; the least wall time of {rounds} rounds", files.len(), lex());
     row("lean: its lexer (token_count)", best[0]);
     row("lean: its parse (tape - lexer)", best[1].saturating_sub(best[0]));
     row("lean: whole (tape)", best[1]);

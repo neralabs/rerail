@@ -50,7 +50,7 @@ fn main() {
     let refused = bufs.iter().zip(&files).filter(|(b, t)| rerail_rr_aot::parse(b, t.len()).is_err()).count();
     let mb = bytes as f64 / 1e6;
     let row = |name: &str, d: Duration| println!("  {name:<44} {:>9.3} ms  {:>8.1} MB/s  {:>6.2} ns/byte", d.as_secs_f64() * 1e3, mb / d.as_secs_f64(), d.as_secs_f64() * 1e9 / bytes as f64);
-    println!("{} files, {mb:.2} MB, {refused} refused; the least wall time of {rounds} rounds", files.len());
+    println!("{} files, {mb:.2} MB, {refused} refused, {} records; the least wall time of {rounds} rounds", files.len(), lex());
     row("tier 1 (lex)", best[0]);
     row("tier 2 (parse - lex)", best[1].saturating_sub(best[0]));
     row("whole (parse)", best[1]);
