@@ -2424,7 +2424,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     // SAFETY: the reader's view (its cache after it, `READER_CACHE` bytes on), the tape's bytes, the
                     // entry in its block, which the projection holds.
                     let (rv, cache) = unsafe { (&*v, v.cast::<u8>().add(128)) };
-                    let doc = Doc { entry: unsafe { &*e.cast::<rerail_clif::view_reads::ViewDoc>() }, tape: Tape::new(tape, rv, cache), lines: &words };
+                    let doc = Doc { entry: unsafe { &*e.cast::<rerail_clif::view_reads::ViewDoc>() }, tape: Tape::new(tape, rv, cache), lines: &words, source: source.as_bytes() };
                     let rust: Vec<i64> = (0..n)
                         .flat_map(|l| {
                             let mut row: Vec<i64> = (0..5).map(|c| doc.node(l, c)).collect();

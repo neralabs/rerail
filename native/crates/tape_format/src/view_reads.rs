@@ -112,12 +112,14 @@ pub enum Place {
 }
 
 /// A document as its views' reads take it: its entry, its tape, and its line index (decision 0612: its language's
-/// one, `newlines`, with its word's room after it), where its directory row places them.
+/// one, `newlines`, with its word's room after it), where its directory row places them; and its source where it
+/// lies, whose bytes say where a line's text ends (its terminator's length: `Report`'s end column).
 #[derive(Clone, Copy)]
 pub struct Doc<'a> {
     pub entry: &'a ViewDoc,
     pub tape: Tape<'a>,
     pub lines: &'a [u8],
+    pub source: &'a [u8],
 }
 
 impl<'a> Doc<'a> {
@@ -351,6 +353,16 @@ impl<'a> Doc<'a> {
     fn loc_start(&self, k: u32) -> u32 {
         f16::line_start(self.lines, &TapeView::default(), k)
     }
+    /// Where line `k`'s (from 0) text ends: its terminator's first byte, or the text's end on the last line
+    /// (`LineTable::end`).
+    #[inline]
+    fn loc_end(&self, k: u32) -> u32 {
+        if k + 1 >= self.loc_count() {
+            return self.entry.source_len;
+        }
+        let last = self.loc_start(k + 1) - 1;
+        last + 1 - crate::newlines::length_ending_at(self.source, last as usize) as u32
+    }
     /// `Loc` position `l`'s byte span: a node's or token's off the tape, the whole text, a line's text, or a node's
     /// end point.
     #[inline]
@@ -374,10 +386,9 @@ impl<'a> Doc<'a> {
         } else if j == 0 {
             (0, e.source_len)
         } else {
-            // Line `j`'s (from 1) place, from its start alone: its text's end is on it (a terminator's bytes are the
-            // line's they end), so its start stands for both ends here.
-            let s = self.loc_start(j - 1);
-            (s, s)
+            // Line `j`'s (from 1) text: its start, and its end before its terminator (on the line, as the CLIF reads'
+            // start alone stands for both ends where only its line and column are read).
+            (self.loc_start(j - 1), self.loc_end(j - 1))
         }
     }
     /// A guest's span where it stands in its host: copied, each end moved by `delta` and kept within `within`; at

@@ -16,6 +16,8 @@ pub(crate) use rerail_boot::code_rule_dsl::prof::{lower_hex, purge_allocator_pag
 mod test_watchdog;
 #[path = "../../../src/test_flush.rs"]
 mod test_flush;
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;
 
 /// The program, booted as the engine boots it (`boot::install`), with this binary's own build identities.
 pub(crate) fn install_store_functions() {

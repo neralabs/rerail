@@ -213,6 +213,22 @@ UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v) { return 
 UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicMax(p, v); }
 UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return atomicCAS(p, e, n); }
 UKL_INLINE void ukl_fence_device() { __threadfence(); }
+// The same atomics on a coherent word (`UKL_COHERENT`, volatile here), as Metal's: C++ takes no volatile word where a
+// plain one is declared, and an atomic is served at L2, where every group's writes meet already.
+#define __UKL_COHERENT_ATOMIC(op)                                                                                     \
+    UKL_INLINE uint32_t ukl_atomic_##op(UKL_COHERENT uint32_t* p, uint32_t v) { return ukl_atomic_##op((UKL_GLOBAL uint32_t*)p, v); }
+__UKL_COHERENT_ATOMIC(add)
+__UKL_COHERENT_ATOMIC(sub)
+__UKL_COHERENT_ATOMIC(or)
+__UKL_COHERENT_ATOMIC(and)
+__UKL_COHERENT_ATOMIC(exchange)
+__UKL_COHERENT_ATOMIC(min)
+__UKL_COHERENT_ATOMIC(max)
+#undef __UKL_COHERENT_ATOMIC
+UKL_INLINE uint32_t ukl_atomic_load(UKL_COHERENT uint32_t* p) { return *p; }
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_COHERENT uint32_t* p) { return *p; }
+UKL_INLINE void ukl_atomic_store(UKL_COHERENT uint32_t* p, uint32_t v) { *p = v; }
+UKL_INLINE uint32_t ukl_atomic_cas(UKL_COHERENT uint32_t* p, uint32_t e, uint32_t n) { return ukl_atomic_cas((UKL_GLOBAL uint32_t*)p, e, n); }
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomicAdd(p, v); }
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return *(volatile uint32_t*)p; }
 UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { *(volatile uint32_t*)p = v; }

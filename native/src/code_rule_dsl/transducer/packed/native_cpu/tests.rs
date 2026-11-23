@@ -2705,6 +2705,10 @@
             context.node_count = 1;
             context.source = source.as_ptr();
             context.source_length = source.len() as u32;
+            // The document's line index (decision 0612), which every task has: a capture's line is read off it.
+            let lines = rerail_tape_format::newlines::Lines::of(source, rerail_tape_format::newlines::Terminators::Lf);
+            context.lines = lines.bytes().as_ptr();
+            context.line_count = 1;
             context.current_node = 0;
             context.task_work_limit = 1 << 20;
             context.path_work_limit = 1 << 20;
