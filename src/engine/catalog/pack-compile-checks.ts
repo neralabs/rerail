@@ -27,20 +27,29 @@ export const PACK_COMPILE_CHECKS_FILE = "pack-compile-checks.json";
 const KEPT_BUILDS = 4;
 
 /**
- * Per engine build, each pack's verdict: null when every rule compiled, else why the pack is left out; and the
- * engine's reading of each `.rerail` rule file, by its path.
+ * Per engine build, each pack's verdict: null when every rule compiled, else why the pack is left out; under `notRun`,
+ * the ids of its rules this Rerail does not run (`readsLeftOutToken`); and the engine's reading of each `.rerail` rule
+ * file, by its path. `notRun` is a field of its own so that a Rerail that predates it still reads the file; a verdict
+ * without it was kept by such a Rerail, and is asked again.
  */
 const KeptChecksSchema = z.array(z.object({
   build: z.string(),
   verdicts: z.record(z.string(), z.string().nullable()),
+  notRun: z.record(z.string(), z.array(z.string())).optional(),
   descriptions: z.record(z.string(), keptDescriptionSchema).optional(),
 }));
 type KeptChecks = z.infer<typeof KeptChecksSchema>;
 
+/** The engine's verdict on one pack: why it is left out (null when it loads), and the ids of its rules it does not run. */
+export interface PackVerdict {
+  readonly problem: string | null;
+  readonly notRun: readonly string[];
+}
+
 export interface PackCompileChecks {
   /** The verdict kept on the pack `packKey` names, or undefined when the engine was never asked under this build. */
-  verdict(packKey: string): string | null | undefined;
-  record(packKey: string, problem: string | null): void;
+  verdict(packKey: string): PackVerdict | undefined;
+  record(packKey: string, verdict: PackVerdict): void;
   /** Reads `.rerail` rules as `describeRerailRules` does, from the readings kept under this build where their files are unchanged. */
   readonly describe: RerailDescriber;
   /** Writes back the verdicts and readings this read used or made, dropping this build's others, when they differ from the file's. */
@@ -83,9 +92,13 @@ export function packCompileChecks(home: string): PackCompileChecks {
   const build = engineBuild();
   const all = readKept(path);
   const mine = all.find(checks => checks.build === build);
-  const kept = new Map(Object.entries(mine?.verdicts ?? {}));
+  const kept = new Map<string, PackVerdict>();
+  for (const [packKey, problem] of Object.entries(mine?.verdicts ?? {})) {
+    const notRun = mine?.notRun?.[packKey];
+    if (notRun !== undefined) kept.set(packKey, { problem, notRun });
+  }
   const keptDescriptions = new Map(Object.entries(mine?.descriptions ?? {}));
-  const used = new Map<string, string | null>();
+  const used = new Map<string, PackVerdict>();
   const usedDescriptions = new Map<string, RerailDescription>();
   let recorded = false;
   const keep = (rule: string, description: RerailDescription): void => {
@@ -98,16 +111,18 @@ export function packCompileChecks(home: string): PackCompileChecks {
       if (verdict !== undefined) used.set(packKey, verdict);
       return verdict;
     },
-    record(packKey, problem) {
+    record(packKey, verdict) {
       if (build === undefined) return;
-      used.set(packKey, problem);
+      used.set(packKey, verdict);
       recorded = true;
     },
     describe: build === undefined ? describeRerailRules : keptRerailDescriber(keptDescriptions, keep),
     save() {
       if (build === undefined || (!recorded && used.size === kept.size && usedDescriptions.size === keptDescriptions.size)) return;
       const others = all.filter(checks => checks.build !== build).slice(0, KEPT_BUILDS - 1);
-      writeKept(path, [{ build, verdicts: Object.fromEntries(used), descriptions: Object.fromEntries(usedDescriptions) }, ...others]);
+      const verdicts = Object.fromEntries([...used].map(([packKey, verdict]) => [packKey, verdict.problem]));
+      const notRun = Object.fromEntries([...used].map(([packKey, verdict]) => [packKey, [...verdict.notRun]]));
+      writeKept(path, [{ build, verdicts, notRun, descriptions: Object.fromEntries(usedDescriptions) }, ...others]);
     },
   };
 }

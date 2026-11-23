@@ -26,7 +26,7 @@ export { SqliteAuditControlStore } from "./audit/audit-control.js";
 export { SqliteAuditReader, SqliteAuditStore } from "./audit/audit-store.js";
 export { type AuditInput, type AuditRecord, type AuditRecorder, type AuditResult, isUnreadFailure, UNREAD_FAILURE_HEAD } from "./audit/audit.js";
 export { loadPackRuleDocuments } from "./catalog/rule-documents.js";
-export { INSTALLED_PACKS_DIR, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "./catalog/rule-catalog.js";
+export { INSTALLED_PACKS_DIR, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, notRunReason, readRuleCatalog } from "./catalog/rule-catalog.js";
 export { WORKTREE_PACK_ID, WORKTREE_PUBLISHER, WORKTREE_RULES_FOLDER, worktreeRuleCatalog } from "./catalog/worktree-pack.js";
 export { approve, currentSubject, isApproved, packSubject, ruleSubject } from "./catalog/rule-approval.js";
 export { RULE_PACK_LIST } from "./catalog/pack-list.generated.js";

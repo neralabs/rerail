@@ -165,6 +165,11 @@ export interface EffectiveRule {
   readonly config: RuleConfig | null;
   /** Why `config` could not be applied to the document (an option it no longer declares, ...); the rule runs nowhere. */
   readonly configError: string | null;
+  /**
+   * Why this Rerail does not run the document its pack ships (`RuleCatalog.notRun`); the rule runs nowhere, whatever
+   * `on` says, until the pack's next version.
+   */
+  readonly notRun: string | null;
   readonly decidedBy: {
     readonly on: Decider;
     readonly mode: Decider;
@@ -237,6 +242,11 @@ export interface RuleCatalog {
   readonly digest: string;
   /** Installed packs left out because they failed a check; the others load. */
   readonly skipped: readonly SkippedRulePack[];
+  /**
+   * Rule id → why this Rerail does not run that rule of a loaded pack: it reads a token parsed files now leave out
+   * (`readsLeftOutToken`). The rule stays in `documents` and keeps its settings; it is shown as not running.
+   */
+  readonly notRun: ReadonlyMap<string, string>;
 }
 
 /**

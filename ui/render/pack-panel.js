@@ -54,8 +54,11 @@ const monogram = pack => PACK_LETTERS[pack.id] ?? pack.id.replace(/[^a-z0-9]/giu
 
 export const packIcon = pack => h("span.picon", { "aria-hidden": "true" }, h(`span.ltr${monogram(pack).length > 2 ? ".l3" : ""}`, null, monogram(pack)));
 
-/** How a pack rule starts once added: its mode, and "off" for a rule the pack adds switched off. */
-const startsAs = rule => `${MODE_LABEL[rule.mode] ?? rule.mode}${rule.on ? "" : " · off"}`;
+/**
+ * How a pack rule starts once added: its mode, "off" for a rule the pack adds switched off, and "not running" for one
+ * Rerail keeps but never evaluates (`inactive`), whose hover says why.
+ */
+const startsAs = rule => `${MODE_LABEL[rule.mode] ?? rule.mode}${rule.on ? "" : " · off"}${rule.inactive ? " · not running" : ""}`;
 
 /** Once the pack is added: whether its rules here honour suppression comments, and the pack's switch for them. */
 function suppressionsLine(pack, suppressions) {
@@ -116,7 +119,7 @@ function renderList(pack) {
     ? h("p.pintro.muted", null, `No rules match “${sheet.query.trim()}”.`)
     : rows.map(rule => h("div.prow", null,
       data.rules.has(rule.id) ? h("button.t", { "data-act": "packrule", "data-i": rule.id, title: rule.title }, rule.title) : h("span.t", { title: rule.title }, rule.title),
-      on ? null : h("span.m", null, startsAs(rule)),
+      on ? null : h("span.m", { title: rule.inactive?.reason ?? null }, startsAs(rule)),
       h("span.mono", null, rule.id)))));
 }
 

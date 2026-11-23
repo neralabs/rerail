@@ -4,7 +4,8 @@
  */
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { LANGUAGE_NOT_SUPPORTED, codeRuleLanguageNotSupported, type CodeRuleLanguageNotSupported } from "../engine/code-rule/code-rule-language-support.js";
+import { INACTIVE_CODE_RULE_CODES, READS_LEFT_OUT_TOKEN_CODE, type InactiveCodeRule } from "../engine/code-rule/code-rule-compile.js";
+import { codeRuleLanguageNotSupported } from "../engine/code-rule/code-rule-language-support.js";
 import { codeRuleSchema, codeRuleValueSchema } from "../engine/code-rule/code-rule-schema.js";
 import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS } from "../engine/catalog/repository-model.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
@@ -82,17 +83,21 @@ export const approvalSubjectSchema = z.object({
   digest: z.string().describe("The digest of the content: approval holds for this content only, and an edit waits again."),
 }).strict();
 
-export const inactiveField = {
-  inactive: z
-    .object({ code: z.literal(LANGUAGE_NOT_SUPPORTED), reason: z.string() })
-    .strict()
-    .optional()
-    .describe("Present when the rule is stored but never evaluated: its language, or a capability it reads, is not supported yet."),
-};
+export const inactiveRuleSchema = z
+  .object({ code: z.enum(INACTIVE_CODE_RULE_CODES), reason: z.string() })
+  .strict()
+  .describe("The rule is kept but never evaluated, whatever on says. language-not-supported: its language, or a capability it reads, is not supported yet. reads-left-out-token: this Rerail no longer runs the rule as its installed pack writes it; the pack's next version runs it again.");
 
-/** The `inactive` field for a code rule whose language, or a capability it reads, the engine does not read yet. */
-export function inactiveOf(kind: string, rule: unknown): { inactive?: CodeRuleLanguageNotSupported } {
-  const unsupported = kind === "code" ? codeRuleLanguageNotSupported(rule as Parameters<typeof codeRuleLanguageNotSupported>[0]) : undefined;
+export const inactiveField = { inactive: inactiveRuleSchema.optional() };
+
+/**
+ * The `inactive` field for a code rule: `notRun` when the catalog says this Rerail no longer runs its pack's document
+ * (`RuleCatalog.notRun`), else when the engine does not read its language, or a capability it reads, yet.
+ */
+export function inactiveOf(kind: string, rule: unknown, notRun?: string | null): { inactive?: InactiveCodeRule } {
+  if (kind !== "code") return {};
+  if (notRun !== undefined && notRun !== null) return { inactive: { code: READS_LEFT_OUT_TOKEN_CODE, reason: notRun } };
+  const unsupported = codeRuleLanguageNotSupported(rule as Parameters<typeof codeRuleLanguageNotSupported>[0]);
   return unsupported === undefined ? {} : { inactive: unsupported };
 }
 
@@ -114,13 +119,16 @@ function rerailRuleBody(rule: RerailRule): z.infer<typeof rerailRuleBodySchema> 
   return { id, revision, mode, description, language, scope: { include: [...scope.include], exclude: [...scope.exclude] }, codes: [...codes], source };
 }
 
-/** A rule document as the API returns it: its kind and body, and for a JSON code rule whether it is inactive. */
-export function ruleDocumentRecord(document: RuleDocument):
-  | { kind: "code"; rule: z.infer<typeof codeRuleSchema>; inactive?: CodeRuleLanguageNotSupported }
+/**
+ * A rule document as the API returns it: its kind and body, and for a JSON code rule whether it is inactive (`notRun`:
+ * why this Rerail no longer runs its pack's document, as `RuleCatalog.notRun` says).
+ */
+export function ruleDocumentRecord(document: RuleDocument, notRun?: string | null):
+  | { kind: "code"; rule: z.infer<typeof codeRuleSchema>; inactive?: InactiveCodeRule }
   | { kind: "conversation"; rule: z.infer<typeof conversationRuleSchema> }
   | { kind: "rerail"; rule: z.infer<typeof rerailRuleBodySchema> } {
   switch (document.kind) {
-    case "code": return { kind: "code", rule: document.rule, ...inactiveOf("code", document.rule) };
+    case "code": return { kind: "code", rule: document.rule, ...inactiveOf("code", document.rule, notRun) };
     case "conversation": return { kind: "conversation", rule: document.rule };
     case "rerail": return { kind: "rerail", rule: rerailRuleBody(document.rule) };
   }
@@ -247,7 +255,7 @@ export const quarantinedRuleSchema = z.object({
   kind: z.enum(RULE_KINDS),
   owner: z.string(),
   reason: z.string(),
-  code: z.literal(LANGUAGE_NOT_SUPPORTED).optional(),
+  code: z.enum(INACTIVE_CODE_RULE_CODES).optional(),
 }).strict();
 
 export const libraryUpsertBodySchema = z.object({

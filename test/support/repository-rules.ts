@@ -85,6 +85,7 @@ export function testCodeRuleCatalog(
       suppressions: "honour",
       config: null,
       configError: null,
+      notRun: null,
       decidedBy: { on: { by: "rule-default" }, mode: { by: "rule-default" }, suppressions: { by: "rule-default" }, config: {} },
       revision: rule.revision,
       payloadHash: ruleDocumentDigest({ kind: "code", rule }),

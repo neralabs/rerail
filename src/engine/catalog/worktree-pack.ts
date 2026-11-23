@@ -192,6 +192,7 @@ function withWorktreePack(installed: RuleCatalog, loaded: LoadedRulePack | undef
     sources: new Map([...installed.sources, ...loaded.sources]),
     digest: `sha256:${createHash("sha256").update(`${installed.digest}\0${catalogDigest([loaded])}`).digest("hex")}`,
     skipped: [...installed.skipped, ...skipped],
+    notRun: installed.notRun,
   };
 }
 

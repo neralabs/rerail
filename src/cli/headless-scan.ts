@@ -34,6 +34,8 @@ import type { RuleCatalog, RuleSetting } from "../engine/catalog/repository-mode
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { isWorktreePack, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
+import { READS_LEFT_OUT_TOKEN_CODE } from "../engine/code-rule/code-rule-compile.js";
+import { clean } from "../harness/setup-screens.js";
 import type { CodeRuleViolation } from "../engine/code-rule/code-rule.js";
 import { CheckoutCatalogs, type CheckoutEligibility, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
 import { readGitBlobs, runGit } from "../engine/git.js";
@@ -103,7 +105,18 @@ export interface ScanReport {
   rules: ScanRule[];
   violations: ScanViolation[];
   failures: ScanFailure[];
+  /**
+   * The rules on in the checkouts scanned that this Rerail does not run: an installed pack writes them in a form it no
+   * longer runs (they test a token parsed files now leave out). Neither a violation nor a failure; the pack's next
+   * version runs them again.
+   */
+  notRun: ScanNotRun[];
   summary: { violations: number; failures: number };
+}
+
+export interface ScanNotRun {
+  ruleId: string;
+  reason: string;
 }
 
 export interface HeadlessScanOptions {
@@ -449,7 +462,7 @@ type ScanAudit = AuditInput & { result?: AuditResult };
  */
 async function runScanAudits(
   databasePath: string, root: string, sessionId: string, paths: readonly string[] | null, ruleCatalog: RuleCatalog | undefined,
-): Promise<{ audits: ScanAudit[]; unaudited: ScanFailure[] }> {
+): Promise<{ audits: ScanAudit[]; unaudited: ScanFailure[]; notRun: ScanNotRun[] }> {
   const audits: ScanAudit[] = [];
   const recorder: AuditRecorder = {
     start(input) { audits.push({ ...input, paths: [...input.paths] }); return String(audits.length - 1); },
@@ -475,11 +488,25 @@ async function runScanAudits(
     if (paths === null) await router.audit(sessionId, { scope: "repository", mode: "log" });
     else if (paths.length > 0) await router.audit(sessionId, { scope: "touched-files", mode: "log", paths: [...paths] });
     const nothingRan = audits.length === 0 && paths?.length !== 0;
-    return { audits, unaudited: nothingRan ? unauditedCheckouts(router, start, paths) : [] };
+    return { audits, unaudited: nothingRan ? unauditedCheckouts(router, start, paths) : [], notRun: rulesNotRun(catalogs, start, audits) };
   } finally {
     await router.close();
     catalogs.close();
   }
+}
+
+/**
+ * The rules on that this Rerail does not run in the checkout the scan starts in and in each other checkout it audited (a
+ * submodule's own, say), each named once.
+ */
+function rulesNotRun(catalogs: CheckoutCatalogs, start: string, audits: readonly ScanAudit[]): ScanNotRun[] {
+  const notRun = new Map<string, ScanNotRun>();
+  for (const checkout of new Set([start, ...audits.map(audit => audit.workspaceRoot)])) {
+    for (const { ruleId, reason, code } of catalogs.catalog(checkout).quarantined()) {
+      if (code === READS_LEFT_OUT_TOKEN_CODE && !notRun.has(ruleId)) notRun.set(ruleId, { ruleId, reason });
+    }
+  }
+  return [...notRun.values()].sort((left, right) => left.ruleId.localeCompare(right.ruleId));
 }
 
 /**
@@ -603,7 +630,7 @@ async function scanReport(
   }
   const repository = repositoryOf(databasePath, root);
   const { base, paths } = scanTarget(options, root);
-  const { audits, unaudited } = await runScanAudits(databasePath, root, `scan-${scanId}`, paths, declaredPacks?.catalog);
+  const { audits, unaudited, notRun } = await runScanAudits(databasePath, root, `scan-${scanId}`, paths, declaredPacks?.catalog);
   const rules = scanRules(audits, refRuleIds, options.rulesRef);
   const violations = scanViolations(audits, rules, root);
   const { audited, completed, failures } = scanOutcome(audits, unaudited, refRules?.skipped ?? []);
@@ -628,6 +655,7 @@ async function scanReport(
     rules: [...rules.values()].sort((left, right) => left.ruleId.localeCompare(right.ruleId)),
     violations,
     failures,
+    notRun,
     summary: { violations: violations.length, failures: failures.length },
   };
 }
@@ -646,13 +674,15 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   return withScanScratch(home, scratch => scanReport(scratch, options, { root, home, useHome, packs, declared, scanId, startedAt }));
 }
 
-/** One line per violation, then a summary: the text `rerail scan` prints without `--json`. */
+/** One line per violation, failure and rule on that does not run, then a summary: the text `rerail scan` prints without `--json`. */
 export function describeScan(report: ScanReport): string {
   const lines = report.violations.map(violation => {
     const at = violation.path === null ? "" : `${violation.path}${violation.start === null ? "" : `:${violation.start.line}:${violation.start.column}`} `;
     return `${at}[${violation.ruleId}] ${violation.message}`;
   });
   for (const failure of report.failures) lines.push(`failure ${failure.code}${failure.path === null ? "" : ` ${failure.path}`}: ${failure.message}`);
+  // A pack's name, in the reason, is what its pack.json says: no control characters reach the terminal.
+  for (const { ruleId, reason } of report.notRun) lines.push(`not run [${clean(ruleId)}]: ${clean(reason)}`);
   const scope = report.scope === "git-diff" ? `git-diff${report.base === null ? "" : ` against ${report.base.ref}`}` : "repository";
   lines.push(`Scan ${report.status}: ${report.repository.displayName} (${scope}), ${report.rules.length} rules, ${report.summary.violations} violations, ${report.summary.failures} failures`);
   return lines.join("\n");

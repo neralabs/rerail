@@ -5,9 +5,9 @@ import { expect, test, type RerailScenarios } from "./dashboard-test.js";
 async function ruleCounts(rerail: RerailScenarios, origin: string, key: string): Promise<{ total: number; on: number }> {
   const response = await rerail.get(`${origin}/api/repository/rules?repository=${encodeURIComponent(key)}`);
   expect(response.ok()).toBe(true);
-  const { rules } = await response.json() as { rules: Array<{ rule: { id: string }; on: boolean; configError: string | null }> };
+  const { rules } = await response.json() as { rules: Array<{ rule: { id: string }; on: boolean; configError: string | null; inactive?: unknown }> };
   const on = new Map<string, boolean>();
-  for (const entry of rules) on.set(entry.rule.id, (on.get(entry.rule.id) ?? true) && entry.on && entry.configError === null);
+  for (const entry of rules) on.set(entry.rule.id, (on.get(entry.rule.id) ?? true) && entry.on && entry.configError === null && entry.inactive === undefined);
   return { total: on.size, on: [...on.values()].filter(Boolean).length };
 }
 

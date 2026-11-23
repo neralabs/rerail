@@ -17,7 +17,7 @@ import { reportQuarantinedRule, type QuarantinedRule } from "../catalog/rule-qua
 import { languageNotSupportedOf } from "./code-rule-language-support.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../native/native.js";
 import type { RepositoryAuditRuleProvenance, AuditRuleProvenance, RulePlacementDecision } from "../audit/audit.js";
-import { bundledCodeRuleDslDirectory, relationalRulesOff } from "./code-rule-compile.js";
+import { bundledCodeRuleDslDirectory, READS_LEFT_OUT_TOKEN_CODE, relationalRulesOff } from "./code-rule-compile.js";
 import {
   folderContains,
   type RuleCatalog,
@@ -673,6 +673,8 @@ function rerailBuilt(
 function refusedBeforeCompile(id: string, rule: EffectiveRule): QuarantinedRule | undefined {
   if (rule.configError !== null)
     return { ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` };
+  // An installed pack's rule this Rerail no longer runs is kept and shown as not running, never a failure.
+  if (rule.notRun !== null) return { ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: rule.notRun, code: READS_LEFT_OUT_TOKEN_CODE };
   const relationalOff = rule.document.kind === "code" ? relationalRulesOff(rule.document.rule) : undefined;
   if (relationalOff === undefined) return undefined;
   return { ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER, reason: relationalOff };

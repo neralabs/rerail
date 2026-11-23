@@ -342,7 +342,7 @@ function effectiveRuleRecord(rule: EffectiveRule, dates: RuleDates): z.infer<typ
     payloadHash: rule.payloadHash,
     ...(rule.approval === undefined ? {} : { approval: { subject: { ...rule.approval.subject }, approved: rule.approval.approved } }),
   };
-  return { ...ruleDocumentRecord(rule.document), ...shared };
+  return { ...ruleDocumentRecord(rule.document, rule.notRun), ...shared };
 }
 
 function libraryRecord(rule: LibraryRule): z.infer<typeof libraryRuleRecordSchema> {
@@ -766,7 +766,7 @@ export const repositoryOperations: readonly Operation[] = [
       return {
         rules: [...ruleCatalog.documents.values()]
           .filter(document => input.kind === undefined || ruleKindOf(document) === input.kind)
-          .map(document => ({ ...ruleDocumentRecord(document), packId: ruleCatalog.packOf.get(document.rule.id) ?? null })),
+          .map(document => ({ ...ruleDocumentRecord(document, ruleCatalog.notRun.get(document.rule.id)), packId: ruleCatalog.packOf.get(document.rule.id) ?? null })),
       };
     },
   }),
@@ -904,22 +904,28 @@ function guardRepositoriesUsing(stores: RerailApiStores, caller: ApiCaller, rule
 
 /**
  * The rules `rules_activity` reports: those present in the repository, or without one every By Rerail rule and
- * every rule created by you. An unknown repository has none.
+ * every rule created by you. An unknown repository has none. `notRun` says why this Rerail no longer runs an installed
+ * pack's rule, as `RuleCatalog.notRun` does.
  */
-export function activityRules(stores: RerailApiStores, key: string | undefined): { id: string; kind: RuleDocument["kind"]; rule: unknown }[] {
+export function activityRules(
+  stores: RerailApiStores,
+  key: string | undefined,
+): { id: string; kind: RuleDocument["kind"]; rule: unknown; notRun: string | null }[] {
   const db = stores.database();
   const ruleCatalog = stores.ruleCatalog();
   if (key === undefined) {
     return [
-      ...[...ruleCatalog.documents.values()].map(document => ({ id: document.rule.id, kind: document.kind, rule: document.rule as unknown })),
-      ...listLibraryRules(db).map(rule => ({ id: rule.document.rule.id, kind: rule.document.kind, rule: rule.document.rule as unknown })),
+      ...[...ruleCatalog.documents.values()].map(document => ({
+        id: document.rule.id, kind: document.kind, rule: document.rule as unknown, notRun: ruleCatalog.notRun.get(document.rule.id) ?? null,
+      })),
+      ...listLibraryRules(db).map(rule => ({ id: rule.document.rule.id, kind: rule.document.kind, rule: rule.document.rule as unknown, notRun: null })),
     ];
   }
   const repository = findRepository(db, key);
   if (repository === undefined) return [];
   const present = new Map(listRepositoryRules(db, ruleCatalog, repository.repositoryKey).rules
-    .map(rule => [rule.document.rule.id, { kind: rule.document.kind, rule: rule.document.rule as unknown }] as const));
-  return [...present].map(([id, { kind, rule }]) => ({ id, kind, rule }));
+    .map(rule => [rule.document.rule.id, { kind: rule.document.kind, rule: rule.document.rule as unknown, notRun: rule.notRun }] as const));
+  return [...present].map(([id, entry]) => ({ id, ...entry }));
 }
 
 function startOrStop(

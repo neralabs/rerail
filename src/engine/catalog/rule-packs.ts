@@ -493,17 +493,22 @@ export function rulePackIdOf(ruleId: string, packs: readonly RulePack[] = loadRu
   return packs.find(pack => pack.rules.some(rule => rule.id === ruleId))?.id ?? null;
 }
 
+/** How many of `pack`'s rules start on and run: those this Rerail does not run (`RuleCatalog.notRun`) are left out. */
+export function rulesStartingOn(pack: RulePack, notRun: ReadonlyMap<string, unknown>): number {
+  return pack.rules.filter(rule => rule.on && !notRun.has(rule.id)).length;
+}
+
 /**
  * The packs whose match definition fits the scanned repository, from its files and dependency manifests: no model, no
- * network, no code from the packs. A pack fits whatever its rules; `ruleCount` is how many start on. Languages come
- * first, then frameworks, then repository packs. Each comes with the folder it belongs in (see
- * `RulePackRecommendation.folder`). `explainNoFit` says why none does.
+ * network, no code from the packs. A pack fits whatever its rules; `ruleCount` is how many start on and run, leaving
+ * out those of `notRun` (`rulesStartingOn`). Languages come first, then frameworks, then repository packs. Each comes
+ * with the folder it belongs in (see `RulePackRecommendation.folder`). `explainNoFit` says why none does.
  */
-export function rulePacksThatFit(scan: RepositoryScan, packs: readonly RulePack[]): RulePackRecommendation[] {
+export function rulePacksThatFit(scan: RepositoryScan, packs: readonly RulePack[], notRun: ReadonlyMap<string, unknown> = new Map()): RulePackRecommendation[] {
   return packs.flatMap(pack => {
     const reason = matchReason(pack.match, scan);
     if (reason === undefined) return [];
-    const ruleCount = pack.rules.filter(rule => rule.on).length;
+    const ruleCount = rulesStartingOn(pack, notRun);
     const folder = pack.category === "repository" ? "" : matchFolder(pack.match, scan);
     return [{ pack, ruleCount, reason, folder }];
   });
@@ -545,8 +550,12 @@ export function explainNoFit(scan: RepositoryScan, packs: readonly RulePack[]): 
 }
 
 /** The packs that fit the repository at `repositoryRoot` (`rulePacksThatFit`) and have a rule that starts on. */
-export function recommendRulePacks(repositoryRoot: string, packs: readonly RulePack[] = loadRulePacks()): RulePackRecommendation[] {
-  return rulePacksThatFit(scanRepository(repositoryRoot), packs).filter(found => found.ruleCount > 0);
+export function recommendRulePacks(
+  repositoryRoot: string,
+  packs: readonly RulePack[] = loadRulePacks(),
+  notRun: ReadonlyMap<string, unknown> = new Map(),
+): RulePackRecommendation[] {
+  return rulePacksThatFit(scanRepository(repositoryRoot), packs, notRun).filter(found => found.ruleCount > 0);
 }
 
 /** How long a daemon reuses a repository's recommendations before scanning it again. */
@@ -563,7 +572,7 @@ export function cachedRecommendRulePacks(repositoryRoot: string, now = Date.now(
   const catalog = loadRuleCatalog();
   const cached = recommendationCache.get(repositoryRoot);
   if (cached !== undefined && cached.digest === catalog.digest && now - cached.at < RECOMMENDATION_CACHE_MS) return cached.recommendations;
-  const recommendations = recommendRulePacks(repositoryRoot, [...catalog.packs.values()]);
+  const recommendations = recommendRulePacks(repositoryRoot, [...catalog.packs.values()], catalog.notRun);
   recommendationCache.set(repositoryRoot, { at: now, digest: catalog.digest, recommendations });
   return recommendations;
 }
