@@ -4811,6 +4811,21 @@ impl Grower {
         Ok(finish(out, &batch, sets, projection, binding))
     }
 
+    /// `admit` for several tape values at once (a round's answers): one projection of them all, their rows one part
+    /// of each source, where one admission each made a batch, its nearest pass and its identity maps a value.
+    pub fn admit_many(
+        &mut self,
+        store: &ContentStore,
+        documents: Vec<Document>,
+        sets: &[(String, Vec<i64>)],
+        tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
+        binding: crate::code_rule_dsl::facts::nearest::Binding,
+        projection: &Projection,
+    ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
+        let (out, batch) = self.sources_of(store, documents.into_iter().map(Input::from).collect(), None, tests, binding, projection, &HashMap::new(), true)?;
+        Ok(finish(out, &batch, sets, projection, binding))
+    }
+
     /// Tape value's relation `name`, its rows admitted (decision 0431 §8): written once, past the chunk's rows of
     /// `name` and the values' admitted before, in the same block relation (`Relation::grown`), so that the device
     /// binds the chunk's and the values' rows whole; read as the rows past those (`values::Slice`). A relation the

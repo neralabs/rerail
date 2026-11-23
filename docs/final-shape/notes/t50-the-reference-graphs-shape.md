@@ -748,6 +748,26 @@ strata 99.9 → 117.2 s, cross 24.8 → 36.8 s, the rest 18.1 → 14.4 s. Next b
   steps 1–4. The cross part's cost is spread thin: no stratum over 1.5 s (`rf_named` 1.5, `rf_ref` 1.2, `rf_target`
   0.57).
 
+### The strata against 0483's, and a round's tape values admitted together (2026-11-23)
+
+0483's rules run again on m1max (`tmp/refs/three/r0483.sh`: 152.6 s CPU, load 6), their spans' own CPU beside the
+head's (`strata.py`; head30, load 20, so somewhat high): per-file 101.8 → 125.6 s, cross 24.4 → 43.3 s. The two
+programs differ (0483's `internal_dead_code_rules`, the head's `idc_head`), so a stratum renamed shows as one gone
+and one new. By size:
+
+- cross `rf_unq_bare` +6.1 s: the cross part's `text` read (above, "The cross part's `text`").
+- the chunks' statistics, item 1's: `count docof` 2.3, `count node_order` 2.2, `count node` 1.4, `count text`
+  0.8, `the exports measured` 2.4 s, on the workers.
+- per-file `look` +4.6 s (step 5), `parsed` +4.0 s, `pre_152` and `pre_227` +2.9 s each (step 6's), against
+  `walk` −2.5, `pre_173` −2.4, `tp_decl` −1.5 and others gone.
+
+**`parsed`.** Its 4.0 s was 4,323 parsed fragments admitted one at a time (`Grower::admit`): a projection, a nearest
+pass and identity maps each, about 0.9 ms a fragment, where their parse took 0.03 s. A round's answers are now
+admitted together (`Grower::admit_many`), one part of each source under all their keys. On `all` (m1max, CPU, load
+6): `parsed` 4.03 → 1.44 s, every relation's rows the same. `pre_227` and `pre_152`, which read inside guests, were
+4.24 and 3.83 s against 2.8–3.5 s in the runs before: some of that is likely the larger parts (an axis made on lookup
+solves its part), so the net is about −1.5 s.
+
 ### Step 6 in part: parent edges, label formulas and field captures in the matcher wave (2026-11-22)
 
 Three changes, each with its rows checked (s1000's digest, `all`'s 17 relations) and its own switch:

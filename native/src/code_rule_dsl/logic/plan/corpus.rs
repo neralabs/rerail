@@ -7202,6 +7202,9 @@ fn run_observed_within(
             let _span = crate::code_rule_dsl::logic::profile::span(|| "tape values admitted".into());
             let text = |a: i64| atoms.value(a as _).map_err(|e| Error::Plan(e.to_string()));
             let mut given_rows: BTreeMap<String, Vec<Vec<i64>>> = given.iter().map(|g| (g.clone(), Vec::new())).collect();
+            // The round's values, admitted together once each is made (`Grower::admit_many`): their documents, each
+            // once, and the keys of the nodes their rows hold.
+            let (mut admit_keys, mut held_keys): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
             for row in rows {
                 // The value asked, and the keys of the nodes its rows hold: its own, and its place's or its node's
                 // document's (`Values::add`).
@@ -7237,15 +7240,28 @@ fn run_observed_within(
                     }
                     _ => continue,
                 };
-                let doc = docs.iter().find(|d| d.key == key).cloned().ok_or_else(|| Error::Plan(format!("tape value {key} is not the chunk's")))?;
-                let made_rows = grower.admit(store, doc, sets, &vocabulary, binding, admit_projection.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
-                // `parsed` is an input too (a program's rows, the batch's): its rows are bound as the value's part, as
+                if !admit_keys.contains(&key) {
+                    admit_keys.push(key);
+                }
+                for k in [Some(key), owner].into_iter().flatten() {
+                    if !held_keys.contains(&k) {
+                        held_keys.push(k);
+                    }
+                }
+            }
+            if !admit_keys.is_empty() {
+                let round: Vec<syntax::Document> = admit_keys
+                    .iter()
+                    .map(|&key| docs.iter().find(|d| d.key == key).cloned().ok_or_else(|| Error::Plan(format!("tape value {key} is not the chunk's"))))
+                    .collect::<Result<_>>()?;
+                let made_rows = grower.admit_many(store, round, sets, &vocabulary, binding, admit_projection.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
+                // `parsed` is an input too (a program's rows, the batch's): its rows are bound as the values' part, as
                 // every relation's are, and given as the answer, which a stratum above the request leaves to the binding.
                 for (name, p) in made_rows.iter().filter(|(name, _)| given.contains(name)) {
                     let width = p.columns().len();
                     given_rows.entry(name.clone()).or_default().extend((0..p.len()).map(|r| (0..width).map(|c| p.value(r, c)).collect()));
                 }
-                values.add(&[Some(key), owner].into_iter().flatten().collect::<Vec<u32>>(), made_rows);
+                values.add(&held_keys, made_rows);
             }
             Ok(std::mem::take(&mut given_rows).into_iter().collect())
         };
