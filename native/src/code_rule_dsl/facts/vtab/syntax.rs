@@ -4401,23 +4401,29 @@ impl Source for Viewed {
             }
             return;
         }
+        // The slots' ops and the inputs they need, decided once for the row (`read_op`), the inputs computed once
+        // and the slots filled from them (`op_value`): no cell or closure a column.
+        use read_op::*;
         let (local, x) = self.local_of_row(p, i);
-        let node = std::cell::OnceCell::new();
-        if x != NONE {
-            let _ = node.set(x);
+        let mut ops = [0u8; 16];
+        let mut needs = 0u8;
+        for (k, &c) in columns.iter().enumerate().take(16) {
+            let (op, need) = Self::read_op(self.view, c);
+            ops[k] = op;
+            needs |= need;
         }
-        let (n, up) = (std::cell::OnceCell::new(), std::cell::OnceCell::new());
-        let x = || *node.get_or_init(|| p.node(local));
-        for (o, &c) in out.iter_mut().zip(columns) {
-            let at = At {
-                node: &x,
-                n: &|| *n.get_or_init(|| p.global(local)),
-                up: &|| *up.get_or_init(|| Self::parent_id_of(p, local, x())),
-                idx: &|| p.idx(local as usize),
-                depth: &|| p.depth(local as usize),
-                prev: &|| Self::prev_id(p, local),
-            };
-            *o = self.value_of(p, local, &at, c);
+        if columns.len() > 16 {
+            for (o, &c) in out.iter_mut().zip(columns) {
+                *o = self.value_at(p, i, c);
+            }
+            return;
+        }
+        let x = if x == NONE && needs & (NEED_X | NEED_UP) != 0 { p.node(local) } else { x };
+        let n = if needs & NEED_ID != 0 { p.global(local) } else { 0 };
+        let up = if needs & NEED_UP != 0 { Self::parent_id_of(p, local, x) } else { 0 };
+        let b = &*self.batch;
+        for (o, &op) in out.iter_mut().zip(&ops[..columns.len()]) {
+            *o = Self::op_value(b, p, local, x, n, up, None, op);
         }
     }
 }
@@ -4515,6 +4521,32 @@ impl Viewed {
         }
     }
 
+    /// Slot op `op` (`read_op`) of the match at `local` of `p`: its tape node `x`, own id `n` and parent's id `up` as
+    /// the plan's needs had them computed, and its place and depth where the probe knows them (`at`).
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    fn op_value(b: &Batch, p: &Projected, local: u32, x: u32, n: i64, up: i64, at: Option<(u32, u32)>, op: u8) -> i64 {
+        use read_op::*;
+        match op {
+            FILE => i64::from(p.file),
+            KEY => i64::from(p.key),
+            TAPE => i64::from(x),
+            KIND => b.dialects[p.tag].kind(&p.facts, x),
+            START => i64::from(p.facts.start(x)),
+            END => i64::from(p.facts.end(x)),
+            LINE => i64::from(p.facts.start_line(x)),
+            UP => up,
+            IDX => i64::from(at.map_or_else(|| p.idx(local as usize), |(i, _)| i)),
+            FIELD => i64::from(field_atom(p.tag, p.facts.field(x))),
+            SIZE => i64::from(p.size(local as usize)),
+            DEPTH => i64::from(at.map_or_else(|| p.depth(local as usize), |(_, d)| d)),
+            ORDER => i64::from(p.key) << 32 | i64::from(p.order(local)),
+            PREV => Self::prev_id(p, local),
+            UNIT => Self::unit_id(b, p, local),
+            OP => b.op_atom(p.tag, b.dialects[p.tag].code(&p.facts, x)),
+            _ => n,
+        }
+    }
     /// `Source::lookup_read`: `lookup_docs`'s matches for one value, each row's `columns` read from what found it.
     /// A lookup by a node's id knows the row's id; by its parent, the parent's id and each child's tape node; by a
     /// kind or a tape node, the tape node: no select, granule search or parent search a row for those. Views whose
@@ -4542,8 +4574,9 @@ impl Viewed {
         let (len, view, b) = (usize::from(plan.len), self.view, &*self.batch);
         let [doc_hint, granule] = &mut cursor.hint;
         let mut vals = [0i64; 8];
-        // A match: its document, local id, tape node (`NONE`: unknown), own id and parent's id where known.
-        let mut emit = |doc: usize, local: u32, x: u32, id: Option<i64>, up: Option<i64>| {
+        // A match: its document, local id, tape node (`NONE`: unknown), own id and parent's id where known, and its place
+        // and depth where the probe knows them (a probe by parent: the hop's counter, one below the parent).
+        let mut emit = |doc: usize, local: u32, x: u32, id: Option<i64>, up: Option<i64>, at: Option<(u32, u32)>| {
             let row = if matches!(view, View::Op) { b.row_of_node(view, doc, local, x) } else { b.row(view, doc, local) };
             let Some(row) = row else { return };
             let p = &b.docs[doc];
@@ -4559,44 +4592,36 @@ impl Viewed {
                 None => 0,
             };
             for (o, &op) in vals[..len].iter_mut().zip(&plan.ops) {
-                *o = match op {
-                    FILE => i64::from(p.file),
-                    KEY => i64::from(p.key),
-                    TAPE => i64::from(x),
-                    KIND => b.dialects[p.tag].kind(&p.facts, x),
-                    START => i64::from(p.facts.start(x)),
-                    END => i64::from(p.facts.end(x)),
-                    LINE => i64::from(p.facts.start_line(x)),
-                    UP => up,
-                    IDX => i64::from(p.idx(local as usize)),
-                    FIELD => i64::from(field_atom(p.tag, p.facts.field(x))),
-                    SIZE => i64::from(p.size(local as usize)),
-                    DEPTH => i64::from(p.depth(local as usize)),
-                    ORDER => i64::from(p.key) << 32 | i64::from(p.order(local)),
-                    PREV => Self::prev_id(p, local),
-                    UNIT => Self::unit_id(b, p, local),
-                    OP => b.op_atom(p.tag, b.dialects[p.tag].code(&p.facts, x)),
-                    _ => n,
-                };
+                *o = Self::op_value(b, p, local, x, n, up, at, op);
             }
             each(row, &vals[..len]);
         };
         if column == self.own() {
             if let Some((doc, local)) = b.node_near(value, doc_hint) {
-                emit(doc, local, NONE, Some(value), None);
+                emit(doc, local, NONE, Some(value), None, None);
             }
         } else if Some(column) == self.parent() {
             if value == -1 {
                 return false;
             }
             if let Some((doc, local)) = b.node_near(value, doc_hint) {
-                b.docs[doc].each_child_node(local, |c, x| emit(doc, c, x, None, Some(value)));
+                // The children's place is the hop's counter and their depth the parent's and one, read once a probe
+                // where the plan reads it. Narrowed to anchors, a node's place counts the nodes under left-out ones too
+                // (`Projected::anchored`): there the place is read as before.
+                let p = &b.docs[doc];
+                let depth = if plan.ops[..len].contains(&DEPTH) { p.depth(local as usize) + 1 } else { 0 };
+                let counted = !p.anchored;
+                let mut i = 0;
+                p.each_child_node(local, |c, x| {
+                    emit(doc, c, x, None, Some(value), counted.then_some((i, depth)));
+                    i += 1;
+                });
             }
         } else if matches!(self.view, View::Core) && column == 1 {
             let Ok(t) = u32::try_from(value) else { return true };
             for (doc, p) in b.docs.iter().enumerate() {
                 if let Some(local) = p.ranks().local(Item::Node, t) {
-                    emit(doc, local, t, None, None);
+                    emit(doc, local, t, None, None, None);
                 }
             }
         } else if matches!(self.view, View::Op) && column == 0 {
@@ -4605,7 +4630,7 @@ impl Viewed {
                 let p = &b.docs[doc];
                 p.facts.each_child(p.node(local), |x| {
                     if p.ranks().is(Item::Token, x) {
-                        emit(doc, local, x, Some(value), None);
+                        emit(doc, local, x, Some(value), None, None);
                     }
                 });
             }
@@ -4613,12 +4638,12 @@ impl Viewed {
             // A unit's nodes, walked on the tape: each match with its local id.
             if let Some((doc, local)) = b.node_near(value, doc_hint) {
                 let p = &b.docs[doc];
-                p.each_of_unit(&b.dialects[p.tag], local, |l| emit(doc, l, NONE, None, None));
+                p.each_of_unit(&b.dialects[p.tag], local, |l| emit(doc, l, NONE, None, None, None));
             }
         } else if matches!(self.view, View::Node) && column == 2 {
             // The batch's index by kind (`Batch::by_kind`): each match with its local id and tape node.
             for &[doc, local, x] in b.by_kind(value) {
-                emit(doc as usize, local, x, None, None);
+                emit(doc as usize, local, x, None, None, None);
             }
         } else {
             return false;
