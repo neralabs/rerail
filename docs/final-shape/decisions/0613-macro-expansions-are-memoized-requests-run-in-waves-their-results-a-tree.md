@@ -347,6 +347,10 @@ So:
      6.5 to 4.4 ms. The queue alone (a first evaluation): 3.08 to 2.67 and 3.45 to 3.18 ms. Every unit gives the
      serial pass's tokens on CUDA and Metal. The M3 Max's batch: 31.4 ms before, 33.1 and 29.2 ms after (first and
      second evaluation).
+   - The unit that sets each answer round, by its team's end (`RERAIL_PP_TRACE`, GB10, CUDA, warm, a second
+     evaluation, with the memo and a round's tree built since): `tif_getimage.c` (19,375 nodes, 7 groups) 3.03 to
+     2.09 ms (1.45 times); C++ unit 1 (51,203 nodes, 11 groups) 3.40 to 1.25 ms (2.7 times). C's round ends at
+     its team; the next team ends at 1.79 ms.
 
    **Built: the memo in the loop** (2026-11-22, `lp_memo_*` in `pp_loop.uglykl`).
    - A call whose arguments are read in one frame is looked up at its `)`. Its key is its definition, the macros
