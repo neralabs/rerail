@@ -10,7 +10,7 @@
 use rerail_c_pp::Config;
 use rerail_c_pp::files::Files;
 use rerail_metal::pp_eval::{Unit, name_key, placement};
-use rerail_metal::pp_expand::{Expanded, Layout, NO_PARENT, NOT_FOUND, Part, PpNode, Request, Sizes, relex_options};
+use rerail_metal::pp_expand::{Expanded, Layout, NO_PARENT, NOT_FOUND, Part, PpNode, Request, Sizes, Tree, relex_options};
 use rerail_metal::slabs;
 
 /// A unit of `files` (each a source and whether it is C++), as the evaluator reads it: each file's
@@ -177,21 +177,27 @@ struct Progress {
     /// Its files' documents' digests (`place_kept`), by the unit's file index: a round lexes only the
     /// files the last one's answers loaded.
     digests: Vec<[u8; 32]>,
+    /// The tree its last round's P1 settled at: the next round starts there (decision 0613 §3).
+    tree: Option<Tree>,
 }
 
 impl Progress {
     fn start(cfg: &Config, io: &mut dyn Files, main: &str) -> Result<Progress, Refused> {
         let src = io.read(main).ok_or(Refused::NoMain)?;
         let pre = rerail_c_pp::stream::parallel::predefined(cfg).0;
-        Ok(Progress { loaded: Loaded { files: vec![pre, src], paths: vec!["<built-in>".into(), main.to_string()], found_by: vec![NOT_FOUND, NOT_FOUND] }, table: Vec::new(), rounds: 0, sizes: None, digests: Vec::new() })
+        Ok(Progress { loaded: Loaded { files: vec![pre, src], paths: vec!["<built-in>".into(), main.to_string()], found_by: vec![NOT_FOUND, NOT_FOUND] }, table: Vec::new(), rounds: 0, sizes: None, digests: Vec::new(), tree: None })
     }
 
     /// The unit as the next round reads it: its files placed, and its layout.
     fn unit(&mut self, d: &Dialect<'_>, cpp: bool) -> Result<(Unit, Layout), rerail_metal::Error> {
         let (cfg, loaded) = (d.cfg, &self.loaded);
         let (unit, _) = place_kept(&loaded.files.iter().map(|s| (s.as_slice(), cpp)).collect::<Vec<_>>(), &mut self.digests)?;
+        let roots = || vec![PpNode { file: 0, parent: NO_PARENT, pdir: 0, depth: 0, unit: 0 }, PpNode { file: 1, parent: NO_PARENT, pdir: 1, depth: 0, unit: 0 }];
+        let tree = self.tree.clone().unwrap_or_default();
         let lay = Layout {
-            nodes: vec![PpNode { file: 0, parent: NO_PARENT, pdir: 0, depth: 0, unit: 0 }, PpNode { file: 1, parent: NO_PARENT, pdir: 1, depth: 0, unit: 0 }],
+            nodes: if tree.nodes.is_empty() { roots() } else { tree.nodes },
+            entered: tree.entered,
+            groups: tree.groups,
             table: self.table.clone(),
             found_by: loaded.found_by.clone(),
             max_depth: cfg.max_depth,
@@ -358,6 +364,7 @@ fn batch_round(d: &Dialect<'_>, cpp: bool, units: &mut [(Box<dyn Files + '_>, St
             Ok(x) if x.p1_flags != 0 => out[k] = Some(Err(Refused::P1(x.p1_flags))),
             // The host's part: the unit's requests answered, and the unit runs again.
             Ok(x) if !x.requests.is_empty() => {
+                p.tree = x.tree;
                 p.answer(units[k].0.as_mut(), x.requests);
                 again.push((k, p));
             }

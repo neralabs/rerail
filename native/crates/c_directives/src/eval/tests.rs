@@ -2793,6 +2793,72 @@ fn where_an_evaluations_gpu_time_goes() {
 
 /// Decision 0613 step 2: a unit's next round keeps its files' documents from the last one: it lexes
 /// only the files the last round's answers loaded, and reads the same documents.
+/// Decision 0613 §3: a round starts from the tree the last round's P1 settled at. Includes three
+/// deep, each a round's requests, conditionals on what each header defines: the rounds give the
+/// serial pass's tokens, and from the last round's tree take fewer P1 iterations than from the roots.
+#[test]
+fn a_round_starts_from_the_last_rounds_tree() {
+    use rerail_c_pp::files::Search;
+    use rerail_metal::pp_expand::{Layout, NO_PARENT, expand_teams};
+    let files: &[(&str, &str)] = &[
+        ("main.c", "#include \"a.h\"\n#ifdef A\n#include \"b.h\"\n#endif\n#if defined(B) && C > 1\nyes C\n#else\nno\n#endif\nend A B\n"),
+        ("a.h", "#ifndef A\n#define A 1\n#include \"c.h\"\n#endif\n#ifdef C\nint c = C;\n#endif\n"),
+        ("b.h", "#define B 2\n#if C > 1\nint b;\n#endif\n"),
+        ("c.h", "#define C 3\n#include \"d.h\"\n"),
+        ("d.h", "#ifdef A\nint d = A;\n#endif\n"),
+    ];
+    let cfg = rerail_c_pp::Config::new(crate::pp::options(false));
+    let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+    let mut serial = Spelled::default();
+    let m2 = m.clone();
+    let mut io = Search::new(Vec::new(), move |p: &str| m2.get(p).cloned());
+    let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
+    assert!(pp.run("main.c"));
+    drop(pp);
+    // The rounds, each from the last's tree or (`roots`) from the roots: the tokens, the rounds, P1's iterations.
+    let rounds = |roots: bool| {
+        let m = m.clone();
+        let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(Vec::new(), move |p: &str| m.get(p).cloned())), "main.c".into())];
+        let mut iters = 0u32;
+        let r = super::rounds::run_many(&cfg, false, &mut units, |pairs, sizes| {
+            let lays: Vec<Layout> = pairs
+                .iter()
+                .map(|(_, l)| Layout {
+                    nodes: if roots { l.nodes.iter().copied().filter(|n| n.parent == NO_PARENT).collect() } else { l.nodes.clone() },
+                    table: l.table.clone(),
+                    found_by: l.found_by.clone(),
+                    max_depth: l.max_depth,
+                    if_ops: l.if_ops.clone(),
+                    features: l.features.clone(),
+                    true_is_one: l.true_is_one,
+                    builtins: l.builtins.clone(),
+                    relex_options: l.relex_options,
+                    file_literals: l.file_literals.clone(),
+                    name_literals: l.name_literals.clone(),
+                    entered: if roots { Vec::new() } else { l.entered.clone() },
+                    groups: if roots { Vec::new() } else { l.groups.clone() },
+                })
+                .collect();
+            let pairs: Vec<_> = pairs.iter().zip(&lays).map(|((u, _), l)| (*u, l)).collect();
+            let xs = expand_teams(&pairs, sizes);
+            if let Ok(xs) = &xs {
+                iters += xs.iter().flatten().map(|x| x.passes.0).sum::<u32>();
+            }
+            xs
+        });
+        let s = r.into_iter().next().unwrap().unwrap_or_else(|_| panic!("refused"));
+        let tapes: Vec<Vec<u8>> = s.loaded.files.iter().map(|f| image(f, crate::pp::options(false))).collect();
+        (part_tokens(&s.part, &s.loaded.files, &tapes), s.rounds, iters)
+    };
+    let (seeded, n, si) = rounds(false);
+    let (fresh, n2, fi) = rounds(true);
+    same(show(&seeded), show(&serial.0), "from the last round's tree");
+    same(show(&fresh), show(&serial.0), "from the roots");
+    same(n, n2, "the rounds");
+    eprintln!("{n} rounds; P1's iterations: {si} from the last round's tree, {fi} from the roots");
+    assert!(n >= 3 && si < fi, "the last round's tree saves iterations: {si} against {fi} in {n} rounds");
+}
+
 #[test]
 fn a_round_lexes_only_its_new_files() {
     let (main, h) = (b"#include \"h.h\"\nint x = H;\n".to_vec(), b"#define H 1\n".to_vec());

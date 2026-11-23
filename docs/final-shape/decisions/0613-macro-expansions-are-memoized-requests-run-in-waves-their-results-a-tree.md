@@ -407,6 +407,21 @@ So:
      0.25 to 0.36 ms: its 101 phases on one group, whatever its size (254 to 3,745 nodes). Its work in round 2
      is the same phases, so keeping it would remove no phase. Rounds cost phases, not data.
 
+   **Built: a round starts from the last round's tree** (2026-11-22, `Tree`, `p1_seed_words`).
+   - A round that ends in requests reads back the tree its P1 settled at: its instances, whether each is
+     entered (live), and each instance's groups' activity. The next round's layout holds that tree whole
+     (`Layout::entered`, `groups`); its first iteration takes the groups as they were, and each
+     instance's directive word its made instance, entered where it was. A unit's files keep their
+     indices across rounds (new ones come after), so the words hold.
+   - It is sound from any start: each test reads only the state before it, so iteration k settles the
+     first k layers whatever they held. The tree is the device's own answer, carried as the next run's
+     input as the file table is; no block is copied.
+   - `a_round_starts_from_the_last_rounds_tree` (includes three deep, each a round's requests): 4 rounds, P1's
+     iterations 9 from the last round's tree against 15 from the roots, the serial pass's tokens both ways.
+   - The corpus (GB10, CUDA, warm, a second evaluation, one run each): C 5.8 to 5.6 ms, C++ 2.5 to 2.1 ms,
+     within the runs' swing. Its units take at most 2 rounds, and a first round's tree is mostly its roots
+     (the table is empty), so it keeps the groups and little else; deeper include chains keep more.
+
    **Measured, not kept: a batch's first round held before its text** (2026-11-22).
    - Every unit of a batch's first round stopped at P1's end, so that the units that request ran their second
      round beside the others' text. GB10, CUDA, warm, a second evaluation: the answer rounds' GPU time 7.2 to
@@ -428,6 +443,8 @@ So:
 - `a_definition_changed_between_uses_is_expanded_again`: `#define G 1` / `F()` / `#undef G` / `#define G 2` /
   `F()`, where `F`'s body names `G`.
 - `a_disabled_macro_paints_alike_in_a_memoized_expansion`: `A` → `B` → `A`, entered at the top and inside `B`.
+- `a_round_starts_from_the_last_rounds_tree`: includes three deep; fewer P1 iterations than from the roots,
+  the same tokens.
 - `an_argument_spelled_alike_is_a_hole`: `P(x, 1)` with `x` from four places in the text, printed, in an argument and
   as a node, and read in four bodies: one result, each hit with its own tokens.
 - `a_childs_open_tail_takes_its_parents_parenthesis`: `#define f g` / `#define g(x) x` / `f(1)`.
