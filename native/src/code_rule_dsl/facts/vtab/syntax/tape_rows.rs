@@ -345,14 +345,27 @@ pub const DOC: &str = "doc";
 /// core.rerail's `structural_before(n, s)`, `structural_after(n, s)` (`Gap`).
 pub const STRUCTURAL: [&str; 2] = ["structural_before", "structural_after"];
 
+/// `visit_index(n, i)` (`VisitIndex`).
+pub const VISIT: &str = "visit_index";
+
+/// `tree_digest(n, s)` (`TreeDigest`).
+pub const DIGEST: &str = "tree_digest";
+
 /// The relations `RowsView` serves, a batch of `shape`'s: none of them made as rows.
 pub(super) fn served(shape: Shape) -> impl Iterator<Item = &'static str> {
-    [DOC, NAMED].into_iter().chain(TOKENS.into_iter().chain(STRUCTURAL).filter(move |_| shape == Shape::Core))
+    [DOC, NAMED, VISIT].into_iter().chain(TOKENS.into_iter().chain(STRUCTURAL).chain([DIGEST]).filter(move |_| shape == Shape::Core))
 }
 
 /// The views `served` names over `batch`.
 pub(super) fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
-    let mut out: Vec<(&'static str, Arc<dyn Source>)> = vec![(DOC, Arc::new(RowsView::new(batch, DocRow::new(batch)))), (NAMED, Arc::new(RowsView::new(batch, NamedChild)))];
+    let mut out: Vec<(&'static str, Arc<dyn Source>)> = vec![
+        (DOC, Arc::new(RowsView::new(batch, DocRow::new(batch)))),
+        (NAMED, Arc::new(RowsView::new(batch, NamedChild))),
+        (VISIT, Arc::new(RowsView::new(batch, VisitIndex))),
+    ];
+    if batch.shape == Shape::Core {
+        out.push((DIGEST, Arc::new(RowsView::new(batch, TreeDigest))));
+    }
     if batch.shape == Shape::Core {
         for which in [Neighbour::First, Neighbour::Last, Neighbour::Before, Neighbour::After] {
             out.push((TOKENS[which as usize], Arc::new(RowsView::new(batch, TokenNeighbour(which)))));
@@ -385,6 +398,11 @@ pub(super) fn strings(batch: &Batch, wants: &dyn Fn(&str) -> bool, each: &mut dy
         let source = p.facts.source.as_str();
         for g in &gaps {
             g.walk(p, &mut |_, a, b| each(if a < b { &source[a as usize..b as usize] } else { "" }));
+        }
+    }
+    if batch.shape == Shape::Core && wants(DIGEST) {
+        for d in 0..batch.docs.len() {
+            TreeDigest::hexes(&At { batch, doc: d }, &mut |_, h| each(h));
         }
     }
 }
@@ -723,5 +741,122 @@ impl TapeRows for DocRow {
     }
     fn statistics(&self, batch: &Batch) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         batch.doc_statistics()
+    }
+}
+
+/// `visit_index(n, i)`: node `n`'s place in CPython's `ast` visit order, from 0 per document, of a file's own Python
+/// documents (`tree::visit_order`). The order is a walk of the tape that the tape holds no index of: each node's place
+/// is kept, 4 bytes a node of the projection, made on the document's first read (`// copy: derived`). Made as rows it
+/// was 13.7 MB of each chunk's block of sources at the M3's 300-file peak (ab200), `n` and `i` a row each.
+pub(super) struct VisitIndex;
+
+impl TapeRows for VisitIndex {
+    /// Each node's place (by its local id), `NONE` for a node with none; `None` for a document with no order.
+    type Doc = Option<Cells<u32>>;
+    fn name(&self) -> &'static str {
+        VISIT
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["n", "i"]
+    }
+    fn own(&self) -> usize {
+        0
+    }
+    fn doc(&self, at: &At) -> Option<Cells<u32>> {
+        let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
+        if at.batch.docs.guest(at.doc).is_some() {
+            return None;
+        }
+        let p = at.p();
+        if python != Some(p.tag) {
+            return None;
+        }
+        let dialect = at.batch.dialects.get(p.tag)?;
+        let n = p.len() as usize;
+        // copy: derived (each node's place in CPython's visit order, a walk the tape holds no index of)
+        Some(
+            Cells::build(p.block(), n.max(1), |out: &mut [u32]| {
+                out.fill(NONE);
+                super::tree::visit_order(p, dialect, &mut |l, i| out[l as usize] = i);
+                n.max(1)
+            })
+            .expect("a projection's block holds a view's places"),
+        )
+    }
+    fn items(&self, at: &At, d: &Self::Doc) -> u32 {
+        if d.is_some() { at.p().len() } else { 0 }
+    }
+    fn members(&self, _: &At, d: &Self::Doc, each: &mut dyn FnMut(u32)) {
+        if let Some(places) = d {
+            places.iter().enumerate().filter(|&(_, &i)| i != NONE).for_each(|(l, _)| each(l as u32));
+        }
+    }
+    fn row(&self, at: &At, d: &Self::Doc, _: &Marked, item: u32, _: u32, out: &mut [i64]) {
+        out[0] = at.p().global(item);
+        out[1] = i64::from(d.as_ref().expect("a row's document has an order")[item as usize]);
+    }
+}
+
+/// `tree_digest(n, h)` (`@tree_digest(n)`): a structural hash of each node's subtree (`core_rr::digests`), of the
+/// nodes of a document with a grammar that parsed. A hash is of the whole subtree, which the tape holds no digest of:
+/// each node's is kept as its atom, 4 bytes a node, interned on the document's first read (`// copy: derived`). Made
+/// as rows it was 6.8 MB of each chunk's block of sources at the M3's 300-file peak (ab200).
+pub(super) struct TreeDigest;
+
+impl TreeDigest {
+    /// Each node of the projection of `at` (by local id, in order) with its digest's symbol; none for a document
+    /// with no grammar, or withheld.
+    fn hexes(at: &At, each: &mut dyn FnMut(u32, &str)) {
+        let Some(dialect) = at.batch.dialects.get(at.batch.docs.tag(at.doc)) else { return };
+        if at.batch.docs.withheld(at.doc) {
+            return;
+        }
+        let p = at.p();
+        let (hash, _) = super::core_rr::digests(&p.facts, dialect, true, false);
+        for (local, id, _) in p.node_ids() {
+            each(local, &super::core_rr::hex(&hash[id as usize]));
+        }
+    }
+}
+
+impl TapeRows for TreeDigest {
+    /// Each node's digest's atom, by local id: made on the document's first read of a row.
+    type Doc = OnceLock<Cells<u32>>;
+    fn name(&self) -> &'static str {
+        DIGEST
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["n", "s"]
+    }
+    fn own(&self) -> usize {
+        0
+    }
+    fn doc(&self, _: &At) -> Self::Doc {
+        OnceLock::new()
+    }
+    fn items(&self, at: &At, _: &Self::Doc) -> u32 {
+        at.p().len()
+    }
+    fn members(&self, at: &At, _: &Self::Doc, each: &mut dyn FnMut(u32)) {
+        if at.batch.dialects.get(at.batch.docs.tag(at.doc)).is_some() && !at.batch.docs.withheld(at.doc) {
+            (0..at.p().len()).for_each(each);
+        }
+    }
+    fn row(&self, at: &At, d: &Self::Doc, _: &Marked, item: u32, _: u32, out: &mut [i64]) {
+        let p = at.p();
+        let atoms = d.get_or_init(|| {
+            let mut hexes: Vec<String> = vec![String::new(); p.len() as usize];
+            Self::hexes(at, &mut |l, h| hexes[l as usize] = h.to_owned());
+            let texts: Vec<&str> = hexes.iter().map(String::as_str).collect();
+            let syms = at.batch.atoms.intern_all(&texts).expect("a document's digests interned");
+            // copy: derived (each node's subtree's digest, interned: the tape holds the subtree, not its hash)
+            Cells::build(p.block(), syms.len().max(1), |out: &mut [u32]| {
+                out[..syms.len()].copy_from_slice(&syms);
+                syms.len().max(1)
+            })
+            .expect("a projection's block holds a view's atoms")
+        });
+        out[0] = p.global(item);
+        out[1] = i64::from(atoms[item as usize]);
     }
 }

@@ -684,7 +684,6 @@ pub(super) struct CoreRows {
     str_part_word: Vec<[i64; 5]>,
     /// `end_point(n, p)`: node n's end point, a zero-width span (`Locs::ends`).
     end_point: Vec<[i64; 2]>,
-    tree_digest: Vec<[i64; 2]>,
     /// `def_digest(n, h)`: each definition unit's own-content hash (`digests`).
     def_digest: Vec<[i64; 2]>,
     ast_match: Vec<[i64; 4]>,
@@ -693,7 +692,7 @@ pub(super) struct CoreRows {
 impl CoreRows {
     /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
     pub(super) fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.spread.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.split_line.as_slice()) + std::mem::size_of_val(self.lf_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.end_point.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.spread.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.split_line.as_slice()) + std::mem::size_of_val(self.lf_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.end_point.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
     }
 }
 
@@ -994,97 +993,13 @@ impl CoreRows {
             }
         }
     }
-    /// `tree_digest(n, h)` (`@tree_digest(n)`): a structural hash of n's subtree, without
-    /// positions. This is not CPython ast.dump serialization. A node hashes its kind, and its children's field and hash in order; a leaf, or a literal with a
-    /// static value, its text or value. Comments and punctuation are left out, and a parenthesized expression is
-    /// the expression inside, so `(a)` and `a`, `'x'` and `"x"`, or `0x10` and `16`, hash the same. Made when a
-    /// program reads it: every node's hash is a 64-character symbol.
-    ///
     /// `def_digest(n, h)` (decision 0083 §0): one row per definition unit, the document's root and each node `is_unit`
-    /// names, hashing the unit's own code. It is `tree_digest`'s hash with each nested unit replaced by its kind and
-    /// name, so editing a method's body changes the method's digest and not its class's or its module's.
-    pub(super) fn digests(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, trees: bool, units: bool) {
-        use sha2::{Digest, Sha256};
+    /// names, hashing the unit's own code (`digests`). `tree_digest` is a view of the tape (`tape_rows::TreeDigest`).
+    pub(super) fn def_digests(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
-        // Children have greater ids than their parent (preorder), so one pass from the end sees them first.
-        let mut hash: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
-        // The same hash, each nested unit standing for its kind and name.
-        let mut own: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
-        let unit = |id: u32| is_unit(dialect.family, dialect.name(f, id));
-        let placeholder = |id: u32| -> [u8; 32] {
-            let mut h = Sha256::new();
-            h.update(b"unit\0");
-            h.update(dialect.name(f, id).as_bytes());
-            h.update([0]);
-            h.update(unit_name(f, dialect, id).unwrap_or_default().as_bytes());
-            h.finalize().into()
-        };
-        for id in (0..f.len() as u32).rev() {
-            let kind = dialect.name(f, id);
-            let kept: Vec<u32> = f
-                .children(id)
-                .iter()
-                .copied()
-                .filter(|&c| {
-                    let k = dialect.name(f, c);
-                    !is_comment(k) && (f.named(c) || !is_punct(k))
-                })
-                .collect();
-            if kind == "parenthesized_expression" && kept.len() == 1 {
-                hash[id as usize] = hash[kept[0] as usize];
-                own[id as usize] = own[kept[0] as usize];
-                continue;
-            }
-            let interpolated = dialect.family == Family::Python
-                && kept.iter().any(|&c| f.named(c) && dialect.name(f, c) == "interpolation");
-            // Each hash only when its relation is read: a node's two SHA-256s were most of a projection that
-            // reads `def_digest` alone (struct's), 1.5 s of 2.8 s on 237 files.
-            let (mut h, mut o) = (trees.then(Sha256::new), units.then(Sha256::new));
-            for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
-                x.update(kind.as_bytes());
-                x.update([0]);
-            }
-            match literal(dialect.family, kind, f.text(id), interpolated).value {
-                Some((value, ty)) => {
-                    for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
-                        x.update(b"=");
-                        x.update(ty.as_bytes());
-                        x.update([0]);
-                        x.update(value.as_bytes());
-                    }
-                }
-                None if kept.is_empty() => {
-                    for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
-                        x.update(b"'");
-                        x.update(f.text(id).as_bytes());
-                    }
-                }
-                None => {
-                    for &c in &kept {
-                        if let Some(h) = h.as_mut() {
-                            h.update(f.field(c).to_le_bytes());
-                            h.update(hash[c as usize]);
-                        }
-                        if let Some(o) = o.as_mut() {
-                            o.update(f.field(c).to_le_bytes());
-                            o.update(if unit(c) { placeholder(c) } else { own[c as usize] });
-                        }
-                    }
-                }
-            }
-            if let Some(h) = h {
-                hash[id as usize] = h.finalize().into();
-            }
-            if let Some(o) = o {
-                own[id as usize] = o.finalize().into();
-            }
-        }
-        let hex = |h: &[u8; 32]| -> String { h.iter().map(|b| format!("{b:02x}")).collect() };
+        let (_, own) = digests(f, dialect, false, true);
         for (local, id, n) in p.node_ids() {
-            if trees {
-                self.tree_digest.push([n, string(&hex(&hash[id as usize])) as i64]);
-            }
-            if units && (local == 0 || unit(id)) {
+            if local == 0 || is_unit(dialect.family, dialect.name(f, id)) {
                 self.def_digest.push([n, string(&hex(&own[id as usize])) as i64]);
             }
         }
@@ -1143,7 +1058,6 @@ impl CoreRows {
             ("str_part_word", make(&["lit", "i", "w", "at", "spec"], &self.str_part_word, [false, false, true, false, false], atom)),
             ("str_part_start", make(&["lit", "i", "l", "c"], &self.str_part_start, [false; 4], atom)),
             ("end_point", pair(&["n", "p"], &self.end_point)),
-            ("tree_digest", node_sym(&self.tree_digest)),
             ("def_digest", node_sym(&self.def_digest)),
             ("ast_match", make(&["p", "n", "g", "c"], &self.ast_match, [true, false, true, false], atom)),
         ]
@@ -1174,4 +1088,96 @@ pub fn single_metavars(pattern: &str) -> Vec<String> {
         i = k.max(i + 1);
     }
     out
+}
+
+/// `tree_digest(n, h)` (`@tree_digest(n)`): a structural hash of n's subtree, without
+/// positions. This is not CPython ast.dump serialization. A node hashes its kind, and its children's field and hash in order; a leaf, or a literal with a
+/// static value, its text or value. Comments and punctuation are left out, and a parenthesized expression is
+/// the expression inside, so `(a)` and `a`, `'x'` and `"x"`, or `0x10` and `16`, hash the same. Each node's hash
+/// (by tape node) is a 64-character symbol (`hex`); a hash not asked for is zeros.
+///
+/// `def_digest(n, h)` (decision 0083 §0): one row per definition unit, the document's root and each node `is_unit`
+/// names, hashing the unit's own code. It is `tree_digest`'s hash with each nested unit replaced by its kind and
+/// name, so editing a method's body changes the method's digest and not its class's or its module's.
+pub fn digests(f: &Facts, dialect: &Dialect, trees: bool, units: bool) -> (Vec<[u8; 32]>, Vec<[u8; 32]>) {
+    use sha2::{Digest, Sha256};
+    // Children have greater ids than their parent (preorder), so one pass from the end sees them first.
+    let mut hash: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
+    // The same hash, each nested unit standing for its kind and name.
+    let mut own: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
+    let unit = |id: u32| is_unit(dialect.family, dialect.name(f, id));
+    let placeholder = |id: u32| -> [u8; 32] {
+        let mut h = Sha256::new();
+        h.update(b"unit\0");
+        h.update(dialect.name(f, id).as_bytes());
+        h.update([0]);
+        h.update(unit_name(f, dialect, id).unwrap_or_default().as_bytes());
+        h.finalize().into()
+    };
+    for id in (0..f.len() as u32).rev() {
+        let kind = dialect.name(f, id);
+        let kept: Vec<u32> = f
+            .children(id)
+            .iter()
+            .copied()
+            .filter(|&c| {
+                let k = dialect.name(f, c);
+                !is_comment(k) && (f.named(c) || !is_punct(k))
+            })
+            .collect();
+        if kind == "parenthesized_expression" && kept.len() == 1 {
+            hash[id as usize] = hash[kept[0] as usize];
+            own[id as usize] = own[kept[0] as usize];
+            continue;
+        }
+        let interpolated = dialect.family == Family::Python
+            && kept.iter().any(|&c| f.named(c) && dialect.name(f, c) == "interpolation");
+        // Each hash only when its relation is read: a node's two SHA-256s were most of a projection that
+        // reads `def_digest` alone (struct's), 1.5 s of 2.8 s on 237 files.
+        let (mut h, mut o) = (trees.then(Sha256::new), units.then(Sha256::new));
+        for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
+            x.update(kind.as_bytes());
+            x.update([0]);
+        }
+        match literal(dialect.family, kind, f.text(id), interpolated).value {
+            Some((value, ty)) => {
+                for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
+                    x.update(b"=");
+                    x.update(ty.as_bytes());
+                    x.update([0]);
+                    x.update(value.as_bytes());
+                }
+            }
+            None if kept.is_empty() => {
+                for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
+                    x.update(b"'");
+                    x.update(f.text(id).as_bytes());
+                }
+            }
+            None => {
+                for &c in &kept {
+                    if let Some(h) = h.as_mut() {
+                        h.update(f.field(c).to_le_bytes());
+                        h.update(hash[c as usize]);
+                    }
+                    if let Some(o) = o.as_mut() {
+                        o.update(f.field(c).to_le_bytes());
+                        o.update(if unit(c) { placeholder(c) } else { own[c as usize] });
+                    }
+                }
+            }
+        }
+        if let Some(h) = h {
+            hash[id as usize] = h.finalize().into();
+        }
+        if let Some(o) = o {
+            own[id as usize] = o.finalize().into();
+        }
+    }
+    (hash, own)
+}
+
+/// A digest's symbol: its 32 bytes in hex.
+pub fn hex(h: &[u8; 32]) -> String {
+    h.iter().map(|b| format!("{b:02x}")).collect()
 }

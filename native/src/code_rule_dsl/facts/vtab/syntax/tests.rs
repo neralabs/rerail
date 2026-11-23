@@ -2824,7 +2824,7 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
 #[test]
 fn tape_row_views_hold_the_rows_their_makers_made() {
     use super::ranks::Item;
-    use super::tape_rows::{NAMED, STRUCTURAL, TOKENS};
+    use super::tape_rows::{DIGEST, NAMED, STRUCTURAL, TOKENS, VISIT};
     let store = ContentStore::open(&temp("tape-rows")).unwrap();
     let docs: Vec<Document> = vec![
         document(1, "m.py", "python", "# top\nimport os.path as p\ndef f(a, b):  # tail\n    \"\"\"d\"\"\"\n    x = a not in b\n    g(*a, f\"v{a}w\", 0xff)\n    return x\n"),
@@ -2868,6 +2868,15 @@ fn tape_row_views_hold_the_rows_their_makers_made() {
             want.entry(STRUCTURAL[1]).or_default().insert(vec![n, i64::from(atoms[1])]);
         }
         let Some(dialect) = batch.dialects.get(p.tag) else { continue };
+        // Every node's digest (`core_rr::digests`, by tape node) and place in CPython's visit order (`tree::visit_order`).
+        if !batch.docs.withheld(d) {
+            let (hash, _) = super::core_rr::digests(f, dialect, true, false);
+            for (_, id, n) in p.node_ids() {
+                let h = store.intern_atoms(&[super::core_rr::hex(&hash[id as usize]).as_str()]).unwrap()[0];
+                want.entry(DIGEST).or_default().insert(vec![n, i64::from(h)]);
+            }
+            super::tree::visit_order(p, dialect, &mut |l, i| _ = want.entry(VISIT).or_default().insert(vec![p.global(l), i64::from(i)]));
+        }
         let mut toks: Vec<(u32, u32, i64)> = p
             .node_ids()
             .filter_map(|(_, id, n)| {
@@ -2899,7 +2908,7 @@ fn tape_row_views_hold_the_rows_their_makers_made() {
             }
         }
     }
-    for name in std::iter::once(NAMED).chain(TOKENS).chain(STRUCTURAL) {
+    for name in std::iter::once(NAMED).chain(TOKENS).chain(STRUCTURAL).chain([DIGEST, VISIT]) {
         let (s, want) = (&views[name], want.remove(name).unwrap_or_default());
         assert!(want.len() > 3, "{name}: rows to compare");
         let width = s.columns().len();

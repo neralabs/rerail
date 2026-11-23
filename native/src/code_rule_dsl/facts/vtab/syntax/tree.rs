@@ -38,12 +38,10 @@ pub(super) struct Tree {
     /// `token` answered on request (decision 0174): its anonymous children's rows (`rr_token_anon`, their text their
     /// kind). Its named children's (`rr_token_named`) are a view of the tape (`tape_rows::NamedChild`).
     token_parts: bool,
-    visit_index: bool,
     op_ats: Vec<[i64; 3]>,
     prev_tokens: Vec<[i64; 2]>,
     tokens: Vec<[i64; 5]>,
     anon_tokens: Vec<[i64; 5]>,
-    visit_indexes: Vec<[i64; 2]>,
 }
 
 impl Tree {
@@ -54,7 +52,6 @@ impl Tree {
             prev_token: read("prev_token"),
             token: read("token"),
             token_parts: read("rr_token_anon"),
-            visit_index: read("visit_index"),
             ..Self::default()
         }
     }
@@ -76,8 +73,8 @@ impl Tree {
         }
     }
 
-    /// Document `p`'s rows (`python`: it is Python's). A text document (no `dialect`) has none.
-    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, python: bool, string: &mut dyn FnMut(&str) -> usize) {
+    /// Document `p`'s rows. A text document (no `dialect`) has none.
+    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
         let Some(dialect) = dialect else { return };
         self.operators(p, dialect, string);
@@ -114,9 +111,6 @@ impl Tree {
                 }
             }
         }
-        if self.visit_index && python && let Some(&root) = p.nodes().next().map(|(_, x)| x).as_ref() {
-            Order { f, dialect, p, next: 0, out: &mut self.visit_indexes }.run(root);
-        }
     }
 
     /// The relations read, their strings as atoms (`atom` of a string index).
@@ -134,9 +128,6 @@ impl Tree {
         if self.token_parts {
             out.push(("rr_token_anon", relation(&["p", "i", "s", "start", "end_"], &mut self.anon_tokens.iter().map(|&[p, i, s, a, b]| vec![p, i, atom(s), a, b]))));
         }
-        if self.visit_index {
-            out.push(("visit_index", relation(&["n", "i"], &mut self.visit_indexes.iter().map(|r| r.to_vec()))));
-        }
         out
     }
 }
@@ -147,8 +138,16 @@ struct Order<'a> {
     f: &'a Facts,
     dialect: &'a Dialect,
     p: &'a Projected,
-    next: i64,
-    out: &'a mut Vec<[i64; 2]>,
+    next: u32,
+    each: &'a mut dyn FnMut(u32, u32),
+}
+
+/// `visit_index`'s numbering of a Python document `p` (a file's own, not a guest's): each node of the projection
+/// with its place in CPython's visit order, `(local, i)`, in that order (`tape_rows::VisitIndex` reads it).
+pub fn visit_order(p: &Projected, dialect: &Dialect, each: &mut dyn FnMut(u32, u32)) {
+    if let Some((_, root)) = p.nodes().next() {
+        Order { f: &p.facts, dialect, p, next: 0, each }.run(root);
+    }
 }
 
 /// What the order does next: number a node and take its children (with a definition's decorators), or number it only.
@@ -179,7 +178,7 @@ impl Order<'_> {
             };
             let local = self.p.local_of_node(id);
             if local != NONE {
-                self.out.push([self.p.global(local), self.next]);
+                (self.each)(local, self.next);
                 self.next += 1;
             }
             if let Some(decorators) = decorators {

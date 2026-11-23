@@ -216,6 +216,10 @@ impl Docs {
     pub(super) fn addr(&self) -> usize {
         self.slots.as_ptr() as usize
     }
+    /// Whether document `i` is withheld (it does not parse, and the policy withholds it): it has no nodes' rows.
+    pub fn withheld(&self, i: usize) -> bool {
+        self.made(i).withheld
+    }
     /// Document `i`, made if it is not.
     pub(super) fn made(&self, i: usize) -> &MadeDoc {
         self.slots[i].made.get_or_init(|| {

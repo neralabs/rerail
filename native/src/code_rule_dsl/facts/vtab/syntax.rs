@@ -3404,9 +3404,7 @@ impl Batch {
         let (wants_parts, wants_part_starts, wants_words) = (projection.wants("str_part"), projection.wants("str_part_start"), projection.wants("str_part_word"));
         let wants_lf_lines = core && projection.wants("lf_line");
         // Only a program that reads it: every node's hash is a symbol.
-        let wants_trees = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
         let wants_units = core && projection.reads.as_ref().is_some_and(|r| r.contains("def_digest"));
-        let wants_digests = wants_trees || wants_units;
         // `rx_span`'s regexes, compiled once for the run's projection (`CompiledSpans`).
         let rx_spans: Vec<core_rr::SpanPattern> = if core {
             let compiled = projection.compiled_rx.of(&projection.rx_spans)?;
@@ -3563,11 +3561,11 @@ impl Batch {
                 c.document(p, &mut string, wants_text, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none(), projection);
                 drop(s);
                 if let Some(dialect) = dialect
-                    && wants_digests
+                    && wants_units
                     && !withheld
                 {
                     let _s = crate::code_rule_dsl::logic::profile::span(|| "digests".into());
-                    c.digests(p, dialect, &mut string, wants_trees, wants_units);
+                    c.def_digests(p, dialect, &mut string);
                 }
             }
             if d.guest.is_none() {
@@ -3579,7 +3577,7 @@ impl Batch {
                     extra.document(p, d, dialect, python == Some(tag) || tag == TEXT, rx, &span_ends[j], &mut rows.text, &mut string)?;
                 }
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "tree document rows".into());
-                tree.document(p, dialect, python == Some(tag), &mut string);
+                tree.document(p, dialect, &mut string);
             } else {
                 // A guest's nodes have their places in its file (`Locs::place`); W's values, f-string trees and CPython's
                 // verdicts are a file's, read off its tape; an embedded program keeps its own (decision 0222).
