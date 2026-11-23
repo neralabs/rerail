@@ -10737,3 +10737,21 @@ watchdog's segfault child writing no core, the test crates on the engine's jemal
 pack run beside each case's. Merged without conflicts.
 
 Relax: the engine checks clean (with roll-up 83).
+
+### Q512. Roll-up 85 (uglykl-CPU-SIMD-parallelization 218499dd23 onto Pulling-it-all-together): what the merge chose
+
+uglykl-CPU-SIMD-parallelization (218499dd23): 0567 step 3, UKL as register-resident NEON Rust ahead of time
+(`rerail-ukl-vec`'s `rs.rs`, the new `rerail-ukl-aot` crate with its checked-in kernels' Rust, hand-written and scalar
+versions to compare), format 16's parent read vectorized, the f16_parent spikes, and its merges of roll-ups 8-10.
+- **`Cargo.toml`**: the hub's members, with `native/crates/ukl_aot`; the feeder's opt-level 3 for it kept.
+- **`ukl/memory.h`**: both. The feeder's whole-value window on the CPU's vector code (`__UKL_WINDOW_WHOLE`, under
+  `UKL_VEC` only) before the hub's word found from the address (`__UKL_OFF`, engine-crating's CUDA misaligned reads).
+- **ukl-aot's checked-in Rust** (`parent_back`, `parent_group`, `parent_step`, `wide_lanes` at 8 lanes): written
+  again (`UKL_RS_WRITE=1`), as their tests say. The windows' word offset is now the address's (`(t + a) & 7`, the
+  hub's `__UKL_OFF`), not the base's, so the generated Rust differs there; the feeder's measured counts were of the
+  older form.
+
+Relax: `rerail-ukl-aot`'s Rust called NEON intrinsics and an atomic Relax's std lacked (`vmull_high_u32`,
+`vcntq_u8`, `vclzq_u32`, `Atomic::from_ptr`): added to the fork (1f2868e6). The engine checks clean; rerail-ukl-aot
+(12), rerail-ukl-vec (50), rerail-ukl (13) and the device setfix tests on the CPU backend (27) pass, the last two
+after the fixes in Q513 and Q514.

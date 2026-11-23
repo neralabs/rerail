@@ -51,10 +51,29 @@
 #define __UKL_DIRECT_ukl_ldc 1
 #endif
 
+// The CPU's vector code (`UKL_VEC`) reads a window of a whole value's bytes (1, 2, 4 or 8) as one unaligned load of
+// those bytes alone: the words it touches are the aligned form's (the word that holds its first byte, and the next
+// only if they run into it), never past its last byte's, and a lane's consecutive windows are then one vector load
+// of their elements (rs.rs), not each lane's word, shift and second word. The bytes above `n` are 0.
+#if defined(UKL_VEC)
+#define __UKL_WINDOW_WHOLE(Ld, Space, t, a, n)                                                                          \
+    if ((n) == 8u)                                                                                                      \
+        return __UKL_WORD_##Ld((Space const uint64_t*)((t) + (a)));                                                     \
+    if ((n) == 4u)                                                                                                      \
+        return *(Space const uint32_t*)((t) + (a));                                                                     \
+    if ((n) == 2u)                                                                                                      \
+        return *(Space const uint16_t*)((t) + (a));                                                                     \
+    if ((n) == 1u)                                                                                                      \
+        return (t)[a];
+#else
+#define __UKL_WINDOW_WHOLE(Ld, Space, t, a, n)
+#endif
+
 #define UKL_DEFINE_BYTE_LOADS(Ld, Space, A)                                                                             \
     /* The 64 bits from byte `a` up, of which the low `n` bytes are wanted. */                                          \
     UKL_INLINE UKL_OVERLOAD uint64_t Ld##_window(Space const uint8_t* t, A a, uint32_t n)                               \
     {                                                                                                                   \
+        __UKL_WINDOW_WHOLE(Ld, Space, t, a, n)                                                                          \
         Space const uint64_t* w = (Space const uint64_t*)((t + a) - __UKL_OFF(t, a));                                   \
         uint32_t s = __UKL_OFF(t, a) * 8u;                                                                              \
         uint64_t lo = __UKL_WORD_##Ld(w) >> s;                                                                          \
@@ -199,9 +218,9 @@ UKL_DEFINE_ATOMICS_AT(uint64_t)
     UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_or_at(UKL_COHERENT const uint8_t* t, A a, uint32_t x) { return ukl_atomic_or_at((UKL_GLOBAL const uint8_t*)t, a, x); } \
     UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_cas_at(UKL_COHERENT const uint8_t* t, A a, uint32_t e, uint32_t n) { return ukl_atomic_cas_at((UKL_GLOBAL const uint8_t*)t, a, e, n); }
 
-// The vector path (`__UKL_VEC`, decision 0567) reads one memory: a coherent base is a global one there, and its C
+// The vector path (`UKL_VEC`, decision 0567) reads one memory: a coherent base is a global one there, and its C
 // reader tells no overload apart by `volatile` (rerail-ukl-vec's `overload`), so its atomics are the global ones.
-#if !defined(__UKL_VEC)
+#if !defined(UKL_VEC)
 UKL_DEFINE_COHERENT_ATOMICS_AT(uint32_t)
 UKL_DEFINE_COHERENT_ATOMICS_AT(uint64_t)
 #endif

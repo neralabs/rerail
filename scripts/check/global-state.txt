@@ -127,12 +127,19 @@ native/crates/cpython/src/code_rule_dsl/cpython/syntax.rs::NOT	stays	a regex of 
 native/crates/device_metal/src/code_rule_dsl/device_metal.rs::LOAD	stays	code registered at load
 native/crates/device_metal/src/code_rule_dsl/device_metal.rs::METAL	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/embed.rs::EMBEDDERS	stays	code registered at load
+native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::EXPRESSION	stays	a constant (an embedder with no state)
+native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::FOR_ALIAS	stays	a constant (an embedder with no state)
+native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::FOR_SOURCE	stays	a constant (an embedder with no state)
+native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::PARAMS	stays	a constant (an embedder with no state)
+native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::SCRIPT	stays	a constant (an embedder with no state)
+native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::STATEMENTS	stays	a constant (an embedder with no state)
 native/crates/rules_base/src/code_rule_dsl/eval/mod.rs::ANCHOR_CORPUS	stays	code registered at load (a slot a crate above fills: rerail-registry)
 native/crates/rules_base/src/code_rule_dsl/eval/mod.rs::SNAPSHOT_CONTEXT	stays	computed once from the engine's constants
 native/crates/facts_base/src/code_rule_dsl/facts/core.rs::CORE_NAMES	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/facts/core.rs::EMPTY	stays	a constant
 native/crates/facts_base/src/code_rule_dsl/facts/core.rs::EXECUTORS	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/facts/core.rs::FAMILY_COLUMNS	stays	code registered at load (a slot a crate above fills: rerail-registry)
+native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::SOURCES_HELD	stays	code a crate above registers at load (a hook: the batches' relations held)
 native/crates/facts_base/src/code_rule_dsl/facts/core.rs::VALUE_READER	stays	code a crate above registers at load
 native/crates/workspace/src/code_rule_dsl/facts/facts_a/facts.rs::GRAMMAR	stays	computed once from the engine's own grammar
 native/crates/workspace/src/code_rule_dsl/facts/facts_a/facts.rs::MADE	stays	process-unique numbers of the symbols' objects (a thread's copy of names is of one numbered object)
