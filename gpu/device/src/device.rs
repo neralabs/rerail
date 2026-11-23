@@ -875,7 +875,11 @@ pub fn reserve(device: &Device, bytes: usize, mapped: usize, host_reads: bool) -
                 let buffer = Buffer::Native(s.buffer.clone());
                 return Ok(Reserved { buffer, kind: ReservedKind::Sparse(std::sync::Arc::new(s), d.clone()) });
             }
-            Ok(Reserved { buffer: alloc_uninitialized_array_sync::<u8>(device, mapped), kind: ReservedKind::Fixed(mapped) })
+            // Without sparse buffers (they need Metal 4: none on macOS 15, the M3's): the host's address space wrapped
+            // over its mapped bytes, as a reservation the host reads is, so it still grows (each `map` a larger wrap,
+            // at another address). Before, a fixed allocation of its first bytes: a program's arena past them, and a
+            // level sort's room, could only run again.
+            wrapped()
         }
         Device::Cpu(d) => {
             let len = bytes.next_multiple_of(crate::os::page_bytes());
@@ -901,6 +905,23 @@ impl Reserved {
         match &self.kind {
             ReservedKind::Wrapped(w, _, _) => w.lock().expect("the wraps").last().expect("a wrap").0.clone(),
             _ => self.buffer.clone(),
+        }
+    }
+
+    /// Whether `map` can grow it: not an allocation of its first bytes (`Fixed`: a backend with no reservation, as
+    /// OpenCL's). A caller whose room must grow then sizes its first bytes for what it will reach.
+    pub fn grows(&self) -> bool {
+        !matches!(self.kind, ReservedKind::Fixed(_))
+    }
+
+    /// Whether `map` grows it at its address: Metal's sparse buffer, the CPU backend's pages, CUDA's host memory at
+    /// the host's address. A wrapped reservation on Metal grows at another address (each `map` a new wrap), so what
+    /// holds its address must be re-pointed (a program's arena is, `Kit::rebase`).
+    pub fn grows_in_place(&self) -> bool {
+        match &self.kind {
+            ReservedKind::Fixed(_) => false,
+            ReservedKind::Wrapped(..) => !cfg!(target_os = "macos"),
+            _ => true,
         }
     }
 

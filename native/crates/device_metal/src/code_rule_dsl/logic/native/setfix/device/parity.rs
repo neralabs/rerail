@@ -264,7 +264,7 @@ fn check_on(fx: &Fixture, cases: &[Case], first: usize) -> (Vec<String>, BTreeMa
         if drows != crows {
             let only_d: Vec<_> = drows.iter().filter(|r| !crows.contains(r)).take(3).collect();
             let only_c: Vec<_> = crows.iter().filter(|r| !drows.contains(r)).take(3).collect();
-            failures.push(format!("{}: rows differ: device {} rows, CPU {}; device alone {only_d:?}, CPU alone {only_c:?}", what(), drows.len(), crows.len()));
+            failures.push(format!("{}: rows differ: device {} rows, CPU {}; device alone {only_d:?}, CPU alone {only_c:?}; report {report:?}", what(), drows.len(), crows.len()));
         } else if let (Err(e), true) = (super::tests::counts_agree(&ccounts.0, &dcounts.0, &ccounts.1), c.joins.is_empty()) {
             // A recursive stratum's counts are its strategy's (the CPU walks a closure without counting rounds): its
             // rows are compared alone.

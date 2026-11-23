@@ -10854,3 +10854,11 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
 - `pp_loop.uglykl`: the hub had moved `LP_WIN`/`LP_WIN_N` up beside the frames (0588's SIMD-group exchanges); the branch's `LpMemo` and its comment go after them. Independent: both kept.
 - Its new round test reads tapes as the file's `Tape` (the format's `Vector<u8>`), as the hub's other tests there do.
 - Checked: Relax check of rerail-metal 0 errors; rerail-c-directives eval tests 45 passed on the CPU (RERAIL_GPU=cpu; no Metal on this Mac).
+
+### Q519. Roll-up 92 (django-bugs a2548c02dd onto Pulling-it-all-together): what the merge chose
+
+- A pre-72 feeder: its `native/src` files followed into their crates by git's rename detection (device_metal's device.rs, parity.rs, tests.rs, metal_join.rs, metal_label_passes.rs, join_stages.uglykl; facts_base's rows.rs; prof's profile.rs). Its 0603 rooms, 0637 idle-group polling and 0540 gate taken whole; 0637 is a new number on the hub.
+- `profile.rs`: the branch's `maps_grown` (of the room remaps) and the hub's `expanded` both kept; `tally` adds both.
+- `join_stages.uglykl`: the hub's `clif_struct` load with the branch's no-growth exit (`omask` all ones) in both lattice-map kernels.
+- `device.rs`: the hub's rewrap check first (nothing ran: encoded again), then the branch's lattice-map handover to the program's tail. The branch's `BlockVec::unwritten_in` is the hub's free `rows::unwritten_in`.
+- Checked: Relax check of rerail-device-metal and rerail-engine 0 errors; device-metal's tests compile (90 listed). They are Metal tests: not run on this Mac, and no farm runs (the user's order).
