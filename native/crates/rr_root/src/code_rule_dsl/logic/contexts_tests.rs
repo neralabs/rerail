@@ -190,3 +190,15 @@ fn a_program_of_no_language_is_its_librarys_host() {
     let v = parse_version(&PROGRAM.replace(".language python\n", "")).unwrap();
     assert!(rules_of(&v, "used").iter().all(|r| r.contains("rr_pass_annotation_ann_names(")), "{}", v.show());
 }
+
+/// 0597 rule 8: a made pass's relations by what they read. `name_node`'s instance reads the context's nodes alone, so
+/// its rows are its tape's; `ann_names` reads the host's `bound` (`.from python bound`), so its rows are the host's
+/// place's.
+#[test]
+fn a_passs_relations_are_its_tapes_or_its_hosts() {
+    let v = parse_version(PROGRAM).unwrap();
+    let by = super::tape_local(&v);
+    let (own, hosted) = by.get("annotation").unwrap_or_else(|| panic!("{by:?}"));
+    assert!(own.contains("rr_pass_annotation_name_node"), "{by:?}\n{:?}", rules_of(&v, "rr_pass_annotation_name_node"));
+    assert!(hosted.contains("rr_pass_annotation_ann_names") && !own.contains("rr_pass_annotation_ann_names"), "{by:?}");
+}

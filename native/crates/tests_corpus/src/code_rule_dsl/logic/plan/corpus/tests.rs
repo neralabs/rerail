@@ -2363,6 +2363,24 @@ calls(x) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(
     assert_eq!(calls, [["f(1)"], ["g(2)"]].map(|r| r.map(str::to_owned).to_vec()).to_vec(), "both scripts' calls");
 }
 
+/// Decision 0597 rule 8, within a run: a tape value is its text's, not its place's. Two files' strings holding one
+/// annotation text are one value, made and parsed once, given both places; a rule reading it through either place
+/// finds its nodes (the files' rows are each their own).
+#[test]
+fn one_annotation_text_in_two_files_is_one_value() {
+    let program = r#"
+.language python
+.decl ann_in(f: symbol, x: symbol)
+ann_in(f, x) :- string_annotation(s), docof(s, d), doc(d, f, _), parsed(s, "annotation", r), within(m, r), kind(m, "identifier"), text(m, x).
+.output ann_in
+"#;
+    let files = [("a.py", "x: \"List[int]\" = []\n"), ("b.py", "def g(y: \"List[int]\"): pass\n")];
+    let (report, rows) = batch_run("r8-one-text", &files, program, "ann_in");
+    assert_eq!((report.values_admitted, report.guest_parses), (1, 1), "one text, one value, parsed once");
+    let set = rows.into_iter().map(|r| r.join("\t")).collect::<std::collections::BTreeSet<String>>();
+    assert_eq!(set, ["a.py\tList", "a.py\tint", "b.py\tList", "b.py\tint"].map(str::to_owned).into(), "both places read the value");
+}
+
 /// Decision 0431 R10: a string a rule parses is parsed in the program's fixpoint (§8). No slice round runs and the
 /// batch never grows: each value is admitted once at its first lookup, `'Foo'` (a string inside an annotation's value)
 /// in the same run, and parsed once. A scan lists no value's nodes (`flat`: a.py's identifiers alone).

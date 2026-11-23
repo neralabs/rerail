@@ -453,6 +453,37 @@ The template's findings stand at the file's lines.
    Both are under their targets with the same findings. Against this decision's measurement before the passes
    (one pack 0.983 T, normal packs 2.179 T), the narrow copies' cost is gone and more.
 
+## Rule 8, measured (2026-11-22)
+
+The spike after the hub merge (04a01ff961), on 40 hogql files that hold quoted annotations (2 chunks) x the Python
+packs, off, one thread, profiled into one store: cold, warm, and an edit of one file (a comment line).
+
+- **Which relations are tape-local.** `contexts::tape_local` sorts each made pass's instances by what their rules read.
+  A relation is tape-local when its rules read only views, constants, the pass's node set and the pass's other
+  tape-local relations. It is a host's when it reads `host_node`/`guest_of`, a host export, or a relation outside the
+  pass. Of the annotation pass's 26 relations, 21 are tape-local and 5 read a host: `cls_early`, `gbefore`, `miss`,
+  `walk` and `wstart`, all name resolution. A profiled run reports the split (`the file-local part's made passes, by
+  what their relations read`). Rung: `a_passs_relations_are_its_tapes_or_its_hosts`.
+- **Within a chunk, rule 8 already holds.** A value is its text's (`tape_value`: keyed by grammar and text). A second
+  string holding the text adds a place (`Got::Placed`), and `Grower::admit` admits that place's rows alone. Cold: 214
+  strings asked, 93 values made, 89 distinct texts. The other 121 strings only added a place. Rung:
+  `one_annotation_text_in_two_files_is_one_value` (one value, one parse, both files' rows).
+- **Across chunks, a text is made once in each chunk that asks for it.** 4 of the 93 values were a second chunk's.
+  The key is the same across chunks and runs (`GuestKeys`, from the store, decision 0391), but each chunk projects
+  the value and runs the pass's strata over it again.
+- **Cost.** The pass's strata's plan steps took 2.3 ms of the run's 3,461 ms of strata CPU (0.07%). Admitting the
+  values ("tape values admitted", projection included) took under 0.1 s of 6.1 s. Making a value once per run
+  instead of once per chunk saves a part of those two figures, and so does keeping it across runs.
+- **Across runs.** The warm run is a full memo hit (16 G instructions against 1,041 G cold). It makes no value and
+  runs no pass stratum. The edit run (116 G) runs the passes' 26 strata for the edited file's chunk alone. It made no
+  value: 0 of its 26 inputs changed. Findings are 231 in all three runs.
+
+What rule 8's keeping would add: each tape-local relation's rows of a value, written once per text into a block
+keyed by the value's key (as a file's kept rows are, 0456's one format), and read in place by every chunk and run
+that places the text. On this corpus the gain is bounded by the two cost figures above. A corpus where one text has
+many places in many chunks would raise the cross-chunk share. hogql has 3,063 quoted annotations over 777 distinct
+texts, and 6 chunks.
+
 ## Open
 
 - The declarations' names (`.context`, `.from`, `.export`, `.root`) and the qualified read (`annotation.ann_type`),
