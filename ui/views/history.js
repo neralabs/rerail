@@ -7,7 +7,7 @@
  * Steered) rank the list by one outcome's count; each row shows its outcome, and a declined one the agent's reasons.
  */
 import { h, setAttr, setText, setContent, syncChildren, icon } from "../dom.js";
-import { fmt, plural, dayLabel, daysAgo, shortSessionId, whenLabel } from "../format.js";
+import { fmt, plural, dayLabel, daysAgo, violationOwner, whenLabel } from "../format.js";
 import { data, ui, ALL_TIME, rangeLabel, allFires, activityAllOf } from "../state.js";
 import { MODE_LABEL, ruleMode, messageText } from "../derive.js";
 import { loadMoreFindings, refreshNow } from "../poll.js";
@@ -189,8 +189,11 @@ function updateViolation(node, item, told) {
   setAttr(diff, "hidden", !differs);
   setText(diff, differs ? x.message : "");
   const open = node.querySelector(".open");
-  setAttr(open, "data-i", x.sessionId);
-  setText(open, shortSessionId(x.sessionId, x.host));
+  const owner = violationOwner(x);
+  setAttr(open, "data-i", owner.session);
+  setAttr(open, "disabled", owner.session === null);
+  setAttr(open, "title", owner.title);
+  setText(open, owner.label);
 }
 
 /** The shown rule's loaded violations, by day; empty while its first page is still to come. */

@@ -6,6 +6,7 @@
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { data, ui, repoName, stateHere } from "../state.js";
 import { invalidate } from "../shell.js";
+import { newerRelease } from "../settings-model.js";
 import { repoOption, repoHint } from "../render/repos.js";
 
 const $ = id => document.getElementById(id);
@@ -78,13 +79,23 @@ export function renderStatus() {
   renderVersion(el);
 }
 
-/** The version of Rerail on this computer, in quiet text at the start of the status. */
+/**
+ * The version of Rerail on this computer, "v0.2.0" in quiet text at the start of the status, whatever the status's
+ * colour; it opens Settings at About Rerail, where the release notes and how to update are. While the daemon reports a
+ * newer version, a small "Update available" beside it leads there too, until Rerail is updated.
+ */
 function renderVersion(statusEl) {
-  let el = statusEl.querySelector(".ver");
+  let el = statusEl.querySelector(".verwrap");
   const version = data.health?.version ?? null;
   if (version === null) { el?.remove(); return; }
-  if (!el) { el = h("span.ver", { title: "The version of Rerail on this computer" }); statusEl.prepend(el); }
-  setText(el, `Rerail ${version}`);
+  const latest = newerRelease(data.health);
+  const key = JSON.stringify([version, latest]);
+  if (el?.dataset.key === key) return;
+  if (!el) { el = h("span.verwrap"); statusEl.prepend(el); }
+  el.dataset.key = key;
+  el.replaceChildren(
+    h("button.ver", { "data-act": "nav", "data-i": "settings?section=about", title: `Rerail ${version}, on this computer. Open Settings to see how to update.` }, `v${version}`),
+    ...(latest === null ? [] : [h("button.vnew", { "data-act": "nav", "data-i": "settings?section=about", title: `Rerail ${latest} is out. Open Settings to see what’s new and how to update.` }, "Update available")]));
 }
 
 /* ---------- the repository and its menu ---------- */

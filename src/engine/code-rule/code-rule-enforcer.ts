@@ -48,6 +48,7 @@ import {
   type AuditFailure,
   type AuditRecorder,
   type AuditMode,
+  type AuditOwner,
   type AuditOrigin,
   type AuditResult,
   type AuditRuleProvenance,
@@ -217,6 +218,8 @@ type StoredEdit = {
   revision: number;
   scope: AuditScope;
   mode: AuditMode;
+  /** Who the edit's audit belongs to (`CodeRuleEditBatch.owner`). */
+  owner: AuditOwner;
   auditId: string | undefined;
 };
 /**
@@ -304,6 +307,8 @@ type ScopeAuditRequest = {
   /** Receives the nested checkouts the walk reached and skipped. */
   readonly reached: string[];
   readonly origin: AuditOrigin;
+  /** Who the audit belongs to: `session` when absent (`CodeRuleEditBatch.owner`). */
+  readonly owner?: AuditOwner;
 };
 /** One `#runScopeAudit`: what it audits and how, and what it has gathered so far. */
 type ScopeAuditRun = Omit<ScopeAuditRequest, "reached"> & {
@@ -1030,14 +1035,16 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   async auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse> {
     this.#enterRevision(sessionId, batch.revision);
     const mode = batch.mode ?? this.#mode;
+    const owner = batch.owner ?? "session";
     const own = batch.edits.filter(edit => this.#ownsEdit(edit.path));
-    // The `.rerail` runs go on after the edit, on the files on disk: nothing here waits for them.
-    this.#rerailRuns()?.gather(own, batch.revision, this.#scope, mode);
-    if (this.#scope === "repository") return this.#auditRepositoryEdits(batch, mode);
+    // The `.rerail` runs go on after the edit, on the files on disk: nothing here waits for them. Their audits and steers
+    // are the session's own, so a change no session made (owner `repository`) runs none of them.
+    if (owner === "session") this.#rerailRuns()?.gather(own, batch.revision, this.#scope, mode);
+    if (this.#scope === "repository") return this.#auditRepositoryEdits(batch, mode, owner);
     const scope = this.#scope;
     for (const edit of own.filter(edit => this.#readsPath(edit.path))) {
       this.#versions.set(edit.path, batch.revision);
-      await this.#queueGeneratedEdit(edit, batch.revision, scope, mode);
+      await this.#queueGeneratedEdit(edit, batch.revision, scope, mode, owner);
     }
     this.#schedule();
     return this.#response(batch.revision);
@@ -1060,10 +1067,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * In repository scope, a batch with an edit a code rule of the native workspace reads audits the whole checkout
    * again. An edit only a `.rerail` rule takes starts no native audit: its run after edits covers it.
    */
-  #auditRepositoryEdits(batch: CodeRuleEditBatch, mode: AuditMode): CodeRuleResponse {
+  #auditRepositoryEdits(batch: CodeRuleEditBatch, mode: AuditMode, owner: AuditOwner): CodeRuleResponse {
     for (const edit of batch.edits) this.#versions.set(edit.path, batch.revision);
     if (batch.edits.some(edit => this.#readsPath(edit.path))) {
-      const task = this.#runScopeAudit({ scope: "repository", mode, paths: [], generatedEdit: true, reached: [], origin: "ongoing" });
+      const task = this.#runScopeAudit({ scope: "repository", mode, paths: [], generatedEdit: true, reached: [], origin: "ongoing", owner });
       this.#trackAudit(task, true);
     }
     return this.#response(batch.revision);
@@ -1074,13 +1081,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     revision: number,
     scope: AuditScope,
     mode: AuditMode,
+    owner: AuditOwner,
   ): Promise<void> {
     if (this.#closing) {
-      this.#startAudit(scope, mode, revision, [edit.path], null);
+      this.#startAudit(scope, mode, revision, [edit.path], null, undefined, undefined, owner);
       return;
     }
     try {
-      const storing = this.#store(edit, revision, scope, mode);
+      const storing = this.#store(edit, revision, scope, mode, owner);
       this.#storing.add(storing);
       let stored: StoredEdit;
       try {
@@ -1089,7 +1097,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         this.#storing.delete(storing);
       }
       if (this.#closing) {
-        this.#startAudit(scope, mode, revision, [edit.path], null);
+        this.#startAudit(scope, mode, revision, [edit.path], null, undefined, undefined, owner);
         this.#release(stored);
         return;
       }
@@ -1097,7 +1105,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       if (previous !== undefined) {
         // Out of the queue before any await, so the pump never evaluates an edit whose audit ends here.
         this.#pending.delete(edit.path);
-        previous.auditId ??= this.#startAudit(previous.scope, previous.mode, previous.revision, [edit.path], null);
+        previous.auditId ??= this.#startAudit(previous.scope, previous.mode, previous.revision, [edit.path], null, undefined, undefined, previous.owner);
         this.#finishAudit(previous.auditId, "superseded", [], []);
         try {
           // Its lines were never reported: the edit that supersedes it reports them with its own.
@@ -1107,7 +1115,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
           this.#release(previous);
         }
         if (this.#closing) {
-          this.#startAudit(scope, mode, revision, [edit.path], null);
+          this.#startAudit(scope, mode, revision, [edit.path], null, undefined, undefined, owner);
           this.#release(stored);
           return;
         }
@@ -1115,7 +1123,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       this.#pending.set(edit.path, stored);
     } catch (error) {
       if (this.#closing) {
-        this.#startAudit(scope, mode, revision, [edit.path], null);
+        this.#startAudit(scope, mode, revision, [edit.path], null, undefined, undefined, owner);
         return;
       }
       this.#recordImmediate(
@@ -1124,6 +1132,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         revision,
         [edit.path],
         [failure("spool", "adapter-error", errorMessage(error), edit.path, "persistence")],
+        owner,
       );
     }
   }
@@ -1186,7 +1195,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /** Edits cancelled before evaluation keep their work, without claiming a compiled-rule revision. */
   #keepPendingAudits(): void {
     for (const [path, stored] of this.#pending)
-      stored.auditId ??= this.#startAudit(stored.scope, stored.mode, stored.revision, [path], null);
+      stored.auditId ??= this.#startAudit(stored.scope, stored.mode, stored.revision, [path], null, undefined, undefined, stored.owner);
   }
 
   /** Ends the session's running audits, or only this evaluator's where the session's are not its to end. */
@@ -1562,7 +1571,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   async #evaluatePendingEdit(path: string, stored: StoredEdit): Promise<void> {
     if (this.#closing) return;
     const prepared = this.#workspace;
-    stored.auditId ??= this.#startAudit(stored.scope, stored.mode, stored.revision, [path], prepared);
+    stored.auditId ??= this.#startAudit(stored.scope, stored.mode, stored.revision, [path], prepared, undefined, undefined, stored.owner);
     const edit = await this.#load(stored);
     if (this.#closing) return;
     const readFailure = this.#readFailureForEdit(path, edit);
@@ -1778,7 +1787,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    */
   #startScopeAudit(run: ScopeAuditRun, prepared: PreparedWorkspace): string | undefined {
     const start = (rerail: readonly AuditRuleProvenance[]) =>
-      this.#startAudit(run.scope, run.mode, run.revision, run.paths, prepared, [...prepared.provenance, ...rerail], run.origin);
+      this.#startAudit(run.scope, run.mode, run.revision, run.paths, prepared, [...prepared.provenance, ...rerail], run.origin, run.owner);
     const rerail = run.origin === "scan" ? this.#rerailRuns() : undefined;
     return rerail === undefined ? start([]) : rerail.beginAudit(run.scope, run.paths, start);
   }
@@ -2609,12 +2618,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     prepared: PreparedWorkspace | null | undefined = this.#replacement ?? this.#workspace,
     provenance: readonly AuditRuleProvenance[] = prepared?.provenance ?? this.#catalog.provenance(),
     origin: AuditOrigin = "ongoing",
+    owner: AuditOwner = "session",
   ): string | undefined {
     if (this.#closing && prepared !== null) return undefined;
     let auditId: string | undefined;
     this.#record(() => {
       auditId = this.#audits.start({
         sessionId: this.#sessionId!,
+        owner,
         workspaceRoot: this.#workspaceRoot,
         scope,
         mode,
@@ -2636,7 +2647,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     provenance: readonly AuditRuleProvenance[],
   ): string | undefined {
     if (stored.auditId === undefined) {
-      const auditId = this.#startAudit(stored.scope, stored.mode, stored.revision, [path], undefined, provenance);
+      const auditId = this.#startAudit(stored.scope, stored.mode, stored.revision, [path], undefined, provenance, undefined, stored.owner);
       if (auditId !== undefined) stored.auditId = auditId;
     }
     return stored.auditId;
@@ -2661,8 +2672,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     revision: number,
     paths: string[],
     failures: AuditFailure[],
+    owner: AuditOwner = "session",
   ): void {
-    this.#finishAudit(this.#startAudit(scope, mode, revision, paths), "failed", [], failures);
+    this.#finishAudit(this.#startAudit(scope, mode, revision, paths, undefined, undefined, undefined, owner), "failed", [], failures);
   }
   #trackAudit(task: Promise<unknown>, generatedEdit = false): void {
     this.#scopeAudits.add(task);
@@ -2684,9 +2696,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     revision: number,
     scope: AuditScope,
     mode: AuditMode,
+    owner: AuditOwner,
   ): Promise<StoredEdit> {
     const bytes = Buffer.byteLength(edit.generatedText ?? "") + Buffer.byteLength(edit.previousText ?? "");
-    const metadata = { language: edit.language, revision, scope, mode, references: 1, auditId: undefined };
+    const metadata = { language: edit.language, revision, scope, mode, owner, references: 1, auditId: undefined };
     if (this.#pendingBytes + bytes <= MAX_PENDING_BYTES) {
       this.#pendingBytes += bytes;
       return { edit, bytes, ...metadata };
