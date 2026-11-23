@@ -48,11 +48,17 @@ DEFINE_KERNEL2(f16, parent_group,
   out[i]=r;
 }
 
-// Spike, no barrier, a look-back: `out` is the shared word, every node's, `NOT_READY` until its parent is written. A
-// node's link goes to an earlier node `j` (whose parent is its own), so a thread takes `out[j]` where it is already
-// written, and only where it is not takes `j`'s step itself and goes on: never a wait, and a step at most computed
-// again, the same. The threads' places are the SIMD groups' tickets (`ukl_sg_ticket`), so the groups started earlier
-// hold the earlier nodes, mostly written by the time a later one looks back.
+// Spike, no barrier, a look-back: `out` is the shared word, every node's: its step (its parent, or `LINKED | j`),
+// then its parent. A node's link goes to an earlier node `j` (whose parent is its own), so a thread takes `out[j]`
+// where `j`'s word is written, and only where it is not takes `j`'s step itself and goes on: a step at most computed
+// again, the same, and no wait for another's result. Whether a word is written is its SIMD group's bit in `seen`
+// (one bit a group of 32 nodes, 1/1024 of `out`'s bytes: 5.5 KB for 1.4 M nodes), set once the group's steps are
+// stored (`ukl_sg_publish`). `out` is never cleared: only `seen` is, by the launch's own threads first, together
+// (`ukl_sg_fill_lanes`: ranges taken and counted, a bounded wait for the ranges running groups have taken). The
+// threads' places are the SIMD groups' tickets (`ukl_sg_ticket`), so the groups started earlier hold the earlier
+// nodes, mostly published by the time a later one looks back. `counts`, 0 before the launch, a cache line apart (32
+// words): the ticket, the ranges started and finished, the threads whose wait for the fill ran out.
+#define UKL_FILL_RANGE 256u
 #include <ukl/simd.h>
 
 #define NOT_READY 4294967294u
@@ -61,16 +67,28 @@ DEFINE_KERNEL2(f16, parent_group,
 #define PARENT_BACK_LINKED(r) (((r)&LINKED)!=0u&&(r)<NOT_READY)
 
 // Node `i`'s parent into `out[i]` (its place: a parameter, so its lanes stay consecutive where it is the id). Its
-// step goes there first, for the nodes after it; then each link is the word there, a step's only where none is yet.
-UKL_INLINE void parent_back_node(UKL_GLOBAL const uint8_t* tape, UKL_GLOBAL const uint32_t* view, UKL_GLOBAL uint32_t* out, uint32_t nodes, uint32_t i)
+// step goes there first, its group published, for the nodes after it; then each link is the word there, a step's
+// only where its group's is not published. Where the fill's wait ran out (`filled` false) nothing is published or
+// read: the walk.
+UKL_INLINE void parent_back_node(UKL_GLOBAL const uint8_t* tape, UKL_GLOBAL const uint32_t* view, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* seen, uint32_t nodes, bool filled, uint32_t first, uint32_t lane, uint32_t i)
 {
+  if(!filled){
+    if(i<nodes)ukl_atomic_store(&out[i],clif_f16_parent(tape,view,i));
+    return;
+  }
+  uint32_t r=CLIF_T_NONE;
+  if(i<nodes){
+    uint64_t s=clif_f16_parent_step(tape,view,i);
+    r=(s&CLIF_T_LINK)!=0u?LINKED|(uint32_t)s:(uint32_t)s;
+    ukl_atomic_store(&out[i],r);
+  }
+  ukl_sg_publish(seen,i,lane);
   if(i>=nodes)return;
-  uint64_t s=clif_f16_parent_step(tape,view,i);
-  uint32_t r=(s&CLIF_T_LINK)!=0u?LINKED|(uint32_t)s:(uint32_t)s;
-  ukl_atomic_store(&out[i],r);
   for(uint32_t k=0u;k<7u&&PARENT_BACK_LINKED(r);k++){
     uint32_t j=r&(LINKED-1u);
-    uint32_t q=ukl_atomic_load(&out[j]);
+    uint32_t q=NOT_READY;
+    if(ukl_sg_published(seen,j,first))
+      q=ukl_atomic_load(&out[j]);
     if(q==NOT_READY){
       uint64_t t=clif_f16_parent_step(tape,view,j);
       q=(t&CLIF_T_LINK)!=0u?LINKED|(uint32_t)t:(uint32_t)t;
@@ -86,21 +104,14 @@ DEFINE_KERNEL2(f16, parent_back,
                ROBUFFER, uint8_t,    tape,   "[bytes]",
                ROBUFFER, uint32_t,   view,   "[words]",
                RWBUFFER, uint32_t,   out,    "[args.nodes]",
-               RWBUFFER, uint32_t,   ticket, "[1]",
+               RWBUFFER, uint32_t,   seen,   "[(args.nodes + 1023) / 1024 + 1]",
+               RWBUFFER, uint32_t,   counts, "[128]",
                ARGS,     ParentArgs, args,   ,
                GID0,     uint32_t,   g,      ,
                LID0,     uint32_t,   lid,    )
 {
-  parent_back_node(tape,view,out,args.nodes,ukl_sg_ticket(ticket,g,lid%UKL_SIMD_WIDTH));
-}
-
-// `parent_back`'s words before a launch: every node's `NOT_READY`, the ticket 0.
-DEFINE_KERNEL2(f16, parent_back_clear,
-               RWBUFFER, uint32_t,   out,    "[args.nodes]",
-               RWBUFFER, uint32_t,   ticket, "[1]",
-               ARGS,     ParentArgs, args,   ,
-               GID0,     uint32_t,   i,      )
-{
-  if(i==0u)ticket[0]=0u;
-  if(i<args.nodes)out[i]=NOT_READY;
+  uint32_t lane=lid&(UKL_SIMD_WIDTH-1u);
+  bool filled=ukl_sg_fill_lanes(seen,(args.nodes+1023u)/1024u+1u,0u,&counts[32],lane);
+  if(!filled)ukl_atomic_add(&counts[96],1u);
+  parent_back_node(tape,view,out,seen,args.nodes,filled,g-lid,lane,ukl_sg_ticket(counts,g,lane));
 }

@@ -67,6 +67,20 @@ fn main() {
     let out = alloc::<u32>(n).unwrap();
     let groups = [n.div_ceil(256) as u64];
     let args = Args { nodes: n as u32, pad0: 0, pad1: 0, pad2: 0 };
+    let back = p.function("parent_back").unwrap();
+    // First into zeros (wrong parents, which only the launch's own fill replaces), checked against the host's.
+    {
+        let (z, c) = (buffer_of(&vec![0u32; n]).unwrap(), buffer_of(&[0u32; 128]).unwrap());
+        let s = buffer_of(&vec![u32::MAX; n.div_ceil(1024) + 1]).unwrap();
+        launch(&q, back).buffer("tape", &tb).buffer("view", &vb).buffer("out", &z).buffer("seen", &s).buffer("counts", &c).value("args", &args).run(&groups, &[256]).unwrap();
+        q.flush().await_().unwrap();
+        let got: Vec<u32> = read(&z, n);
+        if let Some(i) = (0..n).find(|&i| got[i] != want[i]) {
+            panic!("{backend}: back into zeros: node {i}'s parent {} (the host's {})", got[i], want[i]);
+        }
+        let c: Vec<u32> = read(&c, 128);
+        println!("{backend}: back into zeros: every node the host's; ranges {} taken {} finished, {} threads' waits ran out", c[32], c[64], c[96]);
+    }
     let median = |mut v: Vec<f64>| {
         v.sort_by(f64::total_cmp);
         v[v.len() / 2]
@@ -92,21 +106,14 @@ fn main() {
     time("group", &|q| {
         launch(q, f).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).value("args", &args).run(&groups, &[256]).unwrap();
     });
-    // The look-back: its words cleared (`NOT_READY`, the ticket 0), then the launch; and the clear alone.
-    let ticket = alloc::<u32>(1).unwrap();
-    let (clear, back) = (p.function("parent_back_clear").unwrap(), p.function("parent_back").unwrap());
+    // The look-back, one launch: its threads fill `out` themselves (it holds the group kernel's parents before each
+    // run), each run its own counts (zeros) and `seen` (all ones, as if every group published), made on the host.
+    let counts: Vec<_> = (0..10).map(|_| buffer_of(&[0u32; 128]).unwrap()).collect();
+    let seens: Vec<_> = (0..10).map(|_| buffer_of(&vec![u32::MAX; n.div_ceil(1024) + 1]).unwrap()).collect();
+    let run = std::cell::Cell::new(0usize);
     time("back", &|q| {
-        launch(q, clear).buffer("out", &out).buffer("ticket", &ticket).value("args", &args).run(&groups, &[256]).unwrap();
-        launch(q, back).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).buffer("ticket", &ticket).value("args", &args).run(&groups, &[256]).unwrap();
+        let (c, s) = (&counts[run.get()], &seens[run.get()]);
+        run.set(run.get() + 1);
+        launch(q, back).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).buffer("seen", s).buffer("counts", c).value("args", &args).run(&groups, &[256]).unwrap();
     });
-    let mut t = Vec::new();
-    for k in 0..10 {
-        launch(&q, clear).buffer("out", &out).buffer("ticket", &ticket).value("args", &args).run(&groups, &[256]).unwrap();
-        let e = q.flush();
-        e.await_().unwrap();
-        if k > 0 {
-            t.push(e.gpu_seconds() * 1e3);
-        }
-    }
-    println!("{backend}: {:>12}: {:>8.3} ms", "back's clear", median(t));
 }

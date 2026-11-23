@@ -489,6 +489,42 @@ On the CPU the look-back is the fastest form yet on all three, the two launches'
 On Metal its launch alone is at or under `parent_group`'s, and the clear (a write of every node's word) is what
 puts it behind on records.
 
+### The fill in the same launch, then a bitmap of published groups (the user's, 2026-11-22)
+
+The user: "couldn't we do it in the same launch by having the threads cooperate by taking and filling large ranges,
+incrementing a started and finished count, and then having them spin on the finished count once there is no more
+work to do?", then "I am fucking telling you to do that", then "what about a bitmap with one bit per 32-bit value
+saying whether it's occupied or not?".
+
+- **The fill** (`ukl_sg_fill_lanes`, `<ukl/simd.h>`): a SIMD group takes a range from `started` (lane 0, read
+  first, then one atomic add), its lanes fill it together, a fence, then `finished`; a group with no range left waits
+  for `finished`. It waits only for ranges groups that are running took, which wait for nothing (0540 point 1), and
+  boundedly (`UKL_FILL_SPINS`): a thread whose wait runs out reads no shared word, and its parent is the walk. On the
+  CPU's backends each thread takes ranges alone. With `started` and `finished` in one cache line, records took 97 ms
+  (the waits' polls slowed the takes); a line apart, 0.787 ms, no wait run out.
+- **What is filled**: not `out`, but `seen`, a bit a SIMD group (a bit a 32-bit word would be `out`'s 1/32, 175 KB
+  at 1.4 M nodes; a bit a group of 32 words is 5.5 KB). A group stores its steps, then publishes (a fence, the
+  group's barrier, lane 0's or of its bit); a reader takes `out[j]` only where `j`'s group's bit is set (then a
+  fence), else computes the step. `out` is never cleared. On the CPU a node of the reader's own launch group is
+  written already (its chunks run in turn), and a group's last lane sets its bit.
+- Correct on both from poison: `out` zeros (wrong parents), `seen` all ones (every group published), on the CPU at
+  every group size and on the M3.
+- `rs.rs` along the way: an atomic add of one value at one address was one atomic for the chunk, every lane given
+  its old value (a miscompile: C's is each thread's); it is now the value times the running lanes, each lane's old
+  value its own (`a_uniform_atomic_add_is_each_lanes`), another operation each running lane's in turn. An atomic at
+  each lane's address, a shift right by each lane's count, and a function's one `bool` result are written too.
+
+| M3, the GPU's clock | records | numbers (200 k) | random (107 k) |
+|---|---|---|---|
+| `parent_group` | 0.398 ms | 0.127 ms | 0.063 ms |
+| `out` filled in the launch | 0.787 ms | 0.415 ms | 0.298 ms |
+| `seen` filled in the launch | 0.554 ms | 0.175 ms | 0.083 ms |
+| the same, `finished` read plainly first | 0.563 ms | 0.201 ms | 0.091 ms |
+
+On the CPU (load 12–18) the bitmap's form is 106, 402 and 132 instructions a node (25, 116, 40 cycles), against
+`parent_group`'s 115, 380, 135. Still behind on Metal: against the separate clear's launch (0.42 ms on records), it
+adds a group's publish (a fence, a barrier, an or) and, before each hop's word, the bit's atomic load and a fence.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one

@@ -1519,3 +1519,20 @@ fn the_f16_parent_back_kernels_rust_is_the_checked_in_one() {
     let kept = std::fs::read_to_string(&at).unwrap_or_default();
     assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
 }
+
+/// An atomic add of one value at one address is each running thread's, as in C: one atomic of the value times the
+/// running lanes, and each lane's old value its own (the first plus the value times the running lanes below it).
+#[test]
+fn a_uniform_atomic_add_is_each_lanes() {
+    let text = "#include <ukl/backend.h>\n\
+        DEFINE_KERNEL2(t, take, RWBUFFER, uint32_t, c, \"[1]\", RWBUFFER, uint32_t, out, \"[64]\", GID0, uint32_t, i, )\n\
+        { if (i < 64u) out[i] = ukl_atomic_add(&c[0], 3u); }\n";
+    let src = super::source("/<kernels>/take.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("take").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}", e.0));
+    assert!(rust.contains(").wrapping_mul(8u32), Relaxed)"), "no add of every lane where all run:\n{rust}");
+    assert!(rust.contains("vmlaq_u32(vdupq_n_u32("), "the lanes' old values are not their own:\n{rust}");
+    assert!(rust.contains("+= ") && rust.contains("& 1; }"), "no count of the running lanes where some run:\n{rust}");
+}

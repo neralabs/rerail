@@ -640,7 +640,7 @@ impl Em<'_> {
         let res = if ret == M::VOID {
             None
         } else {
-            let init = if rl { self.zeros_of(ret) } else { "0".into() };
+            let init = if rl { self.zeros_of(ret) } else if ret == M::B { "false".into() } else { "0".into() };
             self.line(format!("let mut res: {} = {init};", self.ty(ret, rl)?));
             Some(("res".to_string(), ret, rl))
         };
@@ -1873,8 +1873,18 @@ impl Em<'_> {
             let c = match b {
                 V::S(c, _) => format!("vdupq_n_s32((({c}) & 31) as i32)"),
                 _ => {
+                    // Each lane's count (C's, masked to 31): a shift left by it, or right by its negation (an
+                    // arithmetic one for a signed type).
                     let l = self.lanes(b, m)?;
-                    return Ok(V::L(self.map(|r| format!("vshlq_u32({x}[{r}], vreinterpretq_s32_u32(vandq_u32({l}[{r}], vdupq_n_u32(31))))")), m)).and_then(|v| if op == Op::Shl { Ok(v) } else { err("a shift right by each lane's count") });
+                    let k = |r: u32| format!("vreinterpretq_s32_u32(vandq_u32({l}[{r}], vdupq_n_u32(31)))");
+                    return Ok(V::L(
+                        match (op, s) {
+                            (Op::Shl, _) => self.map(|r| format!("vshlq_u32({x}[{r}], {})", k(r))),
+                            (_, false) => self.map(|r| format!("vshlq_u32({x}[{r}], vnegq_s32({}))", k(r))),
+                            _ => self.map(|r| format!("vreinterpretq_u32_s32(vshlq_s32(vreinterpretq_s32_u32({x}[{r}]), vnegq_s32({})))", k(r))),
+                        },
+                        m,
+                    ));
                 }
             };
             return Ok(V::L(
@@ -2450,10 +2460,44 @@ impl Em<'_> {
                     _ => "fetch_and",
                 };
                 match (&args[0], &args[1]) {
-                    (V::S(p, _), V::S(x, xm)) => {
+                    // One address and one value: each running lane's own atomic, in lane order. An add is one atomic
+                    // of the value times the running lanes, each lane's old value the first plus the value times the
+                    // running lanes below it; another operation, one atomic a running lane.
+                    (V::S(p, _), V::S(x, xm)) if b == Builtin::AtomicAdd => {
+                        let x = conv(x, *xm, M::U32);
+                        let (w, pp) = (self.w, self.p);
+                        let (rank, count) = if cx.full {
+                            let rk = self.map(|r| format!("vld1q_u32(LANE[{r}].as_ptr())"));
+                            (rk, format!("{w}u32"))
+                        } else {
+                            let cur = cx.cur.clone();
+                            let (km, rm, c) = (self.tmp(), self.tmp(), self.tmp());
+                            self.line(format!("let mut {km} = [0u32; {w}];"));
+                            self.line(format!("for r in 0..{pp} {{ vst1q_u32({km}.as_mut_ptr().add(4 * r), {cur}[r]); }}"));
+                            self.line(format!("let mut {rm} = [0u32; {w}];"));
+                            self.line(format!("let mut {c} = 0u32;"));
+                            self.line(format!("for j in 0..{w} {{ {rm}[j] = {c}; {c} += {km}[j] & 1; }}"));
+                            let rk = self.map(|r| format!("vld1q_u32({rm}.as_ptr().add({}))", 4 * r));
+                            (rk, c)
+                        };
                         let t = self.tmp();
-                        self.line(format!("let {t} = AtomicU32::from_ptr({p} as *mut u32).{f}({}, Relaxed);", conv(x, *xm, M::U32)));
-                        V::S(t, m)
+                        self.line(format!("let {t} = AtomicU32::from_ptr({p} as *mut u32).fetch_add(({x}).wrapping_mul({count}), Relaxed);"));
+                        if unread {
+                            return Ok(V::S(t, m));
+                        }
+                        V::L(self.map(|r| format!("vmlaq_u32(vdupq_n_u32({t}), {rank}[{r}], vdupq_n_u32({x}))")), m)
+                    }
+                    // Another operation: each running lane's atomic in turn, its old value its own.
+                    (V::S(p, _), V::S(x, xm)) => {
+                        let x = conv(x, *xm, M::U32);
+                        let (w, pp) = (self.w, self.p);
+                        let (km, ov) = (self.tmp(), self.tmp());
+                        let on = if cx.full { "vdupq_n_u32(u32::MAX)".to_string() } else { format!("{}[r]", cx.cur) };
+                        self.line(format!("let mut {km} = [0u32; {w}];"));
+                        self.line(format!("for r in 0..{pp} {{ vst1q_u32({km}.as_mut_ptr().add(4 * r), {on}); }}"));
+                        self.line(format!("let mut {ov} = [0u32; {w}];"));
+                        self.line(format!("for j in 0..{w} {{ if {km}[j] != 0 {{ {ov}[j] = AtomicU32::from_ptr({p} as *mut u32).{f}({x}, Relaxed); }} }}"));
+                        V::L(self.map(|r| format!("vld1q_u32({ov}.as_ptr().add({}))", 4 * r)), m)
                     }
                     // One address, each lane's value, its old value read by none: the lanes' combination, one atomic.
                     (V::S(p, _), x) if unread => {
@@ -2480,6 +2524,18 @@ impl Em<'_> {
                         self.line(format!("let {t} = {red}({e});"));
                         self.line(format!("if {t} != {id} {{ AtomicU32::from_ptr({p} as *mut u32).{f}({t}, Relaxed); }}"));
                         V::None
+                    }
+                    // Each lane's address: each running lane's atomic in turn, its old value its own.
+                    (V::At { base, idx, scale }, x) => {
+                        let (base, scale, idx) = (base.clone(), *scale, (**idx).clone());
+                        let (il, xl) = (self.lanes(&idx, M::U32)?, self.lanes(x, M::U32)?);
+                        let (w, pp) = (self.w, self.p);
+                        let (km, ia, xa, ov) = (self.tmp(), self.tmp(), self.tmp(), self.tmp());
+                        let on = if cx.full { "vdupq_n_u32(u32::MAX)".to_string() } else { format!("{}[r]", cx.cur) };
+                        self.line(format!("let (mut {km}, mut {ia}, mut {xa}, mut {ov}) = ([0u32; {w}], [0u32; {w}], [0u32; {w}], [0u32; {w}]);"));
+                        self.line(format!("for r in 0..{pp} {{ vst1q_u32({km}.as_mut_ptr().add(4 * r), {on}); vst1q_u32({ia}.as_mut_ptr().add(4 * r), {il}[r]); vst1q_u32({xa}.as_mut_ptr().add(4 * r), {xl}[r]); }}"));
+                        self.line(format!("for j in 0..{w} {{ if {km}[j] != 0 {{ {ov}[j] = AtomicU32::from_ptr(({base} as *mut u8).add({ia}[j] as usize * {scale}) as *mut u32).{f}({xa}[j], Relaxed); }} }}"));
+                        V::L(self.map(|r| format!("vld1q_u32({ov}.as_ptr().add({}))", 4 * r)), m)
                     }
                     _ => return err(format!("{b:?} of each lane's address")),
                 }
