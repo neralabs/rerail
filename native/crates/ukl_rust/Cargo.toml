@@ -8,4 +8,6 @@ description = "UKL kernels the engine runs as Rust (decision 0567 step 3): rerai
 
 [dev-dependencies]
 # The reads' order (`READS`), which the join program's Rust calls them by.
-rerail-clif = { path = "../clif", features = ["test-hooks"] }
+rerail-clif = { path = "../clif", features = ["test-hooks", "ir"] }
+# The relations the four-lane reads are held to the compiled reads on (`lanes::tests`).
+rerail-blocks = { path = "../blocks", features = ["test-hooks"] }
