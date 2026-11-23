@@ -45,60 +45,98 @@ counts. Their origins were not read.
 ## How to close them
 
 A campaign is closed when its invariant holds everywhere in the code, and a check keeps it holding without
-exceptions. Three campaigns already work this way:
+exceptions. Three invariants already work this way: a check refuses a new violation, and a pinned list of the old
+ones only shrinks. For those, the open work is a countdown. The other campaigns have tests for what is built, but
+nothing refuses a new violation or counts the old ones. So for each of them **the first step is the check**. It
+lists today's violations as its pinned exceptions, and from then on the work is a countdown too. The check each one
+needs is under "Check to add" below.
 
-| Invariant | Check | Exceptions left (each list only shrinks) |
-|---|---|---|
-| Blocks are never copied (0353) | `scripts/check/check_no_block_copies.py` | 27 `copy (0353 step N)` sites: step 3: 1, step 4: 5, step 4a: 2, step 6: 11, step 7: 4, step 8: 4 |
-| Everything kept is facts (0104) | `logic/facts_only.rs`, `scripts/check/check_no_new_caches.py` | 31 tables (`NOT_YET_TABLES_PIN`), 6 maps (`NOT_YET_MAPS_PIN`) |
-| No global state (0442) | `scripts/check/check_no_global_state.py`, `global-state.txt` | 4 `shared` statics |
+### Where the counts stand
 
-There, the open work is a countdown, and every commit shows how much is left. The other campaigns have tests for
-what is built, but nothing refuses a new violation or counts the old ones. So for each of them **the first step is
-the check**. It lists today's violations as its pinned exceptions, and from then on the work is a countdown too.
-The check each one needs is under "Check to add" below.
+This tree is 340 commits behind the hub (`final-shape-serverplan-quality`), and some branches are further along
+than the hub. The audit's statuses are this tree's. These are the counts on each:
+
+| Count | Here | The hub | Furthest | Where |
+|---|---:|---:|---:|---|
+| Marked copies (0353) | 27 | 27 | 5 | Native-and-GPU-strata |
+| Tables not yet facts (0104) | 31 | 8 | 0 | Typing-support |
+| Maps not yet facts (0104) | 6 | 6 | 6 | none |
+| Shared statics (0442) | 4 | 4 | 4 | none |
+| `FoldOwn` references (0597) | 31 | 1 | 0 | cost-classifier |
+| `HIDDEN_KEYS` references (0597) | 33 | 16 | 16 | the hub |
+| `rr_narrow_` references (0597) | 37 | 14 | 14 | the hub |
+| `rr_long_text_node` references (0174 step 3) | 19 | 20 | 18 | wolfeel |
+| `rr_wide_` references (widened requests) | 47 | 47 | 47 | none |
+| `combine_read` references (0246 stage 3) | 2 | 2 | 2 | none |
 
 ### The order of work
 
-Ordered to close the most campaigns soonest. Work that is shared appears once, at the first place it is needed.
+Ordered to close the most campaigns soonest, given what the worktrees already have under way (next section).
 
-1. **Close now (1 campaign).** Lean parsers: no open records.
-2. **The short ones (6 campaigns).** Each has one or two open records, and none waits on the two hubs below:
-   - **embedded:** 0431's four loose ends;
-   - **hygiene:** the 4 `shared` statics, then 0094 §5–§6;
-   - **widening:** 0597 step 4, then 0174 step 3. 0174 step 3 also removes 0353's step 3 copy;
-   - **programs:** 0246 stage 3, then 0281 §3. 0246 stage 3 is also what 0225 §7 waits on;
-   - **preprocessor:** header units, which 0327 and 0348 both name, then the stored objects and the words on
-     Metal;
-   - **cold-run:** 0113, then 0114.
-3. **The two hubs**, which hold up five campaigns. 0353's copies go step by step:
-   - step 6 (11 sites: `setfix`'s staged head rows, the host uploads). This is the code 0266 step 4 and 0090 §1's
-     held rows are in;
-   - step 8 (`retain.rs`);
-   - steps 4 and 4a (the device's views and node columns). This is also 0549;
-   - step 7 (the transducer's batch and slabs).
+1. **Merge what is done.** The two hubs are mostly emptied on branches the hub has not taken:
+   - Native-and-GPU-strata: 26 commits, the marked copies from 27 to 5;
+   - Typing-support: 8 commits, the tables not yet facts from 8 to 0.
 
-   0104's tables go step by step:
-   - step 6 (the statistics and kept plans). This is also the first half of 0387;
-   - step 1 (the run record and the derivation graph). This is also 0103's;
-   - step 3 (the corpus plans and the session);
-   - step 7 (the text matcher's tables).
-4. **What the hubs free (6 campaigns):**
-   - **tape-blocks:** 0266, 0260, 0458, 0336, 0156;
-   - **store:** 0115, 0053 §7, 0142, then 0164 and 0190 after it;
-   - **planner:** 0387, 0361, 0354, 0202;
-   - **metal-rules:** 0549, 0540, 0603, 0095, 0098;
-   - **edit-cost:** 0090, 0092 and 0093 in that order, then 0116, 0117, 0225, 0328, 0132;
-   - **typing:** 0083 and 0065, on 0090 and 0092's per-definition deltas, then 0089 and 0047.
-5. **The long ones (3 campaigns):**
-   - **parsers-shape:** Kotlin's chain, 0414, then Swift and Scala;
-   - **rules-parity:** its device forms go with Metal's waves; then 0044 and 0563;
-   - **any-gpu:** 0440 step 10 after 0353, then 0567 step 3.
+   Then this tree merges the hub, and the audit is taken again on it. Before that, renumber django-bugs' 0638 and
+   Swift-Kotlin-Scala-support's 0591, which collide with the hub's.
+2. **Close now (1 campaign).** Lean parsers: no open records.
+3. **The short ones (6 campaigns).** Each has one or two open records, and none waits on the two hubs:
+   - **widening:** 0597 steps 4–7 are in the hub. What is left: the remaining `HIDDEN_KEYS`, `rr_narrow_` and
+     `one_document` references, then 0174 step 3 (long text on request), which also removes 0353's step 3 copy.
+     No worktree is on 0174.
+   - **embedded:** 0431's four loose ends. No worktree is on them.
+   - **hygiene:** the 4 `shared` statics, then 0094 §5–§6. No worktree is on them.
+   - **programs:** 0246 stage 3, which final-shape-rr-align is specifying as 0639; then 0281 §3.
+   - **preprocessor:** Go-C-and-C-support is on 0613. Header units, the stored objects and the words on Metal have no
+     worktree.
+   - **cold-run:** 0113, then 0114. No worktree is on them.
+4. **What is left of the hubs.** 0353's last 5 copies: step 3, which is three worktrees' row 7, and step 4a. Then
+   0104's 6 maps, which are 0628's and 0387's statistics and kept plans.
+5. **What the hubs free (6 campaigns):** tape-blocks, store, planner, metal-rules (django-bugs: 0603 done, 0637,
+   0540's gate), edit-cost, and typing on 0090 and 0092's per-definition deltas. Edit cost and typing have no
+   worktree.
+6. **The long ones (3 campaigns):** parsers-shape (Parser-generators, Swift-Kotlin-Scala-support), rules-parity
+   (wolfeel, Bend-language-investigation, Benchmarks-and-parity), any-gpu (uglykl, CUDA-support).
 
 Some open items reach past their campaign's invariant: a second hash, the Neural Engine lane, multi-GPU, more
-backends, deferred device functions. Each campaign lists them under "Beyond the invariant". Whether they stay
-in it is your call. Kept, the campaign closes when they are done. Made records of their own, it closes without
-them.
+backends, deferred device functions. Each campaign lists them under "Beyond the invariant". Whether they stay in it
+is your call. Kept, the campaign closes when they are done. Made records of their own, it closes without them.
+
+## Who works on what (surveyed 2026-11-23, 16:00)
+
+Each active worktree, the campaigns its work since 2026-11-16 serves, and what it is doing. "Not in hub" counts
+its own commits the hub has not taken. Worktrees idle since 2026-11-20, and detached scratch checkouts, are left out.
+
+| Worktree | Campaigns | Doing | Records | Not in hub |
+|---|---|---|---|---:|
+| Native-and-GPU-strata | [tape-blocks](#tape-blocks) | Removing 0353's copies: steps 4, 6, 7 and 8 are gone (27 marked copies down to 5: step 3's one, step 4a's four). Now asked for rows 7 and 17. Not in the hub: last merged the hub 11-22. | 0353, 0574 | 26 |
+| Benchmarks-and-parity | [tape-blocks](#tape-blocks), [rules-parity](#rules-parity) | The token relations, `visit_index`, `tree_digest`, `structural_before`/`after` and `doc` made views of the tape (0353 row 7); heap blocks moved into the run's blocks; parity held at 463 findings. 735 hub commits behind (last merged 11-21). | 0353 | 8 |
+| wolfeel | [rules-parity](#rules-parity), [tape-blocks](#tape-blocks) | The Python rules moved from Rust to `.rerail`, and their speed back: the gap to W measured (t53), sealed chunks (0622), a node read in one step (0640), a probed node's text off its tape (0353 step 3). 728 hub commits behind (last merged 11-21). | 0611, 0622, 0640, 0353 | 38 |
+| Two-pass-roots-and-cross-file | [planner](#planner), [tape-blocks](#tape-blocks), [metal-rules](#metal-rules) | The planner's statistics as overlay blocks (0628); `BlockVec` folded into `Vector`, one run room; a closure's levels as one launch (0601, 0603); a `.rerail` file read as every document is (0569 §7). Now running the benchmarks. | 0628, 0569, 0603, 0414 | 17 |
+| Typing-support | [store](#store) | t33 step 3: the corpus runs' tables became kept facts (the 8 `corpus_*` tables dropped, read through virtual tables). Its pin of tables not yet facts is 0: the hub's is 8, this tree's 31. A session keeps its store and nothing else. Despite its name, its current work is the store's. | 0104 (t33) | 8 |
+| final-shape-rr-align | [programs](#programs), [store](#store) | Draft 0639: a program linked from module images that phase 0 plans and keeps as facts. This is 0246 stage 3, specified, with no code yet. The session is More-ergonomic-rule-syntax's. | 0639 (draft) | 7 |
+| cost-classifier | [widening](#widening), [embedded](#embedded) | 0597 steps 4–7: hiding's annotation range, `FoldOwn` and the narrow copies removed; f-strings and Vue as contexts; a pass's tape-local rows kept per tape value. All in the hub. Now: a Vue file's embedded script read in place on Metal. Everything is in the hub. | 0597 | 0 |
+| Bend-language-investigation | [rules-parity](#rules-parity), [tape-blocks](#tape-blocks) | Format 16's codes numbered by the sampo corpora's counts (its 0638); a node view's membership test as its own read. Now: the probe code. | 0638 (its own) | 2 |
+| django-bugs | [metal-rules](#metal-rules) | 0603 done; 0637 (idle groups poll, bounded); its 0638 (a program's levels as stacked dispatches, one launch a stack); 0540's resident interpreter gate passes. Now: why Metal's indirect dispatch hangs. Its 0638 collides with the hub's. | 0603, 0637, 0638 (its own), 0540 | 10 |
+| Go-C-and-C-support | [preprocessor](#preprocessor) | 0613: macro expansions as memoized requests run in waves on the GPU, their results a tree. 880 hub commits behind (last merged 11-21). | 0613 | 9 |
+| Parser-generators | [parsers-shape](#parsers-shape) | 0623: `.rerail`'s generated Rust read beside the lean parser, tier 1 and tier 2 against lean's; 0618 tier 2 as one loop over tier 1's records (0496's direction). | 0623, 0618 | 12 |
+| Swift-Kotlin-Scala-support | [parsers-shape](#parsers-shape) | Kotlin read as the lean parser reads it (0621, 0624–0636). Now: the proofs' cost (0414). 1,051 hub commits behind (last merged 11-21); its 0591 collides with the hub's. | 0621–0636, 0414 | 19 |
+| CUDA-support | [any-gpu](#any-gpu) | 0617: matrix units through UKL. Now: kernels compiled for each GPU family in production builds (Apple M families, CUDA, ROCm). | 0617, 0440 | 2 |
+| uglykl-CPU-SIMD-parallelization | [any-gpu](#any-gpu) | 0567 step 3: the CPU device runs kernels as `rs.rs`'s Rust. Now: the CPU's join path through UKL, the same kernel as the GPU's. | 0567 | 3 |
+| Final-shape-quality | [hygiene](#hygiene) | The hub: roll-ups of every branch, from the Pulling-it-all-together session. 340 commits ahead of this tree. |  | 0 |
+| engine-crating | none | The crate split, step 10 (build time; in no campaign). | crate-split plan | 9 |
+| build-and-test-loop-time | none | The build farm (in no campaign). |  | 0 |
+| oscar (this tree) | [hygiene](#hygiene) | The audit, the campaigns and this plan. 340 hub commits behind. |  | 0 |
+
+**Where worktrees overlap:**
+
+- **0353 step 3, row 7: the per-node rows made views of the tape.** Native-and-GPU-strata (asked for rows 7 and 17), Benchmarks-and-parity (token relations, `doc`, digests as views), wolfeel (a probed node's text off its tape).
+- **A device program's levels as one launch.** django-bugs (0603 done, then 0638's stacked dispatches), Two-pass-roots-and-cross-file (the closure's levels on a work queue), cost-classifier (accel's graph closure as one launch, in the hub).
+- **Statistics and kept plans as blocks.** Two-pass-roots-and-cross-file's 0628 is this tree's 0387 and 0104 step 6 (the 5 maps `KeptPlans`, `SESSION_PLANS`, `Memoized`, `SESSION_MEMO`, `ObservedAt`).
+- **Linking from module images.** final-shape-rr-align's draft 0639 is 0246 stage 3, which 0225 §7 waits on.
+- **Record numbers used twice.** 0638: Bend-language-investigation's (format 16's codes numbered by a corpus) is in the hub, so django-bugs' (stacked dispatches) needs a new number. 0591: Swift-Kotlin-Scala-support's (the gap before a token scanned once, a mask) against everyone else's (tier 1's UTF-8 check in simdjson's form).
+
+**No worktree on:** edit-cost, cold-run, typing, embedded (past 0597), hygiene (the 4 statics, 0094).
 
 <a id="parsers-shape"></a>
 ## Generated parsers in the shape of simdjson and the lean parsers
@@ -106,6 +144,8 @@ them.
 88 records: 74 built, 8 partly built, 6 superseded. Origin: 28 a, 56 b, 4 c.
 
 **Invariant.** A generated parser is the lean parser's shape, written from the grammar by the Bitlex compiler: tier 1 is a token loop that decides at the token what the lean lexer decides there (0177, 0415); tier 2 takes tier 1's records a batch at a time (0496); the writer writes the tape in one pass, as simdjson does (0434, 0530).
+
+**Worktrees.** Parser-generators, Swift-Kotlin-Scala-support.
 
 **Kept by.** Every grammar equals the interpreter and the reference (`every_grammar_compiles_here_and_equals_the_interpreters`, `every_grammar_parses_as_the_reference`). Nothing checks the shape: a mark or mask the lean parser does not have passes.
 
@@ -152,6 +192,8 @@ them.
 
 **Invariant.** Every product language has a lean parser on every host.
 
+**Worktrees.** none.
+
 **Kept by.** The byte tests' masks on every backend (`every_backend_gives_the_byte_tests_masks`, each lean crate).
 
 **Closes when.** Closed: no open records.
@@ -168,6 +210,8 @@ them.
 26 records: 19 built, 6 partly built, 1 superseded. Origin: 17 a, 8 b, 1 c.
 
 **Invariant.** Data lives in one place, in one layout, and every reader reads it there (0353). A view is a read of the tape, not a relation. The reads are written once in CLIF (0310), proven within the tape's bytes (0463).
+
+**Worktrees.** Native-and-GPU-strata, Benchmarks-and-parity, wolfeel (in part), Two-pass-roots-and-cross-file (in part), Bend-language-investigation (in part).
 
 **Kept by.** `check_no_block_copies.py`; 27 marked copies left.
 
@@ -211,6 +255,8 @@ them.
 22 records: 13 built, 8 partly built, 1 superseded. Origin: 7 a, 14 b, 1 c.
 
 **Invariant.** An edit costs what it changes: a relation carries its delta (0117), maintenance reaches only what the delta reaches (0090, 0101), what an edit invalidates is keyed by definition (0092), and rules are keyed by module (0225).
+
+**Worktrees.** none.
 
 **Kept by.** Tests that an edit reads and reruns only its own path (`an_edit_reads_only_the_trees_on_its_path`, `a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_readers`). Nothing pins an edit's work to its delta.
 
@@ -256,6 +302,8 @@ them.
 
 **Invariant.** Everything kept is facts, on the same fact path (0104). A cache is two rules (0103). Kept facts are blocks in mapped files (0401). The store stays bounded (0053).
 
+**Worktrees.** Typing-support, final-shape-rr-align (in part).
+
 **Kept by.** `facts_only.rs` pins 31 tables and 6 maps not yet facts; `check_no_new_caches.py` refuses new ones.
 
 **To apply it everywhere:**
@@ -300,6 +348,8 @@ them.
 
 **Invariant.** A cold run uses every core, and its critical path is short: strata are issued from a scoreboard (0113), and no thread ever blocks, because every wait is a scoreboard event (0114).
 
+**Worktrees.** none.
+
 **Kept by.** Measurement only.
 
 **Check to add.** The blocking waits outside the scoreboard, counted and pinned; 0114 §4 takes the launches' and the loops' waits off the list.
@@ -336,6 +386,8 @@ them.
 17 records: 13 built, 3 partly built, 1 not started. Origin: 14 a, 1 b, 2 c.
 
 **Invariant.** Planning never costs more than running (0122). Budgets never change results (0334). Plans come from the relations' declared shapes, so a run plans nothing (0361). Statistics and kept plans are blocks (0387).
+
+**Worktrees.** Two-pass-roots-and-cross-file.
 
 **Kept by.** The budget tests (a misplanned run restarts and gives the full budget's results). Nothing counts planning against running, or plans made at run time.
 
@@ -376,6 +428,8 @@ them.
 49 records: 42 built, 6 partly built, 1 superseded. Origin: 16 a, 22 b, 11 c.
 
 **Invariant.** The Metal budget is the overall budget (0549). Every launch is counted by one ledger, and past `KERNEL_LAUNCH_LIMIT` a run fails. A device wait is on a running thread, never a poll (0540). A stratum's device work is one launch (0603).
+
+**Worktrees.** Two-pass-roots-and-cross-file (in part), django-bugs.
 
 **Kept by.** The launch ledger. Nothing checks for polling waits or a thread's resident copies.
 
@@ -431,6 +485,8 @@ them.
 
 **Invariant.** Kernels are written once in UKL, and every device reads the same blocks (0440). UKL on the CPU is vector code between sync points (0567).
 
+**Worktrees.** CUDA-support, uglykl-CPU-SIMD-parallelization.
+
 **Kept by.** `every_library_header_stands_alone_on_every_backend`, and each backend's conformance tests.
 
 **To apply it everywhere:**
@@ -461,6 +517,8 @@ them.
 
 **Invariant.** One parse a file into the preprocessor's tape, and an evaluator over tapes (0436), whose device passes read in place (0468), on the CPU and every GPU.
 
+**Worktrees.** Go-C-and-C-support.
+
 **Kept by.** 0353's check and the launch ledger, as everywhere.
 
 **To apply it everywhere:**
@@ -490,6 +548,8 @@ them.
 43 records: 36 built, 7 partly built. Origin: 21 a, 20 b, 2 c.
 
 **Invariant.** Main's rules run as `.rr`, with main's findings (the same finding keys) at W's speed. Text is matched a chunk at a time, never per node per byte (0041). A run starts from seeded facts (0044). A relation no rule fills makes no stratum (0563).
+
+**Worktrees.** Benchmarks-and-parity (in part), wolfeel, Bend-language-investigation.
 
 **Kept by.** The packs' parity tests and the data layer's 142 checks.
 
@@ -531,6 +591,8 @@ them.
 
 **Invariant.** There are no guest documents: a string the rules parse is a tape value, and a program the grammar holds is the file's (0431).
 
+**Worktrees.** cost-classifier (in part).
+
 **Kept by.** `a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone`, `a_session_drops_the_guest_rules_where_no_document_embeds`.
 
 **To apply it everywhere:**
@@ -557,6 +619,8 @@ them.
 7 records: 1 built, 4 partly built, 2 superseded. Origin: 4 a, 1 b, 2 c.
 
 **Invariant.** Typing's cross-file facts are ordinary facts: one fixpoint, maintained by deltas (0065, 0083). A library is a module, held once per run (0089).
+
+**Worktrees.** none.
 
 **Kept by.** The typing oracle tests.
 
@@ -598,6 +662,8 @@ them.
 
 **Invariant.** A program is a flat image, written through a writer and read as versions, never as text (0173, 0276). Rules load in one pass (0246). Passes run under a pass manager over maintained analyses (0281).
 
+**Worktrees.** final-shape-rr-align.
+
 **Kept by.** The image round trips (`a_program_reads_back_from_its_image`, `a_stored_program_is_read_from_its_image`). Nothing refuses a pass that goes through text.
 
 **Check to add.** The program paths that print or parse text outside the CLI and tests, listed and pinned.
@@ -634,14 +700,16 @@ them.
 
 **Invariant.** Nothing is computed past what its readers read, and nothing widened is kept. Each relation, copy and attribute exists for a reader's demand (0291, 0461, 0099).
 
+**Worktrees.** cost-classifier.
+
 **Kept by.** The width cap per relation (0462) and the product refusal (0461) stop a runaway. Nothing counts the copies or the attributes made for every node.
 
 **Check to add.** On a fixed pack, the program's copy relations (hiding's, the narrow ones, the widened requests `rr_wide_*`) and the attributes made for every node, counted and pinned, down to 0.
 
 **To apply it everywhere:**
 
-- 0597 step 4: remove the annotation range (`HIDDEN_KEYS`, 33 references), `FoldOwn` (31), the narrow copies (`rr_narrow_`, 25), hiding's annotation copies (`rr_in_annotation`, 19) and `one_document` (20). Then Q420 and Q426, which turn on them. Then steps 5 and 6.
-- 0174 step 3: long text on request (`rr_long_text_node`, 18; `text_kind_demand`, 12), with Q121. This removes 0353's step 3 copy.
+- 0597 step 4: remove the annotation range (`HIDDEN_KEYS`), `FoldOwn`, the narrow copies (`rr_narrow_`), hiding's annotation copies (`rr_in_annotation`) and `one_document`; then Q420 and Q426, which turn on them; then steps 5 and 6. Steps 4 to 7 are in the hub (cost-classifier); the references it still has are in the counts above.
+- 0174 step 3: long text on request (`rr_long_text_node`, `text_kind_demand`), with Q121. This removes 0353's step 3 copy.
 - Q454 (requests by reader), 0458 (documents made when first read), 0115 (digest-only kept relations), 0099 (the factorized store).
 
 **Closes when.** The count at 0, and 0597's measurement recorded.
@@ -673,6 +741,8 @@ them.
 6 records: 5 built, 1 partly built. Origin: 3 a, 2 b, 1 c.
 
 **Invariant.** The engine is re-entrant and holds no global state (0442). A run's state is the run's (0441). No thread-local is unlisted (0192). Parallel work runs on the machine's pool (0442 step 5). The worktrees share one shape (0094).
+
+**Worktrees.** Final-shape-quality, oscar (this tree).
 
 **Kept by.** `check_no_global_state.py` (4 `shared` statics left), `check_thread_state.py`, `check_machine_pool.py`, `check_no_relation_maps.py` (0478: none left).
 
