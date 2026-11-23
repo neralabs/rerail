@@ -685,3 +685,42 @@ only, and the program grows it as the head's rows reach it:
   | spark2's CPU backend | its bound / one row first | 49 of 49 / 49 of 49 |
   | spark2's CUDA (GB10) | one row first | 49 of 49 |
   | The mini's Metal (M1) | as reached / one row first | 49 of 49 / 49 of 49 |
+
+## Without sparse buffers: the M3 (2026-11-22)
+
+The M3 runs macOS 15, whose Metal has no sparse buffers (they need Metal 4). `reserve` then fell back to a fixed
+allocation of the first bytes. That broke the rooms mapped as reached in two places:
+
+- **The arena** could not grow, and the floor its claims asked for was dropped where mapping commits memory. A stopped
+  closure ran again in an arena as small, until 64 runs refused it.
+- **A level sort's room** could not grow either. The reach gate stopped.
+
+The fix:
+
+- **The fallback** is now the host's pages wrapped (`wrapped()`), as a reservation the host reads already was. It grows,
+  but each `map` makes a new wrap at another address (`Reserved::grows`, `Reserved::grows_in_place`).
+- **The arena** follows a moved address already (`Kit::rebase`). Where a reservation cannot grow at all (`!grows()`),
+  its first room is the floor.
+- **A sort's room** holds its addresses, so where its reservation cannot grow in place, its bytes are reserved whole,
+  as before rooms were mapped as reached. A first try let them move, and a recursion's sorted rows came out
+  duplicated (5,995 rows against the CPU's 5,941).
+- **Measured:** the M3 passes 49 of 49, at its rooms as reached and at one row first.
+
+## What one program costs on the GPU (2026-11-22)
+
+0603's steps were measured in counts: launches, reruns, remaps. This measures GPU time per stratum against the
+launch a level before them (a7e1fc4f1b). The test is `measure_one_program_against_a_launch_a_level` (ignored; a
+measurement). It runs each stratum seven times after two warm-ups, on the M3, and takes the medians. Both builds
+produce the same rows.
+
+| Stratum | Rows | A launch a level: wall, GPU, launches | One program: wall, GPU, launches |
+|---|---|---|---|
+| seeds | 68,477 | 73.9 ms, 11.3 ms, 46 | 131.6 ms, 65.0 ms, 1 |
+| seeds ×10 | 695,098 | 600.7 ms, 47.0 ms, — | 1,246.0 ms, 664.6 ms, 1 |
+| closure | 8,620 | 49.8 ms, 11.3 ms, 533 | 138.2 ms, 111.3 ms, 9 |
+| leveled reach | 3,319 | 68.5 ms, 9.0 ms, 1,209 | 68.1 ms, 53.2 ms, 11 |
+| leveled dist (min) | 81 | 51.6 ms, 5.8 ms, 757 | 27.1 ms, 20.0 ms, 8 |
+
+The one program takes 3.4 to 14 times the GPU time of the launches it replaced. Its wall time is lower only for
+the lattice stratum, where the launches' submissions dominated. Fewer launches do not pay for themselves until the
+program's own work costs what the launches' work did. That is the next step, before more is built on the program.

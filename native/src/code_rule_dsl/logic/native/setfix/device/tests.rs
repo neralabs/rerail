@@ -1846,3 +1846,124 @@
         assert_eq!(plain, priced);
         assert_eq!(super::super::level::digest(&plain), super::super::level::digest(&priced));
     }
+
+    /// Decision 0603's measure: each stratum's device time, one program against a launch a level (run at the commit
+    /// before 0603, `a7e1fc4f1b`, its launch limit raised for the recursive strata). Each stratum warm (two runs
+    /// first), then seven runs: the medians of the run's wall, the device's seconds, the encoding's CPU and the wait's
+    /// wall, and its launches and submissions. `RERAIL_MEASURE_RUNS=N`: N runs.
+    #[test]
+    #[ignore = "a measure, not a check: decision 0603's one program against a launch a level"]
+    fn measure_one_program_against_a_launch_a_level() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let runs: usize = std::env::var("RERAIL_MEASURE_RUNS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let mut x = 7u64;
+        let mut next = |m: i64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) as i64).rem_euclid(m)
+        };
+        let src = |t: &str, cols: &str, types: &str| format!("t:x:{}:{}:{types}", hex(&format!("temp.{t}")), hex(cols));
+        // The seeds stratum (`a_strata_seeds_on_the_device_are_the_cpus_rows_and_counts`'s), at its size and ten times it.
+        for scale in [1i64, 10] {
+            let (a, b, c) = (format!("a{scale}"), format!("b{scale}"), format!("c{scale}"));
+            db.execute_batch(&format!("CREATE TEMP TABLE {a} (c0, c1); CREATE TEMP TABLE {b} (c0, c1); CREATE TEMP TABLE {c} (c0);")).unwrap();
+            for _ in 0..3000 * scale {
+                db.execute(&format!("INSERT INTO {a} VALUES (?1, ?2)"), [((next(4) << 32) | next(500 * scale)), next(200 * scale)]).unwrap();
+            }
+            for _ in 0..4000 * scale {
+                db.execute(&format!("INSERT INTO {b} VALUES (?1, ?2)"), [next(200 * scale), ((next(4) << 32) | next(500 * scale))]).unwrap();
+            }
+            for _ in 0..300 * scale {
+                db.execute(&format!("INSERT INTO {c} VALUES (?1)"), [((next(4) << 32) | next(500 * scale))]).unwrap();
+            }
+        }
+        db.execute_batch("CREATE TEMP TABLE e (c0, c1); CREATE TEMP TABLE f (c0, c1);").unwrap();
+        for v in 0..100 {
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [v, v + 1]).unwrap();
+            if next(5) == 0 {
+                db.execute("INSERT INTO e VALUES (?1, ?2)", [v, next(100)]).unwrap();
+            }
+        }
+        for v in 0..80 {
+            db.execute("INSERT INTO f VALUES (?1, ?2)", [v, v + 1]).unwrap();
+            if next(4) == 0 {
+                db.execute("INSERT INTO f VALUES (?1, ?2)", [v, v + 2 + next(6)]).unwrap();
+            }
+        }
+        let seeds = |s: i64| {
+            let (a, b, c) = (src(&format!("a{s}"), "c0, c1", "ii"), src(&format!("b{s}"), "c0, c1", "ii"), src(&format!("c{s}"), "c0", "i"));
+            [
+                format!("pos {a} v0 v1\npos {b} v1 v2\nlt v2 v0\ndeq v2 v0\nneg {c} v2\nhead v0 v2"),
+                format!("pos {a} v0 i:3\npos {c} v0\nhead v0 i:7"),
+                format!("pos {a} v0 v1\npos {c} v0\nne v1 i:5\neq v2 v1\ndocof v3 v0\nhead v1 v2"),
+                format!("pos {a} v0 v1\npos {b} v1 v2\nhead v0 v2"),
+                format!("pos {a} v0 v1\nfunc rr_add v2 v0 v1\nfunc rr_sub v3 v1 i:3\nfunc rr_div v4 v2 v3\nlt v4 v0\nhead v0 v4"),
+                format!("pos {a} v0 v1\nfunc rr_mul v2 v0 v0\nfunc mod v3 v2 i:7\nfunc rr_max v4 v3 v1\nfunc rr_min v5 v4 i:100\nhead v0 v5"),
+                format!("pos {c} v0\ncount {a} v0 _ v1\nhead v0 v1"),
+                format!("pos {c} v0\nsum {a} v0 _ 1 v1\nhead v0 v1"),
+                format!("pos {b} v0 v1\nmin {a} _ v0 0 v2\nhead v1 v2"),
+                format!("pos {a} v0 v1\nmax {a} v0 _ 1 v1\nhead v0 v1"),
+                format!("pos {c} v0\ncount {b} _ _ v1\nhead v0 v1"),
+            ]
+            .iter()
+            .map(|r| format!("seed 0 {}", hex(r)))
+            .collect::<Vec<_>>()
+        };
+        let (e, f) = (src("e", "c0, c1", "ii"), src("f", "c0, c1", "ii"));
+        let strata: Vec<(&str, Vec<String>)> = vec![
+            ("seeds", seeds(1)),
+            ("seeds x10", seeds(10)),
+            ("closure", vec![
+                format!("seed 0 {}", hex(&format!("pos {e} v0 v1\nhead v0 v1"))),
+                format!("join 0 0 {}", hex("pos d0 v0 v1\npos c0 v1 v2\nne v2 v0\nhead v0 v2")),
+                format!("join 0 0 {}", hex("pos c0 v0 v1\npos d0 v1 v2\nne v2 v0\nhead v0 v2")),
+            ]),
+            ("leveled reach", vec![
+                "leveled 0".into(),
+                format!("seed 0 {}", hex(&format!("pos {f} v0 v1\nhead v0 v1"))),
+                format!("join 0 0 {}", hex(&format!("pos d0 v0 v1\npos {f} v1 v2\nhead v0 v2"))),
+            ]),
+            ("leveled dist (min)", vec![
+                format!("lattice 0 1 {} -", hex("min")),
+                "leveled 0".into(),
+                format!("seed 0 {}", hex(&format!("pos {f} i:0 v0\nhead v0 i:1"))),
+                format!("join 0 0 {}", hex(&format!("pos d0 v0 v1\npos {f} v0 v2\nfunc rr_add v3 v1 i:1\nhead v2 v3"))),
+            ]),
+        ];
+        let median = |mut v: Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v[v.len() / 2]
+        };
+        let only = std::env::var("RERAIL_MEASURE_ONLY").ok();
+        for (name, lines) in strata.iter().filter(|(n, _)| only.as_deref().is_none_or(|o| n.starts_with(o))) {
+            let mut m: [Vec<f64>; 4] = Default::default();
+            let mut counts = (0, 0, 0);
+            for run in 0..runs + 2 {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                let mut spec = vec!["name dev_measure".to_owned(), "device".to_owned(), "rel h0 ii empty".to_owned()];
+                spec.extend(lines.iter().cloned());
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                let started = std::time::Instant::now();
+                super::super::run(&db, "dev_measure", 0).unwrap();
+                let wall = started.elapsed().as_secs_f64();
+                let r = super::take_report().expect("a device report");
+                assert!(r.refused.is_none(), "{name}: {r:?}");
+                super::super::close(&db, "dev_measure").unwrap();
+                if run >= 2 {
+                    for (v, x) in m.iter_mut().zip([wall, r.gpu_seconds, r.encode_cpu, r.wait_wall]) {
+                        v.push(1e3 * x);
+                    }
+                    let rows: i64 = db.query_row("SELECT count(*) FROM temp.h0", [], |r| r.get(0)).unwrap();
+                    counts = (r.dispatches, r.submissions, rows);
+                }
+            }
+            let [wall, gpu, encode, wait] = m.map(median);
+            eprintln!("MEASURE {name:<20} wall {wall:8.2} ms  gpu {gpu:8.2} ms  encode {encode:7.2} ms  wait {wait:8.2} ms  launches {:4}  submissions {:3}  rows {}", counts.0, counts.1, counts.2);
+        }
+    }

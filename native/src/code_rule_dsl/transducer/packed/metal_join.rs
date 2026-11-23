@@ -2710,7 +2710,14 @@ impl Batch {
             let tiles = ix_rows.div_ceil(SORT_TILE).max(1);
             let mut one = |bytes: usize, now: usize, hist: bool| -> Result<Held, Error> {
                 let Some(room) = &mut sort_room else { return Held::new(bytes).map_err(|_| Error::BackendCapacity) };
-                let r = std::sync::Arc::new(rerail_device::device::reserve(device, bytes, now.min(bytes), false).map_err(|_| Error::BackendCapacity)?);
+                let mut r = rerail_device::device::reserve(device, bytes, now.min(bytes), false).map_err(|_| Error::BackendCapacity)?;
+                // One that cannot grow at its address (`Reserved::grows_in_place`: macOS 15's Metal, without sparse
+                // buffers, wraps it again elsewhere): its bytes whole, as before rooms were mapped as reached, so the
+                // rooms' growth maps nothing of it (`Kit::grow_rooms`), and the sort's addresses stay.
+                if !r.grows_in_place() {
+                    r = rerail_device::device::reserve(device, bytes, bytes, false).map_err(|_| Error::BackendCapacity)?;
+                }
+                let r = std::sync::Arc::new(r);
                 if hist {
                     room.hist = Some(r.clone());
                 } else {
@@ -2919,7 +2926,20 @@ impl Batch {
                     return Err(Error::BackendCapacity);
                 }
                 let held = if self.reserve_arena {
-                    let r = std::sync::Arc::new(rerail_device::device::reserve(device, ARENA_MAX, room, self.host_reads).map_err(|_| Error::BackendCapacity)?);
+                    let mut r = rerail_device::device::reserve(device, ARENA_MAX, room, self.host_reads).map_err(|_| Error::BackendCapacity)?;
+                    // A reservation that cannot grow (`Reserved::grows`: a backend with no reservation) is an allocation
+                    // of its first pages: those are the floor too, so a program past them runs again in one as large as
+                    // its claims wanted. Before, the floor was dropped wherever mapping commits memory: on the M3
+                    // (macOS 15, whose Metal had no reservation that grew) a stopped program ran again in an arena as
+                    // small, 64 times.
+                    if !r.grows() && self.floor > room {
+                        let room = self.floor.max(16).next_multiple_of(16);
+                        if room > ARENA_MAX {
+                            return Err(Error::BackendCapacity);
+                        }
+                        r = rerail_device::device::reserve(device, ARENA_MAX, room, self.host_reads).map_err(|_| Error::BackendCapacity)?;
+                    }
+                    let r = std::sync::Arc::new(r);
                     self.reserved = Some(r.clone());
                     Held::kept(r.buffer(), Box::new(r))
                 } else {
