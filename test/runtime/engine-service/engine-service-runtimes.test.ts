@@ -880,8 +880,11 @@ describe("the engine service's idle close", () => {
   // daemon's thread until the oldest was 5 s old, then met the lock again where it records the checkout: 10 s, where
   // `main` waited 5 s. That write still waits for the lock, on the thread, up to 5 s, as `main`'s does.
   it("waits for another process's write lock once as a session opens, not first for another session's waiting records", async () => {
-    const { start, live, databasePath } = await idleService({ needsRoom: () => false });
+    const { start, turnEnd, live, databasePath } = await idleService({ needsRoom: () => false });
     await start("a");
+    // The first session's walk and checks, which run on after its start, end before the lock is taken: a write of theirs
+    // would wait for it on the same thread.
+    await turnEnd("a", "turn");
     const sessions = new SqliteSessionStore(databasePath);
     const writer = new Database(databasePath);
     try {
