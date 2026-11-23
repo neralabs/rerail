@@ -405,21 +405,26 @@ fn a_kernel_shipped_for_a_target_the_device_runs_is_loaded() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Decision 0645 step 3: every CUDA target a release ships compiles without a GPU, from its own text (Windows' with
-/// its 32-bit `long`), by the newest of the build's toolkits that compiles for it. Where a build's toolkits are named
-/// (`RERAIL_SHIP_CUDA_HOMES`, as the release job names NVIDIA's NVRTC 13 and 12).
+/// Decision 0645 step 3: every CUDA and AMD target a release ships compiles without a GPU, from its own text
+/// (Windows' with its 32-bit `long`): CUDA's by the newest of the build's toolkits that compiles for it, where they
+/// are named (`RERAIL_SHIP_CUDA_HOMES`, as the release job names NVIDIA's NVRTC 13 and 12); AMD's by hiprtc, where
+/// ROCm or the HIP SDK is named (`ROCM_PATH`, `HIP_PATH`).
 #[test]
-fn every_shipped_cuda_target_compiles_without_a_gpu() {
-    if std::env::var_os("RERAIL_SHIP_CUDA_HOMES").is_none_or(|v| v.is_empty()) {
-        return;
-    }
+fn every_shipped_cuda_and_amd_target_compiles_without_a_gpu() {
+    let named = |v: &str| std::env::var_os(v).is_some_and(|v| !v.is_empty());
+    let cuda = named("RERAIL_SHIP_CUDA_HOMES");
+    let amd = named("ROCM_PATH") || named("HIP_PATH");
     let name = "device_tests_ship.uglykl";
-    for n in rerail_ukl::target::SHIPPED.iter().filter(|n| n.starts_with("sm_") || n.starts_with("compute_")) {
+    for n in rerail_ukl::target::SHIPPED {
         let t = rerail_ukl::Target::named(n).unwrap();
+        let form = t.form().unwrap();
+        if !(cuda && matches!(form, "cubin" | "ptx") || amd && form == "hsaco") {
+            continue;
+        }
         let text = crate::kernels::preprocess_for(&t, name, KERNELS, &[]).unwrap();
         let code = rerail_device::device::compile_offline(n, None, &text, name).unwrap_or_else(|e| panic!("{n}: {e}"));
-        let ptx = n.starts_with("compute_");
-        assert!(if ptx { code.starts_with(b"//") } else { code.starts_with(b"\x7fELF") }, "{n}: {} bytes, not {}", code.len(), if ptx { "PTX" } else { "a cubin" });
+        let ok = if form == "ptx" { code.starts_with(b"//") } else { code.starts_with(b"\x7fELF") };
+        assert!(ok, "{n}: {} bytes, not {form}", code.len());
         eprintln!("{n}: {} bytes", code.len());
     }
 }
