@@ -5781,33 +5781,6 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(recordedIn(root, worktree, batches)).toEqual([["a.py", FIRST_SIGHT]]);
   });
 
-  // A session folder walk re-syncs the worktrees while a walk of the other worktrees reads them, so Git can stop listing
-  // a worktree the walk has read, and list another one at its path, before the session takes the walk: what the walk
-  // found of the removed worktree is none of the new one's, which the walk after takes as a first sight.
-  it("takes as a first sight a worktree Git listed again at its path while a walk of the other worktrees ran", async () => {
-    const root = await twoBranches();
-    git(root, "branch", "third", "main");
-    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
-    const place = join(await workspace(), "kept");
-    git(root, "worktree", "add", "--quiet", "--detach", place, "main");
-    const kept = await realpath(place);
-    roots.push(kept);
-    const file = join(kept, "src", "a.py");
-    const { bridge, auditGeneratedEdits } = await opened(root, extra);
-    // The walk reads the worktrees in the order Git lists them: the first is read by the time it looks at the file.
-    discovery.lstats.set(file, [async () => {
-      roots.splice(roots.indexOf(worktree), 1);
-      await bridge.checkpoint("turn");
-      await addedAgain(root, worktree);
-      roots.push(worktree);
-      await bridge.checkpoint("turn");
-    }]);
-    await shell(bridge, () => writeFile(file, "old\nmine\n"));
-    await bridge.settleWorktreeWalk();
-    expect(discovery.lstats.get(file)).toEqual([]);
-    expect(recordedIn(root, worktree, auditGeneratedEdits.mock.calls.map(([, batch]) => batch))).toEqual([["a.py", FIRST_SIGHT]]);
-  });
-
   // Each walk learns Git's list of the worktrees before it takes it (`learnWorktreeRoots`), so the lists that let go of a
   // removed worktree and find another at its path start no Git on the daemon's thread, and each list taken still decides
   // what the session holds of a worktree (`walkHeld`): what the walk running meanwhile read of the removed worktree is
@@ -5835,6 +5808,33 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(discovery.lstats.get(file)).toEqual([]);
     expect({ blocking: registry.state.blocking, recorded: recordedIn(root, worktree, auditGeneratedEdits.mock.calls.map(([, batch]) => batch)) })
       .toEqual({ blocking: 0, recorded: [["a.py", FIRST_SIGHT]] });
+  });
+
+  // A session folder walk re-syncs the worktrees while a walk of the other worktrees reads them, so Git can stop listing
+  // a worktree the walk has read, and list another one at its path, before the session takes the walk: what the walk
+  // found of the removed worktree is none of the new one's, which the walk after takes as a first sight.
+  it("takes as a first sight a worktree Git listed again at its path while a walk of the other worktrees ran", async () => {
+    const root = await twoBranches();
+    git(root, "branch", "third", "main");
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const place = join(await workspace(), "kept");
+    git(root, "worktree", "add", "--quiet", "--detach", place, "main");
+    const kept = await realpath(place);
+    roots.push(kept);
+    const file = join(kept, "src", "a.py");
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    // The walk reads the worktrees in the order Git lists them: the first is read by the time it looks at the file.
+    discovery.lstats.set(file, [async () => {
+      roots.splice(roots.indexOf(worktree), 1);
+      await bridge.checkpoint("turn");
+      await addedAgain(root, worktree);
+      roots.push(worktree);
+      await bridge.checkpoint("turn");
+    }]);
+    await shell(bridge, () => writeFile(file, "old\nmine\n"));
+    await bridge.settleWorktreeWalk();
+    expect(discovery.lstats.get(file)).toEqual([]);
+    expect(recordedIn(root, worktree, auditGeneratedEdits.mock.calls.map(([, batch]) => batch))).toEqual([["a.py", FIRST_SIGHT]]);
   });
 
   // Each start of the walk the sessions of a repository share lists the worktrees again for every session watching, so
