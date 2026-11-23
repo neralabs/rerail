@@ -17,33 +17,6 @@
     use super::*;
     use crate::code_rule_dsl::logic::plan::output::{Cell, col};
 
-    /// A session's memo holds every file of a tree past any count (the data layer's 2,410 files under two programs:
-    /// 4,820 entries), and per file and program its current entry and the one before, which an edit's input deltas
-    /// read. An older one goes.
-    #[test]
-    fn a_session_memo_holds_the_tree_and_each_file_s_entry_before() {
-        let mut h = HeldEntries::default();
-        let e = |k: i64| std::sync::Arc::new(Entry { key: k, ..Entry::default() });
-        let d = |n: u8| [n; 32];
-        let (main, sources) = ([1; 32], [2; 32]);
-        for f in 0..5000 {
-            for prog in [main, sources] {
-                h.insert(d(0), &format!("f{f}.py"), prog, e(f));
-            }
-        }
-        assert_eq!(h.len(), 10_000, "every file's entry under both programs is held");
-        h.insert(d(1), "f0.py", main, e(0));
-        assert!(h.get(&(d(0), "f0.py".into(), main)).is_some() && h.get(&(d(1), "f0.py".into(), main)).is_some(), "an edit keeps the entry before");
-        h.insert(d(2), "f0.py", main, e(0));
-        assert!(h.get(&(d(0), "f0.py".into(), main)).is_none(), "the entry before the one before goes");
-        assert!(h.get(&(d(1), "f0.py".into(), main)).is_some() && h.get(&(d(2), "f0.py".into(), main)).is_some());
-        // Back to an earlier content: the two kept are that one and the one it replaced.
-        h.insert(d(1), "f0.py", main, e(0));
-        assert!(h.get(&(d(1), "f0.py".into(), main)).is_some() && h.get(&(d(2), "f0.py".into(), main)).is_some());
-        assert_eq!(h.len(), 10_001);
-        assert!(h.get(&(d(0), "f0.py".into(), sources)).is_some(), "another program's entry of the file is its own");
-    }
-
     /// Rows of columns typed `types`, of `rows`.
     pub fn rows_of(types: &[u8], rows: &[&[Cell<'_>]]) -> crate::code_rule_dsl::logic::plan::output::Rows {
         let mut out = crate::code_rule_dsl::logic::plan::output::Rows::new(types.to_vec());
@@ -54,17 +27,7 @@
     }
 
     #[test]
-    fn a_held_entry_is_projected_and_keyed() {
-        let mut entry = Entry { key: 5, nodes: 100, ..Entry::default() };
-        entry.rows.insert("wanted".into(), (2, rerail_blocks::vector![5, 9]));
-        entry.rows.insert("unused".into(), (2, rerail_blocks::vector![1; 2000]));
-        entry.outputs.insert("diagnostic".into(), (rerail_blocks::vector![0], rows_of(&[col::NODE, col::TEXT], &[&[Cell::Int(5), Cell::Text("bad")]])));
-        let keep = |r: &str| r == "wanted";
-        let held = Found::Held(std::sync::Arc::new(entry.clone()));
-        let projected = held.projected(5, &keep).unwrap().unwrap();
-        assert_eq!(projected.rows.keys().collect::<Vec<_>>(), ["wanted"]);
-        assert_eq!((projected.outputs, projected.nodes), (entry.outputs, 100));
-        assert!(held.projected(6, &keep).unwrap().is_none());
+    fn a_tree_demand_keys_its_own_frames() {
         assert_ne!(with_tree_demand([0; 32], false), with_tree_demand([0; 32], true), "wider consumers cannot hit narrower frames");
     }
 
@@ -79,6 +42,7 @@
         let program = Program::new([3; 32], &domains);
         let mut entry = Entry { key: 4, nodes: 9, ..Entry::default() };
         entry.rows.insert("r".into(), (2, rerail_blocks::vector![1, 2, 3, 4]));
+        entry.rows.insert("unused".into(), (2, rerail_blocks::vector![1; 2000]));
         entry.outputs.insert("diagnostic".into(), (rerail_blocks::vector![0], rows_of(&[col::NODE, col::TEXT], &[&[Cell::Int(5), Cell::Text("bad")]])));
         let id = store.put_source(b"x = 1\n", &[]).unwrap();
         let found = |store: &ContentStore| Memo::Stored(store).found_all(&program, &[(Content::Stored(id), "a.py")]).unwrap().pop().flatten();
@@ -87,6 +51,11 @@
         let queued = found(&store).expect("queued, found");
         assert!(matches!(queued, Found::Frame(_)), "read from its segment, not held decoded");
         assert_eq!(queued.entry(4).unwrap(), Some(entry.clone()));
+        // Projected: its demanded relations decoded, its outputs and size whole; another document's key finds none.
+        let projected = queued.projected(4, &|r: &str| r == "r").unwrap().unwrap();
+        assert_eq!(projected.rows.keys().collect::<Vec<_>>(), ["r"]);
+        assert_eq!((&projected.outputs, projected.nodes), (&entry.outputs, 9));
+        assert!(queued.projected(5, &|r: &str| r == "r").unwrap().is_none());
         assert_eq!(store.memo_pack_bytes().unwrap().1, 0, "not written yet");
         drop(waves);
         store.written().unwrap();

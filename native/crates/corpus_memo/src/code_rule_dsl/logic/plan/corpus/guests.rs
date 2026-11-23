@@ -948,7 +948,7 @@ fn parse(path: &str, label: &str, fragment: Option<core::Fragment>, text: String
     let built = match (&parses.store, tape_tag_of(label, fragment)) {
         // Decision 0431 R6: found among the last runs' tapes by its text, or queued earlier in this run; else parsed,
         // and queued for the store with its source, which the manifest names.
-        (Some(s), Some(tag)) if cfg!(feature = "tape-cache") => {
+        (Some(s), Some(tag)) => {
             use sha2::Digest as _;
             let digest: [u8; 32] = sha2::Sha256::digest(key.2.as_bytes()).into();
             let hash = crate::content_store::HashKey::from_sha256_digest(digest);

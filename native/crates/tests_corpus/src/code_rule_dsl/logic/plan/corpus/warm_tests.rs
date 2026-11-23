@@ -107,7 +107,6 @@ impl Corpus {
         let corpus = phases.iter().fold(report.corpus_docs, |a, (_, p)| CorpusDocs {
             from_tape: a.from_tape + p.from_tape,
             parsed: a.parsed + p.parsed,
-            held: a.held + p.held,
             made: a.made + p.made,
             documents: a.documents + p.documents,
         });
@@ -155,6 +154,47 @@ fn a_warm_run_over_unchanged_files_parses_builds_and_makes_nothing() {
     assert_eq!(warm.corpus.parsed, 0, "Q332: no unchanged file is parsed for the corpus batch: {:?} (warm run: {warm:?})", warm.corpus);
     assert_eq!(warm.corpus.from_tape, 0, "Q332: no unchanged file's document is built from its tape: {:?} (warm run: {warm:?})", warm.corpus);
     assert_eq!(warm.corpus.made, 0, "Q332: no unchanged document's rows are made: {:?} (warm run: {warm:?})", warm.corpus);
+}
+
+/// A warm run with nothing to run (t33 K4: no input changed, no stratum run) still gives every output. Of a pack's
+/// policies linked in one run (each its own `p{i}_` part), where a library reads a guest (`parsed`), each violation is
+/// placed in the cross part (`rr_found_through`) and is its output too, handed on as its input: read where the run
+/// binds it, as a cold run gives it.
+#[test]
+fn a_warm_run_with_nothing_to_run_gives_the_per_file_outputs() {
+    let c = Corpus::of("nothing-to-run", PROGRAM, FILES, "named");
+    c.write("e.py", "def check(x):\n    assert x\n    return x\n");
+    c.write("pkg/__init__.py", "");
+    c.write("pkg/loader.py", "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n");
+    c.write("main.py", "from pkg.loader import load\nload(b'x')\n");
+    // As the CLI reads a pack's policy files.
+    let rules = crate::source_tree::native().join("../docs/rule-syntax/packs/python");
+    let paths: Vec<PathBuf> = ["bandit-b101-assert-used.rerail", "bandit-b301-pickle.rerail", "ruff-pyi019-custom-type-var-for-self.rerail"].iter().map(|r| rules.join(r)).collect();
+    let programs = crate::code_rule_dsl::logic::settings::program_texts_read(&paths.iter().map(PathBuf::as_path).collect::<Vec<_>>(), vec![None; paths.len()]).unwrap();
+    let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
+    // Every output of a run over the store `store`, as `to_csv` writes them: by file, its lines sorted.
+    let run = |id: &str, store: &str| -> std::collections::BTreeMap<String, Vec<String>> {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(c.dir.join(store)));
+        let out = c.dir.join(id);
+        let report = super::run_all(&texts, &c.dir.join("src"), &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        if id == "warm" {
+            assert_eq!(report.cross_kept.map(|(ran, _)| ran), Some(0), "no cross-file stratum runs: {:?}", report.cross_kept);
+        }
+        let csv = c.dir.join(format!("{id}-csv"));
+        crate::code_rule_dsl::logic::plan::output::to_csv(&out, &csv).unwrap();
+        std::fs::read_dir(&csv).unwrap().map(|e| {
+            let e = e.unwrap();
+            let mut lines: Vec<String> = std::fs::read_to_string(e.path()).unwrap().lines().map(str::to_owned).collect();
+            lines.sort();
+            (e.file_name().to_string_lossy().into_owned(), lines)
+        }).collect()
+    };
+    let cold = run("cold", "kept.sqlite");
+    let warm = run("warm", "kept.sqlite");
+    let fresh = run("fresh", "fresh.sqlite");
+    assert!(fresh.iter().any(|(rel, lines)| rel.starts_with("p0_B101") && !lines.is_empty()), "B101 finds the assert: {fresh:?}");
+    assert_eq!(cold, fresh, "the cold run's outputs");
+    assert_eq!(warm, fresh, "the warm run's outputs are a cold run's");
 }
 
 /// Phase 1's run kept across processes (t33 K4, `phases::frame`): a warm run over unchanged files takes its frame,

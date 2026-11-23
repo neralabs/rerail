@@ -64,8 +64,6 @@ pub struct CorpusDocs {
     pub from_tape: usize,
     /// The memo hits' documents whose file was parsed again (the store kept no tape of it).
     pub parsed: usize,
-    /// The documents a session held from its last run, unchanged.
-    pub held: usize,
     /// The batch's documents whose rows were made (`Batch::documents_made`), and all it holds.
     pub made: usize,
     pub documents: usize,
@@ -528,7 +526,7 @@ pub fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<c
 /// (`combined::lookup_version`), or the combine's tail run on the version (`combine_tail`) and its image kept as the
 /// entry (`combined::record_version`).
 pub fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
-    let store = if cfg!(feature = "tape-cache") && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
+    let store = if keeps_store() && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
         phases::reading_store()
     } else {
         None
@@ -1755,6 +1753,17 @@ impl ThreadStore {
         crate::code_rule_dsl::logic::profile::with_bound(|s: &SelectedStore| f(s.0.as_ref()))
     }
 
+    /// The selection bound now, to bind again later (`again`): a session's full run is its caller's, on the store
+    /// selected outside the session.
+    pub fn current() -> SelectedStore {
+        crate::code_rule_dsl::logic::profile::bound::<SelectedStore>()
+    }
+
+    /// Binds `selected` (`current`'s) until the guard is dropped.
+    pub fn again(selected: SelectedStore) -> Self {
+        Self { _bound: crate::code_rule_dsl::logic::profile::bind(selected) }
+    }
+
     pub fn owner(root: &Path) -> Option<crate::content_store::analysis_scope::AnalysisOwner> {
         Self::with(|store| {
             let (expected, owner) = store?.ownership.as_ref()?;
@@ -1769,6 +1778,14 @@ impl ThreadStore {
     pub fn git_reads() -> Option<Arc<crate::git_workspace::snapshot::InventoryReads>> {
         Self::with(|store| store.map(|selected| Arc::clone(&selected.git_reads)))
     }
+}
+
+/// Whether this thread's runs keep a store: the build keeps the tape cache (`tape-cache`), or the caller selected a
+/// store for its runs (`ThreadStore::select`): a session's (decision 0063), whose runs are its store's in every
+/// build (t33 step 3). A build without the feature (the browser's) keeps no store of its own, and a session's
+/// there as the CLI's.
+pub fn keeps_store() -> bool {
+    cfg!(feature = "tape-cache") || ThreadStore::with(|store| store.is_some_and(|store| store.path.is_some()))
 }
 
 /// Run with an explicitly selected cache on this thread.
@@ -1846,13 +1863,27 @@ pub fn default_store() -> &'static std::path::PathBuf {
 
 /// A store of this engine build's in `$TMPDIR/<dir>/`: `<build>.sqlite`, or `<build>-<key>.sqlite` for one `key` (a
 /// project) of several. Another build's files there, unused for a day, are removed (with their `-wal`, `-shm` and
-/// lock files, which start with the same name), unless a live process owns their store (`owner::remove_unowned`).
+/// lock files, which start with the same name), unless a live process owns their store (`owner::remove_unowned`):
+/// looked for when this build's store there is new. Another build's files go stale when a new build comes, so its
+/// first store sweeps them; each run looked at every file there (510 in the images' directory, 18 ms a run).
 pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
     use std::hash::{Hash, Hasher};
     let dir = std::env::temp_dir().join(dir);
-    let _ = crate::content_store::prepare_cache_directory(&dir);
     let build = crate::code_rule_dsl::build_ids::engine();
     let build = &build[..build.len().min(16)];
+    let path = match key {
+        // The hasher's keys are fixed: within a build, a project's name is the same in every process.
+        Some(key) => {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut h);
+            dir.join(format!("{build}-{:016x}.sqlite", h.finish()))
+        }
+        None => dir.join(format!("{build}.sqlite")),
+    };
+    if path.exists() {
+        return path;
+    }
+    let _ = crate::content_store::prepare_cache_directory(&dir);
     let day = std::time::Duration::from_secs(24 * 3600);
     let old: Vec<String> = std::fs::read_dir(&dir)
         .into_iter()
@@ -1863,15 +1894,7 @@ pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
         .filter(|name| !name.starts_with(build))
         .collect();
     owner::remove_unowned(&dir, &old);
-    match key {
-        // The hasher's keys are fixed: within a build, a project's name is the same in every process.
-        Some(key) => {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            key.hash(&mut h);
-            dir.join(format!("{build}-{:016x}.sqlite", h.finish()))
-        }
-        None => dir.join(format!("{build}.sqlite")),
-    }
+    path
 }
 
 /// The process's store, for what asks off a test's thread (a test's is its own, `test_store`): the machine's is
@@ -2205,7 +2228,7 @@ pub fn run_fact_image(source: &str, root: &Path, options: &serde_json::Value) ->
 /// `run_fact_image`, with the memo plans its run (and the phases it ran) recorded manifests of: what a later run that
 /// reuses its image in memory (a Git view's inventory) owns again for its own scope (`own_recorded_manifests`).
 pub fn run_fact_image_planned(source: &str, root: &Path, options: &serde_json::Value) -> Result<(Vec<u8>, Vector<[u8; 32]>)> {
-    let store = if cfg!(feature = "tape-cache") { phases::reading_store() } else { None };
+    let store = if keeps_store() { phases::reading_store() } else { None };
     let _reading = store.as_ref().map(|store| store.hold_collection()).transpose()?;
     let (program, program_entry) = combined::embedded_program(source, store.as_deref())?;
     let program_entry = program_entry.as_ref();

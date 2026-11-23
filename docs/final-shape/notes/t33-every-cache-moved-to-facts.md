@@ -4,8 +4,9 @@ Status (2026-11-22): K1, K2 and K3 built; K4 built for the cross-file part, the 
 the phases, and the records it keeps beside them are kept facts (step 1, below); what is left of K4 is an unchanged
 run's fixed cost ("K4: what is left", below). The whole-run cutoff is gone (2026-11-23): its place is the run's
 frame, as phase 1's (`reuse.rs`), checked by `changes_of` as phase 1's is; the frames go in turn once an unchanged
-run costs what a framed one does. Steps 2, 4, 5, 7 and 8 done; 3 and 6
-mostly. It takes decision 0104's eight steps and says, for each
+run costs what a framed one does. Steps 2 to 8 done (step 3's last, the session, 2026-11-23: a session is its
+store; step 6's last, the session's plans and derived values with it): `logic::facts_only` lists no table and no map
+as not yet facts. It takes decision 0104's eight steps and says, for each
 table and map that 0104's checks (`logic::facts_only`) list as "not yet facts", what replaces it.
 
 ## A native step is a relation (built)
@@ -57,7 +58,7 @@ checks, and what needs a decision.
 | **K1. One stored form for facts** | Every relation of every fact space, stored as frames per (space, relation, partition). The partition is a document key, a granule, or the whole relation | `kept_strata` (whole relations, column varints), the memo's frames per document, `rel_*` over frames (bd12fc52d) | one table for all of them, written only by 0102's writer |
 | **K2. Leaf facts** | What the observer sees, as base relations: `file(path, digest)`, `dir(path, listing)`, `path_kind(path, k)`, `env(k, v)`, `engine(build)`, `grammar(g, version)` | the observer (`content_store/observe.rs`), its stat cache in `<store>.files` | the answers as relations; the stat cache written as their rows |
 | **K3. Answers** | A request relation answered by a native step, its rows entering as facts | `parse_of`, `splice_of`, `dir_entry`, `file_line`, `load` (0065 §2a, 0058 §4) | one registry (`.answer req -> rel`, 0103's pattern); results that are objects (a tape, an automaton) as a value naming the object |
-| **K4. Load and maintain across processes** | A run binds the stored relations as its old state, takes the delta of its base relations against the stored ones, and maintains the rest by counting (0090), or by DRed or levels for recursion | in a session, from memory (0077, 0090); across processes, only `kept_strata`'s clean strata | the session path started from K1; skipping strata whose deltas are empty (0101 §1) |
+| **K4. Load and maintain across processes** | A run binds the stored relations as its old state, takes the delta of its base relations against the stored ones, and maintains the rest by counting (0090), or by DRed or levels for recursion | a session's runs are its store's (2026-11-23): one path, from K1, in a session or across processes | the session path started from K1; skipping strata whose deltas are empty (0101 §1) |
 
 With K4, the whole-run cutoff is not a mechanism of its own: when every leaf delta is empty, no stratum runs,
 and every output is as stored.
@@ -171,14 +172,14 @@ removed with nothing in its place but K1–K4.
 | Today | Key and check today | Becomes |
 |---|---|---|
 | `facts_results`, `facts_plan_sets`, `facts_completions` (the per-file memo, 0052) | content, path, plan digest (build, grammar, node-id scheme, program, options, facts) | the per-file part's relations in K1, partitioned by document. A document whose base relations have no delta is not run (K4 over a per-document partition). `plan_digest`, `with_options` and `with_rows` go; `doc_keys` stays (it is identity). **Done** (2026-11-22). The tables were a store of opaque entries with six users, not one cache. A kept partition is held by a source and a plan (`kept_facts::HOLDER`), so it dies when the memo row it replaced would have; `plan::kept_entry` keeps an entry of program facts that way, a relation's rows of one shape a kept relation. A held partition is put whole: the store's writer drops what else it kept, so a run writes an entry inside its waves with no read of the store. Moved: the prepared pointer (which had lost its collection when step 2 moved it), the slice's content memo (`slice/memo.rs`), and `combined.rs`, `preparation/parts.rs` and `choices.rs`. Their entries are read on the run's side, never in the writer's record steps (where a kept read would wait on the writer itself): `name_program` reads the entry before it records, and its record carries the digests its step names; the other steps only make the holder's source. `facts/memo.rs`, the workspace pipeline's per-file memo, had no caller outside its tests and went. The three tables went, with the sweep of the corpus memo's retired schemas (`corpus_swept`) |
-| the projection spike (a075764a3) | (tape, relation) | the base relations as derived relations of `doc_tape`, in K1 per document. After RER-131 renumbers the nodes |
+| the projection spike (a075764a3) | (tape, relation) | the base relations as derived relations of `doc_tape`, in K1 per document. After RER-131 renumbers the nodes. Today a measurement only (`stored_spike.rs`); the base relations are read off the corpus batch's documents (decision 0458), kept by the documents' table |
 | tapes: `source_objects`, `tape_objects` (kept: they are objects) | (content, tag, grammar version, format) | `doc_key` and `doc_tape` as in the Intro; the object tables hold the bytes the answer's value names |
-| `guests.rs` `KEPT` | (text, grammar) | `parse_of`'s answer rows (K3) |
-| `cross_rows`, `cross_blocks`, `cross_components` (0076) | an import component's file bytes | goes: cross-file relations in K1, partitioned by the document of their first location column, maintained by K4. 0092 §6: keys of bytes have no cutoff |
+| `guests.rs` `KEPT` | (text, grammar) | `parse_of`'s answer rows (K3). **Done**: a guest's parse is kept for its run only (`Parses`, a run's value), its tape and source in the store with the file's, found by its text's digest among the last runs' tapes (decision 0431 R6) |
+| `cross_rows`, `cross_blocks`, `cross_components` (0076) | an import component's file bytes | goes: cross-file relations in K1, partitioned by the document of their first location column, maintained by K4. 0092 §6: keys of bytes have no cutoff. **Gone** (decision 0450 §3, 2026-11-19): the schema drops them; the cross part's relations are kept frames (K1, step 4) |
 | `slice_rules`, `slice_document`, `slice_match`, `slice_span`, `slice_fresh` | the slice's rules and documents | **built** (2026-11-21, `slice/kept.rs`): relations of the scope's space in K1, a document's rows its own partition. A run writes only the partitions of the documents it evaluated, reused or lost; the wave reads the others where they lie, through `kept_facts` (a temp view, no copy). The SQL column statistics of the two tables went with them. `slice_fresh` is the run's scratch |
-| `corpus_stats` | a path's stat to its source | goes: K2's `file_stat` |
-| `corpus_plans`, `corpus_plan_relations`, `corpus_manifests`, `corpus_manifest_plans`, `corpus_roots`, `corpus_live`, `corpus_state`, `corpus_decided`, `corpus_swept` (0053) | each run's manifest of what it used | collection is reachability: an object or a frame is live while a stored fact names it. How long an old state is kept is a `.cache` directive on the relation |
-| `session.rs` `SESSION` | the session's memo, cross part, phased exports, written outputs, statistics | the resident copy of K1's relations, written behind by 0102 |
+| `corpus_stats` | a path's stat to its source | goes: K2's `file_stat`. **Gone** (2026-11-21, K2) |
+| `corpus_plans`, `corpus_plan_relations`, `corpus_manifests`, `corpus_manifest_plans`, `corpus_roots`, `corpus_live`, `corpus_state`, `corpus_decided`, `corpus_swept` (0053) | each run's manifest of what it used | **Moved** (2026-11-23): kept facts of the store's corpus space, read by SQL through virtual tables of their names; `corpus_swept` is the state's `swept`. Next: collection is reachability: an object or a frame is live while a stored fact names it. How long an old state is kept is a `.cache` directive on the relation |
+| `session.rs` `SESSION` | the session's memo, cross part, phased exports, written outputs, statistics | **Done** (2026-11-23): a session is its store and its connections, nothing else. `Handle::bind` selects its store (`session.sqlite`) for its runs, which are then the store's as a new process's are: each file's memo entry, the cross part's relations and statistics and the corpus batch's documents' table are kept facts there, read in place through the frames (`kept_read::Bound`), and an edit maintains the cross part from its kept rows (K4). Gone: the in-memory memo (`Memo::Held`, `HeldEntries`) and the input deltas read from its entries, `HeldCorpus`, the written stacks (the output stack is read from its file, `session::Stack::read`), the statistics and the counted exports (`exports::Counted`, the keeper's `Keep`). A build without `tape-cache` (the browser's) keeps a session's store too (`keeps_store`). `InSession` is state (facts_only) |
 
 ### Step 4: the kept strata
 
@@ -205,7 +206,7 @@ rows. The constants' rows (`constant_rows`, step 1) stay in the same `<store>.ph
 | Today | Key and check today | Becomes |
 |---|---|---|
 | `stat_blob`, `fact_stats`, `fact_value_stats`, `kind_size`, `edge_freq`, `tape_kind_counts`, `term_freq`, `term_kind_freq`, `term_node_freq`, `term_coverage`, own counts (a name binding) | one blob per plan; patched by its own delta code (0096) | aggregate relations over K1's relations (`count` per relation, column and document), maintained by counting like any aggregate. `fact_stats`, `fact_value_stats`: **gone** (2026-11-22). Nothing wrote them but the tests of `stats::ingest::merge_facts` and `stats::plans::write_stat1` (no fact relation is a SQL table with a document column), and the slice wave's row estimates, of which the demand relations read one, the terminal matches'. That one is a kept fact (`content_store/estimates.rs`, `terminal_estimate`), read before the drive's transaction; the merge, `write_stat1`, upkeep's exclusion of the tables they named, and the tables went. `kind_size`, `edge_freq`, `tape_kind_counts` and the `term_*` tables are the prefilter's, written in the pass that builds its sets (`content_store/prefilter.rs`) and read by it and the vocabulary: they move with step 7. `stat_blob`: **gone** (2026-11-22). The corpus keeper (`keptstats::Keeper`) is kept facts of its own space, a partition a memo plan: `keeper_build`, `keeper_name`, `keeper_doc`, `keeper_path`, `keeper_stats` (`RelStats` bytes, as `retain::put_base_stats` keeps a base relation's), `keeper_exact` (the symbol columns' exact counts, an atom column the kept writer maps, so `Keeper::map_symbols` went), `keeper_holder` and `keeper_id`; the plan the last run kept is `last_program`, of the same space |
-| `compiled_plans`, `compiled_plan_reads`, `plan.rs` `PLANS`, `SESSION_PLANS`, `KEPT`, `derived.rs` `MEMO`, `SESSION_MEMO` | a plan key; statistic intervals | a plan is an answer keyed by its stratum's definition and the statistics' intervals it is valid over (03 §6 already records those intervals). `compiled_plans`, `compiled_plan_reads`: **built** (2026-11-22, `stats/plans.rs`): a kept space, a partition a plan (`compiled_plan`, `compiled_plan_bytes`, `compiled_plan_read`); read from a space opened before a candidate transaction, written after it |
+| `compiled_plans`, `compiled_plan_reads`, `plan.rs` `PLANS`, `SESSION_PLANS`, `KEPT`, `derived.rs` `MEMO`, `SESSION_MEMO` | a plan key; statistic intervals | a plan is an answer keyed by its stratum's definition and the statistics' intervals it is valid over (03 §6 already records those intervals). `compiled_plans`, `compiled_plan_reads`: **built** (2026-11-22, `stats/plans.rs`): a kept space, a partition a plan (`compiled_plan`, `compiled_plan_bytes`, `compiled_plan_read`); read from a space opened before a candidate transaction, written after it. `SESSION_PLANS`, `SESSION_MEMO`: **gone** (2026-11-23), with the session's other state (step 3): a session's runs read the store's plans and derive their own values, as a new process's do. The run's own (`KeptPlans`, `Memoized`, `ObservedAt`) are made empty at its start and go at its end: state (facts_only), so `NOT_YET_MAPS` is empty |
 | `plan_feedback`, `keeps.rs` `OBSERVED`, `table.rs` `PAID`, `accel_models` | what a run observed | facts the run produces about itself, stored in K1. `plan_feedback`: **built** (2026-11-22), a relation of the compiled plans' space. `accel_models`: **built** (2026-11-21, `content_store/accel_models.rs`): `accel_model(key, archive)` in the store's models' space, a partition a key; the archive a source of the store by its SHA-256, pinned with no end as the table kept it. `models` (the cost model learned per machine): **built** (2026-11-22, `logic/costs/models.rs`): `cost_model` of the statistics' store's models' space (`<costs.sqlite>.facts`, the file's own chain), a partition a machine, its words the model's bytes in order; the table is dropped when the file is opened |
 
 ### Step 7: text patterns and indexes
@@ -319,6 +320,12 @@ Decided (user, 2026-11-21):
    `corpus_*` tables are collection's bookkeeping, not caches (kept facts' own collection reads `corpus_plans`), and
    stay; `run_record` goes with K4, not as a move of its own.
 
+   Corrected 2026-11-23: the `corpus_*` tables moved after all, in stages (the user's order): both forms written, the
+   readers switched to the kept form, then the writers, and the eight tables retired. They are now the store's corpus
+   space (`corpus_runs::kept`, one relation a table), written through `corpus_write`, which puts only the partitions
+   that differ. An old store's rows become kept facts once, when it is opened. SQL keeps the tables' names and
+   columns as virtual tables over the space (`prefilter/vtab.rs`), so `NOT_YET_TABLES` is empty.
+
    Corrected 2026-11-22: K4 is this branch's (no other is building it). The table `run_record` held more than the
    cutoff's records (the Git files' listing, the cone's rounds, the Git functors' answers, the constants), K4's own
    bookkeeping among them, so it moved to kept facts whole; the cutoff's own record goes with the cutoff.
@@ -370,6 +377,33 @@ texts 53 (the cutoff's run pays them) and the run's call 288; within it `run_obs
 | The kept plans (`Durable::start`) | 8 | as above |
 | The constants (`constants::fold`) | 7 | |
 | The rest | about 160 | diffuse: the combine's name (6), the projection (5), the kept part written (5), the strata kept (4), the unfillable pass (4), … |
+
+2026-11-23, the same 30 files, the profiling build, in instructions (load moves CPU time, not them): the framed run
+0.82–0.86 G, the unframed 2.84 G to 2.67 G. Cut:
+
+- another build's stores swept only when this build's store is new (`build_store` statted 510 files a call);
+- the kept statistics read where the store keeps them (keeper format 3): each relation's header and every column's
+  exact counts and watched values kept apart from its statistics' bytes, so an unchanged run decodes none of them
+  (435 decoded before: an empty watched list read as "watched values here", and the columns that are not symbols kept
+  their exact maps in the bytes), and the bytes are read in place (`statkeep::KeptSource`), not copied out;
+- kept rows decoded a chunk at a time (`ColDec::fill`): a run-encoded column was searched for its run at each cell.
+
+What the unframed run does past the frame's point, all of it with no stratum to run ("0 of 1062 strata run; inputs
+changed: none"): the prepared program found and its split assembled again (`prepared_of`, `assemble`, `crossing`),
+the kept plans and their notes read through values, the cross part's program normalized and planned (`run_native_inputs`
+reaches no stratum), the kept part bound from its frames (345 relations), its changes put, the constants folded, the
+combine named. Each is a few percent; together they are the gap. The way to close it is the one above: each made where
+a stratum first reads it, so a run that reaches none makes none of them.
+
+Cut since (2.67 G to 2.57 G): the cross part with nothing to run (no stratum the cut runs, none derived, no input
+changed) is not normalized, planned or walked. Its outputs are read where they are: a clean one from the kept part,
+one that is an input (a pack's violations, handed on through `rr_found_through`) where the run binds it
+(`plan::decode_bound`). A run whose outputs include any other (a view of an input, or any output of a run with no
+kept part, as the Git inventory's) still runs. The outputs of the warm runs, framed and not, are the cold run's (661
+relations). Next in line: the kept entries (`kept_entry::Entries::read`, seven users: the prepared pointer, the kept
+plans and choices, phase 0's graphs, the combine, phase frames, the parts) decode every row into values before a
+reader reads them, a copy decision 0353 forbids, and the largest single read left on the warm path; each reader
+reads its relations in place, as the kept plans' numbers already do (`get_numbers`).
 
 Phase 0's graph images (22 ms of opens: some 110 segment files, a segment a single-source record) are written as
 one record a call now; most calls keep one text's graph, so the small segments stay until the store's writer places

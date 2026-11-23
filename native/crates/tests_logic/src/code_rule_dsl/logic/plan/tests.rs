@@ -311,7 +311,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows_child() {
     for modes in ["", "program"] {
         // The probes' counts are the run's (decision 0442): one run holds them.
         let _run = super::super::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-        let _plans = KeepPlans::start(None);
+        let _plans = KeepPlans::start();
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
@@ -2267,7 +2267,7 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     assert!(work<10_000.0, "price misses as well as hits: {work}");
 
     // A cached live plan must notice a new value distribution even when every relation's size is unchanged.
-    let _plans=KeepPlans::start(None);
+    let _plans=KeepPlans::start();
     model.ndv.insert(("delta",1),1.0);
     let ((before,_,_),_)=model.plan_rule_live(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),Some(2)).unwrap();
     let before:Vec<_>=before.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
@@ -2512,7 +2512,7 @@ fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencie
     model.stats.fan.insert(("walk",2),40000.0);
     model.stats.nodes=300000.0;
     let r = 0usize;
-    let _plans=KeepPlans::start(None);
+    let _plans=KeepPlans::start();
     // Unknown delta distribution first, then an exact zero for the constant, at identical row counts.
     let ((_,before,_),_) = model.plan_rule_reused(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),None).unwrap();
     model.stats.memo.extend("changed",&super::sql_col("changed",1),[(Constant::Int(1),0)]);
@@ -2546,7 +2546,7 @@ fn a_relation_empty_when_planned_does_not_make_a_cross_product_free() {
         }
     }
     let r = 0usize;
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     let explain = explaining(true);
     let (_, explained) = model.plan_rule_reused(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
     drop(explain);
@@ -2582,7 +2582,7 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
     };
     model.stats.nodes = 300_000.0;
     let r = 0usize;
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     let lead = |order: &[Step]| rel_at(&p, r, order[0].at);
     // Planned before the guest round: about no fragment yet (production's estimate was 0.01 rows), and the line
     // ran over none.
@@ -2615,7 +2615,7 @@ fn a_kept_plan_whose_line_ran_far_over_its_price_is_not_reused_at_it() {
         }
     }
     model.stats.nodes = 1_000_000.0;
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     let placed = body::Placed::whole(p.clone());
     let fields = placed.fields().unwrap();
     let own = body::nth(&p, 0);
@@ -2650,7 +2650,7 @@ fn a_recheck_is_priced_with_its_head_bound_and_kept_apart() {
     model.stats.nodes = 1_000_000.0;
     let r = p.rule(crate::code_rule_dsl::logic::program_image::RuleId(0)).unwrap();
     let lits: Vec<_> = r.body().collect();
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     let placed = body::Placed::whole(p.clone());
     let fields = placed.fields().unwrap();
     let own = body::nth(&p, 0);
@@ -3252,7 +3252,7 @@ fn a_join_shape_directive_holds_a_join_back_in_its_rule() {
             p = renamed_head(&p, h);
         }
         let model = model_for(&p, sized);
-        let _plans = KeepPlans::start(None);
+        let _plans = KeepPlans::start();
         let r = 0usize;
         let (order, _, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), first).unwrap();
         order.iter().filter_map(|s| rel_at(&p, r, s.at)).collect()
@@ -3283,7 +3283,7 @@ fn a_join_shape_directive_holds_a_join_back_in_its_rule() {
         {
             let p = parse_version(&shaped).unwrap();
             let model = model_for(&p, &sizes);
-            let _plans = KeepPlans::start(None);
+            let _plans = KeepPlans::start();
             let r = 0usize;
             let (_, x) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
             assert_eq!(x.map(|x| x.shaped), Some(vec!["retparam bound f".to_owned()]));
@@ -3670,7 +3670,7 @@ fn a_run_takes_a_prepared_plan_without_searching() {
     // Another line (its delta) is not held: searched.
     assert!(model.plan_rule(f, &b, Some(0)).is_ok());
     // Found heavy on its prepared order, in a run: searched from then on, once (decision 0361 step 5 with 0203).
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     let line = crate::code_rule_dsl::logic::plan::line_key(&b, None);
     // Horribly slow past 8 times its prepared price: 3 rows of work a node at 2,000 nodes is 6,000; 48,000 the line.
     assert!(!model.prepared_horribly_slow(&b, &[None], &odd, 40_000.0));
@@ -3896,7 +3896,7 @@ fn a_later_run_reads_the_prepared_plans_an_earlier_one_made() {
     // Each build is a new version of the same program, parsed again: the later run's is not the earlier one's.
     let build = prepared_program;
     let held = {
-        let _plans = KeepPlans::start(None);
+        let _plans = KeepPlans::start();
         assert!(super::prepared_to_store().is_none(), "none made yet");
         let v = build();
         let made = prepared::Prepared::of_version(&v);
@@ -3907,7 +3907,7 @@ fn a_later_run_reads_the_prepared_plans_an_earlier_one_made() {
     };
     // As the store gives it back: through its rows.
     let back = prepared::of_store_rows(&prepared::store_rows(&held));
-    let _plans = KeepPlans::start(None);
+    let _plans = KeepPlans::start();
     super::take_stored_prepared(back);
     let v = build();
     let read = prepared::Prepared::of_version(&v);

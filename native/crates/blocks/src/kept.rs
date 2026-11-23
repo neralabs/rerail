@@ -122,15 +122,25 @@ impl<'b> Kept<'b> {
     }
 
     /// Every row in canonical order, handed to `f` one at a time: each column resolved for reads once (`Col::dec`),
-    /// not per cell as `row` resolves it, and the row read into one buffer the rows share.
+    /// not per cell as `row` resolves it, and decoded a chunk of rows at a time as it goes (`ColDec::fill`, a run's
+    /// value once per run), the row read into one buffer the rows share.
     pub fn each_row(&self, mut f: impl FnMut(&[i64])) {
+        use crate::packed::FILL;
         let cols: Vec<crate::packed::ColDec<'_>> = (0..self.rows.arity as usize).map(|c| self.rows.col(c).dec()).collect();
-        let mut row = vec![0i64; cols.len()];
-        for i in 0..self.rows.len() {
-            for (v, c) in row.iter_mut().zip(&cols) {
-                *v = c.get(i);
+        let (k, n) = (cols.len(), self.rows.len());
+        let mut chunk = vec![0i64; k * FILL];
+        let mut row = vec![0i64; k];
+        for at in (0..n).step_by(FILL) {
+            let m = (n - at).min(FILL);
+            for (c, col) in cols.iter().enumerate() {
+                col.fill(at, &mut chunk[c * FILL..c * FILL + m]);
             }
-            f(&row);
+            for i in 0..m {
+                for (c, v) in row.iter_mut().enumerate() {
+                    *v = chunk[c * FILL + i];
+                }
+                f(&row);
+            }
         }
     }
 }

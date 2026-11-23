@@ -44,32 +44,13 @@ pub(in crate::code_rule_dsl) fn share() -> Option<Shared> {
     crate::code_rule_dsl::logic::profile::bound::<Memoized>().0
 }
 
-/// Derived values kept for the run while held; for a session's run (`across`, the session's generation), the values
-/// its earlier runs kept, put back at the end (decision 0090 step 5).
-pub struct Keep(Option<u64>, Option<crate::code_rule_dsl::logic::profile::Bound>);
-
-thread_local! {
-    /// A session's derived values between its runs, with the session's generation.
-    static SESSION_MEMO: RefCell<Option<(u64, Memo)>> = const { RefCell::new(None) };
-}
+/// Derived values kept for the run while held, none at its start: a session's run derives its own, as a new
+/// process's does (t33 step 3).
+pub struct Keep(#[allow(dead_code)] crate::code_rule_dsl::logic::profile::Bound);
 
 impl Keep {
-    pub fn start(across: Option<u64>) -> Self {
-        let kept = across.and_then(|g| SESSION_MEMO.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, m)| m)));
-        let memo = crate::code_rule_dsl::logic::profile::bind(Memoized(Some(Arc::new(parking_lot::Mutex::new(kept.unwrap_or_else(|| Memo { keys: (RandomState::default(), RandomState::default()), values: FxHashMap::default() }))))));
-        Keep(across, Some(memo))
-    }
-}
-
-impl Drop for Keep {
-    fn drop(&mut self) {
-        // Every job that entered it has ended: the run's thread holds the last handle.
-        let memo = share();
-        drop(self.1.take());
-        let memo = memo.map(|m| Arc::try_unwrap(m).map_or_else(|m| std::mem::replace(&mut *m.lock(), Memo { keys: (RandomState::default(), RandomState::default()), values: FxHashMap::default() }), parking_lot::Mutex::into_inner));
-        if let (Some(g), Some(memo)) = (self.0, memo) {
-            SESSION_MEMO.with(|s| *s.borrow_mut() = Some((g, memo)));
-        }
+    pub fn start() -> Self {
+        Keep(crate::code_rule_dsl::logic::profile::bind(Memoized(Some(Arc::new(parking_lot::Mutex::new(Memo { keys: (RandomState::default(), RandomState::default()), values: FxHashMap::default() }))))))
     }
 }
 
@@ -169,7 +150,7 @@ pub mod tests {
         assert_eq!(get("a"), "<a>");
         assert_eq!(get("a"), "<a>");
         assert_eq!(made.get(), 2);
-        let _keep = Keep::start(None);
+        let _keep = Keep::start();
         assert_eq!(get("a"), "<a>");
         assert_eq!(get("a"), "<a>");
         assert_eq!(made.get(), 3);

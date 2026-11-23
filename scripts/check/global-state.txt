@@ -187,7 +187,6 @@ native/crates/lang_python/src/code_rule_dsl/suppress/nosec.rs::NOSEC_COMMENT	sta
 native/crates/lang_python/src/code_rule_dsl/suppress/nosec.rs::NOSEC_COMMENT_TESTS	stays	a regex of a literal
 native/crates/lang_python/src/lib.rs::LOAD	stays	code registered at load (an init-array entry)
 native/crates/logic/src/code_rule_dsl/logic.rs::LOAD	stays	code registered at load
-native/crates/logic/src/code_rule_dsl/logic/plan/corpus/session.rs::GENERATION	stays	an id counter: append-only
 native/crates/logic_core/src/code_rule_dsl/logic/costs/join_steps.rs::INSTALL	stays	code a crate above registers at load (the planner's batch pricer over a trained join model)
 native/crates/matcher/src/code_rule_dsl/matcher/format_args.rs::PREPARERS	stays	code registered at load
 native/crates/matcher/src/code_rule_dsl/matcher/gap.rs::GAPS_MADE	stays	a test's counter (test-hooks)

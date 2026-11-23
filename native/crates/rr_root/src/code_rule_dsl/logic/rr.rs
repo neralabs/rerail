@@ -866,7 +866,7 @@ fn images_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> 
 }
 
 pub fn image_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
-    if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { held_image_store(images_store) } else { None }
+    if super::plan::corpus::keeps_store() && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { held_image_store(images_store) } else { None }
 }
 
 /// The image store a run opened, held while the run's call runs (`HoldImages`, one of the run's own values, decision
@@ -1817,7 +1817,7 @@ pub fn text_header(src: &str) -> Result<std::sync::Arc<super::program_image::Ver
 fn kept_header(src: &str) -> ([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)>) {
     use super::plan::corpus::{combined, phases};
     let key = combined::text_header_key(src);
-    let store = (cfg!(feature = "tape-cache") && !super::plan::corpus::phase0::active()).then(phases::reading_store).flatten();
+    let store = (super::plan::corpus::keeps_store() && !super::plan::corpus::phase0::active()).then(phases::reading_store).flatten();
     let found = store.as_ref().and_then(|store| {
         let _held = store.hold_collection().ok()?;
         store.settle(&combined::queued(&key));
@@ -1860,7 +1860,7 @@ fn retain_current_read(path: &Path, library: &Path, files: &[LibraryFile], progr
 
 fn rule_file_store(path: &Path, library: &Path, sha: &[u8; 32]) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>)> {
     use super::plan::corpus::{combined, phases};
-    if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() { return None; }
+    if !super::plan::corpus::keeps_store() || super::plan::corpus::phase0::active() { return None; }
     Some((combined::rule_file_key(path, library, sha), crate::code_rule_dsl::prof::time("rr.inspect.store", phases::reading_store)))
 }
 

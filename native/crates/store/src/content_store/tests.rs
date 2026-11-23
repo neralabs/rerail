@@ -131,7 +131,9 @@ fn sparse_wal_enforces_real_capacity_states_and_write_rejection() {
     ));
 }
 
-/// `SCAN` steps of `sql`'s query plan that run once per outer row of a correlated subquery.
+/// `SCAN` steps of `sql`'s query plan that run once per outer row of a correlated subquery. A virtual table's step
+/// with an index of its keys (`VIRTUAL TABLE INDEX n:`, `n` its keys' bits, not 0) reads the rows of its key, as an
+/// index's search does: a kept relation's partition (`prefilter::vtab`), no scan.
 fn correlated_scans(connection: &Connection, sql: &str) -> Vec<String> {
     let mut statement = connection
         .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
@@ -156,7 +158,9 @@ fn correlated_scans(connection: &Connection, sql: &str) -> Vec<String> {
     plan.iter()
         .filter(|(_, parent, detail)| {
             let mut ancestor = *parent;
+            let keyed = detail.split_once("VIRTUAL TABLE INDEX ").is_some_and(|(_, n)| !n.starts_with("0:"));
             detail.starts_with("SCAN ")
+                && !keyed
                 && std::iter::from_fn(|| {
                     let (parent, detail) = steps.get(&ancestor)?;
                     ancestor = *parent;

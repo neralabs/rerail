@@ -54,22 +54,16 @@ pub mod issue;
 pub mod source_rows;
 pub mod sql_kernel;
 
-/// Plans kept across chunks on this thread while held (a corpus run), none kept at the start; for a session's run
-/// (`across`, the session's generation), the plans its earlier runs kept, put back at the end (decision 0090 step 5).
-pub struct KeepPlans(Option<u64>, Option<rerail_prof::code_rule_dsl::logic::profile::Bound>);
-
-thread_local! {
-    /// A session's plans between its runs, with the session's generation: another session's are not taken.
-    static SESSION_PLANS: std::cell::RefCell<Option<(u64, rustc_hash::FxHashMap<PlanKey, Kept>, rustc_hash::FxHashMap<u128, Arc<[Step]>>)>> = const { std::cell::RefCell::new(None) };
-}
+/// Plans kept across chunks on this thread while held (a corpus run), none kept at the start: a run's plans from
+/// earlier runs are the store's (`compiled_plans`' kept facts), a session's runs' as a new process's (t33 step 3).
+pub struct KeepPlans(Option<rerail_prof::code_rule_dsl::logic::profile::Bound>);
 
 impl KeepPlans {
-    pub fn start(across: Option<u64>) -> Self {
+    pub fn start() -> Self {
         compose::clear();
-        let (kept, orders) = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _, _)| *k == g).map(|(_, p, o)| (p, o)))).unwrap_or_default();
-        let plans = rerail_prof::code_rule_dsl::logic::profile::bind(KeptPlans(Some(Box::new(SharedPlans { run: Arc::new(RunPlans::new(kept, orders, Default::default())), view: None }))));
+        let plans = rerail_prof::code_rule_dsl::logic::profile::bind(KeptPlans(Some(Box::new(SharedPlans { run: Arc::new(RunPlans::new(Default::default(), Default::default(), Default::default())), view: None }))));
         keeps::observing(true);
-        KeepPlans(across, Some(plans))
+        KeepPlans(Some(plans))
     }
 }
 
@@ -90,23 +84,13 @@ impl Drop for KeepPlans {
             eprintln!("layout facts: {} probe steps checked; broken: {}", b.1.swap(0, std::sync::atomic::Ordering::Relaxed), if broken.is_empty() { "none".to_owned() } else { broken.iter().map(|(r, f)| format!("{r} {f}")).collect::<Vec<_>>().join(", ") });
         }
         compose::clear();
-        // Every job that entered them has ended: the run's thread holds the last handle.
-        let plans = with_plans(|p| p.cloned());
-        drop(self.1.take());
+        drop(self.0.take());
         keeps::observing(false);
         let published = run_counts().published.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>();
         let folds = keeps::run_counts().folds.swap(0, std::sync::atomic::Ordering::Relaxed);
         let deferred = super::native::setfix::run_counts().deferred_walks.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>();
         super::profile::decision("a walk's new texts interned at once (decision 0315)", || format!("{} walks in one piece interned {} new texts, one write of the arena each", deferred[0], deferred[1]));
         super::profile::decision("kept plans shared by RCU (decision 0301)", || format!("{} publications of {} new plans or orders; observed sums folded {folds} times", published[0], published[1]));
-        if let (Some(g), Some(plans)) = (self.0, plans) {
-            // Every job that entered them has ended: the run's thread holds the last handle, or a copy is taken.
-            let (kept, orders) = match Arc::try_unwrap(plans.run) {
-                Ok(p) => p.into_kept(),
-                Err(p) => (p.kept.load().iter().map(|(k, e)| (*k, e.kept())).collect(), rustc_hash::FxHashMap::clone(&p.orders.load())),
-            };
-            SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, kept, orders)));
-        }
     }
 }
 
@@ -5453,6 +5437,19 @@ fn quiet_card(model: &mut Model, tally: &QuietTally, f: Fields<'_>, rel: &str, o
             model.stats.lazily(rel, o.rows(), LazyStats::new(move || (cols, Vec::new(), ())));
         }
     }
+    // A kept relation read from the store (t33 K4: a kept entry with no statistics part, whose rows no run measured
+    // yet): its columns' statistics where the planner first asks, read as its source answers them (`Derived`: kept as
+    // its rows came, else measured over its rows where they lie).
+    if !model.stats.lazy.0.contains_key(rel)
+        && let Some(width) = f.arity(rel)
+    {
+        let names: Vec<String> = (0..width).map(|c| sql_col(rel, c)).collect();
+        let src = o.source(names);
+        model.stats.lazily(rel, o.rows(), LazyStats::new(move || {
+            let cols = crate::code_rule_dsl::facts::vtab::syntax::statistics(src.as_ref()).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])).collect();
+            (cols, Vec::new(), ())
+        }));
+    }
     if !model.stats.lazy.0.contains_key(rel) {
         tally.unmeasured.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
@@ -8667,6 +8664,19 @@ pub fn decode_kept(
     decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
 }
 
+/// Outputs `rels` of `lowered` that are its inputs, as a run with nothing to derive gives them (t33 K4): read where
+/// the run binds them in `db`, decoded as `decoded_outputs` decodes an input's rows.
+#[allow(clippy::type_complexity)]
+pub fn decode_bound(
+    db: &Connection,
+    lowered: &lower::Lowered,
+    rels: &[&str],
+) -> Result<(BTreeMap<String, std::sync::Arc<output::Rows>>, BTreeMap<String, Vector<usize>>)> {
+    let placed = lowered.placed()?;
+    let f = placed.fields()?;
+    decoded_outputs(rels, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &BTreeSet::new())
+}
+
 /// The program's outputs as rows (decision 0239: symbols, kinds and fields as their text, every other value as it
 /// is; no row printed), and per output the columns that hold nodes.
 #[allow(clippy::type_complexity)]
@@ -9621,7 +9631,7 @@ mod ordered_tests {
     /// learns is its own until it is filed.
     #[test]
     fn a_chunk_sees_the_plans_filed_before_its_window_never_a_neighbours() {
-        let _plans = KeepPlans::start(None);
+        let _plans = KeepPlans::start();
         let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
         let put = |key: PlanKey, w: f64| with_plans(|p| plans_put(p.unwrap(), key, (Arc::from(Vec::<Step>::new()), w, None, 1.0, None, None)));
         let get = |key: PlanKey| plans_get(&key).map(|k| k.1);
@@ -9655,7 +9665,7 @@ mod ordered_tests {
     fn a_chunk_sees_the_joins_notes_filed_before_its_window_never_a_neighbours() {
         // The test's own joins memo (decision 0442), empty and no other test's.
         let _own = crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::profile::Shared::new());
-        let _plans = KeepPlans::start(None);
+        let _plans = KeepPlans::start();
         let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
         let key: PlanKey = 0x0261_0001;
         let order = [Step { at: 0, mode: None }, Step { at: 1, mode: None }];
@@ -9680,7 +9690,7 @@ mod ordered_tests {
     fn a_stages_growth_is_read_as_filed_never_as_the_threads_ran() {
         // The test's own joins memo (decision 0442), empty and no other test's.
         let _own = crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::profile::Shared::new());
-        let _plans = KeepPlans::start(None);
+        let _plans = KeepPlans::start();
         let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
         let (rule, stage) = (0x0450_0007u64, 3);
         let seen = || joins::growth(rule, stage);
@@ -9708,7 +9718,7 @@ mod ordered_tests {
     /// chunk beside it, not taken from chunk 0 by whichever planned first; chunk 2 takes chunk 0's.
     #[test]
     fn a_chunk_takes_the_planning_choices_filed_before_its_window_never_a_neighbours() {
-        let _plans = KeepPlans::start(None);
+        let _plans = KeepPlans::start();
         let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
         let key = [0x61u8; 32];
         let chosen = |rel: &str| choices::Chosen { version: None, inlined: vec![rel.to_owned()], demanded: Vec::new(), nodes: 1000.0 };
