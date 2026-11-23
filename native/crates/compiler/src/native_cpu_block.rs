@@ -3542,7 +3542,7 @@ pub(crate) fn before_start(r: &crate::records::Records, native: &BlockNative) ->
                         // The opener's first `m` bytes: its `m`th byte where it holds.
                         ReadNone::Bytes(0) => all,
                         ReadNone::Bytes(m) => held(a.opener, i32::from(m) - 1),
-                        ReadNone::End | ReadNone::Refuse => [0; 4],
+                        ReadNone::End | ReadNone::Refuse | ReadNone::Bad(_) => [0; 4],
                     });
                 }
                 x
@@ -5568,6 +5568,13 @@ fn read_none(f: &mut FunctionBuilder<'_>, none: crate::records::ReadNone, c: &Fi
         ReadNone::End => {
             let l = f.ins().iadd_imm(c.len, -1);
             f.ins().jump(ended, &[l.into(), tag.into(), nohits.into()]);
+        }
+        // Open at the file's end: to its last byte, of its own kind (`Reader::open_kind`), no
+        // word, none of the reader's marks and none of its tests, as the lean lexer's `Bad`.
+        ReadNone::Bad(k) => {
+            let l = f.ins().iadd_imm(c.len, -1);
+            let bad = f.ins().iconst(types::I64, i64::from(k));
+            f.ins().jump(ended, &[l.into(), bad.into(), nohits.into()]);
         }
         ReadNone::Bytes(m) => {
             let l = f.ins().iadd_imm(s, i64::from(m) - 1);

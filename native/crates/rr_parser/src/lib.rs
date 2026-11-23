@@ -42,6 +42,45 @@ const SAMPLES: [&str; 12] = [
     include_str!("../samples/typescript-eslint-no-dynamic-delete.rerail.sample"),
 ];
 
+/// Texts with lean's `Bad` tokens (decision 0650 step 5): a run of bytes no token begins with,
+/// each region open at the file's end (in its first block and blocks past it), a backslash
+/// before a quote outside a string (the quote opens one, as the lean lexer's), and an escape
+/// the engine checks in a string open at the end (a `bad` token: no check). Each is a `bad`
+/// record in tier 1, which no state takes: its statement recovers.
+#[cfg(test)]
+fn bad_token_cases() -> Vec<String> {
+    let mut out: Vec<String> = [
+        "a(x).\n$ b(x).\nc(y).\n",
+        "a(x) :- b(x), x = ?? 1.\nc(y).\n",
+        "a(x). \u{e9}t\u{e9}\nc(y).\n",
+        "a(x).\n\u{1}\u{7f}\nc(y).\n",
+        "r(x) :- a(x) \\\"x\" b(x).\nc(y).\n",
+        "r(x) :- a(x) \\\\\"x\" b(x).\nc(y).\n",
+        "a(x).\nb(\"open\n",
+        "a(x).\nb(\"open\\",
+        "a(x).\nb(\"\\u12",
+        "a(x).\nb(\"\\q",
+        "a(x).\n.policy {\"a\": \"\\q",
+        "a(x).\n\"",
+        "a(x).\n/* open",
+        "a(x).\n/*",
+        "a(x).\nb(`open\n",
+        "a(x).\nb(```open``\n",
+        "$",
+        "\"",
+    ]
+    .iter()
+    .map(|s| (*s).to_owned())
+    .collect();
+    for n in [60usize, 200, 700] {
+        out.push(format!("a(x).\nb(\"{}", "y".repeat(n)));
+        out.push(format!("a(x).\n/* {}", "z".repeat(n)));
+        out.push(format!("a(x).\nb(`{}", "w".repeat(n)));
+        out.push(format!("a(x).\n{}$ c(y).\n", " ".repeat(n)));
+    }
+    out
+}
+
 /// The cap of tier 2's clusters, in words (doc 28: 2,500 runs fastest on `.rerail`).
 const CLUSTER_CAP: usize = 2500;
 
@@ -581,6 +620,70 @@ pub mod tests {
         assert_eq!(differ, 0);
     }
 
+    /// Lean's `Bad` tokens in tier 1 (decision 0650 step 5): each a record of the `bad` kind (a
+    /// region open at the end, to the file's last byte), no word and none of a reader's marks,
+    /// the file not refused; the CPU's records the interpreter's and Metal's the CPU's.
+    #[test]
+    fn tier1_reads_leans_bad_tokens() {
+        let c = crate::compiled().expect("compiles");
+        let block = &c.program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        let bad = r.kinds[usize::from(b'$')];
+        assert!(r.readers.iter().any(|rd| rd.arms.iter().any(|a| a.none == rerail_compiler::records::ReadNone::Bad(bad))), "a region open at the end is a `bad` token");
+        let lazy = lazy_bits(&c.native);
+        let cases = crate::bad_token_cases();
+        let refs: Vec<&[u8]> = cases.iter().map(|s| s.as_bytes()).collect();
+        let cpu = c.parser.tier1.run_files(&refs);
+        for (src, g) in cases.iter().zip(&cpu) {
+            let want = block.run(src.as_bytes());
+            assert!(!refusal(&want.totals) && !refusal(&g.totals), "{src:?}: not refused");
+            assert_eq!(g.positions[usize::from(r.starts)], want.positions[usize::from(r.starts)], "{src:?}: the starts");
+            assert_eq!(g.positions[usize::from(r.lasts)], want.positions[usize::from(r.lasts)], "{src:?}: the lasts");
+            assert_eq!(unlazy(&g.codes, lazy), unlazy(&want.codes, lazy), "{src:?}: the codes");
+            // A `bad` record: its kind (the punctuation's too, whose switches go by its words) and
+            // no word, so every switch refuses it.
+            let is_bad = |x: u32| (x & 0xff) as u8 == bad && rerail_compiler::records::word_of(x) == 0;
+            assert!(want.codes.iter().any(|&x| is_bad(x)), "{src:?}: a `bad` record");
+            // The last record, where it is a region's opener: open to the file's last byte.
+            let (starts, lasts) = (&want.positions[usize::from(r.starts)], &want.positions[usize::from(r.lasts)]);
+            if let (Some(&s), Some(&l)) = (starts.last(), lasts.last())
+                && matches!(src.as_bytes()[s as usize], b'"' | b'/' | b'`')
+            {
+                assert_eq!((want.codes.last().is_some_and(|&x| is_bad(x)), l), (true, src.len() as u32 - 1), "{src:?}: a `bad` token to the file's end");
+            }
+        }
+        metal_reads_as_the_cpu(&c.native, &refs, &cpu, lazy);
+        // Tier 2 refuses the `bad` record, and the statement recovers: lean's tape, with its
+        // ERROR leaf, of the interpreter, the JIT and one machine.
+        let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        for src in &cases {
+            let tapes = [("the interpreter", interp_tape(c, src)), ("the JIT", c.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}"))), ("the machine", machine.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}")))];
+            reads_as_lean(src, false, &tapes);
+        }
+    }
+
+    /// Metal's tier 1 records are the CPU's on `refs` (none refused).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn metal_reads_as_the_cpu(native: &rerail_compiler::block_native::BlockNative, refs: &[&[u8]], cpu: &[rerail_compiler::block::BlockRun], lazy: u32) {
+        if no_device() {
+            return;
+        }
+        use rerail_compiler::block;
+        use rerail_metal::block_program::serial::{Segments, run_serial_split};
+        let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+        let got = run_serial_split(&[native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
+        for ((g, w), src) in got.run.files.iter().zip(cpu).zip(refs) {
+            let src = String::from_utf8_lossy(src);
+            assert!(!refusal(&g.totals), "{src:?}: Metal refuses it");
+            assert_eq!(g.positions, w.positions, "{src:?}: Metal's positions");
+            assert_eq!(unlazy(&g.codes, lazy), unlazy(&w.codes, lazy), "{src:?}: Metal's codes");
+        }
+    }
+
+    /// No device lane off macOS, Linux and Windows.
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    fn metal_reads_as_the_cpu(_: &rerail_compiler::block_native::BlockNative, _: &[&[u8]], _: &[rerail_compiler::block::BlockRun], _: u32) {}
+
     /// A file refused at its start, then many tokens: Metal's record pass stops at the first
     /// token refused (decision 0177, "A refusal leaves the loop"), as the CPU's loop does. Its
     /// codes end there and are the CPU's; the same tokens without the refusal are all coded.
@@ -595,9 +698,10 @@ pub mod tests {
         let c = super::compiled().expect("compiles");
         let lazy = lazy_bits(&c.native);
         let body = "r(x) :- a(x), \"s\". // c\n".repeat(400);
-        // Refused by a mask total (no token coded), and by a token the record pass refuses: an
-        // integer of 19 digits, the engine's (decision 0413; a float chain is read now).
-        for head in ["\u{1}", "````a````.", "x = 1234567890123456789."] {
+        // Refused by a mask total (no token coded: four backticks; a byte no token takes is a
+        // `bad` token now, 0650 step 5), and by a token the record pass refuses: an integer of
+        // 19 digits, the engine's (decision 0413; a float chain is read now).
+        for head in ["````a````.", "x = 1234567890123456789."] {
             let (bad, good) = (format!("a(x).\n{head}\n{body}"), format!("a(x).\n{body}"));
             let refs = [bad.as_bytes(), good.as_bytes()];
             let files: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
@@ -619,7 +723,7 @@ pub mod tests {
         // them is run again (`dropped`): the total is in a segment before them, whose start is
         // final. With the carries exact (the default) none is listed.
         let long = format!("a(\"{}\").\n", "s ".repeat(3000)).repeat(4);
-        let (bad, good) = (format!("\u{1}\n{long}"), long.clone());
+        let (bad, good) = (format!("````a````.\n{long}"), long.clone());
         for (src, refused) in [(&bad, true), (&good, false)] {
             let f = [block::BatchFile { bytes: src.as_bytes(), program: 0 }];
             let got = run_serial_split(&[&c.native], &f, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
@@ -1628,9 +1732,11 @@ pub mod tests {
             .replace("start id_first run word", "start id_first last ident & ~next(ident)")
             .replace("start int_first run num_run once dot", "start int_first last numeral & ~next(numeral)")
             .replace("start punct & p_start pair two_start", "start punct & p_start last p_last")
-            .replace("read str", "last prev(f_str) & ~f_str")
-            .replace("read line | block", "last (f_line & ~next(f_line)) | (prev(f_block) & ~f_block)")
-            .replace("read t1 | t2 | t3", "last (prev(f_t1) & ~f_t1) | (prev(f_t2, 2) & ~prev(f_t2)) | (prev(f_t3, 3) & ~prev(f_t3, 2)) | prev(e_t2)")
+            .replace("start bad_first run other", "start bad_first last code & other & ~next(code & other)")
+            // A region `open` at the file's end ends at its last byte.
+            .replace("read str", "last (prev(f_str) & ~f_str) | (f_str & last_byte)")
+            .replace("read line | block", "last (f_line & ~next(f_line)) | (prev(f_block) & ~f_block) | (f_block & last_byte)")
+            .replace("read t1 | t2 | t3", "last (prev(f_t1) & ~f_t1) | (prev(f_t2, 2) & ~prev(f_t2)) | (prev(f_t3, 3) & ~prev(f_t3, 2)) | prev(e_t2) | ((f_t1 | f_t3) & last_byte)")
             // The gap pass's clauses need the loop; this compares the starts and lasts alone.
             .replace("lf unless after \",\", end", "lf, end")
             .replace(", else escape \"a float the file ends with\"", "")
@@ -2109,6 +2215,7 @@ pub mod tests {
             inputs.push(format!("r(x) :- a(x), {}.\n", "b".repeat(n)).into_bytes());
             inputs.push(format!("{}\"open", " ".repeat(n)).into_bytes());
         }
+        inputs.extend(crate::bad_token_cases().into_iter().map(String::into_bytes));
         // A word on past its block by its next block's first 16 bytes (`short_word`) or more,
         // and one to the file's end.
         for pad in [48usize, 50, 62, 63] {

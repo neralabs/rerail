@@ -2022,7 +2022,9 @@ fn emit_rule(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, ft: &Fetch, bw: &crat
             f.switch_to_block(open);
             f.set_cold_block(open);
             match a.none {
-                ReadNone::Refuse => {
+                // A region open at the file's end, as a token of its own kind (`ReadNone::Bad`):
+                // where tier 2 makes the records, refused, as no state of tier 2 takes it.
+                ReadNone::Refuse | ReadNone::Bad(_) => {
                     f.ins().jump(join, &[s.into(), one.into()]);
                 }
                 ReadNone::End => {

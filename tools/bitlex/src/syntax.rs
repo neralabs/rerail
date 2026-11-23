@@ -330,6 +330,7 @@ impl TokenRule {
             // the byte before an `outside` closer; with `else E bytes M`, `E`'s `M`th byte.
             TokenRule::Read(regions) => {
                 let name = |x: String| Expr::Name(x);
+                let f_open = |r: &Region| name(format!("f_{}", r.kind));
                 let prev = |e: Expr, k: u8| match k {
                     0 => e,
                     1 => call("prev", vec![e]),
@@ -347,6 +348,10 @@ impl TokenRule {
                     };
                     if let Some((e, m)) = &r.empty {
                         last = or(last, prev(name(e.clone()), m - 1));
+                    }
+                    // `open K`: a region open at the file's end ends at its last byte.
+                    if r.open.is_some() {
+                        last = or(last, and(f_open(r), not(call("next", vec![not(Expr::Empty)]))));
                     }
                     out = Some(match out {
                         Some(o) => or(o, last),
@@ -435,6 +440,11 @@ pub struct Region {
     /// ends that token's record, or, closed at its own second closer, leaves it open over the
     /// next template's code. Tier 2 reads the template's code's records inside the string's.
     pub resumes: bool,
+    /// `open K`: an opener with no closer after it anywhere in the file is a token of kind `K` to
+    /// the file's end, as a lexer that finds no closer makes one bad token of the rest (`Bad`).
+    /// Without it such a file is refused. Not with `else`, `outside` or an `or`. `K` is the
+    /// lexer's error token: no rule takes it, `any` and `balanced` neither.
+    pub open: Option<String>,
 }
 
 impl Regions {
@@ -1660,7 +1670,7 @@ impl P {
     }
 
     // --- statements ---
-    /// `regions H { K = O .. C [bytes N] [outside] [else E bytes M] … }` (`Regions`).
+    /// `regions H { K = O .. C [bytes N] [outside] [else E bytes M] [open K] … }` (`Regions`).
     fn regions(&mut self) -> R<Regions> {
         let hidden = self.ident()?;
         self.want_p("{")?;
@@ -1691,20 +1701,24 @@ impl P {
             } else {
                 None
             };
+            let open = if self.eat_kw("open") { Some(self.ident()?) } else { None };
+            if open.is_some() && (outside || empty.is_some() || or.is_some()) {
+                return self.err("`open` on a kind with no `outside`, `else` or `or`");
+            }
             let mut after = Vec::new();
             let resumes = self.eat_kw("resumes");
             if resumes || self.eat_kw("after") {
                 while matches!(self.peek(), Some(Tok::Ident(_))) {
                     after.push(self.ident()?);
                 }
-                if after.is_empty() || outside || empty.is_some() {
+                if after.is_empty() || outside || empty.is_some() || open.is_some() {
                     return self.err("`after` or `resumes` and the kinds it names, on a kind with no `outside` or `else`");
                 }
             }
             if !(1..=3).contains(&bytes) || (outside && bytes != 1) || (outside && or.is_some()) || empty.as_ref().is_some_and(|e| !(1..=3).contains(&e.1)) {
                 return self.err("a closer of 1 to 3 bytes (`outside`: 1, and no `or`), an `else` of 1 to 3");
             }
-            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes });
+            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes, open });
             self.nls();
         }
         if kinds.is_empty() {

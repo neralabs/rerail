@@ -105,10 +105,7 @@ impl Slab {
                 eprintln!("slab of {bytes} bytes: {what}: {e:?}");
             }
         };
-        let device = crate::lane::device().map_err(|e| {
-            said("no device", &e);
-            e
-        })?;
+        let device = crate::lane::device().inspect_err(|e| said("no device", e))?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
         let block = rerail_blocks::alloc::block(&need).map_err(|e| {

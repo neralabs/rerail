@@ -856,7 +856,8 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let none = match line.word()?.as_str() {
                     "refuse" => crate::records::ReadNone::Refuse,
                     "end" => crate::records::ReadNone::End,
-                    w => crate::records::ReadNone::Bytes(w.strip_prefix("bytes").and_then(|m| m.parse().ok()).ok_or(format!("block {at} recarm: `refuse`, `end` or `bytesM`, not {w}"))?),
+                    w if w.starts_with("bad") => crate::records::ReadNone::Bad(w["bad".len()..].parse().map_err(|_| format!("block {at} recarm: `badK`, not {w}"))?),
+                    w => crate::records::ReadNone::Bytes(w.strip_prefix("bytes").and_then(|m| m.parse().ok()).ok_or(format!("block {at} recarm: `refuse`, `end`, `bytesM` or `badK`, not {w}"))?),
                 };
                 let (mut retag, mut last, mut template) = (None, None, None);
                 while let Ok(w) = line.word() {

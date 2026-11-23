@@ -718,6 +718,9 @@ struct RowArm {
     /// Whether a word may be its token: a grammar token's whose first byte may be its first and the rest its tail's.
     /// Only such a row reads its token's word, as the lean lexer reads only a word run's.
     word: bool,
+    /// Whether it reads a region with `open K` (`Region::open`): its record, where `open_bad` is set, `K`'s, with no
+    /// word and no marks.
+    open: bool,
 }
 
 /// `dispatch`'s choices, by the first byte's group: the region opened, and the row.
@@ -5153,6 +5156,7 @@ impl Gen<'_> {
                 st = format!("{{{check}\n            {st}\n        }}");
             }
             let k = self.kind_of(*row);
+            let mut open_k: Option<String> = None;
             let (how, l) = match rule {
                 Some(TokenRule::Run(r)) => {
                     // Its run as its kind's assumptions read it (`in KIND`, decision 0607).
@@ -5193,6 +5197,33 @@ impl Gen<'_> {
                 }
                 Some(TokenRule::Read(rs)) => {
                     let mut code = String::new();
+                    // `open K`: `K`'s record kind, the kind of a byte it begins with (`KINDS`), or its row's own.
+                    let open_kind = |this: &mut Self, name: &str| -> Result<String, String> {
+                        let Some((r, start)) = rows.iter().find_map(|(r, q)| match q {
+                            Stmt::Token { kind, start, .. } if kind == name => Some((*r, start.clone())),
+                            _ => None,
+                        }) else {
+                            return Err(format!("tier 1 as Rust: `open {name}`, no such token"));
+                        };
+                        if let Some(k) = this.x.row_kinds.get(r).copied().flatten() {
+                            return Ok(format!("{k}"));
+                        }
+                        let at = this.bytes_at(&start, 0, &mut HashMap::new());
+                        let mut ks: Vec<u8> = (0..256).filter(|&i| at[i] && !this.skipped[i]).map(|i| this.x.kinds[i]).collect();
+                        ks.sort_unstable();
+                        ks.dedup();
+                        match ks.as_slice() {
+                            [k] => Ok(format!("{k}")),
+                            _ => Err(format!("tier 1 as Rust: `open {name}`, a token of one record kind, not {}", ks.len())),
+                        }
+                    };
+                    for r in rs.iter().filter(|r| r.open.is_some()) {
+                        let k = open_kind(&mut self, r.open.as_deref().unwrap_or_default())?;
+                        match &open_k {
+                            Some(o) if *o != k => return Err(format!("tier 1 as Rust: `{kind}`'s regions open as two kinds")),
+                            _ => open_k = Some(k),
+                        }
+                    }
                     for (i, r) in rs.iter().enumerate() {
                         // A region with `else E bytes M`: its opener with no closer after it is `E`'s, a token of `M` bytes
                         // (the records' reader's `ReadNone::Bytes`).
@@ -5216,6 +5247,9 @@ impl Gen<'_> {
                             // once every block is made: before, the token is read again.
                             Some((_, m)) if fused => format!("{{\n                    if made < nw {{\n                        wait = (2 * made - b).min(nw);\n                        continue 'pass;\n                    }}\n                    s + {}\n                }}", m.saturating_sub(1)),
                             Some((_, m)) => format!("s + {},", m.saturating_sub(1)),
+                            // `open K`: to the file's end, `K`'s token (the lean lexer's `Bad`), once every block is made.
+                            None if r.open.is_some() && fused => "{\n                    if made < nw {\n                        wait = (2 * made - b).min(nw);\n                        continue 'pass;\n                    }\n                    open_bad = true;\n                    n - 1\n                }".to_owned(),
+                            None if r.open.is_some() => "{\n                    open_bad = true;\n                    n - 1\n                }".to_owned(),
                             None => "{\n                    refused = true;\n                    break;\n                }".to_owned(),
                         };
                         let c = self.val(&r.closers())?;
@@ -5434,7 +5468,12 @@ impl Gen<'_> {
                 }
             }
             let word = !extra && x.words.iter().any(|w| w.first().is_some_and(|&c| sb[usize::from(c)]) && w[1..].iter().all(|&c| tail[usize::from(c)]));
-            row_arms.push(RowArm { resume, word, row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra}, "), bits });
+            // A region open at the file's end (`open K`): `K`'s record, no word, no marks, none of the tests.
+            let (decl, k, extra_is, hits) = match &open_k {
+                Some(o) => ("            let mut open_bad = false;\n".to_owned(), if *o == k { k } else { format!("if open_bad {{ {o} }} else {{ {k} }}") }, if extra { "!open_bad".to_owned() } else { "false".to_owned() }, if hits.is_empty() { hits } else { format!("            if !open_bad {{\n{}            }}\n", indent(&hits, "    ")) }),
+                None => (String::new(), k, extra.to_string(), hits),
+            };
+            row_arms.push(RowArm { resume, word, open: open_k.is_some(), row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n{decl}            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra_is}, "), bits });
         }
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
         let mut gap_code = String::new();
@@ -5721,6 +5760,10 @@ impl Gen<'_> {
         let branches = format!("{{\n            // The row: the first whose start holds, of those whose start may be the byte's.\n            let row = match group {{\n{}                _ => usize::MAX,\n            }};\n            match row {{\n{}                _ => {{\n                    // A byte no token begins with.\n                    refused = true;\n                    break;\n                }}\n            }}\n        }}", picks.rows, row_arms.iter().enumerate().map(|(i, a)| format!("                {i} => {},\n", indent(&match &a.resume {
             // The body up to its record's tuple, then the resume.
             Some(r) => format!("{}{r}", a.body.rsplit_once("            (l, ").map_or(a.body.as_str(), |x| x.0)),
+            None if a.open => {
+                let or_none = |x: String| if x == "0" || x == "0x0" { x } else { format!("if open_bad {{ 0 }} else {{ {x} }}") };
+                format!("{}{}, {})\n        }}", a.body, or_none(format!("{:#x}", a.bits)), or_none(if a.word { WORD_READ.to_owned() } else { "0".to_owned() }))
+            }
             None => format!("{}{:#x}, {})\n        }}", a.body, a.bits, if a.word { WORD_READ } else { "0" }),
         }, "        ").trim_start())).collect::<String>());
         let mut fill_top = String::new();
@@ -6109,12 +6152,12 @@ impl Gen<'_> {
                     let _ = write!(out, "\n/// `{f}`'s pairs' first bytes in the block at `base`, as the lean lexer's `pair`: where a pair's two bytes are. A token\n/// never starts at a pair's second byte, so at a token's start this is the grammar's mask of pairs (read left to right).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn w_{f}<S: rerail_simd8::Simd8x64>(src: &[u8], base: usize) -> u64 {{\n    // The block and the one a byte on: in the padded source.\n    let at: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let on: &[u8; 64] = src[base + 1..base + 65].try_into().expect(\"the padded source\");\n    // SAFETY: the caller's.\n    unsafe {{\n        let (v, w) = (S::load(at), S::load(on));\n        {}\n    }}\n}}\n", test.join("\n            | "));
                 }
                 // The function the mask replaces, where nothing calls it.
-                if !out.contains(&format!("{f}(src, s)")) {
-                    if let Some(at) = out.find(&format!("`'s last byte from its first, `s`: its next where the two are a pair, and the one after where the three are a triple, as the lean lexer reads an operator.\nfn {f}(")) {
-                        let start = out[..at].rfind("/// `").unwrap_or(at);
-                        let end = at + out[at..].find("\n}\n\n").map_or(0, |e| e + 4);
-                        out.replace_range(start..end, "");
-                    }
+                if !out.contains(&format!("{f}(src, s)"))
+                    && let Some(at) = out.find(&format!("`'s last byte from its first, `s`: its next where the two are a pair, and the one after where the three are a triple, as the lean lexer reads an operator.\nfn {f}("))
+                {
+                    let start = out[..at].rfind("/// `").unwrap_or(at);
+                    let end = at + out[at..].find("\n}\n\n").map_or(0, |e| e + 4);
+                    out.replace_range(start..end, "");
                 }
             }
             if let Some((_, _, by)) = &token_form {
@@ -6125,11 +6168,11 @@ impl Gen<'_> {
                 if !out.contains("DISPATCH_LO[") {
                     out = out.replacen(&tables, "", 1);
                 }
-                if !out.contains("KINDS[") {
-                    if let Some(at) = out.find("/// Each byte's record kind, as a token's first byte.\nconst KINDS") {
-                        let end = at + out[at..].find("];\n\n").map_or(0, |e| e + 4);
-                        out.replace_range(at..end, "");
-                    }
+                if !out.contains("KINDS[")
+                    && let Some(at) = out.find("/// Each byte's record kind, as a token's first byte.\nconst KINDS")
+                {
+                    let end = at + out[at..].find("];\n\n").map_or(0, |e| e + 4);
+                    out.replace_range(at..end, "");
                 }
             }
         }

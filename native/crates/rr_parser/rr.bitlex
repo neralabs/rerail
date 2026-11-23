@@ -37,6 +37,8 @@ class lf        = '\n'
 class slash     = '/'
 class star      = '*'
 class hash      = '#'
+# The bytes no token begins with, outside the regions: the lean lexer's `bad input`, each its own `Bad` token.
+class other     = 0x00..0x08 0x0b 0x0e..0x1f '$' '\'' '?' '\\' 0x7f..0xff
 class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
 class alpha     = 'a'..'z' 'A'..'Z' '_'
 class digit     = '0'..'9'
@@ -108,24 +110,24 @@ mask tick3      = ttt & ~next(tick, 3)
 # The regions, left to right: each opener not hidden opens its region, to its closer's first
 # byte after it. The hidden bytes run from the byte after the opener through the closer's
 # last (`bytes`), but not a line comment's `\n` (`outside`): it ends the line. Two backticks
-# with no `` `` `` later in the file open no region: they are the empty literal, `e_t2`.
+# with no `` `` `` later in the file open no region: they are the empty literal, `e_t2`. A
+# string, a block comment or a literal of one or three backticks open at the file's end is a
+# `bad` token to the end (`open`), as the lean lexer's `Bad`: its statement recovers. Any quote
+# outside the regions opens a string, as the lean lexer's (a backslash before it is a `bad`
+# token); an escape is read only inside one, where it keeps a quote from closing it (`q`).
 regions hidden {
-  str   = q .. q
+  str   = quote .. q open bad
   line  = line_open .. lf outside
-  block = block_open .. block_end
-  t1    = tick1 .. tick
+  block = block_open .. block_end open bad
+  t1    = tick1 .. tick open bad
   t2    = tick2 .. tt bytes 2 else e_t2 bytes 2
-  t3    = tick3 .. ttt bytes 3
+  t3    = tick3 .. ttt bytes 3 open bad
 }
 
 mask o_tick     = o_t1 | o_t2 | o_t3 | e_t2
 mask region     = hidden | o_str | o_line | o_block | o_tick
 
-# A region open at the file's end, and four backticks: the token loop's, whose reader finds no
-# closer, or no opener at a backtick (decision 0177).
-error "a string open at the end of the file" by tokens when f_str & last_byte
-error "a block comment open at the end of the file" by tokens when f_block & last_byte
-error "a backtick literal open at the end of the file" by tokens when (f_t1 | f_t3) & last_byte
+# Four backticks: the token loop's, whose reader finds no opener at a backtick (decision 0177).
 escape "a run of four backticks or more" by tokens when ttt & next(tick, 3) & ~hidden
 # A `\u` in a string: the forms that are code points by their bytes; any other goes to the
 # engine, which checks it. `h4`: four hex digits after the `u`. An escaped `u` anywhere: the
@@ -202,7 +204,10 @@ mask p          = code & punct & ~f_dot
 mask p_start    = p & ~second
 mask p_last     = (p_start & ~two_start) | second
 
-error "a byte no token takes" by tokens when code & ~ws & ~hashword & ~ident & ~num & ~punct
+# A byte no token begins with: a run of them is one `bad` token, as the lean lexer's `Bad`s (one a
+# character), which no state takes: its statement recovers. No word begins with one: the loop's
+# main run is a word's (`main_run`), not this one.
+mask bad_first  = code & other & ~prev(code & other)
 
 # A token ended by a rule (`run`, `pair`) ends at its start on the CPU, by its run or its pair
 # bit (decision 0177); the others by their last byte's mask. The rules read no `code`: the token
@@ -215,12 +220,13 @@ mask int_first  = digit & int & ~prev(int)
 # where the one before ended, so never in a region (the regions open only at a token's start), a
 # word, a number's run or a pair. The prover proves each, or a test build checks it.
 assume "a token starts in code: the regions open only at a token's start" at starts code = ~empty
-assume "a quote at a start opens a string: a backslash is no token's first byte" at starts o_str = quote
+assume "a quote at a start opens a string: any quote outside the regions opens one" at starts o_str = quote
 assume "a `//` at a start opens a line comment" at starts o_line = line_open
 assume "a `/*` at a start opens a block comment" at starts o_block = block_open
 assume "a backtick at a start opens a literal of one, two or three" at starts o_tick = tick1 | tick2 | tick3
 assume "a name starts at a letter: a start is never in a word" at starts id_first = alpha
 assume "a number starts at a digit: a start is never in a word or a float's fraction" at starts int_first = digit
+assume "a byte no token begins with starts a bad token: a bad token's run takes the ones after it" at starts bad_first = other
 assume "an operator starts at its first byte: a start is never a pair's second or a float's `.`" at starts p_start = punct
 
 # --- Tokens ------------------------------------------------------------------------------------
@@ -239,6 +245,7 @@ token number     = start int_first run num_run once dot
 # A number's check, at its token as a lexer reads it: an integer of 19 digits or more.
 escape "a number of 19 digits or more" at number when all(digit) at least 19
 token punct      = start punct & p_start pair two_start
+token bad        = start bad_first run other
 # The directives' words are words, keywords only where a statement's `.` comes before them;
 # `_`, only where a term can be a wildcard; `must` and `may`, only at a head's start; the
 # aggregates' words, `by` and `sep`, only where an aggregate can be; a `.violation`'s words

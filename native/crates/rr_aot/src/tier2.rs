@@ -157,7 +157,7 @@ pub mod f {
 /// The records' kinds (a code's low byte), by their tokens' names.
 #[allow(dead_code)]
 pub mod t {
-    pub const PUNCT: u32 = 0;
+    pub const BAD: u32 = 0;
     pub const HASH_WORD: u32 = 1;
     pub const CODE_LITERAL: u32 = 2;
     pub const NUMBER: u32 = 3;
@@ -246,40 +246,6 @@ const FLAG_NO_NAMED: u32 = 1 << 1;
 /// The word of a piece of record kind `kind`, its bytes `b`: its kind's keywords'.
 fn word_in(kind: u32, b: &[u8]) -> u32 {
     match kind {
-        0 => match b {
-            b"\x28" => w::LPAREN_10,
-            b"\x29" => w::RPAREN_11,
-            b"\x2c" => w::COMMA_12,
-            b"\x2e" => w::DOT_13,
-            b"\x3b" => w::SEMI_14,
-            b"\x3a" => w::COLON_15,
-            b"\x3d" => w::EQ_16,
-            b"\x3c" => w::LT_17,
-            b"\x3e" => w::GT_18,
-            b"\x21" => w::BANG_19,
-            b"\x7c" => w::BAR_22,
-            b"\x40" => w::AT_23,
-            b"\x2a" => w::STAR_24,
-            b"\x5b" => w::LBRACK_25,
-            b"\x5d" => w::RBRACK_26,
-            b"\x2d" => w::MINUS_27,
-            b"\x2b" => w::PLUS_28,
-            b"\x2f" => w::SLASH_29,
-            b"\x25" => w::PERCENT_30,
-            b"\x7e" => w::TILDE_31,
-            b"\x5e" => w::CARET_32,
-            b"\x26" => w::AMP_33,
-            b"\x7b" => w::LBRACE_20,
-            b"\x7d" => w::RBRACE_21,
-            b"\x3a\x2d" => w::COLON_MINUS_3,
-            b"\x3d\x3e" => w::EQ_GT_4,
-            b"\x21\x3d" => w::BANG_EQ_5,
-            b"\x3c\x3d" => w::LT_EQ_6,
-            b"\x3e\x3d" => w::GT_EQ_7,
-            b"\x3c\x3a" => w::LT_COLON_8,
-            b"\x2d\x3e" => w::MINUS_GT_9,
-            _ => 0,
-        },
         1 => match b {
             b"\x23include" => w::HASH_INCLUDE_34,
             _ => 0,

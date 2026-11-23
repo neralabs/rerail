@@ -283,6 +283,13 @@ pub const AFTER_SHIFT: u32 = 16;
 
 /// The marks' tests' hits at token `s..=l` of rule `rule` (`AFTER_SHIFT`).
 pub fn check_hits(records: &Records, rule: u8, s: usize, l: usize, outputs: &[Vec<u64>]) -> u32 {
+    // A region open at the file's end (`ReadNone::Bad`) is no token of its kind: none of its
+    // kind's tests, as the readers read none.
+    if let Some(&EndRule::Read(i)) = records.rules.get(usize::from(rule))
+        && records.readers[usize::from(i)].open_kind(s, l, outputs).is_some()
+    {
+        return 0;
+    }
     records.checks.iter().filter(|c| c.rule == rule && test_holds(records, c, s, l, outputs)).fold(0, |a, c| match c.then {
         CheckThen::Escape | CheckThen::Cut => a,
         CheckThen::At(k) => a | 1 << k,
@@ -445,13 +452,25 @@ impl Reader {
 impl Reader {
     /// Every kind and marks it gives a token (`retag`, and its arms' own, `ReadArm::retag`).
     pub fn tags(&self) -> impl Iterator<Item = (u8, u32)> + '_ {
-        self.retag.into_iter().chain(self.arms.iter().filter_map(|a| a.retag))
+        let open = self.arms.iter().filter_map(|a| if let ReadNone::Bad(k) = a.none { Some((k, 0)) } else { None });
+        self.retag.into_iter().chain(self.arms.iter().filter_map(|a| a.retag)).chain(open)
     }
 
     /// The kind and marks it gives every token it reads, where they are one: its `retag`, with
     /// no arm of a kind of its own.
     pub fn tag(&self) -> Option<(u8, u32)> {
-        self.retag.filter(|&t| self.arms.iter().all(|a| a.retag.is_none_or(|x| x == t)))
+        self.retag.filter(|&t| self.arms.iter().all(|a| a.retag.is_none_or(|x| x == t) && !matches!(a.none, ReadNone::Bad(_))))
+    }
+
+    /// The kind of its token `s..=l` where the region it read is open at the file's end
+    /// (`ReadNone::Bad`): the first arm whose opener holds at `s` (as `read_end` reads it) with
+    /// no closer's first byte where the token's last says (`off` before it, after `s`). A word of
+    /// output at most: what the reader read, said again.
+    pub fn open_kind(&self, s: usize, l: usize, outputs: &[Vec<u64>]) -> Option<u8> {
+        let a = self.arms.iter().find(|a| bit_at(outputs, a.opener, s))?;
+        let ReadNone::Bad(k) = a.none else { return None };
+        let c = l.checked_add_signed(-isize::from(a.off)).filter(|&c| c > s);
+        (!c.is_some_and(|c| bit_at(outputs, a.closer, c))).then_some(k)
     }
 }
 
@@ -530,6 +549,9 @@ pub enum ReadNone {
     End,
     /// `else E bytes M`: the opener's first `M` bytes.
     Bytes(u8),
+    /// `open K`: to the file's end, a token of kind `K` (no word, none of the reader's marks), as
+    /// the lean lexer makes the rest of the file one `Bad` token where it finds no closer.
+    Bad(u8),
 }
 
 /// The first bit of output `o` at or after byte `from`, a word at a time; `None`, none.
@@ -617,7 +639,7 @@ pub fn read_end(records: &Records, reader: &Reader, s: usize, bytes: &[u8], outp
         }
         return match a.none {
             ReadNone::Refuse => Err(()),
-            ReadNone::End => Ok((n.saturating_sub(1), false)),
+            ReadNone::End | ReadNone::Bad(_) => Ok((n.saturating_sub(1), false)),
             ReadNone::Bytes(m) => Ok((s + usize::from(m) - 1, false)),
         };
     }
@@ -758,7 +780,10 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
                         (s, false)
                     }
                 };
-                checked |= records.checks.iter().any(|c| c.rule == k && c.then == CheckThen::Escape && test_holds(records, c, s, l, outputs));
+                // A region open at the file's end (`ReadNone::Bad`) is no token of its kind: none
+                // of its kind's tests, as the lean lexer reads no escape in its `Bad`.
+                let bad = reader.open_kind(s, l, outputs).is_some();
+                checked |= !bad && records.checks.iter().any(|c| c.rule == k && c.then == CheckThen::Escape && test_holds(records, c, s, l, outputs));
                 // A region that resumes a token's: no record, the open one's end (decision 0600).
                 let opens = reader.arms.iter().any(|a| bit_at(outputs, a.opener, s));
                 if reader.resumes && opens {
@@ -977,6 +1002,13 @@ pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], 
             if !t.part {
                 word = 0;
             }
+        }
+        // A region open at the file's end (`ReadNone::Bad`): its kind, no word, none of its
+        // reader's marks.
+        if let Some(EndRule::Read(i)) = rule
+            && let Some(k) = records.readers[usize::from(*i)].open_kind(s, l, outputs)
+        {
+            (kind, word, marks) = (u32::from(k), 0, 0);
         }
         let retagged: u32 = records.retags.iter().fold(0, |a, t| a | t.marks);
         for (k, &(o, w)) in records.marks.iter().enumerate().filter(|&(k, _)| retagged >> k & 1 == 0) {

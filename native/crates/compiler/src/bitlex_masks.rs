@@ -359,6 +359,9 @@ pub struct Lowering {
     /// Each token read whole by a region's reader (`read R`, `read R | S`): its regions' fills,
     /// its bytes (the blank marks' proof, decision 0430).
     pub read_fills: HashMap<String, Val>,
+    /// A read kind's arms' `open K` (`Region::open`), in `token_reads`' order: the kind its
+    /// region open at the file's end is (`ReadNone::Bad`), its record kind found with the kinds.
+    pub read_opens: HashMap<String, Vec<Option<String>>>,
     /// Each token row's (`tokens`, in order): read inside a region by its reader (`Inside`),
     /// so no first byte ends it by a rule.
     pub inside: Vec<bool>,
@@ -562,6 +565,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         token_part_names: HashMap::default(),
         token_fills: HashMap::default(),
         read_fills: HashMap::default(),
+        read_opens: HashMap::default(),
         inside: Vec::new(),
         inside_of: Vec::new(),
         keywords: Vec::new(),
@@ -1100,14 +1104,17 @@ impl Lowering {
                                 }
                                 let (opener, closer) = (self.expr(&r.opener)?, self.expr(&r.closer)?);
                                 let off = if r.outside { -1 } else { r.bytes as i8 - 1 };
-                                let none = match (&r.empty, r.outside) {
-                                    (Some((_, m)), _) => crate::records::ReadNone::Bytes(*m),
-                                    (None, true) => crate::records::ReadNone::End,
-                                    (None, false) => crate::records::ReadNone::Refuse,
+                                let none = match (&r.empty, r.outside, &r.open) {
+                                    (Some((_, m)), ..) => crate::records::ReadNone::Bytes(*m),
+                                    (None, true, _) => crate::records::ReadNone::End,
+                                    // Its kind's record kind once the kinds are made (`read_opens`).
+                                    (None, false, Some(_)) => crate::records::ReadNone::Bad(0),
+                                    (None, false, None) => crate::records::ReadNone::Refuse,
                                 };
                                 arms.push((opener, closer, off, none));
                             }
                             self.token_reads.insert(kind.clone(), arms);
+                            self.read_opens.insert(kind.clone(), regions.iter().map(|r| r.open.clone()).collect());
                             let fill = regions.iter().map(|r| Expr::Name(format!("f_{}", r.kind))).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a region");
                             let fill = self.expr(&fill)?;
                             self.read_fills.insert(kind.clone(), fill);
@@ -3698,6 +3705,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
         tokens.retain(|t| !low.marks.iter().any(|m| &m.0 == t) && !low.extra.contains(t));
+        // A region's `open K` (`Region::open`): `K` is the lexer's error token, which `any` and
+        // `balanced` take no more than a rule does, as the lean parser fails at a `Bad` there.
+        tokens.retain(|t| !low.region_kinds.iter().any(|r| r.open.as_ref() == Some(t)));
         let reading = |name: &str| reading_names.iter().position(|r| r == name).map(|r| r as u16).ok_or_else(|| format!("reread {name}: no reading of that name"));
         let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token, tokens: &tokens, reading: &reading, marks: &mark_kinds };
         let machine = grammar::build_shaped(&low.tree, &ids, false)?;
@@ -5019,7 +5029,24 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     mark_masks.push(l);
                     (mark_masks.len() - 1) as u16
                 });
-                let mut arms: Vec<crate::records::ReadArm> = low.token_reads[&kind].clone().into_iter().map(|(o, c, off, none)| crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, last, none, retag: None, template: None }).collect();
+                // `open K` (`ReadNone::Bad`): `K`'s record kind, one kind, a token no state takes
+                // by its first bytes' kind.
+                let rf = &real_first;
+                let open_of = |low: &Lowering, k: &String, i: usize, none: crate::records::ReadNone| -> Result<crate::records::ReadNone, String> {
+                    let Some(name) = low.read_opens.get(k).and_then(|v| v.get(i)).cloned().flatten() else { return Ok(none) };
+                    let mut ks: Vec<u8> = (0..rows.len()).filter(|&r| token_rows[r].0 == name && !low.inside.get(r).copied().unwrap_or(false)).flat_map(|r| (0..256).filter(move |&b| rf[r][b / 64] >> (b % 64) & 1 == 1)).map(|b| kinds[b]).collect();
+                    ks.sort_unstable();
+                    ks.dedup();
+                    match ks.as_slice() {
+                        [k] => Ok(crate::records::ReadNone::Bad(*k)),
+                        _ => Err(format!("token {k}: `open {name}`, a token of one record kind, not {}", ks.len())),
+                    }
+                };
+                let mut arms: Vec<crate::records::ReadArm> = Vec::new();
+                for (i, (o, c, off, none)) in low.token_reads[&kind].clone().into_iter().enumerate() {
+                    let none = open_of(low, &kind, i, none)?;
+                    arms.push(crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, last, none, retag: None, template: None });
+                }
                 // A region a kind `resumes` (decision 0600): its arm's template, the second
                 // closer's output; and a reader of regions that resume, none of its own.
                 if let Some(&t) = low.token_templates.get(&kind) {
@@ -5037,7 +5064,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     if low.token_parts.contains_key(k) || low.token_parts.contains_key(&kind) {
                         return Err(format!("two kinds read by readers start at byte {b:#x}, one in parts"));
                     }
-                    for (o, c, off, none) in low.token_reads[k].clone() {
+                    for (i, (o, c, off, none)) in low.token_reads[k].clone().into_iter().enumerate() {
+                        let none = open_of(low, k, i, none)?;
                         arms.push(crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, last: None, none, retag: Some(tag), template: None });
                     }
                 }

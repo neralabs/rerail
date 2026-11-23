@@ -1455,7 +1455,7 @@ impl<'a> G<'a> {
             any(always.clone())
         } else {
             let mut arms: String = by_word.into_iter().map(|(w, cs)| format!("            {w} => {},\n", any(cs.into_iter().chain(always.iter().cloned()).collect()))).collect();
-            let _ = write!(arms, "            _ => {},\n", any(always.clone()));
+            let _ = writeln!(arms, "            _ => {},", any(always.clone()));
             format!("match self.word() {{\n{arms}        }}")
         };
         let _ = writeln!(out, "    /// A mark no rule takes holds at the token (a mark not hidden).\n    fn open_mark(&mut self) -> bool {{\n        {body}\n    }}\n");

@@ -1,6 +1,6 @@
 # 0650: `.rerail`'s tier 2 recovers a statement, as the lean parser does
 
-Status: steps 1 to 4 done; step 5 not started (tier 1's errors still refuse the file). The item is the user's (2026-11-23): lean's statement-level error
+Status: done (steps 1 to 5). The item is the user's (2026-11-23): lean's statement-level error
 recovery in every executor of `rr.bitlex`'s tier 2, with A20 kept (no trial reads inside an expression; `reread` and
 the lookahead patterns stay).
 
@@ -49,9 +49,10 @@ an ERROR leaf in lean's tape. Of the refusals:
   - a reading that reaches a dropped node;
   - the tape's widths.
   They refuse the file as before, and the engine's parser (lean's tape) writes it.
-- **Tier 1's refusals.** These are "a byte no token takes" and a region open at the file's end. Lean's lexer makes
-  each a `Bad` token, which fails its statement. Tier 1 refuses the whole file instead. Until tier 1 writes such a
-  token (step 5), they stay whole-file refusals.
+- **Tier 1's refusals.** These were "a byte no token takes" and a region open at the file's end. Lean's lexer makes
+  each a `Bad` token, which fails its statement. Tier 1 refused the whole file instead. Tier 1 now writes such a
+  token (step 5), and its statement recovers. Tier 1's escapes stay limits (a `\u` escape, a number of 19
+  digits, four backticks, a float the file ends with).
 
 ## The design
 
@@ -165,7 +166,7 @@ lean's, byte for byte. The probe stays, as the tally of what still refuses.
    head the levels are the root's and the statement's before, whole.
 
    **The interpreter (4a).** A refusal is syntax (`refuse!`, a break out of the word) or a limit (`limit!`: the
-   depth, a count, a token's or a local check, tier 1's, a region with no closer), which refuses the file.
+   depth, a count, a token's or a local check, tier 1's), which refuses the file.
    `STATEMENT` first fails the statement before where it holds a provisional field, then marks: the record, the
    tape's length, the open levels' entries (a few at a head), the pending extras and their `keep`, the last end, the
    word, flags, counts, strings, the moved node and the dropped flag. A refusal by syntax with a mark cuts back to it:
@@ -201,4 +202,46 @@ lean's, byte for byte. The probe stays, as the tally of what still refuses.
    refused alike, over all 9,691 texts (6,035 taken whole, 2,971 with a statement recovered, 685 refused). The rr tests
    that once asked a refusal of a statement's syntax ask lean's tape with an ERROR leaf of each executor
    (`reads_as_lean`), or the same refusal of every executor for a limit.
-5. Tier 1's errors as lean's `Bad` tokens, so a byte no token takes and a region open at the end recover too.
+5. Tier 1's errors as lean's `Bad` tokens, so a byte no token takes and a region open at the end recover too. Done.
+
+   **The grammar.** `rr.bitlex` declares lean's `Bad` as a token, `bad`: the bytes no other token begins with,
+   outside the regions (`class other`), a run of them one token (`run other`; lean's are one a character, and the
+   ERROR leaf over them is the same). No state takes it. A region kind takes `open K` (bitlex's `Region::open`): an
+   opener with no closer after it anywhere in the file is a token of kind `K` to the file's last byte, as lean's
+   lexer makes the rest of the file one `Bad`. The string, the block comment and the literals of one and of three
+   backticks are `open bad`; the line comment ends at the file's end already, and two backticks with no closer are
+   the empty literal. The three `error … by tokens` lines for a region open at the end, and the one for a byte no
+   token takes, are gone. `K` is the lexer's error token: `any` and `balanced` leave it out, as lean fails a
+   `.type`'s line, an `.input`'s parameters or braces at a `Bad`.
+
+   **A quote after a backslash.** Lean reads a backslash outside a string as a `Bad` and the quote after it as a
+   string's opener. The regions read escapes before they know where the strings are, so a string's opener was
+   `q`, a quote not escaped, and such a quote opened none. It is `quote` now: any quote outside the regions opens a
+   string, and the escape is read only for the closer (`str = quote .. q`), as lean's string reader reads it. Every
+   text tier 1 took before reads the same: a backslash outside a string was refused.
+
+   **Tier 1.** The reader's arm with `open` reads `ReadNone::Bad(k)`, `k` the `bad` token's record kind. Where it
+   finds no closer it ends at the file's last byte, and the token is `k`'s: no word, none of the reader's marks,
+   none of its kind's tests (the `\u` check, `json_bad`'s hits). The mask form's last byte of such a region is its
+   fill at the last byte (`TokenRule::last`), so Metal's lasts hold it.
+   - The interpreter: `read_end` ends it, and the record pass gives it its kind (`Reader::open_kind`: the arm whose
+     opener holds at the start, and no closer's first byte where the last says, a bit or two read again).
+     `check_hits` gives it none.
+   - The JIT's tier 1: `read_none` jumps to the token's end with the kind as its tag, as a reader's retag.
+   - The generated Rust (`bitlex_lex_rust`): the reader's `None` arm sets `open_bad` and ends at `n - 1`; the record
+     is `bad`'s kind, no word, no bits, no tests. In one pass (decision 0619) it waits for every block, as `else`
+     does.
+   - Metal: `record_bad`, the same test from the opener's and closer's bits, gives the record pass its kind and the
+     marks' tests none.
+   The `bad` record has the punctuation's kind, whose switches go by word: with no word, every switch refuses it.
+
+   **The loop's main run.** `bad`'s run has more first bytes than the identifier's, and the token loop is shaped
+   about the widest run (`main_run`). The main run is now the widest one a word may begin, as a lexer's identifier
+   arm: `bad` is rare, as a lexer's error arm.
+
+   Tests: `tier1_reads_leans_bad_tokens` holds, on each case of `bad_token_cases` (a run of bad bytes, each region
+   open at the end, in its first block and blocks past it, a backslash before a quote, an escape in a string open at
+   the end), the `bad` record, the CPU's records to the interpreter's, Metal's to the CPU's, and each executor's
+   tape to lean's with its ERROR leaf. The generated Rust's records and tapes are held to the JIT's on the same
+   cases. Over the 9,691 edited texts: 6,035 taken whole, 3,640 with a statement recovered (2,971 before), 16
+   refused (685 before), each at a limit: 11 at tier 2's `\u` check, 5 at tier 1's escapes.
