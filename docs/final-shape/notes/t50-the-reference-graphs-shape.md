@@ -1018,6 +1018,10 @@ Then, step by step (each device run's step counts against a CPU run of the same 
   with the budget (their views' row counts differ), and where a probe's group is in both runs its counts are the same.
   So the next instrument has to judge each empty probe within its own run: the binding's key read against the view's
   values on the host (the index check's `key_hash`), not against another run.
+- **Not the stages' screens (2026-11-23).** A probe drops each binding its relation's kept filter says it cannot
+  hold (decision 0488) before reading the index, a step none of the index checks covered. With every read of the kept
+  filters off (`RERAIL_KEPT_KEYS=off`) the 512 MB run is still short (`mn_class` 259,514, `dbg_rd` 469,019); and a
+  view's rows, where most of the loss is, take no screen.
 
 ## Open
 
