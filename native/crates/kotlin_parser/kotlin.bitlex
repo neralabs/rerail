@@ -302,6 +302,39 @@ mask as_dot     = fill(as_run & dot, ~as_run)
 # `<Int?>` or `<Map<A>>` no `>` that ends the line is in it.
 mask as_lt      = fill(as_dot & text("<"), ~as_dot | text("?") | text("<") | gt & prev(gt))
 escape "a blank, a comment or a `\r` after a type the lean parser may split" when (text(" ") | slash | text("\r")) & prev(as_lt) & prev(gt)
+# The line a split reads (`as_sline`): after a type the lean parser may split, from the next
+# line's first token where `as_open` holds (not a `.`, a closer, `?:`, `&&`, `||`, `->`, `:`,
+# `,`, `else`, `val` or `var`) to its end. The lean parser splits only where its trial read of
+# the line at comparison precedence reaches the line's end: a `<`, `>`, `=`, `&&` or `||` outside
+# brackets stops it, and the type stays whole. Where such an operator may be outside brackets
+# (`as_in1`: from an opener to the next closer, surely inside), not read.
+mask as_nl      = lf & code & prev(as_lt) & prev(gt)
+mask as_lead    = fill(as_nl, code & ~ws)
+mask as_first   = code & ~ws & prev(as_lead)
+mask as_skip    = dot | text("?") | text("&") | text("|") | text(":") | text("}") | text(")") | text("]") | text(",") | text("-") & next(gt) | (text("val") | text("var")) & ~next(w, 3) | text("else") & ~next(w, 4)
+mask as_sline   = fill(as_first & ~as_skip, lf & code)
+mask as_opener  = as_sline & code & (text("(") | text("[") | text("{"))
+mask as_in1     = fill(as_opener, code & (text(")") | text("]") | text("}")) | lf & code)
+# A `<` touching a name there is a generic call's where a `>` that a `(` or `{` follows closes it
+# on the line, as the grammar's `generic` and the lean parser's `generic_suffix` read it
+# (`as_gen`); else a comparison, and the line ends inside it. A `<` after a blank, which the lean
+# parser may read as a generic call's too: not read.
+mask as_glt     = as_sline & code & text("<") & ~as_in1 & prev(w)
+mask as_ggt     = code & gt & (next(text("(")) | next(text("{")) | next(text(" ")) & next(text("{"), 2))
+mask as_gen     = fill(as_glt, as_ggt | lf & code)
+escape "a `<` on a split's line that no generic call's `>` closes" when lf & code & prev(as_gen)
+mask as_cmp     = code & (text("<") & ~prev(w) | gt & ~prev(text("-")) & ~(as_ggt & prev(as_gen)) | text("=") | text("&") | text("|"))
+escape "an operator that may stop the lean parser's trial read of a split's line" when as_sline & as_cmp & ~as_in1
+# A split's line left open (a bracket of it open at its end): the trial reads on, to the line
+# that starts with a closer (`as_cline`), as the brackets are written; an operator there outside
+# brackets, not read.
+mask closer     = text(")") | text("]") | text("}")
+mask line_lead  = fill(lf & code, code & ~ws)
+mask as_cont    = fill(lf & code & prev(as_in1) & prev(as_sline), code & closer & prev(line_lead))
+mask as_cline   = fill(code & closer & prev(line_lead) & prev(as_cont), lf & code)
+mask as_c_open  = as_cline & code & (text("(") | text("[") | text("{"))
+mask as_c_in1   = fill(as_c_open, code & closer | lf & code)
+escape "an operator after a split's line left open, where the lean parser's trial read may stop" when as_cline & (as_cmp | code & text("<")) & ~as_c_in1
 
 # --- Tokens ------------------------------------------------------------------------------------
 
@@ -502,11 +535,17 @@ mark jump_at    = tokens "return" | "break" | "continue" "@" without apart
 # failure: the type whole). A string or a character there is `as_open`'s but none of these (a
 # mark's quoted name is a word, and those tokens have none): refused. Before `as_q`, which
 # taking it would pass.
-mark as_split   = tokens "as" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" with as_open
-mark is_split   = tokens "is" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" with as_open
-mark is_split   = tokens "!" "is" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" with as_open
-mark as_split   = tokens "as" "?" without apart simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" with as_open
+mark as_split   = tokens "as" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open
+mark is_split   = tokens "is" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open
+mark is_split   = tokens "!" "is" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open
+mark as_split   = tokens "as" "?" without apart simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open
 mark as_q       = tokens "as" "?" without apart
+# A keyword the lean parser's trial read of a split's line takes as a name (its `kw_name`): the
+# line's first token (`as_kwn`: `for (i in l) {}` a call), or an infix operation's name in a
+# comparison's operand, on the operand's line (`as_kwi`: `do {} while (c)`). A comparison's
+# operand meets such a keyword nowhere else in a file the grammar reads.
+mark as_kwn     = tokens "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open
+mark as_kwi     = tokens "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" without semi
 # A safe call's `?.`: lexed as its `?` and its `.`, as the lean parser reads a `?.` after a type
 # (`String?.f`, `x as T?.f`, `as?.`: `split_at`), and one leaf again where it is a safe call.
 mark qdot       = tokens "?" "." without apart
@@ -800,7 +839,8 @@ tree kotlin {
   choice infix_operand nested = unary_tight (as_op | mul_op | add_op | range_op)*
   choice elvis_operand nested = unary_tight (as_op | mul_op | add_op | range_op | infix_op)*
   choice check_operand nested = unary_tight (as_op | mul_op | add_op | range_op | infix_op | elvis_op)*
-  choice cmp_operand nested = unary_tight (gen_op | as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op)*
+  choice cmp_operand nested = unary_tight (gen_op | as_op | mul_op | add_op | range_op | infix_op | as_kwi kw_infix_op | elvis_op | check_op)*
+  choice kw_infix_op    = wrap infix_expression _ kw_name infix_operand
   choice eq_operand nested = unary_tight (gen_op | as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op)*
   choice conj_operand nested = unary_tight (gen_op | as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op | eq_op)*
   choice disj_operand nested = unary_tight (gen_op | as_op | mul_op | add_op | range_op | infix_op | elvis_op | check_op | cmp_op | eq_op | conj_op)*
@@ -836,10 +876,12 @@ tree kotlin {
   node value_argument   = named name '=' expression | spread_expression | expression
   node spread_expression = '*' expression
 
-  choice primary_tight nested = name | obj_lit object_literal
+  choice primary_tight nested = name | obj_lit object_literal | as_kwn kw_name
                         | number_literal | string_literal | character_literal | boolean_literal | 'null' as null_literal | this_expression
                         | parenthesized_expression | jump_expression | if_expression | when_expression | try_expression | callable_reference
                         | lambda_literal | super_expression | collection_literal
+  # A keyword the lean parser's trial read takes as a name (`as_kwn`): one leaf.
+  choice kw_name        = 'for' as simple_identifier | 'while' as simple_identifier | 'do' as simple_identifier | 'class' as simple_identifier | 'interface' as simple_identifier | 'typealias' as simple_identifier | 'package' as simple_identifier
   node collection_literal = '[' expression (',' expression)* (trail_bracket | ']')
   node callable_reference = [cref type_name] '::' ('class' | name)
   node generic_suffix   = retag call_suffix type_arguments [as_open] (value_arguments [unless no_lambda (blk annotated_lambda)] | unless no_lambda annotated_lambda)
@@ -972,6 +1014,6 @@ tree kotlin {
   # Every mark a rule takes is asked only where a rule takes it, as the lean parser asks each
   # question where it branches (decision 0492). Not hidden: `generic`, where a `<` that opens type
   # arguments no rule reads refuses the file.
-  hidden apart own_line this_at jump_at as_q as_split is_split qdot ge sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp ds_susp cp_mod pm tpm imp_same
+  hidden as_kwn as_kwi apart own_line this_at jump_at as_q as_split is_split qdot ge sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp ds_susp cp_mod pm tpm imp_same
   extra line_comment multiline_comment
 }

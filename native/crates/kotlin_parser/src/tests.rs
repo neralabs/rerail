@@ -973,10 +973,55 @@ fn as_types_the_lean_parser_does_not_split_are_its() {
     ]);
 }
 
+/// The line after a type the lean parser may split (decision 0630): read as the lean parser's trial read
+/// reads it, a keyword no expression starts with a name there, and an operator in brackets.
+#[test]
+fn split_lines_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) {}\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) g(x)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  while (c) {}\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  while (c) g(x)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  do {} while (c)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  for.x\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  typealias\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) {\n    a\n  }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) {\n    if (a) {\n    } else if (a == b) {\n    }\n  }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(a == b)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f { a = 1 }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f { x -> x }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(\"a == b\")\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(\n    a\n  )\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(\n    a\n  ).g(a == b)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  val y = a == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  .x == y\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a ?: b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  assertFailsWith<E> { d.add(4) }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<b>(c)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(a < b)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a .. b\n}\n",
+    ]);
+}
+
 /// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&[
+        // A split's line that the lean parser's trial read stops on: the type whole, which the
+        // grammar decides at `as`, before the line (decision 0630).
+        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) g()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  while (c) g()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  class D\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a < b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a = b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a && b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a || b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(a) == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  -a < b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(\n    a\n  ) == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a < b > (c)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<b> (c)\n}\n",
         // A token on the line of a block comment after one that starts the line: the lean
         // lexer's `asi` inserts no semicolon there, which a mark's questions can not say.
         "val a = 1\n/* c */ /* d */ + 2\n",

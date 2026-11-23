@@ -521,7 +521,13 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                                 strings += 1;
                             }
                             let (s, l): (Vec<u32>, Vec<u32>) = tokens.iter().map(|&(a, b)| (a as u32, b as u32)).unzip();
-                            let (codes, _) = crate::records::pass(r, table, bytes, &s, &l, &tier1.outputs);
+                            let (mut codes, _) = crate::records::pass(r, table, bytes, &s, &l, &tier1.outputs);
+                            // The opener's gap is the record's: the pass over the parts alone
+                            // reads it from the file's start.
+                            let gaps = r.gaps << crate::records::MARK_SHIFT;
+                            if let Some(c) = codes.first_mut() {
+                                *c = *c & !gaps | code & gaps;
+                            }
                             parts.extend(s.iter().zip(&l).zip(&codes).map(|((&a, &b), &c)| (a, b, c)));
                             let (s, l, c) = parts.pop_front().expect("the opener");
                             (start, end, rec_end, code) = (s, s, l + 1, c);

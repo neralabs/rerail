@@ -1158,7 +1158,7 @@ impl P<'_> {
     fn source_file(&mut self) -> R {
         self.open_root(k::SOURCE_FILE);
         loop {
-            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() {
+            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() {
                 break;
             } else if self.m_file_at() {
                 self.mark_file_at()?;
@@ -1170,7 +1170,7 @@ impl P<'_> {
                 break;
             }
         }
-        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
         } else {
             match self.word() {
                 w::PACKAGE_7 => {
@@ -1180,7 +1180,7 @@ impl P<'_> {
                 }
             }
         }
-        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
         } else {
             match self.word() {
                 w::IMPORT_8 => {
@@ -1192,7 +1192,7 @@ impl P<'_> {
         }
         loop {
             let arm: usize;
-            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                 arm = 0;
             } else {
                 match self.word() {
@@ -1502,7 +1502,7 @@ impl P<'_> {
         self.open(k::IMPORT_LIST);
         self.import_header()?;
         loop {
-            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                 break;
             } else {
                 match self.word() {
@@ -1605,7 +1605,7 @@ impl P<'_> {
             arm = 6;
         } else if self.m_lab_loop() {
             arm = 1;
-        } else if self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() {
+        } else if self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() {
             arm = 6;
         } else if self.m_decl_mod() {
             arm = 0;
@@ -1729,7 +1729,7 @@ impl P<'_> {
                         let arm: usize;
                         if self.m_semi() || self.m_semi_close() {
                             arm = 1;
-                        } else if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+                        } else if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                             arm = 0;
                         } else {
                             match self.word() {
@@ -1779,7 +1779,7 @@ impl P<'_> {
     fn r_block(&mut self) -> R {
         self.word_skip(w::LBRACE_17)?;
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
             arm = 0;
         } else {
             match self.word() {
@@ -1813,7 +1813,7 @@ impl P<'_> {
     fn control_structure_body(&mut self) -> R {
         self.open(k::CONTROL_STRUCTURE_BODY);
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() {
+        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() {
             arm = 1;
         } else if self.m_blk() {
             arm = 0;
@@ -1879,7 +1879,7 @@ impl P<'_> {
         self.word_skip(w::RPAREN_21)?;
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-        } else if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_blk() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+        } else if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_blk() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
             self.control_structure_body()?;
         } else {
             match self.word() {
@@ -3655,7 +3655,7 @@ impl P<'_> {
             self.mark_blk()?;
             self.word_skip(w::LBRACE_17)?;
             let arm: usize;
-            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                 arm = 0;
             } else {
                 match self.word() {
@@ -5038,7 +5038,7 @@ impl P<'_> {
                 break;
             } else if self.flags & FLAG_NO_LAMBDA == 0 && self.m_lab_lam() {
                 self.lambda_call()?;
-            } else if self.m_as_split() || self.m_is_split() || self.m_as_q() {
+            } else if self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() {
                 break;
             } else if self.m_qdot() {
                 self.postfix_op()?;
@@ -5119,7 +5119,7 @@ impl P<'_> {
                 loop {
                     self.ask_semi(false)?;
                     let arm: usize;
-                    if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() {
+                    if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() {
                         arm = 1;
                     } else if self.m_qdot() {
                         arm = 0;
@@ -5261,7 +5261,7 @@ impl P<'_> {
             1 => {
                 self.parenthesized_type()?;
                 self.ask_semi(false)?;
-                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_ge() || self.m_generic() {
+                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() || self.m_generic() {
                 } else {
                     match self.word() {
                         w::QUEST_40 => {
@@ -5269,7 +5269,7 @@ impl P<'_> {
                             self.word_leaf(w::QUEST_40, k::QUEST)?;
                             loop {
                                 self.ask_semi(false)?;
-                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_ge() || self.m_generic() {
+                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() || self.m_generic() {
                                     break;
                                 } else {
                                     match self.word() {
@@ -5296,7 +5296,7 @@ impl P<'_> {
             3 => {
                 self.as_user_type()?;
                 self.ask_semi(false)?;
-                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_ge() || self.m_generic() {
+                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() || self.m_generic() {
                 } else {
                     match self.word() {
                         w::QUEST_40 => {
@@ -5304,7 +5304,7 @@ impl P<'_> {
                             self.word_leaf(w::QUEST_40, k::QUEST)?;
                             loop {
                                 self.ask_semi(false)?;
-                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_ge() || self.m_generic() {
+                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() || self.m_generic() {
                                     break;
                                 } else {
                                     match self.word() {
@@ -5338,7 +5338,7 @@ impl P<'_> {
         self.retag(k::USER_TYPE);
         self.type_name()?;
         self.ask_semi(false)?;
-        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_ge() {
+        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() {
         } else if self.m_generic() {
             self.type_arguments()?;
         } else {
@@ -5352,7 +5352,7 @@ impl P<'_> {
         }
         loop {
             self.ask_semi(false)?;
-            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_ge() || self.m_generic() {
+            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() || self.m_generic() {
                 break;
             } else {
                 match self.word() {
@@ -5360,7 +5360,7 @@ impl P<'_> {
                         self.word_skip(w::DOT_32)?;
                         self.type_name()?;
                         self.ask_semi(false)?;
-                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_ge() {
+                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() {
                         } else if self.m_generic() {
                             self.type_arguments()?;
                         } else {
@@ -5496,7 +5496,7 @@ impl P<'_> {
             loop {
                 self.ask_semi(false)?;
                 let arm: usize;
-                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() {
+                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() {
                     arm = 1;
                 } else if self.m_qdot() {
                     arm = 0;
@@ -5600,7 +5600,7 @@ impl P<'_> {
                     self.word_leaf(w::GT_27, k::GT)?;
                     if self.m_as_open() {
                         self.mark_as_open()?;
-                    } else if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
+                    } else if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
                     } else {
                     }
                 }
@@ -5889,6 +5889,9 @@ impl P<'_> {
                 self.check_op()?;
             } else if self.m_as_q() {
                 self.as_op()?;
+            } else if self.m_as_kwi() {
+                self.mark_as_kwi()?;
+                self.kw_infix_op()?;
             } else if self.m_generic() {
                 self.gen_op()?;
             } else {
@@ -5924,6 +5927,19 @@ impl P<'_> {
             }
         }
         self.depth -= 1;
+        self.marked = false;
+        Ok(())
+    }
+
+    /// `kw_infix_op`.
+    fn kw_infix_op(&mut self) -> R {
+        self.wrap(k::INFIX_EXPRESSION, 0)?;
+        self.kw_name()?;
+        let asks = self.asks;
+        self.asks = asks & 0x0 | 0x8;
+        self.infix_operand()?;
+        self.asks = asks;
+        self.close()?;
         self.marked = false;
         Ok(())
     }
@@ -6128,7 +6144,7 @@ impl P<'_> {
             arm = 1;
         } else if self.m_label_at() || self.m_lab_lam() {
             arm = 0;
-        } else if self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() {
+        } else if self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() {
             arm = 1;
         } else if self.m_ann_expr() {
             arm = 0;
@@ -6329,7 +6345,7 @@ impl P<'_> {
         self.open(k::CALL_SUFFIX);
         self.value_arguments()?;
         self.ask_semi(false)?;
-        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_lab_lam() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_qdot() || self.m_ge() {
+        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_lab_lam() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_qdot() || self.m_ge() {
         } else if self.flags & FLAG_NO_LAMBDA == 0 && self.m_blk() {
             self.mark_blk()?;
             self.annotated_lambda()?;
@@ -6390,7 +6406,7 @@ impl P<'_> {
             self.mark_lam_bare()?;
             self.lambda_bare_open()?;
             let arm: usize;
-            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                 arm = 0;
             } else {
                 match self.word() {
@@ -6422,7 +6438,7 @@ impl P<'_> {
             self.lambda_parameters()?;
             self.word_leaf(w::MINUS_GT_41, k::MINUS_GT)?;
             let arm: usize;
-            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+            if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                 arm = 0;
             } else {
                 match self.word() {
@@ -6453,7 +6469,7 @@ impl P<'_> {
                 w::LBRACE_17 => {
                     self.word_skip(w::LBRACE_17)?;
                     let arm: usize;
-                    if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+                    if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
                         arm = 0;
                     } else {
                         match self.word() {
@@ -6647,7 +6663,7 @@ impl P<'_> {
         self.open(k::VALUE_ARGUMENTS);
         self.word_skip(w::LPAREN_19)?;
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() {
+        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() {
             arm = 0;
         } else if self.m_trail() {
             arm = 1;
@@ -6717,7 +6733,7 @@ impl P<'_> {
     fn value_argument(&mut self) -> R {
         self.open(k::VALUE_ARGUMENT);
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
+        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
             arm = 2;
         } else if self.m_named() {
             arm = 0;
@@ -6783,71 +6799,73 @@ impl P<'_> {
         self.deeper()?;
         let arm: usize;
         if self.m_real() {
-            arm = 2;
+            arm = 3;
         } else if self.m_this_at() {
-            arm = 7;
+            arm = 8;
         } else if self.m_jump_at() {
-            arm = 9;
-        } else if self.m_sfx() {
+            arm = 10;
+        } else if self.m_as_kwn() {
             arm = 2;
+        } else if self.m_sfx() {
+            arm = 3;
         } else if self.m_lam_bare() || self.m_lam_params() {
-            arm = 14;
+            arm = 15;
         } else if self.m_obj_lit() {
             arm = 1;
         } else if self.m_cref() {
-            arm = 13;
+            arm = 14;
         } else {
             match self.word() {
                 w::CONSTRUCTOR_36 | w::EXPECT_107 | w::DATA_52 | w::INNER_85 | w::VALUE_86 | w::ACTUAL_108 | w::SET_35 | w::GET_34 | w::OVERRIDE_87 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_84 | w::LATEINIT_88 | w::TAILREC_94 | w::OPERATOR_95 | w::INFIX_96 | w::INLINE_97 | w::EXTERNAL_98 | w::PUBLIC_89 | w::PRIVATE_90 | w::INTERNAL_91 | w::PROTECTED_92 | w::ABSTRACT_100 | w::FINAL_101 | w::OPEN_102 | w::CONST_99 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105 | w::REIFIED_106 | w::FIELD_109 | w::PROPERTY_110 | w::RECEIVER_111 | w::PARAM_112 | w::SETPARAM_113 | w::DELEGATE_114 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_57 | w::FINALLY_58 | w::ENUM_16 | w::FILE_3 | w::OUT_93 | w::BY_25 => {
                     arm = 0;
                 }
                 w::TRUE_116 | w::FALSE_117 => {
-                    arm = 5;
-                }
-                w::NULL_118 => {
                     arm = 6;
                 }
-                w::THIS_37 => {
+                w::NULL_118 => {
                     arm = 7;
                 }
-                w::LPAREN_19 => {
+                w::THIS_37 => {
                     arm = 8;
                 }
-                w::RETURN_60 | w::THROW_59 | w::BREAK_62 | w::CONTINUE_61 => {
+                w::LPAREN_19 => {
                     arm = 9;
                 }
-                w::IF_53 => {
+                w::RETURN_60 | w::THROW_59 | w::BREAK_62 | w::CONTINUE_61 => {
                     arm = 10;
                 }
-                w::WHEN_55 => {
+                w::IF_53 => {
                     arm = 11;
                 }
-                w::TRY_56 => {
+                w::WHEN_55 => {
                     arm = 12;
                 }
-                w::COLON_COLON_63 => {
+                w::TRY_56 => {
                     arm = 13;
                 }
-                w::LBRACE_17 => {
+                w::COLON_COLON_63 => {
                     arm = 14;
                 }
-                w::SUPER_38 => {
+                w::LBRACE_17 => {
                     arm = 15;
                 }
-                w::LBRACK_5 => {
+                w::SUPER_38 => {
                     arm = 16;
+                }
+                w::LBRACK_5 => {
+                    arm = 17;
                 }
                 _ if self.at_simple_identifier() || self.at_backtick_name() => {
                     arm = 0;
                 }
                 _ if self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() => {
-                    arm = 2;
-                }
-                _ if self.at_quote() => {
                     arm = 3;
                 }
-                _ if self.at_tick() => {
+                _ if self.at_quote() => {
                     arm = 4;
+                }
+                _ if self.at_tick() => {
+                    arm = 5;
                 }
                 _ => {
                     arm = usize::MAX;
@@ -6863,51 +6881,55 @@ impl P<'_> {
                 self.object_literal()?;
             }
             2 => {
+                self.mark_as_kwn()?;
+                self.kw_name()?;
+            }
+            3 => {
                 let asks = self.asks;
                 self.asks = asks & 0x8 | 0x0;
                 self.number_literal()?;
                 self.asks = asks;
             }
-            3 => {
+            4 => {
                 self.string_literal()?;
             }
-            4 => {
+            5 => {
                 self.character_literal()?;
             }
-            5 => {
+            6 => {
                 self.boolean_literal()?;
             }
-            6 => {
+            7 => {
                 self.word_leaf(w::NULL_118, k::NULL_LITERAL)?;
             }
-            7 => {
+            8 => {
                 self.this_expression()?;
             }
-            8 => {
+            9 => {
                 self.parenthesized_expression()?;
             }
-            9 => {
+            10 => {
                 self.jump_expression()?;
             }
-            10 => {
+            11 => {
                 self.if_expression()?;
             }
-            11 => {
+            12 => {
                 self.when_expression()?;
             }
-            12 => {
+            13 => {
                 self.try_expression()?;
             }
-            13 => {
+            14 => {
                 self.callable_reference()?;
             }
-            14 => {
+            15 => {
                 self.lambda_literal()?;
             }
-            15 => {
+            16 => {
                 self.super_expression()?;
             }
-            16 => {
+            17 => {
                 self.collection_literal()?;
             }
             _ => {
@@ -6915,6 +6937,38 @@ impl P<'_> {
             }
         }
         self.depth -= 1;
+        self.marked = false;
+        Ok(())
+    }
+
+    /// `kw_name`.
+    fn kw_name(&mut self) -> R {
+        match self.word() {
+            w::FOR_42 => {
+                self.word_leaf(w::FOR_42, k::SIMPLE_IDENTIFIER)?;
+            }
+            w::WHILE_44 => {
+                self.word_leaf(w::WHILE_44, k::SIMPLE_IDENTIFIER)?;
+            }
+            w::DO_45 => {
+                self.word_leaf(w::DO_45, k::SIMPLE_IDENTIFIER)?;
+            }
+            w::CLASS_13 => {
+                self.word_leaf(w::CLASS_13, k::SIMPLE_IDENTIFIER)?;
+            }
+            w::INTERFACE_15 => {
+                self.word_leaf(w::INTERFACE_15, k::SIMPLE_IDENTIFIER)?;
+            }
+            w::TYPEALIAS_11 => {
+                self.word_leaf(w::TYPEALIAS_11, k::SIMPLE_IDENTIFIER)?;
+            }
+            w::PACKAGE_7 => {
+                self.word_leaf(w::PACKAGE_7, k::SIMPLE_IDENTIFIER)?;
+            }
+            _ => {
+                return self.refuse();
+            }
+        }
         self.marked = false;
         Ok(())
     }
@@ -7007,7 +7061,7 @@ impl P<'_> {
                 w::LPAREN_19 => {
                     self.value_arguments()?;
                     self.ask_semi(false)?;
-                    if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_lab_lam() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_qdot() || self.m_ge() {
+                    if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_lab_lam() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_qdot() || self.m_ge() {
                     } else if self.flags & FLAG_NO_LAMBDA == 0 && self.m_blk() {
                         self.mark_blk()?;
                         self.annotated_lambda()?;
@@ -7474,7 +7528,7 @@ impl P<'_> {
                     let arm: usize;
                     if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                         arm = 1;
-                    } else if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
+                    } else if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
                         arm = 0;
                     } else {
                         match self.word() {
@@ -7524,7 +7578,7 @@ impl P<'_> {
                     let arm: usize;
                     if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
                         arm = 1;
-                    } else if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
+                    } else if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
                         arm = 0;
                     } else {
                         match self.word() {
@@ -7582,7 +7636,7 @@ impl P<'_> {
         self.mark_blk()?;
         self.word_skip(w::LBRACE_17)?;
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
             arm = 0;
         } else {
             match self.word() {
@@ -7654,7 +7708,7 @@ impl P<'_> {
         self.mark_blk()?;
         self.word_skip(w::LBRACE_17)?;
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
             arm = 0;
         } else {
             match self.word() {
@@ -7692,7 +7746,7 @@ impl P<'_> {
         self.mark_blk()?;
         self.word_skip(w::LBRACE_17)?;
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+        if self.m_real() || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_decl_mod() || self.m_obj_lit() || self.m_cref() || self.m_named() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
             arm = 0;
         } else {
             match self.word() {
@@ -7737,7 +7791,7 @@ impl P<'_> {
         }
         self.word_skip(w::LBRACE_17)?;
         loop {
-            if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() || self.m_named() {
+            if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() || self.m_named() {
                 self.when_entry()?;
             } else {
                 match self.word() {
@@ -7763,7 +7817,7 @@ impl P<'_> {
     fn when_subject(&mut self) -> R {
         self.open(k::WHEN_SUBJECT);
         self.word_skip(w::LPAREN_19)?;
-        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
+        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
         } else {
             match self.word() {
                 w::VAL_22 => {
@@ -7789,7 +7843,7 @@ impl P<'_> {
     fn when_entry(&mut self) -> R {
         self.open(k::WHEN_ENTRY);
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() || self.m_named() {
+        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() || self.m_named() {
             arm = 0;
         } else {
             match self.word() {
@@ -7844,7 +7898,7 @@ impl P<'_> {
             self.mark_semi()?;
         } else if self.m_semi_close() {
             self.mark_semi_close()?;
-        } else if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() || self.m_named() {
+        } else if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() || self.m_named() {
         } else {
             match self.word() {
                 w::SEMI_33 => {
@@ -7863,7 +7917,7 @@ impl P<'_> {
     fn when_condition(&mut self) -> R {
         self.open(k::WHEN_CONDITION);
         let arm: usize;
-        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
+        if self.m_real() || self.m_label_at() || self.m_lab_lam() || self.m_this_at() || self.m_jump_at() || self.m_as_kwn() || self.m_sfx() || self.m_lam_bare() || self.m_lam_params() || self.m_ann_expr() || self.m_obj_lit() || self.m_cref() {
             arm = 3;
         } else if self.m_named() {
             arm = 0;
@@ -8519,9 +8573,57 @@ impl P<'_> {
         self.take_as_q()
     }
 
+    /// Mark `as_kwn` holds at the token, not taken there; once a token (`held`).
+    fn m_as_kwn(&mut self) -> bool {
+        self.taken >> 20 & 1 == 0 && self.held(20, Self::h_as_kwn)
+    }
+
+    fn h_as_kwn(&self) -> bool {
+        (self.pat_as_kwn_0_0(self.i, self.prev_tok(self.i)))
+    }
+
+    /// Mark `as_kwn` taken: it and the marks before it passed at this token.
+    fn take_as_kwn(&mut self) -> R {
+        self.taken |= 0x1fffff;
+        Ok(())
+    }
+
+    /// Mark `as_kwn` where the rule takes it: it must hold.
+    fn mark_as_kwn(&mut self) -> R {
+        if !self.m_as_kwn() {
+            return self.refuse();
+        }
+        self.marked = true;
+        self.take_as_kwn()
+    }
+
+    /// Mark `as_kwi` holds at the token, not taken there; once a token (`held`).
+    fn m_as_kwi(&mut self) -> bool {
+        self.taken >> 21 & 1 == 0 && self.held(21, Self::h_as_kwi)
+    }
+
+    fn h_as_kwi(&self) -> bool {
+        (self.pat_as_kwi_0_0(self.i, self.prev_tok(self.i)))
+    }
+
+    /// Mark `as_kwi` taken: it and the marks before it passed at this token.
+    fn take_as_kwi(&mut self) -> R {
+        self.taken |= 0x3fffff;
+        Ok(())
+    }
+
+    /// Mark `as_kwi` where the rule takes it: it must hold.
+    fn mark_as_kwi(&mut self) -> R {
+        if !self.m_as_kwi() {
+            return self.refuse();
+        }
+        self.marked = true;
+        self.take_as_kwi()
+    }
+
     /// Mark `qdot` holds at the token, not taken there; once a token (`held`).
     fn m_qdot(&mut self) -> bool {
-        self.taken >> 20 & 1 == 0 && self.held(20, Self::h_qdot)
+        self.taken >> 22 & 1 == 0 && self.held(22, Self::h_qdot)
     }
 
     fn h_qdot(&self) -> bool {
@@ -8530,7 +8632,7 @@ impl P<'_> {
 
     /// Mark `qdot` taken: it and the marks before it passed at this token.
     fn take_qdot(&mut self) -> R {
-        self.taken |= 0x1fffff;
+        self.taken |= 0x7fffff;
         Ok(())
     }
 
@@ -8545,7 +8647,7 @@ impl P<'_> {
 
     /// Mark `ge` holds at the token, not taken there; once a token (`held`).
     fn m_ge(&mut self) -> bool {
-        self.taken >> 21 & 1 == 0 && self.held(21, Self::h_ge)
+        self.taken >> 23 & 1 == 0 && self.held(23, Self::h_ge)
     }
 
     fn h_ge(&self) -> bool {
@@ -8554,7 +8656,7 @@ impl P<'_> {
 
     /// Mark `ge` taken: it and the marks before it passed at this token.
     fn take_ge(&mut self) -> R {
-        self.taken |= 0x3fffff;
+        self.taken |= 0xffffff;
         Ok(())
     }
 
@@ -8569,7 +8671,7 @@ impl P<'_> {
 
     /// Mark `sfx` holds at the token, not taken there; once a token (`held`).
     fn m_sfx(&mut self) -> bool {
-        self.taken >> 22 & 1 == 0 && self.held(22, Self::h_sfx)
+        self.taken >> 24 & 1 == 0 && self.held(24, Self::h_sfx)
     }
 
     fn h_sfx(&self) -> bool {
@@ -8578,7 +8680,7 @@ impl P<'_> {
 
     /// Mark `sfx` taken: it and the marks before it passed at this token.
     fn take_sfx(&mut self) -> R {
-        self.taken |= 0x7fffff;
+        self.taken |= 0x1ffffff;
         Ok(())
     }
 
@@ -8593,7 +8695,7 @@ impl P<'_> {
 
     /// Mark `blk` holds at the token, not taken there; once a token (`held`).
     fn m_blk(&mut self) -> bool {
-        self.taken >> 23 & 1 == 0 && self.held(23, Self::h_blk)
+        self.taken >> 25 & 1 == 0 && self.held(25, Self::h_blk)
     }
 
     fn h_blk(&self) -> bool {
@@ -8602,7 +8704,7 @@ impl P<'_> {
 
     /// Mark `blk` taken: it and the marks before it passed at this token.
     fn take_blk(&mut self) -> R {
-        self.taken |= 0xffffff;
+        self.taken |= 0x3ffffff;
         Ok(())
     }
 
@@ -8617,7 +8719,7 @@ impl P<'_> {
 
     /// Mark `lam_bare` holds at the token, not taken there; once a token (`held`).
     fn m_lam_bare(&mut self) -> bool {
-        self.taken >> 24 & 1 == 0 && self.held(24, Self::h_lam_bare)
+        self.taken >> 26 & 1 == 0 && self.held(26, Self::h_lam_bare)
     }
 
     fn h_lam_bare(&self) -> bool {
@@ -8626,7 +8728,7 @@ impl P<'_> {
 
     /// Mark `lam_bare` taken: it and the marks before it passed at this token.
     fn take_lam_bare(&mut self) -> R {
-        self.taken |= 0x1ffffff;
+        self.taken |= 0x7ffffff;
         Ok(())
     }
 
@@ -8641,7 +8743,7 @@ impl P<'_> {
 
     /// Mark `lam_params` holds at the token, not taken there; once a token (`held`).
     fn m_lam_params(&mut self) -> bool {
-        self.taken >> 25 & 1 == 0 && self.held(25, Self::h_lam_params)
+        self.taken >> 27 & 1 == 0 && self.held(27, Self::h_lam_params)
     }
 
     fn h_lam_params(&self) -> bool {
@@ -8650,7 +8752,7 @@ impl P<'_> {
 
     /// Mark `lam_params` taken: it and the marks before it passed at this token.
     fn take_lam_params(&mut self) -> R {
-        self.taken |= 0x3ffffff;
+        self.taken |= 0xfffffff;
         Ok(())
     }
 
@@ -8665,7 +8767,7 @@ impl P<'_> {
 
     /// Mark `ann_expr` holds at the token, not taken there; once a token (`held`).
     fn m_ann_expr(&mut self) -> bool {
-        self.taken >> 26 & 1 == 0 && self.held(26, Self::h_ann_expr)
+        self.taken >> 28 & 1 == 0 && self.held(28, Self::h_ann_expr)
     }
 
     fn h_ann_expr(&self) -> bool {
@@ -8674,7 +8776,7 @@ impl P<'_> {
 
     /// Mark `ann_expr` taken: it and the marks before it passed at this token.
     fn take_ann_expr(&mut self) -> R {
-        self.taken |= 0x7ffffff;
+        self.taken |= 0x1fffffff;
         Ok(())
     }
 
@@ -8689,7 +8791,7 @@ impl P<'_> {
 
     /// Mark `decl_mod` holds at the token, not taken there; once a token (`held`).
     fn m_decl_mod(&mut self) -> bool {
-        self.taken >> 27 & 1 == 0 && self.held(27, Self::h_decl_mod)
+        self.taken >> 29 & 1 == 0 && self.held(29, Self::h_decl_mod)
     }
 
     fn h_decl_mod(&self) -> bool {
@@ -8698,7 +8800,7 @@ impl P<'_> {
 
     /// Mark `decl_mod` taken: it and the marks before it passed at this token.
     fn take_decl_mod(&mut self) -> R {
-        self.taken |= 0xfffffff;
+        self.taken |= 0x3fffffff;
         Ok(())
     }
 
@@ -8713,7 +8815,7 @@ impl P<'_> {
 
     /// Mark `use_site` holds at the token, not taken there; once a token (`held`).
     fn m_use_site(&mut self) -> bool {
-        self.taken >> 28 & 1 == 0 && self.held(28, Self::h_use_site)
+        self.taken >> 30 & 1 == 0 && self.held(30, Self::h_use_site)
     }
 
     fn h_use_site(&self) -> bool {
@@ -8722,7 +8824,7 @@ impl P<'_> {
 
     /// Mark `use_site` taken: it and the marks before it passed at this token.
     fn take_use_site(&mut self) -> R {
-        self.taken |= 0x1fffffff;
+        self.taken |= 0x7fffffff;
         Ok(())
     }
 
@@ -8737,7 +8839,7 @@ impl P<'_> {
 
     /// Mark `file_at` holds at the token, not taken there; once a token (`held`).
     fn m_file_at(&mut self) -> bool {
-        self.taken >> 29 & 1 == 0 && self.held(29, Self::h_file_at)
+        self.taken >> 31 & 1 == 0 && self.held(31, Self::h_file_at)
     }
 
     fn h_file_at(&self) -> bool {
@@ -8746,7 +8848,7 @@ impl P<'_> {
 
     /// Mark `file_at` taken: it and the marks before it passed at this token.
     fn take_file_at(&mut self) -> R {
-        self.taken |= 0x3fffffff;
+        self.taken |= 0xffffffff;
         Ok(())
     }
 
@@ -8761,7 +8863,7 @@ impl P<'_> {
 
     /// Mark `trail` holds at the token, not taken there; once a token (`held`).
     fn m_trail(&mut self) -> bool {
-        self.taken >> 30 & 1 == 0 && self.held(30, Self::h_trail)
+        self.taken >> 32 & 1 == 0 && self.held(32, Self::h_trail)
     }
 
     fn h_trail(&self) -> bool {
@@ -8770,7 +8872,7 @@ impl P<'_> {
 
     /// Mark `trail` taken: it and the marks before it passed at this token.
     fn take_trail(&mut self) -> R {
-        self.taken |= 0x7fffffff;
+        self.taken |= 0x1ffffffff;
         Ok(())
     }
 
@@ -8785,7 +8887,7 @@ impl P<'_> {
 
     /// Mark `wild` holds at the token, not taken there; once a token (`held`).
     fn m_wild(&mut self) -> bool {
-        self.taken >> 31 & 1 == 0 && self.held(31, Self::h_wild)
+        self.taken >> 33 & 1 == 0 && self.held(33, Self::h_wild)
     }
 
     fn h_wild(&self) -> bool {
@@ -8794,7 +8896,7 @@ impl P<'_> {
 
     /// Mark `wild` taken: it and the marks before it passed at this token.
     fn take_wild(&mut self) -> R {
-        self.taken |= 0xffffffff;
+        self.taken |= 0x3ffffffff;
         Ok(())
     }
 
@@ -8809,7 +8911,7 @@ impl P<'_> {
 
     /// Mark `obj_lit` holds at the token, not taken there; once a token (`held`).
     fn m_obj_lit(&mut self) -> bool {
-        self.taken >> 32 & 1 == 0 && self.held(32, Self::h_obj_lit)
+        self.taken >> 34 & 1 == 0 && self.held(34, Self::h_obj_lit)
     }
 
     fn h_obj_lit(&self) -> bool {
@@ -8818,7 +8920,7 @@ impl P<'_> {
 
     /// Mark `obj_lit` taken: it and the marks before it passed at this token.
     fn take_obj_lit(&mut self) -> R {
-        self.taken |= 0x1ffffffff;
+        self.taken |= 0x7ffffffff;
         Ok(())
     }
 
@@ -8833,7 +8935,7 @@ impl P<'_> {
 
     /// Mark `ft_dot_at` holds at the token, not taken there; once a token (`held`).
     fn m_ft_dot_at(&mut self) -> bool {
-        self.taken >> 33 & 1 == 0 && self.held(33, Self::h_ft_dot_at)
+        self.taken >> 35 & 1 == 0 && self.held(35, Self::h_ft_dot_at)
     }
 
     fn h_ft_dot_at(&self) -> bool {
@@ -8842,7 +8944,7 @@ impl P<'_> {
 
     /// Mark `ft_dot_at` taken: it and the marks before it passed at this token.
     fn take_ft_dot_at(&mut self) -> R {
-        self.taken |= 0x3ffffffff;
+        self.taken |= 0xfffffffff;
         Ok(())
     }
 
@@ -8857,7 +8959,7 @@ impl P<'_> {
 
     /// Mark `generic` holds at the token, not taken there; once a token (`held`).
     fn m_generic(&mut self) -> bool {
-        self.taken >> 34 & 1 == 0 && self.held(34, Self::h_generic)
+        self.taken >> 36 & 1 == 0 && self.held(36, Self::h_generic)
     }
 
     fn h_generic(&self) -> bool {
@@ -8866,7 +8968,7 @@ impl P<'_> {
 
     /// Mark `generic` taken: it and the marks before it passed at this token.
     fn take_generic(&mut self) -> R {
-        self.taken |= 0x7ffffffff;
+        self.taken |= 0x1fffffffff;
         Ok(())
     }
 
@@ -8881,7 +8983,7 @@ impl P<'_> {
 
     /// Mark `fn_paren` holds at the token, not taken there; once a token (`held`).
     fn m_fn_paren(&mut self) -> bool {
-        self.taken >> 35 & 1 == 0 && self.held(35, Self::h_fn_paren)
+        self.taken >> 37 & 1 == 0 && self.held(37, Self::h_fn_paren)
     }
 
     fn h_fn_paren(&self) -> bool {
@@ -8890,7 +8992,7 @@ impl P<'_> {
 
     /// Mark `fn_paren` taken: it and the marks before it passed at this token.
     fn take_fn_paren(&mut self) -> R {
-        self.taken |= 0xfffffffff;
+        self.taken |= 0x3fffffffff;
         Ok(())
     }
 
@@ -8905,7 +9007,7 @@ impl P<'_> {
 
     /// Mark `ty_susp` holds at the token, not taken there; once a token (`held`).
     fn m_ty_susp(&mut self) -> bool {
-        self.taken >> 36 & 1 == 0 && self.held(36, Self::h_ty_susp)
+        self.taken >> 38 & 1 == 0 && self.held(38, Self::h_ty_susp)
     }
 
     fn h_ty_susp(&self) -> bool {
@@ -8914,7 +9016,7 @@ impl P<'_> {
 
     /// Mark `ty_susp` taken: it and the marks before it passed at this token.
     fn take_ty_susp(&mut self) -> R {
-        self.taken |= 0x1fffffffff;
+        self.taken |= 0x7fffffffff;
         Ok(())
     }
 
@@ -8929,7 +9031,7 @@ impl P<'_> {
 
     /// Mark `ds_susp` holds at the token, not taken there; once a token (`held`).
     fn m_ds_susp(&mut self) -> bool {
-        self.taken >> 37 & 1 == 0 && self.held(37, Self::h_ds_susp)
+        self.taken >> 39 & 1 == 0 && self.held(39, Self::h_ds_susp)
     }
 
     fn h_ds_susp(&self) -> bool {
@@ -8938,7 +9040,7 @@ impl P<'_> {
 
     /// Mark `ds_susp` taken: it and the marks before it passed at this token.
     fn take_ds_susp(&mut self) -> R {
-        self.taken |= 0x3fffffffff;
+        self.taken |= 0xffffffffff;
         Ok(())
     }
 
@@ -8953,7 +9055,7 @@ impl P<'_> {
 
     /// Mark `imp_same` holds at the token, not taken there; once a token (`held`).
     fn m_imp_same(&mut self) -> bool {
-        self.taken >> 38 & 1 == 0 && self.held(38, Self::h_imp_same)
+        self.taken >> 40 & 1 == 0 && self.held(40, Self::h_imp_same)
     }
 
     fn h_imp_same(&self) -> bool {
@@ -8962,7 +9064,7 @@ impl P<'_> {
 
     /// Mark `imp_same` taken: it and the marks before it passed at this token.
     fn take_imp_same(&mut self) -> R {
-        self.taken |= 0x7fffffffff;
+        self.taken |= 0x1ffffffffff;
         Ok(())
     }
 
@@ -8977,7 +9079,7 @@ impl P<'_> {
 
     /// Mark `pm` holds at the token, not taken there; once a token (`held`).
     fn m_pm(&mut self) -> bool {
-        self.taken >> 39 & 1 == 0 && self.held(39, Self::h_pm)
+        self.taken >> 41 & 1 == 0 && self.held(41, Self::h_pm)
     }
 
     fn h_pm(&self) -> bool {
@@ -8986,7 +9088,7 @@ impl P<'_> {
 
     /// Mark `pm` taken: it and the marks before it passed at this token.
     fn take_pm(&mut self) -> R {
-        self.taken |= 0xffffffffff;
+        self.taken |= 0x3ffffffffff;
         Ok(())
     }
 
@@ -9001,7 +9103,7 @@ impl P<'_> {
 
     /// Mark `tpm` holds at the token, not taken there; once a token (`held`).
     fn m_tpm(&mut self) -> bool {
-        self.taken >> 40 & 1 == 0 && self.held(40, Self::h_tpm)
+        self.taken >> 42 & 1 == 0 && self.held(42, Self::h_tpm)
     }
 
     fn h_tpm(&self) -> bool {
@@ -9010,7 +9112,7 @@ impl P<'_> {
 
     /// Mark `tpm` taken: it and the marks before it passed at this token.
     fn take_tpm(&mut self) -> R {
-        self.taken |= 0x1ffffffffff;
+        self.taken |= 0x7ffffffffff;
         Ok(())
     }
 
@@ -9025,7 +9127,7 @@ impl P<'_> {
 
     /// Mark `cp_mod` holds at the token, not taken there; once a token (`held`).
     fn m_cp_mod(&mut self) -> bool {
-        self.taken >> 41 & 1 == 0 && self.held(41, Self::h_cp_mod)
+        self.taken >> 43 & 1 == 0 && self.held(43, Self::h_cp_mod)
     }
 
     fn h_cp_mod(&self) -> bool {
@@ -9034,7 +9136,7 @@ impl P<'_> {
 
     /// Mark `cp_mod` taken: it and the marks before it passed at this token.
     fn take_cp_mod(&mut self) -> R {
-        self.taken |= 0x3ffffffffff;
+        self.taken |= 0xfffffffffff;
         Ok(())
     }
 
@@ -9049,7 +9151,7 @@ impl P<'_> {
 
     /// Mark `cref` holds at the token, not taken there; once a token (`held`).
     fn m_cref(&mut self) -> bool {
-        self.taken >> 42 & 1 == 0 && self.held(42, Self::h_cref)
+        self.taken >> 44 & 1 == 0 && self.held(44, Self::h_cref)
     }
 
     fn h_cref(&self) -> bool {
@@ -9058,7 +9160,7 @@ impl P<'_> {
 
     /// Mark `cref` taken: it and the marks before it passed at this token.
     fn take_cref(&mut self) -> R {
-        self.taken |= 0x7ffffffffff;
+        self.taken |= 0x1fffffffffff;
         Ok(())
     }
 
@@ -9073,7 +9175,7 @@ impl P<'_> {
 
     /// Mark `named` holds at the token, not taken there; once a token (`held`).
     fn m_named(&mut self) -> bool {
-        self.taken >> 43 & 1 == 0 && self.held(43, Self::h_named)
+        self.taken >> 45 & 1 == 0 && self.held(45, Self::h_named)
     }
 
     fn h_named(&self) -> bool {
@@ -9082,7 +9184,7 @@ impl P<'_> {
 
     /// Mark `named` taken: it and the marks before it passed at this token.
     fn take_named(&mut self) -> R {
-        self.taken |= 0xfffffffffff;
+        self.taken |= 0x3fffffffffff;
         Ok(())
     }
 
@@ -9097,7 +9199,7 @@ impl P<'_> {
 
     /// Mark `enum_class` holds at the token, not taken there; once a token (`held`).
     fn m_enum_class(&mut self) -> bool {
-        self.taken >> 45 & 1 == 0 && self.held(45, Self::h_enum_class)
+        self.taken >> 47 & 1 == 0 && self.held(47, Self::h_enum_class)
     }
 
     fn h_enum_class(&self) -> bool {
@@ -9106,7 +9208,7 @@ impl P<'_> {
 
     /// Mark `enum_class` taken: it and the marks before it passed at this token.
     fn take_enum_class(&mut self) -> R {
-        self.taken |= 0x3fffffffffff;
+        self.taken |= 0xffffffffffff;
         Ok(())
     }
 
@@ -9121,7 +9223,7 @@ impl P<'_> {
 
     /// Mark `fun_iface` holds at the token, not taken there; once a token (`held`).
     fn m_fun_iface(&mut self) -> bool {
-        self.taken >> 46 & 1 == 0 && self.held(46, Self::h_fun_iface)
+        self.taken >> 48 & 1 == 0 && self.held(48, Self::h_fun_iface)
     }
 
     fn h_fun_iface(&self) -> bool {
@@ -9130,7 +9232,7 @@ impl P<'_> {
 
     /// Mark `fun_iface` taken: it and the marks before it passed at this token.
     fn take_fun_iface(&mut self) -> R {
-        self.taken |= 0x7fffffffffff;
+        self.taken |= 0x1ffffffffffff;
         Ok(())
     }
 
@@ -9145,7 +9247,7 @@ impl P<'_> {
 
     /// Mark `fn_recv` holds at the token, not taken there; once a token (`held`).
     fn m_fn_recv(&mut self) -> bool {
-        self.taken >> 47 & 1 == 0 && self.held(47, Self::h_fn_recv)
+        self.taken >> 49 & 1 == 0 && self.held(49, Self::h_fn_recv)
     }
 
     fn h_fn_recv(&self) -> bool {
@@ -9154,7 +9256,7 @@ impl P<'_> {
 
     /// Mark `fn_recv` taken: it and the marks before it passed at this token.
     fn take_fn_recv(&mut self) -> R {
-        self.taken |= 0xffffffffffff;
+        self.taken |= 0x3ffffffffffff;
         Ok(())
     }
 
@@ -9169,7 +9271,7 @@ impl P<'_> {
 
     /// Mark `acc` holds at the token, not taken there; once a token (`held`).
     fn m_acc(&mut self) -> bool {
-        self.taken >> 48 & 1 == 0 && self.held(48, Self::h_acc)
+        self.taken >> 50 & 1 == 0 && self.held(50, Self::h_acc)
     }
 
     fn h_acc(&self) -> bool {
@@ -9178,7 +9280,7 @@ impl P<'_> {
 
     /// Mark `acc` taken: it and the marks before it passed at this token.
     fn take_acc(&mut self) -> R {
-        self.taken |= 0x1ffffffffffff;
+        self.taken |= 0x7ffffffffffff;
         Ok(())
     }
 
@@ -9193,7 +9295,7 @@ impl P<'_> {
 
     /// Mark `recv` holds at the token, not taken there; once a token (`held`).
     fn m_recv(&mut self) -> bool {
-        self.taken >> 50 & 1 == 0 && self.held(50, Self::h_recv)
+        self.taken >> 52 & 1 == 0 && self.held(52, Self::h_recv)
     }
 
     fn h_recv(&self) -> bool {
@@ -9202,7 +9304,7 @@ impl P<'_> {
 
     /// Mark `recv` taken: it and the marks before it passed at this token.
     fn take_recv(&mut self) -> R {
-        self.taken |= 0x7ffffffffffff;
+        self.taken |= 0x1fffffffffffff;
         Ok(())
     }
 
@@ -9217,7 +9319,7 @@ impl P<'_> {
 
     /// Mark `dotted` holds at the token, not taken there; once a token (`held`).
     fn m_dotted(&mut self) -> bool {
-        self.taken >> 51 & 1 == 0 && self.held(51, Self::h_dotted)
+        self.taken >> 53 & 1 == 0 && self.held(53, Self::h_dotted)
     }
 
     fn h_dotted(&self) -> bool {
@@ -9226,7 +9328,7 @@ impl P<'_> {
 
     /// Mark `dotted` taken: it and the marks before it passed at this token.
     fn take_dotted(&mut self) -> R {
-        self.taken |= 0xfffffffffffff;
+        self.taken |= 0x3fffffffffffff;
         Ok(())
     }
 
@@ -9657,7 +9759,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_as_split_0_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACE_17 || self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::OBJECT_31) && self.bit_at(j, 5) && true
+        (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACE_17 || self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::FOR_42 || self.word_at(j) == w::WHILE_44 || self.word_at(j) == w::DO_45 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7) && self.bit_at(j, 5) && true
     }
 
     #[allow(unused_variables)]
@@ -9703,7 +9805,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_as_split_1_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACE_17 || self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::OBJECT_31) && self.bit_at(j, 5) && true
+        (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACE_17 || self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::FOR_42 || self.word_at(j) == w::WHILE_44 || self.word_at(j) == w::DO_45 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7) && self.bit_at(j, 5) && true
     }
 
     #[allow(unused_variables)]
@@ -9743,7 +9845,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_is_split_0_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACE_17 || self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::OBJECT_31) && self.bit_at(j, 5) && true
+        (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACE_17 || self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::FOR_42 || self.word_at(j) == w::WHILE_44 || self.word_at(j) == w::DO_45 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7) && self.bit_at(j, 5) && true
     }
 
     #[allow(unused_variables)]
@@ -9789,7 +9891,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_is_split_1_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACE_17 || self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::OBJECT_31) && self.bit_at(j, 5) && true
+        (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACE_17 || self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::FOR_42 || self.word_at(j) == w::WHILE_44 || self.word_at(j) == w::DO_45 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7) && self.bit_at(j, 5) && true
     }
 
     #[allow(unused_variables)]
@@ -9802,6 +9904,18 @@ impl P<'_> {
     fn pat_as_q_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
         (self.word_at(j) == w::QUEST_40) && !self.bit_at(j, 7) && true
+    }
+
+    #[allow(unused_variables)]
+    fn pat_as_kwn_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::FOR_42 || self.word_at(j) == w::WHILE_44 || self.word_at(j) == w::DO_45 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7) && self.bit_at(j, 5) && true
+    }
+
+    #[allow(unused_variables)]
+    fn pat_as_kwi_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::FOR_42 || self.word_at(j) == w::WHILE_44 || self.word_at(j) == w::DO_45 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7) && !self.bit_at(j, 3) && true
     }
 
     #[allow(unused_variables)]
@@ -10788,7 +10902,7 @@ impl P<'_> {
             66 => Some(None),
             65 => Some(None),
             132 => None,
-            16432 => None,
+            16434 => None,
             82 => None,
             81 => None,
             20 => None,
