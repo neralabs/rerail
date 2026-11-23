@@ -4104,22 +4104,22 @@ fn a_warm_index_restores_a_clean_file_whose_read_is_denied() {
 }
 
 /// A clean tracked file whose change time moved while no workspace ran (its times set again, as
-/// a copy or an extraction that keeps them leaves every file) is read by the next warm index
-/// alone: the store keeps what its hash showed, and the index after it restores the file with no
-/// read. A write that keeps the size and puts the modification time back moves the change time
-/// again, so the index after it reads the edit.
+/// a copy or an extraction that keeps them leaves every file) is read by every warm index and
+/// restored once its hash equals its blob: nothing is kept of an earlier hash. A write that keeps
+/// the size and puts the modification time back is read the same way, so the index after it
+/// reads the edit.
 #[cfg(windows)]
 #[test]
-fn a_warm_index_reads_a_file_whose_change_time_moved_once_until_it_is_written() {
+fn a_warm_index_reads_a_file_whose_change_time_moved_at_every_index() {
     if git_workspace::ran_with_a_git_setup(
         module_path!(),
-        "a_warm_index_reads_a_file_whose_change_time_moved_once_until_it_is_written",
+        "a_warm_index_reads_a_file_whose_change_time_moved_at_every_index",
     ) {
         return;
     }
     let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = backdated_repository(
-        "restore-remembered",
+        "restore-read-again",
         &[("api/a.py", b"print(1)\n"), ("lib/b.py", b"x = 2\n")],
     );
     let root = directory.0.join("repo");
@@ -4135,7 +4135,7 @@ fn a_warm_index_reads_a_file_whose_change_time_moved_once_until_it_is_written() 
     let edited = root.join("api/a.py");
     let hour = std::time::Duration::from_secs(3_600);
     git_workspace::set_change_time(&edited, written_long_ago() + hour);
-    for (warm_index, hashed) in [(1, 1), (2, 0)] {
+    for warm_index in [1, 2] {
         let mut warm = storage_workspace(&root, directory.store());
         warm.add_code_rule(&code_rule, None).unwrap();
         git_workspace::reset_source_alias_hashes();
@@ -4143,8 +4143,8 @@ fn a_warm_index_reads_a_file_whose_change_time_moved_once_until_it_is_written() 
         assert_eq!(indexed["restoredFiles"], json!(2), "{indexed}");
         assert_eq!(
             git_workspace::source_alias_hashes(),
-            hashed,
-            "warm index {warm_index} hashes the file only once: {indexed}"
+            1,
+            "warm index {warm_index} hashes the file: {indexed}"
         );
         assert_eq!(located(&all_pages(&warm, MAXIMUM_PAGE_BYTES)), found);
         warm.close();
@@ -4172,8 +4172,8 @@ fn a_warm_index_reads_a_file_whose_change_time_moved_once_until_it_is_written() 
 /// A clean tracked file whose data a provider moved off this disk while no workspace ran (a cloud
 /// file placeholder freed, a file moved to offline storage) keeps its stored results with no read:
 /// the attribute moves its change time, a read would make the provider download it, and its stat,
-/// equal to the one Git recorded, decides. Once the data is back, the next warm index reads the
-/// file once and the one after it restores the file with no read.
+/// equal to the one Git recorded, decides. Once the data is back, each warm index reads the file,
+/// whose change time the attribute's clearing moved.
 #[cfg(windows)]
 #[test]
 fn a_warm_index_restores_a_file_whose_data_is_offline_with_no_read() {
@@ -4219,11 +4219,8 @@ fn a_warm_index_restores_a_file_whose_data_is_offline_with_no_read() {
     warm_index(0, "nor on the next index");
 
     git_workspace::set_attributes(&offline, FILE_ATTRIBUTE_NORMAL);
-    // The change time the clearing gave, as a later index sees it: one the clock has left.
-    let hour = std::time::Duration::from_secs(3_600);
-    git_workspace::set_change_time(&offline, written_long_ago() + hour);
-    warm_index(1, "the file back on disk is read once");
-    warm_index(0, "and then restored with no read");
+    warm_index(1, "the file back on disk is read");
+    warm_index(1, "and read again by the next index");
 }
 
 /// Three checkouts of one commit share a content store. `lf` checks out the committed bytes;

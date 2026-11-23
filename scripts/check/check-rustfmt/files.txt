@@ -363,7 +363,6 @@ native/src/tree_watch/windows.rs
 
 # Files written for this repository since.
 native/src/code_rule_dsl/module_graph/listing.rs
-native/src/content_store/verified_files.rs
 native/src/git_start.rs
 native/src/git_start/run.rs
 native/src/git_start/spawn.rs

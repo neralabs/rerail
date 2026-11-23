@@ -24,7 +24,7 @@ use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::adapter::{module_path, package_manifests};
 use crate::code_rule_dsl::model::FileInput;
 use crate::content_store::{
-    CandidateCatalogIdentity, ContentStore, DirectoryReuse, HashKey, StoredFile, StoredLocalResult,
+    CandidateCatalogIdentity, DirectoryReuse, HashKey, StoredFile, StoredLocalResult,
     StoredPathObjects,
 };
 use crate::git_workspace;
@@ -294,11 +294,9 @@ fn restore_candidates<'a>(
 }
 
 /// The candidates whose stored results cover the catalog and whose worktree file holds the blob's
-/// bytes now. What a hash showed of a file whose change time moved is kept in `store`, so the
-/// next restore takes that file with no read until it is written (`VerifiedFiles`).
+/// bytes now.
 fn holding_blob_bytes<'a>(
     repository: &git_workspace::GitWorkspace,
-    store: &ContentStore,
     prepared: Vec<RestoreCandidate<'a>>,
     result_manifest: &'a StoredResults,
 ) -> Vec<VerifiedRestore<'a>> {
@@ -307,18 +305,15 @@ fn holding_blob_bytes<'a>(
     // (whose stored source and results another worktree may have published). Restore only a
     // file that holds the blob's bytes now; verify before taking the workspace lock, since a
     // changed stat costs a hash.
-    let mut verified_files = repository.verified_files(store);
-    let verified = prepared
+    prepared
         .into_iter()
         .filter_map(|(file, input, stored, length, key)| {
             let results = result_manifest.get(&key)?;
             repository
-                .holds_blob_bytes(&file.repository_path, length, &mut verified_files)
+                .holds_blob_bytes(&file.repository_path, length)
                 .then_some((input, stored, results))
         })
-        .collect();
-    verified_files.save();
-    verified
+        .collect()
 }
 
 fn restore_prepared_file(
@@ -660,7 +655,7 @@ impl WorkspaceIndexTask {
             .store
             .local_check_results_by_key(&keys, catalog)
             .map_err(|error| invalid(error.to_string()))?;
-        let verified = holding_blob_bytes(repository, &storage.store, prepared, &result_manifest);
+        let verified = holding_blob_bytes(repository, prepared, &result_manifest);
         self.restore_verified(verified)
     }
 

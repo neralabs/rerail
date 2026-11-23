@@ -1,10 +1,8 @@
 //! Whether a clean worktree file still holds the bytes Git compared with its blob, without a read:
 //! its stat against the stat Git recorded and, on Windows, NTFS's change time, which that stat
-//! lacks; and, once a read hashed a file's bytes equal to its blob after its change time moved,
-//! what restores remember of it in the content store.
+//! lacks.
 
 use super::RESTORE_STAT;
-use crate::content_store::{ContentStore, HashKey, VerifiedWorktreeFile, worktree_path_key};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -44,12 +42,6 @@ impl WorktreeStat {
         self.change.unchanged_since_written() && self.matches(recorded)
     }
 
-    /// The file's identity and change time, where this system keeps them.
-    #[cfg(all(test, windows))]
-    pub(super) fn stamp(&self) -> Option<ChangeStamp> {
-        self.change.stamp()
-    }
-
     /// The stat of the file at `path`, with `times` (change, then modification) and `attributes`
     /// in place of its own: what a volume or a provider these cases cannot make gives.
     #[cfg(all(test, windows))]
@@ -61,17 +53,17 @@ impl WorktreeStat {
 }
 
 /// How many queries beyond the stat's own call this thread's proofs made since the last call: the
-/// file id, the volume's protocol and its file system.
+/// volume's serial number, its protocol and its file system.
 #[cfg(all(test, windows))]
 pub(super) fn queries_made() -> usize {
     platform::QUERIES.replace(0)
 }
 
-/// Makes the file id query answer nothing on this thread, as a volume that gives no file id, or
-/// answer again.
+/// Makes the volume serial number query answer nothing on this thread, as a volume that gives
+/// none, or answer again.
 #[cfg(all(test, windows))]
-pub(super) fn file_ids_answer(answer: bool) {
-    platform::NO_FILE_ID.set(!answer);
+pub(super) fn volume_serials_answer(answer: bool) {
+    platform::NO_SERIAL.set(!answer);
 }
 
 /// Makes every file this thread's proofs ask about answer as one on a network share, or as one on
@@ -81,178 +73,31 @@ pub(super) fn files_are_on_a_share(answer: bool) {
     platform::ON_A_SHARE.set(answer);
 }
 
-/// Makes the file clock read `reading` on this thread, as on a tick these cases cannot time, or
-/// read the system's clock again (`None`).
-#[cfg(all(test, windows))]
-pub(super) fn file_clock_reads(reading: Option<i64>) {
-    platform::CLOCK.set(reading);
-}
+/// Each volume's answer to whether it keeps a change time to trust, by its serial number: asked
+/// once per volume, since every file on it gives the same answer; under `None`, once for the files
+/// that give no serial number.
+#[derive(Debug, Default)]
+pub(super) struct VolumeAnswers(HashMap<Option<u64>, bool>);
 
-/// A file's identity and change time: every write through any of its names, every time set and
-/// every change of its permissions moves the change time, and a file a rename put in its place has
-/// another identity.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct ChangeStamp {
-    volume: u64,
-    file_id: [u8; 16],
-    pub(super) changed: i64,
-}
-
-impl ChangeStamp {
-    fn of(file: &VerifiedWorktreeFile) -> Self {
-        Self {
-            volume: file.volume,
-            file_id: file.file_id,
-            changed: file.changed,
-        }
-    }
-
-    /// Whether every change after the file clock read `clock` (`file_clock`) moves this change
-    /// time: each gets a time no earlier than the reading, so only a change time older than it is
-    /// no later change's. One equal to the reading may be shared by a write in the same tick.
-    fn older_than(&self, clock: Option<i64>) -> bool {
-        clock.is_some_and(|clock| self.changed < clock)
-    }
-}
-
-/// How a clean file whose stat equals the stat Git recorded is shown to hold its blob's bytes.
-pub(super) enum Proof {
-    /// Its stat, its change time or what a restore remembered shows it.
-    Held,
-    /// Only a read can tell: a hash equal to the blob is remembered under the stamp, if any.
-    Read(Option<ChangeStamp>),
-}
-
-/// What restores remember of a worktree's clean files whose change time moved after their last
-/// write: rows of a relation in the content store's frames, read when the first such file needs
-/// them and written once by `save`. A restore where no change time moved reads and writes no row.
-pub struct VerifiedFiles<'a> {
-    store: Option<&'a ContentStore>,
-    worktree: String,
-    /// The remembered files, by the key of their repository path (`worktree_path_key`).
-    known: Option<HashMap<i64, VerifiedWorktreeFile>>,
-    learned: Vec<VerifiedWorktreeFile>,
-    /// Whether each volume, by its serial number, keeps a change time to trust: asked once per
-    /// volume, since every file on it gives the same answer; under `None`, once for the files
-    /// that give no identity.
-    volumes: HashMap<Option<u64>, bool>,
-}
-
-/// The worktree and each volume's answer: the store gives no `Debug`, and the files are many.
-impl std::fmt::Debug for VerifiedFiles<'_> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("VerifiedFiles")
-            .field("worktree", &self.worktree)
-            .field("volumes", &self.volumes)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<'a> VerifiedFiles<'a> {
-    /// The memory of the worktree whose root is `worktree`, kept in `store`.
-    pub fn new(store: Option<&'a ContentStore>, worktree: &Path) -> Self {
-        Self {
-            store,
-            worktree: worktree.to_string_lossy().into_owned(),
-            known: None,
-            learned: Vec::new(),
-            volumes: HashMap::new(),
-        }
-    }
-
-    /// How a file whose stat equals the stat Git recorded is shown to hold `blob`'s bytes. Where
-    /// the volume keeps no change time to trust (FAT, exFAT, a network share, a file that refused
-    /// the handle), or the file's data is not all on this disk, the stat decides, as it does for
-    /// Git.
-    pub(super) fn proof(&mut self, path: &str, blob: HashKey, current: &WorktreeStat) -> Proof {
+impl VolumeAnswers {
+    /// Whether the stat of a file, equal to the stat Git recorded, proves the file holds its blob's
+    /// bytes with no read: nothing changed the file after its last write, or the stat decides, as
+    /// it does for Git, since the volume keeps no change time to trust (FAT, exFAT, a network
+    /// share, a file that refused the handle) or the file's data is not all on this disk. Where it
+    /// does not, only a read can tell.
+    pub(super) fn stat_proves(&mut self, current: &WorktreeStat) -> bool {
         let change = &current.change;
-        if change.unchanged_since_written() || change.leaves_the_stat_to_decide() {
-            return Proof::Held;
-        }
-        // A file with no identity is remembered by none: where change times count, a read decides.
-        let stamp = change.stamp();
-        if !self.trusts(stamp.map(|stamp| stamp.volume), change)
-            || stamp.is_some_and(|stamp| self.remembers(path, &stamp, blob))
-        {
-            return Proof::Held;
-        }
-        Proof::Read(stamp)
+        change.unchanged_since_written()
+            || change.leaves_the_stat_to_decide()
+            || !self.trusts(change)
     }
 
-    /// Whether the volume whose serial number is `volume` keeps a change time to trust; `None`
-    /// stands for the volume of the files that gave no identity.
-    fn trusts(&mut self, volume: Option<u64>, change: &platform::Change) -> bool {
+    /// Whether the volume of the file `change` describes keeps a change time to trust.
+    fn trusts(&mut self, change: &platform::Change) -> bool {
         *self
-            .volumes
-            .entry(volume)
+            .0
+            .entry(change.volume())
             .or_insert_with(|| change.volume_keeps_change_times())
-    }
-
-    /// Remembers that the file at `path` held `blob`'s bytes under `stamp`, read after the file
-    /// clock read `clock`, where the stamp's change time is older than that reading
-    /// (`ChangeStamp::older_than`): a write the read missed then moved it.
-    pub(super) fn learn(
-        &mut self,
-        path: &str,
-        stamp: Option<ChangeStamp>,
-        blob: HashKey,
-        clock: Option<i64>,
-    ) {
-        let Some(stamp) = stamp.filter(|stamp| stamp.older_than(clock)) else {
-            return;
-        };
-        let file = VerifiedWorktreeFile {
-            path: worktree_path_key(path),
-            volume: stamp.volume,
-            file_id: stamp.file_id,
-            changed: stamp.changed,
-            blob,
-        };
-        self.known().insert(file.path, file.clone());
-        self.learned.push(file);
-    }
-
-    /// How many files this memory learned: each one a read whose hash equalled its blob.
-    #[cfg(all(test, windows))]
-    pub(super) fn learned(&self) -> usize {
-        self.learned.len()
-    }
-
-    /// Hands what this restore learned to the store's writer, which writes it behind the restore
-    /// as it writes every relation's rows: a write that fails keeps nothing, which costs the next
-    /// restore a read of each file.
-    pub fn save(self) {
-        let (Some(store), false) = (self.store, self.learned.is_empty()) else {
-            return;
-        };
-        let Ok(now) = crate::content_store::unix_seconds() else {
-            return;
-        };
-        let _ = store.remember_verified_worktree_files(&self.worktree, &self.learned, now);
-    }
-
-    fn remembers(&mut self, path: &str, stamp: &ChangeStamp, blob: HashKey) -> bool {
-        self.known()
-            .get(&worktree_path_key(path))
-            .is_some_and(|file| file.blob == blob && ChangeStamp::of(file) == *stamp)
-    }
-
-    /// The remembered files, read from the store when first needed: those remembered within the
-    /// last 30 days. A store or a clock that cannot be read remembers none, which costs a read of
-    /// each file.
-    fn known(&mut self) -> &mut HashMap<i64, VerifiedWorktreeFile> {
-        let (store, worktree) = (self.store, &self.worktree);
-        self.known.get_or_insert_with(|| {
-            let now = crate::content_store::unix_seconds().ok();
-            store
-                .zip(now)
-                .and_then(|(store, now)| store.verified_worktree_files(worktree, now).ok())
-                .unwrap_or_default()
-                .into_iter()
-                .map(|file| (file.path, file))
-                .collect()
-        })
     }
 }
 
@@ -278,8 +123,7 @@ fn keeps_change_times(name: &str) -> bool {
 /// `answered` says, or refused it with `refusal`, is on this machine: a network share answers the
 /// protocol it is reached by, and a local NTFS or ReFS volume (a Dev Drive is ReFS) refuses the
 /// query as a parameter it does not take (`ERROR_INVALID_PARAMETER`, 87), for a file, a folder and
-/// the volume's root alike. Any other refusal cannot tell, so the stat decides, as on a share, and
-/// no file is remembered.
+/// the volume's root alike. Any other refusal cannot tell, so the stat decides, as on a share.
 #[cfg(any(windows, test))]
 fn on_this_machine(answered: bool, refusal: &std::io::Error) -> bool {
     !answered && refusal.raw_os_error() == Some(87)
@@ -302,7 +146,6 @@ pub fn recalls_data(attributes: u32) -> bool {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::ChangeStamp;
     use std::path::Path;
 
     /// The Unix stat holds the change time, which every write moves, so nothing is kept beside it.
@@ -328,7 +171,7 @@ mod platform {
             false
         }
 
-        pub(super) fn stamp(&self) -> Option<ChangeStamp> {
+        pub(super) fn volume(&self) -> Option<u64> {
             None
         }
     }
@@ -341,7 +184,7 @@ mod platform {
 
 #[cfg(windows)]
 mod platform {
-    use super::{ChangeStamp, keeps_change_times};
+    use super::keeps_change_times;
     use std::fs::File;
     use std::os::windows::io::AsRawHandle;
     use std::path::Path;
@@ -351,10 +194,10 @@ mod platform {
     };
 
     /// NTFS's change time beside the stat, and the attributes handle that answers the file's
-    /// identity and volume. The Windows stat holds the creation time where Unix has the change
-    /// time (Git for Windows records the same), so a write that keeps the size and puts the
-    /// modification time back leaves the stat as it was; the change time, which every write and
-    /// every time set moves, shows it.
+    /// volume. The Windows stat holds the creation time where Unix has the change time (Git for
+    /// Windows records the same), so a write that keeps the size and puts the modification time
+    /// back leaves the stat as it was; the change time, which every write and every time set
+    /// moves, shows it.
     pub(super) struct Change {
         file: Option<File>,
         /// The change time and the modification time, where the handle answered them.
@@ -418,23 +261,18 @@ mod platform {
         }
 
         /// Whether the file's volume is on this machine and keeps a change time every write
-        /// moves: a network share's change time is another machine's clock, so no read here can
-        /// tell a later write from an earlier one.
+        /// moves. A network share's change time is kept by the server's file system, by rules
+        /// this check does not assume: the stat decides there, as for Git, so a scan reads over
+        /// the network only the files whose stat changed.
         pub(super) fn volume_keeps_change_times(&self) -> bool {
             self.file
                 .as_ref()
                 .is_some_and(|file| is_local(file) && keeps_change_times(&file_system(file)))
         }
 
-        /// The file's identity and change time, where the handle answers both.
-        pub(super) fn stamp(&self) -> Option<ChangeStamp> {
-            let (changed, _) = self.times?;
-            let (volume, file_id) = identity(self.file.as_ref()?)?;
-            Some(ChangeStamp {
-                volume,
-                file_id,
-                changed,
-            })
+        /// The serial number of the file's volume, where the handle answers it.
+        pub(super) fn volume(&self) -> Option<u64> {
+            volume_serial(self.file.as_ref()?)
         }
     }
 
@@ -454,23 +292,17 @@ mod platform {
     thread_local! {
         /// The queries beyond the stat's own call this thread made (`super::queries_made`).
         pub(super) static QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-        /// Whether the file id query answers nothing on this thread, as on a volume that gives
-        /// no file id.
-        pub(super) static NO_FILE_ID: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// Whether the volume serial number query answers nothing on this thread, as on a volume
+        /// that gives none.
+        pub(super) static NO_SERIAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         /// Whether every file answers as one on a network share on this thread.
         pub(super) static ON_A_SHARE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-        /// The file clock's reading on this thread, where a case sets one (`super::file_clock_reads`).
-        pub(super) static CLOCK: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
     }
 
     /// The system time as of the clock's last tick (`GetSystemTimeAsFileTime`), which NTFS and
     /// ReFS stamp a change with: a change after this reading gets a time no earlier than it,
     /// whether the file system takes this clock or a finer one.
     pub(super) fn file_clock() -> Option<i64> {
-        #[cfg(test)]
-        if let Some(reading) = CLOCK.get() {
-            return Some(reading);
-        }
         let mut now = windows_sys::Win32::Foundation::FILETIME::default();
         // SAFETY: a buffer of the type the call fills, which lives across the call.
         unsafe {
@@ -501,10 +333,10 @@ mod platform {
         (read != 0).then_some(info)
     }
 
-    /// The serial number of `file`'s volume and its 128-bit id there, as NTFS and ReFS give them.
-    fn identity(file: &File) -> Option<(u64, [u8; 16])> {
+    /// The serial number of `file`'s volume, as NTFS and ReFS give it with the file's id.
+    fn volume_serial(file: &File) -> Option<u64> {
         #[cfg(test)]
-        if queried(NO_FILE_ID.get()) {
+        if queried(NO_SERIAL.get()) {
             return None;
         }
         let mut info = FILE_ID_INFO::default();
@@ -517,7 +349,7 @@ mod platform {
                 std::mem::size_of::<FILE_ID_INFO>() as u32,
             )
         };
-        (read != 0).then_some((info.VolumeSerialNumber, info.FileId.Identifier))
+        (read != 0).then_some(info.VolumeSerialNumber)
     }
 
     /// Whether `file` is on this machine (`super::on_this_machine`).
@@ -572,37 +404,8 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ChangeStamp, HashKey, VerifiedFiles, keeps_change_times, on_this_machine, stat_decides,
-    };
+    use super::{keeps_change_times, on_this_machine, stat_decides};
     use std::io::{Error, ErrorKind};
-    use std::path::Path;
-
-    /// A read's hash is remembered under a change time older than the file clock's reading taken
-    /// before the read, since every later write gets a time no earlier than that reading. A change
-    /// time on the reading itself, or past it, may be a later write's too (a write in the same
-    /// tick of the clock), and with no reading nothing is remembered.
-    #[test]
-    fn only_a_change_time_older_than_the_file_clock_before_the_read_is_remembered() {
-        let changed = 134_000_000_000_000_000;
-        let stamp = ChangeStamp {
-            volume: 7,
-            file_id: [1; 16],
-            changed,
-        };
-        let blob = HashKey::git_sha1([7; 20]);
-        let mut memory = VerifiedFiles::new(None, Path::new("worktree"));
-        for clock in [None, Some(changed - 1), Some(changed)] {
-            memory.learn("a.py", Some(stamp), blob, clock);
-            assert!(memory.learned.is_empty(), "{clock:?}");
-        }
-        memory.learn("a.py", Some(stamp), blob, Some(changed + 1));
-        assert_eq!(
-            memory.learned.len(),
-            1,
-            "a change time older than the reading"
-        );
-    }
 
     /// A read that failed for any reason but the file being gone or grown leaves the stat's
     /// answer: its permissions, another process holding or locking it (Windows' sharing and lock

@@ -103,16 +103,6 @@ pub struct Delta {
     pub added: Vec<i64>,
 }
 
-/// A frame the writer forgets only while the frame of `guard` at the same part still has `digest`, the digest its
-/// reader read: a write of that frame landing first, from this process or another, keeps it (`queue_frames_guarded`).
-#[derive(Clone, Debug)]
-pub struct GoneIf {
-    pub rel: Rel,
-    pub part: i64,
-    pub guard: Rel,
-    pub digest: u64,
-}
-
 /// A frame a run writes.
 pub struct Put {
     pub rel: Rel,
@@ -504,39 +494,6 @@ impl FramesWrite {
     }
 }
 
-/// A space's guarded frames as the writer forgets them (`queue_frames_guarded`).
-pub(super) struct GuardedGone {
-    space: [u8; 32],
-    gone: Vec<GoneIf>,
-}
-
-impl GuardedGone {
-    pub(super) fn run(&mut self, store: &ContentStore) -> StoreResult<()> {
-        // Attempted once, as `FramesWrite::run`: what a failed forgetting keeps goes at a later save.
-        if let Ok(forgot) = store.forget_guarded(&self.space, &self.gone) {
-            store.forget_held(&self.space, &forgot);
-        }
-        Ok(())
-    }
-}
-
-/// Whether the store's file, in `t`, holds `frame`'s guard with the digest its reader read: false once the guard is
-/// written again or forgotten.
-fn guard_holds(t: &Connection, space: &[u8; 32], frame: &GoneIf) -> rusqlite::Result<bool> {
-    let sql = "SELECT digest FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4";
-    let guard = &frame.guard;
-    let digest: Option<i64> = t.query_row_cached(sql, params![&space[..], guard.name, &guard.ident[..], frame.part], |r| r.get(0)).optional()?;
-    Ok(digest == Some(frame.digest as i64))
-}
-
-/// Forgets, in `t`, `frame`'s row and its use.
-fn forget_frame(t: &Connection, space: &[u8; 32], frame: &GoneIf) -> rusqlite::Result<()> {
-    let (rel, part) = (&frame.rel, frame.part);
-    t.execute_cached("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4", params![&space[..], rel.name, &rel.ident[..], part])?;
-    t.execute_cached("DELETE FROM frame_part_used WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4", params![&space[..], rel.name, &rel.ident[..], part])?;
-    Ok(())
-}
-
 impl ContentStore {
     /// The snapshot of this store's file, by its canonical path: handles that name it differently share it.
     fn snapshot(&self) -> Option<Arc<std::sync::Mutex<Snapshot>>> {
@@ -915,43 +872,6 @@ impl ContentStore {
         Ok(parts)
     }
 
-    /// The parts of `rel` in `space` the store's file holds, each with its frame's digest, past the snapshot, whether
-    /// or not their bytes can be read (queued writes are not among them).
-    pub fn stored_frame_parts(&self, space: &[u8; 32], rel: &Rel) -> StoreResult<Vec<(i64, u64)>> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let mut st = connection.prepare_cached("SELECT part, digest FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 ORDER BY part")?;
-        let parts = st.query_map(params![&space[..], rel.name, &rel.ident[..]], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)? as u64)))?;
-        Ok(parts.collect::<Result<_, _>>()?)
-    }
-
-    /// Forgets each of `gone` whose guard holds (`guard_holds`), in one transaction: the guard is read where the frame
-    /// is deleted, so no other writer's write lands between them. Returns those it forgot.
-    fn forget_guarded<'a>(&self, space: &[u8; 32], gone: &'a [GoneIf]) -> StoreResult<Vec<&'a GoneIf>> {
-        self.immediate_transaction_once(|t| {
-            let mut forgot = Vec::new();
-            for frame in gone {
-                if guard_holds(t, space, frame)? {
-                    forget_frame(t, space, frame)?;
-                    forgot.push(frame);
-                }
-            }
-            Ok(forgot)
-        })
-    }
-
-    /// Takes `forgot`, forgotten in the store's file, out of this process's snapshot, each while the snapshot's frame of
-    /// its guard has the digest the forgetting read: a frame this process wrote again since stays.
-    fn forget_held(&self, space: &[u8; 32], forgot: &[&GoneIf]) {
-        let Some(snapshot) = self.snapshot() else { return };
-        let mut snapshot = snapshot.lock().expect("the frames' snapshot");
-        let Some(held) = snapshot.frames.get_mut(space) else { return };
-        let read = |frame: &GoneIf| held.get(&(frame.guard.clone(), frame.part)).is_some_and(|guard| guard.stored.digest == frame.digest);
-        let keys: Vec<(Rel, i64)> = forgot.iter().filter(|frame| read(frame)).map(|frame| (frame.rel.clone(), frame.part)).collect();
-        for key in &keys {
-            held.remove(key);
-        }
-    }
-
     /// Forgets every frame of `space` and its count of runs: the space of a program no run will run again.
     pub fn drop_frame_space(&self, space: &[u8; 32]) -> StoreResult<usize> {
         if let Some(snapshot) = self.snapshot() {
@@ -971,19 +891,6 @@ impl ContentStore {
     /// rows beside 138 MB of their encoding (and the kept part's own rows they were copied from).
     pub fn queue_frames(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
         self.queue_encoded_retagged(space, puts.into_iter().map(Put::encoded).collect(), Vec::new(), Vec::new(), gone, used)
-    }
-
-    /// `queue_frames`, then `gone_if` forgotten in the store's file by a write of its own behind it, each only while its
-    /// guard holds (`GoneIf`), and then in this process's snapshot (`forget_held`).
-    pub fn queue_frames_guarded(&self, space: [u8; 32], puts: Vec<Put>, gone_if: Vec<GoneIf>) {
-        self.queue_frames(space, puts, Vec::new(), None);
-        if gone_if.is_empty() {
-            return;
-        }
-        let bytes = gone_if.len() * 64;
-        let write = GuardedGone { space, gone: gone_if };
-        let job = super::write_back::Work(super::write_back::Kind::Guarded(Box::new(write)));
-        self.write_back_syms(super::write_back::Syms::None, "frames gone while unchanged", bytes, Vec::new(), job);
     }
 
     /// `queue_frames` of frames encoded as they were made (`Put::encoded`): a caller that makes many holds each one's

@@ -60,8 +60,8 @@ const UNCOMPARED_INDEX_ENTRY: gix::index::entry::Flags = gix::index::entry::Flag
 /// records, nanoseconds and change time included, stricter than Git's defaults. A mismatch only
 /// costs a hash, while a false match would reuse results of other bytes: a write that restores
 /// the size and modification time (`touch -r`) still changes the change time on Unix. On Windows
-/// the stat holds the creation time in that field, so `VerifiedFiles::proof` adds the file's own
-/// change time.
+/// the stat holds the creation time in that field, so `VolumeAnswers::stat_proves` adds the file's
+/// own change time.
 const RESTORE_STAT: gix::index::entry::stat::Options = gix::index::entry::stat::Options {
     trust_ctime: true,
     check_stat: true,
@@ -78,8 +78,8 @@ mod worktree_stat;
 
 #[cfg(windows)]
 pub use worktree_stat::recalls_data;
-use worktree_stat::{ChangeStamp, Proof, WorktreeStat, stat_decides};
-pub use worktree_stat::{VerifiedFiles, file_clock};
+use worktree_stat::{VolumeAnswers, WorktreeStat, stat_decides};
+pub use worktree_stat::file_clock;
 
 #[cfg(any(test, feature = "test-hooks"))]
 static SOURCE_ALIAS_HASHES: AtomicUsize = AtomicUsize::new(0);
@@ -312,9 +312,10 @@ pub struct GitWorkspace {
     pub base_files: Vec<BaseFile>,
     pub overlays: Vec<WorkspaceOverlay>,
     pub nested_roots: Vec<PathBuf>,
-    /// The memory with no store that `clean_blob_unread` asks, made at its first call and kept
-    /// across its calls and this workspace's clones, so each volume is asked once.
-    unread: std::sync::Arc<parking_lot::Mutex<Option<VerifiedFiles<'static>>>>,
+    /// Each volume's answer to whether it keeps a change time to trust, which restores
+    /// (`holds_blob_bytes`) and looks at clean blobs (`clean_blob_unread`) ask, kept across their
+    /// calls and this workspace's clones, so each volume is asked once.
+    volume_answers: std::sync::Arc<parking_lot::Mutex<VolumeAnswers>>,
 }
 
 #[derive(Debug)]
@@ -749,24 +750,14 @@ impl GitWorkspace {
             .flatten()
     }
 
-    /// What restores remember, in `store`, of this worktree's clean files whose change time moved
-    /// after their last write (`holds_blob_bytes`).
-    pub fn verified_files<'a>(&self, store: &'a ContentStore) -> VerifiedFiles<'a> {
-        VerifiedFiles::new(Some(store), &self.worktree_root)
-    }
-
     /// Whether the worktree file at `relative_path` holds exactly its committed blob's bytes, which
     /// are `blob_length` long, now. One `lstat` decides while the file's stat equals the stat of
     /// its index entry (`BaseFile::checkout`) and, on Windows, nothing changed the file after its
-    /// last write (`VerifiedFiles::proof`); otherwise the file is hashed. The file may have changed
-    /// since discovery, and a checkout conversion (`core.autocrlf`, a filter driver) keeps a file
-    /// clean in Git while its bytes differ from the blob's.
-    pub fn holds_blob_bytes(
-        &self,
-        relative_path: &str,
-        blob_length: u64,
-        verified: &mut VerifiedFiles<'_>,
-    ) -> bool {
+    /// last write, or the stat decides there as it does for Git (`VolumeAnswers::stat_proves`);
+    /// otherwise the file is hashed. The file may have changed since discovery, and a checkout
+    /// conversion (`core.autocrlf`, a filter driver) keeps a file clean in Git while its bytes
+    /// differ from the blob's.
+    pub fn holds_blob_bytes(&self, relative_path: &str, blob_length: u64) -> bool {
         let Ok(index) = self
             .base_files
             .binary_search_by(|file| file.path.as_str().cmp(relative_path))
@@ -786,10 +777,8 @@ impl GitWorkspace {
         {
             return self.hashes_to_blob(relative_path, blob_length);
         }
-        match verified.proof(relative_path, base.blob, &current) {
-            Proof::Held => true,
-            Proof::Read(stamp) => self.read_decides(relative_path, blob_length, stamp, verified),
-        }
+        let proven = self.volume_answers.lock().stat_proves(&current);
+        proven || self.read_decides(relative_path, blob_length)
     }
 
     /// Whether the file's bytes hash to its committed blob; a file that cannot be read does not.
@@ -799,46 +788,27 @@ impl GitWorkspace {
     }
 
     /// Whether a file whose stat equals the stat Git recorded, and which only a read can prove,
-    /// holds its blob's bytes: a hash decides, and `verified` remembers one equal to the blob
-    /// under `stamp`. A file this process cannot read cannot be hashed: its stat decides, as it
-    /// does for Git (`stat_decides`).
-    fn read_decides(
-        &self,
-        relative_path: &str,
-        blob_length: u64,
-        stamp: Option<ChangeStamp>,
-        verified: &mut VerifiedFiles<'_>,
-    ) -> bool {
-        // Read before the file: a write the read misses comes after this reading.
-        let clock = file_clock();
+    /// holds its blob's bytes: a hash decides. A file this process cannot read cannot be hashed:
+    /// its stat decides, as it does for Git (`stat_decides`).
+    fn read_decides(&self, relative_path: &str, blob_length: u64) -> bool {
         match self.read_source(relative_path, blob_length) {
             Err(error) => stat_decides(&error),
-            Ok(bytes) => {
-                let blob = self.source_alias(relative_path, &bytes);
-                if let Some(blob) = blob {
-                    verified.learn(relative_path, stamp, blob, clock);
-                }
-                blob.is_some()
-            }
+            Ok(bytes) => self.source_alias(relative_path, &bytes).is_some(),
         }
     }
 
     /// A clean base file's blob, unread: the path has no overlay, its worktree stat is exactly its index entry's
-    /// (`BaseFile::checkout`) and, on Windows, nothing changed the file after its last write, or its volume leaves
-    /// the stat to decide (`VerifiedFiles::proof`), so its bytes are the blob's (phase 0, t23). `None` where only a
-    /// hash could tell. The proof's memory is this workspace's own (`unread`), so each volume is asked once.
+    /// (`BaseFile::checkout`) and, on Windows, nothing changed the file after its last write, or the stat decides
+    /// there as it does for Git (`VolumeAnswers::stat_proves`), so its bytes are the blob's (phase 0, t23). `None`
+    /// where only a hash could tell. The volumes' answers are this workspace's own (`volume_answers`), so each volume
+    /// is asked once.
     pub fn clean_blob_unread(&self, relative_path: &str) -> Option<HashKey> {
         let file = self.unedited_base_file(relative_path)?;
         let recorded = file.checkout?;
         let current = WorktreeStat::read(&self.worktree_root.join(relative_path))?;
-        let mut unread = self.unread.lock();
-        let verified = unread.get_or_insert_with(|| VerifiedFiles::new(None, &self.worktree_root));
         let proven = current.metadata.is_file()
             && current.matches(&recorded)
-            && matches!(
-                verified.proof(relative_path, file.blob, &current),
-                Proof::Held
-            );
+            && self.volume_answers.lock().stat_proves(&current);
         proven.then_some(file.blob)
     }
 
@@ -1551,7 +1521,7 @@ fn workspace(
         base_files,
         overlays,
         nested_roots,
-        unread: Default::default(),
+        volume_answers: Default::default(),
     })
 }
 
@@ -1949,8 +1919,7 @@ mod tests {
             WorktreeStat::read(&path).unwrap().proves(&recorded),
             "an untouched file is proven by its stat alone, with no hash"
         );
-        let mut memory = VerifiedFiles::new(None, &root);
-        assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
+        assert!(workspace.holds_blob_bytes("a.py", 9));
 
         std::fs::write(&path, b"print(1)\n").unwrap();
         std::fs::File::options()
@@ -1961,7 +1930,7 @@ mod tests {
             .unwrap();
         assert!(!WorktreeStat::read(&path).unwrap().proves(&recorded));
         assert!(
-            !workspace.holds_blob_bytes("a.py", 9, &mut memory),
+            !workspace.holds_blob_bytes("a.py", 9),
             "bytes written after Git compared the file are not its blob's"
         );
         std::fs::remove_dir_all(root).unwrap();
@@ -1989,7 +1958,6 @@ mod tests {
         );
         initialize_repository_with(&root, &["a.py"]);
         let workspace = discover(&root).unwrap();
-        let mut memory = VerifiedFiles::new(None, &root);
         {
             let _denied = ReadDenied::new(&path);
             assert!(
@@ -1997,11 +1965,11 @@ mod tests {
                 "the read is denied"
             );
             assert!(
-                workspace.holds_blob_bytes("a.py", 9, &mut memory),
+                workspace.holds_blob_bytes("a.py", 9),
                 "an unchanged file this process may not read keeps the answer of its stat"
             );
             assert!(
-                !workspace.holds_blob_bytes("a.py", 10, &mut memory),
+                !workspace.holds_blob_bytes("a.py", 10),
                 "a stat of another size proves nothing"
             );
         }
@@ -2028,7 +1996,6 @@ mod tests {
         backdate(&path, written);
         initialize_repository_with(&root, &["a.py"]);
         let workspace = discover(&root).unwrap();
-        let mut memory = VerifiedFiles::new(None, &root);
         // Setting the same time again moves the change time alone.
         std::fs::File::options()
             .write(true)
@@ -2046,7 +2013,7 @@ mod tests {
                 workspace.read_source("a.py", 9).is_err(),
                 "the file is held"
             );
-            assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
+            assert!(workspace.holds_blob_bytes("a.py", 9));
         }
         {
             let locked = std::fs::File::open(&path).unwrap();
@@ -2055,7 +2022,7 @@ mod tests {
                 workspace.read_source("a.py", 9).is_err(),
                 "the file is locked"
             );
-            assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
+            assert!(workspace.holds_blob_bytes("a.py", 9));
         }
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -2080,15 +2047,6 @@ mod tests {
         (root, path, workspace)
     }
 
-    /// Sets `path`'s creation time to `when`, as the file it replaced had.
-    #[cfg(windows)]
-    fn set_creation_time(path: &Path, when: std::time::SystemTime) {
-        use std::os::windows::fs::FileTimesExt;
-        let file = std::fs::File::options().write(true).open(path).unwrap();
-        file.set_times(std::fs::FileTimes::new().set_created(when))
-            .unwrap();
-    }
-
     /// Writes `bytes` to `path` and puts its modification time back to `written_long_ago`, as
     /// `touch -r` does: its size and stat stay those Git recorded.
     #[cfg(windows)]
@@ -2103,105 +2061,40 @@ mod tests {
     }
 
     /// A clean file whose change time moved after its last write (its times set again, a copy or
-    /// an extraction that kept them) is read once: the hash equal to its blob is remembered in
-    /// the store, and the next restore, in a workspace of its own over the store opened again,
-    /// takes the file with no read. A write that keeps the size and puts the modification time
-    /// back moves the change time, so the restore after it reads the file and finds other bytes.
+    /// an extraction that kept them) is read and hashed at every restore, in this workspace and in
+    /// the next: nothing is kept of an earlier hash. A write that keeps the size and puts the
+    /// modification time back is read the same way, and its other bytes are not the blob's.
     #[cfg(windows)]
     #[test]
-    fn a_clean_file_whose_change_time_moved_is_read_once_until_a_write() {
+    fn a_clean_file_whose_change_time_moved_is_read_at_every_restore() {
         if ran_with_a_git_setup(
             module_path!(),
-            "a_clean_file_whose_change_time_moved_is_read_once_until_a_write",
+            "a_clean_file_whose_change_time_moved_is_read_at_every_restore",
         ) {
             return;
         }
-        let (root, path, workspace) = committed_long_ago("stat-remembered", b"print(1)\n");
+        let (root, path, workspace) = committed_long_ago("stat-read-again", b"print(1)\n");
         let hour = std::time::Duration::from_secs(3_600);
         set_change_time(&path, written_long_ago() + hour);
-        let (database, store) = temporary_store("stat-remembered");
-        let mut first = workspace.verified_files(&store);
-        assert!(workspace.holds_blob_bytes("a.py", 9, &mut first));
-        assert_eq!(
-            first.learned(),
-            1,
-            "the first restore reads and hashes the file"
-        );
-        first.save();
-        // A restart: the store closed, this process's copy of its frames forgotten, and opened again.
-        drop(store);
-        crate::content_store::forget_frames_snapshot(database.to_str().unwrap());
-        let store = ContentStore::open(&database).unwrap();
-        let mut second = discover(&root).unwrap().verified_files(&store);
-        assert!(workspace.holds_blob_bytes("a.py", 9, &mut second));
-        assert_eq!(
-            second.learned(),
-            0,
-            "the next restore takes it with no read"
-        );
-        let current = WorktreeStat::read(&path).unwrap();
-        let another_blob = second.proof("a.py", HashKey::git_sha1([7; 20]), &current);
-        assert!(
-            matches!(another_blob, Proof::Read(Some(_))),
-            "what was remembered of one blob proves no other"
-        );
-
-        let remembered = WorktreeStat::read(&path).unwrap().stamp().unwrap();
-        rewrite_keeping_its_time(&path, b"pront(1)\n");
-        let written = WorktreeStat::read(&path).unwrap().stamp().unwrap();
-        assert_ne!(
-            written.changed, remembered.changed,
-            "the write moved the change time"
-        );
-        let mut third = workspace.verified_files(&store);
-        assert!(
-            !workspace.holds_blob_bytes("a.py", 9, &mut third),
-            "bytes written after the hash are not the blob's"
-        );
-        drop(store);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    /// A file a rename put in a remembered file's place is another file, whatever change time
-    /// it carries: its other bytes are read, not taken for the blob's.
-    #[cfg(windows)]
-    #[test]
-    fn a_file_a_rename_put_in_place_is_read_whatever_its_change_time() {
-        if ran_with_a_git_setup(
-            module_path!(),
-            "a_file_a_rename_put_in_place_is_read_whatever_its_change_time",
-        ) {
-            return;
+        let next = discover(&root).unwrap();
+        for (restore, restoring) in [(1, &workspace), (2, &workspace), (3, &next)] {
+            reset_source_alias_hashes();
+            assert!(restoring.holds_blob_bytes("a.py", 9), "restore {restore}");
+            assert_eq!(source_alias_hashes(), 1, "restore {restore} hashes the file");
         }
-        let (root, path, workspace) = committed_long_ago("stat-renamed", b"print(1)\n");
-        let changed = written_long_ago() + std::time::Duration::from_secs(3_600);
-        set_change_time(&path, changed);
-        let mut memory = VerifiedFiles::new(None, &root);
-        assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
-        assert_eq!(memory.learned(), 1);
-        let remembered = WorktreeStat::read(&path).unwrap().stamp().unwrap();
 
-        let created = std::fs::metadata(&path).unwrap().created().unwrap();
-        let other = root.join("other.py");
-        rewrite_keeping_its_time(&other, b"pront(1)\n");
-        std::fs::rename(&other, &path).unwrap();
-        set_creation_time(&path, created);
-        set_change_time(&path, changed);
-        let recorded = workspace.base_files[0].checkout.unwrap();
-        let renamed = WorktreeStat::read(&path).unwrap();
-        assert!(renamed.matches(&recorded), "the stat Git recorded");
-        let renamed = renamed.stamp().unwrap();
-        assert_eq!(renamed.changed, remembered.changed, "the same change time");
-        assert_ne!(renamed, remembered, "another file");
+        rewrite_keeping_its_time(&path, b"pront(1)\n");
         assert!(
-            !workspace.holds_blob_bytes("a.py", 9, &mut memory),
-            "the renamed file's bytes are not the blob's"
+            !workspace.holds_blob_bytes("a.py", 9),
+            "bytes written after Git compared the file are not the blob's"
         );
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// A write through a remembered file's other name moves the change time both names share,
-    /// so the restore reads the file again and finds the other bytes.
+    /// A write through a clean file's other name, at its size with the modification time put back,
+    /// moves the change time both names share, which the restore reads from the file through a
+    /// handle: under this name the stat no longer proves the file, and the read finds the other
+    /// bytes.
     #[cfg(windows)]
     #[test]
     fn a_write_through_a_hard_link_moves_the_change_time_its_other_name_shows() {
@@ -2214,25 +2107,20 @@ mod tests {
         let (root, path, workspace) = committed_long_ago("stat-linked", b"print(1)\n");
         let link = root.join("b.py");
         std::fs::hard_link(&path, &link).unwrap();
-        set_change_time(
-            &path,
-            written_long_ago() + std::time::Duration::from_secs(3_600),
-        );
-        let mut memory = VerifiedFiles::new(None, &root);
-        assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
-        assert_eq!(memory.learned(), 1);
-        let remembered = WorktreeStat::read(&path).unwrap().stamp().unwrap();
+        // The link moved the change time; give the file the times of one written long ago again.
+        backdate(&path, written_long_ago());
+        let recorded = workspace.base_files[0].checkout.unwrap();
+        assert!(WorktreeStat::read(&path).unwrap().proves(&recorded));
+        reset_source_alias_hashes();
+        assert!(workspace.holds_blob_bytes("a.py", 9));
+        assert_eq!(source_alias_hashes(), 0, "proven by its stat, unread");
 
         rewrite_keeping_its_time(&link, b"pront(1)\n");
-        let through_link = WorktreeStat::read(&path).unwrap().stamp().unwrap();
-        assert_ne!(through_link.changed, remembered.changed);
-        assert_eq!(
-            through_link,
-            WorktreeStat::read(&link).unwrap().stamp().unwrap(),
-            "one file under two names"
-        );
+        let through_link = WorktreeStat::read(&path).unwrap();
+        assert!(through_link.matches(&recorded), "the stat Git recorded");
+        assert!(!through_link.proves(&recorded), "the change time moved");
         assert!(
-            !workspace.holds_blob_bytes("a.py", 9, &mut memory),
+            !workspace.holds_blob_bytes("a.py", 9),
             "bytes written through the other name are not the blob's"
         );
         std::fs::remove_dir_all(root).unwrap();
@@ -2244,17 +2132,16 @@ mod tests {
     #[cfg(windows)]
     fn not_all_on_disk_is_taken_by_its_stat(name: &str, attributes: u32) {
         let (root, path, _) = committed_long_ago(name, b"print(1)\n");
-        let blob = HashKey::git_sha1([7; 20]);
-        let mut memory = VerifiedFiles::new(None, &root);
+        let mut answers = VolumeAnswers::default();
         let on_disk = WorktreeStat::as_if(&path, Some((2, 1)), 0);
         assert!(
-            matches!(memory.proof("a.py", blob, &on_disk), Proof::Read(Some(_))),
+            !answers.stat_proves(&on_disk),
             "a file whose change time moved is read"
         );
         let recalled = WorktreeStat::as_if(&path, Some((2, 1)), attributes);
         worktree_stat::queries_made();
         assert!(
-            matches!(memory.proof("a.py", blob, &recalled), Proof::Held),
+            answers.stat_proves(&recalled),
             "a file with attributes {attributes:#x} is taken by its stat"
         );
         assert_eq!(
@@ -2311,25 +2198,21 @@ mod tests {
             return;
         }
         let (root, path, _) = committed_long_ago("stat-no-change-time", b"print(1)\n");
-        let blob = HashKey::git_sha1([7; 20]);
-        let mut memory = VerifiedFiles::new(None, &root);
+        let mut answers = VolumeAnswers::default();
         worktree_stat::queries_made();
         for times in [Some((0, 1)), None] {
             let current = WorktreeStat::as_if(&path, times, 0);
             for _ in 0..2 {
-                assert!(
-                    matches!(memory.proof("a.py", blob, &current), Proof::Held),
-                    "{times:?}"
-                );
+                assert!(answers.stat_proves(&current), "{times:?}");
             }
         }
         assert_eq!(worktree_stat::queries_made(), 0);
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// A restore asks a volume whether it keeps change times once: for files that give their
-    /// identity, once per volume, and for files that give none, once in all. Every other proof
-    /// makes the file id query alone.
+    /// Whether a volume keeps change times is asked once: for files that give their volume's
+    /// serial number, once per volume, and for files that give none, once in all. Every other
+    /// proof makes the serial number query alone.
     #[cfg(windows)]
     #[test]
     fn a_restore_asks_a_volume_about_its_change_times_once() {
@@ -2340,31 +2223,30 @@ mod tests {
             return;
         }
         let (root, path, _) = committed_long_ago("stat-volume-once", b"print(1)\n");
-        let blob = HashKey::git_sha1([7; 20]);
         let moved = WorktreeStat::as_if(&path, Some((2, 1)), 0);
-        for (identified, proof) in [(true, "Read(Some)"), (false, "Read(None)")] {
-            let mut memory = VerifiedFiles::new(None, &root);
-            worktree_stat::file_ids_answer(identified);
+        for serial in [true, false] {
+            let mut answers = VolumeAnswers::default();
+            worktree_stat::volume_serials_answer(serial);
             worktree_stat::queries_made();
             for _ in 0..3 {
-                let read = match memory.proof("a.py", blob, &moved) {
-                    Proof::Read(stamp) => stamp.is_some() == identified,
-                    Proof::Held => false,
-                };
-                assert!(read, "{proof}");
+                assert!(
+                    !answers.stat_proves(&moved),
+                    "read; a serial number: {serial}"
+                );
             }
-            worktree_stat::file_ids_answer(true);
+            worktree_stat::volume_serials_answer(true);
             assert_eq!(
                 worktree_stat::queries_made(),
                 3 + 2,
-                "three file id queries and the volume's two, once: {proof}"
+                "three serial number queries and the volume's two, once; a serial number: {serial}"
             );
         }
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// A file on a network share whose change time moved keeps the stat's answer with no read: the
-    /// share's change time is another machine's clock, so no reading of this one can prove it.
+    /// A file on a network share whose change time moved keeps the stat's answer with no read: a
+    /// share's change time is kept by the server's file system, so the stat decides there, as for
+    /// Git.
     #[cfg(windows)]
     #[test]
     fn a_file_on_a_share_whose_change_time_moved_is_taken_by_its_stat() {
@@ -2375,47 +2257,15 @@ mod tests {
             return;
         }
         let (root, path, _) = committed_long_ago("stat-share", b"print(1)\n");
-        let blob = HashKey::git_sha1([7; 20]);
         let moved = WorktreeStat::as_if(&path, Some((2, 1)), 0);
         let held = |on_a_share: bool| {
             worktree_stat::files_are_on_a_share(on_a_share);
-            let proof = VerifiedFiles::new(None, &root).proof("a.py", blob, &moved);
+            let proven = VolumeAnswers::default().stat_proves(&moved);
             worktree_stat::files_are_on_a_share(false);
-            matches!(proof, Proof::Held)
+            proven
         };
         assert!(held(true), "on a share");
         assert!(!held(false), "on this machine");
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    /// A change time the file clock had not left when the read that hashed the file began is not
-    /// remembered: a write after the read, in the same tick of that clock, gets the same time.
-    /// Each restore reads such a file until one begins after the clock has left it.
-    #[cfg(windows)]
-    #[test]
-    fn a_change_time_as_new_as_the_read_is_not_remembered() {
-        if ran_with_a_git_setup(
-            module_path!(),
-            "a_change_time_as_new_as_the_read_is_not_remembered",
-        ) {
-            return;
-        }
-        let (root, path, workspace) = committed_long_ago("stat-recent", b"print(1)\n");
-        let changed = written_long_ago() + std::time::Duration::from_secs(3_600);
-        set_change_time(&path, changed);
-        let mut memory = VerifiedFiles::new(None, &root);
-        worktree_stat::file_clock_reads(Some(file_time_of(changed)));
-        assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
-        assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
-        assert_eq!(
-            memory.learned(),
-            0,
-            "read in the tick that stamped the change"
-        );
-        worktree_stat::file_clock_reads(Some(file_time_of(changed) + 1));
-        assert!(workspace.holds_blob_bytes("a.py", 9, &mut memory));
-        assert_eq!(memory.learned(), 1, "read once the clock left that tick");
-        worktree_stat::file_clock_reads(None);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -2445,28 +2295,32 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// A workspace asks a volume whether it keeps change times once across its looks at clean
-    /// blobs, as a restore does: every later look at a file whose change time moved makes the file
-    /// id query alone.
+    /// A workspace asks a volume whether it keeps change times once across its restores and its
+    /// looks at clean blobs: after the first, each one of a file whose change time moved makes the
+    /// serial number query alone.
     #[cfg(windows)]
     #[test]
-    fn looks_at_clean_blobs_ask_a_volume_about_its_change_times_once() {
+    fn a_workspaces_restores_and_looks_ask_a_volume_about_its_change_times_once() {
         if ran_with_a_git_setup(
             module_path!(),
-            "looks_at_clean_blobs_ask_a_volume_about_its_change_times_once",
+            "a_workspaces_restores_and_looks_ask_a_volume_about_its_change_times_once",
         ) {
             return;
         }
         let (root, path, workspace) = committed_long_ago("unread-volume-once", b"print(1)\n");
         rewrite_keeping_its_time(&path, b"print(1)\n");
         worktree_stat::queries_made();
+        assert!(
+            workspace.holds_blob_bytes("a.py", 9),
+            "read, the blob's bytes"
+        );
         for _ in 0..3 {
             assert_eq!(workspace.clean_blob_unread("a.py"), None);
         }
         assert_eq!(
             worktree_stat::queries_made(),
-            3 + 2,
-            "three file id queries and the volume's two, once"
+            4 + 2,
+            "four serial number queries and the volume's two, once"
         );
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -2776,7 +2630,7 @@ mod tests {
                 kind: OverlayKind::Untracked,
             }],
             nested_roots: Vec::new(),
-            unread: Default::default(),
+            volume_answers: Default::default(),
         };
         assert!(workspace.read_source("escape/source.py", u64::MAX).is_err());
         std::fs::remove_dir_all(root).unwrap();
@@ -2803,7 +2657,7 @@ mod tests {
                 kind: OverlayKind::Untracked,
             }],
             nested_roots: Vec::new(),
-            unread: Default::default(),
+            volume_answers: Default::default(),
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         let reader = std::thread::spawn(move || {
@@ -2901,7 +2755,7 @@ mod tests {
                 })
                 .collect(),
             nested_roots: Vec::new(),
-            unread: Default::default(),
+            volume_answers: Default::default(),
         };
         let clean = workspace
             .clean_trees()
@@ -2940,7 +2794,7 @@ mod tests {
                 kind: OverlayKind::Untracked,
             }],
             nested_roots: Vec::new(),
-            unread: Default::default(),
+            volume_answers: Default::default(),
         };
         let clean = workspace
             .clean_trees()
@@ -2991,7 +2845,7 @@ mod tests {
             base_files: Vec::new(),
             overlays: Vec::new(),
             nested_roots: Vec::new(),
-            unread: Default::default(),
+            volume_answers: Default::default(),
         }
     }
 
