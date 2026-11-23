@@ -1226,7 +1226,7 @@ impl Exp {
             opv: zeroed(top)?,
             opbase: zeroed(top)?,
             opscan: Scan::new(arena)?,
-            tokens: zeroed(tok * 4)?,
+            tokens: zeroed(tok * 5)?,
             // The queue's slots (`lpq_cap`: the pieces', the requests' and their ends', a request's record
             // `RQ_ENTRIES` of the tokens' rows), then the pieces' three words.
             lpq: zeroed(16 + 3 * top + 64 + tok / 3 + 3 * top)?,
@@ -1412,7 +1412,7 @@ impl Exp {
         let show = std::env::var_os("RERAIL_PP_PIECES").is_some();
         // The tokens' store: its columns (`Ar`'s), the leaves of the requests' results among its entries.
         let tw = words(&self.tokens);
-        let tc = tw.len() / 4;
+        let tc = tw.len() / 5;
         for i in 0..np {
             // The loop's order of its pieces (`lp_roll_place`): an output piece of its own, or (`cap` past its
             // entry's) a leaf of a request's result in the tokens' store (decision 0613 §6), read in place.

@@ -942,7 +942,7 @@ UKL_INLINE uint32_t paren_delta(Ux u, uint32_t g) {
 // The arena, as the loop reads it.
 typedef struct Ar {
     // The pieces' columns (decision 0520): each one's source, length and flags, start, origin.
-    PP_GLOBAL uint32_t* psrc; PP_GLOBAL uint32_t* pn; PP_GLOBAL uint32_t* pst; PP_GLOBAL uint32_t* pexp;
+    PP_GLOBAL uint32_t* psrc; PP_GLOBAL uint32_t* pn; PP_GLOBAL uint32_t* pst; PP_GLOBAL uint32_t* pexp; PP_GLOBAL uint32_t* pxp;
     PP_GLOBAL uint32_t* out; PP_GLOBAL uint32_t* ctl;
     uint32_t tok_cap, out_cap;
     PP_GLOBAL uint8_t* sbytes; PP_GLOBAL PxScratch* stoks; uint32_t sb_cap, st_cap;
@@ -1306,9 +1306,9 @@ UKL_INLINE void px_make(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t
     u.tline = tline; u.tlinen = tlinen; u.ldelta = ldelta; u.lt0 = lt0; u.sc = sc;
     Ar a;
     // The pieces' columns, `tok_cap` words each: the source, the length and flags, the start, the
-    // origin (decision 0520).
+    // origin (decision 0520), and its expansion (decision 0613 §6).
     uint32_t tc = words[1];
-    a.psrc = cols; a.pn = cols + tc; a.pst = cols + 2u * tc; a.pexp = cols + 3u * tc;
+    a.psrc = cols; a.pn = cols + tc; a.pst = cols + 2u * tc; a.pexp = cols + 3u * tc; a.pxp = cols + 4u * tc;
     a.out = out; a.ctl = ctl;
     a.tok_cap = words[1]; a.out_cap = words[4];
     a.sbytes = sbytes; a.stoks = stoks; a.sb_cap = words[8]; a.st_cap = words[9];
