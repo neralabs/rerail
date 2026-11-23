@@ -730,23 +730,13 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
         let m_numeral: Vec<u64> = (0..nw).map(|i| ((m_int[i] | m_f_dot[i]) | m_frac[i])).collect();
         (m_o_line, m_o_block, m_o_t1, m_o_t2, m_e_t2, m_o_t3, t1, t2, t3)
     };
-    // The next block's classes, made with the block before it: the block's own, where the loop goes on to it.
-    let (mut ahead_b, mut ahead) = (usize::MAX, [0u64; 5]);
-    // The last block's classes: the block before's, where the loop came to it from there.
-    let (mut behind_b, mut behind) = (usize::MAX, [0u64; 5]);
     'tokens: while b < nw {
         let base = b * 64;
         // The block's masks, from its classes (the lean lexer's `Window`): what its tokens read of it.
         // SAFETY: `base` is in the file.
-        let cur = if ahead_b == b { ahead } else { unsafe { block_classes::<S>(src, n, base) } };
-        // SAFETY: `base + 64` is in the file.
-        let next = if base + 64 < n { unsafe { block_classes::<S>(src, n, base + 64) } } else { [0u64; 5] };
-        (ahead_b, ahead) = (b + 1, next);
-        // SAFETY: `base - 64` is in the file.
-        let prev = if behind_b.wrapping_add(1) == b { behind } else if b > 0 { unsafe { block_classes::<S>(src, n, base - 64) } } else { [0u64; 5] };
-        (behind_b, behind) = (b, cur);
+        let cur = unsafe { block_classes::<S>(src, n, base) };
         let k_m_word = cur[0];
-        let k_m_num_run = (cur[1] | ((cur[2] & (cur[1] << 1 | prev[1] >> 63)) & (cur[1] >> 1 | next[1] << 63)));
+        let k_m_num_run = (cur[1] | ((cur[2] & (cur[1] << 1 | u64::from(base > 0 && matches!(src[base - 1], 0x30..=0x39)))) & (cur[1] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], 0x30..=0x39)) << 63)));
         let k_m_dot = cur[2];
         let k_m_digit = cur[1];
         let k_m_ws = cur[3];

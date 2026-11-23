@@ -481,8 +481,13 @@ impl<'a> Bytes<'a> {
                         used.len() - 1
                     }
                 };
+                let rs = self.classes[n.as_str()];
                 match off {
                     0 => format!("cur[{i}]"),
+                    // A byte on or back: the neighbour block's one byte, tested where it is (lean's `shift_in`), not
+                    // the block classified.
+                    1 => format!("(cur[{i}] >> 1 | u64::from(base + 64 < n && {}) << 63)", pattern_test("src[base + 64]", rs)),
+                    -1 => format!("(cur[{i}] << 1 | u64::from(base > 0 && {}))", pattern_test("src[base - 1]", rs)),
                     o if o > 0 => {
                         *on = true;
                         format!("(cur[{i}] >> {o} | next[{i}] << {})", 64 - o)

@@ -563,3 +563,19 @@ on (`shift_in`, the next block's first byte in), those it ends; a pair is a bit 
 pair of tables). The block is classified once, and its five masks packed from it, as lean's four.
 
 Side by side on spark1 (load 12), three rounds in turns: tier 1 24.1–24.4 ms before, 23.0–23.2 ms after. All tests pass.
+
+## A block classified once, its neighbours' one byte tested (done)
+
+A mask a byte on or back (`next(digit)`, `prev(digit)`: a number's `.` between digits) read the neighbour block's
+classes: the loop classified the next block with each block (`ahead`), and again its own after a token jumped past it.
+A shift of one byte needs one bit of the neighbour, its byte at `base + 64` or `base - 1`: that byte is now tested where
+it is, as the lean lexer's `shift_in` reads it, and the loop classifies each block once, where it comes to it. A shift of
+more than a byte still reads the neighbour's classes.
+
+Side by side on spark1 (load 3), three rounds in turns: the same (22.4–23.5 ms before, 22.5–22.6 after); kept as lean's
+shape. All tests pass.
+
+### Tier 1 beside lean, on one clock
+
+`rr_syntax`'s `lean_speed` example measures the lean lexer as `rr-aot-speed` measures tier 1 (the same files, wall
+time, least of `RR_ROUNDS`). On spark1: lean's lexer 13.5 ms, tier 1 21.7 ms; lean's parse 25.4 ms.
