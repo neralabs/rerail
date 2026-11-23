@@ -37,10 +37,11 @@ interface GitignoreSession {
 
 /**
  * One session in a Git checkout whose repository follows `.gitignore` or not, past its baseline walk; the checkout's
- * `.gitignore` leaves out `gen/`, and its `.git/info/exclude` holds `exclude`.
+ * `.gitignore` leaves out `gen/`, and its `.git/info/exclude` holds `exclude`. With `linked`, the session runs in a
+ * linked worktree of that checkout ({@link linkedWorktree}).
  */
 async function withSession(
-  { followGitignore, exclude = "" }: { followGitignore: boolean; exclude?: string },
+  { followGitignore, exclude = "", linked = false }: { followGitignore: boolean; exclude?: string; linked?: boolean },
   run: (session: GitignoreSession) => Promise<void>,
 ): Promise<void> {
   const root = await realpath(await temporaryDirectory({ started: false }));
@@ -49,10 +50,11 @@ async function withSession(
   vi.stubEnv("XDG_CONFIG_HOME", "");
   vi.stubEnv("GIT_CONFIG_GLOBAL", join(root, "home", "gitconfig"));
   const databasePath = join(root, "rerail.sqlite");
-  await writeFile(join(root, ".gitignore"), "gen/\nsessions/\nhome/\nrerail.sqlite*\n");
+  await writeFile(join(root, ".gitignore"), "gen/\nsessions/\nhome/\nlinked/\nrerail.sqlite*\n");
   execFileSync("git", ["init", "--quiet"], { cwd: root });
   await writeFile(join(root, ".git", "info", "exclude"), exclude);
-  const repositoryKey = startTestRepository(root, databasePath);
+  const checkout = linked ? await linkedWorktree(root) : root;
+  const repositoryKey = startTestRepository(checkout, databasePath);
   const database = openRerailDatabase(databasePath);
   try {
     database.update(repositories).set({ followGitignore }).where(eq(repositories.repositoryKey, repositoryKey)).run();
@@ -60,19 +62,19 @@ async function withSession(
     database.$client.close();
   }
   const runtime = new RerailRuntime({
-    storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
+    storageRoot: join(root, "sessions"), databasePath, workspaceRoot: checkout, autostart: false, embedder: testEmbedder,
     createAuditor: options => new NativeCodeRuleEnforcer(needleCatalog(), options),
   });
   const audits = new SqliteAuditStore(databasePath);
   const reader = new SqliteSessionReader(databasePath);
   const sessionId = "follow-gitignore";
   try {
-    await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "codex", sessionId, cwd: root } });
+    await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "codex", sessionId, cwd: checkout } });
     await runtime.codeRulesOpened(sessionId);
     // The baseline walk has run before the session writes anything.
     await runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId, text: "" });
     await run({
-      root, sessionId, runtime, audits, reader,
+      root: checkout, sessionId, runtime, audits, reader,
       events: kind => reader.events(sessionId).filter(event => event.kind === kind).map(event => event.payload),
       findings: () => audits.list({ sessionId }).audits
         .filter(audit => audit.scope === "ai-output" && audit.status === "completed")
@@ -86,6 +88,30 @@ async function withSession(
     reader.close();
     vi.unstubAllEnvs();
   }
+}
+
+/**
+ * Commits the checkout at `root` and adds a linked worktree of it, `linked/`, whose path it returns. The global
+ * configuration names an excludes file for each checkout by its Git folder, as `includeIf "gitdir:..."` does: one that
+ * ignores `la/` for the main checkout's (`.git`), one that ignores `lw/` for the linked worktree's
+ * (`.git/worktrees/linked`).
+ */
+async function linkedWorktree(root: string): Promise<string> {
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  git(root, "add", ".gitignore");
+  git(root, "-c", "user.name=Rerail tests", "-c", "user.email=rerail-tests@example.com", "commit", "--quiet", "-m", "seed");
+  const linked = join(root, "linked");
+  git(root, "worktree", "add", "--quiet", "-b", "wt", linked);
+  const home = join(root, "home");
+  await mkdir(home, { recursive: true });
+  let config = "";
+  for (const [checkout, ignored] of [[root, "la"], [linked, "lw"]] as const) {
+    await writeFile(join(home, `${ignored}.exclude`), `${ignored}/\n`);
+    await writeFile(join(home, `${ignored}.gitconfig`), `[core]\n\texcludesFile = ~/${ignored}.exclude\n`);
+    config += `[includeIf "gitdir:${git(checkout, "rev-parse", "--absolute-git-dir")}"]\n\tpath = ~/${ignored}.gitconfig\n`;
+  }
+  await writeFile(join(home, "gitconfig"), config);
+  return await realpath(linked);
 }
 
 /** One tool call of `toolName`, with `act` run between its call and its result, as the tool would. */
@@ -174,6 +200,20 @@ describe("following .gitignore", () => {
       });
       expect(session.events("ignore-rules-changed")).toEqual([{ path: "hidden/.gitignore", via: "observed", ignoresMore: ["*"] }]);
       expect(session.findings()).toEqual([]);
+    });
+  }, 30_000);
+
+  it("checks a linked worktree's tool edits by the excludes file Git reads there, not the main checkout's", async () => {
+    await withSession({ followGitignore: true, linked: true }, async session => {
+      const write = (path: string) => toolCall(session, path, "Write", { file_path: join(session.root, path), content: "NEEDLE\n" }, async () => {
+        await mkdir(join(session.root, path, ".."), { recursive: true });
+        await writeFile(join(session.root, path), "NEEDLE\n");
+      });
+      // Git checks `la/` here (its excludes file is the main checkout's) and ignores `lw/` (this worktree's).
+      await write("la/b1.py");
+      await write("lw/d2.py");
+      await vi.waitFor(() => expect(session.findings()).toEqual(["la/b1.py"]), { timeout: 10_000 });
+      expect(session.events("ignored-edit")).toMatchObject([{ path: "lw/d2.py", line: 1, pattern: "lw/" }]);
     });
   }, 30_000);
 
