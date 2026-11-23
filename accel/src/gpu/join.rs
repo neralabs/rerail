@@ -484,6 +484,8 @@ pub struct Pass {
     /// The launches charged so far (the evaluation's ledger holds the budget; this is the pass's own count, for
     /// its reports).
     dispatches: Cell<usize>,
+    /// Whether it is a stack (`stack`): its dispatches one launch.
+    stacked: Cell<bool>,
     /// Buffers the launches after reach by address (`use_read`, `use_read_write`), bound by none, each with whether
     /// the launches write it.
     resident: RefCell<Vec<(Buffer, bool)>>,
@@ -495,16 +497,27 @@ pub struct Pass {
 
 impl Pass {
     pub fn new() -> Result<Pass, String> {
-        Ok(Pass { queue: shared::Queue::new()?, dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None), key: Box::new(0) })
+        Ok(Pass { queue: shared::Queue::new()?, dispatches: Cell::new(0), stacked: Cell::new(false), resident: RefCell::new(Vec::new()), error: RefCell::new(None), key: Box::new(0) })
     }
 
     fn pointer(&self) -> usize {
         std::ptr::from_ref::<u8>(&self.key) as usize
     }
 
-    /// The launches made so far.
+    /// The dispatches made so far.
     pub fn dispatches(&self) -> usize {
         self.dispatches.get()
+    }
+
+    /// Makes this pass a stack (decision 0638): its dispatches, one program's dependent levels, are one launch in the
+    /// evaluation's budget, charged at its first.
+    pub fn stack(&self) {
+        self.stacked.set(true);
+    }
+
+    /// The launches it is in the budget: its dispatches, or one for a stack that made any.
+    pub fn launches(&self) -> usize {
+        if self.stacked.get() { self.dispatches.get().min(1) } else { self.dispatches.get() }
     }
 
     fn launch(&self, pipe: &Pipe, buffers: &[&Buffer], bytes: &[u8], grid: Grid<'_>) {
@@ -529,7 +542,11 @@ impl Pass {
             Grid::Indirect { .. } => [GROUP, 1, 1],
         };
         let bound = buffers.iter().map(|(b, _)| (b.contents() as usize, b.length())).collect();
-        launch::attempt(self.pointer(), &pipe.name, shape, group, indirect, bound);
+        if self.stacked.get() {
+            launch::attempt_stacked(self.pointer(), &pipe.name, shape, group, indirect, bound);
+        } else {
+            launch::attempt(self.pointer(), &pipe.name, shape, group, indirect, bound);
+        }
         let made = (|| {
             if buffers.len() != pipe.buffers.len() {
                 return Err(format!("the kernel {} takes {} buffers, given {}", pipe.name, pipe.buffers.len(), buffers.len()));
@@ -637,6 +654,12 @@ impl Pass {
     pub fn use_read_write(&self, buffer: &Buffer) {
         self.holds(buffer, "a resident write", 0, true);
         self.resident.borrow_mut().push((buffer.clone(), true));
+    }
+
+    /// The buffers made resident so far (`use_read`, `use_read_write`), each with whether the launches write it: for
+    /// a later pass whose launches reach them too.
+    pub fn resident(&self) -> Vec<(Buffer, bool)> {
+        self.resident.borrow().clone()
     }
 
     /// Holds the launches after it until the host signals `event` with `value` or more (a gate's, `crate::col`).

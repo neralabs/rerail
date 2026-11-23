@@ -94,6 +94,12 @@ pub fn backend() -> &'static str {
     }
 }
 
+/// Whether the process's device is Metal's (Apple's GPUs), where a phase of a join program is launched with its
+/// bound's groups, not indirectly (decision 0638: Metal's indirect dispatch of it hung the M3).
+pub fn is_metal() -> bool {
+    cfg!(target_os = "macos") && matches!(crate::shared::get().map(|s| &s.device), Some(Device::Native(_)))
+}
+
 fn other() -> ! {
     panic!("a value of one backend given to another's (the GPU's, OpenCL's and the CPU's)")
 }

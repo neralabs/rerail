@@ -77,6 +77,8 @@ struct Evaluation {
     rerunning: bool,
     records: Vec<DispatchRecord>,
     commands: HashMap<usize, u64>,
+    /// The stacked commands charged (`attempt_stacked`): one launch each, whatever its dispatches.
+    stacks: std::collections::HashSet<u64>,
     next_command: u64,
     peak_application_buffer_bytes: usize,
 }
@@ -216,6 +218,7 @@ pub fn mark(pointer: usize, completed: bool) {
                 }
                 if completed {
                     evaluation.commands.remove(&pointer);
+                    evaluation.stacks.remove(&id);
                 }
             }
         }
@@ -225,6 +228,16 @@ pub fn mark(pointer: usize, completed: bool) {
 /// Charges one dispatch of the command known by `pointer` to the evaluation's budget and records it, before it is
 /// enqueued. Past the budget, or with no evaluation, the hard failure.
 pub fn attempt(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64; 3], indirect: bool, buffers: Vec<(usize, u64)>) {
+    record(pointer, kernel, grid, group, indirect, buffers, false);
+}
+
+/// `attempt` for a stack's dispatch (decision 0638): a submission of dependent dispatches of one program, each a
+/// level's, charged as one launch, at its first; the rest recorded only.
+pub fn attempt_stacked(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64; 3], indirect: bool, buffers: Vec<(usize, u64)>) {
+    record(pointer, kernel, grid, group, indirect, buffers, true);
+}
+
+fn record(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64; 3], indirect: bool, buffers: Vec<(usize, u64)>, stacked: bool) {
     EVALUATION.with_borrow(|slot| {
         let Some(evaluation) = slot else { over_budget(format!("{kernel}: a launch outside any evaluation"), &[]) };
         let mut evaluation = evaluation.borrow_mut();
@@ -236,7 +249,9 @@ pub fn attempt(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64; 3], in
             evaluation.commands.insert(pointer, id);
             id
         };
-        evaluation.charge(kernel);
+        if !stacked || evaluation.stacks.insert(id) {
+            evaluation.charge(kernel);
+        }
         let application_buffer_bytes = super::shared::other_reserved();
         evaluation.peak_application_buffer_bytes = evaluation.peak_application_buffer_bytes.max(application_buffer_bytes);
         let peak_application_buffer_bytes = evaluation.peak_application_buffer_bytes;
@@ -269,6 +284,23 @@ mod tests {
 
     fn launch() {
         attempt(1, "k", [1; 3], [1; 3], false, Vec::new());
+    }
+
+    /// A stack's dispatches are one launch (decision 0638): its first charges, the rest are recorded; a stack
+    /// committed and completed, the next stack of the same key charges again.
+    #[test]
+    fn a_stack_is_one_launch() {
+        let e = LaunchScope::enter();
+        let before = available();
+        for _ in 0..KERNEL_LAUNCH_LIMIT + 5 {
+            attempt_stacked(7, "k", [1; 3], [1; 3], false, Vec::new());
+        }
+        assert_eq!(available(), before - 1, "one launch");
+        assert_eq!(e.snapshot().len(), KERNEL_LAUNCH_LIMIT + 5, "every dispatch recorded");
+        mark(7, false);
+        mark(7, true);
+        attempt_stacked(7, "k", [1; 3], [1; 3], false, Vec::new());
+        assert_eq!(available(), before - 2, "the next stack, another launch");
     }
 
     /// The account the launch past the budget raises (`exec::OverBudget`), or none when `f` completes.

@@ -1,6 +1,6 @@
 # 0603. A stratum's device work is one launch: a work queue whose phases and rounds are continuations
 
-Status: accepted (2026-11-22); done (2026-11-22): its steps, its tests, and its rooms mapped as reached. Follows 0601 (every launch counts, and past the budget is a hard failure)
+Status: accepted (2026-11-22); done (2026-11-22): its steps, its tests, and its rooms mapped as reached. Its single launch superseded by 0638 (2026-11-23): its phases are stacked dispatches, one launch a stack. Follows 0601 (every launch counts, and past the budget is a hard failure)
 and takes 0540 step 6's scheme (a level's formulas as a work queue with continuations) to the device joins
 (`metal_join::Batch`, `setfix::device`).
 
