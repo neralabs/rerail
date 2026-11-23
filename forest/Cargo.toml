@@ -16,7 +16,7 @@ objc = "0.2.7"
 block = "0.1.6"
 
 [build-dependencies]
-cc = "=1.11.1"
+cc = "=1.11.2"
 
 [lints.rust]
 # objc 0.2's `msg_send!` tests a `cargo-clippy` feature in the calling crate.
