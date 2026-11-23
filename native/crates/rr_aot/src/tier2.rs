@@ -560,7 +560,8 @@ impl<'a, L: Layout> P<'a, L> {
     /// reaches). The lean parser asks neither at a token it knows.
     #[inline(always)]
     fn take<const M: bool, const F: bool>(&mut self) -> R<(u32, u32)> {
-        if self.i >= self.n || M && self.open_mark() {
+        // Not past the last record: a take of `M` false passed a word's or a kind's test, which fails there.
+        if M && (self.i >= self.n || self.open_mark()) {
             return self.refuse();
         }
         // A mark the level refuses, at the token it takes (`refuse M in L`).
@@ -708,13 +709,22 @@ impl<'a, L: Layout> P<'a, L> {
         }
         let at = at as usize;
         self.w.plain_wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));
+        if !self.dead.is_empty() {
+            self.shift_dead(at);
+        }
+        self.levels.push(std::mem::replace(&mut self.top, (at as u32, at as u32 + 1)));
+        Ok(())
+    }
+
+    /// The nodes a `drop` took out past a wrap's place `at`, one later: the wrap went in before them.
+    #[cold]
+    #[inline(never)]
+    fn shift_dead(&mut self, at: usize) {
         for o in &mut self.dead {
             if *o != NONE && *o as usize >= at {
                 *o += 1;
             }
         }
-        self.levels.push(std::mem::replace(&mut self.top, (at as u32, at as u32 + 1)));
-        Ok(())
     }
 
     /// The node a wrap moved (the wrap's first child) a `kind` now.

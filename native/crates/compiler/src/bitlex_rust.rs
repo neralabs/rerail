@@ -1609,7 +1609,7 @@ impl<'a> G<'a> {
             for (a, b) in [
                 ("    asks: u64,\n", "    asks: u64,\n    /// The marks the level open refuses (`refuse M in L`), their bits in a record's code: a token it takes with one\n    /// refuses the file. A call's are its own, the caller's again where it returns.\n    refusing: u32,\n"),
                 ("marked: false, asks: 0,", "marked: false, asks: 0, refusing: 0,"),
-                ("        if self.i >= self.n || M && self.open_mark() {\n            return self.refuse();\n        }\n", "        if self.i >= self.n || M && self.open_mark() {\n            return self.refuse();\n        }\n        // A mark the level refuses, at the token it takes (`refuse M in L`).\n        if F && self.k == 0 && self.refusing != 0 && self.marks_hold(self.i, self.refusing) {\n            return self.refuse();\n        }\n"),
+                ("        if M && (self.i >= self.n || self.open_mark()) {\n            return self.refuse();\n        }\n", "        if M && (self.i >= self.n || self.open_mark()) {\n            return self.refuse();\n        }\n        // A mark the level refuses, at the token it takes (`refuse M in L`).\n        if F && self.k == 0 && self.refusing != 0 && self.marks_hold(self.i, self.refusing) {\n            return self.refuse();\n        }\n"),
             ] {
                 if out.matches(a).count() != 1 {
                     return Err(format!("tier 2 as Rust: `refuse`'s place in the runtime: {a:?}"));
@@ -1631,7 +1631,8 @@ impl<'a> G<'a> {
             for (a, b) in [
                 ("    gone: Vec<usize>,\n", "    gone: Vec<usize>,\n    /// The nodes a `drop` took out, each by the node it was in: a reading that reaches one refuses (`read_dead`).\n    dead: Vec<u32>,\n"),
                 ("gone: Vec::new(), lost: None,", "gone: Vec::new(), dead: Vec::new(), lost: None,"),
-                ("        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));\n", "        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));\n        for o in &mut self.dead {\n            if *o != NONE && *o as usize >= at {\n                *o += 1;\n            }\n        }\n"),
+                ("    /// The node a wrap moved (the wrap's first child) a `kind` now.\n", "    /// The nodes a `drop` took out past a wrap's place `at`, one later: the wrap went in before them.\n    #[cold]\n    #[inline(never)]\n    fn shift_dead(&mut self, at: usize) {\n        for o in &mut self.dead {\n            if *o != NONE && *o as usize >= at {\n                *o += 1;\n            }\n        }\n    }\n\n    /// The node a wrap moved (the wrap's first child) a `kind` now.\n"),
+                ("        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));\n", "        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));\n        if !self.dead.is_empty() {\n            self.shift_dead(at);\n        }\n"),
                 ("        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.key(i), self.w.start(i), self.w.end(i), self.w.size(i) as usize)).collect();\n", "        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.key(i), self.w.start(i), self.w.end(i), self.w.size(i) as usize)).collect();\n        if self.dead.iter().any(|&o| (o as usize).wrapping_sub(at) < n) {\n            self.read_dead(&nodes, at, root, way)?;\n        }\n"),
             ] {
                 if out.matches(a).count() != 1 {
@@ -2256,7 +2257,8 @@ impl<'a, L: Layout> P<'a, L> {
     /// reaches). The lean parser asks neither at a token it knows.
     #[inline(always)]
     fn take<const M: bool, const F: bool>(&mut self) -> R<(u32, u32)> {
-        if self.i >= self.n || M && self.open_mark() {
+        // Not past the last record: a take of `M` false passed a word's or a kind's test, which fails there.
+        if M && (self.i >= self.n || self.open_mark()) {
             return self.refuse();
         }
         if let Some((kind, None)) = self.lost {

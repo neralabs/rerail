@@ -504,3 +504,17 @@ The level open (its node, and the node made last in it) was the last entry of `l
 `field_made`, `wrap` and relabel went through the vector's length to its last entry. It is a field now (`P::top`), as
 the lean parser holds its `top`; `levels` holds only the levels around it, a push at a level's open and a pop at its
 close. Side by side on spark1 (load 3), three rounds in turns: tier 2 35.5–36.3 ms before, 34.5–35.5 ms after.
+
+### What the profile named: the dropped nodes' shift and the end test
+
+A line profile on m3 (2,891 samples) put tier 2's hottest lines in `wrap`'s loop over the nodes a `drop` took out
+(`dead`), which every wrap walked though it is nearly always empty, and in `take`. Two steps:
+
+- `wrap` shifts the dropped nodes only where there are some (`shift_dead`, cold); lean has no such list.
+- A take the generator knows passed a word's or a kind's test (`M` false, `takes`) does not test for the file's end:
+  both tests fail past the last record. A take of `M` true tests it with the open marks.
+
+Holding the token's span with its code (`arrive`) was tried as well and was slower (the span is written at every record
+reached, read only at a take); lean reads its token's bounds at the take, so it was not kept.
+
+Side by side on spark1 (load 3), five rounds in turns: tier 2 34.5–35.5 ms before, 33.4–34.6 ms after. All tests pass.

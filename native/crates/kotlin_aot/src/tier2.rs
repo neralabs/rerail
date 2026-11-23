@@ -924,7 +924,8 @@ impl<'a, L: Layout> P<'a, L> {
     /// reaches). The lean parser asks neither at a token it knows.
     #[inline(always)]
     fn take<const M: bool, const F: bool>(&mut self) -> R<(u32, u32)> {
-        if self.i >= self.n || M && self.open_mark() {
+        // Not past the last record: a take of `M` false passed a word's or a kind's test, which fails there.
+        if M && (self.i >= self.n || self.open_mark()) {
             return self.refuse();
         }
         if let Some((kind, None)) = self.lost {
