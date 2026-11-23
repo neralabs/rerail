@@ -271,19 +271,24 @@ fn made_by() -> Arc<str> {
 /// Under a heap profile, the bytes of the chunks' open run-life blocks each span's arrays hold (`BlockVec::charged`):
 /// the open block is every array's, so the blocks' account names what lies in it.
 #[derive(Default)]
-struct OpenUse(Mutex<std::collections::HashMap<u32, usize>>);
+struct OpenUse(Mutex<std::collections::HashMap<(u32, &'static str), (usize, usize)>>);
 
-fn open_use(span: u32, bytes: usize) -> (u32, usize) {
-    let u = crate::code_rule_dsl::logic::profile::machine::<OpenUse>();
-    *u.0.lock().unwrap_or_else(|e| e.into_inner()).entry(span).or_default() += bytes;
-    (span, bytes)
-}
-
-fn open_given_back(span: u32, bytes: usize) {
+/// `bytes` of a live array of `ty` charged to `span` (and one array more).
+fn open_use(span: u32, ty: &'static str, bytes: usize) -> (u32, &'static str, usize) {
     let u = crate::code_rule_dsl::logic::profile::machine::<OpenUse>();
     let mut m = u.0.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(b) = m.get_mut(&span) {
-        *b = b.saturating_sub(bytes);
+    let e = m.entry((span, ty)).or_default();
+    e.0 += bytes;
+    e.1 += 1;
+    (span, ty, bytes)
+}
+
+fn open_given_back(span: u32, ty: &'static str, bytes: usize) {
+    let u = crate::code_rule_dsl::logic::profile::machine::<OpenUse>();
+    let mut m = u.0.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(b) = m.get_mut(&(span, ty)) {
+        b.0 = b.0.saturating_sub(bytes);
+        b.1 = b.1.saturating_sub(1);
     }
 }
 
@@ -303,7 +308,28 @@ pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
     // What lies in the chunks' open run-life blocks, by the span whose arrays hold it (no blocks of its own).
     let used = crate::code_rule_dsl::logic::profile::machine::<OpenUse>();
     let used = used.0.lock().unwrap_or_else(|e| e.into_inner());
-    out.extend(used.iter().filter(|(_, b)| **b >= 1 << 20).map(|(&s, &b)| (s, Life::Run as u8, b, 0, "  in the open block of run-life arrays: held by this span's arrays".to_owned())));
+    // By span (each its arrays' types, the most first), the spans under 1 MB as one row: every live array is in one.
+    let mut spans: std::collections::HashMap<u32, (usize, Vec<(usize, usize, &str)>)> = std::collections::HashMap::new();
+    for (&(s, ty), &(b, n)) in used.iter().filter(|(_, (b, _))| *b > 0) {
+        let e = spans.entry(s).or_default();
+        e.0 += b;
+        e.1.push((b, n, ty.rsplit("::").next().unwrap_or(ty)));
+    }
+    let (mut rest, mut rest_spans) = (0, 0);
+    for (s, (b, mut types)) in spans {
+        if b < 1 << 20 {
+            rest += b;
+            rest_spans += 1;
+            continue;
+        }
+        types.sort_by_key(|t| std::cmp::Reverse(t.0));
+        let types: Vec<String> = types.iter().take(4).map(|(b, n, t)| format!("{} MB in {n} {t}", b >> 20)).collect();
+        out.push((s, Life::Run as u8, b, 0, format!("  in the open block of run-life arrays: held by this span's arrays ({})", types.join(", "))));
+    }
+    if rest > 0 {
+        let s = rerail_prof::heap::intern("the open block's arrays of spans under 1 MB each");
+        out.push((s, Life::Run as u8, rest, 0, format!("  in the open block of run-life arrays: {rest_spans} spans")));
+    }
     out.sort_by_key(|o| std::cmp::Reverse(o.2));
     out
 }
@@ -625,7 +651,7 @@ pub struct BlockVec<T: rerail_blocks::Pod> {
     ledger: Option<Arc<rerail_blocks::ledger::Ledger>>,
     /// Under a heap profile, the span its chunk of a chunk's open run-life block is charged to and its bytes
     /// (`OpenUse`): given back with the chunk.
-    charged: Option<(u32, usize)>,
+    charged: Option<(u32, &'static str, usize)>,
     _t: std::marker::PhantomData<T>,
 }
 
@@ -722,9 +748,10 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         }
         let (at, kept) = self.region.take().expect("its own chunk").into_chunk();
         // Handed on to a relation's directory, its bytes are that relation's now, kept while it lives.
-        if let Some((span, bytes)) = self.charged.take() {
-            open_given_back(span, bytes);
-            open_use(rerail_prof::heap::intern("indexes' orders handed to their relations (kept while they live)"), bytes);
+        // (Not given back when the relation frees it: an upper bound.)
+        if let Some((span, ty, bytes)) = self.charged.take() {
+            open_given_back(span, ty, bytes);
+            open_use(rerail_prof::heap::intern("indexes' orders handed to their relations (kept while they live)"), ty, bytes);
         }
         let given = rerail_blocks::relation::Given { at, len: self.len, kept };
         // Handed on: nothing of it is given back here.
@@ -782,7 +809,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         self.ptr = std::ptr::NonNull::new(region.as_mut_ptr()).expect("a block's chunk");
         self.region = Some(region);
         if facts.shared && facts.life == Life::Run && rerail_prof::heap::on() {
-            self.charged = Some(open_use(rerail_prof::heap::span(), size));
+            self.charged = Some(open_use(rerail_prof::heap::span(), std::any::type_name::<T>(), size));
         }
         self.ledger = Some(facts.block.ledger().clone());
         self.facts = Some(facts);
@@ -792,8 +819,8 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
 
     /// Its chunk given back: its region's last handle goes (a borrowed one's chunk is its owner's).
     fn free(&mut self) {
-        if let Some((span, bytes)) = self.charged.take() {
-            open_given_back(span, bytes);
+        if let Some((span, ty, bytes)) = self.charged.take() {
+            open_given_back(span, ty, bytes);
         }
         self.owner = None;
         self.region = None;
