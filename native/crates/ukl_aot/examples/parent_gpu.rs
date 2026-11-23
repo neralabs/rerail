@@ -92,8 +92,4 @@ fn main() {
     time("group", &|q| {
         launch(q, f).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).value("args", &args).run(&groups, &[256]).unwrap();
     });
-    let f = p.function("parent_push").unwrap_or_else(|e| panic!("{backend}: parent_push: {e}"));
-    time("push", &|q| {
-        launch(q, f).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).value("args", &args).run(&groups, &[256]).unwrap();
-    });
 }

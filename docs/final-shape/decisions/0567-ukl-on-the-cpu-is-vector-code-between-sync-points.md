@@ -419,6 +419,28 @@ instructions, 17–21, 93 and 20–29 cycles):
   for the count only) records took 36 instructions a node fewer. On the CPU a chunk with one such lane runs the walk
   masked for all 8. On the GPU the same kernel is 1.45 times the two launches' speed on records.
 
+## Step 3, a spike: chains pushed forward, no barrier (the user's, 2026-11-22)
+
+The user: "why do we need a threadgroup barrier here?", then "go ahead with a spike on option 1". The barrier is
+only there to share steps: a thread a node puts a parent's children far apart (each child's subtree between it and
+the next), so a chain of 7 links spans warps and groups. The spike turned the chase around: a link is always to the
+previous sibling, `i = j + size(j)` (held on every link of the test documents), so a chain's head (a node whose step
+names its parent) writes its parent, then each sibling after it whose step links back, by sizes. Every node is
+written once by one thread; none reads another's result. Its Rust matched the host's on every node at every group.
+
+| | records (1.4 M nodes) | numbers (200 k) | random (10 k) |
+|---|---|---|---|
+| Metal, an M3: group | 0.399 ms | 0.058 ms | 0.040 ms |
+| Metal, an M3: push | 0.878 ms | 0.100 ms | 0.066 ms |
+| CPU, Rust at 8 lanes: group (instr, cycles a node) | 114, 28 | 381, 94 | 129, 32 |
+| CPU, Rust at 8 lanes: push | 293, 74 | 921, 216 | 390, 100 |
+
+Slower everywhere, 1.7 to 2.6 times. Every node still reads its own step to learn whether it heads a chain, and a
+head then reads its chain's slots again (an inner sibling's twice: its size, and the slot before the next): two to
+three slot reads a node against about one. And only the heads work in the loop, one lane in 8 at most, for as many
+rounds as the chunk's longest chain: the threads a node keep the lanes busy, the threads a chain leave them idle.
+The kernel and its Rust are removed; `parent_group` stays the one parent kernel.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one

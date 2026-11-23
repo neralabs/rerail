@@ -18,8 +18,6 @@ pub mod mix_lanes_w8;
 pub mod nearest_jump_w8;
 #[cfg(target_arch = "aarch64")]
 pub mod parent_group_w8;
-#[cfg(target_arch = "aarch64")]
-pub mod parent_push_w8;
 pub mod parent;
 pub mod scalar;
 #[cfg(test)]
