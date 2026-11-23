@@ -376,6 +376,7 @@ pub(super) struct Offsets {
     pub(super) siblings: OnceLock<Vec<usize>>,
     pub(super) locs: OnceLock<Vec<usize>>,
     pub(super) tokens: OnceLock<Vec<usize>>,
+    pub(super) ends: OnceLock<Vec<usize>>,
 }
 
 /// What a group made: the rows `Batch::make_rows` made for some documents, before they are bound, each relation's

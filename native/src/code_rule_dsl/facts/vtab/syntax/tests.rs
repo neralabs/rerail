@@ -490,7 +490,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
     let reads = [
         "node", "text", "comment", "op", "op_at", "str", "strprefix", "value", "value_type", "name", "spread", "next_sibling", "syntax_error",
         "src_line", "line_count", "str_part", "first_token", "last_token", "token_before", "token_after", "child", "line", "end_line", "col",
-        "visit_index", "ast_depth", "structural_before", "structural_after",
+        "visit_index", "ast_depth", "structural_before", "structural_after", "end_point",
     ];
     let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let sources = shaped(&store, docs, &projection).unwrap();
@@ -508,6 +508,16 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
             (r[1], from_tape_tag(tag).unwrap().kinds().kind_name(code).unwrap_or("ERROR").to_owned())
         })
         .collect();
+    // `end_point` is a view (`View::End`): a row a node, its point a position whose line is the node's end line.
+    let lines: HashMap<i64, i64> = read("line").into_iter().map(|r| (r[0], r[1])).collect();
+    let end_lines: HashMap<i64, i64> = read("end_line").into_iter().map(|r| (r[0], r[1])).collect();
+    let ends = read("end_point");
+    assert_eq!(ends.len(), kinds.len(), "an end point a node");
+    assert_eq!(ends.iter().map(|r| r[1]).collect::<BTreeSet<_>>().len(), ends.len(), "distinct end points");
+    for r in &ends {
+        assert!(kinds.contains_key(&r[0]) && !kinds.contains_key(&r[1]), "{r:?}");
+        assert_eq!(lines.get(&r[1]), end_lines.get(&r[0]), "{r:?}: the point's line is the node's end line");
+    }
     let loc = |v: i64| match (kinds.get(&v), texts.get(&v)) {
         (Some(k), Some(t)) if !t.contains('\n') => format!("{k}'{t}'"),
         (Some(k), _) => k.clone(),

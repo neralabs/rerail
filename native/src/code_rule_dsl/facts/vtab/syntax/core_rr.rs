@@ -498,8 +498,6 @@ pub(super) struct CoreRows {
     last_token: Vec<[i64; 2]>,
     token_before: Vec<[i64; 2]>,
     token_after: Vec<[i64; 2]>,
-    /// `end_point(n, p)`: node n's end point, a zero-width span (`Locs::ends`).
-    end_point: Vec<[i64; 2]>,
     structural_before: Vec<[i64; 2]>,
     structural_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
@@ -511,7 +509,7 @@ pub(super) struct CoreRows {
 impl CoreRows {
     /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
     pub(super) fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.spread.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.first_token.as_slice()) + std::mem::size_of_val(self.last_token.as_slice()) + std::mem::size_of_val(self.token_before.as_slice()) + std::mem::size_of_val(self.token_after.as_slice()) + std::mem::size_of_val(self.end_point.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.spread.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.first_token.as_slice()) + std::mem::size_of_val(self.last_token.as_slice()) + std::mem::size_of_val(self.token_before.as_slice()) + std::mem::size_of_val(self.token_after.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
     }
 }
 
@@ -772,10 +770,6 @@ impl CoreRows {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rerail's spans");
         let key = i64::from(p.key);
-        if x.ends > 0 {
-            let from = p.len() + x.ends_from();
-            self.end_point.extend(p.node_ids().take(x.ends as usize).map(|(l, _, n)| [n, p.global(from + l)]));
-        }
         let lines_span = crate::code_rule_dsl::logic::profile::span(|| "lines".into());
         if own_text {
             let source = p.len() + x.tokens;
@@ -1041,7 +1035,6 @@ impl CoreRows {
             ("last_token", pair(&["n", "t"], &self.last_token)),
             ("token_before", pair(&["x", "t"], &self.token_before)),
             ("token_after", pair(&["x", "t"], &self.token_after)),
-            ("end_point", pair(&["n", "p"], &self.end_point)),
             ("structural_before", node_sym(&self.structural_before)),
             ("structural_after", node_sym(&self.structural_after)),
             ("tree_digest", node_sym(&self.tree_digest)),
