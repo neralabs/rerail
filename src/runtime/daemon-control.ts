@@ -893,7 +893,7 @@ export interface DaemonControl {
   ensureSqlite?: (packageRoot: string) => Promise<SqliteRepairResult>;
   /**
    * Told the pid of a daemon still in its start that another process launched, each time the start begins to wait for
-   * it ({@link untilStarted}); never of the daemon this start launched, which it waits for without a word.
+   * it ({@link answeredOrExited}); never of the daemon this start launched, which it waits for without a word.
    */
   onWaiting?: (pid: number) => void;
 }
@@ -1045,9 +1045,9 @@ export function homeDaemonInStart(home: string, machine: DaemonMachine = THIS_MA
  * The daemon of `home` still in its start, found by a start that did not launch it: waited for as long as a start waits
  * for its own launch, from now, and gone once its pid is. One that daemon.json names and that answers is running,
  * whatever its record says: a record a daemon could not rewrite at the end of its start must not keep a start waiting.
- * Its failure shows what it wrote to the log from where its record says its output starts, the lines it wrote before
- * this start found it included, as for a daemon the start launched: what the log held before is earlier runs' and
- * other starts'.
+ * What a start shows of it, when it has not answered by the deadline or exits in the start's last wait, is what it
+ * wrote to the log from where its record says its output starts, the lines it wrote before this start found it
+ * included, as for a daemon the start launched: what the log held before is earlier runs' and other starts'.
  */
 async function foundStarting(home: string, machine: DaemonMachine): Promise<ComingUp | DaemonLookup | undefined> {
   const found = daemonComingUp(home, machine);
@@ -1092,26 +1092,38 @@ async function answeredLaunch(launched: LaunchedDaemon, records: LaunchRecords, 
 
 /**
  * Waits for the daemon `coming` names, still in its start, as a start waits for the daemon it launched (`readyDaemon`),
- * telling `control.onWaiting` first only when another process launched it: until it answers, until it exits, which
- * fails the start with its log and launches nothing more, or until `coming.deadline`, where it fails as
- * {@link unansweredLaunch} says and is left running.
+ * telling `control.onWaiting` first only when another process launched it: until it answers, or until it exits, which
+ * this returns as how it exited. At `coming.deadline` it fails as {@link unansweredLaunch} says, and the daemon is left
+ * running.
  */
-async function untilStarted(control: DaemonControl, coming: ComingUp, machine: DaemonMachine): Promise<RunningDaemon> {
+async function answeredOrExited(control: DaemonControl, coming: ComingUp, machine: DaemonMachine): Promise<RunningDaemon | string> {
   if (!coming.launched) control.onWaiting?.(coming.pid);
   while (Date.now() < coming.deadline) {
-    const daemon = await answeredLaunch(coming.daemon, coming.records, machine.platform);
+    const exit = coming.daemon.exitReason();
+    if (exit !== undefined) return exit;
+    const daemon = await answeringDaemon(coming.records.stateFile, coming.daemon.pid, machine.platform);
     if (daemon !== undefined) return daemon;
     await sleep(POLL_INTERVAL_MS);
   }
   throw await unansweredLaunch(coming.daemon, coming.records);
 }
 
+/** Waits as {@link answeredOrExited} does; an exit fails the start with what the daemon wrote to the log. */
+async function untilStarted(control: DaemonControl, coming: ComingUp, machine: DaemonMachine): Promise<RunningDaemon> {
+  const ended = await answeredOrExited(control, coming, machine);
+  if (typeof ended === "string") throw await exitedLaunch(ended, coming.records);
+  return ended;
+}
+
 /**
  * Runs `locked` under the start lock in `control.home`. One that ends with a daemon still in its start lets go of the
- * lock and waits for that daemon ({@link untilStarted}), so another start finds it and waits beside, never behind the
- * lock. The daemon this start launched is reported as started once it answers. One another process launched is looked
- * up again under the lock once it answers, so a start replaces it as it would a running one; a second wait after that
- * look is the last.
+ * lock and waits for that daemon ({@link answeredOrExited}), so another start finds it and waits beside, never behind
+ * the lock. The daemon this start launched is reported as started once it answers, and its exit fails the start with
+ * its log. One another process launched is looked up again under the lock once it answers, so a start replaces it as it
+ * would a running one, or once it exits, so the start launches a daemon of its own, with its own package and options,
+ * as in a home with none: a hook's start beside another package's daemon that fails in its start is one such case. A
+ * second wait after that look is the last, and the exit of the daemon it waits for fails the start with that daemon's
+ * log.
  *
  * Once the whole start is over, both looks and both waits, it ends the autostart claim (`claimAutostart`) if it names
  * this process, the launcher an autostart started, however the start ended: the launch it held other processes off for
@@ -1128,7 +1140,7 @@ async function startBesideStarting(
   try {
     let outcome = await startUnderLock(control.home, locked);
     if ("status" in outcome && !outcome.launched) {
-      await untilStarted(control, outcome, machine);
+      await answeredOrExited(control, outcome, machine);
       outcome = await startUnderLock(control.home, locked);
     }
     if (!("status" in outcome)) return outcome;
