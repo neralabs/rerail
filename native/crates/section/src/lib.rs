@@ -1,4 +1,4 @@
-//! Sections (decision 0569 §4): a tree of plan or analysis values (a rule's join, a component's spec, a program's
+//! Sections (decision 0628 §4): a tree of plan or analysis values (a rule's join, a component's spec, a program's
 //! declarations) encoded once, where it is computed, into one run of bytes in a block, and read where it lies
 //! through its archived view. A struct's view is a `repr(C)` record of its fields' views, an enum's a `repr(u32)`
 //! tagged record, and a list or a text lies out of line, named by an offset relative to the field that names it:

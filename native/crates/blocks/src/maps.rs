@@ -1292,6 +1292,33 @@ impl<T: Pod> std::ops::Deref for Rec<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An id table in a block (`IdTable`, a set of row ids found by their rows' hashes) finds each id through growth,
+    /// removals that move ids probed past the removed one back, and an id written again in its slot; ids whose hashes
+    /// collide are told apart by their rows. (The engine's other id set in a block, `facts::rows::IdSet`, was merged
+    /// into it, with this test.)
+    #[test]
+    fn an_id_table_finds_each_id_through_growth_and_removals() {
+        // Rows are their ids' values; a hash of 8 values only, so many collide.
+        let row = |id: u32| u64::from(id) * 7 + 1;
+        let hash = |&id: &u32| row(id) % 8;
+        let mut set: IdTable<u32> = IdTable::new();
+        for id in 0..3000u32 {
+            assert_eq!(set.find(hash(&id), |&i| row(i) == row(id)), None);
+            set.insert_unique(hash(&id), id, hash);
+        }
+        assert_eq!(set.len(), 3000);
+        for id in (0..3000u32).step_by(3) {
+            assert_eq!(set.remove(hash(&id), |&i| row(i) == row(id), hash), Some(id));
+        }
+        assert_eq!(set.len(), 2000);
+        for id in 0..3000u32 {
+            let want = (id % 3 != 0).then_some(id);
+            assert_eq!(set.find(hash(&id), |&i| row(i) == row(id)).copied(), want, "id {id}");
+        }
+        assert!(set.find_mut(hash(&1), |&i| i == 1).map(|v| *v = 1).is_some());
+        assert!(set.find_mut(hash(&0), |&i| i == 0).is_none(), "a removed id is not held");
+    }
     use crate::block::kind;
 
     fn room() -> Arc<dyn Room> {

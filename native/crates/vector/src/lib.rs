@@ -1,4 +1,4 @@
-//! Plain values, the rooms structures take their regions from, and the growable array over them (decision 0569 §3).
+//! Plain values, the rooms structures take their regions from, and the growable array over them (decision 0628 §3).
 //!
 //! Below the tape format, so that its writer's columns, like every crate's arrays, lie in the blocks the run's room
 //! gives (`rerail_blocks` implements `Room` over its blocks and installs the run's, `install_default_room`). A crate's

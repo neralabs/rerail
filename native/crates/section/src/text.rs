@@ -1,4 +1,4 @@
-//! Text-keyed sections (decision 0569 §4): a set of names, and a map from a name to a value, each one section of
+//! Text-keyed sections (decision 0628 §4): a set of names, and a map from a name to a value, each one section of
 //! its names sorted and found by a search of them. Shared by a count (`Arc`): a fork that reads one holds it, and a
 //! change makes a new section (`with`, `without`), which the holders after the change read.
 use crate::{Archive, Decode, RelStr, Section, Tuple2};

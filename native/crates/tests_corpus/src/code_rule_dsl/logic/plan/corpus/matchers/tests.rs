@@ -1,0 +1,194 @@
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// Each `ast` atom without captures reads its matcher's relation, one per distinct matcher; `docof` joins the node
+    /// to its document only where the rule reads the document; an atom with captures is left as written.
+    /// `kind`, `field`, `kind` with the field's node read nowhere else becomes one matcher; a field read again stays.
+    #[test]
+    fn tree_shaped_parts_become_matchers() {
+        let src = r#"
+.decl a(c: node)
+.decl b(c: node, f: node)
+.output a, b
+a(c) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
+b(c, f) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
+"#;
+        use crate::code_rule_dsl::logic::plan::corpus::preparation::text::tree_parts_as_matchers;
+        use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, Version};
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
+        fn rule<'v>(v: &'v Version, head: &str) -> RuleRef<'v> {
+            v.rules().find(|r| v.rel_name(r.head().rel()) == head).unwrap()
+        }
+        assert_eq!(tree_parts_as_matchers(prog.clone(), false).unwrap().1, 1);
+        let (captured, made) = tree_parts_as_matchers(prog.clone(), true).unwrap();
+        assert_eq!(made, 2, "with captures, the field the head reads is part of the matcher");
+        let b = rule(&captured, "b");
+        assert_eq!(b.body().count(), 1);
+        let Lit::Ast { captures, matcher, node, .. } = b.body().next().unwrap().view() else { panic!("not a matcher: {}", captured.show_rule(b)) };
+        assert_eq!(captured.text(b.var(node)), "c");
+        let captures: Vec<(String, String)> = captures.map(|(n, s)| (captured.text(n).to_owned(), captured.text(b.var(s)).to_owned())).collect();
+        assert_eq!(captures, vec![("C1".to_owned(), "f".to_owned())], "the field's node captured");
+        let m: serde_json::Value = serde_json::from_str(captured.text(matcher)).unwrap();
+        assert_eq!(m["rule"]["all"][1]["has"]["pattern"], "$C1");
+        let (prog, made) = tree_parts_as_matchers(prog, false).unwrap();
+        assert_eq!(made, 1);
+        let body = |head: &str| rule(&prog, head);
+        let a = body("a");
+        assert_eq!(a.body().count(), 1);
+        let Lit::Ast { matcher, node, .. } = a.body().next().unwrap().view() else { panic!("not a matcher: {}", prog.show_rule(a)) };
+        assert_eq!(prog.text(a.var(node)), "c");
+        let m: serde_json::Value = serde_json::from_str(prog.text(matcher)).unwrap();
+        assert_eq!(m["rule"]["all"][1]["has"]["field"], "function");
+        assert_eq!(m["rule"]["all"][1]["has"]["kind"], "attribute");
+        assert_eq!(body("b").body().count(), 3, "a field the head reads stays a join");
+    }
+
+    /// A matcher whose every read joins its node with a column only another matcher's roots fill is bound only at
+    /// those roots (decision 0459); one read anywhere else, under a negation or with no such join, everywhere.
+    #[test]
+    fn a_matcher_read_only_at_another_matchers_roots_is_bound_there() {
+        let src = r#"
+.decl ident(w: node, d: number)
+.decl inner(w: node, f: node)
+.decl free(w: node)
+.decl mixed(w: node)
+.decl unjoined(w: node)
+.output inner, free, mixed, unjoined
+ident(w, d) :- ast(d, w, {"language": "python", "rule": {"kind": "identifier"}}).
+inner(w, f) :- ident(w, _), ast(d, w, {"language": "python", "rule": {"inside": {"all": [{"kind": "function_definition"}, {"pattern": "$F"}], "stopBy": "end"}}}, F: f).
+free(w) :- ast(d, w, {"language": "python", "rule": {"kind": "call"}}).
+mixed(w) :- ident(w, _), ast(d, w, {"language": "python", "rule": {"inside": {"kind": "class_definition", "stopBy": "end"}}}).
+unjoined(w) :- ast(d, w, {"language": "python", "rule": {"inside": {"kind": "class_definition", "stopBy": "end"}}}).
+"#;
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
+        // The run reads the rules from the prepared program's image (decision 0281, step R).
+        let (image, matchers) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::matcher_relations(prog).unwrap();
+        let at = |needle: &str| matchers.iter().position(|(_, text, _)| text.contains(needle)).unwrap();
+        let demand = demanded_by_roots(&image, &matchers);
+        let word = at("identifier");
+        assert_eq!(demand[at("function_definition")], Some(rerail_blocks::vector![word]), "inner's node is ident's, which only the identifier matcher fills");
+        assert_eq!(demand[at("\"call\"")], None, "free joins with nothing");
+        assert_eq!(demand[word], None, "the identifier matcher is read where nothing bounds it");
+        assert_eq!(demand[at("class_definition")], None, "a matcher one rule reads unjoined is bound everywhere");
+    }
+
+    /// `any`'s arms bind into the environment only when they match, so two arms binding one name share nothing; a
+    /// name two parts of one `all` bind is a join the labels do not carry, and stays refused.
+    // O-split-logic-tests: reads a crate above rerail-logic; compiled only once the split hosts it in the engine.
+    #[cfg(any())]
+    #[test]
+    fn any_arms_binding_one_name_lower() {
+        let lower = |rule: &str| crate::code_rule_dsl::waves::policies::lower_matcher(&format!(r#"{{"language": "python", "rule": {rule}}}"#), None).map(|_| ());
+        lower(r#"{"any": [{"all": [{"kind": "call"}, {"pattern": "$X"}]}, {"all": [{"kind": "attribute"}, {"pattern": "$X"}]}]}"#).unwrap();
+        let err = lower(r#"{"all": [{"pattern": "$X"}, {"has": {"pattern": "$X", "stopBy": "neighbor"}}]}"#).unwrap_err();
+        assert!(err.contains("shared binding"), "{err}");
+    }
+
+    /// A comparison of captures, which the labels do not carry, is dropped where that only widens the matcher; one
+    /// under an `any` arm left with nothing is not.
+    // O-split-logic-tests: reads a crate above rerail-logic; compiled only once the split hosts it in the engine.
+    #[cfg(any())]
+    #[test]
+    fn a_matcher_relaxed_where_it_only_widens() {
+        use crate::code_rule_dsl::waves::policies::relaxed;
+        let m = |rule: &str| serde_json::from_str::<serde_json::Value>(&format!(r#"{{"language": "python", "rule": {rule}}}"#)).unwrap();
+        let got = relaxed(&m(r#"{"all": [{"kind": "call"}, {"pattern": "$A"}, {"not": {"compare": {"left": "A", "right": "A", "op": "ne"}}}]}"#), false).unwrap();
+        assert_eq!(got["rule"], serde_json::json!({"all": [{"kind": "call"}, {"pattern": "$A"}]}));
+        let got = relaxed(&m(r#"{"kind": "call", "has": {"compare": {"left": "A", "right": "B", "op": "eq"}, "stopBy": "neighbor"}}"#), false).unwrap();
+        assert_eq!(got["rule"], serde_json::json!({"kind": "call"}));
+        assert!(relaxed(&m(r#"{"any": [{"kind": "call"}, {"compare": {"left": "A", "right": "B", "op": "eq"}}]}"#), false).is_none());
+        assert!(relaxed(&m(r#"{"kind": "call"}"#), false).is_none());
+        // A path test is W's to confirm; an `any` with an arm left matching every node goes with it.
+        let got = relaxed(&m(r#"{"all": [{"kind": "call"}, {"any": [{"filePath": {"regex": "x"}}, {"kind": "call"}]}]}"#), false).unwrap();
+        assert_eq!(got["rule"], serde_json::json!({"all": [{"kind": "call"}]}));
+        // Every negation in a positive place, only where asked.
+        let not = m(r#"{"all": [{"kind": "call"}, {"not": {"kind": "identifier"}}]}"#);
+        assert!(relaxed(&not, false).is_none());
+        assert_eq!(relaxed(&not, true).unwrap()["rule"], serde_json::json!({"all": [{"kind": "call"}]}));
+        // The relaxed matcher lowers; its roots are confirmed by W's.
+        let (_, _, captor) = crate::code_rule_dsl::waves::policies::lower_matcher(
+            r#"{"language": "python", "rule": {"all": [{"kind": "call"}, {"has": {"pattern": "$A", "field": "function", "stopBy": "neighbor"}}, {"not": {"compare": {"left": "A", "right": "A", "op": "ne", "text": "node"}}}]}}"#,
+            None,
+        )
+        .unwrap();
+        assert!(captor.verify);
+    }
+
+    /// A field's kinds and a kind's leafhood from the grammar: what a long-text twin is made for.
+    #[test]
+    fn field_kinds_and_leaves_from_the_grammar() {
+        assert_eq!(field_kinds("attribute"), Some(BTreeSet::from(["identifier".to_owned()])));
+        assert!(field_kinds("function").is_some_and(|k| k.contains("call") && k.contains("attribute")));
+        assert_eq!(field_kinds("no_such_field"), None);
+        assert!(leaf_kind("identifier") && leaf_kind("integer"));
+        assert!(!leaf_kind("call") && !leaf_kind("decorated_definition"));
+    }
+
+    /// A field's multiplicity from the grammar: `import os, sys` holds two names, a subscript several indexes.
+    #[test]
+    fn single_fields_from_the_grammar() {
+        assert!(single_field("call", "function"));
+        assert!(single_field("attribute", "object"));
+        assert!(single_field("function_definition", "name"));
+        assert!(!single_field("import_statement", "name"));
+        assert!(!single_field("subscript", "subscript"));
+        assert!(!single_field("identifier", "name"), "an alias target");
+    }
+
+    #[test]
+    fn ast_atoms_read_their_matchers_relations() {
+        let src = r#"
+.decl a(n: node)
+.decl b(n: node, d: number)
+.decl c(n: node, x: node)
+.output a, b, c
+a(n) :- ast(d, n, {"language": "python", "rule": {"kind": "call"}}).
+b(n, d) :- ast(d, n, {"language": "python", "rule": {"kind": "call"}}).
+c(n, x) :- ast(d, n, {"language": "python", "rule": {"pattern": "f($X)"}}, X: x).
+"#;
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
+        let (prog, found) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::matcher_relations(prog).unwrap();
+        assert_eq!(found.len(), 2, "one distinct matcher without captures, one with");
+        let rel = &found[0].0;
+        let body = |head: &str| prog.rules().find(|r| prog.rel_name(r.head().rel()) == head).unwrap();
+        let reads = |head: &str| body(head).body().filter_map(|l| l.atom().map(|a| prog.rel_name(a.rel()).to_owned())).collect::<Vec<_>>();
+        assert_eq!(reads("a"), vec![rel.clone()]);
+        assert_eq!(reads("b"), vec![rel.clone(), "docof".to_owned()]);
+        // A captured matcher's relation has the root and a column a capture (decision 0107).
+        assert_eq!(found[1].0, "rr_ast_1_1");
+        assert_eq!(found[1].2, vec!["X".to_owned()]);
+        assert_eq!(reads("c"), vec!["rr_ast_1_1".to_owned()]);
+        let c = body("c");
+        let Some(first) = c.body().next().and_then(|l| l.atom()) else { panic!("not an atom") };
+        assert_eq!(first.args().map(|t| prog.show_term(c, t)).collect::<Vec<_>>(), vec!["$n".to_owned(), "$x".to_owned()]);
+        assert_eq!(columns("rr_ast_1_1"), &["n", "x1"]);
+        assert_eq!(columns("rr_ast_0"), &["n"]);
+        assert!(prog.input_names().contains(rel) && prog.declares(rel));
+    }
+
+    /// A `filePath` test below a matcher's root conjuncts (here in an `any`) is the document's: the matcher holds in
+    /// a file its path passes, by that branch, and elsewhere only by the other.
+    // O-split-logic-tests: reads a crate above rerail-logic; compiled only once the split hosts it in the engine.
+    #[cfg(any())]
+    #[test]
+    fn a_nested_file_path_is_the_documents() {
+        let root = crate::code_rule_dsl::fixtures::temp().with_extension("nested-file-path");
+        std::fs::create_dir_all(root.join("a")).unwrap();
+        std::fs::create_dir_all(root.join("b")).unwrap();
+        std::fs::write(root.join("a/x.py"), "f()\n").unwrap();
+        std::fs::write(root.join("b/y.py"), "f()\nzz()\n").unwrap();
+        let policy = root.with_extension("policy.rerail");
+        let rule = r#"{"language": "python", "rule": {"all": [{"kind": "call"}, {"any": [{"filePath": {"regex": "^a/"}}, {"has": {"field": "function", "regex": "^zz"}}]}]}}"#;
+        std::fs::write(&policy, format!(".language python\n.violation hit(at: node) code \"X1\" \"hit\"\nhit(n) :- ast(d, n, {rule}).\n")).unwrap();
+        let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&policy);
+        let mut hits: Vec<(String, i64)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| (d["file"].as_str().or(d["path"].as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_owned(), d["line"].as_i64().or(d["start_line"].as_i64()).unwrap_or(-1)))
+            .collect();
+        hits.sort();
+        assert_eq!(hits.iter().map(|h| h.0.as_str()).collect::<Vec<_>>(), ["x.py", "y.py"], "{report:#}");
+    }

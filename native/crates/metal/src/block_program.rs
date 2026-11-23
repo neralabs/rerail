@@ -4,9 +4,9 @@
 //! passes and a prefix, the `prev`s guessed and checked; no segment waits on another, in a
 //! launch or across launches (decision 0540 step 7: there is no look-back between groups).
 //!
-//! Its kernels are compiled after `block_common.uglykl`. A group is a SIMD group of 32 lanes,
-//! its ballots 32-bit words: where the device's SIMD width is not 32 a batch is refused
-//! (`ready`), and the CPU's executors run it. Files are read in place through a file table
+//! Its kernels are compiled after `block_common.uglykl`. A group is a SIMD group of the device's
+//! width, 16 or 32 lanes (`group_lanes`): elsewhere a batch is refused (`ready`), and the CPU's
+//! executors run it. Files are read in place through a file table
 //! (`FileRow`), as zero outside them. The instructions are written out straight-line (`emit`),
 //! a word of a lane at a time.
 #[allow(unused_imports)]
@@ -31,17 +31,28 @@ pub fn head(width: LaneWidth) -> String {
     format!("#define BW {}\n#define BM {}\n{COMMON}\n", width.bytes(), width.word())
 }
 
-/// The device the batches run on, where they can: a group is a SIMD group of 32 lanes, so a
-/// device of another SIMD width refuses them (`UnsupportedBackend`), and the CPU runs them.
+/// The device the batches run on, where they can: a group is one of its SIMD groups, so a device
+/// whose groups are not 16 or 32 lanes refuses them (`UnsupportedBackend`), and the CPU runs them.
 pub fn ready() -> Result<&'static rerail_device::device::Device, Error> {
     let device = lane::device()?;
-    if device.simd_width() != GROUP as u32 {
-        return Err(Error::UnsupportedBackend);
-    }
+    group_of(device).ok_or(Error::UnsupportedBackend)?;
     Ok(device)
 }
-/// Lanes per threadgroup: one SIMD group.
-const GROUP: usize = 32;
+
+/// A group's lanes on `device`: its SIMD group, where that is 16 or 32 lanes (`GROUP_LANES` in
+/// `block_common.uglykl`: a ballot is a word of the group's lanes, and the borrow's
+/// carry-lookahead adds two of them in 64 bits). A threadgroup is one group.
+fn group_of(device: &rerail_device::device::Device) -> Option<usize> {
+    match device.simd_width() {
+        w @ (16 | 32) => Some(w as usize),
+        _ => None,
+    }
+}
+
+/// The lanes of a group on the process's device (`group_of`).
+pub fn group_lanes() -> Result<usize, Error> {
+    ready().map(|d| group_of(d).expect("a ready device's group"))
+}
 
 /// The bytes each lane owns, and so the width of its mask words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -147,7 +158,7 @@ fn planes(width: LaneWidth) -> String {
 }
 
 /// Tables of `m`-bit carry vectors: apply, compose (`a` then `b`), the identity, and the group's
-/// exclusive scan (Hillis-Steele over shuffles, five steps) with the group's total. The 1-bit
+/// exclusive scan (Hillis-Steele over shuffles, a step a doubling) with the group's total. The 1-bit
 /// tables are `block_common.uglykl`'s (`tapply1`, ...); this writes the others.
 fn table_helpers(m: usize) -> String {
     assert!(m > 1, "the 1-bit tables are the common code's");
@@ -155,7 +166,8 @@ fn table_helpers(m: usize) -> String {
     let n = 1usize << m;
     let compose: Vec<String> = (0..n).map(|c| format!("(tapply{m}(b, tapply{m}(a, {c}u)) << {}u)", c * m)).collect();
     let identity: u32 = (0..n as u32).map(|c| c << (c as usize * m)).sum();
-    let steps: String = [1, 2, 4, 8, 16].iter().map(|d| format!("\x20 u = ukl_sg_shuffle_up(x, {d}u __UKL_ARGS); x = SEL(x, tcompose{m}(u, x), l >= {d}u);\n")).collect();
+    let step = |d: u32| format!("\x20 u = ukl_sg_shuffle_up(x, {d}u __UKL_ARGS); x = SEL(x, tcompose{m}(u, x), l >= {d}u);\n");
+    let steps: String = [1, 2, 4, 8].into_iter().map(step).collect::<String>() + "#if GROUP_LANES > 16\n" + &step(16) + "#endif\n";
     format!(
         "UKL_INLINE uint32_t tapply{m}(uint32_t t, uint32_t c) {{ return (t >> (c * {m}u)) & {mask}u; }}\n\
          UKL_INLINE uint32_t tcompose{m}(uint32_t a, uint32_t b) {{ return {}; }}\n\
@@ -458,8 +470,8 @@ fn group_loop(native: &BlockNative, g: usize, lanes: bool, one: &mut dyn FnMut(u
         let BlockInst::Carry(init) = native.insts[c] else { unreachable!("a carry") };
         out.push_str(&format!("  BM gc{g}_{k} = v{init};\n"));
     }
-    let bound = rerail_compiler::block::MAX_ROUNDS * GROUP;
-    out.push_str(&format!("  for (uint32_t r{g} = 0u; r{g} < {bound}u; r{g}++) {{\n"));
+    let rounds = rerail_compiler::block::MAX_ROUNDS;
+    out.push_str(&format!("  for (uint32_t r{g} = 0u; r{g} < {rounds}u * GROUP_LANES; r{g}++) {{\n"));
     for (k, &(c, _)) in group.carries.iter().enumerate() {
         out.push_str(&format!("    v{c} = gc{g}_{k};\n"));
     }

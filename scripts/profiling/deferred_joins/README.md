@@ -13,7 +13,7 @@ lab=scripts/profiling/deferred_joins
 mkdir -p tmp/join-tests
 nice -n 19 python3 "$lab/lab.py" --out tmp/join-tests/small.json
 python3 "$lab/report.py" tmp/join-tests/small.json
-nice -n 19 python3 "$lab/test_lab.py"
+nice -n 19 python3 test/scripts/test_deferred_joins_lab.py
 ```
 
 Use a new report name for each experiment.

@@ -66,6 +66,12 @@ pub fn kernel(source: &str, name: &str, constant: Option<u32>) -> Kernel {
     rerail_accel::gpu::kernels::function(source, name, constant)
 }
 
+/// The kernels `names` of `source` (UKL), with `constant` as [`kernel`]: kernels used together, made together (one
+/// program on OpenCL).
+pub fn kernels(source: &str, names: &[&str], constant: Option<u32>) -> Vec<Kernel> {
+    rerail_accel::gpu::kernels::functions(source, names, constant)
+}
+
 /// [`kernel`] of a fixed source (an interpreter's, the same for every rule set): shipped with the engine.
 pub fn kernel_fixed(source: &str, name: &str, constant: Option<u32>) -> Kernel {
     rerail_accel::gpu::kernels::function_fixed(source, name, constant)
@@ -349,8 +355,12 @@ impl Committed {
     /// Waits for the command: `BackendFailure` when it did not complete.
     pub fn wait(self) -> Result<Times, Error> {
         if let Err(e) = self.event.await_() {
-            if std::env::var_os("RERAIL_LAUNCHES").is_some() {
+            if std::env::var_os("RERAIL_LAUNCHES").is_some() || std::env::var_os("RERAIL_PP_WHY").is_some() {
                 eprintln!("{}: {e}", self.label);
+            }
+            // The system took the GPU back (its watchdog, for the display): the work is not at fault.
+            if e.starts_with("preempted: ") {
+                return Err(Error::BackendPreempted);
             }
             return Err(Error::BackendFailure);
         }

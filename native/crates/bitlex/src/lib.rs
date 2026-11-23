@@ -1,7 +1,8 @@
 //! The Bitlex compiler, on the compiler's front end (`rerail-compiler`): a grammar's masks and tokens to tier 1's
 //! block program (`bitlex_masks`), the provers that decide its questions (`bitlex_prove`, `bitlex_sat`, their answers
-//! kept on the machine's disk: `answers`), and its tree section to tier 2's words (`bitlex_tier2`). The sources stay
-//! in the compiler's folder (`crates/compiler/src`); this crate mounts them.
+//! kept on the machine's disk: `answers`), and its tree section to tier 2's words (`bitlex_tier2`). A grammar's Rust is
+//! written here too, from the grammar: tier 1 (`bitlex_lex_rust`), tier 2 (`bitlex_rust`). The sources stay in the
+//! compiler's folder (`crates/compiler/src`); this crate mounts them.
 
 // The compiler's passes hand each other plain tuples of tables; naming each would add nothing.
 #![allow(clippy::type_complexity)]
@@ -19,6 +20,10 @@ pub mod answers;
 pub mod bitlex_lex_rust;
 #[path = "../../compiler/src/bitlex_masks.rs"]
 pub mod bitlex_masks;
+#[path = "../../compiler/src/bitlex_pair_lookup.rs"]
+pub mod bitlex_pair_lookup;
+#[path = "../../compiler/src/bitlex_piece_checks.rs"]
+pub mod bitlex_piece_checks;
 #[path = "../../compiler/src/bitlex_prove.rs"]
 pub mod bitlex_prove;
 /// Tier 2 as Rust, written from the tree rules (decision 0550).

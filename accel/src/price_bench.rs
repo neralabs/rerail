@@ -14,7 +14,6 @@
 //!
 //! Each is the best of several runs: the machine is shared, and the best run is the one least disturbed.
 
-use rerail_blocks::vector::Vector;
 use super::*;
 use crate::cpu::tests::{bits, graph, parts, Rng};
 use crate::exec::process_cpu;

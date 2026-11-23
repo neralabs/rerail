@@ -1,4 +1,4 @@
-//! `#[derive(Archive)]` (decision 0569 §4): for a struct or an enum, its archived view, a `repr(C)` record (a
+//! `#[derive(Archive)]` (decision 0628 §4): for a struct or an enum, its archived view, a `repr(C)` record (a
 //! `repr(u32)` tagged record for an enum) whose fields are its fields' archived views, and the encoder that writes
 //! it into a section (`rerail_section::Writer`): each field's out-of-line data first, then the record.
 //!

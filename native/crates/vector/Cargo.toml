@@ -3,7 +3,7 @@ name = "rerail-vector"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Plain values (`Pod`), the rooms structures take their regions from, and the growable array over them (`Vector`): below the tape format, so every crate's arrays lie in blocks (decision 0569 §3)."
+description = "Plain values (`Pod`), the rooms structures take their regions from, and the growable array over them (`Vector`): below the tape format, so every crate's arrays lie in blocks (decision 0628 §3)."
 
 
 [dependencies]

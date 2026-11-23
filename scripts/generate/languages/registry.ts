@@ -17,7 +17,7 @@ export const LANGUAGE_REGISTRY_MODULE_PATH = resolve(ROOT, "src", "engine", "cod
 export const TEST_LANGUAGES_DIRECTORY = resolve(ROOT, "native", "test-languages");
 
 export const LANGUAGE_REGISTRY_FORMAT = "rerail.language/v1";
-/** The parser implementations a dialect may name: tree-sitter, Forte (Rerail's port, native/src/code_rule_dsl/blade/forte/), or the rule engine's own `.rerail` parser (native/src/code_rule_dsl/logic/rr/syntax.rs). */
+/** The parser implementations a dialect may name: tree-sitter, Forte (Rerail's port, native/crates/forte/src/code_rule_dsl/blade/forte/), or the rule engine's own `.rerail` parser (native/crates/rr_syntax/src/syntax.rs). */
 export const LANGUAGE_PARSERS = ["tree-sitter", "forte", "rr", "bitlex", "literal"] as const;
 
 const name = z.string().regex(/^[a-z][a-z0-9-]*$/u, "Must be lowercase letters, digits and dashes, starting with a letter.");

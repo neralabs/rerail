@@ -1,5 +1,5 @@
 //! Where a tape's bytes live (decision 0353 step 4a). A tape just written holds its own vector, in the run's blocks
-//! (`rerail_vector`, decision 0569 §3). A loaded one is
+//! (`rerail_vector`, decision 0628 §3). A loaded one is
 //! placed: its bytes are in a room someone else holds, a residency slab that the device reads too, and every reader
 //! reads them there. Nothing copies a placed tape.
 

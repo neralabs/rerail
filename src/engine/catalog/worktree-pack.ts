@@ -250,7 +250,7 @@ export function worktreeScanCatalog(installed: RuleCatalog, root: string, fromRe
       const mode = configured === "steer" || configured === "block" ? configured : "log";
       rrPolicies.push({ id: policy.id, path: file.path, payloadHash: rrPayloadHash(programInputs), mode, inputs: programInputs });
     } catch (error) {
-      skipped.push({ path: file.path, packageName: null, version: null, reason: String(error) });
+      skipped.push({ path: file.path, packageName: null, version: null, reason: error instanceof Error ? error.message : String(error) });
     }
   }
   return { ...base, rrPolicies, skipped };

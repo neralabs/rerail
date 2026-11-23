@@ -529,6 +529,102 @@ at 90–140 ns a row: the cost is the executor's per row, spread over every rule
 And by size: `st_pos` (a position for every node of every document, from `node` and `doc`) is 70 M rows of work,
 4.97 s, the largest rule.
 
+**`st_pos` read in place.** `st_pos` is the stage harness's, not the graph's: its outputs put each row at (path,
+start, end) to compare with W's. It made a row for every node, a view's rows made (decision 0353). Each output rule
+now reads `node` keyed by the node it holds, then `doc`. On `all`, same host: `st_pos` (4.97 s) and `st_open` (1.20 s
+for 23 K rows, the index over `st_pos` built on its first probe) are gone, the outputs 13.1 → 8.3 s; 3.382 →
+3.264 T instructions, user 293.5 → 284.8 s, peak 12.3 → 10.0 GB. The rows that differ are the ones listed below,
+unchanged.
+
+### Step 5, first part: the walk runs as a keyed closure, in one wave (decision 0570)
+
+The recursive `walk` line cost 968 ns a row on `all`. On s1000 its step clocks covered 63 of its 388 ms, so the guess
+was the waves: a scope level a wave, each with its runs and lazily built indexes. 0098's closure form now takes a
+walk whose rest reads the row's other columns, and several recursive probes along one column. It runs them as a
+worklist by depth in one wave. Rows are unchanged on `all`. The gain is small: 3.264 → 3.253 T instructions, the
+lookup 12.92 → 12.61 s. The keyed steps take about what the recursive line took (422 ms on s1000). So the cost is the
+climb's probes (`bound_in`, `gbefore`, the nearest axis, about 200 ns each), not the waves. The operator's second
+part, answering a read at the climb's end without making `walk`'s rows, is next.
+
+### Step 5: what `wstart` pays a row (2026-11-21)
+
+`wstart` took 5.4 s on `all`, its first rule about 800 ns a `nameref` row over six steps. The step clocks put
+most of it on the nearest axis (161 ms on s1000 past its 61 ms solve, about 330 ns a probe). A measurement
+(`an_axis_probes_cost`, ignored; on an M1 Max) says otherwise. The solved axis's probe costs 17 ns through
+`Within::lookup_read`. A join over a held axis costs 17.4 ns a row more than the same join without it.
+
+| What (8 documents' nodes, ~2 M probes) | ns a probe |
+|---|---|
+| `Batch::node` (an id to its document and node) | 10.5 |
+| `Within::lookup`, then `value` (the rows path) | 36.3 |
+| `Within::lookup_read` (in place) | 17.0 |
+| the same probe through the set engine's join | 17.4 |
+
+A sample of the s1000 run agrees: the axis's reads are 35 ms past the solve. The join's probes (`candidates`, all
+strata) went to the index runs' `find_at` (40%), the views' reads (19%, half of it an id's translation: `local_of`'s
+`num_number_of`, then `select` back to the tape node), the step's own work (16%), and 4% to a fresh list and `Arc` for
+each probe's rows. So there is no one cost in `wstart`: it is the executor's per-step work on each of its steps.
+
+Two changes:
+
+- **A probe's rows held as found.** A read probe of no row or one row (the usual answer of a node's view or axis)
+  holds it in place (`Found::One`). A list and its `Arc` are made only for more rows.
+- **A test reads in place too.** A step that reads no column (`need` 0) took `find_keyed`, which for the axis is
+  its mutex-and-map rows path. It now takes `lookup_read` with no columns.
+
+On s1000, rows unchanged: 338.6 → 321.9 G instructions; `wstart` 0.755 → 0.697 s, `walk` 0.767 → 0.603 s (own
+CPU; the wall times are noisy between runs). On `all`, against 0570's run: 3.253 → 3.165 T instructions, the
+lookup stage 12.61 → 11.74 s, `wstart` 5.06 s; every stage's rows as before (t50's known `ref` and `open_name`
+differences). The views' id translation and the index runs' probes are left.
+
+### Step 5, second part: the climb's readers in the climb, each test once (decision 0561)
+
+Where `walk`'s time went on s1000: its seed join about 0.1 s, the keyed climb 458 ms of probes. Storing its rows was
+a small part. `look` (about 0.1 s) asked again what the climb had asked: it scanned `bound_in` and probed `walk`, then
+asked `cls_late` once more. So the second part puts `look` and `miss` in the walk's stratum. Their rules run in the
+climb at each depth. A row's tests (`bound_in(s, x)`, `cls_late(n, x, s)`, `gbefore(n, x, s)`) are asked once,
+shared by every rest and sign. Readers alone, without the shared tests, were slower (lookup 1.65 s): they asked each
+row again. With them, s1000's lookup went 1.48 → 1.18 s and 321.9 → 311.0 G instructions, rows unchanged. On `all`
+it is even: 3.165 → 3.159 T instructions, lookup 11.74 → 12.19 s, peak memory 9.89 → 9.14 GB, rows unchanged.
+The shared tests cost about 260 ns each. `walk` is read only in its stratum now, and released after it.
+
+**A test asked directly (the spike, 0561).** A shared test is asked as its index's probe alone (`cands::holds`), not as
+a join of one atom (`RERAIL_DIRECT_TESTS=off`). On s1000 the readers went 271 → 244 ms and 309.8 → 306.2 G
+instructions, rows unchanged. So the executor's frames were about a tenth of it, not most of it, as written above. The
+readers' 240 ms is now 191 ms of tests and 47 ms of pushing `look`'s rows. The tests' cost is the probes themselves, the
+probe structure's job (step 5's spike, above).
+
+### The stage run's memory, after the hub's merge (2026-11-21, f25f01dab1)
+
+Before the merge, `all` peaked at 6.5 GB, once the harness kept row digests, not texts. After it, the same run passed
+16 GB and was stopped, and s1000 went from 727 MB to 2.36 GB of footprint. Found with the heap sampler
+(`RERAIL_HEAP_SAMPLE=1`) and the engine's ceiling (`RERAIL_MEMORY_MAX_MB`, which stops a run and names it). Fixed
+(4b650debdb, c44ab79f97):
+
+- A chunk binds every source as `values::Layered`, which forwarded neither `holds` nor the composite probe. `within`
+  with both sides bound (step 4) made every ancestor's row again: `def_outside` 4.6 → 1.8 s and 880 → 167 MB on
+  s1000.
+- A base relation's statistics were counted off every row (48 bytes a row), `within`'s through a `len` that made all
+  of its rows: now its structure's (`Source::statistics`). Counts over 1 M rows go a window of whole documents at a
+  time.
+- A CPU run's axis solve made the batch's device chunk block before checking the binding: `rf_crossing`'s morsels
+  raised the peak 7.9 → 2.4 GB.
+
+`all` now: peak 16.8 GB (resident, both sides), the engine's footprint 14.0 GB at most, rows unchanged. At the peak,
+in the cross part's `rf_crossing`: heap live 6.1 GB, host blocks 7.2 GB (the Metal driver's 6.2 GB is the same
+blocks, counted by Metal). Of the live heap (sampled, 5.7 GB):
+
+- the inputs' kept frames, 1.67 GB, and the writer's queue at 2.3 GB: every input's frames are gathered into the run's
+  wave and written in its one transaction (0104), so on a cold run they are held until the run ends;
+- the outputs, 0.71 GB writing and 0.63 GB in the cross part;
+- the harness's W side and digests, 0.84 GB.
+
+The host blocks grow through the per-file part, steadily: 10 MB at 2 s, 2.4 GB at 163 s, 7.2 GB at the peak. The
+cross part makes every document's projection again (the lazy corpus batch, 0494), 2.56 GB, where `rf_crossing`'s
+pair statistics (0203) solve `rf_fnl` for the whole corpus. And `def_outside`'s plan reads `nearest` by its scope
+(1.6 M rows on s1000) where it read the demand's `pre_` relations before (0.03 s). These are the hub's mechanisms,
+left for now.
+
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 
 `RERAIL_STAGE_DIFFS=1` listed every differing row. Each kind was cut down to a case of a few lines
@@ -558,3 +654,6 @@ reaches no edge and no open definition. It is W's scope model departing from Pyt
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.
 - `public_best_len` (1.1 s cross) and `reach_edges` belong to the program, not to the graph.
+
+- **Memory.** The run lets go of 10.1 GB of columns on `all`: t52 traces them (the export copy, the narrow twins,
+  8-byte columns) and plans their removal.

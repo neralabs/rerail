@@ -3,7 +3,7 @@
  * they are read from, and say which in `UPSTREAM_VERSIONS`. A reader deciding a port by a table at another release than
  * the pack pins can call a rule on or off where the linter at the pin decides otherwise, so each release must be the
  * pinned one: a gated tool-pack's (`<pack>/<tool>`) is its gates.yaml `upstream.version`; oxlint's, the release Rerail's
- * `oxlint-disable` port follows (native/src/code_rule_dsl/suppress/oxlint.rs, at oxc tag `oxlint_v<version>`); Biome's,
+ * `oxlint-disable` port follows (native/crates/lang_ecma/src/code_rule_dsl/suppress/oxlint.rs, at oxc tag `oxlint_v<version>`); Biome's,
  * the release its `biome-ignore` port and the packs' `suppress.biome` are generated from
  * (scripts/generate/packs/biome-suppression.mjs's `PIN`). A bump moves the pins and lists the tables for regeneration
  * (scripts/upstream/bump.ts); this test fails until they are.
@@ -46,7 +46,7 @@ function pinIn(path: string, pattern: RegExp): string {
 /** Every pinned release a table may be generated from, by gated tool-pack id or tool, with the adapter reading it. */
 function pinnedReleases(): Map<string, { readonly version: string; readonly adapter?: string }> {
   const pins = new Map<string, { version: string; adapter?: string }>([
-    ["oxlint", { version: pinIn("native/src/code_rule_dsl/suppress/oxlint.rs", /at oxc tag `oxlint_v([^`]+)`/u) }],
+    ["oxlint", { version: pinIn("native/crates/lang_ecma/src/code_rule_dsl/suppress/oxlint.rs", /at oxc tag `oxlint_v([^`]+)`/u) }],
     ["biome", { version: pinIn("scripts/generate/packs/biome-suppression.mjs", /^const PIN = "([^"]+)";$/mu) }],
   ]);
   for (const { pack, tool } of gatedToolPacks(ROOT)) {

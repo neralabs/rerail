@@ -262,9 +262,6 @@ pub struct CompiledStream {
     entry: Entry,
     /// The log of the smallest rule function's frame (`Ctx::frame_shift`).
     frame_shift: u64,
-    /// Whether the code asks tier 1's feed for its records (`Ctx::more`, decision 0496): another backend's
-    /// (`set_entry`, the generated Rust). The JIT's reads the records made.
-    asks_feed: bool,
     bounds: Bounds,
     /// The extract `TOKEN` reads, and the output of the mask `SPAN m=1` reads.
     pub starts: Option<usize>,
@@ -331,10 +328,6 @@ pub struct CompiledStream {
     pub word_bytes: Vec<u32>,
     /// Each word's machine code's ranges in `code_bytes` (its place, start, end), for the shape.
     pub word_ranges: Vec<(u32, u32, u32)>,
-    /// With `Options::keep_ir`: each function's IR as Cranelift was given it (its `FuncId`), and the
-    /// entry's id.
-    pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
-    pub entry_id: u32,
 }
 
 /// The calls open, at most (`calls_on_stack`): the stack's depth below the run's first call,
@@ -6644,7 +6637,6 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     for (_, c) in &items {
         clif.push_str(&c.func.display().to_string());
     }
-    let ir: Vec<(u32, cranelift_codegen::ir::Function)> = if crate::native_cpu_codegen::options().keep_ir.load(std::sync::atomic::Ordering::Relaxed) { items.iter().map(|(fid, c)| (fid.as_u32(), c.func.clone())).collect() } else { Vec::new() };
     let defined = crate::native_cpu_codegen::define_functions(&mut module, items, cut.near).map_err(|e| {
         if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
             eprintln!("tier 2: {e:?}");
@@ -6698,7 +6690,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     let marks = marks_of(words);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, asks_feed: false, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, row_calls, direct, open_bound: if sixteen && direct { crate::stream_facts::open_bound(native, widths, tag) } else { None }, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, row_calls, direct, open_bound: if sixteen && direct { crate::stream_facts::open_bound(native, widths, tag) } else { None }, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -7448,19 +7440,6 @@ impl CompiledStream {
         t
     }
 
-    /// Runs another build of the same code from now on: `entry` for the JIT's, and the log of
-    /// its smallest rule function's frame (`Ctx::frame_shift`; 4, a frame pointer and a return
-    /// address, holds for any).
-    ///
-    /// # Safety
-    /// `entry` must be this program's code , reading and writing `Ctx` as the
-    /// JIT's does.
-    pub unsafe fn set_entry(&mut self, entry: Entry, frame_shift: u64) {
-        self.entry = entry;
-        self.frame_shift = frame_shift;
-        self.asks_feed = true;
-    }
-
     /// One call over a file. `bytes` is the file (`len` its length), with 64 readable bytes
     /// after it; `tier1` is tier 1's buffers for it.
     ///
@@ -7562,7 +7541,7 @@ impl CompiledStream {
         let mut tape = self.tape(self.tokens(self.records_of(tier1), bytes.len()));
         let r = self.run_raw(bytes, tier1, &mut tape);
         if r != 0 {
-            return Err(Refused { pc: r as usize - 1, why: refusal::of(r).unwrap_or("the compiled words refuse"), at: None });
+            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse", at: None });
         }
         Ok(tape.nodes())
     }
@@ -7620,7 +7599,7 @@ impl CompiledStream {
                     full = true;
                     tape = self.full_tape(tokens);
                 }
-                r => return Err(format!("tier 2 refuses the file {}", refusal::text(r))),
+                r => return Err(format!("tier 2 refuses the file at word {}", r.wrapping_sub(1))),
             }
         }
     }
@@ -7941,7 +7920,7 @@ impl Parser {
     fn words_with(&self, t2: &CompiledStream, batch: &crate::native_cpu_block::Batch, tape: &mut Tape) -> Result<(), Refused> {
         let r = self.words_raw(t2, batch, tape);
         if r != 0 {
-            return Err(Refused { pc: r as usize - 1, why: refusal::of(r).unwrap_or("the compiled words refuse"), at: None });
+            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse", at: None });
         }
         Ok(())
     }
@@ -7949,12 +7928,9 @@ impl Parser {
     /// `words_with`'s call: 0, one more than the word that refused, or `OVERFLOW` (a format 16 run's).
     fn words_raw(&self, t2: &CompiledStream, batch: &crate::native_cpu_block::Batch, tape: &mut Tape) -> u64 {
         let row = batch.rows[0];
-        // Tier 1's feed, where it made the file's (decision 0496): tier 2 asks it for the records.
-        // A tier 2 that reads the records made (the JIT's) has them all made first.
-        if !t2.asks_feed {
-            batch.fed_all();
-        }
-        let fed = self.tier1.feed.zip(batch.feeds.first()).filter(|_| t2.asks_feed).map(|(f, &state)| (f.more as usize as u64, state as u64));
+        // Tier 1's feed, where it made the file's (decision 0496): tier 2 reads the records made, so has them all
+        // made first.
+        batch.fed_all();
         let extracts = self.tier1.extracts.len();
         let starts = self.stream(batch, t2.starts);
         let outputs = batch.out[row.out as usize..].as_ptr();
@@ -7989,8 +7965,8 @@ impl Parser {
             totals_stride: 8,
             totals_mask: u64::MAX,
             record_stride: layout.stride() as usize,
-            more: fed.map_or(0, |(more, _)| more),
-            feed: fed.map_or(0, |(_, feed)| feed),
+            more: 0,
+            feed: 0,
         };
         unsafe { t2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, view, tape) }
     }
@@ -8001,13 +7977,6 @@ impl Parser {
         let w = self.wide.as_ref()?;
         let widths = rerail_tape_format::Widths { size: 4, ..rerail_tape_format::Narrow::WIDTHS };
         w.sixteen.get_or_init(|| compile_with(&w.native, &w.cut, widths, w.native.tag, true).ok()).as_ref()
-    }
-
-    /// The format 16 tier 2 (`sixteen`), to set its entry (`CompiledStream::set_entry`): another backend's code of
-    /// the same program on its harness (a test's).
-    pub fn sixteen_mut(&mut self) -> Option<&mut CompiledStream> {
-        self.sixteen()?;
-        self.wide.as_mut()?.sixteen.get_mut()?.as_mut()
     }
 
     /// The format 16 tape (16z where `z`) of `bytes` in `lang`, written by tier 2 as it parses, through the

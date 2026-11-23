@@ -46,7 +46,7 @@ pub fn engine_tape(src: &str) -> Vec<tape::Node> {
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 extern crate self as rerail_rr_syntax;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {

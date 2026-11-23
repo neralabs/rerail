@@ -63,7 +63,7 @@ pub mod gpu;
 pub use block::{Block, Cells, Frozen, Header};
 pub use refs::{Ptr, Span};
 
-/// A type whose bytes are its value (`rerail_vector::Pod`, below the tape format: decision 0569 §3).
+/// A type whose bytes are its value (`rerail_vector::Pod`, below the tape format: decision 0628 §3).
 pub use rerail_vector::Pod;
 
 /// How a type is declared in UKL, and the declarations it needs first: C's fixed-width types, a structure a

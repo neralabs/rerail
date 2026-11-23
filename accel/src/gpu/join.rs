@@ -304,7 +304,7 @@ pub fn add_timeline(command: &metal::CommandBufferRef, committed: f64, returned:
 
 impl Submitted {
     /// Another wait for a committed submission: what a sort encoded into it waits for (`Keyed::settle`).
-    pub(super) fn watch(&self) -> Submitted {
+    pub fn watch(&self) -> Submitted {
         Submitted { event: Arc::clone(&self.event), reads: Vec::new(), committed: f64::NAN, watcher: true, key: None }
     }
 
@@ -323,7 +323,8 @@ impl Submitted {
     pub fn wait_ok(self) -> (f64, bool) {
         // A watcher's wait on a submission its owner awaited already would count its device time twice.
         if self.watcher && self.event.is_complete() {
-            return (self.event.gpu_seconds(), true);
+            // Its owner awaited it: whether the device ran it to the end is the event's, read again.
+            return (self.event.gpu_seconds(), self.event.event().await_().is_ok());
         }
         let done = crate::score::phase("gpu wait", || self.event.await_());
         if let Err(why) = &done {
@@ -676,8 +677,12 @@ impl Pass {
     }
 
     /// Commits the launches and waits for them: their device seconds.
+    /// `Err` when the device failed it (its outputs partly written, never read).
     pub fn commit_wait(self) -> Result<f64, String> {
-        Ok(self.commit()?.wait())
+        match self.commit()?.wait_ok() {
+            (seconds, true) => Ok(seconds),
+            (_, false) => Err("a submission the device failed".into()),
+        }
     }
 }
 
@@ -807,6 +812,8 @@ pub struct Keyed {
     screen: Option<Screen>,
     /// The sort's submission while it may still run (`settle`), then its runs and device time (as bits).
     pending: Mutex<Option<Submitted>>,
+    /// Its submission failed on the device (`settle`): its rows are partly written, so no probe reads them.
+    failed: std::sync::atomic::AtomicBool,
     runs: std::sync::atomic::AtomicUsize,
     gpu: std::sync::atomic::AtomicU64,
     pub bytes: usize,
@@ -929,12 +936,26 @@ impl Keyed {
         use std::sync::atomic::Ordering::Relaxed;
         let mut pending = self.pending.lock().expect("a sort's pending submission");
         if let Some(s) = pending.take() {
-            self.gpu.store(s.wait().to_bits(), Relaxed);
+            let (seconds, ok) = s.wait_ok();
+            self.gpu.store(seconds.to_bits(), Relaxed);
+            if !ok {
+                self.failed.store(true, Relaxed);
+            }
+        }
+        if self.failed.load(Relaxed) {
+            self.runs.store(0, Relaxed);
+            return;
         }
         if self.runs.load(Relaxed) == usize::MAX {
             // SAFETY: one word, written by `run_compact` (none when there are no rows), its submission completed.
             self.runs.store(if self.rows > 0 { (unsafe { *self.nruns.buffer.contents().cast::<u32>() }) as usize } else { 0 }, Relaxed);
         }
+    }
+
+    /// Whether its submission failed on the device (after it completes): its rows are not to be read.
+    pub fn failed(&self) -> bool {
+        self.settle();
+        self.failed.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The key's runs (after the sort completes).
@@ -1027,7 +1048,7 @@ impl Keyed {
         };
         let bytes = bytes + screen.as_ref().map_or(0, Screen::bytes);
         let SortParts { perm, starts, rkeys, nruns, key } = parts;
-        let keyed = Keyed { rows: n, key, base, perm, starts, rkeys, nruns, others, screen, pending: Mutex::new(None), runs: std::sync::atomic::AtomicUsize::new(usize::MAX), gpu: std::sync::atomic::AtomicU64::new(0), bytes };
+        let keyed = Keyed { rows: n, key, base, perm, starts, rkeys, nruns, others, screen, pending: Mutex::new(None), failed: std::sync::atomic::AtomicBool::new(false), runs: std::sync::atomic::AtomicUsize::new(usize::MAX), gpu: std::sync::atomic::AtomicU64::new(0), bytes };
         Ok((keyed, reads))
     }
 }
@@ -1239,8 +1260,11 @@ fn stats_round(cols: &[StatCol<'_>], k: usize, wide: bool) -> Result<Vec<Option<
     }
     let mut done = pass.commit()?;
     done.reads = reads;
-    done.wait();
+    let (_, ok) = done.wait_ok();
     drop(keep);
+    if !ok {
+        return Err("a submission the device failed".into());
+    }
     Ok(outs
         .into_iter()
         .zip(cols)
@@ -1720,6 +1744,7 @@ impl Fused {
             others,
             screen: None,
             pending: std::sync::Mutex::new(None),
+            failed: std::sync::atomic::AtomicBool::new(false),
             runs: std::sync::atomic::AtomicUsize::new(usize::MAX),
             gpu: std::sync::atomic::AtomicU64::new(0),
             bytes,

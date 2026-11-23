@@ -1,0 +1,19 @@
+# Written by the crate split (step 7a) and kept by hand: its sources are where they were (crates/compiler/src), mounted in place.
+[package]
+name = "rerail-rir"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The transducer's programs as text: the RIR assembler (`rir_asm`) and the preprocessor's words it validates (`pp_words`, `pp_expr`), over the compiler's front end."
+
+[features]
+test-hooks = ["rerail-compiler/test-hooks", "rerail-blocks/test-hooks"]
+
+[dependencies]
+# The assembler's arrays, in blocks (`rerail_blocks::vector::Vector`, decision 0628 §3).
+rerail-blocks = { path = "../blocks" }
+rerail-compiler = { path = "../compiler" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-rir = { path = ".", features = ["test-hooks"] }

@@ -3,7 +3,7 @@ name = "rerail-section-derive"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "`#[derive(Archive)]`: a tree type's section encoder and its archived view, read in place (decision 0569 §4)."
+description = "`#[derive(Archive)]`: a tree type's section encoder and its archived view, read in place (decision 0628 §4)."
 
 [lib]
 proc-macro = true

@@ -2,8 +2,8 @@
 //! words a word goes on to (`successors`, `rule_successors`, `past_gotos`, `callee`, `push_targets`), the phases a
 //! token's taking is in (`phases`), the bounds a run's buffers need (`bounds`), the calls on the machine's stack
 //! (`calls_on_stack`), the records tier 2 makes itself (`fetch_of`) and the regions it splits (`split_parts`), the
-//! runs words share (`shared_runs`), the state a run keeps (`Mem`) and the reasons a run refuses (`refusal`). The
-//! JIT (`native_cpu_stream`) and the Rust lowering (`rust_stream`) both read them. Nothing here emits code.
+//! runs words share (`shared_runs`), and the state a run keeps (`Mem`), which the JIT
+//! (`native_cpu_stream`) reads. Nothing here emits code.
 
 #![allow(clippy::too_many_arguments)]
 
@@ -211,44 +211,6 @@ pub fn callee(native: &Structure, pc: usize) -> usize {
 pub const RETURNED: u64 = 0;
 /// The top bit, flipped in the run's end values inside the clusters' functions (`RETURNED`).
 pub const ENDED: u64 = 1 << 63;
-
-/// Why a run in Rust (`rust_stream`) refused a file: the value it returns is `MARK | why`, which no word's place is
-/// (the JIT's run returns one more than the word that refused). Each refusal in its source names its reason, as the
-/// lean parser's `Code`s do; `ROOM` is no refusal but the tape's room run out (`OVERFLOW`).
-pub mod refusal {
-    pub const MARK: u64 = 1 << 62;
-    /// Each reason, by its code.
-    pub const NAMES: [(&str, &str); 18] = [
-        ("ROOM", "out of the tape's room"),
-        ("BYTE", "no word takes the token's byte here"),
-        ("WORD", "the token's word is not one this place takes"),
-        ("SPAN", "the token's length is not the one this place takes"),
-        ("EMPTY", "a total of tier 1's that must be zero is not (`EMPTY`: in JSON, a region left open)"),
-        ("END", "the file ends where a token is wanted"),
-        ("STRING", "a region not closed, or an escape at the file's end"),
-        ("CHECK", "a local check of the token's bytes fails"),
-        ("TOKEN", "a token mark that refuses"),
-        ("DEPTH", "calls nested past the depth"),
-        ("RETURN", "a return to no call"),
-        ("COUNT", "a count past its most"),
-        ("STOP", "a word that refuses (`STOP`)"),
-        ("NUMBER", "no number in the language for the node"),
-        ("WRITER", "the format 16 writer's ops failed (the writer keeps why)"),
-        ("NODES", "a node word with no node it needs (a close, a retag, a fold, an accept)"),
-        ("WIDTH", "the tape's widths cannot hold the nodes"),
-        ("FIELD", "a provisional field at the end"),
-    ];
-
-    /// The reason of `r`, a run's value: `None` where it is no refusal of a run in Rust.
-    pub fn of(r: u64) -> Option<&'static str> {
-        (r & MARK != 0 && r != u64::MAX).then(|| NAMES.get((r & !MARK) as usize).map_or("an unknown reason", |n| n.1))
-    }
-
-    /// `r`, a refusal, said: its reason, or the word that refused.
-    pub fn text(r: u64) -> String {
-        of(r).map_or_else(|| format!("at word {}", r.wrapping_sub(1)), |why| format!("({why})"))
-    }
-}
 
 /// With the calls open counted by the machine's stack (`calls_on_stack`): the most of it a run
 /// takes, about `DEPTH` calls of `.rerail`'s largest frames. Past it, a rule function refuses the
@@ -474,9 +436,6 @@ pub enum Mem {
 impl Mem {
     pub const COUNT: u32 = 31;
 }
-
-/// `Ctx::state`'s slots (`rust_stream` writes `Ctx` field for field).
-pub const STATE_SLOTS: usize = Mem::COUNT as usize;
 
 /// The fields a rule's function holds in registers (`Cut::held`) and passes to its calls, given
 /// back with their results (`Cut::pass`): none. The whole state stays in memory, read and
@@ -901,8 +860,7 @@ pub fn shared_runs(native: &Structure, pushes: &[u16], alone_to: Option<&[bool]>
 /// `lang`'s numbers by a program's keys, `u32::MAX` where the table has none: each entry of its table that a key names
 /// (no alias, a kind and field within a key's bits, its flags the extra's where its kind is one of `extras`, its
 /// classes among `classes`, the program's supertype classes), at the key (`kind | field << KIND_BITS | class bits <<
-/// 16`). The JIT's run reads them at run time (`Ctx::numbers`); a generated direct run holds each as a literal at its
-/// word (`rust_stream::rust_source_16`, decision 0535).
+/// 16`). The JIT's run reads them at run time (`Ctx::numbers`).
 pub fn numbers_by_key(lang: &rerail_tape_format::f16::Lang, classes: &[u16], extras: &[u16]) -> rerail_tape_format::Vector<u32> {
     use rerail_tape_format::{CODE_EXTRA, KIND_BITS};
     let mut by = rerail_tape_format::Vector::new();

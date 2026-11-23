@@ -1,0 +1,24 @@
+# Written by hand for the crate split (step 7f): its sources are where they were, mounted in place (src/lib.rs).
+[package]
+name = "rerail-cpython"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "CPython's own facts about Python source (cpython), computed natively over Ruff's parser, under the Python pack."
+
+[features]
+default = ["rerail-adapters/default"]
+test-hooks = ["rerail-adapters/test-hooks"]
+
+[dependencies]
+regex = "=1.13.1"
+ruff_python_parser = "=0.0.10"
+ruff_python_ast = "=0.0.10"
+ruff_text_size = "=0.0.10"
+sha2 = "0.11"
+# `identifier::nfkc`, which a name's verdict reads.
+rerail-adapters = { path = "../adapters", default-features = false }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-cpython = { path = ".", features = ["test-hooks"] }

@@ -10,7 +10,7 @@ mod languages;
 #[path = "../../src/build_grammars.rs"]
 mod grammars;
 // The grammars' token automata, built here once (`tape::token_automata`), not in every process.
-#[path = "../../src/code_rule_dsl/tape/token_automata.rs"]
+#[path = "src/code_rule_dsl/tape/token_automata.rs"]
 #[allow(dead_code)]
 mod token_automata;
 
@@ -33,7 +33,7 @@ fn main() {
 fn token_automata_built(native: &std::path::Path, out: &std::path::Path) {
     let dir = out.join("token_automata");
     std::fs::create_dir_all(&dir).expect("OUT_DIR is writable");
-    println!("cargo:rerun-if-changed={}", native.join("src/code_rule_dsl/tape/token_automata.rs").display());
+    println!("cargo:rerun-if-changed={}", native.join("crates/lang/src/code_rule_dsl/tape/token_automata.rs").display());
     let (mut arms, mut census_arms) = (String::new(), String::new());
     for (variant, path) in token_automata::GRAMMARS {
         let json = native.join("grammars").join(path).join("grammar.json");

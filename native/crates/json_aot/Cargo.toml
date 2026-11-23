@@ -1,0 +1,19 @@
+[package]
+name = "rerail-json-aot"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "JSON's parser in simdjson's structure as Rust, written by the Bitlex compiler from the grammar (json_parser/json-simdjson.bitlex): tier 1 from its lexer statements (`bitlex_lex_rust`, simdjson's stage 1), tier 2 from its tree rules in one loop (`bitlex_rust::tier2_loop`, simdjson's stage 2); rerail-parser-tests' tests check it against the JIT."
+
+[features]
+# The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
+test-hooks = ["rerail-tape-format/test-hooks"]
+
+[dependencies]
+# Stage 1 of tier 1 on simdjson's backends, as the lean lexer's (`bitlex_lex_rust`).
+rerail-simd8 = { path = "../simd8" }
+rerail-tape-format = { path = "../tape_format" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-json-aot = { path = ".", features = ["test-hooks"] }

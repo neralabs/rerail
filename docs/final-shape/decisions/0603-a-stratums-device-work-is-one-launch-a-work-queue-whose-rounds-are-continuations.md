@@ -122,3 +122,162 @@ Open in step 3: the rounds as a loop on the device. The host still turns between
 the next round's relations by their counts (a stage's `nr`, an index's rows) and decides whether to go on. The loop
 needs each of those as a word: a relation's rows read from its descriptor on the device, its indexes built from that
 count, and a round's last phase that resets the round's words and pushes its first again.
+
+## Done (2026-11-22): step 3, the rounds as a loop on the device
+
+A recursive stratum's rounds after its first are one program (`setfix::device::device_rounds`). The first round, over
+the seed rules, is still encoded by the host, as before. The host encodes a program once, launches it, and launches
+it again where it yields. It encodes a new program only where a gate stopped a round.
+
+- **Live relations** (`DevRel::live`): each head's relation and two deltas. Each is grown in place in a block with
+  room (`Part::for_writes_with_room`, `reserve`) and bound at the program's bound for it. A reader takes the
+  relation's rows from its descriptor: `rows_len`, `rel_len`, written once in CLIF (`clif::relation`, decision
+  0310).
+  - A stage reads them through `Stage::r_len`.
+  - A copy appends past them (`Copy::flags & 2`, `Batch::append_live`).
+  - A fold holds them (`LatP::counted & 2`), and its level is the program's round word (`counted & 4`,
+    `LatLevel::Word`).
+  - A live relation's index is built again in each round in the same room (`IX_LIVE`), of its rows as claimed then.
+    Keys past them go to a last bucket of their own. The index is never marked built, and each program forgets the
+    last one's.
+- **Two templates.** A round reads one delta of each head and writes the other, so no delta is copied. The first
+  template reads the side the stopped or first round left. Each template's tables are the same
+  (`round_runs`' sizes).
+- **A round's end** (`Batch::round_end`, `round_one`, `PK_ROUND`) is alone in its level. In order, it:
+  - claims each head's new rows onto its relation (`RoundOp::Add` to `At::Len`);
+  - sets the next delta's length (`Set`);
+  - logs a set head's rows by round where it keeps levels (`Log`);
+  - empties the round's words (`Zero`);
+  - sums each run's counts over the rounds (`Sum`);
+  - counts the round, and jumps to the other template's first phase.
+
+  The phase a jump pushes has its count emptied as it is pushed (`ctl[10 + p]`).
+- **When a program stops:**
+  - it ends when no head made a row (`Done::ended`, `ctl[6]` bit 16);
+  - it fails past `ROUNDS_MAX` (bit 4);
+  - it yields after `ROUNDS_A_LAUNCH` rounds in a launch (8; bit 8, `ctl[9]`). `Batch::resume` launches it again from
+    there, in the same buffers (`Kit`), so a launch's GPU time is a few rounds'.
+
+  `ProgP::first` is a launch's first phase. The queue holds a launch's rounds' items.
+- **Two gates a round.**
+  - After the joins: every table by its room, as before.
+  - After the heads' union, dedup and anti-join, before anything is written: each head's new rows (a lattice head's
+    union rows) by its delta's room, and its relation's rows plus them by its bound (`GateCheck::plus`).
+
+  At a stop, the tables past their room grow to twice the counts seen, a head's room to twice its rows, and the bounds
+  are made again from the rows. The program is encoded again, from the round that stopped.
+- **A lattice head's key map** is made or grown once before a program's rounds, for the program's bound
+  (`Batch::lattice_grow`). A round's fold takes it as it is (`MapFirst::Ready`).
+- **Measured:**
+  - spark2's CPU backend: 45 of 45 (71 s);
+  - the mini's Metal: 32 of 32;
+  - the recursive closure test (`a_recursive_stratum_on_the_device_is_the_cpus_fixpoint`): 8 rounds in 13 launches, 11
+    of them reruns.
+
+Open (step 5): a program's sizes are fixed when it is encoded, so a stratum whose rounds grow fast (the closure test's
+rows double each round) stops at a gate about once a round. The fix is to read a phase's items from a count on the
+device, not from the host's bounds: the finisher pushes the items the count needs, at most the phase's. A dedup's
+places come from the same count. Then a program's tables and relations can hold its launch's rounds (their room is
+address space), and the work is the rows'.
+
+## Step 5: a program's sizes are the device's (decided 2026-11-22)
+
+The user's choice, over sizing tables for the rounds ahead from the growth seen (a model, with host reruns kept) and
+over leaving the reruns as they were. A program's tables and its phases' work are sized on the device by the counts
+its phases just made, not by bounds the host chose when it encoded the program. Its memory and its work follow the
+rows. The only room left to run out of is its arena's, the one gate.
+
+- **A phase's items are a count's** (5a). Each job of a phase pushes as many of its items as a count on the device
+  needs: its input table's rows (`totals[in]`), its relation's rows as claimed, or its copy's count. At most the
+  items encoded, and at least one, so the phase goes on. The finisher pushes them, and the phase's target is their
+  sum (`ctl`). A phase without a count pushes all its items, as now.
+- **A level's counts lie at offsets the device gives** (5b). Each job's counts start at a scan tile, and the level's
+  scan runs the tiles its jobs' counts need. A job reads its offsets less its first, so tiles past its rows, which
+  hold another round's sums, never change them.
+- **Tables are allocated on the device** (5c). A program has an arena. At each level, a phase after the scan claims
+  each table's room from its total: its rows, and so its columns' stride. Each table has a descriptor (its offset and
+  its stride) that every kernel reads, in place of a host's `cap`. The arena is emptied at each round's end. The
+  tables' gate becomes one on the arena's room. Past it, the host makes the arena larger and runs again from the
+  round, the one rerun left.
+- **A dedup's and a fold's places are a count's** (5d): a power of two of twice the rows, and their mask with it.
+- **A live relation's index sorts its rows as claimed** (5e): the radix passes' tiles and its keys a count's.
+
+Each sub-step keeps the setfix device tests passing on the CPU backend and on Metal. The closure test then asserts
+its launches: fewer than its rounds.
+
+### Done (2026-11-22): 5a, a phase's items are a count's
+
+- **A phase's jobs carry segments** (`SegAt`, `join_stages`' `Seg`, the program's `segs` buffer). Each segment is a
+  job's items, with where its rows' count lies (`Job::rows_word`):
+  - a stage's, a witness's, a map's, a row scatter's or a dedup's input table (`totals[in]`);
+  - a scan's live relation's length;
+  - a copy's or a fold's count.
+
+  Its finisher pushes `ceil((count + plus) / GROUP)` of a segment's items, at most them. A job of no count (a row's
+  text, whose SIMD groups stride its rows; an index; a clear) takes all its items (`per` 0). A phase of no counts has
+  no segments. The phase's target is what was pushed (`ctl[10 + phases + p]`), at least one item.
+- **A kernel's counts past its rows may be another round's.** A job reads its offsets less its first, so they never
+  change its own. Its total is its rows' offsets (`dedup_scatter_one` and `scan_scatter_one` now read at their rows,
+  not their caps).
+- **Measured:** spark2's CPU backend, 45 of 45 (76 s); the mini's Metal, 32 of 32.
+
+### Done (2026-11-22): a segment's items stride its rows (for 5b and 5c)
+
+- **Each item names its segment** (`Item.seg`, its index and one; 0 for none). `Program::phase_of` writes it.
+- **A thread-a-row kernel's item strides its job's rows.** Its thread `t` runs at `t`, `t + step`, and so on, while
+  below the count's rows (`*count + plus`). `step` is the segment's items pushed times `JOIN_TG`. A job's rows past
+  its items encoded are still all run, so the items a job encodes no longer bound the rows it can take. This is what
+  5b's and 5c's sizes, made on the device, need. A segment of no count (`per` 0) runs each item once, as before. A
+  scan's or a sort's tile pass is not a segment's.
+- **Measured:** spark2's CPU backend, 45 of 45 (67 s); the mini's Metal, 32 of 32.
+
+### Done (2026-11-22): 5b's mechanism, a level's size script and the program's arena
+
+- **A level's sizes are a script on the device** (`size_one`, `PK_SIZE`; the host's `OpAt`, `Program::script`). One
+  thread runs ops over 64-bit registers: loads, constants, sums, differences, products, rounded quotients, minima and
+  maxima, a claim of the program's arena, and stores of words. A level with counts has one, a phase before its
+  copies. The script claims the level's counts in the arena and sets each job's first word (`Job::base`) and the
+  scan's first level's values (`ScanLevel::at`). The kernel's `counts` is now that arena. Its addresses (a job's
+  descriptor, a scan level, the arena) are resolved when the program launches (`Late`).
+- **A claim past the arena's room stops the program** (`ctl[6]`'s bits 2 and 32) where a gate would.
+- **A round's end empties the arena's top.** A round's counts are its own, so a program of rounds claims no more
+  than its levels need once.
+- **What the script writes is read as words, coherent.** A job's descriptor and a scan level are read as the host
+  wrote them, and their patched words (a first word, an offset, a count) are read as words from a coherent pointer.
+  Reading the whole descriptor through a coherent pointer (its fields are pointers) crashed the M1's Metal compiler
+  service (`XPC_ERROR_CONNECTION_INTERRUPTED`, at each try). The offline check (`metal` to AIR) did not show it.
+  So a table the script places (5c) is an offset from the arena, not a pointer it writes.
+- **Measured:** spark2's CPU backend, 45 of 45; the mini's Metal, 32 of 32.
+
+### Done (2026-11-22): 5c, a stage's tables are placed in the program's arena
+
+- **A table the device sizes is a place** (`Batch::table`, `Place`). Its record is two words: its offset in the arena
+  (in 8-byte units, plus one; 0 for none) and its room in rows. The kernels read a placed table at
+  `arena + offset`, not at a pointer the host gave. A job's descriptor holds the offsets it reads (`l_at`, `o_at`,
+  `v_at`, `h_at`, read as coherent words, as 5b's are). Its caps are sites the scripts write.
+- **The producer claims it.** After the level's scan, the producer's script (`made_sizes`) claims rows × slots × 8
+  bytes from its count (its rows, at most its room). It writes the record, its own output's offset and its caps. The
+  consumer's level script (`level_sizes`) copies the record into its input's offset and its caps. It also claims the
+  job's row values and, for a dedup, its places (5d's dedup half: twice its rows, a power of two, and the mask).
+- **Every scan is three levels** (`Program::scan_sized`). Its sums lie in the arena, and its tile items are
+  segments that stride. So a scan's room is its rows as counted, not a host bound.
+- **One arena a batch.** Every program of a batch claims from one arena (`Batch.pool`) and one top. The next
+  program inherits the top, so a table one program placed is read where it lies by the next. At the batch's
+  `finish`, each place made is fixed: read at its address from then on (`Table::lies`, `room`, `reach_by`). The
+  arena is then the batch's no more. Reading a place against another program's arena read the wrong rows (symbols
+  that were not).
+- **The arena's room** is twice what the program's claims were estimated to be, at least the batch's floor, at most
+  `ARENA_MAX` (4 GB). A claim past it stops the program (`Done::arena_full`, `arena_wanted`). The round runs again
+  from its first stage in an arena of twice what was wanted (the seed round's loop, `complete` in the rounds on
+  the device).
+- **A union over placed rows has a gate** (`append_rows`): its rows' total against its room. Past it, the round
+  stops, and the head's union floor is twice the rows seen (`union_floor`). A round's tail makes every head's union
+  first, then checks that the arena holds the rest (`room_check`, a `CHECK` op of the size script), before any
+  work that may not run twice (a lattice's fold).
+- **A count's words order the work.** A stage, a witness, a row's scatter and a dedup now list their totals as read
+  and written (`Job::order`). A union's sum read the count a dedup wrote in the same level once no host gate ended
+  the level between them: the stage gates are gone for placed tables (`round_gate` skips them).
+- **Not yet placed:** a lattice's fold reads its delta and its union from host tables (asserted: `lattice_fold`).
+  Its places are 5d's other half.
+- **Measured:** spark2's CPU backend, 45 of 45 (67 s); the mini's Metal (an M1), 32 of 32: its compiler takes the
+  kernel.

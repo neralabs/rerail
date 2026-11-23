@@ -3,12 +3,13 @@
 // cache entry (`<ukl/reads/tape_f16z.h>`: `clif_f16b_*`, the block's own node numbers). Included with, defined first:
 // - `CLIF_16(name)`: the instance's name of each read;
 // - `CLIF_16_ARGS`, `CLIF_16_PASS`: the reads' leading parameters, and those passed on;
+// - `CLIF_16_RARE`: how a rare case's read (`side`) is compiled, a call (`UKL_COLD`) or inlined;
 // - the body's two helpers, `CLIF_16(view)(.., a)` (the view's u32 at byte `a`) and `CLIF_16(ld)(.., base, off, w)`
 //   (the `w` bytes at byte `base + off`): every byte the body reads is read by them.
 // The macros are undefined at the end. Not `#pragma once`.
 
-#if !defined(CLIF_16) || !defined(CLIF_16_ARGS) || !defined(CLIF_16_PASS)
-#error "ukl/body/tape_f16.h needs CLIF_16, CLIF_16_ARGS and CLIF_16_PASS (ukl/reads/tape_f16.h, tape_f16z.h)"
+#if !defined(CLIF_16) || !defined(CLIF_16_ARGS) || !defined(CLIF_16_PASS) || !defined(CLIF_16_RARE)
+#error "ukl/body/tape_f16.h needs CLIF_16, CLIF_16_ARGS, CLIF_16_PASS and CLIF_16_RARE (ukl/reads/tape_f16.h, tape_f16z.h)"
 #endif
 
 // Width `k` (a nibble of the view's widths), and column `k`'s offset factor.
@@ -38,7 +39,10 @@ UKL_INLINE uint64_t CLIF_16(checkpoint)(CLIF_16_ARGS, uint32_t c)
 // Node `i`'s value in side list `k` (0 codes' low parts, 1 slots, 2 gaps, 3 lengths), the node listed. A part (PART
 // nodes) holds, for each of its SUB blocks, the end of its run of offsets (a u16), then the offsets (each the low
 // byte of a listed node), then the values; every offset into the part is held to its end, the next part's start.
-UKL_INLINE uint64_t CLIF_16(side)(CLIF_16_ARGS, uint32_t k, uint32_t i)
+// The rare case (a value too wide for its array, escaped): compiled as the instance says (`CLIF_16_RARE`). Inlined in
+// every read that reaches `get`, it was a quarter of the interpreter's compile on an Arc 140V and half of the 16z
+// reads' test kernel's.
+CLIF_16_RARE uint64_t CLIF_16(side)(CLIF_16_ARGS, uint32_t k, uint32_t i)
 {
     uint32_t side = CLIF_16(view)(CLIF_16_PASS, CLIF_T_SIDE + 4u * k);
     uint32_t parts = CLIF_16(view)(CLIF_16_PASS, CLIF_T_PARTS + 4u * k);
@@ -69,7 +73,7 @@ UKL_INLINE uint64_t CLIF_16(side)(CLIF_16_ARGS, uint32_t k, uint32_t i)
 }
 
 // Value `i` of array `a` (0 slots, 1 gaps, 2 lengths): one word's load, or (all ones: escaped) its side list's.
-UKL_INLINE uint64_t CLIF_16(get)(CLIF_16_ARGS, uint32_t a, uint32_t i)
+UKL_SHARED uint64_t CLIF_16(get)(CLIF_16_ARGS, uint32_t a, uint32_t i)
 {
     uint32_t w = CLIF_16(width)(CLIF_16_PASS, a);
     uint32_t array = CLIF_16(column)(CLIF_16_PASS, 1u + a, i >> 10);
@@ -101,7 +105,7 @@ UKL_INLINE uint32_t CLIF_16(number)(CLIF_16_ARGS, uint32_t i)
 }
 
 // The node's start as stated: its checkpoint, then the gaps of the nodes after it, to the node's own.
-UKL_INLINE uint32_t CLIF_16(start_stated)(CLIF_16_ARGS, uint32_t i)
+UKL_SHARED uint32_t CLIF_16(start_stated)(CLIF_16_ARGS, uint32_t i)
 {
     uint32_t c = i >> 3;
     uint64_t from = CLIF_16(checkpoint)(CLIF_16_PASS, c);
@@ -146,3 +150,4 @@ UKL_INLINE uint32_t CLIF_16(start_next)(CLIF_16_ARGS, uint32_t i, uint32_t prev)
 #undef CLIF_16
 #undef CLIF_16_ARGS
 #undef CLIF_16_PASS
+#undef CLIF_16_RARE

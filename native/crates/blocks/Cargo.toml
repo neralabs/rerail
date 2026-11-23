@@ -11,7 +11,7 @@ test-hooks = ["rerail-context/test-hooks"]
 
 [dependencies]
 rerail-context = { path = "../context" }
-# Plain values, rooms and the vector, below the tape format (decision 0569 §3); this crate's blocks are their room.
+# Plain values, rooms and the vector, below the tape format (decision 0628 §3); this crate's blocks are their room.
 rerail-vector = { path = "../vector" }
 libc = "0.2.189"
 rayon = "=1.12.0"

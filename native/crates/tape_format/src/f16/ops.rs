@@ -331,7 +331,9 @@ impl Writer {
         // Each of a block's nodes may be a fault (`w_finalize` lists them).
         let errors = self.len_of(part::ERRORS);
         self.reserve(part::ERRORS, errors + 4 * Z * blocks);
-        let count = self.state.blocks as usize;
+        // Each block's entry by its number: the blocks made, and the `blocks` more a run (`reserve_run`) may make
+        // before it lays them.
+        let count = self.state.blocks as usize + blocks;
         self.reserve(part::LAID_AT, count * LAID_AT as usize);
         if self.z {
             let (out, rooms) = (self.len_of(part::OUT), self.len_of(part::ROOM_FREE));
@@ -383,6 +385,12 @@ impl Writer {
             self.reserve(part::PRESENCE, (count + 1) * words);
         }
         self.reserve_final(count);
+    }
+
+    /// Each node final as it is written: no commit is needed, and no node is changed after (`w::FINAL_AS_WRITTEN`).
+    /// The blocks settle as they would with a commit after each node, so the tape is the same.
+    pub fn final_as_written(&mut self) {
+        self.state.flags |= w::FINAL_AS_WRITTEN;
     }
 
     /// The state's address: what code that calls the ops itself passes them (`reserve_run` first).

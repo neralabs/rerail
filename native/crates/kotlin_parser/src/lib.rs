@@ -7,7 +7,8 @@
 //! error) goes to the lean parser, and from there to tree-sitter.
 
 use rerail_bitlex::bitlex_masks as bitlex_compile;
-use rerail_compiler::{native_ir, rir_asm as rir};
+use rerail_compiler::native_ir;
+use rerail_rir::rir_asm as rir;
 use rerail_compiler::native_cpu_clusters;
 use rerail_cpu_stream::native_cpu_stream;
 use rerail_kotlin_lean as lean;
@@ -90,7 +91,7 @@ fn field(name: &str) -> Option<u16> {
 
 /// Tier 1 and tier 2 of `grammar` as Rust, as the Bitlex compiler writes them from the lexer's
 /// statements (`bitlex_lex_rust`) and the tree rules (`bitlex_rust`), without either tier
-/// compiled.
+/// compiled. The provers start from the shipped answers ([`ANSWERS`]), as every other compile of the grammar.
 pub fn tiers_rust(grammar: &str) -> Result<(String, String), String> {
     let stmts = ::bitlex::syntax::parse(grammar)?;
     let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());

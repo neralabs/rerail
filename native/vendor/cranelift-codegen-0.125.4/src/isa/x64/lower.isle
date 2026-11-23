@@ -3953,6 +3953,10 @@
         (if-let true (has_ssse3))
         (x64_phaddw x y))
 
+;; rerail's patch: 64-bit lanes' pairwise sums (a reduction's horizontal step).
+(rule (lower (has_type $I64X2 (iadd_pairwise x y)))
+      (x64_paddq (x64_punpcklqdq x y) (x64_punpckhqdq x y)))
+
 (rule (lower (has_type $I16X8 (iadd_pairwise x y)))
       (let (
           (x Xmm x)

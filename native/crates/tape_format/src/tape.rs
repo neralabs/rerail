@@ -43,7 +43,7 @@ impl<'a> From<&'a Entry> for EntryRef<'a> {
     }
 }
 
-/// A code as its table's words hold it (decision 0569 §2): read in place.
+/// A code as its table's words hold it (decision 0628 §2): read in place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EntryRef<'a> {
     pub kind: u16,
@@ -78,7 +78,7 @@ impl EntryRef<'_> {
 pub type Words = std::sync::Arc<dyn AsRef<[u32]> + Send + Sync>;
 
 /// Where a table made with no owner's words (`CodeTable::new`) is placed: the engine registers a block's (decision
-/// 0569 §2), once, at load; without it the words are the heap's.
+/// 0628 §2), once, at load; without it the words are the heap's.
 static PLACE: std::sync::OnceLock<fn(&[u32]) -> Words> = std::sync::OnceLock::new();
 
 /// The engine's placing of a table's words (`PLACE`).
@@ -115,7 +115,7 @@ const HEADER_WORDS: usize = 20;
 const REC: usize = 6;
 
 /// The codes a tape's numbers name, by number, and its index of them by kind and by class: encoded words, read where
-/// they lie (decision 0569 §2). On format 16 every document of a language shares its table (`f16::Lang`).
+/// they lie (decision 0628 §2). On format 16 every document of a language shares its table (`f16::Lang`).
 #[derive(Clone)]
 pub struct CodeTable {
     words: Words,
