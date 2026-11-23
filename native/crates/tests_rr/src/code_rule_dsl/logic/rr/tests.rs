@@ -5719,7 +5719,13 @@ fn spike_0639_programs_linked_from_modules() {
         let first = a.lines().zip(b.lines()).position(|(x, y)| x != y).unwrap_or(0);
         format!("{} lines and {}, first differing line {first}; numbers aside {}:\n    only the first:\n      {}\n    only the second:\n      {}", a.lines().count(), b.lines().count(), if sa == sb { "the same lines" } else { "other lines" }, only(&sa, &sb), only(&sb, &sa))
     };
-    // E1.
+    // E1. `RERAIL_SPIKE_PROFILE=1`: the spans of both paths, by name (decision 0442's run scope around them).
+    let profiling = std::env::var_os("RERAIL_SPIKE_PROFILE").is_some();
+    let _run = profiling.then(|| crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env));
+    if profiling {
+        crate::code_rule_dsl::logic::profile::set(true);
+        crate::code_rule_dsl::logic::profile::reset();
+    }
     let mut libraries: HashMap<Vec<PathBuf>, Vec<lower::Module>> = HashMap::new();
     let mut pack_of: HashMap<Vec<PathBuf>, String> = HashMap::new();
     let (mut equal, mut differ, mut same_lines, mut inline_err, mut module_err) = (0, 0, 0, 0, 0);
@@ -5784,6 +5790,22 @@ fn spike_0639_programs_linked_from_modules() {
         }
     }
     println!("E1: {equal} print the same, {differ} differ ({same_lines} of them by order or numbers alone), {module_err} fail on the module path, {inline_err} fail inline");
+    if profiling {
+        let mut by: BTreeMap<String, (f64, f64, u64)> = BTreeMap::new();
+        for (path, t) in crate::code_rule_dsl::logic::profile::spans() {
+            let leaf = path.rsplit('/').next().unwrap_or("").chars().map(|c| if c.is_ascii_digit() { '#' } else { c }).collect::<String>();
+            let e = by.entry(leaf).or_default();
+            e.0 += t.own;
+            e.1 += t.total;
+            e.2 += t.calls;
+        }
+        let mut all: Vec<_> = by.into_iter().collect();
+        all.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
+        for (leaf, (own, total, calls)) in all.into_iter().take(45) {
+            println!("P {own:8.3} own {total:8.3} total {calls:7} calls  {}", leaf.chars().take(110).collect::<String>());
+        }
+        crate::code_rule_dsl::logic::profile::set(false);
+    }
     println!("E1 time on this thread, over the programs compared: inline {t_inline:.3} s; own module {t_own:.3} s, link + tail + passes {t_link:.3} s; the libraries' modules lowered once {t_lib:.3} s ({} libraries)", libraries.len());
     // E2, E3, E4 over each pack's whole library, as a run of the pack lists it.
     let mut by_pack: HashMap<String, Vec<PathBuf>> = HashMap::new();
