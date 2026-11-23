@@ -854,6 +854,25 @@ What is left is what a stage reads through the views' directory at its run, agai
 rows: the next instrument is the failed probes' keys dumped by the device, and the view's values at their rows read
 back from the device and from the host.
 
+Then, step by step (each device run's step counts against a CPU run of the same seeds, `JoinRule::counts`; m1max,
+512 MB, `RERAIL_DEVICE_WAVES=off`):
+
+- **The first probe after a scan loses almost every binding.** `mn_class`: 15,490 scanned, 95 found in
+  `docof($w, $d)` where the CPU finds all; `mn_dec_fn` 4,041 → 63; `rf_edge` 2,347 → 17; `rf_annot_head`
+  8,322 → 38. Every losing view is a `Loc` view (`docof`, kind 9, format 16, no 16z cache, its reads reaching the
+  chunk's block and three slabs). The tape views (`node`, `child`, `field`) lose nothing beyond `tp_ident`'s few.
+  A relation in its block loses the same way when it is the probed side: `mn_dec_class` finds none of 4,442 in
+  `raw_module_name`.
+- **The host reads those relations right where the device binds them.** `raw_module_name`, `rf_def`, `rf_qn` and
+  `rf_pydoc`, read by id in the block and descriptor the device binds (`InRel::in_block`), equal the CPU's rows.
+- **The budget is still the trigger.** At 4 GB, on the same head, every relation is right, with no refusal; at
+  512 MB 145 leases are refused, one slab is retired, two tapes get no slab room, and some batches' `docof` is made
+  on the device.
+- **Not the cause (one or two runs each):** freed pages given back to the OS (`MADV_FREE_REUSABLE`; kept, still
+  short); the GPU pool's recycling (every lease released to Metal, still short); the row blocks' wraps (a
+  `Device::May` block is host memory read through a wrap at either budget); a CPU-built index in a view's home
+  (the `Loc` views' source builds none); lease give-back on a refusal (`mj::give_back` drops only idle buffers).
+
 ## Open
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.
