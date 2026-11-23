@@ -249,6 +249,13 @@ pub fn health() -> Health {
     }
 }
 
+/// Names the installed package this addon was loaded for (`source_tree::name_package`), where the engine reads its
+/// own `.rerail` files. The loader calls it as it loads the addon, before anything reads them.
+#[napi]
+pub fn set_package_root(root: String) {
+    source_tree::name_package(std::path::PathBuf::from(root));
+}
+
 /// What `verify_model` found: `problem` and `file` are absent where the model matches its manifest.
 #[napi(object)]
 pub struct ModelCheck {

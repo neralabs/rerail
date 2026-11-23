@@ -162,7 +162,8 @@ async function readBack(entries, steps) {
  * - a package was never published. Trusted publishing can only be configured for a package that exists, so its first
  *   publish is made by hand. Every name is asked before anything is published;
  * - a publish fails. A version npm already has is not a failure: this job run again publishes what is left;
- * - npm has a version at another integrity: an earlier run published other bytes, and npm never replaces them;
+ * - npm has a version at another integrity: an earlier run published other bytes, and npm never replaces them. Every
+ *   version is read before anything is published, so this run then publishes nothing;
  * - npm does not serve a version within READ_BACK_ATTEMPTS readings.
  *
  * `steps` does the I/O: `exists(name)` resolves to whether npm knows the package, `publish(file, distTag)` returns
@@ -173,7 +174,10 @@ export async function publishEnginePackages(manifest, distTag, steps) {
   const absent = absentEnginePackages(manifest);
   if (absent.length > 0) throw new Error(`the manifest lacks ${absent.map(({ name }) => name).join(", ")}: a release publishes all ${ENGINE_PACKAGES.length} engine packages`);
   await requirePublishedNames(manifest.packages, steps);
-  for (const entry of manifest.packages) publishEntry(entry, distTag, steps);
+  // Read before anything is published: a version npm already has at another integrity ends the run here. Published
+  // first, this run's other packages would be on npm for good beside it, and no core could pin all six.
+  const pending = await unserved(manifest.packages, steps);
+  for (const entry of pending) publishEntry(entry, distTag, steps);
   await readBack(manifest.packages, steps);
 }
 

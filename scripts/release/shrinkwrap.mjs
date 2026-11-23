@@ -74,13 +74,8 @@ function reachable(packages, root, follow) {
   return seen;
 }
 
-/**
- * The shrinkwrap for `manifest` (package.json, without pins on engine packages) from `lock` (package-lock.json): the
- * root and the packages its dependencies reach, with no development dependency, no workspace pack, and `optional`
- * marking a package only optional dependencies reach. Throws when the lockfile is not package.json's. `engines` (the
- * manifest of the packed engine packages) adds each one it lists: an optional dependency of the root, and its entry.
- */
-export function shrinkwrapFrom(manifest, lock, engines = { packages: [] }) {
+/** The lockfile's root entry as the package ships it; throws when the lockfile is not `manifest`'s. */
+function shippedRoot(manifest, lock) {
   const root = lock.packages?.[""];
   if (!(lock.lockfileVersion >= 2) || root === undefined) throw new Error("package-lock.json must be lockfileVersion 2 or later");
   for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
@@ -91,18 +86,38 @@ export function shrinkwrapFrom(manifest, lock, engines = { packages: [] }) {
   const shipped = { ...root, name: manifest.name, version: manifest.version };
   delete shipped.devDependencies;
   delete shipped.workspaces;
+  return shipped;
+}
+
+/** The lockfile's entries the root `shipped` reaches, as the shrinkwrap lists them, by location. */
+function reachedEntries(lock, shipped) {
   const required = reachable(lock.packages, shipped, optional => !optional);
   const all = reachable(lock.packages, shipped, () => true);
-  const packages = { "": shipped };
-  for (const [location, entry] of Object.entries(lock.packages)) {
-    if (!all.has(location)) continue;
-    const kept = { ...Object.fromEntries(Object.entries(entry).filter(([key]) => !TREE_FLAGS.has(key))), ...NO_SOURCE_BUILD };
-    packages[location] = required.has(location) ? kept : { ...kept, optional: true };
+  const entries = {};
+  for (const location of Object.keys(lock.packages).filter(candidate => all.has(candidate))) {
+    const kept = { ...Object.fromEntries(Object.entries(lock.packages[location]).filter(([key]) => !TREE_FLAGS.has(key))), ...NO_SOURCE_BUILD };
+    entries[location] = required.has(location) ? kept : { ...kept, optional: true };
   }
-  if (engines.packages.length > 0) {
-    packages[""] = { ...shipped, optionalDependencies: { ...shipped.optionalDependencies, ...enginePins(engines) } };
-    for (const entry of engines.packages) packages[engineLocation(entry.name)] = { ...engineLockEntry(entry), ...NO_SOURCE_BUILD };
-  }
+  return entries;
+}
+
+/** The root `shipped` with a pin on each engine package of `engines`, and each one's entry, by location. */
+function engineEntries(shipped, engines) {
+  if (engines.packages.length === 0) return {};
+  const entries = { "": { ...shipped, optionalDependencies: { ...shipped.optionalDependencies, ...enginePins(engines) } } };
+  for (const entry of engines.packages) entries[engineLocation(entry.name)] = { ...engineLockEntry(entry), ...NO_SOURCE_BUILD };
+  return entries;
+}
+
+/**
+ * The shrinkwrap for `manifest` (package.json, without pins on engine packages) from `lock` (package-lock.json): the
+ * root and the packages its dependencies reach, with no development dependency, no workspace pack, and `optional`
+ * marking a package only optional dependencies reach. Throws when the lockfile is not package.json's. `engines` (the
+ * manifest of the packed engine packages) adds each one it lists: an optional dependency of the root, and its entry.
+ */
+export function shrinkwrapFrom(manifest, lock, engines = { packages: [] }) {
+  const shipped = shippedRoot(manifest, lock);
+  const packages = { "": shipped, ...reachedEntries(lock, shipped), ...engineEntries(shipped, engines) };
   return { name: manifest.name, version: manifest.version, lockfileVersion: 3, requires: true, packages };
 }
 

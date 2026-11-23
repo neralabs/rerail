@@ -865,7 +865,17 @@ describe("NpmPackageRegistry: one engine per machine", () => {
   it("needs one package, the engine package of its system, at core's version", () => {
     expect(machinePackageSpecs("1.1.0")).toHaveLength(1);
     expect(engineSpec.endsWith(`-${nativePlatformSuffix()}@1.1.0`)).toBe(true);
-    expect(machinePackageSpecs("1.2.0-next.1", "linux", "arm64")).toEqual([engineSpec.replace(`${nativePlatformSuffix()}@1.1.0`, "linux-arm64-gnu@1.2.0-next.1")]);
+    expect(machinePackageSpecs("1.2.0-next.1", "linux", "arm64", false)).toEqual([engineSpec.replace(`${nativePlatformSuffix()}@1.1.0`, "linux-arm64-gnu@1.2.0-next.1")]);
+  });
+
+  // npm would be asked for a package that was never published (E404), or refuse the glibc engine on musl
+  // (EBADPLATFORM), and its message for either names the wrong cause: the install stops before npm runs.
+  it.each<[string, NodeJS.Platform, string, boolean, string]>([
+    ["an operating system", "freebsd", "x64", false, "Rerail has no engine for freebsd on x64: it runs on macOS, Windows, and Linux with glibc, each on arm64 or x64."],
+    ["a processor", "win32", "ia32", false, "Rerail has no engine for Windows on ia32: it runs on macOS, Windows, and Linux with glibc, each on arm64 or x64."],
+    ["a Linux on musl", "linux", "x64", true, "Rerail has no engine for Linux with musl (Alpine, for example): on Linux it needs glibc."],
+  ])("names no package for %s Rerail has no engine for, and says so", (_what, platform, architecture, musl, message) => {
+    expect(() => machinePackageSpecs("1.1.0", platform, architecture, musl)).toThrow(new Error(message));
   });
 
   // npm 11.6.2 and later install every system's engine from core's optional dependencies, and `optional=false` in a

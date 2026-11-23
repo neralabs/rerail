@@ -130,10 +130,18 @@ describe("publishedEnginePackages and rebuildRefusal", () => {
 });
 
 describe("publishEnginePackages", () => {
-  /** Steps that record what happens in order; `served(name, reading)` is the integrity npm serves, null for none yet. */
-  function steps({ unknown = [], publish = () => ({ ok: true, output: "" }), served = (name, _reading, manifest) => manifest.packages.find((packed) => packed.name === name).integrity, manifest }) {
+  const CONFLICT = { ok: false, output: "npm error 403 You cannot publish over the previously published versions: 1.2.0." };
+  const packedAs = (manifest, name) => manifest.packages.find((packed) => packed.name === name).integrity;
+
+  /**
+   * Steps that record what happens in order, over a registry that serves a version once it is published: `onNpm` is
+   * what it holds beforehand, by package name. `publish(file)` and `served(name, reading)` (the integrity npm serves at
+   * that reading of the package, null for none yet) take the registry's place where a case needs another answer.
+   */
+  function steps({ unknown = [], onNpm = {}, publish, served, manifest }) {
     const events = [];
     const readings = new Map();
+    const registry = new Map(Object.entries(onNpm));
     return {
       events,
       exists: async (name) => {
@@ -142,13 +150,17 @@ describe("publishEnginePackages", () => {
       },
       publish: (file, distTag) => {
         events.push(`publish ${file} ${distTag}`);
-        return publish(file);
+        if (publish !== undefined) return publish(file);
+        const { name, integrity } = manifest.packages.find((packed) => packed.file === file);
+        if (registry.has(name)) return CONFLICT;
+        registry.set(name, integrity);
+        return { ok: true, output: "" };
       },
       readIntegrity: async (name, version) => {
         const reading = (readings.get(name) ?? 0) + 1;
         readings.set(name, reading);
         events.push(`read ${name}@${version}`);
-        return served(name, reading, manifest);
+        return served === undefined ? (registry.get(name) ?? null) : served(name, reading, manifest);
       },
       wait: async () => {
         events.push("wait");
@@ -158,13 +170,13 @@ describe("publishEnginePackages", () => {
   }
   const kinds = (events) => events.map((event) => event.split(" ")[0]);
 
-  it("asks npm for every name, publishes the six under core's dist-tag, and returns only once each is read back as packed", async () => {
+  it("asks npm for every name, reads what it has, publishes the six under core's dist-tag, and returns only once each is read back as packed", async () => {
     const manifest = manifestOf();
     const run = steps({ manifest });
     await publishEnginePackages(manifest, "next", run);
-    expect(kinds(run.events)).toEqual([...Array(6).fill("exists"), ...Array(6).fill("publish"), ...Array(6).fill("read")]);
+    expect(kinds(run.events)).toEqual([...Array(6).fill("exists"), ...Array(6).fill("read"), ...Array(6).fill("publish"), ...Array(6).fill("read")]);
     expect(run.events.filter((event) => event.startsWith("publish"))).toEqual(manifest.packages.map(({ file }) => `publish ${file} next`));
-    expect(run.events.filter((event) => event.startsWith("read"))).toEqual(ENGINE_PACKAGES.map(({ name }) => `read ${name}@1.2.0`));
+    expect(run.events.filter((event) => event.startsWith("read")).slice(6)).toEqual(ENGINE_PACKAGES.map(({ name }) => `read ${name}@1.2.0`));
   });
 
   it("publishes nothing when the manifest lacks an engine package: core would install with no engine there", async () => {
@@ -183,43 +195,54 @@ describe("publishEnginePackages", () => {
 
   it("stops at a publish that fails, before the packages after it and before any read-back", async () => {
     const manifest = manifestOf();
-    const run = steps({ manifest, publish: (file) => (file === manifest.packages[2].file ? { ok: false, output: "npm error code E403" } : { ok: true, output: "" }) });
+    const run = steps({ manifest, served: () => null, publish: (file) => (file === manifest.packages[2].file ? { ok: false, output: "npm error code E403" } : { ok: true, output: "" }) });
     await expect(publishEnginePackages(manifest, "next", run)).rejects.toThrow(`npm publish ${manifest.packages[2].name}@1.2.0 failed`);
-    expect(kinds(run.events)).toEqual([...Array(6).fill("exists"), ...Array(3).fill("publish")]);
+    expect(kinds(run.events)).toEqual([...Array(6).fill("exists"), ...Array(6).fill("read"), ...Array(3).fill("publish")]);
   });
 
-  it("takes a version npm already has as published, on a re-run, and still reads it back", async () => {
+  it("publishes, on a re-run, only the versions npm does not have, and reads all six back", async () => {
     const manifest = manifestOf();
-    const conflict = { ok: false, output: "npm error 403 You cannot publish over the previously published versions: 1.2.0." };
-    const run = steps({ manifest, publish: () => conflict });
+    const earlier = manifest.packages.slice(0, 3);
+    const run = steps({ manifest, onNpm: Object.fromEntries(earlier.map(({ name, integrity }) => [name, integrity])) });
     await publishEnginePackages(manifest, "next", run);
-    expect(kinds(run.events).filter((kind) => kind === "read")).toHaveLength(6);
+    expect(run.events.filter((event) => event.startsWith("publish"))).toEqual(manifest.packages.slice(3).map(({ file }) => `publish ${file} next`));
+    expect(kinds(run.events).filter((kind) => kind === "read")).toHaveLength(12);
   });
 
-  it("fails when npm has a version as other bytes than this run packed, as after a rebuild, whatever the publish said", async () => {
+  it("takes a version npm refuses as already published for published, where the registry did not serve it yet, and still reads it back", async () => {
+    const manifest = manifestOf();
+    const run = steps({ manifest, publish: () => CONFLICT, served: (name, reading, packed) => (reading === 1 ? null : packedAs(packed, name)) });
+    await publishEnginePackages(manifest, "next", run);
+    expect(kinds(run.events)).toEqual([...Array(6).fill("exists"), ...Array(6).fill("read"), ...Array(6).fill("publish"), ...Array(6).fill("read")]);
+  });
+
+  // A run whose jobs were all run again has rebuilt its tarballs. Were the versions npm lacks published before this
+  // is noticed, they would stay on npm beside the earlier attempt's, and no core could pin all six.
+  it("publishes nothing when npm has a version as other bytes than this run packed, as after a rebuild", async () => {
     const manifest = manifestOf();
     const other = `sha512-${Buffer.alloc(64, "rebuilt").toString("base64")}`;
-    const conflict = { ok: false, output: "npm error code EPUBLISHCONFLICT" };
-    const run = steps({ manifest, publish: () => conflict, served: (name, _reading, packed) => (name === macIntel.name ? other : packed.packages.find((each) => each.name === name).integrity) });
+    const run = steps({ manifest, onNpm: { [macIntel.name]: other } });
     const failure = await publishEnginePackages(manifest, "next", run).catch((error) => error.message);
     expect(failure).toContain(`npm has ${macIntel.name}@1.2.0 as ${other}, and this run packed ${manifest.packages[1].integrity}`);
     expect(failure).toContain("Release the next version");
+    expect(kinds(run.events)).not.toContain("publish");
     expect(run.events).not.toContain("wait");
   });
 
   it("reads again a version the registry does not serve yet, and only that one", async () => {
     const manifest = manifestOf();
-    const run = steps({ manifest, served: (name, reading, packed) => (name === macArm.name && reading < 3 ? null : packed.packages.find((each) => each.name === name).integrity) });
+    const run = steps({ manifest, served: (name, reading, packed) => (reading === 1 || (name === macArm.name && reading < 4) ? null : packedAs(packed, name)) });
     await publishEnginePackages(manifest, "next", run);
     const reads = run.events.filter((event) => event.startsWith("read") || event === "wait");
-    expect(reads.slice(6)).toEqual(["wait", `read ${macArm.name}@1.2.0`, "wait", `read ${macArm.name}@1.2.0`]);
+    expect(reads.slice(12)).toEqual(["wait", `read ${macArm.name}@1.2.0`, "wait", `read ${macArm.name}@1.2.0`]);
   });
 
   it("fails when the registry never serves a version: unread is not the same as published as packed", async () => {
     const manifest = manifestOf();
-    const run = steps({ manifest, served: (name, _reading, packed) => (name === macArm.name ? null : packed.packages.find((each) => each.name === name).integrity) });
+    const run = steps({ manifest, served: (name, reading, packed) => (reading === 1 || name === macArm.name ? null : packedAs(packed, name)) });
     await expect(publishEnginePackages(manifest, "next", run)).rejects.toThrow(`npm does not serve ${macArm.name}@1.2.0 yet`);
-    expect(run.events.filter((event) => event === `read ${macArm.name}@1.2.0`)).toHaveLength(20);
+    // Once before anything is published, then the read-back's twenty.
+    expect(run.events.filter((event) => event === `read ${macArm.name}@1.2.0`)).toHaveLength(21);
   });
 });
 

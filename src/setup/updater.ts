@@ -22,12 +22,12 @@ import { promisify } from "node:util";
 import { endProcessTree, execFile, spawn } from "../engine/child-process.js";
 import { removeScratch, removeWithRetry, renameWithRetry, replaceFile } from "../engine/file-replace.js";
 import { withHomeLock, type LockEngine } from "../engine/native/file-lock.js";
-import { nativeEnginePackageName } from "../engine/native/native.js";
+import { nativeEnginePackageName, noEngineForSystem } from "../engine/native/native.js";
 import { processState } from "../engine/process-liveness.js";
 import { makeRerailHome } from "../engine/storage/private-files.js";
 import { daemonUsesPackageRoot, lookupDaemon, stopFoundDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
-import { auditSignatures, checkRegistry, NPM_QUERY_TIMEOUT_MS, outsideAnyProject, prefixInstallNpm, runNpm, type NpmRunner } from "../runtime/npm.js";
+import { auditSignatures, checkRegistry, NPM_QUERY_TIMEOUT_MS, npmPackageRefusal, outsideAnyProject, prefixInstallNpm, runNpm, type NpmPackageRefusal, type NpmRunner } from "../runtime/npm.js";
 import { formatDuration, NO_PROGRESS, type Progress, type StallWarning } from "../runtime/progress.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
 import { CURRENT_LINK, defaultRerailHome, LAUNCHER_DIR, UPDATE_STATE_FILE, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
@@ -215,19 +215,26 @@ async function installedFromRegistry(prefix: string): Promise<string | undefined
 /**
  * The npm packages this machine needs for Rerail `version` besides core, as install specs: today the engine package of
  * its system. npm chooses among a package's optional dependencies by their `os` and `cpu` alone, which cannot tell a
- * GPU or a processor's SIMD level, so a package a machine needs for one of those is chosen here.
+ * GPU or a processor's SIMD level, so a package a machine needs for one of those is chosen here. Throws where Rerail
+ * has no engine for the system: npm would otherwise be asked for a package that was never published, or refuse one
+ * built for another C library, and neither of its errors says so.
  */
-export function machinePackageSpecs(version: string, platform: NodeJS.Platform = process.platform, architecture: string = process.arch): readonly string[] {
+export function machinePackageSpecs(version: string, platform: NodeJS.Platform = process.platform, architecture: string = process.arch, musl?: boolean): readonly string[] {
+  const none = noEngineForSystem(platform, architecture, musl);
+  if (none !== undefined) throw new Error(none);
   return [`${nativeEnginePackageName(platform, architecture)}@${version}`];
 }
 
 /** The package an install spec `<name>@<version>` names. */
 const specName = (spec: string): string => spec.slice(0, spec.lastIndexOf("@"));
 
-/** npm's code where its registry has no such package (E404) or version (ETARGET), or the package is built for another system. */
-const NPM_PACKAGE_REFUSED = /\bnpm (?:error|ERR!) code (E404|ETARGET|EBADPLATFORM)\b/u;
-/** The address npm's E404 names: `404 Not Found - GET <url>`. */
-const NPM_NOT_FOUND_URL = /\bGET (https?:\/\/\S+)/u;
+/** What npm's refusal of the engine package `spec` means, and what to do about it. */
+function refusalReason({ code, registry }: NpmPackageRefusal, spec: string): string {
+  if (code === "EBADPLATFORM") {
+    return `npm takes it for another system's engine. It does where the npm on PATH runs on a Node built for another processor than the Node Rerail runs on (${process.execPath}, ${process.arch}): put that Node first on PATH and run this again`;
+  }
+  return `the registry npm installs from${registry === undefined ? "" : ` (${registry})`} does not have it. A mirror, proxy or allowlist must carry ${specName(spec)} as well as ${RERAIL_PACKAGE_NAME}: check the registry in your npm configuration`;
+}
 
 /**
  * Why npm installed nothing, where it refused one of the packages `machineSpecs` names; undefined where it failed for
@@ -235,15 +242,13 @@ const NPM_NOT_FOUND_URL = /\bGET (https?:\/\/\S+)/u;
  */
 function machinePackageRefusal(error: unknown, machineSpecs: readonly string[], coreSpec: string): Error | undefined {
   if (!(error instanceof Error)) return undefined;
-  const code = NPM_PACKAGE_REFUSED.exec(error.message)?.[1];
-  const refused = machineSpecs.find(spec => error.message.includes(specName(spec)));
-  if (code === undefined || refused === undefined) return undefined;
-  const address = NPM_NOT_FOUND_URL.exec(error.message)?.[1];
-  const registry = address === undefined ? undefined : URL.parse(address)?.origin;
-  const reason = code === "EBADPLATFORM"
-    ? `npm takes it for another system's engine. It does where the npm on PATH runs on a Node built for another processor than the Node Rerail runs on (${process.execPath}, ${process.arch}): put that Node first on PATH and run this again`
-    : `the registry npm installs from${registry === undefined ? "" : ` (${registry})`} does not have it. A mirror, proxy or allowlist must carry ${specName(refused)} as well as ${RERAIL_PACKAGE_NAME}: check the registry in your npm configuration`;
-  return new Error(`npm could not install ${refused}, the engine ${coreSpec} runs on here (${code}): ${reason}. Nothing was installed.`, { cause: error });
+  for (const spec of machineSpecs) {
+    const refusal = npmPackageRefusal(error.message, specName(spec));
+    if (refusal !== undefined) {
+      return new Error(`npm could not install ${spec}, the engine ${coreSpec} runs on here (${refusal.code}): ${refusalReason(refusal, spec)}. Nothing was installed.`, { cause: error });
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -278,7 +283,8 @@ async function checkMachinePackages(prefix: string, machineSpecs: readonly strin
  * Core names every system's engine package as an optional dependency. npm 11.6.2 and later install all of them from
  * core's shrinkwrap, on any system, and `optional=false` in a person's npm settings installs none. So the install
  * leaves optional dependencies out (`--omit=optional`) and names this machine's packages itself: exactly those are
- * installed whichever npm runs and whatever its settings, and npm fails where its registry lacks one.
+ * installed whichever npm runs and whatever its settings, and npm fails where its registry lacks one. npm is not run
+ * at all on a system Rerail has no engine for ({@link machinePackageSpecs}).
  */
 async function installForThisMachine(npm: NpmRunner, coreSpec: string, version: string, prefix: string): Promise<void> {
   const machineSpecs = machinePackageSpecs(version);

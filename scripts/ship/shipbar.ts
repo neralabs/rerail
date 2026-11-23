@@ -308,33 +308,47 @@ function copyEngines(from: string, checkout: string): string[] {
  */
 function resolveRelease(version: string, out: string, packDataCache: string | undefined): Checkout {
   const tag = `v${version}`;
-  let parsed = run("git", ["-C", SELF, "rev-parse", "--verify", `${tag}^{commit}`]);
-  if (parsed.status !== 0) {
-    run("git", ["-C", SELF, "fetch", "--quiet", "origin", "tag", tag, "--no-tags"]);
-    parsed = run("git", ["-C", SELF, "rev-parse", "--verify", `${tag}^{commit}`]);
-  }
-  if (parsed.status !== 0) fail(`release ${version}: no tag ${tag} in ${SELF}, and fetching it from origin failed`);
-  const checkout = exportCommit(parsed.stdout.trim(), `release:${version}`, out, packDataCache);
+  const checkout = exportCommit(taggedCommit(version, tag), `release:${version}`, out, packDataCache);
   if (existsSync(join(checkout.dir, RELEASE_FILE))) return checkout;
   const name = `@neralabs/rerail@${version}`;
   const unpacked = join(out, "release-package");
   unpackPackage(name, out, unpacked);
   const core = join(unpacked, "package");
-  const addons = copyEngines(join(core, "native"), checkout.dir);
-  if (addons.length === 0) {
-    const enginePackage = join(out, "release-engine-package");
-    for (const [dependency, pinned] of Object.entries(readJson<{ optionalDependencies?: Record<string, string> }>(join(core, "package.json")).optionalDependencies ?? {})) {
-      unpackPackage(`${dependency}@${pinned}`, out, enginePackage);
-      addons.push(...copyEngines(join(enginePackage, "package"), checkout.dir));
-    }
-    rmSync(enginePackage, { recursive: true, force: true });
-  }
+  const addons = releasedEngines(core, out, checkout.dir);
   if (addons.length === 0) fail(`${name} ships no prebuilt engine: none under native/ (rerail_engine.*.node), and none in an optional dependency`);
   cpSync(join(core, "dist"), join(checkout.dir, "dist"), { recursive: true });
   writeFileSync(join(checkout.dir, RELEASE_FILE), JSON.stringify({ package: name, tag, addons }, null, 1));
   rmSync(unpacked, { recursive: true, force: true });
   console.log(`shipbar: baseline ${name}: ${tag}'s source with the release's ${addons.length} prebuilt engines and dist/`);
   return checkout;
+}
+
+/** The commit `tag` names, fetched from origin where this clone lacks the tag. */
+function taggedCommit(version: string, tag: string): string {
+  let parsed = run("git", ["-C", SELF, "rev-parse", "--verify", `${tag}^{commit}`]);
+  if (parsed.status !== 0) {
+    run("git", ["-C", SELF, "fetch", "--quiet", "origin", "tag", tag, "--no-tags"]);
+    parsed = run("git", ["-C", SELF, "rev-parse", "--verify", `${tag}^{commit}`]);
+  }
+  if (parsed.status !== 0) fail(`release ${version}: no tag ${tag} in ${SELF}, and fetching it from origin failed`);
+  return parsed.stdout.trim();
+}
+
+/**
+ * Copies the engines of the release unpacked at `core` into `destination` and returns their file names: those under
+ * its native/, or, for a release that carries none there, those of the engine packages it names as its optional
+ * dependencies, each unpacked through `out`.
+ */
+function releasedEngines(core: string, out: string, destination: string): string[] {
+  const addons = copyEngines(join(core, "native"), destination);
+  if (addons.length > 0) return addons;
+  const enginePackage = join(out, "release-engine-package");
+  for (const [dependency, pinned] of Object.entries(readJson<{ optionalDependencies?: Record<string, string> }>(join(core, "package.json")).optionalDependencies ?? {})) {
+    unpackPackage(`${dependency}@${pinned}`, out, enginePackage);
+    addons.push(...copyEngines(join(enginePackage, "package"), destination));
+  }
+  rmSync(enginePackage, { recursive: true, force: true });
+  return addons;
 }
 
 function shippedRules(checkout: string, pack: string): string[] {

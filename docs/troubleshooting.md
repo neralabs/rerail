@@ -355,8 +355,8 @@ Rerail found its system's engine package at another version than its own, and lo
 it. Run the command the message gives.
 
 This happens when an engine package was installed or updated apart from Rerail: named in a `package.json` of its own,
-or left in a `node_modules` folder above the install, which is where the message says it found it. Depend on
-`@neralabs/rerail` alone; it names the engine package of its version.
+or left beside Rerail in its `node_modules/@neralabs` folder by an earlier install. Depend on `@neralabs/rerail`
+alone; it names the engine package of its version.
 
 ## The `rerail` command
 

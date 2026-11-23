@@ -628,6 +628,11 @@ export interface NativeBinding {
   assembleRir(text: string): string;
   /** The file-system event bus; an engine built before it lacks it. */
   TreeWatcher?: new () => NativeTreeWatcher;
+  /**
+   * Names the Rerail package the engine reads its own `.rerail` files from (its typing programs and rule library). An
+   * engine built before the engine packages lacks it, and finds the package above its own file.
+   */
+  setPackageRoot?: (root: string) => void;
 }
 
 const require = createRequire(import.meta.url);
@@ -743,22 +748,37 @@ function installedPackageFolder(packageRoot: string, name: string): string | und
   return places.find(folder => existsSync(join(folder, "package.json")));
 }
 
+/**
+ * Why Rerail has no engine for a system at all, whatever is installed: its operating system or processor is not one
+ * of {@link NATIVE_ENGINE_SYSTEMS}, or it is a Linux on musl. Undefined for a system an engine is built for. `musl` is
+ * read from Node's own report unless given.
+ */
+export function noEngineForSystem(platform: NodeJS.Platform = process.platform, architecture: string = process.arch, musl?: boolean): string | undefined {
+  if (!NATIVE_ENGINE_SYSTEMS.some(([os, cpu]) => os === platform && cpu === architecture)) {
+    return `Rerail has no engine for ${systemName(platform, architecture)}: it runs on macOS, Windows, and Linux with glibc, each on arm64 or x64.`;
+  }
+  return platform === "linux" && (musl ?? (process.platform === "linux" && runsOnMusl())) ? NO_MUSL_ENGINE : undefined;
+}
+
+/** Another system's engine package installed for the Rerail at `packageRoot`, when there is one. */
+function otherSystemInstalled({ packageRoot, platform, architecture }: EngineLookup): (typeof NATIVE_ENGINE_SYSTEMS)[number] | undefined {
+  return NATIVE_ENGINE_SYSTEMS.find(([os, cpu]) =>
+    (os !== platform || cpu !== architecture) && installedPackageFolder(packageRoot, nativeEnginePackageName(os, cpu)) !== undefined);
+}
+
 /** Why no engine package was found for a system, and what to do about it. */
 function enginePackageAbsent(lookup: EngineLookup, fileName: string, spec: string): Error {
   const { packageRoot, platform, architecture } = lookup;
   const system = systemName(platform, architecture);
-  if (!NATIVE_ENGINE_SYSTEMS.some(([os, cpu]) => os === platform && cpu === architecture)) {
-    return new Error(`Rerail has no engine for ${system}: it runs on macOS, Windows, and Linux with glibc, each on arm64 or x64.`);
-  }
-  if (platform === "linux" && (lookup.musl ?? (process.platform === "linux" && runsOnMusl()))) return new Error(NO_MUSL_ENGINE);
+  const none = noEngineForSystem(platform, architecture, lookup.musl);
+  if (none !== undefined) return new Error(none);
   const otherwise = `Or set RERAIL_ENGINE_PATH to an engine file for this system (${fileName}).`;
   if (existsSync(join(packageRoot, "native", "Cargo.toml"))) {
     return new Error(
       `Rerail's engine for ${system} is not built: ${join(packageRoot, "native")} has no ${fileName}. Build it with \`npm run build:native\`, or fetch a released one with \`npm run engine:pull\`. ${otherwise}`,
     );
   }
-  const other = NATIVE_ENGINE_SYSTEMS.find(([os, cpu]) =>
-    (os !== platform || cpu !== architecture) && installedPackageFolder(packageRoot, nativeEnginePackageName(os, cpu)) !== undefined);
+  const other = otherSystemInstalled(lookup);
   if (other !== undefined) {
     return new Error(
       `The Rerail at ${packageRoot} was installed for ${systemName(...other)}, and this is ${system}: it has ${nativeEnginePackageName(...other)} and no ${spec}. Its folder came from another computer, or this Node is built for another processor than the Node that installed it. Run Rerail with that Node, or add this system's engine. ${installAdvice(packageRoot, spec, " --force")} \`--force\` has npm keep the other system's engine. ${otherwise}`,
@@ -828,6 +848,9 @@ function namesRerail(manifestPath: string): boolean {
  */
 let workspaceBusy: unknown;
 
+/** Whether this process has named Rerail's package to its engine (`setPackageRoot`): once, as the engine never forgets it. */
+let packageRootNamed = false;
+
 export function loadNativeBinding(): NativeBinding {
   const addonPath = resolveNativeBindingPath();
   let binding: NativeBinding;
@@ -837,6 +860,12 @@ export function loadNativeBinding(): NativeBinding {
     throw engineLoadFailure(error);
   }
   workspaceBusy ??= binding.WORKSPACE_BUSY;
+  if (!packageRootNamed) {
+    // In an engine package of its own the engine cannot always find Rerail's package from its own file: npm can put
+    // the two side by side, and a package manager that keeps a store links the engine package in from there.
+    binding.setPackageRoot?.(PACKAGE_ROOT);
+    packageRootNamed = true;
+  }
   return binding;
 }
 
