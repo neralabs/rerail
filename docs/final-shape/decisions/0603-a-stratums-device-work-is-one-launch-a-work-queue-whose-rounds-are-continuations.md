@@ -650,3 +650,6 @@ reach them, as a set head's are (above):
   buffers it allocates itself, through Intel's unified shared memory (`RERAIL_OPENCL_USM`). Memory wrapped in place
   (a block) has none there, and Apple's OpenCL 1.2 (the mini's) has neither USM nor SVM. A stratum there is refused
   and runs on the host, so OpenCL has no launches to check.
+  Decided (2026-11-22, the user): OpenCL is out of point 3's scope. Point 3 holds on the backends that run
+  programs (the CPU backend, CUDA, Metal), and an OpenCL stratum stays on the host.
+- **#311 again:** the forced setfix device set three more times on the mini, 39 of 39 each: 24 runs without it.
