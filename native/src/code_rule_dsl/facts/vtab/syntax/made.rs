@@ -407,6 +407,24 @@ pub(super) struct Made {
 /// The columns of a made relation a group indexes (`Group::index`).
 const INDEXED: usize = 8;
 
+/// A group's index of one column of one relation (an index in its relation's block, decision 0353): nothing where
+/// the group's rows are in the column's order, else its rows in that order (stable: equal values in row order). A
+/// probe is a binary search. A hash map of a row list a value was most of a made relation's first probes' time.
+pub(super) enum ColIndex {
+    Sorted,
+    Order(Vec<u32>),
+}
+
+/// The first of `0..n` where `below` is false (`below` true then false).
+fn partition(n: usize, below: impl Fn(usize) -> bool) -> usize {
+    let (mut lo, mut hi) = (0, n);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if below(mid) { lo = mid + 1 } else { hi = mid }
+    }
+    lo
+}
+
 pub(super) struct Group {
     pub(super) docs: Vec<usize>,
     /// Each relation's rows of the group, in `Rows::names`' order.
@@ -415,7 +433,7 @@ pub(super) struct Group {
     /// its relation's block, decision 0353). A group's rows never change, so it stands. A probe without it walked the
     /// group's every row: a maintained join's probes of `docof`, one document's group each, were quadratic.
     /// One slot a (relation, column), `INDEXED` columns a relation, set once: a probe reads it with no lock.
-    index: Box<[std::sync::OnceLock<rustc_hash::FxHashMap<i64, Vec<u32>>>]>,
+    index: Box<[std::sync::OnceLock<ColIndex>]>,
     /// The strings its rows used (`Made::used`), where its batch keeps them: a renewed batch's vocabulary is its
     /// groups' (decision 0616).
     strings: Option<Arc<[u32]>>,
@@ -428,15 +446,39 @@ impl Group {
     }
 
     /// The group's rows of relation `rel` (held in `r`) whose `column` is a key of the index, made if it is not.
-    fn index(&self, rel: usize, column: usize, r: &Relation) -> &rustc_hash::FxHashMap<i64, Vec<u32>> {
+    fn index(&self, rel: usize, column: usize, r: &Relation) -> &ColIndex {
         assert!(column < INDEXED, "a made relation of at most {INDEXED} columns");
         self.index[rel * INDEXED + column].get_or_init(|| {
-            let mut by: rustc_hash::FxHashMap<i64, Vec<u32>> = Default::default();
-            for row in self.ranges[rel].clone() {
-                by.entry(Source::value(r, row, column)).or_default().push(row as u32);
+            let range = self.ranges[rel].clone();
+            if range.clone().zip(range.clone().skip(1)).all(|(a, b)| Source::value(r, a, column) <= Source::value(r, b, column)) {
+                return ColIndex::Sorted;
             }
-            by
+            let mut order: Vec<u32> = range.map(|row| row as u32).collect();
+            order.sort_by_key(|&row| Source::value(r, row as usize, column));
+            ColIndex::Order(order)
         })
+    }
+    /// The group's rows of `rel` (in `r`) whose `column` is `value`, in row order, each given to `each`.
+    fn each_match(&self, rel: usize, column: usize, r: &Relation, value: i64, mut each: impl FnMut(usize)) {
+        let range = self.ranges[rel].clone();
+        let at = |row: usize| Source::value(r, row, column);
+        match self.index(rel, column, r) {
+            ColIndex::Sorted => {
+                let (lo, n) = (range.start, range.len());
+                let from = lo + partition(n, |i| at(lo + i) < value);
+                let mut row = from;
+                while row < range.end && at(row) == value {
+                    each(row);
+                    row += 1;
+                }
+            }
+            ColIndex::Order(order) => {
+                let from = partition(order.len(), |i| at(order[i] as usize) < value);
+                for &row in order[from..].iter().take_while(|&&row| at(row as usize) == value) {
+                    each(row as usize);
+                }
+            }
+        }
     }
 }
 
@@ -1111,12 +1153,11 @@ impl MadeRows {
                 made
             }
         };
-        let index = g.index(self.rel, column, &r);
         let mut v = [0i64; 16];
-        for &row in index.get(&value).into_iter().flatten() {
-            Source::row_at(r.as_ref(), row as usize, columns, &mut v[..columns.len()]);
-            each(row as usize, &v[..columns.len()]);
-        }
+        g.each_match(self.rel, column, &r, value, |row| {
+            Source::row_at(r.as_ref(), row, columns, &mut v[..columns.len()]);
+            each(row, &v[..columns.len()]);
+        });
         true
     }
     /// Whether every read of `column` is routed (`route`): its document column (not a host's, whose guests may not
@@ -1161,8 +1202,13 @@ impl MadeRows {
         let mut rows = Vec::new();
         for g in groups {
             // A group's rows by the column's value, found by its index, not a walk of every row of it.
-            let index = g.index(self.rel, column, &r);
-            rows.extend(values.iter().filter_map(|v| index.get(v)).flatten().map(|&row| row as usize).filter(|&row| keep(&r, row)));
+            for &v in values {
+                g.each_match(self.rel, column, &r, v, |row| {
+                    if keep(&r, row) {
+                        rows.push(row);
+                    }
+                });
+            }
         }
         rows.sort_unstable();
         rows.dedup();
