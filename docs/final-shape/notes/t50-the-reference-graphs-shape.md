@@ -811,6 +811,36 @@ the device reads through a wrap of its used extent (decision 0435 §1, `accel/sr
   destruction"), once. And twice, in this and an earlier CPU run, a stall after the run in `keep_image`'s write
   to the content store (`write_back::queue`): 290–500 s and 18 GB, not reproduced by a rerun of the same binary.
 
+### Step 9, narrowed (2026-11-23)
+
+`all` on the dead-code program with two debugging outputs (`dbg_rd`, `dbg_cls`), m1max, `--metal --metal-mb 512`.
+Wrong in 17 of 18 runs after the fixes below, a different set of relations each time.
+
+- **Fixed on the way, not the loss.** A seed the device refused at run time was parsed again by relation name on
+  the run's thread, after other chunks' jobs had rebound or dropped those names: s1000 at 32 MB stopped with "no
+  native relation" every run (`510780dd8d`). A taken in-flight index gave its room back; a witness stage's 16z
+  views went unchecked (`b5d3983148`).
+- **The device makes the short rows.** Each device run of a stratum's seeds, run again on the CPU into a scratch
+  `Fresh` and compared: the device's rows are a subset of the CPU's (`dbg_rd` 8 of 11,656; `mn_class` 7 of 9,015;
+  `rf_forward` 46 of 5,897), the head holding none before (`place`'s anti-join reads nothing), and once two rows
+  the CPU does not make. Every large loss ends in `docof($w, $d)` probed by both columns, read in place.
+- **The trigger is the `Loc` views read in place.** With their in-place reads off (their rows made on the device
+  from the chunk block), both runs are right: `finding` 20,046, `mn_class` 266,996, `dbg_rd` 480,367.
+- **Each view's home, shared by its chunk's strata, takes part.** With every probe of a view building its index in
+  a fresh home of its batch, `docof`'s losses go in both runs; `finding` is still wrong, and `rf_forward` (a
+  relation in its block) still loses rows.
+- **The indexes are right.** Every index's rows are its relation's rows once, when marked built and when found
+  (all checked). 3,751 view indexes found built were checked on the CPU, each row's key hashed from the view's
+  values (`key_hash`) and looked for in its bucket: none wrong, in a run that lost rows. A stage binds the
+  index's own buffer (`DevIndex::bound`, taken after the block's growth).
+- **Not the cause (one run or more each):** the device waves (`RERAIL_DEVICE_WAVES=off` loses rows); the 16z
+  cache (no failure counted); room given back (none given back, still lost); a borrowed index used before its
+  builder completed (waited for, still lost).
+
+What is left is what a stage reads through the views' directory at its run, against what the CPU reads at the same
+rows: the next instrument is the failed probes' keys dumped by the device, and the view's values at their rows read
+back from the device and from the host.
+
 ## Open
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.
