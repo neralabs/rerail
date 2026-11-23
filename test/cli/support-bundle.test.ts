@@ -80,6 +80,10 @@ function recordSession(world: Fixture, sessionId: string, startedAt: number): vo
     event("e8", "events-dropped", { count: 4 });
     event("e9", "code-rules-pending", { boundary: "turn-end" });
     event("e10", "a-kind-from-the-future", { secret: PROMPT });
+    // Two stretches of events a power cut took, as a session's next open records them (`LostEvents`).
+    const lost = (count: number, first: string, last: string) => ({ count, kinds: { call: count }, firstEventId: first, lastEventId: last, firstObservedAt: startedAt, lastObservedAt: startedAt });
+    event("e11", "events-lost", lost(3, "x1", "x3"));
+    event("e12", "events-lost", lost(2, "x4", "x5"));
     database.insert(policySessionOwners).values({ sessionId, delivery: "background", active: true, processId: 1, token: OWNER_TOKEN, updatedAt: startedAt }).run();
   } finally {
     database.$client.close();
@@ -288,9 +292,10 @@ describe("rerail support-bundle", () => {
     expect(bundle.session?.host).toBe("claude-code");
     expect(bundle.session?.eventCounts).toMatchObject({ call: 1, result: 1, "steering-delivered": 1 });
     expect(bundle.session?.gaps).toEqual({
-      droppedEvents: 4, lostEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 1, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
+      droppedEvents: 4, lostEvents: 5, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 1, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
     });
     expect(bundle.session?.timeline).toContainEqual(expect.objectContaining({ kind: "result", tool: "Bash", failed: true }));
+    expect(bundle.session?.timeline.filter(entry => entry.kind === "events-lost").map(entry => entry.count)).toEqual([3, 2]);
     expect(bundle.session?.timeline).toContainEqual(expect.objectContaining({ kind: "steering-delivered", ruleIds: ["eslint-eqeqeq"] }));
     expect(bundle.session?.steers).toEqual([{ mechanism: "message", requested: "steer", ruleIds: ["eslint-eqeqeq"], text: STEER }]);
     const audit = bundle.session?.audits[0];
