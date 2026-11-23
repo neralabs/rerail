@@ -909,10 +909,16 @@ impl<'a> G<'a> {
         let remembered = self.remember.iter().any(|r| r == n);
         let mut arms = Vec::new();
         for a in alts {
-            let (test, own) = self.token_of(a).ok_or_else(|| format!("rule {rule}: choice `{n}` holds more than tokens"))?;
-            let mut body = self.take_token(&test, Some(kind.unwrap_or(&own)), "")?;
+            // A token taken as a kind (`'product' as identifier`): its leaf that kind, and the word it remembers.
+            let (t, written) = match a {
+                Gram::As(k, t) => (&**t, Some(k.as_str())),
+                _ => (a, None),
+            };
+            let (test, own) = self.token_of(t).ok_or_else(|| format!("rule {rule}: choice `{n}` holds more than tokens"))?;
+            let own = written.unwrap_or(&own);
+            let mut body = self.take_token(&test, Some(kind.unwrap_or(own)), "")?;
             if remembered {
-                let _ = writeln!(body, "self.word = {};", self.kind_const(&own)?);
+                let _ = writeln!(body, "self.word = {};", self.kind_const(own)?);
             }
             arms.push((self.first(a)?.0, body));
         }

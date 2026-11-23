@@ -238,9 +238,10 @@ enum E {
 /// the one before it, as a leaf of `into`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pos {
-    /// A token kind, its leaf's kind (0: the token's), and whether it is remembered (a
-    /// `remember` choice's token: its level's word from here).
-    Tok(u16, u16, bool),
+    /// A token kind, its leaf's kind (0: the token's), and the kind it is remembered as (a
+    /// `remember` choice's token: its level's word from here; 0, none): the token's, or the kind
+    /// the choice takes it as (`'product' as identifier`).
+    Tok(u16, u16, u16),
     Call(usize),
     Merge { token: u16, into: u16 },
 }
@@ -389,7 +390,7 @@ impl Builder<'_> {
                     if self.remember.contains(name) {
                         for p in from..self.positions.len() {
                             let Pos::Tok(token, leaf, _) = self.positions[p].1 else { return Err(format!("remember {name}: a choice of tokens only")) };
-                            self.positions[p].1 = Pos::Tok(token, leaf, true);
+                            self.positions[p].1 = Pos::Tok(token, leaf, if leaf == 0 { token } else { leaf });
                         }
                     }
                     match supertype {
@@ -494,7 +495,7 @@ impl Builder<'_> {
         if !(self.ids.is_token)(name) {
             return Err(format!("`{name}` is no rule, choice or token kind"));
         }
-        self.positions.push((level, Pos::Tok((self.ids.kind)(name)?, 0, false)));
+        self.positions.push((level, Pos::Tok((self.ids.kind)(name)?, 0, 0)));
         Ok(E::Tok(self.positions.len() - 1))
     }
 }
@@ -1323,7 +1324,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
             match positions[q].1 {
                 Pos::Tok(kind, NO_LEAF, remembered) => {
                     // A token the grammar implies: taken, no leaf.
-                    if p.field != 0 || !p.supers.is_empty() || remembered {
+                    if p.field != 0 || !p.supers.is_empty() || remembered != 0 {
                         return Err("an implied token with a field, a supertype or a word: it makes no node".into());
                     }
                     acts.push(Act::Settle);
@@ -1332,8 +1333,8 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                 }
                 Pos::Tok(kind, leaf, remembered) => {
                     acts.push(Act::Leaf { field: p.field, supers: p.supers, kind: leaf });
-                    if remembered {
-                        acts.push(Act::Remember { kind });
+                    if remembered != 0 {
+                        acts.push(Act::Remember { kind: remembered });
                     }
                     let Some(acts) = settled(acts) else { continue };
                     out.push((kind, acts, q, push.clone(), false));

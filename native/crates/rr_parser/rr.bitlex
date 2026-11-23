@@ -231,7 +231,7 @@ token string     = start quote & o_str read str
 token comment    = start slash & (o_line | o_block) read line | block
 token code_literal = start tick & o_tick read t1 | t2 | t3
 token hash_word  = start hash & directive run word
-keywords hash_word { "#include" } required
+keywords hash_word { "#include" }
 token identifier = start id_first run word
 # A float's `.` and fraction are its number's: one token.
 mask numeral    = int | f_dot | frac
@@ -243,7 +243,7 @@ token punct      = start punct & p_start pair two_start
 # `_`, only where a term can be a wildcard; `must` and `may`, only at a head's start; the
 # aggregates' words, `by` and `sep`, only where an aggregate can be; a `.violation`'s words
 # only in one; `true`, `false` and `null`, only in JSON.
-keywords identifier { } soft { "test" "fixtures" "exactly" "uses" "end" "decl" "violation" "policy" "edit" "functor" "type" "input" "output" "lattice" "pragma" "true" "false" "null" "_" "must" "may" "count" "min" "max" "sum" "mean" "join" "by" "sep" "code" "in" "tag" "fix" "safe" "suppress" "over" "options" }
+keywords identifier { } soft { "test" "fixtures" "exactly" "uses" "end" "decl" "violation" "policy" "edit" "functor" "type" "input" "output" "lattice" "pragma" "true" "false" "null" "_" "must" "may" "count" "min" "max" "sum" "product" "mean" "join" "by" "at" "sep" "code" "in" "tag" "fix" "safe" "suppress" "over" "options" }
 keywords punct { "(" ")" "," "." ";" ":" "=" "<" ">" "!" "|" "@" "*" "[" "]" "-" "+" "/" "%" "~" "^" "&" "{" "}" ":-" "=>" "!=" "<=" ">=" "<:" "->" } required
 
 skip ws
@@ -270,10 +270,12 @@ mark policy_on   = tokens after "." "policy" "{"
 mark one_name    = tokens "{" identifier "}"
 # A `(` whose next token is `)`.
 mark empty_parens = tokens "(" ")"
-# `min`, `max`, `sum`, `mean` or `join`, then `()` and a `:` (not `:-`): the engine reads an
+# `at` and a string after a pattern's literal: its selector.
+mark at_on       = tokens "at" string
+# `min`, `max`, `sum`, `product`, `mean` or `join`, then `()` and a `:` (not `:-`): the engine reads an
 # aggregate there, with no value, and refuses it. A mark the grammar takes nowhere, so the
 # file is refused wherever it is.
-mark no_value   = tokens after "min" | "max" | "sum" | "mean" | "join" "(" ")" ":"
+mark no_value   = tokens after "min" | "max" | "sum" | "product" | "mean" | "join" "(" ")" ":"
 # A line break, but not after a `,`: a list goes on over lines. The gap's, from the grammar
 # token before, as lean's parser asks it.
 mark newline     = lf unless after ",", end
@@ -296,13 +298,9 @@ mark json_bad    = ff,
 
 # Token marks that refuse: the tokens after a token, comments between them skipped. Declared
 # last, a state tests each only in its switch's arms for its token's first byte.
-# A functor named, not called: `@`, then its name, then a token that can not follow it (a `(`
-# calls it; a `,` or a `}`, in a lattice, may follow one not called). The engine refuses it:
-# a mark the grammar takes nowhere, so the file is refused where it is.
-mark fn_uncalled = tokens "@" identifier ~("(" | "," | "}")
-# `.input` and `.output` with no relation: before an `#include`, or at the file's end. Refused
+# `.input` and `.output` with no relation: before a `#` word (`#include` or another), or at the file's end. Refused
 # as the engine refuses them.
-mark io_bare     = tokens "." "input" | "output" hash_word | end
+mark io_bare     = tokens "." "input" | "output" hash_word | "#include" | end
 
 # --- The tree ----------------------------------------------------------------------------------
 
@@ -419,6 +417,7 @@ tree rr {
   # An operator after an atom: it was a call, its word the function (`relabel … inner`).
   choice literal        = bare: (numeric | string | code_literal | '_' as wildcard | minus | functor_call | json) more [literal_tail]
                         | bare: (identifier as variable) (relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)]
+                                                       | unless no_named (wrap named_argument name as identifier ':' value: term) more [literal_tail]
                                                        | more [literal_tail])
                         | bare: aggregate_literal
                         | literal: negation
@@ -453,7 +452,8 @@ tree rr {
   choice negated_term   = reread parenthesized more1 pattern_tail
                         | reread parenthesized_strict pattern_tail
   choice comparison_tail = wrap comparison left operator: comparison_operator right: term
-  choice pattern_tail   = wrap pattern_match subject '~' pattern: code_literal
+  # A pattern's literal, then `at` and a string: the node kind it selects.
+  choice pattern_tail   = wrap pattern_match subject '~' pattern: code_literal [at_on 'at' selector: string]
   # After a primary: the rest of its product, then of its term.
   choice more           = (wrap binary_expression left operator: multiplicative right: primary)* (wrap binary_expression left operator: additive right: product)*
   choice comparison_operator = '=' | '!=' | '<' | '<=' | '>' | '>='
@@ -488,7 +488,8 @@ tree rr {
   # The aggregates' words but `count`: each the word of its level, which a wrap or a reading
   # gives back its own kind (`as aggregate_word`).
   remember aggregate_word
-  choice aggregate_word = 'min' | 'max' | 'sum' | 'mean' | 'join'
+  # `product`, the one past `join`, has no kind of its own: an identifier, as the engine stores it.
+  choice aggregate_word = 'min' | 'max' | 'sum' | 'mean' | 'join' | 'product' as identifier
   # The aggregate around its word, which takes its own kind back.
   # `count` with a body alone: implied, so dropped once the aggregate holds it.
   choice count_agg      = wrap aggregate _ drop agg_body
@@ -517,9 +518,10 @@ tree rr {
   # An aggregate's word in a value, read as in any other term.
   choice word_in_value nested = aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
                              | (wrap call function as identifier arguments: agg_argument_list) [wrap aggregate _ reread aggregate_value agg_body]] more
-  choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '{' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
+  choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '{' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include' | hash_word as identifier
+  # A `#` word but `#include`: an identifier with no field, as the engine stores any token on the line.
   # A setting's: every punctuation but `{`, which opens a JSON object.
-  choice setting_punctuation = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
+  choice setting_punctuation = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include' | hash_word as identifier
   # A type's `<>`, and an io relation's `()`: stored, as the named children do not say them.
   choice angle_close    = '>'
   choice paren_close    = ')'
@@ -556,13 +558,14 @@ tree rr {
   implied conjunction ','
   implied group '(' ')'
   implied negation '!'
-  implied pattern_tail '~'
+  implied pattern_tail '~' 'at'
   implied unsigned ':'
+  implied literal ':'
   implied parenthesized_expression '(' ')'
   implied functor_call '@'
   implied aggregated ','
   implied agg_body '{' '}'
   implied keyed_body '}'
-  hidden float_after line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens
+  hidden float_after line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens at_on
   extra comment
 }

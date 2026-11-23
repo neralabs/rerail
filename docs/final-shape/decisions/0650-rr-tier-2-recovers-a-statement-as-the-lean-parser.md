@@ -103,7 +103,17 @@ lean's, byte for byte. The probe stays, as the tally of what still refuses.
 
 ## Steps
 
-1. The grammar's gaps where it refuses what lean reads, closed in `rr.bitlex`.
+1. The grammar's gaps where it refuses what lean reads, closed in `rr.bitlex`. Done:
+   - `at_on` and a pattern's `selector`;
+   - a `#` word in a line's punctuation (`hash_word as identifier`): `hash_word`'s keywords are no longer
+     `required`, so a `#` word but `#include` is a token kind of its own, and `io_bare` names both;
+   - a named argument at a literal's start (`unless no_named`, as lean's `primary`);
+   - `product` among the aggregates' words, an identifier as lean's `anon` writes it. A `remember` choice's
+     token taken `as` a kind remembers that kind (`grammar.rs`'s `Pos::Tok`, `bitlex_rust`'s `token_choice`);
+   - `fn_uncalled` removed: in a term `functor_call`'s arguments refuse what it did, and in a line it was wrong.
+
+   The probe now finds no refusal of a text lean reads with no error, but for the limits and tier 1's.
+   `the_grammar_reads_what_the_engine_reads` holds each case.
 2. `recover` in the grammar language, the `line_dot` mark, the calls form's recovery, the provisional check at the
    statement's end, and the fuzz over the calls form.
 3. The device loop.

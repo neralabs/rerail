@@ -294,7 +294,9 @@ pub mod tests {
         // takes nowhere tested by `TOKEN`, once a token, not by each state (0139): 3,515. A
         // number's 19 digits checked at its token (`CHECK`, 0133) in the arms that take one: 3,563.
         // A float one token, made a float by the mark after it (`relabel _ as float`): 3,322.
-        assert!(states <= 413 && arms <= 3004 && c.program.words.len() <= 3322, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // What the engine reads and the grammar refused, read (0650: `#` words on a line, a named
+        // argument at a literal's start, `product`, a pattern's selector): 406 states, 3,097 arms.
+        assert!(states <= 413 && arms <= 3097 && c.program.words.len() <= 3322, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
@@ -761,6 +763,10 @@ pub mod tests {
                     taken[k] += 1;
                     // The engine's, and the lean parser's rows byte for byte.
                     if t != engine {
+                        if differ.is_empty() {
+                            let at = t.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(t.len().min(engine.len()));
+                            eprintln!("file {i} differs from byte {at}: {}", rerail_tape_format::place(&engine, at));
+                        }
                         differ.push((i, k));
                     }
                 }
@@ -1522,16 +1528,45 @@ pub mod tests {
         }
     }
 
+    /// What the engine's parser reads and the grammar once refused (decision 0650): a `#` word in a
+    /// setting's line and a declaration's tail, a named argument at a literal's start, `product`'s
+    /// aggregate, a pattern's selector. Taken by every shape and the interpreter, as the engine's tape.
+    #[test]
+    fn the_grammar_reads_what_the_engine_reads() {
+        let c = crate::compiled().expect("compiles");
+        let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let head = ".decl a(x: number, y: number)\n";
+        let cases = [
+            ".policy \"p\" revi#sion 1\n".to_owned(),
+            ".scope include \"**/*\" #include \"x\"\n".to_owned(),
+            format!("{head}.decl b(p: number)#\n"),
+            format!("{head}.decl b(p: number) #x inline\n"),
+            format!("{head}b(n) :- a(n, _), cont : {{ a(n, 1) }} = 0.\n"),
+            format!("{head}b(k) :- a(_, k), k = product w : {{ a(w, _) }}.\n"),
+            format!("{head}b(k) :- a(_, k), k = product(w) : {{ a(w, _) }}.\n"),
+            format!("{head}b(n) :- a(n, _), n ~ `x` at \"call\".\n"),
+            format!("{head}b(n) :- a(n, _), !n ~ `x` at /* c */ \"call\", n ~ `y`.\n"),
+        ];
+        for src in &cases {
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert!(interp.is_ok(), "{src}: the interpreter {:?}", interp.as_ref().err());
+            for p in [&c.parser, &machine.parser] {
+                assert_eq!(p.image(src.as_bytes()).ok(), Some(crate::engine_tape(src)), "{src}: the engine's tape");
+            }
+        }
+    }
+
     /// The token marks the grammar takes nowhere (`TokenMark::refuses`): `TOKEN` tests them, once
-    /// a token, and no state does. A functor named, not called, before a token that can not
-    /// follow it; an I/O directive with no relation before an `#include` or at the end: refused
-    /// by every shape and the interpreter, comments between the tokens or none; else taken, as
-    /// the engine's tape.
+    /// a token, and no state does. An I/O directive with no relation before an `#include` or at
+    /// the end: refused by every shape and the interpreter, comments between the tokens or none;
+    /// else taken, as the engine's tape. A functor named, not called, in a term: refused by its
+    /// call's arguments (no mark: in a setting's line or a declaration's tail it is a word, as the
+    /// engine reads it; decision 0650).
     #[test]
     fn refusing_token_marks_refuse_at_any_level() {
         let c = crate::compiled().expect("compiles");
         let refusing = c.program.token_marks.iter().filter(|m| m.refuses).count();
-        assert_eq!(refusing, 3, "`no_value`, `fn_uncalled`, `io_bare`");
+        assert_eq!(refusing, 2, "`no_value`, `io_bare`");
         let words = c.program.words.iter().filter(|&&w| rerail_compiler::program::split(w).0 == rerail_compiler::program::MARK);
         assert!(words.clone().all(|&w| !c.program.token_marks.iter().any(|m| m.refuses && m.order == rerail_compiler::program::split(w).1 % 32)), "no state tests a refusing mark");
         let machine = crate::compile_with(rerail_bitlex::bitlex_masks::Shape::Machine).expect("compiles as one machine");
@@ -1542,6 +1577,8 @@ pub mod tests {
             (format!("{head}a(x) :- a(y), x = @f.\n"), false),
             (format!("{head}a(x) :- a(y), x = @f /* c */ .\n"), false),
             (format!("{head}a(x) :- a(y), x = @f + 1.\n"), false),
+            (format!("{head}.mode st@eer\n"), true),
+            (format!("{head}.decl b(x: number) @f inline\n"), true),
             (format!("{head}.input a\n"), true),
             (format!("{head}.output a, a\n.input a\n"), true),
             (format!("{head}.input\n.decl b(x: number)\n"), true),
