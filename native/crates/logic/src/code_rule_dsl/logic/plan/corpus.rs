@@ -8433,6 +8433,34 @@ fn run_observed_within(
                     let _whole = std::env::var_os("RERAIL_CROSS_DEMAND_SPLIT").is_none().then(super::demand::whole_relations);
                     let verify_stats = std::env::var_os("RERAIL_CROSS_VERIFY").map(|_| stats.clone());
                     let s = span("plan and evaluate");
+                    // Nothing to run (t33 K4): no stratum the cut runs, none derived and no input changed. Every
+                    // relation is clean, its rows the kept part's, and the outputs are the clean ones it holds
+                    // (`cut.outputs`, below): the program is not normalized, planned or walked, as a run that reaches
+                    // no stratum would walk it to no effect.
+                    // What is read after it (typing's `returns`): a clean relation's rows where the kept part holds
+                    // them, an input's where the run binds it, else none (nothing is derived: the run makes none).
+                    let wanted_kept: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = cell
+                        .as_ref()
+                        .map(|k| {
+                            wanted
+                                .iter()
+                                .filter_map(|w| {
+                                    let clean = cut.clean.contains(w).then(|| k.kept(w).map(|(h, _)| h.source((0..fields.width(w)).map(|c| format!("c{c}")).collect()))).flatten();
+                                    clean.or_else(|| cross_inputs.iter().find(|(r, _)| r == w).map(|(_, src)| Arc::clone(src))).map(|src| (w.clone(), src))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    // Each output is then read where it is: a clean one from the kept part (`clean_outputs`), one that is
+                    // an input (a part's findings handed on) where the run binds it. Any other (a view of an input, any
+                    // output of a run with no kept part) needs the run.
+                    let bound_outputs: Vec<&str> = cross_f.outputs().filter(|o| !cut.clean.contains(*o)).collect();
+                    let quiet = driven
+                        && cut.strata.0 == 0
+                        && cut.changed.is_empty()
+                        && cell.is_some()
+                        && bound_outputs.iter().all(|o| cross_inputs.iter().any(|(r, _)| r == o))
+                        && cut.derived(&cross_sccs)?.is_empty();
                     // A derived relation derived again (no delta: every one of a cold run's, a new build's first) is handed
                     // off once no later stratum reads it, its frame made then, and the engine drops its rows (Q74): only
                     // where the frames are written, and not one the caller reads after the run or a check reads. One
@@ -8491,6 +8519,16 @@ fn run_observed_within(
                         Ok(())
                     };
                     let got = match driven.then_some(()) {
+                        Some(()) if quiet => {
+                            for (rel, s) in wanted_kept {
+                                if rel == "returns" {
+                                    returns = (0..s.len()).map(|i| (0..2).map(|c| s.value(i, c)).collect()).collect();
+                                }
+                            }
+                            crate::code_rule_dsl::logic::profile::decision("maintenance driven by deltas (decision 0117 step 3)", || format!("nothing to run: 0 of {} strata, no input changed; not walked", cut.strata.1));
+                            let (outputs, nodes) = super::decode_bound(db, cross, &bound_outputs)?;
+                            Outcome { walked: (0, cut.strata.1, cut.strata.1), outputs, nodes, ..Default::default() }
+                        }
                         // Decision 0117 step 3: the base program, each stratum maintained by its own form when reached.
                         Some(()) => {
                             let kept = cell.as_ref().expect("a driven run has a kept part");

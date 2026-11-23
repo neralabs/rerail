@@ -8590,6 +8590,19 @@ pub fn decode_kept(
     decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &names)
 }
 
+/// Outputs `rels` of `lowered` that are its inputs, as a run with nothing to derive gives them (t33 K4): read where
+/// the run binds them in `db`, decoded as `decoded_outputs` decodes an input's rows.
+#[allow(clippy::type_complexity)]
+pub fn decode_bound(
+    db: &Connection,
+    lowered: &lower::Lowered,
+    rels: &[&str],
+) -> Result<(BTreeMap<String, std::sync::Arc<output::Rows>>, BTreeMap<String, Vec<usize>>)> {
+    let placed = lowered.placed()?;
+    let f = placed.fields()?;
+    decoded_outputs(rels, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, Some(lowered.lowering()), "", true, &BTreeSet::new(), &BTreeSet::new())
+}
+
 /// The program's outputs as rows (decision 0239: symbols, kinds and fields as their text, every other value as it
 /// is; no row printed), and per output the columns that hold nodes.
 #[allow(clippy::type_complexity)]
