@@ -283,6 +283,14 @@ through `relax_vfs_shown`, the host's `shown`, which names each folder mount's p
 does. A run that starts its own program again keeps the mount's paths, because its stores are
 keyed by them.
 
+### 17. A guarded or-arm's guard locals are made at the arm's start
+
+Relax lowers a guarded arm's guard once per or-alternative, as rustc tries each candidate. A local
+the guard declares (`matches!(t, A(_, e) | B(_, e) if { let mut v = …; v.contains(n) })`) had its
+slot address made at the first lowering, in the first alternative's blocks, and the other
+alternatives read that register undefined: a segfault in safe code (rerail-rr-parser). The
+lowering now makes those addresses at the arm's start (`guard_slots` in `lower.rs`).
+
 ## Sharing between worktrees
 
 Relax keys a run's stores by the workspace's absolute paths. Under `RELAX_SHARE=rerail` every
