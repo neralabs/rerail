@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { engineSources, isEngineInput } from "../../../scripts/check/ci/engine-inputs.mjs";
-import { affected, namedPaths, names, outputs, seen, shards, stringLiterals } from "../../../scripts/check/ci/test-selection.mjs";
+import { affected, namedPaths, names, outputs, seen, select, shards, stringLiterals } from "../../../scripts/check/ci/test-selection.mjs";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -102,5 +102,15 @@ describe("shards and outputs", () => {
   it("run Linux's shards and no Windows shard for prose alone", () => {
     expect(outputs({ unit: "some", tests: ["test/a.test.ts"], all: 449, windowsExtra: true, prose: true })).toEqual({ unit: "some", "unit-tests": "test/a.test.ts", "unit-shards": "[1]", "windows-shards": "[]" });
     expect(outputs({ unit: "none", tests: [], all: 449, windowsExtra: true, prose: true })["windows-shards"]).toBe("[]");
+  });
+
+  // On this repository: vitest's list and every test file's import closure, which take seconds.
+  it("give a change of prose alone no Windows shard, and one that also changes code its Windows shards", { timeout: 120_000 }, async () => {
+    const prose = await select(ROOT, [".changeset/x.md", "docs/release.md"]);
+    expect(prose.prose).toBe(true);
+    expect(outputs(prose)["windows-shards"]).toBe("[]");
+    const code = await select(ROOT, [".changeset/x.md", "docs/release.md", "src/cli/cli.ts"]);
+    expect(code.prose).toBe(false);
+    expect(JSON.parse(outputs(code)["windows-shards"]).length).toBeGreaterThan(0);
   });
 });
