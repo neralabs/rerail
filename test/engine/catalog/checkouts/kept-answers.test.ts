@@ -11,9 +11,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
 import { declaredSubmodulePaths, keptSubmoduleCount } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
 import { keptConfigCount } from "../../../../src/engine/catalog/checkouts/git-placement.js";
+import { keptRemoteCount } from "../../../../src/engine/catalog/checkouts/kept-remote.js";
 import {
   keptAnswerCounts,
-  keptRemoteCount,
   readRemoteAddress,
   repositoryIdentityLocation,
   worktreeRegistry,

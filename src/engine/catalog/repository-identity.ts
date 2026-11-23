@@ -14,11 +14,10 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { checkoutRealpath, physicalPath, storedForm, storedPath } from "./checkout-control.js";
 import {
   filePlacementInputs,
-  fileText,
   forgetGoneConfigs,
   gitEntryFacts,
   linkedWorktreeFromFiles,
@@ -32,9 +31,17 @@ import {
 } from "./checkouts/git-placement.js";
 import { foldersGitSearches } from "./checkouts/git-search.js";
 import { forgetGoneSubmodules } from "./checkouts/declared-submodules.js";
+import {
+  forgetGoneRemotes,
+  keepRemote,
+  keptRemote,
+  remoteSource,
+  remoteSourceWithoutBlocking,
+  type RemoteAddress,
+  type RemoteSource,
+} from "./checkouts/kept-remote.js";
 import { openNoFollowSync } from "../no-follow.js";
-import { learnGitAccess, standingGitAccess } from "../native/git-access.js";
-import { GitUnavailableError, gitHome, gitText, runGit, runGitAsync, sharedRead, type GitReadOptions, type GitReads, type GitResult, type SharedRead } from "../git.js";
+import { GitUnavailableError, gitText, runGit, runGitAsync, sharedRead, type GitReadOptions, type GitReads, type GitResult, type SharedRead } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
 /** Where a checkout keeps its clone id, and which checkout it is. */
@@ -484,7 +491,8 @@ function keepList(place: RegistryPlace, registry: WorktreeRegistry & { readonly 
  * holds only the lists of its own repositories, whose folders Git's list reads too.
  */
 function forgetGone(common: string): void {
-  for (const kept of [heldTopLevels, gitAcceptances, keptRemotes]) forgetGoneFrom(kept, common);
+  for (const kept of [heldTopLevels, gitAcceptances]) forgetGoneFrom(kept, common);
+  forgetGoneRemotes(common);
   forgetGoneSubmodules(common);
   forgetGoneConfigs(common);
 }
@@ -497,11 +505,6 @@ function forgetGoneFrom(kept: Map<string, { readonly common: string }>, common: 
 /** How many answers each map keeps: for tests, which count what a removed worktree leaves behind. */
 export function keptAnswerCounts(): { readonly heldTopLevels: number; readonly gitAcceptances: number; readonly gitPlacedCommons: number } {
   return { heldTopLevels: heldTopLevels.size, gitAcceptances: gitAcceptances.size, gitPlacedCommons: gitPlacedCommons.size };
-}
-
-/** How many clones' remotes are kept ({@link readRemoteAddress}): for tests, which count what a removed worktree leaves behind. */
-export function keptRemoteCount(): number {
-  return keptRemotes.size;
 }
 
 /**
@@ -855,10 +858,7 @@ export function resolveCloneId(
   return { cloneId: readOrCreateIdentity(location.identityPath, () => recordedIdAt?.(location) ?? randomUUID()), location };
 }
 
-export interface RemoteAddress {
-  name: string;
-  url: string;
-}
+export type { RemoteAddress } from "./checkouts/kept-remote.js";
 
 /**
  * The checkout's `origin` remote, else its only remote; undefined with no remote or several and no `origin`. Git's
@@ -869,168 +869,21 @@ export interface RemoteAddress {
  */
 export function readRemoteAddress(root: string): RemoteAddress | undefined {
   const source = remoteSource(root);
-  const kept = source === undefined ? undefined : keptRemotes.get(source.key);
-  if (kept !== undefined && kept.facts === source?.facts) return kept.remote;
+  const kept = keptRemote(source);
+  if (kept !== undefined) return kept.remote;
   const answers: GitResult[] = [];
   for (let step = remoteStep(answers); "ask" in step; step = remoteStep(answers)) answers.push(runGit(root, step.ask));
-  return keepRemote(source, answers);
+  return answeredRemote(source, answers);
 }
 
 /** {@link readRemoteAddress} for `root` learnt without blocking the caller's thread, unless a kept answer stands. */
 export async function learnRemoteAddress(root: string, options: GitReadOptions = {}): Promise<void> {
   const source = await remoteSourceWithoutBlocking(root, options);
-  if (source === undefined || keptRemotes.get(source.key)?.facts === source.facts) return;
+  if (source === undefined || keptRemote(source) !== undefined) return;
   const answers: GitResult[] = [];
   // Each question depends on the answer before it.
   for (let step = remoteStep(answers); "ask" in step; step = remoteStep(answers)) answers.push(await runGitAsync(root, step.ask, options));
-  keepRemote(source, answers);
-}
-
-/** A remote Git named, "none" included, and the facts it rested on. */
-interface KeptRemote {
-  readonly facts: string;
-  readonly remote: RemoteAddress | undefined;
-  /** The clone's common Git folder, as {@link heldTopLevels} keeps it: the answer leaves once its Git folder is gone ({@link forgetGone}). */
-  readonly common: string;
-}
-
-/**
- * Each clone's remote, by where its remotes are read from: the common Git folder, which every worktree of the clone
- * shares, or a worktree's own `config.worktree`, by that file's path, so the main checkout's, which is in the common
- * folder, keeps an answer apart from the one its other worktrees share.
- */
-const keptRemotes = new Map<string, KeptRemote>();
-
-interface RemoteSource {
-  readonly key: string;
-  readonly facts: string;
-  readonly common: string;
-}
-
-/**
- * {@link remoteSource}; where it names none for a checkout placed from its files that the user owns, the engine owner of
- * its Git reads, which names the system files, is made first unless it stands, as Git processes no thread waits on
- * ({@link learnGitAccess}), and the source read again.
- */
-async function remoteSourceWithoutBlocking(root: string, options: GitReadOptions): Promise<RemoteSource | undefined> {
-  const source = remoteSource(root);
-  if (source !== undefined || placementInputs(resolve(root))?.owned !== true) return source;
-  await learnGitAccess(options);
-  return remoteSource(root);
-}
-
-/**
- * Where `root`'s remotes come from, read now ({@link remoteFacts}). Undefined, so Git is asked each time, where Git's
- * placement of `root` is not read from its files ({@link placementInputs}), where another account owns it (Git reads
- * the repository's config only while a `safe.directory` entry trusts it, the system file's too), where a fact cannot
- * be read or named, or where no engine owner of its Git reads stands ({@link systemConfigFiles}).
- */
-function remoteSource(root: string): RemoteSource | undefined {
-  const inputs = placementInputs(resolve(root));
-  if (inputs === undefined || !inputs.owned) return undefined;
-  const own = configText(join(inputs.gitFolder, "config.worktree"));
-  const facts = remoteFacts(own, inputs.linkedCommon ?? inputs.gitFolder);
-  return facts === undefined ? undefined : { key: own === NO_FILE ? inputs.realCommon : join(inputs.gitFolder, "config.worktree"), facts, common: inputs.realCommon };
-}
-
-/**
- * Every fact Git reads a clone's remote from but the worktree's `config.worktree` (`own`, its text): the configuration
- * this process hands Git ({@link environmentConfig}), the text of the repository's `config` and of each file outside
- * it ({@link wideConfigFiles}), where an `insteadOf` also rewrites an address, and the common folder's older remote
- * files ({@link olderRemoteFiles}). Undefined where one cannot be read, includes another file, or cannot be named.
- */
-function remoteFacts(own: string | undefined, common: string): string | undefined {
-  const environment = environmentConfig();
-  const wide = wideConfigFiles();
-  if (wide === undefined || INCLUDE.test(environment)) return undefined;
-  const files = [join(common, "config"), ...wide];
-  const texts = [own, ...files.map(configText), olderRemoteFiles(common)];
-  return texts.some(text => text === undefined) ? undefined : [environment, ...files, ...texts].join("\0");
-}
-
-/** The variables through which a process hands Git configuration of its own: `-c`'s, and `GIT_CONFIG_COUNT`'s. */
-const ENVIRONMENT_CONFIG = /^GIT_CONFIG_(?:PARAMETERS|COUNT|KEY_\d+|VALUE_\d+)$/iu;
-
-/** The configuration this process hands every Git it starts, read now: each such variable and its value, one per line. */
-function environmentConfig(): string {
-  return Object.entries(process.env)
-    .filter(([name]) => ENVIRONMENT_CONFIG.test(name))
-    .map(([name, value]) => `${name}=${value ?? ""}`)
-    .join("\n");
-}
-
-/**
- * The config files outside the repository that Git reads, by path: the system files ({@link systemConfigFiles}) and the
- * person's global ones ({@link globalConfigFiles}). Undefined where one cannot be named for every Git this process
- * starts: Git named no system file, or a path is relative, which each Git opens from its own folder.
- */
-function wideConfigFiles(): string[] | undefined {
-  const system = systemConfigFiles();
-  if (system === undefined) return undefined;
-  const files = [...system, ...globalConfigFiles()];
-  return files.every(file => isAbsolute(file)) ? files : undefined;
-}
-
-/** The values Git's boolean reading takes as true, read case-blind; any other value of `GIT_CONFIG_NOSYSTEM` reads the system files too. */
-const GIT_TRUE = /^(?:1|true|yes|on)$/iu;
-
-/**
- * The system files Git reads: none under `GIT_CONFIG_NOSYSTEM`; else `GIT_CONFIG_SYSTEM`, or where it is unset the file
- * Rerail's Git was built to read, as the engine's owner of its Git reads names it, with the file Apple Git reads beside
- * it. Undefined where Git named no system file, or no owner stands ({@link standingGitAccess}): this read loads no
- * engine and asks Git nothing to make one.
- */
-function systemConfigFiles(): string[] | undefined {
-  if (GIT_TRUE.test(process.env["GIT_CONFIG_NOSYSTEM"] ?? "")) return [];
-  const access = standingGitAccess();
-  if (access === undefined) return undefined;
-  const named = process.env["GIT_CONFIG_SYSTEM"] ?? access.systemConfig;
-  return named === null ? undefined : [named, access.installationConfig].filter(file => file !== null);
-}
-
-/**
- * The person's global files: `GIT_CONFIG_GLOBAL` when set, else `.gitconfig` in Git's home ({@link gitHome}) and
- * `git/config` in `XDG_CONFIG_HOME` or that home's `.config`.
- */
-function globalConfigFiles(): string[] {
-  const named = process.env["GIT_CONFIG_GLOBAL"];
-  if (named !== undefined && named !== "") return [named];
-  const xdg = process.env["XDG_CONFIG_HOME"];
-  return [join(gitHome(), ".gitconfig"), join(xdg === undefined || xdg === "" ? join(gitHome(), ".config") : xdg, "git", "config")];
-}
-
-/**
- * {@link NO_FILE} while the common Git folder holds neither of the older forms Git still reads a remote from when its
- * configuration gives it no address, `remotes/<name>` and `branches/<name>`; undefined where it holds one or cannot be
- * read, so Git is asked each time.
- */
-function olderRemoteFiles(common: string): string | undefined {
-  return ["remotes", "branches"].every(folder => entryCount(join(common, folder)) === 0) ? NO_FILE : undefined;
-}
-
-/** How many entries the folder at `path` holds: 0 where nothing is there, undefined where it cannot be read. */
-function entryCount(path: string): number | undefined {
-  try {
-    return readdirSync(path).length;
-  } catch (error) {
-    return errorCode(error) === "ENOENT" ? 0 : undefined;
-  }
-}
-
-const NO_FILE = "\0none";
-/**
- * Text that may include another file, which this source does not follow: a section opens anywhere on a line
- * (`[core] [include] path = ...`), and the environment names the key itself (`include.path`).
- */
-const INCLUDE = /include/iu;
-/**
- * A config file's text, read now as Git reads it ({@link fileText}); {@link NO_FILE} when nothing is there; undefined
- * when it is no regular file, cannot be read or includes another.
- */
-function configText(path: string): string | undefined {
-  const read = fileText(path);
-  if (read === "none") return NO_FILE;
-  return read === undefined || INCLUDE.test(read.text) ? undefined : read.text;
+  answeredRemote(source, answers);
 }
 
 /** The next Git question on the way to a checkout's remote, given the answers so far, or the remote they give. */
@@ -1067,10 +920,10 @@ function soleRemoteStep(names: GitResult, url: GitResult | undefined): RemoteSte
  * The remote the answers give, kept under the source's facts only when Git answered every question: a Git that failed
  * answers no remote, as before, and is asked again next time.
  */
-function keepRemote(source: RemoteSource | undefined, answers: readonly GitResult[]): RemoteAddress | undefined {
+function answeredRemote(source: RemoteSource | undefined, answers: readonly GitResult[]): RemoteAddress | undefined {
   const step = remoteStep(answers);
   const remote = "remote" in step ? step.remote : undefined;
-  if (source !== undefined && answers.every(answer => answer.status === 0)) keptRemotes.set(source.key, { facts: source.facts, remote, common: source.common });
+  if (source !== undefined && answers.every(answer => answer.status === 0)) keepRemote(source, remote);
   return remote;
 }
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;

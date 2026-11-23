@@ -166,8 +166,12 @@ export async function learnGitAccess(options: GitReadOptions = {}): Promise<void
   await sharedRead(learning, "installation", options, async () => await learnedGitAccess(options).catch(() => undefined));
 }
 
-/** Makes the owner from asks run without blocking; nothing where `options.signal` stopped them. */
+/**
+ * Makes the owner from asks run without blocking; nothing where `options.signal` stopped them, or where an owner stands
+ * already, which a blocking ask may have made while a stopped ask ran and before this one began.
+ */
 async function learnedGitAccess(options: GitReadOptions): Promise<void> {
+  if (standingGitAccess() !== undefined) return;
   const binding = loadNativeBinding();
   const report = await readGitInstallationWithoutBlocking(options);
   if (report === undefined) return;

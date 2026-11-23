@@ -211,6 +211,43 @@ describe("the engine's Git installation learnt without blocking", () => {
     expect(standingGitAccess()?.systemConfig).toBe("/opt/git/etc/gitconfig");
   });
 
+  it("returns at once for a caller whose own signal was aborted before it joined an ask another caller started", async () => {
+    const { learnGitAccess, standingGitAccess, asks } = await freshGitAccess();
+    const held = Promise.withResolvers<void>();
+    asks.mockImplementation(async (cwd, args) => {
+      await held.promise;
+      return await answered(cwd, args);
+    });
+    const starter = learnGitAccess();
+    // Its abort event fired before it joined, so none reaches it while it waits.
+    const stopping = new AbortController();
+    stopping.abort();
+    let asking = true;
+    const joiner = learnGitAccess({ signal: stopping.signal }).then(() => asking);
+    setImmediate(() => {
+      asking = false;
+      held.resolve();
+    });
+    expect(await joiner).toBe(true);
+    await starter;
+    expect(standingGitAccess()?.systemConfig).toBe("/opt/git/etc/gitconfig");
+  });
+
+  it("asks nothing again for a caller whose shared ask was stopped once a blocking ask made the owner meanwhile", async () => {
+    const { learnGitAccess, nativeGitAccess: blockingAccess, standingGitAccess, asks } = await freshGitAccess();
+    const first = new AbortController();
+    asks.mockImplementationOnce(async (...ask) => {
+      // Once the other caller has joined, the engine's thread asks Git and makes the owner; then this ask's caller stops.
+      await new Promise(resolve => setImmediate(resolve));
+      blockingAccess();
+      return await abortedWhileAsking(first, ...ask);
+    });
+    const before = asks.mock.calls.length;
+    await Promise.all([learnGitAccess({ signal: first.signal }), learnGitAccess({ signal: new AbortController().signal })]);
+    // The stopped ask's two: the live caller, asking again, finds the owner standing and asks nothing.
+    expect({ asks: asks.mock.calls.length - before, standing: standingGitAccess() !== undefined }).toEqual({ asks: 2, standing: true });
+  });
+
   it("keeps the owner a blocking ask made while its own asks ran", async () => {
     const { learnGitAccess, nativeGitAccess: blockingAccess, standingGitAccess, asks } = await freshGitAccess();
     const held = Promise.withResolvers<void>();

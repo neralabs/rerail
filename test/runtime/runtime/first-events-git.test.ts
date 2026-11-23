@@ -132,11 +132,14 @@ describe("a repository's first events in a daemon", () => {
     const { root, checkouts, databasePath } = startedRepository(3);
     const [main] = checkouts as [string];
     const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, autostart: false, embedder: testEmbedder });
-    // The pass over the other worktrees waits here until the case lets it go.
+    // The pass over the other worktrees waits here, at each linked worktree, until the case lets it go.
     const pass = Promise.withResolvers<void>();
-    const learnt: string[] = [];
+    const [learnt, held]: [string[], string[]] = [[], []];
     submoduleReads.before = async checkout => {
-      if (basename(checkout).startsWith("wt-")) await pass.promise;
+      if (basename(checkout).startsWith("wt-")) {
+        held.push(basename(checkout));
+        await pass.promise;
+      }
       learnt.push(basename(checkout));
     };
     let timer: NodeJS.Timeout | undefined;
@@ -144,7 +147,8 @@ describe("a repository's first events in a daemon", () => {
       const opening = runtime.ingest({ kind: "session-start", eventId: "own-start", session: { host: "claude-code", sessionId: "own", cwd: main } });
       const bound = new Promise<string>(resolve => (timer = setTimeout(() => resolve("still waiting after 10 s"), 10_000)));
       expect(await Promise.race([opening.then(() => "answered"), bound])).toBe("answered");
-      expect(learnt).toEqual(["main"]);
+      // The pass reached the linked worktrees and waits there, the start answered.
+      await vi.waitFor(() => expect(held.length).toBeGreaterThan(0), { timeout: 10_000, interval: 20 });
       pass.resolve();
       await vi.waitFor(() => expect(learnt.toSorted()).toEqual(["main", ...checkouts.map(checkout => basename(checkout))].toSorted()), { timeout: 10_000, interval: 20 });
     } finally {
