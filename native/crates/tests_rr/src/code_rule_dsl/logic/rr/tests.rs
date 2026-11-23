@@ -6163,15 +6163,15 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
         }
         let whole_rules = lower::rule_digests(&w);
         let today = lower::link_versions(built.clone()).unwrap();
-        let today_rules: usize = std::iter::once(&today.first).chain(today.appended.iter().map(|(v, _, _)| v)).map(|v| v.rules().count()).sum();
+        let today_rules: usize = today.version.rules().count();
         let helpers = |rules: &BTreeSet<(String, [u8; 32])>| rules.iter().map(|(h, _)| h).filter(|h| h.starts_with("rr_")).collect::<BTreeSet<_>>().len();
-        let today_helpers: BTreeSet<String> = std::iter::once(&today.first).chain(today.appended.iter().map(|(v, _, _)| v)).flat_map(|v| v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect::<Vec<_>>()).filter(|h| h.starts_with("rr_")).collect();
+        let today_helpers: BTreeSet<String> = today.version.rules().map(|r| today.version.rel_name(r.head().rel()).to_owned()).filter(|h| h.starts_with("rr_")).collect();
         let whole_today_helpers: BTreeSet<String> = whole_m.version().rules().map(|r| whole_m.version().rel_name(r.head().rel()).to_owned()).filter(|h| h.starts_with("rr_")).collect();
         let only = |a: &BTreeSet<(String, [u8; 32])>, b: &BTreeSet<(String, [u8; 32])>| a.difference(b).map(|(h, _)| h.clone()).collect::<BTreeSet<_>>().into_iter().take(6).collect::<Vec<_>>().join(", ");
         let strip = |l: &str| -> String {
             l.split(|c: char| !(c.is_alphanumeric() || c == '_')).map(|w| if w.starts_with("rr_") { if w.len() > 17 && w.as_bytes()[w.len() - 17] == b'_' && w[w.len() - 16..].bytes().all(|b| b.is_ascii_hexdigit()) { w[..w.len() - 17].to_owned() } else { w.trim_end_matches(|c: char| c.is_ascii_digit()).to_owned() } } else { w.to_owned() }).collect::<Vec<_>>().join(" ")
         };
-        let today_lines: BTreeSet<String> = std::iter::once(&today.first).chain(today.appended.iter().map(|(v, _, _)| v)).flat_map(|v| v.rules().map(|r| strip(&v.show_rule(r))).collect::<Vec<_>>()).collect();
+        let today_lines: BTreeSet<String> = today.version.rules().map(|r| strip(&today.version.show_rule(r))).collect();
         let content_lines: BTreeSet<String> = built.iter().enumerate().flat_map(|(u, m)| {
             let (v, _) = named(m, &format!("module {u}"));
             v.rules().map(|r| strip(&v.show_rule(r))).collect::<Vec<_>>()
@@ -6302,10 +6302,7 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
             use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
             let linked = lower::link_versions(built.clone()).unwrap();
             let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = linked.lowered;
-            let mut p = Pipeline::new("spike: the tail to kind sets", linked.first);
-            for (own, stated, own_stated) in linked.appended {
-                p.program(&mut lt::AppendModule { own, stated, own_stated });
-            }
+            let mut p = Pipeline::new("spike: the tail to kind sets", linked.version);
             p.program(&mut Passes).program(&mut CrossingCycles);
             p.program(&mut lt::ThreeValued { three, modal });
             p.program(&mut lt::Findings { pending: findings, library: None });
@@ -6396,7 +6393,7 @@ fn modules_named_by_content_link_to_the_whole_lowering() {
             }
         }
         let linked = lower::link_versions(modules).unwrap();
-        let versions: Vec<&Arc<Version>> = std::iter::once(&linked.first).chain(linked.appended.iter().map(|(v, _, _)| v)).collect();
+        let versions: Vec<&Arc<Version>> = vec![&linked.version];
         let whole = lower::lower_module_in_written(whole, &[]).unwrap();
         let lines = |vs: &[&Arc<Version>]| -> BTreeSet<String> { vs.iter().flat_map(|v| v.rules().map(|r| plain(&v.show_rule(r))).collect::<Vec<_>>()).collect() };
         let helpers = |vs: &[&Arc<Version>], tier: &str| -> BTreeSet<String> { vs.iter().flat_map(|v| v.declared_names()).filter(|r| r.starts_with(tier)).collect() };
@@ -6470,6 +6467,26 @@ fn a_program_linked_from_its_modules_is_its_whole_lowering() {
     assert!(compared > 10, "{compared} programs compared");
 }
 
+/// Decision 0639 §4: a program's union extends its library's, which is made once for its modules: two programs of one
+/// library's modules make it once, and each is linked from it with only its own module added.
+#[test]
+fn programs_of_one_library_share_its_union() {
+    let mut programs = walk_rr(&crate::code_rule_dsl::logic::rr::library().join("../packs/python"));
+    programs.sort();
+    let mut by_files: std::collections::BTreeMap<Vec<PathBuf>, Vec<String>> = Default::default();
+    for path in programs {
+        let Ok(src) = std::fs::read_to_string(&path) else { continue };
+        let Ok(Some(m)) = super::modules(&src) else { continue };
+        by_files.entry(m.files.into_iter().map(|(p, _, _)| p).collect()).or_default().push(src);
+    }
+    let two = by_files.into_values().find(|s| s.len() >= 2).expect("two programs of one library's modules");
+    let before = super::library_unions_made();
+    parse_version(&two[0]).unwrap();
+    assert_eq!(super::library_unions_made(), before + 1, "the first program makes its library's union");
+    parse_version(&two[1]).unwrap();
+    assert_eq!(super::library_unions_made(), before + 1, "the second is linked onto it");
+}
+
 /// T8 (decision 0639 §4): the link is a union with nothing to decide, so two modules that give one relation two
 /// declarations (`link_conflict`), or one helper's name two sets of rules (`helper_conflict`), fail it; modules that
 /// agree link. That no library has either is T1 and T2: every program links.
@@ -6495,6 +6512,47 @@ fn a_link_of_modules_that_clash_fails() {
     let b = lower::with_helper_renamed(b, &hb, &ha).unwrap();
     let clash = super::link_library_versions(vec![a, b]).expect_err("one name, two helpers");
     assert!(clash.to_string().contains("helper_conflict"), "{clash}");
+}
+
+/// Decision 0639 §4, stage B: a library's link is a union over its modules' versions, as their images hold them: each
+/// part is its module's version, no rule copied, and the union reads as its fold (the same rules and digest). An edit
+/// stacks on it as on any version, and a fold of the edit is the edit.
+#[test]
+fn a_linked_library_is_a_union_over_its_modules_images() {
+    use crate::code_rule_dsl::logic::program_image::Builder;
+    let mut programs = walk_rr(&crate::code_rule_dsl::logic::rr::library().join("../packs/python"));
+    programs.sort();
+    let m = programs.iter().find_map(|p| super::modules(&std::fs::read_to_string(p).ok()?).ok().flatten()).expect("a program that includes the library");
+    let paths: Vec<PathBuf> = m.files.into_iter().map(|(p, _, _)| p).collect();
+    let modules = super::library_modules(&paths).unwrap();
+    let held: Vec<Arc<Version>> = modules.iter().map(|m| Arc::clone(m.version())).collect();
+    let linked = lower::link_versions(modules).unwrap();
+    let v = &linked.version;
+    let (header, parts) = v.union_parts().expect("the link is a union");
+    assert_eq!(header.size(), 0, "its header holds no rules");
+    let parts: Vec<_> = parts.collect();
+    assert_eq!(parts.len(), held.len(), "a part a module");
+    assert!(parts.iter().zip(&held).all(|(p, m)| Arc::ptr_eq(&p.version, m)), "each part is its module's version, uncopied");
+    let folded = v.fold().unwrap();
+    assert_eq!((folded.size(), folded.digest()), (v.size(), v.digest()), "the union and its fold: {}", crate::code_rule_dsl::logic::program_image::differences(v, &folded));
+    let shown = |x: &Version| x.rules().map(|r| x.show_rule(r)).collect::<Vec<_>>();
+    assert_eq!(shown(v), shown(&folded), "its rules, in order");
+    // An edit of it: its first rule left out.
+    let first = v.rules().next().unwrap().id();
+    let mut b = Builder::on(v);
+    b.remove(first);
+    let (edited, _) = b.finish().unwrap();
+    assert_eq!(edited.size(), v.size() - 1);
+    let refolded = edited.fold().unwrap();
+    assert_eq!((refolded.size(), refolded.digest()), (edited.size(), edited.digest()), "an edit of the union and its fold");
+    // A view of it numbers as it does, so a rule added on the view is past every rule of the union's.
+    assert_eq!(edited.rule_end(), v.rule_end(), "a view of a union numbers its rules as the union");
+    let mut b = Builder::on(&edited);
+    let added = b.copy(v, v.rule(first).unwrap());
+    let (over, _) = b.finish().unwrap();
+    assert!(added.0 >= v.rule_end() && over.rule(added).is_some(), "a rule added on a view of a union is its own");
+    assert!(over.rules().all(|r| over.rule(r.id()).is_some()), "each rule of an edit of a union is found by its id");
+    assert_eq!(over.digest(), v.digest(), "the rule left out and added back");
 }
 
 /// T7 (decision 0639, Collisions 4): a helper's content name holds every header row that names it, its facts, and

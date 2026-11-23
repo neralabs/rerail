@@ -211,7 +211,7 @@ impl Delta {
             || match &**output {
                 Version::Overlay { parent, .. } => Arc::ptr_eq(parent, input),
                 Version::View { .. } => same_numbering(input, output),
-                Version::Base { .. } => false,
+                Version::Base { .. } | Version::Union { .. } => false,
             }
     }
 
@@ -1834,6 +1834,9 @@ pub enum StoredVersion<'r> {
     Overlay { parent: usize, delta: &'r Arc<super::Image> },
     /// A view of version `parent`: the parent's rules it leaves out, ascending.
     View { parent: usize, removed: Vec<u32> },
+    /// A union (decision 0639 §4): its header, and each part with the ranges of its rules it keeps. Its parts' maps
+    /// are found again from the header's names (`UnionPart::found_in`).
+    Union { header: usize, parts: Vec<(usize, Vec<(u32, u32)>)> },
 }
 
 /// What a store keeps of a run's step: its pass, its input and output (in the run's table), its writer's form, and
@@ -1938,6 +1941,10 @@ impl Run {
                 Version::View { parent, .. } => {
                     let removed = parent.rules().map(|r| r.id()).filter(|&id| !v.contains(id)).map(|id| id.0).collect();
                     StoredVersion::View { parent: add(parent, table, out), removed }
+                }
+                Version::Union { header, parts, .. } => {
+                    let header = add(header, table, out);
+                    StoredVersion::Union { header, parts: parts.iter().map(|(p, _)| (add(&p.version, table, out), p.keep.clone())).collect() }
                 }
             };
             table.push(v);

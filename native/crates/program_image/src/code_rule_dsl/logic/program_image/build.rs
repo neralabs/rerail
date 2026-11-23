@@ -260,7 +260,7 @@ impl<'p> Builder<'p> {
         let at = self.enc.begin_rule();
         let n = rule.nodes();
         let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
-        self.enc.copy_nodes(from, rule.image(), n.start + 1..n.end, &vars, same);
+        self.enc.copy_nodes(from, rule.image(), rule.map(), n.start + 1..n.end, &vars, same);
         self.enc.end_rule(at);
         id
     }
@@ -321,8 +321,9 @@ impl<'p> Builder<'p> {
         self.enc.set_from(id.0 - self.enc.rule_base(), source);
         id
     }
+    /// Whether `rule`'s ids are this builder's as its image holds them: a union's part's are mapped (`RuleRef::map`).
     fn same(&self, rule: RuleRef<'_>) -> bool {
-        self.ids.is_some_and(|v| v.holds_image(rule.image()))
+        rule.map().is_none() && self.ids.is_some_and(|v| v.holds_image(rule.image()))
     }
     /// Starts a rule written term by term.
     pub fn rule(&mut self) -> RuleBuilder<'_, 'p> {
@@ -476,7 +477,7 @@ impl<'p> Builder<'p> {
         let same = self.same(rule);
         let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
         let at = self.enc.begin_rule();
-        let mut w = Walk { enc: &mut self.enc, from, im: rule.image(), vars: &vars, same, prefix: Vec::new() };
+        let mut w = Walk { enc: &mut self.enc, from, im: rule.image(), map: rule.map(), vars: &vars, same, prefix: Vec::new() };
         w.atom(rule.head(), Site::Head(rule.head()), rw);
         for l in rule.body() {
             if rw.keep(l) {
@@ -1027,7 +1028,7 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
         let n = lit.node();
         let size = rule.image().node(n).1;
-        self.b.enc.copy_nodes(from, rule.image(), n..n + size, &vars, same);
+        self.b.enc.copy_nodes(from, rule.image(), rule.map(), n..n + size, &vars, same);
         self
     }
     /// A literal of `from`'s rule `rule`, copied through `rw` (its variables renamed, terms replaced): a literal of one
@@ -1036,7 +1037,7 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self.body();
         let same = self.b.same(rule);
         let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
-        let mut w = Walk { enc: &mut self.b.enc, from, im: rule.image(), vars: &vars, same, prefix: Vec::new() };
+        let mut w = Walk { enc: &mut self.b.enc, from, im: rule.image(), map: rule.map(), vars: &vars, same, prefix: Vec::new() };
         w.lit(lit, rw);
         self
     }
@@ -1049,7 +1050,7 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
         let n = atom.node();
         let size = rule.image().node(n).1;
-        self.b.enc.copy_nodes(from, rule.image(), n..n + size, &vars, same);
+        self.b.enc.copy_nodes(from, rule.image(), rule.map(), n..n + size, &vars, same);
         self.head = true;
         self
     }
@@ -1060,7 +1061,7 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         }
         let same = self.b.same(rule);
         let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
-        let mut w = Walk { enc: &mut self.b.enc, from, im: rule.image(), vars: &vars, same, prefix: Vec::new() };
+        let mut w = Walk { enc: &mut self.b.enc, from, im: rule.image(), map: rule.map(), vars: &vars, same, prefix: Vec::new() };
         w.atom(atom, Site::Head(atom), rw);
         self.head = true;
         self
@@ -1206,6 +1207,8 @@ struct Walk<'a, 'e> {
     enc: &'a mut Encoder<'e>,
     from: &'a Version,
     im: &'a super::Image,
+    /// A union's part's ids in `from`'s (`RuleRef::map`).
+    map: Option<&'a super::handles::IdMap>,
     vars: &'a [u32],
     same: bool,
     prefix: Vec<T<'static>>,
@@ -1214,12 +1217,12 @@ struct Walk<'a, 'e> {
 impl Walk<'_, '_> {
     fn open_mapped(&mut self, n: u32) -> usize {
         let kd = self.im.node(n).0;
-        let v = self.enc.map_val(self.from, self.im, n, self.vars, self.same);
+        let v = self.enc.map_val(self.from, self.im, self.map, n, self.vars, self.same);
         self.enc.open(kd, v)
     }
     fn copy(&mut self, n: u32) {
         let size = self.im.node(n).1;
-        self.enc.copy_nodes(self.from, self.im, n..n + size, self.vars, self.same);
+        self.enc.copy_nodes(self.from, self.im, self.map, n..n + size, self.vars, self.same);
     }
     /// `copy`, each variable leaf renamed where `rw.var` names it.
     fn copy_renamed(&mut self, n: u32, rw: &mut impl Rewrite) {
@@ -1231,7 +1234,7 @@ impl Walk<'_, '_> {
                     let s = self.enc.slot_of(a.0);
                     self.enc.leaf(kind::VAR, s);
                 }
-                None => self.enc.copy_nodes(self.from, self.im, m..m + 1, self.vars, self.same),
+                None => self.enc.copy_nodes(self.from, self.im, self.map, m..m + 1, self.vars, self.same),
             }
         }
     }
@@ -1255,7 +1258,7 @@ impl Walk<'_, '_> {
         let mut k = 0;
         while c < end {
             if !rw.drop_arg(a, k) {
-                match (!matches!(site, Site::Head(_))).then(|| rw.arg(a, k, super::handles::term(self.im, c))).flatten() {
+                match (!matches!(site, Site::Head(_))).then(|| rw.arg(a, k, super::handles::term_in(self.im, c, self.map))).flatten() {
                     Some(t) => write_t(self.enc, &t),
                     None => self.term(c, site, rw),
                 }
@@ -1266,7 +1269,7 @@ impl Walk<'_, '_> {
         self.enc.close(at);
     }
     fn term(&mut self, n: u32, site: Site<'_>, rw: &mut impl Rewrite) {
-        let t = super::handles::term(self.im, n);
+        let t = super::handles::term_in(self.im, n, self.map);
         if let Some(t) = rw.term(site, t) {
             write_t(self.enc, &t);
             return;
@@ -1314,7 +1317,7 @@ impl Walk<'_, '_> {
                 let mut c = n + 1;
                 while c < n + size {
                     if self.im.node(c).0 & kind::MASK == kind::ATOM {
-                        let a = AtomRef::new(self.im, c);
+                        let a = AtomRef::mapped(self.im, c, self.map);
                         self.atom(a, Site::Atom(a), rw);
                     } else {
                         self.copy_renamed(c, rw);

@@ -491,7 +491,7 @@ fn put_bytes(out: &mut Vec<u8>, b: &[u8]) {
 /// its size and its value, the value length-prefixed (decision 0639, Collisions 3), so no two templates write the same
 /// bytes (`template_nodes` reads them back).
 fn template_into(v: &crate::code_rule_dsl::logic::program_image::Version, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, named: &dyn Fn(&str) -> String, out: &mut Vec<u8>) {
-    use crate::code_rule_dsl::logic::program_image::{AtomId, RelId, kind};
+    use crate::code_rule_dsl::logic::program_image::kind;
     let im = r.image();
     let nodes = r.nodes();
     for n in nodes.start + 1..nodes.end {
@@ -500,10 +500,10 @@ fn template_into(v: &crate::code_rule_dsl::logic::program_image::Version, r: cra
         out.extend_from_slice(&size.to_le_bytes());
         match kd & kind::MASK {
             kind::ATOM if n == nodes.start + 1 => put_bytes(out, &[]),
-            kind::ATOM => put_bytes(out, named(v.rel_name(RelId(val))).as_bytes()),
-            kind::NEAREST => put_bytes(out, named(v.text(AtomId(val))).as_bytes()),
+            kind::ATOM => put_bytes(out, named(v.rel_name(r.rel_of(val))).as_bytes()),
+            kind::NEAREST => put_bytes(out, named(v.text(r.atom_of(val))).as_bytes()),
             kind::INT if kd & kind::BIG != 0 => put_bytes(out, &im.big(val).to_le_bytes()),
-            _ if kind::val_is_atom(kd) => put_bytes(out, v.text(AtomId(val)).as_bytes()),
+            _ if kind::val_is_atom(kd) => put_bytes(out, v.text(r.atom_of(val)).as_bytes()),
             _ => put_bytes(out, &val.to_le_bytes()),
         }
     }
@@ -531,15 +531,15 @@ pub fn template_nodes(mut b: &[u8]) -> Option<Vec<(u8, u32, Vec<u8>)>> {
 
 /// The relations rule `r`'s body reads, as `template_into` reads them (atoms and `nearest` sets).
 fn rule_reads(v: &crate::code_rule_dsl::logic::program_image::Version, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>) -> Vec<String> {
-    use crate::code_rule_dsl::logic::program_image::{AtomId, RelId, kind};
+    use crate::code_rule_dsl::logic::program_image::kind;
     let im = r.image();
     let nodes = r.nodes();
     let mut out = Vec::new();
     for n in nodes.start + 2..nodes.end {
         let (kd, _, val) = im.node(n);
         match kd & kind::MASK {
-            kind::ATOM => out.push(v.rel_name(RelId(val)).to_owned()),
-            kind::NEAREST => out.push(v.text(AtomId(val)).to_owned()),
+            kind::ATOM => out.push(v.rel_name(r.rel_of(val)).to_owned()),
+            kind::NEAREST => out.push(v.text(r.atom_of(val)).to_owned()),
             _ => {}
         }
     }
@@ -1463,9 +1463,9 @@ impl Lowerer {
 
     /// Module `m` after the modules linked so far, what the lowerer knows of it added to theirs. A helper's name is its
     /// content or its module's (decision 0639 §4), so the link decides no name: a helper of a name linked before is
-    /// that one, and the module's rules and declaration of it are left out. Its program, so left, is returned
-    /// (`relinked`) with the count of its inputs stated first, for `append_fields`.
-    fn link(&mut self, m: Module) -> Result<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, usize), Error> {
+    /// that one, and the module's rules and declaration of it are left out. The module as the union keeps it is
+    /// returned (`LinkedPart`): its version, uncopied, with the rules it keeps.
+    fn link(&mut self, m: Module) -> Result<LinkedPart, Error> {
         let Module { l: m, docof, places, version: v, .. } = m;
         let mut merged: Vec<(String, String, usize)> = Vec::new();
         for h in m.named {
@@ -1488,10 +1488,59 @@ impl Lowerer {
         if let Some(d) = docof {
             self.docof_of_locs = d;
         }
-        let own = relinked(&v, &Default::default(), &merged)?;
-        self.appended += own.size();
-        Ok((own, m.stated))
+        let gone: BTreeSet<&str> = merged.iter().map(|(n, _, _)| n.as_str()).collect();
+        let mut keep: Vec<(u32, u32)> = Vec::new();
+        for r in v.rules().filter(|r| !gone.contains(v.rel_name(r.head().rel()))) {
+            let k = r.id().0;
+            match keep.last_mut() {
+                Some((_, end)) if *end == k => *end = k + 1,
+                _ => keep.push((k, k + 1)),
+            }
+        }
+        self.appended += keep.iter().map(|(s, e)| (e - s) as usize).sum::<usize>();
+        Ok(LinkedPart { version: v, keep, merged: merged.into_iter().map(|(n, _, _)| n).collect(), stated: m.stated })
     }
+}
+
+/// A module as a link keeps it (`Lowerer::link`): its version as its walk or image holds it, the ranges of its rule
+/// ids the union keeps (a merged helper's left out), the helpers it merged into an earlier module's, and the count
+/// of its inputs stated first (`append_fields`).
+pub struct LinkedPart {
+    pub version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    pub keep: Vec<(u32, u32)>,
+    pub merged: Vec<String>,
+    pub stated: usize,
+}
+
+/// Each atom and relation of `v` in `b`'s ids, interned there: a union's part's map (decision 0639 §4).
+pub fn intern_names(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, v: &crate::code_rule_dsl::logic::program_image::Version) -> crate::code_rule_dsl::logic::program_image::IdMap {
+    use crate::code_rule_dsl::logic::program_image::{AtomId, RelId};
+    let atoms = (0..v.atom_end()).map(|a| b.atom(v.text(AtomId(a))).0).collect();
+    let rels = (0..v.rel_end()).map(|r| b.rel(v.rel_name(RelId(r))).0).collect();
+    crate::code_rule_dsl::logic::program_image::IdMap { atoms, rels }
+}
+
+/// Part `part`'s fields added to `a`'s, the union's so far (`append_fields`), each helper it merged declared as the
+/// earlier module declared it (a helper named by content is declared with its first reader's column names).
+pub fn append_part_fields(a: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), part: &LinkedPart, stated: &mut usize) {
+    let kept: Vec<(String, Vec<(String, String)>)> = part.merged.iter().filter_map(|h| Some((h.clone(), a.columns_of(h)?))).collect();
+    append_fields(a, &*part.version, stated, part.stated);
+    for (h, cols) in kept {
+        let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+        a.declare(&h, &pairs);
+    }
+}
+
+/// `part` added to the union `header` names (decision 0639 §4): its names interned in the header, its fields appended
+/// (`append_part_fields`; the first part's copied whole, as its image holds them), and the part with its map.
+pub fn union_part(header: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, part: LinkedPart, stated: &mut usize, first: bool) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::UnionPart>, Error> {
+    let map = intern_names(header, &part.version);
+    if first {
+        header.fields().copy_fields(&part.version, &|r: &str| !r.starts_with("module_"));
+    } else {
+        append_part_fields(&mut header.fields(), &part, stated);
+    }
+    crate::code_rule_dsl::logic::program_image::UnionPart::new(part.version, part.keep, map).map(std::sync::Arc::new).map_err(Error::Syntax)
 }
 
 /// The `must`/`may` rules' places (`modal`, by index in `v`) once the rules of the helpers `merged` names are left out
@@ -1575,54 +1624,107 @@ fn empty_version() -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program
     b.base_version().map_err(Error::Syntax)
 }
 
-/// A library's modules linked as versions (`link`'s steps, the rules kept as versions): the first module's program,
-/// each module after it as `link` leaves it with the inputs stated before it and its own stated count (what
-/// `lowering_tail::AppendModule` appends), and what the lowerer knows of them all (`whole_front`), for the
-/// lowering's tail on the version (`rr::lower_library`).
+/// A library's modules linked (decision 0639 §4): their union, a version over their images that copies no rule
+/// (`Version::Union`), and what the lowerer knows of them all (`whole_front`), for the lowering's tail on it
+/// (`rr::lower_library`).
 pub struct LinkedVersions {
-    pub first: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
-    pub appended: Vec<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, usize, usize)>,
+    pub version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     pub lowered: Lowered,
 }
 
-/// `link` with the modules' rules kept as versions (`LinkedVersions`).
+/// `link` with the modules' rules kept as versions (`LinkedVersions`): their union (`link_library`), alone.
 pub fn link_versions(modules: Vec<Module>) -> Result<LinkedVersions, Error> {
-    let mut modules = modules.into_iter();
-    let Some(Module { mut l, version: v, .. }) = modules.next() else {
-        let lowered = whole_front(Lowerer::default())?;
-        let first = relinked(empty_version()?.as_ref(), &Default::default(), &[])?;
-        return Ok(LinkedVersions { first, appended: Vec::new(), lowered });
-    };
-    // The lowerer's header is the modules' linked so far: what the next module's renames are checked against.
-    let first = relinked(&v, &Default::default(), &[])?;
-    let mut stated = 0;
-    append_fields(&mut l.prog.fields(), &*first, &mut stated, l.stated);
-    l.stated = stated;
-    l.appended = first.size();
-    // Each helper's module, by its name: the union keeps one, whose rules every module that names it must give.
-    let mut linked: Vec<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>> = vec![std::sync::Arc::clone(&v)];
-    let mut home: std::collections::HashMap<String, usize> = l.named.iter().map(|h| (h.clone(), 0)).collect();
-    let mut appended = Vec::new();
-    for m in modules {
+    link_library(modules)?.with(None)
+}
+
+/// A library's modules linked (decision 0639 §4): the union's header (a base of no rules: every name of every part,
+/// and the fields the link states), its parts, and what the lowerer knows of them, so a program's own module is
+/// linked onto it (`with`) and nothing of the library is linked again. `rr` keeps one per set of module keys.
+#[derive(Clone)]
+pub struct LinkedLibrary {
+    header: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    state: LinkState,
+}
+
+/// What a link knows as it adds modules: the lowerer (the first module's, the rest linked into it), the parts, the
+/// count of the header's inputs stated first, each module's version, and each helper's module by its name (the union
+/// keeps one, whose rules every module that names it must give).
+#[derive(Clone, Default)]
+struct LinkState {
+    l: Lowerer,
+    parts: Vec<std::sync::Arc<crate::code_rule_dsl::logic::program_image::UnionPart>>,
+    header_stated: usize,
+    linked: Vec<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
+    home: std::collections::HashMap<String, usize>,
+}
+
+impl LinkState {
+    /// Module `m` linked after the parts so far, its names and fields added to `header`.
+    fn add(&mut self, header: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, m: Module) -> Result<(), Error> {
+        if self.parts.is_empty() {
+            // The first module: its lowerer is the link's, its fields the header's as its image holds them.
+            let Module { mut l, version: v, .. } = m;
+            self.parts.push(union_part(header, LinkedPart { version: std::sync::Arc::clone(&v), keep: vec![(0, v.rule_end())], merged: Vec::new(), stated: l.stated }, &mut 0, true)?);
+            let mut stated = 0;
+            append_fields(&mut l.prog.fields(), &*v, &mut stated, l.stated);
+            l.stated = stated;
+            l.appended = v.size();
+            self.header_stated = stated;
+            self.home = l.named.iter().map(|h| (h.clone(), 0)).collect();
+            self.linked = vec![v];
+            self.l = l;
+            return Ok(());
+        }
         for h in &m.l.named {
-            match home.get(h) {
-                Some(&k) if helper_rules(&linked[k], h) != helper_rules(&m.version, h) => {
+            match self.home.get(h) {
+                Some(&k) if helper_rules(&self.linked[k], h) != helper_rules(&m.version, h) => {
                     return Err(Error::Syntax(format!("helper_conflict: {h} is two helpers, its rules differ between two modules (decision 0639 §4)")));
                 }
                 Some(_) => {}
                 None => {
-                    home.insert(h.clone(), linked.len());
+                    self.home.insert(h.clone(), self.linked.len());
                 }
             }
         }
-        link_conflict(&l.prog.fields(), &*m.version)?;
-        linked.push(std::sync::Arc::clone(&m.version));
-        let (own, b_stated) = l.link(m)?;
-        appended.push((std::sync::Arc::clone(&own), l.stated, b_stated));
-        append_fields(&mut l.prog.fields(), &*own, &mut l.stated, b_stated);
+        link_conflict(&self.l.prog.fields(), &*m.version)?;
+        self.linked.push(std::sync::Arc::clone(&m.version));
+        let part = self.l.link(m)?;
+        append_part_fields(&mut self.l.prog.fields(), &part, &mut self.l.stated);
+        self.parts.push(union_part(header, part, &mut self.header_stated, false)?);
+        Ok(())
     }
-    let lowered = whole_front(l)?;
-    Ok(LinkedVersions { first, appended, lowered })
+}
+
+/// `modules` linked as a library (`LinkedLibrary`), in order.
+pub fn link_library(modules: Vec<Module>) -> Result<LinkedLibrary, Error> {
+    let mut header = crate::code_rule_dsl::logic::program_image::Builder::base();
+    let mut state = LinkState::default();
+    for m in modules {
+        state.add(&mut header, m)?;
+    }
+    Ok(LinkedLibrary { header: header.base_version().map_err(Error::Syntax)?, state })
+}
+
+impl LinkedLibrary {
+    /// The library's union, and `own` linked after its modules (a program's own module): its header an overlay of the
+    /// library's with the module's names and fields, so only its own are interned and stated, and no rule is copied.
+    pub fn with(&self, own: Option<Module>) -> Result<LinkedVersions, Error> {
+        let mut state = self.state.clone();
+        let header = match own {
+            Some(m) => {
+                let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&self.header);
+                state.add(&mut b, m)?;
+                b.finish_overlay().map_err(Error::Syntax)?
+            }
+            None => std::sync::Arc::clone(&self.header),
+        };
+        let lowered = whole_front(state.l)?;
+        if state.parts.is_empty() {
+            return Ok(LinkedVersions { version: empty_version()?, lowered });
+        }
+        let version = crate::code_rule_dsl::logic::program_image::Version::union(header, state.parts).map_err(Error::Syntax)?;
+        Ok(LinkedVersions { version, lowered })
+    }
 }
 
 /// Module `m` with its helper `from` named `to`, its rules and its fields renamed (`relinked`): a test's way to build
@@ -1943,20 +2045,32 @@ pub fn unseed(program: &mut (impl crate::code_rule_dsl::logic::program_image::fi
 pub fn link_seeded_parts(m: Module, seeds: &Seeds) -> Result<Linked, Error> {
     let mut l = seeds.l.clone();
     l.violations.clear();
-    let (own, own_stated) = l.link(m)?;
+    let own = l.link(m)?;
     let stated = l.stated;
     let lowered = whole_front(l)?;
-    Ok(Linked { lowered, own, stated, own_stated })
+    Ok(Linked { lowered, own, stated })
 }
 
 /// `link_seeded_parts`'s parts.
 pub struct Linked {
     pub lowered: Lowered,
-    /// The module's own program, rules and header, as `Lowerer::link` leaves it.
-    pub own: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
-    /// The scope's inputs stated first, and the module's (`append_fields`).
+    /// The module as `Lowerer::link` keeps it.
+    pub own: LinkedPart,
+    /// The scope's inputs stated first (`append_fields`).
     pub stated: usize,
-    pub own_stated: usize,
+}
+
+impl Linked {
+    /// The scope's program `scope` (its seeds' header) and the module's own, as one union (decision 0639 §4): the
+    /// header an overlay of the scope's with the module's names and fields, the module's rules read where they are.
+    pub fn union(self, scope: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Lowered), Error> {
+        let mut header = crate::code_rule_dsl::logic::program_image::Builder::on(scope);
+        let mut stated = self.stated;
+        let part = union_part(&mut header, self.own, &mut stated, false)?;
+        let header = header.finish_overlay().map_err(Error::Syntax)?;
+        let version = crate::code_rule_dsl::logic::program_image::Version::union(header, vec![part]).map_err(Error::Syntax)?;
+        Ok((version, self.lowered))
+    }
 }
 
 impl Seeds {

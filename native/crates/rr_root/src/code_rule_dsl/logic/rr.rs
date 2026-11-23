@@ -300,8 +300,7 @@ impl Text {
         let own: Vec<Stmt> = own.into_iter().filter(|s| !is_include(s)).collect();
         // Its rules written as a version in the walk (decision 0377 step 3).
         let linked = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
-        let written = std::sync::Arc::clone(&linked.own);
-        let version = link_seeded_version(linked, written, scoped, core_names(), library)?;
+        let version = link_seeded_version(linked, scoped, core_names(), library)?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
         // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
         // (decision 0246 §2: a cone is made at link time). The run's `own_part` then holds them as the request.
@@ -326,7 +325,7 @@ impl Text {
     pub fn own_written(self, scoped: &Scoped) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
         let Read::Modular { own, .. } = self.0 else { return Err(Error::Syntax("not a modular text".to_owned())) };
         let own: Vec<Stmt> = own.into_iter().filter(|s| !is_include(s)).collect();
-        Ok(lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?.own)
+        Ok(lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?.own.version)
     }
 
     /// The text's own program, lowered as a module against the library's modules its includes reach and linked in
@@ -590,6 +589,7 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
             None => {
                 // Linked on versions (decision 0377): the modules' rules are never a tree.
                 let version = link_library_versions(modules.iter().map(lower::Module::clone).collect())?;
+                let version = if version.base_bytes().is_some() { version } else { version.fold().map_err(Error::Syntax)? };
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "a linked library's image kept, its kind sets".into());
                 if keep_image(store, "a linked library's image", key, version.own_image().filter(|_| version.base_bytes().is_some()).expect("a folded version is a base").clone()) {
                     crate::code_rule_dsl::prof::count("rr.linked_library_written", 1);
@@ -791,6 +791,13 @@ pub const LOWERED: &str = "p0_module_lowered";
 /// until the store holds it, and a module read once is decoded once.
 #[derive(Default)]
 struct PlannedModules(std::sync::Mutex<std::collections::HashMap<(Option<PathBuf>, crate::content_store::HashKey), (lower::Module, String, bool)>>);
+
+/// How many libraries' unions this process made for the store the run reads (`linked_from_plan`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn library_unions_made() -> usize {
+    let at = image_store_path();
+    crate::code_rule_dsl::logic::profile::shared::<LinkedLibraries>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).keys().filter(|(p, _)| *p == at).count()
+}
 
 /// How many modules phase 0 lowered in this process for the store the run reads (`lower_planned_module`), not read.
 #[cfg(any(test, feature = "test-hooks"))]
@@ -1135,13 +1142,13 @@ pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::V
     b.finish_overlay()
 }
 
-/// The module linked in `scoped` (`lower::link_seeded_parts`), its own program `own_v`, appended onto
-/// the scope's version and through the lowering's tail.
-fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::program_image::Version>, scoped: &Scoped, core: &BTreeSet<String>, library: Option<&Library>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+/// The module linked in `scoped` (`lower::link_seeded_parts`): the union of the scope's version and its own program
+/// (decision 0639 §4), through the lowering's tail.
+fn link_seeded_version(linked: lower::Linked, scoped: &Scoped, core: &BTreeSet<String>, library: Option<&Library>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::Builder;
     let seeds = &scoped.seeds;
-    let lower::Linked { lowered, stated, own_stated, .. } = linked;
-    let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered, library)?;
+    let (union, lowered) = linked.union(&scoped.version()?)?;
+    let v = lowering_tail_on(union, true, lowered, library)?;
     let _unseeding = crate::code_rule_dsl::logic::profile::span(|| "the scope's seeds taken out".to_owned());
     let mut b = Builder::on(&v);
     lower::unseed(&mut b.fields(), seeds, core, library.map(|l| &*l.version));
@@ -1155,34 +1162,27 @@ pub fn lower_statements_version(statements: Vec<Stmt>) -> Result<std::sync::Arc<
     link_library_versions(vec![lower::lower_module_in_written(statements, &[])?])
 }
 
-/// A library's modules linked on versions (decision 0377): `lower::link_versions`, then the lowering's tail
-/// (`lowering_tail_on`), folded to a base. The program `lower::link` makes of them as a tree, as a version.
+/// A library's modules linked (decision 0639 §4): their union over their images (`lower::link_versions`), then the
+/// lowering's tail (`lowering_tail_on`) as edits of it. No rule of a module is copied; a caller that keeps the
+/// program as an image folds it (`Version::fold`).
 pub fn link_library_versions(modules: Vec<lower::Module>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let linked = {
-        let _s = crate::code_rule_dsl::logic::profile::span(|| "the link: modules renumbered, merged and appended (lower::link_versions)".into());
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the link: the modules' union (lower::link_versions)".into());
         lower::link_versions(modules)?
     };
-    let version = {
-        let _s = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail, all of it".into());
-        lowering_tail_on(linked.first, linked.appended, false, linked.lowered, None)?
-    };
-    let _s = crate::code_rule_dsl::logic::profile::span(|| "a library's version folded".into());
-    if version.base_bytes().is_some() { Ok(version) } else { version.fold().map_err(Error::Syntax) }
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail, all of it".into());
+    lowering_tail_on(linked.version, false, linked.lowered, None)
 }
 
-/// The lowering's whole-program half on versions (`lower::whole` on a tree): the modules `appended` onto `start`
-/// (`lowering_tail::AppendModule`), checked declared where `declared` (a text's link: `link_seeded`), then the passes
-/// `whole` runs, in its order, from what the lowerer knows of the modules (`lowered`).
-fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, appended: Vec<(std::sync::Arc<super::program_image::Version>, usize, usize)>, declared: bool, lowered: lower::Lowered, library: Option<&Library>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+/// The lowering's whole-program half on versions (`lower::whole` on a tree), over the linked program `start` (a
+/// union of modules, decision 0639 §4): checked declared where `declared` (a text's link: `link_seeded`), then the
+/// passes `whole` runs, in its order, from what the lowerer knows of the modules (`lowered`).
+fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, declared: bool, lowered: lower::Lowered, library: Option<&Library>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::manager::Pipeline;
     let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = lowered;
     let mut p = Pipeline::new("the lowering's tail", start);
     {
         use super::plan::corpus::preparation::{lowering_tail, on_request::SourcesOnRequest};
-        // The modules appended, in order, and checked declared where the tree's lowering checks it.
-        for (own, stated, own_stated) in appended {
-            p.program(&mut lowering_tail::AppendModule { own, stated, own_stated });
-        }
         // A guest context's passes (decision 0597): made before the declarations are checked, since a `.from` name
         // is declared by its pass.
         p.program(&mut super::contexts::Passes);
@@ -1465,9 +1465,30 @@ fn linked_from_plan(plan: &[PlannedModule], own: Vec<Stmt>) -> Result<std::sync:
         let scope: Vec<&lower::Module> = modules.iter().collect();
         lower::lower_module_in_written(own, &scope)?
     };
-    modules.push(own);
-    link_library_versions(modules)
+    // The library's union, made once for its modules in this process (decision 0639 §4).
+    let key = (image_store_path(), plan.iter().map(|m| m.key.clone()).collect::<Vec<_>>());
+    let held = crate::code_rule_dsl::logic::profile::shared::<LinkedLibraries>();
+    let library = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key).cloned();
+    let library = match library {
+        Some(l) => l,
+        None => {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "a library's union of its modules (lower::link_library)".into());
+            let l = std::sync::Arc::new(lower::link_library(std::mem::take(&mut modules))?);
+            held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(key, std::sync::Arc::clone(&l));
+            l
+        }
+    };
+    let linked = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the link: a text's own module onto its library's union".into());
+        library.with(Some(own))?
+    };
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail, all of it".into());
+    lowering_tail_on(linked.version, false, linked.lowered, None)
 }
+
+/// Each library's union (`lower::LinkedLibrary`) made in this process, by the image store and its modules' plan keys.
+#[derive(Default)]
+struct LinkedLibraries(std::sync::Mutex<std::collections::HashMap<(Option<PathBuf>, Vec<String>), std::sync::Arc<lower::LinkedLibrary>>>);
 
 /// The phase programs a text's own declarations name (`<phase>__<export>`, as `phases::phase_files` reads them): not
 /// its own phase (`.phase`), a typing program's or the engine's (`typing_`, `rr_`). Phase 0 resolves them with its

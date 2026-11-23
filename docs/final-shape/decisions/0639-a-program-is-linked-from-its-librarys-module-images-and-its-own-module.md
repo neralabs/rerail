@@ -297,6 +297,54 @@ T1 `a_program_linked_from_its_modules_is_its_whole_lowering` (two programs of ev
 spike runs them all) and T8 `a_link_of_modules_that_clash_fails`. Stage B is the union as a view over the images
 (below), which removes `link_versions`' copying and `AppendModule`.
 
+**Stage B, designed: the union as a version over the module images.** A version's ids are one space per stack:
+a delta's atoms, relations and rules number past its parent's, and every handle reads its ids from its image's
+nodes as they are. Module images are encoded apart, each numbering from 0, and the same relation (`kind`, a helper
+named by content) has a different id in each. So the union is a new form of version, `Version::Union`:
+- **Its names are a header version**, a base (or an overlay of one) with no rules: every text and relation of every
+  part interned, and the program's fields (declarations, facts, inputs, outputs, `.about` rows) as the link states
+  them (`append_fields`, the first part's fields copied whole, a merged helper's first declaration kept). Its ids are
+  the union's; `text`, `find`, `decl`, `facts`, `inputs` read it.
+- **Its rules are the parts'**, each part a version (a module's base, as its image is read where the store holds it),
+  with the ranges of its rules the link keeps (a merged helper's are left out, `moved_past`) and an `IdMap`: the
+  union's id of each of the part's atoms and relations. Part `k`'s rule `j` is rule `base_k + j`; `heads` and
+  `readers` map the union's relation to the part's and back.
+- **Handles carry the map.** `RuleRef`, `AtomRef`, `LitRef` and the term iterators hold the part's `IdMap` (none for
+  every other version), and map each atom or relation id they read: a relation, a string or call constant, a branded
+  atom, a variable's name, a join's separator, a kind set, a matcher, a capture. A builder copies a mapped rule by
+  text (`Encoder::map_val` maps first), as it copies any rule of other ids.
+- **Edits stack on it** as on any version: an overlay's ids number past the union's. A fold makes a base of it.
+- **A program's union extends its library's.** The library's union (its header, its parts with their maps, and the
+  lowerer's knowledge of them) is made once per set of module keys in a process, and a program's union is the same
+  parts and its own module, its header an overlay of the library's with the own module's texts and fields. So a
+  program interns and states only its own module's names, and copies no rule.
+
+`link_versions` makes the union in place of the first module copied and the rest appended; `AppendModule` and the
+appended list of `lowering_tail_on` go, and a scope's program (`link_seeded_version`) is the union of the scope's
+header and the program's own module.
+
+**As built (step 4, stage B: the union).** `Version::Union { header, parts, end, .. }` and `UnionPart { version, keep,
+map }` (`program_image/version.rs`), `IdMap` on every handle (`handles.rs`), and `Encoder::map_val` mapping a part's
+ids before it looks a text up. `Lowerer::link` returns the module as kept (`LinkedPart`: its version, the ranges it
+keeps, the helpers it merged), never a copy. `lower::link_library` makes a `LinkedLibrary` (the header, the parts,
+the lowerer's state); `LinkedLibrary::with(own)` adds a program's own module, its header an overlay of the library's.
+`rr::linked_from_plan` keeps one `LinkedLibrary` per image store and set of module plan keys in the process
+(`LinkedLibraries`), so a program interns only its own module's names. `link_seeded_version` is `Linked::union`: the
+scope's header and the own module. `AppendModule`, the appended list of `lowering_tail_on` and the fold at the end
+of `link_library_versions` are gone; a caller that keeps an image folds (`lower_library`).
+- **A stored run keeps a union** as kind 3 of `pipeline_run_version` with a row of `pipeline_run_union_part` per part
+  (its version's place and its kept ranges); a reader finds each part's map again by text (`UnionPart::found_in`).
+- **A view's ids are its parent's**, so `Version::rule_end` of a view is its parent's: through the top image it was
+  the header's (no rules), and an overlay on a view of a union numbered its rules over the union's. The SQL suite
+  found it (every program there is an edit of a view of its union).
+- **Raw readers map.** A rule's template (`template_into`, `rule_reads`) reads ids through `RuleRef::atom_of` and
+  `rel_of`.
+
+Tests: `a_linked_library_is_a_union_over_its_modules_images` (each part is its module's version, uncopied; the union
+and its fold have one digest and the same rules in order; a view of it and an overlay on the view number past it),
+`programs_of_one_library_share_its_union` (two programs of one library's modules make its union once). T1, T6 and T8
+pass on the union.
+
 **Why the tail stays Rust.** The tail's whole-program questions (which core relations are read, which kind sets are
 read) belong to preparation's fact spaces (0246 §3, 0225 §5).
 

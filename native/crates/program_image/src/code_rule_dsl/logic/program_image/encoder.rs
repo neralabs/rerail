@@ -444,22 +444,23 @@ impl<'p> Encoder<'p> {
 
     /// Copies nodes `range` of `src` (in a rule whose variables' atoms are `src_vars`), each id mapped: unchanged
     /// when `src`'s ids are this image's (`same`), else by text, through `from`.
-    pub fn copy_nodes(&mut self, from: &Version, src: &super::Image, range: std::ops::Range<u32>, src_vars: &[u32], same: bool) {
+    pub fn copy_nodes(&mut self, from: &Version, src: &super::Image, map: Option<&super::handles::IdMap>, range: std::ops::Range<u32>, src_vars: &[u32], same: bool) {
         for n in range {
             let (kd, size, _) = src.node(n);
-            let v = self.map_val(from, src, n, src_vars, same);
+            let v = self.map_val(from, src, map, n, src_vars, same);
             self.kind.push(kd);
             self.size.push(size);
             self.val.push(v);
         }
     }
-    /// Node `n` of `src`'s value, mapped into this image's ids (`copy_nodes`).
-    pub fn map_val(&mut self, from: &Version, src: &super::Image, n: u32, src_vars: &[u32], same: bool) -> u32 {
+    /// Node `n` of `src`'s value, mapped into this image's ids (`copy_nodes`). `map`: a union's part's ids in
+    /// `from`'s (`RuleRef::map`), read through first; `src_vars` are `from`'s already (`RuleRef::vars`).
+    pub fn map_val(&mut self, from: &Version, src: &super::Image, map: Option<&super::handles::IdMap>, n: u32, src_vars: &[u32], same: bool) -> u32 {
         let (kd, _, val) = src.node(n);
         match kd & kind::MASK {
             kind::ATOM if same => val,
             kind::ATOM => {
-                let t = from.rel_name(RelId(val));
+                let t = from.rel_name(RelId(map.map_or(val, |m| m.rels[val as usize])));
                 self.rel(t)
             }
             kind::VAR | kind::AGG => {
@@ -471,7 +472,7 @@ impl<'p> Encoder<'p> {
                 self.ints.push(src.big(val));
                 self.ints.len() as u32 - 1
             }
-            _ if kind::val_is_atom(kd) && !same => self.atom(from.text(AtomId(val))),
+            _ if kind::val_is_atom(kd) && !same => self.atom(from.text(AtomId(map.map_or(val, |m| m.atoms[val as usize])))),
             _ => val,
         }
     }

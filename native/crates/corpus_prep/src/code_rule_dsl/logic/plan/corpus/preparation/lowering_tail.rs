@@ -1614,35 +1614,6 @@ impl ProgramPass for ThreeValued {
     }
 }
 
-/// A module's program linked onto the scope's (`lower::append_fields`):
-/// its header added to the input's, its rules copied after the input's. Its settings: the module's version (by
-/// digest) and the counts of inputs stated first.
-pub struct AppendModule {
-    pub own: std::sync::Arc<Version>,
-    pub stated: usize,
-    pub own_stated: usize,
-}
-
-impl ProgramPass for AppendModule {
-    const NAME: &'static str = "append a module";
-    fn settings(&self) -> Vec<u8> {
-        format!("{} {} {} {}", self.own.digest(), self.own.size(), self.stated, self.own_stated).into_bytes()
-    }
-    fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        let mut stated = self.stated;
-        let input = std::sync::Arc::clone(w.input());
-        let b = w.derive()?;
-        crate::code_rule_dsl::logic::rr::lower::append_fields(&mut b.fields(), &*self.own, &mut stated, self.own_stated);
-        for r in input.rules() {
-            b.keep(&input, r);
-        }
-        for r in self.own.rules() {
-            b.copy(&self.own, r);
-        }
-        Ok(())
-    }
-}
-
 /// A program to run reads only relations it declares or the transducer makes: else an error, as in Soufflé, not a
 /// plan's panic. (Parsing alone does not ask it: a parse's tests read relations they never declare.) Every relation
 /// a rule reads is declared (`front::read_declared`), and each atom has the columns its relation declares

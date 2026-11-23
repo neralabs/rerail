@@ -2283,7 +2283,7 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
         }
         tried += 1;
     }
-    assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
+    assert_eq!(tried, 3 * crate::code_rule_dsl::tape::formats::Format::ALL.len() * 3, "every case, format and shape");
 }
 
 /// Decision 0353 step 4c: the `node`, `child`, `field`, `core_node` and `line` views' rows read through the views' reads (written once in CLIF), by the JIT on
@@ -2937,7 +2937,7 @@ fn the_directorys_searches_are_the_jits() {
     type ByRow = extern "C" fn(*const u8, u32, u32, u32) -> u32;
     type ByKey = extern "C" fn(*const u8, u32, u32) -> u32;
     // SAFETY: each read's signature: the descriptor, then its arguments.
-    let (by_row, by_key): (ByRow, ByKey) = unsafe { (std::mem::transmute(jit.function("dir_doc_of_row")), std::mem::transmute(jit.function("dir_doc_of_key"))) };
+    let (by_row, by_key): (ByRow, ByKey) = unsafe { (std::mem::transmute::<*const u8, ByRow>(jit.function("dir_doc_of_row")), std::mem::transmute::<*const u8, ByKey>(jit.function("dir_doc_of_key"))) };
     let d = chunk.block.ptr::<u8>(views.at).cast_const();
     // SAFETY: the directory in the batch's block, which the batch holds.
     let dir = unsafe { &*d.cast::<ViewDir>() };
