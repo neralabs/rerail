@@ -173,7 +173,7 @@ impl Bound for Buffer {
 pub fn source() -> &'static str {
     static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
-            "#include <ukl/backend.h>\n{PP_GLOBAL}#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "#include <ukl/backend.h>\n{PP_GLOBAL}#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/workqueue.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
             rerail_clif::view::ukl(),
             SLOTS.iter().enumerate().map(|(k, s)| format!("#define S_{s} {k}u\n")).collect::<String>(),
             include_str!("pp_eval.uglykl"),
@@ -427,14 +427,14 @@ pub const SLOTS: &[&str] = &[
     "P1_NODES", "P1_NDIRS", "P1_NGAPS", "P1_DFIRST", "P1_GFIRST", "P1_SIZE", "P1_CSIZE", "P1_GC", "P1_GHEADS", "P1_GSHIFT",
     "P1_USIZE", "P1_UTOTAL", "P1_BASE", "DIR_ACTS", "RTYPES", "N_STACK", "STK_MATCH", "STK_SRC", "STK_CHANGED", "STK_ROUNDS",
     "NQ", "P1_GCOUNT", "P1_GRPF", "P1_NGRP", "P1_GA", "P1_TAKEN", "P1_OWN", "P1_PAR", "P1_OWN2", "P1_PAR2", "P1_JCHANGED", "P1_ICHANGED",
-    "P1_JUMPS", "P1_ITERS",
+    "P1_JUMPS", "P1_ITERS", "P1_SEEDE", "P1_SEEDG", "P1_NSEED",
     "P1_DEPTHN", "N_FT", "P1_FTKEYS", "P1_FTFILES", "P1_FOUNDBY", "P1_MAXDEPTH", "P1_LIVE",
     "P1_MADE", "P1_MADEF", "P1_ENTER", "P1_CAND", "P1_ONCE", "P1_NEWF", "P1_NEWAT", "P1_NNEW", "P1_REQS", "P1_NREQ", "P1_FLAGS", "P1_NEED", "P1_UFIRST",
     "NC", "DC", "GC", "TC", "P1_UFILE",
     "RSTART", "RUNX", "RUNTOT", "RUN_END", "CNT", "CNT_CAP", "TR_SK", "TR_NK", "TR_TY", "TO_F", "TO_S", "CU_SLOT", "CU_SUB", "CU_UNIT", "TRN", "LREAD", "LB_CAP", "LDELTA", "LKEY", "LVAL", "LVALN", "LHEAD", "LATEST", "LATESTN", "ILINE", "ILINEN", "SLINE", "SLINEN", "LCTL", "IF_COUNT", "IF_FIRST", "IF_KIND", "IF_INST", "SINST", "P1_RNAMES", "P1_RNTOP", "RNC", "RQC", "IF_AT", "IF_TOTAL", "IF_NODES", "IF_OPS", "IF_VAL", "IF_KEYS", "IF_TRUE", "N_IFOP", "IF_OPKEYS", "IF_OPKINDS", "N_FEAT", "IF_FEATKEYS", "IF_FEATVALS",
     "THEADS", "DELTA", "DEPTH", "STATE", "OFLAG", "CTL", "XFLAG", "XAT", "XTOTAL", "XPOS", "V", "OBASE", "LOB", "PLAST", "VTOTAL", "OPV", "OPBASE",
     "OPTOTAL", "OUT", "SC_DEPTH", "SC_CLOSE", "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK", "SC_CKEYS", "SC_KB", "SC_VA", "SC_VB", "SC_HIST",
-    "SC_CAP", "TOKENS", "WORDS", "SCRATCH", "OUT_CAP",
+    "SC_CAP", "TOKENS", "WORDS", "SCRATCH", "OUT_CAP", "LPQ", "LPQ_TOP", "XROWS", "XROWS_CAP",
 ];
 
 fn slot(name: &str) -> usize {

@@ -11,7 +11,7 @@ fn same<T: PartialEq + std::fmt::Debug>(a: T, b: T, what: impl std::fmt::Display
     }
 }
 
-use super::rounds::place;
+use super::rounds::{place, place_kept};
 
 /// `corpus`'s files, each with whether it is C++.
 fn corpus_in() -> Vec<(Vec<u8>, Vec<u8>, bool)> {
@@ -53,7 +53,8 @@ fn the_evaluator_copies_no_tape() {
 
 /// §5 of decision 0468: the evaluator is UKL, launched through the lane: its source has no MSL
 /// (no Metal kernel, attribute, address space or SIMD function of its own) and takes UKL's grid.
-/// Its expansion is a loop a thread a piece (decision 0588): no work queue, no rounds, no pool.
+/// Its expansion is the loop's (decision 0588: no rounds, no pool), its pieces and requests items of one
+/// work queue in the block (decision 0613 §4: UKL's), taken by the SIMD groups.
 #[test]
 fn the_evaluator_is_ukl() {
     let src = rerail_metal::pp_arena::source();
@@ -62,7 +63,7 @@ fn the_evaluator_is_ukl() {
         assert!(code.is_empty(), "the evaluator's source has MSL `{msl}`: {code:?}");
     }
     assert!(src.contains("#include <ukl/grid.h>"), "UKL's grid");
-    assert!(!src.contains("#include <ukl/workqueue.h>") && !src.contains("ukl_wq_"), "no work queue (decision 0588)");
+    assert!(src.contains("#include <ukl/workqueue.h>") && src.contains("ukl_wq_take"), "the requests' queue is UKL's (decision 0613 §4)");
     for rounds in ["px_drain", "PX_DRAIN", "px_item", "ukl_pool_", "<ukl/pool.h>", "PxList"] {
         assert!(!src.contains(rounds), "the rounds' `{rounds}` (decision 0588: the loop alone)");
     }
@@ -1229,6 +1230,257 @@ fn an_argument_passed_on_is_read_once() {
     eprintln!("{} shapes, {tokens} tokens", shapes.len() * 2);
 }
 
+/// Decision 0613 §1: a top call's result kept, and every call with its key read from the memo, read
+/// where the first wrote it: `F(1)` 100 times is expanded by a few groups (those that run its first
+/// calls at once each miss), and each gives the serial pass's tokens. The macros are dear enough to be
+/// looked up (`LP_MEMO_COST` steps: `D`'s), as a cheap one's calls are not.
+#[test]
+fn a_repeated_invocation_is_expanded_once() {
+    let d = "#define A(x) x\n#define D A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a)\n";
+    let calls: Vec<&str> = (0..100).map(|_| "F(1)").collect();
+    let src = format!("{d}#define G(x) [x]\n#define F(x) G(x) G(x x) D\n{}\n", calls.join(" "));
+    let (got, want, (hits, kept)) = expanded_memo(&[("main.c", &src)], false);
+    same(show(&got.expect("refused")), show(&want), "100 calls");
+    eprintln!("memo: {hits} hits, {kept} kept");
+    assert!(hits >= 50 && kept <= 20, "F(1) is expanded by a few groups: {hits} hits, {kept} kept");
+    // Its arguments' tokens are the hit's own, wherever it is and however spaced.
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define F(a, b) a b a\nF(x,y) F( x , y ) F(x,y)\nF(x,y) F(x, y)\n")],
+        &[("main.c", "#define I(x) x\n#define F(x) I(x) I((x))\nF(1) F(1) F(2) F(1)\n")],
+        &[("main.c", "#define E()\n#define F(x) #x x ## 1\nE() a E() F(b) F(b) F( b ) F(b)\n")],
+    ];
+    shapes_agree(shapes);
+    // A call in a body whose arguments are the body's own (`P(r, g)`) is one result for every call of
+    // the body's macro, whatever its arguments; one whose arguments are a parameter's is the call's.
+    // (`Y(1)`'s finds `P` dear, `Y(2)`'s keeps its result, the two after read it.)
+    let src = format!("{d}#define P(a, b) <a b> D\n#define Y(x) P(r, g) P(x, x) x\nY(1) Y(2) Y(3) Y(4)\n");
+    let (got, want, (hits, kept)) = expanded_memo(&[("main.c", &src)], false);
+    same(show(&got.expect("refused")), show(&want), "a body's call");
+    eprintln!("a body's call: {hits} hits, {kept} kept");
+    assert!(hits >= 2, "P(r, g) is one result: {hits} hits, {kept} kept");
+}
+
+/// Decision 0613 §1, arguments as holes: a call is keyed by its arguments' spelling, and its result kept
+/// with their places open. `P(x, 1)` in `Y`'s body, its `x` from four places in the text, is one result;
+/// each hit fills it with its own call's tokens (a piece of the text the first's would print the wrong
+/// token: `q`, `r`, `s` lie beside them). Read in four bodies it is one result too: a result's disabled
+/// macros are those its expansion looks up.
+#[test]
+fn an_argument_spelled_alike_is_a_hole() {
+    let d = "#define A(x) x\n#define D A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a)\n#define P(a, b) <a b> D\n";
+    // Its result printed (`P` at the output), and read in an argument (`A(P(..))`: entries, or a node).
+    for y in ["#define Y(x, y) P(x, 1) y\n", "#define Y(x, y) [A(P(x, 1))] y\n", "#define Y(x, y) A(P(x, 1) P(x, 1)) y\n"] {
+        let src = format!("{d}{y}Y(2, a) q Y(2, b) r Y(2, c) s Y(2, d)\n");
+        let (got, want, (hits, kept)) = expanded_memo(&[("main.c", &src)], false);
+        same(show(&got.expect("refused")), show(&want), y);
+        eprintln!("holes: {hits} hits, {kept} kept");
+        assert!(hits >= 2, "P(x, 1) is one result for four places: {hits} hits, {kept} kept");
+    }
+    // In four bodies: the macros disabled there (`Yk`) are not ones its expansion looks up.
+    let ys: String = (1..=4).map(|k| format!("#define Y{k}(x) P(x, 1) x\n")).collect();
+    let src = format!("{d}{ys}Y1(2) q Y2(2) r Y3(2) s Y4(2)\n");
+    let (got, want, (hits, kept)) = expanded_memo(&[("main.c", &src)], false);
+    same(show(&got.expect("refused")), show(&want), "four bodies");
+    eprintln!("four bodies: {hits} hits, {kept} kept");
+    assert!(hits >= 2, "P(x, 1) is one result in four bodies: {hits} hits, {kept} kept");
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define P(a, b) [a|b|a]\n#define Y(x) P(x, x) P(x x, x)\n#define Z(x) P(x, x)\nY(1) Z(1) Y(1 ) Z( 1) Y(2) Z(2)\n")],
+        &[("main.c", "#define S(a) #a\n#define P(a, b) S(a) a ## b b\n#define Y(x) P(x, 1)\n#define Z(x) P(x, 1)\nY(u) Z(u) Y(u) Z(u)\n")],
+    ];
+    shapes_agree(shapes);
+}
+
+/// Decision 0613 §1: the macros disabled where a call is read are its key's: `B(1)` entered at the top
+/// and inside `A` (where `A` is painted) are two results.
+#[test]
+fn a_disabled_macro_paints_alike_in_a_memoized_expansion() {
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define A(x) B(x) B(x)\n#define B(x) A(x) x\nA(1) B(1) A(1) B(1)\n")],
+        &[("main.c", "#define A(x) [B(x)] [B(x)]\n#define B(x) <A(x)>\n#define C(x) B(x) A(x)\nC(1) C(1) B(1) A(1)\n")],
+        // A call in a body that ends in a function-like name, its `(` after the body's call.
+        &[("main.c", "#define g(x) <x>\n#define f(x) x g\n#define h(x) f(x)(2) f(x) x\nh(1) h(1) (3) h(1)\n")],
+    ];
+    shapes_agree(shapes);
+}
+
+/// Decision 0613 §1: a definition changed between two calls (a directive between them): the second
+/// is expanded again; two calls with no directive between are one.
+#[test]
+fn a_definition_changed_between_uses_is_expanded_again() {
+    // `F` dear enough to be looked up (`LP_MEMO_COST`), from its first call on.
+    let src = "#define G 1\n#define A G\n#define F() A A A A A A A A A A A A A A A A A A A A\nF()\n#undef G\n#define G 2\nF() F()\n";
+    let (got, want, (hits, _)) = expanded_memo(&[("main.c", src)], false);
+    same(show(&got.expect("refused")), show(&want), "G changed");
+    same(hits, 1, "the hits: the last call's");
+}
+
+/// Decision 0613 §4, stage 4: a call's arguments are requests of their own, read by groups that are free (another
+/// unit's team among them, `lp_help`), and taken by the call where they are done. Here each of a call's arguments
+/// is a chain of 8 calls, on 8 lines, and two hold `__COUNTER__`: a reading elsewhere stops at it, and the call
+/// reads that argument itself, in order, so the counts are the serial pass's.
+#[test]
+fn arguments_read_elsewhere_are_the_serial_passes() {
+    let mut t = String::from("#define ID(x) x\n#define F(a, b, c, d) [a|b|c|d]\n#define K() __COUNTER__\n#define C0(x) x\n");
+    for k in 1..=8 {
+        t += &format!("#define C{k}(x) C{}(ID(x))\n", k - 1);
+    }
+    for i in 0..8 {
+        t += &format!("F(C8({i}), C8(K() a{i}), C8(ID(a{i}) b), K())\n");
+    }
+    for cpp in [false, true] {
+        let (got, want, ..) = expanded_x(&[("main.c", t.as_str())], cpp);
+        let got = got.unwrap_or_else(|why| panic!("refused {why}"));
+        same(show(&got), show(&want), "a call's arguments, read elsewhere");
+    }
+}
+
+/// The serial pass's tokens and its expansions (`Expansion` rows): each row's macro, its call's byte offset in
+/// the main file, and its parent's row (0 the text).
+#[derive(Default)]
+struct WithExpansions(Vec<Vec<u8>>, Vec<(Vec<u8>, u32, u32)>);
+
+impl rerail_c_pp::sink::Sink for WithExpansions {
+    fn token(&mut self, _t: &rerail_c_pp::macros::Tk, text: &[u8], _at: Option<rerail_c_pp::sink::At>, _off: u32) {
+        self.0.push(text.to_vec());
+    }
+    fn expansion(&mut self, e: rerail_c_pp::sink::Expansion<'_>) {
+        assert_eq!(e.id as usize, self.1.len() + 1);
+        self.1.push((e.name.to_vec(), e.called.1, e.parent));
+    }
+}
+
+/// Rows of `(macro, call's offset, parent)` as keys a renumbering keeps: each its macro and its parent's key, a
+/// root its call's offset, sorted (the device makes its rows in another order).
+fn expansion_keys(rows: &[(Vec<u8>, u32, u32)]) -> Vec<String> {
+    let key = |mut i: usize| {
+        let mut k = String::new();
+        for _ in 0..=rows.len() {
+            // A row's place is its root call's: the root's alone says it.
+            let (name, at, parent) = &rows[i];
+            let at = if *parent == 0 { format!("@{at}") } else { String::new() };
+            k = format!("/{}{at}{k}", String::from_utf8_lossy(name));
+            if *parent == 0 || *parent as usize > rows.len() {
+                break;
+            }
+            i = *parent as usize - 1;
+        }
+        k
+    };
+    let mut keys: Vec<String> = (0..rows.len()).map(key).collect();
+    keys.sort();
+    keys
+}
+
+/// Decision 0613 §6, stage 5: provenance. The device's expansions are the serial pass's `Expansion` rows, each
+/// with its macro, its root call's place and its parent: through calls read inline, a top call's request, an
+/// argument's expansion and its request, a memoized result used at several places (its rows each place's), a
+/// name a body makes and one an argument brings, and an empty expansion.
+#[test]
+fn expansions_are_the_serial_passes() {
+    let shapes: &[&str] = &[
+        "#define A B\n#define B 1\nA A\n",
+        "#define F(x) x + G\n#define G 2\nF(1) F(G)\n",
+        "#define E\n#define H(x) [x]\nE H(E) H(H(E))\n",
+        "#define ID(x) x\n#define N ID\n#define K(a, b) a(b)\nK(N, 1) K(ID, N) ID(N)(3)\n",
+        "#define P(x) x x\n#define Q P(1)\nQ Q P(Q) P(P(Q))\n",
+        "#define f(x) g\n#define g(y) y h\n#define h 5\nf(1)(2) f(f)(f)\n",
+        // A result the memo keeps (`a_definition_changed_between_uses_is_expanded_again`'s), used again.
+        "#define G 1\n#define A G\n#define F() A A A A A A A A A A A A A A A A A A A A\nF()\nF() F()\n",
+    ];
+    // Arguments read elsewhere (`arguments_read_elsewhere_are_the_serial_passes`'s, without `__COUNTER__`).
+    let mut args = String::from("#define ID(x) x\n#define F(a, b, c, d) [a|b|c|d]\n#define C0(x) x\n");
+    for k in 1..=8 {
+        args += &format!("#define C{k}(x) C{}(ID(x))\n", k - 1);
+    }
+    for i in 0..8 {
+        args += &format!("F(C8({i}), C8(ID(a{i})), C8(ID(a{i}) b), ID(ID({i})))\n");
+    }
+    let shapes: Vec<&str> = shapes.iter().copied().chain([args.as_str()]).collect();
+    for main in &shapes {
+        for cpp in [false, true] {
+            let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+            let mut serial = WithExpansions::default();
+            let m2: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), main.as_bytes().to_vec())].into();
+            let m3 = m2.clone();
+            let mut io = rerail_c_pp::files::Search::new(Vec::new(), move |p: &str| m2.get(p).cloned());
+            let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
+            assert!(pp.run("main.c"));
+            drop(pp);
+            let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(rerail_c_pp::files::Search::new(Vec::new(), move |p: &str| m3.get(p).cloned())), "main.c".into())];
+            let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
+            assert_eq!(s.part.x.refused, 0, "{main}: refused");
+            same(show(&part_tokens(&s.part, &s.loaded.files, &tapes)), show(&serial.0), format!("{main}: tokens"));
+            // The device's rows: a top token's file and offset, through its file's tape.
+            let x = &*s.part.x;
+            let views: Vec<View> = tapes.iter().map(|t| View::new(t).unwrap()).collect();
+            let at = |g: u32| {
+                let f = x.ev.bases.partition_point(|&b| b <= g) - 1;
+                let i = (g - x.ev.bases[f]) as usize;
+                let f = f - s.part.files.start;
+                (f, views[f].start(i) as usize, views[f].end(i) as usize)
+            };
+            let got: Vec<(Vec<u8>, u32, u32)> = x
+                .expansions
+                .iter()
+                .map(|&[def, parent, pos]| {
+                    let (f, a, b) = at(def);
+                    (s.loaded.files[f][a..b].to_vec(), at(pos).1 as u32, parent)
+                })
+                .collect();
+            let (dk, sk) = (expansion_keys(&got), expansion_keys(&serial.1));
+            if dk != sk {
+                // The keys one side has and the other lacks (each a multiset).
+                let less = |a: &[String], b: &[String]| {
+                    let mut b = b.to_vec();
+                    a.iter().filter(|k| b.iter().position(|x| x == *k).map(|i| b.swap_remove(i)).is_none()).take(12).cloned().collect::<Vec<_>>()
+                };
+                panic!("{main}: expansions, C++ {cpp}: {} rows for {}; the device's alone {:?}; the serial pass's alone {:?}", dk.len(), sk.len(), less(&dk, &sk), less(&sk, &dk));
+            }
+        }
+    }
+}
+
+/// Decision 0613 §1: a result that reads a place's built-in (`__LINE__`, `__COUNTER__`) or the text
+/// past its `)` (a function-like name at its end) is not kept; nor (§4) one whose call inside it, a request
+/// of its own, reads one (`C`'s `L()`, on four lines: a tensorflow test printed another line's `__LINE__`).
+#[test]
+fn place_builtins_are_not_memoized() {
+    let src = "#define L(x) x __LINE__\nL(a)\nL(a)\nL(a) L(a)\n";
+    let (got, want, (hits, kept)) = expanded_memo(&[("main.c", src)], false);
+    same(show(&got.expect("refused")), show(&want), "__LINE__");
+    same((hits, kept), (0, 0), "the memo's hits and results");
+    let src = "#define g(x) <x>\n#define f(x) x g\nf(1)(2) f(1) f(1)(3) f(1) x\n";
+    let (got, want, (hits, kept)) = expanded_memo(&[("main.c", src)], false);
+    same(show(&got.expect("refused")), show(&want), "an open tail");
+    same((hits, kept), (0, 0), "the memo's hits and results");
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define C(x) x __COUNTER__\nC(a) C(a)\nC(a)\n")],
+        &[("main.c", "#define L() __LINE__\n#define C(x) [x L()]\nC(a)\nC(a)\n\nC(a) C(a)\n")],
+        &[("main.c", "#define K() __COUNTER__\n#define C(x) [x K()] x\nC(a)\nC(a) C(a)\nC(a)\n")],
+    ];
+    shapes_agree(shapes);
+}
+
+/// `expanded_run`, and the memo's hits and results.
+fn expanded_memo(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, (u32, u32)) {
+    use rerail_c_pp::files::Search;
+    let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+    let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+    let mut serial = Spelled::default();
+    let m2 = m.clone();
+    let mut io = Search::new(Vec::new(), move |p: &str| m2.get(p).cloned());
+    let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
+    assert!(pp.run("main.c"));
+    drop(pp);
+    let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(Vec::new(), move |p: &str| m.get(p).cloned())), "main.c".into())];
+    let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
+    let x = &*s.part.x;
+    if x.refused != 0 {
+        return (Err(x.refused), serial.0, x.memo);
+    }
+    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.memo)
+}
+
 /// `expanded_run`, and the longest piece's steps.
 fn expanded_steps(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32, u32) {
     use rerail_c_pp::files::Search;
@@ -1361,7 +1613,8 @@ fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand
 /// serial pass. The spike is not run: the rounds decide every directive and resolve every
 /// include. Every unit gives the serial pass's tokens, none is refused (a refusal is counted by
 /// reason, then fails the test), and every round is 2 launches. `RERAIL_PP_FIRST` and
-/// `RERAIL_PP_COUNT` choose the files of each language; `RERAIL_PP_STAGES` measures a batch.
+/// `RERAIL_PP_COUNT` choose the files of each language; `RERAIL_PP_STAGES` measures a batch;
+/// `RERAIL_PP_INCLUDE` (directories, `:` between) is searched before the stubs.
 #[test]
 #[ignore = "the corpus (~/orca/rerail-shared/lean-corpus); run in slices"]
 fn the_corpus_preprocesses_on_the_device() {
@@ -1376,14 +1629,16 @@ fn the_corpus_preprocesses_on_the_device() {
         paths.sort();
         langs.push((paths.into_iter().skip(first).take(count).collect(), cpp));
     }
+    let mut dirs: Vec<(String, DirKind)> = std::env::var("RERAIL_PP_INCLUDE").map(|v| v.split(':').filter(|d| !d.is_empty()).map(|d| (d.to_string(), DirKind::System)).collect()).unwrap_or_default();
+    dirs.push(("<stub>".into(), DirKind::After));
     // `RERAIL_PP_AGAIN`: the batches once before, the units' second evaluation the one checked (their teams
     // sized by the loop's work the first measured: `Sizes::work`).
     if std::env::var_os("RERAIL_PP_AGAIN").is_some() {
         eprintln!("the first evaluation:");
-        against_serial(langs.clone(), vec![("<stub>".into(), DirKind::After)], true);
+        against_serial(langs.clone(), dirs.clone(), true);
         eprintln!("the second:");
     }
-    let r = against_serial(langs, vec![("<stub>".into(), DirKind::After)], true);
+    let r = against_serial(langs, dirs, true);
     same(r.refused, std::collections::BTreeMap::new(), "the units refused");
     assert!(r.same_units == 0 || r.launches == LAUNCHES, "{} launches a round, not {LAUNCHES}", r.launches);
 }
@@ -2472,20 +2727,24 @@ fn a_chains_use_is_flat_in_its_length() {
             .iter()
             .map(|&n| {
                 let text = chain(n, body);
-                let (got, want, room, _) = expanded_x(&[("main.c", text.as_str())], false);
+                let (got, want, room, _, rows) = expanded_x(&[("main.c", text.as_str())], false);
                 let got = got.unwrap_or_else(|why| panic!("{what}, {n} levels: refused {why}"));
                 same(show(&got), show(&want), what);
-                room.iter().map(|&(used, _)| used).collect()
+                room.iter().map(|&(used, _)| used).chain([rows]).collect()
             })
             .collect();
+        // The runs' logs (decision 0613 §6): the expansions' rows, output the roll-up reads, a region each run
+        // grows by doubling (twice its rows at most).
+        let logs = 2 * (uses[2][ROOM_STORES.len()] - uses[0][ROOM_STORES.len()]);
+        eprintln!("{what}: log rows: {} {} {}", uses[0][ROOM_STORES.len()], uses[1][ROOM_STORES.len()], uses[2][ROOM_STORES.len()]);
         for (s, name) in ROOM_STORES.iter().enumerate() {
             // The output and the scratch grow with the input (the state written out once, the
             // literals and the `#line` rows' room, two tokens a directive); the tokens' use at 100
-            // levels is at most its use at 25, a 16th more, and a word a level.
+            // levels is at most its use at 25, a 16th more, a word a level, and the logs' rows.
             let (a, b, c) = (uses[0][s], uses[1][s], uses[2][s]);
             eprintln!("{what}: {name}: {a} {b} {c}");
             let grows = ["output", "scratch bytes", "scratch tokens"].contains(name);
-            let bound = a + a / 16 + 75 + 64;
+            let bound = a + a / 16 + 75 + 64 + if *name == "tokens" { logs } else { 0 };
             if !grows && c > bound {
                 flat = false;
             }
@@ -2514,23 +2773,25 @@ fn a_done_calls_exits_are_given_back_to_their_last() {
         t
     };
     let tokens = ROOM_STORES.iter().position(|s| *s == "tokens").unwrap();
-    let uses: Vec<u32> = [16usize, 48]
+    let uses: Vec<(u32, u32)> = [16usize, 48]
         .iter()
         .map(|&n| {
             let text = chain(n);
-            let (got, want, room, _) = expanded_x(&[("main.c", text.as_str())], false);
+            let (got, want, room, _, rows) = expanded_x(&[("main.c", text.as_str())], false);
             let got = got.unwrap_or_else(|why| panic!("{n} levels: refused {why}"));
             same(show(&got), show(&want), "a chain of exits beside it");
-            room[tokens].0
+            (room[tokens].0, rows)
         })
         .collect();
-    eprintln!("tokens: {} {}", uses[0], uses[1]);
-    assert!(uses[1] <= uses[0] + 80 * 32, "the tokens grow {} a level", (uses[1] - uses[0]) / 32);
+    eprintln!("tokens, log rows: {:?} {:?}", uses[0], uses[1]);
+    // The logs' rows (decision 0613 §6) are the expansions', output the roll-up reads: twice their rows at most.
+    let logs = 2 * (uses[1].1 - uses[0].1);
+    assert!(uses[1].0 <= uses[0].0 + 80 * 32 + logs, "the tokens grow {} a level", (uses[1].0 - uses[0].0) / 32);
 }
 
 /// A unit expanded with its run's own figures (`expanded_x`): its output spelled, or its refusal bits; the serial
-/// pass's output; each room's use; the output's pieces.
-type RoomsRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS], u32);
+/// pass's output; each room's use; the output's pieces; the rows its roll-up walked (`Expanded::log_rows`).
+type RoomsRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS], u32, u32);
 /// §3 of decision 0520: the output is pieces. A top level's run of tokens no call covers is one
 /// piece, and a call's expansion its pieces: a text of 2,000 plain tokens on 200 lines, with a call
 /// after each 500 (`G`: `[`, `g`, `]`, `g`, each its own piece of `F`'s body or `G`'s), is its 5 runs
@@ -2543,7 +2804,7 @@ fn the_output_is_pieces_that_refer_to_the_text() {
         text += &line;
         text += if k % 50 == 49 { " G\n" } else { "\n" };
     }
-    let (got, want, _, pieces) = expanded_x(&[("main.c", text.as_str())], false);
+    let (got, want, _, pieces, _) = expanded_x(&[("main.c", text.as_str())], false);
     let got = got.unwrap_or_else(|why| panic!("refused {why}"));
     same(show(&got), show(&want), "the text");
     assert!(want.len() > 2000 && pieces <= 5 + 4 * 4, "{} tokens in {pieces} pieces", want.len());
@@ -2593,7 +2854,7 @@ fn a_piece_read_past_its_end_takes_the_pieces_it_reads() {
         text += &format!("C {args} , {args} )\n");
         text += "s t u v w\n";
     }
-    let (got, want, _, _) = expanded_x(&[("main.c", text.as_str())], false);
+    let (got, want, ..) = expanded_x(&[("main.c", text.as_str())], false);
     let got = got.unwrap_or_else(|why| panic!("refused {why}"));
     assert!(want.len() > 900, "{} tokens", want.len());
     same(show(&got), show(&want), "the text");
@@ -2613,7 +2874,7 @@ fn expanded_x(files: &[(&str, &str)], cpp: bool) -> RoomsRun {
     let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(Vec::new(), move |p: &str| m.get(p).cloned())), "main.c".into())];
     let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
     let got = if s.part.x.refused != 0 { Err(s.part.x.refused) } else { Ok(part_tokens(&s.part, &s.loaded.files, &tapes)) };
-    (got, serial.0, s.part.x.room, s.part.x.pieces)
+    (got, serial.0, s.part.x.room, s.part.x.pieces, s.part.x.log_rows)
 }
 
 /// Plan step 11 of decision 0448 (the built-ins): `__LINE__` is the line of the outermost call's
@@ -2669,4 +2930,86 @@ fn where_an_evaluations_gpu_time_goes() {
             eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
         }
     }
+}
+
+/// Decision 0613 step 2: a unit's next round keeps its files' documents from the last one: it lexes
+/// only the files the last round's answers loaded, and reads the same documents.
+/// Decision 0613 §3: a round starts from the tree the last round's P1 settled at. Includes three
+/// deep, each a round's requests, conditionals on what each header defines: the rounds give the
+/// serial pass's tokens, and from the last round's tree take fewer P1 iterations than from the roots.
+#[test]
+fn a_round_starts_from_the_last_rounds_tree() {
+    use rerail_c_pp::files::Search;
+    use rerail_metal::pp_expand::{Layout, NO_PARENT, expand_teams};
+    let files: &[(&str, &str)] = &[
+        ("main.c", "#include \"a.h\"\n#ifdef A\n#include \"b.h\"\n#endif\n#if defined(B) && C > 1\nyes C\n#else\nno\n#endif\nend A B\n"),
+        ("a.h", "#ifndef A\n#define A 1\n#include \"c.h\"\n#endif\n#ifdef C\nint c = C;\n#endif\n"),
+        ("b.h", "#define B 2\n#if C > 1\nint b;\n#endif\n"),
+        ("c.h", "#define C 3\n#include \"d.h\"\n"),
+        ("d.h", "#ifdef A\nint d = A;\n#endif\n"),
+    ];
+    let cfg = rerail_c_pp::Config::new(crate::pp::options(false));
+    let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+    let mut serial = Spelled::default();
+    let m2 = m.clone();
+    let mut io = Search::new(Vec::new(), move |p: &str| m2.get(p).cloned());
+    let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
+    assert!(pp.run("main.c"));
+    drop(pp);
+    // The rounds, each from the last's tree or (`roots`) from the roots: the tokens, the rounds, P1's iterations.
+    let rounds = |roots: bool| {
+        let m = m.clone();
+        let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(Vec::new(), move |p: &str| m.get(p).cloned())), "main.c".into())];
+        let mut iters = 0u32;
+        let r = super::rounds::run_many(&cfg, false, &mut units, |pairs, sizes| {
+            let lays: Vec<Layout> = pairs
+                .iter()
+                .map(|(_, l)| Layout {
+                    nodes: if roots { l.nodes.iter().copied().filter(|n| n.parent == NO_PARENT).collect() } else { l.nodes.clone() },
+                    table: l.table.clone(),
+                    found_by: l.found_by.clone(),
+                    max_depth: l.max_depth,
+                    if_ops: l.if_ops.clone(),
+                    features: l.features.clone(),
+                    true_is_one: l.true_is_one,
+                    builtins: l.builtins.clone(),
+                    relex_options: l.relex_options,
+                    file_literals: l.file_literals.clone(),
+                    name_literals: l.name_literals.clone(),
+                    entered: if roots { Vec::new() } else { l.entered.clone() },
+                    groups: if roots { Vec::new() } else { l.groups.clone() },
+                })
+                .collect();
+            let pairs: Vec<_> = pairs.iter().zip(&lays).map(|((u, _), l)| (*u, l)).collect();
+            let xs = expand_teams(&pairs, sizes);
+            if let Ok(xs) = &xs {
+                iters += xs.iter().flatten().map(|x| x.passes.0).sum::<u32>();
+            }
+            xs
+        });
+        let s = r.into_iter().next().unwrap().unwrap_or_else(|_| panic!("refused"));
+        let tapes: Vec<Vec<u8>> = s.loaded.files.iter().map(|f| image(f, crate::pp::options(false))).collect();
+        (part_tokens(&s.part, &s.loaded.files, &tapes), s.rounds, iters)
+    };
+    let (seeded, n, si) = rounds(false);
+    let (fresh, n2, fi) = rounds(true);
+    same(show(&seeded), show(&serial.0), "from the last round's tree");
+    same(show(&fresh), show(&serial.0), "from the roots");
+    same(n, n2, "the rounds");
+    eprintln!("{n} rounds; P1's iterations: {si} from the last round's tree, {fi} from the roots");
+    assert!(n >= 3 && si < fi, "the last round's tree saves iterations: {si} against {fi} in {n} rounds");
+}
+
+#[test]
+fn a_round_lexes_only_its_new_files() {
+    let (main, h) = (b"#include \"h.h\"\nint x = H;\n".to_vec(), b"#define H 1\n".to_vec());
+    let mut kept = Vec::new();
+    let (first, built) = place_kept(&[(&main[..], false)], &mut kept).unwrap();
+    same(built, 1, "the first round's tapes");
+    let (second, built) = place_kept(&[(&main[..], false), (&h[..], false)], &mut kept).unwrap();
+    same(built, 1, "the second round's tapes: the header's alone");
+    same(kept.len(), 2, "the digests kept");
+    let again = place(&[(&main[..], false), (&h[..], false)]).unwrap();
+    same(second.len(), again.len(), "the documents");
+    same(first.len(), 1, "the first round's documents");
 }

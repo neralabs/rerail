@@ -341,6 +341,22 @@ UKL_INLINE void p1_inc_new(PP_GLOBAL const PpInst* insts, uint32_t n, PP_GLOBAL 
     ukl_atomic_store(changed, 1u);
 }
 
+// A round started from the last round's tree (decision 0613 §3): instance `i` made by its parent's
+// directive word, entered there where it was (`ent`), and its depth the tree's at least. The
+// iterations go on from that state: a test reads only the state before it, so they reach the
+// fixpoint from any start, and from the last round's in the iterations the new files need.
+UKL_INLINE void p1_seed_words(PP_GLOBAL const PpNode* nodes, PP_GLOBAL const uint32_t* n_nodes, PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint32_t* ent, uint32_t cap,
+                              PP_GLOBAL uint32_t* made, PP_GLOBAL uint32_t* made_file, PP_GLOBAL uint32_t* enter, PP_GLOBAL uint32_t* depth, uint32_t i) {
+    if (i >= n_nodes[0] || nodes[i].parent == PP_NONE) return;
+    PpNode m = nodes[i];
+    uint32_t w = insts[m.parent].dir_first + m.pdir;
+    if (w >= cap) return;
+    made[w] = i;
+    made_file[w] = m.file;
+    enter[w] = ent[i] != 0u ? i : PP_NONE;
+    ukl_atomic_max(depth, m.depth);
+}
+
 // The words that hold no instance's yet: no include enters, none made.
 UKL_INLINE void p1_words_init(PP_GLOBAL uint32_t* made, PP_GLOBAL uint32_t* made_file, PP_GLOBAL uint32_t* enter, uint32_t cap, uint32_t w) {
     if (w >= cap) return;
