@@ -1592,14 +1592,39 @@ impl Gen<'_> {
         Ok(())
     }
 
-    /// `fill(F & Y, ~F)` for a fill `F` the loop keeps and `Y` of stage 1: each of `F`'s runs from
-    /// its first `Y`. It is none where `F` is, so over a gap it is its value at the token before's
-    /// last byte while `F` holds; at a token's first byte `F & (Y | before)`; over the token's
-    /// bytes after, where no `F` starts, `F` at its last byte and `Y` over them or its first
-    /// byte's.
+    /// `fill(F & Y, ~F [| Z])` for a fill `F` the loop keeps and `Y`, `Z` of stage 1: each of
+    /// `F`'s runs from its first `Y`, to a `Z`. It is none where `F` is, so over a gap it is its
+    /// value at the token before's last byte while `F` holds; at a token's first byte `F & (Y |
+    /// before & ~Z)`; over the token's bytes after, where no `F` starts and no `Z` is, `F` at its
+    /// last byte and `Y` over them or its first byte's. `Z` holds at no skipped byte.
     fn within_fill(&mut self, key: &str, name: &Option<String>, e: &Expr, x: &Expr, stop: &Expr, rows: &[(usize, &Stmt)]) -> Result<bool, String> {
-        let Expr::Not(f) = stop else { return Ok(false) };
+        // The stop's terms: `~F`, and the others `Z`.
+        let mut terms = Vec::new();
+        let mut todo = vec![stop];
+        while let Some(t) = todo.pop() {
+            match t {
+                Expr::Or(a, b) => {
+                    todo.push(b);
+                    todo.push(a);
+                }
+                t => terms.push(t),
+            }
+        }
+        let Some(fi) = terms.iter().position(|t| matches!(t, Expr::Not(f) if self.fill_of(f).is_some())) else { return Ok(false) };
+        let Expr::Not(f) = terms.remove(fi) else { return Ok(false) };
         let Some(j) = self.fill_of(f) else { return Ok(false) };
+        let z = terms.into_iter().cloned().reduce(|a, b| Expr::Or(Box::new(a), Box::new(b)));
+        if z.as_ref().is_some_and(|z| self.regional(z)) {
+            return Ok(false);
+        }
+        let zb = z.as_ref().map_or([false; 256], |z| self.bytes_at(z, 0, &mut HashMap::new()));
+        if (0..256).any(|b| zb[b] && self.skipped[b]) {
+            return Ok(false);
+        }
+        let zv = match &z {
+            Some(z) => Some(self.val(z)?),
+            None => None,
+        };
         let y = match x {
             Expr::And(a, b) if self.fill_of(a) == Some(j) => b,
             Expr::And(a, b) if self.fill_of(b) == Some(j) => a,
@@ -1628,7 +1653,31 @@ impl Gen<'_> {
             let sb: [bool; 256] = std::array::from_fn(|b| sb[b] && !self.skipped[b]);
             let bit = |at: &str| yv.as_ref().map(|v| format!("bit(&{v}, {at})"));
             let Some(ys) = self.known_over(y, &sb, || bit("s")) else { return Ok(false) };
-            let g_s = f_s.clone().and(ys.or(carry.clone()));
+            // The stop `Z` at the first byte, and none over the bytes after.
+            let zs = match &z {
+                Some(z) => match self.known_over(z, &sb, || zv.as_ref().map(|v| format!("bit(&{v}, s)"))) {
+                    Some(k) => k,
+                    None => return Ok(false),
+                },
+                None => Known::No,
+            };
+            // `Z` over the bytes after the first (a `->`'s `>`, a `..<`'s `<`): tested there. A
+            // `Y` there comes after every `Z` there, and starts the fill again.
+            let z_tail = match (&z, region) {
+                (Some(z), false) => {
+                    let tb = self.row_tail_bytes(kind, rule, last);
+                    match self.known_over(z, &tb, || zv.as_ref().map(|v| format!("any_in(&{v}, s + 1, l)"))) {
+                        Some(Known::No) => None,
+                        Some(k) => {
+                            let yt = self.known_over(y, &tb, || yv.as_ref().map(|v| format!("any_in(&{v}, s + 1, l)"))).unwrap_or(Known::No);
+                            Some((k, yt))
+                        }
+                        None => return Ok(false),
+                    }
+                }
+                _ => None,
+            };
+            let g_s = f_s.clone().and(ys.or(carry.clone().and(zs.not())));
             let g_l = if region {
                 if !dies {
                     return Ok(false);
@@ -1645,7 +1694,7 @@ impl Gen<'_> {
                     g_s.clone()
                 } else if !tail_starts {
                     let Some(yt) = self.known_over(y, &tb, || yv.as_ref().map(|v| format!("any_in(&{v}, s + 1, l)"))) else { return Ok(false) };
-                    f_l.and(g_s.clone().or(yt))
+                    f_l.clone().and(g_s.clone().or(yt))
                 } else if matches!(self.known_over(y, &tb, || None), Some(Known::No)) {
                     // A start of `F` may be over them, and no `Y`: the first byte's while `F` holds,
                     // that is while no byte stops it but starts it.
@@ -1660,10 +1709,14 @@ impl Gen<'_> {
                     return Ok(false);
                 }
             };
+            let g_l = match z_tail {
+                Some((zt, yt)) => g_l.and(zt.not()).or(f_l.clone().and(yt)),
+                None => g_l,
+            };
             info.push(RowFill { row: *row, at_s: g_s, at_l: g_l.clone(), tail_starts: false, tail_stop: Known::No, region, dies });
             codes.push((*row, g_l.code(), Known::No.code()));
         }
-        self.fills.push(LoopFill { name: name.clone(), key: key.to_owned(), shown: show(e), prev: false, x: x.clone(), xg: None, eg: None, within: Some(j), rows: codes, info, start0: (**y).clone(), stop0: Expr::Empty });
+        self.fills.push(LoopFill { name: name.clone(), key: key.to_owned(), shown: show(e), prev: false, x: x.clone(), xg: None, eg: None, within: Some(j), rows: codes, info, start0: (**y).clone(), stop0: z.unwrap_or(Expr::Empty) });
         Ok(true)
     }
 

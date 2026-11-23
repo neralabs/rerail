@@ -297,7 +297,10 @@ escape "a `;` after a line break and a comment" when code & semicolon & prev(fil
 mask as_kw      = kw_start & (text("as") | text("is")) & ~next(w, 2)
 mask as_run     = fill(prev(as_kw, 2), ~(code & (word | high | dot | text(" ") | text("?") | text("<") | text(">"))))
 mask as_dot     = fill(as_run & dot, ~as_run)
-mask as_lt      = fill(as_dot & text("<"), ~as_dot)
+# Names and dots alone between the angles, as the lean parser's `as_split` asks: the run from a
+# `<` stops at a `?`, at a `<` (which starts one again) and at a second `>` in a row, so after
+# `<Int?>` or `<Map<A>>` no `>` that ends the line is in it.
+mask as_lt      = fill(as_dot & text("<"), ~as_dot | text("?") | text("<") | gt & prev(gt))
 escape "a blank, a comment or a `\r` after a type the lean parser may split" when (text(" ") | slash | text("\r")) & prev(as_lt) & prev(gt)
 
 # --- Tokens ------------------------------------------------------------------------------------

@@ -956,6 +956,23 @@ fn names_past_ascii_are_the_lean_parsers() {
     ]);
 }
 
+/// `x as a.b.C<…>` at a line's end splits only with names and dots between the angles (decision
+/// 0629), as the lean parser's `as_split` asks: a `?` or a second `<` there keeps the type whole.
+#[test]
+fn as_types_the_lean_parser_does_not_split_are_its() {
+    same(&[
+        "fun f() {\n  val a = x as java.util.List<Int?>\n  foo()\n}\n",
+        "fun f() {\n  val a = x as java.util.List<Map<A>>\n  foo()\n}\n",
+        "fun f() {\n  val a = x as? a.B<C?>\n  foo()\n}\n",
+        "fun f() {\n  val a = x as a.B<C, D>\n  foo()\n}\n",
+        "fun f() {\n  val a = x as a.B<c.D>\n  foo()\n}\n",
+        "fun f() {\n  val a = x as a.B<C>?\n  foo()\n}\n",
+        "fun f() {\n  if (x is a.B<C?>)\n    foo()\n}\n",
+        "fun f() {\n  val a = x as a.B<C>\n  (b)\n}\n",
+        "fun f() {\n  val a = x as a.B<C>\n  { b }\n}\n",
+    ]);
+}
+
 /// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
