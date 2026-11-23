@@ -441,17 +441,8 @@ pub fn with_rows<'a>(digest: [u8; 32], rels: impl Iterator<Item = (&'a str, &'a 
     hash.finalize().into()
 }
 
-/// The memo is the tape cache's: a build without `tape-cache` has no store to keep it in, so the runner never reads or
-/// writes it, and saying so here, where the compiler sees it, leaves the store's zstd frames unlinked.
-pub fn off() {
-    if !cfg!(feature = "tape-cache") {
-        unreachable!("the corpus memo is off in a build without `tape-cache`");
-    }
-}
-
 /// The stored source of `text`, stored if it is not.
 pub fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> {
-    off();
     let hash = HashKey::sha256(text.as_bytes());
     // Held (O95): a source the run finds is pinned with it, as one it stores is.
     match store.source_by_hash(hash)? {
@@ -463,7 +454,6 @@ pub fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> {
 /// The source of `text` when the store holds it: one read, nothing written (the run's collection lease keeps it until
 /// the manifest names it, decision 0306 step 4). `None`: not stored yet; `source`, run on the writer, stores it.
 pub fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Option<SourceId>> {
-    off();
     Ok(store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())])?.pop().flatten())
 }
 
@@ -689,7 +679,6 @@ pub fn decode_frame(frame: &Frame) -> StoreResult<Entry> {
 
 /// The memoised entry of the document at `path` (key `key`, content `source`) under `program`.
 pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &Program) -> StoreResult<Option<Entry>> {
-    off();
     match found_all(store, program, &[(source, path)])?.pop().flatten() {
         Some(found) => found.entry(key),
         None => Ok(None),
@@ -698,7 +687,6 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i6
 
 /// `lookup` of many documents, each `(source, path, key)`, in their order: one statement whatever their number.
 pub(super) fn lookup_all(store: &ContentStore, program: &Program, docs: &[(SourceId, &str, i64)]) -> StoreResult<Vec<Option<Entry>>> {
-    off();
     let keys: Vec<(SourceId, &str)> = docs.iter().map(|(s, p, _)| (*s, *p)).collect();
     found_all(store, program, &keys)?.into_iter().zip(docs).map(|(f, (_, _, key))| f.map_or(Ok(None), |f| f.entry(*key))).collect()
 }
@@ -734,7 +722,6 @@ impl Found {
 /// `lookup_all`, each entry found and not decoded: the contents' digests in one read, their frames in one more. A
 /// lookup writes nothing, and marks nothing (decisions 0104, 0227).
 pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(SourceId, &str)]) -> StoreResult<Vec<Option<Found>>> {
-    off();
     let atoms = store.atoms_handle();
     let held: Vec<Option<Found>> = docs.iter().map(|(s, p)| pending(store, &queued(*s, p, program), &atoms)).collect();
     let asked: Vec<usize> = (0..docs.len()).filter(|i| held[*i].is_none()).collect();
@@ -806,7 +793,6 @@ fn queued_content(content: Content, path: &str, program: &[u8; 32]) -> Option<cr
 
 /// `source` of many texts, in their order: the stored ones found (and pinned) in one statement, the others stored.
 pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<SourceId>> {
-    off();
     let hashes: Vec<HashKey> = texts.iter().map(|t| HashKey::sha256(t.as_bytes())).collect();
     let found = store.sources_by_hashes(&hashes)?;
     texts.iter().zip(hashes).zip(found).map(|((text, hash), id)| match id { Some(id) => Ok(id), None => store.put_source_hashed(text.as_bytes(), hash, &[]) }).collect()
@@ -815,7 +801,6 @@ pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<S
 /// The stored sources of many contents, by their SHA-256 digests, in their order: one read and nothing written (a
 /// lookup writes nothing, decision 0104; the run's collection lease keeps them, decision 0306 step 4).
 pub fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<Option<SourceId>>> {
-    off();
     let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
     store.sources_by_hashes(&hashes)
 }
@@ -836,7 +821,6 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
     let standing: HashSet<(String, i64)> = entries.iter().filter(|e| e.4).map(|e| (e.1.clone(), e.2)).collect();
     let known: HashMap<String, [u8; 32]> = entries.iter().filter_map(|e| Some((e.1.clone(), e.5?))).collect();
     let entries: Vec<(Content, String, i64, Entry)> = entries.into_iter().map(|(c, p, k, e, _, _)| (c, p, k, e)).collect();
-    off();
     let plan = plan_digest(program);
     // The atom table the entries' symbols are numbered by: the writer reads their strings from it.
     let made_under = store.atoms_handle();

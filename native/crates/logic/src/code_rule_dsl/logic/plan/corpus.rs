@@ -1063,7 +1063,6 @@ const TAPE_RUNS: usize = 4;
 /// once it is.
 #[allow(clippy::too_many_arguments)]
 pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, set: Option<[u8; 32]>, relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
-    memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let owner = ThreadStore::owner(root);
     let scope = owner.as_ref().map(|owner| owner.scope.clone())
@@ -1670,7 +1669,7 @@ fn run_observed_within(
     // The store's writer held from the run's start to its end (decision 0102): the handles the run opens and closes on
     // the way (the combined program's) queue their writes and go, and the run's end waits for every one. Declared
     // first, so dropped last.
-    let _writer = if cfg!(feature = "tape-cache") { tape_cache_path().map(|p| crate::content_store::write_back::hold(&p)) } else { None };
+    let _writer = if keeps_store() { tape_cache_path().map(|p| crate::content_store::write_back::hold(&p)) } else { None };
     // The run's settings, as `env` facts (t21 E4): `<root>/rerail.env`, then the `env` option's `key=value`s (the
     // command line's `--env`).
     let setting = crate::code_rule_dsl::logic::profile::span(|| "the run's settings".into());
@@ -2148,9 +2147,9 @@ fn run_observed_within(
     // every file), and the run's atoms and each file's memoised rows (decision 0052): atoms are never given out again,
     // so a memoised row's symbols mean the same in every run. The run's SQL works in `store.sqlite`, on the same
     // atoms. Without the store, or reproducing T, the atoms are the run's own; in a session, the session's store's.
-    // Without the `tape-cache` feature (the browser build) there is no store to keep: `tapes` is `None` where the
-    // compiler can see it, so the memo, the run record and their zstd frames are not linked.
-    let tapes = if cfg!(feature = "tape-cache") {
+    // Without the `tape-cache` feature (the browser build) a run keeps no store unless its caller selected one (a
+    // session's, `keeps_store`): `tapes` is `None`, and every file is parsed and evaluated.
+    let tapes = if keeps_store() {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "open tape store".into());
         handed.tapes()?
     } else { &None };
@@ -3803,7 +3802,7 @@ fn run_observed_within(
         // A file memo can be partial for the current rules. Fetch tapes by content before the waves,
         // so completing a memo entry does not reparse the source.
         let mut tape: Vec<Option<crate::content_store::TapeFrame>> = vec![None; window.len()];
-        if let (true, Some(cache), Some(lang)) = (reading, tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")), crate::code_rule_dsl::language::dialect_by_label(label)) {
+        if let (true, Some(cache), Some(lang)) = (reading, tapes.as_ref(), crate::code_rule_dsl::language::dialect_by_label(label)) {
             // A hit's too, where the cross part reads base relations off every file's tape (decision 0458).
             let asked: Vec<usize> = (0..window.len()).filter(|i| (found[*i].is_none() || !stored.is_empty()) && matches!(content[*i], Some(memo::Content::Stored(_)))).collect();
             if let (false, Some(tag)) = (asked.is_empty(), crate::code_rule_dsl::language::tape_tag(lang)) {
@@ -4003,7 +4002,7 @@ fn run_observed_within(
             let changed: BTreeSet<String> = olds.iter().map(|(p, _, _, _)| p.clone()).chain(now_of.keys().filter(|p| !in_table.contains(p.as_str())).cloned()).collect();
             // Each old source and tape where the table's places name them, checked by the hashes kept; else, before
             // the first wave, read through the store.
-            let tape_tag = crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag).filter(|_| tapes.is_some() && cfg!(feature = "tape-cache"));
+            let tape_tag = crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag).filter(|_| tapes.is_some());
             let placed: Vec<(Option<Arc<crate::content_store::CachedBytes>>, Option<crate::content_store::TapeFrame>)> = olds
                 .iter()
                 .map(|(_, _, _, pl)| match pl {
@@ -4015,7 +4014,7 @@ fn run_observed_within(
                 if in_waves { Vec::new() } else { olds.iter().zip(&placed).enumerate().filter(|(_, (_, (b, _)))| b.is_none()).filter_map(|(i, ((_, _, c, _), _))| c.stored().map(|id| (i, id))).collect() };
             let ids: Vec<crate::content_store::SourceId> = through.iter().map(|(_, id)| *id).collect();
             let texts = if ids.is_empty() { HashMap::new() } else { store.get_sources_bulk(&ids).map_err(|e| Error::Plan(e.to_string()))? };
-            let frames = match (tapes.as_ref().filter(|_| cfg!(feature = "tape-cache") && !ids.is_empty()), tape_tag) {
+            let frames = match (tapes.as_ref().filter(|_| !ids.is_empty()), tape_tag) {
                 (Some(cache), Some(tag)) => cache
                     .tape_frames_for(&ids, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))
                     .map_err(|e| Error::Plan(e.to_string()))?,
@@ -4160,7 +4159,7 @@ fn run_observed_within(
         // root record between. One read, before the first wave (decision 0104), for the waves' builds (a load's files,
         // a file the memo misses), and the tapes of the texts the rules parsed (decision 0431 R6).
         if let (Some(cache), Some(tag)) = (
-            tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")),
+            tapes.as_ref(),
             crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag),
         ) {
             let _tapes = crate::code_rule_dsl::logic::profile::span(|| "the root's tapes, by their sources (Q22)".into());
@@ -4215,7 +4214,7 @@ fn run_observed_within(
             value_frames = found.into_iter().map(|(source, hash, t, frame)| ((hash, t), (source, frame))).collect();
         }
     }
-    let guest_parses = guests::Parses::new(tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")).map(|cache| guests::ValueStore { cache, run_tag, by_text: &by_text, others: value_frames, late: &late_sources }));
+    let guest_parses = guests::Parses::new(tapes.as_ref().map(|cache| guests::ValueStore { cache, run_tag, by_text: &by_text, others: value_frames, late: &late_sources }));
     // The roots its requests may read, watched before the first wave (`World::watch`): a `World` made inside the
     // fixpoint would otherwise read the observer's store there (decision 0104; Q150).
     if loading.is_some() {
@@ -4404,12 +4403,10 @@ fn run_observed_within(
             } else {
                 // Tapes kept across runs where the run has the persistent store (`tape_cache`).
                 let (built, tape) = match &tapes {
-                    // The closure sees `&tapes`, not that it is `None` without `tape-cache`: said here so the store's
-                    // tape and source frames are not linked.
                     // In the waves no SQL is read or written (decision 0104): the tape was found before the first wave, or
                     // the file is parsed and its source and tape are the writer's, behind the run; the manifest names the
                     // sources it stores (`late_sources`).
-                    Some(cache) if cfg!(feature = "tape-cache") => {
+                    Some(cache) => {
                         // Else by its text and grammar, among the root's last runs' tapes (Q22): a file whose content the
                         // run has no source id for (no memo, or one named by digest in a wave). Its source is named in the
                         // manifest.
@@ -4426,7 +4423,6 @@ fn run_observed_within(
                         if tape.is_some() { &file_tapes.0 } else { &file_tapes.1 }.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         core::build_in_wave_with_tape(&file, cache, Some(source_digest), tape.as_ref(), true, keep_tapes)
                     }
-                    Some(_) => unreachable!("no tape cache without `tape-cache`"),
                     None => core::build_with_tape(&file, keep_tapes),
                 }
                 .map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
@@ -8753,7 +8749,7 @@ fn run_observed_within(
                             // 0494 step 4 part 2), as the compare reads them (`tape_frames_for`'s key).
                             let tape = crate::code_rule_dsl::language::dialect_by_label(label)
                                 .and_then(crate::code_rule_dsl::language::tape_tag)
-                                .filter(|_| cfg!(feature = "tape-cache"))
+                                .filter(|_| tapes.is_some())
                                 .map(|tag| [i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version())]);
                             if !unchanged && !retain::put_base_documents(store, was, binds, plan, &table, corpus_digest, tape) {
                                 crate::code_rule_dsl::logic::profile::decision("the base relations' documents (decision 0458)", || "not kept: a content held in memory alone, or a path with no atom; the next run reads its base relations' readers again".into());
@@ -9889,8 +9885,8 @@ fn hit_document(how: &HitBuild<'_>, key: i64, path: &str, module: Option<Arc<str
     };
     let file = core::Source { language: language.to_owned(), source: Arc::new(source) };
     let built = match (how.tapes, frame) {
-        (Some(cache), Some(frame)) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, None, Some(frame), true, how.keep_tapes),
-        (None, Some(frame)) if cfg!(feature = "tape-cache") => core::build_with_frame(&file, frame, how.keep_tapes),
+        (Some(cache), Some(frame)) => core::build_in_wave_with_tape(&file, cache, None, Some(frame), true, how.keep_tapes),
+        (None, Some(frame)) => core::build_with_frame(&file, frame, how.keep_tapes),
         _ => core::build_with_tape(&file, how.keep_tapes),
     };
     let (built, tape) = built.map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;

@@ -705,7 +705,7 @@ pub fn sources(
         options = serde_json::json!({ "inputFiles": [] });
     }
     // Kept by an earlier process, and every read of its run as it was: its exports, the phase not run.
-    let store = if cfg!(feature = "tape-cache") { reading_store() } else { None };
+    let store = if super::keeps_store() { reading_store() } else { None };
     if let Some(kept) = store.as_deref().and_then(|store| { let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1's frame, read".into()); frame::get(store, &identity) }) {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1's frame, its reads checked".into());
         let summary = super::Summary::decode(&kept.summary);

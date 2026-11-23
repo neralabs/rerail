@@ -299,7 +299,8 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/prefilter.rs", "REJECT_TERM"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
-    // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
+    // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it. A
+    // session is its store and connections, open things (t33 step 3): its runs keep their results as kept facts.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "InSession"),
     // The record kinds' applies, registered at load.
     ("content_store/record.rs", "KINDS"),
@@ -312,9 +313,6 @@ const STATE: &[(&str, &str)] = &[
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
-    // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
-    // process's): what it keeps between runs is still a cache to move.
-    ("code_rule_dsl/logic/plan/corpus/session.rs", "InSession", "3"),
     ("code_rule_dsl/logic/plan/base.rs", "KeptPlans", "6"),
     ("code_rule_dsl/logic/plan.rs", "SESSION_PLANS", "6"),
     ("code_rule_dsl/logic/derived.rs", "Memoized", "6"),
@@ -324,8 +322,9 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
 ];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised. 7 when a rule pattern's compiled form and a
 /// production's counter name were found to be state, no cache (t33 step 7, 2026-11-21); 6 when the prepared
-/// programs' pointers became kept facts, the map their in-memory copy (t33 step 2).
-const NOT_YET_MAPS_PIN: usize = 6;
+/// programs' pointers became kept facts, the map their in-memory copy (t33 step 2); 5 when a session's runs became
+/// its store's, a session its store and connections (t33 step 3).
+const NOT_YET_MAPS_PIN: usize = 5;
 
 /// The crate's source files, tests left out: a test may make what it likes.
 fn files(under: &Path, out: &mut Vec<PathBuf>) {

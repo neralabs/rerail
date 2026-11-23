@@ -504,7 +504,7 @@ pub fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<c
 /// (`combined::lookup_version`), or the combine's tail run on the version (`combine_tail`) and its image kept as the
 /// entry (`combined::record_version`).
 pub fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
-    let store = if cfg!(feature = "tape-cache") && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
+    let store = if keeps_store() && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
         phases::reading_store()
     } else {
         None
@@ -1758,6 +1758,14 @@ impl ThreadStore {
     }
 }
 
+/// Whether this thread's runs keep a store: the build keeps the tape cache (`tape-cache`), or the caller selected a
+/// store for its runs (`ThreadStore::select`): a session's (decision 0063), whose runs are its store's in every
+/// build (t33 step 3). A build without the feature (the browser's) keeps no store of its own, and a session's
+/// there as the CLI's.
+pub fn keeps_store() -> bool {
+    cfg!(feature = "tape-cache") || ThreadStore::with(|store| store.is_some_and(|store| store.path.is_some()))
+}
+
 /// Run with an explicitly selected cache on this thread.
 pub fn with_tape_cache_path<T>(path: &Path, ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>, run: impl FnOnce() -> T) -> T {
     let _store = ThreadStore::select(path, ownership);
@@ -2184,7 +2192,7 @@ pub fn run_fact_image(source: &str, root: &Path, options: &serde_json::Value) ->
 /// `run_fact_image`, with the memo plans its run (and the phases it ran) recorded manifests of: what a later run that
 /// reuses its image in memory (a Git view's inventory) owns again for its own scope (`own_recorded_manifests`).
 pub fn run_fact_image_planned(source: &str, root: &Path, options: &serde_json::Value) -> Result<(Vec<u8>, Vec<[u8; 32]>)> {
-    let store = if cfg!(feature = "tape-cache") { phases::reading_store() } else { None };
+    let store = if keeps_store() { phases::reading_store() } else { None };
     let _reading = store.as_ref().map(|store| store.hold_collection()).transpose()?;
     let (program, program_entry) = combined::embedded_program(source, store.as_deref())?;
     let program_entry = program_entry.as_ref();
