@@ -818,6 +818,95 @@ pub mod tests {
         assert_eq!(interp, Vec::<usize>::new(), "files whose interpreter image is not the lean tape");
     }
 
+    /// Where the grammar refuses a text, against where the lean parser writes an ERROR leaf: over the corpus and
+    /// lean's edited copies of it (`lean_tape_is_the_engines_on_edited_files`' edits and seed). Each refusal is
+    /// tallied by its word's `why` and by where lean's first ERROR leaf lies: none, over the refused token, or
+    /// apart from it. A probe for statement recovery (decision 0623): only a refusal inside lean's errored
+    /// statement may become one.
+    #[test]
+    #[ignore = "a probe: run by name"]
+    fn where_the_grammar_refuses_against_leans_errors() {
+        use std::collections::BTreeMap;
+        let c = crate::compiled().expect("compiles");
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        const ALPHABET: &[u8] = b"(){}[],.:;!=<>+-*/%@$#_|&~?\\\"'`\n \taz09";
+        let mut files = corpus();
+        files.sort();
+        let mut texts = Vec::new();
+        for text in &files {
+            texts.push(text.clone());
+            for round in 0..4 {
+                let mut bytes = text.as_bytes().to_vec();
+                for _ in 0..=round {
+                    if bytes.is_empty() {
+                        break;
+                    }
+                    let at = (next() % bytes.len() as u64) as usize;
+                    match next() % 3 {
+                        0 => bytes.insert(at, ALPHABET[(next() % ALPHABET.len() as u64) as usize]),
+                        1 => {
+                            bytes.remove(at);
+                        }
+                        _ => {
+                            let to = (at + 1 + (next() % 8) as usize).min(bytes.len() - 1);
+                            bytes.swap(at, to);
+                        }
+                    }
+                }
+                if let Ok(s) = String::from_utf8(bytes) {
+                    texts.push(s);
+                }
+            }
+        }
+        let mut tally: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+        let mut shown: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+        let mut taken_with_error = 0;
+        for src in &texts {
+            let lean = crate::rr::engine_tape(src);
+            let error = lean.iter().find(|n| n.kind == crate::rr::tape::ERROR);
+            let run = c.program.block_programs[0].run(src.as_bytes());
+            match rerail_compiler::stream::run(&c.program, src.as_bytes(), &run) {
+                Ok(_) => taken_with_error += usize::from(error.is_some()),
+                Err(r) => {
+                    let place = match (error, r.at) {
+                        (None, _) => "lean: no error",
+                        (Some(_), None) => "lean: error, refusal unplaced",
+                        (Some(e), Some(at)) if e.start <= at && at <= e.end => "lean: error over it",
+                        (Some(e), Some(at)) if at < e.start => "lean: error after it",
+                        _ => "lean: error before it",
+                    };
+                    *tally.entry((r.why, place)).or_default() += 1;
+                    let n = shown.entry((r.why, place)).or_default();
+                    let most = if r.why == "no state takes the token" { 40 } else if r.why.starts_with("tier 1") { 0 } else { 12 };
+                    if *n < most && place != "lean: error over it" {
+                        *n += 1;
+                        let around = |at: usize, before: usize, after: usize| {
+                            let (a, b) = (at.saturating_sub(before), (at + after).min(src.len()));
+                            let a = (0..=a).rev().find(|&i| src.is_char_boundary(i)).unwrap_or(0);
+                            let b = (b..=src.len()).find(|&i| src.is_char_boundary(i)).unwrap_or(src.len());
+                            format!("{:?}", &src[a..b])
+                        };
+                        let at = r.at.unwrap_or(0) as usize;
+                        eprintln!("--- {} / {place} at {at} (pc {}):\n  refused: {} >>> {}", r.why, r.pc, around(at, 60, 0), around(at, 0, 30));
+                        if let Some(e) = error {
+                            eprintln!("  lean's ERROR {}..{}: {}", e.start, e.end, around(e.start as usize, 30, (e.end - e.start) as usize + 30));
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("{} texts; taken with a lean error: {taken_with_error}", texts.len());
+        for ((why, place), n) in &tally {
+            eprintln!("{n:7}  {why:50} {place}");
+        }
+    }
+
     /// The gap marks tier 2 on the CPU tests itself (`native_cpu_block::lazy_marks`: the line
     /// marks, where a statement asks whether the next token is on its line) read the token's
     /// `Next` and `Start` as their caller has them: in one function, whose state is in a stack
