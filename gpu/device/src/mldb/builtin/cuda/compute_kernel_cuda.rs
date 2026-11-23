@@ -107,7 +107,41 @@ struct Api {
     cu_driver_get_version: unsafe extern "C" fn(*mut i32) -> CUresult,
     /// HIP's device properties (`hipGetDevicePropertiesR0600`), for the architecture's name (`gcnArchName`).
     hip_get_device_properties: Option<unsafe extern "C" fn(*mut u8, i32) -> CUresult>,
+    /// The architectures NVRTC compiles for (`nvrtcGetNumSupportedArchs`, `nvrtcGetSupportedArchs`, CUDA 11.2 on):
+    /// a device it does not compile for is told which toolkit it needs (`needs`). None on HIP.
+    nvrtc_supported_archs: Option<(unsafe extern "C" fn(*mut i32) -> i32, unsafe extern "C" fn(*mut i32) -> i32)>,
 }
+
+/// What this machine lacks that the user must install for GPU support (decision 0645: Rerail ships no GPU
+/// compiler): a GPU driver without its runtime compiler, or a compiler that does not compile for the GPU. Said
+/// once, where the process then has no GPU (`rerail_device::shared`); a machine with no GPU driver says nothing.
+static NEEDS: OnceLock<String> = OnceLock::new();
+
+/// What the user must install for GPU support, when the process found a GPU it could not use (`NEEDS`).
+pub fn needs() -> Option<&'static str> {
+    NEEDS.get().map(String::as_str)
+}
+
+/// What the user must install where NVRTC (its version `nvrtc`) does not compile for the GPU's `sm`, among the
+/// architectures it lists (`archs`): an older toolkit for a GPU older than it compiles for (CUDA 13 dropped sm_70,
+/// the V100), a newer one for a newer GPU. None where it compiles for it.
+fn needs_for_arch(sm: u32, nvrtc: (i32, i32), archs: &[i32]) -> Option<String> {
+    if archs.contains(&(sm as i32)) || archs.is_empty() {
+        return None;
+    }
+    let (lo, hi) = (archs.iter().min().copied().unwrap_or(0), archs.iter().max().copied().unwrap_or(0));
+    let which = if (sm as i32) < lo { "an older CUDA Toolkit that still compiles for it (12.x for sm_70, the Tesla V100)" } else { "a newer CUDA Toolkit" };
+    Some(format!(
+        "This machine's NVIDIA GPU is sm_{sm}, and its CUDA Toolkit's NVRTC ({}.{}) compiles for sm_{lo} to sm_{hi}, not \
+         for it; Rerail runs on the CPU until it can compile for the GPU. Install {which}: {CUDA_TOOLKIT}, and set {} to it.",
+        nvrtc.0,
+        nvrtc.1,
+        if cfg!(windows) { "CUDA_PATH" } else { "CUDA_HOME" }
+    ))
+}
+
+/// Where to get the CUDA Toolkit, in each message that asks for it.
+const CUDA_TOOLKIT: &str = "https://developer.nvidia.com/cuda-toolkit-archive";
 
 unsafe impl Send for Api {}
 unsafe impl Sync for Api {}
@@ -167,16 +201,20 @@ fn cuda_library_names() -> (Vec<String>, Vec<String>) {
     let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     if cfg!(windows) {
         let nvrtc = ["nvrtc64_130_0.dll", "nvrtc64_120_0.dll", "nvrtc64_112_0.dll"];
-        let mut names = s(&nvrtc);
-        if let Ok(home) = std::env::var("CUDA_PATH") {
-            names.extend(nvrtc.iter().map(|s| format!("{home}\\bin\\{s}")));
-        }
+        // The toolkit the user named first (`CUDA_PATH`: the one `needs` asks for), then the system's search.
+        let mut names: Vec<String> = std::env::var("CUDA_PATH").into_iter().flat_map(|home| nvrtc.iter().map(move |s| format!("{home}\\bin\\{s}"))).collect();
+        names.extend(s(&nvrtc));
         (s(&["nvcuda.dll"]), names)
     } else {
-        let home = std::env::var("CUDA_HOME").unwrap_or_else(|_| "/usr/local/cuda".into());
         let nvrtc = ["libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"];
-        let mut names = s(&nvrtc);
-        names.extend(nvrtc.iter().map(|s| format!("{home}/lib64/{s}")));
+        // The toolkit the user named first (`CUDA_HOME`: the one `needs` asks for), then the system's search, then
+        // the toolkit's default place.
+        let home = std::env::var("CUDA_HOME").ok();
+        let mut names: Vec<String> = home.iter().flat_map(|h| nvrtc.iter().map(move |s| format!("{h}/lib64/{s}"))).collect();
+        names.extend(s(&nvrtc));
+        if home.is_none() {
+            names.extend(nvrtc.iter().map(|s| format!("/usr/local/cuda/lib64/{s}")));
+        }
         (s(&["libcuda.so.1", "libcuda.so"]), names)
     }
 }
@@ -274,7 +312,15 @@ fn cuda_api() -> Result<Api, String> {
     use crate::os::{Lib, Scope};
     let (driver, nvrtc_names) = cuda_library_names();
     let cuda = Lib::open(&driver, Scope::Global).ok_or_else(|| format!("no CUDA driver ({})", driver.join(", ")))?;
-    let nvrtc = Lib::open(&nvrtc_names, Scope::Global).ok_or_else(|| format!("no NVRTC ({})", nvrtc_names.join(", ")))?;
+    let nvrtc = Lib::open(&nvrtc_names, Scope::Global).ok_or_else(|| {
+        let _ = NEEDS.set(format!(
+            "This machine has NVIDIA's GPU driver, but not NVRTC, the CUDA Toolkit's compiler, which Rerail needs to \
+             compile its GPU kernels; Rerail runs on the CPU until it is installed. Install the CUDA Toolkit (12.x or \
+             later; 12.x for a Tesla V100 or another sm_70 GPU): {CUDA_TOOLKIT}. Installed elsewhere, set {} to it.",
+            if cfg!(windows) { "CUDA_PATH" } else { "CUDA_HOME" }
+        ));
+        format!("no NVRTC ({})", nvrtc_names.join(", "))
+    })?;
     Ok(Api {
         vendor: Vendor::Cuda,
         cu_init: sym!(cuda, "cuInit"),
@@ -319,6 +365,10 @@ fn cuda_api() -> Result<Api, String> {
         nvrtc_version: sym!(nvrtc, "nvrtcVersion"),
         cu_driver_get_version: sym!(cuda, "cuDriverGetVersion"),
         hip_get_device_properties: None,
+        nvrtc_supported_archs: {
+            let (n, list) = (sym_opt!(nvrtc, "nvrtcGetNumSupportedArchs"), sym_opt!(nvrtc, "nvrtcGetSupportedArchs"));
+            (!n.is_null() && !list.is_null()).then(|| (sym_as(n), sym_as(list)))
+        },
     })
 }
 
@@ -331,7 +381,20 @@ fn hip_api() -> Result<Api, String> {
     use crate::os::{Lib, Scope};
     let (driver, rtc_names) = hip_library_names();
     let hip = Lib::open(&driver, Scope::Global).ok_or_else(|| format!("no HIP runtime ({})", driver.join(", ")))?;
-    let rtc = Lib::open(&rtc_names, Scope::Global).ok_or_else(|| format!("no hiprtc ({})", rtc_names.join(", ")))?;
+    let rtc = Lib::open(&rtc_names, Scope::Global).ok_or_else(|| {
+        let _ = NEEDS.set(if cfg!(windows) {
+            "This machine has AMD's HIP runtime, but not hiprtc, the HIP SDK's compiler, which Rerail needs to compile \
+             its GPU kernels on HIP. Install AMD's HIP SDK for Windows: https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html. \
+             Installed elsewhere, set HIP_PATH to it."
+                .to_string()
+        } else {
+            "This machine has AMD's HIP runtime, but not hiprtc, ROCm's compiler, which Rerail needs to compile its GPU \
+             kernels; Rerail runs on the CPU until it is installed. Install ROCm: https://rocm.docs.amd.com. Installed \
+             elsewhere, set ROCM_PATH to it."
+                .to_string()
+        });
+        format!("no hiprtc ({})", rtc_names.join(", "))
+    })?;
     Ok(Api {
         vendor: Vendor::Hip,
         cu_init: sym!(hip, "hipInit"),
@@ -376,6 +439,7 @@ fn hip_api() -> Result<Api, String> {
         nvrtc_version: sym!(rtc, "hiprtcVersion"),
         cu_driver_get_version: sym!(hip, "hipDriverGetVersion"),
         hip_get_device_properties: Some(sym!(hip, "hipGetDevicePropertiesR0600")),
+        nvrtc_supported_archs: None,
     })
 }
 
@@ -489,6 +553,20 @@ impl CudaDevice {
                 Vendor::Hip => &HIP_ATTRIBUTES,
             };
             let sm = (attr(at.capability_major)? * 10 + attr(at.capability_minor)?) as u32;
+            if let Some((count, list)) = a.nvrtc_supported_archs {
+                let mut n = 0;
+                if count(&mut n) == 0 && n > 0 {
+                    let mut archs = vec![0i32; n as usize];
+                    let (mut major, mut minor) = (0, 0);
+                    (a.nvrtc_version)(&mut major, &mut minor);
+                    if list(archs.as_mut_ptr()) == 0
+                        && let Some(needs) = needs_for_arch(sm, (major, minor), &archs)
+                    {
+                        let _ = NEEDS.set(needs);
+                        return Err(format!("NVRTC {major}.{minor} does not compile for sm_{sm}"));
+                    }
+                }
+            }
             let max_shared_per_block = attr(at.max_shared_per_block_optin)? as u32;
             let pageable = attr(at.pageable_uses_host_page_tables).unwrap_or(0) != 0;
             let says_host_pointer = attr(at.host_pointer_for_registered_mem).unwrap_or(0) != 0;
@@ -1557,5 +1635,23 @@ impl CudaBindContext<'_> {
         let r = self.launch(max_groups, block);
         self.params[hidden] = vec![0];
         r
+    }
+}
+
+#[cfg(test)]
+mod needs_tests {
+    use super::needs_for_arch;
+
+    /// Decision 0645: a GPU the installed NVRTC does not compile for is told which toolkit to install.
+    #[test]
+    fn a_gpu_nvrtc_does_not_compile_for_is_told_the_toolkit() {
+        let without_sm70 = [75, 80, 86, 89, 90, 100, 120, 121]; // a toolkit that has dropped sm_70 (illustrative)
+        let v100 = needs_for_arch(70, (13, 0), &without_sm70).expect("CUDA 13 does not compile for sm_70");
+        assert!(v100.contains("sm_70") && v100.contains("12.x") && v100.contains("NVRTC (13.0)") && v100.contains("sm_75 to sm_121"), "{v100}");
+        assert!(v100.contains(if cfg!(windows) { "CUDA_PATH" } else { "CUDA_HOME" }) && v100.contains("https://"), "{v100}");
+        let newer = needs_for_arch(130, (12, 4), &[50, 60, 70, 80, 90]).expect("12.4 does not compile for sm_130");
+        assert!(newer.contains("a newer CUDA Toolkit"), "{newer}");
+        assert_eq!(needs_for_arch(121, (13, 0), &without_sm70), None);
+        assert_eq!(needs_for_arch(70, (13, 0), &[]), None, "an empty list says nothing");
     }
 }

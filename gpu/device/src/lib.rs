@@ -123,12 +123,23 @@ pub mod shared {
     /// OpenCL's (`OpenCL.dll`, the ICD loader every GPU driver installs): an Intel GPU, or an AMD one without HIP.
     #[cfg(windows)]
     fn open() -> Option<Shared> {
-        open_cuda().or_else(|| opencl().ok())
+        open_cuda().or_else(|| opencl().ok()).or_else(say_needs)
     }
 
     #[cfg(target_os = "linux")]
     fn open() -> Option<Shared> {
-        open_cuda()
+        open_cuda().or_else(say_needs)
+    }
+
+    /// A process left without a GPU says what the user must install for one, where it found a GPU it could not use
+    /// (decision 0645: no GPU compiler ships with Rerail; `compute_kernel_cuda::needs`). Once a process: the device
+    /// is opened once.
+    #[cfg(not(target_os = "macos"))]
+    fn say_needs() -> Option<Shared> {
+        if let Some(needs) = crate::compute_kernel_cuda::needs() {
+            eprintln!("rerail: GPU support: {needs}");
+        }
+        None
     }
 
     #[cfg(not(target_os = "macos"))]

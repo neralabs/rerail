@@ -2,11 +2,12 @@
 
 Status: decided (2026-11-23). The user asked for the design ("for production builds, we need to compile kernels for
 each of the M families GPUs so we're not limiting ourselves to M1 hardware features ... same thing for CUDA, ROCm,
-etc"), and answered the design below with "go ahead". Of its three questions, the user did not answer two:
+etc"), and answered the design below with "go ahead", then its two open questions:
 
-- **Feature tiers, not exact chips** (question 3): the design's recommendation, taken.
-- **The oldest hardware supported** (question 1) and **generated kernels on a machine without a compiler**
-  (question 2) are open (below). Neither changes step 1; both are settled before steps 3 and 5.
+- **Feature tiers, not exact chips** (question 3): the design's recommendation, taken with "go ahead".
+- **The oldest hardware** (question 1): "support the V100 and everything up, including the toolkits needed".
+- **A machine without a GPU compiler** (question 2): "require the user to install what is needed for GPU support,
+  we will not ship with it. This needs to be a clear message so it's actionable".
 
 It builds on decision 0395 (the store, and the kernels shipped for the interpreters) and 0440 (UKL on every
 backend), and moves 0617's M5 switch (`UKL_METAL_APPLE10`) into a target's feature.
@@ -32,7 +33,7 @@ A **target** is the fix: a name for what the text is prepared for, whose defines
 build prepares for each target it ships; a device chooses its target's name; the two texts are the same.
 
 Not every kernel can be shipped. The kernels generated from a pack's rules are written at run time, and always need
-a compiler on the user's machine (question 2). Shipping covers the fixed kernels.
+a compiler on the user's machine. Shipping covers the fixed kernels; the compiler is the user's to install (§6).
 
 ## Decision
 
@@ -65,7 +66,7 @@ The second compile is per chip anyway: on the user's machine, or ahead of time w
 | Backend | Targets | What ships (step 3) |
 |---|---|---|
 | Metal | `apple7` (M1-M4: `simdgroup_matrix`, bf16 from Metal 3.1; `__METAL_VERSION__` 310); `apple10` (M5: `matmul2d`, Metal 4, 400). A tier for the M2, M3 or M4 only when a feature changes the text. | AIR per target. Per-chip archives (`metal-tt`) optional: Metal refuses another OS version's. |
-| CUDA | `sm_<N>`. Ship SASS for sm_75, 80, 86, 89, 90, 100, 120, 121, and PTX for compute_75 and compute_80, which the driver compiles for GPUs newer than the table without NVRTC. An architecture-specific variant (`sm_90a`, `sm_100a`) as exact SASS only, once a kernel uses one. | A fatbin per library |
+| CUDA | `sm_<N>`. Ship SASS for sm_70 (the V100) and sm_75, 80, 86, 89, 90, 100, 120, 121, and PTX for compute_70 and compute_80, which the driver compiles for GPUs newer than the table. sm_70 is built with a 12.x toolkit (CUDA 13 is believed to have dropped it; the build checks NVRTC's own list), the rest with the newest. An architecture-specific variant (`sm_90a`, `sm_100a`) as exact SASS only, once a kernel uses one. | A fatbin per library |
 | HIP | the `gfx` target: `gfx10-3-generic` (RDNA2), `gfx11-generic` (RDNA3's WMMA), `gfx12-generic` (RDNA4), exact `gfx90a`, `gfx942`, `gfx950` (CDNA's MFMA). The wave is the name's: 64 on gfx9's, 32 on RDNA's; `UKL_HIP_AMD_DOT` on the exact RDNA2 targets (`gfx103*`). An exact object only where a generic one measures slower. | Code objects per target |
 | OpenCL, the CPU | local | nothing |
 
@@ -75,8 +76,9 @@ A HIP device whose wave is not its name's takes a local target with its own wave
 
 - A shipped kernel's key: its target's name, the source's digest and the options. The store's key stays exact, the
   local compiler's and driver's versions in it.
-- Lookup: this process; the store; the shipped kernels, of the best target the device runs; a local compile; with no
-  local compiler, shipped PTX or a generic code object, which the driver compiles; else the CPU.
+- Lookup: this process; the store; the shipped kernels, of the best target the device runs; a local compile.
+- A GPU backend runs only with its compiler installed (§6). Without it the process runs on the CPU, and says what
+  to install.
 
 ### 5. Builds cross-compile; devices validate
 
@@ -87,6 +89,24 @@ A HIP device whose wave is not its name's takes a local target with its own wave
   OpenCL) and the Arc 140V (OpenCL). Without a device: the M2 and M4, sm_75 to sm_120, RDNA3 and 4, CDNA. Those
   ship PTX or a generic object only, or wait for a device.
 
+### 6. The user installs the GPU compiler; Rerail says which, and where
+
+Rerail ships no GPU compiler: NVRTC (the CUDA Toolkit) and hiprtc (ROCm, the HIP SDK) are the user's to install.
+Metal's is macOS's, OpenCL's the driver's. Where a machine has a GPU it cannot use, the process says so once, on
+stderr, with what to install, where to get it, and the variable that names an install elsewhere
+(`rerail: GPU support: ...`):
+
+- **A GPU driver without its compiler:** NVIDIA's driver without NVRTC ("Install the CUDA Toolkit (12.x or later;
+  12.x for a Tesla V100 or another sm_70 GPU): <NVIDIA's archive>. Installed elsewhere, set CUDA_HOME to it", Windows'
+  `CUDA_PATH`); AMD's HIP runtime without hiprtc (ROCm and `ROCM_PATH` on Linux; the HIP SDK and `HIP_PATH` on
+  Windows).
+- **A compiler that does not compile for the GPU:** NVRTC lists its architectures (`nvrtcGetSupportedArchs`). A GPU
+  older than the list is told the older toolkit that compiles for it (12.x for sm_70), a newer one a newer toolkit.
+- A machine with no GPU driver says nothing, and neither does one whose GPU another backend opened (Windows'
+  OpenCL, where HIP's compiler is missing).
+- The toolkit the user names comes first: `CUDA_HOME` (`CUDA_PATH`) is searched before the system's libraries, so a
+  V100's machine with a CUDA 13 toolkit installed takes the 12.x one the message asks for.
+
 ## Order of work
 
 1. The target, the names' table and the features; every preparation through it; the test of the rule. Done
@@ -94,7 +114,8 @@ A HIP device whose wave is not its name's takes a local target with its own wave
 2. Shipped kernels keyed by target, and the lookup of the best target a device runs.
 3. `kernels ship --targets`: Metal's AIR per target, CUDA's fatbin, HIP's code objects.
 4. The release workflow ships `rerail-kernels/`.
-5. A compiler for the generated kernels where the machine has none (question 2).
+5. The message where the GPU's compiler is missing or does not compile for it (§6). Done 2026-11-23 ("Step 5,
+   built").
 
 ### Step 1, built (2026-11-23)
 
@@ -112,11 +133,19 @@ A HIP device whose wave is not its name's takes a local target with its own wave
     off), the M1 (`apple7`), the GB10 (`sm_121`), the Radeon 680M (`gfx1035` by HIP; OpenCL's local target);
   - `accel`'s GPU tests on the M5 Max (36).
 
+### Step 5, built (2026-11-23)
+
+- `compute_kernel_cuda::needs`: what the user must install, set where the driver loads and its compiler does not
+  (CUDA's NVRTC, HIP's hiprtc), or where NVRTC's architectures do not hold the GPU's (`needs_for_arch`).
+  `rerail_device::shared` says it where the process is left without a GPU.
+- `CUDA_HOME` and `CUDA_PATH` are searched first; `/usr/local/cuda` only where `CUDA_HOME` is not set.
+- **Passing:** `a_gpu_nvrtc_does_not_compile_for_is_told_the_toolkit` (the V100 under a toolkit without sm_70, a GPU
+  newer than the toolkit), on Linux; the GB10 opens as before, its sm_121 in its NVRTC's list. The missing-compiler
+  messages are not run on a device: the farm's machines have their compilers in the system's search.
+
 ## Open
 
-- **The oldest hardware supported** (question 1). CUDA 13's toolkit is believed to compile no longer for sm_70: the
-  V100 would need a 12.x toolkit as well, or only the NVRTC on its machine. Turing (sm_75) and RDNA2 have the same
-  question.
-- **Generated kernels on a machine without a compiler** (question 2). Metal always has one. For CUDA, NVRTC could be
-  shipped (its licence to be checked for redistribution); hiprtc needs `comgr`, a large LLVM. Else the toolkit or ROCm
-  is required, or those kernels run on the CPU there.
+- **The build's toolkits** (step 3): a 12.x CUDA toolkit beside the newest, for sm_70; which ROCm version's
+  generic targets (`gfx10-3-generic` and on) hiprtc compiles.
+- **HIP's architectures:** hiprtc lists none; a GPU it does not compile for fails at its first compile, with
+  hiprtc's log, not with `needs`.
