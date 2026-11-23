@@ -174,6 +174,11 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
     }
     device()?;
     let function = crate::score::phase("compile", || super::kernels::function_fixed(&source(), name, None));
+    // Launched at `GROUP` threads a group: a pipeline that allows fewer (its registers, its group's memory) is fatal,
+    // as a kernel that does not compile is.
+    if let Some(most) = function.max_threads_per_group() {
+        assert!(most >= GROUP, "the kernel {name} ({variant}) allows {most} threads a group, under the {GROUP} it is launched with");
+    }
     let mut args: Vec<_> = function.get_argument_info().to_vec();
     args.sort_by_key(|a| a.compute_function_arg_index);
     let bound: Vec<_> = args.iter().filter(|a| a.disposition == GridComputeFunctionArgumentDisposition::Buffer && a.name != "a").collect();
@@ -484,9 +489,14 @@ pub struct Pass {
     /// The launches charged so far (the evaluation's ledger holds the budget; this is the pass's own count, for
     /// its reports).
     dispatches: Cell<usize>,
+    /// Whether it is a stack (`stack`): its dispatches one launch.
+    stacked: Cell<bool>,
     /// Buffers the launches after reach by address (`use_read`, `use_read_write`), bound by none, each with whether
     /// the launches write it.
     resident: RefCell<Vec<(Buffer, bool)>>,
+    /// The queue's residency span (`ComputeQueue::residency_span`) its last launch was in, and how many of
+    /// `resident` were made resident in it: a stack's thousands of dispatches make them resident once (decision 0641).
+    applied: Cell<(u64, usize)>,
     /// The first launch that could not be made: the commit's error.
     error: RefCell<Option<String>>,
     /// This submission's key in the evaluation's records (`launch::attempt`, `launch::mark`).
@@ -495,16 +505,27 @@ pub struct Pass {
 
 impl Pass {
     pub fn new() -> Result<Pass, String> {
-        Ok(Pass { queue: shared::Queue::new()?, dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None), key: Box::new(0) })
+        Ok(Pass { queue: shared::Queue::new()?, dispatches: Cell::new(0), stacked: Cell::new(false), resident: RefCell::new(Vec::new()), applied: Cell::new((u64::MAX, 0)), error: RefCell::new(None), key: Box::new(0) })
     }
 
     fn pointer(&self) -> usize {
         std::ptr::from_ref::<u8>(&self.key) as usize
     }
 
-    /// The launches made so far.
+    /// The dispatches made so far.
     pub fn dispatches(&self) -> usize {
         self.dispatches.get()
+    }
+
+    /// Makes this pass a stack (decision 0648): its dispatches, one program's dependent levels, are one launch in the
+    /// evaluation's budget, charged at its first.
+    pub fn stack(&self) {
+        self.stacked.set(true);
+    }
+
+    /// The launches it is in the budget: its dispatches, or one for a stack that made any.
+    pub fn launches(&self) -> usize {
+        if self.stacked.get() { self.dispatches.get().min(1) } else { self.dispatches.get() }
     }
 
     fn launch(&self, pipe: &Pipe, buffers: &[&Buffer], bytes: &[u8], grid: Grid<'_>) {
@@ -529,7 +550,11 @@ impl Pass {
             Grid::Indirect { .. } => [GROUP, 1, 1],
         };
         let bound = buffers.iter().map(|(b, _)| (b.contents() as usize, b.length())).collect();
-        launch::attempt(self.pointer(), &pipe.name, shape, group, indirect, bound);
+        if self.stacked.get() {
+            launch::attempt_stacked(self.pointer(), &pipe.name, shape, group, indirect, bound);
+        } else {
+            launch::attempt(self.pointer(), &pipe.name, shape, group, indirect, bound);
+        }
         let made = (|| {
             if buffers.len() != pipe.buffers.len() {
                 return Err(format!("the kernel {} takes {} buffers, given {}", pipe.name, pipe.buffers.len(), buffers.len()));
@@ -541,9 +566,14 @@ impl Pass {
             if pipe.args {
                 l = l.bytes("a", bytes);
             }
-            for (b, write) in self.resident.borrow().iter() {
+            // Made resident once a span (`residency_span`, Metal's encoder): those added since, or all in a new one.
+            let span = self.queue.residency_span();
+            let (was, done) = self.applied.get();
+            let resident = self.resident.borrow();
+            for (b, write) in &resident[if was == span { done } else { 0 }..] {
                 l = if *write { l.uses(b) } else { l.uses_read(b) };
             }
+            self.applied.set((span, resident.len()));
             match grid {
                 Grid::Groups(groups, threads) => l.run(&[groups.max(1) as u64, 1, 1], &[threads, 1, 1]),
                 Grid::Indirect { grid, offset, most } => l.run_indirect(grid, offset, &[most.max(1) as u64, 1, 1], &[GROUP, 1, 1]),

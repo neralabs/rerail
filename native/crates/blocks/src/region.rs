@@ -426,9 +426,11 @@ pub fn whole(block: &Arc<Block>) -> Shared<u8> {
 /// A kernel's bind of the bytes at `addr`, until `fence` completes, by `op`, writing them or not (its argument's
 /// access, as the kernel declares it): the block or lease holding them is held (`Fence::uses_address`), and a block's
 /// own region, while a handle holds it, is pinned (once a fence and access). Whether a ledger knows the address.
+///
+/// The ledger is found once a fence and address (`Fence::held_at`): a stack's thousands of dispatches each bind its
+/// buffers, and each bind was a search of the live blocks (decision 0639).
 pub fn bind_address(fence: &Arc<Fence>, addr: usize, write: bool, op: &'static str) -> bool {
-    let Some(l) = crate::ledger::of_address(addr) else { return false };
-    fence.uses_address(addr);
+    let Some(l) = fence.held_at(addr) else { return false };
     let root = l.root.lock().unwrap_or_else(|e| e.into_inner()).upgrade();
     if let Some(r) = root
         && fence.first_pin(Arc::as_ptr(&r) as usize, write)

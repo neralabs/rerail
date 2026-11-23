@@ -1229,9 +1229,9 @@ fn waves_kept() -> usize {
     FLUSHED.with_borrow(HashMap::len)
 }
 
-/// Decision 0603's test, of every stratum the device runs in a test build: whatever its rules and rounds, its launches
-/// are one program and its budget's relaunches (and its arenas' remaps, a parked claim's or text's), none a rerun's,
-/// and its relaunches its items over a launch's budget. A breach panics with its report; `RERAIL_ONE_LAUNCH_CHECK=log`
+/// Decisions 0603 and 0648's test, of every stratum the device runs in a test build: whatever its rules and rounds, its
+/// launches are one program's stacks (and its arenas' remaps, a parked claim's or text's), none a rerun's, and its
+/// stacks after its first no more than its rounds: a stack runs a round at least. A breach panics with its report; `RERAIL_ONE_LAUNCH_CHECK=log`
 /// prints one line a stratum instead, to count them. A device whose arenas cannot grow in place (an allocation of
 /// their first bytes: `rerail_device::device::reserve_grows`) runs a stratum again past them, and is not checked.
 fn one_launch(rep: &Report) {
@@ -1241,12 +1241,11 @@ fn one_launch(rep: &Report) {
         let one = rep.waved != 0 || rep.programs == 1;
         // A view expanded for it (copy 0353 step 4) is a dispatch of its pass, not a launch.
         let launches = rep.programs + rep.relaunches + rep.remaps + rep.expanded;
-        let budget = rep.launch_items.max(1);
-        let ok = one && rep.dispatches == launches && rep.reruns == 0 && u64::from(rep.relaunches) <= rep.taken / budget + rep.programs as u64;
+        let ok = one && rep.dispatches == launches && rep.reruns == 0 && rep.relaunches <= rep.rounds + rep.programs;
         if std::env::var_os("RERAIL_ONE_LAUNCH_CHECK").is_some_and(|v| v == "log") {
             eprintln!("ONE_LAUNCH {} programs {} reruns {} arena_reruns {} texts {} rounds {}", if ok { "ok" } else { "breach" }, rep.programs, rep.reruns, rep.arena_reruns, rep.made, rep.rounds);
         } else {
-            assert!(ok, "a stratum past one launch and its budget's relaunches (decision 0603): {rep:?}");
+            assert!(ok, "a stratum past one program's stacks (decisions 0603, 0648): {rep:?}");
         }
     }
     let _ = rep;
@@ -2947,11 +2946,7 @@ fn tally(rep: &mut Report, done: &mj::Done) {
     rep.room_remaps += done.room_remaps;
     rep.expanded += done.expanded;
     rep.maps_grown += done.maps_grown;
-    rep.taken += done.taken;
     rep.programs += done.programs;
-    if done.launch_items != 0 {
-        rep.launch_items = if rep.launch_items == 0 { done.launch_items } else { rep.launch_items.min(done.launch_items) };
-    }
     rep.gpu_seconds += done.gpu_seconds;
     rep.levels += done.levels;
     rep.screened += done.screened;

@@ -10,15 +10,11 @@
 // - a slot is handed over by exchange, never awaited: a taker that finds a slot not yet written marks it TAKEN and
 //   moves on; the pusher, seeing TAKEN, takes another slot;
 // - every loop is bounded (`UKL_WQ_TURNS`); a bound reached ends the worker, as an idle one does;
-// - a worker that finds nothing to take ends at once (decision 0540 step 7, the user's: a worker does the work there
-//   is, and work that needs another's result is a continuation its finisher pushes). A worker that pushed is still
-//   running and takes on, so a queued item has a live worker; a dispatch of more workers than run at once has later
-//   ones start as earlier ones end, and take what is queued then. The host launches the dispatch again while any
-//   remain at its end (`control[2]`), where a budget ended workers.
-// - except where a whole step's items are pushed only once the step before is done (a program's phases, decision
-//   0637): there the finisher would take them alone, every other worker ended. An idle worker of such a dispatch polls
-//   (`ukl_wq_ready`), a bounded number of times, and takes what is written (`ukl_wq_take_ready`). No worker waits for
-//   it: a poller that never runs, or ends, only leaves its items to the others.
+// - a worker that finds nothing to take ends at once; it never polls for others' pushes (decision 0540 step 7, the
+//   user's: a worker does the work there is, and work that needs another's result is a continuation its finisher
+//   pushes). A worker that pushed is still running and takes on, so a queued item has a live worker; a dispatch of
+//   more workers than run at once has later ones start as earlier ones end, and take what is queued then. The host
+//   launches the dispatch again while any remain at its end (`control[2]`), where a budget ended workers.
 // - a worker takes at most `budget` items in a launch (decision 0540), more than an even share where it finishes its
 //   items sooner, then ends, as an idle one does (`ukl_wq_spent`): a launch's GPU time is so bounded by its workers'
 //   budgets, not by the work. The host launches again while items are left. A launch that leaves any had a worker
@@ -104,34 +100,6 @@ UKL_INLINE bool ukl_wq_take(UklWorkQueue q, UKL_PRIVATE uint32_t* item)
     if (value == UKL_WQ_EMPTY)
         return false;
     *item = value - 1u;
-    return true;
-}
-
-// Whether the item at the head is written: a poller's check before it takes (decision 0637), by polls alone.
-UKL_INLINE bool ukl_wq_ready(UklWorkQueue q)
-{
-    uint32_t head = ukl_atomic_poll(&q.control[0]), tail = ukl_atomic_poll(&q.control[1]), end = ukl_wq_end(q);
-    tail = tail < end ? tail : end;
-    if (head >= tail)
-        return false;
-    uint32_t v = ukl_atomic_poll(&q.slots[ukl_wq_slot(q, head)]);
-    return v != UKL_WQ_EMPTY && v != UKL_WQ_TAKEN;
-}
-
-// A poller's take (decision 0637): the item at the head where it is written, else none, and no slot given up. A
-// worker that polls and took with `ukl_wq_take` would give up a slot at each poll that met a push between its tail
-// and its write, and use the queue's room. Only takers claim the head, and each exchanges its own position's slot,
-// so a written slot seen at the head is the claimer's item.
-UKL_INLINE bool ukl_wq_take_ready(UklWorkQueue q, UKL_PRIVATE uint32_t* item)
-{
-    uint32_t head = ukl_atomic_poll(&q.control[0]), tail = ukl_atomic_poll(&q.control[1]), end = ukl_wq_end(q);
-    tail = tail < end ? tail : end;
-    if (head >= tail)
-        return false;
-    uint32_t slot = ukl_wq_slot(q, head), v = ukl_atomic_poll(&q.slots[slot]);
-    if (v == UKL_WQ_EMPTY || v == UKL_WQ_TAKEN || ukl_atomic_cas(&q.control[0], head, head + 1u) != head)
-        return false;
-    *item = ukl_atomic_exchange(&q.slots[slot], UKL_WQ_TAKEN) - 1u;
     return true;
 }
 

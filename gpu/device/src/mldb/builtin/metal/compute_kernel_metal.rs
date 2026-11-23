@@ -337,6 +337,8 @@ pub struct MetalComputeQueue {
     /// The command buffer's staging memory for `enqueue_copy_from_host` (filled up, then another), and how much is
     /// used: one allocation a command buffer, not one a copy. The command buffer keeps it until it completes.
     staging: std::cell::RefCell<Option<(metal::Buffer, u64)>>,
+    /// The compute encoders it opened: what a launch made resident (`use_buffer`) stays so for the open one's life.
+    encoders: std::cell::Cell<u64>,
 }
 
 /// A command buffer's open encoder.
@@ -420,7 +422,7 @@ fn pooled<R>(f: impl FnOnce() -> R) -> R {
 
 impl MetalComputeQueue {
     pub fn new(queue: &metal::CommandQueueRef) -> Self {
-        MetalComputeQueue { queue: queue.to_owned(), command_buffer: pooled(|| queue.new_command_buffer().to_owned()), open: std::cell::RefCell::new(Open::None), staging: Default::default() }
+        MetalComputeQueue { queue: queue.to_owned(), command_buffer: pooled(|| queue.new_command_buffer().to_owned()), open: std::cell::RefCell::new(Open::None), staging: Default::default(), encoders: std::cell::Cell::new(0) }
     }
 
     /// The open compute encoder (ending an open blit encoder first).
@@ -432,7 +434,14 @@ impl MetalComputeQueue {
         Self::end(&mut open);
         let e = pooled(|| self.command_buffer.new_compute_command_encoder().to_owned());
         *open = Open::Compute(e.clone());
+        self.encoders.set(self.encoders.get() + 1);
         e
+    }
+
+    /// The compute encoders it opened so far: a buffer made resident for a launch stays resident for the launches
+    /// after it while this is the same (Metal's `useResource` holds for its encoder's life).
+    pub fn encoders(&self) -> u64 {
+        self.encoders.get()
     }
 
     /// The open blit encoder (ending an open compute encoder first).
