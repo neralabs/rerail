@@ -2347,6 +2347,21 @@ fn run_observed_within(
         memo::named_source(store, text, true, None, &late_sources);
         program_plans.push(plan);
     }
+    // Phase 1's frame (`phases::frame`, t33 K4): kept where this run made it, behind the run, and named in the
+    // manifest either way, so collection keeps it while it keeps the run.
+    if durable.is_some() {
+        for run in &phase_runs {
+            let Some((key, facts)) = &run.frame else { continue };
+            if let Some(facts) = facts {
+                phases::frame::put(store, key, facts);
+            }
+            let (text, plan) = phases::frame::named(key);
+            memo::named_source(store, text, true, None, &late_sources);
+            if !program_plans.contains(&plan) {
+                program_plans.push(plan);
+            }
+        }
+    }
     // Keeps `prepared` in the store (decision 0073): made into facts and encoded here, written by the store's writer
     // in the run's record (decisions 0102, 0306), which names its documents' sources. A later run of this process that
     // holds it in memory asks the store for them once (`documents_in`, below).

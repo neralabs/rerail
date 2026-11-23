@@ -58,6 +58,8 @@ struct Ran {
     /// The files built in the waves with a kept tape, and those parsed.
     waves: (usize, usize),
     rows: BTreeSet<Vec<String>>,
+    /// Phase 1's frame (`phases::frame`): taken (`Some(true)`), made by its run (`Some(false)`), or none.
+    frame: Option<bool>,
 }
 
 impl Ran {
@@ -109,7 +111,8 @@ impl Corpus {
             made: a.made + p.made,
             documents: a.documents + p.documents,
         });
-        Ran { corpus, main: report.corpus_docs, phases, parsed_by: report.parsed, cross_kept: report.cross_kept, waves: report.file_tapes, rows }
+        let frame = report.phase_runs.iter().find(|p| p.name == "sources").and_then(|p| p.frame.as_ref()).map(|(_, made)| made.is_none());
+        Ran { corpus, main: report.corpus_docs, phases, parsed_by: report.parsed, cross_kept: report.cross_kept, waves: report.file_tapes, rows, frame }
     }
 
     /// A cold run, then the warm one over the same store after `edit` (none: the files as they were), and a cold run
@@ -152,6 +155,29 @@ fn a_warm_run_over_unchanged_files_parses_builds_and_makes_nothing() {
     assert_eq!(warm.corpus.parsed, 0, "Q332: no unchanged file is parsed for the corpus batch: {:?} (warm run: {warm:?})", warm.corpus);
     assert_eq!(warm.corpus.from_tape, 0, "Q332: no unchanged file's document is built from its tape: {:?} (warm run: {warm:?})", warm.corpus);
     assert_eq!(warm.corpus.made, 0, "Q332: no unchanged document's rows are made: {:?} (warm run: {warm:?})", warm.corpus);
+}
+
+/// Phase 1's run kept across processes (t33 K4, `phases::frame`): a warm run over unchanged files takes its frame,
+/// every read of its run as it was, and does not run the phase; an edit hands it another file, so the run makes a new
+/// frame. Each run's outputs are a cold run's.
+#[test]
+fn phase_one_is_taken_from_its_frame_and_an_edit_runs_it_again() {
+    let mut c = Corpus::new("phase-frame");
+    let cold = c.run_over("kept.sqlite");
+    assert_eq!(cold.frame, Some(false), "the cold run runs phase 1 and makes its frame (cold run: {cold:?})");
+    let warm = c.run_over("kept.sqlite");
+    assert_eq!(warm.frame, Some(true), "the warm run takes phase 1's frame (warm run: {warm:?})");
+    let phase: Vec<&CorpusDocs> = warm.phases.iter().filter(|(name, _)| name == "sources").map(|(_, d)| d).collect();
+    assert!(phase.iter().all(|d| d.documents == 0 && d.parsed == 0), "phase 1 not run: no corpus batch of its own (warm run: {warm:?})");
+    assert_eq!(warm.rows, cold.rows, "the warm run's outputs are the cold run's");
+    c.write(EDIT.0, EDIT.1);
+    let edited = c.run_over("kept.sqlite");
+    assert_eq!(edited.frame, Some(false), "an edit hands phase 1 another file: it runs, and makes its frame (edited run: {edited:?})");
+    let again = c.run_over("kept.sqlite");
+    assert_eq!(again.frame, Some(true), "the run after the edit takes the edit's frame (run: {again:?})");
+    let fresh = c.run_over("fresh.sqlite").rows;
+    assert_eq!(edited.rows, fresh, "the edited run's outputs are a cold run's");
+    assert_eq!(again.rows, fresh, "the run after it gives the same");
 }
 
 /// A warm run after a one-file edit parses the changed file alone, and builds it alone in the waves.
