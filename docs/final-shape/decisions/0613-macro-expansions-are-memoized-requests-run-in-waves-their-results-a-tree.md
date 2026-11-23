@@ -598,8 +598,24 @@ So:
    - **The frame's kind and space share a word** (`kn`), the frame's seventh word its `xp`.
 
    Every eval test passes on the CPU backend and on Metal; the corpus (m3, Metal) and Boost.Preprocessor's
-   `control` (CPU backend) are the serial pass's. Boost's `array` tests are refused for depth (the loop's
-   stacks) before this stage too.
+   `control` (CPU backend) are the serial pass's.
+
+   **A run's frames are as deep as its input** (2026-11-23). Boost.Preprocessor's `array` and `tuple` tests were
+   refused for depth, before stage 5 too. At the refusal a request held 58 live lists. They were
+   `BOOST_PP_REPEAT_1_n(m, d)`, whose body is `BOOST_PP_REPEAT_1_{n-1}(m, d) m(2, n-1, d)`: each level keeps its
+   tail to read under the next, 256 deep. The serial pass nests the same (its stack measured 149 to 531 contexts
+   deep on Boost's tests, nearly all of them bodies read to their end). The chain was read inside an argument's
+   expansion, where nothing is posted, so one run's 64 frames held it.
+   - The group's 64 frames are the stack's top (`fr_lo` up); a push past them writes the lowest to the run's
+     region 6 (`lp_fpush`, two rows a frame at its index), and a pop reads them back (`lp_fsync`). Walks over
+     the frames (the disabled macros, the dead groups, the levels) read a frame below the slots from there
+     (`lp_fget`). A store with no room stops the run for room, which runs again larger; no depth is refused.
+   - `the_frames_are_as_deep_as_the_input`: chains 100 and 300 deep, each level a tail, object-like and
+     function-like, at the top and in an argument. Boost's `array` and `tuple` (C, C++) are the serial pass's on
+     the CPU backend. The eval tests pass on the CPU backend and on Metal, with the corpus and `control`.
+   - Posting the chain's calls as requests (§4) would make it parallel; inline readings (a line's, a reread, an
+     argument its caller reads) still need the depth.
+   - Still refused in Boost: `debug.c` (an `#if` past the evaluator's room) and `seq.c` (a device error).
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 

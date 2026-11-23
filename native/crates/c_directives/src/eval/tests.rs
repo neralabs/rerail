@@ -2810,9 +2810,27 @@ fn the_output_is_pieces_that_refer_to_the_text() {
     assert!(want.len() > 2000 && pieces <= 5 + 4 * 4, "{} tokens in {pieces} pieces", want.len());
 }
 
+/// A run's frames are as deep as its input nests: past the group's `LP_DEPTH` they are the run's region 6
+/// (`lp_fpush`), never refused. Each level keeps a tail to read under the next, as Boost.Preprocessor's
+/// `BOOST_PP_REPEAT_1_n(m, d)` is `BOOST_PP_REPEAT_1_{n-1}(m, d) m(2, n-1, d)` (256 deep): object-like and
+/// function-like chains 100 and 300 deep, at the top and in an argument, each the serial pass's, none refused.
+#[test]
+fn the_frames_are_as_deep_as_the_input() {
+    for depth in [100usize, 300] {
+        let mut text = String::from("#define O0 o\n#define R0(m) m(0)\n#define ID(x) x\n#define M(k) <k>\n");
+        for k in 1..=depth {
+            text += &format!("#define O{k} O{} t{k}\n#define R{k}(m) R{}(m) m({k})\n", k - 1, k - 1);
+        }
+        text += &format!("int a = O{depth};\nint b = R{depth}(M);\nint c = ID(R{depth}(M) O{depth});\n");
+        let (got, want, refused, _) = expanded(&[("main.c", text.as_str())], false);
+        same(refused, 0, format!("refused at depth {depth}"));
+        same(got.map(|g| show(&g)), Ok(show(&want)), format!("the output at depth {depth}"));
+    }
+}
+
 /// Decision 0588 §1: the text's expansion is one phase of the loop, whatever its rescans' depth (the rounds took
 /// a few phases a rescan): a run's phases are the same for chains of object-like and function-like macros 1, 8 and
-/// 20 deep (within the loop's stacks: deeper is refused for depth, `X_DEPTH`), and each output is the serial pass's.
+/// 20 deep, and each output is the serial pass's.
 #[test]
 fn the_expansion_is_one_loop_phase() {
     use rerail_c_pp::files::Search;
