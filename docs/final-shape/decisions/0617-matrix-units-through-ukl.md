@@ -229,7 +229,8 @@ emulated form, which is the reference.
    behind `thread_elements()`. Done 2026-11-23 ("Step 3, built").
 4. The M5's `matmul2d`: the first owner of several groups on a device (R5).
 5. Intel's DPAS on the Arc: R2, R4 and R7, the shape only. Done 2026-11-23 ("Step 5, built").
-6. The Radeon 680M: the emulation, with its dot-product instructions where they help.
+6. The Radeon 680M: the emulation, with its dot-product instructions where they help. Done 2026-11-23 ("Step 6,
+   built").
 7. `ukl_gemm_tile`, with one backend override (the M5's or CUDA's) to prove the override path. Done 2026-11-23,
    CUDA's ("Step 7, built").
 
@@ -427,6 +428,29 @@ The user: "yes, please add the 1-bit path and emulation/lowering to popcount on 
   emulated.
 - **Found on the way:** `rerail-facts` did not build on Windows (`Within::on_device`'s `cfg` left Windows out, where
   every caller had it), so no Windows test could run.
+
+### Step 6, built (2026-11-23)
+
+- **The Radeon 680M (gfx1035, OpenCL) runs the emulation,** every type, with RDNA2's dot products where the host
+  turns them on (`UKL_OPENCL_AMD_DOT`): `v_dot4_i32_i8` for i8, `v_dot2_f32_f16` for f16. gfx1035 has no bf16 dot
+  product; bf16 takes the reference.
+- **Where they help, measured** (`bench_matrix_products`: 2,048 owners, 256 products each in registers, a fragment of
+  B loaded for each; device time, median of 5). `UKL_DOT_REFERENCE` takes `<ukl/dot.h>`'s references instead:
+
+  | Type | Dot products | References |
+  |---|---|---|
+  | i8 | 2.08 ms | 3.48 ms |
+  | f16 | 4.15 ms | 4.20 ms |
+  | bf16 | 4.24 ms (references) | 4.27 ms |
+
+  - **i8 gains 1.67×:** one instruction for four byte products, where the reference extracts and multiplies each.
+  - **f16 is the same either way:** the reference's conversions and fused multiply-adds cost no more there, and the
+    product is bound by the emulation's shuffles, not its arithmetic.
+  - So the dot products stay on, as they were.
+- **Passing:** the nine matrix tests on the 680M (Windows, OpenCL 2.0 AMD-APP), every type emulated.
+- **The measure itself:** a first version loaded B once and repeated the same product. The compiler folded the
+  repeated integer products (an emulated b1 at 1.2 P multiply-adds a second on the GB10). Each repetition now loads B
+  at another offset.
 
 ### Step 7, built (2026-11-23)
 
