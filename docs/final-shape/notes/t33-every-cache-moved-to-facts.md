@@ -389,9 +389,15 @@ consulted with each one's digest, its plans, under its identity (its program, th
 settings, the engine); a process whose run finds every read as it was (`changes_of`) takes the exports and does not
 run the phase (the combine 0.41 G to 0.17 G). The spans whose text is read are kept with the program, as the text
 kinds are; the memo's strata keep each set of leaves once (22,320 of the pointer's 60,174 rows were one a relation).
-A kept program's text tests are lowered where first tested (`Matcher::lazy`), but the run still compiles them
-before its waves: a compile reads the store's groups of automata, which is SQL (decision 0104), so they compile at
-the first test only once those images are read without SQL.
+A kept program's text tests are lowered and compiled where first tested (`Matcher::lazy`, `Vocabulary::compiling_with`):
+the keys of their groups of automata are kept with the program, and the run reads those images before its waves
+(`HeldDfas`, decision 0104: no SQL inside them), so an unchanged run compiles none.
+
+Since (2026-11-23): the warm run without the cutoff 2.98 G instructions, the cutoff's run 0.90 G. The kept
+statistics are read as kept (`RelStats::kept`): each relation keeps its columns' summary (`keeper_summary`), which
+answers the planner's totals, and a relation is decoded only where a run patches it or asks a map its bytes hold
+(the read 7.8 to 5.9 ms, peak RSS 175 to 156 MB; 6 of 435 relations decoded on a clean run). Keeping the other
+columns' maps as rows of their own was tried and dropped: reading them as rows cost 69 ms, the whole decode 6.
 
 What is left, by phase: prepare 0.87 G (the prepared program's entry, the memo's program, the text tests' compile,
 the cone of requests), the cross part 0.35 G, the parse before its waves 0.38 G (the kept statistics, each
