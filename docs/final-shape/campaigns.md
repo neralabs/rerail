@@ -42,10 +42,82 @@ counts. Their origins were not read.
 | [Work bounded by its readers: nothing widened past what is read, no widened output kept](#widening) | 8 | 2 | 3 / 5 / 0 | |
 | [A re-entrant engine with bounded memory and no global state; one shape across the worktrees](#hygiene) | 6 | 1 | 3 / 2 / 1 | |
 
+## How to close them
+
+A campaign is closed when its invariant holds everywhere in the code, and a check keeps it holding without
+exceptions. Three campaigns already work this way:
+
+| Invariant | Check | Exceptions left (each list only shrinks) |
+|---|---|---|
+| Blocks are never copied (0353) | `scripts/check/check_no_block_copies.py` | 27 `copy (0353 step N)` sites: step 3: 1, step 4: 5, step 4a: 2, step 6: 11, step 7: 4, step 8: 4 |
+| Everything kept is facts (0104) | `logic/facts_only.rs`, `scripts/check/check_no_new_caches.py` | 31 tables (`NOT_YET_TABLES_PIN`), 6 maps (`NOT_YET_MAPS_PIN`) |
+| No global state (0442) | `scripts/check/check_no_global_state.py`, `global-state.txt` | 4 `shared` statics |
+
+There, the open work is a countdown, and every commit shows how much is left. The other campaigns have tests for
+what is built, but nothing refuses a new violation or counts the old ones. So for each of them **the first step is
+the check**. It lists today's violations as its pinned exceptions, and from then on the work is a countdown too.
+The check each one needs is under "Check to add" below.
+
+### The order of work
+
+Ordered to close the most campaigns soonest. Work that is shared appears once, at the first place it is needed.
+
+1. **Close now (1 campaign).** Lean parsers: no open records.
+2. **The short ones (6 campaigns).** Each has one or two open records, and none waits on the two hubs below:
+   - **embedded:** 0431's four loose ends;
+   - **hygiene:** the 4 `shared` statics, then 0094 §5–§6;
+   - **widening:** 0597 step 4, then 0174 step 3. 0174 step 3 also removes 0353's step 3 copy;
+   - **programs:** 0246 stage 3, then 0281 §3. 0246 stage 3 is also what 0225 §7 waits on;
+   - **preprocessor:** header units, which 0327 and 0348 both name, then the stored objects and the words on
+     Metal;
+   - **cold-run:** 0113, then 0114.
+3. **The two hubs**, which hold up five campaigns. 0353's copies go step by step:
+   - step 6 (11 sites: `setfix`'s staged head rows, the host uploads). This is the code 0266 step 4 and 0090 §1's
+     held rows are in;
+   - step 8 (`retain.rs`);
+   - steps 4 and 4a (the device's views and node columns). This is also 0549;
+   - step 7 (the transducer's batch and slabs).
+
+   0104's tables go step by step:
+   - step 6 (the statistics and kept plans). This is also the first half of 0387;
+   - step 1 (the run record and the derivation graph). This is also 0103's;
+   - step 3 (the corpus plans and the session);
+   - step 7 (the text matcher's tables).
+4. **What the hubs free (6 campaigns):**
+   - **tape-blocks:** 0266, 0260, 0458, 0336, 0156;
+   - **store:** 0115, 0053 §7, 0142, then 0164 and 0190 after it;
+   - **planner:** 0387, 0361, 0354, 0202;
+   - **metal-rules:** 0549, 0540, 0603, 0095, 0098;
+   - **edit-cost:** 0090, 0092 and 0093 in that order, then 0116, 0117, 0225, 0328, 0132;
+   - **typing:** 0083 and 0065, on 0090 and 0092's per-definition deltas, then 0089 and 0047.
+5. **The long ones (3 campaigns):**
+   - **parsers-shape:** Kotlin's chain, 0414, then Swift and Scala;
+   - **rules-parity:** its device forms go with Metal's waves; then 0044 and 0563;
+   - **any-gpu:** 0440 step 10 after 0353, then 0567 step 3.
+
+Some open items reach past their campaign's invariant: a second hash, the Neural Engine lane, multi-GPU, more
+backends, deferred device functions. Each campaign lists them under "Beyond the invariant". Whether they stay
+in it is your call. Kept, the campaign closes when they are done. Made records of their own, it closes without
+them.
+
 <a id="parsers-shape"></a>
 ## Generated parsers in the shape of simdjson and the lean parsers
 
 88 records: 74 built, 8 partly built, 6 superseded. Origin: 28 a, 56 b, 4 c.
+
+**Invariant.** A generated parser is the lean parser's shape, written from the grammar by the Bitlex compiler: tier 1 is a token loop that decides at the token what the lean lexer decides there (0177, 0415); tier 2 takes tier 1's records a batch at a time (0496); the writer writes the tape in one pass, as simdjson does (0434, 0530).
+
+**Kept by.** Every grammar equals the interpreter and the reference (`every_grammar_compiles_here_and_equals_the_interpreters`, `every_grammar_parses_as_the_reference`). Nothing checks the shape: a mark or mask the lean parser does not have passes.
+
+**Check to add.** Per grammar, the tier-1 mask words tier 2 reads and the marks decided after their token, pinned against the lean parser's. Kotlin today reads 31 mask words, where the lean lexer has five masks (0451).
+
+**To apply it everywhere:**
+
+- Kotlin, in order: 0177 (marks and checks at the token) → 0415 stages 3–4 → 0429 (the marks' context as loop state) → 0430 (dotted, acc, generic, decl_mod at the token) → 0451 (recv and dotted; tier 2's mask words) → 0496 (batches).
+- 0414: a grammar's proofs read from and written to the content store for every grammar a run compiles.
+- 0332: Kotlin's lost block comments (Q198), then Swift and Scala in Bitlex.
+
+**Closes when.** Kotlin's tier 1 is the lean lexer's masks and nothing else, tier 2 takes batches, and Swift and Scala have their ladders.
 
 **Your words:**
 
@@ -78,6 +150,12 @@ counts. Their origins were not read.
 
 8 records: 8 built, 0 partly built. Origin: 5 a, 3 b, 0 c.
 
+**Invariant.** Every product language has a lean parser on every host.
+
+**Kept by.** The byte tests' masks on every backend (`every_backend_gives_the_byte_tests_masks`, each lean crate).
+
+**Closes when.** Closed: no open records.
+
 **Your words:**
 
 - "I would like you to work on getting the fast parsers (SIMDJSON, the lean Rerail parser) from the parser generators branch and hooked up into the product" (0134)
@@ -88,6 +166,23 @@ counts. Their origins were not read.
 ## One tape format and one block layout, read in place by CPU and GPU (never copied)
 
 26 records: 19 built, 6 partly built, 1 superseded. Origin: 17 a, 8 b, 1 c.
+
+**Invariant.** Data lives in one place, in one layout, and every reader reads it there (0353). A view is a read of the tape, not a relation. The reads are written once in CLIF (0310), proven within the tape's bytes (0463).
+
+**Kept by.** `check_no_block_copies.py`; 27 marked copies left.
+
+**To apply it everywhere:**
+
+- Step 3 (1 site, `syntax.rs`, the eager per-node rows): goes with widening's 0174 step 3 and Q121.
+- Step 6 (11 sites: `setfix.rs`'s staged head rows, `rows.rs`'s merged parts, `metal_join.rs` and `setfix/device.rs`'s uploads and second-key index): with 0266 step 4, a run's relations as blocks.
+- Step 8 (4 sites, `retain.rs`: an input's documents read into tables).
+- Steps 4 and 4a (7 sites: the device's views and node columns, `device_chunk.rs`, `metal_join.rs`; the parsers' column vector and queued tapes, `tape.rs`, `core.rs`): with 0549.
+- Step 7 (4 sites: the transducer's packed batch and residency slabs).
+- Then 0260 (facts between waves as base and delta blocks), 0458 (documents made when first read; phase runs read old sources without SQL, after 0104), 0336 (the planner's choice of decompression, Q65), 0156 §6 (text as a stream of pieces).
+
+**Closes when.** No `copy (0353 step N)` marker is left, so the check refuses every copy with no exception.
+
+**Beyond the invariant (your call):** 0156 §5's algorithm-tagged digests and second hash, and tradeoffs T1–T9; 0336's axis A question.
 
 **Your words:**
 
@@ -114,6 +209,22 @@ counts. Their origins were not read.
 ## An edit costs what it changes
 
 22 records: 13 built, 8 partly built, 1 superseded. Origin: 7 a, 14 b, 1 c.
+
+**Invariant.** An edit costs what it changes: a relation carries its delta (0117), maintenance reaches only what the delta reaches (0090, 0101), what an edit invalidates is keyed by definition (0092), and rules are keyed by module (0225).
+
+**Kept by.** Tests that an edit reads and reruns only its own path (`an_edit_reads_only_the_trees_on_its_path`, `a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_readers`). Nothing pins an edit's work to its delta.
+
+**Check to add.** On a fixed edit, each stratum's rows read against the delta's rows, pinned. Today's surplus becomes the list that shrinks.
+
+**To apply it everywhere:**
+
+- 0090 §1 (kept relations read in place: the held rows, 0353 step 6's code) → §2 per-file base deltas → step 6 per-definition deltas, with 0092's symbol-keyed exports and definition keys.
+- 0093: the check that a global fact feeds only findings, and the lints for forms 1 and 5.
+- 0116 and 0115: derived frames written by document granule.
+- 0117 step 5: a reached stratum's component kept with the session.
+- 0225 §4, §5, §7 (§7 is 0246 stage 3), 0328 (the image as a pass's output), 0132 (bulk planning).
+
+**Closes when.** The edit check shows no stratum reading past its delta, on ep2 and on the fixture.
 
 **Your words:**
 
@@ -143,6 +254,22 @@ counts. Their origins were not read.
 
 29 records: 19 built, 7 partly built, 3 superseded. Origin: 21 a, 6 b, 2 c.
 
+**Invariant.** Everything kept is facts, on the same fact path (0104). A cache is two rules (0103). Kept facts are blocks in mapped files (0401). The store stays bounded (0053).
+
+**Kept by.** `facts_only.rs` pins 31 tables and 6 maps not yet facts; `check_no_new_caches.py` refuses new ones.
+
+**To apply it everywhere:**
+
+- 0104 step 6: 9 tables (`models`, `stat_blob`, `kind_size`, `edge_freq`, `tape_kind_counts`, the 4 `term_*`) and 5 maps (`KeptPlans`, `SESSION_PLANS`, `Memoized`, `SESSION_MEMO`, `ObservedAt`). This is 0387's statistics and kept plans.
+- 0104 step 1: `run_record`, `derivations`, `derivation_inputs`, `name_bindings` (0103's run record and derivation graph).
+- 0104 step 3: the 8 `corpus_*` tables and `InSession`.
+- 0104 step 7: the 10 text-matcher and vocabulary tables.
+- Then 0053 §7 (the atom epoch), 0115 (digest-only kept relations; inputs not kept twice), 0142 (artifact stamps), 0164 (orders kept in frames), then 0190 (re-sorting at idle).
+
+**Closes when.** Both pins at 0, and the atom epoch keeps the store bounded.
+
+**Beyond the invariant (your call):** 0190's launchd agent for machines without a daemon.
+
 **Your words:**
 
 - "let's start by looking at what's happening in the store writer … tell me about all the crazy amounts of inefficiency inherent in how it works today and how we should fix it" (0240)
@@ -171,6 +298,19 @@ counts. Their origins were not read.
 
 32 records: 28 built, 2 partly built, 1 superseded, 1 analysis. Origin: 12 a, 17 b, 3 c.
 
+**Invariant.** A cold run uses every core, and its critical path is short: strata are issued from a scoreboard (0113), and no thread ever blocks, because every wait is a scoreboard event (0114).
+
+**Kept by.** Measurement only.
+
+**Check to add.** The blocking waits outside the scoreboard, counted and pinned; 0114 §4 takes the launches' and the loops' waits off the list.
+
+**To apply it everywhere:**
+
+- 0113: the interner overlay (§4), one plan per component, sessions and answered requests issued; measured at 10 to 300 files.
+- 0114: answers loaded and evaluated on workers, written back in order (§3); launches and loop waits as events (§4, with 0540).
+
+**Closes when.** No blocking wait outside the scoreboard, and the 10-to-300-file measurement recorded.
+
 **Your words:**
 
 - "53.3s user + 8.9s sys CPU is still vastly too high. Please help me understand what the next set of improvements could be here" (0060)
@@ -194,6 +334,21 @@ counts. Their origins were not read.
 ## The planner: never costs more than it saves, improves from feedback
 
 17 records: 13 built, 3 partly built, 1 not started. Origin: 14 a, 1 b, 2 c.
+
+**Invariant.** Planning never costs more than running (0122). Budgets never change results (0334). Plans come from the relations' declared shapes, so a run plans nothing (0361). Statistics and kept plans are blocks (0387).
+
+**Kept by.** The budget tests (a misplanned run restarts and gives the full budget's results). Nothing counts planning against running, or plans made at run time.
+
+**Check to add.** A run's plans made at run time, counted and pinned at 0 (0361's done-criterion), and planning's work against the run's on the fixture packs.
+
+**To apply it everywhere:**
+
+- 0361: derived relations' estimates switched on again (Q290).
+- 0387, all six steps: after 0104 step 6 and 0353.
+- 0354: the learned correction as the default pricer.
+- 0202: O163's IR forms.
+
+**Closes when.** Both counts hold on the packs, and 0387's statistics are blocks.
 
 **Your words:**
 
@@ -219,6 +374,24 @@ counts. Their origins were not read.
 ## Rules on Metal: label walks, device waves, bounded launches, memory budgets
 
 49 records: 42 built, 6 partly built, 1 superseded. Origin: 16 a, 22 b, 11 c.
+
+**Invariant.** The Metal budget is the overall budget (0549). Every launch is counted by one ledger, and past `KERNEL_LAUNCH_LIMIT` a run fails. A device wait is on a running thread, never a poll (0540). A stratum's device work is one launch (0603).
+
+**Kept by.** The launch ledger. Nothing checks for polling waits or a thread's resident copies.
+
+**Check to add.** The polling waits in kernels and host loops, listed and pinned: today the preprocessor's MSL.
+
+**To apply it everywhere:**
+
+- 0549: each thread's resident copies go (0353 step 4).
+- 0540: step 4 (a 16z block decoded by its SIMD group); the resident interpreter's Metal gate; the preprocessor's MSL without polling.
+- 0603: 5d's other half (the lattice fold off the host's tables), 5e (device sorts), the closure launch test, rooms for non-recursive heads.
+- 0095: aggregates and recursion on the device, text tests, the cross-file part.
+- 0098: step 1's data-layer profile at scale.
+
+**Closes when.** No polling wait left, and the Metal budget back down with the resident copies gone.
+
+**Beyond the invariant (your call):** 0098 step 6c (library facts held on the Neural Engine); 0287 §2–§4, which the record defers until a workload shows gain.
 
 **Your words:**
 
@@ -256,6 +429,19 @@ counts. Their origins were not read.
 
 2 records: 0 built, 2 partly built. Origin: 2 a, 0 b, 0 c.
 
+**Invariant.** Kernels are written once in UKL, and every device reads the same blocks (0440). UKL on the CPU is vector code between sync points (0567).
+
+**Kept by.** `every_library_header_stands_alone_on_every_backend`, and each backend's conformance tests.
+
+**To apply it everywhere:**
+
+- 0440 step 10: one block directory, coherent across devices (after 0353).
+- 0567 step 3: its own register allocator, per-call saves, Cranelift from SSA, the Rust SIMD back end, the 1000x gate.
+
+**Closes when.** Step 10 and step 3 done.
+
+**Beyond the invariant (your call):** 0440 steps 11–12 (partitioned memory on a discrete GPU, multi-GPU), the ROCm/HIP and WebGPU backends; 0567 step 4 (wider types).
+
 **Your words:**
 
 - "use it to bring support for CUDA (and other GPUs via ROCm, OpenCL and WebGPU/WebGL/whatever but starting with CUDA) without rewriting all of the kernels over and over again" (0440)
@@ -272,6 +458,18 @@ counts. Their origins were not read.
 ## A C/C++ preprocessor on the CPU and every GPU
 
 17 records: 12 built, 2 partly built, 2 superseded, 1 analysis. Origin: 10 a, 7 b, 0 c.
+
+**Invariant.** One parse a file into the preprocessor's tape, and an evaluator over tapes (0436), whose device passes read in place (0468), on the CPU and every GPU.
+
+**Kept by.** 0353's check and the launch ledger, as everywhere.
+
+**To apply it everywhere:**
+
+- Header units: open in both 0327 and 0348, one piece of work.
+- 0327: `c_pp_tape` and `c_pp_text` as stored objects; system headers as roots.
+- 0348: the words on Metal, past 0408's gate.
+
+**Closes when.** Header units, the stored objects and the Metal words done.
 
 **Your words:**
 
@@ -290,6 +488,18 @@ counts. Their origins were not read.
 ## Main's rules run directly, as Datalog (.rr), with main's findings and W's speed
 
 43 records: 36 built, 7 partly built. Origin: 21 a, 20 b, 2 c.
+
+**Invariant.** Main's rules run as `.rr`, with main's findings (the same finding keys) at W's speed. Text is matched a chunk at a time, never per node per byte (0041). A run starts from seeded facts (0044). A relation no rule fills makes no stratum (0563).
+
+**Kept by.** The packs' parity tests and the data layer's 142 checks.
+
+**To apply it everywhere:**
+
+- Five of the seven open records are the device form of a CPU form already built, and go with Metal's waves: 0041 (chunked automata on the device), 0045 step 4 (device containers), 0511 (the merge-path form), 0561 (a keyed closure on the device), 0570 (its Metal form).
+- 0044: seeds through the store, path facts as rules.
+- 0563 A3: guest inputs counted empty once admission has closed.
+
+**Closes when.** Each form runs on every executor (`every_operation_runs_on_every_executor`), and 0044 and 0563 are done.
 
 **Your words:**
 
@@ -319,6 +529,16 @@ counts. Their origins were not read.
 
 9 records: 8 built, 1 partly built. Origin: 5 a, 4 b, 0 c.
 
+**Invariant.** There are no guest documents: a string the rules parse is a tape value, and a program the grammar holds is the file's (0431).
+
+**Kept by.** `a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone`, `a_session_drops_the_guest_rules_where_no_document_embeds`.
+
+**To apply it everywhere:**
+
+- 0431: `@parse` of computed strings checked against the packs' use; `embed_value`'s placement; the queued tapes' programs record; `publication.rs`'s program count.
+
+**Closes when.** 0431's four items done. 0597, which removes hiding's copies, is counted under widening.
+
 **Your words:**
 
 - "we will need a way to get a normalized string out of a language, so that (for example) SQL in a string with escaped characters can access a non-escaped version that can be actually parsed" (0058)
@@ -335,6 +555,21 @@ counts. Their origins were not read.
 ## Typing and libraries: cross-file facts as ordinary facts, libraries held once
 
 7 records: 1 built, 4 partly built, 2 superseded. Origin: 4 a, 1 b, 2 c.
+
+**Invariant.** Typing's cross-file facts are ordinary facts: one fixpoint, maintained by deltas (0065, 0083). A library is a module, held once per run (0089).
+
+**Kept by.** The typing oracle tests.
+
+**To apply it everywhere:**
+
+- 0089 stage 3: the per-unit memo; a file's library rows kept under the library.
+- 0083: the run path's step 3 (imports read P1 and P2); the stored fixpoint maintained by deltas, which needs 0090 and 0092's per-definition deltas.
+- 0065 §3: instantiation as facts about signatures (`inst_ret`).
+- 0047 §2: production calls switched to the typing programs.
+
+**Closes when.** The fixpoint maintained by deltas, and the library rows held once.
+
+**Beyond the invariant (your call):** 0083: Cranelift and Metal for searches.
 
 **Your words:**
 
@@ -361,6 +596,19 @@ counts. Their origins were not read.
 
 11 records: 7 built, 2 partly built, 2 superseded. Origin: 6 a, 3 b, 2 c.
 
+**Invariant.** A program is a flat image, written through a writer and read as versions, never as text (0173, 0276). Rules load in one pass (0246). Passes run under a pass manager over maintained analyses (0281).
+
+**Kept by.** The image round trips (`a_program_reads_back_from_its_image`, `a_stored_program_is_read_from_its_image`). Nothing refuses a pass that goes through text.
+
+**Check to add.** The program paths that print or parse text outside the CLI and tests, listed and pinned.
+
+**To apply it everywhere:**
+
+- 0246 stage 3: linking from module images in place of `combine_read`; lowering writes clauses into the builder; analyses as rules per module.
+- 0281 §3: rule passes split across the pool by morsel.
+
+**Closes when.** `combine_read` gone and the text check at 0.
+
 **Your words:**
 
 - "design the actual final shape of the loading with (hopefully) one pass" (0246)
@@ -383,6 +631,20 @@ counts. Their origins were not read.
 ## Work bounded by its readers: nothing widened past what is read, no widened output kept
 
 8 records: 6 built, 2 partly built. Origin: 3 a, 5 b, 0 c.
+
+**Invariant.** Nothing is computed past what its readers read, and nothing widened is kept. Each relation, copy and attribute exists for a reader's demand (0291, 0461, 0099).
+
+**Kept by.** The width cap per relation (0462) and the product refusal (0461) stop a runaway. Nothing counts the copies or the attributes made for every node.
+
+**Check to add.** On a fixed pack, the program's copy relations (hiding's, the narrow ones, the widened requests `rr_wide_*`) and the attributes made for every node, counted and pinned, down to 0.
+
+**To apply it everywhere:**
+
+- 0597 step 4: remove the annotation range (`HIDDEN_KEYS`, 33 references), `FoldOwn` (31), the narrow copies (`rr_narrow_`, 25), hiding's annotation copies (`rr_in_annotation`, 19) and `one_document` (20). Then Q420 and Q426, which turn on them. Then steps 5 and 6.
+- 0174 step 3: long text on request (`rr_long_text_node`, 18; `text_kind_demand`, 12), with Q121. This removes 0353's step 3 copy.
+- Q454 (requests by reader), 0458 (documents made when first read), 0115 (digest-only kept relations), 0099 (the factorized store).
+
+**Closes when.** The count at 0, and 0597's measurement recorded.
 
 **Your words** (2026-11-09, which became 0099): "Some of the relations should maybe not be materialized. Something which creates a massive expansion in an intermediate join before narrowing down should maybe be recomputed in the intermediate join and not serialized." Then, on 0575's cost: "we certainly can't afford to lose the performance", and on 0462: "limit the widest a rule can get".
 
@@ -409,6 +671,17 @@ counts. Their origins were not read.
 ## A re-entrant engine with bounded memory and no global state; one shape across the worktrees
 
 6 records: 5 built, 1 partly built. Origin: 3 a, 2 b, 1 c.
+
+**Invariant.** The engine is re-entrant and holds no global state (0442). A run's state is the run's (0441). No thread-local is unlisted (0192). Parallel work runs on the machine's pool (0442 step 5). The worktrees share one shape (0094).
+
+**Kept by.** `check_no_global_state.py` (4 `shared` statics left), `check_thread_state.py`, `check_machine_pool.py`, `check_no_relation_maps.py` (0478: none left).
+
+**To apply it everywhere:**
+
+- The 4 `shared` statics onto the shared object (`profile::Shared`): `plan/corpus/owner.rs::SLOTS`, `regexes::TABLE`, `git_access/pool.rs::ROOTS`, `model.rs::SHARED_MODELS`.
+- 0094 §5 (searches), §6 (phase 0's stored answers and read record), and the incremental layout-invariance gate.
+
+**Closes when.** No `shared` entry left in `global-state.txt`, and 0094's gate in the tests.
 
 **Your words:**
 
