@@ -197,7 +197,8 @@ fn gpu() {
         dev = dev.min(s.device);
         w
     });
-    let ks: Vec<Kernel> = Form::ALL.iter().cycle().take(20).map(|&f| tiny(f)).collect();
+    // The forms one submission holds (`run`): a join runs in its space's own command buffers (`submit`'s `space::run`).
+    let ks: Vec<Kernel> = Form::ALL.iter().filter(|f| !matches!(f, Form::Probe | Form::Tile)).cycle().take(20).map(|&f| tiny(f)).collect();
     let refs: Vec<&Kernel> = ks.iter().collect();
     let w20 = best(50, || {
         let t = Instant::now();
