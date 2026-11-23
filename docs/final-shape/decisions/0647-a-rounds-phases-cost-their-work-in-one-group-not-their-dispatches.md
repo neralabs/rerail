@@ -179,6 +179,7 @@ Measured, cold (a fresh store), on the M3:
 | ast_parent | 4 | 24.0 ms | 97.4 ms |
 | pep604_member | 6 | 21.4 ms | 194.6 ms |
 
-The costliest recursive stratum on the device, `runs_at_import`, made 6.7 million rows in 3 rounds, where the CPU
-took 2 ms. That is its join's plan on the device, not its rounds. The strata of many rounds and few rows
+The costliest recursive stratum on the device, `runs_at_import`, took 102 ms of GPU time for 3 rounds, where the CPU
+took 2 ms. (An earlier version of this record said it made 6.7 million rows: that was the planner's estimate of its
+rows, `gpu_rows`, not rows made.) Its tables are sized from that estimate. 0656 hands it back after its first round. The strata of many rounds and few rows
 (`py_minor`: 44 rounds, 3 rows) are where a round's fixed cost shows.

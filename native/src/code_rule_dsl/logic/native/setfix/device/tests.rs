@@ -232,6 +232,181 @@
         assert!(r.rounds > 4, "the closure takes rounds: {r:?}");
     }
 
+    /// Decision 0656's test: a round that does less work than the component's `narrow` hands it back to the CPU, its
+    /// rows so far placed where the device wrote them, and the CPU's waves go on from them to the same fixpoint
+    /// (`closure` compares the rows). The closure's seed round does about a hundred rows of work, and each round after
+    /// it more: past that, its seed round hands it back; under it, every round runs on the device.
+    #[test]
+    fn a_narrow_round_hands_its_component_back_to_the_cpu() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let whole = closure(&[]);
+        assert!(!whole.handed && whole.rounds > 4, "no hand-back by default in a test: {whole:?}");
+        let narrow = closure(&[("RERAIL_DEVICE_NARROW", "4000000000")]);
+        assert!(narrow.handed && narrow.rounds == 1, "the seed round handed back: {narrow:?}");
+        let wide = closure(&[("RERAIL_DEVICE_NARROW", "30")]);
+        assert!(!wide.handed && wide.rounds == whole.rounds, "every round past 30 rows of work: {wide:?}");
+    }
+
+    /// Decision 0656: a relation a component handed back to the CPU is read by a later stratum on the device as the
+    /// CPU reads it. The closure's seed round hands it back (the CPU's waves add its rounds' rows to the rows the device
+    /// placed), and a later stratum looks it up by its first column on the device: the CPU's rows.
+    #[test]
+    fn a_handed_back_relation_is_read_on_the_device_as_on_the_cpu() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        // Many seed rows and few rounds' rows (`unparen`'s shape: 18,214 seeds, 18 more): pairs (2i, 2i + 1), and a
+        // few chains of them, so the CPU's waves add their rows to the device's part where it lies.
+        db.execute_batch("CREATE TEMP TABLE e (c0, c1);").unwrap();
+        // Node ids' size (a document's key in their high bits).
+        let n = |v: i64| (1i64 << 60) + v;
+        for v in 0..3000i64 {
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [n(2 * v), n(2 * v + 1)]).unwrap();
+        }
+        for v in 0..6i64 {
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [n(2 * v + 1), n(2 * v + 2)]).unwrap();
+        }
+        let e = format!("t:x:{}:{}:ii", hex("temp.e"), hex("c0, c1"));
+        let seed = format!("pos {e} v0 v1\nhead v0 v1");
+        let left = "pos d0 v0 v1\npos c0 v1 v2\nne v2 v0\nhead v0 v2".to_owned();
+        let right = "pos c0 v0 v1\npos d0 v1 v2\nne v2 v0\nhead v0 v2".to_owned();
+        let h0 = format!("r:{}", hex("h0"));
+        // h1(x, z) :- e(x, y), h0(x, z): h0 looked up by its first column.
+        let read = format!("pos {e} v0 v1\npos {h0} v0 v2\nhead v0 v2");
+        // Its reach (e's rows squared) past `REACH_BYTES`: its head's room is what a round adds, so its seed round
+        // stops at its gate and runs again (`RERAIL_ONE_LAUNCH_CHECK=log`: not this test's subject).
+        let _narrow = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_DEVICE_NARROW", "4000000000"), ("RERAIL_ONE_LAUNCH_CHECK", "log")]);
+        let mut got = Vec::new();
+        for device in [false, true] {
+            db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1); DROP TABLE IF EXISTS temp.h1; CREATE TEMP TABLE h1 (c0, c1);").unwrap();
+            let mut spec = vec!["name dev_hand".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel h0 ii empty".to_owned(), format!("seed 0 {}", hex(&seed)), format!("join 0 0 {}", hex(&left)), format!("join 0 0 {}", hex(&right))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "dev_hand", 0).unwrap();
+            if device {
+                let r = super::take_report().expect("a device report");
+                assert!(r.handed, "the closure handed back: {r:?}");
+            }
+            super::super::close(&db, "dev_hand").unwrap();
+            let mut spec = vec!["name dev_read".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel h1 ii empty".to_owned(), format!("seed 0 {}", hex(&read))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "dev_read", 0).unwrap();
+            if device {
+                let r = super::take_report().expect("a device report");
+                assert!(r.refused.is_none(), "the reader ran on the device: {r:?}");
+            }
+            super::super::close(&db, "dev_read").unwrap();
+            let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h1").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            got.push(rows);
+            // Then the CPU's reader, by the index the device's reader left on h0's first column.
+            db.execute_batch("DROP TABLE IF EXISTS temp.h1; CREATE TEMP TABLE h1 (c0, c1);").unwrap();
+            let spec = ["name dev_read_cpu".to_owned(), "rel h1 ii empty".to_owned(), format!("seed 0 {}", hex(&read))];
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "dev_read_cpu", 0).unwrap();
+            super::super::close(&db, "dev_read_cpu").unwrap();
+            let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h1").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            got.push(rows);
+        }
+        assert!(got[0].len() > 2000, "{} rows", got[0].len());
+        assert_eq!(got[0], got[1], "the CPU's reader after the CPU's closure");
+        assert_eq!(got[0].len(), got[2].len(), "the device's reader finds the CPU's rows");
+        assert_eq!(got[0], got[2], "the device's reader's rows are the CPU's");
+        assert_eq!(got[0], got[3], "the CPU's reader after the device's, by the index it left");
+    }
+
+    /// Decision 0656: an index a stratum's delta rules probe an input by is built in its rounds' phases. Handed back
+    /// to the CPU at its seed round's end, those phases never ran: the index is not built, and is not marked built in
+    /// the input's block, where a later stratum's CPU reader by the same key found it and no rows (the django run's
+    /// `unparen`, read by `exc_arg` and `call_kw`).
+    #[test]
+    fn an_index_behind_a_round_end_not_reached_is_not_marked_built() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE e (c0, c1); CREATE TEMP TABLE s (c0, c1);").unwrap();
+        let n = |v: i64| (1i64 << 60) + v;
+        for v in 0..3000i64 {
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [n(2 * v), n(2 * v + 1)]).unwrap();
+        }
+        for v in 0..6i64 {
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [n(2 * v + 1), n(2 * v + 2)]).unwrap();
+            db.execute("INSERT INTO s VALUES (?1, ?2)", [n(2 * v + 1), n(2 * v + 2)]).unwrap();
+        }
+        let e = format!("t:x:{}:{}:ii", hex("temp.e"), hex("c0, c1"));
+        let few = format!("t:x:{}:{}:ii", hex("temp.s"), hex("c0, c1"));
+        let h0 = format!("r:{}", hex("h0"));
+        // h0(x, y) :- e(x, y), on the device where the closure is: a derived relation in its block.
+        let base = format!("pos {e} v0 v1\nhead v0 v1");
+        // h2(x, y) :- e(x, y). h2(x, z) :- h2(x, y), h0(y, z): h0 probed by its first column in the rounds alone.
+        let seed = format!("pos {e} v0 v1\nhead v0 v1");
+        let delta = format!("pos d0 v0 v1\npos {h0} v1 v2\nne v2 v0\nhead v0 v2");
+        // h1(x, z) :- s(x, y), h0(y, z), on the CPU, s's 6 rows: h0 probed by its first column again.
+        let read = format!("pos {few} v0 v1\npos {h0} v1 v2\nhead v0 v2");
+        let _narrow = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_DEVICE_NARROW", "4000000000"), ("RERAIL_ONE_LAUNCH_CHECK", "log")]);
+        let mut got = Vec::new();
+        for device in [false, true] {
+            // Each run's strata named apart: none is the other run's, held with its probes' tables.
+            let name = |n: &str| format!("{n}_{}", if device { "dev" } else { "cpu" });
+            db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1); DROP TABLE IF EXISTS temp.h1; CREATE TEMP TABLE h1 (c0, c1); DROP TABLE IF EXISTS temp.h2; CREATE TEMP TABLE h2 (c0, c1);").unwrap();
+            let mut spec = vec![format!("name {}", name("ix_base"))];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel h0 ii empty".to_owned(), format!("seed 0 {}", hex(&base))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, &name("ix_base"), 0).unwrap();
+            super::super::close(&db, &name("ix_base")).unwrap();
+            let mut spec = vec![format!("name {}", name("ix_hand"))];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel h2 ii empty".to_owned(), format!("seed 0 {}", hex(&seed)), format!("join 0 0 {}", hex(&delta))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, &name("ix_hand"), 0).unwrap();
+            if device {
+                let r = super::take_report().expect("a device report");
+                assert!(r.handed, "the closure handed back: {r:?}");
+            }
+            super::super::close(&db, &name("ix_hand")).unwrap();
+            let spec = [format!("name {}", name("ix_read")), "rel h1 ii empty".to_owned(), format!("seed 0 {}", hex(&read))];
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, &name("ix_read"), 0).unwrap();
+            super::super::close(&db, &name("ix_read")).unwrap();
+            let mut rows = Vec::new();
+            for t in ["h1", "h2"] {
+                let mut r: Vec<(i64, i64)> = db.prepare(&format!("SELECT c0, c1 FROM temp.{t}")).unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                r.sort_unstable();
+                rows.push(r);
+            }
+            got.push(rows);
+        }
+        // Each of s's y found in h0: (2i + 2, 2i + 3), and (2i + 2, 2i + 3) for i below 5 as well.
+        assert!(!got[0][0].is_empty(), "the CPU's reader's rows");
+        assert_eq!(got[0][1], got[1][1], "the closure's rows, handed back, are the CPU's");
+        assert_eq!(got[0][0], got[1][0], "the CPU's reader after the handed-back closure finds h0's rows by its first column");
+    }
+
     /// Decisions 0603 and 0638's test: a stratum is one program's stacks, whatever its rules and rounds. The closure's
     /// seed round and its rounds are one program, its phases a dispatch each, several rounds' to a stack, a stack one
     /// launch. With a stack of one round and a first arena of 16 bytes, its stacks go on (one a round, its walk past

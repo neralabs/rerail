@@ -2918,12 +2918,14 @@ fn tally(rep: &mut Report, done: &mj::Done) {
 /// rounds, each round's new rows (made distinct, less the rows the relation has) its next delta, until a round makes
 /// none. Each relation's rows stay on the device between rounds; the host reads one count per relation a round, and
 /// the new rows once, at the end, into `fresh` as the CPU's waves would add them. `heads` are the component's
-/// relations, which must be empty when it starts. Returns each rule's rows made, seeds then deltas.
-pub(in crate::code_rule_dsl) fn fixpoint(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+/// relations, which must be empty when it starts. Returns each rule's rows made, seeds then deltas, and whether the
+/// device reached the fixpoint: a round too narrow for the device hands the component back (decision 0656, `narrow`),
+/// its rows so far in `fresh` for the CPU's waves to go on from.
+pub(in crate::code_rule_dsl) fn fixpoint(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<(Vec<u64>, bool), String> {
     fixpoint_(seeds, deltas, heads, store, names, fresh)
 }
 
-fn fixpoint_(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+fn fixpoint_(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<(Vec<u64>, bool), String> {
     on_lane("stratum rounds", seeds.len() + deltas.len(), || fixpoint_here(seeds, deltas, heads, store, names, fresh))
 }
 
@@ -2952,7 +2954,7 @@ fn map_at(m: &super::keys::KeyMap) -> mj::LatMap<'_> {
     mj::LatMap { home: m.facts().expect("a map in a block"), at: m.words().offset(), places: m.places(), grows: None }
 }
 
-fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<(Vec<u64>, bool), String> {
     let _in = in_device();
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device fixpoint".into());
     let c0 = thread_cpu();
@@ -3016,8 +3018,11 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     // Every round on the device, the seed round's first: a program of them (`device_rounds`, decision 0603), whose
     // rounds go on across its launches.
     let mut rounds = 0;
+    // A round's work under which the component goes back to the CPU (decision 0656): one whose heads are sets that
+    // keep no levels, whose rows the CPU's waves take as they lie and go on from.
+    let narrow = if heads.iter().all(|&h| !lattices.contains_key(&h) && !leveled(h)) { narrow_work() } else { 0 };
     {
-        let mut lp = Looped { own: &mut own, rep: &mut rep, lattices: &mut lattices, sets: &mut sets, set_levels: &mut set_levels, made: &mut made, rounds: &mut rounds };
+        let mut lp = Looped { own: &mut own, rep: &mut rep, lattices: &mut lattices, sets: &mut sets, set_levels: &mut set_levels, made: &mut made, rounds: &mut rounds, narrow };
         device_rounds(seeds, deltas, heads, store, names, &named, shared.as_ref(), &mut lp)?;
     }
     // A set head's relation as it lies (decision 0325 step 4): every row new (its relation had none before the run),
@@ -3080,8 +3085,21 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     rep.rounds = rounds as u32;
     rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu - rep.upload_cpu).max(0.0);
     one_launch(&rep);
+    let fixed = !rep.handed;
+    if rep.handed {
+        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "recursive components handed back to the CPU (decision 0656)", 1);
+    }
     LAST.with_borrow_mut(|l| *l = Some(rep));
-    Ok(made)
+    Ok((made, fixed))
+}
+
+/// The rows a round's stages make under which the CPU does the round's work in less time than a device round costs
+/// (decision 0656, `placement::narrow_round_work`). `RERAIL_DEVICE_NARROW` sets it (0: never hand back), for a test or
+/// a measure. The library's tests run the device's rounds on small inputs to test them, so there it is none unless a
+/// test sets it.
+fn narrow_work() -> u32 {
+    let default = if cfg!(test) { 0 } else { crate::code_rule_dsl::logic::plan::placement::narrow_round_work() as u32 };
+    std::env::var("RERAIL_DEVICE_NARROW").ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
 /// The address space a recursive head's delta reserves in its block (`Part::for_writes_with_room`): room for its rows
@@ -3101,6 +3119,8 @@ struct Looped<'a> {
     set_levels: &'a mut HashMap<usize, Vec<u32>>,
     made: &'a mut [u64],
     rounds: &'a mut usize,
+    /// A round's work under which it hands the component back (`narrow_work`; 0: never).
+    narrow: u32,
 }
 
 /// A head in a program of rounds (decision 0603 step 3): its relation and its two deltas, each grown in place in its
@@ -3503,7 +3523,9 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
         if done.past_rounds {
             return Err(format!("a recursive component past {ROUNDS_MAX} rounds"));
         }
-        if done.ended {
+        // Ended, or handed back to the CPU after a narrow round (decision 0656): its rows so far are its heads'.
+        if done.ended || done.narrow {
+            lp.rep.handed = done.narrow && !done.ended;
             // The rules' counts, summed over the rounds, as one run's each (`counted`): the seeds' then the deltas'.
             let mut runs: Vec<Option<Run<'_>>> = templates.into_iter().next().expect("a program's templates");
             let seeds_ran = seed_runs.take().expect("the seed round ran");
@@ -3761,10 +3783,18 @@ fn encode_round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], reads: Option<usize>
     }
     for (x, r) in runs.iter().enumerate() {
         let Some(r) = r else { continue };
+        // The round's work: the rows each of its stages made (decision 0656), read before its totals are emptied.
+        if lp.narrow > 0 {
+            for &(i, o) in &r.io {
+                if i != o {
+                    ops.push(mj::RoundOp::Work(mj::At::Word(&r.totals, o)));
+                }
+            }
+        }
         ops.push(mj::RoundOp::Sum(sums[x].as_ref().expect("its sums"), &r.totals));
         ops.push(mj::RoundOp::Zero(&r.totals, 1, r.totals.len - 1));
     }
-    batch.round_end(&ops, round, ROUNDS_MAX as u32, next).map_err(e)?;
+    batch.round_end(&ops, round, ROUNDS_MAX as u32, lp.narrow, next).map_err(e)?;
     drop(ops);
     Ok((runs, ends))
 }

@@ -1704,17 +1704,23 @@ UKL_INLINE void gate_one(JSPACE const GateP* p, UKL_GLOBAL uint32_t* ctl, uint32
 // A recursive component's round's end (`Batch::round_end`, decision 0603 step 3): one thread. Its new rows claimed
 // and its next deltas' lengths set (`ops`, in order: 0 `*to += *from`, 1 `*to = *from`, 2 `to[0..n)` zeroed, 3
 // `to[round] = *from`, a round's count logged by its round (`*round` before it is counted); 4 a count the round made,
-// any of them non-zero going on; 5 `to[k] += from[k]` for `k < n`, counts summed over rounds); the round
-// counted (`round`: the next round's number). The round after runs from the next template's first phase (`next`),
-// which the host encodes after it (decision 0638). With no new rows the program ends (`ctl[6]` bit 16), and with a
-// round past `max` next it stops (bit 4): the phases encoded after it run no groups (`join_grid`).
+// any of them non-zero going on; 5 `to[k] += from[k]` for `k < n`, counts summed over rounds; 6 a count of rows a
+// stage made this round, the round's work); the round counted (`round`: the next round's number). The round after
+// runs from the next template's first phase (`next`), which the host encodes after it (decision 0638). With no new
+// rows the program ends (`ctl[6]` bit 16), and with a round past `max` next it stops (bit 4): the phases encoded
+// after it run no groups (`join_grid`). A round that made rows but did less work than `narrow` (none: never) hands
+// the component back to the CPU (bit 8, decision 0656): its rows so far are the CPU's to go on from.
 typedef struct RoundOp { JSPACE uint32_t* to; JSPACE const uint32_t* from; uint32_t op, n; } RoundOp;
-typedef struct RoundP { JSPACE uint32_t* round; uint32_t nops, max, next, pad; RoundOp ops[1]; } RoundP;
+typedef struct RoundP { JSPACE uint32_t* round; uint32_t nops, max, next, narrow; RoundOp ops[1]; } RoundP;
 UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint32_t t)
 {
     if (t != 0u) return;
     bool any = false;
-    for (uint32_t i = 0u; i < p->nops; i++) if (p->ops[i].op == 4u && *p->ops[i].from != 0u) any = true;
+    uint64_t work = 0u;
+    for (uint32_t i = 0u; i < p->nops; i++) {
+        if (p->ops[i].op == 4u && *p->ops[i].from != 0u) any = true;
+        if (p->ops[i].op == 6u) work += (uint64_t)*p->ops[i].from;
+    }
     uint32_t cur = *p->round;
     for (uint32_t i = 0u; i < p->nops; i++) {
         // Its fields read through `p` (coherent): C++ (CUDA) copies no `volatile` struct whole.
@@ -1731,6 +1737,7 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
     ukl_fence_device();
     if (!any) ukl_atomic_or(&ctl[6], 16u);
     else if (cur + 1u > p->max) ukl_atomic_or(&ctl[6], 4u);
+    else if (work < (uint64_t)p->narrow) ukl_atomic_or(&ctl[6], 8u);
 }
 
 #ifdef JOIN_PROGRAM
@@ -2089,7 +2096,7 @@ UKL_INLINE uint32_t phase_group(UKL_GLOBAL const Item* items, UKL_GLOBAL const u
 }
 
 // A phase's grid (decision 0638): one thread, before the phase's dispatch, in its submission. Where the program is
-// over (`ctl[6]`: a gate stopped it, 2; past its rounds, 4; no new rows, 16; parked, 32) its grid is none, and every
+// over (`ctl[6]`: a gate stopped it, 2; past its rounds, 4; handed back to the CPU, 8; no new rows, 16; parked, 32) its grid is none, and every
 // phase's after it. A gate's room mapped past in the phase before (128) parks it there (`ctl[9]`, its top two bits and
 // that phase), and texts that found the text arena full (64) park it for them (its top bit): the host maps the room
 // or the arena, and goes on from there. Else its groups (`phase_groups`), and the phase the program's last begun
@@ -2106,7 +2113,7 @@ DEFINE_KERNEL2(join, join_grid,
     uint32_t flags = ukl_atomic_poll(&ctl[6]), n = 0u, before = ukl_atomic_poll(&ctl[11]) - 1u;
     if (a.q < ukl_atomic_poll(&ctl[13])) {
         // Run by its chain (`join_chain`): nothing left.
-    } else if ((flags & (2u | 4u | 16u | 32u)) != 0u) {
+    } else if ((flags & (2u | 4u | 8u | 16u | 32u)) != 0u) {
     } else if ((flags & 128u) != 0u) {
         ukl_atomic_and(&ctl[6], ~128u);
         ukl_atomic_store(&ctl[9], 0xC0000000u | before);
@@ -2142,7 +2149,7 @@ UKL_INLINE bool phase_begins(UKL_GLOBAL uint32_t* ctl, uint32_t q, uint32_t seq)
         uint32_t x = ukl_atomic_cas(&ctl[12], w, (seq << 8) | f);
         if (x == w) {
             uint32_t before = ukl_atomic_poll(&ctl[11]) - 1u;
-            if ((f & (2u | 4u | 16u | 32u)) != 0u) {
+            if ((f & (2u | 4u | 8u | 16u | 32u)) != 0u) {
             } else if ((f & 128u) != 0u) {
                 ukl_atomic_and(&ctl[6], ~128u);
                 ukl_atomic_store(&ctl[9], 0xC0000000u | before);
@@ -2159,7 +2166,7 @@ UKL_INLINE bool phase_begins(UKL_GLOBAL uint32_t* ctl, uint32_t q, uint32_t seq)
         }
         w = x;
     }
-    return (flags & (2u | 4u | 16u | 32u | 64u | 128u)) == 0u;
+    return (flags & (2u | 4u | 8u | 16u | 32u | 64u | 128u)) == 0u;
 }
 
 // A phase's dispatch (decision 0638): a group an item, as its grid's (`join_grid`) or its list's (`a.list`) count. A
@@ -2255,7 +2262,7 @@ DEFINE_KERNEL2(join, join_chain,
         // Its groups, as `join_grid` finds them; none where the flags stop it, or it hands back.
         if (l == 0u) {
             uint32_t flags = ukl_atomic_poll(&ctl[6]), n = NONE;
-            if ((flags & (2u | 4u | 16u | 32u | 64u | 128u)) == 0u) {
+            if ((flags & (2u | 4u | 8u | 16u | 32u | 64u | 128u)) == 0u) {
                 n = phase_groups(phases, segs, q);
                 if (n <= CHAIN_GROUPS) ukl_atomic_store(&ctl[11], q + 1u);
                 else n = NONE;

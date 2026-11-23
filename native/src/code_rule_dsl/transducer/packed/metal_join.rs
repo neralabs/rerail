@@ -1061,12 +1061,28 @@ struct Building {
     queued: bool,
     /// Whether it was queued after a gate (`Batch::gate`): not built when the gate stopped its program.
     gated: bool,
+    /// Queued after its program's round ends (`Batch::round_end`): its program's round count, and how many ends lie
+    /// before it. It is built only where the program passed them: one stopped at an earlier end (no new rows, or handed
+    /// back to the CPU, decision 0656) never ran its phase, and its room goes back.
+    behind: Option<Behind>,
     /// A live relation's (`DevRel::live`): of its rows as a round claimed them, never marked built (a reader of the
     /// relation as it lies finds none of its rows' count).
     live: bool,
 }
 
+/// A program's round count (its word, read once its work is done) and the round ends an index's build lies behind.
+#[derive(Clone)]
+struct Behind(std::rc::Rc<dyn Fn() -> u32>, u32);
+
 impl Building {
+    /// Whether its builder ran: no round end it lies behind stopped its program. The device counts the end that stops
+    /// it too (`round_one`), so the count is past the index's ends only where the program went on past them. Where a gate
+    /// stopped it just after the end before the index, it counts as not built: given back, and built again by a later
+    /// batch.
+    fn ran(&self) -> bool {
+        self.behind.as_ref().is_none_or(|Behind(round, ends)| round() > *ends)
+    }
+
     /// Its relation's descriptor's offset in its block: what its `InFlight` is found by.
     fn at(&self) -> usize {
         self.home.block.offset_of(self.rel)
@@ -1433,6 +1449,9 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) ended: bool,
     /// Whether a round's end stopped it past its rounds.
     pub(in crate::code_rule_dsl) past_rounds: bool,
+    /// Whether a round's end handed its component back to the CPU (`round_end`'s `narrow`, decision 0656): a round
+    /// that did less work than a round on the device costs.
+    pub(in crate::code_rule_dsl) narrow: bool,
     /// Whether a size script parked past its program's arena (decision 0603 step 5), an arena whose pages could not
     /// be mapped further, with `stopped`; the bytes its claims wanted. The batch's next programs' arenas are twice
     /// that at least (`Batch::arena_floor`).
@@ -1476,6 +1495,8 @@ pub(in crate::code_rule_dsl) struct Batch {
     borrowed: Vec<Submitted>,
     /// Whether a gate was queued since the last `finish`.
     gated: bool,
+    /// The round ends queued in the open program (`Building::behind`).
+    ends: Option<Behind>,
     /// The atoms directory its text kernels read symbols' bytes through (decision 0478 step 2e), made the first
     /// time a stage reads a symbol's text and made again when the store's atoms have grown past it.
     atoms: Option<std::rc::Rc<DevAtoms>>,
@@ -1546,6 +1567,7 @@ impl Batch {
             program: Program::default(),
             programs: Vec::new(),
             gated: false,
+            ends: None,
             committed: Vec::new(),
             done: Done::default(),
             dummy: Held::new(64)?,
@@ -1684,8 +1706,8 @@ impl Batch {
         let s = pass.commit().map_err(Error::from)?;
         // The indexes whose builders it holds are told to their blocks: a probe of another batch takes one, its work
         // committed after this and so run after (`InFlight`). One queued after a gate, or a live relation's, may not
-        // be built (`finish`): none is told.
-        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live) {
+        // be built (`finish`), as may one queued after a round end: none is told.
+        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live ) {
             let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
             held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch() });
             b.queued = true;
@@ -1782,8 +1804,17 @@ impl Batch {
             if (stopped && b.gated) || b.live {
                 continue;
             }
-            b.check("its batch done");
             let (r, room) = (unsafe { &*b.rel }, &b.room);
+            // Behind a round end its program stopped at: never built, its room the block's again (decision 0656: a stratum
+            // handed back after its seed round left its delta rules' index of an input marked built and empty, and the
+            // CPU's readers by it found no rows).
+            if !b.ran() {
+                crate::code_rule_dsl::prof::count_named("device.index behind a round end not reached, given back".into(), 4 * room.rows_n as usize);
+                // SAFETY: the batch's work has completed; nothing built or read the index.
+                unsafe { r.give_back_index(&b.home.block, room) };
+                continue;
+            }
+            b.check("its batch done");
             // Another batch built the same index meanwhile (each found none, and built its own, on another thread),
             // or this batch's builder was not all encoded: it goes back, its room the block's again, and a later
             // probe finds the one built.
@@ -1798,6 +1829,10 @@ impl Batch {
             }
             // SAFETY: the batch's work, which built it, has completed; `home` keeps the relation.
             unsafe { r.index_built(room) };
+            // A test build checks what it marked: its first, middle and last rows found by their own keys (decision
+            // 0656: an index whose build never ran was marked built, and every probe of it found nothing).
+            #[cfg(any(test, feature = "test-hooks"))]
+            check_built(r, room);
         }
         Ok(std::mem::take(&mut self.done))
     }
@@ -1964,7 +1999,7 @@ impl Batch {
         // is done (`finish`), as the batch's work may already write it.
         let held = self.building.len();
         let before = Building::descriptor(std::ptr::from_ref(r));
-        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, gated: self.gated, live: rel.live });
+        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, gated: self.gated, behind: self.ends.clone(), live: rel.live });
         let buffer = bound(&home)?;
         self.queue_index(rel, cols, &room, &buffer)?;
         self.building[held].encoded = true;
@@ -2515,16 +2550,17 @@ impl Batch {
     /// its next deltas' lengths set, its words emptied for the next round, its counts summed and logged), the round
     /// counted in slot 0 of `round`; then the round after, from phase `next` (`next_phase`; none: the phase after its
     /// own). The program ends when no `RoundOp::Any` word is non-zero (`Done::ended`) and fails past round `max`
-    /// (`Done::past_rounds`). Its rounds go on across its launches: a launch's GPU time is its workers' budgets'
-    /// (decision 0603 point 5).
-    pub(in crate::code_rule_dsl) fn round_end(&mut self, ops: &[RoundOp<'_>], round: &Words, max: u32, next: Option<u32>) -> Result<(), Error> {
+    /// (`Done::past_rounds`). A round that made rows and whose `RoundOp::Work` words sum under `narrow` (0: never)
+    /// stops it, handed back to the CPU (`Done::narrow`, decision 0656). Its rounds go on across its launches: a
+    /// launch's GPU time is its workers' budgets' (decision 0603 point 5).
+    pub(in crate::code_rule_dsl) fn round_end(&mut self, ops: &[RoundOp<'_>], round: &Words, max: u32, narrow: u32, next: Option<u32>) -> Result<(), Error> {
         // Alone in its level: the round's work all before it, the next round's after. Its phase is the next one
         // (`next_phase`); none given, the round after goes on from the phase after it.
         self.flush()?;
         let next = next.unwrap_or(self.program.phases.len() as u32 + 1);
         let mut job = Job::new(JobKind::Round, 0, Stage::default());
         let ra = job.reach(&round.buffer.buffer, 0, true)?;
-        let mut p: Vec<u64> = vec![ra, u64::from(ops.len() as u32) | u64::from(max) << 32, u64::from(next)];
+        let mut p: Vec<u64> = vec![ra, u64::from(ops.len() as u32) | u64::from(max) << 32, u64::from(next) | u64::from(narrow) << 32];
         let (mut reads, mut writes) = (Vec::new(), vec![ra]);
         let word = |job: &mut Job, at: &At<'_>, write: bool| at.reach(job, write);
         for op in ops {
@@ -2537,6 +2573,7 @@ impl Batch {
                 }
                 RoundOp::Log(w, from) => (job.reach(&w.buffer.buffer, 0, true)?, word(&mut job, from, false)?, 3, w.len),
                 RoundOp::Any(from) => (0, word(&mut job, from, false)?, 4, 1),
+                RoundOp::Work(from) => (0, word(&mut job, from, false)?, 6, 1),
                 RoundOp::Sum(to, from) => {
                     assert!(from.len <= to.len, "counts summed into fewer words");
                     (job.reach(&to.buffer.buffer, 0, true)?, job.reach(&from.buffer.buffer, 0, false)?, 5, from.len)
@@ -2563,6 +2600,10 @@ impl Batch {
         // Its phase, the one just flushed, and its next round's first: the walk's jump (decision 0638).
         let at = self.program.phases.len() as u32 - 1;
         self.program.jumps.push((at, next));
+        // The indexes queued after it are built only where the program passes it (`Building::behind`): its count
+        // past it, from where the host set it before the program runs (a stratum's rounds go on across programs).
+        let ends = self.ends.as_ref().map_or_else(|| round.get(0), |b| b.1) + 1;
+        self.ends = Some(Behind(std::rc::Rc::new(round.reader(0)), ends));
         Ok(())
     }
 
@@ -2926,6 +2967,8 @@ impl Batch {
         }
         self.done.programs += 1;
         let mut prog = std::mem::take(&mut self.program);
+        // The next program's round ends are its own.
+        self.ends = None;
         // The next program's claims go on past this one's, in the same arena: a table one places, a later one reads.
         self.program.top = prog.top.clone();
         // The arena, the batch's programs' one: each level's counts and placed tables at the offsets its size scripts
@@ -3242,10 +3285,11 @@ impl Batch {
                 self.done.stopped = true;
                 continue;
             }
-            // A round's end ended it (no new rows) or stopped it past its rounds (`round_end`).
-            if flags & (4 | 16) != 0 {
+            // A round's end ended it (no new rows), stopped it past its rounds, or handed it back (`round_end`).
+            if flags & (4 | 8 | 16) != 0 {
                 self.done.ended |= flags & 16 != 0;
                 self.done.past_rounds |= flags & 4 != 0;
+                self.done.narrow |= flags & 8 != 0;
                 continue;
             }
             // Its stack ended with its walk not done (its rounds' share, or `STACK_PHASES`): launched again, where it
@@ -3256,6 +3300,21 @@ impl Batch {
             }
         }
         Ok((whole, again))
+    }
+}
+
+/// A test build's check of an index just marked built (`Batch::finish`): a relation's own rows (none read through a
+/// view or a base, none dead), its first, middle and last rows each found by its own key.
+#[cfg(any(test, feature = "test-hooks"))]
+fn check_built(r: &rerail_blocks::relation::Relation, room: &rerail_blocks::relation::IndexRoom) {
+    let cols: Vec<usize> = room.key[..room.ncols].iter().map(|&c| c as usize).collect();
+    if room.rows_n == 0 || room.from != 0 || r.base_rows != 0 || !r.own_dead().is_empty() || cols.iter().any(|&c| c >= r.arity as usize) {
+        return;
+    }
+    let v = rerail_blocks::relation::View::full(r);
+    for row in [0, room.rows_n / 2, room.rows_n - 1] {
+        let key: Vec<i64> = cols.iter().map(|&c| r.rows.get(row, c)).collect();
+        assert!(v.probe(room.index, &key).contains(&row), "an index marked built ({} rows keyed by {cols:?}) does not find its row {row}: its build did not run", room.rows_n);
     }
 }
 
@@ -3570,6 +3629,8 @@ pub(in crate::code_rule_dsl) enum RoundOp<'a> {
     Any(At<'a>),
     /// Each of `from`'s words added to `to`'s: a round's counts summed over the rounds.
     Sum(&'a Words, &'a Words),
+    /// Rows a stage made this round: the round's work, against `round_end`'s `narrow`.
+    Work(At<'a>),
 }
 
 /// `Rows::len`'s offset in its descriptor: a relation's rows as claimed, which the device reads (`clif_rows_len`) and
