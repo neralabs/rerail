@@ -655,9 +655,8 @@ pub struct P<'a, L: Layout> {
     k: usize,
     pend: usize,
     w: Writer<L>,
-    /// The nodes open, and the node made last at each.
-    open: Vec<u32>,
-    made: Vec<u32>,
+    /// The levels: each node open, and the node made last in it (one push and one pop a level).
+    levels: Vec<(u32, u32)>,
     /// The last token's end.
     last_end: u32,
     /// The marks taken or passed at this token, by their order.
@@ -688,7 +687,7 @@ impl<'a, L: Layout> P<'a, L> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L) -> R<Self> {
         let (recs, m) = (&lx.recs[..], &lx.masks);
         let n = recs.len();
-        let mut p = P { src, recs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
+        let mut p = P { src, recs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -945,8 +944,8 @@ impl<'a, L: Layout> P<'a, L> {
 
     #[inline(always)]
     fn set_made(&mut self, at: u32) {
-        if let Some(m) = self.made.last_mut() {
-            *m = at;
+        if let Some(l) = self.levels.last_mut() {
+            l.1 = at;
         }
     }
 
@@ -988,7 +987,7 @@ impl<'a, L: Layout> P<'a, L> {
 
     /// The token, which must pass `ok`, joined to the leaf made last: one leaf of `kind`.
     fn merge(&mut self, ok: bool, kind: u16) -> R {
-        let at = *self.made.last().unwrap_or(&NONE);
+        let at = self.levels.last().map_or(NONE, |l| l.1);
         if !ok || at == NONE || at as usize + 1 != self.w.len() {
             return self.refuse();
         }
@@ -1004,8 +1003,7 @@ impl<'a, L: Layout> P<'a, L> {
 
     fn open_root(&mut self, kind: u16) {
         let at = self.w.push(u32::from(kind), 0);
-        self.open.push(at as u32);
-        self.made.push(NONE);
+        self.levels.push((at as u32, NONE));
     }
 
     /// The root closed at the end of the file: from the file's start (`whole`), else (or `whole padded`) from its
@@ -1034,27 +1032,25 @@ impl<'a, L: Layout> P<'a, L> {
     fn open(&mut self, kind: u16) {
         self.flush();
         let at = self.w.push(u32::from(kind), self.start());
-        self.open.push(at as u32);
-        self.made.push(NONE);
+        self.levels.push((at as u32, NONE));
     }
 
     /// The node open closed at the last token's end; the node made last at its parent's level.
     /// One still of no kind (`UNSET`, never retagged) refuses the file.
     #[inline(always)]
     fn close(&mut self) -> R {
-        let at = self.open.pop().expect("a node open") as usize;
+        let at = self.levels.pop().expect("a node open").0 as usize;
         // Closed before the refusal: a refused file's tape is not read.
         if self.w.close_from(at, self.last_end) & 0x3ff == u32::from(UNSET) {
             return self.refuse();
         }
-        self.made.pop();
         self.set_made(at as u32);
         Ok(())
     }
 
     /// The node made last at this level given `field`, where it has none.
     fn field_made(&mut self, field: u16) {
-        let at = *self.made.last().unwrap_or(&NONE);
+        let at = self.levels.last().map_or(NONE, |l| l.1);
         if at == NONE {
             return;
         }
@@ -1063,7 +1059,7 @@ impl<'a, L: Layout> P<'a, L> {
 
     /// The node open, a `kind` now.
     fn retag(&mut self, kind: u16) {
-        let at = *self.open.last().expect("a node open") as usize;
+        let at = self.levels.last().expect("a node open").0 as usize;
         let k = self.w.key(at);
         self.w.set_key(at, k & !0x3ff | u32::from(kind));
     }
@@ -1071,20 +1067,19 @@ impl<'a, L: Layout> P<'a, L> {
     /// A node of `kind` put over the node made last at this level, open: it takes that node's
     /// field, and that node takes `field`.
     fn wrap(&mut self, kind: u16, field: u16) -> R {
-        let at = *self.made.last().unwrap_or(&NONE);
+        let at = self.levels.last().map_or(NONE, |l| l.1);
         if at == NONE {
             return self.refuse();
         }
         let at = at as usize;
         self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));
-        self.open.push(at as u32);
-        self.made.push(at as u32 + 1);
+        self.levels.push((at as u32, at as u32 + 1));
         Ok(())
     }
 
     /// The node a wrap moved (the wrap's first child) a `kind` now.
     fn retype_moved(&mut self, kind: u16) {
-        let at = *self.open.last().expect("a wrap open") as usize + 1;
+        let at = self.levels.last().expect("a wrap open").0 as usize + 1;
         let k = self.w.key(at);
         self.w.set_key(at, k & !0x3ff | u32::from(kind));
     }
@@ -1094,7 +1089,7 @@ impl<'a, L: Layout> P<'a, L> {
     /// `None` kept as it is with every node inside it; `u16::MAX - 1` refuses), `field` each
     /// field's new one, and `root` the node's own way (`u16::MAX`: its kind's).
     fn reread(&mut self, root: Option<Option<u16>>, way: fn(u16) -> Option<Option<u16>>, field: fn(u16) -> u16) -> R {
-        let at = *self.made.last().unwrap_or(&NONE);
+        let at = self.levels.last().map_or(NONE, |l| l.1);
         if at == NONE {
             return self.refuse();
         }

@@ -396,3 +396,12 @@ local (`std::mem::take`) as it starts, and the code reads `stack`. Side by side 
 from 34.9–35.6 ms to 34.2–34.8 ms. Kotlin's tier 2 is not this loop, and its file is unchanged.
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
+
+## One stack of levels, not two (done)
+
+Tier 2 kept the nodes open (`open`) and the node made last at each (`made`) in two vectors, always pushed and popped
+together: a node opened, a wrap, a close. Each level was two pushes and two pops, each with its own length and room.
+Now they are one vector of pairs (`levels`: the node open, the node made last in it). Side by side on spark1 (at a load
+of 14), tier 2 went from 33.1–34.3 ms to 31.9–33.3 ms. Kotlin's file changes the same way.
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
