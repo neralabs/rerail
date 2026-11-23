@@ -724,3 +724,25 @@ produce the same rows.
 The one program takes 3.4 to 14 times the GPU time of the launches it replaced. Its wall time is lower only for
 the lattice stratum, where the launches' submissions dominated. Fewer launches do not pay for themselves until the
 program's own work costs what the launches' work did. That is the next step, before more is built on the program.
+
+### Why: after its first phase, one group runs the program
+
+A temporary trace counted, for each launch, the groups that took any item and the most items one group took (M3, one
+run each):
+
+| Stratum | Groups launched | Items | Groups that took any | Most by one group |
+|---|---|---|---|---|
+| seeds | 904 | 2,202 | 1 | 2,202 |
+| seeds ×10 | 16,384 | 51,435 | 706 | 47,986 |
+| closure (each launch) | 16 | 256 | 1 | 256 |
+| leveled reach (first launch) | 104 | 778 | 1 | 778 |
+
+The cause is in `join_run`'s rule that a group which finds nothing to take ends. A phase's items are pushed only
+once the phase before is done, by the group that finished its last item. By then every other group found the queue
+empty and ended, so the finisher takes the next phase's items alone, and every phase after. The groups launched
+for "any phase's items at once" (`workers`, the largest phase's items) are there only for the first phase. Where
+groups are launched past what the GPU holds at once (seeds ×10), the late ones take some items as they start.
+
+So the program's GPU time is its items run one after another by one group. That is not a cost of the kernel's code.
+The program has to keep workers for a phase pushed after its first, and the rule that a group with nothing to take
+ends rules out the usual way (idle workers polling the queue, bounded). That choice is open.
