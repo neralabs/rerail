@@ -892,6 +892,65 @@ kernels', the host's parents, the CPU device's c++ build's leaves): the Rust of 
 `join_run` had, is run. Writing them found an operation reading a 64-bit value's low half as an array of the
 result's registers; such an operand is `lo(x)` (`Em::wide`).
 
+### The oracle: `join_run` by hand (the user's: "hand-create an idiomatic Rust SIMD version of the kernel ... then identify the correct structure of the code ... I am SURE that we need much smaller functions", 2026-11-23)
+
+`rerail_ukl_rust::join_run` is the join program written by hand from `join_stages.uglykl`: 2,609 lines, 90 KB,
+117 functions (median 9 lines; the largest `row_text` 186, the turn loop `run` 94, the item's dispatch `item` 88).
+It calls the compiled reads through `Launch::reads` as rs.rs's Rust does (36 of them, their places checked against
+`READS`: `the_reads_are_at_their_places`). The CPU device runs it in place of its c++ build for the join program's
+three texts (formats 0, 16 and 16z, `JOIN_PROGRAM`; the format is the view's, read by the compiled reads, so one Rust
+serves all three; `the_join_programs_rust_is_of_this_source` fails when the source changes). For it the CPU device
+now gives a kernel's Rust the compiled reads: `rerail_ukl_rust::Reads`, a table and the JIT's code that holds it,
+made by rerail-gpu (`rerail_clif::jit::Reads`) for the library whose kernel calls them (`calls_reads`), none for
+the others, and kept by that library.
+
+**Checked.** `setfix::device`'s 39 tests (`RERAIL_GPU=cpu`: the strata, the parity families, recursion, lattices,
+texts, verdicts, views) pass on it, as on the c++ build (`RERAIL_CPU_RUST=0`). Two things they found. `substr`'s
+range wraps on the device (`substr_range` of extreme numbers); the Rust's did not, and a debug build panicked. And
+a kernel's Rust that panicked took the CPU queue's thread with it, and the batch's waiter waited for ever: the
+launch now catches it, and the panic is the launch's error.
+
+**Measured** (this Mac, rustc 1.99.1, `rustc --crate-type=lib -C codegen-units=1` of the file alone):
+
+| | rs.rs's `join_run` (32 lanes) | the hand-written `join_run` |
+|---|---|---|
+| Rust | 669 KB, 309 functions (`row_text_one` 58 KB, 1,329 lines) | 90 KB, 117 functions (`row_text` 186 lines) |
+| opt-level 1 | 158 s, 1.2 GB, 2.1 MB of code | 0.6 s, 42 KB of code |
+| opt-level 3 | 337 s, 1.9 MB of code | 0.8 s, 51 KB of code (17 functions after LLVM's inlining) |
+| a group's threads | 32 of its 256 | 256 |
+
+**The structure.** The program's work is a thread's: an item's job is a function of `t` (`stage_count_one`,
+`dedup_claim_one`, `lat_merge_one`, ...) whose control is the thread's own (a candidate loop runs to its binding's
+end, a probe takes its hash's chain, a CAS loop its own retries, a text its own length), and whose every step calls a
+read or follows an address. The oracle is that, read as a CPU runs it:
+
+1. **A group is a loop over its threads**, each a call of the item's function (`Prog::item`): scalar, its branches
+   one arm, its loops its own, its calls calls. LLVM inlines what it chooses.
+2. **What a SIMD group does together is one thread's walk.** `row_text`'s automaton over a text's bytes (the GPU's
+   chunked prefix of states), a `.`'s or a `/`'s place (a ballot, a minimum), a text's characters (a sum), a compare
+   eight bytes a word: each a loop over the bytes.
+3. **The group's own steps are plain code.** Lane 0 takes an item, a barrier, every thread reads it: one thread takes
+   it and runs it. A scan's tile is a running sum; a sort's tile a histogram and a stable scatter.
+
+rs.rs writes the other shape: every value of every function is the 32 lanes' (`[uint32x4_t; 8]`, 16 registers for
+64 bits), both arms of a branch run under masks, a read is a loop over the running lanes, and a function has an
+instance for each shape of its arguments. For code whose lanes part at the first branch this multiplies the text
+and buys nothing: the vector work is masks. And `kernel_group` takes one SIMD group for the group, so of a group's
+256 threads only 32 run.
+
+What rs.rs must do so that its `join_run` is the oracle's size:
+
+- **A width for each function, not one for the kernel** (step 3's bar: "width 1–32 per block"). A function whose
+  control depends on its thread's values (a loop bound, a branch on a read, an address followed) is width 1: written
+  once as the source's function, scalar, a call. Width 32 is for a block whose lanes keep together and whose
+  operations are each lane's (consecutive loads, arithmetic, selects), as `label_parents`' are.
+- **A kernel cut at its barriers, each part a loop over the group's threads** (all of them, by SIMD groups where a
+  part is width 32), what a thread holds across a cut in arrays of the group's threads.
+- **A SIMD-group operation a cut too**: the lanes up to it a loop, the operation over their values, the lanes after
+  it a loop.
+- **No instances at width 1** (one value has one shape), and no inlining of the generator's own: functions the size
+  of the source's.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one

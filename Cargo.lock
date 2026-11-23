@@ -4229,8 +4229,10 @@ dependencies = [
  "metal",
  "objc",
  "rerail-blocks",
+ "rerail-clif",
  "rerail-device",
  "rerail-ukl",
+ "rerail-ukl-rust",
  "rerail-ukl-vec",
 ]
 
@@ -8556,6 +8558,9 @@ dependencies = [
 [[package]]
 name = "rerail-ukl-rust"
 version = "0.1.0"
+dependencies = [
+ "rerail-clif",
+]
 
 [[package]]
 name = "rerail-ukl-vec"

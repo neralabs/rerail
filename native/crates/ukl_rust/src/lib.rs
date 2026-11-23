@@ -8,6 +8,7 @@
 pub mod label_parents_w8;
 #[cfg(target_arch = "aarch64")]
 pub mod label_leaves_w8;
+pub mod join_run;
 mod sources;
 
 pub use sources::*;
@@ -23,6 +24,38 @@ pub struct Launch {
     pub block: [u32; 3],
     pub groups: [u32; 3],
     pub reads: *const *const u8,
+}
+
+/// The reads written once in CLIF, compiled for the CPU (`rerail_clif::jit::Reads`): their table in
+/// `rerail_clif::reads::READS`' order, which a kernel's Rust calls through (`Launch::reads`), and the code it points
+/// into, held as long as the table.
+pub struct Reads {
+    table: Vec<*const u8>,
+    _code: Box<dyn std::any::Any>,
+}
+
+// SAFETY: the table and the code are written once, before `new`, and only read after: each read a function of its
+// arguments, callable from any thread.
+unsafe impl Send for Reads {}
+unsafe impl Sync for Reads {}
+
+impl Reads {
+    /// # Safety
+    ///
+    /// `table` holds every compiled read in `READS`' order, its code `code`'s, unchanged while `code` lives.
+    pub unsafe fn new(table: Vec<*const u8>, code: Box<dyn std::any::Any>) -> Self {
+        Reads { table, _code: code }
+    }
+
+    /// The table, as `Launch::reads`.
+    pub fn table(&self) -> *const *const u8 {
+        self.table.as_ptr()
+    }
+}
+
+/// Whether any of `host`'s kernels calls the compiled reads (and so needs `Launch::reads`).
+pub fn calls_reads(host: &[(&'static str, Kernel)]) -> bool {
+    host.iter().any(|(name, _)| *name == "join_run")
 }
 
 /// A kernel's Rust: one group's threads. `argv` holds the address of each argument's bytes (a buffer's: of its
@@ -66,7 +99,9 @@ pub fn kernels(text: &str, defines: &[(&str, &str)]) -> Vec<(&'static str, Kerne
     if d == LABEL_PASSES_16 {
         out.push(("label_parents", label_parents_w8::label_parents_w8));
     }
-    let _ = d;
+    if JOIN_PROGRAM.contains(&d) {
+        out.push(("join_run", join_run::join_run));
+    }
     out
 }
 

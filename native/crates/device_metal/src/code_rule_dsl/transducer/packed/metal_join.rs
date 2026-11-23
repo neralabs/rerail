@@ -5323,3 +5323,17 @@ fn lat_bytes(p: &LatParams) -> &[u8] {
     // SAFETY: `LatParams` is `repr(C)`: an i64, eight u32s, two u64s, no padding (its size asserted).
     unsafe { std::slice::from_raw_parts((p as *const LatParams).cast::<u8>(), std::mem::size_of::<LatParams>()) }
 }
+
+#[cfg(test)]
+mod join_rust {
+    /// The join program's Rust (`rerail_ukl_rust::join_run`, decision 0567) was written from this source: each view
+    /// format's program text has a digest it runs for. A change to the source is a change to that Rust too.
+    #[test]
+    fn the_join_programs_rust_is_of_this_source() {
+        let digests: Vec<u64> = [0, 16, rerail_clif::view::F16Z_FORMAT]
+            .iter()
+            .map(|&f| rerail_ukl_rust::digest(&format!("#define JOIN_PROGRAM 1\n#define CLIF_BLOCKS_COHERENT 1\n{}", super::view_source(f)), &[]))
+            .collect();
+        assert_eq!(digests, rerail_ukl_rust::JOIN_PROGRAM, "join_stages.uglykl changed: bring rerail_ukl_rust::join_run to it, then its digests ({digests:#018x?})");
+    }
+}

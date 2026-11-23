@@ -3,3 +3,8 @@
 
 /// `label_passes.uglykl` as the engine assembles it for a batch of format 16 (`label_parents_w8`, `label_leaves_w8`).
 pub const LABEL_PASSES_16: u64 = 0x0c753df66dbb7f65;
+
+/// `join_stages.uglykl` as the join program (`JOIN_PROGRAM`, decision 0603) for views of format 0 (several), 16 and
+/// 16z: `join_run`, written by hand (the oracle of rerail-ukl-vec's Rust of it), which reads the views' format as the
+/// compiled reads do, so one Rust for each.
+pub const JOIN_PROGRAM: [u64; 3] = [0xccafc2ec3af58d3e, 0x985c4d514360754c, 0x3e355352300b71c7];
