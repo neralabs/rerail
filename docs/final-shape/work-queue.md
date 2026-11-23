@@ -10847,3 +10847,10 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
 - `metal_programs` takes `rerail-blocks` (its block_serial now holds outputs in blocks).
 - `from_tape::Tape::start` was moved by both sides: one kept. `Held` has two forms: the dead wildcard arm dropped.
 - Checked: Relax engine check 0 errors; lib tests of every changed crate compile; run: plan-base, logic (wellfounded, kept strata, choices, cross views, totals), tests-logic (layout pricing round trip, kept), setfix (cands, statkeep), facts, accel closure.
+
+### Q518. Roll-up 91 (Go-C-and-C-support f6ce3b2f96 onto Pulling-it-all-together): what the merge chose
+
+- The branch's 0613 work (memo in the expansion loop, arguments as holes, rounds from the last round's tree) taken whole: its eight files were at their hub paths.
+- `pp_loop.uglykl`: the hub had moved `LP_WIN`/`LP_WIN_N` up beside the frames (0588's SIMD-group exchanges); the branch's `LpMemo` and its comment go after them. Independent: both kept.
+- Its new round test reads tapes as the file's `Tape` (the format's `Vector<u8>`), as the hub's other tests there do.
+- Checked: Relax check of rerail-metal 0 errors; rerail-c-directives eval tests 45 passed on the CPU (RERAIL_GPU=cpu; no Metal on this Mac).

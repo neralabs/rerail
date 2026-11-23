@@ -273,7 +273,12 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
         // the count). `XAT` and `XPOS` are the overruns' only in a pass run again, before this.
         SCAN(nt, XFLAG, XAT, XTOTAL);
         EACH(s, nt) lp_queue(AT(const uint32_t, XFLAG), AT(const uint32_t, XAT), toks, AT(uint32_t, XPOS), s);
-        ONE(x) { AT(uint32_t, TRN)[26] = 0u; AT(uint32_t, TRN)[27] = AT(const uint32_t, XTOTAL)[0]; }
+        // The memo's table (`lp_memo_*`): the tokens' store's first pairs, free (the store is empty here: its
+        // front is 0), and its definitions' hot bits (`LP_MEMO_HOT`); the front past them.
+        uint32_t mt = lp_memo_size(nt, AT(const uint32_t, WORDS)[1]);
+        EACH(i, mt) AT(uint32_t, TOKENS)[LP_MEMO_STRIDE * i] = 0u;
+        EACH(i, mt != 0u ? LP_MEMO_HOT : 0u) AT(uint32_t, TOKENS)[LP_MEMO_STRIDE * mt + i] = 0u;
+        ONE(x) { AT(uint32_t, TRN)[26] = 0u; AT(uint32_t, TRN)[27] = AT(const uint32_t, XTOTAL)[0]; AT(uint32_t, TRN)[30] = mt; AT(uint32_t, CTL)[0] = mt != 0u ? LP_MEMO_STRIDE * mt + LP_MEMO_HOT : 0u; }
         BARRIER();
         {
             PX_UA(DR);
@@ -432,10 +437,18 @@ UKL_ONCE void pp_unit(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
             break;
         }
         uint32_t nd = N(N_DIRS), ng = N(N_GAPS), nq = N(P1_NGRP);
+        // The first iteration of a round started from the last round's tree: its groups as they were.
+        bool seed = iter == 0u && W(P1_NSEED) != 0u;
+        if (seed) grp_from = ukl_min(W(P1_NSEED), nq);
         EACH(i, ni) p1_insts(nodes, ni, AT(const uint32_t, P1_DFIRST), AT(const uint32_t, P1_GFIRST), AT(PpInst, INSTS), AT(uint32_t, P1_LIVE), i);
         EACH(q, nq) p1_grp_init(AT(const uint32_t, P1_GRPF), ni, AT(const uint32_t, P1_NGRP), grp_from, AT(uint32_t, P1_GA), AT(uint32_t, P1_TAKEN), q);
+        EACH(q, seed ? grp_from : 0u) { AT(uint32_t, P1_GA)[q] = AT(const uint32_t, P1_SEEDG)[q]; AT(uint32_t, P1_TAKEN)[q] = PP_NONE; }
         grp_from = nq;
         BARRIER();
+        if (seed) {
+            EACH(i, ni) p1_seed_words(nodes, AT(const uint32_t, N_INSTS), AT(const PpInst, INSTS), AT(const uint32_t, P1_SEEDE), W(DC), AT(uint32_t, P1_MADE), AT(uint32_t, P1_MADEF), AT(uint32_t, P1_ENTER), AT(uint32_t, P1_DEPTHN), i);
+            BARRIER();
+        }
         for (uint32_t dep = 1u; dep <= N(P1_DEPTHN); dep++) {
             EACH(i, ni) p1_live(nodes, ni, AT(const PpInst, INSTS), AT(const uint32_t, P1_ENTER), AT(uint32_t, P1_LIVE), dep, i);
             BARRIER();
