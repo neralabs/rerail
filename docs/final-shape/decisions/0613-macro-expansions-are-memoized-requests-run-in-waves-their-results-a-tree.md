@@ -637,10 +637,11 @@ So:
      - a function-like name before it, whose look for `(` reaches the hole: the result's first token decides;
      - a `(` after it (or another hole or node, which may begin with one): the result's last token decides.
      A hole at neither edge needs nothing of its result, done or not.
-   - **At an edge, the reader reads it again where it was.** The caller's run is read again from the argument's
-     start, with no post in that argument (as a piece reads again, `RQ_*`). It is never read inline in the
-     rescan: there the caller's macro is disabled, and the serial pass expanded the call under the argument's
-     disabled macros.
+   - **At an edge, the run is read again.** The run (a piece's or a request's) stops and is read again from its
+     start with no post in an argument (a flag of its piece or its record), as a piece is read again for a wrong
+     guess (`RQ_*`). The loop keeps no state to resume at the argument's start, and the hole is never read inline
+     in the rescan: there the caller's macro is disabled, and the serial pass expanded the call under the
+     argument's disabled macros. The holes the first reading posted finish unread.
    - **Its rows** (stage 5): a hole in an argument logs `LG_OCC` with its raw entries, as a request's own-level
      post does.
    - **Tests first.** A call in an argument that becomes a hole, then: the rescan passing it through; a
