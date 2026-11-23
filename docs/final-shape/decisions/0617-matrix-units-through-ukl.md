@@ -214,7 +214,7 @@ emulated form, which is the reference.
 | R4 | `UKL_MMA_EACH` visits each element of C once, at its true coordinates | C filled with `row × 256 + col` through `EACH`, then stored, and compared with the matrix of coordinates |
 | R5 | Owners of several groups run unchanged | the R2 kernel run with threadgroups of 1, 2 and 4 owners; on the CPU the emulation run with `UKL_MMA_GROUPS` forced to 2 and 4, so the multi-group path is tested where no device has it |
 | R6 | Native and emulated forms agree on each device | where `UKL_MMA_NATIVE(T)` is 1, the same kernel run again with the emulation forced, results compared as R2 and R3 |
-| R7 | A native type takes the unit's instruction | the dumped kernel holds it: `mma.sync`, `simdgroup_multiply_accumulate`, `matmul2d`, `v_wmma`, DPAS (a check on the dumped source, as the lowering tests do) |
+| R7 | A native type takes the unit's instruction | the compiled kernel's text holds it: `mma.sync`, `simdgroup_multiply_accumulate`, `matmul2d`, `v_wmma`, DPAS (`matrix_native_forms_take_the_units_instruction`, on the backend's text: CUDA's PTX) |
 | R8 | Loads and stores read and write memory in place | fragments loaded from a relation's column in its block and stored into a relation in a block, with no staging buffer (`check_no_block_copies.py`) |
 | R9 | `ukl_gemm_tile` equals level 1's loop | each type, R2's and R3's inputs |
 
@@ -222,9 +222,9 @@ emulated form, which is the reference.
 
 1. The interface in `ukl/matrix.h`, with the emulated form and the CPU's shim lanes, and R1-R6 and R9 on the CPU.
    This fixes the shape before any device adds its form. Done 2026-11-22, on every backend ("Step 1, built" below).
-2. CUDA's `mma.sync` on the Sparks (R2-R7). Then the V100: its form, or the emulation, chosen by test. Begun
-   2026-11-22: b1's form, and C in `mma.sync`'s layout for every type ("The 1-bit type, built"); f16, bf16 and i8
-   remain.
+2. CUDA's `mma.sync` on the Sparks (R2-R7). Then the V100: its form, or the emulation, chosen by test. Done on
+   the Sparks 2026-11-23: b1's form, and C in `mma.sync`'s layout for every type ("The 1-bit type, built"); f16, bf16
+   and i8 ("Step 2 on the Sparks, built").
 3. Metal's `simdgroup_matrix` on M1-M4 (f16; bf16 where present; i8 emulated). R4 is what checks the coordinates
    behind `thread_elements()`.
 4. The M5's `matmul2d`: the first owner of several groups on a device (R5).
@@ -358,6 +358,27 @@ The user: "yes, please add the 1-bit path and emulation/lowering to popcount on 
 - **Open:**
   - the M1's remaining gap, which needs its compiled shader read;
   - the tile's reads, which bound both machines: larger tiles, or both sides' rows read once for several tiles.
+
+### Step 2 on the Sparks, built (2026-11-23)
+
+- **NVIDIA sm_80 and later run f16, bf16 and i8 on the unit** (`UKL_MMA_NATIVE` 1 for each, with b1's):
+  - f16 and bf16: two `mma.sync.m16n8k16` a product (`.f32.f16.f16.f32`, `.f32.bf16.bf16.f32`), one for each half of
+    C's columns, K 16;
+  - i8: two `mma.sync.m16n8k32` (`.s32.s8.s8.s32`), K 32, the unit's own;
+  - A's and B's registers are words of two 16-bit floats or four bytes along K, the lowest k lowest, each element
+    read where it lies (any layout, device or threadgroup memory); C is read and written in place, its layout already
+    the unit's.
+- **R6 compares as R2 and R3,** not bit for bit: a unit's float sums run in its own order. On small integers the
+  native and forced-emulated products are each the exact product, to the bit; on random inputs the integer types'
+  equal the emulation's, and the floats' are within R3's bound of the exact product. All eight layouts, by level 1
+  and level 2.
+- **R7 is checked:** `matrix_native_forms_take_the_units_instruction` reads the PTX NVRTC makes of the test program
+  (`kernels::native_code`, the device's `compute_<sm>`, the library's options) and finds each native type's
+  `mma.sync`; the forced emulation's holds none. A backend with a native type and no compiled text to read fails the
+  test, so R7 is never skipped quietly.
+- **Measured:** the seven matrix tests pass on CUDA (a GB10: every type native), and on the same host's CPU and
+  OpenCL backends (every type emulated); UKL's own tests (the header for every backend) and `accel`'s GPU tests on
+  CUDA pass.
 
 ## Open
 

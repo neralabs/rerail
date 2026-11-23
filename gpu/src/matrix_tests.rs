@@ -337,30 +337,89 @@ fn matrix_owners_of_several_groups_agree() {
     }
 }
 
-/// R6: where a type is native (`UKL_MMA_NATIVE`: b1 on NVIDIA sm_80 and later), its products equal the emulation's,
-/// forced in another program (`UKL_MMA_FORCE_EMULATED`), in all eight layouts, by level 1 and level 2, on random
-/// inputs; and the forced program says it is emulated. Where nothing is native the test says so.
+/// R6: where a type is native (`UKL_MMA_NATIVE`: f16, bf16, i8 and b1 on NVIDIA sm_80 and later), its products agree
+/// with the emulation's, forced in another program (`UKL_MMA_FORCE_EMULATED`), in all eight layouts, by level 1 and
+/// level 2, compared as R2 and R3: on small integers both are the exact product, to the bit; on random inputs the
+/// integer types' equal the emulation's, and the floats' are each within R3's bound of the exact product (a unit's
+/// sums run in its own order). The forced program says it is emulated. Where nothing is native the test says so.
 #[test]
 fn matrix_native_forms_are_the_emulations() {
     let Some((_, mut q)) = setup() else { return };
     let (p, lanes) = programs(1);
     let (c, e) = (consts(p), consts(emulated()));
-    let types: Vec<Ty> = [(Ty::F16, 4), (Ty::Bf16, 9), (Ty::I8, 14), (Ty::B1, 22)].into_iter().filter(|&(_, i)| c[i] == 1).map(|(t, _)| t).collect();
+    let types = native_types(&c);
     eprintln!("matrix units on {}: native {types:?}", crate::device::backend());
     for i in [4, 9, 14, 22] {
         assert_eq!(e[i], 0, "the forced program is emulated");
     }
     let mut rng = Rng(73);
     for ty in types {
-        let inp = Inputs::new(ty, ty.k(64), &mut rng, false);
+        let small = Inputs::new(ty, ty.k(64), &mut rng, true);
+        let random = Inputs::new(ty, ty.k(64), &mut rng, false);
+        let (exact, mag) = random.reference(ty);
+        let unit = random.k as f64 * 2f64.powi(-ty.precision());
         for l in 0..8u32 {
             let layouts = [l & 1, (l >> 1) & 1, (l >> 2) & 1];
             for tile in [false, true] {
                 let threads = if tile { lanes } else { 2 * lanes };
-                let native = block(p, &mut q, ty, &inp, layouts, tile, false, threads);
-                let emulated = block(emulated(), &mut q, ty, &inp, layouts, tile, false, threads);
-                assert_eq!(native, emulated, "{} {ty:?} layouts {layouts:?}, level {}: native equals emulated", crate::device::backend(), 1 + tile as u32);
+                let what = format!("layouts {layouts:?}, level {}", 1 + tile as u32);
+                let native = block(p, &mut q, ty, &small, layouts, tile, false, threads);
+                assert_exact(ty, &small, &native, &format!("{what}, native"));
+                assert_eq!(native, block(emulated(), &mut q, ty, &small, layouts, tile, false, threads), "{} {ty:?} {what}: native equals emulated", crate::device::backend());
+                let native = block(p, &mut q, ty, &random, layouts, tile, false, threads);
+                if ty.int() {
+                    assert_eq!(native, block(emulated(), &mut q, ty, &random, layouts, tile, false, threads), "{} {ty:?} {what}: native equals emulated", crate::device::backend());
+                } else {
+                    for i in 0..64 * 64 {
+                        let (g, x) = (value(ty, native[i]), exact[i]);
+                        assert!((g - x).abs() <= unit * mag[i], "{} {ty:?} {what}: native C[{}][{}] = {g}, exact {x}, bound {}", crate::device::backend(), i / 64, i % 64, unit * mag[i]);
+                    }
+                }
             }
         }
     }
+}
+
+/// The types R1's constants `c` say are native.
+fn native_types(c: &[u32]) -> Vec<Ty> {
+    [(Ty::F16, 4), (Ty::Bf16, 9), (Ty::I8, 14), (Ty::B1, 22)].into_iter().filter(|&(_, i)| c[i] == 1).map(|(t, _)| t).collect()
+}
+
+/// The instruction a native type's product takes, in the backend's text of the compiled kernel (CUDA's PTX).
+fn unit_instruction(ty: Ty) -> &'static str {
+    match ty {
+        Ty::F16 => "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32",
+        Ty::Bf16 => "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32",
+        Ty::I8 => "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32",
+        Ty::B1 => "mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.and.popc",
+    }
+}
+
+/// R7: a native type's kernel takes the unit's instruction (its compiled text holds it: CUDA's PTX), and the forced
+/// emulation's takes none. Where nothing is native the test says so; a native type on a backend with no text to read
+/// fails, as R7 is then unchecked.
+#[test]
+fn matrix_native_forms_take_the_units_instruction() {
+    if setup().is_none() {
+        return;
+    }
+    let (p, _) = programs(1);
+    let types = native_types(&consts(p));
+    if types.is_empty() {
+        eprintln!("matrix units on {}: none native", crate::device::backend());
+        return;
+    }
+    let code = |defines: &[(&str, &str)]| {
+        crate::kernels::native_code("matrix_tests.uglykl", TESTS, defines)
+            .unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()))
+            .unwrap_or_else(|| panic!("{}: native {types:?}, and no compiled text to read (R7)", crate::device::backend()))
+    };
+    let native = code(&[("UKL_MMA_EMULATED_GROUPS", "1u")]);
+    for &ty in &types {
+        let n = native.matches(unit_instruction(ty)).count();
+        eprintln!("matrix units on {}: {ty:?}'s product, {} ({n} in the program)", crate::device::backend(), unit_instruction(ty));
+        assert!(n > 0, "{} {ty:?}: the compiled kernels hold {}", crate::device::backend(), unit_instruction(ty));
+    }
+    let forced = code(&[("UKL_MMA_EMULATED_GROUPS", "1u"), ("UKL_MMA_FORCE_EMULATED", "1")]);
+    assert!(!forced.contains("mma.sync"), "{}: the forced emulation takes no unit's instruction", crate::device::backend());
 }

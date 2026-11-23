@@ -1,5 +1,5 @@
 // ukl/matrix.h: matrix units through fragments a kernel writes once (decision 0617): the interface, its emulated
-// form on every backend, and the native forms that have landed (NVIDIA's 1-bit product).
+// form on every backend, and the native forms that have landed (NVIDIA's `mma.sync`: f16, bf16, i8 and b1).
 //
 // A fragment is a tile of a matrix held in registers by its owner: one SIMD group, or `UKL_MMA_GROUPS(T)` of them
 // together. Each type has its shape, `C[M×N] += A[M×K] · B[K×N]`, as compile-time constants:
@@ -69,7 +69,8 @@
 #define UKL_MMA_EMULATED_GROUPS 1u
 #endif
 
-// NVIDIA's units, where they serve (sm_80 and later: `mma.sync` with 1-bit AND and POPC): one warp an owner.
+// NVIDIA's units, where they serve (sm_80 and later: `mma.sync`, f16 and bf16 into f32, i8 into i32, and 1-bit AND
+// and POPC): one warp an owner.
 #if defined(UKL_CUDA) && !defined(UKL_HIP) && !defined(UKL_MMA_FORCE_EMULATED) && UKL_SIMD_WIDTH == 32 &&           \
     UKL_MMA_EMULATED_GROUPS == 1 && __CUDA_ARCH__ >= 800
 #define UKL_MMA_CUDA 1
@@ -88,19 +89,24 @@
 #define UKL_MMA_N_f16 16u
 #define UKL_MMA_K_f16 16u
 #define UKL_MMA_GROUPS_f16 UKL_MMA_EMULATED_GROUPS
-#define UKL_MMA_NATIVE_f16 0
+#define UKL_MMA_NATIVE_f16 UKL_MMA_CUDA
 #define UKL_MMA_PACK_f16 1u
 #define UKL_MMA_M_bf16 16u
 #define UKL_MMA_N_bf16 16u
 #define UKL_MMA_K_bf16 16u
 #define UKL_MMA_GROUPS_bf16 UKL_MMA_EMULATED_GROUPS
-#define UKL_MMA_NATIVE_bf16 0
+#define UKL_MMA_NATIVE_bf16 UKL_MMA_CUDA
 #define UKL_MMA_PACK_bf16 1u
 #define UKL_MMA_M_i8 16u
 #define UKL_MMA_N_i8 16u
+// NVIDIA's unit's K (m16n8k32); the emulation's 16, four bytes a word.
+#if UKL_MMA_CUDA
+#define UKL_MMA_K_i8 32u
+#else
 #define UKL_MMA_K_i8 16u
+#endif
 #define UKL_MMA_GROUPS_i8 UKL_MMA_EMULATED_GROUPS
-#define UKL_MMA_NATIVE_i8 0
+#define UKL_MMA_NATIVE_i8 UKL_MMA_CUDA
 #define UKL_MMA_PACK_i8 1u
 #define UKL_MMA_M_b1 16u
 #define UKL_MMA_N_b1 16u
@@ -188,12 +194,24 @@ UKL_INLINE uint32_t ukl_mma_col(uint32_t j, UklMmaAt at)
 #endif
 }
 
+#if UKL_MMA_CUDA
+// `mma.sync`'s registers (g the lane's quad, t its place in it), each word two 16-bit floats or four bytes along K,
+// the lowest k lowest: A's rows g (words 0 and 2) and g + 8 (1 and 3) at k from `P · t` (0, 1) and half K on (2, 3);
+// B's columns g of each half of eight (words 0, 1 and 2, 3), at k from `P · t` and half K on.
+typedef struct ukl_mma_a_f16 { uint32_t w[4]; } ukl_mma_a_f16;
+typedef struct ukl_mma_b_f16 { uint32_t w[4]; } ukl_mma_b_f16;
+typedef struct ukl_mma_a_bf16 { uint32_t w[4]; } ukl_mma_a_bf16;
+typedef struct ukl_mma_b_bf16 { uint32_t w[4]; } ukl_mma_b_bf16;
+typedef struct ukl_mma_a_i8 { uint32_t w[4]; } ukl_mma_a_i8;
+typedef struct ukl_mma_b_i8 { uint32_t w[4]; } ukl_mma_b_i8;
+#else
 typedef struct ukl_mma_a_f16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_a_f16;
 typedef struct ukl_mma_b_f16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_b_f16;
 typedef struct ukl_mma_a_bf16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_a_bf16;
 typedef struct ukl_mma_b_bf16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_b_bf16;
 typedef struct ukl_mma_a_i8 { uint32_t w[UKL_MMA_WORDS_8]; } ukl_mma_a_i8;
 typedef struct ukl_mma_b_i8 { uint32_t w[UKL_MMA_WORDS_8]; } ukl_mma_b_i8;
+#endif
 #if UKL_MMA_CUDA
 // `mma.sync`'s registers: A's rows g and g + 8 at 32-bit k-words q and q + 4 (q the lane's place in its quad); each
 // half of B's columns, its column g at 32-bit k-words q and q + 4. Each is a half of a word in memory, read there.
@@ -440,15 +458,60 @@ UKL_INLINE void ukl_mma_b1(UKL_PRIVATE ukl_mma_c_i32* c, UKL_PRIVATE const ukl_m
             }                                                                                                           \
     }
 
-#define UKL_MMA_TYPE(T, C, CT, ET, UT, P, BITS, WORDS, DOT)                                                             \
+#if UKL_MMA_CUDA
+// ---- NVIDIA's f16, bf16 and i8: `mma.sync` registers, each a word of `P` elements read where they lie (`KH` half of
+// the type's K). ----
+
+#define UKL_MMA_CUDA_LOADS(T, ET, UT, P, BITS, KH, SPACE, SUF)                                                          \
+    UKL_INLINE void ukl_mma_load_a_##T##SUF(UKL_PRIVATE ukl_mma_a_##T* a, SPACE const ET* p, uint32_t stride,           \
+                                            uint32_t layout, UklMmaAt at)                                               \
+    {                                                                                                                   \
+        for (uint32_t q = 0u; q < 4u; q++) {                                                                            \
+            uint32_t r = (at.lane >> 2) + 8u * (q & 1u), k0 = P * (at.lane & 3u) + KH * (q >> 1), w = 0u;               \
+            for (uint32_t t = 0u; t < P; t++)                                                                           \
+                w |= (uint32_t)(UT)(layout == UKL_ROW_MAJOR ? p[r * stride + k0 + t] : p[(k0 + t) * stride + r]) << (t * BITS); \
+            a->w[q] = w;                                                                                                \
+        }                                                                                                               \
+    }                                                                                                                   \
+    UKL_INLINE void ukl_mma_load_b_##T##SUF(UKL_PRIVATE ukl_mma_b_##T* b, SPACE const ET* p, uint32_t stride,           \
+                                            uint32_t layout, UklMmaAt at)                                               \
+    {                                                                                                                   \
+        for (uint32_t q = 0u; q < 4u; q++) {                                                                            \
+            uint32_t c = 8u * (q >> 1) + (at.lane >> 2), k0 = P * (at.lane & 3u) + KH * (q & 1u), w = 0u;               \
+            for (uint32_t t = 0u; t < P; t++)                                                                           \
+                w |= (uint32_t)(UT)(layout == UKL_ROW_MAJOR ? p[(k0 + t) * stride + c] : p[c * stride + k0 + t]) << (t * BITS); \
+            b->w[q] = w;                                                                                                \
+        }                                                                                                               \
+    }
+
+// Two `mma.sync` (`SHAPE`, `TYPES`), one for each half of C's columns, accumulating in place (`R` C's constraint).
+#define UKL_MMA_CUDA_PRODUCT(T, C, SHAPE, TYPES, R)                                                                     \
+    UKL_INLINE void ukl_mma_##T(UKL_PRIVATE ukl_mma_c_##C* c, UKL_PRIVATE const ukl_mma_a_##T* a,                       \
+                                UKL_PRIVATE const ukl_mma_b_##T* b, UklMmaAt at __UKL_PARAMS)                           \
+    {                                                                                                                   \
+        (void)at;                                                                                                       \
+        for (uint32_t h = 0u; h < 2u; h++)                                                                              \
+            asm volatile("mma.sync.aligned." SHAPE ".row.col." TYPES " {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};" \
+                         : R(c->x[2u * h]), R(c->x[2u * h + 1u]), R(c->x[4u + 2u * h]), R(c->x[5u + 2u * h])            \
+                         : "r"(a->w[0]), "r"(a->w[1]), "r"(a->w[2]), "r"(a->w[3]), "r"(b->w[2u * h]), "r"(b->w[2u * h + 1u])); \
+    }
+
+#define UKL_MMA_TYPE(T, C, CT, ET, UT, P, BITS, WORDS, DOT, SHAPE, TYPES, R)                                            \
+    UKL_MMA_CUDA_LOADS(T, ET, UT, P, BITS, UKL_MMA_K_##T / 2u, UKL_GLOBAL, )                                            \
+    UKL_MMA_CUDA_LOADS(T, ET, UT, P, BITS, UKL_MMA_K_##T / 2u, UKL_LOCAL, _local)                                       \
+    UKL_MMA_CUDA_PRODUCT(T, C, SHAPE, TYPES, R)                                                                         \
+    UKL_MMA_TILE(T, C, CT, ET)
+#else
+#define UKL_MMA_TYPE(T, C, CT, ET, UT, P, BITS, WORDS, DOT, SHAPE, TYPES, R)                                            \
     UKL_MMA_AB_LOADS(T, ET, UT, P, BITS, WORDS, UKL_GLOBAL, )                                                           \
     UKL_MMA_AB_LOADS(T, ET, UT, P, BITS, WORDS, UKL_LOCAL, _local)                                                      \
     UKL_MMA_PRODUCT(T, C, CT, 16u / P, WORDS, DOT)                                                                      \
     UKL_MMA_TILE(T, C, CT, ET)
+#endif
 
-UKL_MMA_TYPE(f16, f32, float, uint16_t, uint16_t, 2u, 16u, UKL_MMA_WORDS_16, ukl_dot2_f16)
-UKL_MMA_TYPE(bf16, f32, float, uint16_t, uint16_t, 2u, 16u, UKL_MMA_WORDS_16, ukl_dot2_bf16)
-UKL_MMA_TYPE(i8, i32, int32_t, int8_t, uint8_t, 4u, 8u, UKL_MMA_WORDS_8, ukl_dot4_i8)
+UKL_MMA_TYPE(f16, f32, float, uint16_t, uint16_t, 2u, 16u, UKL_MMA_WORDS_16, ukl_dot2_f16, "m16n8k16", "f32.f16.f16.f32", "+f")
+UKL_MMA_TYPE(bf16, f32, float, uint16_t, uint16_t, 2u, 16u, UKL_MMA_WORDS_16, ukl_dot2_bf16, "m16n8k16", "f32.bf16.bf16.f32", "+f")
+UKL_MMA_TYPE(i8, i32, int32_t, int8_t, uint8_t, 4u, 8u, UKL_MMA_WORDS_8, ukl_dot4_i8, "m16n8k32", "s32.s8.s8.s32", "+r")
 UKL_MMA_B1_LOADS(UKL_GLOBAL, )
 UKL_MMA_B1_LOADS(UKL_LOCAL, _local)
 UKL_MMA_TILE(b1, i32, int32_t, uint64_t)

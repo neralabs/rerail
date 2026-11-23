@@ -550,6 +550,15 @@ impl ComputeFunctionLibrary {
         })
     }
 
+    /// `preprocessed_source` compiled to the backend's text of its instructions (CUDA's PTX), for a test to read which
+    /// instructions a kernel took (decision 0617, R7); None where the backend has no such text.
+    pub fn native_code(device: &Device, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Option<String>, String> {
+        match device {
+            Device::Native(d) => native::Library::native_code(d, preprocessed_source, file_name_to_appear_in_error_messages),
+            Device::Cpu(_) | Device::OpenCl(_) => Ok(None),
+        }
+    }
+
     pub fn get_function(&self, device: &Device, function_name: &str) -> Result<ComputeFunction, String> {
         Ok(match (self, device) {
             (ComputeFunctionLibrary::Native(l), Device::Native(d)) => ComputeFunction::Native(l.get_function(d, function_name)?),

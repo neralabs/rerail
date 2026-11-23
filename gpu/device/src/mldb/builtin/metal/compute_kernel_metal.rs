@@ -256,6 +256,11 @@ pub struct MetalComputeFunctionLibrary {
 
 impl MetalComputeFunctionLibrary {
     /// Compiles (preprocessed) source on the device.
+    /// The compiled kernel's text, for a test to read its instructions (decision 0617, R7): none yet on Metal.
+    pub fn native_code(_device: &DeviceRef, _preprocessed_source: &str, _file_name_to_appear_in_error_messages: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
     pub fn compile_from_source(device: &DeviceRef, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         // A measurement aid: `RERAIL_DEVICE_TRACE` prints where each library is compiled.
         if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
