@@ -6000,7 +6000,7 @@ impl Gen<'_> {
                     None => (&open_code, &branches),
                 };
                 for t in [open_t, branches_t, if alone { &token_read } else { &token_code }, &own_code, if alone { &gap_asked } else { &gap_code }, &acc_after] {
-                    let t = bytes::fuse_tests(&by.rewrite(&bytes::strip_scans(&bytes::strip_pauses(&pairs_read(t))))?);
+                    let t = bytes::fuse_tests(&by.rewrite(&bytes::strip_scans(&bytes::strip_pauses(&pairs_read(t))))?, &by.escapes);
                     if uses(&t, "made") || uses(&t, "wait") || t.contains("'pass") {
                         return Err("a pause the loop still reads".into());
                     }

@@ -780,7 +780,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     };
                     let l = l.max(s);
                     // The token's tests of its bytes, in one window loop: their classes loaded once a window.
-                    let hit = wany_in(n, s, l, |p: isize, esc: &mut [u64; 3]| unsafe { [w_m_str_bad::<S>(src, n, p, &mut esc[0]), w_t12::<S>(src, n, p, &mut esc[1]), w_t13::<S>(src, n, p, &mut esc[2])] });
+                    let hit = wany_in(n, s, l, |p: isize, esc: &mut [u64; 3]| unsafe { let escaped = escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, &mut esc[0]); [e_m_str_bad::<S>(src, n, p, escaped), e_t12::<S>(src, n, p, escaped), e_t13::<S>(src, n, p, escaped)] });
                     if hit[0] {
                         hits |= 1 << 28;
                     }
@@ -1294,6 +1294,16 @@ unsafe fn w_m_q<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: 
     (unsafe { cls_quote::<S>(src, n, p) } & (!escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, esc) & valid(n, p)))
 }
 
+/// `w_m_q` given its window's escaped bytes (`escaped`).
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn e_m_q<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, escaped: u64) -> u64 {
+    (unsafe { cls_quote::<S>(src, n, p) } & (!escaped & valid(n, p)))
+}
+
 /// Class `ctl`'s bits in the 64 bytes from `p`: none past the file or before it.
 ///
 /// # Safety
@@ -1330,6 +1340,16 @@ unsafe fn w_m_str_bad<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize,
     (unsafe { cls_ctl::<S>(src, n, p) } | (escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, esc) & (!unsafe { cls_jesc::<S>(src, n, p) } & valid(n, p))))
 }
 
+/// `w_m_str_bad` given its window's escaped bytes (`escaped`).
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn e_m_str_bad<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, escaped: u64) -> u64 {
+    (unsafe { cls_ctl::<S>(src, n, p) } | (escaped & (!unsafe { cls_jesc::<S>(src, n, p) } & valid(n, p))))
+}
+
 /// Class `u`'s bits in the 64 bytes from `p`: none past the file or before it.
 ///
 /// # Safety
@@ -1363,6 +1383,16 @@ unsafe fn cls_hex<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> 
 #[allow(unused_variables)]
 unsafe fn w_t12<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
     { let a = (escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, esc) & unsafe { cls_u::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!(((unsafe { cls_hex::<S>(src, n, (p + 1)) } & unsafe { cls_hex::<S>(src, n, (p + 2)) }) & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & valid(n, p)) } }
+}
+
+/// `w_t12` given its window's escaped bytes (`escaped`).
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn e_t12<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, escaped: u64) -> u64 {
+    { let a = (escaped & unsafe { cls_u::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!(((unsafe { cls_hex::<S>(src, n, (p + 1)) } & unsafe { cls_hex::<S>(src, n, (p + 2)) }) & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & valid(n, p)) } }
 }
 
 /// Class `c_d`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1447,6 +1477,16 @@ unsafe fn cls_one<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> 
 #[allow(unused_variables)]
 unsafe fn w_t13<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
     { let a = (escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, esc) & unsafe { cls_u::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!((((((unsafe { cls_hex::<S>(src, n, (p + 1)) } & unsafe { cls_hex::<S>(src, n, (p + 2)) }) & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & (!(unsafe { cls_c_d::<S>(src, n, (p + 1)) } & unsafe { cls_upper_hex::<S>(src, n, (p + 2)) }) & valid(n, p))) & (!unsafe { cls_lbrace::<S>(src, n, (p + 1)) } & valid(n, p))) | { let a = unsafe { cls_lbrace::<S>(src, n, (p + 1)) }; if a == 0 { 0 } else { a & ((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_rbrace::<S>(src, n, (p + 3)) }) | ((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 4)) })) | (((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 5)) })) | (((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 6)) }) & (!(unsafe { cls_c_d::<S>(src, n, (p + 2)) } & unsafe { cls_upper_hex::<S>(src, n, (p + 3)) }) & valid(n, p)))) | ((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_hex::<S>(src, n, (p + 6)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 7)) }) & (!unsafe { cls_zero::<S>(src, n, (p + 2)) } & valid(n, p)))) | ((((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_hex::<S>(src, n, (p + 6)) }) & unsafe { cls_hex::<S>(src, n, (p + 7)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 8)) }) & unsafe { cls_one::<S>(src, n, (p + 2)) }) & unsafe { cls_zero::<S>(src, n, (p + 3)) })) } }) & valid(n, p)) } }
+}
+
+/// `w_t13` given its window's escaped bytes (`escaped`).
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn e_t13<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, escaped: u64) -> u64 {
+    { let a = (escaped & unsafe { cls_u::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!((((((unsafe { cls_hex::<S>(src, n, (p + 1)) } & unsafe { cls_hex::<S>(src, n, (p + 2)) }) & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & (!(unsafe { cls_c_d::<S>(src, n, (p + 1)) } & unsafe { cls_upper_hex::<S>(src, n, (p + 2)) }) & valid(n, p))) & (!unsafe { cls_lbrace::<S>(src, n, (p + 1)) } & valid(n, p))) | { let a = unsafe { cls_lbrace::<S>(src, n, (p + 1)) }; if a == 0 { 0 } else { a & ((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_rbrace::<S>(src, n, (p + 3)) }) | ((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 4)) })) | (((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 5)) })) | (((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 6)) }) & (!(unsafe { cls_c_d::<S>(src, n, (p + 2)) } & unsafe { cls_upper_hex::<S>(src, n, (p + 3)) }) & valid(n, p)))) | ((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_hex::<S>(src, n, (p + 6)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 7)) }) & (!unsafe { cls_zero::<S>(src, n, (p + 2)) } & valid(n, p)))) | ((((((((unsafe { cls_hex::<S>(src, n, (p + 2)) } & unsafe { cls_hex::<S>(src, n, (p + 3)) }) & unsafe { cls_hex::<S>(src, n, (p + 4)) }) & unsafe { cls_hex::<S>(src, n, (p + 5)) }) & unsafe { cls_hex::<S>(src, n, (p + 6)) }) & unsafe { cls_hex::<S>(src, n, (p + 7)) }) & unsafe { cls_rbrace::<S>(src, n, (p + 8)) }) & unsafe { cls_one::<S>(src, n, (p + 2)) }) & unsafe { cls_zero::<S>(src, n, (p + 3)) })) } }) & valid(n, p)) } }
 }
 
 /// Class `lf`'s bits in the 64 bytes from `p`: none past the file or before it.

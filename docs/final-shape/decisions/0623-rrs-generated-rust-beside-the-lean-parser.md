@@ -636,3 +636,14 @@ four. On spark1 (load 3.5), three rounds: tier 1 19.9–20.5 ms (22.2–23.7 bef
 26.8–27.8 ms, lean's parse 25.5–26.6 ms. All tests pass.
 
 `rr-aot-speed` and `lean_speed` take `RR_ONLY=lex`: only the lexer, for a count of its work alone.
+
+## A string's tests find its escapes once a window (done)
+
+A string's tests over its bytes (`str_bad`, a `\u` escape's digits) were read in one window loop (`wany_in`), but each
+test found the window's escapes itself, each with its own carry: three `escaped_step`s of the same backslashes a
+window. A window function that reads the escapes of one mask now has a twin given them (`e_NAME`), and a window loop
+whose tests all read the same escapes finds them once, with one carry (`fuse_tests`), as the lean lexer's string reader
+passes each escape once.
+
+Fewer instructions in tier 1 alone (m3, in turns); on spark1 at load 9.5 tier 1 21.2–21.3 ms against lean's lexer
+14.5–14.6 ms in the same rounds (the ratio as before, the host busier). All tests pass.

@@ -36,6 +36,9 @@ pub(super) struct Bytes<'a> {
     /// The operators' pairs masks the loop reads (`k_pair_K`): each row's pairs of bytes, a pair's first byte's bit where
     /// the second is the byte after (lean's `pair`), made of the block's classes too.
     pub(super) pairs: Vec<(String, Vec<(u8, u8)>)>,
+    /// The window functions that read one window's escapes (`escaped_step` of a mask), by name, and that mask: each has
+    /// a twin (`e_NAME`) given the window's escaped bytes, so tests read in one window loop find them once (`fuse_tests`).
+    pub(super) escapes: HashMap<String, String>,
 }
 
 /// The calls of the loop that read a mask: their name, and how many of their first arguments are masks.
@@ -59,7 +62,7 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new() }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new() }
     }
 
     /// `prev(E, k)` and `next(E, k)`: the call's mask and its distance, back (negative) or on.
@@ -217,6 +220,19 @@ impl<'a> Bytes<'a> {
                 self.code,
                 "/// `{m}`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {{\n    {bits}\n}}\n\n"
             );
+            // Its twin given the window's escaped bytes, where it reads them of one mask.
+            if bits.matches("escaped_step(").count() == 1
+                && let Some(at) = bits.find("escaped_step(")
+                && let Some(len) = bits[at..].find(", esc)")
+            {
+                let of = bits[at + "escaped_step(".len()..at + len].to_owned();
+                let twin = bits.replacen(&format!("escaped_step({of}, esc)"), "escaped", 1);
+                let _ = write!(
+                    self.code,
+                    "/// `{f}` given its window's escaped bytes (`escaped`).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn e_{m}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, escaped: u64) -> u64 {{\n    {twin}\n}}\n\n"
+                );
+                self.escapes.insert(f.clone(), of);
+            }
         }
         Ok((format!("|p: isize, esc: &mut u64| unsafe {{ {f}::<S>(src, n, p, esc) }}"), esc))
     }
@@ -569,7 +585,7 @@ fn ident(n: &str) -> String {
 /// `code` with each run of a token's tests over the same bytes (`if wcount_in(n, s, l, w_A) >= 1 { … }`, one after
 /// another, comments between) read in one window loop (`wany_in`), as the lean lexer reads a string once: the tests'
 /// classes are then loaded once a window, not once a test.
-pub(super) fn fuse_tests(code: &str) -> String {
+pub(super) fn fuse_tests(code: &str, escapes: &HashMap<String, String>) -> String {
     let lines: Vec<&str> = code.lines().collect();
     // A test's head: its indent, its span and its window function.
     let head = |l: &str| -> Option<(usize, String, String)> {
@@ -614,9 +630,18 @@ pub(super) fn fuse_tests(code: &str) -> String {
             continue;
         }
         let pad = " ".repeat(ind);
-        let calls: Vec<String> = tests.iter().enumerate().map(|(k, (_, f))| format!("{f}::<S>(src, n, p, &mut esc[{k}])")).collect();
+        // Tests that read the escapes of one mask find them once a window, with one carry, as the lean lexer's string
+        // reader passes each escape once.
+        let of: Vec<Option<&String>> = tests.iter().map(|(_, f)| escapes.get(f)).collect();
+        let shared = of.iter().all(|o| o.is_some() && *o == of[0]);
         let _ = writeln!(out, "{pad}// The token's tests of its bytes, in one window loop: their classes loaded once a window.");
-        let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ [{}] }});", tests.len(), calls.join(", "));
+        if let (true, Some(Some(b))) = (shared, of.first()) {
+            let calls: Vec<String> = tests.iter().map(|(_, f)| format!("e_{}::<S>(src, n, p, escaped)", f.trim_start_matches("w_"))).collect();
+            let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ let escaped = escaped_step({b}, &mut esc[0]); [{}] }});", tests.len(), calls.join(", "));
+        } else {
+            let calls: Vec<String> = tests.iter().enumerate().map(|(k, (_, f))| format!("{f}::<S>(src, n, p, &mut esc[{k}])")).collect();
+            let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ [{}] }});", tests.len(), calls.join(", "));
+        }
         for (k, line) in lines.iter().enumerate().take(last).skip(i) {
             match tests.iter().position(|(h, _)| *h == k) {
                 Some(t) => {
