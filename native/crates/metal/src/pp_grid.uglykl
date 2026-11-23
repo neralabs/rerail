@@ -86,12 +86,14 @@
     u.unit_file = AT(const uint32_t, P1_UFILE); u.op_keys = AT(const uint64_t, IF_OPKEYS); u.op_kinds = AT(const uint32_t, IF_OPKINDS); \
     u.n_ops = W(N_IFOP); u.feat_keys = AT(const uint64_t, IF_FEATKEYS); u.feat_vals = AT(const uint64_t, IF_FEATVALS); u.n_feat = W(N_FEAT); \
     u.tline = AT(const uint32_t, ILINE); u.tlinen = AT(const uint32_t, ILINEN); u.ldelta = AT(const uint32_t, LDELTA); u.lt0 = AT(const uint32_t, LCTL)[0]; \
+    u.toks = AT(const uint32_t, TOKENS); u.tok_cap = AT(const uint32_t, WORDS)[1];                                        \
     u.sc = IF_SCOPE
 
 // A group's threadgroup memory: the take's words, the scans' scratch, and the sorts' counts or a sorted tile (the
 // segmented scans' two rows alias them: no phase runs two of them); in the loop's phase, which runs no scan or sort,
 // each SIMD group's piece's run (`lp_piece`: its stacks, indexed as it goes, in the group's memory, not a thread's,
-// which Metal keeps in device memory).
+// which Metal keeps in device memory); in the `#if` lines' evaluation, each SIMD group's window of tokens
+// (`p1_if_line`: 4 words a thread of the group's 256, within the sort's words, `UKL_SORT_WORDS`, 2,816 at least).
 #define PP_TG_BIG UKL_SORT_WORDS
 #define LP_SLOTS (256u / UKL_SIMD_WIDTH)
 typedef struct PpTg {
@@ -861,7 +863,7 @@ UKL_ONCE uint32_t pp_step(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUF
                                AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, DSLOT), AT(const uint32_t, IF_OPS), AT(const uint32_t, STATE), AT(const uint32_t, OUT), AT(const uint32_t, OBASE),
                                AT(const uint32_t, VTOTAL), AT(const uint32_t, OPTOTAL), defined_key, true_key, W(IF_TRUE), AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP),
                                AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), AT(uint32_t, IF_VAL), AT(uint32_t, VBAD), w,
-                               g.lid & (UKL_SIMD_WIDTH - 1u) __UKL_ARGS);
+                               g.lid & (UKL_SIMD_WIDTH - 1u), tg->big + 4u * (g.lid & ~(UKL_SIMD_WIDTH - 1u)) __UKL_ARGS);
         // The `#line` rows (§6), for the next iteration's lines and the text.
         EACH(w, nd) p1_line_row(u, AT(const uint32_t, IF_KIND), AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS), AT(const uint32_t, N_DIRS),
                                 AT(const uint32_t, IF_COUNT), AT(const uint32_t, IF_AT), AT(const uint32_t, IF_TOTAL), AT(const uint32_t, OUT), AT(const uint32_t, OBASE), AT(const uint32_t, VTOTAL), AT(const uint32_t, OPTOTAL), W(OUT_CAP),

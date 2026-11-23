@@ -282,6 +282,17 @@ UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __reduce
 // The CPU (ukl_cpu_shim.h): a threadgroup's threads are coroutines on one host thread, so every barrier and SIMD-group
 // operation is a suspension, and memory is the host's.
 #define UKL_INLINE static inline
+// The device's clock for a trace (`ukl_clock_ns`): on arm64 the CPU's virtual counter and its frequency, which a user
+// thread reads (the shim includes no system headers); elsewhere none.
+#if defined(__aarch64__)
+UKL_INLINE uint64_t __ukl_cpu_clock_ns(void) {
+    uint64_t c, f;
+    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(c));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
+    return f == 0u ? 0u : (uint64_t)((unsigned __int128)c * 1000000000u / f);
+}
+#define ukl_clock_ns() __ukl_cpu_clock_ns()
+#endif
 // A function the compiler inlines or calls as it chooses (`UKL_FUNC`): a generated program's (`clif_ukl`), large and
 // many, and a small read that should inline where it is called (`clif_t_ld`).
 #define UKL_FUNC static
@@ -726,8 +737,8 @@ UKL_INLINE uint32_t ukl_mask_rank(ukl_mask_t m, uint32_t l) { return ukl_mask_co
 #define ukl_poll_yield() ((void)0)
 #endif
 
-// The device's clock in nanoseconds, for a measurement's trace: CUDA's global timer. 0 where the backend gives a kernel
-// no clock (Metal, OpenCL C).
+// The device's clock in nanoseconds, for a measurement's trace: CUDA's global timer, the CPU's counter on arm64 (above).
+// 0 where the backend gives a kernel no clock (Metal, OpenCL C).
 #ifndef ukl_clock_ns
 #if defined(UKL_CUDA)
 UKL_INLINE uint64_t ukl_clock_ns(void) { uint64_t t; asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t)); return t; }

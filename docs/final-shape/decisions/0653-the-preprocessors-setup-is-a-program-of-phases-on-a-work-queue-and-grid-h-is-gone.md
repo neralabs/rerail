@@ -80,7 +80,7 @@ port the preprocessor, then remove it.
 - The preprocessor's eval tests (`rerail-c-directives`, profile `second`) and the arena's tests, on the CPU
   backend (the user's order of 2026-11-20: no preprocessor run on Metal): 46 of 47 pass;
   `a_line_past_its_room_runs_again_larger` takes 7.8 s, as before this change (7.9 s; 0613's serial `#if` piece,
-  recorded at the merge 8e3ba68cbb).
+  recorded at the merge 8e3ba68cbb). Fixed since (0613, "A line's expansion is requests"): 47 of 47, 0.63 s.
 - The UKL library's stage tests (`rerail-gpu`): the scan, the segmented scans and the sort equal the host's at 1,
   8 and 32 tiles.
 - The setup's Metal source splits into 13 units: the 11 stages, `pp_step` and `pp_advance`.

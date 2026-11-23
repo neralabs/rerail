@@ -1247,7 +1247,7 @@ impl Exp {
             lb_cap: lb_cap as u32,
             // The output's pieces: five columns, `out` words each (decision 0520 §3), their order and
             // the loop's chunks (`lp_flush`).
-            out: zeroed(8 * out)?,
+            out: zeroed(9 * out)?,
             sc_tok: [(); 6].map(|()| zeroed(sc)).into_iter().collect::<Result<Vec<_>, _>>()?.try_into().map_err(|_| crate::pp_arena::failure(concat!(file!(), ":", line!())))?,
             sc_ckeys: arena.zeroed::<u64>(sc)?,
             sc_sort: Sort::new(arena, sc)?,

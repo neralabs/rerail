@@ -840,6 +840,9 @@ typedef struct Ux {
     PP_GLOBAL const uint32_t* vai; PP_GLOBAL const uint32_t* irows;
     // A top token's name's rows (`TROWS`, as `IROWS` a body item's), the text's or the tests' lines'.
     PP_GLOBAL const uint32_t* trows;
+    // The tokens' store's columns (`Ar`'s, `tok_cap` words each): the leaves of the requests' results that the
+    // output's order names (decision 0613 §6), read where they are (`ov_tok`).
+    PP_GLOBAL const uint32_t* toks; uint32_t tok_cap;
     // Each top token's node (`TOPNODE`, `pe_lookups`; a line's are `IF_NODES`): `top_ref` without a
     // search of the stretches.
     PP_GLOBAL const uint32_t* tnode;
@@ -1043,8 +1046,9 @@ UKL_INLINE Tk pc_tok_in(Ux u, PP_GLOBAL const uint32_t* cols, uint32_t cap, uint
 }
 
 // The output (decision 0520 §3): its `np` pieces in five columns from `out`, `cap` words each (and
-// their order, the sixth, and the loop's chunks, the seventh: `lp_flush`), the
-// top level's runs and each call's expansion. Token `k` of it: its piece found by its place.
+// their order, the sixth, the loop's chunks, the seventh: `lp_flush`, and by the order, a leaf's shift of the text's
+// tokens, the eighth, and each one's place, the ninth: `lp_roll_place`), the top level's runs and each call's
+// expansion. Token `k` of it: its piece found by its place.
 // `ci`: the piece a reader read last (its number in the order, `OV_NONE` none), its first token's place
 // `cp` and its tokens `cn`: a reader walks forward, so a token is in it or the next, a jump ahead a
 // gallop from it, and only a jump back a search of them all.
@@ -1054,35 +1058,65 @@ UKL_INLINE Ov ov_new(PP_GLOBAL const uint32_t* cols, uint32_t cap, uint32_t np) 
     Ov o; o.cols = cols; o.cap = cap; o.np = ukl_min(np, cap); o.ci = OV_NONE; o.cp = 0u; o.cn = 0u;
     return o;
 }
-// The pieces are where the loop made them, in its order by `ORDER` (the sixth column, `lp_roll_place`).
+// The pieces are where the loop made them, in its order by `ORDER` (the sixth column, `lp_roll_place`), their
+// places by it (the ninth).
 UKL_INLINE void ov_at(UKL_PRIVATE Ov* o, uint32_t i) {
-    PP_GLOBAL const uint32_t* pat = o->cols + 3u * o->cap;
-    PP_GLOBAL const uint32_t* ord = o->cols + 5u * o->cap;
-    o->ci = i; o->cp = pat[ord[i]];
-    o->cn = i + 1u < o->np ? pat[ord[i + 1u]] - o->cp : 0xffffffffu - o->cp;
+    PP_GLOBAL const uint32_t* pat = o->cols + 8u * o->cap;
+    o->ci = i; o->cp = pat[i];
+    o->cn = i + 1u < o->np ? pat[i + 1u] - o->cp : 0xffffffffu - o->cp;
+}
+// Token `k` of a leaf of a request's result (the order's entry `cap` past its own in the tokens' store, decision
+// 0613 §6): a piece of the text or a body (a span: its tokens from its start, its first's space its own where set)
+// or one token; a leaf of the text moved by its occurrence's shift (`shift`, the order's eighth column).
+UKL_INLINE Tk ov_leaf(Ux u, uint32_t x, uint32_t k, uint32_t shift) {
+    uint32_t tc = u.tok_cap;
+    uint32_t src = u.toks[x], fl = u.toks[tc + x], st = u.toks[2u * tc + x];
+    Tk t;
+    t.exp = 0u; t.flags = 0u;
+    uint32_t kind = src & P_KIND, sub = src & ~P_KIND;
+    bool span = kind == (3u << 30);
+    if (span) { kind = sub == 0x3fffffffu ? P_TOP : P_BODY; st += k; fl = k == 0u ? (fl & 15u) : 0u; }
+    else t.flags = fl & T_NOEXP;
+    if (kind == P_TOP) st += shift;
+    // Its space: set (`LT_SPSET`, 4) or its source's.
+    bool sp = (fl & 4u) != 0u ? (fl & T_SPACE) != 0u : false;
+    if (kind == P_TOP) {
+        t.ref = u.tnode[st];
+        if ((fl & 4u) == 0u) sp = top_space(u, t.ref);
+    } else if (kind == P_BODY) {
+        PpDef d = u.defs[(span ? sub : src) & ~P_KIND];
+        t.ref = d.body + st;
+        if ((fl & 4u) == 0u) sp = (u.items[d.ifirst + st] & I_SPACE) != 0u;
+    } else {
+        t.ref = st;
+        if ((fl & 4u) == 0u) sp = (fl & T_SPACE) != 0u;
+    }
+    if (sp) t.flags |= T_SPACE;
+    return t;
 }
 UKL_INLINE bool ov_in(UKL_PRIVATE const Ov* o, uint32_t k) { return o->ci != OV_NONE && k >= o->cp && k - o->cp < o->cn; }
 UKL_INLINE Tk ov_tok(Ux u, UKL_PRIVATE Ov* o, uint32_t k) {
     if (!ov_in(o, k) && o->ci != OV_NONE && o->ci + 1u < o->np && k >= o->cp) ov_at(o, o->ci + 1u);
     if (!ov_in(o, k)) {
-        PP_GLOBAL const uint32_t* pat = o->cols + 3u * o->cap;
-        PP_GLOBAL const uint32_t* ord = o->cols + 5u * o->cap;
+        PP_GLOBAL const uint32_t* pat = o->cols + 8u * o->cap;
         uint32_t lo = 0u, hi = o->np;
         // Forward of the piece read last (a reader's window ahead): galloped from it, then searched.
         if (o->ci != OV_NONE && k >= o->cp) {
             lo = o->ci;
             for (uint32_t d = 1u; d < 32u && lo + d < o->np; d *= 2u) {
-                if (pat[ord[lo + d]] > k) { hi = lo + d; break; }
+                if (pat[lo + d] > k) { hi = lo + d; break; }
                 lo += d;
             }
         }
         for (uint32_t step = 0u; step < 32u && hi - lo > 1u; step++) {
             uint32_t mid = (lo + hi) / 2u;
-            if (pat[ord[mid]] <= k) lo = mid; else hi = mid;
+            if (pat[mid] <= k) lo = mid; else hi = mid;
         }
         ov_at(o, lo);
     }
-    return pc_tok_in(u, o->cols, o->cap, o->cols[5u * o->cap + o->ci], k - o->cp);
+    uint32_t e = o->cols[5u * o->cap + o->ci];
+    if (e >= o->cap) return ov_leaf(u, e - o->cap, k - o->cp, o->cols[7u * o->cap + o->ci]);
+    return pc_tok_in(u, o->cols, o->cap, e, k - o->cp);
 }
 UKL_INLINE uint32_t ov_ref(Ux u, UKL_PRIVATE Ov* o, uint32_t k) { return ov_tok(u, o, k).ref; }
 UKL_INLINE uint32_t ov_flags(Ux u, UKL_PRIVATE Ov* o, uint32_t k) { return ov_tok(u, o, k).flags; }
@@ -1295,6 +1329,7 @@ UKL_INLINE void px_make(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t
     u.files = files; u.data = data; u.bases = bases; u.n_files = words[0]; u.keys = keys; u.defs = defs; u.items = items;
     u.sorted = sorted; u.perm = perm; u.n_rows = n_rows[0]; u.name_keys = name_keys; u.values = values;
     u.text_nodes = text_nodes; u.gat = gat; u.n_gaps = n_gaps[0]; u.firsts = firsts; u.n_toks = n_toks[0];
+    u.toks = cols; u.tok_cap = words[1];
     // The scratch: its tokens (`st_cap`, an even number), then its bytes.
     PP_GLOBAL PxScratch* stoks = scratch;
     PP_GLOBAL uint8_t* sbytes = (PP_GLOBAL uint8_t*)(scratch + words[9]);

@@ -369,6 +369,13 @@ UKL_INLINE void sy_feed(UKL_PRIVATE IfSy* y, uint32_t op, uint64_t bits, uint32_
 }
 
 // The expression's value: true where it is one, and nonzero with no division by zero evaluated.
+// A SIMD group's evaluation (`p1_if_line`'s `group`): lane 0's end flags, every lane's, so the lanes take the
+// same branches though only lane 0 feeds.
+UKL_INLINE void sy_share(UKL_PRIVATE IfSy* y, bool group __UKL_PARAMS) {
+    if (!group) return;
+    uint32_t st = ukl_sg_shuffle((y->bad ? 1u : 0u) | (y->big ? 2u : 0u), 0u __UKL_ARGS);
+    y->bad = (st & 1u) != 0u; y->big = (st & 2u) != 0u;
+}
 UKL_INLINE bool sy_end(UKL_PRIVATE IfSy* y) {
     if (y->bad || y->big || y->want) return false;
     sy_reduce(y, 3u, 0u);
@@ -792,12 +799,16 @@ UKL_INLINE bool p1_if_plain(Ux u, UKL_PRIVATE Ov* out, uint32_t o, uint32_t g0, 
 
 // An `#if` line's test: its lane's, or (`group`) its SIMD group's, every lane running the
 // evaluation alike: at each step the lanes read the next 32 tokens, one each (`p1_if_plain`), and
-// the run before the first that needs the step below feeds the evaluation at once.
+// the run before the first that needs the step below feeds the evaluation at once. The lanes' tokens
+// reach every lane through the SIMD group's window (`win`, 4 words a lane in threadgroup memory), a
+// barrier each side: a round a window, where a shuffle of each token's three words was 96 (on the CPU
+// backend each a switch of every lane's coroutine).
 UKL_INLINE void p1_if_line(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint32_t* n_nodes, PP_GLOBAL const PpNode* nodes, PP_GLOBAL const uint32_t* dir_bases,
                            PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* count, PP_GLOBAL const uint32_t* first, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* total,
                            PP_GLOBAL const uint32_t* dslot, PP_GLOBAL const uint32_t* ops, PP_GLOBAL const uint32_t* state, PP_GLOBAL const uint32_t* outc, PP_GLOBAL const uint32_t* obase,
                            PP_GLOBAL const uint32_t* vtotal, PP_GLOBAL const uint32_t* ptotal, uint64_t defined_key, uint64_t true_key, uint32_t true_is_one, PP_GLOBAL const uint64_t* op_keys, PP_GLOBAL const uint32_t* op_kinds,
-                           uint32_t n_ops, PP_GLOBAL const uint64_t* feat_keys, PP_GLOBAL const uint64_t* feat_vals, uint32_t n_feat, PP_GLOBAL uint32_t* vals, PP_GLOBAL uint32_t* bad, uint32_t w, uint32_t ln, bool group __UKL_PARAMS) {
+                           uint32_t n_ops, PP_GLOBAL const uint64_t* feat_keys, PP_GLOBAL const uint64_t* feat_vals, uint32_t n_feat, PP_GLOBAL uint32_t* vals, PP_GLOBAL uint32_t* bad, uint32_t w, uint32_t ln, bool group,
+                           UKL_LOCAL uint32_t* win __UKL_PARAMS) {
     // The output (decision 0520 §3), read through its pieces.
     Ov out = ov_new(outc, out_cap, ptotal[0]);
     uint32_t i;
@@ -811,17 +822,23 @@ UKL_INLINE void p1_if_line(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
     y.nv = 0u; y.no = 0u; y.want = true; y.bad = false; y.big = false;
     uint8_t b[IF_TOKB];
     Ov look = out;
-    for (uint32_t o = o0, step = 0u; o < o1 && !y.bad && !y.big; step++) {
+    // A group's lanes take the same branches; lane 0 alone feeds the evaluation (the CPU backend runs the lanes one
+    // after another: each feeding all was the line's work 32 times), and its end flags are every lane's (`sy_share`).
+    bool feeder = !group || ln == 0u;
+    for (uint32_t o = o0, step = 0u; o < o1 && !y.bad && !y.big; step++, sy_share(&y, group __UKL_ARGS)) {
         if (group) {
             // The group's window: lane `ln` reads token `o + ln`.
             uint32_t wop = 0u, wf = 0u;
             uint64_t wb = 0ul;
             bool plain = o + ln < o1 && p1_if_plain(u, &look, o + ln, g0, count[w], ops, s0, defined_key, true_key, true_is_one, op_keys, op_kinds, n_ops, &wop, &wb, &wf);
             uint32_t k = ukl_min(ukl_min((uint32_t)ukl_ctz64((uint64_t)(ukl_sg_ballot(!plain __UKL_ARGS))), (uint32_t)UKL_SIMD_WIDTH), o1 - o);
-            for (uint32_t j = 0u; j < k && !y.bad && !y.big; j++) {
-                uint32_t lo = ukl_sg_shuffle((uint32_t)wb, j __UKL_ARGS), hi = ukl_sg_shuffle((uint32_t)(wb >> 32), j __UKL_ARGS);
-                sy_feed(&y, ukl_sg_shuffle(wop, j __UKL_ARGS), (uint64_t)lo | ((uint64_t)hi << 32), ukl_sg_shuffle(wf, j __UKL_ARGS));
-            }
+            win[ln] = wop; win[UKL_SIMD_WIDTH + ln] = (uint32_t)wb; win[2u * UKL_SIMD_WIDTH + ln] = (uint32_t)(wb >> 32); win[3u * UKL_SIMD_WIDTH + ln] = wf;
+            ukl_sg_barrier();
+            for (uint32_t j = 0u; feeder && j < k && !y.bad && !y.big; j++)
+                sy_feed(&y, win[j], (uint64_t)win[UKL_SIMD_WIDTH + j] | ((uint64_t)win[2u * UKL_SIMD_WIDTH + j] << 32), win[3u * UKL_SIMD_WIDTH + j]);
+            // Read before the next window is written.
+            ukl_sg_barrier();
+            sy_share(&y, group __UKL_ARGS);
             o += k;
             if (k == (uint32_t)UKL_SIMD_WIDTH || o >= o1 || y.bad || y.big) continue;
         }
@@ -844,7 +861,7 @@ UKL_INLINE void p1_if_line(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
             bool v = n != PP_NONE && ref_kind(u, n) == K_IDENTIFIER
                      && visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.floors, u.n_units, ref_key(u, n), slot, bad) != L_NONE;
             if (paren && o < o1) o++;
-            sy_feed(&y, 0u, v ? 1ul : 0ul, 0u);
+            if (feeder) sy_feed(&y, 0u, v ? 1ul : 0ul, 0u);
             continue;
         }
         if (mark >= IO_HAS) {
@@ -870,7 +887,7 @@ UKL_INLINE void p1_if_line(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
             } else {
                 v = p1_if_has_include(u, x, nm, out, p0, p1, kind, f, unit, main_root);
             }
-            sy_feed(&y, 0u, v, 0u);
+            if (feeder) sy_feed(&y, 0u, v, 0u);
             continue;
         }
         Span r = ref_span(u, g);
@@ -878,29 +895,29 @@ UKL_INLINE void p1_if_line(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
             uint64_t key = ref_key(u, g);
             if (key == defined_key) { ukl_atomic_or(x.flags, P1_IF_DEFINED); return; }
             uint32_t k = p1_if_opk(op_keys, op_kinds, n_ops, key);
-            if (k >= OPK_ALT) { sy_feed(&y, k - OPK_ALT, 0ul, 0u); continue; }
+            if (k >= OPK_ALT) { if (feeder) sy_feed(&y, k - OPK_ALT, 0ul, 0u); continue; }
             // Any other name is 0; `true` 1 where it is a keyword.
-            sy_feed(&y, 0u, true_is_one != 0u && key == true_key ? 1ul : 0ul, 0u);
+            if (feeder) sy_feed(&y, 0u, true_is_one != 0u && key == true_key ? 1ul : 0ul, 0u);
         } else if (r.kind == K_NUMBER) {
             uint32_t n = if_bytes(r, b);
             if (n > IF_TOKB) { ukl_atomic_or(x.flags, P1_IF_BIG); return; }
             IfVal c = if_number(b, n);
             if (!c.ok) { y.bad = true; break; }
-            sy_feed(&y, 0u, c.bits, c.f);
+            if (feeder) sy_feed(&y, 0u, c.bits, c.f);
         } else if (r.kind == K_LITERAL) {
             uint32_t n = if_bytes(r, b);
             if (n > IF_TOKB) { ukl_atomic_or(x.flags, P1_IF_BIG); return; }
             IfVal c = if_char(b, n);
             if (!c.ok) { y.bad = true; break; }
-            sy_feed(&y, 0u, c.bits, 0u);
+            if (feeder) sy_feed(&y, 0u, c.bits, 0u);
         } else if (r.kind == K_PUNCT && r.len >= 1u) {
-            sy_feed(&y, eo_punct(r.p, r.len), 0ul, 0u);
+            if (feeder) sy_feed(&y, eo_punct(r.p, r.len), 0ul, 0u);
         } else {
             y.bad = true;
         }
     }
     if (y.big) { ukl_atomic_or(x.flags, P1_IF_BIG); return; }
-    vals[w] = sy_end(&y) ? 1u : 0u;
+    if (feeder) vals[w] = sy_end(&y) ? 1u : 0u;
 }
 
 // The `#if` lines of a SIMD group's lanes (a lane a directive): each lane's own at once, then each
@@ -911,7 +928,8 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
                            PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* count, PP_GLOBAL const uint32_t* first, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* total,
                            PP_GLOBAL const uint32_t* dslot, PP_GLOBAL const uint32_t* ops, PP_GLOBAL const uint32_t* state, PP_GLOBAL const uint32_t* outc, PP_GLOBAL const uint32_t* obase,
                            PP_GLOBAL const uint32_t* vtotal, PP_GLOBAL const uint32_t* ptotal, uint64_t defined_key, uint64_t true_key, uint32_t true_is_one, PP_GLOBAL const uint64_t* op_keys, PP_GLOBAL const uint32_t* op_kinds,
-                           uint32_t n_ops, PP_GLOBAL const uint64_t* feat_keys, PP_GLOBAL const uint64_t* feat_vals, uint32_t n_feat, PP_GLOBAL uint32_t* vals, PP_GLOBAL uint32_t* bad, uint32_t w0, uint32_t ln __UKL_PARAMS) {
+                           uint32_t n_ops, PP_GLOBAL const uint64_t* feat_keys, PP_GLOBAL const uint64_t* feat_vals, uint32_t n_feat, PP_GLOBAL uint32_t* vals, PP_GLOBAL uint32_t* bad, uint32_t w0, uint32_t ln,
+                           UKL_LOCAL uint32_t* win __UKL_PARAMS) {
     bool mine = w0 < n_dirs[0];
     if (mine) vals[w0] = 0u;
     mine = mine && kinds[w0] == IL_TEST && count[w0] != 0u;
@@ -922,7 +940,7 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
         big = o1 - o0 > IF_GROUP_MIN;
         if (!big)
             p1_if_line(u, x, nm, out_cap, kinds, insts, n_nodes, nodes, dir_bases, n_dirs, count, first, at, total, dslot, ops, state, outc, obase, vtotal, ptotal, defined_key, true_key, true_is_one, op_keys, op_kinds, n_ops,
-                       feat_keys, feat_vals, n_feat, vals, bad, w0, ln, false __UKL_ARGS);
+                       feat_keys, feat_vals, n_feat, vals, bad, w0, ln, false, win __UKL_ARGS);
     }
     uint64_t todo = (uint64_t)(ukl_sg_ballot(big __UKL_ARGS));
     while (todo != 0u) {
@@ -930,7 +948,7 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
         todo &= todo - 1u;
         uint32_t w = ukl_sg_shuffle(w0, lead __UKL_ARGS);
         p1_if_line(u, x, nm, out_cap, kinds, insts, n_nodes, nodes, dir_bases, n_dirs, count, first, at, total, dslot, ops, state, outc, obase, vtotal, ptotal, defined_key, true_key, true_is_one, op_keys, op_kinds, n_ops,
-                   feat_keys, feat_vals, n_feat, vals, bad, w, ln, true __UKL_ARGS);
+                   feat_keys, feat_vals, n_feat, vals, bad, w, ln, true, win __UKL_ARGS);
     }
 }
 

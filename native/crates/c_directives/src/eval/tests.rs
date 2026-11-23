@@ -1296,7 +1296,9 @@ fn a_definition_changed_between_uses_is_expanded_again() {
     let src = "#define G 1\n#define A G\n#define F() A A A A A A A A A A A A A A A A A A A A\nF()\n#undef G\n#define G 2\nF() F()\n";
     let (got, want, (hits, _)) = expanded_memo(&[("main.c", src)], false);
     same(show(&got.expect("refused")), show(&want), "G changed");
-    same(hits, 1, "the hits: the last call's");
+    // The last call's hit; and in each of the two expansions of `F`, its 20 `A`s one request (each with `F`
+    // disabled), the other 19 its hits (an object-like macro a request reads is a request, decision 0613 §4).
+    same(hits, 1 + 2 * 19, "the hits: the last call's, and the `A`s in each expansion of `F`");
 }
 
 /// Decision 0613 §4, stage 4: a call's arguments are requests of their own, read by SIMD groups that are free, and
