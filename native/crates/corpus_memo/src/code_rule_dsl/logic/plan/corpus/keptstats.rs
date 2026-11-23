@@ -319,6 +319,10 @@ impl Keeper {
     ///   not know keeps no exact maps (its constants are then counted from the rows held).
     /// - `keeper_watched(r, c, value: atom, count)`: the constants a symbol column watches (`RelStats::watch`), kept
     ///   and mapped as the exact counts are.
+    /// - `keeper_exact_n` and `keeper_watched_n`: the same for every other column, as they are. The statistics' bytes
+    ///   hold none, so a later run asks a column's counts without decoding them (t33 K4).
+    /// - `keeper_head(r, rows, partial)` and `keeper_columns(r, at, word)`: what the statistics' bytes begin with, so
+    ///   a later run reads none of them until it decodes them (`RelStats::kept_with`).
     /// - `keeper_summary(r, c, ndv, sq, sqd)`: each column as the statistics give it (`RelStats::summary`, the exact
     ///   maps in): a later run answers the planner from it and decodes a relation's statistics only to patch them.
     /// - `keeper_holder(r, owner, n)` and `keeper_id(r, i0..i3)`: the holders and identities.
@@ -331,6 +335,10 @@ impl Keeper {
         // `keeper_watched`: their values are atoms, which the store's writer maps (decision 0170).
         let mut exact: Vec<(String, usize, Vec<(i64, i64)>)> = Vec::new();
         let mut watched: Vec<(String, usize, Vec<(i64, i64)>)> = Vec::new();
+        // And every other column's, kept apart too, as they are (`keeper_exact_n`, `keeper_watched_n`): the bytes hold
+        // none, so a later run asks a column's counts without decoding its relation's statistics.
+        let mut exact_n: Vec<(String, usize, Vec<(i64, i64)>)> = Vec::new();
+        let mut watched_n: Vec<(String, usize, Vec<(i64, i64)>)> = Vec::new();
         // Each relation's summary (`RelStats::summary`), with its exact maps in, before they are taken out: a later
         // run answers the planner's statistics from it, its sketches not decoded (t33 K4).
         let summaries: Vec<(String, Vec<(i64, i64, i64)>)> = self.rels.iter().map(|(rel, stats)| (rel.clone(), stats.summary())).collect();
@@ -338,7 +346,8 @@ impl Keeper {
             let width = stats.columns().len();
             match syms(rel, stats.columns()).filter(|c| c.len() == width) {
                 Some(cols) => {
-                    for c in (0..width).filter(|&c| cols[c]) {
+                    for c in 0..width {
+                        let (exact, watched) = if cols[c] { (&mut exact, &mut watched) } else { (&mut exact_n, &mut watched_n) };
                         exact.extend(stats.take_exact(c).map(|pairs| (rel.clone(), c, pairs)));
                         let pairs = stats.take_watched(c);
                         if !pairs.is_empty() {
@@ -363,6 +372,9 @@ impl Keeper {
                 (index[rel.as_str()], out)
             })
             .collect();
+        // Each relation's column names, apart from its statistics as `encode` writes them first: each name and a NUL
+        // after it (a column's name is a rule's identifier, which holds none).
+        let columns: Vec<(i64, Vec<u8>)> = self.rels.iter().map(|(rel, stats)| (index[rel.as_str()], stats.columns().iter().flat_map(|c| c.bytes().chain([0])).collect())).collect();
         let docs: Vec<(&String, memo::Content, i64)> = self.docs.iter().map(|(p, (c, k))| (p, *c, *k)).collect();
         let build: [u8; 32] = sha2::Sha256::digest(crate::code_rule_dsl::build_ids::engine().as_bytes()).into();
         let put = |rel: &str, types: &[u8], n: usize, fill: &mut dyn FnMut(&mut dyn FnMut(i64))| {
@@ -393,6 +405,16 @@ impl Keeper {
                     push_bytes(d as i64, p.as_bytes(), push);
                 }
             })?,
+            put(HEAD, b"iii", self.rels.len(), &mut |push| {
+                for (rel, stats) in &self.rels {
+                    [index[rel.as_str()], stats.rows(), i64::from(stats.partial())].into_iter().for_each(&mut *push);
+                }
+            })?,
+            put(COLUMNS, b"iii", columns.iter().map(|(_, b)| bytes_rows(b.len())).sum(), &mut |push| {
+                for (r, b) in &columns {
+                    push_bytes(*r, b, push);
+                }
+            })?,
             put(STATS, b"iii", stats.iter().map(|(_, b)| bytes_rows(b.len())).sum(), &mut |push| {
                 for (r, b) in &stats {
                     push_bytes(*r, b, push);
@@ -407,6 +429,20 @@ impl Keeper {
             })?,
             put(WATCHED, b"iisi", watched.iter().map(|(_, _, p)| p.len()).sum(), &mut |push| {
                 for (rel, c, pairs) in &watched {
+                    for &(v, n) in pairs {
+                        [index[rel.as_str()], *c as i64, v, n].into_iter().for_each(&mut *push);
+                    }
+                }
+            })?,
+            put(EXACT_N, b"iiii", exact_n.iter().map(|(_, _, p)| p.len()).sum(), &mut |push| {
+                for (rel, c, pairs) in &exact_n {
+                    for &(v, n) in pairs {
+                        [index[rel.as_str()], *c as i64, v, n].into_iter().for_each(&mut *push);
+                    }
+                }
+            })?,
+            put(WATCHED_N, b"iiii", watched_n.iter().map(|(_, _, p)| p.len()).sum(), &mut |push| {
+                for (rel, c, pairs) in &watched_n {
                     for &(v, n) in pairs {
                         [index[rel.as_str()], *c as i64, v, n].into_iter().for_each(&mut *push);
                     }
@@ -435,11 +471,12 @@ impl Keeper {
         ])
     }
 
-    /// The keeper `into_kept` kept under `plan` in `kept`; `None` when none is kept, one of another format, plan or
-    /// engine build, or one whose atoms `to_local` refuses. `keeper_exact`'s values, the store's ids, are mapped to this
-    /// process's by `to_local` (decision 0170), all in one call. The sketches hash the values as they were counted, and
-    /// stay as they are: a run across numberings perturbs their estimates, never a finding.
-    pub fn of_kept(kept: &crate::content_store::kept_facts::KeptSpace, plan: &[u8; 32], to_local: &dyn Fn(&mut [i64]) -> crate::content_store::StoreResult<()>) -> Option<Keeper> {
+    /// The keeper `into_kept` kept under `plan` in `kept`; `None` when none is kept, or one of another format, plan or
+    /// engine build. Its statistics stay where `kept` keeps them (`InPlace`), each relation's read as it is decoded:
+    /// `keeper_exact`'s and `keeper_watched`'s values, the store's ids, mapped to this process's by `to_local` then
+    /// (decision 0170), a relation's in one call. The sketches hash the values as they were counted, and stay as they
+    /// are: a run across numberings perturbs their estimates, never a finding.
+    pub fn of_kept(kept: &std::sync::Arc<crate::content_store::kept_facts::KeptSpace>, plan: &[u8; 32], to_local: ToLocal) -> Option<Keeper> {
         use rerail_blocks::kept::KeptRead as _;
         let part = plan_part(plan);
         let chain = kept.view();
@@ -484,38 +521,39 @@ impl Keeper {
             };
             k.docs.insert(String::from_utf8(paths.remove(&d)?).ok()?, (content, key));
         }
-        // Each relation's statistics as kept, decoded where first read, its summary answering the planner until then.
+        // Each relation's statistics where they are kept, its summary answering the planner until they are decoded,
+        // and its exact counts and watched values read as they are (`InPlace`). Each relation's rows of
+        // `keeper_stats`, `keeper_exact` and `keeper_watched` are one range of their first column (`into_kept` puts
+        // them by relation, in its order), found by a search of it.
         let mut summaries: HashMap<i64, Vec<(i64, (i64, i64, i64))>> = HashMap::new();
         for row in rows(SUMMARY) {
             let [r, c, ndv, sq, sqd] = row[..] else { return None };
             summaries.entry(r).or_default().push((c, (ndv, sq, sqd)));
         }
-        for (r, b) in bytes_of(&cols(STATS))? {
+        let heads: HashMap<i64, (i64, bool)> = rows(HEAD).into_iter().map(|row| match row[..] { [r, n, partial] => Some((r, (n, partial != 0))), _ => None }).collect::<Option<_>>()?;
+        let mut columns = bytes_of(&cols(COLUMNS))?;
+        let entry = |rel: &'static str| chain.get(&rerail_blocks::kept::FactKey { rel, ident: &ident(rel), part });
+        let (stats, exact, watched, exact_n, watched_n) = (entry(STATS), entry(EXACT), entry(WATCHED), entry(EXACT_N), entry(WATCHED_N));
+        let range = |e: &Option<rerail_blocks::kept::Kept<'_>>, r: i64| e.as_ref().map_or((0, 0), |e| e.rows.col(0).dec().equal_range(0, e.rows.len(), r));
+        for (&r, rel) in &names {
+            let (lo, hi) = range(&stats, r);
+            if lo == hi {
+                continue;
+            }
+            // `push_bytes`' rows: the length, then each word in order.
+            let rows = stats.as_ref()?.rows;
+            let (at, word) = (rows.col(1).dec(), rows.col(2).dec());
+            let len = usize::try_from(word.get(lo)).ok()?;
+            let nwords = len.div_ceil(8);
+            (at.get(lo) == -1 && hi - lo == 1 + nwords && (nwords == 0 || at.get(hi - 1) == nwords as i64 - 1)).then_some(())?;
             let summary = summaries.remove(&r).map(|mut s| {
                 s.sort_unstable_by_key(|(c, _)| *c);
                 s.into_iter().map(|(_, x)| x).collect()
             });
-            k.rels.insert(name(r)?, RelStats::kept(b.into(), summary)?);
-        }
-        // The exact counts and the watched values (`keeper_watched`), their atoms this process's.
-        let by_column = |rel: &str| -> Option<BTreeMap<(i64, usize), Vec<(i64, i64)>>> {
-            let got = cols(rel);
-            let mut out: BTreeMap<(i64, usize), Vec<(i64, i64)>> = BTreeMap::new();
-            if got.n > 0 {
-                let [r, c, values, n] = &got.cols[..] else { return None };
-                let mut values = values.clone();
-                to_local(&mut values).ok()?;
-                for i in 0..got.n {
-                    out.entry((r[i], usize::try_from(c[i]).ok()?)).or_default().push((values[i], n[i]));
-                }
-            }
-            Some(out)
-        };
-        for ((r, c), pairs) in by_column(EXACT)? {
-            k.rels.get_mut(&name(r)?)?.put_exact(c, pairs);
-        }
-        for ((r, c), pairs) in by_column(WATCHED)? {
-            k.rels.get_mut(&name(r)?)?.watch(c, pairs);
+            let source = InPlace { space: std::sync::Arc::clone(kept), part, words: lo + 1, len, exact: range(&exact, r), watched: range(&watched, r), exact_n: range(&exact_n, r), watched_n: range(&watched_n, r), to_local: std::sync::Arc::clone(&to_local) };
+            let (n, partial) = *heads.get(&r)?;
+            let names: Vec<String> = String::from_utf8(columns.remove(&r)?).ok()?.split_terminator('\0').map(str::to_owned).collect();
+            k.rels.insert(rel.clone(), RelStats::kept_with(std::sync::Arc::new(source), names, n, partial, summary));
         }
         for row in rows(HOLDERS) {
             let [r, o, n] = row[..] else { return None };
@@ -614,7 +652,12 @@ fn plan_part(key: &[u8; 32]) -> i64 {
 }
 
 /// The kept form's format, in `keeper_build`'s first column.
-const FORMAT: i64 = 1;
+/// 3: every column's exact counts and watched values, and each relation's header, kept apart from its statistics.
+const FORMAT: i64 = 3;
+/// `keeper_head(r, rows, partial)` and `keeper_columns(r, at, word)`: relation `r`'s rows, whether it is partial, and
+/// its column names (each followed by a NUL), as its statistics' bytes begin (`RelStats::kept_with`).
+const HEAD: &str = "keeper_head";
+const COLUMNS: &str = "keeper_columns";
 const BUILD: &str = "keeper_build";
 const NAME: &str = "keeper_name";
 const DOC: &str = "keeper_doc";
@@ -624,6 +667,10 @@ const EXACT: &str = "keeper_exact";
 /// `keeper_watched(r, c, value: atom, count)`: the constants a column watches (`RelStats::watch`), mapped as
 /// `keeper_exact`'s are.
 const WATCHED: &str = "keeper_watched";
+/// `keeper_exact_n(r, c, value, count)` and `keeper_watched_n(r, c, value, count)`: `keeper_exact`'s and
+/// `keeper_watched`'s for the columns that are not symbols, their values as they are.
+const EXACT_N: &str = "keeper_exact_n";
+const WATCHED_N: &str = "keeper_watched_n";
 /// `keeper_summary(r, c, ndv, sq, sqd)`: relation `r`'s column `c` as its statistics give it (`RelStats::summary`).
 const SUMMARY: &str = "keeper_summary";
 const HOLDERS: &str = "keeper_holder";
@@ -643,6 +690,94 @@ fn push_bytes(key: i64, bytes: &[u8], push: &mut dyn FnMut(i64)) {
         let mut w = [0u8; 8];
         w[..c.len()].copy_from_slice(c);
         [key, at as i64, i64::from_le_bytes(w)].into_iter().for_each(&mut *push);
+    }
+}
+
+/// Maps the store's atoms in place to this process's (decision 0170): `Keeper::of_kept`'s, kept with the statistics
+/// it reads, which map their exact counts and watched values as they are decoded.
+pub type ToLocal = std::sync::Arc<dyn Fn(&mut [i64]) -> crate::content_store::StoreResult<()> + Send + Sync>;
+
+/// A relation's statistics where the keeper's kept facts hold them (`Keeper::of_kept`), read there as the relation
+/// is decoded or written back (decision 0353): its `keeper_stats` words from row `words` on, `len` bytes, and its
+/// rows `exact` and `watched` of `keeper_exact` and `keeper_watched`. The space is held, so its files stay mapped.
+struct InPlace {
+    space: std::sync::Arc<crate::content_store::kept_facts::KeptSpace>,
+    part: i64,
+    words: usize,
+    len: usize,
+    exact: (usize, usize),
+    watched: (usize, usize),
+    exact_n: (usize, usize),
+    watched_n: (usize, usize),
+    to_local: ToLocal,
+}
+
+impl InPlace {
+    fn with<T>(&self, rel: &str, f: impl FnOnce(&rerail_blocks::packed::Packed) -> T) -> Option<T> {
+        use rerail_blocks::kept::KeptRead as _;
+        self.space.view().get(&rerail_blocks::kept::FactKey { rel, ident: &ident(rel), part: self.part }).map(|e| f(e.rows))
+    }
+
+    /// `keeper_exact`'s or `keeper_watched`'s rows `lo..hi` by column, their values this process's atoms (`atoms`),
+    /// or `keeper_exact_n`'s or `keeper_watched_n`'s, as they are, into `out`.
+    fn by_column(&self, rel: &str, (lo, hi): (usize, usize), atoms: bool, out: &mut BTreeMap<usize, Vec<(i64, i64)>>) {
+        if lo == hi {
+            return;
+        }
+        self.with(rel, |rows| {
+            let (c, v, n) = (rows.col(1).dec(), rows.col(2).dec(), rows.col(3).dec());
+            let mut values: Vec<i64> = (lo..hi).map(|i| v.get(i)).collect();
+            if atoms && (self.to_local)(&mut values).is_err() {
+                // Unmapped, the counts are not this process's: the column is counted as it has none.
+                crate::code_rule_dsl::prof::count("keptstats.unmapped", 1);
+                return;
+            }
+            for (value, i) in values.into_iter().zip(lo..hi) {
+                out.entry(c.get(i) as usize).or_default().push((value, n.get(i)));
+            }
+        });
+    }
+}
+
+impl crate::code_rule_dsl::logic::plan::statkeep::KeptSource for InPlace {
+    fn len(&self) -> usize {
+        self.len
+    }
+    fn read(&self, f: &mut dyn FnMut(&dyn crate::code_rule_dsl::logic::plan::statkeep::ReadAt) -> Option<()>) -> Option<()> {
+        self.with(STATS, |rows| f(&Words { words: rows.col(2).dec(), from: self.words, len: self.len }))?
+    }
+    fn apart(&self) -> crate::code_rule_dsl::logic::plan::statkeep::Apart {
+        let mut apart = crate::code_rule_dsl::logic::plan::statkeep::Apart::default();
+        self.by_column(EXACT, self.exact, true, &mut apart.exact);
+        self.by_column(EXACT_N, self.exact_n, false, &mut apart.exact);
+        self.by_column(WATCHED, self.watched, true, &mut apart.watched);
+        self.by_column(WATCHED_N, self.watched_n, false, &mut apart.watched);
+        apart
+    }
+}
+
+/// `push_bytes`' words read as the bytes they hold: `len` bytes, from word `from` of `words`.
+struct Words<'a> {
+    words: rerail_blocks::packed::ColDec<'a>,
+    from: usize,
+    len: usize,
+}
+
+impl crate::code_rule_dsl::logic::plan::statkeep::ReadAt for Words<'_> {
+    fn len(&self) -> usize {
+        self.len
+    }
+    fn read_at(&self, at: usize, out: &mut [u8]) -> Option<()> {
+        (at.checked_add(out.len())? <= self.len).then_some(())?;
+        let mut i = 0;
+        while i < out.len() {
+            let p = at + i;
+            let (w, o) = (self.words.get(self.from + p / 8).to_le_bytes(), p % 8);
+            let n = (8 - o).min(out.len() - i);
+            out[i..i + n].copy_from_slice(&w[o..o + n]);
+            i += n;
+        }
+        Some(())
     }
 }
 
@@ -769,7 +904,7 @@ pub mod tests {
         let plan = [7u8; 32];
         store.queue_kept(super::space(), k.into_kept(&plan, &[8u8; 32], &|_, names| Some(vec![false; names.len()])).unwrap());
         store.written().unwrap();
-        let back = Keeper::of_kept(&store.kept_space(&super::space()).unwrap().expect("kept"), &plan, &|_| Ok(())).expect("a keeper");
+        let back = Keeper::of_kept(&store.kept_space(&super::space()).unwrap().expect("kept"), &plan, std::sync::Arc::new(|_| Ok(()))).expect("a keeper");
         drop(store);
         let _ = std::fs::remove_dir_all(dir);
         back
@@ -829,15 +964,17 @@ pub mod tests {
         let syms = |rel: &str, _: &[String]| (rel == "r").then(|| vec![false, true]);
         store.queue_kept(super::space(), k.into_kept(&plan, &[8u8; 32], &syms).unwrap());
         store.written().unwrap();
-        let calls = std::cell::Cell::new(0);
-        let to_local = |v: &mut [i64]| {
-            calls.set(calls.get() + 1);
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = std::sync::Arc::clone(&calls);
+        let to_local: super::ToLocal = std::sync::Arc::new(move |v: &mut [i64]| {
+            counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             v.iter_mut().for_each(|x| *x += 1000);
             Ok(())
-        };
-        let mut back = Keeper::of_kept(&store.kept_space(&super::space()).unwrap().expect("kept"), &plan, &to_local).expect("a keeper");
-        assert_eq!(calls.get(), 1, "one call");
+        });
+        let mut back = Keeper::of_kept(&store.kept_space(&super::space()).unwrap().expect("kept"), &plan, to_local).expect("a keeper");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 0, "nothing read until a relation's counts are asked");
         let mut exact = back.rels.get_mut("r").unwrap().take_exact(1).expect("r.v's counts");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1, "one call for the relation's");
         exact.sort();
         assert_eq!(exact, [(1040, 2), (1041, 2), (1042, 2)], "mapped as read");
         assert!(back.rels.get_mut("u").unwrap().take_exact(1).is_none(), "u's symbol columns unknown: no counts kept");
