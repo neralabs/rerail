@@ -15,8 +15,8 @@
 //! for one is refused when it is compiled.
 //!
 //! ```text
-//! visit_index(n, i)            n's place in the language's visit order, from 0 per document: CPython's `ast`
-//!                              order in a Python document, the tape's elsewhere
+//! visit_index(n, i)            n's place in the language's visit order, a key per document that compares in it
+//!                              (`keys_by_run`): CPython's `ast` order in a Python document, the tape's elsewhere
 //! ```
 //!
 //! Outside Python the order is the tape's: a node, then its children in order, so start offset, an ancestor before
@@ -129,7 +129,9 @@ impl Tree {
     /// component's script, decision 0597) are a document of their own, which `earlier` orders.
     pub(super) fn visits(&mut self, p: &Projected, dialect: &Dialect, python: bool) {
         if self.visit_index && let Some(&root) = p.nodes().next().map(|(_, x)| x).as_ref() {
+            let first = self.visit_indexes.len();
             Order { f: &p.facts, dialect, p, python, next: 0, out: &mut self.visit_indexes }.run(root);
+            keys_by_run(&mut self.visit_indexes[first..]);
         }
     }
 
@@ -158,6 +160,35 @@ impl Tree {
 
 /// CPython's visit order over one Python document's tape (the module doc), with a stack rather than recursion: a
 /// chain of 10,000 `+` is that deep.
+/// `visit_index`'s values for one document's rows, in visit order (as `Order` pushes them, each its place from 0): the
+/// rank of its *run*, a stretch of nodes consecutive in the visit order that are one granule's (its id's slot), then
+/// its index among its granule's nodes in that order (decision 0121's key, in the language's visit order rather than
+/// preorder). An edit inside a granule moves no other granule's values; one that adds or removes a granule moves the
+/// ranks after it. Past the key's bits (more runs, or a granule's more nodes), the places from 0 stay: one scheme a
+/// document, so its values still compare.
+fn keys_by_run(rows: &mut [[i64; 2]]) {
+    use rerail_clif::ids::{INDEX_BITS, ORDER_INDEX_BITS};
+    let mut index: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+    let mut keys = Vec::with_capacity(rows.len());
+    let (mut rank, mut last) = (0u32, None);
+    for r in rows.iter() {
+        let slot = (r[0] as u32) >> INDEX_BITS;
+        if last.is_some_and(|l| l != slot) {
+            rank += 1;
+        }
+        last = Some(slot);
+        let i = index.entry(slot).or_default();
+        if rank >> (32 - ORDER_INDEX_BITS) != 0 || *i >> ORDER_INDEX_BITS != 0 {
+            return;
+        }
+        keys.push(i64::from(rank << ORDER_INDEX_BITS | *i));
+        *i += 1;
+    }
+    for (r, k) in rows.iter_mut().zip(keys) {
+        r[1] = k;
+    }
+}
+
 struct Order<'a> {
     f: &'a Facts,
     dialect: &'a Dialect,

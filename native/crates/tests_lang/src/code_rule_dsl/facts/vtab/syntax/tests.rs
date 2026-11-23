@@ -526,6 +526,28 @@ fn visit_index_outside_python_is_the_tape_order() {
     assert!(index("object'{ x: 1, y: 2 }'") < x && x < index("property_identifier'x'") && x < y, "{:?}", rows["visit_index"]);
 }
 
+/// `visit_index` is a key of the visit order by granule run (decision 0121's, in visit order): an edit inside one
+/// function moves no other function's values, and they still compare in CPython's order (a decorator after its
+/// definition's body).
+#[test]
+fn visit_index_keys_stay_outside_the_edited_granule() {
+    let source = |extra: &str| format!("def f(a):\n    b = a{extra}\n    return b\n\n@dec\ndef g(x):\n    return x + 1\n");
+    let keys = |src: String| -> std::collections::BTreeMap<String, i64> {
+        let rows = core_rows(vec![document(1, "m.py", "python", &src)]);
+        rows["visit_index"].iter().filter_map(|r| { let (n, i) = r.rsplit_once(' ')?; Some((n.to_owned(), i.parse().ok()?)) }).collect()
+    };
+    let (before, after) = (keys(source("")), keys(source("\n    c = b * 2")));
+    let of_g: Vec<&String> = before.keys().filter(|n| n.contains("x + 1") || n.contains("dec") || n.ends_with("'x'") || n.contains("(x)")).collect();
+    assert!(of_g.len() >= 4, "{before:?}");
+    for n in &of_g {
+        assert_eq!(before[*n], after[*n], "{n}: g's nodes keep their values when f is edited");
+    }
+    assert!(after.keys().any(|n| n.contains("b * 2")), "{after:?}");
+    let at = |m: &std::collections::BTreeMap<String, i64>, n: &str| m.iter().find(|(k, _)| k.as_str() == n).map(|(_, v)| *v).unwrap_or_else(|| panic!("no {n}: {m:?}"));
+    assert!(at(&after, "binary_operator'x + 1'") < at(&after, "decorator'@dec'"), "a decorator after its definition's body: {after:?}");
+    assert!(at(&after, "binary_operator'b * 2'") < at(&after, "binary_operator'x + 1'"), "f's nodes before g's: {after:?}");
+}
+
 /// One document of `source` in `label`'s dialect, keyed `key`, with its tape (W's values read it).
 fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
