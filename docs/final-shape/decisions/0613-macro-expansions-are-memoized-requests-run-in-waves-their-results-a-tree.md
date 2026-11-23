@@ -380,7 +380,7 @@ So:
    - On the device, a unit's round 2 runs its P1 and text pass over its files again. That is not where round
      1's time goes. Round 1 of C (GB10, CUDA, warm) is 1.23 ms, set by two units that answer in it: unit 42
      (no includes: its text pass, 9,821 steps) and unit 34 (146 phases). A unit that requests is done in
-     0.25 to 0.69 ms: its 101 phases on one group, whatever its size (254 to 3,745 nodes). Its work in round 2
+     0.25 to 0.36 ms: its 101 phases on one group, whatever its size (254 to 3,745 nodes). Its work in round 2
      is the same phases, so keeping it would remove no phase. Rounds cost phases, not data.
 
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
