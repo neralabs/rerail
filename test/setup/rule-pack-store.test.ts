@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 import semver from "semver";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadRuleCatalog } from "../../src/engine/index.js";
-import { CommandTimeoutError, type NpmRunner, type Progress } from "../../src/runtime/index.js";
+import { CommandTimeoutError, KILL_GRACE_MS, type NpmRunner, type Progress } from "../../src/runtime/index.js";
 import {
   addPackSpecs,
   discoverPacks,
@@ -189,7 +189,7 @@ describe("npmPackStore", () => {
     expect(calls[0]).not.toContain("--prefer-offline");
   });
 
-  it("stops an install or removal npm has not finished well within the packs lock's wait", async () => {
+  it("stops an install, and the install and removal that put it back, within the packs lock's wait", async () => {
     const timeouts: (number | undefined)[] = [];
     const npm: NpmRunner = async (_args, options) => {
       timeouts.push(options?.timeoutMs);
@@ -201,7 +201,12 @@ describe("npmPackStore", () => {
     await store.remove(["@neralabs/rerail-pack-typescript"]);
 
     expect(timeouts).toHaveLength(2);
-    for (const timeout of timeouts) expect(timeout).toBeLessThan(PACKS_LOCK_WAIT_MS);
+    const [install, remove] = timeouts.map(timeout => {
+      expect(timeout).toBeDefined();
+      return timeout! + KILL_GRACE_MS;
+    });
+    // The lock is held through a stopped install and its put-back: an install, then a removal.
+    expect(install! * 2 + remove!).toBeLessThan(PACKS_LOCK_WAIT_MS);
   });
 });
 
@@ -724,7 +729,7 @@ describe("updatePacks", { timeout: COMPILING_TIMEOUT_MS }, () => {
     ]);
     expect(store.installs).toEqual([["@acme/rerail-pack-lint@1.1.0"]]);
     // A step that waits on npm or the lock says so, as the check step does.
-    expect(stalls).toEqual([expect.stringMatching(/npm is stopped at 2 min/u)]);
+    expect(stalls).toEqual([expect.stringMatching(/npm is stopped at 1 min 20 s/u)]);
   });
 
   it("installs nothing and names the problem when npm cannot be asked about a pack", async () => {
