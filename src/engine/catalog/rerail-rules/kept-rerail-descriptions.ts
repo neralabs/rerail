@@ -20,7 +20,8 @@ export const keptDescriptionSchema = z.object({
   description: z.string().nullable(),
   mode: z.enum(RULE_MODES),
   language: z.string().nullable(),
-  scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()), toolCalls: z.boolean() }),
+  // A reading kept by an earlier build has no `text`; it is kept beside this build's, never read by it.
+  scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()), text: z.array(z.string()).default([]), toolCalls: z.boolean() }),
   codes: z.array(z.string()),
   tests: z.number(),
   suppresses: z.boolean(),

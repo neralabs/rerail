@@ -3,11 +3,18 @@
  * `.rerail` rules is gathered; the checkout's queue (`rr-run-queue.ts`) runs the rules that take the gathered files
  * over the whole checkout, on the files on disk, one run at a time. The edit's own check never waits for it: its
  * findings are recorded as an audit of their own and steer at the session's next boundary, as a late steer does.
+ *
+ * A finding's position is read in the file on disk, while the lines an edit wrote are measured in the text it wrote.
+ * So a file whose findings are kept by those lines runs only while the file on disk still holds that text, checked
+ * when the run's turn comes and again once it has ended; a file another writer changed meanwhile waits for this
+ * session's next write of it.
  */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { AuditFailure, AuditMode, AuditRecorder, AuditResult, AuditScope } from "../audit/audit.js";
 import type { CodeRuleEdit, CodeRuleViolation } from "../code-rule/code-rule.js";
 import type { RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
-import { editViolations, type ReportBase } from "../code-rule/edit-findings/generated-lines.js";
+import { editViolations, reportsWholeFile, type ReportBase } from "../code-rule/edit-findings/generated-lines.js";
 import { deliverSteer, steerSourceOf, type SteerTarget } from "../code-rule/edit-findings/steer-publication.js";
 import type { RrClaim, RrRunOwner, RrRunQueue, RrRunTiming } from "./rr-run-queue.js";
 import type { RrRunOutcome } from "./rr-runner.js";
@@ -62,15 +69,15 @@ interface Gathered {
   readonly mode: AuditMode;
 }
 
-/** A run that carries this session's gathered files. */
+/** A run that carries this session's gathered files, made when its turn came. */
 interface Flight {
   readonly files: readonly Gathered[];
   /** The rules the files take, recorded with the audit. */
   readonly taken: readonly RerailRuleEntry[];
-  /** Of those, the rules the child runs: those whose own files were as the catalog read them when its turn came. */
-  rules: readonly RerailRuleEntry[];
+  /** Of those, the rules the child runs: those whose own files were as the catalog read them. */
+  readonly rules: readonly RerailRuleEntry[];
   /** A failure for each rule taken but left out because a file of it changed (`rr-rule-files.ts`). */
-  changed: readonly AuditFailure[];
+  readonly changed: readonly AuditFailure[];
   readonly auditId: string | undefined;
   /** Set when the rules changed while it ran: its files went back to be run with the new rules. */
   requeued: boolean;
@@ -96,17 +103,32 @@ function newest(files: readonly Gathered[]): number {
   return Math.max(...files.map(file => file.revision));
 }
 
+/** The scope `file`'s violations are taken in: in a repository audit's edit, as in touched-files scope, its file's. */
+function reportScope(file: Gathered): AuditScope {
+  return file.scope === "repository" ? "touched-files" : file.scope;
+}
+
+/**
+ * Whether the file of `file` in the checkout at `root` holds the text its edit wrote, where its findings are kept by
+ * the lines it wrote: their positions are read in the file on disk. One whose findings are all kept needs no check.
+ */
+function asWritten(root: string, file: Gathered): boolean {
+  if (reportsWholeFile(reportScope(file), file.edit, file.base)) return true;
+  try {
+    return readFileSync(resolve(root, file.edit.path), "utf8") === file.edit.generatedText;
+  } catch {
+    return false;
+  }
+}
+
 export class RerailEditRuns implements RrRunOwner {
   readonly #host: RerailEditRunsHost;
   readonly #gathered = new Map<string, Gathered>();
   #flight: Flight | undefined;
   #closed = false;
-  /** What the rules were when the running flight claimed them: a change aborts it. */
-  #rulesKey: string;
 
   constructor(host: RerailEditRunsHost) {
     this.#host = host;
-    this.#rulesKey = rulesKey(host.rules());
   }
 
   /** Whether one of the checkout's `.rerail` rules takes a write of `path` (relative to the checkout). */
@@ -129,15 +151,14 @@ export class RerailEditRuns implements RrRunOwner {
   }
 
   /**
-   * After the checkout's rules were read again: where its `.rerail` rules changed while a run of this session goes on,
-   * that run is left (killed when no other session is in it) and its files wait for the next run, with the new rules.
+   * After the checkout's rules were read again: where the rules that take a running run's files changed (one of them
+   * changed or left, or another now takes them), that run is left (killed when no other session is in it) and its
+   * files wait for the next run, with the new rules. A change to rules the run does not carry leaves it running.
    */
   rulesChanged(): void {
-    const key = rulesKey(this.#host.rules());
-    if (key === this.#rulesKey) return;
-    this.#rulesKey = key;
     const flight = this.#flight;
     if (flight === undefined || this.#closed) return;
+    if (rulesKey(this.#takenBy(flight.files)) === rulesKey(flight.taken)) return;
     flight.requeued = true;
     for (const file of flight.files) this.#regather(file);
     this.#host.queue.leave(this);
@@ -158,26 +179,38 @@ export class RerailEditRuns implements RrRunOwner {
     this.#host.queue.leave(this);
   }
 
+  /**
+   * The files gathered by now, handed to a run as its turn comes, with the rules that take them: a rule whose file
+   * changed since the catalog read it is left out, with a failure, so the child never reads text nobody approved.
+   */
   claim(): RrClaim | undefined {
-    const files = [...this.#gathered.values()];
-    this.#gathered.clear();
-    const taken = this.#host.rules().filter(rule => files.some(file => takes(rule, file.edit.path)));
-    if (this.#closed || taken.length === 0) return undefined;
-    this.#rulesKey = rulesKey(this.#host.rules());
-    const flight: Flight = { files, taken, rules: [], changed: [], auditId: this.#startAudit(files, taken), requeued: false };
+    if (this.#closed) return undefined;
+    const files = this.#takeAsWritten();
+    const taken = this.#takenBy(files);
+    if (taken.length === 0) return undefined;
+    const { rules, failures } = unchangedRules(taken);
+    const flight: Flight = { files, taken, rules, changed: failures, auditId: this.#startAudit(files, taken), requeued: false };
+    if (rules.length === 0) {
+      this.#finish(flight, { status: "failed", violations: [], failures });
+      return undefined;
+    }
     this.#flight = flight;
-    return { policies: () => this.#policies(flight), settle: outcome => this.#settle(flight, outcome) };
+    return { policies: rules.map(rule => rule.path), settle: outcome => this.#settle(flight, outcome) };
+  }
+
+  /** The checkout's rules now that take one of `files`. */
+  #takenBy(files: readonly Gathered[]): RerailRuleEntry[] {
+    return this.#host.rules().filter(rule => files.some(file => takes(rule, file.edit.path)));
   }
 
   /**
-   * The policies `flight`'s child runs, decided as it is about to start: a rule whose file changed since the catalog
-   * read it is left out, with a failure, so the child never reads text nobody approved.
+   * The gathered files whose file on disk holds the text their edit wrote ({@link asWritten}), taken for a run; one
+   * another writer changed since stays gathered until this session writes it again.
    */
-  #policies(flight: Flight): string[] {
-    const { rules, failures } = unchangedRules(flight.taken);
-    flight.rules = rules;
-    flight.changed = failures;
-    return rules.map(rule => rule.path);
+  #takeAsWritten(): Gathered[] {
+    const ready = [...this.#gathered.values()].filter(file => asWritten(this.#host.workspaceRoot, file));
+    for (const file of ready) this.#gathered.delete(file.edit.path);
+    return ready;
   }
 
   /** A file of a flight that was left goes back to wait, behind any newer edit of it, keeping the older preimage. */
@@ -186,35 +219,37 @@ export class RerailEditRuns implements RrRunOwner {
     this.#gathered.set(file.edit.path, newer === undefined ? file : { ...newer, base: file.base });
   }
 
+  /**
+   * Records how `flight`'s run ended and steers its findings. A file another writer changed while it ran goes back to
+   * wait and reports nothing from this run: its findings' positions are in the other writer's text.
+   */
   #settle(flight: Flight, outcome: RrRunEnd): void {
     if (this.#flight === flight) this.#flight = undefined;
     if (leftRun(outcome)) {
       this.#finish(flight, { status: flight.requeued ? "superseded" : "interrupted" });
       return;
     }
-    const result = this.#results(flight, outcome);
+    const reported = flight.files.filter(file => asWritten(this.#host.workspaceRoot, file));
+    for (const file of flight.files) if (!reported.includes(file)) this.#regather(file);
+    const result = this.#results(flight, reported, outcome);
     this.#finish(flight, result);
-    if (!this.#closed) void this.#steer(flight, result.violations);
+    if (!this.#closed) void this.#steer(flight, reported, result.violations);
   }
 
-  /**
-   * The violations each file's edit reports (`editViolations`; in repository scope, as in touched-files scope, its
-   * file's), and the rules' failures.
-   */
-  #results(flight: Flight, outcome: RrRunOutcome): AuditResult & Pick<Required<AuditResult>, "violations" | "failures"> {
+  /** The violations each of `files`' edits reports (`editViolations`), and the rules' failures. */
+  #results(flight: Flight, files: readonly Gathered[], outcome: RrRunOutcome): AuditResult & Pick<Required<AuditResult>, "violations" | "failures"> {
     if (outcome.status !== "completed")
       return { status: "failed", violations: [], failures: [...flight.changed, ...rrStoppedFailures(outcome, flight.rules)] };
     const nested = this.#host.nestedCheckouts();
     const found = rrViolations(outcome.findings, flight.rules, path => !insideAny(nested, path));
-    const violations = flight.files.flatMap(file =>
-      editViolations(file.scope === "repository" ? "touched-files" : file.scope, file.edit, found, file.base));
+    const violations = files.flatMap(file => editViolations(reportScope(file), file.edit, found, file.base));
     const failures = [...flight.changed, ...rrRunFailures(outcome.failures, flight.rules)];
     return { status: failures.length > 0 ? "failed" : "completed", violations, failures };
   }
 
-  /** The steering findings of the flight's files whose audit steers, as one background steer at their newest revision. */
-  async #steer(flight: Flight, violations: readonly CodeRuleViolation[]): Promise<void> {
-    const steering = flight.files.filter(file => file.mode === "steer");
+  /** The steering findings of `files` whose audit steers, as one background steer at their newest revision. */
+  async #steer(flight: Flight, files: readonly Gathered[], violations: readonly CodeRuleViolation[]): Promise<void> {
+    const steering = files.filter(file => file.mode === "steer");
     const paths = new Set(steering.map(file => file.edit.path));
     const own = violations.filter(violation => violation.path !== undefined && paths.has(violation.path));
     if (own.length === 0) return;

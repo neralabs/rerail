@@ -368,7 +368,8 @@ export type RrDescription =
       description: string | null;
       mode: "block" | "steer" | "log";
       language: string | null;
-      scope: { include: string[]; exclude: string[]; toolCalls: boolean };
+      /** The files it reads, as its run selects them: `text` names those read as text whatever their language. */
+      scope: { include: string[]; exclude: string[]; text: string[]; toolCalls: boolean };
       /** The codes its findings can have, sorted. */
       codes: string[];
       /** How many `.test` blocks it holds. */

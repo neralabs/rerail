@@ -67,19 +67,26 @@ function describeRequest(paths: string[]): () => { kind: "describe"; paths: stri
 }
 
 /**
+ * The deadline of a describe: 30 seconds. The catalog describes synchronously (`describeRerailPoliciesSync`), so the
+ * daemon answers nothing while it does; the 27 Django rules take about 3 s cold, so 30 s is ten times that, and an
+ * engine that hangs holds the daemon for 30 s, not for a run's 10 minutes. `RERAIL_RR_DEADLINE_MS` replaces it too.
+ */
+const DESCRIBE_DEADLINE_MS = 30_000;
+
+/**
  * What each `.rerail` file of `paths` states of itself (`describeRr`), read and checked by the engine in one child
  * process for all of them. Never rejects: a file that does not read or check, or a child that fails or is killed,
  * gives `ok: false` rows that say why.
  */
 export async function describeRerailPolicies(paths: string[]): Promise<RrDescription[]> {
-  const budget = budgets();
+  const budget = budgets(DESCRIBE_DEADLINE_MS);
   if (budget instanceof Error) return paths.map(path => ({ path, ok: false, error: budget.message }));
   return descriptions(paths, await runChild(describeRequest(paths), { cwd: PACKAGE_ROOT, budgets: budget }), budget);
 }
 
 /** `describeRerailPolicies` for a caller that cannot wait for a promise: this process waits for the child. */
 export function describeRerailPoliciesSync(paths: string[]): RrDescription[] {
-  const budget = budgets();
+  const budget = budgets(DESCRIBE_DEADLINE_MS);
   if (budget instanceof Error) return paths.map(path => ({ path, ok: false, error: budget.message }));
   return descriptions(paths, runChildSync(describeRequest(paths), { cwd: PACKAGE_ROOT, budgets: budget }), budget);
 }

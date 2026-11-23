@@ -38,14 +38,19 @@ function ofLanguage(language: string | null, path: string): boolean {
   return dialect !== undefined && codeRuleLanguageDialects(language).includes(dialect);
 }
 
+/** Whether the rule reads `path` as a file: one of its `.language`, or one a `.scope text` glob matches. */
+function readsAsFile(rule: Pick<RerailRuleEntry, "scope" | "language">, path: string): boolean {
+  return ofLanguage(rule.language, path) || (rule.scope.text.length > 0 && matchesAny(rule.scope.text, path) !== false);
+}
+
 /**
- * Whether the rule reads `path`: a file of its `.language`, which one of its `.scope include` globs matches (any, when
- * it has none) and none of its `exclude` globs does.
+ * Whether the rule reads `path`, as its run selects files (`RerailScope`): one of its `include` globs matches (any, when
+ * it has none), none of its `exclude` globs does, and it reads the file ({@link readsAsFile}).
  */
 export function inRuleScope(rule: Pick<RerailRuleEntry, "scope" | "language">, path: string): boolean {
   const { include, exclude } = rule.scope;
   const included = include.length === 0 || (matchesAny(include, path) ?? true);
-  return included && ofLanguage(rule.language, path) && matchesAny(exclude, path) !== true;
+  return included && readsAsFile(rule, path) && matchesAny(exclude, path) !== true;
 }
 
 /** Whether a write of `path` is one for `rule` to judge: its placement turns it on there and its scope takes the file. */

@@ -40,7 +40,7 @@ class Owner implements RrRunOwner {
     if (this.#written.length === 0) return undefined;
     this.claimed.push(this.#written);
     this.#written = [];
-    return { policies: () => [this.#policy], settle: outcome => this.outcomes.push(outcome) };
+    return { policies: [this.#policy], settle: outcome => this.outcomes.push(outcome) };
   }
 }
 
@@ -133,13 +133,54 @@ describe("a checkout's queue of .rerail runs after edits", () => {
     expect(signal.aborted).toBe(true);
     expect(second.outcomes).toHaveLength(1);
   });
+
+  it("takes the writes made while the run waits for its turn behind another checkout's run, and starts the next only after it", async () => {
+    const runner = heldRunner();
+    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
+    // A scan's run holds this process's one run slot.
+    void runner.slots.run({ start: () => ({ root: "/scanned", policies: ["/rules/scan.rerail"] }) });
+    const owner = new Owner("/rules/a.rerail");
+    owner.write(queue, "a.py");
+    queue.flush();
+    await vi.advanceTimersByTimeAsync(0);
+    // The run is asked for, but has taken nothing yet: the agent's next write joins it.
+    expect(owner.claimed).toEqual([]);
+    owner.write(queue, "a.py");
+    owner.write(queue, "b.py");
+    await vi.advanceTimersByTimeAsync(QUIET_MS * 2);
+    expect(runner.runs).toHaveLength(1);
+    runner.runs[0]!.end(COMPLETED);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(owner.claimed).toEqual([["a.py", "a.py", "b.py"]]);
+    expect(runner.runs.map(({ run }) => run.root)).toEqual(["/scanned", "/repo"]);
+    runner.runs[1]!.end(COMPLETED);
+    await vi.advanceTimersByTimeAsync(QUIET_MS * 2);
+    expect(runner.runs).toHaveLength(2);
+    expect(owner.outcomes).toEqual([COMPLETED]);
+  });
+
+  it("drops a run still waiting for its turn once every owner that wanted it leaves", async () => {
+    const runner = heldRunner();
+    const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
+    void runner.slots.run({ start: () => ({ root: "/scanned", policies: ["/rules/scan.rerail"] }) });
+    const owner = new Owner("/rules/a.rerail");
+    owner.write(queue, "a.py");
+    queue.flush();
+    await vi.advanceTimersByTimeAsync(0);
+    queue.leave(owner);
+    runner.runs[0]!.end(COMPLETED);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(owner.claimed).toEqual([]);
+    expect(owner.outcomes).toEqual([]);
+    expect(runner.runs).toHaveLength(1);
+  });
 });
 
 describe("a checkout's queue when an owner fails", () => {
   it("settles every other owner's claim when one owner's settle throws, and leaves no rejection unhandled", async () => {
     const runner = heldRunner();
     const queue = new RrRunQueue("/repo", { deadlineMs: 60_000, quietMs: QUIET_MS }, runner.slots);
-    const failing: RrRunOwner = { claim: () => ({ policies: () => ["/rules/a.rerail"], settle: () => { throw new Error("the audit store is closed"); } }) };
+    const failing: RrRunOwner = { claim: () => ({ policies: ["/rules/a.rerail"], settle: () => { throw new Error("the audit store is closed"); } }) };
     const other = new Owner("/rules/b.rerail");
     const unhandled = vi.fn();
     process.on("unhandledRejection", unhandled);

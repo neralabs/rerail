@@ -39,7 +39,7 @@ function generatedBy(violation: CodeRuleViolation, ranges: readonly ByteRange[],
  * Whether the edit reports its whole file: in touched-files scope, for a deleted file, and where the text it wrote or
  * the earlier one is unknown (a shell write to a file the session never saw change and Git cannot supply).
  */
-function reportsWholeFile(scope: AuditScope, edit: CodeRuleEdit, base: ReportBase): boolean {
+export function reportsWholeFile(scope: AuditScope, edit: CodeRuleEdit, base: ReportBase): boolean {
   return scope === "touched-files" || edit.deleted === true || edit.generatedText === undefined || base.previousReadError !== undefined;
 }
 

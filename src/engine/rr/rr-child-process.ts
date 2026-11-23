@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "../child-process.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../package-root.js";
-import type { RrBudgets } from "./rr-budgets.js";
+import { type RrBudgets, RUNNER_SETTINGS } from "./rr-budgets.js";
 import type { RrChildRequest, RrChildResult, RrMemoryReport } from "./rr-messages.js";
 
 export type RrKillReason = "deadline" | "memory" | "aborted";
@@ -75,7 +75,8 @@ function childArguments(): string[] {
 }
 
 /**
- * This process's environment, for the child: its thread cap, its store, and none of the runner's own settings.
+ * This process's environment, for the child: its thread cap, its store, and none of the runner's own settings
+ * (`RUNNER_SETTINGS`); the engine's own `RERAIL_RR_*` variables, such as the library `RERAIL_RR_LIB` names, are kept.
  *
  * With no store (`budgets.store` false, the default; `rr-budgets.ts` says why) the child runs with
  * `RERAIL_TAPE_CACHE=off`. With one, it keeps the engine's store of the checkout it runs in: the engine picks one per
@@ -85,7 +86,7 @@ function childArguments(): string[] {
  * of a run's reuse key).
  */
 function childEnvironment(budgets: RrBudgets): NodeJS.ProcessEnv {
-  const kept = Object.entries(process.env).filter(([name]) => !name.startsWith("RERAIL_RR_") && name !== "RERAIL_TAPE_CACHE");
+  const kept = Object.entries(process.env).filter(([name]) => !RUNNER_SETTINGS.has(name) && name !== "RERAIL_TAPE_CACHE");
   return { ...Object.fromEntries(kept), RERAIL_THREADS: String(budgets.threads), ...(budgets.store ? {} : { RERAIL_TAPE_CACHE: "off" }) };
 }
 

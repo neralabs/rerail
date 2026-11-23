@@ -16,6 +16,17 @@ export interface RerailRuleFile {
   readonly sha256: string;
 }
 
+/**
+ * The files a `.rerail` rule reads, as its run selects them (`describeRr`): some `include` glob matches (any file when
+ * none; its `.scope dirs` and `include`), no `exclude` glob does (its `exclude` and `tests false`), and it is a file of
+ * the rule's language or one a `text` glob matches (`.scope text`, read as text whatever its language).
+ */
+export interface RerailScope {
+  readonly include: readonly string[];
+  readonly exclude: readonly string[];
+  readonly text: readonly string[];
+}
+
 export interface RerailRule {
   /** The file's `.policy` id, which is also its file name in the pack. */
   readonly id: string;
@@ -24,7 +35,7 @@ export interface RerailRule {
   readonly mode: RuleMode;
   readonly description: string | null;
   readonly language: string | null;
-  readonly scope: { readonly include: readonly string[]; readonly exclude: readonly string[] };
+  readonly scope: RerailScope;
   /** The violation codes the file's own `.violation`s report. */
   readonly codes: readonly string[];
   /** The file's text. */
@@ -65,7 +76,7 @@ export function rerailRuleOf(described: RerailDescription, source: string): Rera
     mode: described.mode,
     description: described.description,
     language: described.language,
-    scope: { include: described.scope.include, exclude: described.scope.exclude },
+    scope: { include: described.scope.include, exclude: described.scope.exclude, text: described.scope.text },
     codes: described.codes,
     source,
     path: described.path,

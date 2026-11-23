@@ -1,7 +1,7 @@
 import * as childProcess from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -128,7 +128,7 @@ describe("describeRerailPolicies", () => {
       description: "Calls of shout().",
       mode: "log",
       language: "python",
-      scope: { include: ["**/*.py"], exclude: ["vendor/**"], toolCalls: false },
+      scope: { include: ["**/*.py"], exclude: ["vendor/**"], text: [], toolCalls: false },
       codes: ["Shout"],
       tests: 1,
       suppresses: true,
@@ -146,6 +146,19 @@ describe("describeRerailPolicies", () => {
   it("answers the same without a promise", async () => {
     const { rule } = checkout({});
     expect(describeRerailPoliciesSync([rule])).toEqual(await describeRerailPolicies([rule]));
+  });
+
+  it("reads the library `RERAIL_RR_LIB` names, as the engine's own tools do", async () => {
+    const { rule } = checkout({});
+    const library = join(temporary, "library-copy");
+    cpSync(join(PACKAGE_ROOT, "docs", "rule-syntax", "lib"), library, { recursive: true });
+    vi.stubEnv("RERAIL_RR_LIB", library);
+    try {
+      const [row] = await describeRerailPolicies([rule]);
+      expect(row).toMatchObject({ ok: true, files: [{ path: rule }, { path: join(library, "core.rerail") }, { path: join(rule, "..", "lib", "shout-calls.rerail") }] });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

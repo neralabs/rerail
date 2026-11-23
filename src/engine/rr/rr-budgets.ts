@@ -59,6 +59,13 @@ function defaultMemoryBytes(): number {
 const RR_STORE = "RERAIL_RR_STORE";
 
 /**
+ * The runner's own settings, which this process reads and its child never sees: the budgets here and the quiet period
+ * of the runs after edits (`rr-edit-runs.ts`). The engine's own `RERAIL_RR_*` variables (`RERAIL_RR_LIB`, the library
+ * the engine reads its includes from) do reach the child.
+ */
+export const RUNNER_SETTINGS: ReadonlySet<string> = new Set(["RERAIL_RR_DEADLINE_MS", "RERAIL_RR_MEMORY_MB", "RERAIL_RR_THREADS", RR_STORE, "RERAIL_RR_QUIET_MS"]);
+
+/**
  * The budgets of a run: each `RERAIL_RR_*` variable that is set, else the caller's deadline (`deadlineMs`), else the
  * default. Throws for a variable that holds no value it takes.
  */

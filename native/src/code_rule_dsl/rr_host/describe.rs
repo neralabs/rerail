@@ -1,7 +1,7 @@
 //! `describeRr`: what a `.rerail` rule file states, as the engine reads it (its settings, its findings' codes, its
 //! tests and the files it read), once it reads and checks as a run would (`tools::check_rr`).
 
-use crate::code_rule_dsl::logic::front::Program;
+use crate::code_rule_dsl::logic::front::{OPTION_GLOB, Program};
 use crate::code_rule_dsl::logic::front::ast::{Atom, Term};
 use crate::code_rule_dsl::logic::rr;
 use rerail_rr_syntax::syntax::{Item, Tok, tokens};
@@ -21,7 +21,7 @@ fn described(path: &Path) -> Result<Value, String> {
     Ok(json!({
         "path": path, "ok": true, "id": header.id, "revision": header.revision, "description": header.description,
         "mode": header.mode, "language": header.language,
-        "scope": {"include": header.include, "exclude": header.exclude, "toolCalls": header.tool_calls},
+        "scope": scope(&program, &header),
         "codes": codes(&program, &header.id).map_err(|e| format!("{}: {e}", path.display()))?,
         "tests": tests(path)?,
         "suppresses": program.settings.iter().any(|(key, _)| key == "suppress"),
@@ -49,43 +49,32 @@ struct Header {
     description: Option<String>,
     mode: String,
     language: Option<String>,
-    include: Vec<String>,
-    exclude: Vec<String>,
     tool_calls: bool,
 }
 
 impl Header {
     fn of(settings: &[(String, String)]) -> Result<Header, String> {
         let (id, revision) = policy(setting(settings, "policy").ok_or("no `.policy \"id\" revision N`")?)?;
-        let mut header = Header {
+        Ok(Header {
             id,
             revision,
             description: setting(settings, "description").map(first_text).transpose()?.flatten(),
             mode: mode(settings)?,
             language: setting(settings, "language").map(first_text).transpose()?.flatten(),
-            include: Vec::new(),
-            exclude: Vec::new(),
-            tool_calls: false,
-        };
-        for (_, text) in settings.iter().filter(|(key, _)| key == "scope") {
-            header.scope(text)?;
-        }
-        Ok(header)
+            tool_calls: settings.iter().any(|(key, text)| key == "scope" && text.trim() == "tool_calls"),
+        })
     }
+}
 
-    /// One `.scope` line: its globs, or `tool_calls`. The other forms (`dirs`, `text`, `tests`, …) narrow the run
-    /// natively and are not described.
-    fn scope(&mut self, text: &str) -> Result<(), String> {
-        let words = words(text)?;
-        let globs = words.iter().skip(1).cloned();
-        match words.first().map(String::as_str) {
-            Some("include") => self.include.extend(globs),
-            Some("exclude") => self.exclude.extend(globs),
-            Some("tool_calls") => self.tool_calls = true,
-            _ => {}
-        }
-        Ok(())
-    }
+/// The files the rule reads, as the run selects them (`corpus::scoped`): `include`, a glob of which a file matches (any
+/// file, when none), its `dirs` and `include` forms; `exclude`, its `exclude` forms and `tests false`; `text`, the files
+/// it reads as text, whatever their language (`.scope text`). An `include` taken from a policy option is known only at
+/// the run, so a rule with one takes any file; an `exclude` from one is left out, which takes more files, never fewer.
+fn scope(program: &Program, header: &Header) -> Value {
+    let (within, out) = program.doc_scopes.iter().flatten().next().cloned().unwrap_or_default();
+    let known = |globs: Vec<String>| globs.into_iter().filter(|g| !g.starts_with(OPTION_GLOB)).collect::<Vec<_>>();
+    let include = if within.iter().any(|g| g.starts_with(OPTION_GLOB)) { Vec::new() } else { within };
+    json!({"include": include, "exclude": known(out), "text": program.text_globs, "toolCalls": header.tool_calls})
 }
 
 /// The first setting named `key`, as written.

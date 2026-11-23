@@ -77,7 +77,7 @@ fn describe_reads_what_a_rule_states_and_names_why_a_file_is_refused() {
     let row = &rows[0];
     assert_eq!(row["ok"], true, "{row:#}");
     assert_eq!([&row["id"], &row["revision"], &row["description"], &row["mode"], &row["language"]], [&json!("rr-host-shout"), &json!(2), &json!("Calls of shout()."), &json!("log"), &json!("python")]);
-    assert_eq!(row["scope"], json!({"include": ["**/*.py"], "exclude": ["vendor/**"], "toolCalls": false}));
+    assert_eq!(row["scope"], json!({"include": ["**/*.py"], "exclude": ["vendor/**"], "text": [], "toolCalls": false}));
     assert_eq!([&row["codes"], &row["tests"], &row["suppresses"], &row["fixes"]], [&json!(["Shout"]), &json!(1), &json!(true), &json!(false)]);
     let files: Vec<&str> = row["files"].as_array().unwrap().iter().map(|file| file["path"].as_str().unwrap()).collect();
     assert!(files[0].ends_with("shout.rerail") && files.iter().any(|file| file.ends_with("lib/calls.rerail")), "{files:?}");
@@ -85,6 +85,35 @@ fn describe_reads_what_a_rule_states_and_names_why_a_file_is_refused() {
     assert_eq!((&rows[1]["ok"], bad.matches("bad.rerail").count()), (&json!(false), 1), "{bad}");
     let coded = rows[2]["error"].as_str().unwrap();
     assert!(rows[2]["ok"] == false && coded.contains(".violation Coded: its code is a column"), "{coded}");
+}
+
+/// The scope is described as the run selects files by it, every form included: `dirs` and `tests false` narrow what a
+/// write starts a run for as `include` and `exclude` do, `text` names files read whatever their language, and an
+/// include taken from a policy option leaves every file in.
+#[test]
+fn describe_gives_the_scope_the_run_selects_files_by() {
+    let rule = |scope: &str| format!(".policy \"rr-host-scoped\" revision 1\n.language python\n.mode log\n{scope}\n#include \"python/ast.rerail\"\n.violation Call(at: node) \"a call\"\nCall(c) :- kind(c, \"call\").\n");
+    let root = folder(
+        "rr-host-describe-scope",
+        &[
+            ("forms.rerail", &rule(".scope dirs \"shop\", \"api/\"\n.scope exclude \"shop/migrations/**\"\n.scope tests false\n.scope text \"**/*.md\"")),
+            ("option.rerail", &rule(".scope dirs option(\"roots\")\n.scope exclude option(\"skipped\"), \"vendor/**\"")),
+        ],
+    );
+    let rows = describe::describe(&[root.join("forms.rerail"), root.join("option.rerail")]);
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(
+        rows[0]["scope"],
+        json!({
+            "include": ["shop/**", "api/**"],
+            "exclude": ["shop/migrations/**", "test/**", "**/test/**", "tests/**", "**/tests/**"],
+            "text": ["**/*.md"],
+            "toolCalls": false,
+        }),
+        "{:#}",
+        rows[0]
+    );
+    assert_eq!(rows[1]["scope"], json!({"include": [], "exclude": ["vendor/**"], "text": [], "toolCalls": false}), "{:#}", rows[1]);
 }
 
 #[test]

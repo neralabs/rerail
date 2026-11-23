@@ -40,7 +40,7 @@ import {
 import { loadCheckoutRuleSet, ruleConfigurationSignature, ruleConfigurationVersionReader } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
-import type { RerailRule } from "../catalog/rerail-rules/rerail-rule.js";
+import type { RerailRule, RerailScope } from "../catalog/rerail-rules/rerail-rule.js";
 import { audits, checkouts, ruleAttachments, ruleSettings } from "../storage/schema.js";
 import { compareDeterministicStrings, ruleSourceText, stableJsonText } from "../stable-json.js";
 
@@ -327,8 +327,8 @@ export interface RerailRuleEntry {
   readonly id: string;
   /** The rule's file, installed in its pack. */
   readonly path: string;
-  /** The files the rule reads, as its `.scope` says: some include glob (every file when none), and no exclude glob. */
-  readonly scope: { readonly include: readonly string[]; readonly exclude: readonly string[] };
+  /** The files the rule reads, as its run selects them (`RerailScope`). */
+  readonly scope: RerailScope;
   /** The language its `.language` names, or null. */
   readonly language: string | null;
   /**
