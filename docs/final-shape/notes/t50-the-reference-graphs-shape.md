@@ -735,6 +735,19 @@ strata 99.9 → 117.2 s, cross 24.8 → 36.8 s, the rest 18.1 → 14.4 s. Next b
 - `rf_unq_bare` in the cross part (5.2 s), now reading `text` at the named nodes there.
 - The batch's whole read for `text` (above).
 
+### `pre_401`, `pre_402` and step 7, measured (2026-11-23)
+
+- **A named part is priced at its own size.** `within($n, $p)` read from `field($f, "parameters", $p)` was priced at
+  the function's whole size (219 nodes): t50 step 4's bound for a part whose kind is unknown. So the plan expanded
+  every scope to its nodes (3.1 M rows) before testing its few parameters. The tree's fielded edges know a field's
+  children's kinds (`Fielded::joint`), so a part by a named field is priced at their mean size
+  (`Fielded::part_size`; test `within_read_from_a_named_part_is_priced_by_the_parts_own_size`). On `all` (m1max,
+  CPU): `pre_401` and `pre_402` 4.76 → 1.20 s of CPU, every relation's rows the same.
+- **Step 7 is no longer worth an operator.** The prefix walk's stratum (`rf_hit`, `rf_walk` and their readers)
+  takes 0.44 s of CPU at the head (`rf_walk`/`rf_hit`'s own probes 0.07 s), against the 3.7 s t50 measured before
+  steps 1–4. The cross part's cost is spread thin: no stratum over 1.5 s (`rf_named` 1.5, `rf_ref` 1.2, `rf_target`
+  0.57).
+
 ### Step 6 in part: parent edges, label formulas and field captures in the matcher wave (2026-11-22)
 
 Three changes, each with its rows checked (s1000's digest, `all`'s 17 relations) and its own switch:

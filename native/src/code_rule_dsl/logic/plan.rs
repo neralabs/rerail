@@ -501,10 +501,25 @@ impl Fielded {
     pub fn edges(&self, k: &str, f: &str, parent: bool) -> Option<f64> {
         self.field.contains_key(f).then(|| if parent { &self.parent } else { &self.child }.get(&(k.to_owned(), f.to_owned())).copied().unwrap_or(0.0))
     }
+    /// The mean subtree size (by `size`, each kind's) of the children by field `f` of a node of kind `pk`, weighted
+    /// by their kinds' edges: a function's `parameters` is a `parameters` node's few, not the function's whole size.
+    pub fn part_size(&self, pk: &str, f: &str, size: &HashMap<String, f64>) -> Option<f64> {
+        let (mut edges, mut nodes) = (0.0f64, 0.0f64);
+        for ((p, c, field), &n) in &self.joint {
+            if p == pk && field == f
+                && let Some(&s) = size.get(c)
+            {
+                edges += n;
+                nodes += n * s;
+            }
+        }
+        (edges > 0.0).then(|| nodes / edges)
+    }
     fn is_empty(&self) -> bool {
         self.field.is_empty()
     }
-    fn of(edges: impl IntoIterator<Item = (String, String, String, f64)>) -> Fielded {
+    /// Of the tree's fielded edges: (parent kind, child kind, field, count).
+    pub fn of(edges: impl IntoIterator<Item = (String, String, String, f64)>) -> Fielded {
         let mut f = Fielded::default();
         for (p, c, field, n) in edges {
             *f.joint.entry((p.clone(), c.clone(), field.clone())).or_default() += n;
@@ -3776,21 +3791,30 @@ impl Model {
         // $c's not. A part's subtree is at most its parent's, so `within($n, $c)` read from $c is priced at the
         // parent's size (t50 step 4: a function's body, `field($g, "body", $b)`, was priced as a node with children,
         // 3 to 5 nodes, and the plan enumerated every function's body from it).
+        // A part by a named field is priced at that field's children's own mean size where the tree's fielded edges
+        // know them (`Fielded::part_size`): `within($n, $p)` from a function's `parameters` was priced at the whole
+        // function's (219 nodes), and `pre_401` expanded every scope's 3 M nodes before testing its few parameters.
         let mut part_of: HashMap<VarSlot, String> = HashMap::new();
+        let mut part_size: HashMap<VarSlot, f64> = HashMap::new();
         for l in 0..b.len() {
             if let Some(a) = b.plain_atom(l)
                 && !a.neg()
             {
                 let args = b.args(l);
-                let (p, c) = match (b.rel(a), args.len()) {
-                    ("field", 3) => (args[0], args[2]),
-                    ("child", 3) => (args[0], args[1]),
+                let (p, c, f) = match (b.rel(a), args.len()) {
+                    ("field", 3) => (args[0], args[2], b.constant(args[1])),
+                    ("child", 3) => (args[0], args[1], None),
                     _ => continue,
                 };
                 if let (TermRef::Var(p), TermRef::Var(c)) = (p, c)
                     && !kinds.contains_key(&c)
                     && let Some(k) = kinds.get(&p)
                 {
+                    if let Some(f) = f
+                        && let Some(s) = stats.fields.part_size(k, &match f { Constant::Str(s) => s, Constant::Int(i) => i.to_string() }, &stats.size)
+                    {
+                        part_size.insert(c, s);
+                    }
                     part_of.insert(c, k.clone());
                 }
             }
@@ -4010,7 +4034,10 @@ impl Model {
                 && cols == [1]
                 && stats.nodes > 0.0
                 && let Some(size) = match args[1] {
-                    TermRef::Var(v) => kinds.get(&v).or_else(|| part_of.get(&v)).and_then(|k| stats.size.get(k)).copied().or_else(|| stats.subtree_fan()),
+                    TermRef::Var(v) => kinds.get(&v).and_then(|k| stats.size.get(k)).copied()
+                        .or_else(|| part_size.get(&v).copied())
+                        .or_else(|| part_of.get(&v).and_then(|k| stats.size.get(k)).copied())
+                        .or_else(|| stats.subtree_fan()),
                     _ => stats.subtree_fan(),
                 }
             {

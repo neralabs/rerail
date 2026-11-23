@@ -2800,6 +2800,25 @@ fn within_read_from_a_part_is_priced_by_its_parents_size() {
     assert!(work >= 10.0 * 400.0, "work {work}: {order:?}");
 }
 
+/// t50, `pre_401`: a part by a named field is priced at that field's children's own size where the tree's fielded
+/// edges know their kinds. A function's `parameters` is a few nodes, not the function's 400, so the plan reads them
+/// from the part rather than leaving `within` last behind the whole function.
+#[test]
+fn within_read_from_a_named_part_is_priced_by_the_parts_own_size() {
+    let src = ".decl kind(n: number, k: symbol)\n.decl field(p: number, f: symbol, c: number)\n.decl within(n: number, a: number)\n.decl r(n: number)\nr(n) :- kind(g, \"fdef\"), field(g, \"parameters\", b), within(n, b).\n.output r\n";
+    let p = parse(src).unwrap();
+    let mut model = bare_model(&p);
+    model.stats.size = std::sync::Arc::new(HashMap::from([("fdef".to_owned(), 400.0), ("params".to_owned(), 6.0), ("x".to_owned(), 3.0)]));
+    model.stats.kfreq = std::sync::Arc::new([("fdef".to_owned(), 10), ("params".to_owned(), 10), ("x".to_owned(), 2_000)].into_iter().collect());
+    model.stats.nodes = 6_020.0;
+    model.stats.fields = std::sync::Arc::new(super::Fielded::of([("fdef".to_owned(), "params".to_owned(), "parameters".to_owned(), 10.0)]));
+    assert_eq!(model.stats.fields.part_size("fdef", "parameters", &model.stats.size), Some(6.0));
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order.last().map(String::as_str), Some("within($n, $b)"), "{order:?}");
+    // Each function's parameters' descendants: about 10 × 6, not 10 × 400.
+    assert!(work < 10.0 * 400.0, "work {work}: {order:?}");
+}
+
 /// Decision 0299: a relation of the program's facts alone has its rows, distinct values and counts before it is
 /// made, not the default size.
 #[test]
