@@ -46,7 +46,9 @@ pub struct Lang {
 }
 
 impl Lang {
-    /// `table` by number (most frequent first), the widths in bytes, and the revision (1–254).
+    /// `table` by number (the lab's order from the grammar alone, decision 0626: `(flags, kind, field, classes)`, no
+    /// corpus's frequency; a number past the cutoff is read through the side list), the widths in bytes, and the
+    /// revision (1–254).
     pub fn new(table: CodeTable, widths: [usize; 3], revision: u8) -> Result<Self, String> {
         if revision == 0 || revision == 255 {
             return Err(format!("revision {revision} is not a tape revision"));
