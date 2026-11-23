@@ -9,6 +9,7 @@ import type { CodeRuleEdit, CodeRuleViolation } from "../code-rule/code-rule.js"
 import type { RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
 import { editViolations, type ReportBase } from "../code-rule/edit-findings/generated-lines.js";
 import { deliverSteer, steerSourceOf, type SteerTarget } from "../code-rule/edit-findings/steer-publication.js";
+import { RR_QUIET_VARIABLE } from "./rr-budgets.js";
 import type { RrClaim, RrRunOwner, RrRunQueue, RrRunTiming } from "./rr-run-queue.js";
 import type { RrRunOutcome } from "./rr-runner.js";
 import { leftRun, type RrRunEnd } from "./rr-run-slots.js";
@@ -45,11 +46,11 @@ const LONGEST_TIMER_MS = 2_147_483_647;
  * period. Throws for a value that is no whole number from 1 to `LONGEST_TIMER_MS`.
  */
 export function editRunTiming(environment: NodeJS.ProcessEnv = process.env): RrRunTiming {
-  const text = environment.RERAIL_RR_QUIET_MS;
+  const text = environment[RR_QUIET_VARIABLE];
   if (text === undefined || text === "") return { deadlineMs: EDIT_RUN_DEADLINE_MS, quietMs: EDIT_RUN_QUIET_MS };
   const quietMs = Number(text);
   if (!Number.isSafeInteger(quietMs) || quietMs <= 0 || quietMs > LONGEST_TIMER_MS)
-    throw new Error(`RERAIL_RR_QUIET_MS is ${JSON.stringify(text)}: it takes a whole number of milliseconds from 1 to ${LONGEST_TIMER_MS}`);
+    throw new Error(`${RR_QUIET_VARIABLE} is ${JSON.stringify(text)}: it takes a whole number of milliseconds from 1 to ${LONGEST_TIMER_MS}`);
   return { deadlineMs: EDIT_RUN_DEADLINE_MS, quietMs };
 }
 
