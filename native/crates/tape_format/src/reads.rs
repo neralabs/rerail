@@ -106,6 +106,14 @@ pub mod f16 {
         let mut hi = u16_at(t, list, start.wrapping_add(j * 2).min(limit));
         let offsets = start.wrapping_add(nsub.wrapping_mul(2));
         let low = i % BLOCK;
+        // The block's offsets lie before the part's end (every whole tape's): the first at or past `low` is `lo`
+        // and the count of those below it, compared without a branch an offset (the search's are each a guess the
+        // core mispredicts: most of a `kind` read past the cutoff). Else the search, each offset held to the end.
+        let (from, to) = (list as usize + offsets as usize + lo as usize, list as usize + offsets as usize + hi as usize);
+        if lo < hi && offsets.wrapping_add(hi) <= limit && let Some(run) = t.get(from..to) {
+            lo += run.iter().map(|&b| u32::from(u32::from(b) < low)).sum::<u32>();
+            hi = lo;
+        }
         while lo < hi {
             let middle = lo.wrapping_add(hi) >> 1;
             if u8_at(t, list, offsets.wrapping_add(middle).min(limit)) < low {
