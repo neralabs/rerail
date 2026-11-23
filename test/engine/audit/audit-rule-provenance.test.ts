@@ -1835,15 +1835,16 @@ describe("an audit whose other stored lists do not read", () => {
     threeAudits(path);
     const store = new SqliteAuditStore(path);
     const prepared = vi.spyOn(Database.prototype, "prepare");
+    let sources: string[] = [];
     try {
       store.latestSummary("session-a");
+      sources = prepared.mock.calls.map(([source]) => source);
     } finally {
       prepared.mockRestore();
       store.close();
     }
     // Each test of a list in SQL begins with `json_valid`; the summary reads five lists.
-    const tests = prepared.mock.calls.map(([source]) => source.split("json_valid(").length - 1).filter(count => count > 0);
-    expect(tests).toEqual([5]);
+    expect(sources.map(source => source.split("json_valid(").length - 1).filter(count => count > 0)).toEqual([5]);
   });
 
   it.each([

@@ -468,13 +468,12 @@ const FILE_WORK_STOPPED = sql.raw(`(json_extract(value, '$.blind') IS NULL AND j
 
 /**
  * How many items `text` holds when it is a JSON array whose items are each of JSON type `item`, as `parsedList` reads
- * it, else NULL, in SQL. Each test runs only once the one before it passed, so text that does not parse fails no
- * query. SQLite parses the text once: `json_type` and `jsonb` read the parse `json_valid` made, and `json_each` walks
- * the `jsonb` value it is given without parsing it again.
+ * it, else NULL, in SQL: one walk of its items tests them and counts them. Each test runs only once the one before it
+ * passed, so text that does not parse fails no query.
  */
 function listLength(text: SQL | SQLiteColumn, item: StoredItem): SQL<number | null> {
   return sql<number | null>`(CASE WHEN NOT json_valid(${text}) THEN NULL WHEN json_type(${text}) <> 'array' THEN NULL
-    ELSE (SELECT CASE WHEN max(entry.type <> ${item}) THEN NULL ELSE count(*) END FROM json_each(jsonb(${text})) entry) END)`;
+    ELSE (SELECT CASE WHEN max(entry.type <> ${item}) THEN NULL ELSE count(*) END FROM json_each(${text}) entry) END)`;
 }
 /** 1 when `text` holds a JSON array whose items are each of JSON type `item`, as `parsedList` reads it, else 0, in SQL. */
 function holdsList(text: SQL | SQLiteColumn, item: StoredItem): SQL<number> {
