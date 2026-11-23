@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import {
-  access,
   chmod,
   copyFile,
   lstat,
@@ -35,6 +34,7 @@ import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { CURRENT_LINK, DAEMON_ACCESS_TOKEN_FILE, defaultRerailHome, STATUS_LINES_FOLDER, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
 import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import { runGit } from "../engine/git.js";
+import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { pinnedNodePath } from "./node-path.js";
 import { windowsSystemProgram } from "../engine/system-programs.js";
@@ -67,11 +67,11 @@ export interface RegistrationOptions {
    */
   keepHookCommand?: boolean;
   /**
-   * Test seam: whether a file is at a path. Registration asks it of cmd.exe's System32 path before it writes or keeps a
-   * Windows hook entry that starts cmd.exe (`cmdHookEntry`). This computer's file system by default, asked without
-   * holding the event loop.
+   * Test seam: whether cmd.exe at a path runs a command. Registration asks it of cmd.exe's System32 path before it writes
+   * or keeps a Windows hook entry that starts cmd.exe (`cmdHookEntry`). By default it starts that cmd.exe once
+   * (`cmdRunsCommands`), without holding the event loop.
    */
-  fileExists?: ((path: string) => boolean | Promise<boolean>) | undefined;
+  cmdRuns?: ((path: string) => boolean | Promise<boolean>) | undefined;
   /**
    * Removal only: whether `root` is the managed install, whose removal takes Pi's gallery entry (`npm:@neralabs/rerail`)
    * out too. `rerail install --remove` sets it when it removes the install itself, which before any set-up is the running
@@ -107,8 +107,8 @@ interface Context {
   platform: NodeJS.Platform;
   /** `RegistrationOptions.keepHookCommand`. */
   keepHookCommand: boolean;
-  /** `RegistrationOptions.fileExists`. */
-  fileExists: (path: string) => boolean | Promise<boolean>;
+  /** `RegistrationOptions.cmdRuns`. */
+  cmdRuns: (path: string) => boolean | Promise<boolean>;
 }
 
 interface TextFile {
@@ -580,9 +580,9 @@ function cursorPowershellHookCommand(context: HookCommandContext, executable: st
  * on the node the host's PATH finds first, and where that is another node than the recorded one the launcher starts the
  * recorded one as a second process on every hook event; the PATH set-up runs with tells nothing of the host's, which a
  * version manager's shell, an editor started from another shell or an installer run since can make differ. The `node`
- * entry stays only where cmd.exe cannot start the paths (`cmdHookEntry`). Registration reads no PATH. With
- * `keepHookCommand`, an entry in either form that the settings already hold stays as it is (`keptHookEntry`). A
- * removal writes no entry (`updateGroupedHooks`), so it does not look for cmd.exe.
+ * entry stays only where cmd.exe cannot start the paths or runs no command (`cmdHookEntry`). Registration reads no
+ * PATH. With `keepHookCommand`, an entry in either form that the settings already hold stays as it is
+ * (`keptHookEntry`). A removal writes no entry (`updateGroupedHooks`), so it does not start cmd.exe.
  */
 async function hookExecEntry(context: Context, executable: string): Promise<JsonObject> {
   const launched: LauncherArgs = [hookScript(context, ENTRY_POINTS.hookLauncher), context.nodePath, hookScript(context, executable)];
@@ -598,16 +598,17 @@ function nodeHookEntry(launched: LauncherArgs): JsonObject {
 /**
  * The cmd.exe exec-form entry that runs the hook launcher with `launched` (`cmdHookArgs`), or undefined where cmd.exe
  * would not read each path back as one word (`cmdReadsAsOneWord`), where SystemRoot does not give cmd.exe a full path
- * (`isFullWindowsPath`), or where no file is at that path: that hook starts with `node`, in two processes when PATH finds
- * another node. Windows completes any other path from a current folder or drive, and a hook's current folder is the
- * repository it runs in. A full path with nothing at it, from a SystemRoot that names no Windows, would start nothing on
- * every hook event. The words and the path's form are tested before the file is looked for, since a path that is not
- * full would be looked for from this process's current folder.
+ * (`isFullWindowsPath`), or where cmd.exe at that path runs no command (`cmdRunsCommands`): that hook starts with `node`,
+ * in two processes when PATH finds another node. Windows completes any other path from a current folder or drive, and a
+ * hook's current folder is the repository it runs in. A full path with nothing at it, from a SystemRoot that names no
+ * Windows, or a cmd.exe that a policy keeps from running commands, would fail every hook event. The words and the
+ * path's form are tested before cmd.exe is started, since a path that is not full would be started from this process's
+ * current folder.
  */
-async function cmdHookEntry(context: Pick<Context, "fileExists">, launched: LauncherArgs): Promise<JsonObject | undefined> {
+async function cmdHookEntry(context: Pick<Context, "cmdRuns">, launched: LauncherArgs): Promise<JsonObject | undefined> {
   const cmd = windowsSystemProgram("cmd.exe");
   if (!isFullWindowsPath(cmd) || !launched.every(path => cmdReadsAsOneWord(path))) return undefined;
-  return await context.fileExists(cmd) ? { type: "command", command: cmd, args: cmdHookArgs(launched) } : undefined;
+  return await context.cmdRuns(cmd) ? { type: "command", command: cmd, args: cmdHookArgs(launched) } : undefined;
 }
 
 /**
@@ -670,7 +671,8 @@ function cmdReadsAsOneWord(path: string): boolean {
  * `entry`, or with `keepHookCommand` the entry of either form for the same hook (`nodeHookEntry`, `cmdHookEntry`) that
  * `settings` already hold: versions 0.2.0 and earlier wrote the `node` form where their PATH found the recorded node,
  * and such a hook still runs, so a check of whether Rerail is connected reads it as current. `entry` is the cmd.exe form
- * only while a file is at its path (`hookExecEntry`): one with nothing there starts no hook, so it reads as out of date.
+ * only while cmd.exe at its path runs a command (`hookExecEntry`): one that runs none starts no hook, so it reads as out
+ * of date.
  */
 function keptHookEntry(context: Context, settings: JsonObject, entry: JsonObject): JsonObject {
   const launched = context.keepHookCommand && typeof entry.command === "string" ? launcherArgs(entry.command, entry.args) : undefined;
@@ -2004,12 +2006,27 @@ export function detectHarnesses(home: string = homedir()): Harness[] {
   return HARNESSES.filter((harness) => existsSync(join(base, CONFIG_DIRS[harness])));
 }
 
+/** How long registration waits for `cmd.exe /d /c exit 0` to end before it reads that cmd.exe as one that runs no command. */
+const CMD_RUN_LIMIT_MS = 10_000;
+
 /**
- * Whether a file or folder is at `path`, asked of this computer's file system off the event loop: the daemon asks it in
- * the check of whether Rerail is connected (`cmdHookEntry`), and a synchronous look would hold every request it serves.
+ * Whether cmd.exe at `path` runs a command: `cmd.exe /d /c exit 0`, started as Claude Code starts an exec-form hook,
+ * ends with exit 0. A file there is not enough. The `DisableCMD` policy at 1 leaves it in place, and cmd then writes "The
+ * command prompt has been disabled by your administrator." and ends with exit 255 for every command; an AppLocker or WDAC
+ * rule refuses to start it. Started off the event loop: the daemon asks it in the check of whether Rerail is connected
+ * (`cmdHookEntry`), and a synchronous start would hold every request it serves.
  */
-function fileThere(path: string): Promise<boolean> {
-  return access(path).then(() => true, () => false);
+function cmdRunsCommands(path: string): Promise<boolean> {
+  return new Promise(resolve => {
+    try {
+      const cmd = spawn(path, ["/d", "/c", "exit", "0"], { stdio: "ignore", timeout: CMD_RUN_LIMIT_MS });
+      cmd.once("error", () => resolve(false));
+      cmd.once("exit", code => resolve(code === 0));
+    } catch {
+      // The helper refuses a path that is not full, and spawn throws on arguments it cannot pass: no cmd.exe to start.
+      resolve(false);
+    }
+  });
 }
 
 function newContext(options: RegistrationOptions, mode: Mode): Context {
@@ -2024,7 +2041,7 @@ function newContext(options: RegistrationOptions, mode: Mode): Context {
     dryRun: options.dryRun === true,
     platform: options.platform ?? process.platform,
     keepHookCommand: options.keepHookCommand === true,
-    fileExists: options.fileExists ?? fileThere,
+    cmdRuns: options.cmdRuns ?? cmdRunsCommands,
   };
 }
 

@@ -353,8 +353,8 @@ describe("Claude Code settings.json", () => {
   }
 
   /**
-   * A file system with cmd.exe at `systemCmd()`, the one file set-up asks about before it writes a cmd.exe entry
-   * (`RegistrationOptions.fileExists`): these tests run on Linux too, and give `SystemRoot` values no Windows has.
+   * A computer whose cmd.exe at `systemCmd()` runs commands, the one program set-up starts before it writes a cmd.exe
+   * entry (`RegistrationOptions.cmdRuns`): these tests run on Linux too, and give `SystemRoot` values no Windows has.
    */
   const cmdThere = (path: string): boolean => path === systemCmd();
 
@@ -382,7 +382,7 @@ describe("Claude Code settings.json", () => {
     const other = await windowsNode(home, "other-node");
     const link = join(dirname(home), "nodejs");
     linkFolder(dirname(nodePath), link);
-    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists: cmdThere };
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, cmdRuns: cmdThere };
     const viaCmd = cmdEntry(launcherPath, nodePath, hookPath);
     // Claude Code starts a hook with its own PATH, which need not be set-up's: a version manager's shell, an editor
     // started from another shell, an installer run since. A `node` entry would start the launcher on whichever node that
@@ -418,7 +418,7 @@ describe("Claude Code settings.json", () => {
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
     const nodePath = await windowsNode(home, folder);
-    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists: cmdThere };
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, cmdRuns: cmdThere };
 
     await registerHarnesses(windows);
     // A word with no space reaches cmd.exe bare, where `&` splits it, and cmd expands `%` even inside quotes: that hook
@@ -443,8 +443,8 @@ describe("Claude Code settings.json", () => {
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
     const nodePath = await windowsNode(home, "newer-node");
-    // A file is at cmd.exe's path under each `SystemRoot` here, so the path's form alone decides.
-    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists: cmdThere };
+    // cmd.exe runs commands at its path under each `SystemRoot` here, so the path's form alone decides.
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, cmdRuns: cmdThere };
     // Claude Code starts the command from the hook's working folder, a repository. Windows completes a path without a
     // drive or without a root folder from there or from its drive: a `Windows\System32\cmd.exe` committed to the
     // repository, or one on its drive, would run on every hook event.
@@ -493,8 +493,8 @@ describe("Claude Code settings.json", () => {
     const path = join(home, ".claude", "settings.json");
     const nodePath = await windowsNode(home, "newer-node");
     // cmd.exe only where Windows is: an entry naming any other path would start nothing on every hook event.
-    const fileExists = (file: string) => file === win32.join(windowsAt, "System32", "cmd.exe");
-    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists };
+    const cmdRuns = (file: string) => file === win32.join(windowsAt, "System32", "cmd.exe");
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, cmdRuns };
     vi.stubEnv("SystemRoot", systemRoot);
 
     await registerHarnesses(windows);
@@ -504,7 +504,7 @@ describe("Claude Code settings.json", () => {
     expect(JSON.stringify(await readJson(path))).not.toContain("hook-launcher");
   });
 
-  it("asks this computer's files whether cmd.exe is there unless told otherwise", async () => {
+  it("starts cmd.exe on this computer to learn whether it runs commands unless told otherwise", async () => {
     const { home, root } = await fixture();
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
@@ -518,27 +518,46 @@ describe("Claude Code settings.json", () => {
     expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [viaPath] }]);
   });
 
+  it.runIf(process.platform === "win32")("writes main's node hook entry where cmd.exe is there but runs no command, as under the DisableCMD policy", async () => {
+    const { home, root } = await fixture();
+    const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
+    const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
+    const path = join(home, ".claude", "settings.json");
+    const nodePath = await windowsNode(home, "newer-node");
+    // A program at cmd.exe's System32 path that ends `exit 0` with another exit code, as cmd.exe ends every command under
+    // the DisableCMD policy at 1, with exit 255 after "The command prompt has been disabled by your administrator.": here
+    // a node, which takes `/d` for a script it cannot find and exits 1. A cmd.exe entry would fail every hook event.
+    const systemRoot = join(dirname(home), "Windows");
+    await mkdir(join(systemRoot, "System32"), { recursive: true });
+    await copyFile(process.execPath, join(systemRoot, "System32", "cmd.exe"));
+    vi.stubEnv("SystemRoot", systemRoot);
+
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"] });
+    const viaPath = { type: "command", command: "node", args: [launcherPath, nodePath, hookPath] };
+    expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [viaPath] }]);
+  }, 60_000);
+
   it.each([
     // A removal writes no hook entry, so it needs no cmd.exe.
     ["a removal", 0, (options: RegistrationOptions) => unregisterHarnesses(options)],
-    // A check of whether Rerail is connected compares the entry registration would write, looked for once, with both forms.
+    // A check of whether Rerail is connected compares the entry registration would write, asked once, with both forms.
     ["a check of whether Rerail is connected", 1, (options: RegistrationOptions) => registerHarnesses({ ...options, dryRun: true, keepHookCommand: true })],
-  ])("%s looks for cmd.exe %i times on Windows", async (_case, looks, run) => {
+  ])("%s starts cmd.exe %i times on Windows", async (_case, starts, run) => {
     const { home, root } = await fixture();
     const asked: string[] = [];
-    const fileExists = (file: string) => {
+    const cmdRuns = (file: string) => {
       asked.push(file);
       return cmdThere(file);
     };
-    const windows = { root, home, nodePath: await windowsNode(home, "recorded-node"), platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists };
+    const windows = { root, home, nodePath: await windowsNode(home, "recorded-node"), platform: "win32" as const, harnesses: ["claude-code"] as const, cmdRuns };
     await registerHarnesses(windows);
     asked.length = 0;
 
     await run(windows);
-    expect(asked).toEqual(Array.from({ length: looks }, systemCmd));
+    expect(asked).toEqual(Array.from({ length: starts }, systemCmd));
   });
 
-  it("replaces and removes a cmd.exe hook entry set-up wrote once that cmd.exe is gone, and keeps a person's bare cmd.exe hook", async () => {
+  it("replaces and removes a cmd.exe hook entry set-up wrote once that cmd.exe runs no command, and keeps a person's bare cmd.exe hook", async () => {
     const { home, root } = await fixture();
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
@@ -550,11 +569,12 @@ describe("Claude Code settings.json", () => {
     const sessionStart = async () => ((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart;
     const written = async () => {
       await seed(path, { hooks: { SessionStart: [{ hooks: [theirs] }] } });
-      await registerHarnesses({ ...windows, fileExists: cmdThere });
+      await registerHarnesses({ ...windows, cmdRuns: cmdThere });
       expect(await sessionStart()).toEqual([{ hooks: [theirs] }, { hooks: [ours] }]);
     };
-    // Nothing is at cmd.exe's path any more: the entry set-up wrote starts nothing, and it is still Rerail's.
-    const gone = { ...windows, fileExists: () => false };
+    // cmd.exe is gone, or a policy keeps it from running commands: the entry set-up wrote fails every hook event, a check
+    // of whether Rerail is connected reads it as out of date, and it is still Rerail's.
+    const gone = { ...windows, cmdRuns: () => false };
 
     await written();
     const plan = await registerHarnesses({ ...gone, dryRun: true, keepHookCommand: true });
@@ -666,7 +686,7 @@ describe("Claude Code settings.json", () => {
     const { home, root } = await fixture();
     const path = join(home, ".claude", "settings.json");
     const nodePath = await windowsPathNode(home, "recorded-node");
-    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists: cmdThere };
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, cmdRuns: cmdThere };
     const plan = async (options: { keepHookCommand?: boolean }) =>
       change((await registerHarnesses({ ...windows, ...options, dryRun: true })).changes, "claude-code", "settings.json").action;
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
@@ -698,7 +718,7 @@ describe("Claude Code settings.json", () => {
     // it is the person's, and only an entry Rerail wrote word for word is Rerail's to replace or remove.
     const theirs = { type: "command", command: ours.command, args: ["/d", "/c", "(", "set", "MY_HOOK_FLAG=1", "&", nodePath, launcherPath, nodePath, hookPath, ")"] };
     await seed(path, { hooks: { PreToolUse: [{ matcher: "", hooks: [theirs] }] } });
-    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists: cmdThere };
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, cmdRuns: cmdThere };
 
     await registerHarnesses(windows);
     expect(((await readJson(path)).hooks as Record<string, unknown[]>).PreToolUse).toEqual([
@@ -715,7 +735,7 @@ describe("Claude Code settings.json", () => {
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
     const nodePath = await windowsNode(home, "newer-node");
-    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists: cmdThere };
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, cmdRuns: cmdThere };
     // A build of Rerail wrote these words: a recorded node that could not start showed a hook error on every event.
     const earlier = cmdEntry(launcherPath, nodePath, hookPath, []);
     const sessionStart = async () => ((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart;
@@ -743,7 +763,7 @@ describe("Claude Code settings.json", () => {
     // Rerail writes cmd.exe by its System32 path: the same words after any other command are the person's.
     const theirs = { ...ours, command };
     await seed(path, { hooks: { SessionStart: [{ hooks: [theirs] }] } });
-    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists: cmdThere };
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, cmdRuns: cmdThere };
 
     await registerHarnesses(windows);
     expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [theirs] }, { hooks: [ours] }]);
@@ -760,7 +780,7 @@ describe("Claude Code settings.json", () => {
     // Claude Code passes shell-form hooks to Git Bash, which turns `/d /c` into drive paths so cmd reads the event JSON as commands.
     const cmdWrapper = `cmd /d /c "if exist "${nodePath}" ("${nodePath}" "${hookPath}") else (node "${hookPath}")"`;
     await seed(path, { hooks: { ...foreign.hooks, SessionStart: [{ hooks: [{ type: "command", command: cmdWrapper }] }] } });
-    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists: cmdThere };
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, cmdRuns: cmdThere };
 
     await registerHarnesses(windows);
     // `node.exe` from PATH keeps the hook alive after a version manager removes the recorded node.
@@ -843,7 +863,7 @@ describe("Claude Code settings.json", () => {
     // 0.1.3 and 0.1.4 start the launcher with `node` from PATH, whichever node PATH finds first.
     const released = (node: string) => ({ type: "command", command: "node", args: [launcherPath, node, hookPath] });
     await checkReleasedEntries({
-      options: { root, home, nodePath: await recordedNode("recorded-node"), platform: "win32", harnesses: ["claude-code"], fileExists: cmdThere },
+      options: { root, home, nodePath: await recordedNode("recorded-node"), platform: "win32", harnesses: ["claude-code"], cmdRuns: cmdThere },
       released,
       current: node => cmdEntry(launcherPath, node, hookPath),
       upgrade: () => recordedNode("v24.9.0"),

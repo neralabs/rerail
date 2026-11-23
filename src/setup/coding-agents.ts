@@ -53,8 +53,8 @@ export interface DataAccessOptions {
   platform?: NodeJS.Platform;
   /** Claude Code's managed settings file (`claudeManagedSettingsPath`); null for none. */
   claudeManagedSettings?: string | null;
-  /** Whether a file is at a path, as the registration that counts as connected reads it (`RegistrationOptions.fileExists`). */
-  fileExists?: (path: string) => boolean | Promise<boolean>;
+  /** Whether cmd.exe at a path runs a command, as the registration that counts as connected asks it (`RegistrationOptions.cmdRuns`). */
+  cmdRuns?: (path: string) => boolean | Promise<boolean>;
 }
 
 /**
@@ -69,14 +69,14 @@ export async function codingAgentStates(root: string, home: string, options: Dat
   const states: CodingAgentState[] = [];
   for (const id of HARNESSES) {
     const base = { id, name: CODING_AGENT_NAMES[id], found: found.has(id) };
-    const state = base.found ? await connection(root, home, id, { platform, fileExists: options.fileExists }) : { connected: false, problem: null };
+    const state = base.found ? await connection(root, home, id, { platform, cmdRuns: options.cmdRuns }) : { connected: false, problem: null };
     states.push({ ...base, ...state, rerailData: rerailDataAccess(id, state.connected, home, platform, managed) });
   }
   return states;
 }
 
 /** What a registration reads of this computer that a check of whether Rerail is connected can name. */
-type ConnectionFacts = Pick<RegistrationOptions, "platform" | "fileExists">;
+type ConnectionFacts = Pick<RegistrationOptions, "platform" | "cmdRuns">;
 
 async function connection(root: string, home: string, id: Harness, facts: ConnectionFacts): Promise<Pick<CodingAgentState, "connected" | "problem">> {
   try {

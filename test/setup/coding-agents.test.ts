@@ -327,16 +327,16 @@ describe("whether a coding agent can read Rerail's data", () => {
     const other = join(dirname(home), "other-node");
     await mkdir(other);
     await writeFile(join(other, "node.exe"), "");
-    // cmd.exe at the path set-up names, on Linux too: set-up writes a cmd.exe entry only where a file is there.
+    // A cmd.exe that runs commands at the path set-up names, on Linux too: set-up writes a cmd.exe entry only there.
     const cmd = win32.join(process.env.SystemRoot || String.raw`C:\Windows`, "System32", "cmd.exe");
-    const fileExists = (path: string) => path === cmd;
+    const cmdRuns = (path: string) => path === cmd;
     const askedWith = async (path: string) => {
       vi.stubEnv("PATH", path);
-      return stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, fileExists });
+      return stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, cmdRuns });
     };
 
     expect(await askedWith(other)).toEqual({ connected: true, access: "file-tools" });
-    await registerHarnesses({ root, home, harnesses: ["claude-code"], platform: "win32", fileExists });
+    await registerHarnesses({ root, home, harnesses: ["claude-code"], platform: "win32", cmdRuns });
     expect(await readFile(join(home, ".claude", "settings.json"), "utf8")).toContain(inJson(cmd));
     expect(await askedWith(recorded)).toEqual({ connected: true, access: "file-tools" });
   });
@@ -353,14 +353,14 @@ describe("whether a coding agent can read Rerail's data", () => {
     vi.stubEnv("PATHEXT", ".exe");
     vi.stubEnv("PATH", other);
     const cmd = win32.join(process.env.SystemRoot || String.raw`C:\Windows`, "System32", "cmd.exe");
-    const fileExists = (path: string) => path === cmd;
-    const windows = { root, home, harnesses: ["claude-code"] as const, platform: "win32" as const, fileExists };
+    const cmdRuns = (path: string) => path === cmd;
+    const windows = { root, home, harnesses: ["claude-code"] as const, platform: "win32" as const, cmdRuns };
     looksOnPath.mockClear();
     await registerHarnesses(windows);
     expect(await readFile(settings, "utf8")).toContain(inJson(cmd));
     expect(looksOnPath).not.toHaveBeenCalled();
 
-    expect(await stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, fileExists })).toEqual({ connected: true, access: "file-tools" });
+    expect(await stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, cmdRuns })).toEqual({ connected: true, access: "file-tools" });
     // The question `rerail update` and set-up ask of each coding agent (`isRegistered`): would a removal change anything.
     const removal = await unregisterHarnesses({ ...windows, dryRun: true });
     expect(removal.changes.some(change => change.harness === "claude-code" && change.action !== "unchanged" && change.action !== "skipped")).toBe(true);
