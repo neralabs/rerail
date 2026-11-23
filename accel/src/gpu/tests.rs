@@ -439,7 +439,29 @@ fn a_levels_staged_probes_are_the_hosts_joins_batch_after_batch() {
     // The GPU's lane alone, then every lane as the engine has them (the cores', the caller's own runs of a launch no
     // lane took, each lane's claims), its launches taken in no order.
     for (lanes, ex) in [("the gpu's", Executor::with(vec![backend().unwrap()])), ("every", Executor::new())] {
-    let mut rng = Rng(31);
+        level_batches(&ex, 31, lanes);
+    }
+}
+
+/// The same from 4 threads at once through one executor, as a run's strata send their levels' batches while the
+/// lanes' workers and other strata's device waves submit: each its own pairs.
+#[test]
+fn concurrent_levels_staged_probes_are_the_hosts_joins() {
+    if !has_device() {
+        return;
+    }
+    let ex = Executor::new();
+    std::thread::scope(|sc| {
+        for t in 0..4u64 {
+            let ex = &ex;
+            sc.spawn(move || level_batches(ex, 100 + t, "every"));
+        }
+    });
+}
+
+/// `a_levels_staged_probes_...`'s batches through `ex`, from seed `seed`.
+fn level_batches(ex: &Executor, seed: u64, lanes: &str) {
+    let mut rng = Rng(seed);
     // Kept right sides, reused by later batches under their ids.
     let mut kept: Vec<(u64, Vec<i64>)> = Vec::new();
     for batch in 0..60u64 {
@@ -461,7 +483,8 @@ fn a_levels_staged_probes_are_the_hosts_joins_batch_after_batch() {
                 let most = if rng.below(3) == 0 { 40_000 } else { 2_000 };
                 let nr = 1 + rng.below(most) as usize;
                 let r: Vec<i64> = (0..nr).map(|_| rng.below(range) as i64).collect();
-                let id = batch << 8 | j;
+                // One id names one right side: unique across the threads, as a relation's uid is.
+                let id = seed << 32 | batch << 8 | j;
                 kept.push((id, r.clone()));
                 (id, r)
             };
@@ -492,6 +515,5 @@ fn a_levels_staged_probes_are_the_hosts_joins_batch_after_batch() {
             assert_eq!(got.len(), want.len(), "{lanes} lanes, batch {batch} join {i}: pairs");
             assert!(got == want, "{lanes} lanes, batch {batch} join {i}: the host's pairs, in its order");
         }
-    }
     }
 }
