@@ -373,7 +373,7 @@ The template's findings stand at the file's lines.
      declarations by their bytes (`used_after`). (Since 5.9 `visit_index` is the tape's order elsewhere, below.)
    - 5.7: `the_vue_packs_template_policies_find_their_examples`, alone and beside a plain program: no-unused-vars,
      no-use-v-if-with-v-for, valid-v-for, no-unused-refs, no-template-shadow.
-   - **Found, open: a pack's Vue policies beside a context.** Beside no-template-shadow, which brings the contexts
+   - **Found (built in rungs 5.7-5.10, below): a pack's Vue policies beside a context.** Beside no-template-shadow, which brings the contexts
      `script` and `expression`, a policy reading the script's or the template code's nodes in host rules finds
      nothing (rule 1: those nodes are the contexts'), and no-unused-refs fails (`no such table: main.vname`). 15 of
      the pack's 23 policies read them so (11 through `vue/component` or `vue/mutation`, 4 through `vue/code`). Rule 5
