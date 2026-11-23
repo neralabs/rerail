@@ -5904,7 +5904,11 @@ fn each_prelude(p: u32) -> String {
         } else {
             (format!("return [vdupq_n_u32((b.add(u as usize * s) as *const {ty}).read_unaligned(){ext} as u32); {p}];"), format!("g[j] = v{ext} as u32;"))
         };
-        o.push_str(&format!("#[inline(always)]\nunsafe fn ld_{name}(b: *const u8, ix: [uint32x4_t; {p}], s: usize) -> [uint32x4_t; {n}] {{\n\tlet u = minv(&ix);\n\tif u == maxv(&ix) {{\n\t\t{one}\n\t}}\n\tlet a = words{p}(ix);\n\tlet mut g = [0u32; {w}];\n\tfor j in 0..{} {{\n\t\tlet v = (b.add(a[j] as usize * s) as *const {ty}).read_unaligned();\n\t\t{put}\n\t}}\n\tregs{n}(g)\n}}\n", 4 * p));
+        // A function of a loop over the lanes is `#[inline]`, not always: LLVM simplifies it (unrolls its loop) on its
+        // own before inlining it. Inlined first, each of its loops was unrolled in the kernel's function, every unroll
+        // walking that function's values (`ScalarEvolution::forgetLoop`): `join_run` did not compile in 15 minutes,
+        // and compiles in 158 s so.
+        o.push_str(&format!("#[inline]\nunsafe fn ld_{name}(b: *const u8, ix: [uint32x4_t; {p}], s: usize) -> [uint32x4_t; {n}] {{\n\tlet u = minv(&ix);\n\tif u == maxv(&ix) {{\n\t\t{one}\n\t}}\n\tlet a = words{p}(ix);\n\tlet mut g = [0u32; {w}];\n\tfor j in 0..{} {{\n\t\tlet v = (b.add(a[j] as usize * s) as *const {ty}).read_unaligned();\n\t\t{put}\n\t}}\n\tregs{n}(g)\n}}\n", 4 * p));
     }
     // Each lane's element at its address (`at(j)`, lane `j`'s), and stores there: in the lanes mask `k` has on (a
     // lane off writes a word of the stack's, no branch: its address opaque, so the select stays one), or in all.
@@ -5912,11 +5916,11 @@ fn each_prelude(p: u32) -> String {
         let wide = ty == "u64";
         let (n, w) = if wide { (2 * p, 8 * p) } else { (p, 4 * p) };
         let put = if wide { format!("g[j] = v as u32;\n\t\tg[{} + j] = (v >> 32) as u32;", 4 * p) } else { format!("g[j] = v{ext} as u32;") };
-        o.push_str(&format!("#[inline(always)]\nunsafe fn ldj_{name}(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; {n}] {{\n\tlet mut g = [0u32; {w}];\n\tfor j in 0..{} {{\n\t\tlet v = (at(j) as *const {ty}).read_unaligned();\n\t\t{put}\n\t}}\n\tregs{n}(g)\n}}\n", 4 * p));
+        o.push_str(&format!("#[inline]\nunsafe fn ldj_{name}(mut at: impl FnMut(usize) -> *const u8) -> [uint32x4_t; {n}] {{\n\tlet mut g = [0u32; {w}];\n\tfor j in 0..{} {{\n\t\tlet v = (at(j) as *const {ty}).read_unaligned();\n\t\t{put}\n\t}}\n\tregs{n}(g)\n}}\n", 4 * p));
         if ext.is_empty() {
             let val = if wide { format!("(x[{} + j] as u64) << 32 | x[j] as u64", 4 * p) } else { format!("x[j] as {ty}") };
-            o.push_str(&format!("#[inline(always)]\nunsafe fn stj_{name}(k: [uint32x4_t; {p}], v: [uint32x4_t; {n}], at: impl Fn(usize) -> *mut u8) {{\n\tlet (m, x) = (words{p}(k), words{n}(v));\n\tlet mut z = 0u64;\n\tlet sink = core::hint::black_box(&raw mut z) as *mut u8;\n\tfor j in 0..{} {{\n\t\t(core::hint::select_unpredictable(m[j] != 0, at(j), sink) as *mut {ty}).write_unaligned({val});\n\t}}\n}}\n", 4 * p));
-            o.push_str(&format!("#[inline(always)]\nunsafe fn stjf_{name}(v: [uint32x4_t; {n}], at: impl Fn(usize) -> *mut u8) {{\n\tlet x = words{n}(v);\n\tfor j in 0..{} {{\n\t\t(at(j) as *mut {ty}).write_unaligned({val});\n\t}}\n}}\n", 4 * p));
+            o.push_str(&format!("#[inline]\nunsafe fn stj_{name}(k: [uint32x4_t; {p}], v: [uint32x4_t; {n}], mut at: impl FnMut(usize) -> *mut u8) {{\n\tlet (m, x) = (words{p}(k), words{n}(v));\n\tlet mut z = 0u64;\n\tlet sink = core::hint::black_box(&raw mut z) as *mut u8;\n\tfor j in 0..{} {{\n\t\t(core::hint::select_unpredictable(m[j] != 0, at(j), sink) as *mut {ty}).write_unaligned({val});\n\t}}\n}}\n", 4 * p));
+            o.push_str(&format!("#[inline]\nunsafe fn stjf_{name}(v: [uint32x4_t; {n}], mut at: impl FnMut(usize) -> *mut u8) {{\n\tlet x = words{n}(v);\n\tfor j in 0..{} {{\n\t\t(at(j) as *mut {ty}).write_unaligned({val});\n\t}}\n}}\n", 4 * p));
         }
     }
     o.push_str(&format!("/// Each lane's address of its halves `lo` and `hi`; a lane mask `k` has off, the first on's.\n#[inline(always)]\nunsafe fn addrs(lo: [uint32x4_t; {p}], hi: [uint32x4_t; {p}], k: [uint32x4_t; {p}]) -> [usize; {w}] {{\n\tlet (l, h, b) = (words{p}(lo), words{p}(hi), bits(&k));\n\tlet f = b.trailing_zeros() as usize % {w};\n\tcore::array::from_fn(|j| {{\n\t\tlet j = if b >> j & 1 != 0 {{ j }} else {{ f }};\n\t\t((h[j] as u64) << 32 | l[j] as u64) as usize\n\t}})\n}}\n", w = 4 * p));

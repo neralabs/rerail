@@ -878,6 +878,14 @@ differ little), then the text of each (declarations, splats, masks).
    64-bit splat (`splat64`), which roll as NEON's do.
 7. **Splats** (669 KB): the zero register a constant (`Z`), a value in every lane `splat(x)`.
 
+**Compiled** (the user's "compile it and see"). At opt-level 1 `join_run` did not compile in 15 minutes: one thread
+in LLVM's full unroll of loops (`LoopFullUnrollPass`), its time in `ScalarEvolution::forgetLoop`. The prelude's
+functions of a loop over the lanes (`ld_*`, `ldj_*`, `stj_*`, `stjf_*`) were `#[inline(always)]`, inlined before
+LLVM simplifies anything, so each of their 32-iteration loops was unrolled in the kernel's function, every unroll
+walking that function's values. As `#[inline]` each is simplified (unrolled) on its own and then inlined: 158 s,
+1.2 GB, 2.1 MB of code. Keeping long instances out of line instead (`#[inline(never)]`) did not end the unrolls'
+walk and cost `label_parents` 2-4% of its instructions; it was not kept.
+
 Every kernel checked in at 8 lanes is now also checked in at 32 (`rerail-ukl-aot`'s `*_w32`,
 `the_kernels_rust_at_32_lanes_is_the_checked_in_one`), and its tests run both against the same answers (the scalar
 kernels', the host's parents, the CPU device's c++ build's leaves): the Rust of more than two registers, which only

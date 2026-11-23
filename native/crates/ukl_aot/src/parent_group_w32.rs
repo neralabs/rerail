@@ -239,7 +239,7 @@ unsafe fn ix_on(k: [uint32x4_t; 8], a: [uint32x4_t; 8]) -> [uint32x4_t; 8] {
 	let s = vdupq_n_u32(maxv_on(&k, &a));
 	core::array::from_fn(|r| vbslq_u32(k[r], a[r], s))
 }
-#[inline(always)]
+#[inline]
 unsafe fn ld_u8(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8] {
 	let u = minv(&ix);
 	if u == maxv(&ix) {
@@ -253,7 +253,7 @@ unsafe fn ld_u8(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8] 
 	}
 	regs8(g)
 }
-#[inline(always)]
+#[inline]
 unsafe fn ld_i8(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8] {
 	let u = minv(&ix);
 	if u == maxv(&ix) {
@@ -267,7 +267,7 @@ unsafe fn ld_i8(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8] 
 	}
 	regs8(g)
 }
-#[inline(always)]
+#[inline]
 unsafe fn ld_u16(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8] {
 	let u = minv(&ix);
 	if u == maxv(&ix) {
@@ -281,7 +281,7 @@ unsafe fn ld_u16(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8]
 	}
 	regs8(g)
 }
-#[inline(always)]
+#[inline]
 unsafe fn ld_i16(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8] {
 	let u = minv(&ix);
 	if u == maxv(&ix) {
@@ -295,7 +295,7 @@ unsafe fn ld_i16(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8]
 	}
 	regs8(g)
 }
-#[inline(always)]
+#[inline]
 unsafe fn ld_u32(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8] {
 	let u = minv(&ix);
 	if u == maxv(&ix) {
@@ -309,7 +309,7 @@ unsafe fn ld_u32(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 8]
 	}
 	regs8(g)
 }
-#[inline(always)]
+#[inline]
 unsafe fn ld_u64(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 16] {
 	let u = minv(&ix);
 	if u == maxv(&ix) {
@@ -325,8 +325,8 @@ unsafe fn ld_u64(b: *const u8, ix: [uint32x4_t; 8], s: usize) -> [uint32x4_t; 16
 	}
 	regs16(g)
 }
-#[inline(always)]
-unsafe fn ldj_u8(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
+#[inline]
+unsafe fn ldj_u8(mut at: impl FnMut(usize) -> *const u8) -> [uint32x4_t; 8] {
 	let mut g = [0u32; 32];
 	for j in 0..32 {
 		let v = (at(j) as *const u8).read_unaligned();
@@ -334,8 +334,8 @@ unsafe fn ldj_u8(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
 	}
 	regs8(g)
 }
-#[inline(always)]
-unsafe fn stj_u8(k: [uint32x4_t; 8], v: [uint32x4_t; 8], at: impl Fn(usize) -> *mut u8) {
+#[inline]
+unsafe fn stj_u8(k: [uint32x4_t; 8], v: [uint32x4_t; 8], mut at: impl FnMut(usize) -> *mut u8) {
 	let (m, x) = (words8(k), words8(v));
 	let mut z = 0u64;
 	let sink = core::hint::black_box(&raw mut z) as *mut u8;
@@ -343,15 +343,15 @@ unsafe fn stj_u8(k: [uint32x4_t; 8], v: [uint32x4_t; 8], at: impl Fn(usize) -> *
 		(core::hint::select_unpredictable(m[j] != 0, at(j), sink) as *mut u8).write_unaligned(x[j] as u8);
 	}
 }
-#[inline(always)]
-unsafe fn stjf_u8(v: [uint32x4_t; 8], at: impl Fn(usize) -> *mut u8) {
+#[inline]
+unsafe fn stjf_u8(v: [uint32x4_t; 8], mut at: impl FnMut(usize) -> *mut u8) {
 	let x = words8(v);
 	for j in 0..32 {
 		(at(j) as *mut u8).write_unaligned(x[j] as u8);
 	}
 }
-#[inline(always)]
-unsafe fn ldj_i8(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
+#[inline]
+unsafe fn ldj_i8(mut at: impl FnMut(usize) -> *const u8) -> [uint32x4_t; 8] {
 	let mut g = [0u32; 32];
 	for j in 0..32 {
 		let v = (at(j) as *const i8).read_unaligned();
@@ -359,8 +359,8 @@ unsafe fn ldj_i8(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
 	}
 	regs8(g)
 }
-#[inline(always)]
-unsafe fn ldj_u16(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
+#[inline]
+unsafe fn ldj_u16(mut at: impl FnMut(usize) -> *const u8) -> [uint32x4_t; 8] {
 	let mut g = [0u32; 32];
 	for j in 0..32 {
 		let v = (at(j) as *const u16).read_unaligned();
@@ -368,8 +368,8 @@ unsafe fn ldj_u16(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
 	}
 	regs8(g)
 }
-#[inline(always)]
-unsafe fn stj_u16(k: [uint32x4_t; 8], v: [uint32x4_t; 8], at: impl Fn(usize) -> *mut u8) {
+#[inline]
+unsafe fn stj_u16(k: [uint32x4_t; 8], v: [uint32x4_t; 8], mut at: impl FnMut(usize) -> *mut u8) {
 	let (m, x) = (words8(k), words8(v));
 	let mut z = 0u64;
 	let sink = core::hint::black_box(&raw mut z) as *mut u8;
@@ -377,15 +377,15 @@ unsafe fn stj_u16(k: [uint32x4_t; 8], v: [uint32x4_t; 8], at: impl Fn(usize) -> 
 		(core::hint::select_unpredictable(m[j] != 0, at(j), sink) as *mut u16).write_unaligned(x[j] as u16);
 	}
 }
-#[inline(always)]
-unsafe fn stjf_u16(v: [uint32x4_t; 8], at: impl Fn(usize) -> *mut u8) {
+#[inline]
+unsafe fn stjf_u16(v: [uint32x4_t; 8], mut at: impl FnMut(usize) -> *mut u8) {
 	let x = words8(v);
 	for j in 0..32 {
 		(at(j) as *mut u16).write_unaligned(x[j] as u16);
 	}
 }
-#[inline(always)]
-unsafe fn ldj_i16(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
+#[inline]
+unsafe fn ldj_i16(mut at: impl FnMut(usize) -> *const u8) -> [uint32x4_t; 8] {
 	let mut g = [0u32; 32];
 	for j in 0..32 {
 		let v = (at(j) as *const i16).read_unaligned();
@@ -393,8 +393,8 @@ unsafe fn ldj_i16(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
 	}
 	regs8(g)
 }
-#[inline(always)]
-unsafe fn ldj_u32(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
+#[inline]
+unsafe fn ldj_u32(mut at: impl FnMut(usize) -> *const u8) -> [uint32x4_t; 8] {
 	let mut g = [0u32; 32];
 	for j in 0..32 {
 		let v = (at(j) as *const u32).read_unaligned();
@@ -402,8 +402,8 @@ unsafe fn ldj_u32(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 8] {
 	}
 	regs8(g)
 }
-#[inline(always)]
-unsafe fn stj_u32(k: [uint32x4_t; 8], v: [uint32x4_t; 8], at: impl Fn(usize) -> *mut u8) {
+#[inline]
+unsafe fn stj_u32(k: [uint32x4_t; 8], v: [uint32x4_t; 8], mut at: impl FnMut(usize) -> *mut u8) {
 	let (m, x) = (words8(k), words8(v));
 	let mut z = 0u64;
 	let sink = core::hint::black_box(&raw mut z) as *mut u8;
@@ -411,15 +411,15 @@ unsafe fn stj_u32(k: [uint32x4_t; 8], v: [uint32x4_t; 8], at: impl Fn(usize) -> 
 		(core::hint::select_unpredictable(m[j] != 0, at(j), sink) as *mut u32).write_unaligned(x[j] as u32);
 	}
 }
-#[inline(always)]
-unsafe fn stjf_u32(v: [uint32x4_t; 8], at: impl Fn(usize) -> *mut u8) {
+#[inline]
+unsafe fn stjf_u32(v: [uint32x4_t; 8], mut at: impl FnMut(usize) -> *mut u8) {
 	let x = words8(v);
 	for j in 0..32 {
 		(at(j) as *mut u32).write_unaligned(x[j] as u32);
 	}
 }
-#[inline(always)]
-unsafe fn ldj_u64(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 16] {
+#[inline]
+unsafe fn ldj_u64(mut at: impl FnMut(usize) -> *const u8) -> [uint32x4_t; 16] {
 	let mut g = [0u32; 64];
 	for j in 0..32 {
 		let v = (at(j) as *const u64).read_unaligned();
@@ -428,8 +428,8 @@ unsafe fn ldj_u64(at: impl Fn(usize) -> *const u8) -> [uint32x4_t; 16] {
 	}
 	regs16(g)
 }
-#[inline(always)]
-unsafe fn stj_u64(k: [uint32x4_t; 8], v: [uint32x4_t; 16], at: impl Fn(usize) -> *mut u8) {
+#[inline]
+unsafe fn stj_u64(k: [uint32x4_t; 8], v: [uint32x4_t; 16], mut at: impl FnMut(usize) -> *mut u8) {
 	let (m, x) = (words8(k), words16(v));
 	let mut z = 0u64;
 	let sink = core::hint::black_box(&raw mut z) as *mut u8;
@@ -437,8 +437,8 @@ unsafe fn stj_u64(k: [uint32x4_t; 8], v: [uint32x4_t; 16], at: impl Fn(usize) ->
 		(core::hint::select_unpredictable(m[j] != 0, at(j), sink) as *mut u64).write_unaligned((x[32 + j] as u64) << 32 | x[j] as u64);
 	}
 }
-#[inline(always)]
-unsafe fn stjf_u64(v: [uint32x4_t; 16], at: impl Fn(usize) -> *mut u8) {
+#[inline]
+unsafe fn stjf_u64(v: [uint32x4_t; 16], mut at: impl FnMut(usize) -> *mut u8) {
 	let x = words16(v);
 	for j in 0..32 {
 		(at(j) as *mut u64).write_unaligned((x[32 + j] as u64) << 32 | x[j] as u64);
