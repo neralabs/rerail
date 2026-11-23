@@ -1686,6 +1686,11 @@ impl InKept {
     pub(in crate::code_rule_dsl) fn input_digest(&self, rel: &str) -> Option<u64> {
         self.inputs.get(rel).map(|(d, _)| *d)
     }
+    /// Whether every input of `measured` (statistics a run measured, `write_input_kept`'s `input_stats`) has them
+    /// kept at the rows of its digest in `digests`: a run that put its inputs as they were then puts nothing.
+    pub(in crate::code_rule_dsl) fn holds_all_stats<V>(&self, measured: &HashMap<String, V>, digests: &HashMap<String, u64>) -> bool {
+        measured.keys().all(|rel| self.names.get(rel).zip(digests.get(rel)).is_some_and(|(name, d)| self.holds_stats(name, *d)))
+    }
     /// Whether a statistics entry (`kept_stats::PART`) of the rows of digest `digest` is kept under `name`.
     fn holds_stats(&self, name: &KeptRel, digest: u64) -> bool {
         self.bound.as_ref().and_then(|b| b.entry(&name.name, &name.ident, kept_stats::PART)).is_some_and(|e| e.digest() == digest)
