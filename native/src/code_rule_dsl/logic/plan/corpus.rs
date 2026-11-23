@@ -7076,7 +7076,10 @@ fn run_observed_within(
         };
         let mut totals_add: Vec<(String, usize, Vec<(String, i64, i64, i64, i64)>)> = Vec::new();
         let mut bound: BTreeSet<String> = BTreeSet::new();
+        // Each source bound, its failure asked once the chunk has run (below).
+        let mut checked: Vec<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = Vec::new();
         for (rel, source) in sources {
+            checked.push(Arc::clone(&source));
             // A relation no rule reads is bound unmeasured: measuring reads every row, and a `py.*`
             // family's first read makes them (decision 0029).
             if !read.contains(&rel) {
@@ -7265,6 +7268,14 @@ fn run_observed_within(
                 None => Arc::new(Rows::of(db, rel, &format!("temp.{}", crate::code_rule_dsl::logic::sql::ident(rel)))?),
             };
             export_rows.push((rel.clone(), rows));
+        }
+        // A source that failed while the chunk ran (decision 0494: a batch relation whose rows read are not the count
+        // its kept statistics gave, which its readers took for its length) fails the chunk. SQL's reads asked it at
+        // each scan; the native engine's reads never did, and ran on with a length that changed under them: the
+        // conditions of a wrong result, and of a paired walk's left row past its seed's (one profiled M3 run, ab218,
+        // whose cause the lanes' tests ruled out).
+        if let Some(why) = checked.iter().find_map(|s| s.failure()) {
+            return Err(Error::Plan(why));
         }
         // The chunk's native relations are forgotten, and its sources dropped before the connection's next chunk.
         crate::code_rule_dsl::logic::native::component::forget_derived(db);

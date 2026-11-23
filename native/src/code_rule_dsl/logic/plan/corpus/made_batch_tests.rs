@@ -300,3 +300,39 @@ fn a_text_test_bound_by_an_input_is_probed_not_scanned() {
     let whole: Vec<&String> = made.keys().filter(|(t, x)| t.starts_with("a batch's every document made by a whole read") && x.starts_with("the batch's vocabulary")).map(|(_, x)| x).collect();
     assert!(whole.is_empty(), "the text test was scanned, the batch made whole: {whole:?}");
 }
+
+/// A batch's failure (decision 0494: a document whose views' counts differ from those it was given, which its
+/// readers took for its rows' length) fails the chunk that read it. SQL's reads asked a source's failure at each
+/// scan; the native engine's never did, and a run went on with a length that changed under its readers.
+#[test]
+fn a_batchs_failure_fails_a_native_chunk() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("made-batch-failure");
+    let _ = std::fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    for k in 0..4 {
+        std::fs::write(src.join(format!("m{k}.py")), format!("def f{k}(x):\n    return x + {k}\n")).unwrap();
+    }
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, ".decl named(n: node, s: symbol)\nnamed(n, s) :- name(n, s).\n.output named\n").unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let run = |fail: bool| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(if fail { "failed.sqlite" } else { "store.sqlite" })));
+        // SAFETY: nextest runs each test in a process of its own; no other thread reads the environment meanwhile.
+        unsafe {
+            if fail { std::env::set_var("RERAIL_TEST_FAIL_DOC", "m2.py") } else { std::env::remove_var("RERAIL_TEST_FAIL_DOC") }
+        }
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        let out = dir.join(if fail { "out-failed" } else { "out" });
+        let got = super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).map(|_| crate::code_rule_dsl::logic::plan::output::shown(&out, "named").unwrap_or_default().len());
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+        got
+    };
+    let clean = run(false);
+    let failed = run(true);
+    unsafe { std::env::remove_var("RERAIL_TEST_FAIL_DOC") };
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(clean.as_ref().is_ok_and(|&n| n > 0), "{clean:?}");
+    let why = failed.expect_err("the run read a failed batch").to_string();
+    assert!(why.contains("m2.py") && why.contains("0494"), "{why}");
+}

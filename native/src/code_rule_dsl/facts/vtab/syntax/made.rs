@@ -235,6 +235,12 @@ impl Docs {
                     view_counts(&made.p)
                 ));
             }
+            // A test's: the document `RERAIL_TEST_FAIL_DOC` names fails as one whose counts differ, so a run's
+            // readers are shown to stop on a batch's failure (`a_batchs_failure_fails_a_native_chunk`).
+            #[cfg(any(test, feature = "test-hooks"))]
+            if std::env::var_os("RERAIL_TEST_FAIL_DOC").is_some_and(|p| self.slots[i].input.path().ends_with(&*p.to_string_lossy())) {
+                self.fail(format!("{}: failed by the test (decision 0494)", self.slots[i].input.path()));
+            }
             made
         })
     }
