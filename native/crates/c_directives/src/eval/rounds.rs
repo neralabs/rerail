@@ -18,7 +18,7 @@ use rerail_metal::slabs;
 /// (decision 0468 §1). A document already resident (by its digest) is not placed again.
 pub fn place(files: &[(&[u8], bool)]) -> Result<Unit, rerail_metal::Error> {
     use sha2::{Digest as _, Sha256};
-    let tapes: Vec<_> = files.iter().map(|&(s, cpp)| rerail_c_pp::tape::image_16(s, crate::pp::options(cpp))).collect();
+    let tapes: Vec<_> = files.iter().map(|&(s, cpp)| rerail_c_pp::tape::image(s, crate::pp::options(cpp))).collect();
     let digests: Vec<[u8; 32]> = files.iter().zip(&tapes).map(|(&(s, _), t)| Sha256::new().chain_update(t.as_bytes()).chain_update(s).finalize().into()).collect();
     let misses = slabs::misses(&digests)?;
     let mut parts = Vec::new();

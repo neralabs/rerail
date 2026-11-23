@@ -4070,25 +4070,55 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let mut free: Vec<u8> = (0..256usize).rev().filter(|&b| !(0..rows.len()).any(|r| starts(r, b))).map(|b| b as u8).collect();
         let mut byte_of: HashMap<String, u8> = HashMap::default();
         let width = |r: usize| real_first[r].iter().map(|w| w.count_ones()).sum::<u32>();
+        let reader = |r: usize| low.token_reads.contains_key(&token_rows[r].0);
+        let shares = |r: usize, q: usize| token_rows[q].0 != token_rows[r].0 && (0..256).any(|b| starts(r, b) && starts(q, b));
+        // A reader's kind, and a token's kind that shares a first byte with a wider one's (a
+        // `0x` beside a number, a `.5` beside the operators): its own kind, which its start
+        // gives the record, as the lean lexer's `T` (decision 0509). The widest keeps its bytes.
+        let mut moves: Vec<bool> = (0..rows.len())
+            .map(|r| if reader(r) { (0..rows.len()).any(|q| shares(r, q)) } else { (0..rows.len()).any(|q| shares(r, q) && !reader(q) && (width(q), std::cmp::Reverse(q)) > (width(r), std::cmp::Reverse(r))) })
+            .collect();
+        let kinds_moved = |moves: &[bool]| (0..rows.len()).filter(|&r| moves[r]).map(|r| &token_rows[r].0).collect::<std::collections::BTreeSet<_>>().len();
+        // Where the free bytes do not reach (a kind that begins at almost every byte, as C's code between
+        // directives: every other kind shares one with it), the fewest kinds move instead: of two kinds kept that
+        // share a first byte, the one sharing with the most kinds still kept, until no two kept kinds share one. A
+        // moved kind's rows are recorded at its own byte whichever of the two moves; but a moved row's keywords are
+        // no longer met at their first letters (`bitlex_tier2`), so a kind with keywords is never the one moved.
+        // The readers move as above.
+        if kinds_moved(&moves) > free.len() {
+            let kind_of = |r: usize| token_rows[r].0.as_str();
+            let worded: std::collections::BTreeSet<&str> = (0..rows.len()).filter(|&r| !rows[r].keywords.is_empty() || !rows[r].soft.is_empty()).map(kind_of).collect();
+            let mut gone: std::collections::BTreeSet<&str> = (0..rows.len()).filter(|&r| reader(r) && moves[r]).map(kind_of).collect();
+            loop {
+                let mut pairs: std::collections::BTreeMap<&str, std::collections::BTreeSet<&str>> = Default::default();
+                for r in (0..rows.len()).filter(|&r| !reader(r) && !gone.contains(kind_of(r))) {
+                    for q in (0..rows.len()).filter(|&q| !reader(q) && !gone.contains(kind_of(q)) && shares(r, q)) {
+                        if !worded.contains(kind_of(r)) {
+                            pairs.entry(kind_of(r)).or_default().insert(kind_of(q));
+                        } else if worded.contains(kind_of(q)) {
+                            return Err(format!("`{}` and `{}`: two kinds with keywords share a first byte", kind_of(r), kind_of(q)));
+                        }
+                    }
+                }
+                let Some((&most, _)) = pairs.iter().max_by_key(|(k, with)| (with.len(), std::cmp::Reverse(*k))) else { break };
+                gone.insert(most);
+            }
+            moves = (0..rows.len()).map(|r| gone.contains(kind_of(r))).collect();
+        }
         for r in 0..rows.len() {
             let kind = &token_rows[r].0;
-            let shares = |q: usize| token_rows[q].0 != *kind && (0..256).any(|b| starts(r, b) && starts(q, b));
-            // A reader's kind, and a token's kind that shares a first byte with a wider one's (a
-            // `0x` beside a number, a `.5` beside the operators): its own kind, which its start
-            // gives the record, as the lean lexer's `T` (decision 0509). The widest keeps its bytes.
-            let shared = if low.token_reads.contains_key(kind) {
-                (0..rows.len()).any(shares)
-            } else {
-                (0..rows.len()).any(|q| shares(q) && !low.token_reads.contains_key(&token_rows[q].0) && (width(q), std::cmp::Reverse(q)) > (width(r), std::cmp::Reverse(r)))
-            };
-            if !shared {
+            if !moves[r] {
                 continue;
             }
             let f = match byte_of.get(kind) {
                 Some(&f) => f,
                 None => {
                     if free.is_empty() {
-                        return Err(format!("`{kind}`: no byte left that no token begins with, for its reader's kind"));
+                        let mut took: Vec<&str> = byte_of.keys().map(String::as_str).collect();
+                        took.sort_unstable();
+                        let own = |q: usize| real_first[q].iter().map(|w| w.count_ones()).sum::<u32>();
+                        let rows: Vec<String> = (0..rows.len()).map(|q| format!("{} {}", token_rows[q].0, own(q))).collect();
+                        return Err(format!("`{kind}`: no byte left that no token begins with, for its reader's kind (the kinds that took one: {}; the rows' first bytes: {})", took.join(", "), rows.join(", ")));
                     }
                     let f = free.remove(0);
                     byte_of.insert(kind.clone(), f);

@@ -7356,6 +7356,23 @@ impl CompiledStream {
         Numbers(numbers_by_key(lang, &self.classes, &self.extras))
     }
 
+    /// The numbers by this program's keys as `number` numbers each (`Numbers`): a key's kind, field, classes (the
+    /// program's supertype classes its bits name) and whether its kind is an extra; `None` where the language has no
+    /// code for it. For a grammar whose kinds are a lean parser's ids, numbered as that parser's sink numbers them
+    /// (`rerail_tape_format::Named`, by names, decision 0626).
+    pub fn numbers_by(&self, number: &dyn Fn(u16, u16, &[u16], bool) -> Option<u32>) -> Numbers {
+        use rerail_tape_format::KIND_BITS;
+        let mut by = vec![u32::MAX; crate::stream_analysis::id_slots(self.classes.len())];
+        for (slot, n) in by.iter_mut().enumerate() {
+            let (kind, field, bits) = ((slot & ((1 << KIND_BITS) - 1)) as u16, (slot >> KIND_BITS & 0x3f) as u16, slot >> 16);
+            let classes: Vec<u16> = self.classes.iter().enumerate().filter(|&(j, _)| bits >> j & 1 == 1).map(|(_, &c)| c).collect();
+            if let Some(got) = number(kind, field, &classes, self.extras.contains(&kind)) {
+                *n = got;
+            }
+        }
+        Numbers(by)
+    }
+
     /// The widths the tape is written at, and the language's tag.
     pub fn widths_tag(&self) -> (rerail_tape_format::Widths, u8) {
         (self.widths, self.tag)

@@ -18,13 +18,11 @@ fn same(texts: &[&str]) {
     let c = compiled().unwrap_or_else(|e| panic!("the grammar compiles: {e}"));
     for &text in texts {
         let want = lean_text(text).unwrap_or_else(|| panic!("the lean parser refuses {text:?}"));
-        let image = c.parser.image(text.as_bytes()).unwrap_or_else(|why| panic!("the grammar refuses {text:?}: {why:?}\n{}\n{}", c.explain(text), c.words));
+        let image = c.tape(text).unwrap_or_else(|why| panic!("the grammar refuses {text:?}: {why}\n{}\n{}", c.explain(text), c.words));
         let got = image_text(&image).expect("a tape image");
         assert_eq!(got, want, "{text:?}");
         // The interpreter's, over the interpreter's tier 1: the same tape.
-        let run = c.program.block_programs[0].run(text.as_bytes());
-        let nodes = rerail_compiler::stream::run(&c.program, text.as_bytes(), &run).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why:?}"));
-        let interp = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, text.as_bytes());
+        let interp = c.interpreted(text).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why}"));
         assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
         // Tier 1 as Rust: the interpreter's records; tier 2 as Rust over them: the same tape.
         if let Some(why) = tier1_differs(c, text) {
@@ -73,7 +71,7 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     // An escape of `A & ~L` the lowering makes a local check of tier 2's at `A`'s token
     // (`pending_checks`): the interpreter refuses the file there, tier 1 as Rust where it reads
     // the escape. Either way the file is refused.
-    if lx.refused && !refused && c.parser.image(text.as_bytes()).is_err() {
+    if lx.refused && !refused && c.tape(text).is_err() {
         return None;
     }
     if refused != lx.refused {
@@ -882,7 +880,7 @@ fn show() {
                 Err(e) => eprintln!("reference: {e:?}"),
             }
         }
-        match c.parser.image(text.as_bytes()) {
+        match c.tape(&text) {
             Ok(image) => {
                 let got = image_text(&image).unwrap_or_default();
                 if got == lean {
@@ -1392,8 +1390,8 @@ fn reference_probe() {
         Err(e) => eprintln!("eval: {e:?}"),
     }
     let c = compiled().expect("compiles");
-    match c.parser.image(text.as_bytes()) {
-        Ok(i) => eprintln!("compiled: {}", image_text(&i).expect("an image")),
+    match c.tape(&text) {
+        Ok(i) => eprintln!("compiled: {}", image_text(&i).expect("a tape")),
         Err(e) => eprintln!("compiled refuses: {e:?}\n{}", c.explain(&text)),
     }
 }
@@ -1454,6 +1452,6 @@ fn walk_lemmas_keep_the_tapes() {
         "fun f() {\n    a(\"x\") /* y */ // z\n}\n",
     ];
     for t in texts {
-        assert_eq!(with.parser.image(t.as_bytes()).ok(), without.parser.image(t.as_bytes()).ok(), "{t:?}");
+        assert_eq!(with.tape(t).ok(), without.tape(t).ok(), "{t:?}");
     }
 }

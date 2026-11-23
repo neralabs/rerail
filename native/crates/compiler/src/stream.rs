@@ -348,14 +348,24 @@ pub fn image(nodes: &[Node], extras: &[u16], tag: u8, src: &[u8]) -> Vec<u8> {
 /// written by format 16's ops in one pass with each block's presence, its lines those `terminators` end, as the
 /// format 16 tier 2's run writes it. The interpreter's tape: the meaning the compiled tiers' tapes are checked against.
 pub fn image16(nodes: &[Node], extras: &[u16], lang: &rerail_tape_format::f16::Lang, terminators: rerail_tape_format::newlines::Terminators, tag: u8, src: &[u8]) -> Result<rerail_tape_format::f16::Written, String> {
+    let number = |kind: u16, field: u16, classes: &[u16], extra: bool| {
+        let flags = if extra { rerail_tape_format::CODE_EXTRA } else { 0 };
+        lang.number(&rerail_tape_format::tape::Entry { kind, field, flags, alias: None, classes: classes.to_vec() })
+    };
+    image16_by(nodes, extras, lang, &number, terminators, tag, src)
+}
+
+/// The same, each node numbered by `number` (its kind, field, supertypes ascending and whether its kind is one of
+/// `extras`), as the compiled tier 2's `CompiledStream::numbers_by` numbers its keys: a grammar whose kinds are a lean
+/// parser's ids, numbered by that parser's names.
+pub fn image16_by(nodes: &[Node], extras: &[u16], lang: &rerail_tape_format::f16::Lang, number: &dyn Fn(u16, u16, &[u16], bool) -> Option<u32>, terminators: rerail_tape_format::newlines::Terminators, tag: u8, src: &[u8]) -> Result<rerail_tape_format::f16::Written, String> {
     let mut numbers = Vec::with_capacity(nodes.len());
     for n in nodes {
         let mut classes = n.supers.clone();
         classes.sort_unstable();
         classes.dedup();
-        let flags = if extras.contains(&n.kind) { rerail_tape_format::CODE_EXTRA } else { 0 };
-        let entry = rerail_tape_format::tape::Entry { kind: n.kind, field: n.field, flags, alias: None, classes };
-        numbers.push(lang.number(&entry).ok_or_else(|| format!("code {entry:?}: a code the language's table lacks"))?);
+        let extra = extras.contains(&n.kind);
+        numbers.push(number(n.kind, n.field, &classes, extra).ok_or_else(|| format!("kind {}, field {}, classes {classes:?}, extra {extra}: a code the language's table lacks", n.kind, n.field))?);
     }
     let node = |i: usize| rerail_tape_format::f16::Node { number: numbers[i], start: u64::from(nodes[i].start), end: u64::from(nodes[i].end), subtree_end: i + nodes[i].size.max(1) as usize };
     rerail_tape_format::f16::write_present(lang, nodes.len(), src, terminators, tag, false, node)

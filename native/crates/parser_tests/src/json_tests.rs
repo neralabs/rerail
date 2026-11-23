@@ -1190,9 +1190,12 @@ fn jsonc_refusals_by_reason() {
     let c = form("jsonc");
     let list = std::fs::read_to_string(std::env::var("RERAIL_JSON_FILES").expect("set RERAIL_JSON_FILES")).expect("reads");
     let mut reasons: std::collections::BTreeMap<String, (usize, String)> = Default::default();
+    let t2 = c.parser.sixteen().expect("a format 16 tier 2");
+    let lang = rerail_tape_format::f16::lang(t2.widths_tag().1).expect("JSON's format 16 table");
+    let numbers = t2.numbers(lang);
     for path in list.lines().filter(|l| !l.is_empty()) {
         let Ok(bytes) = std::fs::read(path) else { continue };
-        if let Err(e) = c.parser.image(&bytes) {
+        if let Err(e) = c.parser.image16(&bytes, rerail_tape_format::newlines::Terminators::Newlines, lang, &numbers, false) {
             let r = reasons.entry(format!("{e:?}")).or_insert((0, path.to_owned()));
             r.0 += 1;
         }
