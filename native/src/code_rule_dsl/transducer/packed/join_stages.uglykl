@@ -13,9 +13,10 @@
 // program's worker (decision 0603) reads in one launch what other groups of it wrote, coherent across the device
 // (`CLIF_BLOCKS_COHERENT`).
 #define JSPACE CLIF_BLOCK_SPACE
-// A struct of whole words read from JSPACE into `dst`: where it is coherent, a word at a time as the coherent loads
-// read them (`ukl_ldc_u32`), since C++ (CUDA) copies no volatile struct and OpenCL 1.2 reads coherent words apart.
-#if defined(CLIF_BLOCKS_COHERENT) && !defined(UKL_CPU)
+// A struct of whole words read from JSPACE into `dst`: where it is coherent on a backend that copies no such struct
+// (CUDA's C++ copies no volatile one; OpenCL 1.2 reads coherent words apart), a word at a time as the coherent loads
+// read them (`ukl_ldc_u32`). Metal copies a coherent struct as it is.
+#if defined(CLIF_BLOCKS_COHERENT) && !defined(UKL_CPU) && !defined(UKL_METAL)
 #define JREAD(T, dst, src)                                                                                             \
     do {                                                                                                               \
         UKL_PRIVATE uint32_t* jr_to = (UKL_PRIVATE uint32_t*)&(dst);                                                   \

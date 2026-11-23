@@ -2929,8 +2929,8 @@ impl TapeDoc {
         self.points.point(byte as u32).line()
     }
 
-    /// The source's line table, shared with the evaluator that restored this document.
-    #[cfg(any(test, feature = "test-hooks"))]
+    /// The source's line table, shared with the evaluator that restored this document: its language's line index
+    /// (decision 0612), which the transducer's batch counts and its JIT reads where it lies.
     pub fn line_table(&self) -> &LineTable {
         &self.lines
     }
