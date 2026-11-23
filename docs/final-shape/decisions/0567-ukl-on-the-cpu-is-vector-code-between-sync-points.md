@@ -525,6 +525,10 @@ On the CPU (load 12–18) the bitmap's form is 106, 402 and 132 instructions a n
 `parent_group`'s 115, 380, 135. Still behind on Metal: against the separate clear's launch (0.42 ms on records), it
 adds a group's publish (a fence, a barrier, an or) and, before each hop's word, the bit's atomic load and a fence.
 
+Tried next, at the user's word ("please test it"): a thread keeps the group it last saw published (its own first),
+and a hop into it reads `out[j]` without the bit's load and fence. Correct on both; on the M3 0.584, 0.173 and
+0.085 ms, the same as without it. The per-hop bit and fence are not the cost, and the change is not kept.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one
