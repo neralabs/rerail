@@ -328,19 +328,12 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
 /// Each byte's record kind, as a token's first byte (`Records::kinds`).
 const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 0, 0, 0, 0, 5, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-/// A record of an extra (a comment): the extra's mark in its code.
-#[inline(always)]
-fn is_extra(code: u32) -> bool {
-    code >> 31 & 1 == 1
-}
-
 /// An extra's node kind: a later extra kind's by its bit, else the first's.
 fn extra_kind(code: u32) -> u16 {
     k::COMMENT
 }
 
 type R<X = ()> = Result<X, u32>;
-
 
 /// No node made yet at a level.
 const NONE: u32 = u32::MAX;
@@ -349,15 +342,21 @@ const UNSET: u16 = 0x3ff;
 /// The deepest the calls go.
 const DEPTH: u32 = 400;
 
-/// The parser: tier 1's records (the tokens and the comments), the token read next, the tree.
+/// The parser: tier 1's records (the grammar tokens), its comments apart, the token read next, the tree.
 pub struct P<'a, L: Layout> {
     src: &'a [u8],
     /// Tier 1's records, one a token: its first and last byte and its code (the lean parser's `Tok`).
     recs: &'a [crate::tier1::Rec],
+    /// The comments (the extras), apart from the tokens, as the lean parser's `comments`.
+    xs: &'a [crate::tier1::Rec],
     n: usize,
-    /// The next grammar token's record; the first record not written yet (the comments before it).
+    /// The next grammar token's record.
     i: usize,
+    /// The comments: the first not yet written (`pend`), the first after the token's start (`xi`), and where that one
+    /// starts (`next_x`, `u32::MAX` past the last), as the lean parser's `comment` and `next_comment`.
     pend: usize,
+    xi: usize,
+    next_x: u32,
     w: Writer<L>,
     /// The level open: its node, and the node made last in it, held as the lean parser holds its `top`; the levels
     /// around it on `levels` (one push and one pop a level).
@@ -398,10 +397,11 @@ pub struct P<'a, L: Layout> {
 #[allow(dead_code)]
 impl<'a, L: Layout> P<'a, L> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L) -> R<Self> {
-        let recs = &lx.recs[..];
+        let (recs, xs) = (&lx.recs[..], &lx.extras[..]);
         let n = recs.len();
-        let mut p = P { src, recs, n, i: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, cur: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, dead: Vec::new(), strings: 0, stack: Vec::with_capacity(64) };
-        p.i = p.next_tok(0);
+        // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
+        let mut p = P { src, recs, xs, n, i: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, cur: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, dead: Vec::new(), strings: 0, stack: Vec::with_capacity(64) };
+        p.pass_comments();
         p.arrive()?;
         Ok(p)
     }
@@ -432,25 +432,20 @@ impl<'a, L: Layout> P<'a, L> {
         self.holds >> order & 1 == 1
     }
 
+    /// The comments before the token passed (`xi`), as the lean parser's comment cursor moves on.
     #[inline(always)]
-    fn next_tok(&self, mut j: usize) -> usize {
-        while j < self.n && is_extra(self.recs[j].code) {
-            j += 1;
+    fn pass_comments(&mut self) {
+        let to = if self.i < self.n { self.recs[self.i].start } else { u32::MAX };
+        while self.next_x < to {
+            self.xi += 1;
+            self.next_x = self.xs.get(self.xi).map_or(u32::MAX, |x| x.start);
         }
-        j.min(self.n)
     }
 
-    /// The grammar token before record `j` (`n`: none).
+    /// The grammar token before token `j` (`n`: none).
     #[inline(always)]
     fn prev_tok(&self, j: usize) -> usize {
-        let mut k = j;
-        while k > 0 {
-            k -= 1;
-            if !is_extra(self.recs[k].code) {
-                return k;
-            }
-        }
-        self.n
+        if j == 0 { self.n } else { j - 1 }
     }
 
     #[inline(always)]
@@ -469,13 +464,9 @@ impl<'a, L: Layout> P<'a, L> {
         j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b))
     }
 
-    /// Gap mark `b` at record `j`, asked of the bytes since the grammar token before's first byte, as tier 1 reads a
+    /// Gap mark `b` at token `j`, asked of the bytes since the grammar token before's first byte, as tier 1 reads a
     /// gap and the lean parser asks whether a token is on a line.
-    /// An extra keeps none of them.
     fn gap(&self, j: usize, b: u32) -> bool {
-        if is_extra(self.recs[j].code) {
-            return false;
-        }
         let p = self.prev_tok(j);
         let (from, before) = if p < self.n { (self.recs[p].start as usize + 1, self.word_at(p)) } else { (0, 0) };
         crate::tier1::gap(self.src, from, self.recs[j].start as usize, before, b)
@@ -526,32 +517,27 @@ impl<'a, L: Layout> P<'a, L> {
     /// The comments before the token, written into the node open: the one a mark lost first.
     #[inline(always)]
     fn flush(&mut self) {
-        while self.pend < self.i {
+        while self.pend < self.xi {
             let j = self.pend;
             self.pend += 1;
-            let c = self.recs[j].code;
-            if is_extra(c) {
-                let (s, e) = (self.recs[j].start, self.recs[j].last + 1);
-                self.w.plain_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
-            }
+            let (s, e) = (self.xs[j].start, self.xs[j].last + 1);
+            self.w.plain_leaf(u32::from(extra_kind(self.xs[j].code)) | 1 << 16, s, e);
         }
     }
 
     /// The comments pending before the line break of settling mark `bit` (an extra's code holds
     /// the bits of its own gap): written now, into the node open, the node's end past them.
     fn settle(&mut self, bit: u32) {
-        while self.pend < self.i {
+        while self.pend < self.xi {
             let j = self.pend;
-            let c = self.recs[j].code;
-            if is_extra(c) && c >> (16 + bit) & 1 == 1 {
+            let c = self.xs[j].code;
+            if c >> (16 + bit) & 1 == 1 {
                 break;
             }
             self.pend += 1;
-            if is_extra(c) {
-                let (s, e) = (self.recs[j].start, self.recs[j].last + 1);
-                self.w.plain_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
-                self.last_end = self.last_end.max(e);
-            }
+            let (s, e) = (self.xs[j].start, self.xs[j].last + 1);
+            self.w.plain_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
+            self.last_end = self.last_end.max(e);
         }
     }
 
@@ -625,7 +611,7 @@ impl<'a, L: Layout> P<'a, L> {
         }
         let (s, key) = (self.w.plain_start(at as usize), self.w.plain_key(at as usize));
         // The comments between are its text.
-        self.pend = self.i;
+        self.pend = self.xi;
         let (_, e) = self.take::<M, F>()?;
         self.w.plain_truncate(at as usize);
         let at = self.w.plain_leaf(key & !0x3ff | u32::from(kind), s, e);
@@ -6416,7 +6402,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_fix_on_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::FIX_40) && self.pat_fix_on_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::FIX_40) && self.pat_fix_on_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6428,13 +6414,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_suppress_on_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::SUPPRESS_42) && self.pat_suppress_on_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::SUPPRESS_42) && self.pat_suppress_on_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn pat_suppress_on_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_identifier_at(j)) && self.pat_suppress_on_0_2(self.next_tok(j + 1), j)
+        (self.at_identifier_at(j)) && self.pat_suppress_on_0_2(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6446,7 +6432,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_options_on_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::OPTIONS_44) && self.pat_options_on_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::OPTIONS_44) && self.pat_options_on_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6458,7 +6444,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_over_on_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::OVER_43) && self.pat_over_on_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::OVER_43) && self.pat_over_on_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6470,7 +6456,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_policy_on_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::POLICY_53) && self.pat_policy_on_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::POLICY_53) && self.pat_policy_on_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6482,13 +6468,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_one_name_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LBRACE_20) && self.pat_one_name_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::LBRACE_20) && self.pat_one_name_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn pat_one_name_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_identifier_at(j)) && self.pat_one_name_0_2(self.next_tok(j + 1), j)
+        (self.at_identifier_at(j)) && self.pat_one_name_0_2(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6500,7 +6486,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_empty_parens_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LPAREN_10) && self.pat_empty_parens_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::LPAREN_10) && self.pat_empty_parens_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6512,13 +6498,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_no_value_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LPAREN_10) && self.pat_no_value_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::LPAREN_10) && self.pat_no_value_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn pat_no_value_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::RPAREN_11) && self.pat_no_value_0_2(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::RPAREN_11) && self.pat_no_value_0_2(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6530,7 +6516,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_end_on_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::DOT_13) && self.pat_end_on_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::DOT_13) && self.pat_end_on_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6542,13 +6528,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_fn_uncalled_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_23) && self.pat_fn_uncalled_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::AT_23) && self.pat_fn_uncalled_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn pat_fn_uncalled_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_identifier_at(j)) && self.pat_fn_uncalled_0_2(self.next_tok(j + 1), j)
+        (self.at_identifier_at(j)) && self.pat_fn_uncalled_0_2(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6560,13 +6546,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_io_bare_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::DOT_13) && self.pat_io_bare_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::DOT_13) && self.pat_io_bare_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn pat_io_bare_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::INPUT_55 || self.word_at(j) == w::OUTPUT_56) && self.pat_io_bare_0_2(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::INPUT_55 || self.word_at(j) == w::OUTPUT_56) && self.pat_io_bare_0_2(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -6793,16 +6779,9 @@ impl<L: Layout> P<'_, L> {
     /// Past the token, to the next grammar token's record.
     #[inline(always)]
     fn advance(&mut self, from: usize) -> R {
-        // The record after the token: the next token, but for comments; with none between, nothing is pending.
-        let j = self.i + 1;
-        self.i = if j < self.n && is_extra(self.recs[j].code) {
-            self.next_tok(j + 1)
-        } else {
-            if self.pend + 1 == j {
-                self.pend = j;
-            }
-            j
-        };
+        // The next token, the comments before it passed.
+        self.i += 1;
+        self.pass_comments();
         self.arrive()
     }
 

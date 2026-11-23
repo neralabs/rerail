@@ -689,3 +689,31 @@ that measure:
 Also: the escapes' class call inside a window closure's `unsafe` is written without its own `unsafe` (a nested-block
 warning in the generated file), and a shift of 0 is not written. All tests pass: rr, Kotlin, JSON, the product build,
 clippy.
+
+## Comments apart from the tokens, the writer sized as lean's, Kotlin's words by the table (2026-11-23)
+
+Three differences the generated Rust still had from the lean parsers' source:
+
+- **The comments are apart from the tokens.** Tier 1 wrote a comment (an extra) as a record between the tokens, and
+  tier 2 tested each record for one: `next_tok` skipped them, `prev_tok` scanned back over them, and `advance` kept the
+  pending ones' place. The lean lexers keep their comments in a list of their own (`Lexed::comments`), and the lean
+  parser places them by where they start (`comment`, `next_comment`). Now tier 1's `Lexed` holds the grammar tokens'
+  records (`recs`) and the comments' (`extras`), pushed apart as lean's `comments`. Tier 2's cursor over them is lean's:
+  `pend` (the first not yet written), `xi` (the first after the token's start) and `next_x` (where that one starts),
+  moved on in `advance` (`pass_comments`). `flush`, `settle`, and Kotlin's `drops`, `loses` and `loses since` read
+  `xs[pend..xi]`. The next and the previous token are `i + 1` and `i - 1`. A gap question (decision 0451) reads the
+  tokens and the comments by where they start (`back`, `ahead`, `since_comments`).
+  This is the Bitlex compiler's Rust only. The engine's records (`records.rs`: the stream walk, the JIT, the Metal
+  passes) still hold the extras among the tokens. The tests compare tier 1's tokens and comments, merged by start,
+  with the interpreter's records, and the tapes with the JIT's.
+- **The writer is sized as lean's.** Lean makes its writer for each file with room for `n + n / 2 + comments + 8`
+  nodes (`n` its tokens). Tier 2 sized it from the bytes (`src.len() / 3 + 16`) and now sizes it as lean does. Both make
+  the writer for each file: lean reuses no columns either, so that part was no difference.
+- **Kotlin's words come from the table.** Kotlin's tier 1 matched a token's bytes against each word (`match b`). It
+  now reads the word as rr's does, and as lean Kotlin's `keyword_switch` does: the first 8 bytes and the next 8,
+  masked to the length, hashed by one multiply into `WORDS`, and compared without a branch. Kotlin's source has no
+  padding, so a load near the file's end reads zeros past it (`load8`, its end apart and cold, as lean Kotlin's
+  `swar::load8`).
+
+Also: the uncalled helpers' pass collapses every run of blank lines it leaves. All tests pass: rr, Kotlin, JSON, the
+product build, clippy.

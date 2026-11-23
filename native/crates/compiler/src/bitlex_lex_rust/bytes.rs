@@ -1104,6 +1104,9 @@ fn key8(w: &[u8]) -> u64 {
     w.iter().take(8).enumerate().fold(0, |k, (i, &c)| k | u64::from(c) << (8 * i))
 }
 
+/// `word_at`'s load of 8 bytes where the source is not padded: zeros past the file, as the lean Kotlin lexer's `load8`.
+const LOAD_AT_END: &str = "/// The 8 bytes at `i`, little-endian, zeros past the file.\n#[inline(always)]\nfn load8(src: &[u8], i: usize) -> u64 {\n    match src.get(i..i + 8) {\n        Some(b) => u64::from_le_bytes(b.try_into().expect(\"8 bytes\")),\n        None => load8_at_end(src, i),\n    }\n}\n\n/// `load8` within 8 bytes of the file's end.\n#[cold]\n#[inline(never)]\nfn load8_at_end(src: &[u8], i: usize) -> u64 {\n    let rest = src.get(i..).unwrap_or(&[]);\n    let have = rest.len().min(8);\n    let mut w = [0u8; 8];\n    w[..have].copy_from_slice(&rest[..have]);\n    u64::from_le_bytes(w)\n}\n\n";
+
 /// A word's bytes after its 8th, to its 16th, as one word of memory: zeros past its end.
 fn tail8(w: &[u8]) -> u64 {
     key8(w.get(8..).unwrap_or(&[]))
@@ -1112,9 +1115,10 @@ fn tail8(w: &[u8]) -> u64 {
 /// A token's word from one load (decision 0623 step 4, the lean lexer's `word_code`): its first 8 bytes masked to its
 /// length, and the length, hashed by one multiply into a table where each of the grammar's words (`words`, code
 /// `i + 1`) has a slot of its own; a word of 9 to 16 bytes compares its rest as a second word of memory in the same
-/// test, as lean's `ninth`. `None` where a word is longer, or no multiplier the search tries gives each its own slot.
-pub(super) fn word_table(words: &[Vec<u8>]) -> Option<String> {
-    if words.iter().any(|w| w.len() > 16) {
+/// test, as lean's `ninth`. Where the source is not padded (`padded` false), a load near the file's end reads zeros
+/// past it, as the lean Kotlin lexer's `load8`. `None` where a word is longer, or no multiplier the search tries gives each its own slot.
+pub(super) fn word_table(words: &[Vec<u8>], padded: bool) -> Option<String> {
+    if words.is_empty() || words.iter().any(|w| w.len() > 16) {
         return None;
     }
     let keys: Vec<u64> = words.iter().map(|w| key8(w) ^ w.len() as u64).collect();
@@ -1148,9 +1152,12 @@ pub(super) fn word_table(words: &[Vec<u8>]) -> Option<String> {
                 }
             }
             return Some(format!(
-                "/// Each slot's word (`word_at`): its first 8 bytes, the next 8, its length, its code (0: none), as the lean lexer's\n/// `WORDS`.\nstatic WORDS: [(u64, u64, u32, u32); {}] = [\n{table}];\n\n/// A token's word: the code of the word its `len` bytes from `s` are, 0 for none, as the lean lexer's `word_code`. Its\n/// first 8 bytes, masked to its length, and the length, hashed by one multiply into `WORDS`; its bytes 8 to 16 masked\n/// the same, compared with the first and the length in one test (lean's `ninth`), without a branch.\n#[inline(always)]\nfn word_at(src: &[u8], s: usize, len: usize) -> u32 {{\n    let raw = u64::from_le_bytes(src[s..s + 8].try_into().expect(\"the padded source\"));\n    let rest = u64::from_le_bytes(src[s + 8..s + 16].try_into().expect(\"the padded source\"));\n    let k = raw & (u64::MAX >> (64 - 8 * len.clamp(1, 8)));\n    let t = rest & u64::MAX.checked_shr(128 - 8 * len.clamp(8, 16) as u32).unwrap_or(0);\n    let (key, tail, l, code) = WORDS[((k ^ len as u64).wrapping_mul({mul:#018x}) >> {}) as usize];\n    code & 0u32.wrapping_sub(u32::from((key == k) & (tail == t) & (l as usize == len)))\n}}\n\n",
+                "/// Each slot's word (`word_at`): its first 8 bytes, the next 8, its length, its code (0: none), as the lean lexer's\n/// `WORDS`.\nstatic WORDS: [(u64, u64, u32, u32); {}] = [\n{table}];\n\n/// A token's word: the code of the word its `len` bytes from `s` are, 0 for none, as the lean lexer's `word_code`. Its\n/// first 8 bytes, masked to its length, and the length, hashed by one multiply into `WORDS`; its bytes 8 to 16 masked\n/// the same, compared with the first and the length in one test (lean's `ninth`), without a branch.\n#[inline(always)]\nfn word_at(src: &[u8], s: usize, len: usize) -> u32 {{\n    let raw = {l0};\n    let rest = {l8};\n    let k = raw & (u64::MAX >> (64 - 8 * len.clamp(1, 8)));\n    let t = rest & u64::MAX.checked_shr(128 - 8 * len.clamp(8, 16) as u32).unwrap_or(0);\n    let (key, tail, l, code) = WORDS[((k ^ len as u64).wrapping_mul({mul:#018x}) >> {}) as usize];\n    code & 0u32.wrapping_sub(u32::from((key == k) & (tail == t) & (l as usize == len)))\n}}\n\n{loads}",
                 1usize << bits,
-                64 - bits
+                64 - bits,
+                l0 = if padded { "u64::from_le_bytes(src[s..s + 8].try_into().expect(\"the padded source\"))" } else { "load8(src, s)" },
+                l8 = if padded { "u64::from_le_bytes(src[s + 8..s + 16].try_into().expect(\"the padded source\"))" } else { "load8(src, s + 8)" },
+                loads = if padded { "" } else { LOAD_AT_END },
             ));
         }
     }

@@ -106,8 +106,6 @@ unsafe fn marks<S: rerail_simd8::Simd8x64>(src: &[u8], p: usize, a: u8, b: u8) -
     unsafe { S::marks32(block, a, b) }
 }
 
-
-
 /// Whether a `number` token, and a word of its row, may end before byte `b`: a byte no token starts at, or one a
 /// record starts at after it (simdjson's `is_not_structural_or_whitespace` false); at any other the file is refused.
 #[inline(always)]

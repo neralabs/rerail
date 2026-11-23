@@ -8,9 +8,11 @@ pub struct Rec {
     pub code: u32,
 }
 
-/// Tier 1's records, one a token, and whether the file goes to tree-sitter.
+/// Tier 1's records, one a grammar token; the comments (the extras) apart, as the lean lexer keeps its comments; and
+/// whether the file goes to tree-sitter.
 pub struct Lexed {
     pub recs: Vec<Rec>,
+    pub extras: Vec<Rec>,
     pub refused: bool,
 }
 
@@ -493,6 +495,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
     // Room for a record a byte, as the lean lexer's: each token's first byte is after the last's, so the writes need no check.
     let mut recs: Vec<Rec> = Vec::with_capacity(n + 1);
     let out = recs.as_mut_ptr();
+    // The comments, apart from the tokens, as the lean lexer's `comments`.
+    let mut extras: Vec<Rec> = Vec::new();
     let mut len = 0usize;
     let mut at = 0usize;
     // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.
@@ -962,10 +966,15 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
             pending = hits >> 16;
         }
         from_record = s + 1;
-        debug_assert!(len < n && l >= s, "a token a byte at most");
-        // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.
-        unsafe { out.add(len).write(Rec { start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 }) };
-        len += 1;
+        let rec = Rec { start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 };
+        if extra {
+            extras.push(rec);
+        } else {
+            debug_assert!(len < n && l >= s, "a token a byte at most");
+            // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.
+            unsafe { out.add(len).write(rec) };
+            len += 1;
+        }
         at = l + 1;
         if at >= base + 64 {
             b = at / 64;
@@ -984,6 +993,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
     unsafe { recs.set_len(len) };
     Lexed {
         recs,
+        extras,
         refused,
     }
 }

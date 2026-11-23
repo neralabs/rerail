@@ -119,9 +119,13 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
         return None;
     }
     let (starts, lasts) = (&run.positions[0], &run.positions[1]);
-    for k in 0..starts.len().max(lx.recs.len()) {
+    // Tier 1 as Rust keeps the comments apart from the tokens (as the lean lexer); the interpreter's records hold both,
+    // by where they start.
+    let mut recs: Vec<_> = lx.recs.iter().chain(&lx.extras).copied().collect();
+    recs.sort_by_key(|r| r.start);
+    for k in 0..starts.len().max(recs.len()) {
         let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
-        let rec = lx.recs.get(k);
+        let rec = recs.get(k);
         let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), rec.map(|r| &r.code));
         let kept = |c: Option<&u32>| c.map(|&c| c & !late & !asked);
         let late_ok = run.codes.get(k).zip(ours.2).is_none_or(|(&t, &o)| t & late & !o == 0);

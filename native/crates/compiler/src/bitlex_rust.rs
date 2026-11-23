@@ -1039,7 +1039,7 @@ impl<'a> G<'a> {
         (!ws.is_empty()).then_some(ws)
     }
 
-    /// The token before the token a run starts at, as its first function's `prev`: found (a scan back over the extras)
+    /// The token before the token a run starts at, as its first function's `prev`: found
     /// only where the run's first element reads it, a `(C)*` with an ending; else none (`self.n`), as no element reads it.
     fn run_prev(seq: &[Vec<TokenElem>]) -> &'static str {
         match seq.first().map(Vec::as_slice) {
@@ -1052,7 +1052,7 @@ impl<'a> G<'a> {
     /// they hold.
     fn run(&self, seq: &[Vec<TokenElem>], name: &str, fns: &mut String) -> Result<(), String> {
         for (k, e) in seq.iter().enumerate() {
-            let next = if k + 1 == seq.len() { "true".to_owned() } else { format!("self.{name}_{}(self.next_tok(j + 1), j)", k + 1) };
+            let next = if k + 1 == seq.len() { "true".to_owned() } else { format!("self.{name}_{}(j + 1, j)", k + 1) };
             let body = if let [TokenElem::Many(choices, nests, ending)] = e.as_slice() {
                 // `(C)*`: the elements after it tried at each token from here, where every depth is
                 // 0 (and, with `ending`, after one of its tokens); else one more of the run's.
@@ -1067,7 +1067,7 @@ impl<'a> G<'a> {
                 for (d, n) in nests.iter().enumerate() {
                     let _ = writeln!(b, "            if {} {{\n                depth[{d}] += 1;\n            }} else if {} {{\n                if depth[{d}] == 0 {{\n                    return false;\n                }}\n                depth[{d}] -= 1;\n            }}", self.elem(&n.open, "j")?, self.elem(&n.close, "j")?);
                 }
-                b.push_str("            prev = j;\n            j = self.next_tok(j + 1);\n        }\n");
+                b.push_str("            prev = j;\n            j += 1;\n        }\n");
                 b
             } else {
                 format!("        let _ = prev;\n        {} && {next}\n", self.elem(e, "j")?)
@@ -1077,8 +1077,8 @@ impl<'a> G<'a> {
         Ok(())
     }
 
-    /// A gap question's element at record `j` (`GapPattern`, decision 0451): over the records,
-    /// the extras among them; `none` what it gives where there is no record there.
+    /// A gap question's element at a record (`GapPattern`, decision 0451): comment `j` where `x`, else token `j`;
+    /// `none` what it gives where there is no record there.
     fn gap_elem(&self, e: &[TokenElem], j: &str) -> Result<(String, bool), String> {
         let (not, choices) = match e {
             [TokenElem::Not(inner)] => (true, inner.as_slice()),
@@ -1088,18 +1088,18 @@ impl<'a> G<'a> {
         let mut and = Vec::new();
         for c in choices {
             match c {
-                TokenElem::Kind(k) if self.x.extras.contains(k) => pos.push(format!("(is_extra(self.recs[{j}].code) && extra_kind(self.recs[{j}].code) == {})", self.kind_const(k)?)),
+                TokenElem::Kind(k) if self.x.extras.contains(k) => pos.push(format!("(x && extra_kind(self.xs[{j}].code) == {})", self.kind_const(k)?)),
                 TokenElem::Kind(k) => {
                     self.kind_tests.borrow_mut().insert(k.clone());
-                    pos.push(format!("(!is_extra(self.recs[{j}].code) && self.at_{}_rec({j}))", ident(k)));
+                    pos.push(format!("(!x && self.at_{}_rec({j}))", ident(k)));
                 }
                 TokenElem::Word(w) => match self.word_of(&String::from_utf8_lossy(w)) {
-                    Some(id) => pos.push(format!("(!is_extra(self.recs[{j}].code) && self.recs[{j}].code >> 8 & 0xff == w::{})", self.word_const(id))),
+                    Some(id) => pos.push(format!("(!x && self.recs[{j}].code >> 8 & 0xff == w::{})", self.word_const(id))),
                     None => pos.push("false".into()),
                 },
-                TokenElem::With(m) => and.push(format!("self.marks_hold({j}, 1 << {})", self.bit_num(m)?)),
-                TokenElem::Without(m) => and.push(format!("!self.marks_hold({j}, 1 << {})", self.bit_num(m)?)),
-                TokenElem::Starting(bytes) => and.push(format!("matches!(self.src[self.recs[{j}].start as usize], {})", bytes.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(" | "))),
+                TokenElem::With(m) => and.push(format!("self.rec_marks_hold(x, {j}, 1 << {})", self.bit_num(m)?)),
+                TokenElem::Without(m) => and.push(format!("!self.rec_marks_hold(x, {j}, 1 << {})", self.bit_num(m)?)),
+                TokenElem::Starting(bytes) => and.push(format!("matches!(self.src[self.record(x, {j}).start as usize], {})", bytes.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(" | "))),
                 TokenElem::End | TokenElem::Not(_) | TokenElem::Many(..) => return Err(format!("a gap question's element {c:?}")),
             }
         }
@@ -1119,32 +1119,34 @@ impl<'a> G<'a> {
     }
 
     /// A gap question as a function of the token's record (`gap_pattern_holds`): `after`'s
-    /// records before it, the last just before; `since`'s from the grammar token before; `before`'s
-    /// from it on.
+    /// records before it, the last just before; `since`'s the grammar token before, then the comments since it;
+    /// `before`'s from it on. The records are the tokens and the comments, by where they start (`back`, `ahead`).
     fn gap_fn(&self, q: &::bitlex::syntax::GapPattern, name: &str, fns: &mut String) -> Result<(), String> {
         let mut conds = Vec::new();
         let a = q.after.len() as isize;
         for (i, e) in q.after.iter().enumerate() {
             let (c, not) = self.gap_elem(e, "j")?;
-            if q.since {
-                // From the grammar token before (none before the file's first: the record before 0).
-                let none = if i == 0 && not { "true" } else { "false" };
-                conds.push(format!("{{ let j = g as isize + {i} - 1; if j < 0 {{ {none} }} else {{ let j = j as usize; j < here && {c} }} }}"));
-            } else {
-                let off = i as isize - a;
+            if q.since && i == 0 {
+                // The grammar token before (none before the file's first).
                 let none = if not { "true" } else { "false" };
-                conds.push(format!("{{ let j = here as isize + {off}; if j < 0 {{ {none} }} else {{ let j = j as usize; {c} }} }}"));
+                conds.push(format!("{{ if here == 0 {{ {none} }} else {{ let (x, j) = (false, here - 1); {c} }} }}"));
+            } else if q.since {
+                // The comments since it, before the token.
+                conds.push(format!("{{ let (x, j) = (true, x0 + {i} - 1); j < self.xi && {c} }}"));
+            } else {
+                let none = if not { "true" } else { "false" };
+                conds.push(format!("{{ match self.back(here, {}) {{ Some((x, j)) => {c}, None => {none} }} }}", a - i as isize));
             }
         }
         for (i, e) in q.before.iter().enumerate() {
             if matches!(e.as_slice(), [TokenElem::End]) {
-                conds.push(format!("here + {i} >= self.n"));
+                conds.push(format!("self.ahead(here, {i}).is_none()"));
                 continue;
             }
             let (c, _) = self.gap_elem(e, "j")?;
-            conds.push(format!("{{ let j = here + {i}; j < self.n && {c} }}"));
+            conds.push(format!("{{ match self.ahead(here, {i}) {{ Some((x, j)) => {c}, None => false }} }}"));
         }
-        let g = if q.since { "        let g = self.prev_tok(here);\n        let g = if g >= self.n { 0 } else { g + 1 };\n" } else { "" };
+        let g = if q.since { "        let x0 = self.since_comments(here);\n" } else { "" };
         let _ = write!(fns, "    #[allow(unused_variables)]\n    fn {name}(&self, here: usize) -> bool {{\n{g}        {}\n    }}\n\n", if conds.is_empty() { "true".to_owned() } else { conds.iter().map(|c| format!("({c})")).collect::<Vec<_>>().join("\n            && ") });
         Ok(())
     }
@@ -1417,7 +1419,7 @@ impl<'a> G<'a> {
                 // Its opener's kind: its own row's.
                 let rows = self.x.lexer.iter().filter(|s| matches!(s, ::bitlex::syntax::Stmt::Token { .. }));
                 let own = rows.enumerate().find(|(_, s)| matches!(s, ::bitlex::syntax::Stmt::Token { kind, .. } if *kind == rd.kind)).and_then(|(i, _)| self.x.row_kinds.get(i).copied().flatten());
-                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_bit(&self.m.{}, from).filter(|&p| self.i + 1 >= self.n || p < self.recs[self.i + 1].start as usize) {{\n            self.known = 0;\n            return self.resume_{r}(p);\n        }}\n", rd.open);
+                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_bit(&self.m.{}, from).filter(|&p| p < (if self.i + 1 < self.n {{ self.recs[self.i + 1].start }} else {{ u32::MAX }}).min(self.next_x) as usize) {{\n            self.known = 0;\n            return self.resume_{r}(p);\n        }}\n", rd.open);
                 (format!("resume_{r}"), "at byte `s`, no record of its own: the string's parts after its template's `}`", format!("s: usize) -> R {{\n        self.sub.clear();\n        self.k = 0;\n        self.piece(s, s, {});", kind_or(own, "s")))
             } else {
                 (format!("split_{r}"), "record `j`", "j: usize) -> R {\n        let s = self.recs[j].start as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.recs[j].code));".to_owned())
@@ -1430,7 +1432,7 @@ impl<'a> G<'a> {
                 close = rd.close
             );
         }
-        let _ = write!(out, "    /// Past the token, to the next grammar token's record{}.\n    #[inline(always)]\n    fn advance(&mut self, from: usize) -> R {{\n{resume}        // The record after the token: the next token, but for comments; with none between, nothing is pending.\n        let j = self.i + 1;\n        self.i = if j < self.n && is_extra(self.recs[j].code) {{\n            self.next_tok(j + 1)\n        }} else {{\n            if self.pend + 1 == j {{\n                self.pend = j;\n            }}\n            j\n        }};\n        self.arrive()\n    }}\n\n", if resume.is_empty() { "" } else { ", or the string's parts a template's `}` resumes, at the record before the next (decision 0600)" });
+        let _ = write!(out, "    /// Past the token, to the next grammar token's record{}.\n    #[inline(always)]\n    fn advance(&mut self, from: usize) -> R {{\n{resume}        // The next token, the comments before it passed.\n        self.i += 1;\n        self.pass_comments();\n        self.arrive()\n    }}\n\n", if resume.is_empty() { "" } else { ", or the string's parts a template's `}` resumes, at the record before the next (decision 0600)" });
         let _ = write!(out, "    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {{\n        let s = self.recs[j].start as usize;\n{at}        let _ = s;\n        Ok(())\n    }}\n\n");
         // A piece's word: its kind's keywords', as the lean lexer finds a word.
         let mut arms = String::new();
@@ -1532,12 +1534,8 @@ impl<'a> G<'a> {
         let mut extras = String::new();
         let mut split = String::new();
         self.splits(&mut split, &mut extras)?;
-        // An extra's record: the extra's mark in its code; its kind the first extra's, or a later one's by its own bit.
-        let is_extra = match self.x.extra_bits.first() {
-            Some((b, _)) => format!("code >> {} & 1 == 1", 16 + u32::from(*b)),
-            None => "false".to_owned(),
-        };
-        let _ = writeln!(extras, "\n/// A record of an extra (a comment): the extra's mark in its code.\n#[inline(always)]\nfn is_extra(code: u32) -> bool {{\n    {is_extra}\n}}\n");
+        // An extra's kind: the first extra's, or a later one's by its own bit.
+        extras.push('\n');
         let mut kind = String::new();
         for (b, k) in self.x.extra_bits.iter().skip(1) {
             let _ = write!(kind, "    if code >> {} & 1 == 1 {{\n        return k::{};\n    }}\n", 16 + u32::from(*b), self.kind_const(k)?.trim_start_matches("k::"));
@@ -1662,18 +1660,19 @@ impl<'a> G<'a> {
         // lost, and a taken token checks none.
         if ["self.drop_pending()", "self.lose_pending()", "self.move_first()"].iter().all(|c| !out.contains(c)) {
             for (a, b) in [
-                ("    /// The extras a mark's question dropped or lost (`drops`, `loses`), by record; the one lost,\n    /// its kind and, once its token is taken, that token's start: a pending extra of no width.\n    gone: Vec<usize>,\n", ""),
-                ("    lost: Option<(u16, Option<u32>)>,\n    /// The extra a mark's `loses since` moved, by record, and where: of no width there.\n    moved: Option<(usize, u32)>,\n", ""),
+                ("    /// The extras a mark's question dropped or lost (`drops`, `loses`), by comment; the one lost,\n    /// its kind and, once its token is taken, that token's start: a pending extra of no width.\n    gone: Vec<usize>,\n", ""),
+                ("    lost: Option<(u16, Option<u32>)>,\n    /// The extra a mark's `loses since` moved, by comment, and where: of no width there.\n    moved: Option<(usize, u32)>,\n", ""),
                 ("gone: Vec::new(), ", ""),
                 ("lost: None, moved: None, ", ""),
                 ("        if let Some((kind, Some(s))) = self.lost {\n            self.lost = None;\n            let at = self.w.push(u32::from(kind) | 1 << 16, s);\n            self.w.close(at, s);\n        }\n", ""),
                 ("        if let Some((kind, None)) = self.lost {\n            self.lost = Some((kind, Some(self.start())));\n        }\n", ""),
-                ("        // An extra a `loses since` moved and the one after it go with those before: the lean\n        // lexer's semicolon is past that one.\n        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.i);\n        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.recs[k].code) && !self.gone.contains(&k)));\n", ""),
+                ("        // An extra a `loses since` moved and the one after it go with those before: the lean\n        // lexer's semicolon is past that one.\n        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.xi);\n        let through = moved.and_then(|m| (m + 1..self.xi).find(|k| !self.gone.contains(k)));\n", ""),
                 (" && Some(j) != moved && Some(j) != through {", " {"),
-                ("            if is_extra(c) && !self.gone.contains(&j) {\n                let (s, e) = self.extra_span(j);\n", "            if is_extra(c) {\n                let (s, e) = (self.recs[j].start, self.recs[j].last + 1);\n"),
-                ("    /// Extra `j`'s span: its bytes, or of no width where a mark's `loses since` moved it.\n    fn extra_span(&self, j: usize) -> (u32, u32) {\n        match self.moved {\n            Some((m, s)) if m == j => (s, s),\n            _ => (self.recs[j].start, self.recs[j].last + 1),\n        }\n    }\n\n", ""),
-                ("    /// `loses since`: the first extra pending of no width at the next one's start (the lean\n    /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).\n    fn move_first(&mut self) {\n        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j));\n        if let (Some(a), Some(b)) = (pending.next(), pending.next()) {\n            self.moved = Some((a, self.recs[b].start));\n        }\n    }\n\n", ""),
-                ("    /// The extra pending last before the token (not yet written, not dropped or lost).\n    fn pending_last(&self) -> Option<usize> {\n        (self.pend..self.i).rev().find(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j))\n    }\n\n    /// `drops`: the extra pending last gone; with none left pending, the nodes closed next end\n    /// at the token, where the semicolon of no width is (the lean lexer's `Asi::Swallow`).\n    fn drop_pending(&mut self) {\n        if let Some(j) = self.pending_last() {\n            self.gone.push(j);\n            if self.pending_last().is_none() {\n                self.last_end = self.start();\n            }\n        }\n    }\n\n    /// `loses`: the extra pending last made again after the token is taken, of no width at its\n    /// start (the lean lexer's `asi` loses it); once a token.\n    fn lose_pending(&mut self) {\n        if self.lost.is_some() {\n            return;\n        }\n        if let Some(j) = self.pending_last() {\n            self.gone.push(j);\n            self.lost = Some((extra_kind(self.recs[j].code), None));\n        }\n    }\n\n", ""),
+                ("            if !self.gone.contains(&j) {\n                let (s, e) = self.extra_span(j);\n                self.w.push_leaf(u32::from(extra_kind(self.xs[j].code)) | 1 << 16, s, e);\n            }\n", "            let (s, e) = (self.xs[j].start, self.xs[j].last + 1);\n            self.w.push_leaf(u32::from(extra_kind(self.xs[j].code)) | 1 << 16, s, e);\n"),
+                ("            if !self.gone.contains(&j) {\n                let (s, e) = self.extra_span(j);\n                self.w.push_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);\n                self.last_end = self.last_end.max(e);\n            }\n", "            let (s, e) = (self.xs[j].start, self.xs[j].last + 1);\n            self.w.push_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);\n            self.last_end = self.last_end.max(e);\n"),
+                ("    /// Extra `j`'s span: its bytes, or of no width where a mark's `loses since` moved it.\n    fn extra_span(&self, j: usize) -> (u32, u32) {\n        match self.moved {\n            Some((m, s)) if m == j => (s, s),\n            _ => (self.xs[j].start, self.xs[j].last + 1),\n        }\n    }\n\n", ""),
+                ("    /// `loses since`: the first extra pending of no width at the next one's start (the lean\n    /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).\n    fn move_first(&mut self) {\n        let mut pending = (self.pend..self.xi).filter(|j| !self.gone.contains(j));\n        if let (Some(a), Some(b)) = (pending.next(), pending.next()) {\n            self.moved = Some((a, self.xs[b].start));\n        }\n    }\n\n", ""),
+                ("    /// The extra pending last before the token (not yet written, not dropped or lost).\n    fn pending_last(&self) -> Option<usize> {\n        (self.pend..self.xi).rev().find(|j| !self.gone.contains(j))\n    }\n\n    /// `drops`: the extra pending last gone; with none left pending, the nodes closed next end\n    /// at the token, where the semicolon of no width is (the lean lexer's `Asi::Swallow`).\n    fn drop_pending(&mut self) {\n        if let Some(j) = self.pending_last() {\n            self.gone.push(j);\n            if self.pending_last().is_none() {\n                self.last_end = self.start();\n            }\n        }\n    }\n\n    /// `loses`: the extra pending last made again after the token is taken, of no width at its\n    /// start (the lean lexer's `asi` loses it); once a token.\n    fn lose_pending(&mut self) {\n        if self.lost.is_some() {\n            return;\n        }\n        if let Some(j) = self.pending_last() {\n            self.gone.push(j);\n            self.lost = Some((extra_kind(self.xs[j].code), None));\n        }\n    }\n\n", ""),
             ] {
                 if !out.contains(a) {
                     return Err(format!("tier 2: the runtime's lost extras, not where they were: {a:?}"));
@@ -1694,8 +1693,8 @@ impl<'a> G<'a> {
                 ("        } else if self.k < self.sub.len() {\n            self.sub[self.k].0\n", ""),
                 ("        if self.k < self.sub.len() {\n            let (s, l, _) = self.sub[self.k];\n            self.k += 1;\n            if self.k < self.sub.len() {\n                self.known = 0;\n                self.last_end = l + 1;\n                return Ok((s, l + 1));\n            }\n            self.sub.clear();\n            self.k = 0;\n            self.advance(l as usize + 1)?;\n            self.last_end = l + 1;\n            return Ok((s, l + 1));\n        }\n", ""),
                 ("    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).\n    m: &'a crate::tier1::Masks,\n", ""),
-                ("let (recs, m) = (&lx.recs[..], &lx.masks);", "let recs = &lx.recs[..];"),
-                ("P { src, recs, m, n,", "P { src, recs, n,"),
+                ("let (recs, xs, m) = (&lx.recs[..], &lx.extras[..], &lx.masks);", "let (recs, xs) = (&lx.recs[..], &lx.extras[..]);"),
+                ("P { src, recs, xs, m, n,", "P { src, recs, xs, n,"),
                 ("    /// At record `i`: split it where tier 2 reads its region in parts.\n", "    /// At record `i`: its code read, no mark known there yet.\n"),
                 ("        if self.i < self.n {\n            self.split(self.i)?;\n        }\n", "        self.cur = if self.i < self.n { self.recs[self.i].code } else { 0 };\n"),
                 // The token's code held as the token is reached (a token is its record), as the lean parser holds its
@@ -1988,22 +1987,28 @@ const UNSET: u16 = 0x3ff;
 /// The deepest the calls go.
 const DEPTH: u32 = 400;
 
-/// The parser: tier 1's records (the tokens and the comments), the token read next, the tree.
+/// The parser: tier 1's records (the grammar tokens), its comments apart, the token read next, the tree.
 pub struct P<'a, L: Layout> {
     src: &'a [u8],
     /// Tier 1's records, one a token: its first and last byte and its code (the lean parser's `Tok`).
     recs: &'a [crate::tier1::Rec],
+    /// The comments (the extras), apart from the tokens, as the lean parser's `comments`.
+    xs: &'a [crate::tier1::Rec],
     /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).
     m: &'a crate::tier1::Masks,
     n: usize,
-    /// The next grammar token's record; the first record not written yet (the comments before it).
+    /// The next grammar token's record.
     i: usize,
     /// The pieces of record `i` where tier 2 splits it (a string, decision 0323's lowering B), as
     /// the lean parser's string arm reads its pieces: each one's first and last byte and code;
     /// the token is piece `k`.
     sub: Vec<(u32, u32, u32)>,
     k: usize,
+    /// The comments: the first not yet written (`pend`), the first after the token's start (`xi`), and where that one
+    /// starts (`next_x`, `u32::MAX` past the last), as the lean parser's `comment` and `next_comment`.
     pend: usize,
+    xi: usize,
+    next_x: u32,
     w: Writer<L>,
     /// The level open: its node, and the node made last in it, held as the lean parser holds its `top`; the levels
     /// around it on `levels` (one push and one pop a level).
@@ -2023,11 +2028,11 @@ pub struct P<'a, L: Layout> {
     /// The marks whose questions a level that may end at them asks (`ask_M`), by order: those
     /// of the caller's level, as the lean parser's `stmt`.
     asks: u64,
-    /// The extras a mark's question dropped or lost (`drops`, `loses`), by record; the one lost,
+    /// The extras a mark's question dropped or lost (`drops`, `loses`), by comment; the one lost,
     /// its kind and, once its token is taken, that token's start: a pending extra of no width.
     gone: Vec<usize>,
     lost: Option<(u16, Option<u32>)>,
-    /// The extra a mark's `loses since` moved, by record, and where: of no width there.
+    /// The extra a mark's `loses since` moved, by comment, and where: of no width there.
     moved: Option<(usize, u32)>,
     /// The strings open over a template's code (decision 0600): their parts go on at the next
     /// opener of a reader that resumes them (`advance`).
@@ -2037,10 +2042,11 @@ pub struct P<'a, L: Layout> {
 #[allow(dead_code)]
 impl<'a, L: Layout> P<'a, L> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L) -> R<Self> {
-        let (recs, m) = (&lx.recs[..], &lx.masks);
+        let (recs, xs, m) = (&lx.recs[..], &lx.extras[..], &lx.masks);
         let n = recs.len();
-        let mut p = P { src, recs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
-        p.i = p.next_tok(0);
+        // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
+        let mut p = P { src, recs, xs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
+        p.pass_comments();
         p.arrive()?;
         Ok(p)
     }
@@ -2079,25 +2085,88 @@ impl<'a, L: Layout> P<'a, L> {
         self.holds >> order & 1 == 1
     }
 
+    /// The comments before the token passed (`xi`), as the lean parser's comment cursor moves on.
     #[inline(always)]
-    fn next_tok(&self, mut j: usize) -> usize {
-        while j < self.n && is_extra(self.recs[j].code) {
-            j += 1;
+    fn pass_comments(&mut self) {
+        let to = if self.i < self.n { self.recs[self.i].start } else { u32::MAX };
+        while self.next_x < to {
+            self.xi += 1;
+            self.next_x = self.xs.get(self.xi).map_or(u32::MAX, |x| x.start);
         }
-        j.min(self.n)
     }
 
-    /// The grammar token before record `j` (`n`: none).
+    /// The grammar token before token `j` (`n`: none).
     #[inline(always)]
     fn prev_tok(&self, j: usize) -> usize {
-        let mut k = j;
-        while k > 0 {
-            k -= 1;
-            if !is_extra(self.recs[k].code) {
-                return k;
-            }
+        if j == 0 { self.n } else { j - 1 }
+    }
+
+    /// A record: comment `j` where `x`, else token `j`.
+    #[inline(always)]
+    fn record(&self, x: bool, j: usize) -> crate::tier1::Rec {
+        if x { self.xs[j] } else { self.recs[j] }
+    }
+
+    /// The `k`th record before the token (`here`, the token `i`), the comments among them by where they start: whether a
+    /// comment, and its index; none before the file's first.
+    fn back(&self, here: usize, k: usize) -> Option<(bool, usize)> {
+        debug_assert_eq!(here, self.i);
+        let (mut t, mut x) = (here, self.xi);
+        let mut got = None;
+        for _ in 0..k {
+            got = if x > 0 && (t == 0 || self.xs[x - 1].start > self.recs[t - 1].start) {
+                x -= 1;
+                Some((true, x))
+            } else if t > 0 {
+                t -= 1;
+                Some((false, t))
+            } else {
+                return None;
+            };
         }
-        self.n
+        got
+    }
+
+    /// The `k`th record from the token on (`here`, the token `i`; 0 the token itself), the comments among them by where
+    /// they start; none past the last.
+    fn ahead(&self, here: usize, k: usize) -> Option<(bool, usize)> {
+        debug_assert_eq!(here, self.i);
+        if here >= self.n {
+            return None;
+        }
+        let (mut t, mut x) = (here, self.xi);
+        let mut got = (false, here);
+        for _ in 0..k {
+            let next = if t + 1 < self.n { self.recs[t + 1].start } else { u32::MAX };
+            got = if x < self.xs.len() && self.xs[x].start < next {
+                x += 1;
+                (true, x - 1)
+            } else if t + 1 < self.n {
+                t += 1;
+                (false, t)
+            } else {
+                return None;
+            };
+        }
+        Some(got)
+    }
+
+    /// The first comment since the grammar token before the token (`here`, the token `i`): the comments between.
+    fn since_comments(&self, here: usize) -> usize {
+        debug_assert_eq!(here, self.i);
+        if here == 0 {
+            return 0;
+        }
+        let mut x = self.xi;
+        while x > 0 && self.xs[x - 1].start > self.recs[here - 1].start {
+            x -= 1;
+        }
+        x
+    }
+
+    /// Whether one of the marks `bits` holds at a record (`rec`): a comment's are the marks it keeps of its own gap.
+    fn rec_marks_hold(&self, x: bool, j: usize, bits: u32) -> bool {
+        if x { self.xs[j].code >> 16 & bits != 0 } else { self.marks_hold(j, bits) }
     }
 
     #[inline(always)]
@@ -2116,13 +2185,9 @@ impl<'a, L: Layout> P<'a, L> {
         j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b))
     }
 
-    /// Gap mark `b` at record `j`, asked of the bytes since the grammar token before's first byte, as tier 1 reads a
+    /// Gap mark `b` at token `j`, asked of the bytes since the grammar token before's first byte, as tier 1 reads a
     /// gap and the lean parser asks whether a token is on a line.
-    /// An extra keeps none of them.
     fn gap(&self, j: usize, b: u32) -> bool {
-        if is_extra(self.recs[j].code) {
-            return false;
-        }
         let p = self.prev_tok(j);
         let (from, before) = if p < self.n { (self.recs[p].start as usize + 1, self.word_at(p)) } else { (0, 0) };
         crate::tier1::gap(self.src, from, self.recs[j].start as usize, before, b)
@@ -2185,13 +2250,12 @@ impl<'a, L: Layout> P<'a, L> {
             let at = self.w.push(u32::from(kind) | 1 << 16, s);
             self.w.close(at, s);
         }
-        while self.pend < self.i {
+        while self.pend < self.xi {
             let j = self.pend;
             self.pend += 1;
-            let c = self.recs[j].code;
-            if is_extra(c) && !self.gone.contains(&j) {
+            if !self.gone.contains(&j) {
                 let (s, e) = self.extra_span(j);
-                self.w.push_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
+                self.w.push_leaf(u32::from(extra_kind(self.xs[j].code)) | 1 << 16, s, e);
             }
         }
     }
@@ -2200,16 +2264,16 @@ impl<'a, L: Layout> P<'a, L> {
     fn extra_span(&self, j: usize) -> (u32, u32) {
         match self.moved {
             Some((m, s)) if m == j => (s, s),
-            _ => (self.recs[j].start, self.recs[j].last + 1),
+            _ => (self.xs[j].start, self.xs[j].last + 1),
         }
     }
 
     /// `loses since`: the first extra pending of no width at the next one's start (the lean
     /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).
     fn move_first(&mut self) {
-        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j));
+        let mut pending = (self.pend..self.xi).filter(|j| !self.gone.contains(j));
         if let (Some(a), Some(b)) = (pending.next(), pending.next()) {
-            self.moved = Some((a, self.recs[b].start));
+            self.moved = Some((a, self.xs[b].start));
         }
     }
 
@@ -2218,16 +2282,16 @@ impl<'a, L: Layout> P<'a, L> {
     fn settle(&mut self, bit: u32) {
         // An extra a `loses since` moved and the one after it go with those before: the lean
         // lexer's semicolon is past that one.
-        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.i);
-        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.recs[k].code) && !self.gone.contains(&k)));
-        while self.pend < self.i {
+        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.xi);
+        let through = moved.and_then(|m| (m + 1..self.xi).find(|k| !self.gone.contains(k)));
+        while self.pend < self.xi {
             let j = self.pend;
-            let c = self.recs[j].code;
-            if is_extra(c) && c >> (16 + bit) & 1 == 1 && Some(j) != moved && Some(j) != through {
+            let c = self.xs[j].code;
+            if c >> (16 + bit) & 1 == 1 && Some(j) != moved && Some(j) != through {
                 break;
             }
             self.pend += 1;
-            if is_extra(c) && !self.gone.contains(&j) {
+            if !self.gone.contains(&j) {
                 let (s, e) = self.extra_span(j);
                 self.w.push_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
                 self.last_end = self.last_end.max(e);
@@ -2237,7 +2301,7 @@ impl<'a, L: Layout> P<'a, L> {
 
     /// The extra pending last before the token (not yet written, not dropped or lost).
     fn pending_last(&self) -> Option<usize> {
-        (self.pend..self.i).rev().find(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j))
+        (self.pend..self.xi).rev().find(|j| !self.gone.contains(j))
     }
 
     /// `drops`: the extra pending last gone; with none left pending, the nodes closed next end
@@ -2259,7 +2323,7 @@ impl<'a, L: Layout> P<'a, L> {
         }
         if let Some(j) = self.pending_last() {
             self.gone.push(j);
-            self.lost = Some((extra_kind(self.recs[j].code), None));
+            self.lost = Some((extra_kind(self.xs[j].code), None));
         }
     }
 
@@ -2352,7 +2416,7 @@ impl<'a, L: Layout> P<'a, L> {
         }
         let (s, key) = (self.w.start(at as usize), self.w.key(at as usize));
         // The comments between are its text.
-        self.pend = self.i;
+        self.pend = self.xi;
         let (_, e) = self.take::<M, F>()?;
         self.w.truncate(at as usize);
         let at = self.w.push_leaf(key & !0x3ff | u32::from(kind), s, e);

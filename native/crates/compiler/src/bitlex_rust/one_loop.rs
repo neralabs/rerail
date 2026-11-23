@@ -1582,7 +1582,10 @@ pub(super) fn drop_uncalled(mut out: String, parts: &[String]) -> String {
             }
         }
         if !dropped {
-            return out.replace("\n\n\n\n", "\n\n").replace("\n\n\n", "\n\n");
+            while out.contains("\n\n\n") {
+                out = out.replace("\n\n\n", "\n\n");
+            }
+            return out;
         }
     }
 }

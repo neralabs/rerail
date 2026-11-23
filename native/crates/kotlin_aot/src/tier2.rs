@@ -598,12 +598,6 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
 const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 9, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 21, 11, 12, 13, 14, 17, 18, 19, 20, 15, 16, 1, 5, 6, 4, 0, 0];
 
 
-/// A record of an extra (a comment): the extra's mark in its code.
-#[inline(always)]
-fn is_extra(code: u32) -> bool {
-    code >> 24 & 1 == 1
-}
-
 /// An extra's node kind: a later extra kind's by its bit, else the first's.
 fn extra_kind(code: u32) -> u16 {
     if code >> 25 & 1 == 1 {
@@ -638,22 +632,28 @@ const UNSET: u16 = 0x3ff;
 /// The deepest the calls go.
 const DEPTH: u32 = 400;
 
-/// The parser: tier 1's records (the tokens and the comments), the token read next, the tree.
+/// The parser: tier 1's records (the grammar tokens), its comments apart, the token read next, the tree.
 pub struct P<'a, L: Layout> {
     src: &'a [u8],
     /// Tier 1's records, one a token: its first and last byte and its code (the lean parser's `Tok`).
     recs: &'a [crate::tier1::Rec],
+    /// The comments (the extras), apart from the tokens, as the lean parser's `comments`.
+    xs: &'a [crate::tier1::Rec],
     /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).
     m: &'a crate::tier1::Masks,
     n: usize,
-    /// The next grammar token's record; the first record not written yet (the comments before it).
+    /// The next grammar token's record.
     i: usize,
     /// The pieces of record `i` where tier 2 splits it (a string, decision 0323's lowering B), as
     /// the lean parser's string arm reads its pieces: each one's first and last byte and code;
     /// the token is piece `k`.
     sub: Vec<(u32, u32, u32)>,
     k: usize,
+    /// The comments: the first not yet written (`pend`), the first after the token's start (`xi`), and where that one
+    /// starts (`next_x`, `u32::MAX` past the last), as the lean parser's `comment` and `next_comment`.
     pend: usize,
+    xi: usize,
+    next_x: u32,
     w: Writer<L>,
     /// The level open: its node, and the node made last in it, held as the lean parser holds its `top`; the levels
     /// around it on `levels` (one push and one pop a level).
@@ -673,11 +673,11 @@ pub struct P<'a, L: Layout> {
     /// The marks whose questions a level that may end at them asks (`ask_M`), by order: those
     /// of the caller's level, as the lean parser's `stmt`.
     asks: u64,
-    /// The extras a mark's question dropped or lost (`drops`, `loses`), by record; the one lost,
+    /// The extras a mark's question dropped or lost (`drops`, `loses`), by comment; the one lost,
     /// its kind and, once its token is taken, that token's start: a pending extra of no width.
     gone: Vec<usize>,
     lost: Option<(u16, Option<u32>)>,
-    /// The extra a mark's `loses since` moved, by record, and where: of no width there.
+    /// The extra a mark's `loses since` moved, by comment, and where: of no width there.
     moved: Option<(usize, u32)>,
     /// The strings open over a template's code (decision 0600): their parts go on at the next
     /// opener of a reader that resumes them (`advance`).
@@ -687,10 +687,11 @@ pub struct P<'a, L: Layout> {
 #[allow(dead_code)]
 impl<'a, L: Layout> P<'a, L> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L) -> R<Self> {
-        let (recs, m) = (&lx.recs[..], &lx.masks);
+        let (recs, xs, m) = (&lx.recs[..], &lx.extras[..], &lx.masks);
         let n = recs.len();
-        let mut p = P { src, recs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
-        p.i = p.next_tok(0);
+        // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
+        let mut p = P { src, recs, xs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
+        p.pass_comments();
         p.arrive()?;
         Ok(p)
     }
@@ -729,25 +730,88 @@ impl<'a, L: Layout> P<'a, L> {
         self.holds >> order & 1 == 1
     }
 
+    /// The comments before the token passed (`xi`), as the lean parser's comment cursor moves on.
     #[inline(always)]
-    fn next_tok(&self, mut j: usize) -> usize {
-        while j < self.n && is_extra(self.recs[j].code) {
-            j += 1;
+    fn pass_comments(&mut self) {
+        let to = if self.i < self.n { self.recs[self.i].start } else { u32::MAX };
+        while self.next_x < to {
+            self.xi += 1;
+            self.next_x = self.xs.get(self.xi).map_or(u32::MAX, |x| x.start);
         }
-        j.min(self.n)
     }
 
-    /// The grammar token before record `j` (`n`: none).
+    /// The grammar token before token `j` (`n`: none).
     #[inline(always)]
     fn prev_tok(&self, j: usize) -> usize {
-        let mut k = j;
-        while k > 0 {
-            k -= 1;
-            if !is_extra(self.recs[k].code) {
-                return k;
-            }
+        if j == 0 { self.n } else { j - 1 }
+    }
+
+    /// A record: comment `j` where `x`, else token `j`.
+    #[inline(always)]
+    fn record(&self, x: bool, j: usize) -> crate::tier1::Rec {
+        if x { self.xs[j] } else { self.recs[j] }
+    }
+
+    /// The `k`th record before the token (`here`, the token `i`), the comments among them by where they start: whether a
+    /// comment, and its index; none before the file's first.
+    fn back(&self, here: usize, k: usize) -> Option<(bool, usize)> {
+        debug_assert_eq!(here, self.i);
+        let (mut t, mut x) = (here, self.xi);
+        let mut got = None;
+        for _ in 0..k {
+            got = if x > 0 && (t == 0 || self.xs[x - 1].start > self.recs[t - 1].start) {
+                x -= 1;
+                Some((true, x))
+            } else if t > 0 {
+                t -= 1;
+                Some((false, t))
+            } else {
+                return None;
+            };
         }
-        self.n
+        got
+    }
+
+    /// The `k`th record from the token on (`here`, the token `i`; 0 the token itself), the comments among them by where
+    /// they start; none past the last.
+    fn ahead(&self, here: usize, k: usize) -> Option<(bool, usize)> {
+        debug_assert_eq!(here, self.i);
+        if here >= self.n {
+            return None;
+        }
+        let (mut t, mut x) = (here, self.xi);
+        let mut got = (false, here);
+        for _ in 0..k {
+            let next = if t + 1 < self.n { self.recs[t + 1].start } else { u32::MAX };
+            got = if x < self.xs.len() && self.xs[x].start < next {
+                x += 1;
+                (true, x - 1)
+            } else if t + 1 < self.n {
+                t += 1;
+                (false, t)
+            } else {
+                return None;
+            };
+        }
+        Some(got)
+    }
+
+    /// The first comment since the grammar token before the token (`here`, the token `i`): the comments between.
+    fn since_comments(&self, here: usize) -> usize {
+        debug_assert_eq!(here, self.i);
+        if here == 0 {
+            return 0;
+        }
+        let mut x = self.xi;
+        while x > 0 && self.xs[x - 1].start > self.recs[here - 1].start {
+            x -= 1;
+        }
+        x
+    }
+
+    /// Whether one of the marks `bits` holds at a record (`rec`): a comment's are the marks it keeps of its own gap.
+    fn rec_marks_hold(&self, x: bool, j: usize, bits: u32) -> bool {
+        if x { self.xs[j].code >> 16 & bits != 0 } else { self.marks_hold(j, bits) }
     }
 
     #[inline(always)]
@@ -766,13 +830,9 @@ impl<'a, L: Layout> P<'a, L> {
         j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b))
     }
 
-    /// Gap mark `b` at record `j`, asked of the bytes since the grammar token before's first byte, as tier 1 reads a
+    /// Gap mark `b` at token `j`, asked of the bytes since the grammar token before's first byte, as tier 1 reads a
     /// gap and the lean parser asks whether a token is on a line.
-    /// An extra keeps none of them.
     fn gap(&self, j: usize, b: u32) -> bool {
-        if is_extra(self.recs[j].code) {
-            return false;
-        }
         let p = self.prev_tok(j);
         let (from, before) = if p < self.n { (self.recs[p].start as usize + 1, self.word_at(p)) } else { (0, 0) };
         crate::tier1::gap(self.src, from, self.recs[j].start as usize, before, b)
@@ -835,13 +895,12 @@ impl<'a, L: Layout> P<'a, L> {
             let at = self.w.push(u32::from(kind) | 1 << 16, s);
             self.w.plain_close(at, s);
         }
-        while self.pend < self.i {
+        while self.pend < self.xi {
             let j = self.pend;
             self.pend += 1;
-            let c = self.recs[j].code;
-            if is_extra(c) && !self.gone.contains(&j) {
+            if !self.gone.contains(&j) {
                 let (s, e) = self.extra_span(j);
-                self.w.plain_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
+                self.w.plain_leaf(u32::from(extra_kind(self.xs[j].code)) | 1 << 16, s, e);
             }
         }
     }
@@ -850,16 +909,16 @@ impl<'a, L: Layout> P<'a, L> {
     fn extra_span(&self, j: usize) -> (u32, u32) {
         match self.moved {
             Some((m, s)) if m == j => (s, s),
-            _ => (self.recs[j].start, self.recs[j].last + 1),
+            _ => (self.xs[j].start, self.xs[j].last + 1),
         }
     }
 
     /// `loses since`: the first extra pending of no width at the next one's start (the lean
     /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).
     fn move_first(&mut self) {
-        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j));
+        let mut pending = (self.pend..self.xi).filter(|j| !self.gone.contains(j));
         if let (Some(a), Some(b)) = (pending.next(), pending.next()) {
-            self.moved = Some((a, self.recs[b].start));
+            self.moved = Some((a, self.xs[b].start));
         }
     }
 
@@ -868,16 +927,16 @@ impl<'a, L: Layout> P<'a, L> {
     fn settle(&mut self, bit: u32) {
         // An extra a `loses since` moved and the one after it go with those before: the lean
         // lexer's semicolon is past that one.
-        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.i);
-        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.recs[k].code) && !self.gone.contains(&k)));
-        while self.pend < self.i {
+        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.xi);
+        let through = moved.and_then(|m| (m + 1..self.xi).find(|k| !self.gone.contains(k)));
+        while self.pend < self.xi {
             let j = self.pend;
-            let c = self.recs[j].code;
-            if is_extra(c) && c >> (16 + bit) & 1 == 1 && Some(j) != moved && Some(j) != through {
+            let c = self.xs[j].code;
+            if c >> (16 + bit) & 1 == 1 && Some(j) != moved && Some(j) != through {
                 break;
             }
             self.pend += 1;
-            if is_extra(c) && !self.gone.contains(&j) {
+            if !self.gone.contains(&j) {
                 let (s, e) = self.extra_span(j);
                 self.w.plain_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
                 self.last_end = self.last_end.max(e);
@@ -887,7 +946,7 @@ impl<'a, L: Layout> P<'a, L> {
 
     /// The extra pending last before the token (not yet written, not dropped or lost).
     fn pending_last(&self) -> Option<usize> {
-        (self.pend..self.i).rev().find(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j))
+        (self.pend..self.xi).rev().find(|j| !self.gone.contains(j))
     }
 
     /// `drops`: the extra pending last gone; with none left pending, the nodes closed next end
@@ -909,7 +968,7 @@ impl<'a, L: Layout> P<'a, L> {
         }
         if let Some(j) = self.pending_last() {
             self.gone.push(j);
-            self.lost = Some((extra_kind(self.recs[j].code), None));
+            self.lost = Some((extra_kind(self.xs[j].code), None));
         }
     }
 
@@ -1002,7 +1061,7 @@ impl<'a, L: Layout> P<'a, L> {
         }
         let (s, key) = (self.w.plain_start(at as usize), self.w.plain_key(at as usize));
         // The comments between are its text.
-        self.pend = self.i;
+        self.pend = self.xi;
         let (_, e) = self.take::<M, F>()?;
         self.w.plain_truncate(at as usize);
         let at = self.w.plain_leaf(key & !0x3ff | u32::from(kind), s, e);
@@ -8954,7 +9013,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_head_ctor_0_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::PUBLIC_89 || self.word_at(j) == w::PRIVATE_90 || self.word_at(j) == w::INTERNAL_91 || self.word_at(j) == w::PROTECTED_92) && self.next_head_ctor_0_1_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::PUBLIC_89 || self.word_at(j) == w::PRIVATE_90 || self.word_at(j) == w::INTERNAL_91 || self.word_at(j) == w::PROTECTED_92) && self.next_head_ctor_0_1_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -8966,7 +9025,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_head_ctor_0_2_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_2) && self.next_head_ctor_0_2_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::AT_2) && self.next_head_ctor_0_2_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -8989,7 +9048,7 @@ impl<L: Layout> P<'_, L> {
                 depth[0] -= 1;
             }
             prev = j;
-            j = self.next_tok(j + 1);
+            j += 1;
         }
     }
 
@@ -9002,7 +9061,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_head_ctor_0_3_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_2) && self.next_head_ctor_0_3_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::AT_2) && self.next_head_ctor_0_3_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9025,7 +9084,7 @@ impl<L: Layout> P<'_, L> {
                 depth[0] -= 1;
             }
             prev = j;
-            j = self.next_tok(j + 1);
+            j += 1;
         }
     }
 
@@ -9037,8 +9096,8 @@ impl<L: Layout> P<'_, L> {
 
     #[allow(unused_variables)]
     fn refuses_taken_head_ctor_0(&self, here: usize) -> bool {
-        ({ let j = here as isize + -2; if j < 0 { true } else { let j = j as usize; !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
+        ({ match self.back(here, 2) { Some((x, j)) => !((!x && self.recs[j].code >> 8 & 0xff == w::SEMI_33)), None => true } })
+            && ({ match self.back(here, 1) { Some((x, j)) => ((x && extra_kind(self.xs[j].code) == k::MULTILINE_COMMENT)) && self.rec_marks_hold(x, j, 1 << 3), None => false } })
     }
 
     fn refuses_taken_head_ctor(&self) -> bool {
@@ -9060,7 +9119,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_ann_lf_0_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::ELSE_54) && self.next_ann_lf_0_1_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::ELSE_54) && self.next_ann_lf_0_1_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9072,7 +9131,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_ann_lf_0_2_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::ELSE_54) && self.next_ann_lf_0_2_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::ELSE_54) && self.next_ann_lf_0_2_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9090,7 +9149,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_semi_0_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::ELSE_54) && self.next_semi_0_1_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::ELSE_54) && self.next_semi_0_1_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9102,7 +9161,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_semi_0_2_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::ELSE_54) && self.next_semi_0_2_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::ELSE_54) && self.next_semi_0_2_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9113,15 +9172,15 @@ impl<L: Layout> P<'_, L> {
 
     #[allow(unused_variables)]
     fn drops_semi_0(&self, here: usize) -> bool {
-        ({ let j = here as isize + -2; if j < 0 { true } else { let j = j as usize; !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
-            && ({ let j = here + 0; j < self.n && true && matches!(self.src[self.recs[j].start as usize], 0x61 | 0x65 | 0x77) })
+        ({ match self.back(here, 2) { Some((x, j)) => !((!x && self.recs[j].code >> 8 & 0xff == w::SEMI_33)), None => true } })
+            && ({ match self.back(here, 1) { Some((x, j)) => ((x && extra_kind(self.xs[j].code) == k::MULTILINE_COMMENT)) && self.rec_marks_hold(x, j, 1 << 3), None => false } })
+            && ({ match self.ahead(here, 0) { Some((x, j)) => true && matches!(self.src[self.record(x, j).start as usize], 0x61 | 0x65 | 0x77), None => false } })
     }
 
     #[allow(unused_variables)]
     fn drops_semi_1(&self, here: usize) -> bool {
-        ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) } })
-            && ({ let j = here + 0; j < self.n && ((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::AS_10) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::WHERE_28) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::ELSE_54)) })
+        ({ match self.back(here, 1) { Some((x, j)) => ((x && extra_kind(self.xs[j].code) == k::MULTILINE_COMMENT)), None => false } })
+            && ({ match self.ahead(here, 0) { Some((x, j)) => ((!x && self.recs[j].code >> 8 & 0xff == w::AS_10) || (!x && self.recs[j].code >> 8 & 0xff == w::WHERE_28) || (!x && self.recs[j].code >> 8 & 0xff == w::ELSE_54)), None => false } })
     }
 
     fn drops_semi(&self) -> bool {
@@ -9130,18 +9189,17 @@ impl<L: Layout> P<'_, L> {
 
     #[allow(unused_variables)]
     fn refuses_semi_0(&self, here: usize) -> bool {
-        ({ let j = here as isize + -2; if j < 0 { true } else { let j = j as usize; !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
-            && ({ let j = here + 0; j < self.n && ((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::CATCH_57) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::FINALLY_58) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::ELSE_54)) })
+        ({ match self.back(here, 2) { Some((x, j)) => !((!x && self.recs[j].code >> 8 & 0xff == w::SEMI_33)), None => true } })
+            && ({ match self.back(here, 1) { Some((x, j)) => ((x && extra_kind(self.xs[j].code) == k::MULTILINE_COMMENT)) && self.rec_marks_hold(x, j, 1 << 3), None => false } })
+            && ({ match self.ahead(here, 0) { Some((x, j)) => ((!x && self.recs[j].code >> 8 & 0xff == w::CATCH_57) || (!x && self.recs[j].code >> 8 & 0xff == w::FINALLY_58) || (!x && self.recs[j].code >> 8 & 0xff == w::ELSE_54)), None => false } })
     }
 
     #[allow(unused_variables)]
     fn refuses_semi_1(&self, here: usize) -> bool {
-        let g = self.prev_tok(here);
-        let g = if g >= self.n { 0 } else { g + 1 };
-        ({ let j = g as isize + 0 - 1; if j < 0 { true } else { let j = j as usize; j < here && !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = g as isize + 1 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
-            && ({ let j = g as isize + 2 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) } })
+        let x0 = self.since_comments(here);
+        ({ if here == 0 { true } else { let (x, j) = (false, here - 1); !((!x && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
+            && ({ let (x, j) = (true, x0 + 1 - 1); j < self.xi && ((x && extra_kind(self.xs[j].code) == k::MULTILINE_COMMENT)) && self.rec_marks_hold(x, j, 1 << 3) })
+            && ({ let (x, j) = (true, x0 + 2 - 1); j < self.xi && ((x && extra_kind(self.xs[j].code) == k::MULTILINE_COMMENT)) })
     }
 
     fn refuses_semi(&self) -> bool {
@@ -9150,16 +9208,16 @@ impl<L: Layout> P<'_, L> {
 
     #[allow(unused_variables)]
     fn loses_semi_0(&self, here: usize) -> bool {
-        ({ let j = here as isize + -2; if j < 0 { true } else { let j = j as usize; !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
-            && ({ let j = here + 0; j < self.n && true && matches!(self.src[self.recs[j].start as usize], 0x2c | 0x2e | 0x3a | 0x2a | 0x25 | 0x3e | 0x3c | 0x3d | 0x7b | 0x5b | 0x28 | 0x3f | 0x7c | 0x26 | 0x2f) })
+        ({ match self.back(here, 2) { Some((x, j)) => !((!x && self.recs[j].code >> 8 & 0xff == w::SEMI_33)), None => true } })
+            && ({ match self.back(here, 1) { Some((x, j)) => ((x && extra_kind(self.xs[j].code) == k::MULTILINE_COMMENT)) && self.rec_marks_hold(x, j, 1 << 3), None => false } })
+            && ({ match self.ahead(here, 0) { Some((x, j)) => true && matches!(self.src[self.record(x, j).start as usize], 0x2c | 0x2e | 0x3a | 0x2a | 0x25 | 0x3e | 0x3c | 0x3d | 0x7b | 0x5b | 0x28 | 0x3f | 0x7c | 0x26 | 0x2f), None => false } })
     }
 
     #[allow(unused_variables)]
     fn loses_semi_1(&self, here: usize) -> bool {
-        ({ let j = here as isize + -2; if j < 0 { true } else { let j = j as usize; !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
-            && ({ let j = here + 0; j < self.n && ((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::BANG_EQ_69) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::BANG_EQ_EQ_70) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::AS_10) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::WHERE_28) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::BY_25)) })
+        ({ match self.back(here, 2) { Some((x, j)) => !((!x && self.recs[j].code >> 8 & 0xff == w::SEMI_33)), None => true } })
+            && ({ match self.back(here, 1) { Some((x, j)) => ((x && extra_kind(self.xs[j].code) == k::MULTILINE_COMMENT)) && self.rec_marks_hold(x, j, 1 << 3), None => false } })
+            && ({ match self.ahead(here, 0) { Some((x, j)) => ((!x && self.recs[j].code >> 8 & 0xff == w::BANG_EQ_69) || (!x && self.recs[j].code >> 8 & 0xff == w::BANG_EQ_EQ_70) || (!x && self.recs[j].code >> 8 & 0xff == w::AS_10) || (!x && self.recs[j].code >> 8 & 0xff == w::WHERE_28) || (!x && self.recs[j].code >> 8 & 0xff == w::BY_25)), None => false } })
     }
 
     fn loses_semi(&self) -> bool {
@@ -9168,11 +9226,10 @@ impl<L: Layout> P<'_, L> {
 
     #[allow(unused_variables)]
     fn moves_semi_0(&self, here: usize) -> bool {
-        let g = self.prev_tok(here);
-        let g = if g >= self.n { 0 } else { g + 1 };
-        ({ let j = g as isize + 0 - 1; if j < 0 { true } else { let j = j as usize; j < here && !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = g as isize + 1 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
-            && ({ let j = g as isize + 2 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::LINE_COMMENT)) } })
+        let x0 = self.since_comments(here);
+        ({ if here == 0 { true } else { let (x, j) = (false, here - 1); !((!x && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
+            && ({ let (x, j) = (true, x0 + 1 - 1); j < self.xi && ((x && extra_kind(self.xs[j].code) == k::MULTILINE_COMMENT)) && self.rec_marks_hold(x, j, 1 << 3) })
+            && ({ let (x, j) = (true, x0 + 2 - 1); j < self.xi && ((x && extra_kind(self.xs[j].code) == k::LINE_COMMENT)) })
     }
 
     fn moves_semi(&self) -> bool {
@@ -9188,7 +9245,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_bt_cref_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_backtick_name_at(j)) && self.pat_bt_cref_0_1(self.next_tok(j + 1), j)
+        (self.at_backtick_name_at(j)) && self.pat_bt_cref_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9200,7 +9257,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_label_at_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j)) && self.pat_label_at_0_1(self.next_tok(j + 1), j)
+        (self.at_simple_identifier_at(j)) && self.pat_label_at_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9212,13 +9269,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_label_at_0_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j)) && self.next_label_at_0_0_1(self.next_tok(j + 1), j)
+        (self.at_simple_identifier_at(j)) && self.next_label_at_0_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn next_label_at_0_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_2) && self.next_label_at_0_0_2(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::AT_2) && self.next_label_at_0_0_2(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9230,13 +9287,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_lab_loop_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j)) && self.pat_lab_loop_0_1(self.next_tok(j + 1), j)
+        (self.at_simple_identifier_at(j)) && self.pat_lab_loop_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn pat_lab_loop_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 5) && self.pat_lab_loop_0_2(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 5) && self.pat_lab_loop_0_2(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9248,13 +9305,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_lab_lam_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j)) && self.pat_lab_lam_0_1(self.next_tok(j + 1), j)
+        (self.at_simple_identifier_at(j)) && self.pat_lab_lam_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn pat_lab_lam_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 5) && self.pat_lab_lam_0_2(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::AT_2) && !self.bit_at(j, 5) && self.pat_lab_lam_0_2(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9266,7 +9323,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_this_at_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::THIS_37) && self.pat_this_at_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::THIS_37) && self.pat_this_at_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9278,7 +9335,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_jump_at_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61) && self.pat_jump_at_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61) && self.pat_jump_at_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9290,7 +9347,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_as_q_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AS_10) && self.pat_as_q_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::AS_10) && self.pat_as_q_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9302,7 +9359,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_qdot_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::QUEST_40) && self.pat_qdot_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::QUEST_40) && self.pat_qdot_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9314,7 +9371,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_ge_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GT_27) && self.pat_ge_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::GT_27) && self.pat_ge_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9326,7 +9383,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_sfx_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j)) && self.pat_sfx_0_1(self.next_tok(j + 1), j)
+        (self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j)) && self.pat_sfx_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9344,7 +9401,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_lam_bare_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LBRACE_17) && self.pat_lam_bare_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::LBRACE_17) && self.pat_lam_bare_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9356,7 +9413,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_lam_params_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LBRACE_17) && self.pat_lam_params_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::LBRACE_17) && self.pat_lam_params_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9379,7 +9436,7 @@ impl<L: Layout> P<'_, L> {
                 depth[0] -= 1;
             }
             prev = j;
-            j = self.next_tok(j + 1);
+            j += 1;
         }
     }
 
@@ -9392,7 +9449,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_ann_expr_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_2) && self.pat_ann_expr_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::AT_2) && self.pat_ann_expr_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9415,7 +9472,7 @@ impl<L: Layout> P<'_, L> {
                 depth[0] -= 1;
             }
             prev = j;
-            j = self.next_tok(j + 1);
+            j += 1;
         }
     }
 
@@ -9428,7 +9485,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_decl_mod_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::PUBLIC_89 || self.word_at(j) == w::PRIVATE_90 || self.word_at(j) == w::INTERNAL_91 || self.word_at(j) == w::PROTECTED_92 || self.word_at(j) == w::ABSTRACT_100 || self.word_at(j) == w::FINAL_101 || self.word_at(j) == w::OPEN_102 || self.word_at(j) == w::OVERRIDE_87 || self.word_at(j) == w::LATEINIT_88 || self.word_at(j) == w::CONST_99 || self.word_at(j) == w::SEALED_84 || self.word_at(j) == w::ANNOTATION_1 || self.word_at(j) == w::DATA_52 || self.word_at(j) == w::INNER_85 || self.word_at(j) == w::VALUE_86 || self.word_at(j) == w::TAILREC_94 || self.word_at(j) == w::OPERATOR_95 || self.word_at(j) == w::INFIX_96 || self.word_at(j) == w::INLINE_97 || self.word_at(j) == w::EXTERNAL_98 || self.word_at(j) == w::SUSPEND_24 || self.word_at(j) == w::VARARG_103 || self.word_at(j) == w::NOINLINE_104 || self.word_at(j) == w::CROSSINLINE_105 || self.word_at(j) == w::EXPECT_107 || self.word_at(j) == w::ACTUAL_108) && self.pat_decl_mod_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::PUBLIC_89 || self.word_at(j) == w::PRIVATE_90 || self.word_at(j) == w::INTERNAL_91 || self.word_at(j) == w::PROTECTED_92 || self.word_at(j) == w::ABSTRACT_100 || self.word_at(j) == w::FINAL_101 || self.word_at(j) == w::OPEN_102 || self.word_at(j) == w::OVERRIDE_87 || self.word_at(j) == w::LATEINIT_88 || self.word_at(j) == w::CONST_99 || self.word_at(j) == w::SEALED_84 || self.word_at(j) == w::ANNOTATION_1 || self.word_at(j) == w::DATA_52 || self.word_at(j) == w::INNER_85 || self.word_at(j) == w::VALUE_86 || self.word_at(j) == w::TAILREC_94 || self.word_at(j) == w::OPERATOR_95 || self.word_at(j) == w::INFIX_96 || self.word_at(j) == w::INLINE_97 || self.word_at(j) == w::EXTERNAL_98 || self.word_at(j) == w::SUSPEND_24 || self.word_at(j) == w::VARARG_103 || self.word_at(j) == w::NOINLINE_104 || self.word_at(j) == w::CROSSINLINE_105 || self.word_at(j) == w::EXPECT_107 || self.word_at(j) == w::ACTUAL_108) && self.pat_decl_mod_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9440,7 +9497,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_use_site_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::FIELD_109 || self.word_at(j) == w::PROPERTY_110 || self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35 || self.word_at(j) == w::RECEIVER_111 || self.word_at(j) == w::PARAM_112 || self.word_at(j) == w::SETPARAM_113 || self.word_at(j) == w::DELEGATE_114) && self.pat_use_site_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::FIELD_109 || self.word_at(j) == w::PROPERTY_110 || self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35 || self.word_at(j) == w::RECEIVER_111 || self.word_at(j) == w::PARAM_112 || self.word_at(j) == w::SETPARAM_113 || self.word_at(j) == w::DELEGATE_114) && self.pat_use_site_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9452,13 +9509,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_file_at_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::AT_2) && self.pat_file_at_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::AT_2) && self.pat_file_at_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn pat_file_at_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::FILE_3) && self.pat_file_at_0_2(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::FILE_3) && self.pat_file_at_0_2(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9470,7 +9527,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_trail_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::COMMA_20) && self.pat_trail_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::COMMA_20) && self.pat_trail_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9482,7 +9539,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_wild_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::DOT_32) && self.pat_wild_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::DOT_32) && self.pat_wild_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9494,7 +9551,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_obj_lit_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::OBJECT_31) && self.pat_obj_lit_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::OBJECT_31) && self.pat_obj_lit_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9506,7 +9563,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_ft_dot_at_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::DOT_32) && self.pat_ft_dot_at_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::DOT_32) && self.pat_ft_dot_at_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9518,7 +9575,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_generic_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LT_26) && !self.bit_at(j, 5) && self.pat_generic_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::LT_26) && !self.bit_at(j, 5) && self.pat_generic_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9549,14 +9606,14 @@ impl<L: Layout> P<'_, L> {
                 depth[1] -= 1;
             }
             prev = j;
-            j = self.next_tok(j + 1);
+            j += 1;
         }
     }
 
     #[allow(unused_variables)]
     fn pat_generic_0_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GT_27) && self.pat_generic_0_3(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::GT_27) && self.pat_generic_0_3(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9568,7 +9625,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_fn_paren_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LPAREN_19) && self.pat_fn_paren_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::LPAREN_19) && self.pat_fn_paren_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9599,14 +9656,14 @@ impl<L: Layout> P<'_, L> {
                 depth[1] -= 1;
             }
             prev = j;
-            j = self.next_tok(j + 1);
+            j += 1;
         }
     }
 
     #[allow(unused_variables)]
     fn pat_fn_paren_0_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::RPAREN_21) && self.pat_fn_paren_0_3(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::RPAREN_21) && self.pat_fn_paren_0_3(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9618,7 +9675,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_ty_susp_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::SUSPEND_24) && self.pat_ty_susp_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::SUSPEND_24) && self.pat_ty_susp_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9630,7 +9687,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_ds_susp_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::SUSPEND_24) && self.pat_ds_susp_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::SUSPEND_24) && self.pat_ds_susp_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9642,7 +9699,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_cp_mod_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::PUBLIC_89 || self.word_at(j) == w::PRIVATE_90 || self.word_at(j) == w::INTERNAL_91 || self.word_at(j) == w::PROTECTED_92 || self.word_at(j) == w::ABSTRACT_100 || self.word_at(j) == w::FINAL_101 || self.word_at(j) == w::OPEN_102 || self.word_at(j) == w::OVERRIDE_87 || self.word_at(j) == w::LATEINIT_88 || self.word_at(j) == w::CONST_99 || self.word_at(j) == w::SEALED_84 || self.word_at(j) == w::ANNOTATION_1 || self.word_at(j) == w::DATA_52 || self.word_at(j) == w::INNER_85 || self.word_at(j) == w::VALUE_86 || self.word_at(j) == w::TAILREC_94 || self.word_at(j) == w::OPERATOR_95 || self.word_at(j) == w::INFIX_96 || self.word_at(j) == w::INLINE_97 || self.word_at(j) == w::EXTERNAL_98 || self.word_at(j) == w::SUSPEND_24 || self.word_at(j) == w::VARARG_103 || self.word_at(j) == w::NOINLINE_104 || self.word_at(j) == w::CROSSINLINE_105 || self.word_at(j) == w::EXPECT_107 || self.word_at(j) == w::ACTUAL_108) && self.pat_cp_mod_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::PUBLIC_89 || self.word_at(j) == w::PRIVATE_90 || self.word_at(j) == w::INTERNAL_91 || self.word_at(j) == w::PROTECTED_92 || self.word_at(j) == w::ABSTRACT_100 || self.word_at(j) == w::FINAL_101 || self.word_at(j) == w::OPEN_102 || self.word_at(j) == w::OVERRIDE_87 || self.word_at(j) == w::LATEINIT_88 || self.word_at(j) == w::CONST_99 || self.word_at(j) == w::SEALED_84 || self.word_at(j) == w::ANNOTATION_1 || self.word_at(j) == w::DATA_52 || self.word_at(j) == w::INNER_85 || self.word_at(j) == w::VALUE_86 || self.word_at(j) == w::TAILREC_94 || self.word_at(j) == w::OPERATOR_95 || self.word_at(j) == w::INFIX_96 || self.word_at(j) == w::INLINE_97 || self.word_at(j) == w::EXTERNAL_98 || self.word_at(j) == w::SUSPEND_24 || self.word_at(j) == w::VARARG_103 || self.word_at(j) == w::NOINLINE_104 || self.word_at(j) == w::CROSSINLINE_105 || self.word_at(j) == w::EXPECT_107 || self.word_at(j) == w::ACTUAL_108) && self.pat_cp_mod_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9654,7 +9711,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_cref_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j)) && self.pat_cref_0_1(self.next_tok(j + 1), j)
+        (self.at_simple_identifier_at(j)) && self.pat_cref_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9666,7 +9723,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_named_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j)) && self.pat_named_0_1(self.next_tok(j + 1), j)
+        (self.at_simple_identifier_at(j)) && self.pat_named_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9678,7 +9735,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_named_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::BANG_49) && self.bit_at(j, 3) && self.pat_named_1_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::BANG_49) && self.bit_at(j, 3) && self.pat_named_1_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9690,7 +9747,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_enum_class_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::ENUM_16) && self.pat_enum_class_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::ENUM_16) && self.pat_enum_class_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9702,7 +9759,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_fun_iface_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::FUN_14) && self.pat_fun_iface_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::FUN_14) && self.pat_fun_iface_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9714,7 +9771,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_fn_recv_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j)) && self.pat_fn_recv_0_1(self.next_tok(j + 1), j)
+        (self.at_simple_identifier_at(j)) && self.pat_fn_recv_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9729,14 +9786,14 @@ impl<L: Layout> P<'_, L> {
                 return false;
             }
             prev = j;
-            j = self.next_tok(j + 1);
+            j += 1;
         }
     }
 
     #[allow(unused_variables)]
     fn pat_fn_recv_0_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::DOT_32) && self.pat_fn_recv_0_3(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::DOT_32) && self.pat_fn_recv_0_3(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9760,7 +9817,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_0_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_acc_0_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_acc_0_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9772,7 +9829,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_0_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_acc_0_1_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_acc_0_1_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9784,13 +9841,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_0_2_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34) && self.next_acc_0_2_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::GET_34) && self.next_acc_0_2_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn next_acc_0_2_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LPAREN_19) && self.next_acc_0_2_2(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::LPAREN_19) && self.next_acc_0_2_2(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9808,7 +9865,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_1_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_acc_1_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_acc_1_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9820,7 +9877,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_1_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_acc_1_1_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_acc_1_1_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9832,13 +9889,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_acc_1_2_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34) && self.next_acc_1_2_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::GET_34) && self.next_acc_1_2_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn next_acc_1_2_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::LPAREN_19) && self.next_acc_1_2_2(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::LPAREN_19) && self.next_acc_1_2_2(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9850,7 +9907,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_recv_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j)) && self.pat_recv_0_1(self.next_tok(j + 1), j)
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j)) && self.pat_recv_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9865,20 +9922,20 @@ impl<L: Layout> P<'_, L> {
                 return false;
             }
             prev = j;
-            j = self.next_tok(j + 1);
+            j += 1;
         }
     }
 
     #[allow(unused_variables)]
     fn pat_recv_0_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::DOT_32) && self.pat_recv_0_3(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::DOT_32) && self.pat_recv_0_3(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn pat_recv_0_3(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j)) && self.pat_recv_0_4(self.next_tok(j + 1), j)
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j)) && self.pat_recv_0_4(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9890,7 +9947,7 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn next_recv_0_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j)) && self.next_recv_0_0_1(self.next_tok(j + 1), j)
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j)) && self.next_recv_0_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -9902,13 +9959,13 @@ impl<L: Layout> P<'_, L> {
     #[allow(unused_variables)]
     fn pat_dotted_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::DOT_32) && self.pat_dotted_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::DOT_32) && self.pat_dotted_0_1(j + 1, j)
     }
 
     #[allow(unused_variables)]
     fn pat_dotted_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j)) && self.pat_dotted_0_2(self.next_tok(j + 1), j)
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j)) && self.pat_dotted_0_2(j + 1, j)
     }
 
     #[allow(unused_variables)]
@@ -10513,20 +10570,13 @@ impl<L: Layout> P<'_, L> {
     /// Past the token, to the next grammar token's record, or the string's parts a template's `}` resumes, at the record before the next (decision 0600).
     #[inline(always)]
     fn advance(&mut self, from: usize) -> R {
-        if self.strings > 0 && let Some(p) = first_bit(&self.m.rd1_open, from).filter(|&p| self.i + 1 >= self.n || p < self.recs[self.i + 1].start as usize) {
+        if self.strings > 0 && let Some(p) = first_bit(&self.m.rd1_open, from).filter(|&p| p < (if self.i + 1 < self.n { self.recs[self.i + 1].start } else { u32::MAX }).min(self.next_x) as usize) {
             self.known = 0;
             return self.resume_1(p);
         }
-        // The record after the token: the next token, but for comments; with none between, nothing is pending.
-        let j = self.i + 1;
-        self.i = if j < self.n && is_extra(self.recs[j].code) {
-            self.next_tok(j + 1)
-        } else {
-            if self.pend + 1 == j {
-                self.pend = j;
-            }
-            j
-        };
+        // The next token, the comments before it passed.
+        self.i += 1;
+        self.pass_comments();
         self.arrive()
     }
 
