@@ -1,0 +1,70 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "rr-sample",
+  "name": "Sample rules in .rerail",
+  "category": "language",
+  "covers": "A fixture pack whose rules are written in .rerail.",
+  "reason": "matches Python",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "**/*.py"
+        ],
+        "label": "*.py files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "rr-sample-assert",
+      "document": "rules/rr-sample-assert.rerail",
+      "title": "No assert statements",
+      "group": "Sample",
+      "examples": {
+        "caught": {
+          "path": "src/a.py",
+          "text": "assert user.is_admin\n"
+        },
+        "passes": {
+          "path": "src/a.py",
+          "text": "if not user.is_admin:\n    raise PermissionError()\n"
+        }
+      }
+    },
+    {
+      "id": "rr-sample-print-call",
+      "document": "rules/rr-sample-print-call.rerail",
+      "title": "No print calls",
+      "group": "Sample",
+      "examples": {
+        "caught": {
+          "path": "src/a.py",
+          "text": "print(\"starting\")\n"
+        },
+        "passes": {
+          "path": "src/a.py",
+          "text": "import logging\nlogging.info(\"starting\")\n"
+        }
+      }
+    },
+    {
+      "id": "rr-sample-deprecated-call",
+      "document": "rules/rr-sample-deprecated-call.rerail",
+      "title": "No calls to deprecated functions",
+      "group": "Sample",
+      "examples": {
+        "caught": {
+          "path": "src/a.py",
+          "text": "def view(items):\n    return old_total(items)\n",
+          "with": [{ "path": "src/legacy.py", "text": "@deprecated\ndef old_total(items):\n    return sum(items)\n" }]
+        },
+        "passes": {
+          "path": "src/a.py",
+          "text": "def view(items):\n    return old_total(items)\n",
+          "with": [{ "path": "src/legacy.py", "text": "def old_total(items):\n    return sum(items)\n" }]
+        }
+      }
+    }
+  ]
+}

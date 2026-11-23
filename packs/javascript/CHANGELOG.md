@@ -10,7 +10,7 @@ Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- This version needs Rerail 0.2.0 or newer, where rules that test punctuation such as `,`, `=>` or `[` run again; 0.2.0 skips the previous version's. They report what they did, except that `eslint-no-with` now spans the whole `with` statement, not only its keyword.
+- This version needs Rerail 0.2.1 or newer, where rules that test punctuation such as `,`, `=>` or `[` run again; 0.2.1 skips the previous version's. They report what they did, except that `eslint-no-with` now spans the whole `with` statement, not only its keyword.
 
 ### Fixed
 

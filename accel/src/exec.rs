@@ -127,9 +127,10 @@ thread_local! {
     static LAST_RUN: std::cell::Cell<(f64, &'static str)> = const { std::cell::Cell::new((0.0, "")) };
 }
 
-/// Runs `f` as the job `name`: a wait that runs it for another knows what made it late ([`waits`]).
+/// Runs `f` as the job `name`: a wait that runs it for another knows what made it late ([`waits`]). It runs inside the
+/// job fence ([`fenced`]).
 pub fn as_job<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
-    let r = f();
+    let r = fenced(f);
     LAST_JOB.with(|j| j.set(name));
     r
 }
@@ -156,6 +157,47 @@ pub fn help_once() -> bool {
         LAST_RUN.with(|l| l.set((0.0, "")));
     }
     ran
+}
+
+/// What [`fenced`] calls around a job ([`fence_jobs`]): `enter` before it, `leave` after.
+struct FenceCalls {
+    enter: fn(),
+    leave: fn(),
+}
+
+/// The engine's fence ([`fence_jobs`]).
+static JOB_FENCE: OnceLock<FenceCalls> = OnceLock::new();
+
+/// A job's fence, closed when it ends (or unwinds).
+struct Fence(fn());
+
+impl Drop for Fence {
+    fn drop(&mut self) {
+        (self.0)();
+    }
+}
+
+/// Runs the job `f` inside the fence the engine set ([`fence_jobs`]), on whatever thread runs it: the jobs started
+/// through [`as_job`] (the engine's named jobs and the jobs beside a caller) and through a stream (a run's strata,
+/// [`crate::stream::Stream`]), which, beside a run's own thread, are the only work that queues device launches or
+/// flushes a wave. The chunks of
+/// rayon's own data-parallel loops (`par_iter`, `join`) are not fenced, and need not be: they queue and flush nothing,
+/// and a fenced job one of them takes while it waits is fenced on its own.
+pub fn fenced<R>(f: impl FnOnce() -> R) -> R {
+    let _fence = JOB_FENCE.get().map(|calls| {
+        (calls.enter)();
+        Fence(calls.leave)
+    });
+    f()
+}
+
+/// Sets what fences a job off the per-thread state of the job it may be run inside: `enter` is called before each job
+/// ([`fenced`]) and `leave` after. The engine's device wave keeps the launches a stratum queued on its thread until the
+/// stratum's wave is flushed (`rerail_engine`'s `lanes::wave`); a job taken by that thread while it waited, whose own
+/// flush took them, ran them into its own outputs, and the stratum, resumed elsewhere, found none. Set once, at start;
+/// a later call is ignored.
+pub fn fence_jobs(enter: fn(), leave: fn()) {
+    let _ = JOB_FENCE.set(FenceCalls { enter, leave });
 }
 
 /// One site's waits ([`Waiting`]): how many ran others' jobs, for how long, and how late those jobs made them.

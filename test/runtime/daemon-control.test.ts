@@ -62,6 +62,7 @@ import { engineCapabilityProof, type EngineProofAnswer } from "../../src/runtime
 import { DEAD_PID, olderDaemon, until } from "../support/processes/daemon-home.js";
 import { type ProbeLaunch, type StartedProbe, runConsoleProbe } from "../support/platform/console-probe.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
+import { MODULE_QUALIFIED_ONLY, withCommandPrefix } from "../support/platform/powershell-commands.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -2125,6 +2126,33 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(existsSync(stateFile)).toBe(true);
     expect(signals).toEqual([]);
   }, 30_000);
+
+  // A busy daemon the home's lock does not prove, on a machine where Windows PowerShell finds a cmdlet named alone only
+  // after it has read every installed module it has not read yet: 46 s with 40 large ones, past the stop's 10 s.
+  // PowerShell's own setting that loads only the modules a command names stands in for that machine. Each read is the
+  // real one, of this process, which started before the record.
+  it.runIf(process.platform === "win32")("stops a busy daemon the home's lock does not prove while PowerShell loads only the modules a command names", { timeout: 60_000 }, async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    const programs: string[] = [];
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    const qualifiedOnly = ((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      programs.push(program);
+      return runSync(program, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), options);
+    }) as unknown as typeof childProcess.spawnSync;
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(qualifiedOnly).mockImplementationOnce(qualifiedOnly);
+    await writeFile(stateFile, JSON.stringify({ ...state("win32"), startedAt: Date.now() }));
+    const machine: DaemonMachine = {
+      ...machineWith("win32", signals, () => undefined),
+      processStartedAt: (pid, timeoutMs) => (pid === LIVE_PID ? processStartedAt(process.pid, timeoutMs, "win32") : undefined),
+    };
+    expect(await stopDaemon(home, machine)).toBe("stopped");
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(existsSync(stateFile)).toBe(false);
+    // The stop's lookup and its check just before the SIGTERM each read the start, both under that setting.
+    expect(programs).toHaveLength(2);
+    for (const program of programs) expect(program).toMatch(/\\powershell\.exe$/iu);
+  });
 
   // The stop waits its 10 s for the pid to end, as for any daemon that does not end at its SIGTERM. With no start read,
   // that process and a daemon whose exit runs on look the same, and the stop kills it (the held-lock case above).
