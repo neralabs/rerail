@@ -1,4 +1,4 @@
-//! `ukl/matrix.h`'s tests (decision 0617, requirements R1-R5 and R9), on the process's device: each 64×64 block a
+//! `ukl/matrix.h`'s tests (decision 0617, requirements R1-R6 and R9), on the process's device: each 64×64 block a
 //! kernel's owners compute through fragments equals the host's product, exactly where the arithmetic is exact and
 //! within the bound elsewhere, in every layout, from device and threadgroup memory, by level 1 and level 2, with
 //! owners of one SIMD group or several. Without a device they pass, saying so.
@@ -30,6 +30,8 @@ enum Ty {
     F16,
     Bf16,
     I8,
+    /// Bits: `C += popcount(A & B)`, 64 of them a word along K.
+    B1,
 }
 
 impl Ty {
@@ -38,6 +40,7 @@ impl Ty {
             Ty::F16 => "t_mma_f16",
             Ty::Bf16 => "t_mma_bf16",
             Ty::I8 => "t_mma_i8",
+            Ty::B1 => "t_mma_b1",
         }
     }
     /// An element's value: an f16's or a bf16's bits, an i8.
@@ -45,15 +48,23 @@ impl Ty {
         match self {
             Ty::F16 => f16_to_f64(x as u16),
             Ty::Bf16 => f32::from_bits((x as u32) << 16) as f64,
-            Ty::I8 => x as f64,
+            Ty::I8 | Ty::B1 => x as f64,
         }
+    }
+    /// Whether C is integers.
+    fn int(self) -> bool {
+        matches!(self, Ty::I8 | Ty::B1)
+    }
+    /// K for each test's sizes: the type's own multiple (b1's 256 bits) of the others' `k`.
+    fn k(self, k: u32) -> u32 {
+        if self == Ty::B1 { 256 * k.div_ceil(64) } else { k }
     }
     /// The input type's precision in bits (R3's bound).
     fn precision(self) -> i32 {
         match self {
             Ty::F16 => 11,
             Ty::Bf16 => 8,
-            Ty::I8 => 0,
+            Ty::I8 | Ty::B1 => 0,
         }
     }
     /// The element of a small integer `v` (|v| <= 64): exact in every type.
@@ -62,6 +73,7 @@ impl Ty {
             Ty::F16 => f16_of_small(v) as i32,
             Ty::Bf16 => ((v as f32).to_bits() >> 16) as i32,
             Ty::I8 => v,
+            Ty::B1 => v & 1,
         }
     }
     /// A random element: a float of moderate size (f16 2^-7..2^8, bf16 2^-30..2^30), or any i8.
@@ -70,6 +82,7 @@ impl Ty {
             Ty::F16 => ((r.below(2) as u32) << 15 | ((r.below(16) as u32 + 8) << 10) | r.below(1024) as u32) as i32,
             Ty::Bf16 => ((r.below(2) as u32) << 15 | ((r.below(61) as u32 + 97) << 7) | r.below(128) as u32) as i32,
             Ty::I8 => r.below(256) as i32 - 128,
+            Ty::B1 => r.below(2) as i32,
         }
     }
 }
@@ -96,13 +109,19 @@ fn programs(groups: u32) -> (&'static Program, u32) {
     (p, consts(p)[16])
 }
 
-/// R1's constants: per type M, N, K, groups, native; then the SIMD width, an owner's lanes, the block.
+/// The program with the emulation forced where a native form exists (`UKL_MMA_FORCE_EMULATED`, R6).
+fn emulated() -> &'static Program {
+    program_with("matrix_tests.uglykl", TESTS, &[("UKL_MMA_EMULATED_GROUPS", "1u"), ("UKL_MMA_FORCE_EMULATED", "1")]).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()))
+}
+
+/// R1's constants: per type M, N, K, groups, native (f16, bf16, i8); the SIMD width, an owner's lanes, the block;
+/// then b1's five.
 fn consts(p: &Program) -> Vec<u32> {
-    let Some((_, mut q)) = setup() else { return vec![0; 18] };
-    let out = alloc::<u32>(18).unwrap();
+    let Some((_, mut q)) = setup() else { return vec![0; 23] };
+    let out = alloc::<u32>(23).unwrap();
     launch(&q, p.function("t_mma_consts").unwrap()).buffer("out", &out).run(&[1], &[1]).unwrap();
     q.flush().await_().unwrap();
-    read(&out, 18)
+    read(&out, 23)
 }
 
 /// A block's inputs, logically row-major (`a[r * k + kk]`, `b[kk * 64 + c]`), and C's starting value's bits.
@@ -121,7 +140,7 @@ impl Inputs {
         let c = (0..64 * 64)
             .map(|_| {
                 let v = rng.below(201) as i32 - 100;
-                if ty == Ty::I8 { v as u32 } else { (v as f32).to_bits() }
+                if ty.int() { v as u32 } else { (v as f32).to_bits() }
             })
             .collect();
         Inputs { k, a, b, c }
@@ -134,7 +153,7 @@ impl Inputs {
         let (mut exact, mut mag) = (vec![0.0; 64 * 64], vec![0.0; 64 * 64]);
         for r in 0..64 {
             for c in 0..64 {
-                let c0 = if ty == Ty::I8 { self.c[r * 64 + c] as i32 as f64 } else { f32::from_bits(self.c[r * 64 + c]) as f64 };
+                let c0 = if ty.int() { self.c[r * 64 + c] as i32 as f64 } else { f32::from_bits(self.c[r * 64 + c]) as f64 };
                 let (mut s, mut m) = (c0, c0.abs());
                 for kk in 0..k {
                     let p = ty.value(self.a[r * k + kk]) * ty.value(self.b[kk * 64 + c]);
@@ -162,10 +181,20 @@ fn lay<T: Copy>(logical: &[T], rows: usize, cols: usize, layout: u32) -> Vec<T> 
     out
 }
 
-fn elements(ty: Ty, v: &[i32]) -> Buffer {
+/// A `rows × cols` matrix, logically row-major, in memory in `layout`: b1's bits packed into words along K first
+/// (`along_rows`: K runs down the columns, B's).
+fn elements(ty: Ty, v: &[i32], rows: usize, cols: usize, along_rows: bool, layout: u32) -> Buffer {
     match ty {
-        Ty::I8 => buffer_of(&v.iter().map(|&x| x as i8).collect::<Vec<_>>()).unwrap(),
-        _ => buffer_of(&v.iter().map(|&x| x as u16).collect::<Vec<_>>()).unwrap(),
+        Ty::I8 => buffer_of(&lay(&v.iter().map(|&x| x as i8).collect::<Vec<_>>(), rows, cols, layout)).unwrap(),
+        Ty::B1 if along_rows => {
+            let w: Vec<u64> = (0..rows / 64 * cols).map(|i| (0..64).map(|t| (v[(64 * (i / cols) + t) * cols + i % cols] as u64) << t).sum()).collect();
+            buffer_of(&lay(&w, rows / 64, cols, layout)).unwrap()
+        }
+        Ty::B1 => {
+            let w: Vec<u64> = (0..rows * (cols / 64)).map(|i| (0..64).map(|t| (v[(i / (cols / 64)) * cols + 64 * (i % (cols / 64)) + t] as u64) << t).sum()).collect();
+            buffer_of(&lay(&w, rows, cols / 64, layout)).unwrap()
+        }
+        _ => buffer_of(&lay(&v.iter().map(|&x| x as u16).collect::<Vec<_>>(), rows, cols, layout)).unwrap(),
     }
 }
 
@@ -174,8 +203,8 @@ fn elements(ty: Ty, v: &[i32]) -> Buffer {
 fn block(p: &Program, q: &mut ComputeQueue, ty: Ty, inp: &Inputs, layouts: [u32; 3], tile: bool, local: bool, threads: u32) -> Vec<u32> {
     let k = inp.k as usize;
     let [la, lb, lc] = layouts;
-    let a = elements(ty, &lay(&inp.a, 64, k, la));
-    let b = elements(ty, &lay(&inp.b, k, 64, lb));
+    let a = elements(ty, &inp.a, 64, k, false, la);
+    let b = elements(ty, &inp.b, k, 64, true, lb);
     let c = buffer_of(&lay(&inp.c, 64, 64, lc)).unwrap();
     let args = MmaArgs { k: inp.k, la, lb, lc, tile: tile as u32, shared_mem: local as u32 };
     launch(q, p.function(ty.kernel()).unwrap()).value("args", &args).buffer("A", &a).buffer("B", &b).buffer("Cm", &c).run(&[1], &[threads as u64]).unwrap();
@@ -186,7 +215,7 @@ fn block(p: &Program, q: &mut ComputeQueue, ty: Ty, inp: &Inputs, layouts: [u32;
 }
 
 fn value(ty: Ty, bits: u32) -> f64 {
-    if ty == Ty::I8 { bits as i32 as f64 } else { f32::from_bits(bits) as f64 }
+    if ty.int() { bits as i32 as f64 } else { f32::from_bits(bits) as f64 }
 }
 
 /// Every element equal to the exact product (R2).
@@ -206,10 +235,15 @@ fn matrix_shapes_divide_the_block() {
     }
     let (p, lanes) = programs(1);
     let c = consts(p);
-    eprintln!("matrix units on {}: f16 {:?}, bf16 {:?}, i8 {:?} (M, N, K, groups, native); SIMD width {}, an owner {} lanes", crate::device::backend(), &c[0..5], &c[5..10], &c[10..15], c[15], lanes);
-    for t in 0..3 {
-        let s = &c[t * 5..t * 5 + 5];
-        assert!(s[0..3].iter().all(|&d| d > 0 && 64 % d == 0), "type {t}'s shape {:?} divides 64", &s[0..3]);
+    eprintln!("matrix units on {}: f16 {:?}, bf16 {:?}, i8 {:?}, b1 {:?} (M, N, K, groups, native); SIMD width {}, an owner {} lanes", crate::device::backend(), &c[0..5], &c[5..10], &c[10..15], &c[18..23], c[15], lanes);
+    for t in [0, 5, 10, 18] {
+        let s = &c[t..t + 5];
+        assert!(s[0..2].iter().all(|&d| d > 0 && 64 % d == 0), "the shape {:?} divides 64", &s[0..3]);
+        if t == 18 {
+            assert!(s[2] > 0 && s[2] % 64 == 0, "b1's K {} is whole words", s[2]);
+        } else {
+            assert!(s[2] > 0 && 64 % s[2] == 0, "the shape {:?} divides 64", &s[0..3]);
+        }
         assert_eq!(s[3] * c[15], lanes, "an owner's lanes are its groups'");
     }
     assert_eq!(c[17], 64);
@@ -222,11 +256,11 @@ fn matrix_products_are_exact_on_small_integers() {
     let Some((_, mut q)) = setup() else { return };
     let (p, lanes) = programs(1);
     let mut rng = Rng(61);
-    for ty in [Ty::F16, Ty::Bf16, Ty::I8] {
-        let big = Inputs::new(ty, 128, &mut rng, true);
+    for ty in [Ty::F16, Ty::Bf16, Ty::I8, Ty::B1] {
+        let big = Inputs::new(ty, ty.k(128), &mut rng, true);
         assert_exact(ty, &big, &block(p, &mut q, ty, &big, [ROW; 3], false, false, 4 * lanes), "K 128, level 1");
         assert_exact(ty, &big, &block(p, &mut q, ty, &big, [ROW; 3], true, false, 4 * lanes), "K 128, level 2");
-        let inp = Inputs::new(ty, 32, &mut rng, true);
+        let inp = Inputs::new(ty, ty.k(32), &mut rng, true);
         for l in 0..8u32 {
             let layouts = [l & 1, (l >> 1) & 1, (l >> 2) & 1];
             assert_exact(ty, &inp, &block(p, &mut q, ty, &inp, layouts, false, false, 2 * lanes), &format!("layouts {layouts:?}"));
@@ -244,12 +278,12 @@ fn matrix_products_are_within_the_bound_on_random_inputs() {
     let Some((_, mut q)) = setup() else { return };
     let (p, lanes) = programs(1);
     let mut rng = Rng(67);
-    for ty in [Ty::F16, Ty::Bf16, Ty::I8] {
-        let k = 128u32;
+    for ty in [Ty::F16, Ty::Bf16, Ty::I8, Ty::B1] {
+        let k = ty.k(128);
         let inp = Inputs::new(ty, k, &mut rng, false);
         let got = block(p, &mut q, ty, &inp, [ROW, COL, ROW], false, false, 4 * lanes);
-        if ty == Ty::I8 {
-            assert_exact(ty, &inp, &got, "random bytes");
+        if ty.int() {
+            assert_exact(ty, &inp, &got, "random bytes or bits");
         } else {
             let (exact, mag) = inp.reference(ty);
             let unit = k as f64 * 2f64.powi(-ty.precision());
@@ -288,7 +322,7 @@ fn matrix_each_visits_every_element_at_its_coordinates() {
 fn matrix_owners_of_several_groups_agree() {
     let Some((_, mut q)) = setup() else { return };
     let mut rng = Rng(71);
-    let inputs: Vec<(Ty, Inputs)> = [Ty::F16, Ty::I8].into_iter().map(|ty| (ty, Inputs::new(ty, 64, &mut rng, true))).collect();
+    let inputs: Vec<(Ty, Inputs)> = [Ty::F16, Ty::I8, Ty::B1].into_iter().map(|ty| (ty, Inputs::new(ty, ty.k(64), &mut rng, true))).collect();
     for groups in [1u32, 2, 4] {
         let (p, lanes) = programs(groups);
         for owners in [1u32, 2, 4] {
@@ -298,6 +332,34 @@ fn matrix_owners_of_several_groups_agree() {
             for (ty, inp) in &inputs {
                 let got = block(p, &mut q, *ty, inp, [ROW, COL, ROW], false, false, owners * lanes);
                 assert_exact(*ty, inp, &got, &format!("groups {groups}, owners {owners}"));
+            }
+        }
+    }
+}
+
+/// R6: where a type is native (`UKL_MMA_NATIVE`: b1 on NVIDIA sm_80 and later), its products equal the emulation's,
+/// forced in another program (`UKL_MMA_FORCE_EMULATED`), in all eight layouts, by level 1 and level 2, on random
+/// inputs; and the forced program says it is emulated. Where nothing is native the test says so.
+#[test]
+fn matrix_native_forms_are_the_emulations() {
+    let Some((_, mut q)) = setup() else { return };
+    let (p, lanes) = programs(1);
+    let (c, e) = (consts(p), consts(emulated()));
+    let types: Vec<Ty> = [(Ty::F16, 4), (Ty::Bf16, 9), (Ty::I8, 14), (Ty::B1, 22)].into_iter().filter(|&(_, i)| c[i] == 1).map(|(t, _)| t).collect();
+    eprintln!("matrix units on {}: native {types:?}", crate::device::backend());
+    for i in [4, 9, 14, 22] {
+        assert_eq!(e[i], 0, "the forced program is emulated");
+    }
+    let mut rng = Rng(73);
+    for ty in types {
+        let inp = Inputs::new(ty, ty.k(64), &mut rng, false);
+        for l in 0..8u32 {
+            let layouts = [l & 1, (l >> 1) & 1, (l >> 2) & 1];
+            for tile in [false, true] {
+                let threads = if tile { lanes } else { 2 * lanes };
+                let native = block(p, &mut q, ty, &inp, layouts, tile, false, threads);
+                let emulated = block(emulated(), &mut q, ty, &inp, layouts, tile, false, threads);
+                assert_eq!(native, emulated, "{} {ty:?} layouts {layouts:?}, level {}: native equals emulated", crate::device::backend(), 1 + tile as u32);
             }
         }
     }

@@ -60,7 +60,10 @@ fn workloads() -> Vec<(&'static str, Kernel)> {
     // W3: 12,000 nodes, about 35 levels.
     let (coff, cdst) = layered(&mut rng, 12000, 5, 35);
     let w3 = Kernel::Closure { n: 12000, off: coff, dst: cdst };
-    vec![("W1 bit product", w1), ("W5 bit product", w5), ("W2 count table", w2), ("W2 count table, pairs", w2e), ("W4 histogram", w4), ("W3 closure", w3)]
+    let all = vec![("W1 bit product", w1), ("W5 bit product", w5), ("W2 count table", w2), ("W2 count table, pairs", w2e), ("W4 histogram", w4), ("W3 closure", w3)];
+    // `RERAIL_PRICE_ONLY=<text>`: the workloads whose names hold it (one kernel's prices, its reference alone run).
+    let only = std::env::var("RERAIL_PRICE_ONLY").ok();
+    all.into_iter().filter(|(name, _)| only.as_deref().is_none_or(|o| name.contains(o))).collect()
 }
 
 /// The smallest launch of each form: what a launch costs beyond its work.

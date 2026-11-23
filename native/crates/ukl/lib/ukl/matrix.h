@@ -1,15 +1,18 @@
-// ukl/matrix.h: matrix units through fragments a kernel writes once (decision 0617). This is order-of-work step 1:
-// the interface and its emulated form, which every backend runs until its unit's own form lands in ukl/backend.h.
+// ukl/matrix.h: matrix units through fragments a kernel writes once (decision 0617): the interface, its emulated
+// form on every backend, and the native forms that have landed (NVIDIA's 1-bit product).
 //
 // A fragment is a tile of a matrix held in registers by its owner: one SIMD group, or `UKL_MMA_GROUPS(T)` of them
 // together. Each type has its shape, `C[M×N] += A[M×K] · B[K×N]`, as compile-time constants:
 //
-//   UKL_MMA_M(T), UKL_MMA_N(T), UKL_MMA_K(T)   the shape; each divides UKL_MMA_BLOCK (64)
+//   UKL_MMA_M(T), UKL_MMA_N(T), UKL_MMA_K(T)   the shape; M and N divide UKL_MMA_BLOCK (64)
 //   UKL_MMA_GROUPS(T)                          the SIMD groups that own a fragment
 //   UKL_MMA_NATIVE(T)                          1 where the device's unit runs it, 0 where it is emulated
+//   UKL_MMA_PACK(T)                            T's elements in one element in memory (1; 64 for b1)
 //
-// `T` is `f16` or `bf16` (into f32) or `i8` (into i32). In memory, a 16-bit float is its bits (`uint16_t`), an i8 an
-// `int8_t`, an accumulator a `float` or an `int32_t`.
+// `T` is `f16` or `bf16` (into f32), `i8` (into i32), or `b1` (into i32: `C += popcount(A & B)`, the bit product). In
+// memory, a 16-bit float is its bits (`uint16_t`), an i8 an `int8_t`, a b1 element one bit of a `uint64_t` holding 64
+// of them along K (lowest first), an accumulator a `float` or an `int32_t`. K counts T's elements (b1: bits); a
+// pointer's offset and a stride count elements in memory (b1: 64-bit words).
 //
 // Every operation is convergent over the owner: every lane of each of its SIMD groups calls it, with its place
 // (`UklMmaAt`, from `ukl_mma_at(lid)` in a 1-D threadgroup). A threadgroup holds whole owners; `ukl_mma_owner(lid)`
@@ -27,20 +30,30 @@
 // The loads and stores read device memory (`UKL_GLOBAL`); their `_local` forms read threadgroup memory. Each reads
 // the memory where it lies: a fragment is registers (decision 0353's memory hierarchy, not a copy).
 //
-// The emulated form, every type 16×16×16, is the library's reference:
-// - C's 256 elements, row-major, lie across the owner's lanes: element e of owner lane `part · W + lane` is
-//   element `e · L + part · W + lane` (`W` the SIMD width, `L` the owner's lanes).
-// - A and B are packed words along K (two 16-bit floats or four bytes a word). Each SIMD group of the owner holds the
-//   whole of A and B, k-major: word j of a lane is word `j · W + lane`, at k-word `idx / 16` of row (A) or column
-//   (B) `idx % 16`.
-// - So a product's lane reads its row of A and its column of B from the other lanes by shuffle, each from the same
-//   register in every lane (`16 · kw / W`), and adds them with `<ukl/dot.h>`'s dot products: the device's
-//   instructions where it has them.
-// - Its sums are in k's order, the dot products' own rounding: f32, or exact for i8.
+// C's layout is the backend's: each thread holds `UKL_MMA_RB` rows by `UKL_MMA_CB` columns of the 16×16 fragment,
+// element `i · CB + j` at row `ukl_mma_row(i, at)` and column `ukl_mma_col(j, at)`.
+// - NVIDIA sm_80 and later: `mma.sync`'s accumulator layout (rows g and g + 8, `g` the lane's quad; two columns in
+//   each half of eight), so that a native product reads and writes C in place, whatever the type.
+// - Elsewhere, a group of 16 lanes or more: rows and columns each, so that the emulation reads each of its rows of A
+//   and columns of B once a k-word, not once an element. They interleave (a lane's columns `16 / CB` apart, its
+//   rows `16 / RB`), so that lanes side by side hold columns side by side: a store of C writes whole runs of a row.
+//   A narrower group's lanes hold rows and columns whose words lie in the same register of every lane (below).
 //
-// At 16 lanes or more a lane's column of B is the same for each of its elements, so it is read once a product. A
-// narrower group (an OpenCL device's 8 lanes, or 1) reads each element's row and column apart; every lane still reads
-// the same register, which may then be known only at run time (an owner of several groups), so it is picked by value.
+// The emulated form, every type 16×16, is the library's reference:
+// - f16, bf16 and i8 (K 16): A and B are packed words along K (two 16-bit floats or four bytes a word). Each SIMD
+//   group of the owner holds the whole of A and B, k-major: word j of a lane is word `j · W + lane`, at k-word
+//   `idx / 16` of row (A) or column (B) `idx % 16`. A product's lane reads its rows of A and columns of B from the
+//   other lanes by shuffle, each from the same register in every lane, and adds them with `<ukl/dot.h>`'s dot
+//   products: the device's instructions where it has them. Its sums are in k's order, the dot products' own
+//   rounding: f32, or exact for i8.
+// - b1 (K 64, one word; NVIDIA's unit's is 256): popcount on the threads. Each lane loads its own rows of A and
+//   columns of B, where they lie (the lanes that share a row read the same words: a broadcast of the memory, not a
+//   shuffle), and adds `popcount(a & b)` a 64-bit word at a time, which beat the int8 units where there is no 1-bit
+//   unit (`tools/matrix-offload/RESULTS.md`, finding 2). Its K is one word so that a lane's words stay a few
+//   registers, and its words are 64 bits: 32-bit ones took the M1 twice the loads, and twice the time.
+//
+// `UKL_MMA_FORCE_EMULATED` (a test's define) runs the emulation, in its own layout, where a native form exists
+// (requirement R6).
 
 #pragma once
 #include <ukl/simd.h>
@@ -51,9 +64,17 @@
 #define UKL_COL_MAJOR 1u
 
 // The SIMD groups an emulated owner spans: 1, or (a test's define) 2 or 4, so that the multi-group path is tested
-// where no device has it yet (requirement R5).
+// where no device has it yet (requirement R5). An owner of several groups is emulated on every device.
 #ifndef UKL_MMA_EMULATED_GROUPS
 #define UKL_MMA_EMULATED_GROUPS 1u
+#endif
+
+// NVIDIA's units, where they serve (sm_80 and later: `mma.sync` with 1-bit AND and POPC): one warp an owner.
+#if defined(UKL_CUDA) && !defined(UKL_HIP) && !defined(UKL_MMA_FORCE_EMULATED) && UKL_SIMD_WIDTH == 32 &&           \
+    UKL_MMA_EMULATED_GROUPS == 1 && __CUDA_ARCH__ >= 800
+#define UKL_MMA_CUDA 1
+#else
+#define UKL_MMA_CUDA 0
 #endif
 
 #define UKL_MMA_M(T) UKL_MMA_M_##T
@@ -61,35 +82,69 @@
 #define UKL_MMA_K(T) UKL_MMA_K_##T
 #define UKL_MMA_GROUPS(T) UKL_MMA_GROUPS_##T
 #define UKL_MMA_NATIVE(T) UKL_MMA_NATIVE_##T
+#define UKL_MMA_PACK(T) UKL_MMA_PACK_##T
 
 #define UKL_MMA_M_f16 16u
 #define UKL_MMA_N_f16 16u
 #define UKL_MMA_K_f16 16u
 #define UKL_MMA_GROUPS_f16 UKL_MMA_EMULATED_GROUPS
 #define UKL_MMA_NATIVE_f16 0
+#define UKL_MMA_PACK_f16 1u
 #define UKL_MMA_M_bf16 16u
 #define UKL_MMA_N_bf16 16u
 #define UKL_MMA_K_bf16 16u
 #define UKL_MMA_GROUPS_bf16 UKL_MMA_EMULATED_GROUPS
 #define UKL_MMA_NATIVE_bf16 0
+#define UKL_MMA_PACK_bf16 1u
 #define UKL_MMA_M_i8 16u
 #define UKL_MMA_N_i8 16u
 #define UKL_MMA_K_i8 16u
 #define UKL_MMA_GROUPS_i8 UKL_MMA_EMULATED_GROUPS
 #define UKL_MMA_NATIVE_i8 0
+#define UKL_MMA_PACK_i8 1u
+#define UKL_MMA_M_b1 16u
+#define UKL_MMA_N_b1 16u
+// NVIDIA's unit's K; the emulation's two words, so that a lane's rows of A and columns of B stay a few registers.
+#if UKL_MMA_CUDA
+#define UKL_MMA_K_b1 256u
+#else
+#define UKL_MMA_K_b1 64u
+#endif
+#define UKL_MMA_GROUPS_b1 UKL_MMA_EMULATED_GROUPS
+#define UKL_MMA_NATIVE_b1 UKL_MMA_CUDA
+#define UKL_MMA_PACK_b1 64u
 
-// The emulation's layout: the owner's lanes, C's elements a lane, A's and B's words a lane (16 rows of 8 words for a
-// 16-bit type, of 4 for bytes).
+// The owner's lanes, C's elements a lane, A's and B's words a lane for the shuffled types (16 rows of 8 words for a
+// 16-bit type, of 4 for bytes), b1's 64-bit k-words.
 #define UKL_MMA_LANES (UKL_MMA_EMULATED_GROUPS * UKL_SIMD_WIDTH)
 #define UKL_MMA_C_PER (256u / UKL_MMA_LANES)
 #define UKL_MMA_WORDS_16 (128u / UKL_SIMD_WIDTH)
 #define UKL_MMA_WORDS_8 (64u / UKL_SIMD_WIDTH)
+#define UKL_MMA_KW_b1 (UKL_MMA_K_b1 / 64u)
 
-// Requirement R1: every shape divides the block; an owner's lanes divide C's elements.
+// C's rows (`RB`) and columns (`CB`) a lane.
+#if UKL_MMA_CUDA
+#define UKL_MMA_RB 2u
+#define UKL_MMA_CB 4u
+#elif UKL_SIMD_WIDTH >= 16
+#define UKL_MMA_RB (UKL_MMA_C_PER >= 128u ? 16u : UKL_MMA_C_PER >= 32u ? 8u : UKL_MMA_C_PER >= 8u ? 4u : UKL_MMA_C_PER >= 2u ? 2u : 1u)
+#define UKL_MMA_CB (UKL_MMA_C_PER / UKL_MMA_RB)
+#elif UKL_MMA_LANES < 16
+#define UKL_MMA_RB 16u
+#define UKL_MMA_CB (16u / UKL_MMA_LANES)
+#else
+#define UKL_MMA_RB (256u / UKL_MMA_LANES)
+#define UKL_MMA_CB 1u
+#endif
+
+// Requirement R1: every shape's M and N divide the block, and K whole words; an owner's lanes divide C's elements,
+// each a lane's rows by its columns.
 UKL_STATIC_ASSERT(UKL_MMA_BLOCK % UKL_MMA_M_f16 == 0u && UKL_MMA_BLOCK % UKL_MMA_N_f16 == 0u && UKL_MMA_BLOCK % UKL_MMA_K_f16 == 0u, "f16's shape divides 64");
 UKL_STATIC_ASSERT(UKL_MMA_BLOCK % UKL_MMA_M_bf16 == 0u && UKL_MMA_BLOCK % UKL_MMA_N_bf16 == 0u && UKL_MMA_BLOCK % UKL_MMA_K_bf16 == 0u, "bf16's shape divides 64");
 UKL_STATIC_ASSERT(UKL_MMA_BLOCK % UKL_MMA_M_i8 == 0u && UKL_MMA_BLOCK % UKL_MMA_N_i8 == 0u && UKL_MMA_BLOCK % UKL_MMA_K_i8 == 0u, "i8's shape divides 64");
+UKL_STATIC_ASSERT(UKL_MMA_BLOCK % UKL_MMA_M_b1 == 0u && UKL_MMA_BLOCK % UKL_MMA_N_b1 == 0u && UKL_MMA_K_b1 % 64u == 0u, "b1's shape divides 64, its K whole words");
 UKL_STATIC_ASSERT(UKL_MMA_LANES <= 256u && 256u % UKL_MMA_LANES == 0u, "an emulated owner's lanes divide a fragment's 256 elements");
+UKL_STATIC_ASSERT(UKL_MMA_RB * UKL_MMA_CB * UKL_MMA_LANES == 256u, "a lane's rows by its columns are its elements");
 
 // A thread's place in its owner: its lane, and which of the owner's SIMD groups it is in.
 typedef struct UklMmaAt {
@@ -107,8 +162,31 @@ UKL_INLINE UklMmaAt ukl_mma_at(uint32_t lid)
 }
 UKL_INLINE uint32_t ukl_mma_owner(uint32_t lid) { return lid / UKL_MMA_LANES; }
 
-// C's element `e` of this thread: its index, row-major in the 16×16 fragment.
-UKL_INLINE uint32_t ukl_mma_c_index(uint32_t e, UklMmaAt at) { return e * UKL_MMA_LANES + at.part * UKL_SIMD_WIDTH + at.lane; }
+// Row `i` (of `RB`) and column `j` (of `CB`) of this thread's elements of C. A narrow group's (under 16 lanes) are
+// those whose words, in the shuffled types' packing, lie in the same register of every lane of the group: all 16
+// rows and interleaved columns (an owner under 16 lanes), or a column a lane (16 or more).
+UKL_INLINE uint32_t ukl_mma_row(uint32_t i, UklMmaAt at)
+{
+#if UKL_MMA_CUDA
+    return (at.lane >> 2) + 8u * i;
+#elif UKL_SIMD_WIDTH >= 16
+    return (at.part * UKL_SIMD_WIDTH + at.lane) / (16u / UKL_MMA_CB) + (16u / UKL_MMA_RB) * i;
+#else
+    return ((at.part * UKL_SIMD_WIDTH + at.lane) / (16u / UKL_MMA_CB)) * UKL_MMA_RB + i;
+#endif
+}
+UKL_INLINE uint32_t ukl_mma_col(uint32_t j, UklMmaAt at)
+{
+#if UKL_MMA_CUDA
+    return 8u * (j >> 1) + 2u * (at.lane & 3u) + (j & 1u);
+#elif UKL_SIMD_WIDTH < 16 && UKL_MMA_LANES < 16
+    return UKL_MMA_LANES * j + at.part * UKL_SIMD_WIDTH + at.lane;
+#elif UKL_SIMD_WIDTH >= 16
+    return (at.part * UKL_SIMD_WIDTH + at.lane) % (16u / UKL_MMA_CB) + (16u / UKL_MMA_CB) * j;
+#else
+    return ((at.part * UKL_SIMD_WIDTH + at.lane) % (16u / UKL_MMA_CB)) * UKL_MMA_CB + j;
+#endif
+}
 
 typedef struct ukl_mma_a_f16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_a_f16;
 typedef struct ukl_mma_b_f16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_b_f16;
@@ -116,6 +194,16 @@ typedef struct ukl_mma_a_bf16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_a_bf16;
 typedef struct ukl_mma_b_bf16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_b_bf16;
 typedef struct ukl_mma_a_i8 { uint32_t w[UKL_MMA_WORDS_8]; } ukl_mma_a_i8;
 typedef struct ukl_mma_b_i8 { uint32_t w[UKL_MMA_WORDS_8]; } ukl_mma_b_i8;
+#if UKL_MMA_CUDA
+// `mma.sync`'s registers: A's rows g and g + 8 at 32-bit k-words q and q + 4 (q the lane's place in its quad); each
+// half of B's columns, its column g at 32-bit k-words q and q + 4. Each is a half of a word in memory, read there.
+typedef struct ukl_mma_a_b1 { uint32_t w[4]; } ukl_mma_a_b1;
+typedef struct ukl_mma_b_b1 { uint32_t w[4]; } ukl_mma_b_b1;
+#else
+// The lane's own rows of A and columns of B, each its k-words.
+typedef struct ukl_mma_a_b1 { uint64_t w[UKL_MMA_RB * UKL_MMA_KW_b1]; } ukl_mma_a_b1;
+typedef struct ukl_mma_b_b1 { uint64_t w[UKL_MMA_CB * UKL_MMA_KW_b1]; } ukl_mma_b_b1;
+#endif
 // The accumulators' elements are `x`: `UKL_MMA_EACH` names them.
 typedef struct ukl_mma_c_f32 { float x[UKL_MMA_C_PER]; } ukl_mma_c_f32;
 typedef struct ukl_mma_c_i32 { int32_t x[UKL_MMA_C_PER]; } ukl_mma_c_i32;
@@ -129,7 +217,7 @@ typedef struct ukl_mma_c_i32 { int32_t x[UKL_MMA_C_PER]; } ukl_mma_c_i32;
 #endif
 #define UKL_MMA_EACH(c, at, row, col, v)                                                                                \
     for (uint32_t __ukl_mma_e = 0u; __ukl_mma_e < UKL_MMA_C_PER; __ukl_mma_e++)                                         \
-        for (uint32_t row = ukl_mma_c_index(__ukl_mma_e, (at)) >> 4, col = ukl_mma_c_index(__ukl_mma_e, (at)) & 15u,    \
+        for (uint32_t row = ukl_mma_row(__ukl_mma_e / UKL_MMA_CB, (at)), col = ukl_mma_col(__ukl_mma_e % UKL_MMA_CB, (at)), \
                       __ukl_mma_once = 1u;                                                                              \
              __ukl_mma_once != 0u; __ukl_mma_once = 0u)                                                                 \
             for (UKL_MMA_ELEM_TYPE_((c).x[0]) v = (c).x[__ukl_mma_e]; __ukl_mma_once != 0u;                             \
@@ -141,21 +229,23 @@ typedef struct ukl_mma_c_i32 { int32_t x[UKL_MMA_C_PER]; } ukl_mma_c_i32;
     UKL_INLINE void ukl_mma_load_c_##C##SUF(UKL_PRIVATE ukl_mma_c_##C* c, SPACE const CT* p, uint32_t stride,           \
                                             uint32_t layout, UklMmaAt at)                                               \
     {                                                                                                                   \
-        for (uint32_t e = 0u; e < UKL_MMA_C_PER; e++) {                                                                 \
-            uint32_t i = ukl_mma_c_index(e, at), r = i >> 4, k = i & 15u;                                               \
-            c->x[e] = layout == UKL_ROW_MAJOR ? p[r * stride + k] : p[k * stride + r];                                  \
-        }                                                                                                               \
+        for (uint32_t i = 0u; i < UKL_MMA_RB; i++)                                                                      \
+            for (uint32_t j = 0u; j < UKL_MMA_CB; j++) {                                                                \
+                uint32_t r = ukl_mma_row(i, at), k = ukl_mma_col(j, at);                                                \
+                c->x[i * UKL_MMA_CB + j] = layout == UKL_ROW_MAJOR ? p[r * stride + k] : p[k * stride + r];            \
+            }                                                                                                           \
     }                                                                                                                   \
     UKL_INLINE void ukl_mma_store_c_##C##SUF(UKL_PRIVATE const ukl_mma_c_##C* c, SPACE CT* p, uint32_t stride,          \
                                              uint32_t layout, UklMmaAt at)                                              \
     {                                                                                                                   \
-        for (uint32_t e = 0u; e < UKL_MMA_C_PER; e++) {                                                                 \
-            uint32_t i = ukl_mma_c_index(e, at), r = i >> 4, k = i & 15u;                                               \
-            if (layout == UKL_ROW_MAJOR)                                                                                \
-                p[r * stride + k] = c->x[e];                                                                            \
-            else                                                                                                        \
-                p[k * stride + r] = c->x[e];                                                                            \
-        }                                                                                                               \
+        for (uint32_t i = 0u; i < UKL_MMA_RB; i++)                                                                      \
+            for (uint32_t j = 0u; j < UKL_MMA_CB; j++) {                                                                \
+                uint32_t r = ukl_mma_row(i, at), k = ukl_mma_col(j, at);                                                \
+                if (layout == UKL_ROW_MAJOR)                                                                            \
+                    p[r * stride + k] = c->x[i * UKL_MMA_CB + j];                                                       \
+                else                                                                                                    \
+                    p[k * stride + r] = c->x[i * UKL_MMA_CB + j];                                                       \
+            }                                                                                                           \
     }
 
 UKL_INLINE void ukl_mma_fill_c_f32(UKL_PRIVATE ukl_mma_c_f32* c, float v, UklMmaAt at)
@@ -175,7 +265,8 @@ UKL_MMA_C_OPS(f32, float, UKL_LOCAL, _local)
 UKL_MMA_C_OPS(i32, int32_t, UKL_LOCAL, _local)
 UKL_MMA_C_OPS(i32, int32_t, UKL_GLOBAL, )
 
-// ---- A and B: loads of `T`'s elements (`ET` in memory, `P` a word, `BITS` each), packed along K. ----
+// ---- A and B of the shuffled types: loads of `T`'s elements (`ET` in memory, `P` a word, `BITS` each), packed
+// along K. ----
 
 #define UKL_MMA_AB_LOADS(T, ET, UT, P, BITS, WORDS, SPACE, SUF)                                                         \
     UKL_INLINE void ukl_mma_load_a_##T##SUF(UKL_PRIVATE ukl_mma_a_##T* a, SPACE const ET* p, uint32_t stride,           \
@@ -213,44 +304,114 @@ UKL_INLINE uint32_t ukl_mma_word_(UKL_PRIVATE const uint32_t* w, uint32_t n, uin
     return v;
 }
 
-// ---- The product: `c += a · b`, by shuffles and `DOT` (16 / P k-words, each `P` products). ----
+// ---- The shuffled product: `c += a · b`, by shuffles and `DOT` (`KW` k-words). Each k-word: the lane's rows of A
+// and columns of B read by shuffle, once each, then every element's dot product. ----
 
 #if UKL_SIMD_WIDTH >= 16
-// A lane's column of B is the same for each of its elements (`lane % 16`), read once; each word read from register
-// `16 · kw / W` of lane `16 · kw % W` plus the row or the column: a constant register.
-#define UKL_MMA_PRODUCT(T, C, CT, P, WORDS, DOT)                                                                        \
+// A row's or a column's word of k-word `kw` lies in register `16 · kw / W` of lane `16 · kw % W` plus the row or
+// column: a constant register.
+#define UKL_MMA_PRODUCT(T, C, CT, KW, WORDS, DOT)                                                                       \
     UKL_INLINE void ukl_mma_##T(UKL_PRIVATE ukl_mma_c_##C* c, UKL_PRIVATE const ukl_mma_a_##T* a,                       \
                                 UKL_PRIVATE const ukl_mma_b_##T* b, UklMmaAt at __UKL_PARAMS)                           \
     {                                                                                                                   \
-        uint32_t bw[16u / P];                                                                                           \
-        for (uint32_t kw = 0u; kw < 16u / P; kw++)                                                                      \
-            bw[kw] = ukl_sg_shuffle(b->w[(16u * kw) / UKL_SIMD_WIDTH], (16u * kw) % UKL_SIMD_WIDTH + (at.lane & 15u) __UKL_ARGS); \
-        for (uint32_t e = 0u; e < UKL_MMA_C_PER; e++) {                                                                 \
-            uint32_t r = ukl_mma_c_index(e, at) >> 4;                                                                   \
-            CT acc = c->x[e];                                                                                           \
-            for (uint32_t kw = 0u; kw < 16u / P; kw++)                                                                  \
-                acc = DOT(ukl_sg_shuffle(a->w[(16u * kw) / UKL_SIMD_WIDTH], (16u * kw) % UKL_SIMD_WIDTH + r __UKL_ARGS), bw[kw], acc); \
-            c->x[e] = acc;                                                                                              \
+        for (uint32_t kw = 0u; kw < KW; kw++) {                                                                         \
+            uint32_t ar[UKL_MMA_RB], bc[UKL_MMA_CB];                                                                    \
+            for (uint32_t i = 0u; i < UKL_MMA_RB; i++)                                                                  \
+                ar[i] = ukl_sg_shuffle(a->w[(16u * kw) / UKL_SIMD_WIDTH], (16u * kw) % UKL_SIMD_WIDTH + ukl_mma_row(i, at) __UKL_ARGS); \
+            for (uint32_t j = 0u; j < UKL_MMA_CB; j++)                                                                  \
+                bc[j] = ukl_sg_shuffle(b->w[(16u * kw) / UKL_SIMD_WIDTH], (16u * kw) % UKL_SIMD_WIDTH + ukl_mma_col(j, at) __UKL_ARGS); \
+            for (uint32_t i = 0u; i < UKL_MMA_RB; i++)                                                                  \
+                for (uint32_t j = 0u; j < UKL_MMA_CB; j++)                                                              \
+                    c->x[i * UKL_MMA_CB + j] = DOT(ar[i], bc[j], c->x[i * UKL_MMA_CB + j]);                             \
         }                                                                                                               \
     }
 #else
-// A narrow group (fewer than 16 lanes): each element's row of A and column of B read apart, the register picked.
-#define UKL_MMA_PRODUCT(T, C, CT, P, WORDS, DOT)                                                                        \
+// A narrow group (fewer than 16 lanes): the register of a row's or a column's word is the same in every lane of the
+// group (the layout's choice), known at run time where the owner spans groups: picked by value.
+#define UKL_MMA_PRODUCT(T, C, CT, KW, WORDS, DOT)                                                                       \
     UKL_INLINE void ukl_mma_##T(UKL_PRIVATE ukl_mma_c_##C* c, UKL_PRIVATE const ukl_mma_a_##T* a,                       \
                                 UKL_PRIVATE const ukl_mma_b_##T* b, UklMmaAt at __UKL_PARAMS)                           \
     {                                                                                                                   \
-        for (uint32_t e = 0u; e < UKL_MMA_C_PER; e++) {                                                                 \
-            uint32_t i = ukl_mma_c_index(e, at), r = i >> 4, col = i & 15u;                                             \
-            CT acc = c->x[e];                                                                                           \
-            for (uint32_t kw = 0u; kw < 16u / P; kw++) {                                                                \
-                uint32_t ia = 16u * kw + r, ib = 16u * kw + col;                                                        \
-                uint32_t av = ukl_sg_shuffle(ukl_mma_word_(a->w, WORDS, ia / UKL_SIMD_WIDTH), ia % UKL_SIMD_WIDTH __UKL_ARGS); \
-                uint32_t bv = ukl_sg_shuffle(ukl_mma_word_(b->w, WORDS, ib / UKL_SIMD_WIDTH), ib % UKL_SIMD_WIDTH __UKL_ARGS); \
-                acc = DOT(av, bv, acc);                                                                                 \
+        for (uint32_t kw = 0u; kw < KW; kw++) {                                                                         \
+            uint32_t ar[UKL_MMA_RB], bc[UKL_MMA_CB];                                                                    \
+            for (uint32_t i = 0u; i < UKL_MMA_RB; i++) {                                                                \
+                uint32_t ia = 16u * kw + ukl_mma_row(i, at);                                                            \
+                ar[i] = ukl_sg_shuffle(ukl_mma_word_(a->w, WORDS, ia / UKL_SIMD_WIDTH), ia % UKL_SIMD_WIDTH __UKL_ARGS); \
             }                                                                                                           \
-            c->x[e] = acc;                                                                                              \
+            for (uint32_t j = 0u; j < UKL_MMA_CB; j++) {                                                                \
+                uint32_t ib = 16u * kw + ukl_mma_col(j, at);                                                            \
+                bc[j] = ukl_sg_shuffle(ukl_mma_word_(b->w, WORDS, ib / UKL_SIMD_WIDTH), ib % UKL_SIMD_WIDTH __UKL_ARGS); \
+            }                                                                                                           \
+            for (uint32_t i = 0u; i < UKL_MMA_RB; i++)                                                                  \
+                for (uint32_t j = 0u; j < UKL_MMA_CB; j++)                                                              \
+                    c->x[i * UKL_MMA_CB + j] = DOT(ar[i], bc[j], c->x[i * UKL_MMA_CB + j]);                             \
         }                                                                                                               \
     }
+#endif
+
+// ---- b1: the bit product. ----
+
+#if UKL_MMA_CUDA
+#define UKL_MMA_B1_LOADS(SPACE, SUF)                                                                                    \
+    UKL_INLINE void ukl_mma_load_a_b1##SUF(UKL_PRIVATE ukl_mma_a_b1* a, SPACE const uint64_t* p, uint32_t stride,       \
+                                           uint32_t layout, UklMmaAt at)                                                \
+    {                                                                                                                   \
+        SPACE const uint32_t* h = (SPACE const uint32_t*)p;                                                             \
+        for (uint32_t q = 0u; q < 4u; q++) {                                                                            \
+            uint32_t r = (at.lane >> 2) + 8u * (q & 1u), kw = (at.lane & 3u) + 4u * (q >> 1);                           \
+            a->w[q] = h[2u * (layout == UKL_ROW_MAJOR ? r * stride + kw / 2u : (kw / 2u) * stride + r) + (kw & 1u)];    \
+        }                                                                                                               \
+    }                                                                                                                   \
+    UKL_INLINE void ukl_mma_load_b_b1##SUF(UKL_PRIVATE ukl_mma_b_b1* b, SPACE const uint64_t* p, uint32_t stride,       \
+                                           uint32_t layout, UklMmaAt at)                                                \
+    {                                                                                                                   \
+        SPACE const uint32_t* h = (SPACE const uint32_t*)p;                                                             \
+        for (uint32_t q = 0u; q < 4u; q++) {                                                                            \
+            uint32_t c = 8u * (q >> 1) + (at.lane >> 2), kw = (at.lane & 3u) + 4u * (q & 1u);                           \
+            b->w[q] = h[2u * (layout == UKL_ROW_MAJOR ? (kw / 2u) * stride + c : c * stride + kw / 2u) + (kw & 1u)];    \
+        }                                                                                                               \
+    }
+
+// Two `mma.sync` m16n8k256, one for each half of C's columns, accumulating in place.
+UKL_INLINE void ukl_mma_b1(UKL_PRIVATE ukl_mma_c_i32* c, UKL_PRIVATE const ukl_mma_a_b1* a, UKL_PRIVATE const ukl_mma_b_b1* b,
+                           UklMmaAt at __UKL_PARAMS)
+{
+    (void)at;
+    for (uint32_t h = 0u; h < 2u; h++)
+        asm volatile("mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.and.popc {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};"
+                     : "+r"(c->x[2u * h]), "+r"(c->x[2u * h + 1u]), "+r"(c->x[4u + 2u * h]), "+r"(c->x[5u + 2u * h])
+                     : "r"(a->w[0]), "r"(a->w[1]), "r"(a->w[2]), "r"(a->w[3]), "r"(b->w[2u * h]), "r"(b->w[2u * h + 1u]));
+}
+#else
+#define UKL_MMA_B1_LOADS(SPACE, SUF)                                                                                    \
+    UKL_INLINE void ukl_mma_load_a_b1##SUF(UKL_PRIVATE ukl_mma_a_b1* a, SPACE const uint64_t* p, uint32_t stride,       \
+                                           uint32_t layout, UklMmaAt at)                                                \
+    {                                                                                                                   \
+        for (uint32_t i = 0u; i < UKL_MMA_RB; i++) {                                                                    \
+            uint32_t r = ukl_mma_row(i, at);                                                                            \
+            for (uint32_t kw = 0u; kw < UKL_MMA_KW_b1; kw++)                                                            \
+                a->w[i * UKL_MMA_KW_b1 + kw] = layout == UKL_ROW_MAJOR ? p[r * stride + kw] : p[kw * stride + r];       \
+        }                                                                                                               \
+    }                                                                                                                   \
+    UKL_INLINE void ukl_mma_load_b_b1##SUF(UKL_PRIVATE ukl_mma_b_b1* b, SPACE const uint64_t* p, uint32_t stride,       \
+                                           uint32_t layout, UklMmaAt at)                                                \
+    {                                                                                                                   \
+        for (uint32_t j = 0u; j < UKL_MMA_CB; j++) {                                                                    \
+            uint32_t c = ukl_mma_col(j, at);                                                                            \
+            for (uint32_t kw = 0u; kw < UKL_MMA_KW_b1; kw++)                                                            \
+                b->w[j * UKL_MMA_KW_b1 + kw] = layout == UKL_ROW_MAJOR ? p[kw * stride + c] : p[c * stride + kw];       \
+        }                                                                                                               \
+    }
+
+UKL_INLINE void ukl_mma_b1(UKL_PRIVATE ukl_mma_c_i32* c, UKL_PRIVATE const ukl_mma_a_b1* a, UKL_PRIVATE const ukl_mma_b_b1* b,
+                           UklMmaAt at __UKL_PARAMS)
+{
+    (void)at;
+    for (uint32_t kw = 0u; kw < UKL_MMA_KW_b1; kw++)
+        for (uint32_t i = 0u; i < UKL_MMA_RB; i++)
+            for (uint32_t j = 0u; j < UKL_MMA_CB; j++)
+                c->x[i * UKL_MMA_CB + j] += (int32_t)ukl_popcount64(a->w[i * UKL_MMA_KW_b1 + kw] & b->w[j * UKL_MMA_KW_b1 + kw]);
+}
 #endif
 
 // ---- Level 2: one owner's 64×64 block of C (at `C`, `lc` its layout) += A[64×K] · B[K×64], from device memory. ----
@@ -268,10 +429,11 @@ UKL_INLINE uint32_t ukl_mma_word_(UKL_PRIVATE const uint32_t* w, uint32_t n, uin
                 ukl_mma_c_##C c;                                                                                        \
                 ukl_mma_load_c_##C(&c, Cp + co, ldc, lc, at);                                                           \
                 for (uint32_t k = 0u; k < K; k += UKL_MMA_K_##T) {                                                      \
+                    uint32_t km = k / UKL_MMA_PACK_##T;                                                                 \
                     ukl_mma_a_##T a;                                                                                    \
                     ukl_mma_b_##T b;                                                                                    \
-                    ukl_mma_load_a_##T(&a, A + (la == UKL_ROW_MAJOR ? ci * lda + k : k * lda + ci), lda, la, at);       \
-                    ukl_mma_load_b_##T(&b, B + (lb == UKL_ROW_MAJOR ? k * ldb + cj : cj * ldb + k), ldb, lb, at);       \
+                    ukl_mma_load_a_##T(&a, A + (la == UKL_ROW_MAJOR ? ci * lda + km : km * lda + ci), lda, la, at);     \
+                    ukl_mma_load_b_##T(&b, B + (lb == UKL_ROW_MAJOR ? km * ldb + cj : cj * ldb + km), ldb, lb, at);     \
                     ukl_mma_##T(&c, &a, &b, at __UKL_ARGS);                                                             \
                 }                                                                                                       \
                 ukl_mma_store_c_##C(&c, Cp + co, ldc, lc, at);                                                          \
@@ -281,9 +443,12 @@ UKL_INLINE uint32_t ukl_mma_word_(UKL_PRIVATE const uint32_t* w, uint32_t n, uin
 #define UKL_MMA_TYPE(T, C, CT, ET, UT, P, BITS, WORDS, DOT)                                                             \
     UKL_MMA_AB_LOADS(T, ET, UT, P, BITS, WORDS, UKL_GLOBAL, )                                                           \
     UKL_MMA_AB_LOADS(T, ET, UT, P, BITS, WORDS, UKL_LOCAL, _local)                                                      \
-    UKL_MMA_PRODUCT(T, C, CT, P, WORDS, DOT)                                                                                   \
+    UKL_MMA_PRODUCT(T, C, CT, 16u / P, WORDS, DOT)                                                                      \
     UKL_MMA_TILE(T, C, CT, ET)
 
 UKL_MMA_TYPE(f16, f32, float, uint16_t, uint16_t, 2u, 16u, UKL_MMA_WORDS_16, ukl_dot2_f16)
 UKL_MMA_TYPE(bf16, f32, float, uint16_t, uint16_t, 2u, 16u, UKL_MMA_WORDS_16, ukl_dot2_bf16)
 UKL_MMA_TYPE(i8, i32, int32_t, int8_t, uint8_t, 4u, 8u, UKL_MMA_WORDS_8, ukl_dot4_i8)
+UKL_MMA_B1_LOADS(UKL_GLOBAL, )
+UKL_MMA_B1_LOADS(UKL_LOCAL, _local)
+UKL_MMA_TILE(b1, i32, int32_t, uint64_t)

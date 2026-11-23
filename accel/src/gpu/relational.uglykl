@@ -7,6 +7,7 @@
 
 #include <ukl/backend.h>
 #include <ukl/simd.h>
+#include <ukl/matrix.h>
 
 // Threads a threadgroup of the 1-D kernels.
 #define REL_TG 256u
@@ -16,15 +17,23 @@
 typedef struct BitProductArgs { uint32_t n; uint32_t m; uint32_t kw; uint32_t mode; uint32_t mw; } BitProductArgs;
 UKL_REFLECT_STRUCT(BitProductArgs, n, m, kw, mode, mw)
 
-// Bit product: C[i][j] = popcount(A_i & B_j) over rows of `kw` u64 words (the spikes' W1/W5 bit gram).
+// Bit product: C[i][j] = popcount(A_i & B_j) over rows of `kw` u64 words (the spikes' W1/W5 bit gram), through
+// ukl/matrix.h's 1-bit fragments (decision 0617): `mma.sync`'s AND and POPC on NVIDIA's units, the threads' popcount
+// elsewhere.
 //
-// One threadgroup per 64x64 output tile, 16 x 16 threads, 4x4 outputs per thread; 8 words of each side staged per
-// step (2 x 4.2 KB of threadgroup memory). The grid is (column tiles, row tiles).
+// One threadgroup per 64x64 output tile (256 threads); each fragment owner (a SIMD group) holds `BP_NF` of its sixteen
+// 16x16 fragments of C, in the tile's column order, so that an owner's fragments share their rows of A where the
+// owners are a multiple of 4. Each step stages 8 u64 words of each side's 64 rows in threadgroup memory, k-major
+// (2 x 4.5 KB; a stride of 72 words puts every lane's half-word of NVIDIA's fragment loads in its own bank), and runs
+// its 512 bits' products (K = 256 on NVIDIA's unit, 64 emulated). The grid is (column tiles, row tiles).
 //
-// mode 0: every count, into C (n x m, row-major).
+// mode 0: every count, into C (n x m, row-major), each where its lane holds it.
 // mode 1: only whether count >= min[j], as bits of `mask` (n rows of `mw` u32 words, bit j of a row in word j / 32).
 //         A tile's 64 columns are exactly two mask words of each of its rows, so the tile gathers them in threadgroup
 //         memory (512 B) and writes them whole: no device atomics, and no zero fill beforehand.
+#define BP_STRIDE 72u
+#define BP_OWNERS (REL_TG / UKL_MMA_LANES)
+#define BP_NF (UKL_MMA_LANES >= 16u ? UKL_MMA_LANES / 16u : 1u)
 DEFINE_KERNEL2(relational, bp_tile,
                ROBUFFER, uint64_t, A,     "[n * kw]",
                ROBUFFER, uint64_t, B,     "[m * kw]",
@@ -32,8 +41,7 @@ DEFINE_KERNEL2(relational, bp_tile,
                RWBUFFER, uint32_t, mask,  "[n * mw]",
                ROBUFFER, uint32_t, minv,  "[m]",
                ARGS,     BitProductArgs, args, ,
-               SHARED,   uint64_t, As,    520,
-               SHARED,   uint64_t, Bs,    520,
+               SHARED,   uint64_t, S,     1152,
                SHARED,   uint32_t, tmask, 128,
                TGID0,    uint32_t, tgx,   ,
                TGID1,    uint32_t, tgy,   ,
@@ -42,35 +50,58 @@ DEFINE_KERNEL2(relational, bp_tile,
 {
   const uint32_t t = tpy * 16u + tpx;
   const uint32_t row0 = tgy * 64u, col0 = tgx * 64u;
+  const UklMmaAt at = ukl_mma_at(t);
+  const uint32_t owner = ukl_mma_owner(t);
+  // The owner's rows of A are the same for each of its fragments where the owners are a multiple of 4.
+  const bool share_a = BP_OWNERS % 4u == 0u;
+  // The staging: A's and B's words.
+  UKL_LOCAL uint64_t* As = S;
+  UKL_LOCAL uint64_t* Bs = S + 8u * BP_STRIDE;
   if (t < 128u) ukl_atomic_store_local(&tmask[t], 0u);
   ukl_tg_barrier();  // zeroed before any thread ORs (kw = 0 has no other barrier)
-  uint32_t acc[4][4];
-  for (uint32_t r = 0u; r < 4u; r++) for (uint32_t c = 0u; c < 4u; c++) acc[r][c] = 0u;
+  ukl_mma_c_i32 c[BP_NF];
+  for (uint32_t n = 0u; n < BP_NF; n++) ukl_mma_fill_c_i32(&c[n], 0, at);
   const uint32_t lr = t / 4u, lw = (t % 4u) * 2u;
   for (uint32_t k0 = 0u; k0 < args.kw; k0 += 8u) {
     for (uint32_t q = 0u; q < 2u; q++) {
       uint32_t gk = k0 + lw + q;
       uint32_t ga = row0 + lr, gb = col0 + lr;
-      As[(lw + q) * 65u + lr] = (ga < args.n && gk < args.kw) ? A[(uint64_t)ga * args.kw + gk] : (uint64_t)0;
-      Bs[(lw + q) * 65u + lr] = (gb < args.m && gk < args.kw) ? B[(uint64_t)gb * args.kw + gk] : (uint64_t)0;
+      uint64_t a = (ga < args.n && gk < args.kw) ? A[(uint64_t)ga * args.kw + gk] : (uint64_t)0;
+      uint64_t b = (gb < args.m && gk < args.kw) ? B[(uint64_t)gb * args.kw + gk] : (uint64_t)0;
+      As[(lw + q) * BP_STRIDE + lr] = a;
+      Bs[(lw + q) * BP_STRIDE + lr] = b;
     }
     ukl_tg_barrier();
-    for (uint32_t w = 0u; w < 8u; w++) {
-      uint64_t a[4], b[4];
-      for (uint32_t r = 0u; r < 4u; r++) a[r] = As[w * 65u + tpy + 16u * r];
-      for (uint32_t c = 0u; c < 4u; c++) b[c] = Bs[w * 65u + tpx + 16u * c];
-      for (uint32_t r = 0u; r < 4u; r++) for (uint32_t c = 0u; c < 4u; c++) acc[r][c] += ukl_popcount64(a[r] & b[c]);
+    for (uint32_t h = 0u; h < 8u / UKL_MMA_KW_b1; h++) {
+      // A's 16 rows of a fragment: column-major here (word kw of row r at kw * stride + r); B's 16 columns row-major
+      // in K (word kw of column c at kw * stride + c).
+      UKL_LOCAL const uint64_t* ak = As + h * UKL_MMA_KW_b1 * BP_STRIDE;
+      UKL_LOCAL const uint64_t* bk = Bs + h * UKL_MMA_KW_b1 * BP_STRIDE;
+      ukl_mma_a_b1 af;
+      if (share_a) ukl_mma_load_a_b1_local(&af, ak + (owner % 4u) * 16u, BP_STRIDE, UKL_COL_MAJOR, at);
+      for (uint32_t n = 0u; n < BP_NF; n++) {
+        uint32_t f = owner + n * BP_OWNERS;
+        if (BP_OWNERS * BP_NF > 16u && f >= 16u) break;  // only where the owners outnumber the fragments
+        if (!share_a) ukl_mma_load_a_b1_local(&af, ak + (f % 4u) * 16u, BP_STRIDE, UKL_COL_MAJOR, at);
+        ukl_mma_b_b1 bf;
+        ukl_mma_load_b_b1_local(&bf, bk + (f / 4u) * 16u, BP_STRIDE, UKL_ROW_MAJOR, at);
+        ukl_mma_b1(&c[n], &af, &bf, at __UKL_ARGS);
+      }
     }
     ukl_tg_barrier();
   }
-  for (uint32_t r = 0u; r < 4u; r++) for (uint32_t c = 0u; c < 4u; c++) {
-    uint32_t lrow = tpy + 16u * r, lcol = tpx + 16u * c;
-    uint32_t i = row0 + lrow, j = col0 + lcol;
-    if (i < args.n && j < args.m) {
-      if (args.mode == 0u) {
-        C[(uint64_t)i * args.m + j] = acc[r][c];
-      } else if (acc[r][c] >= minv[j]) {
-        ukl_atomic_add_local(&tmask[lrow * 2u + lcol / 32u], 1u << (lcol % 32u));  // one thread a bit: an add is the OR
+  for (uint32_t n = 0u; n < BP_NF; n++) {
+    uint32_t f = owner + n * BP_OWNERS;
+    if (BP_OWNERS * BP_NF > 16u && f >= 16u) break;  // only where the owners outnumber the fragments
+    UKL_MMA_EACH(c[n], at, row, col, v) {
+      uint32_t lrow = (f % 4u) * 16u + row, lcol = (f / 4u) * 16u + col;
+      uint32_t i = row0 + lrow, j = col0 + lcol;
+      if (i < args.n && j < args.m) {
+        if (args.mode == 0u) {
+          C[(uint64_t)i * args.m + j] = (uint32_t)v;
+        } else if ((uint32_t)v >= minv[j]) {
+          ukl_atomic_add_local(&tmask[lrow * 2u + lcol / 32u], 1u << (lcol % 32u));  // one thread a bit: an add is the OR
+        }
       }
     }
   }
