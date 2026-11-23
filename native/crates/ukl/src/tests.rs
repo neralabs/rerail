@@ -162,14 +162,14 @@ fn an_in_memory_kernel_gets_its_backends_shim() {
 #[test]
 fn a_metal_kernel_takes_the_tapes_reads() {
     let k = "#include <metal_stdlib>\nusing namespace metal;\n#define CLIF_VIEW_SPACE device\n#define clif_view(v, a) the_kernels_view(v, a)\n#include <ukl/reads/tape.h>\nkernel void k() {}\n";
-    let out = crate::metal_source("k.metal", k).unwrap_or_else(|e| panic!("{e}"));
+    let out = crate::metal_source(&crate::Target::named("apple7").unwrap(), "k.metal", k).unwrap_or_else(|e| panic!("{e}"));
     let squeezed: String = out.chars().filter(|c| !c.is_whitespace()).collect();
     assert!(squeezed.contains("clif_tape_number(deviceconstuint8_t*t,deviceconstuint32_t*v"), "the view where the kernel reads it");
     assert!(out.contains("the_kernels_view(v,") || out.contains("the_kernels_view(v ,"), "the kernel's load of the view");
     assert!(!out.contains("metal_stdlib"), "the front end's own header, left to it");
     assert!(crate::takes_library(k) && !crate::takes_library("#include <metal_stdlib>\n"));
     let both = "#include <ukl/reads/tape.h>\n#include <ukl/reads/tape_z.h>\n";
-    assert!(crate::metal_source("both.metal", both).is_err(), "one set of the tape's reads");
+    assert!(crate::metal_source(&crate::Target::named("apple7").unwrap(), "both.metal", both).is_err(), "one set of the tape's reads");
 }
 
 /// Windows' LLP64: an integer literal's `long` suffix is written `long long`, so `(1ul << 39) - 1` and `~0ul` are the
@@ -197,4 +197,24 @@ fn the_fingerprint_is_fnv_over_the_carried_files() {
         }
     }
     assert_eq!(fingerprint(), h);
+}
+
+/// Decision 0645: each backend's names give their targets, the same every time; other names give none.
+#[test]
+fn targets_are_their_names() {
+    use crate::Target;
+    let m5 = Target::named("apple10").unwrap();
+    assert_eq!(m5.backend, Backend::Metal { version: 400 });
+    assert_eq!(m5.defines, [("UKL_HAS_MATMUL2D".to_string(), "1".to_string())]);
+    assert_eq!(Target::named("apple7").unwrap().defines, []);
+    assert_eq!(Target::named("sm_121").unwrap().backend, Backend::Cuda { sm: 121 });
+    assert_eq!(Target::named("gfx90a").unwrap().backend, Backend::Hip { wave: 64 });
+    let rdna2 = Target::named("gfx1035").unwrap();
+    assert_eq!((rdna2.backend, rdna2.defines.len()), (Backend::Hip { wave: 32 }, 1));
+    assert_eq!(Target::named("gfx11-generic").unwrap().defines, []);
+    assert!(Target::named("gfx1035").unwrap().shippable() && !Target::local(Backend::Cpu, Vec::new()).shippable());
+    for bad in ["apple8", "sm_", "sm_x", "sm_30", "gfx", "gfx-generic", "cpu"] {
+        assert!(Target::named(bad).is_none(), "{bad}");
+    }
+    assert_eq!(Target::named("sm_80"), Target::named("sm_80"));
 }

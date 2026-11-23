@@ -90,11 +90,11 @@
 #define UKL_MMA_VOLTA 0
 #endif
 
-// The M5's units (Apple's GPU family 10, which the host finds: `UKL_METAL_APPLE10`): Metal 4's `matmul2d`
+// The M5's units (the target `apple10`'s feature `UKL_HAS_MATMUL2D`, decision 0645): Metal 4's `matmul2d`
 // (MetalPerformancePrimitives), f16, bf16 and i8, at 16×16×32 with A and B in registers (its cooperative tensors, which
 // take one SIMD group, and one of M, N or K 32). One SIMD group an owner: `matmul2d` on several groups gives each its
 // own 16×16 blocks (measured, decision 0617 "Step 4"), so no fragment is several groups'.
-#if defined(UKL_METAL) && defined(UKL_METAL_APPLE10) && !defined(UKL_MMA_FORCE_EMULATED) && UKL_SIMD_WIDTH == 32 &&     \
+#if defined(UKL_METAL) && defined(UKL_HAS_MATMUL2D) && !defined(UKL_MMA_FORCE_EMULATED) && UKL_SIMD_WIDTH == 32 &&     \
     UKL_MMA_EMULATED_GROUPS == 1
 #define UKL_MMA_M5 1
 #else

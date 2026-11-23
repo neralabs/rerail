@@ -111,15 +111,14 @@ fn get_kernel_type_from_data_type(data_type: MTLDataType) -> Result<KernelBaseTy
     })
 }
 
-/// The defines a device's kernels compile with (decision 0617): `UKL_METAL_APPLE10` on Apple's GPU family 10 (the M5),
-/// whose matrix units UKL reaches through Metal 4's `matmul2d`. `RERAIL_METAL_MATRIX_UNITS=0` leaves them out (`RERAIL_METAL_UNITS` is decision 0571's).
-pub fn defines(device: &DeviceRef) -> Vec<(&'static str, String)> {
-    if std::env::var("RERAIL_METAL_MATRIX_UNITS").is_ok_and(|v| v == "0") {
-        return Vec::new();
-    }
+/// The name of the device's target (decision 0645, `rerail_ukl::Target`): Metal's highest tier the device has,
+/// `apple10` on Apple's GPU family 10 (the M5: Metal 4's `matmul2d`), else `apple7`. `RERAIL_METAL_MATRIX_UNITS=0`
+/// takes `apple7` on any device (`RERAIL_METAL_UNITS` is decision 0571's).
+pub fn target_name(device: &DeviceRef) -> &'static str {
+    let off = std::env::var("RERAIL_METAL_MATRIX_UNITS").is_ok_and(|v| v == "0");
     // `MTLGPUFamilyApple10` (1010), which the metal crate does not name.
-    let apple10: bool = unsafe { msg_send![device, supportsFamily: 1010_i64] };
-    if apple10 { vec![("UKL_METAL_APPLE10", "1".into())] } else { Vec::new() }
+    let apple10: bool = !off && unsafe { msg_send![device, supportsFamily: 1010_i64] };
+    if apple10 { "apple10" } else { "apple7" }
 }
 
 // `StructMemberRef::struct_type`/`array_type` and `ArrayTypeRef::element_struct_type`/`element_array_type` in the

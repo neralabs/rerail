@@ -60,12 +60,12 @@ pub fn takes_library(text: &str) -> bool {
     text.contains("#include <ukl")
 }
 
-/// A Metal source that takes the library (`takes_library`), preprocessed for the Metal front end: the library's
-/// headers in place, the source's own text and macros as written. A hand-written MSL kernel includes the generated
-/// reads so (decision 0440 §3.3) until it is UKL itself.
-pub fn metal_source(name: &str, text: &str) -> Result<String, Error> {
+/// A Metal source that takes the library (`takes_library`), preprocessed for the Metal front end and `target` (a
+/// Metal tier, `Target`): the library's headers in place, the source's own text and macros as written. A
+/// hand-written MSL kernel includes the generated reads so (decision 0440 §3.3) until it is UKL itself.
+pub fn metal_source(target: &Target, name: &str, text: &str) -> Result<String, Error> {
     let path = format!("/<kernels>/{name}");
-    Preprocess::new(Backend::Metal { version: 310 }).file(&path, text).run(&path)
+    target.preprocess().file(&path, text).run(&path)
 }
 
 /// A GPU backend a kernel is preprocessed for.
@@ -349,6 +349,8 @@ impl Preprocess {
 }
 
 pub mod split;
+pub mod target;
+pub use target::Target;
 
 #[cfg(test)]
 mod tests;

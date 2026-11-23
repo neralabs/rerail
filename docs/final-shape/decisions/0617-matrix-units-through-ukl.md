@@ -416,7 +416,7 @@ The user: "yes, please add the 1-bit path and emulation/lowering to popcount on 
 
 - **The M5 runs f16, bf16 and i8 on Metal 4's `matmul2d`** (MetalPerformancePrimitives; `UKL_MMA_M5`). The host
   asks the device for Apple's GPU family 10 (`supportsFamily:` 1010, which the metal crate does not name) and gives
-  its kernels `UKL_METAL_APPLE10`; `RERAIL_METAL_MATRIX_UNITS=0` leaves it out. The M1-M4 keep `simdgroup_matrix`.
+  its kernels `UKL_METAL_APPLE10` (since decision 0645, the target `apple10`'s feature `UKL_HAS_MATMUL2D`); `RERAIL_METAL_MATRIX_UNITS=0` leaves it out. The M1-M4 keep `simdgroup_matrix`.
 - **The shape is 16×16×32, one SIMD group an owner.** A probe of `matmul2d` on the M5 Max (macOS 26.4) settled what
   the headers leave open:
   - With A and B in registers (cooperative input tensors), the operation takes one SIMD group only ("Input

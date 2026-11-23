@@ -255,16 +255,26 @@ impl Device {
         Some(cores * by_threads.min(by_memory))
     }
 
-    /// The defines a kernel's preprocessing for this device takes (the CPU's knobs, `compute_kernel_cpu::defines`;
-    /// OpenCL's width and largest threadgroup; HIP's instructions by architecture): `rerail_gpu::Preprocessing`.
-    pub fn compile_defines(&self) -> Vec<(&'static str, String)> {
+    /// The name of the target a kernel's text is prepared for on this device (decision 0645, `rerail_ukl::Target`,
+    /// which `rerail_gpu::Preprocessing` makes of it): Metal's tier, CUDA's `sm_<N>`, HIP's `gfx` target. None on
+    /// OpenCL and the CPU, whose text is prepared from what the device reports (`local_defines`).
+    pub fn target_name(&self) -> Option<String> {
+        match self {
+            Device::Cpu(_) | Device::OpenCl(_) => None,
+            #[cfg(not(target_os = "macos"))]
+            Device::Native(d) => Some(d.target_name()),
+            #[cfg(target_os = "macos")]
+            Device::Native(d) => Some(crate::compute_kernel_metal::target_name(d).to_string()),
+        }
+    }
+
+    /// The defines of a device without a target's name (`target_name`): the CPU's knobs
+    /// (`compute_kernel_cpu::defines`), OpenCL's width and largest threadgroup and its units.
+    pub fn local_defines(&self) -> Vec<(&'static str, String)> {
         match self {
             Device::Cpu(_) => cpu::defines(),
             Device::OpenCl(d) => d.defines(),
-            #[cfg(not(target_os = "macos"))]
-            Device::Native(d) => d.defines(),
-            #[cfg(target_os = "macos")]
-            Device::Native(d) => crate::compute_kernel_metal::defines(d),
+            Device::Native(_) => Vec::new(),
         }
     }
 

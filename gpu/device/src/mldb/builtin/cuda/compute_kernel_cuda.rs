@@ -535,15 +535,13 @@ impl CudaDevice {
         a
     }
 
-    /// The defines its kernels' preprocessing takes: on HIP, the dot-product instructions of the architectures they
-    /// were measured on (RDNA2's `v_dot4_i32_i8` and `v_dot2_f32_f16`, a Radeon 680M's gfx1035: `ukl/dot.h`); RDNA3
-    /// spells its byte form otherwise (`v_dot4_i32_iu8`), and takes the reference until it is measured.
-    pub fn defines(&self) -> Vec<(&'static str, String)> {
-        let mut v = Vec::new();
-        if self.vendor == Vendor::Hip && self.arch.starts_with("gfx103") {
-            v.push(("UKL_HIP_AMD_DOT", "1".to_string()));
+    /// The name of the device's target (decision 0645, `rerail_ukl::Target`): CUDA's `sm_<N>`, HIP's `gfx`
+    /// architecture.
+    pub fn target_name(&self) -> String {
+        match self.vendor {
+            Vendor::Cuda => format!("sm_{}", self.sm),
+            Vendor::Hip => self.arch.to_string(),
         }
-        v
     }
 
     /// An event the host signals and a queue waits on (`metal::SharedEvent`): a word of pinned memory.

@@ -1165,3 +1165,26 @@ fn dot_products_equal_their_references() {
     eprintln!("{backend}: dot2 forms equal to the reference {exact}, within one rounding {rounded}");
 }
 
+
+/// Decision 0645: the device's target is its name's, and the text a build prepares for the name is the text the
+/// device prepares for itself (the matrix tests' kernels, which test the most features). A local target (OpenCL's,
+/// the CPU's) ships nothing, and says so.
+#[test]
+fn a_devices_text_is_its_targets() {
+    let Some(shared) = crate::shared::get() else {
+        return;
+    };
+    let target = crate::Preprocessing::target(&shared.device);
+    eprintln!("the target on {}: {} ({:?}, {:?})", crate::device::backend(), target.name, target.backend, target.defines);
+    if !target.shippable() {
+        assert!(matches!(target.backend, rerail_ukl::Backend::OpenCl | rerail_ukl::Backend::Cpu), "{}: a local target on a shipping backend", target.name);
+        return;
+    }
+    let named = rerail_ukl::Target::named(&target.name).unwrap_or_else(|| panic!("{}: no target of that name", target.name));
+    assert_eq!(target, named, "the device's target is its name's");
+    let text = include_str!("matrix_tests.uglykl");
+    let path = "/<kernels>/matrix_tests.uglykl";
+    let device = crate::Preprocessing::preprocess(&shared.device).file(path, text).run(path).unwrap_or_else(|e| panic!("{e}"));
+    let built = named.preprocess().file(path, text).run(path).unwrap_or_else(|e| panic!("{e}"));
+    assert!(device == built, "{}: the device's text is the build's", target.name);
+}

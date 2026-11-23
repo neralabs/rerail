@@ -85,11 +85,13 @@ pub struct Key {
 
 impl Key {
     pub fn of(source: &str, name: &str, constant: Option<u32>) -> Key {
-        // A source that takes UKL's library names its headers, not their text: the library's fingerprint keys it too.
+        // A source that takes UKL's library names its headers, not their text: the library's fingerprint keys it too,
+        // and the target its text is prepared for (decision 0645: an M1's and an M5's texts differ).
         let library: [u8; 32] = if rerail_ukl::takes_library(source) {
             let mut d = Sha256::new();
             d.update(source.as_bytes());
             d.update(rerail_ukl::fingerprint().to_le_bytes());
+            d.update(places().target.as_bytes());
             d.finalize().into()
         } else {
             Sha256::digest(source.as_bytes()).into()
@@ -113,11 +115,13 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Where the store and the shipped kernels are, and this device's tag in them.
+/// Where the store and the shipped kernels are, this device's tag in them, and its target (decision 0645).
 struct Places {
     store: Option<PathBuf>,
     shipped: Option<PathBuf>,
     tag: String,
+    /// The name of the target a source that takes UKL's library is prepared for (`msl`): Metal's tier.
+    target: String,
     /// This process's wanted list.
     run: String,
 }
@@ -144,8 +148,13 @@ fn places() -> Arc<Places> {
         // Elsewhere the device layer's store keeps the backend's compiled kernels, by its own device and driver.
         #[cfg(not(target_os = "macos"))]
         let tag = "no-device".to_owned();
+        // Without a device, Metal's baseline tier (every Apple GPU's).
+        #[cfg(target_os = "macos")]
+        let target = super::shared::get().map(|s| rerail_device::compute_kernel_metal::target_name(&s.device).to_owned()).unwrap_or_else(|| "apple7".to_owned());
+        #[cfg(not(target_os = "macos"))]
+        let target = "apple7".to_owned();
         let started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-        Arc::new(Places { store, shipped, tag, run: format!("{started:024}-{}", std::process::id()) })
+        Arc::new(Places { store, shipped, tag, target, run: format!("{started:024}-{}", std::process::id()) })
     });
     Arc::clone(places)
 }
@@ -616,13 +625,15 @@ fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescript
 }
 
 /// `source` as the Metal front end takes it: a source that takes UKL's library (`#include <ukl/...>`: the reads
-/// written once in CLIF, decision 0440 §3.3) preprocessed with it in place, any other as it is.
+/// written once in CLIF, decision 0440 §3.3) preprocessed with it in place, for the device's target (decision
+/// 0645), any other as it is.
 #[cfg(target_os = "macos")]
 pub fn msl<'a>(source: &'a str, name: &str) -> Result<std::borrow::Cow<'a, str>, String> {
     if !rerail_ukl::takes_library(source) {
         return Ok(std::borrow::Cow::Borrowed(source));
     }
-    rerail_ukl::metal_source(name, source).map(std::borrow::Cow::Owned).map_err(|e| format!("{name}: {e}"))
+    let target = rerail_ukl::Target::named(&places().target).ok_or_else(|| format!("{name}: no target {}", places().target))?;
+    rerail_ukl::metal_source(&target, name, source).map(std::borrow::Cow::Owned).map_err(|e| format!("{name}: {e}"))
 }
 
 /// The library of `source` (its digest `library`): this process's, else, where the source splits (decision 0571),
