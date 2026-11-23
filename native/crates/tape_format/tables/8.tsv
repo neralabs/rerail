@@ -1,7 +1,7 @@
 # Tape format 16's choices for tape tag 8 (blade), decisions 0293 §3 and 0626. Written by the lab from the grammar:
 #   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
-# 2035 codes; no node types declared: the grammar's list is the bound; numbered by how often each is a node's over 78 files, 16651 nodes (`rerail-engine code-counts`).
-revision	3
+# 2035 codes; no node types declared: the grammar's list is the bound; numbered by how often each is a node's over 93 files, 17128 nodes (`rerail-engine code-counts`).
+revision	4
 widths	1	1	1
 code	2	0	0	-	-
 code	49	0	0	-	-
@@ -28,8 +28,8 @@ code	6	0	0	-	-
 code	6	7	0	-	-
 code	6	8	0	-	-
 code	7	0	0	-	-
-code	4	0	0	-	-
 code	1	0	0	-	-
+code	4	0	0	-	-
 code	33	0	0	-	-
 code	14	0	0	-	-
 code	71	0	0	-	-
@@ -49,10 +49,10 @@ code	53	0	0	-	-
 code	65	0	0	-	-
 code	66	0	0	-	-
 code	16	0	0	-	-
-code	22	0	0	-	-
-code	54	0	0	-	-
 code	67	0	0	-	-
 code	70	0	0	-	-
+code	22	0	0	-	-
+code	54	0	0	-	-
 code	1	1	0	-	-
 code	1	2	0	-	-
 code	1	3	0	-	-

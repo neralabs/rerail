@@ -1,48 +1,48 @@
 # Tape format 16's choices for tape tag 12 (vue), decisions 0293 §3 and 0626. Written by the lab from the grammar:
 #   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
-# 76 codes; numbered by how often each is a node's over 2630 files, 524582 nodes (`rerail-engine code-counts`).
-revision	3
+# 76 codes; numbered by how often each is a node's over 3770 files, 800970 nodes (`rerail-engine code-counts`).
+revision	4
 widths	1	1	1
 code	14	0	0	-	-
 code	54	0	0	-	-
 code	10	0	0	-	-
 code	30	0	0	-	-
 code	60	0	0	-	-
+code	9	0	0	-	-
+code	53	0	0	-	-
 code	24	0	0	-	-
 code	47	0	0	-	-
 code	51	0	0	-	-
-code	9	0	0	-	-
-code	53	0	0	-	-
-code	18	0	0	-	-
 code	44	0	0	-	-
+code	18	0	0	-	-
 code	23	0	0	-	-
 code	36	0	0	-	-
+code	50	0	0	-	-
 code	56	0	0	-	-
 code	58	0	0	-	-
-code	50	0	0	-	-
 code	21	0	0	-	-
 code	22	0	0	-	-
 code	41	0	0	-	-
 code	45	0	0	-	-
-code	29	0	0	-	-
 code	55	0	0	-	-
+code	29	0	0	-	-
 code	62	0	0	-	-
 code	37	0	1	-	-
+code	46	0	0	-	-
 code	27	0	0	-	-
 code	61	0	0	-	-
-code	46	0	0	-	-
 code	0	0	2	-	-
-code	20	0	0	-	-
 code	0	0	3	-	-
+code	12	0	0	-	-
+code	20	0	0	-	-
+code	5	0	0	-	-
+code	8	0	0	-	-
 code	1	0	0	-	-
 code	3	0	0	-	-
 code	4	0	0	-	-
-code	5	0	0	-	-
 code	6	0	0	-	-
 code	7	0	0	-	-
-code	8	0	0	-	-
 code	11	0	0	-	-
-code	12	0	0	-	-
 code	16	0	0	-	-
 code	17	0	0	-	-
 code	25	0	0	-	-

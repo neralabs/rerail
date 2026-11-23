@@ -66,8 +66,8 @@ pub struct Counts {
 }
 
 impl Counts {
-    /// The counts of `paths` (`tag<TAB>number<TAB>count` lines, `nodes` lines, `#` comments), each number an entry of
-    /// the shipped table of its tag.
+    /// The counts of `paths` (`tag<TAB>number<TAB>count` lines, `nodes` and `revision` lines, `#` comments), each
+    /// number an entry of the shipped table of its tag; a file whose revision is not the shipped table's is refused.
     pub fn read(paths: &[&str]) -> Result<Self, String> {
         let mut c = Counts::default();
         for p in paths {
@@ -75,6 +75,14 @@ impl Counts {
             for line in text.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
                 let cells: Vec<&str> = line.split('\t').collect();
                 let num = |i: usize| cells.get(i).and_then(|c| c.parse::<u64>().ok()).ok_or_else(|| format!("{p}: {line:?}"));
+                if cells[0] == "revision" {
+                    let (tag, revision) = (num(1)? as u8, num(2)?);
+                    let lang = rerail_tape_format::f16::lang(tag).ok_or_else(|| format!("{p}: tag {tag} has no table"))?;
+                    if u64::from(lang.revision()) != revision {
+                        return Err(format!("{p}: tag {tag}'s counts number revision {revision}'s table, not the shipped {}", lang.revision()));
+                    }
+                    continue;
+                }
                 if cells[0] == "nodes" {
                     let e = c.langs.entry(num(1)? as u8).or_default();
                     (e.0, e.1) = (e.0 + num(2)?, e.1 + num(3)?);
