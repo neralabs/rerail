@@ -2,7 +2,6 @@ import * as childProcess from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
@@ -268,7 +267,7 @@ describe("placeCheckout", () => {
     await twoSessionsPlacing(main, async (_starter, joiner) => {
       void joiner.stop().then(() => (returnedWhileHeld = passHeld));
       // The pass waits here until the next turn of the event loop.
-      await setImmediate();
+      await new Promise(resolve => setImmediate(resolve));
       passHeld = false;
     });
     expect(returnedWhileHeld).toBe(true);

@@ -302,8 +302,9 @@ describe("the remotes kept for a clone's worktrees", () => {
     const at = clone();
     const linked = join(at.root, "linked");
     git(at.main, "config", "extensions.worktreeConfig", "true");
-    git(at.main, "config", "--worktree", "rerail.case", "main");
     git(at.main, "worktree", "add", "--quiet", "-b", "linked", linked);
+    // Written after the worktree is added, which Git would give a copy of it.
+    git(at.main, "config", "--worktree", "rerail.case", "main");
     expect(remoteAsks(() => [readRemoteAddress(at.main), readRemoteAddress(linked)])).toBeGreaterThan(0);
 
     // Read in turn, each answer stands for its own facts.
