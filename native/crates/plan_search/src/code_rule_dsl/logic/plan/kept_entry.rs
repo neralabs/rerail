@@ -121,10 +121,11 @@ impl Entries {
         // Each atom's text read once for the call, shared by the rows that hold it (the relations' and rules' names
         // repeat across a program's rows): read per cell, they were most of a warm run's kept plans' read.
         let texts = Texts { store, seen: std::cell::RefCell::new(std::collections::HashMap::new()) };
-        for entry in entries.filter(|e| *e.key.ident == self.ident(e.key.rel)) {
+        for entry in entries {
             let part = entry.key.part;
             let Some((rel, kinds)) = entry.key.rel.rsplit_once('#') else { continue };
-            if !rels(rel) {
+            // The reader's relations first: an entry's identity is a hash of its name, made only for those.
+            if !rels(rel) || *entry.key.ident != self.ident(entry.key.rel) {
                 continue;
             }
             found.insert(part);
