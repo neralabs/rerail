@@ -108,7 +108,7 @@ describe("the daemon's daily update check", () => {
     expect(restarted.newest()?.latest).toBe("0.4.0");
   });
 
-  it("asks on the channel rerail update installs from, and asks again at once when it changes", async () => {
+  it("asks on the channel rerail update installs from, and asks again at the next look when it changes", async () => {
     const folder = home(), time = clock(), npm = registry("0.3.0-next.2", "0.3.0");
     writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: "next", current: { version: "0.2.1", packageRoot: folder } }));
     const checks = start(folder, npm, time.now);
@@ -116,9 +116,27 @@ describe("the daemon's daily update check", () => {
     expect(checks.newest()?.latest).toBe("0.3.0-next.2");
 
     writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: "latest", current: { version: "0.2.1", packageRoot: folder } }));
+    // The channel left behind is not reported in the meantime, nor by a daemon restarted before its first look.
+    expect(checks.newest()).toBeNull();
+    const restarted = start(folder, npm, time.now);
+    expect(restarted.newest()).toBeNull();
+    restarted.stop();
+
     await time.advance(HOUR);
     expect(npm.asked).toEqual(["next", "latest"]);
     expect(checks.newest()?.latest).toBe("0.3.0");
+  });
+
+  it("stops asking and reporting once a signed customer profile is activated while it runs", async () => {
+    const folder = home(), time = clock(), npm = registry("0.3.0", "0.4.0");
+    const checks = start(folder, npm, time.now);
+    await time.advance(1_000);
+    expect(checks.newest()?.latest).toBe("0.3.0");
+
+    writeFileSync(join(folder, ACTIVE_PROFILE_FILE), "acme\n");
+    expect(checks.newest()).toBeNull();
+    await time.advance(2 * DAY);
+    expect(npm.asked).toHaveLength(1);
   });
 
   it("keeps its record private to the account, and starts over from one it cannot read", async () => {

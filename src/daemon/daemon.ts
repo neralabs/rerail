@@ -775,13 +775,13 @@ export class RerailDaemon {
     if (this.#closed) return;
     this.#closed = true;
     clearInterval(this.#recordCheck);
+    this.#updateChecks?.stop();
     // A write in flight lands before the state file is removed below, never after.
     await this.#recordChecked;
     try {
       await this.#statusLines?.stop();
       this.#provenanceMove?.stop.abort();
       await this.#provenanceMove?.done;
-      this.#updateChecks?.stop();
       // Pruning stops first: a remote sink that fails to stop must not leave a pass free to commit after close begins.
       await this.#checkoutPruning?.stop();
       await this.#remoteSink?.stop();

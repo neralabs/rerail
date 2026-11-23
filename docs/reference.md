@@ -367,12 +367,12 @@ The trust-root file must arrive through an authenticated channel independent of 
 
 Updates are explicit: Rerail never installs on its own. Once a day the daemon of an installed Rerail asks npm for the
 newest version on the update channel, the one a bare `rerail update` installs, and keeps the answer in
-`update-check.json` in the Rerail home. `/healthz` reports it as `update`, and the dashboard shows "Update available"
+`update-check.json` in the Rerail home. `/healthz` reports it as `update` while that channel is still the update channel, and the dashboard shows "Update available"
 while it is newer than the daemon's version. A failed ask keeps the last answer, logs one line to `daemon.log` and is
 tried again a day later; a restarted daemon asks only once that day has passed. Unless you add a remote or turn Merge
-Assist on (internal testing), it is the only request Rerail makes on its own ([privacy](privacy.md)). `RERAIL_UPDATE_CHECK=0` (or `false`) set for the daemon turns it off. A daemon run from a checkout never
-checks, and neither does one whose home holds a signed customer profile (internal testing), whose channel it cannot
-read.
+Assist on (internal testing), it is the only request Rerail makes on its own, apart from an npm rebuild of the SQLite binding when it fails to load ([privacy](privacy.md)). `RERAIL_UPDATE_CHECK=0` (or `false`) set for the daemon turns it off. A daemon run from a checkout never
+checks, and neither does one while its home holds a signed customer profile (internal testing), whose channel it cannot
+read. The daemon runs npm with the Node it runs under first on `PATH`, so a daemon started with an agent's shorter `PATH` still reaches the npm installed beside that Node.
 
 ```sh
 rerail version            # the installed version

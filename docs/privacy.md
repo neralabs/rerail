@@ -12,7 +12,7 @@ no hosted model.
 - **No hosted model or LLM API.** Semantic matching runs a bundled model in-process.
 - **No silent updates**, no pack install scripts, no remote Git, no third-party dashboard resources.
 - **One request on its own:** once a day, an update check. Unless you add a remote or turn Merge Assist on, no other
-  network request runs without you asking.
+  network request runs without you asking, except an npm rebuild of the SQLite binding when it fails to load.
 
 <details>
 <summary>Details and source files</summary>
@@ -30,8 +30,10 @@ no hosted model.
   (`native/Cargo.toml`, `native/src/model.rs`).
 - **No silent updates.** Only `rerail update` or `rerail setup` installs a version (`src/setup/updater.ts`).
 - **One request on its own.** Once a day the daemon of an installed Rerail asks npm for the newest `@neralabs/rerail`
-  on your update channel, so the dashboard can say a newer version is out. It installs nothing, and sends nothing
-  about you or your work. `RERAIL_UPDATE_CHECK=0` set for the daemon turns it off (`src/setup/update-check.ts`).
+  on your update channel, so the dashboard can say a newer version is out. It installs nothing and sends nothing about
+  your work: the request carries what any npm request does, npm's user agent (npm and Node versions, operating system,
+  CPU) and the credentials your npm config holds for the registry. `RERAIL_UPDATE_CHECK=0` set for the daemon turns it
+  off (`src/setup/update-check.ts`).
   Every other network request runs because you ran a command, added a remote or turned Merge Assist on (both in
   internal testing, below), with one exception: when the SQLite binding fails its load check, starting the daemon
   rebuilds it with npm (below).
