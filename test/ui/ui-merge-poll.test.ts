@@ -170,7 +170,7 @@ describe("Merge Assist reads and writes", () => {
     expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(2);
   });
 
-  it("takes another 404 as a failed read, and shows Merge Assist in the sidebar only once a read succeeds", async () => {
+  it("keeps Merge Assist in the sidebar after a read fails while /healthz lists the experiment", async () => {
     mergeRead = () => json({ error: "checkout-not-found", message: "no such checkout" }, 404);
 
     await refresh();

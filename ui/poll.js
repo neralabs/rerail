@@ -395,9 +395,10 @@ function holdMergeAssist(status) {
   githubDueAt = readAgainInMs === undefined ? null : performance.now() + readAgainInMs;
 }
 
-/**
- * A Merge Assist read failed with `error`, kept for the page. It says nothing of whether the daemon runs Merge Assist:
- * only a read that answers shows its sidebar item. Whether anything shown changed.
+  /**
+   * A Merge Assist read failed with `error`, kept for the page. The sidebar still follows whether `/healthz` lists the
+   * experiment; this failure only explains why its page has no status yet. Whether anything shown changed.
+   */
  */
 function takeMergeAssistFailure(error) {
   mergeAssistRead.at = Date.now();
