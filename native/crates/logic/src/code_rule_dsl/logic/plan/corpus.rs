@@ -594,7 +594,7 @@ pub fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding:
 pub fn combine_handed(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>)> {
     let text = crate::code_rule_dsl::logic::rr::print_version(read)?;
     let none = added::Added::default();
-    let key = texts_digest(&[text.as_str()], &[None], &none);
+    let key = texts_digest(&[text.as_str()], &[None], &none, true);
     let made = combine_stored_version(&[text.as_str()], &none, &key, Some(read))?;
     let hidden = combine_tail(&[text.as_str()], &none, Some(read), None)?.0;
     let kept = phases::reading_store().and_then(|store| {
@@ -2246,7 +2246,7 @@ fn run_observed_within(
         // these: the key also keys a session's kept frames, so a diagnostic switch turned on mid-session must not
         // make the next run cold.
         for switch in PREPARING {
-            hash.update(format!("\0{switch}={}", std::env::var(switch).unwrap_or_default()).as_bytes());
+            hash.update(format!("\0{switch}={}", crate::code_rule_dsl::logic::profile::var(switch).unwrap_or_default()).as_bytes());
         }
         hash.finalize().into()
     };
@@ -2397,6 +2397,21 @@ fn run_observed_within(
             }), "store")
         }
         (None, _) => (None, ""),
+    };
+    // Neither held for this store's atoms nor in the store: one this process prepared for another store (a run of the
+    // same program over another store) is moved to this store's atoms (`prepared::moved`), not prepared again; kept
+    // in the store as a prepared one is.
+    let (kept, from) = match kept {
+        Some(p) => (Some(p), from),
+        None => match with_prepared(|kept| kept.get(&prepared_key).and_then(|all| all.first().cloned())).and_then(|p| prepared::moved(store, &p, dialect)) {
+            Some(p) => {
+                let p = Arc::new(p);
+                keep_durably(&p);
+                keep_prepared(prepared_key, Arc::clone(&p));
+                (Some(p), "memory")
+            }
+            None => (None, from),
+        },
     };
     drop(section.take());
     let reused = kept.is_some();
@@ -3329,6 +3344,10 @@ fn run_observed_within(
     let observing = recording && !crate::git_workspace::snapshot::contains(root);
     // The heap's part of the run's count (decision 0435 §3), which the profile reports and the chunks' room starts from.
     rerail_accel::budget::set_heap_reader(crate::code_rule_dsl::logic::profile::memory::heap_live);
+    // The most it has been, sampled, is the profile's alone (`keep_most`).
+    if crate::code_rule_dsl::logic::profile::on() {
+        rerail_accel::budget::keep_most();
+    }
     // The documents the builder reads, in batches, each ended by `None` on the chunks' channel: the corpus's, then
     // each load's (decision 0065 §2a). A run that loads nothing closes the channel after the corpus's, so the
     // builder ends without waiting (as it must without threads).
@@ -3418,7 +3437,7 @@ fn run_observed_within(
         && memoised
         && loading.is_none()
         && keeper.is_some()
-        && std::env::var("RERAIL_CROSS_K4").map_or(true, |v| v != "off")
+        && crate::code_rule_dsl::logic::profile::var("RERAIL_CROSS_K4").map_or(true, |v| v != "off")
         && std::env::var("RERAIL_KEPT_INPUTS").map_or(true, |v| v != "off");
     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() && !kept_route {
         eprintln!("rerail: no kept route: session {}, durable {}, memoised {memoised}, loading {}, keeper {}", session.is_some(), durable.is_some(), loading.is_some(), keeper.is_some());
@@ -8101,7 +8120,7 @@ fn run_observed_within(
     // Without a session, a run with the store keeps its cross-file part as a session does, in the store's frames
     // (t33 K4): it starts from them and maintains them from the delta of its inputs. `RERAIL_CROSS_K4=off` keeps the
     // strata as before (whole strata run or kept, `kept_strata`), to compare.
-    let k4 = durable.is_some() && std::env::var("RERAIL_CROSS_K4").map_or(true, |v| v != "off");
+    let k4 = durable.is_some() && crate::code_rule_dsl::logic::profile::var("RERAIL_CROSS_K4").map_or(true, |v| v != "off");
     let one_fixpoint = run_placed.v.rules().next().is_some() && session.is_none() && !k4;
     // A new process that maintains its cross-file part from the store (t32 4.1) runs it as a session does: its
     // inputs bound before the run, not loaded as their first reader runs. Not a part whose requests the run answers
@@ -8611,7 +8630,7 @@ fn run_observed_within(
                     let hand_off = was_kept.is_some()
                         && !spike
                         && std::env::var_os("RERAIL_CROSS_VERIFY").is_none()
-                        && std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_none()
+                        && crate::code_rule_dsl::logic::profile::var_os("RERAIL_CROSS_DELTA_COUNTS").is_none()
                         && std::env::var("RERAIL_CROSS_HAND_OFF").map_or(true, |v| v != "off");
                     let handed: std::cell::RefCell<HashMap<String, retain::Handed>> = std::cell::RefCell::new(HashMap::new());
                     let mut unloaded: Vec<String> = Vec::new();
@@ -10458,7 +10477,7 @@ pub mod tests {
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "a work tree with a head"]);
         let out = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::git_seeing_no_file_under_the_root_is_kept_child", "--ignored", "--test-threads", "1", "--nocapture"])
-            .env("RERAIL_TAPE_CACHE", dir.path().join("store.sqlite"))
+            .env("RERAIL_TAPE_CACHE", { let store = dir.path().join("store.sqlite"); super::test_store::begun(&store); store })
             .env("RERAIL_GIT_FILES_CHILD", work.join("ignored"))
             .output()
             .unwrap();

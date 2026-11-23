@@ -32,7 +32,7 @@ pub struct Found {
 
 /// The text passes on `p`, for a program of `dialect`, as `plan::corpus`'s preparation runs them.
 pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::GrammarDialect) -> Result<Found> {
-    if dialect == crate::code_rule_dsl::language::GrammarDialect::Python && !std::env::var("RERAIL_AST_PARTS").is_ok_and(|v| v == "off") {
+    if dialect == crate::code_rule_dsl::language::GrammarDialect::Python && !crate::code_rule_dsl::logic::profile::var("RERAIL_AST_PARTS").is_ok_and(|v| v == "off") {
         p.rules(&mut Absorb { capture: !std::env::var("RERAIL_AST_PART_CAPTURES").is_ok_and(|v| v == "off"), rewritten: 0 });
     }
     let mut lowering = MatcherRelations::default();

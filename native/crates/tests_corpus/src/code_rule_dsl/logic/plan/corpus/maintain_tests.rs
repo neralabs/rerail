@@ -348,7 +348,9 @@ fn r4_a_line_inserted_is_no_change_to_a_stratum_that_reads_no_offset() {
 /// that order is searched before the comparison.
 #[test]
 fn a_finding_s_places_moved_are_maintained() {
-    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
+    // For this test's runs alone (`switches::set`): set on the process and left, the floor was every later test's in
+    // the process (a session test's cross-file aggregate derived again, a warm host-file edit made every document).
+    let _floor = super::switches::set(&[("RERAIL_AGAIN_MIN", "50")]);
     let program = r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).

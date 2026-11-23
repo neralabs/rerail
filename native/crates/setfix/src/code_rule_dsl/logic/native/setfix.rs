@@ -437,7 +437,7 @@ pub fn symbol_text(conn: &Connection, atom: i64) -> Result<String> {
 /// decision 0122 §2): the default; `RERAIL_WAVE0=kept` makes the kept rows the first wave's delta, as before (a
 /// measurement aid). Read at each stratum planned, so a test can set it; the spec carries the choice (`KeptOld`).
 pub fn wave0_changes() -> bool {
-    !std::env::var("RERAIL_WAVE0").is_ok_and(|v| v == "kept")
+    !crate::code_rule_dsl::logic::profile::var("RERAIL_WAVE0").is_ok_and(|v| v == "kept")
 }
 
 /// Appends the symbols pending in `conn`'s database if a flush is due (decision 0049 §4.2): a run's end.

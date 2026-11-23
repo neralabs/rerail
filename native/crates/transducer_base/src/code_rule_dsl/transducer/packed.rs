@@ -205,7 +205,7 @@ impl WorkBudget {
     /// The process's budget: `RERAIL_DEVICE_BUDGET` (`replan`, the default since decision 0334's pack check, or
     /// `full`).
     pub fn current() -> Self {
-        match std::env::var("RERAIL_DEVICE_BUDGET").as_deref() {
+        match crate::code_rule_dsl::logic::profile::var("RERAIL_DEVICE_BUDGET").as_deref() {
             Ok("full") => Self::Full,
             _ => Self::Replan { slack: REPLAN_SLACK, doublings: 0 },
         }

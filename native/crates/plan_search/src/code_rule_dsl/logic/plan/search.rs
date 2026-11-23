@@ -5471,7 +5471,7 @@ pub struct Chosen {
 /// column. The input, and the atom's column of each head column. A run holds such a relation in place
 /// (`Run::input_view`); a session neither keeps nor counts it run (`retain::cut`).
 pub fn input_view_shape(v: &super::super::program_image::Version, rule: super::super::program_image::RuleRef<'_>, input: impl Fn(&str) -> bool) -> Option<(String, Vec<usize>)> {
-    if std::env::var_os("RERAIL_COPY_VIEWS").is_some() {
+    if crate::code_rule_dsl::logic::profile::var_os("RERAIL_COPY_VIEWS").is_some() {
         return None;
     }
     let mut body = rule.body();

@@ -499,6 +499,20 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
     Ok(got.ok().map(|p| (p, documents, found)))
 }
 
+/// `prepared`, kept in this process for another store, with its name atoms moved to `store`'s (decision 0270), as
+/// `lookup` moves one another store kept: a process that runs one program over several stores prepares it once.
+/// `None` when a name has no atom here or the program does not read back.
+pub(super) fn moved(store: &ContentStore, prepared: &Prepared, dialect: GrammarDialect) -> Option<Prepared> {
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "the prepared program of another store, moved to this one's atoms".into());
+    let mut facts = rest_of(prepared);
+    let version = match relocate(store, &mut facts, &prepared.lowered.version)? {
+        Some(moved) => moved,
+        None => std::sync::Arc::clone(&prepared.lowered.version),
+    };
+    crate::code_rule_dsl::prof::count("corpus.prepared_moved", 1);
+    prepared_of(&facts, std::sync::Arc::clone(&prepared.source), version, dialect).ok()
+}
+
 /// Moves the lowered program's name atoms, and the pointer's (`prepared_op`, `prepared_interned_atom`), to `store`'s
 /// (decision 0270): its strings interned here in one call. `Some(None)` when they are already this store's,
 /// `Some(version)` of the moved program when they moved; `None` when the program holds a name atom no intern call

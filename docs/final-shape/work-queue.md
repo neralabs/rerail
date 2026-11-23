@@ -10516,3 +10516,23 @@ lands in its crate after the crate split (setfix, device_metal, blocks, prof, fa
 
 Relax: the engine checks clean; rerail-blocks (77) passes; the global-state check passes. The new device tests are
 Metal's and do not run on this Mac.
+
+### Q499. Roll-up 74 (final-rerail-shape-rr-align 18922f09dd onto Pulling-it-all-together): what the merge chose
+
+rr-align's test and store work: tests apart in one process (each test thread its own shared object), a named store
+begun from the test template, the store's schema checked in two statements and its checking connection kept, kept
+entries recording their greatest atom (store floor 10), opt-level 1 in dev and test builds. No conflict; every file
+lands in its crate after the crate split. No architectural clash.
+
+Three test faults the merge showed, fixed after it (Q500):
+- **The template, and every kept record, under Relax.** A test build's engine id was its binary's path and build
+  time. Under Relax every checkout's tests run in one host binary that no edit rebuilds, so the template a floor-9
+  build made (another checkout's, or this one's before the merge) was opened at floor 10 and 30 corpus tests
+  failed; kept records and the whole-run cutoff, keyed by the same id, could reuse other code's results. The id now
+  also covers the engine's sources by `stat` (`build_ids::sources_stamp`), as `build.rs`'s covers their bytes.
+- **Two kept-facts tests shared a store** (`store("wave-readers")`): run in parallel, each removed and swept the
+  other's files (a staged block gone, then the memory cap). One is `wave-reader-puts`.
+- **The write-back retry test counted retries in 20 ms of wall time**: a first run slower than that (a cold first
+  call) left one. Retrying is now asserted on a job busy twice then done, and giving up on one always busy.
+
+Relax: the engine checks clean; the reuse and session tests (30) and rerail-store (232) pass.

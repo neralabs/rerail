@@ -19,7 +19,7 @@ cranelift-native = { path = "native/vendor/cranelift-native-0.125.4" }
 rayon-core = { path = "native/vendor/rayon-core-1.13.0" }
 
 # Dependencies (SQLite's C, tree-sitter, regex, cranelift, ast-grep) are optimized in dev and test
-# builds: they compile once and stay cached, while this crate keeps its fast unoptimized rebuilds.
+# builds: they compile once and stay cached. The workspace's own crates are at opt-level 1 (`[profile.dev]`).
 [profile.dev.package."*"]
 opt-level = 3
 
@@ -130,12 +130,19 @@ opt-level = 3
 # Dev and test builds keep file and line numbers (panics, backtraces) but not full debug info: the
 # test binary was ~300 MB, mostly DWARF, and linking it dominated each rebuild. For a debugger,
 # build with full debug info: `cargo test --profile debugging` (or `cargo build --profile debugging`).
+#
+# The workspace's crates at opt-level 1 (the user, 2026-11-22). Measured on a Linux Spark, the corpus tests
+# (rerail-tests-corpus, 203, six test threads): 121 s at opt-level 0, 47 s at 1 (612 -> 145 s of user CPU);
+# opt-level 2 ran no faster. A first build takes 92 s longer (112 -> 204 s); a one-line edit's rebuild is
+# unchanged (24-26 s either way).
 [profile.dev]
 debug = "line-tables-only"
+opt-level = 1
 
 [profile.debugging]
 inherits = "dev"
 debug = true
+opt-level = 0
 
 [profile.debugging.package."*"]
 opt-level = 3

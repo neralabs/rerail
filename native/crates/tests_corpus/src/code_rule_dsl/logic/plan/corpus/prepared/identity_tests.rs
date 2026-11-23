@@ -12,6 +12,8 @@ fn fresh_and_restored_programs_have_identical_relation_identities() {
     std::fs::create_dir_all(&typeshed).unwrap();
     std::fs::write(typeshed.join("VERSIONS"), "builtins: 3.0-\n").unwrap();
     std::fs::write(typeshed.join("builtins.pyi"), "class object: ...\nclass int(object): ...\n").unwrap();
+    // Begun from the template (`test_store::begun`): each child process would otherwise fill an empty one first.
+    crate::code_rule_dsl::logic::plan::corpus::test_store::begun(&root.join("facts.sqlite"));
     let mut snapshots = Vec::new();
     for phase in ["fresh", "restored", "restored-again"] {
         let output = crate::code_rule_dsl::test_support::niced_self()
