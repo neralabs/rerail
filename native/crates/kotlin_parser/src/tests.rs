@@ -1053,11 +1053,9 @@ fn split_lines_are_the_lean_parsers() {
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&[
-        // A split's line that starts with a string, which a token mark does not name (decision
-        // 0633).
-        "fun f() {\n  val v = x as a.B<C>\n  \"s\" + a\n}\n",
-        // An intersection type among type arguments, which the grammar's types do not read.
-        "val x = f<A & B>()\n",
+        // `suspend fun (` at a statement's start: the lean parser's anonymous function, where the
+        // declaration's modifiers take `suspend` (decision 0634).
+        "fun f() {\n  suspend fun() = 1\n}\n",
         // A token on the line of a block comment after one that starts the line: the lean
         // lexer's `asi` inserts no semicolon there, which a mark's questions can not say.
         "val a = 1\n/* c */ /* d */ + 2\n",
@@ -1125,6 +1123,111 @@ fn spaced_generic_calls_are_the_lean_parsers() {
         "val x = a[0] < b > (c)\n",
         "val x = a < b > c\n",
         "fun f() {\n  if (a < b && c > (d)) g()\n}\n",
+    ]);
+}
+
+/// A split's line read as the lean parser's trial does: one that starts with a string or a
+/// character, an `if` whose body or `else` is read in full, a jump's value, an `if`, a `when` or a
+/// `try` that ends at a block before an operator the trial stops at, two generic calls, and a
+/// navigation after type arguments (decision 0634).
+#[test]
+fn split_lines_past_0633_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n  val v = x as a.B<C>\n  \"s\" + a\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  \"s\".f()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  \"a${b}c\" == d\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  'c' == d\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  \"s\"\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) d == e\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) d < e\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) a = b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) {a} == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) {a} else {b} == c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) d else {e} == f\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) d else e == f\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) {d} else e == f\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  if (c) d\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  return a == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  return\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  when (x) {\n    1 -> a\n  } == y\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  when {\n    a -> b\n  } == y\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  try {\n    a\n  } catch (e: E) {\n    b\n  } == y\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<B>.c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<B>.c == d\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<B>(c).d<E>(f)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f<T>(a) + g<U>(b)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<B>::c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a<B>?.c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  x.y<Z>().w\n}\n",
+    ]);
+}
+
+/// A navigation after type arguments (`a<B>.c`), whose suffix holds them, as the lean parser's
+/// `navigation` (decision 0634).
+#[test]
+fn generic_navigations_are_the_lean_parsers() {
+    same(&[
+        "val x = a<B>.c\n",
+        "val x = a<B>::class\n",
+        "val x = a<B>?.c()\n",
+        "val x = f(a<B>.c)\n",
+        "val x = a<B, C>.d.e()\n",
+        "fun f() {\n  a<B>.c = 1\n}\n",
+        "val x = a < b > .c\n",
+    ]);
+}
+
+/// A definitely non-nullable type (`T & Any`) and a parenthesized user type before its `&`, as the
+/// lean parser's `ty_core`, after `as` and `is` too (decision 0634).
+#[test]
+fn intersection_types_are_the_lean_parsers() {
+    same(&[
+        "fun <T> f(x: T & Any) {}\n",
+        "val x = f<A & B>()\n",
+        "fun <T> f(x: (T) & Any) {}\n",
+        "fun <T> f(x: T & (Any)) {}\n",
+        "fun <T> f(x: T & ((Any))) {}\n",
+        "fun <T> f(x: List<T & Any>) {}\n",
+        "fun <T> f(x: @A T & Any) {}\n",
+        "val x = y as T & Any\n",
+        "val x = y is T & Any\n",
+        "val x = y as? (T) & Any\n",
+        "val x = y !is T & (Any)\n",
+        "fun f() {\n  when (x) {\n    is T & Any -> 1\n  }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f<A & B>()\n}\n",
+    ]);
+}
+
+/// Anonymous functions, with a receiver and `suspend`, and a statement's `fun (`, as the lean
+/// parser's `anonymous_function` and `declaration_ahead` (decision 0634).
+#[test]
+fn anonymous_functions_are_the_lean_parsers() {
+    same(&[
+        "val f = fun(x: Int): Int = x + 1\n",
+        "val f = fun(x: Int) { g(x) }\n",
+        "val f = fun Int.(x: Int) = this + x\n",
+        "val f = fun A<B>.C.(x: Int) = 1\n",
+        "val f = suspend fun() { g() }\n",
+        "fun f() {\n  fun(x: Int) = x\n}\n",
+        "fun f() {\n  fun g() = 1\n}\n",
+        "val f = fun(x: Int)\n",
+        "val f = fun(x: Int)\n  {}\n",
+        "val f = g(fun(x: Int) = x)\n",
+        "suspend fun f() = 1\n",
+    ]);
+}
+
+/// A `when` entry's guard (`is A if c ->`): its commas leaves of the lean tape there, as
+/// tree-sitter's automaton keeps them (decision 0634).
+#[test]
+fn when_guards_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n  when (x) {\n    is A if x.b -> 1\n    is B, is C if c -> 2\n    else -> 3\n  }\n}\n",
+        "fun f() {\n  when (x) {\n    1 if a && b -> 1\n  }\n}\n",
+        "fun f() {\n  when (x) {\n    1, 2, 3 if c -> 2\n  }\n}\n",
+        "fun f() {\n  when (x) {\n    is A if c, is B -> 1\n  }\n}\n",
+        "fun f() {\n  when (x) {\n    is A, is B if c, -> 1\n  }\n}\n",
+        "fun f() {\n  when (x) {\n    is A, -> 1\n    is A, is B -> 1\n  }\n}\n",
     ]);
 }
 
@@ -1254,12 +1357,13 @@ fn as_splits_are_the_lean_parsers() {
         "fun f() {\n    val d = x as java.util.List<Int>\n        .size\n}\n",
         "fun f() {\n    val d = x as java.util.List<Int>\n    if (d) g()\n}\n",
         "fun f() {\n    val d = x as java.util.List<Int>\n    a = b\n}\n",
+        // A string first (decision 0634).
+        "fun f() {\n    val d = x as java.util.List<Int>\n    \"s\".f()\n}\n",
     ]);
     refused(&[
         "fun f() {\n    val d = x as java.util.List<Int>  \n    g(d)\n}\n",
         "fun f() {\n    val d = x as java.util.List<Int> // c\n    g(d)\n}\n",
         "fun f() {\n    val d = x as java.util.List<Int>\r\n    g(d)\n}\n",
-        "fun f() {\n    val d = x as java.util.List<Int>\n    \"s\".f()\n}\n",
     ]);
 }
 
@@ -1512,13 +1616,24 @@ fn corpus() {
     let (mut same, mut refused, mut differ, mut lean_refused) = (0, 0, 0, 0);
     let mut aot = (0, 0, 0);
     let mut tier1 = 0;
+    let mut accepted: Vec<String> = Vec::new();
     let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
     paths.sort();
     for p in &paths {
         let Ok(text) = std::fs::read_to_string(p) else { continue };
         let Some(want) = lean_text(&text) else {
             lean_refused += 1;
-            assert!(c.image(&text).is_none(), "{}: accepted a file the lean parser refuses", p.display());
+            if c.image(&text).is_some() {
+                // Where the lean parser refuses it, and the text there.
+                let why = lean::tape(text.as_bytes()).err();
+                let at = match why {
+                    Some(lean::Refusal::Parse(a) | lean::Refusal::Lex(a)) => a as usize,
+                    _ => 0,
+                };
+                let near: String = text.get(at.saturating_sub(40)..(at + 40).min(text.len())).unwrap_or("").into();
+                eprintln!("lean refuses, ours reads: {}: {why:?} near {near:?}", p.display());
+                accepted.push(p.display().to_string());
+            }
             continue;
         };
         // Tier 1 as Rust: the interpreter's records.
@@ -1583,6 +1698,7 @@ fn corpus() {
     eprintln!("kotlin corpus: {same} the same, {refused} refused, {differ} differ ({lean_refused} the lean parser refuses)");
     eprintln!("the parser as Rust: {} the same, {} refused, {} differ; tier 1's records differ in {tier1}", aot.0, aot.1, aot.2);
     assert_eq!(differ, 0);
+    assert!(accepted.is_empty(), "accepted files the lean parser refuses: {accepted:?}");
     assert_eq!(aot.2, 0, "the parser as Rust: a wrong tape");
     assert_eq!(tier1, 0, "tier 1 as Rust: records not the interpreter's");
 }
@@ -2323,6 +2439,10 @@ fn probe() {
         }
         if std::env::var_os("RERAIL_KOTLIN_PROBE_LEAN").is_some() {
             eprintln!("  lean:\n{}", lean.as_deref().unwrap_or("(refused)"));
+        }
+        if std::env::var_os("RERAIL_KOTLIN_PROBE_EXPLAIN").is_some() && ours.is_none() {
+            // The program's words around where it refuses.
+            eprintln!("{}", c.explain(&text).lines().filter(|l| !l.starts_with("token ") && !l.starts_with("cpu token ")).collect::<Vec<_>>().join("\n"));
         }
         if std::env::var_os("RERAIL_KOTLIN_PROBE_INTERP").is_some() {
             // The interpreter's nodes, in its order: kind and span.

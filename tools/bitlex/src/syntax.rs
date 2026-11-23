@@ -1423,6 +1423,15 @@ impl P {
                 continue;
             }
             match self.peek().cloned() {
+                // `kind "N"`: the token kind of a quoted name (`token '"'`), not a word.
+                Some(Tok::Ident(k)) if k == "kind" && matches!(self.peek_at(1), Some(Tok::Str(_))) => {
+                    self.i += 1;
+                    let n = self.string()?;
+                    match String::from_utf8(n) {
+                        Ok(n) => out.push(TokenElem::Kind(n)),
+                        Err(_) => return self.err("a kind's name in UTF-8"),
+                    }
+                }
                 Some(Tok::Str(s)) => {
                     self.i += 1;
                     out.push(TokenElem::Word(s));
@@ -2868,6 +2877,8 @@ mod tier2_tests {
             Ok((vec![(false, vec![vec![word("{")], vec![many(vec![name.clone()])], vec![word(",")], vec![many(vec![name.clone()])], vec![word("->")]])], false))
         );
         assert!(mark("mark k = lf, before \"{\" (~name without k)* \"->\"").is_ok());
+        // `kind "N"`: a kind with a quoted name, not a word (decision 0634).
+        assert_eq!(mark("mark k = lf, before kind '\"' | \"a\""), Ok((vec![(false, vec![vec![TokenElem::Kind("\"".into()), word("a")]])], false)));
         let whole = Nest { open: vec![word("(")], close: vec![word(")")], whole: true };
         assert_eq!(
             mark("mark k = lf, before \"{\" (name)* nest (\"(\" to \")\" whole) \"->\""),
