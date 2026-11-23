@@ -1,6 +1,6 @@
 # 0622. A relation's sealed chunks take the frozen columns' encodings
 
-Status: steps 1 and 2 built (2026-11-22); step 3 measured and not kept (below); step 4 open. t52 step 5: written before it was built, as t52's plan
+Status: steps 1 and 2 built (2026-11-22); steps 3 and 4 measured and not kept (below). t52 step 5: written before it was built, as t52's plan
 asks. t52 named it 0605; it is numbered past the highest record in any worktree (0621).
 
 ## Intro
@@ -114,6 +114,14 @@ they lie.**
   `rf_in_loop`'s heap (111 MB). The first is 0353 step 3's: `text` read on the tape for each node bound, not every
   document's node rows made (t50, "The cross part's `text`"). Built 2026-11-23 (t50, "Then the tape view"): the peak
   2,837 → 2,474 MB.
+
+- **Step 4, measured and not built (2026-11-23).** A census in `Rows::seal` on `all` (m1max, a temporary aid): for
+  each chunk it considers, its raw bytes, what it keeps now (sealed or raw), and what a dictionary of the chunk's
+  distinct values would take (8 bytes each, and each row's index at ceil(log2 distinct) bits). Of 1,408 MB raw: kept
+  893 MB; a dictionary alone 1,141 MB; the better of the two per chunk 775 MB. A dictionary would save 118 MB (13%)
+  of the run's sealed volume, spread over the run. The peak saw 0.2 GB of step 1's 0.65 GB, since most sealed relations are
+  gone by then, so its gain at the peak is a few tens of MB. Every reader (host, CLIF, the kernels' header) would
+  pay a dictionary load per read. Kinds already pack to their range (`PACK`). Not built.
 
 ## Test
 
