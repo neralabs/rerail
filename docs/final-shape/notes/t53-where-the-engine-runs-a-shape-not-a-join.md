@@ -141,10 +141,10 @@ over the id's decoding and the tape (`Ranks::select`, `Projected::local_of`, `Pr
 and `code`, `Numbering::granule`: about 600 together). So the per-row cost is three things, in this order: the
 probe's candidate loop, the sealed columns' reads, and an id's way to its place on the tape.
 
-A sample of `all` itself (m1max, 15 s of its per-file phase) names the id's way to the tape: a node id's document
-found by a search (`Batch::locate_doc`, `ViewDir::doc_of_row`), its slot by rank and select over the document's
-numbering (`Numbering::select`, `Numbering::granule`), then the tape decoded there (`f16::side`, `Viewed::read_value`):
-together about as many samples as the join's own loop (`run_join_in_each::enter`, `cands::candidates`). W holds a
-node as a pointer to its struct, so none of these steps exists there. The jemalloc statistics refresh also shows in
-the sample, but measured it is small: 244 us a refresh, one every 10 ms from the budget's sampler (decision 0435),
-about 1.3 s of CPU on `all` (under 1%).
+A sample of `all` itself (m1max, 15 s of its per-file phase, this head's binary; a first sample was of a binary
+another branch had built into the same target directory, and is not used), its busy frames: the probe's loop
+(`cands::candidates` 3,070, `run_join_in_each::enter` 2,404, `RowRef::at` 1,541, `Cands::any`), the sealed chunks'
+reads (`IntCol::get` 2,136), and an id's way to the tape (`Projected::node` 1,426, `Projected::local_of` 1,154,
+`Numbering::granule` 1,067, `Tape::code` 955, `Ranks::select` 826, `f16::side` 478). W holds a node as a pointer to
+its struct, so none of the last group's steps exists there. The jemalloc statistics refresh, measured: 244 us a
+refresh, one every 10 ms from the budget's sampler (decision 0435), about 1.3 s of CPU on `all` (under 1%).
