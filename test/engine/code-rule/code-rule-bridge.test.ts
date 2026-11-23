@@ -4805,7 +4805,6 @@ function recordedIn(root: string, worktree: string, batches: readonly CodeRuleEd
   return batches.flatMap(batch => batch.edits).filter(edit => edit.path.startsWith(prefix))
     .map(edit => [basename(edit.path), edit.previousReadError ?? "none"]);
 }
-const FIRST_SIGHT = "Source changed during initial discovery without a captured preimage";
 
 describe("CodeRuleBridge and every worktree of the repository", () => {
   /**
@@ -5920,9 +5919,9 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
 
   // Each start of the walk the sessions of a repository share lists the worktrees again for every session watching, so
   // Git can stop listing a worktree, and list another one at its path, while the evaluator weighs a change a walk found
-  // in it: when the evaluator then fails, what the session saw of the removed worktree is not put back, and the walk
-  // after takes the new one as a first sight.
-  it("takes as a first sight a worktree Git listed again at its path while the evaluator weighed a walk's change there, then failed", async () => {
+  // in it: when the evaluator then fails, neither what the session saw of the removed worktree nor the change it was to
+  // record for the repository is put back, and the walk after reads the new one as new.
+  it("reads as new a worktree Git listed again at its path while the evaluator weighed a walk's change there, then failed", async () => {
     const root = await twoBranches();
     git(root, "branch", "third", "main");
     const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
@@ -5967,7 +5966,10 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.settleWorktreeWalk();
     await Promise.all(turns);
     await bridge.settleWorktreeWalk();
-    expect(recordedIn(root, worktree, batches)).toEqual([["a.py", "none"], ["a.py", FIRST_SIGHT]]);
+    // Its first read is its baseline, as of any worktree new to the session (#534): the failed record of the removed
+    // worktree's change is not made of the new one's file, and a write there after is measured from the new one's text.
+    expect(recordedIn(root, worktree, batches)).toEqual([["a.py", "none"]]);
+    expect(await writtenThere(bridge, worktree, () => batches)).toEqual([["a.py", "old\nmine\n"]]);
   });
 
   // A checkout inside the session folder can be deleted, or a file can take its folder's place: whichever way a kept

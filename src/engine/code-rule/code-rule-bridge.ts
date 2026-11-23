@@ -1663,6 +1663,19 @@ function walkKeeps(discovery: SourceDiscovery, walk: WalkStart, root: string): b
 function walkHeld(discovery: SourceDiscovery, walk: WalkStart, worktree: string): boolean {
   return discovery.worktrees.listed.get(worktree) === walk.listed?.get(worktree);
 }
+/** The worktrees `walk` of the other worktrees read that Git did not list for the whole walk (`walkHeld`). */
+function walkLost(discovery: SourceDiscovery, walk: WalkStart): Set<string> {
+  return new Set([...walk.worktrees].filter(worktree => !walk.inSession && !walkHeld(discovery, walk, worktree)));
+}
+/**
+ * Leaves the records for the repository of `paths` that `walk` handed the session to the next walk
+ * (`WorktreeDiscovery.unrecorded`), but those in a worktree Git did not list for the whole walk: one removed took its
+ * changes with it (`#forgetWorktrees`), and the next walk reads one listed again at its path as new.
+ */
+function leaveRecords(discovery: SourceDiscovery, walk: WalkStart, paths: Iterable<string>): void {
+  const lost = walkLost(discovery, walk);
+  for (const path of paths) if (!underBaselineRoot(lost, path)) discovery.worktrees.unrecorded.add(path);
+}
 /** Keeps the `HEAD` and unmerged entries a walk read, those it keeps (`walkKeeps`), as what the next walk is judged from. */
 function keepWalkedGit(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
   const keeps = (root: string): boolean => walkKeeps(discovery, walk, root);
@@ -3205,7 +3218,8 @@ export class CodeRuleBridge {
     const views = await this.#readTakenTexts(discovery, walk, scan, found);
     // Not this take's to record: the session keeps what it saw of them (`#takeSnapshots`), and a record of one waits.
     for (const path of views.keys()) previous.delete(path);
-    discovery.worktrees.unrecorded = new Set([...walk.records].filter(path => views.has(path)));
+    discovery.worktrees.unrecorded = new Set();
+    leaveRecords(discovery, walk, [...walk.records].filter(path => views.has(path)));
     return { walk, scan, snapshots, views };
   }
 
@@ -3437,7 +3451,7 @@ export class CodeRuleBridge {
    */
   #leaveToNextWalk(discovery: SourceDiscovery, walk: WalkStart, path: string): void {
     this.#keepToolView(path, walk.previous.get(path));
-    if (walk.records.has(path)) discovery.worktrees.unrecorded.add(path);
+    if (walk.records.has(path)) leaveRecords(discovery, walk, [path]);
   }
 
   /** Keeps `before`, what the session saw of `path` before this walk, unless it holds a view of its own of it. */
@@ -3483,7 +3497,7 @@ export class CodeRuleBridge {
       // A rejected evaluator submission is not an observation we have enforced.
       // Restore these baselines so the next requested scan can retry the changes.
       this.#restoreObservations(discovery, walk, edits);
-      for (const path of unrecorded) discovery.worktrees.unrecorded.add(path);
+      leaveRecords(discovery, walk, unrecorded);
       throw error;
     }
   }
@@ -3493,7 +3507,7 @@ export class CodeRuleBridge {
    * worktrees (`walkHeld`): one removed took its files with it (`#forgetWorktrees`), and one listed again is new.
    */
   #restoreObservations(discovery: SourceDiscovery, walk: WalkStart, edits: readonly CodeRuleEdit[]): void {
-    const gone = new Set([...walk.worktrees].filter(worktree => !walk.inSession && !walkHeld(discovery, walk, worktree)));
+    const gone = walkLost(discovery, walk);
     for (const edit of edits.filter(edit => !underBaselineRoot(gone, edit.path))) {
       const before = walk.previous.get(edit.path);
       if (before === undefined) this.#unobserve(edit.path);
