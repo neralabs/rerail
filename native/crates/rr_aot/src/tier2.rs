@@ -1784,8 +1784,8 @@ impl<L: Layout> P<'_, L> {
                             } else {
                                 match self.word() {
                                     w::LBRACE_20 => {
-                                        stack.push(186);
-                                        st = 35;
+                                        stack.push(189);
+                                        st = 36;
                                         continue 'run;
                                     }
                                     _ => {
@@ -1851,8 +1851,8 @@ impl<L: Layout> P<'_, L> {
                                     } else {
                                         match self.word() {
                                             w::LBRACE_20 => {
-                                                stack.push(186);
-                                                st = 35;
+                                                stack.push(189);
+                                                st = 36;
                                                 continue 'run;
                                             }
                                             _ => {
@@ -1887,7 +1887,7 @@ impl<L: Layout> P<'_, L> {
                 5 => {
                     if self.m_policy_on() {
                         stack.push(6);
-                        st = 130;
+                        st = 133;
                         continue 'run;
                     } else {
                         match self.word() {
@@ -1898,7 +1898,7 @@ impl<L: Layout> P<'_, L> {
                             }
                             w::VIOLATION_66 => {
                                 stack.push(6);
-                                st = 142;
+                                st = 145;
                                 continue 'run;
                             }
                             w::EDIT_67 => {
@@ -1908,7 +1908,7 @@ impl<L: Layout> P<'_, L> {
                             }
                             w::FUNCTOR_68 => {
                                 stack.push(6);
-                                st = 159;
+                                st = 162;
                                 continue 'run;
                             }
                             w::TYPE_2 => {
@@ -1917,14 +1917,13 @@ impl<L: Layout> P<'_, L> {
                                 continue 'run;
                             }
                             w::INPUT_55 | w::OUTPUT_56 => {
-                                stack.push(u64::from(self.word));
                                 stack.push(6);
-                                st = 162;
+                                st = 165;
                                 continue 'run;
                             }
                             w::LATTICE_69 => {
                                 stack.push(6);
-                                st = 172;
+                                st = 175;
                                 continue 'run;
                             }
                             w::PRAGMA_1 => {
@@ -1939,7 +1938,7 @@ impl<L: Layout> P<'_, L> {
                             }
                             w::FIXTURES_64 if self.flags & FLAG_IN_BLOCK == 0 => {
                                 stack.push(6);
-                                st = 129;
+                                st = 132;
                                 continue 'run;
                             }
                             _ => {
@@ -2033,7 +2032,6 @@ impl<L: Layout> P<'_, L> {
                     }
                     match arm {
                         0 => {
-                            stack.push(u64::from(self.word));
                             stack.push(11);
                             st = 12;
                             continue 'run;
@@ -2101,7 +2099,6 @@ impl<L: Layout> P<'_, L> {
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
                     let ret = stack.pop().unwrap_or(0) as usize;
-                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
@@ -2112,8 +2109,8 @@ impl<L: Layout> P<'_, L> {
                 }
                 15 => {
                     self.open(k::CLAUSE);
-                    stack.push(126);
-                    st = 127;
+                    stack.push(129);
+                    st = 130;
                     continue 'run;
                 }
                 16 => {
@@ -2129,7 +2126,6 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_skip_as::<false, false>(w::COMMA_12)?;
-                            stack.push(u64::from(self.word));
                             stack.push(18);
                             st = 19;
                             continue 'run;
@@ -2223,8 +2219,7 @@ impl<L: Layout> P<'_, L> {
                             continue 'run;
                         }
                         1 => {
-                            stack.push(u64::from(self.word));
-                            stack.push(6);
+                            stack.push(6 | u64::from(self.word) << 32);
                             st = 26;
                             continue 'run;
                         }
@@ -2238,42 +2233,41 @@ impl<L: Layout> P<'_, L> {
                     match self.word() {
                         w::X_54 => {
                             self.word_leaf_as::<false, false>(w::X_54, k::WILDCARD)?;
-                            st = 13;
-                            continue 'run;
-                        }
-                        w::MINUS_27 => {
-                            stack.push(13);
                             st = 27;
                             continue 'run;
                         }
+                        w::MINUS_27 => {
+                            stack.push(27);
+                            st = 28;
+                            continue 'run;
+                        }
                         w::AT_23 => {
-                            stack.push(13);
-                            st = 29;
+                            stack.push(27);
+                            st = 30;
                             continue 'run;
                         }
                         w::LBRACE_20 => {
-                            stack.push(13);
-                            st = 35;
+                            stack.push(27);
+                            st = 36;
                             continue 'run;
                         }
                         w::COUNT_47 => {
                             self.word_leaf_as::<false, false>(w::COUNT_47, k::VARIABLE)?;
                             match self.word() {
                                 w::COLON_15 => {
-                                    stack.push(13);
-                                    st = 41;
+                                    stack.push(27);
+                                    st = 42;
                                     continue 'run;
                                 }
                                 w::LPAREN_10 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(39);
-                                    st = 31;
+                                    stack.push(40);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 _ => {
-                                    st = 13;
+                                    st = 27;
                                     continue 'run;
                                 }
                             }
@@ -2325,46 +2319,44 @@ impl<L: Layout> P<'_, L> {
                             }
                             match arm {
                                 0 => {
-                                    stack.push(13);
-                                    st = 74;
+                                    stack.push(27);
+                                    st = 75;
                                     continue 'run;
                                 }
                                 1 => {
                                     self.mark_empty_parens()?;
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(39);
-                                    st = 31;
+                                    stack.push(40);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 2 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(119);
-                                    st = 90;
+                                    stack.push(122);
+                                    st = 93;
                                     continue 'run;
                                 }
                                 _ => {
-                                    st = 13;
+                                    st = 27;
                                     continue 'run;
                                 }
                             }
                         }
                         w::LPAREN_10 => {
-                            stack.push(13);
-                            st = 120;
+                            stack.push(27);
+                            st = 123;
                             continue 'run;
                         }
                         _ if self.at_string() => {
                             self.tk_as::<false, false>(self.at_string(), k::STRING, 0)?;
-                            st = 13;
+                            st = 27;
                             continue 'run;
                         }
                         _ if self.at_code_literal() => {
                             self.tk_as::<false, false>(self.at_code_literal(), k::CODE_LITERAL, 0)?;
-                            st = 13;
+                            st = 27;
                             continue 'run;
                         }
                         _ if self.at_identifier() => {
@@ -2373,22 +2365,20 @@ impl<L: Layout> P<'_, L> {
                                 w::LPAREN_10 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(39);
-                                    st = 31;
+                                    stack.push(40);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 w::COLON_15 if self.flags & FLAG_NO_NAMED == 0 => {
                                     self.wrap(k::NAMED_ARGUMENT, f::NAME)?;
                                     self.retype_moved(k::IDENTIFIER);
                                     self.word_skip_as::<false, false>(w::COLON_15)?;
-                                    stack.push(u64::from(self.word));
-                                    stack.push(40);
+                                    stack.push(41);
                                     st = 19;
                                     continue 'run;
                                 }
                                 _ => {
-                                    st = 13;
+                                    st = 27;
                                     continue 'run;
                                 }
                             }
@@ -2399,6 +2389,16 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 27 => {
+                    self.depth -= 1;
+                    self.marked = false;
+                    // The place the call returns to, then what a level's saved of its caller's.
+                    let top = stack.pop().unwrap_or(0);
+                    let ret = top as u32 as usize;
+                    self.word = (top >> 32) as u16;
+                    st = ret;
+                    continue 'run;
+                }
+                28 => {
                     self.word_leaf_as::<false, false>(w::MINUS_27, k::MINUS)?;
                     let arm: usize;
                     match self.word() {
@@ -2429,8 +2429,7 @@ impl<L: Layout> P<'_, L> {
                         1 => {
                             self.wrap(k::UNARY_EXPRESSION, 0)?;
                             self.drop_made()?;
-                            stack.push(u64::from(self.word));
-                            stack.push(28);
+                            stack.push(29 | u64::from(self.word) << 32);
                             st = 26;
                             continue 'run;
                         }
@@ -2439,22 +2438,21 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                28 => {
+                29 => {
                     self.field_made(f::OPERAND);
                     self.close()?;
                     st = 6;
                     continue 'run;
                 }
-                29 => {
+                30 => {
                     self.open(k::FUNCTOR_CALL);
                     self.word_skip_as::<true, false>(w::AT_23)?;
                     self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::FUNCTION)?;
-                    stack.push(u64::from(self.word));
-                    stack.push(30);
-                    st = 31;
+                    stack.push(31);
+                    st = 32;
                     continue 'run;
                 }
-                30 => {
+                31 => {
                     self.field_made(f::ARGUMENTS);
                     self.close()?;
                     self.marked = false;
@@ -2463,7 +2461,7 @@ impl<L: Layout> P<'_, L> {
                     st = ret;
                     continue 'run;
                 }
-                31 => {
+                32 => {
                     self.deeper()?;
                     self.open(k::ARGUMENT_LIST);
                     self.word_skip_as::<true, false>(w::LPAREN_10)?;
@@ -2481,282 +2479,276 @@ impl<L: Layout> P<'_, L> {
                     }
                     match arm {
                         0 => {
-                            stack.push(u64::from(self.word));
-                            stack.push(34);
+                            stack.push(35);
                             st = 19;
                             continue 'run;
                         }
                         _ => {
-                            st = 32;
+                            st = 33;
                             continue 'run;
                         }
                     }
                 }
-                32 => {
+                33 => {
                     self.word_skip_as::<false, false>(w::RPAREN_11)?;
                     self.close()?;
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
                     let ret = stack.pop().unwrap_or(0) as usize;
-                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
-                33 => {
+                34 => {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_skip_as::<false, false>(w::COMMA_12)?;
-                            stack.push(u64::from(self.word));
-                            stack.push(34);
+                            stack.push(35);
                             st = 19;
                             continue 'run;
                         }
                         _ => {
-                            st = 32;
+                            st = 33;
                             continue 'run;
                         }
                     }
                 }
-                34 => {
-                    self.field_made(f::ARGUMENT);
-                    st = 33;
-                    continue 'run;
-                }
                 35 => {
-                    self.word_leaf_as::<false, false>(w::LBRACE_20, k::JSON_OBJECT)?;
-                    stack.push(u64::from(self.word));
-                    stack.push(6);
-                    st = 36;
+                    self.field_made(f::ARGUMENT);
+                    st = 34;
                     continue 'run;
                 }
                 36 => {
-                    self.deeper()?;
-                    st = 38;
+                    self.word_leaf_as::<false, false>(w::LBRACE_20, k::JSON_OBJECT)?;
+                    stack.push(6);
+                    st = 37;
                     continue 'run;
                 }
                 37 => {
+                    self.deeper()?;
+                    st = 39;
+                    continue 'run;
+                }
+                38 => {
                     self.merge_as::<false, false>(self.word() == w::RBRACE_21, k::JSON_OBJECT)?;
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
                     let ret = stack.pop().unwrap_or(0) as usize;
-                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
-                38 => {
+                39 => {
                     match self.word() {
                         w::HASH_INCLUDE_34 => {
                             self.merge_as::<false, false>(self.word() == w::HASH_INCLUDE_34, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::LPAREN_10 => {
                             self.merge_as::<true, false>(self.word() == w::LPAREN_10, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::RPAREN_11 => {
                             self.merge_as::<false, false>(self.word() == w::RPAREN_11, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::COMMA_12 => {
                             self.merge_as::<false, false>(self.word() == w::COMMA_12, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::DOT_13 => {
                             self.merge_as::<true, false>(self.word() == w::DOT_13, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::SEMI_14 => {
                             self.merge_as::<false, false>(self.word() == w::SEMI_14, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::COLON_15 => {
                             self.merge_as::<false, false>(self.word() == w::COLON_15, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::EQ_16 => {
                             self.merge_as::<false, false>(self.word() == w::EQ_16, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::LT_17 => {
                             self.merge_as::<false, false>(self.word() == w::LT_17, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::GT_18 => {
                             self.merge_as::<false, false>(self.word() == w::GT_18, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::BANG_19 => {
                             self.merge_as::<false, false>(self.word() == w::BANG_19, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::BAR_22 => {
                             self.merge_as::<false, false>(self.word() == w::BAR_22, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::AT_23 => {
                             self.merge_as::<true, false>(self.word() == w::AT_23, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::STAR_24 => {
                             self.merge_as::<false, false>(self.word() == w::STAR_24, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::LBRACK_25 => {
                             self.merge_as::<false, false>(self.word() == w::LBRACK_25, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::RBRACK_26 => {
                             self.merge_as::<false, false>(self.word() == w::RBRACK_26, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::MINUS_27 => {
                             self.merge_as::<false, false>(self.word() == w::MINUS_27, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::PLUS_28 => {
                             self.merge_as::<false, false>(self.word() == w::PLUS_28, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::SLASH_29 => {
                             self.merge_as::<false, false>(self.word() == w::SLASH_29, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::PERCENT_30 => {
                             self.merge_as::<false, false>(self.word() == w::PERCENT_30, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::TILDE_31 => {
                             self.merge_as::<false, false>(self.word() == w::TILDE_31, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::CARET_32 => {
                             self.merge_as::<false, false>(self.word() == w::CARET_32, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::AMP_33 => {
                             self.merge_as::<false, false>(self.word() == w::AMP_33, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::COLON_MINUS_3 => {
                             self.merge_as::<false, false>(self.word() == w::COLON_MINUS_3, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::EQ_GT_4 => {
                             self.merge_as::<false, false>(self.word() == w::EQ_GT_4, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::BANG_EQ_5 => {
                             self.merge_as::<false, false>(self.word() == w::BANG_EQ_5, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::LT_EQ_6 => {
                             self.merge_as::<false, false>(self.word() == w::LT_EQ_6, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::GT_EQ_7 => {
                             self.merge_as::<false, false>(self.word() == w::GT_EQ_7, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::LT_COLON_8 => {
                             self.merge_as::<false, false>(self.word() == w::LT_COLON_8, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::MINUS_GT_9 => {
                             self.merge_as::<false, false>(self.word() == w::MINUS_GT_9, k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         w::LBRACE_20 => {
                             self.merge_as::<false, false>(self.word() == w::LBRACE_20, k::JSON_OBJECT)?;
-                            stack.push(u64::from(self.word));
-                            stack.push(38);
-                            st = 36;
+                            stack.push(39);
+                            st = 37;
                             continue 'run;
                         }
                         _ if self.at_string() => {
                             self.merge_as::<false, false>(self.at_string(), k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         _ if self.at_code_literal() => {
                             self.merge_as::<false, false>(self.at_code_literal(), k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         _ if self.at_identifier() => {
                             self.merge_as::<false, false>(self.at_identifier(), k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         _ if self.at_number() => {
                             self.merge_as::<false, false>(self.at_number(), k::JSON_OBJECT)?;
-                            st = 38;
+                            st = 39;
                             continue 'run;
                         }
                         _ => {
-                            st = 37;
+                            st = 38;
                             continue 'run;
                         }
                     }
                 }
-                39 => {
+                40 => {
                     self.field_made(f::ARGUMENTS);
                     self.close()?;
-                    st = 13;
-                    continue 'run;
-                }
-                40 => {
-                    self.field_made(f::VALUE);
-                    self.close()?;
-                    st = 13;
+                    st = 27;
                     continue 'run;
                 }
                 41 => {
-                    self.wrap(k::AGGREGATE, 0)?;
-                    self.drop_made()?;
-                    stack.push(4);
-                    st = 42;
+                    self.field_made(f::VALUE);
+                    self.close()?;
+                    st = 27;
                     continue 'run;
                 }
                 42 => {
-                    self.word_leaf_as::<false, false>(w::COLON_15, k::COLON)?;
-                    self.word_skip_as::<false, false>(w::LBRACE_20)?;
-                    stack.push(43);
-                    st = 44;
+                    self.wrap(k::AGGREGATE, 0)?;
+                    self.drop_made()?;
+                    stack.push(4);
+                    st = 43;
                     continue 'run;
                 }
                 43 => {
+                    self.word_leaf_as::<false, false>(w::COLON_15, k::COLON)?;
+                    self.word_skip_as::<false, false>(w::LBRACE_20)?;
+                    stack.push(44);
+                    st = 45;
+                    continue 'run;
+                }
+                44 => {
                     self.field_made(f::BODY);
                     self.word_skip_as::<false, false>(w::RBRACE_21)?;
                     self.marked = false;
@@ -2765,79 +2757,78 @@ impl<L: Layout> P<'_, L> {
                     st = ret;
                     continue 'run;
                 }
-                44 => {
+                45 => {
                     stack.push(u64::from(self.flags));
                     self.flags = self.flags & !FLAG_NO_NAMED;
-                    stack.push(u64::from(self.word));
-                    stack.push(117);
-                    st = 48;
+                    stack.push(120 | u64::from(self.word) << 32);
+                    st = 49;
                     continue 'run;
                 }
-                45 => {
+                46 => {
                     self.close()?;
                     st = 6;
                     continue 'run;
                 }
-                46 => {
+                47 => {
                     match self.word() {
                         w::SEMI_14 => {
                             self.word_skip_as::<false, false>(w::SEMI_14)?;
                             stack.push(u64::from(self.flags));
                             self.flags = self.flags & !FLAG_NO_NAMED;
-                            stack.push(u64::from(self.word));
-                            stack.push(47);
-                            st = 48;
+                            stack.push(48 | u64::from(self.word) << 32);
+                            st = 49;
                             continue 'run;
                         }
                         _ => {
-                            st = 45;
+                            st = 46;
                             continue 'run;
                         }
                     }
                 }
-                47 => {
+                48 => {
                     self.flags = stack.pop().unwrap_or(0) as u32;
                     self.field_made(f::ALTERNATIVE);
-                    st = 46;
-                    continue 'run;
-                }
-                48 => {
-                    self.deeper()?;
-                    self.open(k::CONJUNCTION);
-                    stack.push(51);
-                    st = 52;
+                    st = 47;
                     continue 'run;
                 }
                 49 => {
+                    self.deeper()?;
+                    self.open(k::CONJUNCTION);
+                    stack.push(52);
+                    st = 53;
+                    continue 'run;
+                }
+                50 => {
                     self.close()?;
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    self.word = stack.pop().unwrap_or(0) as u16;
+                    let top = stack.pop().unwrap_or(0);
+                    let ret = top as u32 as usize;
+                    self.word = (top >> 32) as u16;
                     st = ret;
                     continue 'run;
                 }
-                50 => {
+                51 => {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_skip_as::<false, false>(w::COMMA_12)?;
-                            stack.push(51);
-                            st = 52;
+                            stack.push(52);
+                            st = 53;
                             continue 'run;
                         }
                         _ => {
-                            st = 49;
+                            st = 50;
                             continue 'run;
                         }
                     }
                 }
-                51 => {
+                52 => {
                     self.field_made(f::LITERAL);
-                    st = 50;
+                    st = 51;
                     continue 'run;
                 }
-                52 => {
+                53 => {
                     let arm: usize;
                     match self.word() {
                         w::X_54 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 => {
@@ -2867,37 +2858,37 @@ impl<L: Layout> P<'_, L> {
                             match self.word() {
                                 w::X_54 => {
                                     self.word_leaf_as::<false, false>(w::X_54, k::WILDCARD)?;
-                                    st = 62;
+                                    st = 63;
                                     continue 'run;
                                 }
                                 w::MINUS_27 => {
-                                    stack.push(62);
-                                    st = 27;
+                                    stack.push(63);
+                                    st = 28;
                                     continue 'run;
                                 }
                                 w::AT_23 => {
-                                    stack.push(62);
-                                    st = 29;
+                                    stack.push(63);
+                                    st = 30;
                                     continue 'run;
                                 }
                                 w::LBRACE_20 => {
-                                    stack.push(62);
-                                    st = 35;
+                                    stack.push(63);
+                                    st = 36;
                                     continue 'run;
                                 }
                                 _ if self.at_number() => {
                                     self.numeric()?;
-                                    st = 62;
+                                    st = 63;
                                     continue 'run;
                                 }
                                 _ if self.at_string() => {
                                     self.tk_as::<false, false>(self.at_string(), k::STRING, 0)?;
-                                    st = 62;
+                                    st = 63;
                                     continue 'run;
                                 }
                                 _ if self.at_code_literal() => {
                                     self.tk_as::<false, false>(self.at_code_literal(), k::CODE_LITERAL, 0)?;
-                                    st = 62;
+                                    st = 63;
                                     continue 'run;
                                 }
                                 _ => {
@@ -2912,38 +2903,35 @@ impl<L: Layout> P<'_, L> {
                                     self.relabel_field(f::LITERAL)?;
                                     self.wrap(k::ATOM, f::RELATION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(70);
-                                    st = 31;
+                                    stack.push(71);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
-                                    stack.push(56);
-                                    st = 57;
+                                    stack.push(57);
+                                    st = 58;
                                     continue 'run;
                                 }
                                 _ => {
-                                    stack.push(56);
-                                    st = 57;
+                                    stack.push(57);
+                                    st = 58;
                                     continue 'run;
                                 }
                             }
                         }
                         2 => {
-                            stack.push(71);
-                            st = 72;
+                            stack.push(72);
+                            st = 73;
                             continue 'run;
                         }
                         3 => {
-                            stack.push(u64::from(self.word));
-                            stack.push(96);
-                            st = 97;
+                            stack.push(99 | u64::from(self.word) << 32);
+                            st = 100;
                             continue 'run;
                         }
                         4 => {
-                            stack.push(u64::from(self.word));
-                            stack.push(116);
-                            st = 106;
+                            stack.push(119);
+                            st = 109;
                             continue 'run;
                         }
                         _ => {
@@ -2951,12 +2939,12 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                53 => {
+                54 => {
                     self.relabel_field(f::LITERAL)?;
                     match self.word() {
                         w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
                             stack.push(6);
-                            st = 54;
+                            st = 55;
                             continue 'run;
                         }
                         w::TILDE_31 => {
@@ -2969,16 +2957,15 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                54 => {
+                55 => {
                     self.wrap(k::COMPARISON, f::LEFT)?;
                     self.comparison_operator()?;
                     self.field_made(f::OPERATOR);
-                    stack.push(u64::from(self.word));
-                    stack.push(55);
+                    stack.push(56);
                     st = 19;
                     continue 'run;
                 }
-                55 => {
+                56 => {
                     self.field_made(f::RIGHT);
                     self.close()?;
                     self.marked = false;
@@ -2987,11 +2974,11 @@ impl<L: Layout> P<'_, L> {
                     st = ret;
                     continue 'run;
                 }
-                56 => {
+                57 => {
                     match self.word() {
                         w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
                             stack.push(6);
-                            st = 53;
+                            st = 54;
                             continue 'run;
                         }
                         _ => {
@@ -3000,17 +2987,17 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                57 => {
-                    st = 60;
+                58 => {
+                    st = 61;
                     continue 'run;
                 }
-                58 => {
+                59 => {
                     match self.word() {
                         w::PLUS_28 | w::MINUS_27 => {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.additive()?;
                             self.field_made(f::OPERATOR);
-                            stack.push(59);
+                            stack.push(60);
                             st = 22;
                             continue 'run;
                         }
@@ -3020,47 +3007,47 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                59 => {
+                60 => {
                     self.field_made(f::RIGHT);
                     self.close()?;
-                    st = 58;
+                    st = 59;
                     continue 'run;
                 }
-                60 => {
+                61 => {
                     match self.word() {
                         w::STAR_24 | w::SLASH_29 | w::PERCENT_30 => {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.multiplicative()?;
                             self.field_made(f::OPERATOR);
-                            stack.push(61);
+                            stack.push(62);
                             st = 25;
                             continue 'run;
                         }
                         _ => {
-                            st = 58;
+                            st = 59;
                             continue 'run;
                         }
                     }
                 }
-                61 => {
+                62 => {
                     self.field_made(f::RIGHT);
                     self.close()?;
-                    st = 60;
-                    continue 'run;
-                }
-                62 => {
-                    self.field_made(f::BARE);
-                    stack.push(56);
-                    st = 57;
+                    st = 61;
                     continue 'run;
                 }
                 63 => {
+                    self.field_made(f::BARE);
+                    stack.push(57);
+                    st = 58;
+                    continue 'run;
+                }
+                64 => {
                     match self.word() {
                         w::STAR_24 | w::SLASH_29 | w::PERCENT_30 => {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.multiplicative()?;
                             self.field_made(f::OPERATOR);
-                            stack.push(67);
+                            stack.push(68);
                             st = 25;
                             continue 'run;
                         }
@@ -3068,7 +3055,7 @@ impl<L: Layout> P<'_, L> {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.additive()?;
                             self.field_made(f::OPERATOR);
-                            stack.push(69);
+                            stack.push(70);
                             st = 22;
                             continue 'run;
                         }
@@ -3077,13 +3064,13 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                64 => {
+                65 => {
                     match self.word() {
                         w::PLUS_28 | w::MINUS_27 => {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.additive()?;
                             self.field_made(f::OPERATOR);
-                            stack.push(65);
+                            stack.push(66);
                             st = 22;
                             continue 'run;
                         }
@@ -3093,41 +3080,41 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                65 => {
+                66 => {
                     self.field_made(f::RIGHT);
                     self.close()?;
-                    st = 64;
+                    st = 65;
                     continue 'run;
                 }
-                66 => {
+                67 => {
                     match self.word() {
                         w::STAR_24 | w::SLASH_29 | w::PERCENT_30 => {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.multiplicative()?;
                             self.field_made(f::OPERATOR);
-                            stack.push(67);
+                            stack.push(68);
                             st = 25;
                             continue 'run;
                         }
                         _ => {
-                            st = 64;
+                            st = 65;
                             continue 'run;
                         }
                     }
                 }
-                67 => {
+                68 => {
                     self.field_made(f::RIGHT);
                     self.close()?;
-                    st = 66;
+                    st = 67;
                     continue 'run;
                 }
-                68 => {
+                69 => {
                     match self.word() {
                         w::PLUS_28 | w::MINUS_27 => {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.additive()?;
                             self.field_made(f::OPERATOR);
-                            stack.push(69);
+                            stack.push(70);
                             st = 22;
                             continue 'run;
                         }
@@ -3137,13 +3124,13 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                69 => {
+                70 => {
                     self.field_made(f::RIGHT);
                     self.close()?;
-                    st = 68;
+                    st = 69;
                     continue 'run;
                 }
-                70 => {
+                71 => {
                     self.field_made(f::ARGUMENTS);
                     self.close()?;
                     match self.word() {
@@ -3153,13 +3140,13 @@ impl<L: Layout> P<'_, L> {
                             self.relabel_kind(k::CALL)?;
                             match self.word() {
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
-                                    stack.push(56);
-                                    st = 63;
+                                    stack.push(57);
+                                    st = 64;
                                     continue 'run;
                                 }
                                 w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
                                     stack.push(6);
-                                    st = 53;
+                                    st = 54;
                                     continue 'run;
                                 }
                                 _ => {
@@ -3173,38 +3160,37 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                71 => {
+                72 => {
                     self.field_made(f::BARE);
                     st = 6;
                     continue 'run;
                 }
-                72 => {
+                73 => {
                     match self.word() {
                         w::COUNT_47 => {
                             self.word_leaf_as::<false, false>(w::COUNT_47, k::VARIABLE)?;
                             match self.word() {
                                 w::COLON_15 => {
-                                    stack.push(73);
-                                    st = 41;
+                                    stack.push(74);
+                                    st = 42;
                                     continue 'run;
                                 }
                                 w::LPAREN_10 => {
                                     self.relabel_field(f::LITERAL)?;
                                     self.wrap(k::ATOM, f::RELATION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(70);
-                                    st = 31;
+                                    stack.push(71);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
-                                    stack.push(56);
-                                    st = 57;
+                                    stack.push(57);
+                                    st = 58;
                                     continue 'run;
                                 }
                                 _ => {
-                                    stack.push(56);
-                                    st = 57;
+                                    stack.push(57);
+                                    st = 58;
                                     continue 'run;
                                 }
                             }
@@ -3255,27 +3241,26 @@ impl<L: Layout> P<'_, L> {
                             }
                             match arm {
                                 0 => {
-                                    stack.push(73);
-                                    st = 74;
+                                    stack.push(74);
+                                    st = 75;
                                     continue 'run;
                                 }
                                 1 => {
                                     self.relabel_field(f::LITERAL)?;
                                     self.wrap(k::ATOM, f::RELATION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(95);
-                                    st = 90;
+                                    stack.push(98);
+                                    st = 93;
                                     continue 'run;
                                 }
                                 2 => {
-                                    stack.push(56);
-                                    st = 57;
+                                    stack.push(57);
+                                    st = 58;
                                     continue 'run;
                                 }
                                 _ => {
-                                    stack.push(56);
-                                    st = 57;
+                                    stack.push(57);
+                                    st = 58;
                                     continue 'run;
                                 }
                             }
@@ -3285,40 +3270,39 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                73 => {
-                    stack.push(56);
-                    st = 57;
-                    continue 'run;
-                }
                 74 => {
-                    self.wrap(k::AGGREGATE, f::OPERATOR)?;
-                    self.retype_moved(self.word);
-                    stack.push(4);
-                    st = 75;
+                    stack.push(57);
+                    st = 58;
                     continue 'run;
                 }
                 75 => {
-                    stack.push(u64::from(self.flags));
-                    self.flags = self.flags | FLAG_NO_NAMED;
-                    stack.push(u64::from(self.word));
-                    stack.push(93);
-                    st = 83;
+                    self.wrap(k::AGGREGATE, f::OPERATOR)?;
+                    self.retype_moved(self.word);
+                    stack.push(4);
+                    st = 76;
                     continue 'run;
                 }
                 76 => {
+                    stack.push(u64::from(self.flags));
+                    self.flags = self.flags | FLAG_NO_NAMED;
+                    stack.push(96);
+                    st = 84;
+                    continue 'run;
+                }
+                77 => {
                     match self.word() {
                         w::SEP_46 => {
                             self.word_leaf_as::<false, false>(w::SEP_46, k::SEP)?;
                             self.tk_as::<false, false>(self.at_string(), k::STRING, f::SEPARATOR)?;
                             stack.push(6);
-                            st = 42;
+                            st = 43;
                             continue 'run;
                         }
                         w::COLON_15 => {
                             self.word_leaf_as::<false, false>(w::COLON_15, k::COLON)?;
                             self.word_leaf_as::<false, false>(w::LBRACE_20, k::LBRACE)?;
-                            stack.push(77);
-                            st = 44;
+                            stack.push(78);
+                            st = 45;
                             continue 'run;
                         }
                         _ => {
@@ -3326,42 +3310,41 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                77 => {
+                78 => {
                     self.field_made(f::BODY);
                     self.word_skip_as::<false, false>(w::RBRACE_21)?;
                     st = 6;
                     continue 'run;
                 }
-                78 => {
+                79 => {
                     self.word_leaf_as::<false, false>(w::RPAREN_11, k::RPAREN)?;
                     stack.push(6);
-                    st = 76;
+                    st = 77;
                     continue 'run;
                 }
-                79 => {
+                80 => {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_skip_as::<false, false>(w::COMMA_12)?;
                             stack.push(u64::from(self.flags));
                             self.flags = self.flags & !FLAG_NO_NAMED;
-                            stack.push(u64::from(self.word));
-                            stack.push(80);
+                            stack.push(81);
                             st = 19;
                             continue 'run;
                         }
                         _ => {
-                            st = 78;
+                            st = 79;
                             continue 'run;
                         }
                     }
                 }
-                80 => {
+                81 => {
                     self.flags = stack.pop().unwrap_or(0) as u32;
                     self.field_made(f::KEY);
-                    st = 79;
+                    st = 80;
                     continue 'run;
                 }
-                81 => {
+                82 => {
                     match self.word() {
                         w::SEP_46 => {
                             self.word_leaf_as::<false, false>(w::SEP_46, k::SEP)?;
@@ -3371,17 +3354,17 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                     stack.push(6);
-                    st = 42;
-                    continue 'run;
-                }
-                82 => {
-                    self.flags = stack.pop().unwrap_or(0) as u32;
-                    self.field_made(f::KEY);
-                    stack.push(6);
-                    st = 81;
+                    st = 43;
                     continue 'run;
                 }
                 83 => {
+                    self.flags = stack.pop().unwrap_or(0) as u32;
+                    self.field_made(f::KEY);
+                    stack.push(6);
+                    st = 82;
+                    continue 'run;
+                }
+                84 => {
                     self.deeper()?;
                     let arm: usize;
                     match self.word() {
@@ -3409,32 +3392,32 @@ impl<L: Layout> P<'_, L> {
                             match self.word() {
                                 w::X_54 => {
                                     self.word_leaf_as::<false, false>(w::X_54, k::WILDCARD)?;
-                                    st = 84;
+                                    st = 85;
                                     continue 'run;
                                 }
                                 w::AT_23 => {
-                                    stack.push(84);
-                                    st = 29;
+                                    stack.push(85);
+                                    st = 30;
                                     continue 'run;
                                 }
                                 w::LBRACE_20 => {
-                                    stack.push(84);
-                                    st = 35;
+                                    stack.push(85);
+                                    st = 36;
                                     continue 'run;
                                 }
                                 _ if self.at_number() => {
                                     self.numeric()?;
-                                    st = 84;
+                                    st = 85;
                                     continue 'run;
                                 }
                                 _ if self.at_string() => {
                                     self.tk_as::<false, false>(self.at_string(), k::STRING, 0)?;
-                                    st = 84;
+                                    st = 85;
                                     continue 'run;
                                 }
                                 _ if self.at_code_literal() => {
                                     self.tk_as::<false, false>(self.at_code_literal(), k::CODE_LITERAL, 0)?;
-                                    st = 84;
+                                    st = 85;
                                     continue 'run;
                                 }
                                 _ => {
@@ -3448,27 +3431,24 @@ impl<L: Layout> P<'_, L> {
                                 w::LPAREN_10 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(85);
-                                    st = 31;
+                                    stack.push(86);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 _ => {
-                                    st = 84;
+                                    st = 85;
                                     continue 'run;
                                 }
                             }
                         }
                         2 => {
-                            stack.push(u64::from(self.word));
                             stack.push(13);
-                            st = 86;
+                            st = 87;
                             continue 'run;
                         }
                         3 => {
-                            stack.push(u64::from(self.word));
-                            stack.push(13);
-                            st = 87;
+                            stack.push(13 | u64::from(self.word) << 32);
+                            st = 88;
                             continue 'run;
                         }
                         _ => {
@@ -3476,41 +3456,40 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                84 => {
-                    stack.push(13);
-                    st = 57;
-                    continue 'run;
-                }
                 85 => {
-                    self.field_made(f::ARGUMENTS);
-                    self.close()?;
-                    st = 84;
+                    stack.push(13);
+                    st = 58;
                     continue 'run;
                 }
                 86 => {
+                    self.field_made(f::ARGUMENTS);
+                    self.close()?;
+                    st = 85;
+                    continue 'run;
+                }
+                87 => {
                     self.deeper()?;
                     self.word_leaf_as::<false, false>(w::COUNT_47, k::VARIABLE)?;
                     match self.word() {
                         w::COLON_15 => {
-                            stack.push(84);
-                            st = 41;
+                            stack.push(85);
+                            st = 42;
                             continue 'run;
                         }
                         w::LPAREN_10 => {
                             self.wrap(k::CALL, f::FUNCTION)?;
                             self.retype_moved(k::IDENTIFIER);
-                            stack.push(u64::from(self.word));
-                            stack.push(85);
-                            st = 31;
+                            stack.push(86);
+                            st = 32;
                             continue 'run;
                         }
                         _ => {
-                            st = 84;
+                            st = 85;
                             continue 'run;
                         }
                     }
                 }
-                87 => {
+                88 => {
                     self.deeper()?;
                     match self.word() {
                         w::MIN_48 => {
@@ -3558,56 +3537,65 @@ impl<L: Layout> P<'_, L> {
                     }
                     match arm {
                         0 => {
-                            stack.push(84);
-                            st = 74;
+                            stack.push(89);
+                            st = 75;
                             continue 'run;
                         }
                         1 => {
                             self.mark_empty_parens()?;
                             self.wrap(k::CALL, f::FUNCTION)?;
                             self.retype_moved(k::IDENTIFIER);
-                            stack.push(u64::from(self.word));
-                            stack.push(85);
-                            st = 31;
+                            stack.push(90);
+                            st = 32;
                             continue 'run;
                         }
                         2 => {
                             self.wrap(k::CALL, f::FUNCTION)?;
                             self.retype_moved(k::IDENTIFIER);
-                            stack.push(u64::from(self.word));
-                            stack.push(89);
-                            st = 90;
+                            stack.push(92);
+                            st = 93;
                             continue 'run;
                         }
                         _ => {
-                            st = 84;
+                            st = 89;
                             continue 'run;
                         }
                     }
                 }
-                88 => {
-                    self.close()?;
-                    st = 84;
+                89 => {
+                    stack.push(27);
+                    st = 58;
                     continue 'run;
                 }
-                89 => {
+                90 => {
+                    self.field_made(f::ARGUMENTS);
+                    self.close()?;
+                    st = 89;
+                    continue 'run;
+                }
+                91 => {
+                    self.close()?;
+                    st = 89;
+                    continue 'run;
+                }
+                92 => {
                     self.field_made(f::ARGUMENTS);
                     self.close()?;
                     match self.word() {
                         w::COLON_15 => {
                             self.wrap(k::AGGREGATE, 0)?;
                             self.reread_aggregate_value()?;
-                            stack.push(88);
-                            st = 42;
+                            stack.push(91);
+                            st = 43;
                             continue 'run;
                         }
                         _ => {
-                            st = 84;
+                            st = 89;
                             continue 'run;
                         }
                     }
                 }
-                90 => {
+                93 => {
                     self.deeper()?;
                     self.open(UNSET);
                     self.retag(k::ARGUMENT_LIST);
@@ -3626,39 +3614,37 @@ impl<L: Layout> P<'_, L> {
                     }
                     match arm {
                         0 => {
-                            stack.push(u64::from(self.word));
-                            stack.push(92);
+                            stack.push(95);
                             st = 19;
                             continue 'run;
                         }
                         _ => {
-                            st = 32;
+                            st = 33;
                             continue 'run;
                         }
                     }
                 }
-                91 => {
+                94 => {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_leaf_as::<false, false>(w::COMMA_12, k::COMMA)?;
                             self.drop_made()?;
-                            stack.push(u64::from(self.word));
-                            stack.push(92);
+                            stack.push(95);
                             st = 19;
                             continue 'run;
                         }
                         _ => {
-                            st = 32;
+                            st = 33;
                             continue 'run;
                         }
                     }
                 }
-                92 => {
+                95 => {
                     self.field_made(f::ARGUMENT);
-                    st = 91;
+                    st = 94;
                     continue 'run;
                 }
-                93 => {
+                96 => {
                     self.flags = stack.pop().unwrap_or(0) as u32;
                     self.field_made(f::VALUE);
                     match self.word() {
@@ -3684,17 +3670,15 @@ impl<L: Layout> P<'_, L> {
                                     self.word_leaf_as::<true, false>(w::LPAREN_10, k::LPAREN)?;
                                     stack.push(u64::from(self.flags));
                                     self.flags = self.flags & !FLAG_NO_NAMED;
-                                    stack.push(u64::from(self.word));
-                                    stack.push(80);
+                                    stack.push(81);
                                     st = 19;
                                     continue 'run;
                                 }
                                 1 => {
                                     stack.push(u64::from(self.flags));
                                     self.flags = self.flags | FLAG_NO_NAMED;
-                                    stack.push(u64::from(self.word));
-                                    stack.push(82);
-                                    st = 83;
+                                    stack.push(83);
+                                    st = 84;
                                     continue 'run;
                                 }
                                 _ => {
@@ -3704,7 +3688,7 @@ impl<L: Layout> P<'_, L> {
                         }
                         w::SEP_46 | w::COLON_15 => {
                             stack.push(6);
-                            st = 81;
+                            st = 82;
                             continue 'run;
                         }
                         _ => {
@@ -3712,13 +3696,13 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                94 => {
+                97 => {
                     self.close()?;
-                    stack.push(56);
-                    st = 57;
+                    stack.push(57);
+                    st = 58;
                     continue 'run;
                 }
-                95 => {
+                98 => {
                     self.field_made(f::ARGUMENTS);
                     self.close()?;
                     match self.word() {
@@ -3728,13 +3712,13 @@ impl<L: Layout> P<'_, L> {
                             self.relabel_kind(k::CALL)?;
                             match self.word() {
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
-                                    stack.push(56);
-                                    st = 63;
+                                    stack.push(57);
+                                    st = 64;
                                     continue 'run;
                                 }
                                 w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
                                     stack.push(6);
-                                    st = 53;
+                                    st = 54;
                                     continue 'run;
                                 }
                                 _ => {
@@ -3746,8 +3730,8 @@ impl<L: Layout> P<'_, L> {
                             self.relabel_field(f::BARE)?;
                             self.wrap(k::AGGREGATE, 0)?;
                             self.reread_aggregate_value()?;
-                            stack.push(94);
-                            st = 42;
+                            stack.push(97);
+                            st = 43;
                             continue 'run;
                         }
                         _ => {
@@ -3756,31 +3740,32 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                96 => {
+                99 => {
                     self.field_made(f::LITERAL);
                     st = 6;
                     continue 'run;
                 }
-                97 => {
+                100 => {
                     self.deeper()?;
                     self.open(k::NEGATION);
                     self.word_skip_as::<false, false>(w::BANG_19)?;
-                    stack.push(98);
-                    st = 99;
+                    stack.push(101);
+                    st = 102;
                     continue 'run;
                 }
-                98 => {
+                101 => {
                     self.field_made(f::OPERAND);
                     self.close()?;
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    self.word = stack.pop().unwrap_or(0) as u16;
+                    let top = stack.pop().unwrap_or(0);
+                    let ret = top as u32 as usize;
+                    self.word = (top >> 32) as u16;
                     st = ret;
                     continue 'run;
                 }
-                99 => {
+                102 => {
                     let arm: usize;
                     match self.word() {
                         w::X_54 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 => {
@@ -3810,37 +3795,37 @@ impl<L: Layout> P<'_, L> {
                             match self.word() {
                                 w::X_54 => {
                                     self.word_leaf_as::<false, false>(w::X_54, k::WILDCARD)?;
-                                    st = 101;
+                                    st = 104;
                                     continue 'run;
                                 }
                                 w::MINUS_27 => {
-                                    stack.push(101);
-                                    st = 27;
+                                    stack.push(104);
+                                    st = 28;
                                     continue 'run;
                                 }
                                 w::AT_23 => {
-                                    stack.push(101);
-                                    st = 29;
+                                    stack.push(104);
+                                    st = 30;
                                     continue 'run;
                                 }
                                 w::LBRACE_20 => {
-                                    stack.push(101);
-                                    st = 35;
+                                    stack.push(104);
+                                    st = 36;
                                     continue 'run;
                                 }
                                 _ if self.at_number() => {
                                     self.numeric()?;
-                                    st = 101;
+                                    st = 104;
                                     continue 'run;
                                 }
                                 _ if self.at_string() => {
                                     self.tk_as::<false, false>(self.at_string(), k::STRING, 0)?;
-                                    st = 101;
+                                    st = 104;
                                     continue 'run;
                                 }
                                 _ if self.at_code_literal() => {
                                     self.tk_as::<false, false>(self.at_code_literal(), k::CODE_LITERAL, 0)?;
-                                    st = 101;
+                                    st = 104;
                                     continue 'run;
                                 }
                                 _ => {
@@ -3854,14 +3839,13 @@ impl<L: Layout> P<'_, L> {
                                 w::LPAREN_10 => {
                                     self.wrap(k::ATOM, f::RELATION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(102);
-                                    st = 31;
+                                    stack.push(105);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                                    stack.push(100);
-                                    st = 57;
+                                    stack.push(103);
+                                    st = 58;
                                     continue 'run;
                                 }
                                 _ => {
@@ -3871,19 +3855,17 @@ impl<L: Layout> P<'_, L> {
                         }
                         2 => {
                             stack.push(6);
-                            st = 103;
+                            st = 106;
                             continue 'run;
                         }
                         3 => {
-                            stack.push(u64::from(self.word));
-                            stack.push(6);
-                            st = 97;
+                            stack.push(6 | u64::from(self.word) << 32);
+                            st = 100;
                             continue 'run;
                         }
                         4 => {
-                            stack.push(u64::from(self.word));
-                            stack.push(105);
-                            st = 106;
+                            stack.push(108);
+                            st = 109;
                             continue 'run;
                         }
                         _ => {
@@ -3891,25 +3873,25 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                100 => {
+                103 => {
                     self.pattern_tail()?;
                     st = 6;
                     continue 'run;
                 }
-                101 => {
-                    stack.push(100);
-                    st = 57;
+                104 => {
+                    stack.push(103);
+                    st = 58;
                     continue 'run;
                 }
-                102 => {
+                105 => {
                     self.field_made(f::ARGUMENTS);
                     self.close()?;
                     match self.word() {
                         w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
                             self.relabel_inner(f::FUNCTION)?;
                             self.relabel_kind(k::CALL)?;
-                            stack.push(100);
-                            st = 57;
+                            stack.push(103);
+                            st = 58;
                             continue 'run;
                         }
                         _ => {
@@ -3918,27 +3900,26 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                103 => {
+                106 => {
                     match self.word() {
                         w::COUNT_47 => {
                             self.word_leaf_as::<false, false>(w::COUNT_47, k::VARIABLE)?;
                             match self.word() {
                                 w::COLON_15 => {
-                                    stack.push(101);
-                                    st = 41;
+                                    stack.push(104);
+                                    st = 42;
                                     continue 'run;
                                 }
                                 w::LPAREN_10 => {
                                     self.wrap(k::ATOM, f::RELATION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(102);
-                                    st = 31;
+                                    stack.push(105);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
-                                    stack.push(100);
-                                    st = 57;
+                                    stack.push(103);
+                                    st = 58;
                                     continue 'run;
                                 }
                                 _ => {
@@ -3992,21 +3973,20 @@ impl<L: Layout> P<'_, L> {
                             }
                             match arm {
                                 0 => {
-                                    stack.push(101);
-                                    st = 74;
+                                    stack.push(104);
+                                    st = 75;
                                     continue 'run;
                                 }
                                 1 => {
                                     self.wrap(k::ATOM, f::RELATION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(102);
-                                    st = 31;
+                                    stack.push(105);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 2 => {
-                                    stack.push(100);
-                                    st = 57;
+                                    stack.push(103);
+                                    st = 58;
                                     continue 'run;
                                 }
                                 _ => {
@@ -4019,12 +3999,12 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                104 => {
+                107 => {
                     match self.word() {
                         w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
                             self.reread_parenthesized()?;
-                            stack.push(100);
-                            st = 63;
+                            stack.push(103);
+                            st = 64;
                             continue 'run;
                         }
                         w::TILDE_31 => {
@@ -4038,11 +4018,11 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                105 => {
+                108 => {
                     match self.word() {
                         w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::TILDE_31 => {
                             stack.push(6);
-                            st = 104;
+                            st = 107;
                             continue 'run;
                         }
                         _ => {
@@ -4051,15 +4031,15 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                106 => {
+                109 => {
                     self.deeper()?;
                     self.open(k::GROUP);
                     self.word_skip_as::<true, false>(w::LPAREN_10)?;
-                    stack.push(107);
-                    st = 108;
+                    stack.push(110);
+                    st = 111;
                     continue 'run;
                 }
-                107 => {
+                110 => {
                     self.field_made(f::BODY);
                     self.word_skip_as::<false, false>(w::RPAREN_11)?;
                     self.close()?;
@@ -4067,42 +4047,39 @@ impl<L: Layout> P<'_, L> {
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
                     let ret = stack.pop().unwrap_or(0) as usize;
-                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
-                108 => {
+                111 => {
                     stack.push(u64::from(self.flags));
                     self.flags = self.flags & !FLAG_NO_NAMED;
-                    stack.push(u64::from(self.word));
-                    stack.push(111);
-                    st = 112;
+                    stack.push(114 | u64::from(self.word) << 32);
+                    st = 115;
                     continue 'run;
                 }
-                109 => {
+                112 => {
                     match self.word() {
                         w::SEMI_14 => {
                             self.word_skip_as::<false, false>(w::SEMI_14)?;
                             stack.push(u64::from(self.flags));
                             self.flags = self.flags & !FLAG_NO_NAMED;
-                            stack.push(u64::from(self.word));
-                            stack.push(110);
-                            st = 48;
+                            stack.push(113 | u64::from(self.word) << 32);
+                            st = 49;
                             continue 'run;
                         }
                         _ => {
-                            st = 45;
+                            st = 46;
                             continue 'run;
                         }
                     }
                 }
-                110 => {
+                113 => {
                     self.flags = stack.pop().unwrap_or(0) as u32;
                     self.field_made(f::ALTERNATIVE);
-                    st = 109;
+                    st = 112;
                     continue 'run;
                 }
-                111 => {
+                114 => {
                     self.flags = stack.pop().unwrap_or(0) as u32;
                     match self.word() {
                         w::SEMI_14 => {
@@ -4110,9 +4087,8 @@ impl<L: Layout> P<'_, L> {
                             self.word_skip_as::<false, false>(w::SEMI_14)?;
                             stack.push(u64::from(self.flags));
                             self.flags = self.flags & !FLAG_NO_NAMED;
-                            stack.push(u64::from(self.word));
-                            stack.push(110);
-                            st = 48;
+                            stack.push(113 | u64::from(self.word) << 32);
+                            st = 49;
                             continue 'run;
                         }
                         _ => {
@@ -4121,48 +4097,48 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                112 => {
+                115 => {
                     self.deeper()?;
                     self.open(UNSET);
                     self.retag(k::CONJUNCTION);
-                    stack.push(114);
-                    st = 52;
+                    stack.push(117);
+                    st = 53;
                     continue 'run;
                 }
-                113 => {
+                116 => {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_leaf_as::<false, false>(w::COMMA_12, k::COMMA)?;
                             self.drop_made()?;
-                            stack.push(114);
-                            st = 52;
+                            stack.push(117);
+                            st = 53;
                             continue 'run;
                         }
                         _ => {
-                            st = 49;
+                            st = 50;
                             continue 'run;
                         }
                     }
                 }
-                114 => {
+                117 => {
                     self.field_made(f::LITERAL);
-                    st = 113;
+                    st = 116;
                     continue 'run;
                 }
-                115 => {
+                118 => {
                     match self.word() {
                         w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
                             self.reread_parenthesized()?;
                             match self.word() {
                                 w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 => {
                                     self.relabel_field(f::BARE)?;
-                                    stack.push(56);
-                                    st = 63;
+                                    stack.push(57);
+                                    st = 64;
                                     continue 'run;
                                 }
                                 w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 => {
                                     stack.push(6);
-                                    st = 54;
+                                    st = 55;
                                     continue 'run;
                                 }
                                 _ => {
@@ -4181,12 +4157,12 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                116 => {
+                119 => {
                     self.field_made(f::LITERAL);
                     match self.word() {
                         w::STAR_24 | w::SLASH_29 | w::PERCENT_30 | w::PLUS_28 | w::MINUS_27 | w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::TILDE_31 => {
                             stack.push(6);
-                            st = 115;
+                            st = 118;
                             continue 'run;
                         }
                         _ => {
@@ -4195,7 +4171,7 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                117 => {
+                120 => {
                     self.flags = stack.pop().unwrap_or(0) as u32;
                     match self.word() {
                         w::SEMI_14 => {
@@ -4203,9 +4179,8 @@ impl<L: Layout> P<'_, L> {
                             self.word_skip_as::<false, false>(w::SEMI_14)?;
                             stack.push(u64::from(self.flags));
                             self.flags = self.flags & !FLAG_NO_NAMED;
-                            stack.push(u64::from(self.word));
-                            stack.push(47);
-                            st = 48;
+                            stack.push(48 | u64::from(self.word) << 32);
+                            st = 49;
                             continue 'run;
                         }
                         _ => {
@@ -4214,37 +4189,36 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                118 => {
+                121 => {
                     self.close()?;
-                    st = 13;
+                    st = 27;
                     continue 'run;
                 }
-                119 => {
+                122 => {
                     self.field_made(f::ARGUMENTS);
                     self.close()?;
                     match self.word() {
                         w::COLON_15 => {
                             self.wrap(k::AGGREGATE, 0)?;
                             self.reread_aggregate_value()?;
-                            stack.push(118);
-                            st = 42;
+                            stack.push(121);
+                            st = 43;
                             continue 'run;
                         }
                         _ => {
-                            st = 13;
+                            st = 27;
                             continue 'run;
                         }
                     }
                 }
-                120 => {
+                123 => {
                     self.open(k::PARENTHESIZED_EXPRESSION);
                     self.word_skip_as::<true, false>(w::LPAREN_10)?;
-                    stack.push(u64::from(self.word));
-                    stack.push(121);
+                    stack.push(124);
                     st = 19;
                     continue 'run;
                 }
-                121 => {
+                124 => {
                     self.field_made(f::EXPRESSION);
                     self.word_skip_as::<false, false>(w::RPAREN_11)?;
                     self.close()?;
@@ -4254,11 +4228,10 @@ impl<L: Layout> P<'_, L> {
                     st = ret;
                     continue 'run;
                 }
-                122 => {
+                125 => {
                     match self.word() {
                         w::EQ_GT_4 => {
                             self.word_skip_as::<false, false>(w::EQ_GT_4)?;
-                            stack.push(u64::from(self.word));
                             stack.push(18);
                             st = 19;
                             continue 'run;
@@ -4269,45 +4242,45 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                123 => {
-                    self.field_made(f::BODY);
-                    st = 122;
-                    continue 'run;
-                }
-                124 => {
-                    match self.word() {
-                        w::COLON_MINUS_3 => {
-                            self.word_skip_as::<false, false>(w::COLON_MINUS_3)?;
-                            stack.push(123);
-                            st = 44;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 122;
-                            continue 'run;
-                        }
-                    }
-                }
-                125 => {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.word_skip_as::<false, false>(w::COMMA_12)?;
-                            stack.push(126);
-                            st = 127;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 124;
-                            continue 'run;
-                        }
-                    }
-                }
                 126 => {
-                    self.field_made(f::HEAD);
+                    self.field_made(f::BODY);
                     st = 125;
                     continue 'run;
                 }
                 127 => {
+                    match self.word() {
+                        w::COLON_MINUS_3 => {
+                            self.word_skip_as::<false, false>(w::COLON_MINUS_3)?;
+                            stack.push(126);
+                            st = 45;
+                            continue 'run;
+                        }
+                        _ => {
+                            st = 125;
+                            continue 'run;
+                        }
+                    }
+                }
+                128 => {
+                    match self.word() {
+                        w::COMMA_12 => {
+                            self.word_skip_as::<false, false>(w::COMMA_12)?;
+                            stack.push(129);
+                            st = 130;
+                            continue 'run;
+                        }
+                        _ => {
+                            st = 127;
+                            continue 'run;
+                        }
+                    }
+                }
+                129 => {
+                    self.field_made(f::HEAD);
+                    st = 128;
+                    continue 'run;
+                }
+                130 => {
                     self.open(k::HEAD);
                     match self.word() {
                         w::MUST_35 | w::MAY_36 => {
@@ -4327,16 +4300,14 @@ impl<L: Layout> P<'_, L> {
                                 w::LPAREN_10 => {
                                     self.relabel_field(f::RELATION)?;
                                     self.relabel_kind(k::IDENTIFIER)?;
-                                    stack.push(u64::from(self.word));
-                                    stack.push(128);
-                                    st = 31;
+                                    stack.push(131);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 _ if self.at_identifier() => {
                                     self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::RELATION)?;
-                                    stack.push(u64::from(self.word));
-                                    stack.push(128);
-                                    st = 31;
+                                    stack.push(131);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 _ => {
@@ -4346,9 +4317,8 @@ impl<L: Layout> P<'_, L> {
                         }
                         _ if self.at_identifier() => {
                             self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::RELATION)?;
-                            stack.push(u64::from(self.word));
-                            stack.push(128);
-                            st = 31;
+                            stack.push(131);
+                            st = 32;
                             continue 'run;
                         }
                         _ => {
@@ -4356,12 +4326,12 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                128 => {
+                131 => {
                     self.field_made(f::ARGUMENTS);
                     st = 4;
                     continue 'run;
                 }
-                129 => {
+                132 => {
                     self.drop_made()?;
                     self.retag(k::FIXTURES_BLOCK);
                     self.word_skip_as::<false, false>(w::FIXTURES_64)?;
@@ -4370,19 +4340,18 @@ impl<L: Layout> P<'_, L> {
                     st = 8;
                     continue 'run;
                 }
-                130 => {
+                133 => {
                     self.mark_policy_on()?;
                     self.drop_made()?;
                     self.retag(k::POLICY_DOCUMENT);
                     self.word_skip_as::<false, false>(w::POLICY_53)?;
-                    stack.push(u64::from(self.word));
                     stack.push(u64::from(self.refusing));
                     self.refusing = 0x1000;
-                    stack.push(131);
-                    st = 132;
+                    stack.push(134);
+                    st = 135;
                     continue 'run;
                 }
-                131 => {
+                134 => {
                     self.field_made(f::DOCUMENT);
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
@@ -4390,51 +4359,50 @@ impl<L: Layout> P<'_, L> {
                     st = ret;
                     continue 'run;
                 }
-                132 => {
+                135 => {
                     self.deeper()?;
                     self.word_leaf_as::<false, true>(w::LBRACE_20, k::JSON_OBJECT)?;
                     if self.at_string() {
-                        stack.push(134);
-                        st = 135;
+                        stack.push(137);
+                        st = 138;
                         continue 'run;
                     } else {
-                        st = 133;
+                        st = 136;
                         continue 'run;
                     }
                 }
-                133 => {
+                136 => {
                     self.merge_as::<false, true>(self.word() == w::RBRACE_21, k::JSON_OBJECT)?;
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
                     let ret = stack.pop().unwrap_or(0) as usize;
                     self.refusing = stack.pop().unwrap_or(0) as u32;
-                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
-                134 => {
+                137 => {
                     match self.word() {
                         w::COMMA_12 => {
                             self.merge_as::<false, true>(self.word() == w::COMMA_12, k::JSON_OBJECT)?;
-                            stack.push(134);
-                            st = 135;
+                            stack.push(137);
+                            st = 138;
                             continue 'run;
                         }
                         _ => {
-                            st = 133;
+                            st = 136;
                             continue 'run;
                         }
                     }
                 }
-                135 => {
+                138 => {
                     self.merge_as::<false, true>(self.at_string(), k::JSON_OBJECT)?;
                     self.merge_as::<false, true>(self.word() == w::COLON_15, k::JSON_OBJECT)?;
                     stack.push(6);
-                    st = 136;
+                    st = 139;
                     continue 'run;
                 }
-                136 => {
+                139 => {
                     match self.word() {
                         w::MINUS_27 => {
                             self.merge_as::<false, true>(self.word() == w::MINUS_27, k::JSON_OBJECT)?;
@@ -4458,19 +4426,17 @@ impl<L: Layout> P<'_, L> {
                             continue 'run;
                         }
                         w::LBRACE_20 => {
-                            stack.push(u64::from(self.word));
                             stack.push(u64::from(self.refusing));
                             self.refusing = 0x1000;
                             stack.push(6);
-                            st = 137;
+                            st = 140;
                             continue 'run;
                         }
                         w::LBRACK_25 => {
-                            stack.push(u64::from(self.word));
                             stack.push(u64::from(self.refusing));
                             self.refusing = 0x1000;
                             stack.push(6);
-                            st = 139;
+                            st = 142;
                             continue 'run;
                         }
                         _ if self.at_string() => {
@@ -4488,33 +4454,33 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                137 => {
+                140 => {
                     self.deeper()?;
                     self.merge_as::<false, true>(self.word() == w::LBRACE_20, k::JSON_OBJECT)?;
                     if self.at_string() {
-                        stack.push(138);
-                        st = 135;
+                        stack.push(141);
+                        st = 138;
                         continue 'run;
                     } else {
-                        st = 133;
+                        st = 136;
                         continue 'run;
                     }
                 }
-                138 => {
+                141 => {
                     match self.word() {
                         w::COMMA_12 => {
                             self.merge_as::<false, true>(self.word() == w::COMMA_12, k::JSON_OBJECT)?;
-                            stack.push(138);
-                            st = 135;
+                            stack.push(141);
+                            st = 138;
                             continue 'run;
                         }
                         _ => {
-                            st = 133;
+                            st = 136;
                             continue 'run;
                         }
                     }
                 }
-                139 => {
+                142 => {
                     self.deeper()?;
                     self.merge_as::<false, true>(self.word() == w::LBRACK_25, k::JSON_OBJECT)?;
                     let arm: usize;
@@ -4531,80 +4497,79 @@ impl<L: Layout> P<'_, L> {
                     }
                     match arm {
                         0 => {
-                            stack.push(141);
-                            st = 136;
+                            stack.push(144);
+                            st = 139;
                             continue 'run;
                         }
                         _ => {
-                            st = 140;
+                            st = 143;
                             continue 'run;
                         }
                     }
                 }
-                140 => {
+                143 => {
                     self.merge_as::<false, true>(self.word() == w::RBRACK_26, k::JSON_OBJECT)?;
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
                     let ret = stack.pop().unwrap_or(0) as usize;
                     self.refusing = stack.pop().unwrap_or(0) as u32;
-                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
-                141 => {
+                144 => {
                     match self.word() {
                         w::COMMA_12 => {
                             self.merge_as::<false, true>(self.word() == w::COMMA_12, k::JSON_OBJECT)?;
-                            stack.push(141);
-                            st = 136;
+                            stack.push(144);
+                            st = 139;
                             continue 'run;
                         }
                         _ => {
-                            st = 140;
+                            st = 143;
                             continue 'run;
                         }
                     }
                 }
-                142 => {
+                145 => {
                     self.drop_made()?;
                     self.retag(k::VIOLATION_DECLARATION);
                     self.word_skip_as::<false, false>(w::VIOLATION_66)?;
                     self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                     self.column_list()?;
                     self.field_made(f::COLUMNS);
-                    st = 153;
+                    st = 156;
                     continue 'run;
                 }
-                143 => {
+                146 => {
                     if self.m_fix_on() {
                         self.mark_fix_on()?;
                         self.fix_line()?;
                         self.field_made(f::FIX);
-                        st = 143;
+                        st = 146;
                         continue 'run;
                     } else if self.m_suppress_on() {
                         self.mark_suppress_on()?;
-                        stack.push(144);
-                        st = 145;
+                        stack.push(147);
+                        st = 148;
                         continue 'run;
                     } else if self.m_options_on() {
                         self.mark_options_on()?;
                         self.word_skip_as::<false, false>(w::OPTIONS_44)?;
-                        stack.push(151);
-                        st = 35;
+                        stack.push(154);
+                        st = 36;
                         continue 'run;
                     } else {
                         st = 6;
                         continue 'run;
                     }
                 }
-                144 => {
+                147 => {
                     self.field_made(f::SUPPRESS);
-                    st = 143;
+                    st = 146;
                     continue 'run;
                 }
-                145 => {
+                148 => {
                     self.open(k::SUPPRESS_LINE);
                     self.word_skip_as::<false, false>(w::SUPPRESS_42)?;
                     self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::TOOL)?;
@@ -4637,8 +4602,8 @@ impl<L: Layout> P<'_, L> {
                         } else {
                             match self.word() {
                                 w::LBRACE_20 => {
-                                    stack.push(146);
-                                    st = 147;
+                                    stack.push(149);
+                                    st = 150;
                                     continue 'run;
                                 }
                                 _ => {
@@ -4651,238 +4616,207 @@ impl<L: Layout> P<'_, L> {
                         continue 'run;
                     }
                 }
-                146 => {
+                149 => {
                     self.field_made(f::OVER);
                     st = 4;
                     continue 'run;
                 }
-                147 => {
+                150 => {
                     self.word_leaf_as::<false, false>(w::LBRACE_20, k::RAW_TEXT)?;
-                    stack.push(u64::from(self.word));
                     stack.push(6);
-                    st = 148;
+                    st = 151;
                     continue 'run;
                 }
-                148 => {
+                151 => {
                     self.deeper()?;
-                    st = 150;
+                    st = 153;
                     continue 'run;
                 }
-                149 => {
+                152 => {
                     self.merge_as::<false, false>(self.word() == w::RBRACE_21, k::RAW_TEXT)?;
                     self.depth -= 1;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
                     let ret = stack.pop().unwrap_or(0) as usize;
-                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
-                    continue 'run;
-                }
-                150 => {
-                    match self.word() {
-                        w::HASH_INCLUDE_34 => {
-                            self.merge_as::<false, false>(self.word() == w::HASH_INCLUDE_34, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::LPAREN_10 => {
-                            self.merge_as::<true, false>(self.word() == w::LPAREN_10, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::RPAREN_11 => {
-                            self.merge_as::<false, false>(self.word() == w::RPAREN_11, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::COMMA_12 => {
-                            self.merge_as::<false, false>(self.word() == w::COMMA_12, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::DOT_13 => {
-                            self.merge_as::<true, false>(self.word() == w::DOT_13, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::SEMI_14 => {
-                            self.merge_as::<false, false>(self.word() == w::SEMI_14, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::COLON_15 => {
-                            self.merge_as::<false, false>(self.word() == w::COLON_15, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::EQ_16 => {
-                            self.merge_as::<false, false>(self.word() == w::EQ_16, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::LT_17 => {
-                            self.merge_as::<false, false>(self.word() == w::LT_17, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::GT_18 => {
-                            self.merge_as::<false, false>(self.word() == w::GT_18, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::BANG_19 => {
-                            self.merge_as::<false, false>(self.word() == w::BANG_19, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::BAR_22 => {
-                            self.merge_as::<false, false>(self.word() == w::BAR_22, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::AT_23 => {
-                            self.merge_as::<true, false>(self.word() == w::AT_23, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::STAR_24 => {
-                            self.merge_as::<false, false>(self.word() == w::STAR_24, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::LBRACK_25 => {
-                            self.merge_as::<false, false>(self.word() == w::LBRACK_25, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::RBRACK_26 => {
-                            self.merge_as::<false, false>(self.word() == w::RBRACK_26, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::MINUS_27 => {
-                            self.merge_as::<false, false>(self.word() == w::MINUS_27, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::PLUS_28 => {
-                            self.merge_as::<false, false>(self.word() == w::PLUS_28, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::SLASH_29 => {
-                            self.merge_as::<false, false>(self.word() == w::SLASH_29, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::PERCENT_30 => {
-                            self.merge_as::<false, false>(self.word() == w::PERCENT_30, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::TILDE_31 => {
-                            self.merge_as::<false, false>(self.word() == w::TILDE_31, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::CARET_32 => {
-                            self.merge_as::<false, false>(self.word() == w::CARET_32, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::AMP_33 => {
-                            self.merge_as::<false, false>(self.word() == w::AMP_33, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::COLON_MINUS_3 => {
-                            self.merge_as::<false, false>(self.word() == w::COLON_MINUS_3, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::EQ_GT_4 => {
-                            self.merge_as::<false, false>(self.word() == w::EQ_GT_4, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::BANG_EQ_5 => {
-                            self.merge_as::<false, false>(self.word() == w::BANG_EQ_5, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::LT_EQ_6 => {
-                            self.merge_as::<false, false>(self.word() == w::LT_EQ_6, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::GT_EQ_7 => {
-                            self.merge_as::<false, false>(self.word() == w::GT_EQ_7, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::LT_COLON_8 => {
-                            self.merge_as::<false, false>(self.word() == w::LT_COLON_8, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::MINUS_GT_9 => {
-                            self.merge_as::<false, false>(self.word() == w::MINUS_GT_9, k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        w::LBRACE_20 => {
-                            self.merge_as::<false, false>(self.word() == w::LBRACE_20, k::RAW_TEXT)?;
-                            stack.push(u64::from(self.word));
-                            stack.push(150);
-                            st = 148;
-                            continue 'run;
-                        }
-                        _ if self.at_string() => {
-                            self.merge_as::<false, false>(self.at_string(), k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        _ if self.at_code_literal() => {
-                            self.merge_as::<false, false>(self.at_code_literal(), k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        _ if self.at_identifier() => {
-                            self.merge_as::<false, false>(self.at_identifier(), k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        _ if self.at_number() => {
-                            self.merge_as::<false, false>(self.at_number(), k::RAW_TEXT)?;
-                            st = 150;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 149;
-                            continue 'run;
-                        }
-                    }
-                }
-                151 => {
-                    self.field_made(f::OPTIONS);
-                    st = 143;
-                    continue 'run;
-                }
-                152 => {
-                    self.tk_as::<false, false>(self.at_string(), k::STRING, f::MESSAGE)?;
-                    st = 143;
                     continue 'run;
                 }
                 153 => {
                     match self.word() {
-                        w::CODE_37 => {
-                            stack.push(153);
-                            st = 154;
+                        w::HASH_INCLUDE_34 => {
+                            self.merge_as::<false, false>(self.word() == w::HASH_INCLUDE_34, k::RAW_TEXT)?;
+                            st = 153;
                             continue 'run;
                         }
-                        w::TAG_39 => {
+                        w::LPAREN_10 => {
+                            self.merge_as::<true, false>(self.word() == w::LPAREN_10, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::RPAREN_11 => {
+                            self.merge_as::<false, false>(self.word() == w::RPAREN_11, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::COMMA_12 => {
+                            self.merge_as::<false, false>(self.word() == w::COMMA_12, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::DOT_13 => {
+                            self.merge_as::<true, false>(self.word() == w::DOT_13, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::SEMI_14 => {
+                            self.merge_as::<false, false>(self.word() == w::SEMI_14, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::COLON_15 => {
+                            self.merge_as::<false, false>(self.word() == w::COLON_15, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::EQ_16 => {
+                            self.merge_as::<false, false>(self.word() == w::EQ_16, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::LT_17 => {
+                            self.merge_as::<false, false>(self.word() == w::LT_17, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::GT_18 => {
+                            self.merge_as::<false, false>(self.word() == w::GT_18, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::BANG_19 => {
+                            self.merge_as::<false, false>(self.word() == w::BANG_19, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::BAR_22 => {
+                            self.merge_as::<false, false>(self.word() == w::BAR_22, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::AT_23 => {
+                            self.merge_as::<true, false>(self.word() == w::AT_23, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::STAR_24 => {
+                            self.merge_as::<false, false>(self.word() == w::STAR_24, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::LBRACK_25 => {
+                            self.merge_as::<false, false>(self.word() == w::LBRACK_25, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::RBRACK_26 => {
+                            self.merge_as::<false, false>(self.word() == w::RBRACK_26, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::MINUS_27 => {
+                            self.merge_as::<false, false>(self.word() == w::MINUS_27, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::PLUS_28 => {
+                            self.merge_as::<false, false>(self.word() == w::PLUS_28, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::SLASH_29 => {
+                            self.merge_as::<false, false>(self.word() == w::SLASH_29, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::PERCENT_30 => {
+                            self.merge_as::<false, false>(self.word() == w::PERCENT_30, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::TILDE_31 => {
+                            self.merge_as::<false, false>(self.word() == w::TILDE_31, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::CARET_32 => {
+                            self.merge_as::<false, false>(self.word() == w::CARET_32, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::AMP_33 => {
+                            self.merge_as::<false, false>(self.word() == w::AMP_33, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::COLON_MINUS_3 => {
+                            self.merge_as::<false, false>(self.word() == w::COLON_MINUS_3, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::EQ_GT_4 => {
+                            self.merge_as::<false, false>(self.word() == w::EQ_GT_4, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::BANG_EQ_5 => {
+                            self.merge_as::<false, false>(self.word() == w::BANG_EQ_5, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::LT_EQ_6 => {
+                            self.merge_as::<false, false>(self.word() == w::LT_EQ_6, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::GT_EQ_7 => {
+                            self.merge_as::<false, false>(self.word() == w::GT_EQ_7, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::LT_COLON_8 => {
+                            self.merge_as::<false, false>(self.word() == w::LT_COLON_8, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::MINUS_GT_9 => {
+                            self.merge_as::<false, false>(self.word() == w::MINUS_GT_9, k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        w::LBRACE_20 => {
+                            self.merge_as::<false, false>(self.word() == w::LBRACE_20, k::RAW_TEXT)?;
                             stack.push(153);
-                            st = 158;
+                            st = 151;
+                            continue 'run;
+                        }
+                        _ if self.at_string() => {
+                            self.merge_as::<false, false>(self.at_string(), k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        _ if self.at_code_literal() => {
+                            self.merge_as::<false, false>(self.at_code_literal(), k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        _ if self.at_identifier() => {
+                            self.merge_as::<false, false>(self.at_identifier(), k::RAW_TEXT)?;
+                            st = 153;
+                            continue 'run;
+                        }
+                        _ if self.at_number() => {
+                            self.merge_as::<false, false>(self.at_number(), k::RAW_TEXT)?;
+                            st = 153;
                             continue 'run;
                         }
                         _ => {
@@ -4892,6 +4826,34 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 154 => {
+                    self.field_made(f::OPTIONS);
+                    st = 146;
+                    continue 'run;
+                }
+                155 => {
+                    self.tk_as::<false, false>(self.at_string(), k::STRING, f::MESSAGE)?;
+                    st = 146;
+                    continue 'run;
+                }
+                156 => {
+                    match self.word() {
+                        w::CODE_37 => {
+                            stack.push(156);
+                            st = 157;
+                            continue 'run;
+                        }
+                        w::TAG_39 => {
+                            stack.push(156);
+                            st = 161;
+                            continue 'run;
+                        }
+                        _ => {
+                            st = 155;
+                            continue 'run;
+                        }
+                    }
+                }
+                157 => {
                     self.word_leaf_as::<false, false>(w::CODE_37, k::CODE)?;
                     let arm: usize;
                     if self.m_one_name() {
@@ -4920,8 +4882,8 @@ impl<L: Layout> P<'_, L> {
                             self.relabel_field(f::CODE)?;
                             self.wrap(k::CODE_COLUMN, 0)?;
                             self.drop_made()?;
-                            stack.push(155);
-                            st = 156;
+                            stack.push(158);
+                            st = 159;
                             continue 'run;
                         }
                         _ => {
@@ -4929,7 +4891,7 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                155 => {
+                158 => {
                     match self.word() {
                         w::IN_38 => {
                             self.word_skip_as::<false, false>(w::IN_38)?;
@@ -4942,7 +4904,7 @@ impl<L: Layout> P<'_, L> {
                     st = 6;
                     continue 'run;
                 }
-                156 => {
+                159 => {
                     if self.m_one_name() {
                         self.mark_one_name()?;
                         self.word_skip_as::<false, false>(w::LBRACE_20)?;
@@ -4953,8 +4915,8 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         match self.word() {
                             w::LBRACE_20 => {
-                                stack.push(157);
-                                st = 147;
+                                stack.push(160);
+                                st = 150;
                                 continue 'run;
                             }
                             _ => {
@@ -4963,33 +4925,32 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                157 => {
+                160 => {
                     self.field_made(f::COLUMN);
                     st = 6;
                     continue 'run;
                 }
-                158 => {
+                161 => {
                     self.word_leaf_as::<false, false>(w::TAG_39, k::TAG)?;
                     self.relabel_field(f::TAG)?;
                     self.wrap(k::TAG_COLUMN, 0)?;
                     self.drop_made()?;
                     stack.push(4);
-                    st = 156;
+                    st = 159;
                     continue 'run;
                 }
-                159 => {
+                162 => {
                     self.retag(k::FUNCTOR_DECLARATION);
                     self.word_skip_as::<false, false>(w::FUNCTOR_68)?;
                     self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                     self.column_list()?;
                     self.field_made(f::COLUMNS);
                     self.word_leaf_as::<false, false>(w::COLON_15, k::COLON)?;
-                    stack.push(u64::from(self.word));
-                    stack.push(160);
-                    st = 161;
+                    stack.push(163);
+                    st = 164;
                     continue 'run;
                 }
-                160 => {
+                163 => {
                     self.field_made(f::RETURN_TYPE);
                     loop {
                         if self.m_line() {
@@ -5016,7 +4977,7 @@ impl<L: Layout> P<'_, L> {
                     st = ret;
                     continue 'run;
                 }
-                161 => {
+                164 => {
                     self.deeper()?;
                     self.open(UNSET);
                     self.retag(k::TYPE);
@@ -5046,11 +5007,10 @@ impl<L: Layout> P<'_, L> {
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
                     let ret = stack.pop().unwrap_or(0) as usize;
-                    self.word = stack.pop().unwrap_or(0) as u16;
                     st = ret;
                     continue 'run;
                 }
-                162 => {
+                165 => {
                     self.deeper()?;
                     self.retag(k::IO_DIRECTIVE);
                     match self.word() {
@@ -5065,20 +5025,20 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                     if self.at_identifier() {
-                        stack.push(164);
-                        st = 165;
+                        stack.push(167);
+                        st = 168;
                         continue 'run;
                     } else {
                         st = 13;
                         continue 'run;
                     }
                 }
-                163 => {
+                166 => {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_skip_as::<false, false>(w::COMMA_12)?;
-                            stack.push(164);
-                            st = 165;
+                            stack.push(167);
+                            st = 168;
                             continue 'run;
                         }
                         _ => {
@@ -5087,12 +5047,12 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                164 => {
+                167 => {
                     self.field_made(f::RELATION);
-                    st = 163;
+                    st = 166;
                     continue 'run;
                 }
-                165 => {
+                168 => {
                     self.open(k::IO_RELATION);
                     self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                     match self.word() {
@@ -5116,9 +5076,8 @@ impl<L: Layout> P<'_, L> {
                             match arm {
                                 0 => {
                                     self.drop_made()?;
-                                    stack.push(u64::from(self.word));
-                                    stack.push(166);
-                                    st = 167;
+                                    stack.push(169);
+                                    st = 170;
                                     continue 'run;
                                 }
                                 1 => {
@@ -5138,396 +5097,195 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                166 => {
+                169 => {
                     self.field_made(f::PARAMETERS);
                     self.word_skip_as::<false, false>(w::RPAREN_11)?;
                     st = 4;
                     continue 'run;
                 }
-                167 => {
+                170 => {
                     self.deeper()?;
                     match self.word() {
                         w::HASH_INCLUDE_34 => {
                             self.word_leaf_as::<false, false>(w::HASH_INCLUDE_34, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::COMMA_12 => {
                             self.word_leaf_as::<false, false>(w::COMMA_12, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::DOT_13 => {
                             self.word_leaf_as::<true, false>(w::DOT_13, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::SEMI_14 => {
                             self.word_leaf_as::<false, false>(w::SEMI_14, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::COLON_15 => {
                             self.word_leaf_as::<false, false>(w::COLON_15, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::EQ_16 => {
                             self.word_leaf_as::<false, false>(w::EQ_16, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::LT_17 => {
                             self.word_leaf_as::<false, false>(w::LT_17, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::GT_18 => {
                             self.word_leaf_as::<false, false>(w::GT_18, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::BANG_19 => {
                             self.word_leaf_as::<false, false>(w::BANG_19, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::BAR_22 => {
                             self.word_leaf_as::<false, false>(w::BAR_22, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::AT_23 => {
                             self.word_leaf_as::<true, false>(w::AT_23, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::STAR_24 => {
                             self.word_leaf_as::<false, false>(w::STAR_24, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::LBRACK_25 => {
                             self.word_leaf_as::<false, false>(w::LBRACK_25, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::RBRACK_26 => {
                             self.word_leaf_as::<false, false>(w::RBRACK_26, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::MINUS_27 => {
                             self.word_leaf_as::<false, false>(w::MINUS_27, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::PLUS_28 => {
                             self.word_leaf_as::<false, false>(w::PLUS_28, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::SLASH_29 => {
                             self.word_leaf_as::<false, false>(w::SLASH_29, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::PERCENT_30 => {
                             self.word_leaf_as::<false, false>(w::PERCENT_30, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::TILDE_31 => {
                             self.word_leaf_as::<false, false>(w::TILDE_31, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::CARET_32 => {
                             self.word_leaf_as::<false, false>(w::CARET_32, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::AMP_33 => {
                             self.word_leaf_as::<false, false>(w::AMP_33, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::LBRACE_20 => {
                             self.word_leaf_as::<false, false>(w::LBRACE_20, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::RBRACE_21 => {
                             self.word_leaf_as::<false, false>(w::RBRACE_21, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::COLON_MINUS_3 => {
                             self.word_leaf_as::<false, false>(w::COLON_MINUS_3, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::EQ_GT_4 => {
                             self.word_leaf_as::<false, false>(w::EQ_GT_4, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::BANG_EQ_5 => {
                             self.word_leaf_as::<false, false>(w::BANG_EQ_5, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::LT_EQ_6 => {
                             self.word_leaf_as::<false, false>(w::LT_EQ_6, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::GT_EQ_7 => {
                             self.word_leaf_as::<false, false>(w::GT_EQ_7, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::LT_COLON_8 => {
                             self.word_leaf_as::<false, false>(w::LT_COLON_8, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::MINUS_GT_9 => {
                             self.word_leaf_as::<false, false>(w::MINUS_GT_9, k::RAW_TEXT)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         w::LPAREN_10 => {
                             self.word_leaf_as::<true, false>(w::LPAREN_10, k::RAW_TEXT)?;
-                            stack.push(u64::from(self.word));
-                            stack.push(168);
-                            st = 169;
+                            stack.push(171);
+                            st = 172;
                             continue 'run;
                         }
                         _ if self.at_string() => {
                             self.tk_as::<false, false>(self.at_string(), k::RAW_TEXT, 0)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         _ if self.at_code_literal() => {
                             self.tk_as::<false, false>(self.at_code_literal(), k::RAW_TEXT, 0)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         _ if self.at_identifier() => {
                             self.tk_as::<false, false>(self.at_identifier(), k::RAW_TEXT, 0)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         _ if self.at_number() => {
                             self.tk_as::<false, false>(self.at_number(), k::RAW_TEXT, 0)?;
-                            st = 168;
+                            st = 171;
                             continue 'run;
                         }
                         _ => {
                             return self.refuse();
                         }
                     }
-                }
-                168 => {
-                    match self.word() {
-                        w::HASH_INCLUDE_34 => {
-                            self.merge_as::<false, false>(self.word() == w::HASH_INCLUDE_34, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::COMMA_12 => {
-                            self.merge_as::<false, false>(self.word() == w::COMMA_12, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::DOT_13 => {
-                            self.merge_as::<true, false>(self.word() == w::DOT_13, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::SEMI_14 => {
-                            self.merge_as::<false, false>(self.word() == w::SEMI_14, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::COLON_15 => {
-                            self.merge_as::<false, false>(self.word() == w::COLON_15, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::EQ_16 => {
-                            self.merge_as::<false, false>(self.word() == w::EQ_16, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::LT_17 => {
-                            self.merge_as::<false, false>(self.word() == w::LT_17, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::GT_18 => {
-                            self.merge_as::<false, false>(self.word() == w::GT_18, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::BANG_19 => {
-                            self.merge_as::<false, false>(self.word() == w::BANG_19, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::BAR_22 => {
-                            self.merge_as::<false, false>(self.word() == w::BAR_22, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::AT_23 => {
-                            self.merge_as::<true, false>(self.word() == w::AT_23, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::STAR_24 => {
-                            self.merge_as::<false, false>(self.word() == w::STAR_24, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::LBRACK_25 => {
-                            self.merge_as::<false, false>(self.word() == w::LBRACK_25, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::RBRACK_26 => {
-                            self.merge_as::<false, false>(self.word() == w::RBRACK_26, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::MINUS_27 => {
-                            self.merge_as::<false, false>(self.word() == w::MINUS_27, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::PLUS_28 => {
-                            self.merge_as::<false, false>(self.word() == w::PLUS_28, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::SLASH_29 => {
-                            self.merge_as::<false, false>(self.word() == w::SLASH_29, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::PERCENT_30 => {
-                            self.merge_as::<false, false>(self.word() == w::PERCENT_30, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::TILDE_31 => {
-                            self.merge_as::<false, false>(self.word() == w::TILDE_31, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::CARET_32 => {
-                            self.merge_as::<false, false>(self.word() == w::CARET_32, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::AMP_33 => {
-                            self.merge_as::<false, false>(self.word() == w::AMP_33, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::LBRACE_20 => {
-                            self.merge_as::<false, false>(self.word() == w::LBRACE_20, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::RBRACE_21 => {
-                            self.merge_as::<false, false>(self.word() == w::RBRACE_21, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::COLON_MINUS_3 => {
-                            self.merge_as::<false, false>(self.word() == w::COLON_MINUS_3, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::EQ_GT_4 => {
-                            self.merge_as::<false, false>(self.word() == w::EQ_GT_4, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::BANG_EQ_5 => {
-                            self.merge_as::<false, false>(self.word() == w::BANG_EQ_5, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::LT_EQ_6 => {
-                            self.merge_as::<false, false>(self.word() == w::LT_EQ_6, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::GT_EQ_7 => {
-                            self.merge_as::<false, false>(self.word() == w::GT_EQ_7, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::LT_COLON_8 => {
-                            self.merge_as::<false, false>(self.word() == w::LT_COLON_8, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::MINUS_GT_9 => {
-                            self.merge_as::<false, false>(self.word() == w::MINUS_GT_9, k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        w::LPAREN_10 => {
-                            self.merge_as::<true, false>(self.word() == w::LPAREN_10, k::RAW_TEXT)?;
-                            stack.push(u64::from(self.word));
-                            stack.push(168);
-                            st = 169;
-                            continue 'run;
-                        }
-                        _ if self.at_string() => {
-                            self.merge_as::<false, false>(self.at_string(), k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        _ if self.at_code_literal() => {
-                            self.merge_as::<false, false>(self.at_code_literal(), k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        _ if self.at_identifier() => {
-                            self.merge_as::<false, false>(self.at_identifier(), k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        _ if self.at_number() => {
-                            self.merge_as::<false, false>(self.at_number(), k::RAW_TEXT)?;
-                            st = 168;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 13;
-                            continue 'run;
-                        }
-                    }
-                }
-                169 => {
-                    self.deeper()?;
-                    st = 171;
-                    continue 'run;
-                }
-                170 => {
-                    self.merge_as::<false, false>(self.word() == w::RPAREN_11, k::RAW_TEXT)?;
-                    self.depth -= 1;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    self.word = stack.pop().unwrap_or(0) as u16;
-                    st = ret;
-                    continue 'run;
                 }
                 171 => {
                     match self.word() {
@@ -5683,9 +5441,8 @@ impl<L: Layout> P<'_, L> {
                         }
                         w::LPAREN_10 => {
                             self.merge_as::<true, false>(self.word() == w::LPAREN_10, k::RAW_TEXT)?;
-                            stack.push(u64::from(self.word));
                             stack.push(171);
-                            st = 169;
+                            st = 172;
                             continue 'run;
                         }
                         _ if self.at_string() => {
@@ -5709,12 +5466,210 @@ impl<L: Layout> P<'_, L> {
                             continue 'run;
                         }
                         _ => {
-                            st = 170;
+                            st = 13;
                             continue 'run;
                         }
                     }
                 }
                 172 => {
+                    self.deeper()?;
+                    st = 174;
+                    continue 'run;
+                }
+                173 => {
+                    self.merge_as::<false, false>(self.word() == w::RPAREN_11, k::RAW_TEXT)?;
+                    self.depth -= 1;
+                    self.marked = false;
+                    // The place the call returns to, then what a level's saved of its caller's.
+                    let ret = stack.pop().unwrap_or(0) as usize;
+                    st = ret;
+                    continue 'run;
+                }
+                174 => {
+                    match self.word() {
+                        w::HASH_INCLUDE_34 => {
+                            self.merge_as::<false, false>(self.word() == w::HASH_INCLUDE_34, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::COMMA_12 => {
+                            self.merge_as::<false, false>(self.word() == w::COMMA_12, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::DOT_13 => {
+                            self.merge_as::<true, false>(self.word() == w::DOT_13, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::SEMI_14 => {
+                            self.merge_as::<false, false>(self.word() == w::SEMI_14, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::COLON_15 => {
+                            self.merge_as::<false, false>(self.word() == w::COLON_15, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::EQ_16 => {
+                            self.merge_as::<false, false>(self.word() == w::EQ_16, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::LT_17 => {
+                            self.merge_as::<false, false>(self.word() == w::LT_17, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::GT_18 => {
+                            self.merge_as::<false, false>(self.word() == w::GT_18, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::BANG_19 => {
+                            self.merge_as::<false, false>(self.word() == w::BANG_19, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::BAR_22 => {
+                            self.merge_as::<false, false>(self.word() == w::BAR_22, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::AT_23 => {
+                            self.merge_as::<true, false>(self.word() == w::AT_23, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::STAR_24 => {
+                            self.merge_as::<false, false>(self.word() == w::STAR_24, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::LBRACK_25 => {
+                            self.merge_as::<false, false>(self.word() == w::LBRACK_25, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::RBRACK_26 => {
+                            self.merge_as::<false, false>(self.word() == w::RBRACK_26, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::MINUS_27 => {
+                            self.merge_as::<false, false>(self.word() == w::MINUS_27, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::PLUS_28 => {
+                            self.merge_as::<false, false>(self.word() == w::PLUS_28, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::SLASH_29 => {
+                            self.merge_as::<false, false>(self.word() == w::SLASH_29, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::PERCENT_30 => {
+                            self.merge_as::<false, false>(self.word() == w::PERCENT_30, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::TILDE_31 => {
+                            self.merge_as::<false, false>(self.word() == w::TILDE_31, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::CARET_32 => {
+                            self.merge_as::<false, false>(self.word() == w::CARET_32, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::AMP_33 => {
+                            self.merge_as::<false, false>(self.word() == w::AMP_33, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::LBRACE_20 => {
+                            self.merge_as::<false, false>(self.word() == w::LBRACE_20, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::RBRACE_21 => {
+                            self.merge_as::<false, false>(self.word() == w::RBRACE_21, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::COLON_MINUS_3 => {
+                            self.merge_as::<false, false>(self.word() == w::COLON_MINUS_3, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::EQ_GT_4 => {
+                            self.merge_as::<false, false>(self.word() == w::EQ_GT_4, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::BANG_EQ_5 => {
+                            self.merge_as::<false, false>(self.word() == w::BANG_EQ_5, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::LT_EQ_6 => {
+                            self.merge_as::<false, false>(self.word() == w::LT_EQ_6, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::GT_EQ_7 => {
+                            self.merge_as::<false, false>(self.word() == w::GT_EQ_7, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::LT_COLON_8 => {
+                            self.merge_as::<false, false>(self.word() == w::LT_COLON_8, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::MINUS_GT_9 => {
+                            self.merge_as::<false, false>(self.word() == w::MINUS_GT_9, k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        w::LPAREN_10 => {
+                            self.merge_as::<true, false>(self.word() == w::LPAREN_10, k::RAW_TEXT)?;
+                            stack.push(174);
+                            st = 172;
+                            continue 'run;
+                        }
+                        _ if self.at_string() => {
+                            self.merge_as::<false, false>(self.at_string(), k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        _ if self.at_code_literal() => {
+                            self.merge_as::<false, false>(self.at_code_literal(), k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        _ if self.at_identifier() => {
+                            self.merge_as::<false, false>(self.at_identifier(), k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        _ if self.at_number() => {
+                            self.merge_as::<false, false>(self.at_number(), k::RAW_TEXT)?;
+                            st = 174;
+                            continue 'run;
+                        }
+                        _ => {
+                            st = 173;
+                            continue 'run;
+                        }
+                    }
+                }
+                175 => {
                     self.drop_made()?;
                     self.retag(k::LATTICE_DECLARATION);
                     self.word_skip_as::<false, false>(w::LATTICE_69)?;
@@ -5727,15 +5682,15 @@ impl<L: Layout> P<'_, L> {
                     self.word_skip_as::<false, false>(w::GT_18)?;
                     self.word_skip_as::<false, false>(w::LBRACE_20)?;
                     if self.at_identifier() {
-                        stack.push(175);
-                        st = 176;
+                        stack.push(178);
+                        st = 179;
                         continue 'run;
                     } else {
-                        st = 173;
+                        st = 176;
                         continue 'run;
                     }
                 }
-                173 => {
+                176 => {
                     self.word_skip_as::<false, false>(w::RBRACE_21)?;
                     self.marked = false;
                     // The place the call returns to, then what a level's saved of its caller's.
@@ -5743,35 +5698,34 @@ impl<L: Layout> P<'_, L> {
                     st = ret;
                     continue 'run;
                 }
-                174 => {
+                177 => {
                     match self.word() {
                         w::COMMA_12 => {
                             self.word_skip_as::<false, false>(w::COMMA_12)?;
-                            stack.push(175);
-                            st = 176;
+                            stack.push(178);
+                            st = 179;
                             continue 'run;
                         }
                         _ => {
-                            st = 173;
+                            st = 176;
                             continue 'run;
                         }
                     }
                 }
-                175 => {
+                178 => {
                     self.field_made(f::OPERATION);
-                    st = 174;
+                    st = 177;
                     continue 'run;
                 }
-                176 => {
+                179 => {
                     self.open(k::LATTICE_OPERATION);
                     self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::NAME)?;
                     self.word_skip_as::<false, false>(w::MINUS_GT_9)?;
-                    stack.push(u64::from(self.word));
-                    stack.push(177);
-                    st = 178;
+                    stack.push(180);
+                    st = 181;
                     continue 'run;
                 }
-                177 => {
+                180 => {
                     self.field_made(f::VALUE);
                     self.close()?;
                     self.marked = false;
@@ -5780,19 +5734,19 @@ impl<L: Layout> P<'_, L> {
                     st = ret;
                     continue 'run;
                 }
-                178 => {
+                181 => {
                     self.deeper()?;
-                    stack.push(179);
-                    st = 181;
+                    stack.push(182);
+                    st = 184;
                     continue 'run;
                 }
-                179 => {
+                182 => {
                     match self.word() {
                         w::PLUS_28 | w::MINUS_27 => {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.additive()?;
                             self.field_made(f::OPERATOR);
-                            stack.push(180);
+                            stack.push(183);
                             st = 22;
                             continue 'run;
                         }
@@ -5802,13 +5756,13 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                180 => {
+                183 => {
                     self.field_made(f::RIGHT);
                     self.close()?;
-                    st = 179;
+                    st = 182;
                     continue 'run;
                 }
-                181 => {
+                184 => {
                     let arm: usize;
                     match self.word() {
                         w::X_54 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::COUNT_47 | w::MIN_48 | w::MAX_49 | w::SUM_50 | w::MEAN_51 | w::JOIN_52 | w::LPAREN_10 => {
@@ -5827,13 +5781,12 @@ impl<L: Layout> P<'_, L> {
                     match arm {
                         0 => {
                             self.numeric()?;
-                            st = 182;
+                            st = 185;
                             continue 'run;
                         }
                         1 => {
-                            stack.push(u64::from(self.word));
-                            stack.push(182);
-                            st = 184;
+                            stack.push(185 | u64::from(self.word) << 32);
+                            st = 187;
                             continue 'run;
                         }
                         _ => {
@@ -5841,13 +5794,13 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                182 => {
+                185 => {
                     match self.word() {
                         w::STAR_24 | w::SLASH_29 | w::PERCENT_30 => {
                             self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
                             self.multiplicative()?;
                             self.field_made(f::OPERATOR);
-                            stack.push(183);
+                            stack.push(186);
                             st = 25;
                             continue 'run;
                         }
@@ -5857,53 +5810,52 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                183 => {
+                186 => {
                     self.field_made(f::RIGHT);
                     self.close()?;
-                    st = 182;
+                    st = 185;
                     continue 'run;
                 }
-                184 => {
+                187 => {
                     self.deeper()?;
                     match self.word() {
                         w::X_54 => {
                             self.word_leaf_as::<false, false>(w::X_54, k::WILDCARD)?;
-                            st = 13;
-                            continue 'run;
-                        }
-                        w::MINUS_27 => {
-                            stack.push(13);
                             st = 27;
                             continue 'run;
                         }
+                        w::MINUS_27 => {
+                            stack.push(27);
+                            st = 28;
+                            continue 'run;
+                        }
                         w::AT_23 => {
-                            stack.push(13);
-                            st = 185;
+                            stack.push(27);
+                            st = 188;
                             continue 'run;
                         }
                         w::LBRACE_20 => {
-                            stack.push(13);
-                            st = 35;
+                            stack.push(27);
+                            st = 36;
                             continue 'run;
                         }
                         w::COUNT_47 => {
                             self.word_leaf_as::<false, false>(w::COUNT_47, k::VARIABLE)?;
                             match self.word() {
                                 w::COLON_15 => {
-                                    stack.push(13);
-                                    st = 41;
+                                    stack.push(27);
+                                    st = 42;
                                     continue 'run;
                                 }
                                 w::LPAREN_10 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(39);
-                                    st = 31;
+                                    stack.push(40);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 _ => {
-                                    st = 13;
+                                    st = 27;
                                     continue 'run;
                                 }
                             }
@@ -5955,46 +5907,44 @@ impl<L: Layout> P<'_, L> {
                             }
                             match arm {
                                 0 => {
-                                    stack.push(13);
-                                    st = 74;
+                                    stack.push(27);
+                                    st = 75;
                                     continue 'run;
                                 }
                                 1 => {
                                     self.mark_empty_parens()?;
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(39);
-                                    st = 31;
+                                    stack.push(40);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 2 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(119);
-                                    st = 90;
+                                    stack.push(122);
+                                    st = 93;
                                     continue 'run;
                                 }
                                 _ => {
-                                    st = 13;
+                                    st = 27;
                                     continue 'run;
                                 }
                             }
                         }
                         w::LPAREN_10 => {
-                            stack.push(13);
-                            st = 120;
+                            stack.push(27);
+                            st = 123;
                             continue 'run;
                         }
                         _ if self.at_string() => {
                             self.tk_as::<false, false>(self.at_string(), k::STRING, 0)?;
-                            st = 13;
+                            st = 27;
                             continue 'run;
                         }
                         _ if self.at_code_literal() => {
                             self.tk_as::<false, false>(self.at_code_literal(), k::CODE_LITERAL, 0)?;
-                            st = 13;
+                            st = 27;
                             continue 'run;
                         }
                         _ if self.at_identifier() => {
@@ -6003,22 +5953,20 @@ impl<L: Layout> P<'_, L> {
                                 w::LPAREN_10 => {
                                     self.wrap(k::CALL, f::FUNCTION)?;
                                     self.retype_moved(k::IDENTIFIER);
-                                    stack.push(u64::from(self.word));
-                                    stack.push(39);
-                                    st = 31;
+                                    stack.push(40);
+                                    st = 32;
                                     continue 'run;
                                 }
                                 w::COLON_15 => {
                                     self.wrap(k::NAMED_ARGUMENT, f::NAME)?;
                                     self.retype_moved(k::IDENTIFIER);
                                     self.word_skip_as::<false, false>(w::COLON_15)?;
-                                    stack.push(u64::from(self.word));
-                                    stack.push(40);
+                                    stack.push(41);
                                     st = 19;
                                     continue 'run;
                                 }
                                 _ => {
-                                    st = 13;
+                                    st = 27;
                                     continue 'run;
                                 }
                             }
@@ -6028,16 +5976,15 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                185 => {
+                188 => {
                     self.open(UNSET);
                     self.retag(k::FUNCTOR_CALL);
                     self.word_skip_as::<true, false>(w::AT_23)?;
                     self.tk_as::<false, false>(self.at_identifier(), k::IDENTIFIER, f::FUNCTION)?;
                     match self.word() {
                         w::LPAREN_10 => {
-                            stack.push(u64::from(self.word));
-                            stack.push(128);
-                            st = 31;
+                            stack.push(131);
+                            st = 32;
                             continue 'run;
                         }
                         _ => {
@@ -6046,7 +5993,7 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 }
-                186 => {
+                189 => {
                     self.field_made(f::ARGUMENT);
                     st = 4;
                     continue 'run;

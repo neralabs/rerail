@@ -44,6 +44,51 @@ struct Rl<'g, 'a> {
     hot: HashSet<String>,
     /// The levels whose call saves its caller's refused marks: a level that refuses one, or one a hot rule calls.
     saves: HashSet<String>,
+    /// The levels whose own code may change the level's word (`remember`, a reading), which their call saves with the
+    /// place it returns to: another leaves its caller's word as it found it.
+    words: HashSet<String>,
+}
+
+/// Whether `g` holds a reading (`Gram::Reread`), itself or inside.
+fn rereads(g: &Gram) -> bool {
+    match g {
+        Gram::Reread { .. } => true,
+        Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().any(rereads),
+        Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => rereads(a),
+        Gram::Wrap { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => rereads(body),
+        _ => false,
+    }
+}
+
+/// The levels whose own code (theirs and the rules that are no level it reaches) takes a `remember` choice or reads a
+/// reading: what may set the level's word (`Rl::words`).
+fn word_setters(g: &G<'_>) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for &level in g.rules.keys().filter(|n| g.nested(n)) {
+        let mut seen: HashSet<&str> = HashSet::from([level]);
+        let mut todo = vec![level];
+        let mut sets = false;
+        while let Some(r) = todo.pop() {
+            let body = match g.rules.get(r) {
+                Some(Stmt::Node { body, .. } | Stmt::Choice { body, .. }) => body,
+                _ => continue,
+            };
+            sets |= rereads(body);
+            let mut ns = Vec::new();
+            names(body, &mut ns);
+            for n in ns {
+                if g.remember.iter().any(|r| r == n) {
+                    sets = true;
+                } else if g.mark_of(n).is_none() && g.rules.contains_key(n) && !g.nested(n) && seen.insert(n) {
+                    todo.push(n);
+                }
+            }
+        }
+        if sets {
+            out.insert(level.to_owned());
+        }
+    }
+    out
 }
 
 /// The rules `g` names (`Gram::Sym`), itself and inside.
@@ -197,13 +242,15 @@ impl Rl<'_, '_> {
                     let (set, keep, _) = self.g.call_asks(rest, rule)?;
                     let _ = write!(out, "self.stack.push(self.asks);\nself.asks = self.asks & {keep:#x} | {set:#x};\n");
                 }
-                if self.word {
-                    out.push_str("self.stack.push(u64::from(self.word));\n");
-                }
                 if self.refusing && self.saves.contains(n.as_str()) {
                     let _ = write!(out, "self.stack.push(u64::from(self.refusing));\nself.refusing = {:#x};\n", self.g.refusing.get(n.as_str()).copied().unwrap_or(0));
                 }
-                let _ = write!(out, "self.stack.push({ret});\n{}", go(self.level(n)?));
+                // The word, where the level may change it, in one entry with the place: one push a call.
+                if self.word && self.words.contains(n.as_str()) {
+                    let _ = write!(out, "self.stack.push({ret} | u64::from(self.word) << 32);\n{}", go(self.level(n)?));
+                } else {
+                    let _ = write!(out, "self.stack.push({ret});\n{}", go(self.level(n)?));
+                }
                 out
             }
             Gram::Sym(n) => {
@@ -335,13 +382,15 @@ impl Rl<'_, '_> {
         if nested {
             end.push_str("self.depth -= 1;\n");
         }
-        end.push_str("self.marked = false;\n// The place the call returns to, then what a level's saved of its caller's.\nlet ret = self.stack.pop().unwrap_or(0) as usize;\n");
+        end.push_str("self.marked = false;\n// The place the call returns to, then what a level's saved of its caller's.\n");
+        if nested && self.word && self.words.contains(n) {
+            end.push_str("let top = self.stack.pop().unwrap_or(0);\nlet ret = top as u32 as usize;\nself.word = (top >> 32) as u16;\n");
+        } else {
+            end.push_str("let ret = self.stack.pop().unwrap_or(0) as usize;\n");
+        }
         // A level's call saved its caller's state too, a rule's that is no level only the place.
         if nested && self.refusing && self.saves.contains(n) {
             end.push_str("self.refusing = self.stack.pop().unwrap_or(0) as u32;\n");
-        }
-        if nested && self.word {
-            end.push_str("self.word = self.stack.pop().unwrap_or(0) as u16;\n");
         }
         if nested && self.asks {
             end.push_str("self.asks = self.stack.pop().unwrap_or(0);\n");
@@ -357,8 +406,9 @@ impl Rl<'_, '_> {
 pub(super) fn tier2(x: &Input<'_>) -> Result<(String, u32), String> {
     let g = G::new(x);
     let (hot, saves) = refusers(&g);
+    let words = word_setters(&g);
     let all = (0..x.marks.len()).filter(|&m| g.asks(m)).count();
-    let rl = Rl { g: &g, places: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), levels: RefCell::new(BTreeMap::new()), calls: RefCell::new(HashMap::new()), busy: RefCell::new(HashSet::new()), asks: all > 0, word: !g.remember.is_empty(), refusing: !g.refusing.is_empty(), hot, saves };
+    let rl = Rl { g: &g, places: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), levels: RefCell::new(BTreeMap::new()), calls: RefCell::new(HashMap::new()), busy: RefCell::new(HashSet::new()), asks: all > 0, word: !g.remember.is_empty(), refusing: !g.refusing.is_empty(), hot, saves, words };
     // The root: its node, its body, then the file's end, at place 0.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (body, whole, padded) = match g.rules[root] {

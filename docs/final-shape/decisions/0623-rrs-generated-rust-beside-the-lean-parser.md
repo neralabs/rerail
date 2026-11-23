@@ -478,3 +478,14 @@ In the same hour the lean parser's parse was 28.4–29.2 ms and its lexer 14.7�
 tier 1 was 23.7–24.8 ms (`rr-aot-speed`). `rr_aot_against_jit`'s own tier 1 figure (45 ms) is a test build's: with
 `test-hooks` tier 1 also runs stage 1's walk and asserts each region's opener against it, so its tier 1 is no measure of
 the product's.
+
+### A level's call is one push where it leaves the word alone
+
+A level's call saved its caller's word (`remember`) on the stack, then the place it returns to: two pushes and two pops
+a call. A level whose own code takes no `remember` choice and reads no reading (`records::word_setters`: its body and
+the rules that are no level it reaches) leaves the word as it found it, so its call saves only the place, as the lean
+parser's call is its return address. Where a level may change the word, the word goes in the place's entry
+(`ret | word << 32`): one push either way. `.rerail`: 12 calls of 67 save a word; Kotlin remembers none.
+
+Side by side on spark1, three rounds in turns: tier 2 35.2–37.7 ms before, 35.7–37.2 ms after, the same within the
+host's swing; the step is kept as the lean parser's shape. All tests pass.
