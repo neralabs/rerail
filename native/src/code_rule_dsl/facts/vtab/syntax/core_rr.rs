@@ -998,9 +998,10 @@ impl CoreRows {
     pub(super) fn def_digests(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
         let (_, own) = digests(f, dialect, false, true);
+        let mut text = [0u8; 64];
         for (local, id, n) in p.node_ids() {
             if local == 0 || is_unit(dialect.family, dialect.name(f, id)) {
-                self.def_digest.push([n, string(&hex(&own[id as usize])) as i64]);
+                self.def_digest.push([n, string(hex_into(&own[id as usize], &mut text)) as i64]);
             }
         }
     }
@@ -1102,9 +1103,12 @@ pub fn single_metavars(pattern: &str) -> Vec<String> {
 pub fn digests(f: &Facts, dialect: &Dialect, trees: bool, units: bool) -> (Vec<[u8; 32]>, Vec<[u8; 32]>) {
     use sha2::{Digest, Sha256};
     // Children have greater ids than their parent (preorder), so one pass from the end sees them first.
-    let mut hash: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
+    // Each only when asked for: a node's 32 bytes each (the measure of `tree_digest` alone allocated both, and a
+    // child list and 32 strings a node: 252 MB of heap for 2 reads at the M3's 300-file run, ab220).
+    let mut hash: Vec<[u8; 32]> = if trees { vec![[0; 32]; f.len()] } else { Vec::new() };
     // The same hash, each nested unit standing for its kind and name.
-    let mut own: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
+    let mut own: Vec<[u8; 32]> = if units { vec![[0; 32]; f.len()] } else { Vec::new() };
+    let mut kept: Vec<u32> = Vec::new();
     let unit = |id: u32| is_unit(dialect.family, dialect.name(f, id));
     let placeholder = |id: u32| -> [u8; 32] {
         let mut h = Sha256::new();
@@ -1116,18 +1120,18 @@ pub fn digests(f: &Facts, dialect: &Dialect, trees: bool, units: bool) -> (Vec<[
     };
     for id in (0..f.len() as u32).rev() {
         let kind = dialect.name(f, id);
-        let kept: Vec<u32> = f
-            .children(id)
-            .iter()
-            .copied()
-            .filter(|&c| {
-                let k = dialect.name(f, c);
-                !is_comment(k) && (f.named(c) || !is_punct(k))
-            })
-            .collect();
+        kept.clear();
+        kept.extend(f.children(id).iter().copied().filter(|&c| {
+            let k = dialect.name(f, c);
+            !is_comment(k) && (f.named(c) || !is_punct(k))
+        }));
         if kind == "parenthesized_expression" && kept.len() == 1 {
-            hash[id as usize] = hash[kept[0] as usize];
-            own[id as usize] = own[kept[0] as usize];
+            if trees {
+                hash[id as usize] = hash[kept[0] as usize];
+            }
+            if units {
+                own[id as usize] = own[kept[0] as usize];
+            }
             continue;
         }
         let interpolated = dialect.family == Family::Python
@@ -1179,5 +1183,15 @@ pub fn digests(f: &Facts, dialect: &Dialect, trees: bool, units: bool) -> (Vec<[
 
 /// A digest's symbol: its 32 bytes in hex.
 pub fn hex(h: &[u8; 32]) -> String {
-    h.iter().map(|b| format!("{b:02x}")).collect()
+    hex_into(h, &mut [0; 64]).to_owned()
+}
+
+/// A digest's symbol written into `out`, no allocation: its 32 bytes in hex.
+pub fn hex_into<'a>(h: &[u8; 32], out: &'a mut [u8; 64]) -> &'a str {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    for (i, b) in h.iter().enumerate() {
+        out[2 * i] = DIGITS[usize::from(b >> 4)];
+        out[2 * i + 1] = DIGITS[usize::from(b & 15)];
+    }
+    std::str::from_utf8(out).expect("hex digits")
 }

@@ -813,8 +813,9 @@ impl TreeDigest {
         }
         let p = at.p();
         let (hash, _) = super::core_rr::digests(&p.facts, dialect, true, false);
+        let mut text = [0u8; 64];
         for (local, id, _) in p.node_ids() {
-            each(local, &super::core_rr::hex(&hash[id as usize]));
+            each(local, super::core_rr::hex_into(&hash[id as usize], &mut text));
         }
     }
 }
@@ -845,9 +846,10 @@ impl TapeRows for TreeDigest {
     fn row(&self, at: &At, d: &Self::Doc, _: &Marked, item: u32, _: u32, out: &mut [i64]) {
         let p = at.p();
         let atoms = d.get_or_init(|| {
-            let mut hexes: Vec<String> = vec![String::new(); p.len() as usize];
-            Self::hexes(at, &mut |l, h| hexes[l as usize] = h.to_owned());
-            let texts: Vec<&str> = hexes.iter().map(String::as_str).collect();
+            // Every node's 64 digits in one buffer, each a slice of it.
+            let mut digits: Vec<u8> = vec![b'0'; 64 * p.len() as usize];
+            Self::hexes(at, &mut |l, h| digits[64 * l as usize..64 * (l as usize + 1)].copy_from_slice(h.as_bytes()));
+            let texts: Vec<&str> = digits.chunks_exact(64).map(|d| std::str::from_utf8(d).expect("hex digits")).collect();
             let syms = at.batch.atoms.intern_all(&texts).expect("a document's digests interned");
             // copy: derived (each node's subtree's digest, interned: the tape holds the subtree, not its hash)
             Cells::build(p.block(), syms.len().max(1), |out: &mut [u32]| {
