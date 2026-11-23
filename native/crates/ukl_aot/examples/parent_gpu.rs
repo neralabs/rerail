@@ -1,6 +1,8 @@
 //! `kernels/f16_parent.uglykl` on the process's GPU (Metal on macOS, CUDA on Linux; `RERAIL_GPU=cpu` the UKL CPU
-//! backend), against the host's read on every node: `parent_group`, one launch of each group's steps and the chase
-//! of their links in its threadgroup memory. It is timed by the GPU's own clock: the median of 9 runs after a first,
+//! backend), against the host's read on every node: `parent_step` then `parent_link` (two launches stacked on the
+//! queue, a chain past 7 links reported as a corrupt tape, and a chain of 8 on the device to show it), and
+//! `parent_group`, one launch of each group's steps and the chase of their links in its threadgroup memory; the
+//! spike `parent_back` beside them. Each is timed by the GPU's own clock: the median of 9 runs after a first,
 //! the tape and view uploaded once before (not timed).
 //!
 //! `cargo run -p rerail-ukl-aot --profile profiling --example parent_gpu [records|numbers|random] [SIZE]`
@@ -64,7 +66,8 @@ fn main() {
     // SAFETY: the view is plain u32s.
     let words = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(&d.view).cast::<u32>(), size_of::<rerail_clif::view::TapeView>() / 4) };
     let (tb, vb) = (buffer_of(&bytes).unwrap(), buffer_of(words).unwrap());
-    let out = alloc::<u32>(n).unwrap();
+    // Each node's word, then `parent_link`'s fault word, 0 (no other kernel writes it).
+    let out = buffer_of(&vec![0u32; n + 1]).unwrap();
     let groups = [n.div_ceil(256) as u64];
     let args = Args { nodes: n as u32, pad0: 0, pad1: 0, pad2: 0 };
     let back = p.function("parent_back").unwrap();
@@ -106,6 +109,17 @@ fn main() {
     time("group", &|q| {
         launch(q, f).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).value("args", &args).run(&groups, &[256]).unwrap();
     });
+    // The two launches, stacked on the queue: each node's step, then the chase of the links; the fault word 0 before them,
+    // `out`'s word past the nodes' after every run (a test document is no corrupt tape).
+    let (step, link) = (p.function("parent_step").unwrap(), p.function("parent_link").unwrap());
+    let steps = alloc::<u32>(n).unwrap();
+    time("two", &|q| {
+        launch(q, step).buffer("tape", &tb).buffer("view", &vb).buffer("steps", &steps).value("args", &args).run(&groups, &[256]).unwrap();
+        launch(q, link).buffer("steps", &steps).buffer("out", &out).value("args", &args).run(&groups, &[256]).unwrap();
+    });
+    if let Err(e) = parent::fault(read::<u32>(&out, n + 1)[n]) {
+        panic!("{backend}: two: {e}");
+    }
     // The look-back, one launch: its threads fill `out` themselves (it holds the group kernel's parents before each
     // run), each run its own counts (zeros) and `seen` (all ones, as if every group published), made on the host.
     let counts: Vec<_> = (0..10).map(|_| buffer_of(&[0u32; 128]).unwrap()).collect();
@@ -116,4 +130,16 @@ fn main() {
         run.set(run.get() + 1);
         launch(q, back).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).buffer("seen", s).buffer("counts", c).value("args", &args).run(&groups, &[256]).unwrap();
     });
+    // A chain of 8 links (node 9's, past 7: no tape the writer made) on the device: the corruption, reported.
+    {
+        let chain: Vec<u32> = [parent::NONE, 0].into_iter().chain((2..10u32).map(|i| (1 << 31) | (i - 1))).collect();
+        let (s, o) = (buffer_of(&chain).unwrap(), buffer_of(&vec![0u32; chain.len() + 1]).unwrap());
+        let a = Args { nodes: chain.len() as u32, pad0: 0, pad1: 0, pad2: 0 };
+        launch(&q, link).buffer("steps", &s).buffer("out", &o).value("args", &a).run(&[1], &[256]).unwrap();
+        q.flush().await_().unwrap();
+        match parent::fault(read::<u32>(&o, chain.len() + 1)[chain.len()]) {
+            Err(e) if e.node == 9 => println!("{backend}: a chain of 8 links: {e}"),
+            r => panic!("{backend}: a chain of 8 links not reported as node 9's: {r:?}"),
+        }
+    }
 }

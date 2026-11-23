@@ -573,6 +573,42 @@ and the old kernels kept as `tmp/parent-two/`, not in the tree):
   code in the kernel halves the launch's speed (0.281 against 0.151 ms on records), within 22% of a plain copy's.
   Without it the two launches would be 0.457, 0.103 and 0.050 ms: behind `parent_group` on records only.
 
+### The two launches are the parent kernel again, a chain past 7 a corrupt tape (the user's, 2026-11-22)
+
+The user: "isn't 'at most 7 hops' a guarantee of the format?", then "go ahead / if we hit more than 7, this should
+be reported as tape corruption somehow; it should not be a silent failure".
+
+- **It is the format's.** A leaf's slot names the next node's parent on every K-th sibling (K = 8,
+  `rerail_tape_format::f16`, decision 0156 §1), and the writer sets it in one place (`writer16.rs`, a sibling index
+  a multiple of K); a first child's step is its parent (the node before). A chain from sibling m runs back to the
+  first multiple of 8 or the first child: at most 7 links on any tape the writer made.
+- **`parent_step` and `parent_link` are back, the links with no walk.** A node still linked after 7 is a corrupt
+  tape: its word NONE, and `out`'s word past the nodes' (0 before the launch) 1 more than one such node. The host's
+  runner (`parent::run_two`, `parent::run_link`) returns it as an error, `parent::Corrupt` ("corrupt format 16
+  tape: node N's parent is more than 7 links of siblings back"); the GPU harness reads the word after every run and
+  runs a chain of 8 on the device (`a_chain_past_seven_links_is_a_corrupt_tape` on the CPU, at groups of 8, 20 and
+  256: a chain of 7 a parent, of 8 the error).
+- **The report is a word of `out`, by a plain store.** A store to a second buffer, under the chase's condition,
+  made the launch as slow as the walk had (records 0.278 against 0.150 ms; numbers 0.040 against 0.026): an atomic
+  max, a plain store, a SIMD group's vote and one lane's store, a store after `out[i]`'s, all the same. Binding the
+  buffer and not writing it, or choosing NONE by a select, cost nothing; the store to `out[nodes]` costs nothing
+  (0.150 ms). Why the second buffer costs this on Metal is not known; measured only.
+- **`rs.rs`**: a store of each lane's value at one address (C's threads racing, any one's value standing) is each
+  running lane's in lane order, the last one's left (`a_store_of_lanes_values_at_one_address_is_a_running_lanes`);
+  it was refused.
+
+| | records (1.4 M nodes) | numbers (200 k) | random (107 k) |
+|---|---|---|---|
+| Metal, an M3: two launches | 0.454 ms | 0.101 ms | 0.047 ms |
+| Metal, an M3: `parent_group` | 0.399 ms | 0.127 ms | 0.064 ms |
+| CPU, Rust at 8 lanes: two launches (instr, cycles a node) | 72, 20 | 344, 84 | 93, 32 |
+| CPU, Rust at 8 lanes: `parent_group` | 114, 29 | 381, 97 | 134, 40 |
+| CPU: the host's scalar read | 105, 17 | 482, 95 | 132, 33 |
+
+(This Mac at load 7–13.) The two launches are faster than `parent_group` on both backends, but for records on
+Metal (14% behind); `parent_group` stays beside them, and its walk past a group's links is a real case (its walk
+past 7 is not reported: the host's read, `clif_f16_parent`, walks any chain).
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one

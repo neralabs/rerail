@@ -1494,6 +1494,21 @@ fn the_f16_parent_kernels_rust_is_the_checked_in_one() {
     assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
 }
 
+/// `f16_parent`'s parent kernel of two launches as Rust at 8 lanes, as checked in: each node's step, then the chase of
+/// the links, a chain past 7 reported in `out`'s word past the nodes' (no atomic, no second buffer), never walked.
+#[test]
+fn the_f16_parent_two_launches_rust_is_the_checked_in_one() {
+    for kernel in ["parent_step", "parent_link"] {
+        let rust = f16_parent_rust(kernel).unwrap_or_else(|e| panic!("{}", e.0));
+        let at = format!("{}/../ukl_aot/src/{kernel}_w8.rs", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("UKL_RS_WRITE").is_some() {
+            std::fs::write(&at, &rust).unwrap();
+        }
+        let kept = std::fs::read_to_string(&at).unwrap_or_default();
+        assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+    }
+}
+
 /// A barrier only parts a kernel's function at its top: one in a branch (or in a function it calls) is refused.
 #[test]
 fn a_barrier_not_at_the_top_of_the_kernels_function_is_refused() {
@@ -1518,6 +1533,23 @@ fn the_f16_parent_back_kernels_rust_is_the_checked_in_one() {
     }
     let kept = std::fs::read_to_string(&at).unwrap_or_default();
     assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+}
+
+/// A store of each lane's value at one address is C's race of the threads: each running lane's in lane order, the
+/// last running lane's left, one of the values C allows (rerail-ukl-aot's `a_chain_past_seven_links_is_a_corrupt_tape`
+/// runs one).
+#[test]
+fn a_store_of_lanes_values_at_one_address_is_a_running_lanes() {
+    let text = "#include <ukl/backend.h>\n\
+        DEFINE_KERNEL2(t, race, RWBUFFER, uint32_t, c, \"[1]\", GID0, uint32_t, i, )\n\
+        { if (i < 64u && (i & 1u) != 0u) c[0] = i; }\n";
+    let src = super::source("/<kernels>/race.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("race").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}", e.0));
+    let stores = rust.lines().filter(|l| l.contains(".write_unaligned(vgetq_lane_u32::<")).count();
+    assert!(stores >= 8 && rust.contains("if vgetq_lane_u32::<3>("), "not each running lane's store in turn:\n{rust}");
 }
 
 /// An atomic add of one value at one address is each running thread's, as in C: one atomic of the value times the

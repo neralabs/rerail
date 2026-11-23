@@ -52,6 +52,66 @@ pub struct ParentArgs {
     pub pad2: u32,
 }
 
+/// A corrupt tape: a node whose chain of links to previous siblings goes past 7 (format 16 names the parent on every
+/// 8th sibling, so no tape its writer made holds one). `node` is one such node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Corrupt {
+    pub node: u32,
+}
+
+impl std::fmt::Display for Corrupt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "corrupt format 16 tape: node {}'s parent is more than 7 links of siblings back (every 8th names it)", self.node)
+    }
+}
+
+impl std::error::Error for Corrupt {}
+
+/// `parent_link`'s fault word (`out`'s past the nodes', 0 before the launch): the corrupt tape it names, if any.
+pub fn fault(word: u32) -> Result<(), Corrupt> {
+    if word == 0 { Ok(()) } else { Err(Corrupt { node: word - 1 }) }
+}
+
+/// `f16_parent`'s parent kernel of two launches as Rust (`step`: `parent_step`, `link`: `parent_link`) over `d`'s
+/// nodes in groups of `block` threads: each node's step into `steps`, then each linked node's chase of them. Each
+/// node's parent, or the tape's corruption (a chain past 7).
+///
+/// # Safety
+///
+/// `step` and `link` are kernels of `parent_step`'s and `parent_link`'s arguments.
+pub unsafe fn run_two(step: crate::Kernel, link: crate::Kernel, d: &Doc, block: u32) -> Result<Vec<u32>, Corrupt> {
+    let mut steps = vec![0u32; d.nodes() as usize];
+    let (tp, vp) = (d.bytes.as_ptr(), (&raw const d.view).cast::<u8>());
+    let sp = steps.as_mut_ptr().cast::<u8>().cast_const();
+    let (counts, first): (*const u32, u32) = (std::ptr::null(), 0);
+    let args = ParentArgs { nodes: d.nodes(), pad0: 0, pad1: 0, pad2: 0 };
+    let p = |x: &*const u8| (&raw const *x).cast::<u8>();
+    let (a, c, f) = ((&raw const args).cast::<u8>(), (&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>());
+    unsafe { crate::launch(step, &[p(&tp), p(&vp), p(&sp), a, c, f], d.nodes().div_ceil(block), block) };
+    unsafe { run_link(link, &steps, block) }
+}
+
+/// `parent_link` alone, as Rust, over `steps` (each node's step: its parent, or `LINKED | j`) in groups of `block`
+/// threads: each node's parent, or the corruption of a chain past 7.
+///
+/// # Safety
+///
+/// `link` is a kernel of `parent_link`'s arguments.
+pub unsafe fn run_link(link: crate::Kernel, steps: &[u32], block: u32) -> Result<Vec<u32>, Corrupt> {
+    let n = steps.len() as u32;
+    // Each node's word, then the fault word, 0.
+    let mut out = vec![0u32; steps.len() + 1];
+    let sp = steps.as_ptr().cast::<u8>();
+    let op = out.as_mut_ptr().cast::<u8>().cast_const();
+    let (counts, first): (*const u32, u32) = (std::ptr::null(), 0);
+    let args = ParentArgs { nodes: n, pad0: 0, pad1: 0, pad2: 0 };
+    let p = |x: &*const u8| (&raw const *x).cast::<u8>();
+    let (a, c, f) = ((&raw const args).cast::<u8>(), (&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>());
+    unsafe { crate::launch(link, &[p(&sp), p(&op), a, c, f], n.div_ceil(block), block) };
+    let word = out.pop().unwrap_or(0);
+    fault(word).map(|()| out)
+}
+
 /// `f16_parent`'s kernel of one launch as Rust (`parent_group`) over `d`'s nodes in groups of `block` threads (at
 /// most 256, its threadgroup memory's steps): each group's steps, then each linked node's chase of them. Each
 /// node's parent.

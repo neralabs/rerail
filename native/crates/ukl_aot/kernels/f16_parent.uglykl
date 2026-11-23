@@ -1,18 +1,23 @@
 // A test kernel of rerail-ukl-aot (decision 0567 step 3): every node's parent over a format 16 tape in place, by one
 // step a node and a chase of the steps' links, no walk over the slots. A walk's only state is its node, so a node
 // whose first step (`clif_f16_parent_step`, `<ukl/reads/tape_f16.h>`) goes on from a previous sibling's node `j` has
-// `j`'s parent.
+// `j`'s parent. Each node's step is one word, its parent or (`LINKED`) the node `j` it is linked to (a node's number
+// is below 2^31: a node takes 2 bytes of the tape at least, whose offsets are u32, so the high bit is free; NONE is a
+// parent).
 //
-// One launch, groups of 256 threads, every thread one node: each node's step as one word in its group's threadgroup
-// memory, its parent or (`LINKED`) the node `j` it is linked to (a node's number is below 2^31: a node takes 2 bytes
-// of the tape at least, whose offsets are u32, so the high bit is free; NONE is a parent). A barrier, then each
-// linked node follows its links there, at most K - 1 = 7 (every K-th sibling names the parent); a link that leaves
-// the group, or a chain still linked after 7 (a slot no tape's), is the walk from that link's node, whose parent it
-// is (`clif_f16_parent`). A node's slot is read once, and a node not linked reads only its own word.
+// The parent kernel is two launches, stacked on one queue (no host between them):
 //
-// (Two launches, the steps through device memory, and pointer jumping, rounds that read and write two arrays of
-// every node, were slower on an M3's Metal: the traffic, not the threads. On the CPU the barrier parts the kernel's
-// Rust in two phases, each chunk's first before any chunk's second: `rerail-ukl-vec`'s `rs.rs`.)
+// - `parent_step`: each node's step into `steps`, a word a node.
+// - `parent_link`: each linked node follows its links through `steps`, at most K - 1 = 7: format 16 names the parent
+//   on every K-th sibling (K = 8, `rerail_tape_format::f16`), so no tape its writer made holds a longer chain. A node
+//   still linked after 7 is a corrupt tape, reported, never walked: `out`'s word past the nodes' (0 before the
+//   launch) is then 1 more than one such node, and that node's word NONE. The launch reads only `steps` and writes
+//   only `out`: a walk in it, which no tape takes, halved its speed on an M3, and so did a store to a second buffer
+//   for the report (0567).
+//
+// `parent_group` is one launch: the steps in its group's threadgroup memory, a barrier, the chase there; a link that
+// leaves the group, or a chain still linked after 7, is the walk from that link's node (`clif_f16_parent`). On the
+// CPU the barrier parts its Rust in two phases, each chunk's first before any chunk's second (`rs.rs`).
 
 #define CLIF_VIEW_SPACE UKL_GLOBAL
 #include <ukl/backend.h>
@@ -22,6 +27,34 @@
 
 typedef struct ParentArgs { uint32_t nodes, pad0, pad1, pad2; } ParentArgs;
 UKL_REFLECT_STRUCT(ParentArgs, nodes, pad0, pad1, pad2)
+
+DEFINE_KERNEL2(f16, parent_step,
+               ROBUFFER, uint8_t,    tape,  "[bytes]",
+               ROBUFFER, uint32_t,   view,  "[words]",
+               RWBUFFER, uint32_t,   steps, "[args.nodes]",
+               ARGS,     ParentArgs, args,  ,
+               GID0,     uint32_t,   i,     )
+{
+  if(i>=args.nodes)return;
+  uint64_t r=clif_f16_parent_step(tape,view,i);
+  steps[i]=(r&CLIF_T_LINK)!=0u?LINKED|(uint32_t)r:(uint32_t)r;
+}
+
+DEFINE_KERNEL2(f16, parent_link,
+               ROBUFFER, uint32_t,   steps, "[args.nodes]",
+               RWBUFFER, uint32_t,   out,   "[args.nodes + 1]",
+               ARGS,     ParentArgs, args,  ,
+               GID0,     uint32_t,   i,     )
+{
+  if(i>=args.nodes)return;
+  uint32_t r=steps[i];
+  for(uint32_t k=0u;k<7u&&r!=CLIF_T_NONE&&(r&LINKED)!=0u;k++)
+    r=steps[r&(LINKED-1u)];
+  bool corrupt=r!=CLIF_T_NONE&&(r&LINKED)!=0u;
+  out[i]=corrupt?CLIF_T_NONE:r;
+  if(corrupt)
+    out[args.nodes]=i+1u;
+}
 
 DEFINE_KERNEL2(f16, parent_group,
                ROBUFFER, uint8_t,    tape,  "[bytes]",

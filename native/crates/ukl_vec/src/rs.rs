@@ -2338,6 +2338,17 @@ impl Em<'_> {
             V::S(s, _) => {
                 let x = match x {
                     V::S(e, xm) => conv(e, *xm, m),
+                    _ if m.bytes() == 4 => {
+                        // Lanes' values at one address: C's threads race there, and any one's value stands. Each
+                        // running lane's in turn, in lane order, so the last running lane's is left.
+                        let l = self.lanes(x, m)?;
+                        let cur = cx.cur.clone();
+                        for j in 0..self.w {
+                            let on = self.on(&cur, j);
+                            self.line(format!("if {on} {{ ({s} as *mut u32).write_unaligned(vgetq_lane_u32::<{}>({l}[{}])); }}", j % 4, j / 4));
+                        }
+                        return Ok(());
+                    }
                     _ => {
                         // An address this pass takes for one value, a call's result a later pass may find each lane's.
                         self.pending.get_or_insert_with(|| "a store of lanes' values at one address".into());

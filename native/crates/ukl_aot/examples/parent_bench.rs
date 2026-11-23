@@ -59,6 +59,8 @@ fn main() {
                 #[cfg(target_arch = "aarch64")]
                 "ukl" => out = unsafe { parent::run(rerail_ukl_aot::parent_group_w8::parent_group_w8, &d, 256) },
                 #[cfg(target_arch = "aarch64")]
+                "two" => out = unsafe { parent::run_two(rerail_ukl_aot::parent_step_w8::parent_step_w8, rerail_ukl_aot::parent_link_w8::parent_link_w8, &d, 256) }.unwrap(),
+                #[cfg(target_arch = "aarch64")]
                 "back" => out = unsafe { parent::run_back(rerail_ukl_aot::parent_back_w8::parent_back_w8, &d, 256) },
                 _ => {}
             }
@@ -81,6 +83,7 @@ fn main() {
             out
         });
         time("ukl w8", &d, &want, || unsafe { parent::run(rerail_ukl_aot::parent_group_w8::parent_group_w8, &d, 256) });
+        time("ukl two w8", &d, &want, || unsafe { parent::run_two(rerail_ukl_aot::parent_step_w8::parent_step_w8, rerail_ukl_aot::parent_link_w8::parent_link_w8, &d, 256) }.unwrap());
         time("ukl back w8", &d, &want, || unsafe { parent::run_back(rerail_ukl_aot::parent_back_w8::parent_back_w8, &d, 256) });
     }
 }

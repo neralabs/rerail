@@ -142,12 +142,31 @@ fn the_kernels_rust_parent_is_the_hosts() {
         for block in [8, 20, 32, 36, 256] {
             let group = unsafe { crate::parent::run(crate::parent_group_w8::parent_group_w8, &d, block) };
             let back = unsafe { crate::parent::run_back(crate::parent_back_w8::parent_back_w8, &d, block) };
-            for (name, got) in [("group", group), ("back", back)] {
+            let two = unsafe { crate::parent::run_two(crate::parent_step_w8::parent_step_w8, crate::parent_link_w8::parent_link_w8, &d, block) }
+                .unwrap_or_else(|e| panic!("two: {}, groups of {block}: {e}", d.name));
+            for (name, got) in [("two", two), ("group", group), ("back", back)] {
                 if let Some(i) = (0..want.len()).find(|&i| got[i] != want[i]) {
                     panic!("{name}: {} ({} nodes), groups of {block}: node {i}'s parent {} (the host's {})", d.name, want.len(), got[i], want[i]);
                 }
             }
         }
+    }
+}
+
+/// A chain of links past 7 (no tape format 16's writer made) is the tape's corruption, reported, not a parent: a
+/// chain of 7 is a parent, one of 8 the error naming its node, at groups that end in part of a chunk.
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn a_chain_past_seven_links_is_a_corrupt_tape() {
+    use crate::parent::{Corrupt, NONE, run_link};
+    const LINKED: u32 = 1 << 31;
+    // Node 0 the root, 1 its child, 2 to 9 each linked to the node before: node 8 is 7 links from 1, node 9 is 8.
+    let steps: Vec<u32> = [NONE, 0].into_iter().chain((2..10).map(|i| LINKED | (i - 1))).collect();
+    for block in [8, 20, 256] {
+        let ok = unsafe { run_link(crate::parent_link_w8::parent_link_w8, &steps[..9], block) };
+        assert_eq!(ok, Ok(vec![NONE, 0, 0, 0, 0, 0, 0, 0, 0]), "groups of {block}");
+        let bad = unsafe { run_link(crate::parent_link_w8::parent_link_w8, &steps, block) };
+        assert_eq!(bad, Err(Corrupt { node: 9 }), "groups of {block}");
     }
 }
 
