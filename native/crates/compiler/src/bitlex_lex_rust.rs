@@ -5349,9 +5349,11 @@ fn absorb(a: &str, b: &str) -> String {
         let ds = parts_of(c, " || ");
         !(ds.len() > 1 && cs.iter().any(|o| o != c && ds.contains(o)))
     }).collect();
+    // A disjunction `parts_of` took out of its parentheses goes back in them: `&&` binds closer.
+    let conj = |c: &str| if parts_of(c, " || ").len() > 1 { format!("({c})") } else { c.to_owned() };
     let mut out = String::new();
     for (i, c) in keep.iter().enumerate() {
-        out = if i == 0 { (*c).to_owned() } else { format!("({out} && {c})") };
+        out = if i == 0 { conj(c) } else { format!("({out} && {})", conj(c)) };
     }
     out
 }

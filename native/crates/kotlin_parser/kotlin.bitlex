@@ -167,8 +167,6 @@ escape "a byte above 0x7f outside a comment" when code & high
 # `*` closes there, which `block_end` (a `/` not two bytes after a `/*`) does not say.
 escape "a block comment nested past 3 levels" when c_deep
 escape "a `*/*/` in a block comment" when f_block & slash & prev(star) & prev(slash & prev(star), 2)
-# The scanner's semicolon is the line break; a `;` that starts a line, or ends the file, comes
-# with one: not read yet.
 
 # --- Words -------------------------------------------------------------------------------------
 
@@ -232,9 +230,14 @@ mask close_at   = lf_end | code & rbrace & (prev(after_semi) | prev(code & semic
 # The first token of each line, and the bytes of a line from an `@` or a visibility modifier
 # that starts it (an accessor's, `acc_word`).
 mask line_first = solid & prev(fill(lf & code, solid))
-escape "a `;` that starts a line" when code & semicolon & line_first
-# No solid byte after it, at the file's last byte.
-escape "a `;` that ends the file" when last_byte & fill(code & semicolon, solid)
+# The scanner's semicolon is the line break; before a `;`, the `;` is (`semi`'s `unless before`).
+# A `;` after a line break and a comment (the scanner's semicolon is of no width at the line
+# break, and a `;` takes no statement's place): the lean parser refuses it. Through `code` alone,
+# so the token loop tests it: a region's first byte (`r_first`) is a comment's where it is a `/`,
+# as no string starts with one.
+mask r_first    = ~code & prev(code)
+mask cmt_on_lf  = r_first & slash & prev(fill(lf & code, code & ~ws | r_first))
+escape "a `;` after a line break and a comment" when code & semicolon & prev(fill(cmt_on_lf, code & ~ws | r_first & ~slash))
 # `get` or `set` first on a line: an accessor, which tree-sitter reads as a declaration of its own
 # after a property's; not read yet.
 # A getter or setter on a line of its own: a mark a class body's member takes. Elsewhere (a
@@ -373,7 +376,7 @@ mark by_lf      = lf & code, before "by"
 # it settles nothing and asks no question, so a comment after the annotation is the next
 # token's node's. Before `semi`, so a level that takes it takes it before it ends at `semi`;
 # taken, it passes `semi`.
-mark ann_lf     = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, passes semi
+mark ann_lf     = lf & code unless after ";", unless before ";" | "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, passes semi
 # A block comment first on the line after a line break where a semicolon may come (not after a
 # `;`): the lean lexer's `asi` reads it through, then decides by the token after it, as `semi`'s
 # questions do at that token (decision 0451), the comment's record holding `semi`'s bit of its
@@ -401,7 +404,7 @@ mark ann_lf     = lf & code unless after ";", unless before "}" | "," | "." | ".
 #   it is the last before the token, neither dropped nor lost, though a line break is before it.
 # - Before `catch` or `finally`, the scanner inserts a semicolon of no width before the
 #   comment, which the parser of a `try` never asks: the comment is the `try`'s, as any other.
-mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally", unless before "else" ~"->", unless before "else" end, end, settles, ends,
+mark semi       = lf & code unless after ";", unless before ";" | "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally", unless before "else" ~"->", unless before "else" end, end, settles, ends,
   drops after ~";" multiline_comment with semi before starting "aew",
   drops unless after multiline_comment before "as" | "where",
   drops unless after multiline_comment before "else" ~"->",

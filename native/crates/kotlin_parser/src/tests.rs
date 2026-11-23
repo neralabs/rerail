@@ -908,6 +908,29 @@ fn nested_block_comments_are_the_lean_parsers() {
     ]);
 }
 
+/// A `;` after a line break is the semicolon, not the line break (decision 0626), as the lean
+/// lexer's `asi` returns the `;` it finds: first on a line, at the file's end, in a block and a
+/// class body, after a comment on the line before, alone on its line.
+#[test]
+fn a_semicolon_after_a_line_break_is_the_lean_parsers() {
+    same(&[
+        "val a = 1\n;val b = 2\n",
+        "val a = 1;\n",
+        "val a = 1 ;\n",
+        "val a = 1\n;\n",
+        "fun f() {\n    a()\n    ;b()\n}\n",
+        "class A {\n    val a = 1\n    ;val b = 2\n}\n",
+        "import a.b\n;val c = 1\n",
+        "package a\n;\n",
+        "val a = 1 // c\n;val b = 2\n",
+        "val a = 1 /* c */\n;val b = 2\n",
+        "val a = 1\n// c\nval b = 2;\n",
+        "val a = 1\n\"s\" // c\n;val b = 2\n",
+        "val a = 1\n// c\n\"s\";\n",
+        "val a = \"x/y\"\n;val b = 2\n",
+    ]);
+}
+
 /// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
@@ -923,6 +946,10 @@ fn what_the_grammar_does_not_read_is_refused() {
         "/* /* /* /* /* deep */ */ */ */ */\nval x = 1\n",
         "/*/**/*/\nval x = 1\n",
         "/* /* c\n",
+        // A `;` after a line break and a comment: the lean parser refuses it too.
+        "val a = 1\n// c\n;val b = 2\n",
+        "val a = 1\n/* c */\n;val b = 2\n",
+        "val a = 1\n/* c */ ;val b = 2\n",
         "/* open\n",
         "val x = 1d\n",
         "val x = 1.5L\n",
