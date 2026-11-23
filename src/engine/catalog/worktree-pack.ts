@@ -50,7 +50,7 @@ interface RuleFile {
 }
 
 /** A rule file's stamp: it changes when the file is edited, replaced or becomes something other than a regular file. */
-const fileStamp = (info: Stats): string => `${info.mtimeMs}:${info.size}:${info.mode}`;
+const ruleFileStamp = (info: Stats): string => `${info.mtimeMs}:${info.size}:${info.mode}`;
 
 /**
  * The names in the rules folder that the catalog reads, the `.json` and `.rerail` entries, in the order it reads them: a
@@ -71,7 +71,7 @@ function ruleFiles(checkoutRoot: string): readonly RuleFile[] | undefined {
     return ruleNames(readdirSync(directory)).map(name => {
       const path = join(directory, name);
       const info = lstatSync(path);
-      return { name, path, stamp: fileStamp(info), regular: info.isFile(), size: info.size };
+      return { name, path, stamp: ruleFileStamp(info), regular: info.isFile(), size: info.size };
     });
   } catch {
     return undefined;
@@ -87,7 +87,7 @@ export async function worktreeRulesStamp(checkoutRoot: string): Promise<string> 
   try {
     if (!(await lstat(join(checkoutRoot, ".rerail"))).isDirectory() || !(await lstat(directory)).isDirectory()) return "";
     const names = ruleNames(await readdir(directory));
-    const stamps = await Promise.all(names.map(async name => `${name}\0${fileStamp(await lstat(join(directory, name)))}`));
+    const stamps = await Promise.all(names.map(async name => `${name}\0${ruleFileStamp(await lstat(join(directory, name)))}`));
     return stamps.join("\n");
   } catch {
     return "";
