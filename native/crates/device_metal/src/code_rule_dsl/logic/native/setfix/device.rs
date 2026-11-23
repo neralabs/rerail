@@ -3319,11 +3319,17 @@ fn device_rounds(deltas: &[(&Plan, &JoinRule, usize)], base: usize, heads: &[usi
             None => direct_batch(None)?,
         };
         batch.arena_floor(floor);
+        batch.again_on_rewrap();
         let mut kept = Kept::default();
         // Encoded, not launched, on an error: dropped with its batch, which nothing ran.
         let templates = encode_program(deltas, heads, store, names, named, shared, lp, &live, &mut sizes, &mut sums, &logs, side, &round, union_floor, &mut batch, &mut kept)?;
         let (t0, w0) = (Instant::now(), thread_cpu());
         let mut done = batch.finish().map_err(e)?;
+        if done.rewrapped {
+            // Its encoding grew a head's block past the wrap its relations had bound (`Done::rewrapped`): nothing
+            // ran, and it is encoded again, every bind of the grown wrap.
+            continue;
+        }
         while done.yielded {
             tally(lp.rep, &done);
             batch.resume().map_err(e)?;

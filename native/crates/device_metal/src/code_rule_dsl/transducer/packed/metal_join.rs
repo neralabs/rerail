@@ -620,6 +620,20 @@ impl DevRel {
     }
 
     /// Makes the buffers a view's reads reach by address resident in `pass` (none for a relation).
+    /// The buffer a job binds its relation by: its block's wrap as it is now (`Block::device_buffer`), not the one it
+    /// was made with. A block an index's room grew past its wrap is wrapped anew, at another device address; on G15
+    /// (the M3) one launch's writes through one wrap are not seen through another (`launch`), so every bind of a
+    /// block takes its newest. Words (no block) bind their own buffer.
+    fn wrap(&self) -> Result<Buffer, Error> {
+        match &self.home {
+            Some(home) => {
+                let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+                Ok(home.block.device_buffer(device)?)
+            }
+            None => Ok(self.buffer.buffer.clone()),
+        }
+    }
+
     pub(in crate::code_rule_dsl) fn resident_in(&self, pass: &Pass) {
         if let Some(v) = &self.view {
             let buffers: Vec<&Buffer> = v.buffers.iter().collect();
@@ -837,15 +851,15 @@ impl Rows<'_> {
     /// Its buffer, its rows (a table's capacity, a relation's rows), and its descriptors' offsets: the relation's
     /// and its rows' (0 for a table, column-major).
     /// A table's values' offset in its buffer too (`Table::lies`; 0 for a relation).
-    fn of(&self) -> (Buffer, usize, u64, u64, u64) {
+    fn of(&self) -> Result<(Buffer, usize, u64, u64, u64), Error> {
         match self {
             Rows::Table(t) => {
                 let (b, at) = t.lies();
-                (b, t.room(), 0, 0, at)
+                Ok((b, t.room(), 0, 0, at))
             }
             Rows::Rel(r) => {
                 assert!(r.at != 0, "a copy of words, not a relation");
-                (r.buffer.buffer.clone(), r.rows, r.at, r.rows_at(), 0)
+                Ok((r.wrap()?, r.rows, r.at, r.rows_at(), 0))
             }
         }
     }
@@ -922,9 +936,9 @@ pub(in crate::code_rule_dsl) struct DevIndex {
     /// No index, a walk on the tape: 1 the `child` view probed by its parent, the parent's children (`by_parent`); 2 a
     /// `has` axis probed by its node, 3 by its ancestor (`by_has`); 0 an index.
     walk: u32,
-    /// Its block's buffer, taken once the index has its room: what its builder and its probes bind. A block with no
-    /// slab of its own is bound by a wrap of its used extent (`Block::device_buffer`), which a buffer taken before the
-    /// index was added (its relation's) does not reach.
+    /// Its block's buffer, taken once the index has its room, and its builder's bind; the block is held by it. Its
+    /// probes bind the block's wrap as it is when they are encoded (`DevRel::wrap`): a block grown past its wrap
+    /// since, by another index's room, is wrapped anew.
     buffer: Held,
     /// The relation's columns it is by (`Batch::index`'s `cols`), to find it again (`Batch::again`).
     cols: Vec<usize>,
@@ -944,11 +958,6 @@ impl DevIndex {
     /// The relation its probes read: `rel`, or the copy it was built on.
     pub(in crate::code_rule_dsl) fn of<'a>(&'a self, rel: &'a DevRel) -> &'a DevRel {
         self.moved.as_deref().unwrap_or(rel)
-    }
-
-    /// The buffer its probes bind: its block's, which reaches the index.
-    fn bound(&self) -> &Buffer {
-        &self.buffer.buffer
     }
 }
 
@@ -1324,6 +1333,10 @@ pub(in crate::code_rule_dsl) struct Done {
     /// claims wanted. The batch's next programs' arenas are twice that at least (`Batch::arena_floor`).
     pub(in crate::code_rule_dsl) arena_full: bool,
     pub(in crate::code_rule_dsl) arena_wanted: usize,
+    /// Whether a program was not launched because it reached a block through two of its wraps (`launch`): its
+    /// encoding grew the block past the wrap it had bound. Nothing of it ran; its caller encodes it again
+    /// (`Batch::again_on_rewrap`), whose binds take the grown wrap.
+    pub(in crate::code_rule_dsl) rewrapped: bool,
 }
 
 /// Work encoded into one submission at a time, committed at `commit_open` and `finish`; every submission runs on the
@@ -1354,6 +1367,9 @@ pub(in crate::code_rule_dsl) struct Batch {
     gated: bool,
     /// The program a round's end yielded, and the phase it goes on from (`resume`).
     resume: Option<(Kit, usize)>,
+    /// Whether its caller encodes a program again that reached a block through two wraps (`Done::rewrapped`);
+    /// else such a program fails the batch.
+    again_on_rewrap: bool,
     /// The atoms directory its text kernels read symbols' bytes through (decision 0478 step 2e), made the first
     /// time a stage reads a symbol's text and made again when the store's atoms have grown past it.
     atoms: Option<std::rc::Rc<DevAtoms>>,
@@ -1419,6 +1435,7 @@ impl Batch {
             programs: Vec::new(),
             gated: false,
             resume: None,
+            again_on_rewrap: false,
             committed: Vec::new(),
             done: Done::default(),
             dummy: Held::new(64)?,
@@ -1611,6 +1628,21 @@ impl Batch {
                 eprintln!("rerail: a device batch refused: {o}");
             }
             crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "a batch whose rows ran past a relation's (its strata on the CPU)", overran.len() as u64);
+            failed += 1;
+        }
+        if self.done.rewrapped && failed == 0 && self.again_on_rewrap {
+            // Nothing of it ran (`launch`): its indexes' rooms go back, and its caller encodes it again.
+            for b in self.building.drain(..) {
+                let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
+                b.forget(&mut held);
+                // SAFETY: no work of the batch's ran; no reader was given the index outside it.
+                unsafe { (*b.rel).give_back_index(&b.home.block, &b.room) };
+            }
+            self.gated = false;
+            return Ok(std::mem::take(&mut self.done));
+        }
+        if self.done.rewrapped {
+            eprintln!("rerail: a join program reached a block through two of its wraps (its encoding grew the block): not run");
             failed += 1;
         }
         if failed > 0 {
@@ -1816,6 +1848,36 @@ impl Batch {
         Ok(DevIndex { index: room.index as u32, rows: n, moved: None, built: true, walk: 0, buffer, cols: Vec::new() })
     }
 
+    /// Commits the open work as a submission of its own (`submit_open`), and opens the next pass with what was resident
+    /// on it: the work after reaches those buffers too (a view's tapes, by address).
+    fn cut(&mut self) -> Result<(), Error> {
+        let residents = self.pass.as_ref().map(|p| p.residents()).unwrap_or_default();
+        self.submit_open()?;
+        crate::code_rule_dsl::prof::count_named("device.batch cut: a block reached through a grown wrap".into(), 1);
+        let pass = self.open()?;
+        for (b, write) in &residents {
+            if *write {
+                pass.use_read_write(b);
+            } else {
+                pass.use_read(&[b]);
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether the open program (its jobs queued, and those in its program) reaches `b`'s memory through another wrap
+    /// of it (another device address).
+    fn reached_otherwise(&self, b: &Buffer) -> Result<bool, Error> {
+        let at = address(b)?;
+        let others = self.program.uses.iter().chain(self.queued.iter().flat_map(|j| j.uses.iter()));
+        for (u, _) in others {
+            if u.contents() == b.contents() && address(u)? != at {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// An index's build into its room (`room`, in the block `buffer` binds), queued in the batch's level: every index of
     /// the level bucketed in one launch, sorted in one sort, placed in one launch (`flush`), before the level's stages,
     /// which probe it. A live relation's (`DevRel::live`) is of its rows as the device claimed them when it runs, at
@@ -1886,7 +1948,7 @@ impl Batch {
                 let rel = index.map_or(rel, |ix| ix.of(rel));
                 bind_right(&mut stage, rel, index);
                 rel.resident_in(self.open()?);
-                index.map_or(&rel.buffer.buffer, |ix| ix.bound()).clone()
+                rel.wrap()?
             }
             None => self.dummy.buffer.clone(),
         };
@@ -1950,7 +2012,7 @@ impl Batch {
         stage.agg[0] = rest.len() as u32;
         let rel = right.1.map_or(right.0, |ix| ix.of(right.0));
         bind_right(&mut stage, rel, right.1);
-        let a = right.1.map_or(&rel.buffer.buffer, |ix| ix.bound()).clone();
+        let a = rel.wrap()?;
         let fbuf = self.screen(&mut stage, screen);
         let mut probes = [Stage::default(); WITNESS_PROBES];
         let mut bufs: Vec<Buffer> = Vec::new();
@@ -1960,7 +2022,7 @@ impl Batch {
             bind_right(&mut b, rel, *ix);
             b.cap_in = left.room() as u32;
             probes[k] = b;
-            bufs.push(ix.map_or(&rel.buffer.buffer, |ix| ix.bound()).clone());
+            bufs.push(rel.wrap()?);
         }
         // The bindings with a witness out as they are: a semi-join's scatter (mode 1 writes the binding alone).
         let mut write = stage;
@@ -2134,8 +2196,8 @@ impl Batch {
             Rows::Rel(r) => Some(r),
             Rows::Table(_) => None,
         });
-        let (s, src_rows, src_at, _, s_off) = src.of();
-        let (d, dst_rows, _, dst_rows_at, d_off) = dst.of();
+        let (s, src_rows, src_at, _, s_off) = src.of()?;
+        let (d, dst_rows, _, dst_rows_at, d_off) = dst.of()?;
         let src_from = match src {
             Rows::Rel(r) => r.from,
             Rows::Table(_) => 0,
@@ -2332,6 +2394,12 @@ impl Batch {
         Ok(())
     }
 
+    /// Its programs that reach a block through two of its wraps (`Done::rewrapped`) are encoded again by its caller,
+    /// not failed.
+    pub(in crate::code_rule_dsl) fn again_on_rewrap(&mut self) {
+        self.again_on_rewrap = true;
+    }
+
     /// The program the last `finish` found yielded (`Done::yielded`) launched again from where it stopped: its rounds
     /// go on in the same buffers. False when none yielded.
     pub(in crate::code_rule_dsl) fn resume(&mut self) -> Result<bool, Error> {
@@ -2354,7 +2422,7 @@ impl Batch {
             None => bound(map.home)?,
         };
         let mut job = Job::new(JobKind::Lattice, 0, Stage::default());
-        job.desc.s = job.reach(&r.buffer.buffer, 0, false)?;
+        job.desc.s = job.reach(&r.wrap()?, 0, false)?;
         job.desc.vc = job.reach(&hb.buffer, 0, true)?;
         job.desc.g = job.reach(&ob.buffer, 0, false)?;
         for d in [&mut job.desc.l, &mut job.desc.a, &mut job.desc.totals, &mut job.desc.h, &mut job.desc.o, &mut job.desc.counters, &mut job.desc.v] {
@@ -2406,6 +2474,20 @@ impl Batch {
         });
         if after {
             self.flush()?;
+        }
+        // A block the job reaches through another wrap than the open program does: grown since (an index's room, a
+        // head's rows), wrapped anew at another device address (`Block::device_buffer`). One launch reaching a block
+        // through two wraps misreads on G15 (`launch`): the work encoded so far commits as a launch of its own, which
+        // this job, and the rest, run after on the one queue. A batch that encodes its program again instead
+        // (`again_on_rewrap`) is cut by none: its program is one launch of rounds.
+        if !self.again_on_rewrap {
+            let mut cut = false;
+            for (u, _) in &job.uses {
+                cut |= self.reached_otherwise(u)?;
+            }
+            if cut {
+                self.cut()?;
+            }
         }
         self.queued.push(job);
         Ok(())
@@ -2693,6 +2775,24 @@ impl Batch {
 
     /// One launch of `join_run` over `kit`'s program from its phase `first` (its first, or where a round yielded).
     fn launch(&mut self, kit: Kit, first: usize) -> Result<(), Error> {
+        // One wrap of each block a launch reaches (decision 0353: a block lies in one place, and the device reads it
+        // there through one address). A block wrapped for the device is wrapped again, longer, at another address, when
+        // it grows past its wrap (`Block::device_buffer`): a program whose encoding grew a block it had bound reaches
+        // its memory at two addresses. On the M3 Max's GPU (G15) two such addresses are not coherent within a launch:
+        // a round's rows and its relation's length written through one were not seen through the other until the
+        // launch ended, and a fixpoint appended its last round's rows again each round after. Not run.
+        // Read alone through both, it is read as it was before the launch: only a block written through one is refused.
+        let mut wraps: std::collections::HashMap<usize, (u64, bool, bool)> = std::collections::HashMap::new();
+        for (b, write) in &kit.uses {
+            let at = address(b)?;
+            let w = wraps.entry(b.contents() as usize).or_insert((at, false, false));
+            w.1 |= w.0 != at;
+            w.2 |= *write;
+        }
+        if wraps.values().any(|&(_, two, written)| two && written) {
+            self.done.rewrapped = true;
+            return Ok(());
+        }
         let nphases = kit.phase_items.len();
         let ctl = Words::zeroed(10 + 2 * nphases)?;
         let slots = Words::zeroed(kit.capacity)?;
@@ -2954,7 +3054,7 @@ impl At<'_> {
                 assert!(slot < w.len, "a word past its words");
                 job.reach(&w.buffer.buffer, 4 * slot as u64, write)
             }
-            At::Len(r) => job.reach(&r.buffer.buffer, r.rows_at() + ROWS_LEN, write),
+            At::Len(r) => job.reach(&r.wrap()?, r.rows_at() + ROWS_LEN, write),
         }
     }
 }
@@ -4244,7 +4344,7 @@ impl Batch {
         job.desc.a = job.reach(&places.buffer, 0, true)?;
         job.desc.totals = job.reach(&chosen.buffer, 0, true)?;
         job.desc.h = job.reach(&flags.buffer, 0, true)?;
-        job.desc.s = job.reach(&r.buffer.buffer, 0, true)?;
+        job.desc.s = job.reach(&r.wrap()?, 0, true)?;
         job.desc.vc = job.reach(&hb.buffer, 0, true)?;
         job.desc.o = job.reach(&delta.buffer.buffer, 0, true)?;
         job.desc.counters = job.reach(&counters.buffer.buffer, 0, true)?;
