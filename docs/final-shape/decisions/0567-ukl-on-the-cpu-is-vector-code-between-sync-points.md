@@ -529,6 +529,28 @@ Tried next, at the user's word ("please test it"): a thread keeps the group it l
 and a hop into it reads `out[j]` without the bit's load and fence. Correct on both; on the M3 0.584, 0.173 and
 0.085 ms, the same as without it. The per-hop bit and fence are not the cost, and the change is not kept.
 
+### Where the look-back's time goes (the user's: "find what is expensive in the shape", 2026-11-22)
+
+Measured by switches in the kernel (each part taken out in turn; kept as `tmp/parent-back-ablation-switches.patch`,
+not in the tree) and by counters of its hops, on the M3 and in the Rust at 8 lanes.
+
+- **The hops mostly hit.** Records: 595 k nodes chase, 940 k hops, 52 k into a group not yet published (5.6%), 660 k
+  into the reader's own group, 199 k into the one before. Numbers: 688 k hops, 14 k unpublished (2%), 625 k own
+  group. Random: 96 k hops, 8 k unpublished (8%), 68 k own group. No chain is walked past 7.
+- **On the GPU the shared-word protocol is free.** The publish's fence and barrier, the fence after the bit and an
+  atomic read of `out[j]`, all three taken out: 0.553, 0.200, 0.087 ms against 0.560, 0.205, 0.090.
+- **On the GPU the fill is the cost, as a barrier, not as bytes.** An empty launch is 0.109, 0.020, 0.013 ms; the
+  fill alone 0.236, 0.056, 0.044. Neither its fence nor every wave's read of `finished` costs anything (a hot word
+  read by every lane, read-write or read-only: the empty launch's time). But 2,613, 1,912 and 1,938 waves (a
+  GPU's resident waves) find the fill unfinished and wait: the launch's whole first round idles until 5.5 KB is
+  cleared. That is the separate clear's cost again (0.121 ms on records): a grid-wide sync point, whatever it
+  writes. Without it the launch would be about 0.43, 0.15, 0.05 ms against `parent_group`'s 0.400, 0.127, 0.064.
+- **On the CPU the fill is 13 instructions a node** (each thread's own counter loads and mask work, a chunk of 8
+  at a time), **and its result known only at run time 17 more** (the walk for a fill that ran out stays in the
+  node's code): 106, 402, 132 instructions a node; the fill run but `filled` then true, 89, 399, 117; no fill, 76,
+  384, 104 (`parent_group` 114, 380, 134). Without the fill the look-back is the CPU's best on records and random;
+  on numbers every form is the step's own cost (slot width 1: each escaped step a search of the side list).
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one
