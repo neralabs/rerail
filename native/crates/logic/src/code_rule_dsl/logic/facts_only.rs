@@ -310,21 +310,23 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/base.rs", "SelectedStore"),
     // The engine's own answers (`rr::lower::World`), listed once from its constants.
     ("code_rule_dsl/logic/rr/lower.rs", "ENGINE"),
+    // A run's plans, its derived values and its observed keeps, in the run's context (decisions 0038, 0113, 0301),
+    // each made empty at the run's start and gone at its end: across runs, plans and their feedback are the store's
+    // kept facts (`compiled_plans`, `plan_feedback`, t33 step 6), a session's runs' as a new process's (t33 step 3).
+    ("code_rule_dsl/logic/plan/base.rs", "KeptPlans"),
+    ("code_rule_dsl/logic/derived.rs", "Memoized"),
+    ("code_rule_dsl/logic/plan/keeps.rs", "ObservedAt"),
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
-const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
-    ("code_rule_dsl/logic/plan/base.rs", "KeptPlans", "6"),
-    ("code_rule_dsl/logic/derived.rs", "Memoized", "6"),
-    // The observed keeps, a handle a strand enters (decision 0113 §4).
-    ("code_rule_dsl/logic/plan/keeps.rs", "ObservedAt", "6"),
-];
+const NOT_YET_MAPS: &[(&str, &str, &str)] = &[];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised. 7 when a rule pattern's compiled form and a
 /// production's counter name were found to be state, no cache (t33 step 7, 2026-11-21); 6 when the prepared
 /// programs' pointers became kept facts, the map their in-memory copy (t33 step 2); 5 when a session's runs became
 /// its store's, a session its store and connections (t33 step 3); 3 when a session's plans and derived values between
 /// its runs went with it (t33 step 3: its runs read the store's plans, and derive their own values, as a new
-/// process's do).
-const NOT_YET_MAPS_PIN: usize = 3;
+/// process's do); 0 when a run's plans, derived values and observed keeps were found to be the run's alone (no
+/// session's copy of them is kept between runs: t33 steps 3 and 6).
+const NOT_YET_MAPS_PIN: usize = 0;
 
 /// The crate's source files, tests left out: a test may make what it likes.
 fn files(under: &Path, out: &mut Vec<PathBuf>) {
