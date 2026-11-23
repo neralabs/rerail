@@ -291,6 +291,31 @@ slot address made at the first lowering, in the first alternative's blocks, and 
 alternatives read that register undefined: a segfault in safe code (rerail-rr-parser). The
 lowering now makes those addresses at the arm's start (`guard_slots` in `lower.rs`).
 
+### 18. A share's paths are the disk's, to std and to the program's own C calls
+
+A share's mount is a disk folder under another path, but std answered its paths as virtual files:
+a synthetic stat (no device, inode or change time; a folder's time 0), and listings from the
+loader. A program's own C library calls (`libc::open`) found nothing there at all, since the mount
+is on no disk. So the observer (`rerail-observe`) recorded stats from std, then listed the same
+folders with `open` and `getattrlistbulk`, found no folder, and named every entry changed:
+`tests_corpus`'s `the_run_after_a_cold_one_with_tape_values_writes_nothing` failed under Relax
+with "the observer forgot answers its listings named changed" over the 22 paths of
+`docs/rule-syntax/lib`.
+
+Now a path under a folder mount is the disk's:
+
+- **std** (Unix) hands every syscall the disk path (`run_path_with_cstr`, by the loader's
+  `relax_vfs_folder_disk`), so stats, listings and descriptors are the disk's. `canonicalize`
+  gives the mount's path back (`relax_vfs_folder_virtual`), so the paths a program holds, and its
+  stores' keys, stay the mount's. A program's current folder in the mount stays virtual.
+- **The program's own C calls** that take a path (`open`, `openat`, `creat`, `opendir`, `stat`,
+  `lstat`, `fstatat`, `access`, `statfs`, `readlink`, `mkdir`, `unlink`, `rename`, `getattrlist`,
+  `clonefile`, ...) are the run's interposers (`libc_paths.rs`, beside `domain_res.rs`'s), which
+  replace a mount path argument by its disk path.
+
+The fork's `tests/share_folder_disk` checks both under `RELAX_SHARE`. It fails on the earlier
+Relax with "a synthetic stat: ino 0 dev 0 ctime 0". Windows' std keeps a folder mount virtual.
+
 ## Sharing between worktrees
 
 Relax keys a run's stores by the workspace's absolute paths. Under `RELAX_SHARE=rerail` every

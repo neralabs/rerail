@@ -168,10 +168,10 @@ index 695fd45e..a07f3ade 100644
              "x86_64-unknown-linux-gnu"
          }
 diff --git a/libs/relax/base/src/vfs.rs b/libs/relax/base/src/vfs.rs
-index 0ee9ff6f..7c6b0e13 100644
+index 0ee9ff6f..b5a4a61c 100644
 --- a/libs/relax/base/src/vfs.rs
 +++ b/libs/relax/base/src/vfs.rs
-@@ -1355,6 +1355,17 @@ pub extern "C" fn relax_vfs_list(p: *const u8, n: usize, out: *mut *const u8, ou
+@@ -1355,6 +1355,42 @@ pub extern "C" fn relax_vfs_list(p: *const u8, n: usize, out: *mut *const u8, ou
      }
  }
  
@@ -181,6 +181,31 @@ index 0ee9ff6f..7c6b0e13 100644
 +pub extern "C" fn relax_vfs_shown(p: *const u8, n: usize, out: *mut *const u8, out_len: *mut usize) -> u64 {
 +    let Ok(text) = std::str::from_utf8(unsafe { std::slice::from_raw_parts(p, n) }) else { return 0 };
 +    match shown(text) {
++        std::borrow::Cow::Owned(s) => hold(s.into_bytes(), out, out_len),
++        std::borrow::Cow::Borrowed(_) => 0,
++    }
++}
++
++/// The disk path of `p` under a folder mount (a shared workspace's checkout, SHARE), held until
++/// `relax_vfs_release`; 0 when `p` is under none. A folder mount names a disk folder under another
++/// path, nothing more: std answers its paths from the disk (std fs_vfs.rs `folder_disk`), so a
++/// program's stats, listings and descriptors are the disk's, as are those of the libc calls it makes
++/// itself (jit.rs `relax_libc_path`).
++pub extern "C" fn relax_vfs_folder_disk(p: *const u8, n: usize, out: *mut *const u8, out_len: *mut usize) -> u64 {
++    if !ANY_FOLDER.load(Ordering::Acquire) {
++        return 0;
++    }
++    match folder_path(unsafe { path_arg(p, n) }) {
++        Some(disk) => hold(disk.to_string_lossy().into_owned().into_bytes(), out, out_len),
++        None => 0,
++    }
++}
++
++/// `p` (a disk path) under the folder mount that names its folder ([`virtual_of`]), held until
++/// `relax_vfs_release`; 0 when no folder mount names it. A path std hands back (`canonicalize`) is
++/// the mount's, as the paths the program was given are.
++pub extern "C" fn relax_vfs_folder_virtual(p: *const u8, n: usize, out: *mut *const u8, out_len: *mut usize) -> u64 {
++    match virtual_of(unsafe { path_arg(p, n) }) {
 +        std::borrow::Cow::Owned(s) => hold(s.into_bytes(), out, out_len),
 +        std::borrow::Cow::Borrowed(_) => 0,
 +    }
@@ -205,6 +230,53 @@ index a83c0c4f..f44a8d24 100644
          return None;
      }
      home().ok().map(|dir| SharedCode { dir, stale: Vec::new() })
+diff --git a/libs/relax/compiler/src/domain_res.rs b/libs/relax/compiler/src/domain_res.rs
+index 80e81389..5e9426e7 100644
+--- a/libs/relax/compiler/src/domain_res.rs
++++ b/libs/relax/compiler/src/domain_res.rs
+@@ -255,19 +255,19 @@ mod unix {
+     // registers.
+     #[cfg(not(all(target_vendor = "apple", target_arch = "aarch64")))]
+     pub extern "C" fn open(path: *const c_char, flags: c_int, mode: c_uint) -> c_int {
+-        note_fd(unsafe { sys::open(path, flags, mode) })
++        note_fd(unsafe { sys::open(crate::libc_paths::disk(path, 0), flags, mode) })
+     }
+     #[cfg(all(target_vendor = "apple", target_arch = "aarch64"))]
+     pub extern "C" fn open(path: *const c_char, flags: c_int, _2: u64, _3: u64, _4: u64, _5: u64, _6: u64, _7: u64, mode: c_uint) -> c_int {
+-        note_fd(unsafe { sys::open(path, flags, mode) })
++        note_fd(unsafe { sys::open(crate::libc_paths::disk(path, 0), flags, mode) })
+     }
+     #[cfg(not(all(target_vendor = "apple", target_arch = "aarch64")))]
+     pub extern "C" fn openat(dir: c_int, path: *const c_char, flags: c_int, mode: c_uint) -> c_int {
+-        note_fd(unsafe { sys::openat(dir, path, flags, mode) })
++        note_fd(unsafe { sys::openat(dir, crate::libc_paths::disk(path, 0), flags, mode) })
+     }
+     #[cfg(all(target_vendor = "apple", target_arch = "aarch64"))]
+     pub extern "C" fn openat(dir: c_int, path: *const c_char, flags: c_int, _3: u64, _4: u64, _5: u64, _6: u64, _7: u64, mode: c_uint) -> c_int {
+-        note_fd(unsafe { sys::openat(dir, path, flags, mode) })
++        note_fd(unsafe { sys::openat(dir, crate::libc_paths::disk(path, 0), flags, mode) })
+     }
+     fn fcntl_inner(fd: c_int, cmd: c_int, arg: usize) -> c_int {
+         #[cfg(any(target_os = "linux", target_os = "android"))]
+@@ -291,7 +291,7 @@ mod unix {
+     }
+ 
+     pub extern "C" fn creat(path: *const c_char, mode: c_uint) -> c_int {
+-        note_fd(unsafe { sys::creat(path, mode) })
++        note_fd(unsafe { sys::creat(crate::libc_paths::disk(path, 0), mode) })
+     }
+     pub extern "C" fn socket(domain: c_int, ty: c_int, protocol: c_int) -> c_int {
+         note_fd(unsafe { sys::socket(domain, ty, protocol) })
+@@ -331,7 +331,8 @@ mod unix {
+         unsafe { sys::close(fd) }
+     }
+     pub extern "C" fn opendir(path: *const c_char) -> *mut c_void {
+-        let d = unsafe { sys::opendir(path) };
++        // (a folder mount's path as the disk names it: libc_paths.rs)
++        let d = unsafe { sys::opendir(crate::libc_paths::disk(path, 0)) };
+         if !d.is_null() {
+             note(Res::Dir(d as usize));
+         }
 diff --git a/libs/relax/compiler/src/inspect/instrument.rs b/libs/relax/compiler/src/inspect/instrument.rs
 index 88412a53..068bad81 100644
 --- a/libs/relax/compiler/src/inspect/instrument.rs
@@ -291,7 +363,7 @@ index 64fedf3a..2d5b07bf 100644
      use super::{Raw, MAX_FRAMES};
  
 diff --git a/libs/relax/compiler/src/jit.rs b/libs/relax/compiler/src/jit.rs
-index 1205bea4..8dc2944b 100644
+index 1205bea4..e278d1d9 100644
 --- a/libs/relax/compiler/src/jit.rs
 +++ b/libs/relax/compiler/src/jit.rs
 @@ -5136,6 +5136,9 @@ unsafe fn materialize_fault() {
@@ -325,15 +397,30 @@ index 1205bea4..8dc2944b 100644
              AF_OK => unmade.remove(&c),
              why => unmade.insert(c, why),
          };
-@@ -25865,6 +25873,7 @@ pub(crate) fn loader_symbol(name: &[u8]) -> Option<usize> {
+@@ -25865,6 +25873,9 @@ pub(crate) fn loader_symbol(name: &[u8]) -> Option<usize> {
          b"relax_vfs_read" => Some(crate::vfs::relax_vfs_read as *const () as usize),
          b"relax_vfs_list" => Some(crate::vfs::relax_vfs_list as *const () as usize),
          b"relax_vfs_mounts" => Some(crate::vfs::relax_vfs_mounts as *const () as usize),
 +        b"relax_vfs_shown" => Some(crate::vfs::relax_vfs_shown as *const () as usize),
++        b"relax_vfs_folder_disk" => Some(crate::vfs::relax_vfs_folder_disk as *const () as usize),
++        b"relax_vfs_folder_virtual" => Some(crate::vfs::relax_vfs_folder_virtual as *const () as usize),
          b"relax_vfs_release" => Some(crate::vfs::relax_vfs_release as *const () as usize),
          b"relax_vfs_edit" => Some(crate::vfs::relax_vfs_edit as *const () as usize),
          b"relax_vfs_note" => Some(crate::reload::relax_vfs_note as *const () as usize),
-@@ -26983,6 +26992,27 @@ fn prefront_slot(front: &FrontShared, id: u32) -> bool {
+@@ -26165,7 +26176,11 @@ fn lookup_interposer(link: &str) -> Option<u64> {
+         "Sleep" => Some(crate::domain_threads::waits::sleep as *const () as usize as u64),
+         #[cfg(windows)]
+         "SleepEx" => Some(crate::domain_threads::waits::sleep_ex as *const () as usize as u64),
+-        // what a run opens, so that its end gives it back
++        // what a run opens, so that its end gives it back; and the path calls that read the disk under a folder
++        // mount's paths (libc_paths.rs)
++        #[cfg(unix)]
++        _ => crate::libc_paths::interposer(link).or_else(|| crate::domain_res::interposer(link)),
++        #[cfg(not(unix))]
+         _ => crate::domain_res::interposer(link),
+     }
+ }
+@@ -26983,6 +26998,27 @@ fn prefront_slot(front: &FrontShared, id: u32) -> bool {
      false
  }
  
@@ -361,7 +448,7 @@ index 1205bea4..8dc2944b 100644
  fn prefront_slot_once(front: &FrontShared, id: u32) -> bool {
      match front.slot_keys.get(&id) {
          Some(FnKey::Closure(..)) => return prefront_closure(front, id),
-@@ -27039,6 +27069,28 @@ fn prefront_closure(front: &FrontShared, id: u32) -> bool {
+@@ -27039,6 +27075,28 @@ fn prefront_closure(front: &FrontShared, id: u32) -> bool {
  /// no front off the owner ("no body": prefront_twin takes an instance's body only), and the O3
  /// build of a hot caller that inlines it left it out (a large app: a view's draw closures, a text
  /// layout's closure, all unverified).
@@ -390,7 +477,7 @@ index 1205bea4..8dc2944b 100644
  fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u32>) -> bool {
      let Some(key @ FnKey::Closure(cfile, _, parent)) = front.slot_keys.get(&id) else { return prefront_fail(AF_NOT_BODY) };
      let up = front.unit.load(Ordering::Relaxed);
-@@ -27052,8 +27104,10 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
+@@ -27052,8 +27110,10 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
      // from the disk cache): made again here, as lower_ahead_as makes an instance's. The closures of
      // a parent built long ago are what turns hot later (a benchmark's or a frame's callback): their
      // O3 builds bailed on this for the whole run and the closure ran baseline code
@@ -403,7 +490,7 @@ index 1205bea4..8dc2944b 100644
          None => {
              let Some(FnKey::Inst(d, args)) = front.slot_keys.get(&parent) else {
                  prefront_fail(AF_NO_PARENT);
-@@ -27064,7 +27118,7 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
+@@ -27064,7 +27124,7 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
              let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crate::typeck::try_codegen_body(&u.prog, &u.tcx, d, &args)));
              let missing = !crate::program::take_missing().is_empty();
              match made {
@@ -412,7 +499,7 @@ index 1205bea4..8dc2944b 100644
                  Err(p) if !p.is::<crate::preempt::NeedsUnit>() && !crate::preempt::is_cancelled(&*p) => std::panic::resume_unwind(p),
                  _ => {
                      prefront_fail(AF_NO_PARENT);
-@@ -27727,6 +27781,16 @@ pub struct FrontShared {
+@@ -27727,6 +27787,16 @@ pub struct FrontShared {
      /// inline const blocks' bytes): any thread's lowering reads it here, the tiers of one instance
      /// share one value. A source change bumps the epoch in the key, so nothing stale is read.
      body_consts: crate::conc::MemoMap<(u64, u32, u32, bool), (u64, u32)>,
@@ -429,7 +516,7 @@ index 1205bea4..8dc2944b 100644
      /// Ahead checks are queued during startup and UI bursts.
      ahead_enabled: bool,
      /// bodies checked ahead after the first present: those no build took are dropped when a
-@@ -27802,6 +27866,7 @@ impl FrontShared {
+@@ -27802,6 +27872,7 @@ impl FrontShared {
              // helper's lowering of main raced the exit with its layout errors, limits/issue-55878)
              tls: crate::conc::MemoMap::with_bits(8),
              body_consts: crate::conc::MemoMap::with_bits(12),
@@ -438,10 +525,19 @@ index 1205bea4..8dc2944b 100644
              ahead_post: Default::default(),
          }
 diff --git a/libs/relax/compiler/src/lib.rs b/libs/relax/compiler/src/lib.rs
-index 5e831c36..4dcb73ca 100644
+index 5e831c36..6aa82ac9 100644
 --- a/libs/relax/compiler/src/lib.rs
 +++ b/libs/relax/compiler/src/lib.rs
-@@ -427,7 +427,7 @@ pub fn print_as_rustc(sess: &std::sync::Arc<crate::Session>, args: &[String], in
+@@ -210,6 +210,8 @@ pub mod coverage;
+ pub mod owner;
+ #[cfg(unix)]
+ pub mod forkexec;
++#[cfg(unix)]
++pub mod libc_paths;
+ pub mod lifeline;
+ pub mod postframe;
+ mod nounwind;
+@@ -427,7 +429,7 @@ pub fn print_as_rustc(sess: &std::sync::Arc<crate::Session>, args: &[String], in
      // split-debuginfo kinds, only_cdylib)
      let (dll_pre, dll_suf, exe_suf, st_pre, st_suf, split, only_cdylib): (&str, &str, &str, &str, &str, &[&str], bool) = match triple {
          "aarch64-apple-darwin" | "aarch64-apple-ios" => ("lib", ".dylib", "", "lib", ".a", &["off", "packed", "unpacked"], false),
@@ -450,6 +546,173 @@ index 5e831c36..4dcb73ca 100644
          "x86_64-pc-windows-gnu" => ("", ".dll", ".exe", "lib", ".a", &["off"], false),
          "wasm32-unknown-unknown" | "wasm64-unknown-unknown" => ("", ".wasm", ".wasm", "lib", ".a", &["off"], true),
          t => return Err(format!("no target model for {t}")),
+diff --git a/libs/relax/compiler/src/libc_paths.rs b/libs/relax/compiler/src/libc_paths.rs
+new file mode 100644
+index 00000000..a7209e22
+--- /dev/null
++++ b/libs/relax/compiler/src/libc_paths.rs
+@@ -0,0 +1,161 @@
++//! The C library's path calls a program makes itself (`libc::open`, `libc::statfs`, ...), with a folder mount's
++//! paths as the disk names them. A folder mount (a shared workspace's checkout, RELAX_SHARE) is a disk folder under
++//! another path: std answers its paths from the disk (std fs_vfs.rs `kind`), and these give a program's own calls
++//! the same disk. Without them a program that listed a folder by `open` and `getattrlistbulk` (rerail's observer)
++//! found no such folder under the mount, where std had just read it.
++//!
++//! `open`, `openat`, `creat` and `opendir` are the run's already (domain_res.rs, which keeps what they open): they
++//! take their path through [`disk`]. The rest are here ([`interposer`]). Each passes its arguments on as it got
++//! them, a path argument replaced by its disk path where a folder mount names it; none is variadic.
++
++use std::cell::RefCell;
++use std::ffi::{CStr, CString, c_char, c_int, c_void};
++
++/// mode_t (sandbox/broker.rs declares the `*at` calls with it too).
++#[cfg(target_vendor = "apple")]
++type ModeT = u16;
++#[cfg(not(target_vendor = "apple"))]
++type ModeT = u32;
++
++thread_local! {
++    /// The disk paths handed to this thread's call in progress, by argument.
++    static HELD: RefCell<[Option<CString>; 2]> = const { RefCell::new([None, None]) };
++}
++
++/// `p` as the disk names it: a folder mount's path its disk path, held until this thread's next call that
++/// translates argument `slot` (0 or 1); any other path (a relative one, a disk one, one not UTF-8) itself.
++pub(crate) fn disk(p: *const c_char, slot: usize) -> *const c_char {
++    if p.is_null() || !relax_base::vfs::folder_mounted() {
++        return p;
++    }
++    let Ok(path) = unsafe { CStr::from_ptr(p) }.to_str() else { return p };
++    let std::borrow::Cow::Owned(on_disk) = relax_base::vfs::on_disk(path) else { return p };
++    let Ok(on_disk) = CString::new(on_disk) else { return p };
++    HELD.with(|h| {
++        let mut h = h.borrow_mut();
++        let at = &mut h[slot.min(1)];
++        *at = Some(on_disk);
++        at.as_ref().map_or(p, |c| c.as_ptr())
++    })
++}
++
++mod sys {
++    use super::*;
++    extern "C" {
++        pub fn stat(path: *const c_char, buf: *mut c_void) -> c_int;
++        pub fn lstat(path: *const c_char, buf: *mut c_void) -> c_int;
++        pub fn fstatat(fd: c_int, path: *const c_char, buf: *mut u8, flag: c_int) -> c_int;
++        pub fn access(path: *const c_char, mode: c_int) -> c_int;
++        pub fn faccessat(fd: c_int, path: *const c_char, mode: c_int, flag: c_int) -> c_int;
++        pub fn statfs(path: *const c_char, buf: *mut c_void) -> c_int;
++        pub fn readlink(path: *const c_char, buf: *mut c_char, size: usize) -> isize;
++        pub fn readlinkat(fd: c_int, path: *const c_char, buf: *mut u8, size: usize) -> isize;
++        pub fn mkdir(path: *const c_char, mode: ModeT) -> c_int;
++        pub fn mkdirat(fd: c_int, path: *const c_char, mode: ModeT) -> c_int;
++        pub fn rmdir(path: *const c_char) -> c_int;
++        pub fn unlink(path: *const c_char) -> c_int;
++        pub fn unlinkat(fd: c_int, path: *const c_char, flag: c_int) -> c_int;
++        pub fn truncate(path: *const c_char, len: i64) -> c_int;
++        pub fn chmod(path: *const c_char, mode: ModeT) -> c_int;
++        pub fn rename(from: *const c_char, to: *const c_char) -> c_int;
++        pub fn link(from: *const c_char, to: *const c_char) -> c_int;
++        #[cfg(target_vendor = "apple")]
++        pub fn getattrlist(path: *const c_char, attrs: *mut c_void, buf: *mut c_void, size: usize, options: u64) -> c_int;
++        #[cfg(target_vendor = "apple")]
++        pub fn clonefile(from: *const c_char, to: *const c_char, flags: u32) -> c_int;
++    }
++}
++
++extern "C" fn stat(path: *const c_char, buf: *mut c_void) -> c_int {
++    unsafe { sys::stat(disk(path, 0), buf) }
++}
++extern "C" fn lstat(path: *const c_char, buf: *mut c_void) -> c_int {
++    unsafe { sys::lstat(disk(path, 0), buf) }
++}
++extern "C" fn fstatat(fd: c_int, path: *const c_char, buf: *mut u8, flag: c_int) -> c_int {
++    unsafe { sys::fstatat(fd, disk(path, 0), buf, flag) }
++}
++extern "C" fn access(path: *const c_char, mode: c_int) -> c_int {
++    unsafe { sys::access(disk(path, 0), mode) }
++}
++extern "C" fn faccessat(fd: c_int, path: *const c_char, mode: c_int, flag: c_int) -> c_int {
++    unsafe { sys::faccessat(fd, disk(path, 0), mode, flag) }
++}
++extern "C" fn statfs(path: *const c_char, buf: *mut c_void) -> c_int {
++    unsafe { sys::statfs(disk(path, 0), buf) }
++}
++extern "C" fn readlink(path: *const c_char, buf: *mut c_char, size: usize) -> isize {
++    unsafe { sys::readlink(disk(path, 0), buf, size) }
++}
++extern "C" fn readlinkat(fd: c_int, path: *const c_char, buf: *mut u8, size: usize) -> isize {
++    unsafe { sys::readlinkat(fd, disk(path, 0), buf, size) }
++}
++extern "C" fn mkdir(path: *const c_char, mode: ModeT) -> c_int {
++    unsafe { sys::mkdir(disk(path, 0), mode) }
++}
++extern "C" fn mkdirat(fd: c_int, path: *const c_char, mode: ModeT) -> c_int {
++    unsafe { sys::mkdirat(fd, disk(path, 0), mode) }
++}
++extern "C" fn rmdir(path: *const c_char) -> c_int {
++    unsafe { sys::rmdir(disk(path, 0)) }
++}
++extern "C" fn unlink(path: *const c_char) -> c_int {
++    unsafe { sys::unlink(disk(path, 0)) }
++}
++extern "C" fn unlinkat(fd: c_int, path: *const c_char, flag: c_int) -> c_int {
++    unsafe { sys::unlinkat(fd, disk(path, 0), flag) }
++}
++extern "C" fn truncate(path: *const c_char, len: i64) -> c_int {
++    unsafe { sys::truncate(disk(path, 0), len) }
++}
++extern "C" fn chmod(path: *const c_char, mode: ModeT) -> c_int {
++    unsafe { sys::chmod(disk(path, 0), mode) }
++}
++extern "C" fn rename(from: *const c_char, to: *const c_char) -> c_int {
++    unsafe { sys::rename(disk(from, 0), disk(to, 1)) }
++}
++extern "C" fn link(from: *const c_char, to: *const c_char) -> c_int {
++    unsafe { sys::link(disk(from, 0), disk(to, 1)) }
++}
++#[cfg(target_vendor = "apple")]
++extern "C" fn getattrlist(path: *const c_char, attrs: *mut c_void, buf: *mut c_void, size: usize, options: u64) -> c_int {
++    unsafe { sys::getattrlist(disk(path, 0), attrs, buf, size, options) }
++}
++#[cfg(target_vendor = "apple")]
++extern "C" fn clonefile(from: *const c_char, to: *const c_char, flags: u32) -> c_int {
++    unsafe { sys::clonefile(disk(from, 0), disk(to, 1), flags) }
++}
++
++/// The run's version of the C library's path call `link` (its link name), for a program (jit.rs
++/// `lookup_interposer`). Linux's `*64` names are the same calls on a 64-bit target.
++pub(crate) fn interposer(link_name: &str) -> Option<u64> {
++    macro_rules! at {
++        ($f:expr) => {
++            Some($f as *const () as usize as u64)
++        };
++    }
++    match link_name {
++        "stat" | "stat64" => at!(stat),
++        "lstat" | "lstat64" => at!(lstat),
++        "fstatat" | "fstatat64" => at!(fstatat),
++        "access" => at!(access),
++        "faccessat" => at!(faccessat),
++        "statfs" | "statfs64" => at!(statfs),
++        "readlink" => at!(readlink),
++        "readlinkat" => at!(readlinkat),
++        "mkdir" => at!(mkdir),
++        "mkdirat" => at!(mkdirat),
++        "rmdir" => at!(rmdir),
++        "unlink" => at!(unlink),
++        "unlinkat" => at!(unlinkat),
++        "truncate" | "truncate64" => at!(truncate),
++        "chmod" => at!(chmod),
++        "rename" => at!(rename),
++        "link" => at!(link),
++        #[cfg(target_vendor = "apple")]
++        "getattrlist" => at!(getattrlist),
++        #[cfg(target_vendor = "apple")]
++        "clonefile" => at!(clonefile),
++        _ => None,
++    }
++}
 diff --git a/libs/relax/compiler/src/lower.rs b/libs/relax/compiler/src/lower.rs
 index 28d3fbd3..4e88811c 100644
 --- a/libs/relax/compiler/src/lower.rs
@@ -631,18 +894,20 @@ index 781123aa..4760aaf3 100644
          let cell = TLS_BLOCK.with(|c| c as *const std::cell::Cell<u64> as u64);
          let off = cell.wrapping_sub(fs_base()) as i64;
 diff --git a/libs/relax/compiler/src/sandbox/script.rs b/libs/relax/compiler/src/sandbox/script.rs
-index 9ec4e6a0..bde0f578 100644
+index 9ec4e6a0..4f436410 100644
 --- a/libs/relax/compiler/src/sandbox/script.rs
 +++ b/libs/relax/compiler/src/sandbox/script.rs
-@@ -339,6 +339,7 @@ mod files {
+@@ -339,6 +339,9 @@ mod files {
              "relax_vfs_release" => e!(sc_vfs_release),
              "relax_vfs_edit" => e!(sc_vfs_edit),
              "relax_vfs_mounts" => e!(sc_vfs_mounts),
 +            "relax_vfs_shown" => e!(sc_vfs_shown),
++            "relax_vfs_folder_disk" => e!(sc_vfs_shown),
++            "relax_vfs_folder_virtual" => e!(sc_vfs_shown),
              "relax_vfs_note" => e!(sc_vfs_note),
              _ => return None,
          })
-@@ -992,6 +993,11 @@ mod files {
+@@ -992,6 +995,11 @@ mod files {
          0
      }
  
@@ -887,19 +1152,135 @@ index f6cd792c..39da808b 100644
      pub fn load(&self, order: Ordering) -> T {
          unsafe { ia::atomic_load(self.v.get() as *const T, load_order(order)) }
      }
+diff --git a/libs/relax/compiler/std/std/fs_unix.rs b/libs/relax/compiler/std/std/fs_unix.rs
+index c628237d..4ccb7007 100644
+--- a/libs/relax/compiler/std/std/fs_unix.rs
++++ b/libs/relax/compiler/std/std/fs_unix.rs
+@@ -32,8 +32,12 @@ pub(crate) fn vfs_stat(k: &vfs::Kind) -> stat_t {
+ const MAX_STACK_ALLOCATION: usize = 384;
+ const NUL_ERR: io::Error = io::const_error!(io::ErrorKind::InvalidInput, "file name contained an unexpected NUL byte");
+ 
++/// `f` over `path` as a C string: a folder mount's path as the disk names it (fs_vfs.rs `kind`), every other as given.
+ #[inline]
+ pub(crate) fn run_path_with_cstr<T>(path: &Path, f: &dyn Fn(&CStr) -> io::Result<T>) -> io::Result<T> {
++    if let Some(disk) = vfs::folder_disk(path) {
++        return run_with_cstr(disk.as_os_str().as_encoded_bytes(), f);
++    }
+     run_with_cstr(path.as_os_str().as_encoded_bytes(), f)
+ }
+ 
+@@ -1226,7 +1230,7 @@ pub fn canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
+         }
+         return Ok(out);
+     }
+-    run_path_with_cstr(path.as_ref(), &|c| {
++    let real = run_path_with_cstr(path.as_ref(), &|c| {
+         let r = unsafe { sys::realpath(c.as_ptr(), core::ptr::null_mut()) };
+         if r.is_null() {
+             return Err(io::Error::last_os_error());
+@@ -1234,7 +1238,13 @@ pub fn canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
+         let bytes = unsafe { core::slice::from_raw_parts(r as *const u8, sys::strlen(r)) }.to_vec();
+         unsafe { sys::free(r as *mut c_void) };
+         Ok(PathBuf::from(OsString::from_bytes_vec(bytes)))
+-    })
++    })?;
++    // A folder mount's path canonical is the mount's still (the disk resolved it): a program keeps the paths it
++    // was given (a share's CARGO_MANIFEST_DIR), and its stores' keys with them.
++    if vfs::folder_disk(path.as_ref()).is_some() {
++        return Ok(vfs::folder_virtual(&real).unwrap_or(real));
++    }
++    Ok(real)
+ }
+ 
+ pub fn read_link<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
+@@ -1291,7 +1301,9 @@ pub fn soft_link<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> io::Re
+ }
+ 
+ pub(crate) fn symlink_raw(original: &Path, link: &Path) -> io::Result<()> {
+-    run_path_with_cstr(original, &|a| {
++    // `original` is the link's text, not a path resolved here: as given, never a folder mount's disk path (a relative
++    // `m0.py` became the share's absolute disk path, resolved against the program's current folder in it).
++    run_with_cstr(original.as_os_str().as_encoded_bytes(), &|a| {
+         run_path_with_cstr(link, &|b| {
+             cvt(unsafe { sys::symlink(a.as_ptr(), b.as_ptr()) })?;
+             Ok(())
 diff --git a/libs/relax/compiler/std/std/fs_vfs.rs b/libs/relax/compiler/std/std/fs_vfs.rs
-index fc1eeacb..329f097d 100644
+index fc1eeacb..cfa92e8b 100644
 --- a/libs/relax/compiler/std/std/fs_vfs.rs
 +++ b/libs/relax/compiler/std/std/fs_vfs.rs
-@@ -16,6 +16,7 @@ extern "C" {
+@@ -16,6 +16,9 @@ extern "C" {
      fn relax_vfs_read(p: *const u8, n: usize, out: *mut *const u8, out_len: *mut usize) -> u64;
      fn relax_vfs_list(p: *const u8, n: usize, out: *mut *const u8, out_len: *mut usize) -> u64;
      fn relax_vfs_mounts(out: *mut *const u8, out_len: *mut usize) -> u64;
 +    fn relax_vfs_shown(p: *const u8, n: usize, out: *mut *const u8, out_len: *mut usize) -> u64;
++    fn relax_vfs_folder_disk(p: *const u8, n: usize, out: *mut *const u8, out_len: *mut usize) -> u64;
++    fn relax_vfs_folder_virtual(p: *const u8, n: usize, out: *mut *const u8, out_len: *mut usize) -> u64;
      fn relax_vfs_release(id: u64);
      fn relax_vfs_edit(p: *const u8, n: usize, mode: u32, out: *mut *const u8, out_len: *mut usize) -> u64;
      fn relax_vfs_note(p: *const u8, n: usize, kind: u32);
-@@ -185,6 +186,14 @@ pub(crate) fn list(path: &Path) -> io::Result<Vec<(Vec<u8>, bool)>> {
+@@ -100,7 +103,7 @@ pub(crate) fn chosen() -> Option<Option<PathBuf>> {
+ /// set_current_dir: a virtual folder becomes the program's current folder (Ok: the result). A
+ /// real one is Err(the folder): the caller changes the OS's folder to it, then calls `chose_real`.
+ pub(crate) fn set_cwd(path: &Path) -> Result<io::Result<()>, PathBuf> {
+-    let Some((abs, k)) = kind(path) else {
++    let Some((abs, k)) = kind_any(path) else {
+         // (a relative path is the virtual folder's while the program is in one)
+         return Err(absolute(path).unwrap_or_else(|| path.to_path_buf()));
+     };
+@@ -150,8 +153,23 @@ fn kind_abs(path: &Path) -> Option<Kind> {
+     }
+ }
+ 
+-/// None: the disk; Some((absolute path, kind)): a virtual path.
++/// None: the disk; Some((absolute path, kind)): a virtual path. A folder mount's path is the disk's
++/// (`folder_disk`): its syscalls take the disk path (fs_unix.rs `run_path_with_cstr`), so its stat, listing and
++/// descriptors are the disk's, as are those of the libc calls a program makes itself. Answered as a virtual
++/// file (a synthetic stat: no device, inode or change time, a folder's time 0), a program that compared what std
++/// told it with what libc did saw every file changed (rerail's observer, under RELAX_SHARE).
+ pub(crate) fn kind(path: &Path) -> Option<(Cow<'_, Path>, Kind)> {
++    let (abs, k) = kind_any(path)?;
++    // (Unix: Windows' std hands its syscalls the path as given, so its folder mounts stay virtual)
++    #[cfg(unix)]
++    if folder_disk(&abs).is_some() {
++        return None;
++    }
++    Some((abs, k))
++}
++
++/// `kind`, a folder mount's paths included: the current folder a program changes to stays the mount's.
++fn kind_any(path: &Path) -> Option<(Cow<'_, Path>, Kind)> {
+     let abs = match absolute(path) {
+         Some(abs) => Cow::Owned(abs),
+         None => Cow::Borrowed(path),
+@@ -160,6 +178,27 @@ pub(crate) fn kind(path: &Path) -> Option<(Cow<'_, Path>, Kind)> {
+     Some((abs, k))
+ }
+ 
++/// The disk path of `path` (made absolute against the virtual current folder) where it lies under a folder
++/// mount (a shared workspace's checkout, SHARE); None elsewhere.
++pub(crate) fn folder_disk(path: &Path) -> Option<PathBuf> {
++    let abs = match absolute(path) {
++        Some(abs) => Cow::Owned(abs),
++        None => Cow::Borrowed(path),
++    };
++    let b = key(&*abs);
++    let (mut p, mut n) = (core::ptr::null(), 0usize);
++    let id = unsafe { relax_vfs_folder_disk(b.as_ptr(), b.len(), &mut p, &mut n) };
++    take(id, p, n).map(|v| PathBuf::from(String::from_utf8_lossy(&v).into_owned()))
++}
++
++/// The disk path `path` under the folder mount that names its folder; None where none does.
++pub(crate) fn folder_virtual(path: &Path) -> Option<PathBuf> {
++    let b = key(path);
++    let (mut p, mut n) = (core::ptr::null(), 0usize);
++    let id = unsafe { relax_vfs_folder_virtual(b.as_ptr(), b.len(), &mut p, &mut n) };
++    take(id, p, n).map(|v| PathBuf::from(String::from_utf8_lossy(&v).into_owned()))
++}
++
+ fn take(id: u64, ptr: *const u8, len: usize) -> Option<Vec<u8>> {
+     if id == 0 {
+         return None;
+@@ -185,6 +224,14 @@ pub(crate) fn list(path: &Path) -> io::Result<Vec<(Vec<u8>, bool)>> {
      Ok(v.split(|c| *c == b'\n').filter(|l| l.len() > 2).map(|l| (l[2..].to_vec(), l[0] == b'd')).collect())
  }
  
@@ -1226,6 +1607,126 @@ index 00000000..4d7901ef
 +    assert_eq!(out, [200, 215, 102, 103, 203, 105, 208, 107, 201, 202, 214, 111, 207, 209, 114, 205]);
 +    assert_eq!(outs, [-56, -41, 102, 103, -53, 105, -48, 107, -55, -54, -42, 111, -49, -47, 114, -51]);
 +    assert_eq!(tbl, [200, 215, 0, 0, 203, 0, 208, 0, 201, 202, 214, 0, 207, 209, 0, 205]);
++}
+diff --git a/libs/relax/compiler/tests/share_folder_disk/.gitignore b/libs/relax/compiler/tests/share_folder_disk/.gitignore
+new file mode 100644
+index 00000000..633fc35b
+--- /dev/null
++++ b/libs/relax/compiler/tests/share_folder_disk/.gitignore
+@@ -0,0 +1,3 @@
++target/
++target-relax/
++Cargo.lock
+diff --git a/libs/relax/compiler/tests/share_folder_disk/Cargo.toml b/libs/relax/compiler/tests/share_folder_disk/Cargo.toml
+new file mode 100644
+index 00000000..fce67036
+--- /dev/null
++++ b/libs/relax/compiler/tests/share_folder_disk/Cargo.toml
+@@ -0,0 +1,8 @@
++[package]
++name = "share-folder-disk"
++version = "0.1.0"
++edition = "2024"
++publish = false
++
++# its own workspace (no dependencies: runs offline anywhere)
++[workspace]
+diff --git a/libs/relax/compiler/tests/share_folder_disk/run.sh b/libs/relax/compiler/tests/share_folder_disk/run.sh
+new file mode 100755
+index 00000000..037d92fd
+--- /dev/null
++++ b/libs/relax/compiler/tests/share_folder_disk/run.sh
+@@ -0,0 +1,15 @@
++#!/bin/bash
++# usage: run.sh <makepad binary>: under RELAX_SHARE (the package folder-mounted, its paths on no disk), std's stat
++# of a mount path is the disk's, and the program's own C library calls (open, stat) reach the same files; a
++# symbolic link made outside the share keeps its relative target (src/lib.rs). Prints "share_folder_disk: ok" or "share_folder_disk: FAILED" (exit 1).
++H=$(cd "$(dirname "$0")" && pwd)
++T=$(mktemp -d) || exit 1
++[ -n "$T" ] || exit 1
++trap 'rm -rf "$T"' EXIT
++export RELAX_CACHE=off
++OUT=$(cd "$H" && RELAX_HOME="$T/home" RELAX_SHARE=share-folder-disk SHARE_FOLDER_DISK_MOUNTED=1 RELAX_STD=$H/../../std "$1" test share-folder-disk --lib 2>&1)
++if echo "$OUT" | grep -q "test result: ok. 2 passed"; then
++  echo "share_folder_disk: ok"
++else
++  echo "$OUT" | tail -12; echo "share_folder_disk: FAILED"; exit 1
++fi
+diff --git a/libs/relax/compiler/tests/share_folder_disk/src/lib.rs b/libs/relax/compiler/tests/share_folder_disk/src/lib.rs
+new file mode 100644
+index 00000000..2e78cce9
+--- /dev/null
++++ b/libs/relax/compiler/tests/share_folder_disk/src/lib.rs
+@@ -0,0 +1,70 @@
++//! Under RELAX_SHARE the package is folder-mounted: CARGO_MANIFEST_DIR is the mount's path, on no disk. What std
++//! says of a path there is the disk's (a real device, inode and change time, not a synthetic stat), and so is what
++//! the program's own C library calls say of it: a program that compared the two (a listing by `open`, against stats
++//! std gave) saw every file changed, or no folder at all.
++
++#[cfg(test)]
++mod tests {
++    use std::ffi::{CString, c_char, c_int};
++    use std::os::fd::FromRawFd as _;
++    use std::os::unix::fs::MetadataExt as _;
++    use std::path::Path;
++
++    unsafe extern "C" {
++        fn open(path: *const c_char, flags: c_int, ...) -> c_int;
++        fn stat(path: *const c_char, buf: *mut u8) -> c_int;
++    }
++
++    fn c(p: &Path) -> CString {
++        CString::new(p.to_str().unwrap()).unwrap()
++    }
++
++    /// Outside the share, as before: a symbolic link's canonical path is its target's, its stat the target's.
++    #[test]
++    fn a_link_outside_the_share_is_its_target() {
++        let base = std::env::temp_dir().join(format!("share-folder-disk-{}", std::process::id()));
++        std::fs::create_dir_all(&base).unwrap();
++        std::fs::write(base.join("m0.py"), "x = 1\n").unwrap();
++        let link = base.join("alias.py");
++        let _ = std::fs::remove_file(&link);
++        std::os::unix::fs::symlink("m0.py", &link).unwrap();
++        let real = std::fs::canonicalize(&base).unwrap();
++        let got = std::fs::canonicalize(&link);
++        let meta = std::fs::metadata(&link).map(|m| m.ino());
++        let target = std::fs::metadata(base.join("m0.py")).unwrap().ino();
++        let _ = std::fs::remove_dir_all(&base);
++        assert_eq!(got.unwrap(), real.join("m0.py"));
++        assert_eq!(meta.unwrap(), target);
++    }
++
++    #[test]
++    fn a_share_paths_are_the_disks_to_std_and_to_libc() {
++        let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
++        if std::env::var_os("SHARE_FOLDER_DISK_MOUNTED").is_some() {
++            assert!(dir.to_str().unwrap().contains("/vfs/share/"), "not run under the share's mount: {}", dir.display());
++        }
++        let src = dir.join("src");
++        let lib = src.join("lib.rs");
++        // std: the disk's stat
++        let meta = std::fs::metadata(&lib).unwrap();
++        assert!(meta.ino() != 0 && meta.dev() != 0 && meta.ctime() != 0, "a synthetic stat: ino {} dev {} ctime {}", meta.ino(), meta.dev(), meta.ctime());
++        let folder = std::fs::metadata(&src).unwrap();
++        assert!(folder.is_dir() && folder.ino() != 0 && folder.mtime() != 0, "a synthetic folder stat");
++        // a listing's entries: the same files
++        let listed = std::fs::read_dir(&src).unwrap().flatten().find(|e| e.file_name() == "lib.rs").expect("lib.rs listed");
++        assert_eq!(listed.metadata().unwrap().ino(), meta.ino());
++        // the C library, called by the program itself, on the mount's paths
++        let fd = unsafe { open(c(&src).as_ptr(), 0) };
++        assert!(fd >= 0, "open({}): {}", src.display(), std::io::Error::last_os_error());
++        let opened = unsafe { std::fs::File::from_raw_fd(fd) };
++        assert_eq!(opened.metadata().unwrap().ino(), folder.ino(), "the folder libc opened is not the one std stated");
++        let mut buf = [0u8; 512];
++        assert_eq!(unsafe { stat(c(&lib).as_ptr(), buf.as_mut_ptr()) }, 0, "stat({}): {}", lib.display(), std::io::Error::last_os_error());
++        // canonical: still the mount's path, as the program was given
++        let canonical = std::fs::canonicalize(&lib).unwrap();
++        assert!(canonical.starts_with(std::fs::canonicalize(dir).unwrap()) && canonical.ends_with("src/lib.rs"), "canonical: {}", canonical.display());
++        if std::env::var_os("SHARE_FOLDER_DISK_MOUNTED").is_some() {
++            assert!(canonical.to_str().unwrap().contains("/vfs/share/"), "canonical left the mount: {}", canonical.display());
++        }
++    }
 +}
 diff --git a/libs/relax/compiler/tests/substitute_smallvec_glob/.gitignore b/libs/relax/compiler/tests/substitute_smallvec_glob/.gitignore
 new file mode 100644
