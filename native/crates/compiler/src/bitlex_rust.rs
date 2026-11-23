@@ -971,21 +971,8 @@ impl<'a> G<'a> {
         if nested {
             out.push_str("        self.deeper()?;\n");
         }
-        if root && self.recover.is_some_and(|r| r.0 == name) {
-            // The statement loop (decision 0650), as the lean parser's: a mark before each statement; one that fails
-            // (or holds a provisional field at its end) is cut back to it and made one ERROR leaf.
-            let one = match body {
-                Gram::Star(a) => &**a,
-                Gram::Seq(v) if v.len() == 1 && matches!(&v[0], Gram::Star(_)) => match &v[0] {
-                    Gram::Star(a) => &**a,
-                    _ => unreachable!(),
-                },
-                _ => return Err(format!("recover {name}: its body is one repetition, the statements")),
-            };
-            let settled = if self.provisional.is_empty() { "" } else { ".and_then(|()| self.settled(save.w))" };
-            let _ = writeln!(out, "        self.open_root({});", self.kind_const(name)?);
-            let _ = writeln!(out, "        while self.i < self.n {{\n            let save = self.mark();\n            if self.statement(){settled}.is_err() {{\n                self.recover(save)?;\n            }}\n        }}");
-            let _ = writeln!(out, "        self.close_root({whole}, {padded})\n    }}\n");
+        if let Some(one) = self.statements(name, body)? {
+            let _ = writeln!(out, "{}    }}\n", self.statement_loop(name, "self.statement()", "")?);
             let _ = write!(out, "    /// A statement of `{name}`: one of its repetition, as the lean parser's `statement`.\n    fn statement(&mut self) -> R {{\n");
             out.push_str(&self.code(one, &[], name, "        ")?);
             out.push_str("        Ok(())\n");
@@ -1014,6 +1001,34 @@ impl<'a> G<'a> {
         }
         out.push_str("    }\n\n");
         Ok(out)
+    }
+
+    /// The root `name`'s one statement where it recovers (`recover`, decision 0650): its body is one repetition, the
+    /// statements, as the lean parser's file.
+    fn statements<'g>(&self, name: &str, body: &'g Gram) -> Result<Option<&'g Gram>, String> {
+        if self.order.first() != Some(&name) || !self.recover.is_some_and(|r| r.0 == name) {
+            return Ok(None);
+        }
+        match body {
+            Gram::Star(a) => Ok(Some(&**a)),
+            Gram::Seq(v) if v.len() == 1 => self.statements(name, &v[0]),
+            _ => Err(format!("recover {name}: its body is one repetition, the statements")),
+        }
+    }
+
+    /// The root `name`'s statement loop (decision 0650), as the lean parser's: a mark before each statement (`call`);
+    /// one that fails, or holds a provisional field at its end, is cut back to it (`cut`, then `recover`) and made one
+    /// ERROR leaf. Then the root's close.
+    fn statement_loop(&self, name: &str, call: &str, cut: &str) -> Result<String, String> {
+        let (whole, padded) = match self.rules[name] {
+            Stmt::Node { whole, padded, .. } => (*whole, *padded),
+            _ => return Err(format!("recover {name}: no node")),
+        };
+        let settled = if self.provisional.is_empty() { "" } else { ".and_then(|()| self.settled(save.w))" };
+        Ok(format!(
+            "        self.open_root({});\n        while self.i < self.n {{\n            let save = self.mark();\n            if {call}{settled}.is_err() {{\n{cut}                self.recover(save)?;\n            }}\n        }}\n        self.close_root({whole}, {padded})\n",
+            self.kind_const(name)?
+        ))
     }
 
     /// `recover`'s runtime (decision 0650), added to `out`: the statement's `Mark` (what a statement changes of the

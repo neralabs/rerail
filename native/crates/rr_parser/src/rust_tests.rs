@@ -41,14 +41,13 @@ fn node_differs(text: &str, a: &Nodes, b: &Nodes, an: &str, bn: &str) -> Option<
 
 /// Where the parser as Rust's tape is not the lean parser's or the JIT's. A tape it writes is the lean parser's: a
 /// statement that fails is one ERROR leaf (decision 0650). A file the JIT takes, it takes, with the JIT's tape. The
-/// device's form (the one loop) recovers no statement yet: it refuses a file the calls take that way, else its tape is
-/// the calls'.
+/// device's form (the one loop) takes what the calls take, a statement recovered or none, with their tape.
 fn tape_differs(c: &Compiled, text: &str) -> Option<String> {
     let theirs = c.parser.image(text.as_bytes()).ok().map(|i| image_nodes(&i));
     let buf = rerail_rr_aot::padded(text.as_bytes());
     let ours = rerail_rr_aot::parse(&buf, text.len()).ok().map(|i| image_nodes(&i));
     let looped = rerail_rr_aot::parse_loop(&buf, text.len()).ok().map(|i| image_nodes(&i));
-    if looped.is_some() && looped != ours {
+    if looped != ours {
         return Some(format!("the one loop's tape is not the calls': {} nodes, {} nodes", looped.map_or(0, |l| l.len()), ours.as_ref().map_or(0, |o| o.len())));
     }
     if let Some(b) = &ours {
@@ -300,14 +299,14 @@ fn a_statement_that_fails_is_one_error_leaf() {
         if let Some(d) = node_differs(text, &image_nodes(&lean), &image_nodes(&ours), "the lean parser", "the parser as Rust") {
             panic!("{text:?}: {d}");
         }
-        assert_ne!(rerail_rr_aot::parse_loop(&buf, text.len()).ok(), Some(ours), "{text:?}: the one loop recovers none yet");
+        assert_eq!(rerail_rr_aot::parse_loop(&buf, text.len()).ok(), Some(ours), "{text:?}: the one loop's tape is the calls'");
     }
     let deep = format!("a(X) :- b(X), X = {}1{}.\nc(1).\n", "(".repeat(500), ")".repeat(500));
     assert!(rerail_rr_aot::parse(&rerail_rr_aot::padded(deep.as_bytes()), deep.len()).is_err(), "past the depth: refused");
 }
 
 /// The lean parser's edited copies of the corpus (`edited_corpus`): a tape the parser as Rust writes, a statement
-/// recovered or none, is the lean parser's. Counts the files taken whole, those taken with a statement recovered, and
+/// recovered or none, is the lean parser's, and the one loop's is the calls'. Counts the files taken whole, those taken with a statement recovered, and
 /// those refused (tier 1's errors, a limit).
 #[test]
 #[ignore = "the corpus: run by name"]
@@ -317,7 +316,13 @@ fn corpus_edited_tapes_are_the_lean_tapes() {
     let mut differ = Vec::new();
     for (k, text) in texts.iter().enumerate() {
         let buf = rerail_rr_aot::padded(text.as_bytes());
-        let Ok(ours) = rerail_rr_aot::parse(&buf, text.len()) else {
+        let got = rerail_rr_aot::parse(&buf, text.len());
+        if rerail_rr_aot::parse_loop(&buf, text.len()) != got {
+            eprintln!("differs: text {k}: the one loop's tape is not the calls'");
+            differ.push(format!("text {k}: the one loop's tape is not the calls'"));
+            continue;
+        }
+        let Ok(ours) = got else {
             refused += 1;
             continue;
         };

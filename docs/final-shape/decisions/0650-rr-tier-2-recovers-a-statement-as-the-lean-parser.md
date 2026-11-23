@@ -1,6 +1,6 @@
 # 0650: `.rerail`'s tier 2 recovers a statement, as the lean parser does
 
-Status: steps 1 and 2 done; 3 to 5 under way. The item is the user's (2026-11-23): lean's statement-level error
+Status: steps 1 to 3 done; 4 and 5 under way. The item is the user's (2026-11-23): lean's statement-level error
 recovery in every executor of `rr.bitlex`'s tier 2, with A20 kept (no trial reads inside an expression; `reread` and
 the lookahead patterns stay).
 
@@ -98,8 +98,10 @@ lean's.
 
 - **The calls form (`tier2.rs`, `bitlex_rust`).** `source_file`'s loop takes lean's `mark`, and on a syntax
   refusal calls `recover`.
-- **The device loop (`tier2_loop.rs`).** Its statement loop head saves the mark in its state. A syntax refusal goes
-  to one recovery block, which resets, scans, writes the leaf, and goes back to the head.
+- **The device loop (`tier2_loop.rs`).** `run` is the calls form's statement loop. The loop's places are one
+  statement's (`statement`), from its first decision to its end, which returns. A refusal anywhere in them returns
+  to `run`, which cuts the loop's stack back (at a statement's start it is empty) and recovers as the calls form
+  does. The loop holds no mark of its own, and the recovery is the calls form's code.
 - **The interpreter (`stream.rs`) and the JIT (`native_cpu_stream.rs`).** The same, as words: a `MARK`-like word at
   the loop head, and a refusal kind that jumps to the recovery instead of returning.
 
@@ -142,8 +144,8 @@ lean's, byte for byte. The probe stays, as the tally of what still refuses.
    a `.test` block, a bare term, and the suppress line's `,`; past the depth, refused).
    `corpus_edited_tapes_are_the_lean_tapes` (run by name) parses the corpus and lean's edited copies of it: each
    text the calls form takes, whole or with statements recovered, has lean's tape, node for node. Each other
-   text is refused for a limit or for tier 1. `deep_nesting_ends_in_a_refusal` covers the limits. The one loop
-   recovers nothing yet, and its tests check that it refuses those texts.
-3. The device loop.
+   text is refused for a limit or for tier 1. `deep_nesting_ends_in_a_refusal` covers the limits.
+3. The device loop. Done, as above: `statement_loop` writes both forms' `run`. The tests above hold the one loop's
+   result to the calls form's on each text, taken, recovered or refused.
 4. The interpreter and the JIT.
 5. Tier 1's errors as lean's `Bad` tokens, so a byte no token takes and a region open at the end recover too.
