@@ -173,6 +173,47 @@ function Assert-RerailManagedInstall([string]$RerailHome) {
   "launcher and current junction in place under $RerailHome"
 }
 
+# The managed install holds one engine package, this machine's, beside core: set-up installs core without its optional
+# dependencies and names that one package itself, where npm alone installs all six inside core (docs/release.md,
+# "Engine packages"). The engine packages are the optional dependencies core's own package.json pins, and each says in
+# its package.json which system and processor it is for; node judges that, since its own architecture picks the engine,
+# whatever the machine's. A core from before they existed pins none, which only a version installed from npmjs can be:
+# `Packed` says the version came from a local registry. Writes what the install holds, and throws unless it is that one
+# package. scripts/host/azure/guest.sh makes the same check on Linux and macOS.
+function Assert-RerailEnginePackage([string]$RerailHome, [bool]$Packed) {
+  $ErrorActionPreference = "Continue"
+  $check = Join-Path ([IO.Path]::GetTempPath()) ("rerail-engine-package-" + [guid]::NewGuid() + ".js")
+  Write-RerailUtf8 $check @'
+const fs = require("node:fs");
+const path = require("node:path");
+const [current, packed] = process.argv.slice(2);
+const core = fs.realpathSync(current);
+const prefix = path.resolve(core, "..", "..", "..");
+const read = (folder) => JSON.parse(fs.readFileSync(path.join(folder, "package.json"), "utf8"));
+const { version, optionalDependencies = {} } = read(core);
+const pinned = Object.keys(optionalDependencies);
+if (pinned.length === 0) {
+  console.log(`core ${version} pins no engine package${packed ? "" : ": a version from before they existed, which carries its engines itself"}`);
+  process.exit(packed ? 1 : 0);
+}
+const held = pinned.flatMap((name) => [path.join(prefix, "node_modules", name), path.join(core, "node_modules", name)]).filter((folder) => fs.existsSync(path.join(folder, "package.json")));
+console.log(`engine packages in ${prefix}: ${held.map((folder) => path.relative(prefix, folder)).join(", ") || "none"}`);
+const own = held.filter((folder) => read(folder).os.includes(process.platform) && read(folder).cpu.includes(process.arch));
+if (held.length !== 1 || own.length !== 1) {
+  console.log(`expected one of the ${pinned.length} core ${version} pins: the one for ${process.platform} ${process.arch}`);
+  process.exit(1);
+}
+'@
+  try {
+    $arguments = @($check, "$RerailHome\current")
+    if ($Packed) { $arguments += "packed" }
+    & (Get-RerailNode) @arguments
+    if ($LASTEXITCODE -ne 0) { throw "the managed install under $RerailHome does not hold this machine's engine package alone" }
+  } finally {
+    Remove-Item -Force $check -ErrorAction SilentlyContinue
+  }
+}
+
 # Each agent's registered SessionStart command run the way that agent runs it: Claude Code spawns its exec-form entry
 # directly (no shell), Codex passes its command to Windows PowerShell. The session ids are `<Prefix>-claude` and
 # `<Prefix>-codex`; ask the daemon for them afterwards (Assert-RerailSessionsRecorded), since a hook where Rerail is

@@ -19,7 +19,9 @@ const PROGRAMS: &str = "native/src/code_rule_dsl/typing/programs";
 ///
 /// - `RERAIL_SOURCE_ROOT`;
 /// - a checkout or an installed package above the file this code was loaded from: the program, a test binary, or
-///   the Node addon, built into its checkout's `target/` or installed in its package's `native/`;
+///   the Node addon, built into its checkout's `target/` or `native/`, or installed in its engine package
+///   (`@neralabs/rerail-engine-<suffix>`) inside the package's own `node_modules`;
+/// - the installed package beside that engine package (`beside`);
 /// - a checkout above the package `cargo run` or `cargo test` runs (`CARGO_MANIFEST_DIR`, as the program runs);
 /// - a checkout above the working directory.
 ///
@@ -42,7 +44,7 @@ fn find(source_root: Option<OsString>, image: Option<PathBuf>, others: [Option<P
     if let Some(root) = source_root {
         return Some(PathBuf::from(root));
     }
-    let from_image = image.and_then(|image| above(&image, is_root_or_installed));
+    let from_image = image.and_then(|image| above(&image, is_root_or_installed).or_else(|| beside(&image)));
     from_image.or_else(|| others.into_iter().flatten().find_map(|start| above(&start, is_root)))
 }
 
@@ -50,6 +52,16 @@ fn find(source_root: Option<OsString>, image: Option<PathBuf>, others: [Option<P
 fn above(start: &Path, test: impl Fn(&Path) -> bool) -> Option<PathBuf> {
     let start = dunce::canonicalize(start).unwrap_or_else(|_| start.to_owned());
     start.ancestors().find(|dir| test(dir)).map(Path::to_owned)
+}
+
+/// The installed package beside the package that holds `image`. The Node addon is installed in an engine package
+/// of its own, which npm puts inside `@neralabs/rerail` (found above the addon) or, when one install names both,
+/// next to it in the same scope's directory, where nothing above the addon is the package. Only that one
+/// directory is looked at, and only as an installed package.
+fn beside(image: &Path) -> Option<PathBuf> {
+    let image = dunce::canonicalize(image).unwrap_or_else(|_| image.to_owned());
+    let package = image.parent()?.parent()?.join("rerail");
+    is_installed(&package).then_some(package)
 }
 
 fn is_root(dir: &Path) -> bool {
@@ -221,6 +233,30 @@ mod tests {
         // A package missing either half of what it ships is not one.
         std::fs::remove_file(dir.path().join("native/src/code_rule_dsl/typing/programs/sources.rerail")).unwrap();
         assert_eq!(super::find(None, Some(addon), [None, None]), None);
+    }
+
+    #[test]
+    fn an_installed_package_is_the_root_around_its_engine_package_or_beside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let scope = dir.path().join("node_modules/@neralabs");
+        let package = scope.join("rerail");
+        layout(&package, &["package.json", "docs/rule-syntax/lib/core.rerail", "native/src/code_rule_dsl/typing/programs/sources.rerail"]);
+        let root = Some(canonical(package.clone()));
+        // Inside the package, where npm puts the optional dependencies its shrinkwrap lists.
+        let inside = package.join("node_modules/@neralabs/rerail-engine-linux-x64-gnu/addon.node");
+        // Beside it, where npm puts a package the install names with it.
+        let beside = scope.join("rerail-engine-linux-x64-gnu/addon.node");
+        // In a package of another scope, which no install of Rerail makes.
+        let elsewhere = dir.path().join("node_modules/other/addon.node");
+        for addon in [&inside, &beside, &elsewhere] {
+            layout(addon.parent().unwrap(), &["package.json", "addon.node"]);
+        }
+        assert_eq!(super::find(None, Some(inside), [None, None]), root);
+        assert_eq!(super::find(None, Some(beside.clone()), [None, None]), root);
+        assert_eq!(super::find(None, Some(elsewhere), [None, None]), None);
+        // A package beside the addon that is missing either half of what it ships is not one.
+        std::fs::remove_file(package.join("docs/rule-syntax/lib/core.rerail")).unwrap();
+        assert_eq!(super::find(None, Some(beside), [None, None]), None);
     }
 
     #[test]

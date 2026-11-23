@@ -10,11 +10,12 @@ import {
   compareSemver,
   gitBashShim,
   launcherShim,
+  machinePackageSpecs,
   validateManagedInstallation,
   type Installation,
   type PackageRegistry,
 } from "../../src/setup/updater.js";
-import { ENTRY_POINTS } from "../../src/engine/index.js";
+import { ENTRY_POINTS, nativePlatformSuffix } from "../../src/engine/index.js";
 import type { NpmRunner, Progress } from "../../src/runtime/index.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -61,7 +62,7 @@ async function fixture(): Promise<{ home: string; packageRoot: string }> {
 }
 
 /** The engine as a Rerail whose engine does not load has it. */
-const noEngine = (): never => { throw new Error("Unsupported platform or missing native addon: rerail_engine.node"); };
+const noEngine = (): never => { throw new Error("Rerail's engine for Linux on x64 is not installed"); };
 
 async function assertPackageIdentity(installation: Installation): Promise<void> {
   const manifest = JSON.parse(await readFile(join(installation.packageRoot, "package.json"), "utf8")) as Record<
@@ -663,44 +664,68 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
   });
 });
 
-describe("NpmPackageRegistry", () => {
-  interface NpmCall { args: readonly string[]; cwd: string | undefined; timeoutMs: number | undefined; projectConfig: boolean; env: NodeJS.ProcessEnv | undefined; userconfig: string | undefined }
+interface NpmCall { args: readonly string[]; cwd: string | undefined; timeoutMs: number | undefined; projectConfig: boolean; env: NodeJS.ProcessEnv | undefined; userconfig: string | undefined }
 
-  /**
-   * An npm whose registry has `@neralabs/rerail@1.1.0` at https://mirror.example/npm and whose `audit signatures`
-   * does what `audit` does. It notes, per call, whether the folder it ran in had a project `.npmrc` or `package.json`.
-   */
-  function fakeNpm(audit: () => Promise<void>): { npm: NpmRunner; calls: NpmCall[] } {
-    const calls: NpmCall[] = [];
-    const npm: NpmRunner = async (args, options = {}) => {
-      const cwd = options.cwd ?? process.cwd();
-      const userconfigPath = options.env?.npm_config_userconfig;
-      calls.push({
-        args, cwd: options.cwd, timeoutMs: options.timeoutMs, projectConfig: existsSync(join(cwd, ".npmrc")) || existsSync(join(cwd, "package.json")), env: options.env,
-        userconfig: userconfigPath === undefined ? undefined : await readFile(userconfigPath, "utf8"),
-      });
-      if (args[0] === "view") return { stdout: JSON.stringify("1.1.0"), stderr: "" };
-      if (args[0] === "audit") {
-        await audit();
-        return { stdout: "", stderr: "" };
-      }
-      const prefix = args[args.indexOf("--prefix") + 1]!;
-      const packageRoot = join(prefix, "node_modules", "@neralabs", "rerail");
-      await mkdir(packageRoot, { recursive: true });
-      await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.1.0" }));
-      await writeFile(join(prefix, "node_modules", ".package-lock.json"), JSON.stringify({
-        packages: { "node_modules/@neralabs/rerail": { resolved: "https://mirror.example/npm/@neralabs/rerail/-/rerail-1.1.0.tgz" } },
-      }));
+/** The integrity of a package's tarball on the fake registry, and so the one core pins for it. */
+const releasedIntegrity = (name: string): string => `sha512-${Buffer.from(name).toString("base64")}`;
+
+/** What the fake npm's install does with a package the command names beside core: this machine's engine package. */
+interface FakeInstall {
+  /** The integrity npm records for the one it installed; none where it installs none. */
+  installed?: (name: string) => string | undefined;
+  /** The integrity core's `npm-shrinkwrap.json` pins for it; none where it pins none. */
+  pinned?: (name: string) => string | undefined;
+  /** npm's output where the install fails. */
+  failure?: (specs: readonly string[]) => string;
+}
+
+/**
+ * An npm whose registry has `@neralabs/rerail@1.1.0` at https://mirror.example/npm and whose `audit signatures`
+ * does what `audit` does. Its install puts every package the command names into the prefix, and the core it installs
+ * pins each of the others in its `npm-shrinkwrap.json`, as a released core pins its engine packages. It notes, per
+ * call, whether the folder it ran in had a project `.npmrc` or `package.json`.
+ */
+function fakeNpm(audit: () => Promise<void>, install: FakeInstall = {}): { npm: NpmRunner; calls: NpmCall[] } {
+  const { installed = releasedIntegrity, pinned = releasedIntegrity, failure } = install;
+  const calls: NpmCall[] = [];
+  const npm: NpmRunner = async (args, options = {}) => {
+    const cwd = options.cwd ?? process.cwd();
+    const userconfigPath = options.env?.npm_config_userconfig;
+    calls.push({
+      args, cwd: options.cwd, timeoutMs: options.timeoutMs, projectConfig: existsSync(join(cwd, ".npmrc")) || existsSync(join(cwd, "package.json")), env: options.env,
+      userconfig: userconfigPath === undefined ? undefined : await readFile(userconfigPath, "utf8"),
+    });
+    if (args[0] === "view") return { stdout: JSON.stringify("1.1.0"), stderr: "" };
+    if (args[0] === "audit") {
+      await audit();
       return { stdout: "", stderr: "" };
-    };
-    return { npm, calls };
-  }
+    }
+    const specs = args.filter(argument => /^@[^@]+@/u.test(argument));
+    if (failure !== undefined) throw new Error(`npm failed (1): ${failure(specs)}`);
+    const prefix = args[args.indexOf("--prefix") + 1]!;
+    const packageRoot = join(prefix, "node_modules", "@neralabs", "rerail");
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.1.0" }));
+    const lockfile: Record<string, object> = { "node_modules/@neralabs/rerail": { resolved: "https://mirror.example/npm/@neralabs/rerail/-/rerail-1.1.0.tgz" } };
+    const shrinkwrap: Record<string, object> = {};
+    for (const name of specs.map(spec => spec.slice(0, spec.lastIndexOf("@"))).filter(name => name !== "@neralabs/rerail")) {
+      const [recorded, pin] = [installed(name), pinned(name)];
+      if (recorded !== undefined) lockfile[`node_modules/${name}`] = { version: "1.1.0", integrity: recorded };
+      if (pin !== undefined) shrinkwrap[`node_modules/${name}`] = { version: "1.1.0", integrity: pin, optional: true };
+    }
+    await writeFile(join(prefix, "node_modules", ".package-lock.json"), JSON.stringify({ packages: lockfile }));
+    await writeFile(join(packageRoot, "npm-shrinkwrap.json"), JSON.stringify({ packages: shrinkwrap }));
+    return { stdout: "", stderr: "" };
+  };
+  return { npm, calls };
+}
 
-  async function updaterWith(npm: NpmRunner, validateInstallation: (installation: Installation) => Promise<void>): Promise<ManagedUpdater> {
-    const { home, packageRoot } = await fixture();
-    return new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new NpmPackageRegistry(npm), validateInstallation });
-  }
+async function updaterWith(npm: NpmRunner, validateInstallation: (installation: Installation) => Promise<void>): Promise<ManagedUpdater> {
+  const { home, packageRoot } = await fixture();
+  return new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new NpmPackageRegistry(npm), validateInstallation });
+}
 
+describe("NpmPackageRegistry", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -809,6 +834,97 @@ describe("NpmPackageRegistry", () => {
     expect(validate).toHaveBeenCalled();
     const written = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
     expect(written).toContain("warning: https://mirror.example/npm ");
+  });
+});
+
+describe("NpmPackageRegistry: one engine per machine", () => {
+  const [engineSpec] = machinePackageSpecs("1.1.0") as [string];
+  const engine = engineSpec.slice(0, engineSpec.lastIndexOf("@"));
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** An update through an npm whose install does `install`; `validate` is the check that runs the staged version. */
+  async function updateWith(install: FakeInstall): Promise<{ update: Promise<unknown>; updater: ManagedUpdater; calls: NpmCall[]; validate: ReturnType<typeof vi.fn> }> {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const { npm, calls } = fakeNpm(async () => {}, install);
+    const validate = vi.fn(async (_installation: Installation) => {});
+    const updater = await updaterWith(npm, validate);
+    return { update: updater.update(), updater, calls, validate };
+  }
+
+  /** Nothing of a refused install was run, checked for signatures or left on disk. */
+  async function expectNothingStaged({ updater, calls, validate }: Awaited<ReturnType<typeof updateWith>>): Promise<void> {
+    expect(validate).not.toHaveBeenCalled();
+    expect(calls.map(call => call.args[0])).not.toContain("audit");
+    expect((await updater.status()).current.version).toBe("1.0.0");
+    expect(await readdir(updater.versionsRoot)).toEqual([]);
+  }
+
+  it("needs one package, the engine package of its system, at core's version", () => {
+    expect(machinePackageSpecs("1.1.0")).toHaveLength(1);
+    expect(engineSpec.endsWith(`-${nativePlatformSuffix()}@1.1.0`)).toBe(true);
+    expect(machinePackageSpecs("1.2.0-next.1", "linux", "arm64")).toEqual([engineSpec.replace(`${nativePlatformSuffix()}@1.1.0`, "linux-arm64-gnu@1.2.0-next.1")]);
+  });
+
+  // npm 11.6.2 and later install every system's engine from core's optional dependencies, and `optional=false` in a
+  // person's npm settings none: named in the install, this machine's one is installed either way.
+  it("names this machine's engine package in the install and leaves core's optional dependencies out", async () => {
+    const run = await updateWith({});
+    await expect(run.update).resolves.toMatchObject({ changed: true, current: { version: "1.1.0" } });
+    const install = run.calls.find(call => call.args[0] === "install")!;
+    const prefix = install.args[install.args.indexOf("--prefix") + 1]!;
+    expect(install.args).toEqual(["install", "--prefix", prefix, "--ignore-scripts", "--omit=dev", "--omit=optional", "--no-audit", "--no-fund", engineSpec, "@neralabs/rerail@1.1.0"]);
+    expect(run.validate).toHaveBeenCalled();
+  });
+
+  it("takes an installed engine whose integrity holds the digest core pins among others", async () => {
+    const run = await updateWith({ installed: name => `sha1-b2xkZXI= ${releasedIntegrity(name)}` });
+    await expect(run.update).resolves.toMatchObject({ changed: true });
+  });
+
+  it("refuses the install before running any of it when the engine npm installed is not the one core pins", async () => {
+    const run = await updateWith({ installed: () => "sha512-b3RoZXIgYnl0ZXM=" });
+    await expect(run.update).rejects.toThrow(
+      `The ${engineSpec} npm installed is not the one @neralabs/rerail@1.1.0 was released with: its integrity is sha512-b3RoZXIgYnl0ZXM=, and @neralabs/rerail@1.1.0 pins ${releasedIntegrity(engine)}.`,
+    );
+    await expectNothingStaged(run);
+  });
+
+  it("refuses the install when npm installed core without the engine package", async () => {
+    const run = await updateWith({ installed: () => undefined });
+    await expect(run.update).rejects.toThrow(`npm installed @neralabs/rerail@1.1.0 without ${engineSpec}, its engine on this system.`);
+    await expectNothingStaged(run);
+  });
+
+  it("refuses the install when core pins no integrity for the engine package", async () => {
+    const run = await updateWith({ pinned: () => undefined });
+    await expect(run.update).rejects.toThrow(`@neralabs/rerail@1.1.0 pins no ${engine} in its npm-shrinkwrap.json`);
+    await expectNothingStaged(run);
+  });
+
+  it.each([
+    ["a version of the engine package", "ETARGET", (spec: string) => `npm error code ETARGET\nnpm error notarget No matching version found for ${spec}.\nnpm error notarget In most cases you or one of your dependencies are requesting a package version that doesn't exist.`, ""],
+    ["the engine package", "E404", (spec: string) => `npm error code E404\nnpm error 404 Not Found - GET https://mirror.example/npm/${spec.slice(0, spec.lastIndexOf("@")).replace("/", "%2f")} - not found\nnpm error 404\nnpm error 404  The requested resource '${spec}' could not be found or you do not have permission to access it.`, " (https://mirror.example)"],
+  ])("says the registry lacks the engine where npm finds no %s", async (_what, code, output, registry) => {
+    const run = await updateWith({ failure: ([spec]) => output(spec!) });
+    await expect(run.update).rejects.toThrow(new Error(
+      `npm could not install ${engineSpec}, the engine @neralabs/rerail@1.1.0 runs on here (${code}): the registry npm installs from${registry} does not have it. ` +
+      `A mirror, proxy or allowlist must carry ${engine} as well as @neralabs/rerail: check the registry in your npm configuration. Nothing was installed.`,
+    ));
+    await expectNothingStaged(run);
+  });
+
+  // Rerail's Node chooses the engine package, and the npm on PATH judges its platform under the Node it runs on.
+  it("says npm takes the engine package for another system's where it refuses its platform", async () => {
+    const run = await updateWith({ failure: ([spec]) => `npm error code EBADPLATFORM\nnpm error notsup Unsupported platform for ${spec}: wanted {"os":"darwin","cpu":"arm64"} (current: {"os":"darwin","cpu":"x64"})` });
+    await expect(run.update).rejects.toThrow(`npm could not install ${engineSpec}, the engine @neralabs/rerail@1.1.0 runs on here (EBADPLATFORM): npm takes it for another system's engine. It does where the npm on PATH runs on a Node built for another processor than the Node Rerail runs on (${process.execPath}, ${process.arch}): put that Node first on PATH and run this again. Nothing was installed.`);
+  });
+
+  it("leaves npm's own error as it is where npm fails over another package", async () => {
+    const run = await updateWith({ failure: () => "npm error code E404\nnpm error 404  The requested resource 'hono@4.13.14' could not be found or you do not have permission to access it." });
+    await expect(run.update).rejects.toThrow("npm failed (1): npm error code E404\nnpm error 404  The requested resource 'hono@4.13.14'");
   });
 });
 

@@ -63,28 +63,35 @@ Each environment installs Node and Git the way a user would.
 
 ## What each environment checks
 
-Up to nine checks run as the ordinary user, never root or SYSTEM, so set-up writes PATH as on a person's computer.
+Up to ten checks run as the ordinary user, never root or SYSTEM, so set-up writes PATH as on a person's computer.
 
-1. **registry**: a registry on the VM serves the package and every published rule pack in `packs/`; all else comes
-   from npmjs.
+1. **registry**: a registry on the VM serves the package, its six engine packages and every published rule pack in
+   `packs/`; all else comes from npmjs.
 2. **project**: a Git repository with a `package.json` and one commit, plus empty agent folders.
 3. **setup**: `npx @neralabs/rerail setup --json`, answered until Rerail is on.
 4. **shrinkwrap** (Linux and macOS, when the package under test is a tarball): npm read the package's shrinkwrap, so
    `better-sqlite3` is installed inside it.
-5. **status**: `rerail status` shows the daemon running with `Engine: ok`.
-6. **PATH**: a new shell finds `rerail`.
-7. **hooks**: Claude Code's and Codex's SessionStart commands record their sessions with the daemon.
-8. **daemon-restart**: `rerail daemon stop` and `rerail daemon start` work.
-9. **uninstall**: `rerail install --remove` unhooks every agent and takes Rerail off PATH.
+5. **engine-package**: the managed install holds one engine package, this machine's.
+6. **status**: `rerail status` shows the daemon running with `Engine: ok`.
+7. **PATH**: a new shell finds `rerail`.
+8. **hooks**: Claude Code's and Codex's SessionStart commands record their sessions with the daemon.
+9. **daemon-restart**: `rerail daemon stop` and `rerail daemon start` work.
+10. **uninstall**: `rerail install --remove` unhooks every agent and takes Rerail off PATH.
 
 <details>
 <summary>Exact pass conditions</summary>
 
-- **registry**: the VM's registry serves them as npmjs will.
+- **registry**: the VM's registry serves them as npmjs will. The bundle the VM unpacks holds seven tarballs for the
+  package under test, core's and one per [engine package](release.md#engine-packages), beside the rule packs': core
+  alone would install with no engine, since npm skips an optional dependency no registry has, with exit code 0.
 - **project**: the `package.json` is React and TypeScript; empty `~/.claude`, `~/.codex` and `~/.cursor` make set-up
   connect those agents.
 - **setup**: runs in the project, then sends each answer through the launcher command it prints (allow sessions, read
   this repository, start with the packs shown) until set-up says Rerail is on.
+- **engine-package**: of the engine packages core's `package.json` pins, exactly one is installed, beside core or
+  inside it, and its `os` and `cpu` are those of the machine's Node. Left to npm, the install would hold all six
+  inside core. A core from before the engine packages pins none: that passes for a version from npmjs (`--npm`) and
+  fails for a tarball.
 - **status**: `~/.rerail/current` is a symlink (junction on Windows).
 - **hooks**: Claude Code's and Codex's SessionStart commands run as each agent runs them. Cursor's hooks are registered.
 - **daemon-restart**: `rerail daemon stop` returns within 60 seconds, `status` shows no daemon, and `rerail daemon
@@ -103,7 +110,7 @@ The PATH check uses login and interactive bash on Linux; login interactive zsh (
 interactive zsh on macOS. On Windows, PATH is built from machine and user registry values, as a new terminal builds it.
 
 The release workflow runs the same checks before every publish: `guest.sh` on Linux and macOS, and on Windows the
-registry, set-up, managed install, hook and uninstall steps of `scripts/host/windows-host.ps1` via
+registry, set-up, managed install, engine package, hook and uninstall steps of `scripts/host/windows-host.ps1` via
 `scripts/host/windows-install-smoke.ps1`.
 
 Facts are recorded, not judged: OS, glibc or Windows build, Node and its location, npm, Git; on Windows, also the
@@ -134,8 +141,10 @@ just rerail-env-matrix run --tarball <file> --env ubuntu-24.04-x64 --keep       
 just rerail-env-matrix sweep --run-id <id>                                          # delete what a --keep run left
 ```
 
-- **Tarball**: needs every native engine, so use a `rerail-package` artifact from a Release or Environment matrix run
-  (`gh run download <run> -n rerail-package`), not a checkout's `npm pack`.
+- **Tarball**: core's tarball, with the six engine packages' tarballs and their manifest (`engine-packages.json`) in
+  the same folder. Every environment needs its own engine, so use a `rerail-package` artifact from a Release or
+  Environment matrix run (`gh run download <run> -n rerail-package`), which holds all seven, not a checkout's
+  `npm pack`.
 - **`--npm`**: until launch, npmjs serves `@neralabs` only to signed-in members; set `RERAIL_ENV_NPM_TOKEN` to a read
   token.
 - **Duration**: environments run in parallel; a full run takes about 20 minutes, Windows longest.

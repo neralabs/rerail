@@ -6,8 +6,9 @@
 # which native engine is exercised. The environment matrix (scripts/host/azure/guest.ps1) runs the same steps from
 # windows-host.ps1 on Windows 11 VMs.
 #
-# Only the @neralabs scope resolves through the local registry (Verdaccio), which serves the package and this
-# checkout's published rule packs as npmjs serves them, its shrinkwrap marked so npm reads it; every dependency still
+# Only the @neralabs scope resolves through the local registry (Verdaccio), which serves the package, the engine
+# packages it was packed against (they lie beside the tarball, with their manifest) and this checkout's published rule
+# packs as npmjs serves them, its shrinkwrap marked so npm reads it; every dependency still
 # comes from npmjs, exactly as for a user who installs the published package. The runner has Visual Studio, and a
 # user may have neither it nor Python, so any native compile npm starts fails the smoke.
 param([Parameter(Mandatory)][string]$Tarball)
@@ -45,8 +46,16 @@ try {
   $packTarballs = @(Get-ChildItem "$base\packs" -Filter *.tgz | ForEach-Object { $_.FullName })
   Write-Host "packed $($packTarballs.Count) rule packs"
 
+  Step "Listing the engine packages the tarball was packed against"
+  # Core carries no engine: it pins the engine packages packed into its folder (engine-packages.json there lists them),
+  # and an install finds none unless the registry serves them too. releaseTarballs is the one reading of that folder.
+  $engineScripts = ([Uri](Join-Path $PSScriptRoot "..\release\engine\release.mjs")).AbsoluteUri
+  $releaseTarballs = @(& $node --input-type=module -e "const { releaseTarballs } = await import(process.argv[1]); for (const path of releaseTarballs(process.argv[2])) console.log(path);" $engineScripts $Tarball)
+  if ($LASTEXITCODE -ne 0) { throw "listing the tarballs packed with $Tarball exited $LASTEXITCODE" }
+  Write-Host "serving $($releaseTarballs.Count) tarballs of the release: $(($releaseTarballs | ForEach-Object { Split-Path -Leaf $_ }) -join ' ')"
+
   Step "Starting a local registry for the @neralabs scope"
-  $registry = Start-RerailRegistry -Root "$base\registry" -Tarballs (@($Tarball) + $packTarballs)
+  $registry = Start-RerailRegistry -Root "$base\registry" -Tarballs ($releaseTarballs + $packTarballs)
 
   Step "Running npx @neralabs/rerail setup in a sandbox profile, answering its questions (stdout captured)"
   # os.homedir() reads USERPROFILE on Windows; the rest pins npm and Rerail state, including the one Rerail
@@ -93,6 +102,7 @@ try {
 
   Step "Checking the managed installation"
   Assert-RerailManagedInstall -RerailHome $rerailHome | ForEach-Object { Write-Host $_ }
+  Assert-RerailEnginePackage -RerailHome $rerailHome -Packed $true | ForEach-Object { Write-Host $_ }
   $status = (& $launcher status) -join "`n"
   Write-Host $status
   if ($status -notmatch [regex]::Escape("running at http://127.0.0.1:$daemonPort")) { throw "rerail status does not show the setup-started daemon" }
