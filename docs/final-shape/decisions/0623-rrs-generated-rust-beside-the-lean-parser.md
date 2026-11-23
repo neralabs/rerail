@@ -489,3 +489,11 @@ parser's call is its return address. Where a level may change the word, the word
 
 Side by side on spark1, three rounds in turns: tier 2 35.2–37.7 ms before, 35.7–37.2 ms after, the same within the
 host's swing; the step is kept as the lean parser's shape. All tests pass.
+
+### Comments stay records between the tokens (the user, 2026-11-23)
+
+Lean keeps comments in a list of their own; tier 1 writes them as records among the tokens. That stream is the one
+record format every executor reads (the JIT, the devices, the generated Rust), and Kotlin's marks test comment records
+beside tokens. Asked whether to split it, the user chose to keep the one stream: a token with no comment after it costs
+one test of the record already read (`advance`), as lean's costs one compare of its next comment's start. What remains
+of tier 2 against lean is looked for in a line profile instead.
