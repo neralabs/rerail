@@ -490,6 +490,62 @@ describe("remote sink outbox", () => {
     expect(events.every(item => item.content === "omitted" && !("payload" in item))).toBe(true);
   });
 
+  /** An audit the repository owns (a change in another worktree no session made), of a checkout of {@link REPOSITORY}. */
+  function seedRepositoryAudit(sessionId: string): string {
+    const database = new Database(databasePath());
+    database.prepare("INSERT INTO checkouts (checkout_path, repository_key, clone_id, created_at, last_seen_at) VALUES ('/work/w', ?, 'c', 1, 1)").run(REPOSITORY);
+    database.close();
+    const audits = new SqliteAuditStore(databasePath());
+    const auditId = audits.start({
+      sessionId, owner: "repository", workspaceRoot: "/work/w", scope: "ai-output", mode: "log", revision: 1, catalogRevision: "c1",
+      ruleRevisions: [{ ruleId: "no-todo", revision: 1 }], paths: ["a.ts"],
+    });
+    audits.finish(auditId, {
+      status: "completed",
+      violations: [{
+        id: "v1", ruleId: "no-todo", clauseId: "c", code: "TODO", mode: "steer", message: "No TODO", path: "a.ts",
+        span: { startByte: 0, endByte: 4, startLine: 0, startColumn: 0, endLine: 0, endColumn: 4 }, captures: {}, variables: {},
+      }],
+    });
+    audits.close();
+    return auditId;
+  }
+
+  it("sends an audit the repository owns with no session, naming its repository, and its violations with no session", async () => {
+    const { sessionId, auditId: sessions } = seed();
+    const owned = seedRepositoryAudit(sessionId);
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const records = storedRecords(sink);
+    expect(records.filter(item => item.type === "audit").map(item => [item.id, item.sessionId, item.repositoryKey]))
+      .toEqual(expect.arrayContaining([[sessions, sessionId, null], [owned, null, REPOSITORY]]));
+    expect(records.find(item => item.type === "violation" && item.auditId === owned)).toMatchObject({ sessionId: null, logged: true });
+  });
+
+  it("holds back an audit the repository owns while that repository is excluded", async () => {
+    const { sessionId } = seed();
+    const owned = seedRepositoryAudit(sessionId);
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    setRepositoryExcluded(REPOSITORY, true, home);
+    await outbox().sync({ force: true });
+    expect(storedRecords(sink).filter(item => item.id === owned || item.auditId === owned)).toEqual([]);
+  });
+
+  it("sends an audit the repository owns whose stored paths do not read with no session, its repository and a failure that names them, and again whole once they are mended", async () => {
+    const { sessionId } = seed();
+    const owned = seedRepositoryAudit(sessionId);
+    setPathsText(owned, '["a.ts"');
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    setPathsText(owned, '["a.ts"]');
+    await outbox().sync({ force: true });
+    const sent = (request: number): unknown[] => sink.requests[request]!.records.filter(item => item.type === "audit" && item.id === owned);
+    expect(sent(0)).toEqual([expect.objectContaining({
+      sessionId: null, repositoryKey: REPOSITORY, paths: [], failures: [expect.objectContaining({ clauseId: "paths", code: "adapter-error" })],
+    })]);
+    expect(sent(1)).toEqual([expect.objectContaining({ sessionId: null, repositoryKey: REPOSITORY, paths: ["a.ts"], failures: [] })]);
+  });
+
   it("sends nothing of an excluded repository", async () => {
     seed();
     addRemote({ url: sink.url, token: "test-token", content: true }, home);

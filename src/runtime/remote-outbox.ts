@@ -575,7 +575,8 @@ export class RemoteOutbox {
       const isExcluded = (sessionId: string, at: number): boolean =>
         excludedSessions.has(sessionId) || excluded.at(sessionRepository.get(sessionId) ?? null, at);
       if (!this.#collectEvents(state, rerail, remote, batch, isExcluded)) return batch;
-      if (!this.#collectAudits(rerail, rules, batch, isExcluded, addSnapshot, unsent)) return batch;
+      const isExcludedRepository = (repositoryKey: string | null, at: number): boolean => excluded.at(repositoryKey, at);
+      if (!this.#collectAudits(rerail, rules, batch, { isExcluded, isExcludedRepository }, addSnapshot, unsent)) return batch;
     }
 
     const scans = state.prepare("SELECT scan_id, repository_key, document_json, rules_json, queued_at FROM scans ORDER BY queued_at").all() as Array<{ scan_id: string; repository_key: string; document_json: string; rules_json: string; queued_at: number }>;
@@ -625,16 +626,22 @@ export class RemoteOutbox {
     rerail: Database.Database,
     rules: RuleDocuments,
     batch: BatchBuilder,
-    isExcluded: (sessionId: string, at: number) => boolean,
+    { isExcluded, isExcludedRepository }: {
+      isExcluded: (sessionId: string, at: number) => boolean;
+      isExcludedRepository: (repositoryKey: string | null, at: number) => boolean;
+    },
     addSnapshot: (item: OutboxRecord) => boolean,
     unsent: (item: OutboxRecord) => boolean,
   ): boolean {
-    const rows = rerail.prepare("SELECT audit_id, session_id, origin, status, started_at, finished_at, length(violations_json) AS size FROM audits WHERE finished_at IS NOT NULL ORDER BY started_at").all() as FinishedAuditRow[];
+    const rows = rerail.prepare("SELECT audit_id, session_id, repository_id, origin, status, started_at, finished_at, length(violations_json) AS size FROM audits WHERE finished_at IS NOT NULL ORDER BY started_at").all() as FinishedAuditRow[];
+    // An audit the repository owns has no session: its repository's exclusions decide.
+    const excludedAudit = (row: FinishedAuditRow): boolean =>
+      row.session_id === null ? isExcludedRepository(row.repository_id, row.started_at) : isExcluded(row.session_id, row.started_at);
     // Opens the database at its first read: a sync with no audit to test or send opens none.
     const reader = new SqliteAuditReader(join(this.#home, RERAIL_DATABASE_FILE));
     const sink: AuditSink = { rerail, rules, batch, addSnapshot, unsent, reader, rows };
     try {
-      return rows.every(row => isExcluded(row.session_id, row.started_at) || this.#addPending(sink, row));
+      return rows.every(row => excludedAudit(row) || this.#addPending(sink, row));
     } finally {
       reader.close();
     }
@@ -834,8 +841,8 @@ function violationKeysOf(rerail: Database.Database, audit: AuditRecord): Readonl
   return new Map(rows.map(entry => [entry.ordinal, entry]));
 }
 
-/** A finished audit as `#collectAudits` lists it. */
-interface FinishedAuditRow { audit_id: string; session_id: string; origin: string; status: string; started_at: number; finished_at: number; size: number }
+/** A finished audit as `#collectAudits` lists it; an audit the repository owns has `repository_id` and no session. */
+interface FinishedAuditRow { audit_id: string; session_id: string | null; repository_id: string | null; origin: string; status: string; started_at: number; finished_at: number; size: number }
 
 /**
  * What decides whether an audit is sent again: a change to its status, end or violations, its marking as a scan, or
@@ -881,6 +888,7 @@ function addTogether(sink: AuditSink, items: readonly OutboxRecord[]): boolean {
 function auditRecord(audit: AuditRecord, hash: string): OutboxRecord {
   return record("audit", audit.auditId, {
     sessionId: audit.sessionId,
+    repositoryKey: audit.repositoryId,
     workspaceRoot: audit.workspaceRoot,
     scope: audit.scope,
     mode: audit.mode,
