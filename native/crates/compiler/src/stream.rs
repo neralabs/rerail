@@ -1114,10 +1114,10 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
         // `TOKEN` test is the one entry's), and none an `unless` alone of a refusing mark.
         let rising = i == 0 || program.token_marks[i - 1].order < m.order || (program.token_marks[i - 1].order == m.order && !m.refuses && !program.token_marks[i - 1].refuses);
         let rising = rising && !(m.refuses && m.unless);
-        // One run at most, after the mark's token, not last, of no `end`.
-        let runs = m.elems.iter().filter(|e| e.run).count();
+        // Its runs after the mark's token, none last or right after another, of no `end`.
         let last = m.elems.last().is_some_and(|e| e.run);
-        let rising = rising && runs <= 1 && !last && m.elems.iter().all(|e| !e.run || (e.offset > 0 && !e.end));
+        let twice = m.elems.windows(2).any(|w| w[0].run && w[1].run);
+        let rising = rising && !twice && !last && m.elems.iter().all(|e| !e.run || (e.offset > 0 && !e.end));
         let offsets = m.elems.windows(2).all(|w| w[0].offset < w[1].offset) && m.elems.iter().any(|e| e.offset == 0) && m.elems.first().is_some_and(|e| e.offset >= -1);
         // A `not` or an `end` only after the mark's token, but for the token before's `not`,
         // which has an `end` (no token before holds), and the mark's own token's `not`, a gap

@@ -8267,7 +8267,7 @@ impl P<'_> {
     }
 
     fn h_as_open(&self) -> bool {
-        (self.bit_at(self.i, 5) && !self.next_as_open_0_0_0(self.i, self.prev_tok(self.i)))
+        (self.bit_at(self.i, 5) && !self.next_as_open_0_0_0(self.i, self.prev_tok(self.i)) && !self.next_as_open_0_1_0(self.i, self.prev_tok(self.i)))
     }
 
     /// Mark `as_open` taken: it and the marks before it passed at this token.
@@ -8507,7 +8507,7 @@ impl P<'_> {
     }
 
     fn h_as_split(&self) -> bool {
-        (self.pat_as_split_0_0(self.i, self.prev_tok(self.i))) || (self.pat_as_split_1_0(self.i, self.prev_tok(self.i)))
+        (self.pat_as_split_0_0(self.i, self.prev_tok(self.i)) && !self.next_as_split_0_0_0(self.i, self.prev_tok(self.i))) || (self.pat_as_split_1_0(self.i, self.prev_tok(self.i)) && !self.next_as_split_1_0_0(self.i, self.prev_tok(self.i)))
     }
 
     /// Mark `as_split` taken: it and the marks before it passed at this token.
@@ -8531,7 +8531,7 @@ impl P<'_> {
     }
 
     fn h_is_split(&self) -> bool {
-        (self.pat_is_split_0_0(self.i, self.prev_tok(self.i))) || (self.pat_is_split_1_0(self.i, self.prev_tok(self.i)))
+        (self.pat_is_split_0_0(self.i, self.prev_tok(self.i)) && !self.next_is_split_0_0_0(self.i, self.prev_tok(self.i))) || (self.pat_is_split_1_0(self.i, self.prev_tok(self.i)) && !self.next_is_split_1_0_0(self.i, self.prev_tok(self.i)))
     }
 
     /// Mark `is_split` taken: it and the marks before it passed at this token.
@@ -9621,6 +9621,42 @@ impl P<'_> {
     }
 
     #[allow(unused_variables)]
+    fn next_as_open_0_1_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::FOR_42 || self.word_at(j) == w::WHILE_44 || self.word_at(j) == w::DO_45 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7) && self.next_as_open_0_1_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_open_0_1_1(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && true && self.next_as_open_0_1_2(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(((j < self.n && !((self.word_at(j) == w::LT_26 || self.word_at(j) == w::GT_27 || self.word_at(j) == w::MINUS_GT_41 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::AS_10 || self.word_at(j) == w::IS_75 || self.word_at(j) == w::FUN_14 || self.word_at(j) == w::OBJECT_31)))) && !self.bit_at(j, 3)) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACK_5 || self.word_at(j) == w::LBRACE_17) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21 || self.word_at(j) == w::RBRACK_6 || self.word_at(j) == w::RBRACE_18) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_open_0_1_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::EQ_EQ_71 || self.word_at(j) == w::BANG_EQ_69 || self.word_at(j) == w::EQ_EQ_EQ_72 || self.word_at(j) == w::BANG_EQ_EQ_70 || self.word_at(j) == w::AMP_AMP_50 || self.word_at(j) == w::BAR_BAR_51 || self.word_at(j) == w::PLUS_EQ_64 || self.word_at(j) == w::MINUS_EQ_65 || self.word_at(j) == w::STAR_EQ_66 || self.word_at(j) == w::SLASH_EQ_67 || self.word_at(j) == w::PERCENT_EQ_68 || self.word_at(j) == w::LT_EQ_73) && true
+    }
+
+    #[allow(unused_variables)]
     fn pat_bt_cref_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
         (self.at_backtick_name_at(j)) && self.pat_bt_cref_0_1(self.next_tok(j + 1), j)
@@ -9763,6 +9799,76 @@ impl P<'_> {
     }
 
     #[allow(unused_variables)]
+    fn next_as_split_0_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::AS_10) && self.next_as_split_0_0_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_split_0_0_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j)) && self.next_as_split_0_0_2(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_split_0_0_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::DOT_32) && self.next_as_split_0_0_3(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_split_0_0_3(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.word_at(prev) == w::GT_27) && self.next_as_split_0_0_4(j, prev) {
+                return true;
+            }
+            if j >= self.n || !((self.at_simple_identifier_at(j) || self.word_at(j) == w::DOT_32 || self.word_at(j) == w::LT_26 || self.word_at(j) == w::GT_27)) {
+                return false;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_split_0_0_4(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::FOR_42 || self.word_at(j) == w::WHILE_44 || self.word_at(j) == w::DO_45 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7) && self.bit_at(j, 5) && self.next_as_split_0_0_5(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_split_0_0_5(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && true && self.next_as_split_0_0_6(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(((j < self.n && !((self.word_at(j) == w::LT_26 || self.word_at(j) == w::GT_27 || self.word_at(j) == w::MINUS_GT_41 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::AS_10 || self.word_at(j) == w::IS_75 || self.word_at(j) == w::FUN_14 || self.word_at(j) == w::OBJECT_31)))) && !self.bit_at(j, 3)) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACK_5 || self.word_at(j) == w::LBRACE_17) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21 || self.word_at(j) == w::RBRACK_6 || self.word_at(j) == w::RBRACE_18) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_split_0_0_6(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::EQ_EQ_71 || self.word_at(j) == w::BANG_EQ_69 || self.word_at(j) == w::EQ_EQ_EQ_72 || self.word_at(j) == w::BANG_EQ_EQ_70 || self.word_at(j) == w::AMP_AMP_50 || self.word_at(j) == w::BAR_BAR_51 || self.word_at(j) == w::PLUS_EQ_64 || self.word_at(j) == w::MINUS_EQ_65 || self.word_at(j) == w::STAR_EQ_66 || self.word_at(j) == w::SLASH_EQ_67 || self.word_at(j) == w::PERCENT_EQ_68 || self.word_at(j) == w::LT_EQ_73) && true
+    }
+
+    #[allow(unused_variables)]
     fn pat_as_split_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
         (self.word_at(j) == w::AS_10) && self.pat_as_split_1_1(self.next_tok(j + 1), j)
@@ -9809,6 +9915,82 @@ impl P<'_> {
     }
 
     #[allow(unused_variables)]
+    fn next_as_split_1_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::AS_10) && self.next_as_split_1_0_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_split_1_0_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::QUEST_40) && !self.bit_at(j, 7) && self.next_as_split_1_0_2(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_split_1_0_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j)) && self.next_as_split_1_0_3(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_split_1_0_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::DOT_32) && self.next_as_split_1_0_4(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_split_1_0_4(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.word_at(prev) == w::GT_27) && self.next_as_split_1_0_5(j, prev) {
+                return true;
+            }
+            if j >= self.n || !((self.at_simple_identifier_at(j) || self.word_at(j) == w::DOT_32 || self.word_at(j) == w::LT_26 || self.word_at(j) == w::GT_27)) {
+                return false;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_split_1_0_5(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::FOR_42 || self.word_at(j) == w::WHILE_44 || self.word_at(j) == w::DO_45 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7) && self.bit_at(j, 5) && self.next_as_split_1_0_6(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_split_1_0_6(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && true && self.next_as_split_1_0_7(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(((j < self.n && !((self.word_at(j) == w::LT_26 || self.word_at(j) == w::GT_27 || self.word_at(j) == w::MINUS_GT_41 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::AS_10 || self.word_at(j) == w::IS_75 || self.word_at(j) == w::FUN_14 || self.word_at(j) == w::OBJECT_31)))) && !self.bit_at(j, 3)) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACK_5 || self.word_at(j) == w::LBRACE_17) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21 || self.word_at(j) == w::RBRACK_6 || self.word_at(j) == w::RBRACE_18) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_as_split_1_0_7(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::EQ_EQ_71 || self.word_at(j) == w::BANG_EQ_69 || self.word_at(j) == w::EQ_EQ_EQ_72 || self.word_at(j) == w::BANG_EQ_EQ_70 || self.word_at(j) == w::AMP_AMP_50 || self.word_at(j) == w::BAR_BAR_51 || self.word_at(j) == w::PLUS_EQ_64 || self.word_at(j) == w::MINUS_EQ_65 || self.word_at(j) == w::STAR_EQ_66 || self.word_at(j) == w::SLASH_EQ_67 || self.word_at(j) == w::PERCENT_EQ_68 || self.word_at(j) == w::LT_EQ_73) && true
+    }
+
+    #[allow(unused_variables)]
     fn pat_is_split_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
         (self.word_at(j) == w::IS_75) && self.pat_is_split_0_1(self.next_tok(j + 1), j)
@@ -9846,6 +10028,76 @@ impl P<'_> {
     fn pat_is_split_0_4(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
         (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACE_17 || self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::FOR_42 || self.word_at(j) == w::WHILE_44 || self.word_at(j) == w::DO_45 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7) && self.bit_at(j, 5) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_0_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::IS_75) && self.next_is_split_0_0_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_0_0_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j)) && self.next_is_split_0_0_2(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_0_0_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::DOT_32) && self.next_is_split_0_0_3(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_0_0_3(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.word_at(prev) == w::GT_27) && self.next_is_split_0_0_4(j, prev) {
+                return true;
+            }
+            if j >= self.n || !((self.at_simple_identifier_at(j) || self.word_at(j) == w::DOT_32 || self.word_at(j) == w::LT_26 || self.word_at(j) == w::GT_27)) {
+                return false;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_0_0_4(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::FOR_42 || self.word_at(j) == w::WHILE_44 || self.word_at(j) == w::DO_45 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7) && self.bit_at(j, 5) && self.next_is_split_0_0_5(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_0_0_5(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && true && self.next_is_split_0_0_6(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(((j < self.n && !((self.word_at(j) == w::LT_26 || self.word_at(j) == w::GT_27 || self.word_at(j) == w::MINUS_GT_41 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::AS_10 || self.word_at(j) == w::IS_75 || self.word_at(j) == w::FUN_14 || self.word_at(j) == w::OBJECT_31)))) && !self.bit_at(j, 3)) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACK_5 || self.word_at(j) == w::LBRACE_17) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21 || self.word_at(j) == w::RBRACK_6 || self.word_at(j) == w::RBRACE_18) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_0_0_6(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::EQ_EQ_71 || self.word_at(j) == w::BANG_EQ_69 || self.word_at(j) == w::EQ_EQ_EQ_72 || self.word_at(j) == w::BANG_EQ_EQ_70 || self.word_at(j) == w::AMP_AMP_50 || self.word_at(j) == w::BAR_BAR_51 || self.word_at(j) == w::PLUS_EQ_64 || self.word_at(j) == w::MINUS_EQ_65 || self.word_at(j) == w::STAR_EQ_66 || self.word_at(j) == w::SLASH_EQ_67 || self.word_at(j) == w::PERCENT_EQ_68 || self.word_at(j) == w::LT_EQ_73) && true
     }
 
     #[allow(unused_variables)]
@@ -9892,6 +10144,82 @@ impl P<'_> {
     fn pat_is_split_1_5(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
         (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACE_17 || self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::FOR_42 || self.word_at(j) == w::WHILE_44 || self.word_at(j) == w::DO_45 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7) && self.bit_at(j, 5) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_1_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::BANG_49) && self.next_is_split_1_0_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_1_0_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::IS_75) && self.next_is_split_1_0_2(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_1_0_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j)) && self.next_is_split_1_0_3(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_1_0_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::DOT_32) && self.next_is_split_1_0_4(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_1_0_4(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.word_at(prev) == w::GT_27) && self.next_is_split_1_0_5(j, prev) {
+                return true;
+            }
+            if j >= self.n || !((self.at_simple_identifier_at(j) || self.word_at(j) == w::DOT_32 || self.word_at(j) == w::LT_26 || self.word_at(j) == w::GT_27)) {
+                return false;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_1_0_5(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::MINUS_77 || self.word_at(j) == w::PLUS_76 || self.word_at(j) == w::BANG_49 || self.word_at(j) == w::PLUS_PLUS_80 || self.word_at(j) == w::MINUS_MINUS_81 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_118 || self.word_at(j) == w::TRUE_116 || self.word_at(j) == w::FALSE_117 || self.word_at(j) == w::BREAK_62 || self.word_at(j) == w::CONTINUE_61 || self.word_at(j) == w::FOR_42 || self.word_at(j) == w::WHILE_44 || self.word_at(j) == w::DO_45 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7) && self.bit_at(j, 5) && self.next_is_split_1_0_6(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_1_0_6(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && true && self.next_is_split_1_0_7(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(((j < self.n && !((self.word_at(j) == w::LT_26 || self.word_at(j) == w::GT_27 || self.word_at(j) == w::MINUS_GT_41 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::IF_53 || self.word_at(j) == w::WHEN_55 || self.word_at(j) == w::TRY_56 || self.word_at(j) == w::RETURN_60 || self.word_at(j) == w::THROW_59 || self.word_at(j) == w::AS_10 || self.word_at(j) == w::IS_75 || self.word_at(j) == w::FUN_14 || self.word_at(j) == w::OBJECT_31)))) && !self.bit_at(j, 3)) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACK_5 || self.word_at(j) == w::LBRACE_17) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21 || self.word_at(j) == w::RBRACK_6 || self.word_at(j) == w::RBRACE_18) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_is_split_1_0_7(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::EQ_EQ_71 || self.word_at(j) == w::BANG_EQ_69 || self.word_at(j) == w::EQ_EQ_EQ_72 || self.word_at(j) == w::BANG_EQ_EQ_70 || self.word_at(j) == w::AMP_AMP_50 || self.word_at(j) == w::BAR_BAR_51 || self.word_at(j) == w::PLUS_EQ_64 || self.word_at(j) == w::MINUS_EQ_65 || self.word_at(j) == w::STAR_EQ_66 || self.word_at(j) == w::SLASH_EQ_67 || self.word_at(j) == w::PERCENT_EQ_68 || self.word_at(j) == w::LT_EQ_73) && true
     }
 
     #[allow(unused_variables)]

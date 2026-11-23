@@ -20,7 +20,7 @@ enum Tok {
 /// `(C)*` (`Many`, decision 0416), any number of tokens of `C`'s choices (or of none of them, for
 /// a `C` that is one `~`), then the elements after
 /// it from any of them on (as a forward scan for the first place they hold), the only choice of
-/// its element, one a run and never its last. A run's `nest` counts depths (`Nest`); its `ending
+/// its element, never the first or last element nor right after another run. A run's `nest` counts depths (`Nest`); its `ending
 /// (C)` (the third field) tries the elements after it only where its last token, or the token
 /// before it where it took none, is one of `C` (Q342).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1345,13 +1345,21 @@ impl P {
         let mut out = vec![];
         // `(C | …)*`: a run of them (`Many`), alone in its element.
         if self.eat_p("(") {
-            let inner = self.token_choices()?;
+            let mut inner = self.token_choices()?;
+            // Its tokens' `with M` and `without M` (as the lean parsers' scans stop at a line
+            // end: `!peek_at(j).nl`).
+            while let Some(with) = if self.eat_kw("without") { Some(false) } else if self.eat_kw("with") { Some(true) } else { None } {
+                let m = self.ident()?;
+                inner.push(if with { TokenElem::With(m) } else { TokenElem::Without(m) });
+            }
             self.want_p(")")?;
             self.want_p("*")?;
-            // Kinds and words, or one `~` of them: a run of any other tokens.
-            let not = matches!(inner.as_slice(), [TokenElem::Not(_)]);
-            if !not && inner.iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_))) {
-                return self.err("a run of kinds and words, or of a `~` of them");
+            // Kinds and words, or one `~` of them: a run of any other tokens; then marks.
+            let marks = inner.iter().filter(|c| matches!(c, TokenElem::With(_) | TokenElem::Without(_))).count();
+            let choices = &inner[..inner.len() - marks];
+            let not = matches!(choices, [TokenElem::Not(_)]);
+            if choices.is_empty() || !not && choices.iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_))) {
+                return self.err("a run of kinds and words, or of a `~` of them, then its `with`s and `without`s");
             }
             // `nest (O to C) …`: the depths it counts (`Nest`).
             let mut nests = vec![];
@@ -1496,7 +1504,8 @@ impl P {
         }
     }
     /// A run of elements, as a token mark's (`tokens`) or a mark's `before`: each an element of
-    /// choices, a `~` or a run; one run at most, never first or last; an `end` only last.
+    /// choices, a `~` or a run; a run never first or last, nor right after another; an `end`
+    /// only last.
     fn token_seq(&mut self) -> R<Vec<Vec<TokenElem>>> {
         let mut seq = vec![];
         while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_) | Tok::P("~") | Tok::P("("))) {
@@ -1509,8 +1518,8 @@ impl P {
         if seq.is_empty() {
             return self.err("a token");
         }
-        if runs.len() > 1 || runs.first().is_some_and(|&i| i == 0 || i + 1 == seq.len()) {
-            return self.err("one run of tokens at most, after the first token and before the last");
+        if runs.windows(2).any(|w| w[1] == w[0] + 1) || runs.iter().any(|&i| i == 0 || i + 1 == seq.len()) {
+            return self.err("runs of tokens after the first token, before the last, none right after another");
         }
         if seq[..seq.len() - 1].iter().any(|c| c.contains(&TokenElem::End)) {
             return self.err("an `end` only last");
@@ -2841,10 +2850,17 @@ mod tier2_tests {
         );
         assert!(mark("mark k = lf, before ~\"}\"").is_err());
         assert!(mark("mark k = lf, before end").is_err());
-        // A run first or last, two runs, a run of a `~`: refused.
+        // A run first or last, two runs side by side, a run of a `~` and more: refused. Two runs
+        // with a token between them, and a run's `without`, are read (decision 0632).
         assert!(mark("mark k = lf, before (name)* \"->\"").is_err());
         assert!(mark("mark k = lf, before \"{\" (name)*").is_err());
-        assert!(mark("mark k = lf, before \"{\" (name)* \",\" (name)* \"->\"").is_err());
+        assert!(mark("mark k = lf, before \"{\" (name)* (\",\")* \"->\"").is_err());
+        let many = |e: Vec<TokenElem>| TokenElem::Many(e, vec![], vec![]);
+        assert_eq!(
+            mark("mark k = lf, before \"{\" (name)* \",\" (name)* \"->\""),
+            Ok((vec![(false, vec![vec![word("{")], vec![many(vec![name.clone()])], vec![word(",")], vec![many(vec![name.clone()])], vec![word("->")]])], false))
+        );
+        assert!(mark("mark k = lf, before \"{\" (~name without k)* \"->\"").is_ok());
         assert!(mark("mark k = lf, before \"{\" (~name | \",\")* \"->\"").is_err());
         assert_eq!(
             mark("mark k = lf, before \"{\" (~(name | \",\"))* \"->\""),

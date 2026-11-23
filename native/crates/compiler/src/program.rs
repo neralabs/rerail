@@ -544,7 +544,7 @@ pub struct TokenElem {
     /// The file's end takes it too: no token left (the last element only).
     pub end: bool,
     /// A run (decision 0416): any number of records the element takes, then the elements after
-    /// it from any of them on (one run at most, after offset 0, never last).
+    /// it from any of them on (after offset 0, never last nor right after another run).
     pub run: bool,
     /// A run's depths (Q339, Bitlex's `nest`): each side of one, the run's records it takes go
     /// one deeper (`open`) or one out. The elements after the run are tried only where every

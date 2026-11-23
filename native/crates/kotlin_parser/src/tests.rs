@@ -973,8 +973,9 @@ fn as_types_the_lean_parser_does_not_split_are_its() {
     ]);
 }
 
-/// The line after a type the lean parser may split (decision 0630): read as the lean parser's trial read
-/// reads it, a keyword no expression starts with a name there, and an operator in brackets.
+/// The line after a type the lean parser may split (decisions 0630, 0632): read as the lean
+/// parser's trial read reads it, a keyword no expression starts with a name there, an operator in
+/// brackets; and where the trial stops on the line, the type whole and the line a statement.
 #[test]
 fn split_lines_are_the_lean_parsers() {
     same(&[
@@ -1000,6 +1001,19 @@ fn split_lines_are_the_lean_parsers() {
         "fun f() {\n  val v = x as a.B<C>\n  a<b>(c)\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  f(a < b)\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  a .. b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a = b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a += 1\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a && b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a || b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  -a == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a.b = c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  this.a = b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(a) == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(a).b = c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a[0] = b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f { a } == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a = f(b) == c\n}\n",
     ]);
 }
 
@@ -1007,18 +1021,17 @@ fn split_lines_are_the_lean_parsers() {
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&[
-        // A split's line that the lean parser's trial read stops on: the type whole, which the
-        // grammar decides at `as`, before the line (decision 0630).
+        // A split's line where the lean parser's trial read may stop past what the grammar's
+        // keep pattern reads: a `<`, a nested bracket, a word whose operand may take the
+        // operator, a keyword line that fails (decisions 0630, 0632).
         "fun f() {\n  val v = x as a.B<C>\n  for (i in l) g()\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  while (c) g()\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  class D\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  a < b\n}\n",
-        "fun f() {\n  val v = x as a.B<C>\n  a == b\n}\n",
-        "fun f() {\n  val v = x as a.B<C>\n  a = b\n}\n",
-        "fun f() {\n  val v = x as a.B<C>\n  a && b\n}\n",
-        "fun f() {\n  val v = x as a.B<C>\n  a || b\n}\n",
-        "fun f() {\n  val v = x as a.B<C>\n  f(a) == b\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  -a < b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(a) < b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(a < b) == c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(g(x)) == b\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  f(\n    a\n  ) == b\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  a < b > (c)\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  a<b> (c)\n}\n",
@@ -1172,9 +1185,9 @@ fn templates_read_again_across_a_block_are_the_lean_parsers() {
 /// `x as a.b.C<D>` (`as?`, `is`) where `>` ends its line: tree-sitter's reading, as the lean
 /// parser's `split_type`: navigations over `x as a`, then a call's type arguments before `(`
 /// or `{` on the next line, or comparisons before an operand there; elsewhere the type whole.
-/// Where the lean parser's trial read decides it on what the grammar does not ask (an
-/// assignment on the next line), before a string there, or past a blank or a comment after
-/// the `>`, the file is refused.
+/// Where the lean parser's trial read stops on an assignment on the next line, the type whole
+/// (decision 0632). Before a string there, or past a blank or a comment after the `>`, the file
+/// is refused.
 #[test]
 fn as_splits_are_the_lean_parsers() {
     same(&[
@@ -1201,12 +1214,12 @@ fn as_splits_are_the_lean_parsers() {
         "fun f() {\n    g(\n        x as java.util.List<Int>\n    )\n}\n",
         "fun f() {\n    val d = x as java.util.List<Int>\n        .size\n}\n",
         "fun f() {\n    val d = x as java.util.List<Int>\n    if (d) g()\n}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    a = b\n}\n",
     ]);
     refused(&[
         "fun f() {\n    val d = x as java.util.List<Int>  \n    g(d)\n}\n",
         "fun f() {\n    val d = x as java.util.List<Int> // c\n    g(d)\n}\n",
         "fun f() {\n    val d = x as java.util.List<Int>\r\n    g(d)\n}\n",
-        "fun f() {\n    val d = x as java.util.List<Int>\n    a = b\n}\n",
         "fun f() {\n    val d = x as java.util.List<Int>\n    \"s\".f()\n}\n",
     ]);
 }

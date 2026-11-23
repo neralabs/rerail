@@ -315,6 +315,13 @@ mask as_skip    = dot | text("?") | text("&") | text("|") | text(":") | text("}"
 mask as_sline   = fill(as_first & ~as_skip, lf & code)
 mask as_opener  = as_sline & code & (text("(") | text("[") | text("{"))
 mask as_in1     = fill(as_opener, code & (text(")") | text("]") | text("}")) | lf & code)
+# `as_open`'s `unless before` of a trial that stops, as bytes (`as_k`): from an assignment's or a
+# comparison's `=`, a `&` or a `|` outside brackets, with no `<`, `>`, `@`, `;` or such word
+# before it on the line, and brackets one deep (an opener inside another, or a closer of none,
+# the token run's depth that the masks do not count), to the line's end.
+mask as_dng     = code & (text("<") | gt | text("@") | text(";") | as_opener & prev(as_in1) | (text(")") | text("]") | text("}")) & ~prev(as_in1) | kw_start & (text("if") & ~next(w, 2) | text("when") & ~next(w, 4) | text("try") & ~next(w, 3) | text("return") & ~next(w, 6) | text("throw") & ~next(w, 5) | (text("as") | text("is")) & ~next(w, 2) | text("fun") & ~next(w, 3) | text("object") & ~next(w, 6)))
+mask as_unsafe  = fill(as_sline & as_dng, lf & code)
+mask as_k       = fill(as_sline & code & (text("=") | text("&") | text("|")) & ~as_in1 & ~as_unsafe, lf & code)
 # A `<` touching a name there is a generic call's where a `>` that a `(` or `{` follows closes it
 # on the line, as the grammar's `generic` and the lean parser's `generic_suffix` read it
 # (`as_gen`); else a comparison, and the line ends inside it. A `<` after a blank, which the lean
@@ -322,15 +329,15 @@ mask as_in1     = fill(as_opener, code & (text(")") | text("]") | text("}")) | l
 mask as_glt     = as_sline & code & text("<") & ~as_in1 & prev(w)
 mask as_ggt     = code & gt & (next(text("(")) | next(text("{")) | next(text(" ")) & next(text("{"), 2))
 mask as_gen     = fill(as_glt, as_ggt | lf & code)
-escape "a `<` on a split's line that no generic call's `>` closes" when lf & code & prev(as_gen)
+escape "a `<` on a split's line that no generic call's `>` closes" when lf & code & prev(as_gen) & ~prev(as_k)
 mask as_cmp     = code & (text("<") & ~prev(w) | gt & ~prev(text("-")) & ~(as_ggt & prev(as_gen)) | text("=") | text("&") | text("|"))
-escape "an operator that may stop the lean parser's trial read of a split's line" when as_sline & as_cmp & ~as_in1
+escape "an operator that may stop the lean parser's trial read of a split's line" when as_sline & as_cmp & ~as_in1 & ~as_k
 # A split's line left open (a bracket of it open at its end): the trial reads on, to the line
 # that starts with a closer (`as_cline`), as the brackets are written; an operator there outside
 # brackets, not read.
 mask closer     = text(")") | text("]") | text("}")
 mask line_lead  = fill(lf & code, code & ~ws)
-mask as_cont    = fill(lf & code & prev(as_in1) & prev(as_sline), code & closer & prev(line_lead))
+mask as_cont    = fill(lf & code & prev(as_in1) & prev(as_sline) & ~prev(as_k), code & closer & prev(line_lead))
 mask as_cline   = fill(code & closer & prev(line_lead) & prev(as_cont), lf & code)
 mask as_c_open  = as_cline & code & (text("(") | text("[") | text("{"))
 mask as_c_in1   = fill(as_c_open, code & closer | lf & code)
@@ -503,7 +510,11 @@ mark semi_close = close_at, before "}", settles, ends
 # operand starts: only the split's rules take it (`as_split`), so wherever the grammar reads
 # that type whole, or splits no type, the file is refused. After `semi`: a statement's end does
 # not pass it.
-mark as_open    = lf & code & prev(as_lt) & prev(gt), unless before "}" | ")" | "]" | "," | "." | "?:" | "&&" | "||" | "->" | ":" | "else" | "val" | "var"
+# Nor where the lean parser's trial read of the line stops on it: an operand's first token, then
+# tokens of no `<`, `>` or word whose operand may take the operator (`if`, `return`, …), to an
+# assignment's, an equality's, a `<=`'s, `&&` or `||` outside brackets. The type stays whole, and the
+# line is a statement. The masks' copy: `as_k`.
+mark as_open    = lf & code & prev(as_lt) & prev(gt), unless before "}" | ")" | "]" | "," | "." | "?:" | "&&" | "||" | "->" | ":" | "else" | "val" | "var", unless before simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "this" | "super" | "null" | "true" | "false" | "break" | "continue" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" (~("<" | ">" | "->" | "@" | ";" | "if" | "when" | "try" | "return" | "throw" | "as" | "is" | "fun" | "object") without semi)* nest ("(" | "[" | "{" to ")" | "]" | "}") "=" | "==" | "!=" | "===" | "!==" | "&&" | "||" | "+=" | "-=" | "*=" | "/=" | "%=" | "<="
 # A token first on its line, with no comment before it there: where a line break after a comment
 # decides at it (`semi`'s `loses since`).
 mark own_line   = solid & prev(fill(lf & code, ~ws))
@@ -533,12 +544,13 @@ mark jump_at    = tokens "return" | "break" | "continue" "@" without apart
 # `<`, names and dots, `>` at the line's end, and the next line a call's `(` or `{` or an
 # operand's first token (a keyword no expression starts with is the lean parser's trial read's
 # failure: the type whole). A string or a character there is `as_open`'s but none of these (a
-# mark's quoted name is a word, and those tokens have none): refused. Before `as_q`, which
-# taking it would pass.
-mark as_split   = tokens "as" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open
-mark is_split   = tokens "is" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open
-mark is_split   = tokens "!" "is" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open
-mark as_split   = tokens "as" "?" without apart simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open
+# mark's quoted name is a word, and those tokens have none): refused. Not where the lean
+# parser's trial read of the line stops on it (`as_open`'s `unless before`, which `with as_open`
+# does not read: the code's bit is the mask's). Before `as_q`, which taking it would pass.
+mark as_split   = tokens "as" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open, unless before "as" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "this" | "super" | "null" | "true" | "false" | "break" | "continue" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open (~("<" | ">" | "->" | "@" | ";" | "if" | "when" | "try" | "return" | "throw" | "as" | "is" | "fun" | "object") without semi)* nest ("(" | "[" | "{" to ")" | "]" | "}") "=" | "==" | "!=" | "===" | "!==" | "&&" | "||" | "+=" | "-=" | "*=" | "/=" | "%=" | "<="
+mark is_split   = tokens "is" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open, unless before "is" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "this" | "super" | "null" | "true" | "false" | "break" | "continue" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open (~("<" | ">" | "->" | "@" | ";" | "if" | "when" | "try" | "return" | "throw" | "as" | "is" | "fun" | "object") without semi)* nest ("(" | "[" | "{" to ")" | "]" | "}") "=" | "==" | "!=" | "===" | "!==" | "&&" | "||" | "+=" | "-=" | "*=" | "/=" | "%=" | "<="
+mark is_split   = tokens "!" "is" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open, unless before "!" "is" simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "this" | "super" | "null" | "true" | "false" | "break" | "continue" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open (~("<" | ">" | "->" | "@" | ";" | "if" | "when" | "try" | "return" | "throw" | "as" | "is" | "fun" | "object") without semi)* nest ("(" | "[" | "{" to ")" | "]" | "}") "=" | "==" | "!=" | "===" | "!==" | "&&" | "||" | "+=" | "-=" | "*=" | "/=" | "%=" | "<="
+mark as_split   = tokens "as" "?" without apart simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") "(" | "{" | simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "@" | "this" | "super" | "null" | "true" | "false" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "object" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open, unless before "as" "?" without apart simple_identifier "." (simple_identifier | "." | "<" | ">")* ending (">") simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "-" | "+" | "!" | "++" | "--" | "this" | "super" | "null" | "true" | "false" | "break" | "continue" | "for" | "while" | "do" | "class" | "interface" | "typealias" | "package" with as_open (~("<" | ">" | "->" | "@" | ";" | "if" | "when" | "try" | "return" | "throw" | "as" | "is" | "fun" | "object") without semi)* nest ("(" | "[" | "{" to ")" | "]" | "}") "=" | "==" | "!=" | "===" | "!==" | "&&" | "||" | "+=" | "-=" | "*=" | "/=" | "%=" | "<="
 mark as_q       = tokens "as" "?" without apart
 # A keyword the lean parser's trial read of a split's line takes as a name (its `kw_name`): the
 # line's first token (`as_kwn`: `for (i in l) {}` a call), or an infix operation's name in a

@@ -1521,11 +1521,15 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                 let (mut kinds, mut words, mut end, mut without) = (Vec::new(), Vec::new(), false, Vec::new());
                 let none_nest = Vec::new();
                 let none_ending = Vec::new();
+                // A run of tokens none of the choices, its marks after them.
+                let not_marks: Vec<::bitlex::syntax::TokenElem>;
                 let (not, run, choices, nests, ending) = match choices.as_slice() {
                     [::bitlex::syntax::TokenElem::Not(inner)] => (true, false, inner.as_slice(), &none_nest, &none_ending),
-                    // A run of tokens none of the choices.
                     [::bitlex::syntax::TokenElem::Many(inner, nests, ending)] => match inner.as_slice() {
-                        [::bitlex::syntax::TokenElem::Not(none)] => (true, true, none.as_slice(), nests, ending),
+                        [::bitlex::syntax::TokenElem::Not(none), marks @ ..] => {
+                            not_marks = none.iter().chain(marks).cloned().collect();
+                            (true, true, not_marks.as_slice(), nests, ending)
+                        }
                         _ => (false, true, inner.as_slice(), nests, ending),
                     },
                     c => (false, false, c, &none_nest, &none_ending),
