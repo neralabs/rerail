@@ -21,9 +21,13 @@ keyed on the checkout's path saw each worktree's crates as different. The farm f
   same environment, from `~/.cargo/config.toml`, and a build that differs is stopped, not quietly
   compiled apart. Every worktree runs the one installed farm.
 - **Editing.** A workspace crate that misses is being edited here: it compiles incrementally on
-  this Mac, never on another, so its next edit starts from that state. For the next 2 hours it
-  skips the cache, as without the farm. A crate that was a hit has no incremental state: its first
-  edit compiles it whole.
+  this Mac, never on another, so its next edit starts from that state. Until 2 hours after its last
+  compile it skips the cache, as without the farm. A crate that was a hit has no incremental state: its first
+  edit compiles it whole. A hot compile runs rustc with the `--remap-path-prefix` arguments sccache
+  gives a miss (`sccache_remaps`): rustc counts them in its incremental state's options, and
+  without them each change between the two ways threw the state away. The first edit after a
+  miss then compiled every crate it reached whole: 10 crates, 524 s CPU, against 45 s with them
+  (farm 59).
 
 ```
 cargo ──▶ rustc-wrapper ──┬─ hot crate ───────────────▶ rustc -C incremental (here)

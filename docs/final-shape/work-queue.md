@@ -10714,3 +10714,8 @@ UKL's misaligned 16z line reads on CUDA, and its merge of the hub at roll-up 80.
 join_stages.uglykl are the hub's. Merged without conflicts.
 
 Relax: the engine checks clean.
+
+### Q509. Roll-up 82 (build-and-test-loop-time 8bc7d69011 onto Pulling-it-all-together): what the merge chose
+
+build-and-test-loop-time (8bc7d69011): farm 59, a hot compile passes the remaps the patched sccache gives a miss,
+so a crate's incremental state serves both ways (`scripts/build/farm/`). Merged without conflicts; no engine source.
