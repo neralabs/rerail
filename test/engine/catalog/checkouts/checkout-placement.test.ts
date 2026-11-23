@@ -11,11 +11,11 @@ vi.mock("../../../../src/engine/native/native.js", async importOriginal => {
   return { ...actual, pathsOwnedByCurrentUser: vi.fn(actual.pathsOwnedByCurrentUser) };
 });
 
-import { placeCheckout, PLACING_AT_ONCE } from "../../../../src/engine/catalog/checkouts/checkout-placement.js";
+import { placeCheckout, placeWorktrees, PLACING_AT_ONCE } from "../../../../src/engine/catalog/checkouts/checkout-placement.js";
 import { learnDeclaredSubmodules } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
 import { readRemoteAddress, repositoryIdentityLocation, worktreeRegistry } from "../../../../src/engine/catalog/repository-identity.js";
-import { GitReads } from "../../../../src/engine/git.js";
+import { GitReads, type GitReadOptions } from "../../../../src/engine/git.js";
 import { standingGitAccess } from "../../../../src/engine/native/git-access.js";
 import { pathsOwnedByCurrentUser } from "../../../../src/engine/native/native.js";
 import { removeFolderSync } from "../../../support/platform/remove-folder.js";
@@ -71,6 +71,12 @@ function repositoryWithWorktrees(count: number): { root: string; checkouts: stri
   const worktrees = Array.from({ length: count }, (_, i) => join(root, `wt-${i}`));
   for (const [i, worktree] of worktrees.entries()) git(main, ["worktree", "add", "--quiet", "-b", `wt-${i}`, worktree]);
   return { root, checkouts: [main, ...worktrees] };
+}
+
+/** A session's open (`placeCheckout`), then the pass over the other worktrees Git listed (`placeWorktrees`), as the daemon runs them. */
+async function placeAll(folder: string, options: GitReadOptions = {}): Promise<void> {
+  const registry = await placeCheckout(folder, options);
+  if (registry !== undefined) await placeWorktrees(registry, options);
 }
 
 /** The Git processes started while `act` ran: blocking the caller (`spawnSync`) or not (`spawn`), by their arguments. */
@@ -150,7 +156,7 @@ async function twoSessionsPlacing(main: string, atPass: (starter: GitReads, join
   try {
     await Promise.all([new GitReads(), new GitReads()].map(session => session.run(signal => {
       sessions.set(signal, session);
-      return placeCheckout(main, { signal });
+      return placeAll(main, { signal });
     })));
   } finally {
     learn.mockImplementation(actual);
@@ -171,19 +177,31 @@ function firstEventAsks(checkouts: readonly string[]): void {
 describe("placeCheckout", () => {
   it("learns what a checkout's first events ask Git, for it and every worktree Git lists, with no Git the caller waits on", async () => {
     const { checkouts } = repositoryWithWorktrees(3);
-    const placing = await gitStarts(() => placeCheckout(checkouts[1]!));
+    const placing = await gitStarts(() => placeAll(checkouts[1]!));
     expect(placing.blocking).toEqual([]);
     expect(placing.notBlocking.length).toBeGreaterThan(0);
 
     expect(await gitStarts(() => firstEventAsks(checkouts))).toEqual({ blocking: [], notBlocking: [] });
     // A session opening there later finds each answer kept, its submodules' among them.
-    expect(await gitStarts(() => placeCheckout(checkouts[2]!))).toEqual({ blocking: [], notBlocking: [] });
+    expect(await gitStarts(() => placeAll(checkouts[2]!))).toEqual({ blocking: [], notBlocking: [] });
+  });
+
+  it("learns the session's own checkout and gives the registry, leaving the other worktrees to the pass after it", async () => {
+    const { checkouts } = repositoryWithWorktrees(3);
+    const [main] = checkouts as [string];
+    const learn = vi.mocked(learnDeclaredSubmodules);
+    const before = learn.mock.calls.length;
+    const learnt = (): string[] => learn.mock.calls.slice(before).map(([folder]) => basename(folder));
+    const registry = await placeCheckout(main);
+    expect({ learnt: learnt(), listed: registry?.worktrees.map(worktree => basename(worktree)) }).toEqual({ learnt: ["main"], listed: checkouts.map(checkout => basename(checkout)) });
+    await placeWorktrees(registry!);
+    expect(learnt().toSorted()).toEqual(["main", ...checkouts.map(checkout => basename(checkout))].toSorted());
   });
 
   it("asks Git again once what an answer rested on changes: a remote added, a submodule checked out", async () => {
-    const { root, checkouts } = repositoryWithWorktrees(1);
+    const { checkouts } = repositoryWithWorktrees(1);
     const [main, worktree] = checkouts as [string, string];
-    await placeCheckout(main);
+    await placeAll(main);
     expect(await gitStarts(() => firstEventAsks(checkouts))).toEqual({ blocking: [], notBlocking: [] });
 
     git(main, ["remote", "add", "origin", "https://example.invalid/team/main.git"]);
@@ -192,7 +210,6 @@ describe("placeCheckout", () => {
     expect(new CheckoutOwners().declaredSubmodules(main)).toEqual([join(main, "lib")]);
     git(main, ["rm", "--quiet", "-r", "--cached", "lib"]);
     expect(new CheckoutOwners().declaredSubmodules(main)).toEqual([]);
-    expect(root).toBeTruthy();
   });
 
   it("asks Git each time for the remote of a configuration that includes another file, which no kept answer reads", async () => {
@@ -236,7 +253,7 @@ describe("placeCheckout", () => {
       return child;
     });
     try {
-      const placing = await gitStarts(() => placeCheckout(main));
+      const placing = await gitStarts(() => placeAll(main));
       expect(placing.notBlocking.filter(args => args.includes("--show-toplevel")).length).toBeGreaterThanOrEqual(worktrees.length);
       expect(most).toBeGreaterThan(1);
       expect(most).toBeLessThanOrEqual(PLACING_AT_ONCE);
@@ -248,7 +265,7 @@ describe("placeCheckout", () => {
   it("places a repository's worktrees once for sessions that open there together", async () => {
     const { checkouts } = repositoryWithWorktrees(6);
     const [learnt, lists] = [vi.mocked(learnDeclaredSubmodules).mock.calls.length, gitLists()];
-    await Promise.all([placeCheckout(checkouts[0]!), placeCheckout(checkouts[0]!), placeCheckout(checkouts[0]!)]);
+    await Promise.all([placeAll(checkouts[0]!), placeAll(checkouts[0]!), placeAll(checkouts[0]!)]);
     // One Git list, and each listed checkout's submodules learnt once by the pass the three sessions share (the
     // session's own checkout once per session besides).
     expect(gitLists() - lists).toBe(1);
@@ -298,7 +315,7 @@ describe("placeCheckout", () => {
       return child;
     });
     try {
-      const placing = await gitStarts(() => placeCheckout(main));
+      const placing = await gitStarts(() => placeAll(main));
       // The main checkout, then each submodule in it and in the linked worktree.
       expect(placing.notBlocking.filter(args => args.includes("--show-toplevel")).length).toBeGreaterThanOrEqual(1 + 2 * paths.length);
       expect(most).toBeLessThanOrEqual(PLACING_AT_ONCE);
@@ -310,7 +327,7 @@ describe("placeCheckout", () => {
   it("places no further worktree once its signal is aborted midway", async () => {
     const { checkouts } = repositoryWithWorktrees(12);
     const stopping = new AbortController();
-    const learnt = await learntWhile(() => placeCheckout(checkouts[0]!, { signal: stopping.signal }), calls => {
+    const learnt = await learntWhile(() => placeAll(checkouts[0]!, { signal: stopping.signal }), calls => {
       // The second is the first listed checkout's: Rerail stops once the pass over the worktrees has begun.
       if (calls === 2) stopping.abort();
     });
@@ -324,7 +341,7 @@ describe("placeCheckout", () => {
     const worktrees = Array.from({ length: 36 }, (_, i) => join(root, `wt-${i}`));
     for (const [i, worktree] of worktrees.entries()) git(main, ["worktree", "add", "--quiet", "-b", `wt-${i}`, worktree]);
     let [seen, turnAt]: [number, number | undefined] = [0, undefined];
-    const learnt = await learntWhile(() => placeCheckout(main), calls => {
+    const learnt = await learntWhile(() => placeAll(main), calls => {
       seen = calls;
       // Queued as the pass begins, as a request would arrive: it runs at the pass's first turn of the event loop.
       if (calls === 2) setImmediate(() => (turnAt ??= seen));
@@ -338,7 +355,7 @@ describe("placeCheckout", () => {
     const [main] = checkouts as [string];
     for (const [name, value] of [["GIT_OBJECT_DIRECTORY", join(main, ".git", "objects")], ["GIT_DIR", join(main, ".git")]] as const) {
       vi.stubEnv(name, value);
-      expect(await gitStarts(() => placeCheckout(checkouts[1]!)), name).toEqual({ blocking: [], notBlocking: [] });
+      expect(await gitStarts(() => placeAll(checkouts[1]!)), name).toEqual({ blocking: [], notBlocking: [] });
       vi.unstubAllEnvs();
     }
   });
@@ -350,10 +367,10 @@ describe("placeCheckout", () => {
     takeOwnersAway();
     // No owner of the engine's Git reads stands, so a remote read ahead would read Git's installation first.
     expect(standingGitAccess()).toBeUndefined();
-    expect(await gitStarts(() => placeCheckout(checkouts[1]!))).toEqual({ blocking: [], notBlocking: [] });
-    expect(await gitStarts(() => placeCheckout(checkouts[0]!))).toEqual({ blocking: [], notBlocking: [] });
+    expect(await gitStarts(() => placeAll(checkouts[1]!))).toEqual({ blocking: [], notBlocking: [] });
+    expect(await gitStarts(() => placeAll(checkouts[0]!))).toEqual({ blocking: [], notBlocking: [] });
     // A session in a subfolder: Git places the subfolder, whose answer names the checkout above, and nothing more.
-    const placing = await gitStarts(() => placeCheckout(subfolder));
+    const placing = await gitStarts(() => placeAll(subfolder));
     expect({ blocking: placing.blocking, placements: placing.notBlocking.map(args => args.includes("--show-toplevel")) }).toEqual({ blocking: [], placements: [true] });
   });
 
@@ -371,7 +388,7 @@ describe("placeCheckout", () => {
       });
       const spawn = vi.mocked(childProcess.spawn);
       const before = spawn.mock.calls.length;
-      await placeCheckout(main);
+      await placeAll(main);
       const placedAt = spawn.mock.calls.length;
       const running = spawn.mock.results.slice(before, placedAt).filter((result, i) => {
         const child = result.value as childProcess.ChildProcess;
@@ -388,7 +405,7 @@ describe("placeCheckout", () => {
     const { root, checkouts } = repositoryWithWorktrees(2);
     const stopped = new AbortController();
     stopped.abort();
-    expect(await gitStarts(() => placeCheckout(checkouts[0]!, { signal: stopped.signal }))).toEqual({ blocking: [], notBlocking: [] });
+    expect(await gitStarts(() => placeAll(checkouts[0]!, { signal: stopped.signal }))).toEqual({ blocking: [], notBlocking: [] });
 
     const gone = join(root, "gone");
     mkdirSync(gone);
@@ -396,6 +413,6 @@ describe("placeCheckout", () => {
     await expect(placeCheckout(gone)).resolves.toBeUndefined();
     const outside = join(temporaryRoot(), "plain");
     mkdirSync(outside);
-    expect(await gitStarts(() => placeCheckout(outside))).toEqual({ blocking: [], notBlocking: [] });
+    expect(await gitStarts(() => placeAll(outside))).toEqual({ blocking: [], notBlocking: [] });
   });
 });

@@ -1,14 +1,15 @@
 /**
  * What a checkout's first events ask Git, learnt without blocking the caller's thread: where the session's folder sits
  * in Git ({@link placeWithoutBlocking}), its clone's remote ({@link learnRemoteAddress}), the worktrees Git registers for
- * it ({@link learnWorktreeRegistry}), where each of those sits, and the submodules each declares
- * ({@link learnDeclaredSubmodules}). Each answer is kept by its owner, so the calls a session's first events make after
- * it start no Git while those answers stand. The daemon awaits it as a session opens: that session's events wait in
- * order, and every other session is answered meanwhile.
+ * it ({@link learnWorktreeRegistry}) and the submodules it declares ({@link learnDeclaredSubmodules}), then where each of
+ * those worktrees sits and the submodules each declares ({@link placeWorktrees}). Each answer is kept by its owner, so
+ * the calls a session's first events make after it start no Git while those answers stand. The daemon awaits the
+ * session's own checkout as the session opens: that session's events wait in order, and every other session is answered
+ * meanwhile. The other worktrees are placed after the open, and a walk of them waits for that pass.
  */
 import { lstatSync } from "node:fs";
 import { lstat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { physicalPath, storedPath } from "../checkout-control.js";
 import { learnDeclaredSubmodules } from "./declared-submodules.js";
@@ -22,49 +23,55 @@ import {
 import { sharedRead, type GitReadOptions, type SharedRead } from "../../git.js";
 
 /**
- * Learns what `folder`'s first events ask Git, as processes no thread waits on. Each read ends with its Git's exit, at
- * the latest at Git's own time limit, and once `options.signal` is aborted no Git starts. It never fails: what it could
- * not learn (Git missing, a folder gone or outside Git) is left to the calls after it, which ask Git as they always did.
- * So is what no call after it could take, which is not asked: any placement while a lookup variable moves Git's lookup,
- * and a checkout another account owns ({@link placeWithoutBlocking}).
+ * Learns what `folder`'s first events ask Git of the session's own checkout, as processes no thread waits on: where the
+ * folder and its checkout's top level sit, the clone's remote, Git's registry of its worktrees and the submodules checked
+ * out in it. Each read ends with its Git's exit, at the latest at Git's own time limit, and once `options.signal` is
+ * aborted no Git starts. It never fails: what it could not learn (Git missing, a folder gone or outside Git) is left to
+ * the calls after it, which ask Git as they always did. So is what no call after it could take, which is not asked: any
+ * placement while a lookup variable moves Git's lookup, and a checkout another account owns ({@link placeWithoutBlocking}).
+ * Resolves with the registry Git listed, whose worktrees {@link placeWorktrees} places; undefined where Git listed none.
  */
-export async function placeCheckout(folder: string, options: GitReadOptions = {}): Promise<void> {
+export async function placeCheckout(folder: string, options: GitReadOptions = {}): Promise<WorktreeRegistry | undefined> {
   try {
-    const location = await placeFolder(folder, options);
-    if (location?.git === true) await placeRepository(location, options);
+    const location = await placeWithoutBlocking(folder, options);
+    return location?.git === true ? await placeRepository(location, options) : undefined;
   } catch {
     // Nothing learnt is kept wrong: each owner keeps only what Git answered to its end.
+    return undefined;
   }
 }
 
 /**
- * Where `folder` sits in Git, by its path as given. Its checkout's top level is placed next by its real path
- * ({@link placeRepository}), the path the session's checkout is found by.
- */
-async function placeFolder(folder: string, options: GitReadOptions): Promise<RepositoryIdentityLocation | undefined> {
-  return await placeWithoutBlocking(resolve(folder), options);
-}
-
-/**
- * The checkout's top level, its clone's remote, Git's registry of its worktrees and its submodules, then each worktree
- * the registry lists ({@link placeListed}). Each read settles before it returns, so none of its Git runs on after it,
+ * The checkout's top level, by its real path, the path the session's checkout is found by, then its clone's remote, Git's
+ * registry of its worktrees and its submodules. Each read settles before it returns, so none of its Git runs on after it,
  * and one that fails leaves the others' answers kept.
  */
-async function placeRepository(location: RepositoryIdentityLocation, options: GitReadOptions): Promise<void> {
+async function placeRepository(location: RepositoryIdentityLocation, options: GitReadOptions): Promise<WorktreeRegistry | undefined> {
   const top = physicalPath(location.workspaceRoot);
   await placeWithoutBlocking(top, options);
   const [registry] = await Promise.allSettled([learnWorktreeRegistry(top, options), learnRemoteAddress(top, options), placeSubmodules(top, options)]);
-  if (registry.status === "fulfilled" && registry.value !== undefined) await placeListed(registry.value, options);
+  return registry.status === "fulfilled" ? registry.value : undefined;
 }
 
 /**
- * The passes over a registry's worktrees under way, one per registry as Git listed it: sessions opening together share
- * it, and a session's stop cuts no other session's pass short ({@link sharedRead}).
+ * The passes over a registry's worktrees under way, one per registry as Git listed it: sessions opening together and the
+ * walks of those worktrees share it, and a session's stop cuts no other session's pass short ({@link sharedRead}).
  */
 const listedPasses = new Map<WorktreeRegistry, SharedRead<void>>();
 
-async function placeListed(registry: WorktreeRegistry, options: GitReadOptions): Promise<void> {
-  await sharedRead(listedPasses, registry, options, async () => await placeEach(registry.worktrees, options));
+/**
+ * Learns, for each worktree `registry` lists, what {@link placeCheckout} learns of the session's own checkout but the
+ * registry and the remote, which a clone's worktrees share: where it sits and the submodules checked out in it
+ * ({@link placeEach}). One pass runs per registry at a time, which every caller meanwhile joins. Each Git ends as
+ * {@link placeCheckout}'s do, and it never fails.
+ */
+export async function placeWorktrees(registry: WorktreeRegistry, options: GitReadOptions = {}): Promise<void> {
+  await sharedRead(listedPasses, registry, options, async () => await placeEach(registry.worktrees, options)).catch(() => undefined);
+}
+
+/** Whether a pass over `registry`'s worktrees is under way ({@link placeWorktrees}), which a walk of them joins rather than asks Git itself. */
+export function placingWorktrees(registry: WorktreeRegistry): boolean {
+  return listedPasses.has(registry);
 }
 
 /** How many folders a worker places between two turns of the event loop: each costs a few file reads on the caller's thread. */

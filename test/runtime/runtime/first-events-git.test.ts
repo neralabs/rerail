@@ -6,6 +6,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
 
+/** What each placement's submodule read waits for first, by the checkout it reads: nothing unless a case sets it. */
+const submoduleReads = vi.hoisted(() => ({ before: (_checkout: string): Promise<void> | undefined => undefined }));
+vi.mock("../../../src/engine/catalog/checkouts/declared-submodules.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/engine/catalog/checkouts/declared-submodules.js")>(
+    "../../../src/engine/catalog/checkouts/declared-submodules.js",
+  );
+  return {
+    ...actual,
+    learnDeclaredSubmodules: async (...args: Parameters<typeof actual.learnDeclaredSubmodules>) => {
+      await submoduleReads.before(args[0]);
+      return await actual.learnDeclaredSubmodules(...args);
+    },
+  };
+});
+
 import { RerailRuntime, SqliteSessionReader } from "../../../src/runtime/index.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
@@ -111,6 +126,33 @@ describe("a repository's first events in a daemon", () => {
         reader.close();
       }
     });
+  });
+
+  it("answers a session's start once its own checkout is placed, and places the other worktrees after it", { timeout: 30_000 }, async () => {
+    const { root, checkouts, databasePath } = startedRepository(3);
+    const [main] = checkouts as [string];
+    const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, autostart: false, embedder: testEmbedder });
+    // The pass over the other worktrees waits here until the case lets it go.
+    const pass = Promise.withResolvers<void>();
+    const learnt: string[] = [];
+    submoduleReads.before = async checkout => {
+      if (basename(checkout).startsWith("wt-")) await pass.promise;
+      learnt.push(basename(checkout));
+    };
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const opening = runtime.ingest({ kind: "session-start", eventId: "own-start", session: { host: "claude-code", sessionId: "own", cwd: main } });
+      const bound = new Promise<string>(resolve => (timer = setTimeout(() => resolve("still waiting after 10 s"), 10_000)));
+      expect(await Promise.race([opening.then(() => "answered"), bound])).toBe("answered");
+      expect(learnt).toEqual(["main"]);
+      pass.resolve();
+      await vi.waitFor(() => expect(learnt.toSorted()).toEqual(["main", ...checkouts.map(checkout => basename(checkout))].toSorted()), { timeout: 10_000, interval: 20 });
+    } finally {
+      clearTimeout(timer);
+      pass.resolve();
+      submoduleReads.before = () => undefined;
+      await runtime.dispose();
+    }
   });
 
   it("leaves none of its placement's Git running in the checkout when the session's open fails", async () => {

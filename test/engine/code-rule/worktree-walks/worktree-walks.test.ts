@@ -12,6 +12,7 @@ import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/
 import { lookMoved, WorktreeLooks } from "../../../../src/engine/code-rule/worktree-look.js";
 import { WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
 import { RepositoryWorktreeWalks, WorktreeWalks, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
+import type { WorktreeListLearning } from "../../../../src/engine/catalog/repository-identity.js";
 import { GitReads } from "../../../../src/engine/git.js";
 import type * as Git from "../../../../src/engine/git.js";
 import { StampTreeWatch } from "./support/stamp-tree-watch.js";
@@ -162,7 +163,7 @@ interface SessionOptions {
    */
   readonly registry?: string;
   /** What the auditor learns before each walk lists the other worktrees, as the router learns Git's list. */
-  readonly learn?: (git: GitReads) => Promise<void> | undefined;
+  readonly learn?: (git: GitReads) => WorktreeListLearning | undefined;
 }
 
 /**
@@ -1246,7 +1247,7 @@ describe("what a session learns before a walk lists the other worktrees", () => 
     const { bridge, worktreeRoots } = await opened(worktrees[0]!, checkouts, new WorktreeWalks({ gapMs: 0 }), {
       learn: () => {
         entered.resolve();
-        return learnt.promise;
+        return { kind: "learning", done: learnt.promise };
       },
     });
     void bridge.checkpoint("turn").catch(() => undefined);

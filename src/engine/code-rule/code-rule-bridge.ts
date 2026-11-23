@@ -48,9 +48,10 @@ import { type EndedCalls, ToolCallWindows } from "./tool-call-windows.js";
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
-  type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks,
-  type WorktreeWatch,
+  storedRegistry, type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk,
+  WorktreeWalks, type WorktreeWatch,
 } from "./worktree-walks.js";
+import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
 
 export { WORKTREE_WALK_GAP_MS } from "./worktree-walks.js";
 
@@ -2849,10 +2850,11 @@ export class CodeRuleBridge {
   /**
    * The repository's other worktrees as they are now, each relative to the session folder in `WorktreeDiscovery.roots`. One
    * first seen now is a baseline but for what changed since the session opened, which Git's verdicts judge. One gone took
-   * its files with it, and none of them is an edit.
+   * its files with it, and none of them is an edit. `registry`: the list the walk's learn step gave as stored, in the same
+   * synchronous run (`worktreeRoots`).
    */
-  #syncWorktrees(discovery: SourceDiscovery): readonly string[] {
-    const worktrees = (this.#auditor.worktreeRoots?.() ?? []).filter(worktree => worktree !== discovery.root);
+  #syncWorktrees(discovery: SourceDiscovery, registry?: WorktreeRegistry): readonly string[] {
+    const worktrees = (this.#auditor.worktreeRoots?.(registry) ?? []).filter(worktree => worktree !== discovery.root);
     const current = new Set(worktrees.map(worktree => sessionPath(discovery.root, worktree)));
     const { roots, fresh, listed } = discovery.worktrees;
     for (const worktree of current) {
@@ -2899,7 +2901,7 @@ export class CodeRuleBridge {
     discovery.worktrees.watch ??= this.#sharedWorktreeWalks().watch({
       clock: filesystemClock,
       ...prepare,
-      start: () => this.#startWorktreeWalk(discovery),
+      start: registry => this.#startWorktreeWalk(discovery, registry),
     });
     discovery.worktrees.watch.request();
   }
@@ -2916,11 +2918,11 @@ export class CodeRuleBridge {
    * The session's part in a walk of the other worktrees as it begins: the worktrees it watches now, and what it takes
    * the walk's findings against. Undefined once the session has closed, or when the worktrees cannot be listed.
    */
-  #startWorktreeWalk(discovery: SourceDiscovery): WatcherWalk | undefined {
+  #startWorktreeWalk(discovery: SourceDiscovery, registry: WorktreeRegistry | undefined): WatcherWalk | undefined {
     if (this.#abandoned(discovery)) return undefined;
     let worktrees: readonly string[];
     try {
-      worktrees = this.#syncWorktrees(discovery);
+      worktrees = this.#syncWorktrees(discovery, registry);
     } catch (error) {
       discovery.worktrees.gaps = [{ reason: errorMessage(error) }];
       return undefined;
@@ -2966,11 +2968,12 @@ export class CodeRuleBridge {
   /** One walk of the session folder; the other worktrees' walk is shared (`#scheduleWorktreeWalk`), and neither changes what the other owns. */
   async #walkSources(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): Promise<void> {
     // What the worktrees' list would ask Git is learnt first, as a process no thread waits on, so the list below starts
-    // none; while the stored list stands there is nothing to wait for. A session that closed meanwhile has its walk stop
-    // there, as at the walk's other waits.
-    const learning = this.#learnWorktrees(discovery);
+    // none; while the stored list stands there is nothing to wait for, and the list below takes it as read here. A
+    // session that closed meanwhile has its walk stop there, as at the walk's other waits.
+    const learnt = this.#auditor.learnWorktreeRoots?.(discovery.git);
+    const learning = this.#learnWorktrees(discovery, learnt);
     if (learning !== undefined && !(await learning)) return;
-    const worktrees = this.#syncWorktrees(discovery);
+    const worktrees = this.#syncWorktrees(discovery, storedRegistry(learnt));
     const walk: WalkStart = {
       inSession: true, baseline: !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),
       previous: new Map(this.#observed), versions: new Map(discovery.versions),
@@ -2987,12 +2990,12 @@ export class CodeRuleBridge {
   }
 
   /**
-   * What the worktrees' list would ask Git, learnt through the session's Git reads (`learnWorktreeRoots`): resolves
-   * whether the session's walk goes on, false once the session closed meanwhile; undefined, with nothing to wait for,
-   * when there is nothing to learn.
+   * The wait for what `learnt` learns through the session's Git reads (`learnWorktreeRoots`): resolves whether the
+   * session's walk goes on, false once the session closed meanwhile; undefined, with nothing to wait for, when there is
+   * nothing to learn or the stored list stands.
    */
-  #learnWorktrees(discovery: SourceDiscovery): Promise<boolean> | undefined {
-    return this.#auditor.learnWorktreeRoots?.(discovery.git)?.then(() => !this.#abandoned(discovery));
+  #learnWorktrees(discovery: SourceDiscovery, learnt: WorktreeListLearning | undefined): Promise<boolean> | undefined {
+    return learnt?.kind === "learning" ? learnt.done.then(() => !this.#abandoned(discovery)) : undefined;
   }
 
   #abandoned(discovery: SourceDiscovery): boolean {

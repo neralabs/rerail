@@ -32,6 +32,7 @@ import { readGitHead } from "../../../src/engine/git-head-reader.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 import type * as WalkReads from "../../../src/engine/code-rule/walk-read-buffers.js";
 import { WorktreeWalks } from "../../../src/engine/code-rule/worktree-walks.js";
+import type { WorktreeListLearning } from "../../../src/engine/catalog/repository-identity.js";
 import { holdDeletePending } from "../../support/platform/delete-pending.js";
 import { denyAccess, restoreAccess } from "../../support/platform/deny-access.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
@@ -4814,14 +4815,14 @@ const FIRST_SIGHT = "Source changed during initial discovery without a captured 
 function learningRoots(roots: readonly string[]) {
   const state: { blocking: number; learnt?: { readonly key: string; readonly list: readonly string[] } } = { blocking: 0 };
   const key = (): string => roots.join("\0");
-  const learnWorktreeRoots = (git: Git.GitReads): Promise<void> | undefined => {
+  const learnWorktreeRoots = (git: Git.GitReads): WorktreeListLearning | undefined => {
     if (state.learnt?.key === key()) return undefined;
     // Read before Git runs, as the registry is: a change meanwhile leaves the list taken after it to Git.
     const learnt = { key: key(), list: [...roots] };
-    return git.run(async () => {
+    return { kind: "learning", done: git.run(async () => {
       await new Promise(resolve => setImmediate(resolve));
       state.learnt = learnt;
-    });
+    }) };
   };
   const worktreeRoots = (): string[] => {
     let learnt = state.learnt;

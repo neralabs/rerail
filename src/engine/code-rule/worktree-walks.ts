@@ -13,6 +13,7 @@
  * every file of every worktree on each walk: with 190 worktrees, about 5 s of the daemon's main thread a walk.
  */
 import { sep } from "node:path";
+import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
 import { gitModifiedOrUntrackedPaths, GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
 import { readGitHead } from "../git-head-reader.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
@@ -181,12 +182,16 @@ export interface WorktreeWatcher {
   clock(): Promise<number>;
   /**
    * Called before each walk begins, before {@link WorktreeWatcher.start}: what `start` would ask Git, learnt through `git`
-   * as processes no thread waits on, so `start` finds it kept; undefined, with nothing started, when `start` would ask
-   * Git nothing. Never rejects; a throw is taken as nothing to learn.
+   * as processes no thread waits on, so `start` finds it kept, or the list stored for the registry, read with no Git,
+   * which `start` takes as read here; undefined, with nothing started, when there is nothing to learn. What it gives to
+   * wait on never rejects; a throw is taken as nothing to learn.
    */
-  prepare?(git: GitReads): Promise<void> | undefined;
-  /** Called as each walk begins, before it reads anything; undefined once the session has closed or cannot say. */
-  start(): WatcherWalk | undefined;
+  prepare?(git: GitReads): WorktreeListLearning | undefined;
+  /**
+   * Called as each walk begins, before it reads anything, with the list its {@link WorktreeWatcher.prepare} read when no
+   * wait came between them; undefined once the session has closed or cannot say.
+   */
+  start(registry?: WorktreeRegistry): WatcherWalk | undefined;
 }
 
 /** A session's watch of the shared walk. */
@@ -400,11 +405,16 @@ async function listedFor(
   return firstSeen.has(root) ? await listChanged(git, checkouts) : new Map<string, readonly string[] | undefined>();
 }
 
+/** The list `learnt` stored for the registry, read with no Git, which the walk's list takes in the same synchronous run. */
+export function storedRegistry(learnt: WorktreeListLearning | undefined): WorktreeRegistry | undefined {
+  return learnt?.kind === "stored" ? learnt.registry : undefined;
+}
+
 /**
  * What `watcher` learns before a walk begins ({@link WorktreeWatcher.prepare}), through `git`. A throw is taken as nothing
  * to learn, as a walk takes a throw of `start`: the walk begins, and its start meets what failed.
  */
-function preparedBy(watcher: WorktreeWatcher, git: GitReads): Promise<void> | undefined {
+function preparedBy(watcher: WorktreeWatcher, git: GitReads): WorktreeListLearning | undefined {
   try {
     return watcher.prepare?.(git);
   } catch {
@@ -677,10 +687,12 @@ export class WorktreeWalks {
 
   /** One walk, for every session asking and every session sharing a worktree with one; returns the sessions that asked. */
   async #walkOnce(): Promise<Watching[]> {
-    // A walk with nothing to learn begins at once.
-    const preparing = this.#prepare();
-    if (preparing.length > 0) await Promise.allSettled(preparing);
-    const starts = this.#start();
+    // A walk with nothing to learn begins at once, and each session's start takes the list its learn step read. After a
+    // wait, each reads the registry as it is then, a worktree added meanwhile included.
+    const prepared = this.#prepare();
+    const learning = [...prepared.values()].flatMap(learnt => (learnt?.kind === "learning" ? [learnt.done] : []));
+    if (learning.length > 0) await Promise.allSettled(learning);
+    const starts = this.#start(learning.length === 0 ? prepared : new Map());
     this.#forget([...starts.values()].map(walk => rootsOf(walk)));
     this.#watchRegistries(starts.values());
     const askers = [...starts.keys()].filter(watching => watching.requested);
@@ -693,19 +705,22 @@ export class WorktreeWalks {
     return askers;
   }
 
-  /** Each watching session's {@link WorktreeWatcher.prepare} that learns something, through the walks' Git reads, which stop with the last session. */
-  #prepare(): Promise<void>[] {
+  /** Each watching session's {@link WorktreeWatcher.prepare}, through the walks' Git reads, which stop with the last session. */
+  #prepare(): Map<Watching, WorktreeListLearning | undefined> {
     const git = this.#git;
-    return this.#watching.flatMap(({ watcher }) => preparedBy(watcher, git) ?? []);
+    return new Map(this.#watching.map(watching => [watching, preparedBy(watching.watcher, git)]));
   }
 
-  /** Each open session's part in the walk beginning now; one that cannot say has its request dropped. */
-  #start(): Map<Watching, WatcherWalk> {
+  /**
+   * Each open session's part in the walk beginning now, given the list its learn step stored where `prepared` holds one;
+   * one that cannot say has its request dropped.
+   */
+  #start(prepared: ReadonlyMap<Watching, WorktreeListLearning | undefined>): Map<Watching, WatcherWalk> {
     const starts = new Map<Watching, WatcherWalk>();
     for (const watching of [...this.#watching]) {
       let walk: WatcherWalk | undefined;
       try {
-        walk = watching.watcher.start();
+        walk = watching.watcher.start(storedRegistry(prepared.get(watching)));
       } catch {
         walk = undefined;
       }

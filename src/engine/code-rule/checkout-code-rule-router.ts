@@ -13,7 +13,8 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
-import { learnWorktreeList, worktreeRegistry, type WorktreeRegistry } from "../catalog/repository-identity.js";
+import { placeWorktrees, placingWorktrees } from "../catalog/checkouts/checkout-placement.js";
+import { learnWorktreeList, worktreeRegistry, type WorktreeListLearning, type WorktreeRegistry } from "../catalog/repository-identity.js";
 import type { GitReads } from "../git.js";
 import { GIT_OPEN_AGAIN_MS, gitReadTimedOut, nativeGitAccess } from "../native/git-access.js";
 import type { NativeGitAccess, NativeGitIgnoreMatcher } from "../native/native.js";
@@ -87,13 +88,6 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #sessionRoot: string;
   /** Where Git registers the worktrees, as `worktreeRoots` last read them (`worktreeRegistry`). */
   #registryFolder: string | undefined;
-  /**
-   * The list stored for the registry that the last `learnWorktreeRoots` read while it stood, taken by a `worktreeRoots`
-   * in the same synchronous run, so a walk that asks right after its learn step places the checkout and reads the
-   * registry once. Dropped as that run ends: an ask after an await (a walk's start behind another session's learn step,
-   * a taken walk's resync) reads the registry as it is then, a worktree added meanwhile included.
-   */
-  #learntRegistry: WorktreeRegistry | undefined;
   readonly #lanes = new Map<string, Lane>();
   readonly #eligibility = new Map<string, CheckoutEligibility>();
   /** The daemon's Git ignore matchers (`gitIgnoreMatchers`), or the router's own. */
@@ -549,12 +543,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * The other worktrees Git registers for the session's checkout that may run rules: a shell write in one is an edit
    * like any other, wherever the worktree sits and whatever the session's checkout ignores. The walk cannot tell which
-   * session wrote a file, so what it finds there is recorded under the repository and steers no session.
+   * session wrote a file, so what it finds there is recorded under the repository and steers no session. `registry` is
+   * the list `learnWorktreeRoots` gave as stored, in the same synchronous run; without it the registry is read now.
    */
-  worktreeRoots(): string[] {
+  worktreeRoots(registry: WorktreeRegistry | undefined = worktreeRegistry(this.#options.startingCheckout)): string[] {
     const starting = this.#options.startingCheckout;
-    const registry = this.#learntRegistry ?? worktreeRegistry(starting);
-    this.#learntRegistry = undefined;
     this.#registryFolder = registry === undefined ? undefined : join(registry.commonDirectory, "worktrees");
     return (registry?.worktrees ?? [])
       .map(worktree => storedPath(worktree))
@@ -564,16 +557,16 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * Git's list of the worktrees `worktreeRoots` reads, learnt through `git` as a process no thread waits on and kept as
    * the registry keeps it (`learnWorktreeList`): a worktree added since the last list costs the daemon's thread no Git.
-   * Undefined while the stored list stands, which a `worktreeRoots` in the same synchronous run takes as read here, and
-   * for a checkout placed by a kept acceptance, whose list the registry reads as before.
+   * While the stored list stands, that list, for a `worktreeRoots` in the same synchronous run to take; but where a
+   * session opening there is placing the listed worktrees (`placeWorktrees`), that pass, joined through `git`, so the
+   * walk after it asks Git for none of them itself. Undefined for a checkout placed by a kept acceptance, whose list the
+   * registry reads as before.
    */
-  learnWorktreeRoots(git: GitReads): Promise<void> | undefined {
+  learnWorktreeRoots(git: GitReads): WorktreeListLearning | undefined {
     const learnt = learnWorktreeList(this.#options.startingCheckout, git);
-    this.#learntRegistry = learnt?.kind === "stored" ? learnt.registry : undefined;
-    queueMicrotask(() => {
-      this.#learntRegistry = undefined;
-    });
-    return learnt?.kind === "learning" ? learnt.done : undefined;
+    if (learnt?.kind !== "stored" || !placingWorktrees(learnt.registry)) return learnt;
+    const { registry } = learnt;
+    return { kind: "learning", done: git.run(signal => placeWorktrees(registry, { signal })) };
   }
 
   /** The folder where Git registers the worktrees `worktreeRoots` last named (`worktrees` in the common Git folder). */

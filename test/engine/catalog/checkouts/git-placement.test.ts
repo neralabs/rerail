@@ -22,6 +22,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkoutRealpath, physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
+import { placeWorktrees, placingWorktrees } from "../../../../src/engine/catalog/checkouts/checkout-placement.js";
 import { declaredSubmodulePaths } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
 import {
   learnRemoteAddress,
@@ -36,7 +37,7 @@ import {
 } from "../../../../src/engine/catalog/repository-identity.js";
 import { CheckoutCodeRuleRouter } from "../../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
-import { WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
+import { storedRegistry, WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
 import { GitReads, gitText, runGit, runGitAsync } from "../../../../src/engine/git.js";
 import { pathsOwnedByCurrentUser } from "../../../../src/engine/native/native.js";
 import { setUpTestRepository } from "../../../support/repository-rules.js";
@@ -514,14 +515,15 @@ describe("a walk's learn step of Git's list of the worktrees", () => {
 
   // A started repository, a router opened in it and two worktrees Git adds: under half a second on a quiet machine, past
   // the default 5 s on one busy with other runs. The same holds for the two cases after it.
-  it("has the router take the list its learn step read once, and read the registry again at its next ask", { timeout: 30_000 }, async () => {
+  it("has the router take the list its learn step handed over, and read the registry again at an ask given none", { timeout: 30_000 }, async () => {
     const root = await temporaryRoot();
     const { main, first, auditor } = await routerWithStoredList(root);
     const later = join(root, "later");
-    expect(auditor.learnWorktreeRoots(new GitReads())).toBeUndefined();
-    expect(auditor.worktreeRoots()).toEqual([first]);
+    const learnt = auditor.learnWorktreeRoots(new GitReads());
+    expect(learnt?.kind).toBe("stored");
+    expect(auditor.worktreeRoots(storedRegistry(learnt))).toEqual([first]);
 
-    // A worktree added after the list the learn step read was taken: the next ask reads the registry again.
+    // A worktree added after the list the learn step read was taken: an ask given no list reads the registry again.
     git(main, "worktree", "add", "--quiet", "-b", "later", later);
     expect(auditor.worktreeRoots().toSorted()).toEqual([first, later].toSorted());
   });
@@ -530,7 +532,7 @@ describe("a walk's learn step of Git's list of the worktrees", () => {
     const root = await temporaryRoot();
     const { main, first, auditor } = await routerWithStoredList(root);
     const later = join(root, "later");
-    expect(auditor.learnWorktreeRoots(new GitReads())).toBeUndefined();
+    expect(auditor.learnWorktreeRoots(new GitReads())?.kind).toBe("stored");
 
     // Git adds a worktree while the caller awaits, as a walk's start waits for another session's learn step.
     await gitMeanwhile(main, "worktree", "add", "--quiet", "-b", "later", later);
@@ -549,11 +551,11 @@ describe("a walk's learn step of Git's list of the worktrees", () => {
       clock: async () => Date.now(),
       prepare: git => {
         const learnt = auditor.learnWorktreeRoots(git);
-        stood = learnt === undefined;
+        stood = learnt?.kind === "stored";
         return learnt;
       },
-      start: () => {
-        listed.resolve(auditor.worktreeRoots());
+      start: registry => {
+        listed.resolve(auditor.worktreeRoots(registry));
         return undefined;
       },
     });
@@ -562,7 +564,7 @@ describe("a walk's learn step of Git's list of the worktrees", () => {
       clock: async () => Date.now(),
       prepare: () => {
         entered.resolve();
-        return learning.promise;
+        return { kind: "learning", done: learning.promise };
       },
       start: () => undefined,
     });
@@ -576,6 +578,21 @@ describe("a walk's learn step of Git's list of the worktrees", () => {
     await gitMeanwhile(main, "worktree", "add", "--quiet", "-b", "later", later);
     learning.resolve();
     expect({ stood, listed: (await listed.promise).toSorted() }).toEqual({ stood: true, listed: [first, later].toSorted() });
+  });
+
+  it("has the router's learn step join a pass placing the listed worktrees under way, so a walk waits for that pass", { timeout: 30_000 }, async () => {
+    const root = await temporaryRoot();
+    const { main, auditor } = await routerWithStoredList(root);
+    const registry = worktreeRegistry(main)!;
+    // A session opening in the repository places the other worktrees after its open.
+    const passing = placeWorktrees(registry);
+    const learnt = auditor.learnWorktreeRoots(new GitReads());
+    expect(learnt?.kind).toBe("learning");
+    await (learnt?.kind === "learning" ? learnt.done : undefined);
+    expect(placingWorktrees(registry)).toBe(false);
+    await passing;
+    // With no pass under way, the stored list stands and nothing is waited for.
+    expect(auditor.learnWorktreeRoots(new GitReads())?.kind).toBe("stored");
   });
 });
 
