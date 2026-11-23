@@ -374,7 +374,7 @@ rerail update check       # resolve the channel without installing
 rerail update             # install and activate a newer version
 ```
 
-`rerail update` backs up the database, installs and validates the new version, activates it, and re-registers your connected coding agents. It names each step on stderr as it starts, and ends by listing the installed rule packs with a newer version.
+`rerail update` backs up the database, installs and validates the new version, activates it, and re-registers your connected coding agents. It names each step on stderr as it starts, and ends by updating each installed rule pack to the newest version that fits the active core.
 
 <details>
 <summary>Update steps and failures</summary>
@@ -386,9 +386,9 @@ rerail update             # install and activate a newer version
 3. Validates its native runtime and event stream.
 4. Activates it atomically for new harness sessions; `rerail update status` names the replaced version.
 5. Updated or not, re-registers every connected coding agent (`rerail install --refresh`, which also runs on its own), adding new commands, skills and hooks and removing retired ones. A coding agent never connected is left alone.
-6. Updated or not, once the refresh succeeds, lists each installed rule pack with a newer version on the channel that fits the active core (on `next` for a pack the channel has no version of, which is where set-up installs it from; its line says `(on next)`), and the `rerail packs add <id>@<version>` command that installs them ([rule packs](rule-packs.md#third-parties-packs)). It installs none. A pack npm cannot be asked about gets a `warning:` line; the update still succeeds.
+6. Updated or not, once the refresh succeeds, the active version runs `rerail packs update`: each installed rule pack moves to the newest version up to the channel's that the active core accepts by its core range (up to `next`'s for a pack the channel has no version of, which is where set-up installs it from; its line says `(from next)`), so the active core's engine checks it ([updating packs](rule-packs.md#rerail-packs)). A third party's new version runs in Log until you approve it. A pack npm cannot be asked about gets a `warning:` line. A pack that does not install or load is put back alone, the others still move, and the update exits 1 with the new core active.
 
-Steps 2 to 4 and 6 each print a line on stderr as they start. On a terminal the line counts the step's time up; elsewhere (a coding agent, CI) a step that runs past 30 s prints `… still running after 30 s`, then again every 30 s. An npm request warns that npm may be stuck after 30 s and is stopped at 3 min; the download warns at 3 min and is stopped at 20. Step 6 asks npm about each pack with requests stopped at 1 min each. A stopped npm that has not exited 5 s later is killed. A stopped step fails the update, and the version that was active stays active. A version change prints `Updated Rerail <old> → <new> in <time>` on stdout.
+Steps 2 to 4 and 6 each print a line on stderr as they start. On a terminal the line counts the step's time up; elsewhere (a coding agent, CI) a step that runs past 30 s prints `… still running after 30 s`, then again every 30 s. An npm request warns that npm may be stuck after 30 s and is stopped at 3 min; the download warns at 3 min and is stopped at 20. Step 6 asks npm about each pack with requests stopped at 1 min each, then installs each pack as a step of its own. A stopped npm that has not exited 5 s later is killed. A stopped step fails the update, and the version that was active stays active. A version change prints `Updated Rerail <old> → <new> in <time>` on stdout.
 
 An agent that can't be re-registered is named with the reason, the rest are refreshed, and the update exits 1 with the new version active. One whose configuration can't be read is named and skipped. Coming from a version without step 5, run `rerail install --refresh` once.
 
