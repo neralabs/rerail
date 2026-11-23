@@ -1,7 +1,7 @@
 # Tape format 16's choices for tape tag 13 (rr), decisions 0293 §3 and 0626. Written by the lab from the grammar:
 #   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
 # 14896 codes; no node types declared: the grammar's list is the bound; numbered by how often each is a node's over 1782 files, 1506377 nodes (`rerail-engine code-counts`).
-revision	4
+revision	5
 widths	1	1	1
 code	42	12	0	-	-
 code	37	30	0	-	-
