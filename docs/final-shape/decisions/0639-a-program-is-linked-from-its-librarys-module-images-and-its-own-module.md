@@ -240,21 +240,31 @@ asks for every module, so the template's store holds every module's image, and e
 
 ### 6. The tail, by module
 
-After the link, a program's lowering is the tail. Per tail run (Python, 152 runs, `RERAIL_SPIKE_PROFILE`):
+After the link, a program's lowering is the tail. Per tail run (Python, 152 runs, `RERAIL_SPIKE_PROFILE`, spans
+read by `clock_gettime`: see below):
 
 | Step | ms | Reads | Where it goes |
 |---|---|---|---|
-| `check_given`: cycles, caches, answers | 5.1 | SCCs of the program; a cache's two rules; a request's answer | SCCs compose over modules: per module, and per program only through E8's relations. The cache and answer checks are per relation |
-| (inside the tail, outside every span) | 4.6 | unknown | open: not the lowerer's drop, nor the pipeline's making (0 ms) |
-| guest context passes (0597), crossing cycles | 4.0 | guest contexts | not yet classified |
-| `lower::link_versions` | 2.9 | every module | gone: the union view (§4) |
-| sources on request (two rounds) | 3.0 | what the program reads | downward: per program, as rules |
-| aggregate demand | 3.1 | a helper's readers (in its module) and strata | per module; the strata check per program only through E8's relations |
-| kind sets | 2.0 | which sets a rule reads | downward: three rules (E10), per program |
-| span patterns | 1.6 | the columns' spans, from the scope | upward: per module |
-| order the nodes compared | 1.3 | a rule and its relations' column types | local: per module (its `rr_ordered<k>` counter named by content) |
-| append a module | 1.2 | every module | gone: the union view |
-| findings, core declarations, the rest | ≈3 | a `.violation`'s rules; what rules read | local, or a union of each module's |
+| `check_given`: cycles, caches, answers | 5.0 | SCCs of the program; a cache's two rules; a request's answer | SCCs compose over modules: per module, and per program only through E8's relations. The cache and answer checks are per relation |
+| guest context passes (0597), crossing cycles | 4.5 | guest contexts | not yet classified |
+| sources on request (two rounds) | 3.2 | what the program reads | downward: per program, as rules |
+| aggregate demand | 2.8 | a helper's readers (in its module) and strata | per module; the strata check per program only through E8's relations |
+| `lower::link_versions` | 2.5 | every module | gone: the union view (§4) |
+| kind sets | 2.1 | which sets a rule reads | downward: three rules (E10), per program |
+| span patterns | 2.0 | the columns' spans, from the scope | upward: per module |
+| append a module | 1.9 | every module | gone: the union view |
+| order the nodes compared | 1.7 | a rule and its relations' column types | local: per module (its `rr_ordered<k>` counter named by content) |
+| findings, core declarations | 2.2 | a `.violation`'s rules; what rules read | local, or a union of each module's |
+| the rest (unit, literals once, nullary, axes, widening, ...) | ≈2.4 | a rule | local |
+
+**The tail's time outside its passes was the profiler's clock.** A first profile showed 4.6 ms a run in the tail
+outside every pass. Timed directly around each `program()` call, the passes took 3.518 s against their spans' 2.636 s.
+On Linux the spans read `getrusage(RUSAGE_THREAD)`, which gives the running thread's time as of its last scheduler
+update. A span's close then calls `getrusage(RUSAGE_SELF)` (`memory::peak_sampled`), which brings it up to date, so
+each span lost the time since the last update to its parent. The profile now reads
+`clock_gettime(CLOCK_THREAD_CPUTIME_ID)` on every Unix, as it did on macOS. The tail's own time is then 0.03 ms a
+run, and the passes' spans hold 3.502 s of the clock's 3.518 s. Linux profiles taken before charged part of each
+span's time to its parent.
 
 Each tail step is one of four kinds, and each kind has its place:
 - **Local** (a rule or a relation, with declarations): at module time, in the module's image.
@@ -302,7 +312,7 @@ spark2, `RERAIL_THREADS=1`, over every pack and the engine's phase programs.
 | E8 | Relations with different rules from more than one module | `php_dynamic`, `cc_decision`, `cc_name`, `layout_at`, `token_text_ask`, `rr_embed_req`, `rr_dir_req`, `rr_file_req`. The 73 `extensible` declarations add facts across modules far more than rules |
 | E9 | A module against its scope lowered without its rules | 170 of 213 the same image; the 43 others reuse a declaration the scope's lowering made (kind set helpers in 10 files, `tape` in 8, `rr_embed_req` in 3, `rr_dir_req`/`rr_file_req`, `rx_span`) |
 | E10 | The tail's `KindSets` pass against three `.rerail` rules over the same input's reads | the same sets taken out in all 17 libraries (django 10, Python 7, Vue 7, ...) |
-| — | The link and the tail per run, by span | `link_versions` 2.9 ms, the tail 28.6 ms (§6's table) |
+| — | The link and the tail per run, by span | `link_versions` 2.5 ms, the tail 28.5 ms (§6's table) |
 
 The 7 inline failures fail the same without this change: `ruff-perf403` (refused at reading, open items),
 `eslint-curly`, `eslint-no-object-constructor` and `clippy-redundant-field-names` ("message: no column"),
@@ -311,8 +321,8 @@ The 7 inline failures fail the same without this change: `ruff-perf403` (refused
 
 What the spike leaves: the link, tail and passes are most of a program's lowering (33 of 39 ms for Python). §6 places
 each step: the link goes with the union view, most of the tail moves to module time, and what stays per program is
-downward rules over the union's rows and the few relations E8 lists. Not yet known: 4.6 ms of the tail outside any
-span, and what the guest context passes read.
+downward rules over the union's rows and the few relations E8 lists. Not yet known: what the guest context passes
+read.
 
 ## Collisions
 

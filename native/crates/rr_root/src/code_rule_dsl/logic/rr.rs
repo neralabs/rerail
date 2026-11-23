@@ -1163,19 +1163,26 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
         }
         // A guest context's passes (decision 0597): made before the declarations are checked, since a `.from` name
         // is declared by its pass.
-        p.program(&mut super::contexts::Passes).program(&mut super::contexts::CrossingCycles);
+        p.program(&mut super::contexts::Passes);
+        p.program(&mut super::contexts::CrossingCycles);
         if declared {
             p.program(&mut lowering_tail::Declared);
         }
         p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
         p.program(&mut lowering_tail::Findings { pending: findings.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) });
-        p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns { library: library.map(|l| (l.spans(), l.version.digest())) }).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
-        p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) }).program(&mut lowering_tail::Unit);
-        p.program(&mut lowering_tail::BooleanRelations).program(&mut lowering_tail::ScopeGlobs);
+        p.program(&mut lowering_tail::CoreDecls { docof_of_locs });
+        p.program(&mut lowering_tail::SpanPatterns { library: library.map(|l| (l.spans(), l.version.digest())) });
+        p.program(&mut lowering_tail::GrammarNames);
+        p.program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
+        p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) });
+        p.program(&mut lowering_tail::Unit);
+        p.program(&mut lowering_tail::BooleanRelations);
+        p.program(&mut lowering_tail::ScopeGlobs);
         for round in lower::ON_REQUEST {
             p.program(&mut SourcesOnRequest { round });
         }
-        p.program(&mut lowering_tail::OrderNodes).program(&mut lowering_tail::DeclareAxes);
+        p.program(&mut lowering_tail::OrderNodes);
+        p.program(&mut lowering_tail::DeclareAxes);
         // `finish`'s checks, on the version.
         let _checks = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: finish_checks_given".to_owned());
         super::front::finish_checks_given(p.current().map_err(Error::Syntax)?, library.map(|l| &*l.version))?;
@@ -1183,7 +1190,12 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
     {
         use super::plan::corpus::preparation::{DropRepeated, lowering_tail};
         let _demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
-        p.program(&mut lowering_tail::AggregateDemand).program(&mut lowering_tail::Unit).program(&mut lowering_tail::LiteralsOnce).program(&mut lowering_tail::DropSelfRules).program(&mut DropRepeated::default()).program(&mut lowering_tail::FactsOnce);
+        p.program(&mut lowering_tail::AggregateDemand);
+        p.program(&mut lowering_tail::Unit);
+        p.program(&mut lowering_tail::LiteralsOnce);
+        p.program(&mut lowering_tail::DropSelfRules);
+        p.program(&mut DropRepeated::default());
+        p.program(&mut lowering_tail::FactsOnce);
     }
     let widening = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: the widening rounds".to_owned());
     for _ in 0..16 {
