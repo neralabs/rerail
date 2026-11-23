@@ -1700,6 +1700,10 @@ impl<'a> G<'a> {
                 }
                 out = out.replacen(a, b, 1);
             }
+            // A record's code where it is in the file: one test of the records' own length, not `n`'s and then the
+            // slice's (a token's code is its record's here).
+            out = out.replace("        if j >= self.n {\n            return false;\n        }\n        let c = self.code_at(j);\n", "        let Some(c) = self.recs.get(j).map(|r| r.code) else {\n            return false;\n        };\n");
+            out = out.replace("        if j < self.n { self.code_at(j) >> 8 & 0xff } else { 0 }\n", "        self.recs.get(j).map_or(0, |r| r.code >> 8 & 0xff)\n");
             let parts: Vec<String> = RUNTIME.split("\n\n").map(|p| p.trim_matches('\n').to_owned()).filter(|p| !p.is_empty() && p.matches('{').count() == p.matches('}').count()).collect();
             out = out.replace("if F && self.k == 0 && self.refusing != 0 ", "if F && self.refusing != 0 ");
             out = one_loop::drop_uncalled(out, &parts);

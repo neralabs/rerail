@@ -460,7 +460,7 @@ impl<'a, L: Layout> P<'a, L> {
 
     #[inline(always)]
     fn word_at(&self, j: usize) -> u32 {
-        if j < self.n { self.code_at(j) >> 8 & 0xff } else { 0 }
+        self.recs.get(j).map_or(0, |r| r.code >> 8 & 0xff)
     }
 
     /// Mark `b` at record `j`: its code's bit, else, for a gap mark tier 1 leaves to tier 2 (`tier1::ASKED`), the bytes.
@@ -6576,10 +6576,9 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn at_code_literal_at(&self, j: usize) -> bool {
-        if j >= self.n {
+        let Some(c) = self.recs.get(j).map(|r| r.code) else {
             return false;
-        }
-        let c = self.code_at(j);
+        };
         matches!(c & 0xff, 3)
     }
 
@@ -6594,10 +6593,9 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn at_hash_word_at(&self, j: usize) -> bool {
-        if j >= self.n {
+        let Some(c) = self.recs.get(j).map(|r| r.code) else {
             return false;
-        }
-        let c = self.code_at(j);
+        };
         matches!(c & 0xff, 1) && !matches!(c >> 8 & 0xff, 34)
     }
 
@@ -6612,10 +6610,9 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn at_identifier_at(&self, j: usize) -> bool {
-        if j >= self.n {
+        let Some(c) = self.recs.get(j).map(|r| r.code) else {
             return false;
-        }
-        let c = self.code_at(j);
+        };
         matches!(c & 0xff, 5)
     }
 
@@ -6630,10 +6627,9 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn at_number_at(&self, j: usize) -> bool {
-        if j >= self.n {
+        let Some(c) = self.recs.get(j).map(|r| r.code) else {
             return false;
-        }
-        let c = self.code_at(j);
+        };
         matches!(c & 0xff, 2)
     }
 
@@ -6648,10 +6644,9 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn at_string_at(&self, j: usize) -> bool {
-        if j >= self.n {
+        let Some(c) = self.recs.get(j).map(|r| r.code) else {
             return false;
-        }
-        let c = self.code_at(j);
+        };
         matches!(c & 0xff, 4)
     }
 

@@ -518,3 +518,8 @@ Holding the token's span with its code (`arrive`) was tried as well and was slow
 reached, read only at a take); lean reads its token's bounds at the take, so it was not kept.
 
 Side by side on spark1 (load 3), five rounds in turns: tier 2 34.5–35.5 ms before, 33.4–34.6 ms after. All tests pass.
+
+The mark questions' look-ahead (`word_at`, `at_K_at`) read a record's code after testing `j < n` and then the slice's own
+bound. Where a token is its record (no region read in parts), each reads it with one test, `self.recs.get(j)`, as the
+lean parser reads `self.t.get(j)`. Side by side, five rounds: the same within the host's swing (33.2–35.4 ms before,
+34.7–37.0 after); kept as lean's shape.
