@@ -92,3 +92,9 @@ pub mod code_rule_dsl {
     #[path = "../../../../src/code_rule_dsl/test_support.rs"]
     mod test_support;
 }
+
+// The engine's allocator (`rerail_prof::heap::Sampled`, as `rerail-engine`'s `lib.rs` declares it): without it the
+// test binary ran on the system allocator, which no build of the engine runs on.
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+#[global_allocator]
+static GLOBAL: rerail_prof::heap::Sampled = rerail_prof::heap::Sampled;

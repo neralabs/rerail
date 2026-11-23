@@ -199,8 +199,18 @@ fn r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows() {
         assert_eq!(ran.shape.maintenance_held, 0, "R1: after {what}, no relation is held under a maintenance name");
         assert_eq!(ran.shape.rows_copied, 0, "R2: after {what}, no row is copied to state a change");
         // The changed documents' memo entries are found (under the memo plan's id and the store path), so the inputs'
-        // deltas are read from them, not every document hashed. (A few still are: 0364's open item.)
-        assert!(ran.shape.inputs_from_entries > 0, "R2: after {what}, inputs' deltas are read from the changed documents' entries ({} hashed)", ran.shape.inputs_hashed);
+        // deltas are read from them, or given beside a kept input by its changed owners (0458, `inputs_from_owners`, as
+        // R2 in a new process reads them), not every document hashed. (A few still are: 0364's open item.) The run's
+        // shape counts its phases' runs too: phase 1's, which evaluated `sources.rerail` again in each run, met this
+        // with its own deltas after the cycle closed again, until its whole-run cutoff (`phases::sources`) reused it
+        // over the files of the session's first run.
+        assert!(
+            ran.shape.inputs_from_entries + ran.shape.inputs_from_owners > 0,
+            "R2: after {what}, inputs' deltas are read from the changed documents ({} from entries, {} from owners, {} hashed)",
+            ran.shape.inputs_from_entries,
+            ran.shape.inputs_from_owners,
+            ran.shape.inputs_hashed
+        );
     }
 }
 

@@ -144,6 +144,7 @@ native/crates/facts_base/src/code_rule_dsl/facts/nearest.rs::NEAREST	stays	compi
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::BLOCK_DEVICE	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::HEAP_NET	stays	code a crate above registers at load (the allocator's net count)
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::HEAP_PEAK	stays	the allocator's per-thread peak a crate above registers once (decision 0469)
+native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::SOURCES_HELD	stays	code a crate above registers at load (what lists the batches' relations held)
 native/crates/facts_base/src/code_rule_dsl/facts/span_prefilter.rs::SPAN_PREFILTER	stays	compiled once from the engine's own code
 native/crates/facts_base/src/code_rule_dsl/facts/vtab.rs::CLOSES	stays	a generation counter: append-only
 native/crates/facts_base/src/code_rule_dsl/facts/vtab.rs::FORGET	stays	code registered at load
@@ -312,7 +313,6 @@ native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::IDS	stays	computed once 
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::JAVASCRIPT	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TSX	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TYPESCRIPT	stays	code registered at load
-native/crates/lang/src/code_rule_dsl/tape/formats.rs::SAID	stays	a warning said once a process
 native/crates/lang/src/code_rule_dsl/tape/go_lean.rs::IDS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/html_lean.rs::IDS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/java_lean.rs::IDS	stays	computed once from the engine's own files
@@ -384,6 +384,27 @@ native/src/process.rs::LAUNCHED	stays	this process's children's handles (Windows
 native/crates/store_base/src/source_tree.rs::IMAGE	stays	computed once from the engine's own files
 native/crates/metal/src/pp_arena.rs::T	stays	computed once from the process's device (a group's threads: the GPU's, or the CPU's 32)
 native/crates/observe/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers the store its tests keep the observer's answers in)
+native/crates/store/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers the store with the observer)
+native/crates/tests_admission/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_anchors/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_calls/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_compile/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_conformance/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_corpus/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_cpu/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_demand/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_findings/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_lang/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_logic/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_matcher/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_resolve/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_rr/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_scope/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_sql/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_tape/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_transducer/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_value/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
+native/crates/tests_workspace/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/store_base/src/content_store/observer_store/base.rs::STORE	stays	code a crate above registers at load (the content store, as the observer and git reach it)
 native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::RANGED	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
 native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::BY_NAME	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's

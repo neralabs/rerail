@@ -10727,3 +10727,13 @@ value (`corpus_prep`'s new `preparation/kept.rs`), rule 7 on the memo path, rule
 passes kept too. Merged without conflicts.
 
 Relax: the engine checks clean (with roll-up 84).
+
+### Q511. Roll-up 84 (final-rerail-shape-rr-align 16455bce23 onto Pulling-it-all-together): what the merge chose
+
+final-rerail-shape-rr-align (16455bce23): its merge of the hub at roll-up 80, then phase 0 composing a program
+file's and a text's graph from its modules' graphs (no bootstrap run), builtin phases' lowered programs kept in the
+store, the test template's run with phase 1, a guest placed by segments or pieces read in place (0353/0603), the
+watchdog's segfault child writing no core, the test crates on the engine's jemalloc, and the Vue pack tests as one
+pack run beside each case's. Merged without conflicts.
+
+Relax: the engine checks clean (with roll-up 83).

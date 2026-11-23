@@ -1904,6 +1904,13 @@ pub struct FactPhase<'a> {
     _run: std::marker::PhantomData<&'a ()>,
 }
 
+impl<'a> FactPhase<'a> {
+    /// A phase's run of the program `program_entry` keeps (a builtin phase's, `phases::lowered_entry`).
+    pub fn of(program_entry: Option<&'a combined::Embedded>) -> Self {
+        Self { program_entry, _run: std::marker::PhantomData }
+    }
+}
+
 /// Runs under way here, in the run's context: a run started inside another (a phase, the constants, phase 0) is
 /// nested, and so is a run in a job of one (decision 0442: the context goes with the job).
 #[derive(Clone, Copy, Default)]
@@ -2171,10 +2178,11 @@ pub fn run_read_handing(
     typing: &Typing,
     options: &serde_json::Value,
     image: Option<&mut Vec<u8>>,
+    phase: FactPhase<'_>,
 ) -> Result<Report> {
     added::check_tool_calls(options).map_err(Error::Plan)?;
     let key = read_key(read)?;
-    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, image, Default::default())
+    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, image, phase)
 }
 
 pub fn run_fact_image(source: &str, root: &Path, options: &serde_json::Value) -> Result<Vec<u8>> {

@@ -676,10 +676,13 @@ Each step ends with:
          `[ns, starts[ns], ne, ends[ne]]`; the byte loop goes). The entry holds the positions' counts and a run to the
          lines; `loc_line` (a relation's read of the same body as `lines_line`) finds a line. A guest's places are
          its host's lines through its placement, a copied stretch or a point, from the entry's scalars (decision
-         0055). A normalized string's pieces and an embedder's segments live in no block: such a batch makes its
-         places (counted, `views.refused.locs.guest_*`). On hogql every guest is a copied stretch.
-       - Left made: the axis (step 5); a batch whose tapes are not on the device (the device's budget spent); a
-         batch with a guest whose placement is not a copied stretch or a point. `expand_view`, `VIEW_EXPAND`,
+         0055). A normalized string's pieces and an embedder's segments live in no block: such a guest's entry holds
+         its spans placed (`ViewDoc::placed`, `PLACED_TABLE`: each position's host span, made once into the block
+         as the host places it, `Placement::host`), so its batch's places are read in place too (2026-11-22: a
+         stratum over a Vue guest made `line` and `docof` by launches of their own, past decision 0603's one
+         launch). On hogql every guest is a copied stretch.
+       - Left made: the axis (step 5); a batch whose tapes are not on the device (the device's budget spent).
+         `expand_view`, `VIEW_EXPAND`,
          ChunkDoc's node columns and `fill_lines`/`fill_locs` (row 14) stay for them.
        - Found on the way: the slabs holding tapes were never retired (4d's first part); now they are retired once
          only the pool holds them, so a long session frees them with its tapes.
