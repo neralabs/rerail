@@ -1905,7 +1905,7 @@ pub fn lex(src: &[u8]) -> Lexed {
         }
         let here_2: bool;
         let mut hits = 0u32;
-        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {
+        let (l, kind, extra, mut marks, word): (usize, u32, bool, u32, u32) = {
             // The row: the first whose start holds, of those whose start may be the byte's.
             let row = match group {
                 // `!#$%&()*+,-:;<=>?@[\]^{|~`
@@ -2007,7 +2007,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = fs_5;
                     fill_6 = false;
-                    (l, 0, true, 0x100)
+                    (l, 0, true, 0x100, 0)
                 }
 ,
                 1 => {
@@ -2052,7 +2052,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = fs_5;
                     fill_6 = false;
-                    (l, 0, true, 0x300)
+                    (l, 0, true, 0x300, 0)
                 }
 ,
                 2 => {
@@ -2101,7 +2101,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, word(&src[s..=l]))
                 }
 ,
                 3 => {
@@ -2158,7 +2158,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
                 }
 ,
                 4 => {
@@ -2210,7 +2210,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, 4, false, 0x0)
+                    (l, 4, false, 0x0, word(&src[s..=l]))
                 }
 ,
                 5 => {
@@ -2259,7 +2259,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, 6, false, 0x0)
+                    (l, 6, false, 0x0, 0)
                 }
 ,
                 6 => {
@@ -2308,7 +2308,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, 5, false, 0x0)
+                    (l, 5, false, 0x0, 0)
                 }
 ,
                 7 => {
@@ -2378,7 +2378,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
                 }
 ,
                 8 => {
@@ -2489,7 +2489,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
                 }
 ,
                 9 => {
@@ -2749,7 +2749,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
                 }
 ,
                 12 => {
@@ -2788,7 +2788,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x80)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x80, 0)
                 }
 ,
                 13 => {
@@ -2846,7 +2846,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, word(&src[s..=l]))
                 }
 ,
                 _ => {
@@ -2857,7 +2857,6 @@ pub fn lex(src: &[u8]) -> Lexed {
             }
         }
 ;
-        let word = if extra { 0 } else { word(&src[s..=l]) };
         // The token marks: tier 2 tests the rest of each.
         if extra {
             // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.

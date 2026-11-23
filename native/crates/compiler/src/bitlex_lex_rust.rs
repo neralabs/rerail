@@ -697,6 +697,9 @@ struct Stage1Text {
     ret: String,
 }
 
+/// A row's read of its token's word (`RowArm::word`): `word_at` in its place where the word table is made.
+const WORD_READ: &str = "word(&src[s..=l])";
+
 struct RowArm {
     row: usize,
     /// Its first bytes, and those after its first it may hold.
@@ -712,6 +715,9 @@ struct RowArm {
     /// A row whose regions resume a string's (decision 0600): in place of its record, its last
     /// the open record's, and the loop on past it.
     resume: Option<String>,
+    /// Whether a word may be its token: a grammar token's whose first byte may be its first and the rest its tail's.
+    /// Only such a row reads its token's word, as the lean lexer reads only a word run's.
+    word: bool,
 }
 
 /// `dispatch`'s choices, by the first byte's group: the region opened, and the row.
@@ -4642,7 +4648,7 @@ impl Gen<'_> {
             let kept: Vec<&str> = self.nodes.iter().filter(|n| n.kept).map(|n| n.name.as_str()).collect();
             let _ = write!(
                 out,
-                "/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {{\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].iter().all(|&b| b == b' '), \"the source padded with spaces\");\n    // Stage 1: the records, and whether an escape holds.\n    let Stage1 {{ {}starts, count, refused }} = stage1_best(buf, n);\n    Lexed {{ starts, count, len: n, refused }}\n}}\n",
+                "/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {{\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    // Stage 1: the records, and whether an escape holds.\n    let Stage1 {{ {}starts, count, refused }} = stage1_best(buf, n);\n    Lexed {{ starts, count, len: n, refused }}\n}}\n",
                 kept.iter().map(|k| format!("{k}, ")).collect::<String>()
             );
             out.push_str(&used_helpers(&out));
@@ -5427,7 +5433,8 @@ impl Gen<'_> {
                     let _ = write!(scans, "            // scan {name}: its bits in the token's bytes, all of them code\n            let mut q = s;\n            while let Some(i) = first_in(&{both}, q, l) {{\n                if bit(&{u}, i) {{\n                    c_{name} += 1;\n                    if c_{name} > {max} {{\n                        refused = true;\n                        break;\n                    }}\n                }} else {{\n                    c_{name} = c_{name}.saturating_sub(1);\n                }}\n                q = i + 1;\n            }}\n", name = ident(name));
                 }
             }
-            row_arms.push(RowArm { resume, row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra}, "), bits });
+            let word = !extra && x.words.iter().any(|w| w.first().is_some_and(|&c| sb[usize::from(c)]) && w[1..].iter().all(|&c| tail[usize::from(c)]));
+            row_arms.push(RowArm { resume, word, row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra}, "), bits });
         }
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
         let mut gap_code = String::new();
@@ -5714,7 +5721,7 @@ impl Gen<'_> {
         let branches = format!("{{\n            // The row: the first whose start holds, of those whose start may be the byte's.\n            let row = match group {{\n{}                _ => usize::MAX,\n            }};\n            match row {{\n{}                _ => {{\n                    // A byte no token begins with.\n                    refused = true;\n                    break;\n                }}\n            }}\n        }}", picks.rows, row_arms.iter().enumerate().map(|(i, a)| format!("                {i} => {},\n", indent(&match &a.resume {
             // The body up to its record's tuple, then the resume.
             Some(r) => format!("{}{r}", a.body.rsplit_once("            (l, ").map_or(a.body.as_str(), |x| x.0)),
-            None => format!("{}{:#x})\n        }}", a.body, a.bits),
+            None => format!("{}{:#x}, {})\n        }}", a.body, a.bits, if a.word { WORD_READ } else { "0" }),
         }, "        ").trim_start())).collect::<String>());
         let mut fill_top = String::new();
         let mut fill_end = String::new();
@@ -5968,10 +5975,10 @@ impl Gen<'_> {
         let (open_code, branches, token_code, own_code, gap_code, acc_after) = (tokens(&open_code), tokens(&branches), tokens(&token_code), tokens(&own_code), tokens(&gap_code), tokens(&acc_after));
         // A token's row and record kind by one load (decision 0623 step 3, the lean lexer's `TOKEN`): its row where its first
         // byte picks one, else the arm of its group's tests. Where the rows' pick makes no region of its own.
-        let token_form = picks.by_byte.as_ref().filter(|_| self.opens.is_none() || picks.fused).and_then(|(by, arms)| {
+        let token_form = picks.by_byte.as_ref().filter(|_| (self.opens.is_none() || picks.fused) && x.words.len() < 255).and_then(|(by, arms)| {
             let head = format!("let row = match group {{\n{}                _ => usize::MAX,\n            }};", tokens(&picks.rows));
             let pick = format!("let row = match pick {{\n                p if usize::from(p) < {} => usize::from(p),\n{}                _ => usize::MAX,\n            }};", row_arms.len(), tokens(arms));
-            let one = "        // The token's row (or its first byte's group's tests) and its record kind, by one load (the lean lexer's `TOKEN`).\n        let (pick, kind1) = TOKEN[usize::from(src[s])];\n";
+            let one = "        // The token's row (or its first byte's group's tests) and its record kind, by one load (the lean lexer's `TOKEN`).\n        let (pick, kind1, word1) = TOKEN[usize::from(src[s])];\n";
             (open_code.contains(GROUP_LINE) && branches.contains(&head)).then(|| (open_code.replacen(GROUP_LINE, one, 1), branches.replacen(&head, &pick, 1).replace("u32::from(KINDS[usize::from(src[s])])", "u32::from(kind1)"), *by))
         });
         // The one pass with its masks read from the bytes where the loop reads them (decision 0623 step 1), as the lean
@@ -6071,11 +6078,10 @@ impl Gen<'_> {
         }
         let _ = write!(
             out,
-            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    // Room for a record a byte, as the lean lexer's: each token's first byte is after the last's, so the writes need no check.\n    let mut recs: Vec<Rec> = Vec::with_capacity(n + 1);\n    let out = recs.as_mut_ptr();\n    let mut len = 0usize;\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}{fw_decl}{scan_decl}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).\n    let mut b = at / 64;\n{stage}{loop_head}        let base = b * 64;\n{block_starts} & (!0u64 << at.saturating_sub(base));\n        while firsts != 0 {{\n        let s = base + firsts.trailing_zeros() as usize;\n        if s >= n {{\n            break 'tokens;\n        }}\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches};\n        let word = if extra {{ 0 }} else {{ {word_read} }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        debug_assert!(len < n && l >= s, \"a token a byte at most\");\n        // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.\n        unsafe {{ out.add(len).write(Rec {{ start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 }}) }};\n        len += 1;\n        at = l + 1;\n        if at >= base + 64 {{\n            b = at / 64;\n            continue 'tokens;\n        }}\n        firsts &= !0u64 << (at - base);\n        }}\n        b += 1;\n    }}\n{pass_end}{unplaced_code}    let _ = (from, from_record, before, pending);\n{span_after}    // SAFETY: `len` records written.\n    unsafe {{ recs.set_len(len) }};\n    Lexed {{\n        recs,\n{masks_init}        refused,\n    }}\n}}\n",
+            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    // Room for a record a byte, as the lean lexer's: each token's first byte is after the last's, so the writes need no check.\n    let mut recs: Vec<Rec> = Vec::with_capacity(n + 1);\n    let out = recs.as_mut_ptr();\n    let mut len = 0usize;\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}{fw_decl}{scan_decl}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).\n    let mut b = at / 64;\n{stage}{loop_head}        let base = b * 64;\n{block_starts} & (!0u64 << at.saturating_sub(base));\n        while firsts != 0 {{\n        let s = base + firsts.trailing_zeros() as usize;\n        if s >= n {{\n            break 'tokens;\n        }}\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks, word): (usize, u32, bool, u32, u32) = {branches};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        debug_assert!(len < n && l >= s, \"a token a byte at most\");\n        // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.\n        unsafe {{ out.add(len).write(Rec {{ start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 }}) }};\n        len += 1;\n        at = l + 1;\n        if at >= base + 64 {{\n            b = at / 64;\n            continue 'tokens;\n        }}\n        firsts &= !0u64 << (at - base);\n        }}\n        b += 1;\n    }}\n{pass_end}{unplaced_code}    let _ = (from, from_record, before, pending);\n{span_after}    // SAFETY: `len` records written.\n    unsafe {{ recs.set_len(len) }};\n    Lexed {{\n        recs,\n{masks_init}        refused,\n    }}\n}}\n",
             own = own_code,
             plain_decl = plain_decl_text,
             stage = if fused { walk.as_str() } else { "" },
-            word_read = if word_table.is_some() { "word_at(src, s, l + 1 - s)" } else { "word(&src[s..=l])" },
             block_starts = match &from_bytes {
                 Some((_, st, ..)) => st.clone(),
                 None => format!("        let mut firsts = !{skip}[b]"),
@@ -6083,7 +6089,7 @@ impl Gen<'_> {
             masks_init = if fields.is_empty() { String::new() } else { format!("        masks: Masks {{\n{fields_init}        }},\n") },
         );
         if fused {
-            out.push_str("\nrerail_simd8::dispatch! {\n    fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;\n}\n\n/// The spaces after a file `lex` reads, as simdjson's `SIMDJSON_PADDING`: each block of it is loaded where it is.\npub const PADDING: usize = 64;\n\n/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].iter().all(|&b| b == b' '), \"the source padded with spaces\");\n    lex_best(buf, n)\n}\n");
+            out.push_str("\nrerail_simd8::dispatch! {\n    fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;\n}\n\n/// The spaces after a file `lex` reads, as simdjson's `SIMDJSON_PADDING`: each block of it is loaded where it is.\npub const PADDING: usize = 64;\n\n/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    lex_best(buf, n)\n}\n");
         }
         if let Some((_, _, code, _)) = &from_bytes {
             out.push_str(code);
@@ -6109,8 +6115,9 @@ impl Gen<'_> {
                 }
             }
             if let Some((_, _, by)) = &token_form {
-                let row: Vec<String> = (0..256).map(|c| format!("({}, {})", by[c], x.kinds[c])).collect();
-                let _ = write!(out, "\n/// Each byte's pick as a token's first byte, and its record kind (the lean lexer's `TOKEN`): the token's row where the\n/// byte picks one, else {} and its group's index, whose tests pick it; `u8::MAX`, none.\nstatic TOKEN: [(u8, u8); 256] = [{}];\n", row_arms.len(), row.join(", "));
+                let one = |c: usize| x.words.iter().position(|w| w.as_slice() == [c as u8]).map_or(0, |i| i + 1);
+                let row: Vec<String> = (0..256).map(|c| format!("({}, {}, {})", by[c], x.kinds[c], one(c))).collect();
+                let _ = write!(out, "\n/// Each byte's pick as a token's first byte, its record kind, and the code of the word it is alone (the lean lexer's\n/// `TOKEN`): the token's row where the byte picks one, else {} and its group's index, whose tests pick it; `u8::MAX`,\n/// none.\nstatic TOKEN: [(u8, u8, u8); 256] = [{}];\n", row_arms.len(), row.join(", "));
                 // The tables the one load replaces, where nothing else reads them.
                 if !out.contains("DISPATCH_LO[") {
                     out = out.replacen(&tables, "", 1);
@@ -6124,8 +6131,14 @@ impl Gen<'_> {
             }
         }
         if let Some(t) = &word_table {
+            // A token of one byte's word by `TOKEN`'s load, as the lean lexer's operators; a longer one's by the table.
+            let read = if out.contains("let (pick, kind1, word1) = TOKEN[") { "if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) }" } else { "word_at(src, s, l + 1 - s)" };
+            out = out.replace(WORD_READ, read);
             out = out.replacen(&word_fn, "", 1);
             out.push_str(t);
+        }
+        if !out.contains("u32::from(word1)") {
+            out = out.replace("let (pick, kind1, word1) = TOKEN[", "let (pick, kind1, _) = TOKEN[");
         }
         // The gap marks tier 2 asks of the bytes (decision 0623 step 5): where the loop reads the bytes, and no region is
         // read in parts (a piece's start is not its record's).

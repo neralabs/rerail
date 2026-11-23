@@ -229,7 +229,7 @@ rerail_simd8::dispatch! {
 
 /// The records of `buf[..n]`, its `PADDING` bytes after it spaces.
 pub fn lex(buf: &[u8], n: usize) -> Lexed {
-    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].iter().all(|&b| b == b' '), "the source padded with spaces");
+    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b"        "), "the source padded with spaces");
     // Stage 1: the records, and whether an escape holds.
     let Stage1 { starts, count, refused } = stage1_best(buf, n);
     Lexed { starts, count, len: n, refused }

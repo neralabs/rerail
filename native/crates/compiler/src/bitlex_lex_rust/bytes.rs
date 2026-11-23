@@ -127,6 +127,9 @@ impl<'a> Bytes<'a> {
             Expr::Name(n) => {
                 if self.classes.contains_key(n.as_str()) {
                     let f = format!("cls_{}", ident(n));
+                    // A class without the space: the padding after the file (spaces, `PADDING`) holds none of it, so its
+                    // bits need no end, as the lean lexer reads its padded bytes.
+                    let held = if self.classes[n.as_str()].iter().any(|&(lo, hi)| lo <= 0x20 && 0x20 <= hi) { "held(b, q, n, p)" } else { "padded(b, q, p)" };
                     if !self.cls.contains(&f)
                         && let Some(code) = self.class_code.get(n.as_str())
                     {
@@ -141,7 +144,7 @@ impl<'a> Bytes<'a> {
                         }
                         let _ = write!(
                             self.code,
-                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window::<S>(src, n, p) }}) else {{ return 0 }};\n{lines}    // SAFETY: the caller's.\n    let b = unsafe {{ {code} }};\n    held(b, q, n, p)\n}}\n\n"
+                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window::<S>(src, n, p) }}) else {{ return 0 }};\n{lines}    // SAFETY: the caller's.\n    let b = unsafe {{ {code} }};\n    {held}\n}}\n\n"
                         );
                     }
                     if !self.cls.contains(&f) {
@@ -158,7 +161,7 @@ impl<'a> Bytes<'a> {
                             .collect();
                         let _ = write!(
                             self.code,
-                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window::<S>(src, n, p) }}) else {{ return 0 }};\n    // SAFETY: the caller's.\n    let b = unsafe {{ {} }};\n    held(b, q, n, p)\n}}\n\n",
+                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window::<S>(src, n, p) }}) else {{ return 0 }};\n    // SAFETY: the caller's.\n    let b = unsafe {{ {} }};\n    {held}\n}}\n\n",
                             if bits.is_empty() { "0".to_owned() } else { bits.join(" | ") }
                         );
                     }
@@ -706,6 +709,12 @@ fn held(b: u64, q: isize, n: usize, p: isize) -> u64 {
     b & valid(n, p)
 }
 
+/// `held` of a class the padding holds none of: the bits before the file shifted out, those past it none.
+#[inline(always)]
+fn padded(b: u64, q: isize, p: isize) -> u64 {
+    if p < q { b << (q - p) } else { b }
+}
+
 /// The bits of the window from `p` that are the file's bytes.
 #[inline(always)]
 fn valid(n: usize, p: isize) -> u64 {
@@ -979,16 +988,18 @@ pub(super) fn word_table(words: &[Vec<u8>]) -> Option<String> {
             for slot in &slots {
                 match words.get(*slot) {
                     Some(w) => {
-                        let tail: Vec<String> = w.iter().skip(8).map(|c| format!("{c:#04x}")).collect();
-                        let _ = writeln!(table, "    ({:#018x}, {}, {}, &[{}]),", key8(w), w.len(), slot + 1, tail.join(", "));
+                        let _ = writeln!(table, "    ({:#018x}, {}, {}),", key8(w), w.len(), slot + 1);
                     }
-                    None => table.push_str("    (0, 0, 0, &[]),\n"),
+                    None => table.push_str("    (0, 0, 0),\n"),
                 }
             }
+            // The bytes after the 8th of each word longer, by its code: compared only for a word that long.
+            let long: Vec<String> = words.iter().enumerate().filter(|(_, w)| w.len() > 8).map(|(i, w)| format!("        {} => b\"{}\",", i + 1, w[8..].iter().map(|c| std::ascii::escape_default(*c).to_string()).collect::<String>())).collect();
             return Some(format!(
-                "/// Each slot's word (`word_at`): its first 8 bytes, its length, its code, its bytes after the 8th.\nstatic WORDS: [(u64, usize, u32, &[u8]); {}] = [\n{table}];\n\n/// A token's word: the code of the word its `len` bytes from `s` are, 0 for none. Its first 8 bytes, masked to its length,\n/// and the length, hashed by one multiply into `WORDS` (the lean lexer's `word_code`); a word of more than 8 compares the rest.\n#[inline(always)]\nfn word_at(src: &[u8], s: usize, len: usize) -> u32 {{\n    let raw = u64::from_le_bytes(src[s..s + 8].try_into().expect(\"the padded source\"));\n    let k = raw & (u64::MAX >> (64 - 8 * len.min(8)));\n    let (key, l, code, tail) = WORDS[((k ^ len as u64).wrapping_mul({mul:#018x}) >> {}) as usize];\n    if key == k && l == len && (len <= 8 || src[s + 8..s + len] == *tail) {{ code }} else {{ 0 }}\n}}\n\n",
+                "/// Each slot's word (`word_at`): its first 8 bytes, its length, its code (0: none), as the lean lexer's `WORDS`.\nstatic WORDS: [(u64, u32, u32); {}] = [\n{table}];\n\n/// A token's word: the code of the word its `len` bytes from `s` are, 0 for none, as the lean lexer's `word_code`. Its\n/// first 8 bytes, masked to its length, and the length, hashed by one multiply into `WORDS`, compared without a branch;\n/// a word of more than 8 compares the rest.\n#[inline(always)]\nfn word_at(src: &[u8], s: usize, len: usize) -> u32 {{\n    let raw = u64::from_le_bytes(src[s..s + 8].try_into().expect(\"the padded source\"));\n    let k = raw & (u64::MAX >> (64 - 8 * len.min(8)));\n    let (key, l, code) = WORDS[((k ^ len as u64).wrapping_mul({mul:#018x}) >> {}) as usize];\n    let code = code & 0u32.wrapping_sub(u32::from((key == k) & (l as usize == len)));\n    if len > 8 && code != 0 && src[s + 8..s + len] != *long_tail(code) {{ 0 }} else {{ code }}\n}}\n\n/// The bytes after the 8th of the word of `code`, of those longer than 8.\nfn long_tail(code: u32) -> &'static [u8] {{\n    match code {{\n{}\n        _ => b\"\",\n    }}\n}}\n\n",
                 1usize << bits,
-                64 - bits
+                64 - bits,
+                long.join("\n")
             ));
         }
     }

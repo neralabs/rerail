@@ -748,9 +748,9 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
             break 'tokens;
         }
         // The token's row (or its first byte's group's tests) and its record kind, by one load (the lean lexer's `TOKEN`).
-        let (pick, kind1) = TOKEN[usize::from(src[s])];
+        let (pick, kind1, word1) = TOKEN[usize::from(src[s])];
         let mut hits = 0u32;
-        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {
+        let (l, kind, extra, mut marks, word): (usize, u32, bool, u32, u32) = {
             // The row: the first whose start holds, of those whose start may be the byte's.
             let row = match pick {
                 p if usize::from(p) < 7 => usize::from(p),
@@ -792,7 +792,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, u32::from(kind1), false, 0x0)
+                    (l, u32::from(kind1), false, 0x0, 0)
                 }
 ,
                 1 => {
@@ -825,7 +825,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     if wcount_in(n, s, l, |p: isize, esc: &mut u64| unsafe { w_t14::<S>(src, n, p, esc) }) >= 1 {
                         hits |= 1 << 28;
                     }
-                    (l, 0, true, 0x8000)
+                    (l, 0, true, 0x8000, 0)
                 }
 ,
                 2 => {
@@ -873,21 +873,21 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         break 'tokens;
                     };
                     let l = l.max(s);
-                    (l, u32::from(kind1), false, 0x0)
+                    (l, u32::from(kind1), false, 0x0, 0)
                 }
 ,
                 3 => {
                     // `hash_word`: run word
                     let l = brun_last(n, base, k_m_word, s, |p: isize, esc: &mut u64| unsafe { w_m_word::<S>(src, n, p, esc) });
                     let l = l.max(s);
-                    (l, u32::from(kind1), false, 0x0)
+                    (l, u32::from(kind1), false, 0x0, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
                 }
 ,
                 4 => {
                     // `identifier`: run word
                     let l = brun_last(n, base, k_m_word, s, |p: isize, esc: &mut u64| unsafe { w_m_word::<S>(src, n, p, esc) });
                     let l = l.max(s);
-                    (l, u32::from(kind1), false, 0x0)
+                    (l, u32::from(kind1), false, 0x0, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
                 }
 ,
                 5 => {
@@ -905,7 +905,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, u32::from(kind1), false, 0x0)
+                    (l, u32::from(kind1), false, 0x0, 0)
                 }
 ,
                 6 => {
@@ -915,7 +915,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     if l + 1 - s >= 1 && (!(matches!(src[s], 0x2d) && !((s + 1) < n && matches!(src[(s + 1)], 0x30..=0x39)))).then_some(s).is_none() {
                         hits |= 1 << 12;
                     }
-                    (l, u32::from(kind1), false, 0x0)
+                    (l, u32::from(kind1), false, 0x0, if l == s { u32::from(word1) } else { word_at(src, s, l + 1 - s) })
                 }
 ,
                 _ => {
@@ -926,7 +926,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
             }
         }
 ;
-        let word = if extra { 0 } else { word_at(src, s, l + 1 - s) };
         // The token marks: tier 2 tests the rest of each.
         if extra {
             // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.
@@ -992,7 +991,7 @@ pub const PADDING: usize = 64;
 
 /// The records of `buf[..n]`, its `PADDING` bytes after it spaces.
 pub fn lex(buf: &[u8], n: usize) -> Lexed {
-    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].iter().all(|&b| b == b' '), "the source padded with spaces");
+    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b"        "), "the source padded with spaces");
     lex_best(buf, n)
 }
 /// The 64 bytes from `p` as loaded, and the byte they start at: at the file's first byte for a window before it. None
@@ -1016,6 +1015,12 @@ unsafe fn window<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> O
 fn held(b: u64, q: isize, n: usize, p: isize) -> u64 {
     let b = if p < q { b << (q - p) } else { b };
     b & valid(n, p)
+}
+
+/// `held` of a class the padding holds none of: the bits before the file shifted out, those past it none.
+#[inline(always)]
+fn padded(b: u64, q: isize, p: isize) -> u64 {
+    if p < q { b << (q - p) } else { b }
 }
 
 /// The bits of the window from `p` that are the file's bytes.
@@ -1264,7 +1269,7 @@ unsafe fn cls_quote<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -
     let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
     // SAFETY: the caller's.
     let b = unsafe { S::eq_mask(v, 0x22) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// Class `backslash`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1276,7 +1281,7 @@ unsafe fn cls_backslash<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isiz
     let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
     // SAFETY: the caller's.
     let b = unsafe { S::eq_mask(v, 0x5c) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// `m_q`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -1299,7 +1304,7 @@ unsafe fn cls_ctl<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> 
     let c1 = unsafe { S::classify(v, &LO_1, &HI_1) };
     // SAFETY: the caller's.
     let b = unsafe { S::to_bitmask(S::test(c1, S::splat(0x80))) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// Class `jesc`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1312,7 +1317,7 @@ unsafe fn cls_jesc<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) ->
     let c2 = unsafe { S::classify(v, &LO_2, &HI_2) };
     // SAFETY: the caller's.
     let b = unsafe { S::to_bitmask(S::test(c2, S::splat(0x0f))) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// `m_str_bad`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -1334,7 +1339,7 @@ unsafe fn cls_u<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u6
     let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
     // SAFETY: the caller's.
     let b = unsafe { S::eq_mask(v, 0x75) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// Class `hex`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1347,7 +1352,7 @@ unsafe fn cls_hex<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> 
     let c0 = unsafe { S::classify(v, &LO_0, &HI_0) };
     // SAFETY: the caller's.
     let b = unsafe { S::to_bitmask(S::test(c0, S::splat(0x44))) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// `t12`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -1370,7 +1375,7 @@ unsafe fn cls_c_d<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> 
     let c0 = unsafe { S::classify(v, &LO_0, &HI_0) };
     // SAFETY: the caller's.
     let b = unsafe { S::to_bitmask(S::test(c0, S::splat(0x80))) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// Class `upper_hex`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1383,7 +1388,7 @@ unsafe fn cls_upper_hex<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isiz
     let c1 = unsafe { S::classify(v, &LO_1, &HI_1) };
     // SAFETY: the caller's.
     let b = unsafe { S::to_bitmask(S::test(c1, S::splat(0x03))) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// Class `lbrace`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1395,7 +1400,7 @@ unsafe fn cls_lbrace<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) 
     let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
     // SAFETY: the caller's.
     let b = unsafe { S::eq_mask(v, 0x7b) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// Class `rbrace`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1407,7 +1412,7 @@ unsafe fn cls_rbrace<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) 
     let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
     // SAFETY: the caller's.
     let b = unsafe { S::eq_mask(v, 0x7d) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// Class `zero`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1419,7 +1424,7 @@ unsafe fn cls_zero<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) ->
     let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
     // SAFETY: the caller's.
     let b = unsafe { S::eq_mask(v, 0x30) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// Class `one`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1431,7 +1436,7 @@ unsafe fn cls_one<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> 
     let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
     // SAFETY: the caller's.
     let b = unsafe { S::eq_mask(v, 0x31) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// `t13`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -1453,7 +1458,7 @@ unsafe fn cls_lf<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u
     let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
     // SAFETY: the caller's.
     let b = unsafe { S::eq_mask(v, 0x0a) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// `m_lf`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -1475,7 +1480,7 @@ unsafe fn cls_slash<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -
     let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
     // SAFETY: the caller's.
     let b = unsafe { S::eq_mask(v, 0x2f) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// Class `star`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1487,7 +1492,7 @@ unsafe fn cls_star<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) ->
     let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
     // SAFETY: the caller's.
     let b = unsafe { S::eq_mask(v, 0x2a) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// `m_block_end`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -1519,7 +1524,7 @@ unsafe fn cls_tick<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) ->
     let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
     // SAFETY: the caller's.
     let b = unsafe { S::eq_mask(v, 0x60) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// `m_tick`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -1562,7 +1567,7 @@ unsafe fn cls_word<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) ->
     let c0 = unsafe { S::classify(v, &LO_0, &HI_0) };
     // SAFETY: the caller's.
     let b = unsafe { S::to_bitmask(S::test(c0, S::splat(0x3c))) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// `m_word`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -1585,7 +1590,7 @@ unsafe fn cls_digit<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -
     let c0 = unsafe { S::classify(v, &LO_0, &HI_0) };
     // SAFETY: the caller's.
     let b = unsafe { S::to_bitmask(S::test(c0, S::splat(0x04))) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// Class `dot`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1597,7 +1602,7 @@ unsafe fn cls_dot<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> 
     let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
     // SAFETY: the caller's.
     let b = unsafe { S::eq_mask(v, 0x2e) };
-    held(b, q, n, p)
+    padded(b, q, p)
 }
 
 /// `m_num_run`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -1676,277 +1681,288 @@ unsafe fn block_classes<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, base: u
 }
 
 
-/// Each byte's pick as a token's first byte, and its record kind (the lean lexer's `TOKEN`): the token's row where the
-/// byte picks one, else 7 and its group's index, whose tests pick it; `u8::MAX`, none.
-static TOKEN: [(u8, u8); 256] = [(255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (6, 0), (0, 4), (3, 1), (255, 0), (6, 0), (6, 0), (255, 0), (6, 0), (6, 0), (6, 0), (6, 0), (6, 0), (6, 0), (6, 0), (10, 0), (5, 2), (5, 2), (5, 2), (5, 2), (5, 2), (5, 2), (5, 2), (5, 2), (5, 2), (5, 2), (6, 0), (6, 0), (6, 0), (6, 0), (6, 0), (255, 0), (6, 0), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (6, 0), (255, 0), (6, 0), (6, 0), (4, 5), (13, 3), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (4, 5), (6, 0), (6, 0), (6, 0), (6, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0), (255, 0)];
-/// Each slot's word (`word_at`): its first 8 bytes, its length, its code, its bytes after the 8th.
-static WORDS: [(u64, usize, u32, &[u8]); 256] = [
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000005f, 1, 54, &[]),
-    (0x0000000000003e2d, 2, 9, &[]),
-    (0x000000000000002f, 1, 29, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000005d, 1, 26, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000002d, 1, 27, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x00000065736c6166, 5, 58, &[]),
-    (0, 0, 0, &[]),
-    (0x0000007475706e69, 5, 55, &[]),
-    (0, 0, 0, &[]),
-    (0x0000616d67617270, 6, 1, &[]),
-    (0x000000000000005b, 1, 25, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000002b, 1, 28, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000000000040, 1, 23, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000746e756f63, 5, 47, &[]),
-    (0x0000000000007962, 2, 45, &[]),
-    (0x0000000000000029, 1, 11, &[]),
-    (0x000000007473756d, 4, 35, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000003e, 1, 18, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000006c636564, 4, 65, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000003c, 1, 17, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000000000025, 1, 30, &[]),
-    (0x000000006c6c756e, 4, 59, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000003a, 1, 15, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x00000000006d7573, 3, 50, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000078616d, 3, 49, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000000000021, 1, 19, &[]),
-    (0x000000000079616d, 3, 36, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x6564756c636e6923, 8, 34, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000007d, 1, 21, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000074696465, 4, 67, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x00726f74636e7566, 7, 68, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000007b, 1, 20, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000000706573, 3, 46, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x00796c7463617865, 7, 61, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000005e, 1, 32, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000002e, 1, 13, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000002c, 1, 12, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x006563697474616c, 7, 69, &[]),
-    (0x0000000074736574, 4, 60, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000000006e69, 2, 38, &[]),
-    (0x0000000000003d3c, 2, 6, &[]),
-    (0x000000000000002a, 1, 24, &[]),
-    (0x000074757074756f, 6, 56, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000000003d3e, 2, 7, &[]),
-    (0x0000000000000028, 1, 10, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000000003d21, 2, 5, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000000000026, 1, 33, &[]),
-    (0, 0, 0, &[]),
-    (0x7373657270707573, 8, 42, &[]),
-    (0x0000000000003e3d, 2, 4, &[]),
-    (0, 0, 0, &[]),
-    (0x000000007265766f, 4, 43, &[]),
-    (0x7365727574786966, 8, 64, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000065757274, 4, 57, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000000003a3c, 2, 8, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000003d, 1, 16, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000000002d3a, 2, 3, &[]),
-    (0x000000000000003b, 1, 14, &[]),
-    (0x00736e6f6974706f, 7, 44, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000000646e65, 3, 63, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000007e, 1, 31, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x6f6974616c6f6976, 9, 66, &[0x6e]),
-    (0, 0, 0, &[]),
-    (0x000000006e696f6a, 4, 52, &[]),
-    (0, 0, 0, &[]),
-    (0x000000000000007c, 1, 22, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000065707974, 4, 2, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x00000000006e696d, 3, 48, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000065646f63, 4, 37, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000000786966, 3, 40, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000065666173, 4, 41, &[]),
-    (0x000000006e61656d, 4, 51, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000073657375, 4, 62, &[]),
-    (0, 0, 0, &[]),
-    (0x0000000000676174, 3, 39, &[]),
-    (0x00007963696c6f70, 6, 53, &[]),
-    (0, 0, 0, &[]),
-    (0, 0, 0, &[]),
+/// Each byte's pick as a token's first byte, its record kind, and the code of the word it is alone (the lean lexer's
+/// `TOKEN`): the token's row where the byte picks one, else 7 and its group's index, whose tests pick it; `u8::MAX`,
+/// none.
+static TOKEN: [(u8, u8, u8); 256] = [(255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (6, 0, 19), (0, 4, 0), (3, 1, 0), (255, 0, 0), (6, 0, 30), (6, 0, 33), (255, 0, 0), (6, 0, 10), (6, 0, 11), (6, 0, 24), (6, 0, 28), (6, 0, 12), (6, 0, 27), (6, 0, 13), (10, 0, 29), (5, 2, 0), (5, 2, 0), (5, 2, 0), (5, 2, 0), (5, 2, 0), (5, 2, 0), (5, 2, 0), (5, 2, 0), (5, 2, 0), (5, 2, 0), (6, 0, 15), (6, 0, 14), (6, 0, 17), (6, 0, 16), (6, 0, 18), (255, 0, 0), (6, 0, 23), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (6, 0, 25), (255, 0, 0), (6, 0, 26), (6, 0, 32), (4, 5, 54), (13, 3, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (4, 5, 0), (6, 0, 20), (6, 0, 22), (6, 0, 21), (6, 0, 31), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0), (255, 0, 0)];
+/// Each slot's word (`word_at`): its first 8 bytes, its length, its code (0: none), as the lean lexer's `WORDS`.
+static WORDS: [(u64, u32, u32); 256] = [
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000000000005f, 1, 54),
+    (0x0000000000003e2d, 2, 9),
+    (0x000000000000002f, 1, 29),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000000000005d, 1, 26),
+    (0, 0, 0),
+    (0x000000000000002d, 1, 27),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x00000065736c6166, 5, 58),
+    (0, 0, 0),
+    (0x0000007475706e69, 5, 55),
+    (0, 0, 0),
+    (0x0000616d67617270, 6, 1),
+    (0x000000000000005b, 1, 25),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000000000002b, 1, 28),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000000000040, 1, 23),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000746e756f63, 5, 47),
+    (0x0000000000007962, 2, 45),
+    (0x0000000000000029, 1, 11),
+    (0x000000007473756d, 4, 35),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000000000003e, 1, 18),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000006c636564, 4, 65),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000000000003c, 1, 17),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000000000025, 1, 30),
+    (0x000000006c6c756e, 4, 59),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000000000003a, 1, 15),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x00000000006d7573, 3, 50),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000000078616d, 3, 49),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000000000021, 1, 19),
+    (0x000000000079616d, 3, 36),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x6564756c636e6923, 8, 34),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000000000007d, 1, 21),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000074696465, 4, 67),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x00726f74636e7566, 7, 68),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000000000007b, 1, 20),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000000706573, 3, 46),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x00796c7463617865, 7, 61),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000000000005e, 1, 32),
+    (0, 0, 0),
+    (0x000000000000002e, 1, 13),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000000000002c, 1, 12),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x006563697474616c, 7, 69),
+    (0x0000000074736574, 4, 60),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000000006e69, 2, 38),
+    (0x0000000000003d3c, 2, 6),
+    (0x000000000000002a, 1, 24),
+    (0x000074757074756f, 6, 56),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000000003d3e, 2, 7),
+    (0x0000000000000028, 1, 10),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000000003d21, 2, 5),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000000000026, 1, 33),
+    (0, 0, 0),
+    (0x7373657270707573, 8, 42),
+    (0x0000000000003e3d, 2, 4),
+    (0, 0, 0),
+    (0x000000007265766f, 4, 43),
+    (0x7365727574786966, 8, 64),
+    (0, 0, 0),
+    (0x0000000065757274, 4, 57),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000000003a3c, 2, 8),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000000000003d, 1, 16),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000000002d3a, 2, 3),
+    (0x000000000000003b, 1, 14),
+    (0x00736e6f6974706f, 7, 44),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000000646e65, 3, 63),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x000000000000007e, 1, 31),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x6f6974616c6f6976, 9, 66),
+    (0, 0, 0),
+    (0x000000006e696f6a, 4, 52),
+    (0, 0, 0),
+    (0x000000000000007c, 1, 22),
+    (0, 0, 0),
+    (0x0000000065707974, 4, 2),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x00000000006e696d, 3, 48),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000065646f63, 4, 37),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000000786966, 3, 40),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000065666173, 4, 41),
+    (0x000000006e61656d, 4, 51),
+    (0, 0, 0),
+    (0, 0, 0),
+    (0x0000000073657375, 4, 62),
+    (0, 0, 0),
+    (0x0000000000676174, 3, 39),
+    (0x00007963696c6f70, 6, 53),
+    (0, 0, 0),
+    (0, 0, 0),
 ];
 
-/// A token's word: the code of the word its `len` bytes from `s` are, 0 for none. Its first 8 bytes, masked to its length,
-/// and the length, hashed by one multiply into `WORDS` (the lean lexer's `word_code`); a word of more than 8 compares the rest.
+/// A token's word: the code of the word its `len` bytes from `s` are, 0 for none, as the lean lexer's `word_code`. Its
+/// first 8 bytes, masked to its length, and the length, hashed by one multiply into `WORDS`, compared without a branch;
+/// a word of more than 8 compares the rest.
 #[inline(always)]
 fn word_at(src: &[u8], s: usize, len: usize) -> u32 {
     let raw = u64::from_le_bytes(src[s..s + 8].try_into().expect("the padded source"));
     let k = raw & (u64::MAX >> (64 - 8 * len.min(8)));
-    let (key, l, code, tail) = WORDS[((k ^ len as u64).wrapping_mul(0x7a9f0944767a16e5) >> 56) as usize];
-    if key == k && l == len && (len <= 8 || src[s + 8..s + len] == *tail) { code } else { 0 }
+    let (key, l, code) = WORDS[((k ^ len as u64).wrapping_mul(0x7a9f0944767a16e5) >> 56) as usize];
+    let code = code & 0u32.wrapping_sub(u32::from((key == k) & (l as usize == len)));
+    if len > 8 && code != 0 && src[s + 8..s + len] != *long_tail(code) { 0 } else { code }
+}
+
+/// The bytes after the 8th of the word of `code`, of those longer than 8.
+fn long_tail(code: u32) -> &'static [u8] {
+    match code {
+        66 => b"n",
+        _ => b"",
+    }
 }
 
 

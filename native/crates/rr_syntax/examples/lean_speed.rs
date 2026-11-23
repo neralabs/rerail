@@ -34,6 +34,14 @@ fn main() {
     let lex = || files.iter().map(|t| rerail_rr_syntax::lean::token_count(t)).sum::<usize>();
     let tape = || files.iter().map(|t| rerail_rr_syntax::lean::tape(t).len()).sum::<usize>();
     let mut best = [Duration::MAX; 2];
+    // `RR_ONLY=lex`: the lexer alone, for a count of its work (instructions, cycles) apart from the parse's.
+    if std::env::var("RR_ONLY").as_deref() == Ok("lex") {
+        for _ in 0..rounds {
+            best[0] = best[0].min(time(&lex));
+        }
+        println!("lean's lexer alone, {rounds} rounds: {:.3} ms", best[0].as_secs_f64() * 1e3);
+        return;
+    }
     for _ in 0..rounds {
         best[0] = best[0].min(time(&lex));
         best[1] = best[1].min(time(&tape));

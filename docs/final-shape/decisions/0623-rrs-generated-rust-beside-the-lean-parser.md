@@ -607,3 +607,32 @@ escapes found by clearing the bits before the region (`escaped_step(bs & lo)`), 
 region classes either in the block's one classify or in one of their own made where a region is first read in the
 block. Both were the same or slower (22.7–23.7 ms against 22.2–23.3 ms, in turns), and lean's micro-lexers read from
 the token as the windows do.
+
+## A token reads only the word it may be, and a class the padding lacks reads no end (done)
+
+Four changes to tier 1's token loop, each the lean lexer's shape:
+
+- **Only a row a word may be reads a word.** The word was read after the rows' match, for every token: a string's, a
+  comment's, a number's too. Each row now reads it in its own arm, and only a row a word may be (`RowArm::word`: a
+  grammar word whose first byte may be the row's first and whose others its tail's); the others' word is 0. As in the
+  lean lexer, where only a word run has a code.
+- **A one-byte token's word is in `TOKEN`.** `TOKEN`'s load gives each byte's pick, its record kind, and the code of the
+  word that byte is alone, so a one-byte operator's word is that load's, as the lean lexer reads an operator's kind from
+  its `TOKEN`. A longer token's is `word_at`'s.
+- **`word_at` is the lean lexer's `word_code`.** A slot is its word's first 8 bytes, its length and its code; the hit
+  is compared without a branch, and only a word longer than 8 compares the rest (`long_tail`, by its code).
+- **A class the padding lacks reads no end.** The source is padded with spaces (`PADDING`), so a class without the
+  space holds no bit past the file, and a window before the file shifts its bytes out. Such a class's window
+  (`cls_*`) masks nothing (`padded`), as the lean lexer reads its padded bytes. A class with the space still masks to
+  the file's bytes (`held`).
+
+`lex`'s check that the padding is spaces reads it 8 bytes at a time.
+
+Tried, not kept: the word table without a branch at all (the bytes after the 8th masked in, a `u128` mask): more work
+for every word, and slower.
+
+Instruction counts of tier 1 alone (`RR_ONLY=lex`, on m3, the earlier build and this one in turns) fell at each of the
+four. On spark1 (load 3.5), three rounds: tier 1 19.9–20.5 ms (22.2–23.7 before), lean's lexer 13.6–14.4 ms; tier 2
+26.8–27.8 ms, lean's parse 25.5–26.6 ms. All tests pass.
+
+`rr-aot-speed` and `lean_speed` take `RR_ONLY=lex`: only the lexer, for a count of its work alone.
