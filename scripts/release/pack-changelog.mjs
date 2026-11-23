@@ -38,8 +38,9 @@ function unescapeRerail(body) {
 
 /**
  * The `{ mode, description }` a rule document written in `.rerail` states of itself, as packRules reads a document:
- * its one `.mode block|steer|log` and its `.description "…"`, each undefined where it has none. A `.mode` that names
- * codes (`.mode log CODE`) is not the rule's mode.
+ * its first `.mode block|steer|log` and its `.description "…"`, each undefined where it has none. A `.mode` that names
+ * codes (`.mode log CODE`) is not the rule's mode. A document with more than one `.mode` is not checked for here: the
+ * engine refuses it, so its pack fails to load (rule-packs.ts, readRerailPackDocument) long before a release.
  */
 export function rerailRuleHeader(text) {
   const mode = /^\.mode[ \t]+(block|steer|log)[ \t]*(?:\/\/.*)?$/mu.exec(text)?.[1];
