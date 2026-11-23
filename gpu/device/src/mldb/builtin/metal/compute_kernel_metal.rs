@@ -111,6 +111,17 @@ fn get_kernel_type_from_data_type(data_type: MTLDataType) -> Result<KernelBaseTy
     })
 }
 
+/// The defines a device's kernels compile with (decision 0617): `UKL_METAL_APPLE10` on Apple's GPU family 10 (the M5),
+/// whose matrix units UKL reaches through Metal 4's `matmul2d`. `RERAIL_METAL_UNITS=0` leaves them out.
+pub fn defines(device: &DeviceRef) -> Vec<(&'static str, String)> {
+    if std::env::var("RERAIL_METAL_UNITS").is_ok_and(|v| v == "0") {
+        return Vec::new();
+    }
+    // `MTLGPUFamilyApple10` (1010), which the metal crate does not name.
+    let apple10: bool = unsafe { msg_send![device, supportsFamily: 1010_i64] };
+    if apple10 { vec![("UKL_METAL_APPLE10", "1".into())] } else { Vec::new() }
+}
+
 // `StructMemberRef::struct_type`/`array_type` and `ArrayTypeRef::element_struct_type`/`element_array_type` in the
 // metal crate return the (uninhabited) Objective-C types by value; these ask for the same properties by reference.
 fn member_struct_type(m: &metal::StructMemberRef) -> &StructTypeRef {

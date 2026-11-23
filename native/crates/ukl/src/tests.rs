@@ -27,7 +27,7 @@ fn tokens(text: &str) -> Vec<String> {
 }
 
 /// clang's `-E` of `main` under the same backend: no predefines but the language's (`-undef`), no system
-/// headers, the same search order (the forest, then the carried headers' directories on disk).
+/// headers, the same search order (the forest, then this crate's carried headers' directories on disk).
 fn clang(backend: Backend, main: &str) -> Option<String> {
     let f = forest();
     let mut c = Command::new("clang");
@@ -36,8 +36,10 @@ fn clang(backend: Backend, main: &str) -> Option<String> {
     } else {
         c.args(["-x", "c++", "-std=gnu++20", "-undef", "-nostdinc", "-E", "-P", "-w"]);
     }
-    c.arg(format!("-I{f}")).arg(format!("-I{f}/mldb/builtin/{}/ukl", backend.dir())).arg(format!("-I{f}/mldb/block/ukl"));
-    c.arg(format!("-I{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")));
+    // The shims are this crate's (`mldb/`, carried from the forest).
+    let m = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    c.arg(format!("-I{f}")).arg(format!("-I{m}")).arg(format!("-I{m}/mldb/builtin/{}/ukl", backend.dir())).arg(format!("-I{m}/mldb/block/ukl"));
+    c.arg(format!("-I{m}/lib"));
     for (n, v) in backend.predefines() {
         c.arg(format!("-D{n}={}", v.unwrap_or_default()));
     }

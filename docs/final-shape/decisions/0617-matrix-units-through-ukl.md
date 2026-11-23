@@ -101,7 +101,7 @@ Every operation is convergent over the owner: every lane of every owning SIMD gr
 | NVIDIA sm_80 and later (the Sparks' GB10) | PTX `mma.sync` | f16, bf16, i8 | 16×8×16 (i8: 16×8×32), 1 group | the Sparks |
 | NVIDIA sm_70 (V100) | `mma.sync` m8n8k4, or `wmma` 16×16×16 | f16 | to choose by test; bf16 and i8 emulated | the V100 VM |
 | Apple M1-M4 | `simdgroup_matrix` | f16; bf16 where the device has it (to verify per Mac) | 8×8×8, 1 group | the Macs |
-| Apple M5 | Metal 4 `matmul2d` over `cooperative_tensor` | f16, bf16; i8 to verify | configured (dividing 64), several groups | the M5 |
+| Apple M5 | Metal 4 `matmul2d` over `cooperative_tensor` | f16, bf16, i8 | 16×16×32, 1 group (measured: "Step 4, built") | the M5 |
 | Intel Xe2 (the Arc 140V) | `cl_intel_subgroup_matrix_multiply_accumulate` (DPAS) | f16, bf16, i8 | 8×16×16 (i8: K 32) at sub-group width 16 (to verify) | the Arc: shape only, no performance work (decision 0576's compile times) |
 | AMD RDNA3 and later | `v_wmma_*` | f16, bf16, i8 | 16×16×16, 1 group (wave32) | none yet: emulated until one joins the farm |
 | AMD RDNA2 (the Radeon 680M) | none | none | emulated: 16×16×16, 1 group | the Radeon 680M host |
@@ -227,7 +227,8 @@ emulated form, which is the reference.
    and i8 ("Step 2 on the Sparks, built"). The V100 runs the emulation, its test's choice ("The V100").
 3. Metal's `simdgroup_matrix` on M1-M4 (f16; bf16 where present; i8 emulated). R4 is what checks the coordinates
    behind `thread_elements()`. Done 2026-11-23 ("Step 3, built").
-4. The M5's `matmul2d`: the first owner of several groups on a device (R5).
+4. The M5's `matmul2d`. It was to be the first owner of several groups on a device (R5); measured, it is not.
+   Done 2026-11-23 ("Step 4, built").
 5. Intel's DPAS on the Arc: R2, R4 and R7, the shape only. Done 2026-11-23 ("Step 5, built").
 6. The Radeon 680M: the emulation, with its dot-product instructions where they help. Done 2026-11-23 ("Step 6,
    built").
@@ -409,6 +410,51 @@ The user: "yes, please add the 1-bit path and emulation/lowering to popcount on 
 - **Measured:** the seven matrix tests pass on the M1 Max and the M3 Max (f16 and bf16 native, i8 and b1 emulated),
   R7 finding `air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64f16.v64f16.v64f32` and its bf16 form; CUDA's and
   the CPU's pass as before; `accel`'s GPU tests (the bit product on the new layout) pass on the M3.
+
+### Step 4, built (2026-11-23)
+
+- **The M5 runs f16, bf16 and i8 on Metal 4's `matmul2d`** (MetalPerformancePrimitives; `UKL_MMA_M5`). The host
+  asks the device for Apple's GPU family 10 (`supportsFamily:` 1010, which the metal crate does not name) and gives
+  its kernels `UKL_METAL_APPLE10`; `RERAIL_METAL_UNITS=0` leaves it out. The M1-M4 keep `simdgroup_matrix`.
+- **The shape is 16×16×32, one SIMD group an owner.** A probe of `matmul2d` on the M5 Max (macOS 26.4) settled what
+  the headers leave open:
+  - With A and B in registers (cooperative input tensors), the operation takes one SIMD group only ("Input
+    cooperative tensors require a single SIMD group"), and one of M, N or K must be 32. So K is 32 for the three
+    types, as i8's already is on CUDA and DPAS.
+  - On several SIMD groups (`execution_simdgroups<4>`, A and B in memory), `matmul2d` gives each group its own 16×16
+    blocks of C. No 16×16 fragment belongs to several groups. So the M5 is not the first owner of several groups
+    this decision expected: R5 stays checked by the emulation's owners of 2 and 4 groups, on every backend.
+- **Fragments are the lane's elements, not the tensors.** A cooperative tensor has no constant size, so it cannot
+  be a struct's field. A fragment of A or B holds the lane's 16 elements in the tensor's order:
+  - A row-major operand is loaded by the tensor's own load, over the memory where it lies.
+  - A column-major one is loaded element by element, at the tensor's coordinates of each element
+    (`get_multidimensional_index`). A tensor whose first stride is not 1 loaded the wrong elements; R2 found it.
+  - A product makes the input tensors from the fragments, and moves C into the destination tensor and back.
+- **C's layout is `matmul2d`'s destination, measured:**
+  - a lane holds rows `(lane / 2) % 4 + 4 · (lane / 16)` and 8 on;
+  - and columns `4 · (lane % 2) + 8 · ((lane / 8) % 2)`, four side by side.
+  - R4 checks it. b1, emulated, takes the same layout.
+- **Metal's tensor headers reach the compiler past UKL's preprocessor.** `<metal_tensor>` and MetalPerformance-
+  Primitives are the front end's own, as `metal_stdlib` is, but Metal does not include them by itself. The
+  preprocessor leaves them empty, and a text that included them names them again at its top (`Preprocess::run`).
+- **R7 on the M5:** the product is a function the driver defines, `__tensorops_impl_matmul2d_op_run_cooperative_`
+  with `f16_f16_f32`, `b16_b16_f32` or `i8_i8_i32`. The forced emulation's text holds neither Metal unit's name.
+  When R7 fails, it now lists the names that only the native form's text holds.
+- **Measured** on the M5 Max, `bench_matrix_products`, device time:
+
+  | Type | Rate: native | Rate: emulated (best) | Tile call: native | Tile call: forced emulation |
+  |---|---|---|---|---|
+  | f16 | 0.656 ms | 1.576 ms | 0.112 ms | 1.318 ms |
+  | bf16 | 0.656 ms | 1.829 ms | 0.112 ms | 1.533 ms |
+  | i8 | 0.495 ms | 1.082 ms | 0.129 ms | 0.903 ms |
+
+  The native form stays on. The rate kernel holds every type in one kernel, and its b1 branch ran at half the
+  emulated programs' speed (0.206 against 0.105 ms) while `matmul2d`'s branches shared the kernel. The bit
+  product's own kernel has none of them.
+- **Passing:**
+  - On the M5, the nine matrix tests and `accel`'s `bit_product_counts_and_pairs`.
+  - UKL's preprocessor tests, on Linux. Their clang comparison had pointed at the forest's shim directories since
+    the shims moved into `rerail-ukl` (f0f3aa6f5f); it now searches the crate's, as the preprocessor does.
 
 ### The V100 (2026-11-23)
 

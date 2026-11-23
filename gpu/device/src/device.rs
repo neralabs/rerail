@@ -264,7 +264,7 @@ impl Device {
             #[cfg(not(target_os = "macos"))]
             Device::Native(d) => d.defines(),
             #[cfg(target_os = "macos")]
-            Device::Native(_) => Vec::new(),
+            Device::Native(d) => crate::compute_kernel_metal::defines(d),
         }
     }
 

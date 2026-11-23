@@ -38,7 +38,11 @@ include!("carried.rs");
 
 /// The Metal front end's own headers, which it includes in every source itself: empty when a source that names them
 /// (a hand-written MSL kernel that takes the library's headers) is preprocessed ahead of it.
-const METAL_OWN: &[&str] = &["metal_stdlib", "metal_atomic"];
+const METAL_OWN: &[&str] = &["metal_stdlib", "metal_atomic", "metal_tensor", METAL_MPP];
+
+/// Metal 4's tensor operations (`matmul2d`, decision 0617's M5 form): a header of the front end's that it does not
+/// include by itself, so a preprocessed text that included it names it again, first (`Preprocess::run`).
+const METAL_MPP: &str = "MetalPerformancePrimitives/MetalPerformancePrimitives.h";
 
 /// A fingerprint of everything a kernel can include from here (the shims and the library): a kernel's text names its
 /// headers, not their contents, so a store of compiled kernels keys a kernel by its text and this.
@@ -262,8 +266,12 @@ impl Preprocess {
 
     /// `main` preprocessed: the backend's source text, with line markers to the original files.
     pub fn run(&self, main: &str) -> Result<String, Error> {
-        let (text, _) = self.pass(main, TextSink::default())?;
-        Ok(String::from_utf8_lossy(&text.out).into_owned())
+        let (text, paths) = self.pass(main, TextSink::default())?;
+        let text = String::from_utf8_lossy(&text.out).into_owned();
+        if matches!(self.backend, Backend::Metal { .. }) && paths.iter().any(|p| p.ends_with(METAL_MPP)) {
+            return Ok(format!("#include <metal_tensor>\n#include <{METAL_MPP}>\n{text}"));
+        }
+        Ok(text)
     }
 
     /// `main` preprocessed for a frontend (decision 0327, mode (b)): the expanded text, the C parser's tokens over

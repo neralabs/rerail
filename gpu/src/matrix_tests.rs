@@ -428,8 +428,9 @@ fn native_types(c: &[u32]) -> Vec<Ty> {
 }
 
 /// The instruction a native type's product takes, in the backend's text of the compiled kernel: CUDA's PTX, Metal's
-/// AIR intrinsics (`air.`, the 8×8 product into f32), Intel's DPAS builtins in its binary (whose kernels' metadata
-/// also says `has_dpas: true`, `unit_marker`).
+/// AIR intrinsics (`air.`, the 8×8 product into f32; on the M5 `matmul2d`'s run on cooperative tensors, a function
+/// the driver defines), Intel's DPAS builtins in its binary (whose kernels' metadata also says `has_dpas: true`,
+/// `unit_marker`).
 fn unit_instruction(ty: Ty) -> &'static str {
     let metal = crate::device::backend() == "Metal";
     let opencl = crate::device::backend() == "OpenCL";
@@ -437,6 +438,9 @@ fn unit_instruction(ty: Ty) -> &'static str {
         Ty::F16 if opencl => "intel_sub_group_f16_f16_matrix_mad_k16",
         Ty::Bf16 if opencl => "intel_sub_group_bf16_bf16_matrix_mad_k16",
         Ty::I8 if opencl => "intel_sub_group_i8_i8_matrix_mad_k32",
+        Ty::F16 if metal && m5() => "__tensorops_impl_matmul2d_op_run_cooperative_f16_f16_f32",
+        Ty::Bf16 if metal && m5() => "__tensorops_impl_matmul2d_op_run_cooperative_b16_b16_f32",
+        Ty::I8 if metal => "__tensorops_impl_matmul2d_op_run_cooperative_i8_i8_i32",
         Ty::F16 if metal => "air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64f16.v64f16.v64f32",
         Ty::Bf16 if metal => "air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64bf16.v64bf16.v64f32",
         // Volta's (sm_70) where the device is one, else sm_80's.
@@ -454,12 +458,19 @@ fn volta() -> bool {
     crate::device::backend() == "CUDA" && native_types(&consts(p)) == [Ty::F16]
 }
 
-/// A unit's instruction, of any type: what the forced emulation's text holds none of.
-fn unit_marker() -> &'static str {
+/// Whether the Metal device is an M5 (Apple's family 10, `matmul2d`): its constants say i8 is native, which only
+/// `matmul2d` makes it on a Mac.
+fn m5() -> bool {
+    let (p, _) = programs(1);
+    crate::device::backend() == "Metal" && native_types(&consts(p)).contains(&Ty::I8)
+}
+
+/// A unit's instructions, of any type: what the forced emulation's text holds none of.
+fn unit_marker() -> &'static [&'static str] {
     match crate::device::backend() {
-        "Metal" => "multiply_accumulate",
-        "OpenCL" => "matrix_mad",
-        _ => "mma.sync",
+        "Metal" => &["multiply_accumulate", "matmul2d_op_run"],
+        "OpenCL" => &["matrix_mad"],
+        _ => &["mma.sync"],
     }
 }
 
@@ -489,13 +500,15 @@ fn matrix_native_forms_take_the_units_instruction() {
             .unwrap_or_else(|| panic!("{}: native {types:?}, and no compiled text to read (R7)", crate::device::backend()))
     };
     let native = code(&[("UKL_MMA_EMULATED_GROUPS", "1u")]);
+    let forced = code(&[("UKL_MMA_EMULATED_GROUPS", "1u"), ("UKL_MMA_FORCE_EMULATED", "1")]);
     for &ty in &types {
         let n = native.matches(unit_instruction(ty)).count();
         eprintln!("matrix units on {}: {ty:?}'s product, {} ({n} in the program)", crate::device::backend(), unit_instruction(ty));
-        assert!(n > 0, "{} {ty:?}: the compiled kernels hold {}", crate::device::backend(), unit_instruction(ty));
+        // The native form's lines the forced emulation's text lacks: where the unit's instruction is to be found.
+        let only: Vec<&str> = native.lines().filter(|l| !forced.lines().any(|f| f == *l)).collect();
+        assert!(n > 0, "{} {ty:?}: the compiled kernels hold {}; the native form's alone: {only:?}", crate::device::backend(), unit_instruction(ty));
     }
-    let forced = code(&[("UKL_MMA_EMULATED_GROUPS", "1u"), ("UKL_MMA_FORCE_EMULATED", "1")]);
-    assert!(!forced.contains(unit_marker()), "{}: the forced emulation takes no unit's instruction", crate::device::backend());
+    assert!(!unit_marker().iter().any(|m| forced.contains(m)), "{}: the forced emulation takes no unit's instruction", crate::device::backend());
     if crate::device::backend() == "OpenCL" {
         assert!(intel_has_dpas(&native) && !intel_has_dpas(&forced), "OpenCL: the compiler's has_dpas is the native form's alone");
         eprintln!("matrix units on OpenCL: the native form's kernel has_dpas, the forced emulation's not");

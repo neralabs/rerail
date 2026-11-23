@@ -90,9 +90,24 @@
 #define UKL_MMA_VOLTA 0
 #endif
 
+// The M5's units (Apple's GPU family 10, which the host finds: `UKL_METAL_APPLE10`): Metal 4's `matmul2d`
+// (MetalPerformancePrimitives), f16, bf16 and i8, at 16×16×32 with A and B in registers (its cooperative tensors, which
+// take one SIMD group, and one of M, N or K 32). One SIMD group an owner: `matmul2d` on several groups gives each its
+// own 16×16 blocks (measured, decision 0617 "Step 4"), so no fragment is several groups'.
+#if defined(UKL_METAL) && defined(UKL_METAL_APPLE10) && !defined(UKL_MMA_FORCE_EMULATED) && UKL_SIMD_WIDTH == 32 &&     \
+    UKL_MMA_EMULATED_GROUPS == 1
+#define UKL_MMA_M5 1
+#else
+#define UKL_MMA_M5 0
+#endif
+#if UKL_MMA_M5
+#include <metal_tensor>
+#include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
+#endif
+
 // Apple's units (M1-M4: `simdgroup_matrix`, 8×8×8; f16, and bf16 from Metal 3.1, where `bfloat` came): one SIMD group
 // an owner, a 16×16 fragment four of its matrices. (`__HAVE_BFLOAT__` is not defined at 3.1: the version is the test.)
-#if defined(UKL_METAL) && !defined(UKL_MMA_FORCE_EMULATED) && UKL_SIMD_WIDTH == 32 && UKL_MMA_EMULATED_GROUPS == 1
+#if defined(UKL_METAL) && !defined(UKL_MMA_FORCE_EMULATED) && UKL_SIMD_WIDTH == 32 && UKL_MMA_EMULATED_GROUPS == 1 && !UKL_MMA_M5
 #define UKL_MMA_APPLE 1
 #else
 #define UKL_MMA_APPLE 0
@@ -122,26 +137,32 @@
 
 #define UKL_MMA_M_f16 16u
 #define UKL_MMA_N_f16 16u
+// The M5's K is 32 (`matmul2d`'s cooperative inputs need one of M, N or K 32).
+#if UKL_MMA_M5
+#define UKL_MMA_K_f16 32u
+#define UKL_MMA_K_bf16 32u
+#else
 #define UKL_MMA_K_f16 16u
+#define UKL_MMA_K_bf16 16u
+#endif
 #define UKL_MMA_GROUPS_f16 UKL_MMA_EMULATED_GROUPS
-#define UKL_MMA_NATIVE_f16 (UKL_MMA_CUDA || UKL_MMA_VOLTA || UKL_MMA_APPLE || UKL_MMA_INTEL)
+#define UKL_MMA_NATIVE_f16 (UKL_MMA_CUDA || UKL_MMA_VOLTA || UKL_MMA_APPLE || UKL_MMA_INTEL || UKL_MMA_M5)
 #define UKL_MMA_PACK_f16 1u
 #define UKL_MMA_M_bf16 16u
 #define UKL_MMA_N_bf16 16u
-#define UKL_MMA_K_bf16 16u
 #define UKL_MMA_GROUPS_bf16 UKL_MMA_EMULATED_GROUPS
-#define UKL_MMA_NATIVE_bf16 (UKL_MMA_CUDA || UKL_MMA_APPLE_BF16 || UKL_MMA_INTEL)
+#define UKL_MMA_NATIVE_bf16 (UKL_MMA_CUDA || UKL_MMA_APPLE_BF16 || UKL_MMA_INTEL || UKL_MMA_M5)
 #define UKL_MMA_PACK_bf16 1u
 #define UKL_MMA_M_i8 16u
 #define UKL_MMA_N_i8 16u
 // NVIDIA's and Intel's units' K (m16n8k32; DPAS's k32); the emulation's 16, four bytes a word.
-#if UKL_MMA_CUDA || UKL_MMA_INTEL
+#if UKL_MMA_CUDA || UKL_MMA_INTEL || UKL_MMA_M5
 #define UKL_MMA_K_i8 32u
 #else
 #define UKL_MMA_K_i8 16u
 #endif
 #define UKL_MMA_GROUPS_i8 UKL_MMA_EMULATED_GROUPS
-#define UKL_MMA_NATIVE_i8 (UKL_MMA_CUDA || UKL_MMA_INTEL)
+#define UKL_MMA_NATIVE_i8 (UKL_MMA_CUDA || UKL_MMA_INTEL || UKL_MMA_M5)
 #define UKL_MMA_PACK_i8 1u
 #define UKL_MMA_M_b1 16u
 #define UKL_MMA_N_b1 16u
@@ -164,7 +185,7 @@
 #define UKL_MMA_KW_b1 (UKL_MMA_K_b1 / 64u)
 
 // C's rows (`RB`) and columns (`CB`) a lane.
-#if UKL_MMA_CUDA || UKL_MMA_VOLTA || UKL_MMA_APPLE
+#if UKL_MMA_CUDA || UKL_MMA_VOLTA || UKL_MMA_APPLE || UKL_MMA_M5
 #define UKL_MMA_RB 2u
 #define UKL_MMA_CB 4u
 #elif UKL_MMA_INTEL
@@ -218,6 +239,10 @@ UKL_INLINE uint32_t ukl_mma_row(uint32_t i, UklMmaAt at)
     // `m8n8k4`'s f32 accumulators: the quad pair's quadrant (rows from `(lane >> 3) & 1`), row `(lane & 1) + 2i`, and
     // 4 on in the pair's upper half (lanes 16 on).
     return 8u * ((at.lane >> 3) & 1u) + (at.lane & 1u) + 2u * i + 4u * (at.lane >> 4);
+#elif UKL_MMA_M5
+    // `matmul2d`'s cooperative destination (measured): rows (lane / 2) % 4, 4 on in the upper half of the lanes, and 8
+    // on; its element 4i + j is ours.
+    return ((at.lane >> 1) & 3u) + 4u * (at.lane >> 4) + 8u * i;
 #elif UKL_MMA_INTEL
     return i;
 #elif UKL_MMA_APPLE
@@ -235,6 +260,8 @@ UKL_INLINE uint32_t ukl_mma_col(uint32_t j, UklMmaAt at)
     return 8u * (j >> 1) + 2u * (at.lane & 3u) + (j & 1u);
 #elif UKL_MMA_VOLTA
     return 8u * ((at.lane >> 2) & 1u) + 4u * (j >> 1) + (at.lane & 2u) + (j & 1u);
+#elif UKL_MMA_M5
+    return 4u * (at.lane & 1u) + 8u * ((at.lane >> 3) & 1u) + j;
 #elif UKL_MMA_INTEL
     (void)j;
     return at.lane;
@@ -268,6 +295,23 @@ typedef struct ukl_mma_a_bf16 { uint16_t w[16]; } ukl_mma_a_bf16;
 typedef struct ukl_mma_b_bf16 { uint32_t w[8]; } ukl_mma_b_bf16;
 typedef struct ukl_mma_a_i8 { uint16_t w[16]; } ukl_mma_a_i8;
 typedef struct ukl_mma_b_i8 { uint32_t w[8]; } ukl_mma_b_i8;
+#elif UKL_MMA_M5
+// The M5's: the lane's elements of `matmul2d`'s cooperative input tensors (16 each, in the tensors' order), for an
+// operation of 16×16×32 on one SIMD group. (A cooperative tensor has no constant size, so it is no struct's field: the
+// product makes its tensors from these.)
+#define UKL_MMA_M5_OP(ST, CT)                                                                                           \
+    mpp::tensor_ops::matmul2d<mpp::tensor_ops::matmul2d_descriptor(16, 16, 32, false, false, false,                     \
+                                                                   mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate), \
+                              metal::execution_simdgroup>
+typedef UKL_MMA_M5_OP(half, float) ukl_mma_m5_op_f16;
+typedef UKL_MMA_M5_OP(bfloat, float) ukl_mma_m5_op_bf16;
+typedef UKL_MMA_M5_OP(int8_t, int) ukl_mma_m5_op_i8;
+typedef struct ukl_mma_a_f16 { half w[16]; } ukl_mma_a_f16;
+typedef struct ukl_mma_b_f16 { half w[16]; } ukl_mma_b_f16;
+typedef struct ukl_mma_a_bf16 { bfloat w[16]; } ukl_mma_a_bf16;
+typedef struct ukl_mma_b_bf16 { bfloat w[16]; } ukl_mma_b_bf16;
+typedef struct ukl_mma_a_i8 { int8_t w[16]; } ukl_mma_a_i8;
+typedef struct ukl_mma_b_i8 { int8_t w[16]; } ukl_mma_b_i8;
 #else
 // Apple's: A's 8×8 matrices row tile by k tile (`2 · ti + tk`), B's k tile by column tile (`2 · tk + tj`).
 #if UKL_MMA_APPLE
@@ -693,6 +737,76 @@ UKL_INLINE void ukl_mma_f16(UKL_PRIVATE ukl_mma_c_f32* c, UKL_PRIVATE const ukl_
 UKL_MMA_CUDA_TILE(f16, f32, float, uint16_t)
 #endif
 
+#if UKL_MMA_M5
+// ---- The M5's f16, bf16 and i8: `matmul2d`'s cooperative tensors. A load fills the lane's elements of the input
+// tensor from memory in place; a product makes the tensors from the fragments, and moves C into the destination tensor
+// and back, element for element (its order is `x`'s). ----
+
+#define UKL_MMA_M5_LOADS(T, ST, CT, SPACE, SUF)                                                                         \
+    UKL_INLINE void ukl_mma_load_a_##T##SUF(UKL_PRIVATE ukl_mma_a_##T* a, SPACE const UKL_MMA_M5_MEM_##T* p,            \
+                                            uint32_t stride, uint32_t layout, UklMmaAt at)                              \
+    {                                                                                                                   \
+        (void)at;                                                                                                       \
+        auto t = ukl_mma_m5_op_##T().get_left_input_cooperative_tensor<ST, ST, CT>();                                   \
+        UKL_MMA_M5_FILL(a, t, p, stride, layout, ST, SPACE, 32, 16)                                                     \
+    }                                                                                                                   \
+    UKL_INLINE void ukl_mma_load_b_##T##SUF(UKL_PRIVATE ukl_mma_b_##T* b, SPACE const UKL_MMA_M5_MEM_##T* p,            \
+                                            uint32_t stride, uint32_t layout, UklMmaAt at)                              \
+    {                                                                                                                   \
+        (void)at;                                                                                                       \
+        auto t = ukl_mma_m5_op_##T().get_right_input_cooperative_tensor<ST, ST, CT>();                                  \
+        UKL_MMA_M5_FILL(b, t, p, stride, layout, ST, SPACE, 16, 32)                                                     \
+    }
+
+// A fragment `f`'s elements, those of the cooperative tensor `t` (`X` columns by `Y` rows, columns innermost, as a
+// tensor's extents are): a row-major operand by the tensor's load (its rows `stride` apart); a column-major one, whose
+// tensor would have no unit stride, element by element at the tensor's coordinates of each.
+#define UKL_MMA_M5_FILL(f, t, p, stride, layout, ST, SPACE, X, Y)                                                       \
+    if (layout == UKL_ROW_MAJOR) {                                                                                      \
+        metal::tensor<SPACE ST, metal::dextents<int32_t, 2>, metal::tensor_inline> m(                                   \
+            (SPACE ST*)p, metal::dextents<int32_t, 2>(X, Y), metal::array<int32_t, 2>{1, (int32_t)stride});             \
+        t.load(m);                                                                                                      \
+        for (uint16_t i = 0; i < 16; i++)                                                                               \
+            f->w[i] = t[i];                                                                                             \
+    } else {                                                                                                            \
+        for (uint16_t i = 0; i < 16; i++) {                                                                             \
+            auto ix = t.get_multidimensional_index(i);                                                                  \
+            f->w[i] = ((SPACE const ST*)p)[(uint32_t)ix[0] * stride + (uint32_t)ix[1]];                                  \
+        }                                                                                                               \
+    }
+
+#define UKL_MMA_M5_PRODUCT(T, C, ST, CT)                                                                                \
+    UKL_INLINE void ukl_mma_##T(UKL_PRIVATE ukl_mma_c_##C* c, UKL_PRIVATE const ukl_mma_a_##T* a,                       \
+                                UKL_PRIVATE const ukl_mma_b_##T* b, UklMmaAt at __UKL_PARAMS)                           \
+    {                                                                                                                   \
+        (void)at;                                                                                                       \
+        ukl_mma_m5_op_##T op;                                                                                           \
+        auto l = op.get_left_input_cooperative_tensor<ST, ST, CT>();                                                    \
+        auto r = op.get_right_input_cooperative_tensor<ST, ST, CT>();                                                   \
+        for (uint16_t i = 0; i < 16; i++) {                                                                             \
+            l[i] = a->w[i];                                                                                             \
+            r[i] = b->w[i];                                                                                             \
+        }                                                                                                               \
+        auto d = op.get_destination_cooperative_tensor<decltype(l), decltype(r), CT>();                                 \
+        for (uint16_t i = 0; i < 8; i++)                                                                                \
+            d[i] = c->x[i];                                                                                             \
+        op.run(l, r, d);                                                                                                \
+        for (uint16_t i = 0; i < 8; i++)                                                                                \
+            c->x[i] = d[i];                                                                                             \
+    }
+
+// The elements' types in memory, as UKL's kernels hold them (16-bit floats' bits; bytes).
+#define UKL_MMA_M5_MEM_f16 uint16_t
+#define UKL_MMA_M5_MEM_bf16 uint16_t
+#define UKL_MMA_M5_MEM_i8 int8_t
+
+#define UKL_MMA_M5_TYPE(T, C, CT, ET, ST, OCT)                                                                          \
+    UKL_MMA_M5_LOADS(T, ST, OCT, UKL_GLOBAL, )                                                                          \
+    UKL_MMA_M5_LOADS(T, ST, OCT, UKL_LOCAL, _local)                                                                     \
+    UKL_MMA_M5_PRODUCT(T, C, ST, OCT)                                                                                   \
+    UKL_MMA_TILE(T, C, CT, ET)
+#endif
+
 #if UKL_MMA_APPLE
 // ---- Apple's f16 and bf16: four 8×8 `simdgroup_matrix` a fragment of A or B (`MT` its type, `ST` an element's),
 // each loaded where it lies, a column-major one transposed as it loads. ----
@@ -820,6 +934,10 @@ UKL_MMA_INTEL_TYPE(i8, i32, int32_t, int8_t, uint8_t, 2u, 4u, 8u, int8, intel_su
 UKL_MMA_CUDA_TYPE(f16, f32, float, uint16_t, uint16_t, 2u, 16u, "m16n8k16", "f32.f16.f16.f32", "+f")
 UKL_MMA_CUDA_TYPE(bf16, f32, float, uint16_t, uint16_t, 2u, 16u, "m16n8k16", "f32.bf16.bf16.f32", "+f")
 UKL_MMA_CUDA_TYPE(i8, i32, int32_t, int8_t, uint8_t, 4u, 8u, "m16n8k32", "s32.s8.s8.s32", "+r")
+#elif UKL_MMA_M5
+UKL_MMA_M5_TYPE(f16, f32, float, uint16_t, half, float)
+UKL_MMA_M5_TYPE(bf16, f32, float, uint16_t, bfloat, float)
+UKL_MMA_M5_TYPE(i8, i32, int32_t, int8_t, int8_t, int)
 #else
 #if UKL_MMA_APPLE
 UKL_MMA_APPLE_TYPE(f16, half)
