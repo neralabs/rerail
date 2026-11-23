@@ -905,8 +905,9 @@ interface KeptRemote {
 }
 
 /**
- * Each clone's remote, by the Git folder its remotes are read from: the common one, which every worktree of the clone
- * shares, or a worktree's own when it has a `config.worktree`.
+ * Each clone's remote, by where its remotes are read from: the common Git folder, which every worktree of the clone
+ * shares, or a worktree's own `config.worktree`, by that file's path, so the main checkout's, which is in the common
+ * folder, keeps an answer apart from the one its other worktrees share.
  */
 const keptRemotes = new Map<string, KeptRemote>();
 
@@ -939,7 +940,7 @@ function remoteSource(root: string): RemoteSource | undefined {
   if (inputs === undefined || !inputs.owned) return undefined;
   const own = configText(join(inputs.gitFolder, "config.worktree"));
   const facts = remoteFacts(own, inputs.linkedCommon ?? inputs.gitFolder);
-  return facts === undefined ? undefined : { key: own === NO_FILE ? inputs.realCommon : inputs.gitFolder, facts, common: inputs.realCommon };
+  return facts === undefined ? undefined : { key: own === NO_FILE ? inputs.realCommon : join(inputs.gitFolder, "config.worktree"), facts, common: inputs.realCommon };
 }
 
 /**

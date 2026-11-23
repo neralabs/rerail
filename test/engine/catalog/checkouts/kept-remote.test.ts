@@ -297,6 +297,20 @@ describe("a clone's remote kept by the daemon, against Git's own answer once a f
   });
 });
 
+describe("the remotes kept for a clone's worktrees", () => {
+  it("keeps the main checkout's, read with a config.worktree of its own, apart from the one its other worktrees share", () => {
+    const at = clone();
+    const linked = join(at.root, "linked");
+    git(at.main, "config", "extensions.worktreeConfig", "true");
+    git(at.main, "config", "--worktree", "rerail.case", "main");
+    git(at.main, "worktree", "add", "--quiet", "-b", "linked", linked);
+    expect(remoteAsks(() => [readRemoteAddress(at.main), readRemoteAddress(linked)])).toBeGreaterThan(0);
+
+    // Read in turn, each answer stands for its own facts.
+    expect(remoteAsks(() => [readRemoteAddress(at.main), readRemoteAddress(linked), readRemoteAddress(at.main)])).toBe(0);
+  });
+});
+
 /** The engine's owner of its Git reads, naming `files` as Rerail's Git reported them. */
 function gitAccess(files: Pick<NativeGitAccess, "systemConfig" | "installationConfig">): NativeGitAccess {
   return { ...files, openGitIgnoreMatcher: () => null };
