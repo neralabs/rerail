@@ -4,7 +4,8 @@
  */
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { LANGUAGE_NOT_SUPPORTED, codeRuleLanguageNotSupported, type CodeRuleLanguageNotSupported } from "../engine/code-rule/code-rule-language-support.js";
+import { INACTIVE_CODE_RULE_CODES, READS_LEFT_OUT_TOKEN_CODE, type InactiveCodeRule } from "../engine/code-rule/code-rule-compile.js";
+import { codeRuleLanguageNotSupported } from "../engine/code-rule/code-rule-language-support.js";
 import { codeRuleSchema, codeRuleValueSchema } from "../engine/code-rule/code-rule-schema.js";
 import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS } from "../engine/catalog/repository-model.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
@@ -12,6 +13,8 @@ import { conversationRuleSchema } from "../engine/catalog/rule-schema.js";
 import { engineRegexIssues, type RegexIssue } from "../engine/catalog/rule-regexes.js";
 import { EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
 import { RULE_APPROVAL_SUBJECTS, RULE_KINDS } from "../engine/storage/schema.js";
+import type { RerailRule } from "../engine/catalog/rerail-rules/rerail-rule.js";
+import type { RuleDocument } from "../engine/catalog/rule-store.js";
 
 const START_STATES = ["started", "stopped", "not-set-up"] as const;
 
@@ -80,18 +83,55 @@ export const approvalSubjectSchema = z.object({
   digest: z.string().describe("The digest of the content: approval holds for this content only, and an edit waits again."),
 }).strict();
 
-export const inactiveField = {
-  inactive: z
-    .object({ code: z.literal(LANGUAGE_NOT_SUPPORTED), reason: z.string() })
-    .strict()
-    .optional()
-    .describe("Present when the rule is stored but never evaluated: its language, or a capability it reads, is not supported yet."),
-};
+export const inactiveRuleSchema = z
+  .object({ code: z.enum(INACTIVE_CODE_RULE_CODES), reason: z.string() })
+  .strict()
+  .describe("The rule is kept but never evaluated, whatever on says. language-not-supported: its language, or a capability it reads, is not supported yet. reads-left-out-token: this Rerail no longer runs the rule as its installed pack writes it; the pack's next version runs it again.");
 
-/** The `inactive` field for a code rule whose language, or a capability it reads, the engine does not read yet. */
-export function inactiveOf(kind: string, rule: unknown): { inactive?: CodeRuleLanguageNotSupported } {
-  const unsupported = kind === "code" ? codeRuleLanguageNotSupported(rule as Parameters<typeof codeRuleLanguageNotSupported>[0]) : undefined;
+export const inactiveField = { inactive: inactiveRuleSchema.optional() };
+
+/**
+ * The `inactive` field for a code rule: `notRun` when the catalog says this Rerail no longer runs its pack's document
+ * (`RuleCatalog.notRun`), else when the engine does not read its language, or a capability it reads, yet.
+ */
+export function inactiveOf(kind: string, rule: unknown, notRun?: string | null): { inactive?: InactiveCodeRule } {
+  if (kind !== "code") return {};
+  if (notRun !== undefined && notRun !== null) return { inactive: { code: READS_LEFT_OUT_TOKEN_CODE, reason: notRun } };
+  const unsupported = codeRuleLanguageNotSupported(rule as Parameters<typeof codeRuleLanguageNotSupported>[0]);
   return unsupported === undefined ? {} : { inactive: unsupported };
+}
+
+/** A pack's rule written in `.rerail`, as the API returns it: what the engine reads from the file, and its text. */
+export const rerailRuleBodySchema = z.object({
+  id: z.string(),
+  revision: z.number().int(),
+  mode: z.enum(RULE_MODES).describe("The mode the file's .mode names; the effective mode is the record's own mode."),
+  description: z.string().nullable(),
+  language: z.string().nullable(),
+  scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()) }).strict(),
+  codes: z.array(z.string()).describe("The violation codes the rule reports."),
+  source: z.string().describe("The text of the rule's .rerail file."),
+}).strict().describe("A rule written in .rerail, which a rule pack ships. It takes no options, and only its pack holds it.");
+
+/** `rule` as the API returns it: everything but where the file and its includes are on this computer. */
+function rerailRuleBody(rule: RerailRule): z.infer<typeof rerailRuleBodySchema> {
+  const { id, revision, mode, description, language, scope, codes, source } = rule;
+  return { id, revision, mode, description, language, scope: { include: [...scope.include], exclude: [...scope.exclude] }, codes: [...codes], source };
+}
+
+/**
+ * A rule document as the API returns it: its kind and body, and for a JSON code rule whether it is inactive (`notRun`:
+ * why this Rerail no longer runs its pack's document, as `RuleCatalog.notRun` says).
+ */
+export function ruleDocumentRecord(document: RuleDocument, notRun?: string | null):
+  | { kind: "code"; rule: z.infer<typeof codeRuleSchema>; inactive?: InactiveCodeRule }
+  | { kind: "conversation"; rule: z.infer<typeof conversationRuleSchema> }
+  | { kind: "rerail"; rule: z.infer<typeof rerailRuleBodySchema> } {
+  switch (document.kind) {
+    case "code": return { kind: "code", rule: document.rule, ...inactiveOf("code", document.rule, notRun) };
+    case "conversation": return { kind: "conversation", rule: document.rule };
+    case "rerail": return { kind: "rerail", rule: rerailRuleBody(document.rule) };
+  }
 }
 
 const ruleSourceSchema = z.object({
@@ -121,13 +161,14 @@ const effectiveRuleBase = {
     .describe("Epoch milliseconds the attachment that brings the rule in (its pack, or the rule itself) was added at this folder."),
   updatedAt: z.number().int().nullable().describe("Epoch milliseconds a rule created by you was last edited; null for rules by Rerail."),
   copiedFromRuleId: z.string().nullable()
-    .describe("The By Rerail rule a rule created by you is an edited copy of; approving the copy turns that rule off where the copy is added. Null for any other rule."),
+    .describe("The rule a rule created by you is an edited copy of (a By Rerail rule, or your approved rule a coding agent edited); approving the copy turns that rule off where the copy is added. Null for any other rule."),
   approval: z.object({ subject: approvalSubjectSchema, approved: z.boolean() }).strict().optional()
     .describe("Present for a rule Rerail did not publish (created by you, in a worktree's .rerail/rules, or in a third party's or a folder's pack): until a person approves its content it runs in Log."),
 };
 export const effectiveRuleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("code"), rule: codeRuleSchema, ...effectiveRuleBase, ...inactiveField }).strict(),
   z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, ...effectiveRuleBase }).strict(),
+  z.object({ kind: z.literal("rerail"), rule: rerailRuleBodySchema, ...effectiveRuleBase }).strict(),
 ]);
 
 export const unavailableReferenceSchema = z.object({
@@ -200,7 +241,7 @@ export const attachmentRecordSchema = z.object({
 const libraryRuleBase = {
   revision: z.number().int().positive(),
   payloadHash: z.string(),
-  copiedFromRuleId: z.string().nullable().describe("The By Rerail rule this rule is an edited copy of."),
+  copiedFromRuleId: z.string().nullable().describe("The rule this rule is an edited copy of: a By Rerail rule, or your approved rule a coding agent edited."),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 };
@@ -214,7 +255,7 @@ export const quarantinedRuleSchema = z.object({
   kind: z.enum(RULE_KINDS),
   owner: z.string(),
   reason: z.string(),
-  code: z.literal(LANGUAGE_NOT_SUPPORTED).optional(),
+  code: z.enum(INACTIVE_CODE_RULE_CODES).optional(),
 }).strict();
 
 export const libraryUpsertBodySchema = z.object({
@@ -262,6 +303,7 @@ export const libraryUpsertResultSchema = z.object({
 export const rerailRuleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("code"), rule: codeRuleSchema, packId: z.string().nullable(), ...inactiveField }).strict(),
   z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, packId: z.string().nullable() }).strict(),
+  z.object({ kind: z.literal("rerail"), rule: rerailRuleBodySchema, packId: z.string().nullable() }).strict(),
 ]);
 
 export const startBodySchema = z.object({

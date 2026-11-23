@@ -9,7 +9,7 @@ use super::{
 };
 use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
-use crate::code_rule_dsl::language::Family;
+use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{ScopeName, Unresolved};
 use crate::code_rule_dsl::model::ViolationSpec;
@@ -22,7 +22,8 @@ use crate::code_rule_dsl::scope::{
 use crate::code_rule_dsl::suppress::Suppress;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
 use crate::code_rule_dsl::value::{BigInt, Context, NodeRef, Value};
-use ast_grep_core::{Doc, Node};
+use ast_grep_core::tree_sitter::StrDoc;
+use ast_grep_core::{Doc, Language, Node};
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -35,6 +36,17 @@ pub struct C;
 
 fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
     Err(Refusal::Refused(message.into()))
+}
+
+/// The expression of the one statement of the function body `root` holds, where the file parsed
+/// cleanly and that statement is an expression statement.
+fn lone_expression<'t>(root: &tree_sitter::Node<'t>) -> Option<tree_sitter::Node<'t>> {
+    root.child(0)
+        .and_then(|function| function.child_by_field_name("body"))
+        .filter(|body| !root.has_error() && body.named_child_count() == 1)
+        .and_then(|body| body.named_child(0))
+        .filter(|statement| statement.kind() == "expression_statement")
+        .and_then(|statement| statement.named_child(0))
 }
 
 impl Adapter for C {
@@ -252,6 +264,18 @@ impl ValueRules for C {
 /// A C and C++ file hosts no literal grammar a policy parses, and has no `languageOptions`.
 impl SyntaxRules for C {
     const DOLLAR_NAMES: bool = false;
+
+    /// C and C++ allow only declarations at file scope, so tree-sitter reads a bare call there as
+    /// one: `gets($A)` as a C `macro_type_specifier`, `std::atoi($A)` as a C++ declaration of `$A`.
+    fn body_pattern(pattern: &str, language: GrammarDialect) -> Option<(String, String)> {
+        const PREFIX: &str = "void f() { ";
+        let pattern = pattern.trim();
+        let processed = language.pre_process_pattern(pattern);
+        let parsed = StrDoc::try_new(&format!("{PREFIX}{processed}; }}"), language).ok()?;
+        let expression = lone_expression(&parsed.tree.root_node())?;
+        (expression.byte_range() == (PREFIX.len()..PREFIX.len() + processed.len()))
+            .then(|| (format!("{PREFIX}{pattern}; }}"), expression.kind().to_owned()))
+    }
 
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
         match feature {

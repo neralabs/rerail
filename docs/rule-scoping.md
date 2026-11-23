@@ -272,7 +272,7 @@ An edit, or a new pack version, is new content and waits again. Going back to ap
 
 The session footer counts what waits (`2 to approve`), as does `/rerail`, and Overview lists it. An approval changes the configuration signature, so a running session picks it up at its next event.
 
-`rule_approvals_set` refuses a coding agent, but `rerail rules approve` cannot tell who runs it: a coding agent with a shell can run it too. That the agent waits for the person's yes is the `/rerail-create` skill's instruction, not something Rerail enforces, as with the rest of the line between people and coding agents ([coding agents](#coding-agents)). Approval keeps a rule no person read from steering by default; it does not stop an agent set on approving one.
+`rule_approvals_set` refuses a coding agent, and so do `rerail rules approve <id>` and `rerail rules import` in a coding agent's session ([coding agents](#coding-agents)). Approval keeps a rule no person read from steering by default; it does not stop an agent set on approving one.
 
 </details>
 
@@ -309,7 +309,15 @@ The HTTP API (`/api`) is for people; MCP callers (`/mcp`) are coding agents. The
 
 Anything else is refused with `403 agent-not-permitted` and the dashboard URL where a person can make the change. Only a person links repository addresses, starts and stops a whole repository, or approves a rule's content ([approval](#approval)). A rule a coding agent writes runs in Log until then.
 
-**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library instead (`<id>-copy`, `-copy-2`, …). The CLI does the same for every coding agent, MCP or not: `rerail rules show <id>` prints the rule as a draft, and `rerail rules add` of a draft that keeps its id stores the copy. `rules add` refuses a second copy where one is already added, and naming the copy is how to change it again.
+**The CLI in a coding agent's session.** The CLI reads a coding agent's session from the variable the agent sets for the commands its shell runs: `CLAUDECODE` (Claude Code), `CODEX_THREAD_ID` (Codex), `CURSOR_AGENT` (Cursor), `PI_CODING_AGENT` (Pi), or `AI_AGENT`, which several set. OMP sets none of them, so its sessions are not seen. There, as for an MCP caller:
+
+- `rerail rules approve <id | package>` is refused, and names the dashboard page where a person approves it; with no name it lists what waits.
+- `rerail rules import` is refused: it replaces your rules, approved ones included.
+- `rerail rules add` of a draft that changes one of your approved rules saves the draft as a copy, as below, rather than changing the rule. The rule keeps running as it is, in every repository it is added to, until a person approves the copy. A rule still waiting for approval, and a draft that says what the approved rule says, are changed in place. Where the approved rule is not added, the copy would have nowhere to run, so the edit is refused until the rule is added there unchanged.
+
+Like the API's, this holds a coding agent to the path it is given. It is not a security boundary: the agent runs as you, and can unset the variable before it runs a command.
+
+**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library instead (`<id>-copy`, `-copy-2`, …), as `rerail rules add` does for a coding agent's edit of your approved rule. The CLI does the same for every coding agent, MCP or not: `rerail rules show <id>` prints the rule as a draft, and `rerail rules add` of a draft that keeps its id stores the copy. `rules add` refuses a second copy where one is already added, and naming the copy is how to change it again.
 
 <details>
 <summary>How the copy replaces the original</summary>
@@ -317,7 +325,7 @@ Anything else is refused with `403 agent-not-permitted` and the dashboard URL wh
 - The copy is attached wherever the original is present in the target repository, at the same folders.
 - Its first approval switches the original off there with a repository setting: at once for a person's write, which is approved as saved, and for a coding agent's copy when a person approves it.
 - Until then the original keeps running beside the copy, which runs in Log, so writing a copy never weakens a rule.
-- The original stays a reference to its installed pack.
+- A By Rerail original stays a reference to its installed pack; your own rule stays in your library, unchanged.
 - `repository_rules_get` names the original in the copy's `copiedFromRuleId` (`null` for every other rule), so the dashboard can say that approving the copy turns the original off.
 
 </details>
@@ -386,7 +394,7 @@ A setting's `suppressions` and `config` are written only when set, so a dump wit
 
 An imported library rule whose content was not approved here runs in Log until a person approves it; the command says how many do.
 
-- `rerail rules import <file> --approve` approves each imported rule as it is imported, for a dump of your own rules, and prints each id. Rerail's command files never pre-approve it, so a coding agent's host asks first.
+- `rerail rules import <file> --approve` approves each imported rule as it is imported, for a dump of your own rules, and prints each id. Like all of `rules import`, it is refused in a coding agent's session.
 - `rerail rules import` accepts only that format, and is all-or-nothing after every code rule compiles.
 - `rerail reset`, and Clear history in the dashboard's Settings (`repository_reset`), delete only that repository's execution history.
 

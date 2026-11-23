@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { exitedEveryThread, processStartedAt, processState, type ProcessSignal } from "../../src/engine/process-liveness.js";
+import { cmdletsWithoutModule, commandScript, MODULE_QUALIFIED_ONLY, withCommandPrefix } from "../support/platform/powershell-commands.js";
 import { exitedEveryThread as removalExitedEveryThread } from "../support/platform/remove-folder.js";
 
 // Spies that call through, so a test can stand a program in for Windows PowerShell.
@@ -134,6 +135,30 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
       const constrained = args.map((arg, at) => (args[at - 1] === "-Command" ? `$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'; ${arg}` : arg));
       return runSync(program, constrained, options);
     }) as unknown as typeof childProcess.spawnSync);
+    const started = processStartedAt(process.pid, 30_000);
+    expect(started).toBeDefined();
+    expect(Math.abs(started! - (Date.now() - process.uptime() * 1_000))).toBeLessThan(1_000);
+  });
+
+  // A cmdlet named alone makes Windows PowerShell read every installed module it has not read yet before it runs: 46 s
+  // with 40 large ones, past every limit a caller gives the read.
+  it("names the module of the cmdlet it runs, so PowerShell reads no other installed module first", async () => {
+    const scripts: Array<string | undefined> = [];
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((_program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      scripts.push(commandScript(args));
+      return runSync(process.execPath, ["-e", "process.stdout.write('133444736000001234')"], options);
+    }) as unknown as typeof childProcess.spawnSync);
+    expect(processStartedAt(process.pid, 30_000, "win32")).toBe(1_700_000_000_000);
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]).toMatch(/\\Get-Process /u);
+    expect(cmdletsWithoutModule(scripts[0] ?? "")).toEqual([]);
+  });
+
+  it.runIf(process.platform === "win32")("reads when this process started while PowerShell loads only the modules a command names", async () => {
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) =>
+      runSync(program, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), options)) as unknown as typeof childProcess.spawnSync);
     const started = processStartedAt(process.pid, 30_000);
     expect(started).toBeDefined();
     expect(Math.abs(started! - (Date.now() - process.uptime() * 1_000))).toBeLessThan(1_000);

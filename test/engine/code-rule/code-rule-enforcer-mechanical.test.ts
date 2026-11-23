@@ -15,6 +15,7 @@ import { isSourceGap, type AuditRecorder, type AuditInput, type AuditResult } fr
 import { defaultRerailDatabasePath } from "../../../src/engine/storage/database.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import type { CodeRuleEdit, SteerMetadata } from "../../../src/engine/code-rule/code-rule.js";
+import type { CodeRuleDslCatalog, RerailRuleEntry } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { AUDIT_MAX_SOURCE_BYTES, MAX_SOURCE_BYTES, modulePath, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { SOURCE_LANGUAGES } from "../../../src/engine/code-rule/code-rule-languages.js";
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
@@ -1438,6 +1439,44 @@ describe("mechanical code rule regressions", () => {
     } finally { await enforcer.close(); }
   });
 
+  it("starts no repository audit for a write only a .rerail rule takes, in repository scope", async () => {
+    const { recorder, audits } = recordingAudits();
+    const root = await mkdtemp(join(tmpdir(), "rerail-enforcer-"));
+    roots.push(root);
+    const capabilitiesPath = join(root, "capabilities.json");
+    await writeFile(capabilitiesPath, await readFile(join(bundledCodeRuleDslDirectory(), "capabilities.json")));
+    const json = testCodeRuleCatalog([needleCodeRule(1)], capabilitiesPath);
+    const rerailRule: RerailRuleEntry = {
+      id: "rr-lib-rule", path: join(root, "rr-lib-rule.rerail"), placement: [{ folder: "", mode: "steer" }], files: [],
+      scope: { include: ["lib/**/*.py"], exclude: [], text: [] }, language: "python",
+      provenance: { ruleId: "rr-lib-rule", revision: 1, payloadHash: "hash", source: { kind: "pack", id: "rr", packId: "rr" }, repositoryKey: "repository", checkoutPath: root, placement: [] },
+    };
+    // The JSON rule reads `api/**`; the `.rerail` rule alone takes `lib/**`.
+    const catalog: CodeRuleDslCatalog = {
+      get status() { return json.status; },
+      snapshot: () => ({ ...json.snapshot(), rerailRules: [rerailRule] }),
+      provenance: () => json.provenance(),
+      quarantined: () => json.quarantined(),
+      refresh: () => json.refresh(),
+    };
+    const enforcer = new NativeCodeRuleEnforcer(catalog, {
+      workspaceRoot: root, steerDelivery: { requestSteer: async () => undefined }, audits: recorder, scope: "repository", mode: "steer",
+    });
+    try {
+      await mkdir(join(root, "lib"));
+      await writeFile(join(root, "lib", "report.py"), "assert True\n");
+      await enforcer.openWorkspace("rerail-only-write");
+      expect(enforcer.acceptsPath("lib/report.py")).toBe(true);
+      await enforcer.auditGeneratedEdits("rerail-only-write", {
+        revision: 1,
+        checkpoints: ["edit"],
+        edits: [{ path: "lib/report.py", language: "python", generatedText: "assert True\n" }],
+      });
+      await enforcer.settleGeneratedEdits();
+      expect([...audits.values()].filter(audit => audit.scope === "repository" && audit.origin === "ongoing")).toEqual([]);
+    } finally { await enforcer.close(); }
+  });
+
   it("audits a Git checkout through the native repository index and records its clean directories for reuse", async () => {
     const { recorder, audits } = recordingAudits();
     const { root, enforcer } = await fixture({ audits: recorder });
@@ -1872,7 +1911,7 @@ describe("mechanical code rule regressions", () => {
   it("steers with the anchored location, interpolated message, and suggested fix", async () => {
     const { recorder, audits } = recordingAudits();
     const fixing = codeRuleSchema.parse({
-      format: "rerail.policy/v1", id: "test:logger", revision: 1, mode: "block",
+      format: "rerail.policy/v1", id: "test:logger", revision: 1, mode: "block", title: "Log through the logger",
       scope: { include: ["web/**/*.tsx"], exclude: [] },
       clauses: [{
         id: "logger",
@@ -1902,10 +1941,10 @@ describe("mechanical code rule regressions", () => {
         "  Suggested fix: replace 2:3–2:20 with `logger.info(user)`",
         "Fix it, or tell the user in one line why you won't and run `rerail feedback test:logger '<that line>'`.",
       ].join("\n"));
-      // Where the rule comes from is for the person's line, never the agent's text.
+      // Where the rule comes from, and its title, are for the person's line, never the agent's text.
       expect(requestSteer.mock.calls[0]![3]).toMatchObject({
         ruleIds: ["test:logger"],
-        rules: [{ id: "test:logger", state: "steered", origin: "From your rule library." }],
+        rules: [{ id: "test:logger", title: "Log through the logger", state: "steered", origin: "From your rule library." }],
       });
       expect(auditForPath(audits, "web/App.tsx")?.result).toMatchObject({
         violations: [expect.objectContaining({ fix: { span: expect.objectContaining({ startLine: 1, startColumn: 2 }), text: "logger.info(user)" } })],

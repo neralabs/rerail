@@ -163,7 +163,7 @@ describe("hook steers", () => {
   it.each(hookCases)("counts no $host output whose only delivery is a note naming no rule (a Merge Assist note)", async ({ host, run, input }) => {
     const root = await temporaryDirectory();
     const options = hookOptions(root);
-    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jbarnes-1: retry.ts" };
+    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jdoe-1: retry.ts" };
     await persistPending(pendingPath(options.storageRoot!, host, "session-1"), [{ ...delivery("Your edit overlaps open work."), conflict }]);
     const output = await run(input(root), options);
     expect(JSON.stringify(output)).toContain("Your edit overlaps open work.");
@@ -175,7 +175,7 @@ describe("hook steers", () => {
     const root = await temporaryDirectory();
     const options = hookOptions(root);
     const path = pendingPath(options.storageRoot!, "claude-code", "session-1");
-    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jbarnes-1: retry.ts" };
+    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jdoe-1: retry.ts" };
     await mkdir(join(path, ".."), { recursive: true });
     await writeFile(path, JSON.stringify([{ ...delivery("kept"), conflict }, { ...delivery("unlinked"), conflict: { ...conflict, url: null } }, { ...delivery("unnamed"), conflict: "x" }]));
     expect(await readPending(path)).toEqual([{ ...delivery("kept"), conflict }, delivery("unlinked"), delivery("unnamed")]);

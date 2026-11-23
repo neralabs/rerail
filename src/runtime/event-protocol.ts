@@ -39,6 +39,7 @@ export const AdapterEventSchema: z.ZodType<AdapterEvent> = z.discriminatedUnion(
 /** A rule a delivery names, for the person's line (`SteerRule`). */
 export const SteerRuleSchema = z.object({
   id: z.string().min(1),
+  title: z.string().optional(),
   state: z.enum(["steered", "logged"]),
   origin: z.string().optional(),
   url: z.string().optional(),

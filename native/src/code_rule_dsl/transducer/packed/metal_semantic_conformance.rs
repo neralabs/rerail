@@ -31,8 +31,8 @@ pub mod phase_four;
 #[test]
 #[ignore = "pinned corpus differential subset against the independent CPU interpreter"]
 fn pinned_corpus_optional_body_and_injection_differential() {
-    let root = std::env::var("TEMPO_ALL_SCM_REPOSITORY").unwrap();
-    let query_root = std::env::var("TEMPO_PYTHON_SCM_QUERY_DIR").unwrap();
+    let root = std::env::var("RERAIL_PACKED_ALL_SCM_REPOSITORY").unwrap();
+    let query_root = std::env::var("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR").unwrap();
     let mut paths = std::fs::read_dir(query_root)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -2425,8 +2425,8 @@ pub mod retained_grid_runtime {
         ]];
         assert_fixture(&programs, &files, &anchors);
     }
-    #[ignore = "O83: G's grid-executor copy, written for the old 600-launch bound; it needs more than KERNEL_LAUNCH_LIMIT (200 since list step 26). The executor is superseded (decision 0028, O33) and stays until list step 31"]    #[test]
-    fn inputs_optional_nested_branches_and_quantified_strings_preserve_saved_context() {
+    /// The three fixture queries, or every pattern of the catalog in `RERAIL_PACKED_CONTEXT_REPRO_CATALOG`.
+    fn saved_context_programs() -> Vec<Program> {
         let queries = [
             "(if_statement alternative: (_ (_) @conditional.inner)?) @conditional.outer",
             "(call function: (attribute object: (identifier) @_re) arguments: (argument_list (string (string_start) [(string_content) @injection.content (interpolation)]+ (string_end))) (#eq? @_re \"re\") (#set! injection.language \"regex\"))",
@@ -2442,7 +2442,7 @@ pub mod retained_grid_runtime {
                 .unwrap()
             })
             .collect::<Vec<_>>();
-        if let Ok(root) = std::env::var("TEMPO_CONTEXT_REPRO_CATALOG") {
+        if let Ok(root) = std::env::var("RERAIL_PACKED_CONTEXT_REPRO_CATALOG") {
             programs.clear();
             let mut paths = std::fs::read_dir(root)
                 .unwrap()
@@ -2466,13 +2466,17 @@ pub mod retained_grid_runtime {
             }
             assert_eq!(programs.len(), 335);
         }
+        programs
+    }
+    /// The two fixture documents, then three of the repository in `RERAIL_PACKED_CONTEXT_REPRO_REPOSITORY`.
+    fn saved_context_files() -> Vec<TapeDoc> {
         let mut files = vec![
             tape(
                 "if one:\n    pass\nelif two:\n    pass\nelif three:\n    pass\nelse:\n    first()\n    second()\n",
             ),
             tape("re.compile(f'a{b}c' 'd')\nre.match('a' f'{b}c', text)\n"),
         ];
-        if let Ok(root) = std::env::var("TEMPO_CONTEXT_REPRO_REPOSITORY") {
+        if let Ok(root) = std::env::var("RERAIL_PACKED_CONTEXT_REPRO_REPOSITORY") {
             for path in [
                 "Lib/_py_warnings.py",
                 "Lib/_pydatetime.py",
@@ -2483,7 +2487,11 @@ pub mod retained_grid_runtime {
                 ));
             }
         }
-        if let Ok(nodes) = std::env::var("TEMPO_CONTEXT_DUMP_NODES") {
+        files
+    }
+    /// Prints the nodes in `RERAIL_PACKED_CONTEXT_DUMP_NODES`, numbered across `files`, with their children.
+    fn dump_saved_context_nodes(files: &[TapeDoc]) {
+        if let Ok(nodes) = std::env::var("RERAIL_PACKED_CONTEXT_DUMP_NODES") {
             for node in nodes.split(',').map(|node| node.parse::<u32>().unwrap()) {
                 let mut first = 0;
                 for (index, file) in files.iter().enumerate() {
@@ -2502,7 +2510,7 @@ pub mod retained_grid_runtime {
                             })
                             .collect::<Vec<_>>();
                         eprintln!(
-                            "TEMPO_CONTEXT_NODE global={node} file={index} local={local} span={:?} children={children:?}",
+                            "RERAIL_PACKED_CONTEXT_NODE global={node} file={index} local={local} span={:?} children={children:?}",
                             file.transducer_span(local)
                         );
                     }
@@ -2510,7 +2518,10 @@ pub mod retained_grid_runtime {
                 }
             }
         }
-        let active_programs = std::env::var("TEMPO_CONTEXT_ACTIVE_PROGRAMS")
+    }
+    /// Every node of a program's leading kinds, for the programs in `RERAIL_PACKED_CONTEXT_ACTIVE_PROGRAMS` (all by default).
+    fn saved_context_anchors(programs: &[Program], files: &[TapeDoc]) -> Vec<Vec<Vec<u32>>> {
+        let active_programs = std::env::var("RERAIL_PACKED_CONTEXT_ACTIVE_PROGRAMS")
             .ok()
             .map(|value| {
                 value
@@ -2518,7 +2529,7 @@ pub mod retained_grid_runtime {
                     .map(|index| index.parse::<usize>().unwrap())
                     .collect::<Vec<_>>()
             });
-        let anchors = files
+        files
             .iter()
             .map(|file| {
                 programs
@@ -2542,30 +2553,32 @@ pub mod retained_grid_runtime {
                     })
                     .collect::<Vec<_>>()
             })
-            .collect::<Vec<_>>();
-        let expected =
-            crate::code_rule_dsl::transducer::packed::execute_batch_outcomes(&programs, &files, &anchors)
-                .unwrap();
-        if std::env::var_os("TEMPO_CONTEXT_DUMP_PROGRAMS").is_some() {
+            .collect::<Vec<_>>()
+    }
+    /// Prints programs 115 and 278's instructions under `RERAIL_PACKED_CONTEXT_DUMP_PROGRAMS`.
+    fn dump_saved_context_programs(programs: &[Program]) {
+        if std::env::var_os("RERAIL_PACKED_CONTEXT_DUMP_PROGRAMS").is_some() {
             for index in [115, 278] {
                 if let Some(program) = programs.get(index) {
                     for (pc, &word) in program.words.iter().enumerate() {
                         eprintln!(
-                            "TEMPO_CONTEXT_PROGRAM program={index} pc={pc} instruction={:?}",
+                            "RERAIL_PACKED_CONTEXT_PROGRAM program={index} pc={pc} instruction={:?}",
                             crate::code_rule_dsl::transducer::packed::split(word)
                         );
                     }
                 }
             }
         }
-        assert!(expected.errors.iter().flatten().all(Option::is_none));
-        let repetitions = std::env::var("TEMPO_CONTEXT_REPRO_REPEAT")
+    }
+    /// The fixture, `RERAIL_PACKED_CONTEXT_REPRO_REPEAT` times (once by default), each within the launch limit.
+    fn assert_saved_context_fixture_repeats(programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) {
+        let repetitions = std::env::var("RERAIL_PACKED_CONTEXT_REPRO_REPEAT")
             .map(|value| value.parse::<usize>().unwrap())
             .unwrap_or(1);
         for _ in 0..repetitions {
             let scope = metal_backend::launch::LaunchScope::enter();
             let start = std::time::Instant::now();
-            assert_fixture(&programs, &files, &anchors);
+            assert_fixture(programs, files, anchors);
             let trace = scope.snapshot();
             assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
             assert!(
@@ -2582,6 +2595,19 @@ pub mod retained_grid_runtime {
                 })
             );
         }
+    }
+    #[ignore = "O83: G's grid-executor copy, written for the old 600-launch bound; it needs more than KERNEL_LAUNCH_LIMIT (200 since list step 26). The executor is superseded (decision 0028, O33) and stays until list step 31"]    #[test]
+    fn inputs_optional_nested_branches_and_quantified_strings_preserve_saved_context() {
+        let programs = saved_context_programs();
+        let files = saved_context_files();
+        dump_saved_context_nodes(&files);
+        let anchors = saved_context_anchors(&programs, &files);
+        let expected =
+            crate::code_rule_dsl::transducer::packed::execute_batch_outcomes(&programs, &files, &anchors)
+                .unwrap();
+        dump_saved_context_programs(&programs);
+        assert!(expected.errors.iter().flatten().all(Option::is_none));
+        assert_saved_context_fixture_repeats(&programs, &files, &anchors);
     }
     #[test]
     fn inputs_checked_capacity_replay_grows_from_measured_wave_demand() {

@@ -8,8 +8,8 @@ import { formatPiConflict, registerPiConflictRenderer, type ConflictTheme } from
 type ConflictNotice = Parameters<typeof formatPiConflict>[1];
 
 const CARD = "http://127.0.0.1:4737/?repository=acme-web#merge-assist/conflict%3Aa";
-const CONFLICT: ConflictNotice = { id: "conflict:a", text: "your edit overlaps PR #398 (Tim): model.rs · GrammarMatcher", url: CARD };
-const NOTE = conflictNote({ file: "src/model.rs", peer: "PR #398", author: "Tim", summary: "Share matchers", pullRequest: true });
+const CONFLICT: ConflictNotice = { id: "conflict:a", text: "your edit overlaps PR #398 (Sam): model.rs · GrammarMatcher", url: CARD };
+const NOTE = conflictNote({ file: "src/model.rs", peer: "PR #398", author: "Sam", summary: "Share matchers", pullRequest: true });
 
 /** Tags each colour so the expected rows read the structure rather than escape codes. */
 const theme: ConflictTheme = { fg: (colour, text) => `<${colour}>${text}</${colour}>` };
@@ -34,20 +34,20 @@ const readable = (line: string): string => line.replace(/\u001b\[[0-9;]*m|\u001b
 describe("Pi's Merge Assist conflict line", () => {
   it("is the line Claude Code, Codex and OMP show, `open` linking the conflict's card where Pi draws links", () => {
     expect(formatPiConflict(NOTE, CONFLICT, { expanded: false, hyperlinks: true, mark: MARK }, theme)).toEqual([
-      { detail: false, text: `◆ ${MARK} · your edit overlaps PR #398 (Tim): model.rs · GrammarMatcher  ·  ${link(CARD, "open")}` },
+      { detail: false, text: `◆ ${MARK} · your edit overlaps PR #398 (Sam): model.rs · GrammarMatcher  ·  ${link(CARD, "open")}` },
     ]);
   });
 
   it("prints the card's address after `open` where Pi draws no links", () => {
     expect(formatPiConflict(NOTE, CONFLICT, { expanded: false, hyperlinks: false, mark: MARK }, theme)).toEqual([
-      { detail: false, text: `◆ ${MARK} · your edit overlaps PR #398 (Tim): model.rs · GrammarMatcher  ·  open → ${CARD}` },
+      { detail: false, text: `◆ ${MARK} · your edit overlaps PR #398 (Sam): model.rs · GrammarMatcher  ·  open → ${CARD}` },
     ]);
   });
 
   it("has no `open` while no dashboard linked the conflict", () => {
     const unlinked: ConflictNotice = { id: CONFLICT.id, text: CONFLICT.text };
     expect(formatPiConflict(NOTE, unlinked,{ expanded: false, hyperlinks: true, mark: MARK }, theme)).toEqual([
-      { detail: false, text: `◆ ${MARK} · your edit overlaps PR #398 (Tim): model.rs · GrammarMatcher` },
+      { detail: false, text: `◆ ${MARK} · your edit overlaps PR #398 (Sam): model.rs · GrammarMatcher` },
     ]);
   });
 
@@ -61,12 +61,12 @@ describe("Pi's Merge Assist conflict line", () => {
   });
 
   it("strips control characters from the conflict's words, its address and the note", () => {
-    const hostile: ConflictNotice = { id: "conflict:b", text: "your edit overlaps x\u001b[2J\u0007 (Tim): a.ts", url: "http://127.0.0.1:4737/\u0007\u001b]8;;http://evil/" };
+    const hostile: ConflictNotice = { id: "conflict:b", text: "your edit overlaps x\u001b[2J\u0007 (Sam): a.ts", url: "http://127.0.0.1:4737/\u0007\u001b]8;;http://evil/" };
     const rows = formatPiConflict("note\u001b[31m red\u0007", hostile, { expanded: true, hyperlinks: true, mark: MARK }, theme);
     const escapes = rows.flatMap(row => row.text.match(/\u001b[^\]]|\u001b\]8;;[^\u0007]*\u0007/gu) ?? []);
     // The only escapes left are the link's own framing, around the stripped address.
     expect(new Set(escapes)).toEqual(new Set(["\u001b]8;;http://127.0.0.1:4737/]8;;http://evil/\u0007", "\u001b]8;;\u0007"]));
-    expect(rows[0]!.text).toContain("your edit overlaps x[2J (Tim): a.ts");
+    expect(rows[0]!.text).toContain("your edit overlaps x[2J (Sam): a.ts");
     expect(rows.at(-1)!.text).toBe("<dim>note[31m red</dim>");
   });
 });
@@ -74,7 +74,7 @@ describe("Pi's Merge Assist conflict line", () => {
 describe("Pi's renderer for rerail.rule", () => {
   it("draws a Merge Assist note as its conflict's line instead of Pi's card of the agent's note", () => {
     const drawn = registered(false)(message({ requested: "steer", mechanism: "native-queue", sessionId: "s", rules: [], conflict: CONFLICT }), options(false), plainTheme);
-    expect(drawn?.render(200).map(readable)).toEqual([` ◆ R E R A I L · your edit overlaps PR #398 (Tim): model.rs · GrammarMatcher  ·  open → ${CARD}`]);
+    expect(drawn?.render(200).map(readable)).toEqual([` ◆ R E R A I L · your edit overlaps PR #398 (Sam): model.rs · GrammarMatcher  ·  open → ${CARD}`]);
   });
 
   it("declines a steer, or a conflict it cannot read, so Pi draws those as before", () => {

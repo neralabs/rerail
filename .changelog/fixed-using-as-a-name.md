@@ -1,1 +1,0 @@
-TypeScript and JavaScript rules now read a file that uses `using` as a variable name, as in `const using = f(); using.length`. It was a syntax error, so every rule that reads code skipped the file. TypeScript `using` and `await using` declarations now declare their names, so `typescript-eslint-no-unused-vars` reports an unused one.

@@ -1,0 +1,62 @@
+.policy "django-practice-host-header-without-get-host" revision 1
+.description "Read the request's host with request.get_host(), which checks it against ALLOWED_HOSTS, not from the Host header."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Django checks the Host header against ALLOWED_HOSTS only in
+// HttpRequest.get_host(); code that reads the header itself takes whatever host the client sent, which an attacker
+// uses to poison password-reset links and caches. It matches a read of the Host or X-Forwarded-Host header:
+// `<x>.META["HTTP_HOST"]`, `<x>.META.get("HTTP_HOST")`, `<x>.headers["host"]`, `<x>.headers.get("Host")`, the header
+// name in any case. It leaves alone reads in the arguments of a logger call (`logger.warning(f"Host: {…}")`), where
+// the raw header is what a diagnostic should show.
+//   host = request.META["HTTP_HOST"]                 reported
+//   host = request.headers.get("X-Forwarded-Host")   reported
+//   host = request.get_host()                        not reported
+//   request.META["HTTP_HOST"] = "example.com"        not reported: a store (tests, RequestFactory setup)
+//   logger.warning("host %s", request.headers.get("Host"))     not reported: logging
+
+#include "lib/django.rerail"
+
+.violation HostHeaderWithoutGetHost(at: node, key: symbol) "This reads the `{key}` header directly, which skips the ALLOWED_HOSTS check Django does only in `request.get_host()`: a client can send any host, and links or cache keys built from it can point at the attacker's site. Use `request.get_host()`; leave the raw read only for logging or diagnostics."
+
+// hhg_key(k): the header names, lowercased, as META spells them and as `headers` does.
+.decl hhg_key(k: symbol)
+hhg_key("http_host"). hhg_key("http_x_forwarded_host").
+hhg_key("host"). hhg_key("x-forwarded-host"). hhg_key("x_forwarded_host").
+// hhg_holder(o): o is a request's header mapping, `<x>.META` or `<x>.headers`.
+.decl hhg_holder(o: node)
+hhg_holder(o) :- attr_of(o, _, "META").
+hhg_holder(o) :- attr_of(o, _, "headers").
+.decl hhg_host_key(k: node, key: symbol)
+hhg_host_key(k, key) :- str(k, key), hhg_key(l), iglob(l, key).
+// hhg_logged(n): n is in the arguments of a logging call, `<…log…>.warning(…)` and its kin.
+.decl hhg_log_method(m: symbol)
+hhg_log_method("debug"). hhg_log_method("info"). hhg_log_method("warning"). hhg_log_method("warn").
+hhg_log_method("error"). hhg_log_method("exception"). hhg_log_method("critical"). hhg_log_method("log").
+.decl hhg_logged(n: node)
+hhg_logged(n) :- hhg_read(n, _), kind(c, "call"), field(c, "function", f), attr_of(f, o, m), hhg_log_method(m),
+    text(o, t), icontains("log", t), field(c, "arguments", al), within(n, al).
+// hhg_read(n, key): n reads the header key.
+.decl hhg_read(n: node, key: symbol)
+hhg_read(s, key) :- kind(s, "subscript"), field(s, "value", o), hhg_holder(o), field(s, "subscript", k),
+    hhg_host_key(k, key), expr_ctx(s, "load").
+hhg_read(c, key) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "get"), hhg_holder(o), posarg(c, 0, k),
+    hhg_host_key(k, key).
+
+HostHeaderWithoutGetHost(n, key) :- hhg_read(n, key), !hhg_logged(n), docof(n, d), !dj_test_doc(d).
+
+// The cases, `cases/django-practice-host-header-without-get-host/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "site/__init__.py" from "../cases/django-practice-host-header-without-get-host/site/__init__.py"
+    .fixture "site/tests/test_views.py" from "../cases/django-practice-host-header-without-get-host/site/tests/test_views.py"
+    .fixture "site/views.py" from "../cases/django-practice-host-header-without-get-host/site/views.py"
+    .expect _ at "site/views.py":9
+    .expect _ at "site/views.py":10
+    .expect _ at "site/views.py":11
+    .expect _ at "site/views.py":12
+    .expect _ at "site/views.py":13
+    .expect _ at "site/views.py":14
+    .expect _ at "site/views.py":20
+    .expect _ at "site/views.py":34
+.end

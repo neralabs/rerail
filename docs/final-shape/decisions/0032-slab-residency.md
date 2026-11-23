@@ -19,7 +19,7 @@ The user chose the full §20 scope: the kernels on the wave's path read the v9np
 
 ## Prior work consulted
 
-- **PIAT spec §20** (Pulling-it-all-together `docs/rule-engine-direction/spec.md`).
+- **PIAT spec §20** (PIAT `docs/rule-engine-direction/spec.md`).
   - **Adopted:**
     - 20.1 resident forms;
     - 20.2 slabs (anonymous mappings, 64 MiB, a 16-byte bump, no partial `MADV_DONTNEED`);
@@ -44,7 +44,7 @@ The user chose the full §20 scope: the kernels on the wave's path read the v9np
   - Its "no parent column" stands for storage.
   - Its measured upload saving (≤ 12 ms of a 1.83 s cold S7 audit) means this step buys shape and
     pinning, not cold speed.
-- **Tempo evidence** (§20 preamble):
+- **The predecessor's evidence** (§20 preamble):
   - First-use Metal mapping cost 213 ms against 6.1 ms of GPU time, and reused buffers cut the
     wait 30–60×. **Agrees:** buffers are retained per slab, not created per batch.
   - Heap decompression left 3.3 GiB of high-water. **Agrees:** frames are decompressed straight

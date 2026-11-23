@@ -17,15 +17,15 @@ withExperiments("MERGE_ASSIST");
 const workspace = mergeAssistWorkspaces();
 
 /** The overlap's line: who on the other side is changing what. */
-const SUMMARY = "jbarnes-1 (Tim Belanger) is changing function retry";
+const SUMMARY = "jdoe-1 (Alex Kim) is changing function retry";
 
 /**
- * The base holds `file` (a `body`), branch `jbarnes-1` changes its line 20 (in a commit `subject` says), and this
+ * The base holds `file` (a `body`), branch `jdoe-1` changes its line 20 (in a commit `subject` says), and this
  * checkout edits line 22, uncommitted: one overlap.
  */
 async function overlap(file: string, subject = "Grow retry"): Promise<{ ws: Workspace; theirs: string }> {
   const ws = await workspace({ files: { [file]: body("retry") } });
-  const theirs = ws.worktree("jbarnes-1");
+  const theirs = ws.worktree("jdoe-1");
   commit(theirs, { [file]: changed("retry") }, subject);
   writeFiles(ws.repo, { [file]: body("retry", { 22: "  const retry22 = \"mine\";" }) });
   return { ws, theirs };
@@ -103,7 +103,7 @@ function hookScript(ws: Workspace, mode: HookMode = "answer"): HookScript {
     // A process it leaves behind in a group of its own, holding its stdout until released (at most a minute, should the
     // test stop first): the command's answer must not wait for it.
     `  if (mode === 'orphan') { const orphan = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(`${released("process.exit(0)")} setTimeout(() => process.exit(0), 60000);`)}], { detached: true, stdio: ['ignore', 'inherit', 'ignore'] }); record({ kind: 'started', event, pid: orphan.pid }); orphan.unref(); return; }`,
-    "  const answer = () => { record({ kind: 'answer', event }); process.stdout.write(JSON.stringify({ note: 'Ask Jeremy in #storefront before you go on.', status: 'Jeremy reshapes retry(): ask him first' })); };",
+    "  const answer = () => { record({ kind: 'answer', event }); process.stdout.write(JSON.stringify({ note: 'Ask Dana in #storefront before you go on.', status: 'Dana reshapes retry(): ask them first' })); };",
     `  if (mode === 'held') { ${released("answer()")} } else answer();`,
     "});",
   ].join("\n"));
@@ -154,13 +154,13 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       expect(conflict).toMatchObject({ quiet: false, summary: SUMMARY });
       const [note, ...more] = service.pendingNotes("session", ws.repo, new Set(), "claude-code");
       expect(more).toEqual([]);
-      expect(note!.content).toContain(`Your edit to ${FILE} overlaps open work: "jbarnes-1" ("Tim Belanger"), described on their side as "Grow retry".`);
-      expect(note!.conflict).toEqual({ id: conflict.id, text: "your edit overlaps jbarnes-1 (Tim Belanger): retry.ts · function retry" });
+      expect(note!.content).toContain(`Your edit to ${FILE} overlaps open work: "jdoe-1" ("Alex Kim"), described on their side as "Grow retry".`);
+      expect(note!.conflict).toEqual({ id: conflict.id, text: "your edit overlaps jdoe-1 (Alex Kim): retry.ts · function retry" });
       // Claude Code, at its next tool call: the person's line beside the note.
       const output = claudeHookOutput("PostToolUse", [deliveryOf(note!, "session")], { links: "plain" });
-      expect(output).toMatchObject({ systemMessage: expect.stringContaining("Rerail · your edit overlaps jbarnes-1 (Tim Belanger): retry.ts · function retry") });
+      expect(output).toMatchObject({ systemMessage: expect.stringContaining("Rerail · your edit overlaps jdoe-1 (Alex Kim): retry.ts · function retry") });
       // Codex has no status line: its line carries the conflict's line.
-      expect(service.pendingNotes("codex-session", ws.repo, new Set(), "codex")[0]!.conflict!.text).toBe(`your edit overlaps jbarnes-1 (Tim Belanger): retry.ts · function retry — ${SUMMARY}`);
+      expect(service.pendingNotes("codex-session", ws.repo, new Set(), "codex")[0]!.conflict!.text).toBe(`your edit overlaps jdoe-1 (Alex Kim): retry.ts · function retry — ${SUMMARY}`);
       expect(takeNotes(service, "session", ws.repo)).toHaveLength(1);
       expect(takeNotes(service, "session", ws.repo)).toEqual([]);
       expect(footer(ws, "footer")).toEqual({ conflicts: 1, summary: { id: conflict.id, text: SUMMARY } });
@@ -182,7 +182,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       const [note] = service.pendingNotes("session", ws.repo, new Set(), "claude-code");
       const lines = note!.content.split("\n");
       expect(lines).toHaveLength(4);
-      expect(lines[1]).toMatch(/^Your edit to src\/retry\.ts overlaps open work: "jbarnes-1" \("Tim Belanger"\), described on their side as "Grow retry and more and more .*…"\.$/u);
+      expect(lines[1]).toMatch(/^Your edit to src\/retry\.ts overlaps open work: "jdoe-1" \("Alex Kim"\), described on their side as "Grow retry and more and more .*…"\.$/u);
       expect(lines[1]!.length).toBeLessThan(400);
     });
 
@@ -262,19 +262,19 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       hook.release();
       await service.settled();
       const [note] = service.pendingNotes("session", ws.repo);
-      expect(note!.content).toContain("The user's conflict hook adds: Ask Jeremy in #storefront before you go on.");
-      expect(footer(ws, "f2")).toMatchObject({ summary: { text: "Jeremy reshapes retry(): ask him first" } });
+      expect(note!.content).toContain("The user's conflict hook adds: Ask Dana in #storefront before you go on.");
+      expect(footer(ws, "f2")).toMatchObject({ summary: { text: "Dana reshapes retry(): ask them first" } });
     });
 
     /**
-     * A Claude Code session in a checkout whose branch has not yet overlapped jbarnes-1's committed change, the hook
+     * A Claude Code session in a checkout whose branch has not yet overlapped jdoe-1's committed change, the hook
      * command `mode` set; `edit` makes the overlapping edit through a tool call, and answers its result's deliveries.
      * `noteWaitMs` bounds how long Rerail's note waits for the command, `mergeAssistWaitMs` how long the edit's result
      * waits for Merge Assist.
      */
     async function editSession(mode: "answer" | "held", bounds: { noteWaitMs: number; mergeAssistWaitMs: number }): Promise<{ ws: Workspace; service: MergeAssistRuntime; runtime: RerailRuntime; hook: HookScript; sessionId: string; edit: () => Promise<AdapterDelivery[]> }> {
       const ws = await workspace({ files: { [FILE]: body("retry") } });
-      commit(ws.worktree("jbarnes-1"), { [FILE]: changed("retry") }, "Grow retry");
+      commit(ws.worktree("jdoe-1"), { [FILE]: changed("retry") }, "Grow retry");
       const { hook, service } = await withHook(ws, mode, { noteWaitMs: bounds.noteWaitMs });
       const runtime = sessionRuntime(ws, service, { mergeAssistWaitMs: bounds.mergeAssistWaitMs });
       const sessionId = `hook-${mode}-session`;
@@ -299,8 +299,8 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       try {
         const [note, ...others] = overlapNotes(await edit());
         expect(others).toEqual([]);
-        expect(note!.content).toContain("The user's conflict hook adds: Ask Jeremy in #storefront before you go on.");
-        expect(note!.conflict).toMatchObject({ text: expect.stringContaining("your edit overlaps jbarnes-1") });
+        expect(note!.content).toContain("The user's conflict hook adds: Ask Dana in #storefront before you go on.");
+        expect(note!.conflict).toMatchObject({ text: expect.stringContaining("your edit overlaps jdoe-1") });
         expect(hook.calls()[0]).toMatchObject({ event: "detected", stdin: { session: { id: sessionId, host: "claude-code" } } });
         expect(hookNotes(await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." }))).toEqual([]);
       } finally {
@@ -316,13 +316,13 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
         expect(hook.steps()).not.toContain("answer detected");
         expect(others).toEqual([]);
         expect(note!.content).not.toContain("conflict hook");
-        expect(note!.conflict).toMatchObject({ text: expect.stringContaining("your edit overlaps jbarnes-1") });
+        expect(note!.conflict).toMatchObject({ text: expect.stringContaining("your edit overlaps jdoe-1") });
         hook.release();
         await service.settled();
         const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." });
         expect(overlapNotes(next)).toEqual([]);
-        expect(hookNotes(next)).toEqual([expect.stringContaining("The user's conflict hook adds: Ask Jeremy in #storefront before you go on.")]);
-        expect(hookNotes(next)[0]).toContain("About the conflict with \"jbarnes-1\"");
+        expect(hookNotes(next)).toEqual([expect.stringContaining("The user's conflict hook adds: Ask Dana in #storefront before you go on.")]);
+        expect(hookNotes(next)[0]).toContain("About the conflict with \"jdoe-1\"");
         expect(hookNotes(await runtime.ingest({ kind: "user-prompt", eventId: "after", sessionId, text: "And on." }))).toEqual([]);
       } finally {
         await runtime.dispose();
@@ -345,7 +345,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
         await vi.waitFor(() => expect(service.pendingNotes(sessionId, ws.repo)).toHaveLength(1), { timeout: 20_000 });
         const [note, ...others] = overlapNotes(await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." }));
         expect(others).toEqual([]);
-        expect(note!.content).toContain("The user's conflict hook adds: Ask Jeremy in #storefront before you go on.");
+        expect(note!.content).toContain("The user's conflict hook adds: Ask Dana in #storefront before you go on.");
       } finally {
         await runtime.dispose();
       }
@@ -376,7 +376,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
         await service.settled();
         const deliveries = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." });
         const lines = deliveries.flatMap(delivery => (delivery.conflict === undefined ? [] : [delivery.conflict.text]));
-        expect(lines).toEqual([expect.stringMatching(/ — Jeremy reshapes retry\(\): ask him first$/u)]);
+        expect(lines).toEqual([expect.stringMatching(/ — Dana reshapes retry\(\): ask them first$/u)]);
       } finally {
         await runtime.dispose();
       }

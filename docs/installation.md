@@ -36,7 +36,7 @@ It installs Rerail under `~/.rerail`, without admin rights or, on Windows, Devel
 
 1. **Read sessions?** "No" stops set-up with Rerail installed and off.
 2. **Read this repository?** Or skip the scan and pick rule packs yourself.
-3. **Start?** Accept the recommended rule packs, change them, or answer "Not now".
+3. **Start?** Accept the suggested rule packs, change them, or answer "Not now".
 
 <details>
 <summary>What each question covers</summary>
@@ -45,7 +45,7 @@ It installs Rerail under `~/.rerail`, without admin rights or, on Windows, Devel
    edit) to check them against your rules?
 2. Outside a repository it asks which folder to start with, or lets you skip; `--repo <folder>` names one. If you skip
    the scan and pick rule packs yourself, no code is read.
-3. It shows the recommended rule packs, each with why it matched, or why none fits, and the coding agents it will
+3. It shows the suggested rule packs, each with why it was suggested, or why none matches, and the coding agents it will
    connect. "Not now" installs, connects and turns on nothing.
 
 Connecting a coding agent adds Rerail's commands to it, and the commands load Rerail's skills: instructions, in

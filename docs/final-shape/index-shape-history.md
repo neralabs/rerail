@@ -241,6 +241,6 @@ what the run keeps, not indexes: the parse of unchanged files and the kept rows 
   - the index round: b8fa829fe, 7c244a140, 1e1ec60a3, 81eb4c03e, 6a3d27178, 9fca64112, 738d8f0d4, 4244c8dd8,
     d58bc9258, 8c1df51e1, f58b371a0;
   - after it: 427705315, 7bfd96d03, 30570a267, 891586b36, cd6df3ee4.
-- Sessions: Pulling-it-all-together `3adb237a` (the index round, 2026-11-10/11); Typing-support `94a6bce4`
+- Sessions: PIAT `3adb237a` (the index round, 2026-11-10/11); Typing-support `94a6bce4`
   (the cost re-measured and levers A–C, 2026-11-11/12); Benchmarks-and-parity `9ce40b48` (the readers' tables,
   2026-11-13).

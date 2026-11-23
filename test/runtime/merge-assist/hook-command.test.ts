@@ -57,7 +57,7 @@ async function driveHolding(folder?: string): Promise<string> {
 
 describe("the conflict hook command's answer", () => {
   it("reads a null note or status as none, as most serializers write an absent field", async () => {
-    expect(await answering({ note: null, status: "Tim is on it" })).toEqual({ ok: true, error: null, note: null, status: "Tim is on it" });
+    expect(await answering({ note: null, status: "Sam is on it" })).toEqual({ ok: true, error: null, note: null, status: "Sam is on it" });
     expect(await answering({ note: "Ask Jordan first.", status: null })).toEqual({ ok: true, error: null, note: "Ask Jordan first.", status: null });
     expect(await answering({ note: 1 })).toMatchObject({ ok: false });
   });
