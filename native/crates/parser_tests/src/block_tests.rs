@@ -17,7 +17,7 @@ use rerail_compiler::program::Words as Program;
 use rerail_rir::rir_asm as rir;
 pub use crate::executors::{Executors, inputs, runs};
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-use rerail_metal as metal_program_backend;
+use rerail_metal_programs as metal_program_backend;
 
 /// What a program's digest covers of its block programs: their canonical bytes (the engine's
 /// digest hashes these, `packed::block_digest_tests`).
@@ -218,7 +218,7 @@ fn interpreters_have_no_byte_loops() {
     for word in ["for ", "while ", "loop {", ".iter()", "[j]", "[i]"] {
         assert!(!kernel.contains(word), "the CPU eq kernel has `{word}`");
     }
-    let common = include_str!("../../metal/src/block_common.uglykl");
+    let common = include_str!("../../metal_programs/src/block_common.uglykl");
     // The carries' helpers, straight-line.
     let carry = &common[common.find("// `prev` by k").expect("the carries")..common.find("// The sinks' cut").expect("the sinks")];
     for word in ["for (", "while", "if (", "?"] {

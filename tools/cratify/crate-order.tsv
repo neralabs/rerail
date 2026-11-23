@@ -14,6 +14,7 @@ rerail-clif	core
 rerail-json-lean	core
 rerail-tape-format	core
 rerail-json-aot	core
+rerail-error	core
 rerail-compiler	core
 rerail-rir	core
 rerail-rr-syntax	core
@@ -45,6 +46,7 @@ rerail-forest	core
 rerail-accel	core
 rerail-prof	core
 rerail-metal	core
+rerail-metal-programs	core
 rerail-store-base	core
 rerail-observe	core
 rerail-store	core

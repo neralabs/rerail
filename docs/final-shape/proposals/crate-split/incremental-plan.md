@@ -1296,3 +1296,40 @@ dropped the `--timings` runs (2026-11-22).
     leaves moved to the host on the Metal path, and it fails as it stands.
   - Checks: the workspace with `--tests` is clean on Linux and macOS. The guards pass. Tests (Linux): the source
     scanners and the plan and schedule tests, 125. On a Mac: the Metal launch guard.
+- **Step 10** (2026-11-22): more cuts by §2's mechanism, each measured by what an edit to a crate recompiles and by
+  the longest chain. Both numbers come from `cargo metadata` (`tools/cratify/fanout.py`, with `--workspace` so that
+  test crates and their dev-dependencies count). Measured at the hub's tip: an edit to `rerail-compiler` (18k lines,
+  5 crates below it) rebuilt 72 crates, `rerail-store` 63 and `rerail-facts-base` 60. The longest chain is 35.
+  - **10a, the compiler.** It sat under the whole engine through three edges:
+    - `rerail-lang` reads `rerail-metal`'s runtime (slabs, the device, its buffers), and the runtime held the
+      compiler's programs on the device. Those programs (`block_program` with its serial form and
+      `block_common.uglykl`, and `pp_on`, 3.4k lines) are now `rerail-metal-programs`, above the runtime. Their
+      callers were the parser crates and device-metal, which were above it already. The runtime no longer reads the
+      compiler:
+      - its error is `rerail-error`, below both, which `rerail_compiler::Error` and `rerail_metal::Error` re-export;
+      - `slabs::SOURCE_MARGIN` is its own constant, which `rerail-metal-programs` asserts equal to
+        `block_native::BACK`;
+      - the serial kernels' release moved out of `runtime::drop_pipelines` into `rerail_metal_programs::drop_kernels`.
+        device-metal's `metal_backend::drop_pipelines` calls both.
+    - 48 crates declared the compiler, rr-parser, rir, cpu-block or metal without naming them (the split tool gave
+      each crate the engine's list): the language layer, facts, logic, the planner, typing, sessions and every test
+      crate. Those dependencies are gone.
+    - Then, crates above an edit: compiler 72 to 50, rir 69 to 36, bitlex and cpu-block 55 to 34, cpu-stream 54 to
+      33, rr-parser 49 to 29. metal 68 (5.8k lines, from 9.2k). The longest chain is unchanged (35): it runs through
+      store and facts-base, next.
+    - Checks: the workspace with `--tests` is clean on Linux, and the touched crates on macOS. Tests (Linux): metal,
+      metal-programs, error, compiler and parser_tests' block tests, 108.
+  - **10b, the store.** It had 63 crates above it. Above facts-base, no crate's library calls the store. With an
+    empty `ContentStore` in their facades, the libraries of transducer-base, logic-core, run, adapters and rr all
+    compile. Only names under its path held them: its records, the upkeep and the atoms. facts-base calls 29 of its
+    methods and facts two (`intern_atoms`, `atoms_handle`); their tests open stores. So the store's interface is
+    those calls and its records, below it; the store and its atoms go above. In three parts:
+    - **10b-1, the records.** What the crates above hold of the store is data. A tape's or a source's bytes where
+      they lie (`ObjectBytes`, `ObjectFrame`, `TapeFrame`, `TapeBytes`), the programs recorded with a file's tape,
+      the derivations (`Binding`, `Derivation*`, `ABSENT`), `Sym`, the tree diff, a tape's prefilter rows, its
+      positional search index and lookups, and a queued write's `Key` are now in `rerail-store-base`. The store
+      re-exports each at its old path. `ObjectFrame::of` and `TapeFrame::set_programs` replace the private fields the
+      store wrote.
+    - **10b-2, the store's calls**: a trait in store-base that `ContentStore` implements. facts-base holds the store
+      through it.
+    - **10b-3, the atoms**: the interner as a crate of its own below the store, for facts, run and setfix.

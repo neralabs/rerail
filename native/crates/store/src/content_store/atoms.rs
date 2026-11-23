@@ -38,7 +38,7 @@ pub(crate) use stored::clone_file;
 mod vtab;
 pub use map::{ProcessIds, StoreIds, map_columns, mapped};
 
-pub type Sym = u32;
+pub use rerail_store_base::content_store::Sym;
 
 /// The values `Atoms::intern_all` looks up under one read lock (decision 0315): a writer waits at most this many
 /// lookups for it.

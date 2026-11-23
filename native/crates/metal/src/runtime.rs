@@ -439,12 +439,10 @@ pub fn evaluation_scope() -> launch::LaunchScope {
 }
 
 /// Releases the compiled pipelines and libraries (the residency's drop): the process's; the store keeps them
-/// (`rerail_accel::gpu::kernels`, decision 0395).
+/// (`rerail_accel::gpu::kernels`, decision 0395). The serial block programs' own are released by
+/// `rerail_metal_programs::drop_kernels`, which the residency's drop calls with this.
 pub fn drop_pipelines() {
     rerail_accel::gpu::kernels::release();
-    if let Ok(mut kernels) = crate::block_program::serial::kernels_held().0.lock() {
-        kernels.clear();
-    }
 }
 
 #[cfg(any(test, feature = "test-hooks"))]

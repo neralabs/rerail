@@ -979,6 +979,13 @@ pub(crate) fn kernels_held() -> std::sync::Arc<Kernels> {
     rerail_context::machine::<Kernels>()
 }
 
+/// Releases the kernels held (the residency's drop).
+pub(crate) fn drop_kernels() {
+    if let Ok(mut kernels) = kernels_held().0.lock() {
+        kernels.clear();
+    }
+}
+
 /// The run's count of sources generated and kernels compiled (a benchmark reads it around its timed runs, which must
 /// make none).
 #[derive(Default)]

@@ -11,7 +11,7 @@ use rerail_compiler::program::Words as Program;
 use rerail_rir::rir_asm as rir;
 use rerail_bitlex::bitlex_masks as bitlex_compile;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-use rerail_metal as metal_program_backend;
+use rerail_metal_programs as metal_program_backend;
 
 /// The masks the compiler handles so far: classes, logic, `prev`, `starts`, `after`, `span`,
 /// `toggle`, `after_odd_run` and `fill`.

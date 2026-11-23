@@ -1,3 +1,7 @@
+//! The error a program's compile and a device's run return: one type, which `rerail_compiler::Error` and
+//! `rerail_metal::Error` re-export. In a crate of its own, below both, so that the device's runtime needs no
+//! compiler.
+
 //! The transducer's errors.
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -7,7 +7,7 @@ description = "The parsers' tests that need no engine: the .rerail ladder agains
 
 [features]
 # The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
-test-hooks = ["rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-metal/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-tape-format/test-hooks"]
+test-hooks = ["rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-metal-programs/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-tape-format/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
@@ -32,7 +32,6 @@ rerail-parser-tests = { path = ".", features = ["test-hooks"] }
 
 # The device layer's targets (macOS, Linux and Windows): the GPU lane (decision 0440 step E).
 [target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
-# The block programs' Metal backend, for the Metal checks (`metal_tests`).
-rerail-metal = { path = "../metal", features = ["test-hooks"] }
+rerail-metal-programs = { path = "../metal_programs", features = ["test-hooks"] }
 # simdjson itself, the measure the simdjson form is timed against (`simdjson_form_against_simdjson`).
 rerail-simdjson-native = { path = "../simdjson_native" }

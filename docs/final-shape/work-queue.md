@@ -10704,3 +10704,13 @@ them with `std::env::var`. They are now read through `profile::var` and listed i
 
 Relax: the engine checks clean; the device setfix tests pass on the CPU backend (27, `RERAIL_GPU=cpu`: UKL's CPU
 build of `join_stages`). CUDA, HIP and Metal are farm-only.
+
+### Q508. Roll-up 81 (engine-crating ebbcd015a8 onto Pulling-it-all-together): what the merge chose
+
+engine-crating (ebbcd015a8): crate split 10a (the compiler's device programs leave the runtime for
+`rerail-metal-programs`; unnamed dependencies go) and 10b-1 (the store's records move into `rerail-store-base`),
+UKL's misaligned 16z line reads on CUDA, and its merge of the hub at roll-up 80. Its own CUDA commit (542b9352a4,
+`UKL_COHERENT_COPY`) was settled to the hub's roll-up 80 choice when it merged the hub: backend.h, clif.h and
+join_stages.uglykl are the hub's. Merged without conflicts.
+
+Relax: the engine checks clean.
