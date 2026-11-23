@@ -2017,8 +2017,7 @@ impl<'a, L: Layout> P<'a, L> {
             let c = self.recs[j].code;
             if is_extra(c) && !self.gone.contains(&j) {
                 let (s, e) = self.extra_span(j);
-                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, s);
-                self.w.close(at, e);
+                self.w.push_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
             }
         }
     }
@@ -2056,8 +2055,7 @@ impl<'a, L: Layout> P<'a, L> {
             self.pend += 1;
             if is_extra(c) && !self.gone.contains(&j) {
                 let (s, e) = self.extra_span(j);
-                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, s);
-                self.w.close(at, e);
+                self.w.push_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
                 self.last_end = self.last_end.max(e);
             }
         }
@@ -2137,8 +2135,7 @@ impl<'a, L: Layout> P<'a, L> {
         }
         self.flush();
         let (s, e) = self.bump()?;
-        let at = self.w.push(u32::from(kind) | u32::from(field) << 10, s);
-        self.w.close(at, e);
+        let at = self.w.push_leaf(u32::from(kind) | u32::from(field) << 10, s, e);
         self.set_made(at as u32);
         Ok(())
     }
@@ -2177,8 +2174,7 @@ impl<'a, L: Layout> P<'a, L> {
         self.pend = self.i;
         let (_, e) = self.bump()?;
         self.w.truncate(at as usize);
-        let at = self.w.push(key & !0x3ff | u32::from(kind), s);
-        self.w.close(at, e);
+        let at = self.w.push_leaf(key & !0x3ff | u32::from(kind), s, e);
         self.set_made(at as u32);
         Ok(())
     }
@@ -2240,10 +2236,7 @@ impl<'a, L: Layout> P<'a, L> {
         if at == NONE {
             return;
         }
-        let k = self.w.key(at as usize);
-        if k >> 10 & 0x3f == 0 {
-            self.w.set_key(at as usize, k | u32::from(field) << 10);
-        }
+        self.w.set_field(at as usize, 0x3f << 10, u32::from(field) << 10);
     }
 
     /// The node open, a `kind` now.

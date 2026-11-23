@@ -850,6 +850,45 @@ impl<L: Layout> Writer<L> {
         self.mark(node, TAIL_WIDE, tail > 0xffff && end >= from);
     }
 
+    /// A closed leaf at the end, in preorder: `push` and `close` at once, as a token is written (its tail from its start,
+    /// as `insert_leaf`'s). At a chain's node, the two.
+    #[inline(always)]
+    pub fn push_leaf(&mut self, key: u32, start: u32, end: u32) -> usize {
+        if self.n == self.chain_at {
+            let at = self.push(key, start);
+            self.close(at, end);
+            return at;
+        }
+        let at = self.push(key, start);
+        let tail = end.wrapping_sub(start);
+        if tail >= self.wide_from {
+            self.close_marks(at, end, start, start, tail);
+        }
+        let (c, ws) = (self.cell(at), self.layout.widths());
+        Self::put(&mut self.size, c, ws.size, 1);
+        Self::put(&mut self.tail, c, ws.tail, tail);
+        at
+    }
+
+    /// `node`'s key given the bits `field` where its bits `mask` are none (a field set after the node was made, where
+    /// it has none): `key` and `set_key` at once.
+    #[inline]
+    pub fn set_field(&mut self, node: usize, mask: u32, field: u32) {
+        if node == self.chain_at || node < self.base {
+            let k = self.key(node);
+            if k & mask == 0 {
+                self.set_key(node, k | field);
+            }
+            return;
+        }
+        let c = self.cell(node);
+        let k = self.keys[c];
+        if k & mask == 0 {
+            self.uncode_from(node);
+            self.keys[c] = k | field;
+        }
+    }
+
     /// `node`'s key changed (a field set after it was made, a kind found later).
     #[inline]
     pub fn set_key(&mut self, node: usize, key: u32) {
@@ -1677,6 +1716,45 @@ mod tests {
             };
             assert_eq!(build(false), build(true), "{places:?} over {n}");
         }
+    }
+
+    /// A leaf written at once (`push_leaf`) and a field set where there is none (`set_field`) give the tape `push` and
+    /// `close`, and `key` and `set_key`, give: wide tails among the leaves, a field set where one is and where none is.
+    #[test]
+    fn a_leaf_at_once_and_a_field_are_the_calls_they_join() {
+        let src = vec![b' '; 200_000];
+        let build = |joined: bool| {
+            let mut w = Widths::guess(src.len());
+            loop {
+                let mut o = Writer::new(1, w, 8);
+                let r = o.push(key(1, 0, 0), 0);
+                for i in 0..40u32 {
+                    let (s, e) = (10 * i, if i % 7 == 3 { 10 * i + 70_000 } else { 10 * i + 3 });
+                    let k = key(2 + (i % 3) as u16, if i % 5 == 0 { 3 } else { 0 }, 0);
+                    let x = if joined {
+                        o.push_leaf(k, s, e)
+                    } else {
+                        let x = o.push(k, s);
+                        o.close(x, e);
+                        x
+                    };
+                    let field = u32::from(1 + (i % 4) as u16) << 10;
+                    if joined {
+                        o.set_field(x, 0x3f << 10, field);
+                    } else if o.key(x) >> 10 & 0x3f == 0 {
+                        let k = o.key(x);
+                        o.set_key(x, k | field);
+                    }
+                }
+                o.close(r, 199_999);
+                o.commit();
+                match o.finish(&src) {
+                    Ok(t) => break decode(&t).unwrap(),
+                    Err(Redo(wider)) => w = wider,
+                }
+            }
+        };
+        assert_eq!(build(false), build(true));
     }
 
     /// A leaf put in later, between closed nodes (`insert_leaf`), gives the tape written in order.

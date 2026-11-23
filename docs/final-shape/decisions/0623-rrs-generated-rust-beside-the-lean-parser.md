@@ -365,3 +365,18 @@ away, keeps its window function. The windows past the block, which a token's rea
 The pairs mask (`w_pair_6`) is now made in the vectors too: each pair's two equality tests joined (`S::and`), the
 pairs joined (`S::or`), then one mask, as lean's `pair`. It made two 64-bit masks a pair before. Built side by side on
 spark1, A/B in turns, tier 1 is the same (16.9 ms): the optimizer had already joined them. It stays for the shape.
+
+## Tier 2 writes a leaf, and sets a field, in one writer call (done)
+
+A token tier 2 takes was a leaf in two writer calls, `push` then `close`. A field set on the node made last was two,
+`key` then `set_key`. Each call checks again whether the node is a held chain's (`chain_at`) or before the window
+(`base`), and the leaf's size column was written twice. The writer now has `push_leaf`, a closed leaf at the end (its
+tail from its start, as `insert_leaf`'s), and `set_field`, the field's bits where the key holds none. Each checks the
+chain and the window once, and takes the two calls where the node is a chain's or before the window. Tier 2's leaves
+(`tk`, `merge`, the comments `flush` and `settle` write) and `field_made` use them. A test
+(`a_leaf_at_once_and_a_field_are_the_calls_they_join`) gives the same tape both ways, wide tails included.
+
+Built side by side on spark1 and run in turns, three rounds each, tier 2 went from 34.1–37.6 ms to 32.7–33.1 ms (the
+JIT's: 32.9 ms). Kotlin's file uses them the same way.
+
+`rr_parser`'s 52 library tests, `kotlin_parser`'s 70 and `rerail-tape-format`'s 43 pass.
