@@ -92,7 +92,18 @@ export async function runCommand(command: string, args: readonly string[], optio
     cancelStop();
     reject(error);
   });
-  child.once("exit", (code, signal) => {
+  // Node reports `exit` before the output pipes are read to their end, so the answer waits for `close`. A process the
+  // command started and left running holds them open as long as it runs: past `KILL_GRACE_MS` after `exit` they are
+  // closed, so `close` comes with what the command printed by then.
+  let unheld: NodeJS.Timeout | undefined;
+  child.once("exit", () => {
+    unheld = setTimeout(() => {
+      child.stdout.destroy();
+      child.stderr.destroy();
+    }, KILL_GRACE_MS);
+  });
+  child.once("close", (code, signal) => {
+    clearTimeout(unheld);
     cancelStop();
     const detail = cleanCommandError(stderr || stdout);
     if (timedOut) {

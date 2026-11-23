@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
 
-import { cleanCommandError, CommandTimeoutError, environmentForNode, runCommand, runNpm, windowsNpmCliPath } from "../../src/runtime/npm.js";
+import { cleanCommandError, CommandTimeoutError, environmentForNode, KILL_GRACE_MS, runCommand, runNpm, windowsNpmCliPath } from "../../src/runtime/npm.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { fromDriveRoot, fullyQualified } from "../support/platform/windows-paths.js";
 
@@ -49,7 +49,10 @@ describe("runNpm on Windows", () => {
     const node = fullyQualified(join(await binDirectory("node.exe"), "node.exe"));
     vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
       const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
-      process.nextTick(() => child.emit("exit", 0, null));
+      process.nextTick(() => {
+        child.emit("exit", 0, null);
+        child.emit("close", 0, null);
+      });
       return child as unknown as childProcess.ChildProcess;
     });
     Object.defineProperty(process, "platform", { ...platform, value: "win32" });
@@ -66,7 +69,10 @@ describe("runNpm on Windows", () => {
     const binaries = await binDirectory("node.exe");
     vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
       const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
-      process.nextTick(() => child.emit("exit", 0, null));
+      process.nextTick(() => {
+        child.emit("exit", 0, null);
+        child.emit("close", 0, null);
+      });
       return child as unknown as childProcess.ChildProcess;
     });
     Object.defineProperty(process, "platform", { ...platform, value: "win32" });
@@ -83,7 +89,10 @@ describe("runNpm on Windows", () => {
     vi.stubEnv("npm_execpath", "");
     vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
       const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
-      process.nextTick(() => child.emit("exit", 0, null));
+      process.nextTick(() => {
+        child.emit("exit", 0, null);
+        child.emit("close", 0, null);
+      });
       return child as unknown as childProcess.ChildProcess;
     });
     await inFolder(bin, async () => {
@@ -166,6 +175,22 @@ describe("runCommand", () => {
     const script = "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1_000)";
     await expect(runCommand(process.execPath, ["-e", script], { timeoutMs: 500 })).rejects.toThrow(CommandTimeoutError);
     expect(Date.now() - started).toBeLessThan(12_000);
+  }, 20_000);
+
+  it("answers with what the command printed after it exited, through a process it left running", async () => {
+    // The command exits at once; the process it started writes to the same output a moment later.
+    const script = "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => process.stdout.write(\\'late\\'), 300)'], { stdio: 'inherit' }).unref(); process.stdout.write('early ')";
+
+    await expect(runCommand(process.execPath, ["-e", script])).resolves.toEqual({ stdout: "early late", stderr: "" });
+  });
+
+  it("answers soon after the command exits when a process it left running keeps its output open", async () => {
+    const script = "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 12_000)'], { stdio: 'inherit' }).unref(); process.stdout.write('done')";
+    const started = Date.now();
+
+    await expect(runCommand(process.execPath, ["-e", script])).resolves.toEqual({ stdout: "done", stderr: "" });
+
+    expect(Date.now() - started).toBeLessThan(KILL_GRACE_MS + 5_000);
   }, 20_000);
 
   it("leaves a command that finishes in time alone", async () => {

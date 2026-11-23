@@ -1,0 +1,1 @@
+On a busy machine, `rerail update` could now and then lose what npm printed, and then warn that it could not check a rule pack for a newer version ("Unexpected end of JSON input"). Rerail now reads npm's whole answer before it goes on.
