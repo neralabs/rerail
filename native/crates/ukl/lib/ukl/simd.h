@@ -110,3 +110,23 @@ UKL_INLINE ukl_mask_t ukl_sg_match(uint32_t v __UKL_PARAMS) { return ukl_sg_matc
 
 // Lane `from`'s value, in every lane.
 UKL_INLINE uint32_t ukl_sg_broadcast(uint32_t v, uint32_t from __UKL_PARAMS) { return ukl_sg_shuffle(v, from __UKL_ARGS); }
+
+// The thread's place in the order the SIMD groups start: lane 0 takes a ticket for the group's lanes from `counter`
+// (one atomic add a group, zero before the launch), every lane gets it plus its own lane, so a group started later
+// has later places. A kernel that reads what earlier places wrote (a look-back) finds it written more often. Where
+// the groups run in their ids' order (the CPU's backends, a group's chunks in turn), the place is the thread's id and
+// no ticket is taken. Every thread of the launch calls it once, before any returns: the places are then the
+// launch's threads, each once.
+#if defined(UKL_VEC) || defined(UKL_CPU)
+// A macro, so the id stays what it is (consecutive lanes) and the lane is not computed.
+#define ukl_sg_ticket(counter, gid, lane) (gid)
+#else
+UKL_INLINE uint32_t ukl_sg_ticket(UKL_GLOBAL uint32_t* counter, uint32_t gid, uint32_t lane __UKL_PARAMS)
+{
+    (void)gid;
+    uint32_t t = 0u;
+    if (lane == 0u)
+        t = ukl_atomic_add(counter, UKL_SIMD_WIDTH);
+    return ukl_sg_shuffle(t, 0u __UKL_ARGS) + lane;
+}
+#endif

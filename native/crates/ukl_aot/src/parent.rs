@@ -73,6 +73,26 @@ pub unsafe fn run(group: crate::Kernel, d: &Doc, block: u32) -> Vec<u32> {
     out
 }
 
+/// Spike: `parent_back` (a look-back, no barrier) as Rust over `d`'s nodes in groups of `block` threads, `out` all
+/// `NOT_READY` before it, the ticket 0. Each node's parent.
+///
+/// # Safety
+///
+/// `back` is a kernel of `parent_back`'s arguments.
+pub unsafe fn run_back(back: crate::Kernel, d: &Doc, block: u32) -> Vec<u32> {
+    let mut out = vec![0xFFFF_FFFEu32; d.nodes() as usize];
+    let mut ticket = 0u32;
+    let (tp, vp) = (d.bytes.as_ptr(), (&raw const d.view).cast::<u8>());
+    let (op, kp) = (out.as_mut_ptr().cast::<u8>().cast_const(), (&raw mut ticket).cast::<u8>().cast_const());
+    let (counts, first): (*const u32, u32) = (std::ptr::null(), 0);
+    let args = ParentArgs { nodes: d.nodes(), pad0: 0, pad1: 0, pad2: 0 };
+    let p = |x: &*const u8| (&raw const *x).cast::<u8>();
+    let (a, c, f) = ((&raw const args).cast::<u8>(), (&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>());
+    unsafe { crate::launch(back, &[p(&tp), p(&vp), p(&op), p(&kp), a, c, f], d.nodes().div_ceil(block), block) };
+    out
+}
+
+
 /// A generator of JSON texts, the same from the same seed.
 pub struct Gen(u64);
 

@@ -23,6 +23,12 @@ rayon-core = { path = "native/vendor/rayon-core-1.13.0" }
 [profile.dev.package."*"]
 opt-level = 3
 
+# The kernels' Rust as rerail-ukl-vec writes it (`rerail-ukl-aot`, decision 0567): register-resident NEON, every
+# function `#[inline(always)]`. Unoptimized, each inlined call's temporaries are one frame's, which overflows a test
+# thread's stack, and it is not the code under test.
+[profile.dev.package.rerail-ukl-aot]
+opt-level = 3
+
 # simdjson's tree (`rerail-simdjson`) runs a step per token of every JSON file: optimized as a dependency's code.
 [profile.dev.package.rerail-simdjson]
 opt-level = 3

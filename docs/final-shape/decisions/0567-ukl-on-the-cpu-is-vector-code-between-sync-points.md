@@ -441,6 +441,54 @@ three slot reads a node against about one. And only the heads work in the loop, 
 rounds as the chunk's longest chain: the threads a node keep the lanes busy, the threads a chain leave them idle.
 The kernel and its Rust are removed; `parent_group` stays the one parent kernel.
 
+## Step 3, a spike: a look-back, no barrier (the user's, 2026-11-22)
+
+The user: "what exactly is shared? and what happens if no other thread produces it? How do we ensure that each step
+is calculated exactly once? Why would we stop and wait for coordination rather than just take what is already
+calculated?", then "yes, please do / on the GPU, we can ensure rising order by making waves each take a ticket (once
+per wave, not 32 times) via an atomic add".
+
+`parent_group` shares a group's steps, and only those: a chain that leaves the group recomputes its tail, each
+thread of it apart, and the barrier is there only because threadgroup memory starts as garbage. A step is the same
+whoever computes it, so it needs computing at least once, not exactly once, and nothing needs to wait.
+`parent_back` (`kernels/f16_parent.uglykl`) is the look-back:
+
+- **`out` is the shared word, every node's**: `NOT_READY` before the launch (`parent_back_clear`), then the node's
+  step (its parent, or `LINKED | j`), then its parent. A thread stores its step first, then follows its links
+  through the words: a parent ends the chase, a link hops on, and only `NOT_READY` is a step computed again. Every
+  word a reader sees is true, so a stale one costs a step, never a wrong parent. (With final parents alone shared,
+  numbers' links, each to the node before, all in the same 8 lanes, were recomputed back to the chunk's start: 1,785
+  instructions a node.)
+- **A thread's place is its SIMD group's ticket** (`ukl_sg_ticket`, `<ukl/simd.h>`): lane 0 takes one atomic add of
+  the group's width and shuffles it to the lanes, so groups started later hold later nodes and look back at nodes
+  mostly written. On the CPU's backends, whose groups and chunks run in their ids' order, it is the id (a macro,
+  so the lanes stay consecutive). The node's work is a function of its place (`parent_back_node`): a local
+  variable assigned the id would be each lane's in `rs.rs`, a parameter keeps the shape.
+- `rs.rs`: a store of lanes' values at one address, seen in a pass before a call's result is found to be each
+  lane's, is an error only if the passes settle with it.
+- `rerail-ukl-aot` builds at opt-level 3 in dev: unoptimized, the generated Rust's inlined calls overflowed a test
+  thread's stack.
+
+Its Rust matches the host's on every node of the test documents at every group size. This Mac at load 7–11:
+
+| Instructions, cycles a node | records (1.4 M nodes) | numbers (40 k) | random (107 k) |
+|---|---|---|---|
+| The host's read | 105, 18 | 479, 88 | 132, 33 |
+| `parent_group` | 114, 29 | 377, 90 | 134, 40 |
+| `parent_back` (its `NOT_READY` fill counted) | 60, 16 | 334, 76 | 84, 25 |
+
+Metal, an M3, the GPU's clock, every node checked against the host's:
+
+| | records | numbers (200 k) | random (107 k) |
+|---|---|---|---|
+| `parent_group` | 0.400 ms | 0.127 ms | 0.064 ms |
+| `parent_back`: the clear, then the launch | 0.540 ms | 0.127 ms | 0.061 ms |
+| the clear alone | 0.121 ms | 0.022 ms | 0.014 ms |
+
+On the CPU the look-back is the fastest form yet on all three, the two launches' too (71, 345, 92 instructions).
+On Metal its launch alone is at or under `parent_group`'s, and the clear (a write of every node's word) is what
+puts it behind on records.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one

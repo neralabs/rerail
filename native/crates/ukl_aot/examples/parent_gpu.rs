@@ -92,4 +92,21 @@ fn main() {
     time("group", &|q| {
         launch(q, f).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).value("args", &args).run(&groups, &[256]).unwrap();
     });
+    // The look-back: its words cleared (`NOT_READY`, the ticket 0), then the launch; and the clear alone.
+    let ticket = alloc::<u32>(1).unwrap();
+    let (clear, back) = (p.function("parent_back_clear").unwrap(), p.function("parent_back").unwrap());
+    time("back", &|q| {
+        launch(q, clear).buffer("out", &out).buffer("ticket", &ticket).value("args", &args).run(&groups, &[256]).unwrap();
+        launch(q, back).buffer("tape", &tb).buffer("view", &vb).buffer("out", &out).buffer("ticket", &ticket).value("args", &args).run(&groups, &[256]).unwrap();
+    });
+    let mut t = Vec::new();
+    for k in 0..10 {
+        launch(&q, clear).buffer("out", &out).buffer("ticket", &ticket).value("args", &args).run(&groups, &[256]).unwrap();
+        let e = q.flush();
+        e.await_().unwrap();
+        if k > 0 {
+            t.push(e.gpu_seconds() * 1e3);
+        }
+    }
+    println!("{backend}: {:>12}: {:>8.3} ms", "back's clear", median(t));
 }

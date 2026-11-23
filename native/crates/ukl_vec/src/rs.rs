@@ -229,6 +229,9 @@ struct Em<'a> {
     /// The kernel's threadgroup memory, if it has any: the argument number it is named by (`arg{k}`, after the
     /// launch's), as a buffer.
     shared: Option<u32>,
+    /// What this pass could not write, which a later pass may (a call's result it finds of each lane): an error if the
+    /// passes settle with it.
+    pending: Option<String>,
 }
 
 /// Kernel `name`'s vector tape `k` as Rust at `w` lanes (4, 8, 16 or 32): a module's text, its entry
@@ -244,7 +247,7 @@ pub fn kernel(k: &crate::vector::Kernel, w: u32) -> R<String> {
             bodies.insert(v.w(i, 0), i);
         }
     }
-    let mut e = Em { v, w, p: w / 4, bodies, lanes: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), risky: false, risky_insts: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new(), shared: None };
+    let mut e = Em { v, w, p: w / 4, bodies, lanes: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), risky: false, risky_insts: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new(), shared: None, pending: None };
     if e.v.len() > 0 && e.v.kind(0) == Kind::Func && e.v.w(0, 2) > 0 {
         e.shared = Some(e.v.w(0, 4));
     }
@@ -260,6 +263,7 @@ pub fn kernel(k: &crate::vector::Kernel, w: u32) -> R<String> {
         e.n = 0;
         e.seen.clear();
         e.writes.clear();
+        e.pending = None;
         e.module(&k.name)?;
         // The buffers only their own threads write: none written where the writes' buffer is not known.
         let mut d: std::collections::BTreeSet<u32> = e.writes.iter().filter_map(|w| w.0).collect();
@@ -278,6 +282,9 @@ pub fn kernel(k: &crate::vector::Kernel, w: u32) -> R<String> {
     }
     if e.again {
         return err("the variables' lanes did not settle");
+    }
+    if let Some(p) = e.pending.take() {
+        return err(p);
     }
     Ok(std::mem::take(&mut e.out))
 }
@@ -2321,7 +2328,11 @@ impl Em<'_> {
             V::S(s, _) => {
                 let x = match x {
                     V::S(e, xm) => conv(e, *xm, m),
-                    _ => return err("a store of lanes' values at one address"),
+                    _ => {
+                        // An address this pass takes for one value, a call's result a later pass may find each lane's.
+                        self.pending.get_or_insert_with(|| "a store of lanes' values at one address".into());
+                        return Ok(());
+                    }
                 };
                 self.line(format!("({s} as *mut {}).write_unaligned({x});", scalar(m)?));
                 Ok(())

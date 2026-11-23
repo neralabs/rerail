@@ -140,9 +140,12 @@ fn the_kernels_rust_parent_is_the_hosts() {
     for d in crate::parent::documents(&lang) {
         let want = crate::parent::scalar(&d);
         for block in [8, 20, 32, 36, 256] {
-            let got = unsafe { crate::parent::run(crate::parent_group_w8::parent_group_w8, &d, block) };
-            if let Some(i) = (0..want.len()).find(|&i| got[i] != want[i]) {
-                panic!("{} ({} nodes), groups of {block}: node {i}'s parent {} (the host's {})", d.name, want.len(), got[i], want[i]);
+            let group = unsafe { crate::parent::run(crate::parent_group_w8::parent_group_w8, &d, block) };
+            let back = unsafe { crate::parent::run_back(crate::parent_back_w8::parent_back_w8, &d, block) };
+            for (name, got) in [("group", group), ("back", back)] {
+                if let Some(i) = (0..want.len()).find(|&i| got[i] != want[i]) {
+                    panic!("{name}: {} ({} nodes), groups of {block}: node {i}'s parent {} (the host's {})", d.name, want.len(), got[i], want[i]);
+                }
             }
         }
     }
