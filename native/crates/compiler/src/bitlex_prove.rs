@@ -39,16 +39,20 @@ const BEFORE: u16 = 256;
 /// The tries per byte of the position.
 const BUDGET: u32 = 1 << 12;
 
-/// The provers' work left to a compile, shared by every prover it makes (decision 0637): a
+/// The provers' work left to a compile, shared by every prover it makes (decision 0646): a
 /// count of steps (a search's try, a solver's conflict, a window's variable), so a compile's
 /// answers are the same on any machine and under any load, sized to about a second of proving.
 /// Spent, a prover stops with its sound answer (not proved), as past its own limits.
+///
+/// A question takes at most a 16th of it (decision 0650, [`Proofs::ask`]): the steps below its
+/// floor are not its. One hard question (an induction of 100,000 conflicts a solve)
+/// took all of Kotlin's, and every question after it was answered not proved.
 #[derive(Clone, Debug)]
-pub struct Budget(std::sync::Arc<std::sync::atomic::AtomicU64>);
+pub struct Budget(std::sync::Arc<(std::sync::atomic::AtomicU64, std::sync::atomic::AtomicU64, u64)>);
 
 impl Budget {
     pub fn new(steps: u64) -> Self {
-        Budget(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(steps)))
+        Budget(std::sync::Arc::new((std::sync::atomic::AtomicU64::new(steps), std::sync::atomic::AtomicU64::new(0), steps / 16)))
     }
 
     /// No limit: a question asked apart from a compile (the provers' own tests).
@@ -56,15 +60,35 @@ impl Budget {
         Budget::new(u64::MAX)
     }
 
+    fn total(&self) -> u64 {
+        self.0.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn floor(&self) -> u64 {
+        self.0.1.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The steps left to the question being asked (to the compile, outside one).
     pub fn left(&self) -> u64 {
-        self.0.load(std::sync::atomic::Ordering::Relaxed)
+        self.total().saturating_sub(self.floor())
     }
 
     /// `n` steps taken: whether any were left.
     pub fn spend(&self, n: u64) -> bool {
         let left = self.left();
-        self.0.store(left.saturating_sub(n), std::sync::atomic::Ordering::Relaxed);
+        self.0.0.store(self.total().saturating_sub(n.min(left)), std::sync::atomic::Ordering::Relaxed);
         left > 0
+    }
+
+    /// Run `f` as one question: within a 16th of the compile's budget (and within the floor of
+    /// the question it is asked in, if any). Unlimited, unlimited.
+    fn question<T>(&self, f: impl FnOnce() -> T) -> T {
+        let before = self.floor();
+        let floor = before.max(self.total().saturating_sub(self.0.2));
+        self.0.1.store(floor, std::sync::atomic::Ordering::Relaxed);
+        let out = f();
+        self.0.1.store(before, std::sync::atomic::Ordering::Relaxed);
+        out
     }
 }
 
@@ -482,6 +506,55 @@ pub fn first_bytes_in(work: &Budget, ops: &[BlockOp], tables: &[ClassTable], v: 
     out
 }
 
+/// Two values (an operation and its delay) proved never to hold at one byte.
+pub type Apart = ((u16, u8), (u16, u8));
+
+/// Whether `v` is zero by its shape alone (decision 0650): of its conjuncts (through `And`,
+/// `AndNot` and `Prev`), one is a disjunct (through `Or` and `Prev`) of a negated one at the same
+/// lag, as a region's content row is its body less every part's bytes and a part's row is one of
+/// those parts. A conjunct `prev(x, k)` holding says `x` holds `k` bytes back, in the stream, so
+/// each is an operation at a lag. Or two of its conjuncts are a pair `apart` at one byte (two
+/// regions' fills). No proof, no window.
+pub fn never_by_shape(ops: &[BlockOp], apart: &[Apart], v: u16) -> bool {
+    let (mut pos, mut neg, mut todo) = (HashSet::default(), Vec::new(), vec![(v, 0u32)]);
+    while let Some((x, l)) = todo.pop() {
+        // Every conjunct holds, a whole part's start as well as its own conjuncts.
+        if !matches!(ops[usize::from(x)], BlockOp::Const(_)) && !pos.insert((x, l)) {
+            continue;
+        }
+        match ops[usize::from(x)] {
+            BlockOp::And(a, b) => todo.extend([(a, l), (b, l)]),
+            BlockOp::AndNot(a, b) => {
+                todo.push((a, l));
+                neg.push((b, l));
+            }
+            BlockOp::Not(a) => neg.push((a, l)),
+            BlockOp::Prev(a, k) => todo.push((a, l + u32::from(k))),
+            // A constant is no byte's: it says nothing of a lag before the stream.
+            _ => {}
+        }
+    }
+    // A value at delay `d` read at lag `l` is the byte `l + d` back from the question's value.
+    for &((a, da), (b, db)) in apart {
+        let byte = |x: u16, d: u8| pos.iter().filter(move |&&(y, _)| y == x).map(move |&(_, l)| l + u32::from(d));
+        if byte(a, da).any(|p| byte(b, db).any(|q| q == p)) {
+            return true;
+        }
+    }
+    let mut leaves = neg;
+    while let Some((x, l)) = leaves.pop() {
+        if pos.contains(&(x, l)) {
+            return true;
+        }
+        match ops[usize::from(x)] {
+            BlockOp::Or(a, b) => leaves.extend([(a, l), (b, l)]),
+            BlockOp::Prev(a, k) => leaves.push((a, l + u32::from(k))),
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Whether a value is zero at every byte of every stream, proved: `first_bytes` empty, stopped
 /// at the first class of bytes not proved (most questions fail, and fail early).
 pub fn never(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
@@ -609,7 +682,7 @@ impl Proofs {
         // `RERAIL_PROVING_TRACE`: each question proved, its work and time, on stderr.
         let trace = std::env::var_os("RERAIL_PROVING_TRACE").is_some();
         let (before, t) = (self.work.left(), std::time::Instant::now());
-        let a = f();
+        let a = self.work.question(f);
         if trace {
             let head = text.iter().position(|&b| b == b'\n').map_or(&text[..text.len().min(80)], |i| &text[..i.min(80)]);
             eprintln!("ask {:>10} steps {:>9.1} ms {}", before - self.work.left(), t.elapsed().as_secs_f64() * 1e3, String::from_utf8_lossy(head));
@@ -1551,6 +1624,50 @@ mod tests {
         let mut p = Proofs { known, made: Vec::new(), used: Vec::new(), work: Budget::unlimited() };
         assert_eq!(p.ask(key(&a, 2, 0), || Answer::Never(false)), Answer::Never(true));
         assert!(p.made.is_empty(), "a known answer proved again");
+    }
+
+    /// A value never set by its shape: a part's start under a body less the parts (through
+    /// `prev`, at its lag), and two fills proved apart; not where the lags differ (decision 0650).
+    #[test]
+    fn values_never_by_their_shape() {
+        // 0 `x`, 1 `y`, 2 `x | y` (the parts), 3 `prev(x)`, 4 a body, 5 the body less the parts
+        // (a content row), 6 `prev` of it.
+        let mut ops = vec![BlockOp::Eq(b'x'), BlockOp::Eq(b'y'), BlockOp::Or(0, 1), BlockOp::Prev(0, 1), BlockOp::Eq(b'b'), BlockOp::AndNot(4, 2), BlockOp::Prev(5, 1)];
+        let at = |ops: &mut Vec<BlockOp>, op: BlockOp| {
+            ops.push(op);
+            (ops.len() - 1) as u16
+        };
+        // The content row at a part's byte: never.
+        let v = at(&mut ops, BlockOp::And(5, 1));
+        assert!(never_by_shape(&ops, &[], v));
+        // A byte later, through `prev` on both sides: never.
+        let v = at(&mut ops, BlockOp::And(6, 3));
+        assert!(never_by_shape(&ops, &[], v));
+        // At a byte the parts are not read at: not by shape.
+        let v = at(&mut ops, BlockOp::And(5, 3));
+        assert!(!never_by_shape(&ops, &[], v));
+        // Two values proved apart: `x` a byte back at delay 0 and `y` here at delay 1 are one
+        // byte; at delay 0 both, two.
+        let v = at(&mut ops, BlockOp::And(3, 1));
+        assert!(never_by_shape(&ops, &[((0, 0), (1, 1))], v));
+        assert!(!never_by_shape(&ops, &[((0, 0), (1, 0))], v));
+    }
+
+    /// A question takes a 16th of the budget at most: past it, it is not proved, and the next
+    /// question has the rest (decision 0650).
+    #[test]
+    fn a_question_takes_its_share() {
+        let work = Budget::new(1600);
+        let mut p = Proofs { known: HashMap::default(), made: Vec::new(), used: Vec::new(), work: work.clone() };
+        let spent = |w: &Budget| {
+            while w.spend(1) {}
+            Answer::Never(false)
+        };
+        p.ask(b"one".to_vec(), || spent(&work));
+        assert_eq!(work.left(), 1500, "a question spent past its share");
+        p.ask(b"two".to_vec(), || spent(&work));
+        assert_eq!(work.left(), 1400);
+        assert_eq!(Budget::unlimited().left(), u64::MAX);
     }
 
     fn class(set: &[u8]) -> (ClassTable, BlockOp) {

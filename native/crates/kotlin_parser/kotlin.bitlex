@@ -132,7 +132,11 @@ mask sq_close   = sq & ~escaped(backslash)
 # the regions say which `}` (a tail opens at a `}` only while a template is open, and a tail
 # closed at its quote ends the string), as the lean lexer reads a template's code.
 mask t_dollar   = dollar & next(lbrace) & ~escaped(bs) & ~prev(esc_dollar)
-mask t_lex      = prev(t_dollar)
+# In a string with the prefix `$$` (decision 0650): `$${`, its last two `$`s and the brace.
+mask t2_dollar  = dollar & next(dollar) & next(lbrace, 2) & ~escaped(bs) & ~prev(esc_dollar)
+# A `"` after `$$`: a string with that prefix, whose templates take two `$`s.
+mask q2         = prev(dollar) & prev(dollar, 2)
+mask t_lex      = prev(t_dollar) | prev(t2_dollar, 2)
 mask t_close    = rbrace
 # A raw string: `"""`, then to the last three quotes of the next run of three or more past it
 # (`bytes 3`, as the lean lexer looks from the opener's end): the opener's run of four or five
@@ -146,15 +150,19 @@ mask rclose     = dq3 & ~next(dq, 3)
 regions hidden nests lbrace .. rbrace depth 4 else t_deep {
   line  = line_open .. lf outside
   block = block_open .. block_end nests 3 else c_deep
-  rstr  = dq3 bytes 3 .. rclose bytes 3 or t_dollar
-  str   = dq & ~dq3 .. dq_close or t_dollar
+  rstr  = dq3 & ~q2 bytes 3 .. rclose bytes 3 or t_dollar
+  str   = dq & ~dq3 & ~q2 .. dq_close or t_dollar
+  rstr2 = dq3 & q2 bytes 3 .. rclose bytes 3 or t2_dollar bytes 2
+  str2  = dq & ~dq3 & q2 .. dq_close or t2_dollar bytes 2
   chr   = sq .. sq_close
   tick  = bt .. bt
   tail  = t_close .. dq_close or t_dollar resumes str
   rtail = t_close .. rclose bytes 3 or t_dollar resumes rstr
+  tail2 = t_close .. dq_close or t2_dollar bytes 2 resumes str2
+  rtail2 = t_close .. rclose bytes 3 or t2_dollar bytes 2 resumes rstr2
 }
 # Where a token in a region starts: a string's, a character's or a backtick name's opener.
-mask opens      = o_str | o_chr | o_tick | o_tail | o_rstr | o_rtail
+mask opens      = o_str | o_chr | o_tick | o_tail | o_rstr | o_rtail | o_str2 | o_rstr2 | o_tail2 | o_rtail2
 mask region     = hidden | o_line | o_block | opens
 # A template's `{`: its `$`'s token's, not code.
 mask t_brace    = t_lex & prev(hidden) & ~hidden
@@ -166,11 +174,15 @@ mask code       = ~region & ~t_brace
 # no code. A `$` in code is no template's.
 escape "a template's code nested past 4 levels" when t_deep
 # An empty `${}`: a tail opens right after the `{` (a brace's would close at that `}`).
-escape "an empty `${}`" when (o_tail | o_rtail) & prev(lbrace)
-escape "a `$` outside a string" when code & dollar
+escape "an empty `${}`" when (o_tail | o_rtail | o_tail2 | o_rtail2) & prev(lbrace)
+# A string's prefix (`$` or `$$` before its `"`, decision 0650): a token of its own, which the tape
+# leaves out. Three or more are not read.
+mask pre_at     = dollar & next(dq) | dollar & next(dollar) & next(dq, 2)
+escape "a `$` outside a string" when code & dollar & ~pre_at
+escape "a string's prefix of three `$`s or more" when code & dollar & next(dollar) & next(dollar, 2)
 
 error "a block comment open at the end of the file" by tokens when f_block & last_byte
-error "a string open at the end of the file" by tokens when (f_str | f_tail | f_rstr | f_rtail) & last_byte
+error "a string open at the end of the file" by tokens when (f_str | f_tail | f_rstr | f_rtail | f_str2 | f_tail2 | f_rstr2 | f_rtail2) & last_byte
 error "a character open at the end of the file" by tokens when f_chr & last_byte
 error "a backtick name open at the end of the file" by tokens when f_tick & last_byte
 # A character or a backtick name over a line is not read (the lean lexer refuses them). A
@@ -180,12 +192,14 @@ escape "a character or a backtick name over a line" when (f_chr | f_tick) & lf
 # --- Strings -----------------------------------------------------------------------------------
 
 # A raw string's bytes after its `"""`, and a raw tail's after its `}`. No backslash escapes in it.
-mask rbody      = f_rstr & ~o_rstr & ~prev(o_rstr) & ~prev(o_rstr, 2) | f_rtail & ~o_rtail
+mask rbody2     = f_rstr2 & ~o_rstr2 & ~prev(o_rstr2) & ~prev(o_rstr2, 2) | f_rtail2 & ~o_rtail2
+mask rbody      = f_rstr & ~o_rstr & ~prev(o_rstr) & ~prev(o_rstr, 2) | f_rtail & ~o_rtail | rbody2
 # A `\$` there is content, and the lean parser's reader passes the byte after it too: before a
 # quote it ends the string after that one quote, and a `$` after it starts no template. Those
 # are not read.
 escape "a `\$` before a quote or a `$` in a raw string" when rbody & dollar & escaped(backslash) & next(dq | dollar)
-mask body       = f_str & ~o_str | f_tail & ~o_tail | rbody
+mask body2      = f_str2 & ~o_str2 | f_tail2 & ~o_tail2 | rbody2
+mask body       = f_str & ~o_str | f_tail & ~o_tail | rbody | body2
 # A `$` where `esc0` and `esc_dollar` differ, before a backslash (`\$\\$\`): `bs` does not say
 # whether that backslash escapes. Not read.
 escape "a `\$` after a `\$` and backslashes" when body & ~rbody & (esc0 & ~esc_dollar | esc_dollar & ~esc0) & next(backslash)
@@ -194,26 +208,41 @@ mask s_dollar   = body & dollar & ~escaped(bs) & ~prev(esc_dollar)
 # `$name`: the `$`, then the name to its last word byte. The lean parser starts a name at any
 # letter past ASCII, and its lexer refuses one it is not sure of: past ASCII, only `uni` is read,
 # so in a file read a name's byte past ASCII is a letter's (`high`, as in code).
-mask id_dollar  = s_dollar & next(alpha | high)
+mask s1         = s_dollar & ~body2
+mask id_dollar  = s1 & next(alpha | high)
 mask id_last    = s_word & ~next(s_word)
 escape "a template's name with a byte past ASCII, not a name's letter" when fill(id_dollar, ~s_word) & high & ~uni
 # A `$` before no name: a content token of its own, the content after it another.
-mask lone       = s_dollar & ~next(alpha | high)
+mask lone       = s1 & ~next(alpha | high)
 # A run of `$`s, as the lean parser's reader reads it: where a template starts after it, each `$`
 # before the template's a content token of its own; where none does, the run one token
 # (decision 0636). Runs of up to four are told apart; longer ones are not read.
 mask d_start    = alpha | high | lbrace
-mask t_run      = s_dollar & (next(d_start) | next(dollar) & next(d_start, 2) | next(dollar) & next(dollar, 2) & next(d_start, 3) | next(dollar) & next(dollar, 2) & next(dollar, 3) & next(d_start, 4))
+mask t_run      = s1 & (next(d_start) | next(dollar) & next(d_start, 2) | next(dollar) & next(dollar, 2) & next(d_start, 3) | next(dollar) & next(dollar, 2) & next(dollar, 3) & next(d_start, 4))
 escape "a run of five `$`s or more in a string" when s_dollar & next(dollar) & next(dollar, 2) & next(dollar, 3) & next(dollar, 4)
 mask d_run      = lone & ~next(lbrace) & ~t_run
 mask lone1      = lone & ~d_run
 mask d_first    = d_run & ~prev(d_run)
 mask d_last     = d_run & ~next(d_run)
+# In a string with the prefix `$$`, as the lean parser's reader counts a run against its prefix: a
+# run of at least two whose template starts after it is its extra `$`s, each a content token, and
+# the template's two (`id2`, or the closer `t2_dollar`); any other run, one content token. Runs
+# of up to four.
+mask s2         = s_dollar & body2
+mask id2        = s2 & next(dollar) & next(alpha | high, 2)
+mask id2l       = s2 & prev(s2) & next(alpha | high)
+mask extra2     = s2 & next(dollar) & next(dollar, 2) & (next(d_start, 3) | next(dollar, 3) & next(d_start, 4))
+mask d_run2     = s2 & ~extra2 & ~id2 & ~id2l & ~t2_dollar & ~prev(t2_dollar)
+mask d2_first   = d_run2 & ~prev(d_run2)
+mask d2_last    = d_run2 & ~next(d_run2)
+# A template name's `$` in either string, and the name after it.
+mask id_any     = id_dollar | id2l
+mask id_name    = fill(prev(id_any), prev(id_last))
 # A line string's `\$` before its quote: the lean parser's reader ends the string at that quote
 # and writes no content of the piece before it (decision 0636). Its backslash, a part's start:
 # `esc_qd` where a byte of content is before it (the piece's, a content token), else `esc_q`.
 mask esc_q_at   = body & ~rbody & next(esc_dollar & next(dq))
-mask gap_byte   = body & ~fill(prev(id_dollar), prev(id_last)) & ~id_dollar & ~lone
+mask gap_byte   = body & ~id_name & ~id_dollar & ~lone & ~s2
 
 # --- Characters --------------------------------------------------------------------------------
 
@@ -364,12 +393,13 @@ token bin_literal = start bin_at run prev(bin_at) | bx
 # after the run it read, looking for `"""`), or to a template: each run is a part of its own, to
 # the first of a run of quotes' last quote and its own last byte (`r_end`).
 mask r_q        = rbody & dq & ~next(dq)
-mask r_id       = fill(prev(id_dollar), prev(id_last))
-mask r_stop     = ~rbody | r_q | id_dollar | lone | r_id
+mask r_id       = id_name
+mask r_dol      = id_dollar | lone | s2
+mask r_stop     = ~rbody | r_q | r_dol | r_id
 # The quotes of a closing run before its last three (three quotes after each, which only a
 # closing run has in a body): the closer's, as the lean lexer's closer takes the run.
 mask r_lead     = rbody & dq3 & next(dq, 3)
-mask r_x        = rbody & ~id_dollar & ~lone & ~r_id & ~r_lead
+mask r_x        = rbody & ~r_dol & ~r_id & ~r_lead
 mask r_start    = r_x & (~prev(r_x) | prev(r_q))
 mask r_end      = r_x & ~next(r_x)
 # A string: its opener, its parts, and its closer, a `"` or a template's `${`. After the
@@ -377,34 +407,44 @@ mask r_end      = r_x & ~next(r_x)
 # A string and a raw string: one reader at `"` (`read str | rstr`), each region's closer its
 # own. A raw string's `"""` is its opener's byte and a part, `'""'`, for the two after it; its
 # closer is three bytes, of the reader's kind.
-token '"'       = start o_str | o_rstr read str | rstr parts {
-                    '""' = prev(o_rstr) bytes 2
+token '"'       = start o_str | o_rstr | o_str2 | o_rstr2 read str | rstr | str2 | rstr2 parts {
+                    '""' = prev(o_rstr | o_rstr2) bytes 2
                     string_content = r_start last r_q | r_end
                     '""' = r_lead bytes 1
                     interpolation_identifier_start = id_dollar bytes 1
-                    interpolated_identifier = prev(id_dollar) last id_last
+                    interpolated_identifier = prev(id_any) last id_last
                     string_content = lone1 bytes 1
                     string_content = d_first last d_last
                     esc_q = esc_q_at & ~prev(gap_byte) bytes 2
                     esc_qd = esc_q_at & prev(gap_byte) bytes 2
+                    interpolation_identifier_start = id2 bytes 2
+                    string_content = extra2 bytes 1
+                    string_content = d2_first last d2_last
                   } else string_content closes {
                     interpolation_expression_start = t_dollar bytes 2
+                    interpolation_expression_start = t2_dollar bytes 3
                   }
-token interpolation_expression_end = start o_tail | o_rtail read tail | rtail parts {
+token interpolation_expression_end = start o_tail | o_rtail | o_tail2 | o_rtail2 read tail | rtail | tail2 | rtail2 parts {
                     string_content = r_start last r_q | r_end
                     '""' = r_lead bytes 1
                     interpolation_identifier_start = id_dollar bytes 1
-                    interpolated_identifier = prev(id_dollar) last id_last
+                    interpolated_identifier = prev(id_any) last id_last
                     string_content = lone1 bytes 1
                     string_content = d_first last d_last
                     esc_q = esc_q_at & ~prev(gap_byte) bytes 2
                     esc_qd = esc_q_at & prev(gap_byte) bytes 2
+                    interpolation_identifier_start = id2 bytes 2
+                    string_content = extra2 bytes 1
+                    string_content = d2_first last d2_last
                   } else string_content closes {
-                    '"' = dq_close & prev(f_tail) bytes 1
-                    '"' = rclose & prev(f_rtail) bytes 3
+                    '"' = dq_close & prev(f_tail | f_tail2) bytes 1
+                    '"' = rclose & prev(f_rtail | f_rtail2) bytes 3
                     interpolation_expression_start = t_dollar bytes 2
+                    interpolation_expression_start = t2_dollar bytes 3
                   }
 # `\uXXXX`: tree-sitter keeps its `\u` as a token under the escape's node, its digits none.
+# A string's prefix: its `$`s, one token (decision 0650).
+token string_prefix = start code & pre_at & ~prev(dollar) run dollar & next(dq)
 token "'"       = start o_chr read chr parts {
                     "\\u" = c_uesc bytes 2
                     uni_digits = prev(c_uesc, 2) bytes 4
@@ -415,7 +455,7 @@ token backtick_name = start o_tick read tick
 # lean lexer reads its first byte, then the next two.
 pairs two_start = "->" "==" "!=" "<=" "&&" "||" "++" "--" "+=" "-=" "*=" "/=" "%=" "::" "?:" ".." "!!" "===" "!==" "..<"
 mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
-mask p_start    = code & punct & ~second & ~nb
+mask p_start    = code & punct & ~second & ~nb & ~pre_at
 token punct     = start p_start pair two_start
 
 # The hard keywords: no name. (`by` and `constructor` are soft, as in tree-sitter-kotlin.)
@@ -958,7 +998,7 @@ tree kotlin {
   choice interp_soft    = 'expect' | 'data' | 'inner' | 'value' | 'actual' | 'set' | 'get' | 'override' | 'suspend' | 'annotation' | 'sealed' | 'lateinit' | 'tailrec' | 'operator' | 'infix' | 'inline' | 'external' | 'public' | 'private' | 'internal' | 'protected' | 'abstract' | 'final' | 'open' | 'const' | 'vararg' | 'noinline' | 'crossinline' | 'reified' | 'field' | 'property' | 'receiver' | 'param' | 'setparam' | 'delegate' | 'companion' | 'constructor' | 'init' | 'dynamic' | 'where' | 'catch' | 'finally' | 'enum' | 'out'
   # A raw string's `""` after its first quote, and its closing run's quotes before its last
   # three: implied, no leaves.
-  node string_literal   = '"' (string_content | '""' | interpolation_identifier_start interp_id
+  node string_literal   = [string_prefix] '"' (string_content | '""' | interpolation_identifier_start interp_id
                           | interpolation_expression_start interpolated_expression interpolation_expression_end)* [esc_q | drop esc_qd] '"'
   # A `\$` before the quote (`esc_q`, `esc_qd`), and the content of its piece before it (the node
   # `drop` takes): no leaf, as the lean parser's reader writes none (decision 0636).
@@ -1067,7 +1107,7 @@ tree kotlin {
   implied value_arguments '(' ')' ','
   implied this_expression 'this'
   implied this_label 'this' '@'
-  implied string_literal '"' '""' esc_q esc_qd
+  implied string_literal string_prefix '"' '""' esc_q esc_qd
   implied character_literal "'" char_content
   implied uni_escape uni_digits
   implied number_literal 'L' 'u' 'U' 'uL' 'UL'

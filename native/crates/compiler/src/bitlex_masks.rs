@@ -366,6 +366,9 @@ pub struct Lowering {
     pub inside_of: Vec<Option<(String, bool)>>,
     /// Each token's scope, where it is a token inside a region read in parts (`TokenRule::Inside`).
     pub scope_of: Vec<Option<Val>>,
+    /// Values proved never to hold at one byte (`regions_apart`'s fills), each an operation and
+    /// its delay: what `bitlex_prove::never_by_shape` reads of them.
+    pub apart: Vec<bitlex_prove::Apart>,
     pub keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, bool)>,
     /// Each row's soft keywords: a word's kind where the grammar takes it, the row's elsewhere.
     pub soft: Vec<(String, Vec<Vec<u8>>)>,
@@ -560,6 +563,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         inside: Vec::new(),
         inside_of: Vec::new(),
         scope_of: Vec::new(),
+        apart: Vec::new(),
         keywords: Vec::new(),
         skip: None,
         prefix: None,
@@ -1801,6 +1805,9 @@ impl Lowering {
     /// streams `prover` found refuting it first (`Induction::refutes`).
     pub fn either_never(&mut self, prover: &mut bitlex_prove::Induction, x: Val) -> bool {
         let ops = proof_ops(&self.program, &self.prefix);
+        if bitlex_prove::never_by_shape(&ops, &self.apart, x.v) {
+            return true;
+        }
         let tables = &self.program.tables;
         let key = bitlex_prove::question_given(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("either never"), prover.given());
         let work = self.proofs.work.clone();
@@ -5491,6 +5498,7 @@ fn regions_apart(low: &mut Lowering, settled: &mut bitlex_prove::Induction) -> R
         for (a, b, _) in pairs {
             let lag = |x: Val| u32::from(any.d - x.d);
             settled.add_lemma(vec![(a.v, lag(a), true), (b.v, lag(b), true)]);
+            low.apart.push(((a.v, a.d), (b.v, b.d)));
         }
     }
     Ok(())

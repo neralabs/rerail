@@ -267,27 +267,27 @@ pub mod f {
 pub mod t {
     pub const PUNCT: u32 = 0;
     pub const INTERPOLATION_EXPRESSION_END: u32 = 1;
-    pub const REAL_LITERAL: u32 = 2;
-    pub const BIN_LITERAL: u32 = 3;
-    pub const HEX_LITERAL: u32 = 4;
-    pub const INTEGER_LITERAL: u32 = 5;
-    pub const QUOTE: u32 = 6;
-    pub const TICK: u32 = 7;
-    pub const BACKTICK_NAME: u32 = 8;
-    pub const SIMPLE_IDENTIFIER: u32 = 9;
-    pub const INTERPOLATION_EXPRESSION_END_CLOSE: u32 = 10;
-    pub const UNI_DIGITS: u32 = 11;
-    pub const CHARACTER_ESCAPE_SEQ: u32 = 12;
-    pub const CHAR_CONTENT: u32 = 13;
-    pub const BACKSLASH_U: u32 = 14;
-    pub const INTERPOLATED_IDENTIFIER: u32 = 15;
-    pub const INTERPOLATION_EXPRESSION_START: u32 = 16;
-    pub const STRING_CONTENT: u32 = 17;
-    pub const INTERPOLATION_IDENTIFIER_START: u32 = 18;
-    pub const ESC_QD: u32 = 19;
-    pub const ESC_Q: u32 = 20;
-    pub const QUOTE_QUOTE: u32 = 21;
-    pub const QUOTE__CLOSE: u32 = 22;
+    pub const INTERPOLATION_EXPRESSION_START: u32 = 2;
+    pub const STRING_CONTENT: u32 = 3;
+    pub const INTERPOLATION_IDENTIFIER_START: u32 = 4;
+    pub const QUOTE_QUOTE: u32 = 5;
+    pub const INTERPOLATED_IDENTIFIER: u32 = 6;
+    pub const STRING_PREFIX: u32 = 7;
+    pub const REAL_LITERAL: u32 = 8;
+    pub const BIN_LITERAL: u32 = 9;
+    pub const HEX_LITERAL: u32 = 10;
+    pub const INTEGER_LITERAL: u32 = 11;
+    pub const TICK: u32 = 12;
+    pub const QUOTE__CLOSE: u32 = 13;
+    pub const QUOTE: u32 = 14;
+    pub const BACKTICK_NAME: u32 = 15;
+    pub const SIMPLE_IDENTIFIER: u32 = 16;
+    pub const ESC_QD: u32 = 17;
+    pub const ESC_Q: u32 = 18;
+    pub const UNI_DIGITS: u32 = 19;
+    pub const CHARACTER_ESCAPE_SEQ: u32 = 20;
+    pub const CHAR_CONTENT: u32 = 21;
+    pub const BACKSLASH_U: u32 = 22;
     pub const TICK__CLOSE: u32 = 23;
 }
 
@@ -470,7 +470,54 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
             b"\x2e\x2e\x3c" => w::DOT_DOT_LT_48,
             _ => 0,
         },
-        9 => match b {
+        6 => match b {
+            b"expect" => w::EXPECT_108,
+            b"data" => w::DATA_53,
+            b"inner" => w::INNER_86,
+            b"value" => w::VALUE_87,
+            b"actual" => w::ACTUAL_109,
+            b"set" => w::SET_35,
+            b"get" => w::GET_34,
+            b"override" => w::OVERRIDE_88,
+            b"suspend" => w::SUSPEND_24,
+            b"annotation" => w::ANNOTATION_1,
+            b"sealed" => w::SEALED_85,
+            b"lateinit" => w::LATEINIT_89,
+            b"tailrec" => w::TAILREC_95,
+            b"operator" => w::OPERATOR_96,
+            b"infix" => w::INFIX_97,
+            b"inline" => w::INLINE_98,
+            b"external" => w::EXTERNAL_99,
+            b"public" => w::PUBLIC_90,
+            b"private" => w::PRIVATE_91,
+            b"internal" => w::INTERNAL_92,
+            b"protected" => w::PROTECTED_93,
+            b"abstract" => w::ABSTRACT_101,
+            b"final" => w::FINAL_102,
+            b"open" => w::OPEN_103,
+            b"const" => w::CONST_100,
+            b"vararg" => w::VARARG_104,
+            b"noinline" => w::NOINLINE_105,
+            b"crossinline" => w::CROSSINLINE_106,
+            b"reified" => w::REIFIED_107,
+            b"field" => w::FIELD_110,
+            b"property" => w::PROPERTY_111,
+            b"receiver" => w::RECEIVER_112,
+            b"param" => w::PARAM_113,
+            b"setparam" => w::SETPARAM_114,
+            b"delegate" => w::DELEGATE_115,
+            b"companion" => w::COMPANION_30,
+            b"constructor" => w::CONSTRUCTOR_36,
+            b"init" => w::INIT_29,
+            b"dynamic" => w::DYNAMIC_39,
+            b"where" => w::WHERE_28,
+            b"catch" => w::CATCH_58,
+            b"finally" => w::FINALLY_59,
+            b"enum" => w::ENUM_16,
+            b"out" => w::OUT_94,
+            _ => 0,
+        },
+        16 => match b {
             b"as" => w::AS_10,
             b"break" => w::BREAK_63,
             b"class" => w::CLASS_13,
@@ -552,59 +599,12 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
             b"out" => w::OUT_94,
             _ => 0,
         },
-        15 => match b {
-            b"expect" => w::EXPECT_108,
-            b"data" => w::DATA_53,
-            b"inner" => w::INNER_86,
-            b"value" => w::VALUE_87,
-            b"actual" => w::ACTUAL_109,
-            b"set" => w::SET_35,
-            b"get" => w::GET_34,
-            b"override" => w::OVERRIDE_88,
-            b"suspend" => w::SUSPEND_24,
-            b"annotation" => w::ANNOTATION_1,
-            b"sealed" => w::SEALED_85,
-            b"lateinit" => w::LATEINIT_89,
-            b"tailrec" => w::TAILREC_95,
-            b"operator" => w::OPERATOR_96,
-            b"infix" => w::INFIX_97,
-            b"inline" => w::INLINE_98,
-            b"external" => w::EXTERNAL_99,
-            b"public" => w::PUBLIC_90,
-            b"private" => w::PRIVATE_91,
-            b"internal" => w::INTERNAL_92,
-            b"protected" => w::PROTECTED_93,
-            b"abstract" => w::ABSTRACT_101,
-            b"final" => w::FINAL_102,
-            b"open" => w::OPEN_103,
-            b"const" => w::CONST_100,
-            b"vararg" => w::VARARG_104,
-            b"noinline" => w::NOINLINE_105,
-            b"crossinline" => w::CROSSINLINE_106,
-            b"reified" => w::REIFIED_107,
-            b"field" => w::FIELD_110,
-            b"property" => w::PROPERTY_111,
-            b"receiver" => w::RECEIVER_112,
-            b"param" => w::PARAM_113,
-            b"setparam" => w::SETPARAM_114,
-            b"delegate" => w::DELEGATE_115,
-            b"companion" => w::COMPANION_30,
-            b"constructor" => w::CONSTRUCTOR_36,
-            b"init" => w::INIT_29,
-            b"dynamic" => w::DYNAMIC_39,
-            b"where" => w::WHERE_28,
-            b"catch" => w::CATCH_58,
-            b"finally" => w::FINALLY_59,
-            b"enum" => w::ENUM_16,
-            b"out" => w::OUT_94,
-            _ => 0,
-        },
         _ => 0,
     }
 }
 
 /// Each byte's record kind, as a token's first byte (`Records::kinds`).
-const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 23, 11, 12, 13, 14, 16, 22, 17, 18, 15, 19, 20, 21, 1, 3, 4, 2, 0, 0, 6, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 9, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9];
+const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 19, 20, 21, 22, 2, 13, 3, 4, 6, 17, 18, 5, 7, 1, 9, 10, 8, 0, 0, 14, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 0, 0, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 16, 15, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16];
 
 
 /// A record of an extra (a comment): the extra's mark in its code.
@@ -1223,7 +1223,7 @@ impl P<'_> {
                     w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_43 | w::WHILE_45 | w::DO_46 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                         arm = 0;
                     }
-                    _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                    _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                         arm = 0;
                     }
                     _ => {
@@ -1656,7 +1656,7 @@ impl P<'_> {
                 w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                     arm = 6;
                 }
-                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                     arm = 6;
                 }
                 _ => {
@@ -1760,7 +1760,7 @@ impl P<'_> {
                                 w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_43 | w::WHILE_45 | w::DO_46 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                                     arm = 0;
                                 }
-                                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                                     arm = 0;
                                 }
                                 _ => {
@@ -1810,7 +1810,7 @@ impl P<'_> {
                 w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_43 | w::WHILE_45 | w::DO_46 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                     arm = 0;
                 }
-                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                     arm = 0;
                 }
                 _ => {
@@ -1848,7 +1848,7 @@ impl P<'_> {
                 w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_43 | w::WHILE_45 | w::DO_46 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                     arm = 1;
                 }
-                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                     arm = 1;
                 }
                 _ => {
@@ -1910,7 +1910,7 @@ impl P<'_> {
                 w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_43 | w::WHILE_45 | w::DO_46 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                     self.control_structure_body()?;
                 }
-                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                     self.control_structure_body()?;
                 }
                 _ => {
@@ -3765,7 +3765,7 @@ impl P<'_> {
                     w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_43 | w::WHILE_45 | w::DO_46 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                         arm = 0;
                     }
-                    _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                    _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                         arm = 0;
                     }
                     _ => {
@@ -6370,7 +6370,7 @@ impl P<'_> {
                 w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                     arm = 1;
                 }
-                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                     arm = 1;
                 }
                 _ => {
@@ -6625,7 +6625,7 @@ impl P<'_> {
                     w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_43 | w::WHILE_45 | w::DO_46 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                         arm = 0;
                     }
-                    _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                    _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                         arm = 0;
                     }
                     _ => {
@@ -6657,7 +6657,7 @@ impl P<'_> {
                     w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_43 | w::WHILE_45 | w::DO_46 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                         arm = 0;
                     }
-                    _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                    _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                         arm = 0;
                     }
                     _ => {
@@ -6688,7 +6688,7 @@ impl P<'_> {
                             w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_43 | w::WHILE_45 | w::DO_46 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                                 arm = 0;
                             }
-                            _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                            _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                                 arm = 0;
                             }
                             _ => {
@@ -6886,7 +6886,7 @@ impl P<'_> {
                 w::STAR_9 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                     arm = 0;
                 }
-                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                     arm = 0;
                 }
                 _ => {
@@ -6957,7 +6957,7 @@ impl P<'_> {
                 w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                     arm = 2;
                 }
-                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                     arm = 2;
                 }
                 _ => {
@@ -7077,7 +7077,7 @@ impl P<'_> {
                 _ if self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() => {
                     arm = 5;
                 }
-                _ if self.at_quote() => {
+                _ if self.at_string_prefix() || self.at_quote() => {
                     arm = 6;
                 }
                 _ if self.at_tick() => {
@@ -7711,6 +7711,10 @@ impl P<'_> {
     /// `string_literal`.
     fn string_literal(&mut self) -> R {
         self.open(k::STRING_LITERAL);
+        if self.at_string_prefix() {
+            self.skip(self.at_string_prefix())?;
+        } else {
+        }
         self.skip(self.at_quote())?;
         loop {
             if self.at_string_content() {
@@ -7884,7 +7888,7 @@ impl P<'_> {
                             w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                                 arm = 0;
                             }
-                            _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                            _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                                 arm = 0;
                             }
                             _ => {
@@ -7934,7 +7938,7 @@ impl P<'_> {
                             w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                                 arm = 0;
                             }
-                            _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                            _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                                 arm = 0;
                             }
                             _ => {
@@ -7992,7 +7996,7 @@ impl P<'_> {
                 w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_43 | w::WHILE_45 | w::DO_46 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                     arm = 0;
                 }
-                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                     arm = 0;
                 }
                 _ => {
@@ -8064,7 +8068,7 @@ impl P<'_> {
                 w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_43 | w::WHILE_45 | w::DO_46 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                     arm = 0;
                 }
-                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                     arm = 0;
                 }
                 _ => {
@@ -8102,7 +8106,7 @@ impl P<'_> {
                 w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::FOR_43 | w::WHILE_45 | w::DO_46 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                     arm = 0;
                 }
-                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                     arm = 0;
                 }
                 _ => {
@@ -8147,7 +8151,7 @@ impl P<'_> {
                     w::IN_44 | w::IS_76 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 | w::ELSE_55 => {
                         self.when_entry()?;
                     }
-                    _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                    _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                         self.when_entry()?;
                     }
                     _ => {
@@ -8203,7 +8207,7 @@ impl P<'_> {
                 w::IN_44 | w::IS_76 | w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 | w::ELSE_55 => {
                     arm = 1;
                 }
-                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                     arm = 1;
                 }
                 _ => {
@@ -8245,7 +8249,7 @@ impl P<'_> {
                         w::ELSE_55 => {
                             arm = 1;
                         }
-                        _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                        _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                             arm = 0;
                         }
                         _ => {
@@ -8388,7 +8392,7 @@ impl P<'_> {
                 w::BANG_50 | w::MINUS_78 | w::PLUS_77 | w::PLUS_PLUS_81 | w::MINUS_MINUS_82 | w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 | w::TRUE_117 | w::FALSE_118 | w::NULL_119 | w::THIS_37 | w::LPAREN_19 | w::RETURN_61 | w::THROW_60 | w::BREAK_63 | w::CONTINUE_62 | w::IF_54 | w::WHEN_56 | w::TRY_57 | w::COLON_COLON_64 | w::LBRACE_17 | w::SUPER_38 | w::LBRACK_5 => {
                     arm = 3;
                 }
-                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_quote() || self.at_tick() => {
+                _ if self.at_simple_identifier() || self.at_backtick_name() || self.at_integer_literal() || self.at_hex_literal() || self.at_bin_literal() || self.at_real_literal() || self.at_string_prefix() || self.at_quote() || self.at_tick() => {
                     arm = 3;
                 }
                 _ => {
@@ -34776,7 +34780,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 6 | 22)
+        matches!(c & 0xff, 13 | 14)
     }
 
     fn at_quote(&self) -> bool {
@@ -34786,7 +34790,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_quote_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 6 | 22)
+        matches!(c & 0xff, 13 | 14)
     }
 
     fn at_quote_quote_at(&self, j: usize) -> bool {
@@ -34794,7 +34798,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 21)
+        matches!(c & 0xff, 5)
     }
 
     fn at_quote_quote(&self) -> bool {
@@ -34804,7 +34808,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_quote_quote_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 21)
+        matches!(c & 0xff, 5)
     }
 
     fn at_tick_at(&self, j: usize) -> bool {
@@ -34812,7 +34816,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 7 | 23)
+        matches!(c & 0xff, 12 | 23)
     }
 
     fn at_tick(&self) -> bool {
@@ -34822,7 +34826,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_tick_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 7 | 23)
+        matches!(c & 0xff, 12 | 23)
     }
 
     fn at_backslash_u_at(&self, j: usize) -> bool {
@@ -34830,7 +34834,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 14)
+        matches!(c & 0xff, 22)
     }
 
     fn at_backslash_u(&self) -> bool {
@@ -34840,7 +34844,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_backslash_u_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 14)
+        matches!(c & 0xff, 22)
     }
 
     fn at_backtick_name_at(&self, j: usize) -> bool {
@@ -34848,7 +34852,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 8)
+        matches!(c & 0xff, 15)
     }
 
     fn at_backtick_name(&self) -> bool {
@@ -34858,7 +34862,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_backtick_name_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 8)
+        matches!(c & 0xff, 15)
     }
 
     fn at_bin_literal_at(&self, j: usize) -> bool {
@@ -34866,7 +34870,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 3)
+        matches!(c & 0xff, 9)
     }
 
     fn at_bin_literal(&self) -> bool {
@@ -34876,7 +34880,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_bin_literal_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 3)
+        matches!(c & 0xff, 9)
     }
 
     fn at_char_content_at(&self, j: usize) -> bool {
@@ -34884,7 +34888,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 13)
+        matches!(c & 0xff, 21)
     }
 
     fn at_char_content(&self) -> bool {
@@ -34894,7 +34898,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_char_content_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 13)
+        matches!(c & 0xff, 21)
     }
 
     fn at_character_escape_seq_at(&self, j: usize) -> bool {
@@ -34902,7 +34906,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 12)
+        matches!(c & 0xff, 20)
     }
 
     fn at_character_escape_seq(&self) -> bool {
@@ -34912,7 +34916,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_character_escape_seq_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 12)
+        matches!(c & 0xff, 20)
     }
 
     fn at_esc_q_at(&self, j: usize) -> bool {
@@ -34920,7 +34924,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 20)
+        matches!(c & 0xff, 18)
     }
 
     fn at_esc_q(&self) -> bool {
@@ -34930,7 +34934,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_esc_q_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 20)
+        matches!(c & 0xff, 18)
     }
 
     fn at_esc_qd_at(&self, j: usize) -> bool {
@@ -34938,7 +34942,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 19)
+        matches!(c & 0xff, 17)
     }
 
     fn at_esc_qd(&self) -> bool {
@@ -34948,7 +34952,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_esc_qd_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 19)
+        matches!(c & 0xff, 17)
     }
 
     fn at_hex_literal_at(&self, j: usize) -> bool {
@@ -34956,7 +34960,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 4)
+        matches!(c & 0xff, 10)
     }
 
     fn at_hex_literal(&self) -> bool {
@@ -34966,7 +34970,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_hex_literal_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 4)
+        matches!(c & 0xff, 10)
     }
 
     fn at_integer_literal_at(&self, j: usize) -> bool {
@@ -34974,7 +34978,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 5)
+        matches!(c & 0xff, 11)
     }
 
     fn at_integer_literal(&self) -> bool {
@@ -34984,7 +34988,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_integer_literal_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 5)
+        matches!(c & 0xff, 11)
     }
 
     fn at_interpolated_identifier_at(&self, j: usize) -> bool {
@@ -34992,7 +34996,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 15)
+        matches!(c & 0xff, 6)
     }
 
     fn at_interpolated_identifier(&self) -> bool {
@@ -35002,7 +35006,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolated_identifier_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 15)
+        matches!(c & 0xff, 6)
     }
 
     fn at_interpolation_expression_end_at(&self, j: usize) -> bool {
@@ -35010,7 +35014,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 1 | 10)
+        matches!(c & 0xff, 1)
     }
 
     fn at_interpolation_expression_end(&self) -> bool {
@@ -35020,7 +35024,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolation_expression_end_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 1 | 10)
+        matches!(c & 0xff, 1)
     }
 
     fn at_interpolation_expression_start_at(&self, j: usize) -> bool {
@@ -35028,7 +35032,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 16)
+        matches!(c & 0xff, 2)
     }
 
     fn at_interpolation_expression_start(&self) -> bool {
@@ -35038,7 +35042,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolation_expression_start_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 16)
+        matches!(c & 0xff, 2)
     }
 
     fn at_interpolation_identifier_start_at(&self, j: usize) -> bool {
@@ -35046,7 +35050,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 18)
+        matches!(c & 0xff, 4)
     }
 
     fn at_interpolation_identifier_start(&self) -> bool {
@@ -35056,7 +35060,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolation_identifier_start_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 18)
+        matches!(c & 0xff, 4)
     }
 
     fn at_real_literal_at(&self, j: usize) -> bool {
@@ -35064,7 +35068,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 2)
+        matches!(c & 0xff, 8)
     }
 
     fn at_real_literal(&self) -> bool {
@@ -35074,7 +35078,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_real_literal_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 2)
+        matches!(c & 0xff, 8)
     }
 
     fn at_simple_identifier_at(&self, j: usize) -> bool {
@@ -35082,7 +35086,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 9) && !matches!(c >> 8 & 0xff, 10 | 63 | 13 | 62 | 46 | 55 | 118 | 43 | 14 | 54 | 44 | 15 | 76 | 119 | 31 | 61 | 38 | 37 | 60 | 117 | 57 | 11 | 22 | 23 | 56 | 45)
+        matches!(c & 0xff, 16) && !matches!(c >> 8 & 0xff, 10 | 63 | 13 | 62 | 46 | 55 | 118 | 43 | 14 | 54 | 44 | 15 | 76 | 119 | 31 | 61 | 38 | 37 | 60 | 117 | 57 | 11 | 22 | 23 | 56 | 45)
     }
 
     fn at_simple_identifier(&self) -> bool {
@@ -35092,7 +35096,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_simple_identifier_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 9) && !matches!(c >> 8 & 0xff, 10 | 63 | 13 | 62 | 46 | 55 | 118 | 43 | 14 | 54 | 44 | 15 | 76 | 119 | 31 | 61 | 38 | 37 | 60 | 117 | 57 | 11 | 22 | 23 | 56 | 45)
+        matches!(c & 0xff, 16) && !matches!(c >> 8 & 0xff, 10 | 63 | 13 | 62 | 46 | 55 | 118 | 43 | 14 | 54 | 44 | 15 | 76 | 119 | 31 | 61 | 38 | 37 | 60 | 117 | 57 | 11 | 22 | 23 | 56 | 45)
     }
 
     fn at_string_content_at(&self, j: usize) -> bool {
@@ -35100,7 +35104,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 17)
+        matches!(c & 0xff, 3)
     }
 
     fn at_string_content(&self) -> bool {
@@ -35110,7 +35114,25 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_string_content_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 17)
+        matches!(c & 0xff, 3)
+    }
+
+    fn at_string_prefix_at(&self, j: usize) -> bool {
+        if j >= self.n {
+            return false;
+        }
+        let c = self.code_at(j);
+        matches!(c & 0xff, 7)
+    }
+
+    fn at_string_prefix(&self) -> bool {
+        self.at_string_prefix_at(self.i)
+    }
+
+    /// Record `j` (not the piece at the token) one of the kind's.
+    fn at_string_prefix_rec(&self, j: usize) -> bool {
+        let c = self.codes[j];
+        matches!(c & 0xff, 7)
     }
 
     fn at_uni_digits_at(&self, j: usize) -> bool {
@@ -35118,7 +35140,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 11)
+        matches!(c & 0xff, 19)
     }
 
     fn at_uni_digits(&self) -> bool {
@@ -35128,7 +35150,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_uni_digits_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 11)
+        matches!(c & 0xff, 19)
     }
 
     /// Reading `assignable`: each kind's way (`Some(Some(K))` read as `K`, `Some(None)` gone, `None` kept with what is inside it).
@@ -35164,7 +35186,7 @@ impl P<'_> {
         self.reread(root, Self::reading_assignable, Self::reading_field_assignable)
     }
 
-    /// `"`'s region (`read str | rstr parts`), record `j`: its opener's byte, each part, each run of the bytes between, its closer.
+    /// `"`'s region (`read str | rstr | str2 | rstr2 parts`), record `j`: its opener's byte, each part, each run of the bytes between, its closer.
     fn split_0(&mut self, j: usize) -> R {
         let s = self.starts[j] as usize;
         self.sub.clear();
@@ -35232,31 +35254,55 @@ impl P<'_> {
                     part = Some((e, 2, 8));
                 }
             }
+            // `interpolation_identifier_start`
+            if let Some(e) = first_bit(&m.id2, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 2, 9) < q) {
+                    part = Some((e, 2, 9));
+                }
+            }
+            // `string_content`
+            if let Some(e) = first_bit(&m.extra2, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 1, 10) < q) {
+                    part = Some((e, 1, 10));
+                }
+            }
+            // `string_content`
+            if let Some(e) = first_bit(&m.d2_first, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 0, 11) < q) {
+                    part = Some((e, 0, 11));
+                }
+            }
             let to = part.map_or(c, |q| q.0);
             if to > at {
-                self.piece(at, to - 1, 17);
+                self.piece(at, to - 1, 3);
             }
             match part {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
-                        0 => (e + 1, 21),
+                        0 => (e + 1, 5),
                         1 => (match first_bit(&m.rd0_part1_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 17),
-                        2 => (e + 0, 21),
-                        3 => (e + 0, 18),
+                        }, 3),
+                        2 => (e + 0, 5),
+                        3 => (e + 0, 4),
                         4 => (match first_bit(&m.id_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 15),
-                        5 => (e + 0, 17),
+                        }, 6),
+                        5 => (e + 0, 3),
                         6 => (match first_bit(&m.d_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 17),
-                        7 => (e + 1, 20),
-                        8 => (e + 1, 19),
+                        }, 3),
+                        7 => (e + 1, 18),
+                        8 => (e + 1, 17),
+                        9 => (e + 1, 4),
+                        10 => (e + 0, 3),
+                        11 => (match first_bit(&m.d2_last, e) {
+                            Some(l) => l,
+                            None => return self.refuse(),
+                        }, 3),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);
@@ -35264,16 +35310,24 @@ impl P<'_> {
                 }
                 None => {
                     let (l, kind) = if bit(&m.t_dollar, c) {
-                        (c + 1, 16)
+                        (c + 1, 2)
+                    } else if bit(&m.t2_dollar, c) {
+                        (c + 2, 2)
                     } else if bit(&m.o_str, s) {
                         // `str`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 22)
-                    } else {
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 13)
+                    } else if bit(&m.o_rstr, s) {
                         // `rstr`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 22)
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 13)
+                    } else if bit(&m.o_str2, s) {
+                        // `str2`
+                        (if bit(&m.t2_dollar, c) { c + 1 } else { c + 0 }, 13)
+                    } else {
+                        // `rstr2`
+                        (if bit(&m.t2_dollar, c) { c + 1 } else { c + 2 }, 13)
                     };
                     self.piece(c, l, kind);
-                    if bit(&m.t_dollar, c) {
+                    if bit(&m.t_dollar, c) || bit(&m.t2_dollar, c) {
                         self.strings += 1;
                     }
                     return Ok(());
@@ -35282,7 +35336,7 @@ impl P<'_> {
         }
     }
 
-    /// `interpolation_expression_end`'s region (`read tail | rtail parts`), at byte `s`, no record of its own: the string's parts after its template's `}`: its opener's byte, each part, each run of the bytes between, its closer.
+    /// `interpolation_expression_end`'s region (`read tail | rtail | tail2 | rtail2 parts`), at byte `s`, no record of its own: the string's parts after its template's `}`: its opener's byte, each part, each run of the bytes between, its closer.
     fn resume_1(&mut self, s: usize) -> R {
         self.sub.clear();
         self.k = 0;
@@ -35343,9 +35397,27 @@ impl P<'_> {
                     part = Some((e, 2, 7));
                 }
             }
+            // `interpolation_identifier_start`
+            if let Some(e) = first_bit(&m.id2, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 2, 8) < q) {
+                    part = Some((e, 2, 8));
+                }
+            }
+            // `string_content`
+            if let Some(e) = first_bit(&m.extra2, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 1, 9) < q) {
+                    part = Some((e, 1, 9));
+                }
+            }
+            // `string_content`
+            if let Some(e) = first_bit(&m.d2_first, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 0, 10) < q) {
+                    part = Some((e, 0, 10));
+                }
+            }
             let to = part.map_or(c, |q| q.0);
             if to > at {
-                self.piece(at, to - 1, 17);
+                self.piece(at, to - 1, 3);
             }
             match part {
                 Some((e, _, i)) => {
@@ -35353,20 +35425,26 @@ impl P<'_> {
                         0 => (match first_bit(&m.rd0_part1_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 17),
-                        1 => (e + 0, 21),
-                        2 => (e + 0, 18),
+                        }, 3),
+                        1 => (e + 0, 5),
+                        2 => (e + 0, 4),
                         3 => (match first_bit(&m.id_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 15),
-                        4 => (e + 0, 17),
+                        }, 6),
+                        4 => (e + 0, 3),
                         5 => (match first_bit(&m.d_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 17),
-                        6 => (e + 1, 20),
-                        7 => (e + 1, 19),
+                        }, 3),
+                        6 => (e + 1, 18),
+                        7 => (e + 1, 17),
+                        8 => (e + 1, 4),
+                        9 => (e + 0, 3),
+                        10 => (match first_bit(&m.d2_last, e) {
+                            Some(l) => l,
+                            None => return self.refuse(),
+                        }, 3),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);
@@ -35374,20 +35452,28 @@ impl P<'_> {
                 }
                 None => {
                     let (l, kind) = if bit(&m.rd1_closes0, c) {
-                        (c + 0, 22)
+                        (c + 0, 13)
                     } else if bit(&m.rd1_closes1, c) {
-                        (c + 2, 22)
+                        (c + 2, 13)
                     } else if bit(&m.t_dollar, c) {
-                        (c + 1, 16)
+                        (c + 1, 2)
+                    } else if bit(&m.t2_dollar, c) {
+                        (c + 2, 2)
                     } else if bit(&m.o_tail, s) {
                         // `tail`
                         (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else {
+                    } else if bit(&m.o_rtail, s) {
                         // `rtail`
                         (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
+                    } else if bit(&m.o_tail2, s) {
+                        // `tail2`
+                        (if bit(&m.t2_dollar, c) { c + 1 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
+                    } else {
+                        // `rtail2`
+                        (if bit(&m.t2_dollar, c) { c + 1 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
                     };
                     self.piece(c, l, kind);
-                    if !(bit(&m.t_dollar, c)) {
+                    if !(bit(&m.t_dollar, c) || bit(&m.t2_dollar, c)) {
                         self.strings = self.strings.saturating_sub(1);
                     }
                     return Ok(());
@@ -35430,14 +35516,14 @@ impl P<'_> {
             }
             let to = part.map_or(c, |q| q.0);
             if to > at {
-                self.piece(at, to - 1, 13);
+                self.piece(at, to - 1, 21);
             }
             match part {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
-                        0 => (e + 1, 14),
-                        1 => (e + 3, 11),
-                        2 => (e + 1, 12),
+                        0 => (e + 1, 22),
+                        1 => (e + 3, 19),
+                        2 => (e + 1, 20),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);

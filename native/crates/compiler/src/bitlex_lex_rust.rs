@@ -1755,9 +1755,18 @@ impl Gen<'_> {
     fn fits_closer(&self, e: &Expr, k: usize, rr: i64) -> bool {
         let Some(r) = self.kinds.get(k) else { return true };
         let mut memo = HashMap::new();
-        let closers = r.closers();
-        let at: Vec<[bool; 256]> = (0..4).map(|d| self.bytes_at(&closers, d, &mut memo)).collect();
-        self.cubes(e, &mut memo).iter().any(|c| c.iter().all(|(o, b)| usize::try_from(rr + o).ok().and_then(|d| at.get(d)).is_none_or(|x| (0..256).any(|i| x[i] && b[i]))))
+        let cubes = self.cubes(e, &mut memo);
+        // Each closer over its own bytes: byte `rr` is a closer's only where it has more than
+        // `rr` (decision 0650). `str2`'s `"` is one byte, its `$${` two: the byte after a `"`
+        // is no closer's, and may be a name's letter.
+        let mut alts = vec![(r.closer.clone(), i64::from(r.bytes))];
+        if let Some((c2, m)) = &r.or {
+            alts.push((c2.clone(), i64::from(*m)));
+        }
+        alts.iter().filter(|(_, n)| rr < (*n).max(1)).any(|(c, _)| {
+            let at: Vec<[bool; 256]> = (0..4).map(|d| self.bytes_at(c, d, &mut memo)).collect();
+            cubes.iter().any(|cube| cube.iter().all(|(o, b)| usize::try_from(rr + o).ok().and_then(|d| at.get(d)).is_none_or(|x| (0..256).any(|i| x[i] && b[i]))))
+        })
     }
 
     /// The classes a mask of stage 1 reads, through the masks it names.
@@ -3670,9 +3679,11 @@ impl Gen<'_> {
                     }
                     per.push((p0, body, p2, grid));
                 }
+                // A regional mask the walk can not write in every region: its value is the masks'
+                // fixed point's, which only a test build makes. Refused, not written so: a product
+                // build of that Rust would not compile (decision 0650).
                 let (Some(outside), true) = (outside, per.len() == n) else {
-                    out.push((f.clone(), self.val(e)?));
-                    continue;
+                    return Err(format!("the part mask `{f}` reads the regions, and the walk writes it in {} of their {n} kinds", per.len()));
                 };
                 let ko = key(&outside);
                 if per.iter().all(|(p0, body, p2, grid)| key(p0) == ko && p2.iter().all(|(_, v)| v.iter().all(|v| key(v) == ko)) && body.iter().all(|b| key(&b.2) == ko) && grid.iter().flatten().flatten().all(|v| key(v) == ko)) {
@@ -4952,7 +4963,9 @@ impl Gen<'_> {
         };
         let branches = format!("{{\n            // The row: the first whose start holds, of those whose start may be the byte's.\n            let row = match group {{\n{}                _ => usize::MAX,\n            }};\n{nest_step}            match row {{\n{}                _ => {{\n                    // A byte no token begins with.\n                    refused = true;\n                    break;\n                }}\n            }}\n        }}", picks.rows, row_arms.iter().enumerate().map(|(i, a)| format!("                {i} => {},\n", indent(&match &a.resume {
             // The body up to its record's tuple, then the resume.
-            Some(r) => format!("{}{r}", a.body.rsplit_once("            (l, ").map_or(a.body.as_str(), |x| x.0)),
+            // Not fused, a row's bytes leave `code_l` after the row (`acc_after`), which a resume's
+            // own `continue` passes by: it clears them itself (decision 0650).
+            Some(r) => format!("{}{}{r}", a.body.rsplit_once("            (l, ").map_or(a.body.as_str(), |x| x.0), if !picks.fused && !self.code_after.is_empty() { "            clear(&mut code_l, s, l);\n" } else { "" }),
             None => format!("{}{:#x})\n        }}", a.body, a.bits),
         }, "        ").trim_start())).collect::<String>());
         let mut fill_top = String::new();

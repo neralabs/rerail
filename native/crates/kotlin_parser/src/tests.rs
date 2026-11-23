@@ -1277,6 +1277,30 @@ fn the_wide_corpus_lines_are_the_lean_parsers() {
     refused(&both);
 }
 
+/// A string with the prefix `$$` (`$$"…"`, `$$"""…"""`): its templates take two `$`s, a `$` alone
+/// or a run short of a template's is content, and the prefix is a token of its own, as the lean
+/// parser's string reader counts a run against its prefix (decision 0650).
+#[test]
+fn prefixed_strings_are_the_lean_parsers() {
+    same(&[
+        "val x = $$\"a $b $$c\"\n",
+        "val x = $$\"a ${b} $${c} d\"\n",
+        "val x = $$\"$$$c\"\n",
+        "val x = $$\"a\\$$b\"\n",
+        "val x = $$\"\"\"a $b $${c}\"\"\"\n",
+        "val x = $\"a $b\"\n",
+        "val x = $$\"$$ $\"\n",
+        "val x = $$\"$${\"$x\"}\"\n",
+        "val x = $$\"$${a}b$$c\"\n",
+        "val x = $$\"\"\"\n  {\"a\": \"$$b\", \"c\": $${d}}\n\"\"\"\n",
+        "val x = f($$\"a\")\n",
+        "val x = \"a$$b\" + $$\"c\"\n",
+        "val x = $$\"a\\$\"\n",
+    ]);
+    // Three `$`s or more: not read.
+    refused(&["val x = $$$\"a $$b $$$c\"\n"]);
+}
+
 /// A `\$` before a line string's quote ends the string there, and the content of its piece makes
 /// no leaf; the byte after a `\$` is plain; a run of `$`s that starts no template is one content
 /// token (the lean parser's string reader, decision 0636).
