@@ -6779,7 +6779,12 @@ impl<L: Layout> P<'_, L> {
 
     /// A mark no rule takes holds at the token (a mark not hidden).
     fn open_mark(&mut self) -> bool {
-        self.m_end_on() || self.m_fn_uncalled() || self.m_io_bare() || self.m_no_value()
+        match self.word() {
+            w::AT_23 => self.m_fn_uncalled(),
+            w::DOT_13 => self.m_end_on() || self.m_io_bare(),
+            w::LPAREN_10 => self.m_no_value(),
+            _ => false,
+        }
     }
 
     fn at_code_literal_at(&self, j: usize) -> bool {

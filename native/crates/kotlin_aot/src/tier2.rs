@@ -9879,7 +9879,10 @@ impl<L: Layout> P<'_, L> {
 
     /// A mark no rule takes holds at the token (a mark not hidden).
     fn open_mark(&mut self) -> bool {
-        self.m_bt_cref() || self.m_generic() || self.m_lab_lam() || self.m_lab_loop() || self.m_label_at()
+        match self.word() {
+            w::LT_26 => self.m_generic() || self.m_bt_cref() || self.m_lab_lam() || self.m_lab_loop() || self.m_label_at(),
+            _ => self.m_bt_cref() || self.m_lab_lam() || self.m_lab_loop() || self.m_label_at(),
+        }
     }
 
     fn at_quote_at(&self, j: usize) -> bool {

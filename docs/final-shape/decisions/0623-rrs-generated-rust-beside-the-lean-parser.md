@@ -331,3 +331,12 @@ loaded once a window, and each keeps its escape carry. On spark2 tier 1 went fro
 unchanged.
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
+
+## `open_mark` asks by the token's word (done)
+
+`open_mark` called each open mark's test at every token taken, each a function with its own word guard. Now it is one
+`match` on the token's word. A word some mark's runs start with calls those marks, plus the marks whose runs start
+otherwise. Every other word calls only the latter, and in `.rerail` there are none, so `false`. On spark2 tier 2 went
+from 35.7 ms to 35.1 ms. Kotlin's `open_mark` is the same `match`, its four unguarded marks in every arm.
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.

@@ -1164,6 +1164,8 @@ impl<'a> G<'a> {
         }
         let mut done: HashSet<&str> = HashSet::new();
         let mut fns = String::new();
+        // Each mark's guard words (`first_words`), by its name: none where a definition starts otherwise.
+        let mut guards: std::collections::BTreeMap<String, Option<Vec<String>>> = std::collections::BTreeMap::new();
         for (order, m) in self.x.marks.iter().enumerate() {
             if !done.insert(m.name.as_str()) {
                 continue;
@@ -1219,6 +1221,7 @@ impl<'a> G<'a> {
                 }
                 holds.push(format!("({})", c.join(" && ")));
             }
+            guards.insert(n.clone(), firsts.clone());
             let guard = match firsts {
                 Some(mut ws) if !ws.is_empty() => {
                     ws.sort();
@@ -1274,10 +1277,29 @@ impl<'a> G<'a> {
         }
         out.push_str(&fns);
         // The marks no rule may pass: where one holds at a token taken, the file is refused.
-        let open: Vec<String> = self.x.marks.iter().filter(|m| !m.hidden).map(|m| format!("self.m_{}()", ident(&m.name))).collect::<HashSet<_>>().into_iter().collect();
-        let mut open = open;
+        // Asked by the token's word, as the lean parser's: a mark whose runs start with words only at those words; the
+        // others at every token.
+        let mut open: Vec<String> = self.x.marks.iter().filter(|m| !m.hidden).map(|m| ident(&m.name)).collect::<HashSet<_>>().into_iter().collect();
         open.sort();
-        let _ = writeln!(out, "    /// A mark no rule takes holds at the token (a mark not hidden).\n    fn open_mark(&mut self) -> bool {{\n        {}\n    }}\n", if open.is_empty() { "false".to_owned() } else { open.join(" || ") });
+        let call = |n: &String| format!("self.m_{n}()");
+        let always: Vec<String> = open.iter().filter(|n| !matches!(guards.get(*n), Some(Some(_)))).map(call).collect();
+        let mut by_word: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+        for n in &open {
+            if let Some(Some(ws)) = guards.get(n) {
+                for w in ws {
+                    by_word.entry(w.clone()).or_default().push(call(n));
+                }
+            }
+        }
+        let any = |cs: Vec<String>| if cs.is_empty() { "false".to_owned() } else { cs.join(" || ") };
+        let body = if by_word.is_empty() {
+            any(always.clone())
+        } else {
+            let mut arms: String = by_word.into_iter().map(|(w, cs)| format!("            {w} => {},\n", any(cs.into_iter().chain(always.iter().cloned()).collect()))).collect();
+            let _ = write!(arms, "            _ => {},\n", any(always.clone()));
+            format!("match self.word() {{\n{arms}        }}")
+        };
+        let _ = writeln!(out, "    /// A mark no rule takes holds at the token (a mark not hidden).\n    fn open_mark(&mut self) -> bool {{\n        {body}\n    }}\n");
         Ok(())
     }
 
