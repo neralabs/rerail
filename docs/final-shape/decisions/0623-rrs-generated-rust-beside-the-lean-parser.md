@@ -274,3 +274,19 @@ other, so at a token's start the raw mask is that mask. A pairs row with a tripl
 `pair_6` is gone. Kotlin's file is unchanged.
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes and records included.
+
+## Why the AOT's tier 1 was slower than the JIT's: a string's `\u` test read in full (done)
+
+A line-level profile of `rr-aot-speed` (xctrace's Time Profiler on an M3 Max, the leaf addresses resolved by `atos`
+with inlined frames) put over half of tier 1's time in one window word, `w_t13`: the test for a `\u` escape the engine
+checks. Every string token ran it over its bytes. Its expression reads `\u`, then the hex digits and braces at up to
+eight offsets on. Each class at an offset (`cls_hex(p + 3)`) is a window loaded, classified and turned into bits, so
+the test read about a dozen windows for each 64 bytes of every string, `\u` or none. Lean scans a string once
+(`micro::string_end`) and unescapes it only when it saw a `\u`.
+
+Now the bytes form reads an `and`'s right side only where its left side holds any bit, when the right side reads three
+classes or more and carries no escapes (a side with `escaped`'s carry is always read: the next window starts from it).
+A string with no `\u` then costs the test its backslash and `u` windows. On spark2, over the 1,831 files, tier 1 went
+from 33.3 ms to 18.9 ms (the JIT's: 17.0 ms). Kotlin's file is unchanged.
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.

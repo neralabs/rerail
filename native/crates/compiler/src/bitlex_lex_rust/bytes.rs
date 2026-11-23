@@ -167,7 +167,17 @@ impl<'a> Bytes<'a> {
                 }
             }
             Expr::Not(a) => format!("(!{} & valid(n, {p}))", self.win(a, off, depth + 1)?),
-            Expr::And(a, b) => format!("({} & {})", self.win(a, off, depth + 1)?, self.win(b, off, depth + 1)?),
+            Expr::And(a, b) => {
+                let (a, b) = (self.win(a, off, depth + 1)?, self.win(b, off, depth + 1)?);
+                // A test of several windows after one that rarely holds (a `\u` escape's digits after its `\u`): read
+                // only where the first holds, as the lean lexer unescapes a string only when it saw a `\u`. A side
+                // that carries escapes is always read, its carry the next window's.
+                if b.matches("cls_").count() >= 3 && !b.contains("esc)") {
+                    format!("{{ let a = {a}; if a == 0 {{ 0 }} else {{ a & {b} }} }}")
+                } else {
+                    format!("({a} & {b})")
+                }
+            }
             Expr::Or(a, b) => format!("({} | {})", self.win(a, off, depth + 1)?, self.win(b, off, depth + 1)?),
             Expr::Xor(a, b) => format!("({} ^ {})", self.win(a, off, depth + 1)?, self.win(b, off, depth + 1)?),
             Expr::Call(f, args) if f == "escaped" && off == 0 => {
