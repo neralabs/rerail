@@ -111,6 +111,19 @@ impl<'b> Kept<'b> {
     pub fn row(&self, i: usize) -> Vec<i64> {
         (0..self.rows.arity as usize).map(|c| self.rows.get(i, c)).collect()
     }
+
+    /// Every row in canonical order, handed to `f` one at a time: each column resolved for reads once (`Col::dec`),
+    /// not per cell as `row` resolves it, and the row read into one buffer the rows share.
+    pub fn each_row(&self, mut f: impl FnMut(&[i64])) {
+        let cols: Vec<crate::packed::ColDec<'_>> = (0..self.rows.arity as usize).map(|c| self.rows.col(c).dec()).collect();
+        let mut row = vec![0i64; cols.len()];
+        for i in 0..self.rows.len() {
+            for (v, c) in row.iter_mut().zip(&cols) {
+                *v = c.get(i);
+            }
+            f(&row);
+        }
+    }
 }
 
 /// What reads a space's kept facts.

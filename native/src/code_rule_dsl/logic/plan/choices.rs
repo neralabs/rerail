@@ -404,17 +404,19 @@ pub fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<(sup
     if !{ let _s = super::super::profile::span(|| "whether the store holds them".into()); held(store, prepared)? } {
         return Ok(Default::default());
     }
-    let Some(facts) = ({ let _s = super::super::profile::span(|| "their entry, read".into()); PLANS.within(*prepared).get(store, 0) }) else { return Ok(Default::default()) };
+    // The plans' rows are numbers alone: each decoded from the block as it holds them, not through values (t33 K4:
+    // their values were most of a warm run's read of the entry).
+    let mut plans = super::StoredPlans::default();
+    let Some(facts) = ({
+        let _s = super::super::profile::span(|| "their entry, read".into());
+        PLANS.within(*prepared).get_numbers(store, 0, PLANS_REL, &mut |row| plans.extend(super::StoredPlan::of_row(row)))
+    }) else {
+        return Ok(Default::default());
+    };
     { let _s = super::super::profile::span(|| "the join notes, taken".into()); take_notes(&facts); }
     let _s = super::super::profile::span(|| "the plans, decoded".into());
     let ready: Vec<Vec<Value>> = facts.get(PREPARED_REL).into_iter().flatten().map(|row| row.as_slice().to_vec()).collect();
     let analyses: Vec<Vec<Value>> = facts.get(ANALYSES_REL).into_iter().flatten().map(|row| row.as_slice().to_vec()).collect();
-    let plans = facts
-        .get(PLANS_REL)
-        .into_iter()
-        .flatten()
-        .filter_map(|row| super::StoredPlan::of_row(&row.iter().map(|v| match v { Value::Int(i) => Some(*i), Value::Str(_) | Value::Branded(_) => None }).collect::<Option<Vec<_>>>()?))
-        .collect();
     Ok((plans, super::prepared::of_store_rows(&ready), super::kept_analyses::of_store_rows(&analyses)))
 }
 
