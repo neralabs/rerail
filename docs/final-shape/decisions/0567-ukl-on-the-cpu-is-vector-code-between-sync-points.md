@@ -851,7 +851,7 @@ differ little), then the text of each (declarations, splats, masks).
 
 ### The instances and their text (the user's: "please address these", 2026-11-23)
 
-`join_run`'s Rust, 2.53 MB to 694 KB (17,020 lines), in these steps (each its size after):
+`join_run`'s Rust, 2.53 MB to 669 KB (17,026 lines), in these steps (each its size after):
 
 1. **Instances of one text, once** (2.33 MB). A function's instances are keyed by what a call knows of its arguments
    (`Em::inst`), and some of that changes nothing written. The module's last pass (`merge_instances`) writes once each
@@ -876,6 +876,7 @@ differ little), then the text of each (declarations, splats, masks).
    each lane's address (`ldj_u32(|j| ...)`, `stj_u32(k, v, |j| ...)`), each lane's 64-bit address (`addrs`), and the
    operations of one register NEON has as several (`vmulhiq_u32`, `vlt64q_u32`, `veq64q_u32`, `vadcq_u32`) or a
    64-bit splat (`splat64`), which roll as NEON's do.
+7. **Splats** (669 KB): the zero register a constant (`Z`), a value in every lane `splat(x)`.
 
 Every kernel checked in at 8 lanes is now also checked in at 32 (`rerail-ukl-aot`'s `*_w32`,
 `the_kernels_rust_at_32_lanes_is_the_checked_in_one`), and its tests run both against the same answers (the scalar

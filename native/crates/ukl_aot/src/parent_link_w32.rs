@@ -98,6 +98,12 @@ unsafe fn vlt64sq_u32(al: uint32x4_t, ah: uint32x4_t, bl: uint32x4_t, bh: uint32
 unsafe fn veq64q_u32(al: uint32x4_t, ah: uint32x4_t, bl: uint32x4_t, bh: uint32x4_t) -> uint32x4_t {
 	vandq_u32(vceqq_u32(al, bl), vceqq_u32(ah, bh))
 }
+/// The zero register, and a value in every lane.
+const Z: uint32x4_t = unsafe { core::mem::transmute::<[u32; 4], uint32x4_t>([0; 4]) };
+#[inline(always)]
+unsafe fn splat(x: u32) -> [uint32x4_t; 8] {
+	[vdupq_n_u32(x); 8]
+}
 /// A 64-bit value in every lane: its halves.
 #[inline(always)]
 unsafe fn splat64(v: u64) -> [uint32x4_t; 16] {
@@ -478,12 +484,12 @@ unsafe fn regs16(a: [u32; 64]) -> [uint32x4_t; 16] {
 #[inline(always)]
 unsafe fn b0_r0r1sg_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg0: *const u8, arg1: *const u8, x2: *const u8) {
 	let gid0 = l.group[0] * l.block[0] + lid0;
-	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut x4 = [Z; 8];
 	let mut x5: u32 = 0;
-	let mut x6 = [vdupq_n_u32(0); 8];
+	let mut x6 = [Z; 8];
 	let mut live = k;
 	let t0 = iota(gid0);
-	let t1 = [vdupq_n_u32((x2 as *const u32).read_unaligned()); 8];
+	let t1 = splat((x2 as *const u32).read_unaligned());
 	let t2 = cge_r(t0, t1);
 	let t3 = and_r(live, t2);
 	{
@@ -497,7 +503,7 @@ unsafe fn b0_r0r1sg_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg0: *const u8
 		} else {
 			let t6 = ix_on(live, t0);
 			let t7 = arg0 as *const u32;
-			let mut t8 = [vdupq_n_u32(0); 8];
+			let mut t8 = [Z; 8];
 			let t9 = words8(t6);
 			t8 = ldj_u32(|j| t7.add(t9[j] as usize) as *const u8);
 			t4 = t8;
@@ -536,21 +542,21 @@ unsafe fn b0_r0r1sg_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg0: *const u8
 				break;
 			}
 			// Lanes part: each its own rounds.
-			let t18 = [vdupq_n_u32(4294967295u32); 8];
+			let t18 = splat(4294967295u32);
 			let t19 = cne_r(x4, t18);
 			let t20: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(vdupq_n_u32(if ((x5) < (7u32)) { u32::MAX } else { 0 }), t19[r]));
-			let t21 = [vdupq_n_u32(2147483648u32); 8];
+			let t21 = splat(2147483648u32);
 			let t22 = and_r(x4, t21);
-			let t23 = [vdupq_n_u32(0u32); 8];
+			let t23 = [Z; 8];
 			let t24 = cne_r(t22, t23);
 			let t25 = and_r(t20, t24);
 			t10 = and_r(t10, t25);
 			if !(any(&t10)) { break; }
-			let t26 = [vdupq_n_u32(2147483647u32); 8];
+			let t26 = splat(2147483647u32);
 			let t27 = and_r(x4, t26);
 			let t28 = ix_on(t10, t27);
 			let t29 = arg0 as *const u32;
-			let mut t30 = [vdupq_n_u32(0); 8];
+			let mut t30 = [Z; 8];
 			let t31 = words8(t28);
 			t30 = ldj_u32(|j| t29.add(t31[j] as usize) as *const u8);
 			x4 = bsl_r(t10, t30, x4);
@@ -558,15 +564,15 @@ unsafe fn b0_r0r1sg_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg0: *const u8
 			let t33 = x5;
 			x5 = (x5).wrapping_add(1u32);
 		}
-		let t34 = [vdupq_n_u32(4294967295u32); 8];
+		let t34 = splat(4294967295u32);
 		let t35 = cne_r(x4, t34);
-		let t36 = [vdupq_n_u32(2147483648u32); 8];
+		let t36 = splat(2147483648u32);
 		let t37 = and_r(x4, t36);
-		let t38 = [vdupq_n_u32(0u32); 8];
+		let t38 = [Z; 8];
 		let t39 = cne_r(t37, t38);
 		let t40 = and_r(t35, t39);
 		x6 = t40;
-		let mut t41 = [vdupq_n_u32(0); 8];
+		let mut t41 = [Z; 8];
 		let t42 = and_r(live, x6);
 		let t43 = bic_r(live, x6);
 		{
@@ -604,10 +610,10 @@ unsafe fn b0_r0r1sg_p(l: &Launch, lid0: u32, k: [uint32x4_t; 8], arg0: *const u8
 #[inline(always)]
 unsafe fn b0_r0r1sg_f(l: &Launch, lid0: u32, arg0: *const u8, arg1: *const u8, x2: *const u8) {
 	let gid0 = l.group[0] * l.block[0] + lid0;
-	let mut x4 = [vdupq_n_u32(0); 8];
+	let mut x4 = [Z; 8];
 	let mut x5: u32 = 0;
-	let mut x6 = [vdupq_n_u32(0); 8];
-	let mut live = [vdupq_n_u32(u32::MAX); 8];
+	let mut x6 = [Z; 8];
+	let mut live = splat(u32::MAX);
 	if ((gid0) as u64 + 31) < (((x2 as *const u32).read_unaligned()) as u64) {
 		let t0 = (arg0 as *const u32).add((gid0) as usize);
 		let t1: [uint32x4_t; 8] = [vld1q_u32(t0.add(0)), vld1q_u32(t0.add(4)), vld1q_u32(t0.add(8)), vld1q_u32(t0.add(12)), vld1q_u32(t0.add(16)), vld1q_u32(t0.add(20)), vld1q_u32(t0.add(24)), vld1q_u32(t0.add(28))];
@@ -645,22 +651,22 @@ unsafe fn b0_r0r1sg_f(l: &Launch, lid0: u32, arg0: *const u8, arg1: *const u8, x
 				break;
 			}
 			// Lanes part: each its own rounds.
-			let t10 = [vdupq_n_u32(4294967295u32); 8];
+			let t10 = splat(4294967295u32);
 			let t11 = cne_r(x4, t10);
 			let t12: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(vdupq_n_u32(if ((x5) < (7u32)) { u32::MAX } else { 0 }), t11[r]));
-			let t13 = [vdupq_n_u32(2147483648u32); 8];
+			let t13 = splat(2147483648u32);
 			let t14 = and_r(x4, t13);
-			let t15 = [vdupq_n_u32(0u32); 8];
+			let t15 = [Z; 8];
 			let t16 = cne_r(t14, t15);
 			let t17 = and_r(t12, t16);
 			t2 = and_r(t2, t17);
 			if !(any(&t2)) { break; }
-			let t18 = [vdupq_n_u32(2147483647u32); 8];
+			let t18 = splat(2147483647u32);
 			let t19 = and_r(x4, t18);
 			let t20 = iota(gid0);
 			let t21 = bsl_r(t2, t19, t20);
 			let t22 = arg0 as *const u32;
-			let mut t23 = [vdupq_n_u32(0); 8];
+			let mut t23 = [Z; 8];
 			let t24 = words8(t21);
 			t23 = ldj_u32(|j| t22.add(t24[j] as usize) as *const u8);
 			x4 = bsl_r(t2, t23, x4);
@@ -668,15 +674,15 @@ unsafe fn b0_r0r1sg_f(l: &Launch, lid0: u32, arg0: *const u8, arg1: *const u8, x
 			let t26 = x5;
 			x5 = (x5).wrapping_add(1u32);
 		}
-		let t27 = [vdupq_n_u32(4294967295u32); 8];
+		let t27 = splat(4294967295u32);
 		let t28 = cne_r(x4, t27);
-		let t29 = [vdupq_n_u32(2147483648u32); 8];
+		let t29 = splat(2147483648u32);
 		let t30 = and_r(x4, t29);
-		let t31 = [vdupq_n_u32(0u32); 8];
+		let t31 = [Z; 8];
 		let t32 = cne_r(t30, t31);
 		let t33 = and_r(t28, t32);
 		x6 = t33;
-		let mut t34 = [vdupq_n_u32(0); 8];
+		let mut t34 = [Z; 8];
 		let t35 = mvn_r(x6);
 		{
 			t34 = bsl_r(x6, t27, t34);
@@ -706,7 +712,7 @@ unsafe fn b0_r0r1sg_f(l: &Launch, lid0: u32, arg0: *const u8, arg1: *const u8, x
 	} else {
 		// Lanes part: the chunk's lanes on both sides of the bound.
 		let t39 = iota(gid0);
-		let t40 = [vdupq_n_u32((x2 as *const u32).read_unaligned()); 8];
+		let t40 = splat((x2 as *const u32).read_unaligned());
 		let t41 = cge_r(t39, t40);
 		let t42 = and_r(live, t41);
 		{
@@ -720,7 +726,7 @@ unsafe fn b0_r0r1sg_f(l: &Launch, lid0: u32, arg0: *const u8, arg1: *const u8, x
 			} else {
 				let t45 = ix_on(live, t39);
 				let t46 = arg0 as *const u32;
-				let mut t47 = [vdupq_n_u32(0); 8];
+				let mut t47 = [Z; 8];
 				let t48 = words8(t45);
 				t47 = ldj_u32(|j| t46.add(t48[j] as usize) as *const u8);
 				t43 = t47;
@@ -759,21 +765,21 @@ unsafe fn b0_r0r1sg_f(l: &Launch, lid0: u32, arg0: *const u8, arg1: *const u8, x
 					break;
 				}
 				// Lanes part: each its own rounds.
-				let t57 = [vdupq_n_u32(4294967295u32); 8];
+				let t57 = splat(4294967295u32);
 				let t58 = cne_r(x4, t57);
 				let t59: [uint32x4_t; 8] = core::array::from_fn(|r| vandq_u32(vdupq_n_u32(if ((x5) < (7u32)) { u32::MAX } else { 0 }), t58[r]));
-				let t60 = [vdupq_n_u32(2147483648u32); 8];
+				let t60 = splat(2147483648u32);
 				let t61 = and_r(x4, t60);
-				let t62 = [vdupq_n_u32(0u32); 8];
+				let t62 = [Z; 8];
 				let t63 = cne_r(t61, t62);
 				let t64 = and_r(t59, t63);
 				t49 = and_r(t49, t64);
 				if !(any(&t49)) { break; }
-				let t65 = [vdupq_n_u32(2147483647u32); 8];
+				let t65 = splat(2147483647u32);
 				let t66 = and_r(x4, t65);
 				let t67 = ix_on(t49, t66);
 				let t68 = arg0 as *const u32;
-				let mut t69 = [vdupq_n_u32(0); 8];
+				let mut t69 = [Z; 8];
 				let t70 = words8(t67);
 				t69 = ldj_u32(|j| t68.add(t70[j] as usize) as *const u8);
 				x4 = bsl_r(t49, t69, x4);
@@ -781,15 +787,15 @@ unsafe fn b0_r0r1sg_f(l: &Launch, lid0: u32, arg0: *const u8, arg1: *const u8, x
 				let t72 = x5;
 				x5 = (x5).wrapping_add(1u32);
 			}
-			let t73 = [vdupq_n_u32(4294967295u32); 8];
+			let t73 = splat(4294967295u32);
 			let t74 = cne_r(x4, t73);
-			let t75 = [vdupq_n_u32(2147483648u32); 8];
+			let t75 = splat(2147483648u32);
 			let t76 = and_r(x4, t75);
-			let t77 = [vdupq_n_u32(0u32); 8];
+			let t77 = [Z; 8];
 			let t78 = cne_r(t76, t77);
 			let t79 = and_r(t74, t78);
 			x6 = t79;
-			let mut t80 = [vdupq_n_u32(0); 8];
+			let mut t80 = [Z; 8];
 			let t81 = and_r(live, x6);
 			let t82 = bic_r(live, x6);
 			{
@@ -854,7 +860,7 @@ pub unsafe fn parent_link_w32(argv: *const *const u8, l: &Launch) {
 	}
 	let mut lid0 = 0u32;
 	while lid0 + 32 <= n {
-		let mut live = [vdupq_n_u32(u32::MAX); 8];
+		let mut live = splat(u32::MAX);
 		let gid0 = l.group[0] * l.block[0] + lid0;
 		'chunk: {
 			b0_r0r1sg_f(l, lid0, arg0, arg1, x2);

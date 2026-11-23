@@ -593,6 +593,7 @@ impl Em<'_> {
                 r = r.replace(&format!("core::mem::transmute::<[u32; {}], [uint32x4_t; {n}]>(", 4 * n), &format!("regs{n}("));
             }
         }
+        let r = if self.rolled() { splats(&r, self.p) } else { r };
         self.line_at(&untyped(&r))
     }
 
@@ -5883,6 +5884,7 @@ fn each_prelude(p: u32) -> String {
     ] {
         o.push_str(&format!("#[inline(always)]\nunsafe fn {name}({args}) -> uint32x4_t {{\n\t{body}\n}}\n"));
     }
+    o.push_str(&format!("/// The zero register, and a value in every lane.\nconst Z: uint32x4_t = unsafe {{ core::mem::transmute::<[u32; 4], uint32x4_t>([0; 4]) }};\n#[inline(always)]\nunsafe fn splat(x: u32) -> [uint32x4_t; {p}] {{\n\t[vdupq_n_u32(x); {p}]\n}}\n"));
     o.push_str(&format!("/// A 64-bit value in every lane: its halves.\n#[inline(always)]\nunsafe fn splat64(v: u64) -> [uint32x4_t; {q}] {{\n\tcore::array::from_fn(|r| vdupq_n_u32(if r < {p} {{ v as u32 }} else {{ (v >> 32) as u32 }}))\n}}\n", q = 2 * p));
     o.push_str(&format!("/// Lanes `f + j`.\n#[inline(always)]\nunsafe fn iota(f: u32) -> [uint32x4_t; {p}] {{\n\tcore::array::from_fn(|r| vaddq_u32(vdupq_n_u32(f), vld1q_u32(LANE[r].as_ptr())))\n}}\n"));
     o.push_str(&format!("/// An array's first registers, and those from its {p}th (a 64-bit value's halves).\n#[inline(always)]\nunsafe fn lo<const N: usize, const M: usize>(a: [uint32x4_t; M]) -> [uint32x4_t; N] {{\n\tcore::array::from_fn(|r| a[r])\n}}\n#[inline(always)]\nunsafe fn hi<const N: usize, const M: usize>(a: [uint32x4_t; M]) -> [uint32x4_t; N] {{\n\tcore::array::from_fn(|r| a[r + {p}])\n}}\n"));
@@ -5923,6 +5925,42 @@ fn each_prelude(p: u32) -> String {
     o
 }
 
+/// Line `s` with the prelude's names of splats: the zero register `Z`, and a value in every lane of the `p` registers
+/// (`[vdupq_n_u32(x); p]`) `splat(x)`.
+fn splats(s: &str, p: u32) -> String {
+    let s = s.replace("vdupq_n_u32(0u32)", "Z").replace("vdupq_n_u32(0)", "Z");
+    let open = "[vdupq_n_u32(";
+    let close = format!("); {p}]");
+    let mut out = String::with_capacity(s.len());
+    let mut at = 0;
+    while let Some(k) = s[at..].find(open) {
+        let from = at + k + open.len();
+        // The splat's value: to its call's closing parenthesis.
+        let mut depth = 1i32;
+        let end = s[from..].bytes().position(|c| {
+            match c {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                _ => {}
+            }
+            depth == 0
+        });
+        out.push_str(&s[at..at + k]);
+        match end.map(|e| from + e).filter(|&e| s[e..].starts_with(&close)) {
+            Some(e) => {
+                out.push_str(&format!("splat({})", &s[from..e]));
+                at = e + close.len();
+            }
+            None => {
+                out.push_str(open);
+                at = from;
+            }
+        }
+    }
+    out.push_str(&s[at..]);
+    out
+}
+
 /// Line `s` without its `let`'s type of registers (`: [uint32x4_t; N]`) where its value says it: a call of a function
 /// of the prelude's that returns them, a splat or a list of registers, a transmute that names it. Not a closure's
 /// (`from_fn`), which takes it from there.
@@ -5940,8 +5978,8 @@ fn untyped(s: &str) -> String {
         return s.to_string();
     }
     let value = &after[eq + 4..];
-    let helper = value.split('(').next().is_some_and(|f| f.ends_with("_r") || f.ends_with("_w") || f.starts_with("words") || f.starts_with("regs"));
-    if helper || value.starts_with("[vdupq_n_u32(") || value.starts_with("core::mem::transmute::<") {
+    let helper = value.split('(').next().is_some_and(|f| f.ends_with("_r") || f.ends_with("_w") || f.starts_with("words") || f.starts_with("regs") || f.starts_with("ld"));
+    if helper || value.starts_with("[vdupq_n_u32(") || value.starts_with("[Z; ") || value.starts_with("splat(") || value.starts_with("core::mem::transmute::<") {
         return format!("let {m}{name} = {value}");
     }
     s.to_string()
