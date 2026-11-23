@@ -10,7 +10,8 @@ import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores, type DatabaseApiStoresOptions } from "../../src/api/stores.js";
 import { openRerailDatabase, recordCheckout, type RerailDatabase } from "../../src/engine/index.js";
 import { createMergeAssistService, SqliteSessionStore, type MergeAssistService } from "../../src/runtime/index.js";
-import { FakeGithub } from "../support/merge-assist/workspace.js";
+import { commit } from "../support/merge-assist/git.js";
+import { FakeGithub, mergeAssistWorkspaces } from "../support/merge-assist/workspace.js";
 import { installPack, installPackDirectory, thirdPartyPack, uninstallPack } from "../support/installed-packs.js";
 import { gitRepository } from "../support/repository-setup.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -20,6 +21,8 @@ import { withExperiments } from "../support/environment/experiments.js";
 
 /** The beat of these streams: none comes within a test unless the test moves the clock to it. */
 const BEAT_MS = 60 * 60_000;
+
+const mergeWorkspace = mergeAssistWorkspaces();
 
 interface Message { readonly event: string; readonly data: string }
 
@@ -177,6 +180,45 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     } finally {
       other.close();
       await stream.stop();
+    }
+  });
+
+  it("sends a new token when the daemon's Merge Assist records a hook command's result on the stores' own connection", async () => {
+    const ws = await mergeWorkspace();
+    // A conflict: branch `jdoe-orders` changes the line `mine` changes.
+    commit(ws.worktree("jdoe-orders"), { "src/api/orders.ts": "export const orders = () => client.get(\"/v2/orders\");\n" }, "Version the orders path");
+    // As the daemon makes them: one Merge Assist for the API and the sessions, writing on the stores' own connection.
+    let daemonStores: DatabaseApiStores | undefined;
+    const mergeAssist = createMergeAssistService({ database: () => daemonStores!.database(), github: new FakeGithub() });
+    daemonStores = new DatabaseApiStores(ws.databasePath, {
+      health: () => ({ pid: process.pid, database: { path: ws.databasePath, exists: true }, native: { ok: true } }),
+      origin: () => "http://127.0.0.1:4737",
+      changeFeed: { beatMs: BEAT_MS },
+      mergeAssist,
+    });
+    // The hook command ends once the test makes this file, so its result is written while the stream listens.
+    const release = join(ws.folder, "release-hook");
+    const script = "const fs = require(\"node:fs\"); const wait = () => { if (!fs.existsSync(process.argv[1])) setTimeout(wait, 10); }; wait();";
+    await mergeAssist.setEnabled(ws.repo, true);
+    await mergeAssist.updateSettings(ws.repo, { hook: { command: [process.execPath, "-e", script, release], timeoutSeconds: 20 } });
+    expect((await mergeAssist.scan(ws.repo)).conflicts).toHaveLength(1);
+    const stream = messagesOf(await createRerailApi(daemonStores, operations, { version: "0.0.0-test" }).request("/api/changes"));
+    // A wait of its own, under the case's: a commit the stream never hears fails here, not at the case's timeout.
+    const within = async <T>(waiting: Promise<T>): Promise<T | string> =>
+      await Promise.race([waiting, new Promise<string>(resolve => setTimeout(resolve, 2_000, "nothing within 2 s"))]);
+    try {
+      const first = await stream.next();
+
+      writeFileSync(release, "");
+      await mergeAssist.settled();
+
+      expect(await within(stream.next().then(message => message.data !== first.data))).toBe(true);
+    } finally {
+      await stream.stop();
+      // The hook command has ended (`settled`) before its folder goes with the workspace.
+      await mergeAssist.settled();
+      await mergeAssist.stop();
+      daemonStores.close();
     }
   });
 
