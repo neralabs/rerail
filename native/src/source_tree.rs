@@ -19,14 +19,19 @@ use std::path::{Path, PathBuf};
 ///
 /// `None` outside a checkout: an installed engine has no source tree.
 ///
-/// A search each call (the loader's lookup, a canonical path, a walk up the directories: 1.9 M instructions): a
-/// caller that makes many paths finds the directories once and hands them on (`phase0::Dirs`), not this.
+/// Found once a run (`setting`), as `native` and `rule_library` are; outside a run, at each call. Each is a search (a
+/// canonical path, a walk up the directories): asked at each call, the rule library alone was searched for 791 times
+/// in a reach test's 23 runs.
 pub fn root() -> Option<PathBuf> {
-    find()
+    rerail_prof::code_rule_dsl::logic::profile::setting(find)
 }
 
 /// The checkout's or installed package's `native/` directory.
 pub fn native() -> PathBuf {
+    rerail_prof::code_rule_dsl::logic::profile::setting(find_native)
+}
+
+fn find_native() -> PathBuf {
     if std::env::var_os("RERAIL_SOURCE_ROOT").is_none()
         && let Some(native) = beside_image("native", "src/code_rule_dsl/typing/programs/sources.rerail")
     {
@@ -37,6 +42,10 @@ pub fn native() -> PathBuf {
 
 /// The `.rerail` library from a source checkout or from the package that contains the addon.
 pub fn rule_library() -> PathBuf {
+    rerail_prof::code_rule_dsl::logic::profile::setting(find_rule_library)
+}
+
+fn find_rule_library() -> PathBuf {
     const LIBRARY: &str = "docs/rule-syntax/lib";
     if let Some(root) = std::env::var_os("RERAIL_SOURCE_ROOT") {
         return PathBuf::from(root).join(LIBRARY);

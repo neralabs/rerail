@@ -2141,8 +2141,23 @@ pub fn usage() -> (f64, f64, f64) {
 
 /// The root a manifest names: the fact root of a snapshot, else the canonical path.
 pub fn manifest_root(root: &Path) -> String {
-    crate::git_workspace::snapshot::fact_root(root)
-        .or_else(|| root.canonical().ok()).unwrap_or_else(|| root.to_path_buf()).to_string_lossy().into_owned()
+    named_root(root).to_string_lossy().into_owned()
+}
+
+/// The name the run's facts give `root` (its manifest's, its fact spaces', `kept_strata::part_space`): the fact root
+/// of a snapshot, else the canonical path, else `root`. Found once a run for each root: asked at each call, a run
+/// resolved its root 17 times.
+pub fn named_root(root: &Path) -> std::path::PathBuf {
+    #[derive(Default)]
+    struct Named(std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, std::path::PathBuf>>);
+    let named = crate::code_rule_dsl::logic::profile::local::<Named>();
+    if let Some(found) = named.0.lock().expect("the run's named roots").get(root) {
+        return found.clone();
+    }
+    let found = crate::git_workspace::snapshot::fact_root(root)
+        .or_else(|| root.canonical().ok()).unwrap_or_else(|| root.to_path_buf());
+    named.0.lock().expect("the run's named roots").insert(root.to_path_buf(), found.clone());
+    found
 }
 
 /// `run_read` inside another run that hands it the source texts it read (`sources`, decision 0300): phase 1's.
