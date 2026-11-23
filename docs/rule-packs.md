@@ -44,6 +44,7 @@ Packs that port a linter are [linter-equivalent](#linter-equivalent) to it.
 | Node.js | framework | eslint-plugin-n 18.4.1 | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | eslint-plugin-vue 10.11.1 | 23 (21) | `*.vue` files |
 | React | framework | eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1 | 51 (32) | a `react` dependency, or `*.jsx` files |
+| Django | framework | none: Rerail's own rules | 27 (25) | a `django` dependency in `requirements*.txt` or `pyproject.toml`, or a `manage.py` |
 
 - **A project's own pack** is a `repository` pack you install from its folder with `rerail packs add <folder>`. It counts as a third party's pack.
 - **Starting values** are a pack's `mode` and `on`: what its rules start with in a repository that adds it. Repository or checkout settings override them.
@@ -58,7 +59,7 @@ A project's own pack holds rule documents in `rules/` and a `pack.json` whose ma
 Starting values also apply to rules a later upgrade adds.
 
 - **Mode:** the rule document's (`steer`), unless `pack.json` sets one. A port of a rule upstream only warns about is listed with `"mode": "log"` ([pack format](pack-format.md#packjson)).
-- **On:** a ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it. Such a rule is experimental, listed with `"on": false`. A reviewer also holds a rule off when its steer would do harm where no matcher change can tell the cases apart: `"on": false` with `heldOff`, one line saying why (Python's B009 and B010; the pack's README says more). Set-up then turns rules on or off to match the repository's own lint config ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)), except that it never turns a held-off rule on ([pack format](pack-format.md#packjson)).
+- **On:** a ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it. Such a rule is experimental, listed with `"on": false`. A reviewer also holds a rule off when its steer would do harm where no matcher change can tell the cases apart: `"on": false` with `heldOff`, one line saying why (Python's B009 and B010; the pack's README says more). Set-up then turns rules on or off to match the repository's own lint config ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)), except that it never turns a held-off rule on ([pack format](pack-format.md#packjson)). A rule of Rerail's own, with no upstream, starts on only when at least 90% of its read matches on the pack's corpus were real; below that it ships with `"on": false` (Django's get-handler-writes and host-header-without-get-host).
 - **Suppressions:** a rule honours its linter's suppression comments only if its document says so (`suppress`) and the repository's `suppressions` setting for it is `honour` ([rule scoping](rule-scoping.md#rules-attachments-and-settings)). The pack's `honourSuppressionComments` is the starting value.
 
 </details>
@@ -156,7 +157,7 @@ The catalog checks each installed pack on its own. A failing pack is left out an
 A pack must pass:
 
 1. **Package:** `package.json` is a pack's, named for its `pack.json` `id` and installed under that name.
-2. **`pack.json`:** valid, and every listed document exists.
+2. **`pack.json`:** valid, and every listed document exists. A rule written in `.rerail` is one the engine reads and checks.
 3. **Core range:** includes the active Rerail's version.
 4. **Compilation:** every code rule compiles, or is refused only for reading a token a tape may leave out.
 5. **No clash:** no other loading pack has its pack id or one of its rules.
@@ -167,9 +168,9 @@ A pack must pass:
 The catalog reads only packs the packs folder's `package.json` lists as its own dependencies. A pack npm installed only as another package's dependency is never read. It is reported as left out, saying it is not in that `package.json`, with `rerail packs add <package>` as the fix. If that `package.json` is missing or unreadable, every pack on disk is reported that way, with why, not as no packs.
 
 1. **Package.** `package.json` matches `rulePackPackageSchema`, named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`. So `@neralabs/rerail-pack-foo` in a `rerail-pack-foo` folder is left out (`it is installed as rerail-pack-foo, but its package.json names @neralabs/rerail-pack-foo`): no package borrows Rerail's publisher.
-2. **`pack.json`.** Valid (`rulePackFileSchema`, `match` included); every listed document carries the listed id. A rule document the schema refuses is named with its first issue (`Rule pack complexity: rules/<rule>.json clauses.0.forbid.ast.language Invalid option: …`).
+2. **`pack.json`.** Valid (`rulePackFileSchema`, `match` included); every listed document carries the listed id. A rule document the schema refuses is named with its first issue (`Rule pack complexity: rules/<rule>.json clauses.0.forbid.ast.language Invalid option: …`). Core asks the engine to read each `.rerail` document, with every file it includes, in a short-lived process that runs nothing; one it refuses leaves the pack out with the engine's words (`Rule pack django lists <rule>, whose document rules/<rule>.rerail the engine refuses: …`), as does one on Block, one that reads tool calls, or one whose findings carry a fix, none of which a pack's `.rerail` rule may do yet. The engine's reading of each file is kept beside the compile verdicts, by the bytes of the file and of every file it includes, so an unchanged pack starts no process.
 3. **Core range.** Prereleases included. It is the reason given whenever it leaves this Rerail out, also for a pack whose `pack.json` or rule documents this Rerail cannot read: a pack made for a newer Rerail holds what an older one does not know, and `it needs a newer Rerail (>=0.1.5-0) than this one (0.1.4)` says what to do where the refusal of an unknown field or language would not.
-4. **Compilation.** One refused only as `language-not-supported` loads, inactive until the engine reads its language. One refused for reading a token a tape may leave out (`a token test reads a token the tape may leave out`) is a form older packs were written in, which this engine no longer answers: the pack loads, and that rule alone is skipped where a repository runs it and reported, with the engine's reason, as any rule that fails to compile when it loads. A newer version of the pack runs it again. Any other refusal leaves the pack out.
+4. **Compilation.** One refused only as `language-not-supported` loads, inactive until the engine reads its language. One refused for reading a token a tape may leave out (`a token test reads a token the tape may leave out`) is a form older packs were written in, which this engine no longer answers: the pack loads, and that rule alone never runs. It keeps its settings and is shown as not running wherever rules are shown (`inactive` with code `reads-left-out-token` in the API, the dashboard's Not running, `rerail packs list` and `rerail rules show`), it is left out of every rule count, and set-up and the refresh that ends `rerail update` name the packs that have such rules. It is not a failed audit. A newer version of the pack runs it again. Any other refusal leaves the pack out.
 5. **No clash.** Rerail's own wins (`pack id sql is taken by @neralabs/rerail-pack-sql`); between third parties, the first by package name. Install location never decides. While Rerail's own pack for an id is installed but left out (by its core range, say), the other is left out too (`pack id sql is kept for @neralabs/rerail-pack-sql, which is installed but left out`). Repositories adding the id run nothing until Rerail's loads.
 
 Reasons are written for the person reading set-up, `rerail packs list` or `rerail update`:
@@ -218,7 +219,7 @@ It must be named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` (`<id>` from 
 
 A checkout can carry its own rules in `<checkout>/.rerail/rules/`, with no pack, install or attachment.
 
-Each `.json` rule document directly in that folder is one rule. Rerail reads the folder as pack `worktree`, for that checkout only. Each rule runs in Log until a person approves it (`rerail rules approve <id>`, in the checkout).
+Each `.json` rule document directly in that folder is one rule. Rerail reads the folder as pack `worktree`, for that checkout only. Each rule runs in Log until a person approves it (`rerail rules approve <id>`, in the checkout). A `.rerail` file there is left out, with why: a rule written in `.rerail` runs only from a rule pack for now.
 
 <details>
 <summary>What it reads, settings, edits and file checks</summary>
@@ -285,7 +286,7 @@ Core reads each installed pack's `pack.json` and listed documents into memory, r
 
 ## Format
 
-A pack is `packs/<id>/pack.json`, in the `rerail.rule-pack/v1` format, beside the rule documents it lists in `packs/<id>/rules/`.
+A pack is `packs/<id>/pack.json`, in the `rerail.rule-pack/v1` format, beside the rule documents it lists in `packs/<id>/rules/`. A rule document is a JSON document or a `.rerail` file ([Rules written in .rerail](pack-format.md#rules-written-in-rerail)), which takes no options and runs through the `.rerail` runner.
 
 Every `pack.json` field, with an example, is in [pack-format.md, "pack.json"](pack-format.md#packjson); what every pack must prove is its [validation contract](pack-format.md#the-validation-contract).
 

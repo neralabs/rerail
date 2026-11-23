@@ -10,7 +10,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("node:fs", { spy: true });
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
-import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
+import { describeScan, runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
+import { installPackDirectory, removeInstalledPacks, withOlderTokenRule } from "../support/installed-packs.js";
+import { repositoryPath } from "../support/oracles.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
@@ -268,6 +270,49 @@ describe("headless rerail scan", () => {
     const report = await scan(realpathSync(worktree), { databasePath });
     expect({ status: report.status, rulesSource: report.rulesSource, failures: report.failures }).toEqual({ status: "completed", rulesSource: { kind: "home" }, failures: [] });
     expect(report.violations).toHaveLength(1);
+  });
+
+  it("names the rules on that this Rerail does not run, neither failing the scan nor counting them as run", async () => {
+    const root = checkout();
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    roots.push(home);
+    const rule = "complexity-cyclomatic-python";
+    installPackDirectory(withOlderTokenRule(repositoryPath("packs", "complexity"), join(home, "older-pack"), rule), "complexity");
+    try {
+      const databasePath = join(home, "rerail.sqlite");
+      setUpTestRepository(root, { packs: ["complexity"] }, databasePath);
+
+      const report = await scan(root, { databasePath });
+
+      const reason = expect.stringMatching(/^This Rerail no longer runs the rule as Function complexity \S+ writes it: it tests a token that parsed files now leave out\. The pack's next version runs it again\.$/u);
+      expect({ status: report.status, failures: report.failures, notRun: report.notRun }).toEqual({ status: "completed", failures: [], notRun: [{ ruleId: rule, reason }] });
+      expect(report.rules.map(({ ruleId }) => ruleId)).not.toContain(rule);
+      expect(describeScan(report)).toContain(`\nnot run [${rule}]: This Rerail no longer runs the rule as Function complexity `);
+    } finally {
+      removeInstalledPacks();
+    }
+  });
+
+  it("names the rules a submodule it audits has on that this Rerail does not run", async () => {
+    const root = checkout();
+    const submodule = checkout();
+    git(root, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", submodule, "sub");
+    git(root, "commit", "--quiet", "-m", "Add the submodule");
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    roots.push(home);
+    const rule = "complexity-cyclomatic-python";
+    installPackDirectory(withOlderTokenRule(repositoryPath("packs", "complexity"), join(home, "older-pack"), rule), "complexity");
+    try {
+      const databasePath = join(home, "rerail.sqlite");
+      setUpTestRepository(root, {}, databasePath);
+      setUpTestRepository(join(root, "sub"), { packs: ["complexity"] }, databasePath);
+
+      const report = await scan(root, { databasePath, paths: ["sub/a.py"] });
+
+      expect({ status: report.status, notRun: report.notRun.map(({ ruleId }) => ruleId) }).toEqual({ status: "completed", notRun: [rule] });
+    } finally {
+      removeInstalledPacks();
+    }
   });
 
   it("uses the Rerail home's configuration in a copy of a started checkout that no session has recorded", async () => {
