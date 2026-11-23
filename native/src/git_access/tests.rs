@@ -1336,8 +1336,9 @@ fn a_linked_worktree_ignores_what_git_ignores_there() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-/// In a linked worktree the workspace discovery lists as untracked a file Git shows there, which
-/// the excludes file the repository's config names for the main checkout leaves out.
+/// In each checkout the workspace discovery lists what `git status` lists there: in a linked
+/// worktree, as untracked, a file the excludes file the repository's config names for the main
+/// checkout leaves out.
 #[test]
 fn a_linked_worktree_lists_what_git_status_lists_there() {
     use crate::git_workspace::{OverlayKind, WorkspaceOverlay};
@@ -1347,12 +1348,28 @@ fn a_linked_worktree_lists_what_git_status_lists_there() {
         write(checkout, &[("la/f.py", b"f\n")]);
     }
     let listed = |checkout: &Path| crate::git_workspace::discover(checkout).unwrap().overlays;
-    assert_eq!(listed(&main), []);
+    // Each line `git status` prints, as an untracked file: a line for a tracked file keeps its
+    // status letters in the path, so it matches nothing the discovery lists.
+    let git_status = |checkout: &Path| {
+        let arguments = ["status", "--porcelain", "--untracked-files=all"];
+        let output = git_output(checkout, &arguments, &[]);
+        assert!(output.status.success(), "git status in {}", checkout.display());
+        let lines = String::from_utf8(output.stdout).unwrap();
+        let overlay = |line: &str| WorkspaceOverlay {
+            path: line.strip_prefix("?? ").unwrap_or(line).to_owned(),
+            kind: OverlayKind::Untracked,
+        };
+        lines.lines().map(overlay).collect::<Vec<_>>()
+    };
     let untracked = WorkspaceOverlay {
         path: "la/f.py".to_owned(),
         kind: OverlayKind::Untracked,
     };
-    assert_eq!(listed(&linked), [untracked]);
+    for (checkout, shown) in [(&main, vec![]), (&linked, vec![untracked])] {
+        let git = git_status(checkout);
+        assert_eq!(listed(checkout), git, "{}", checkout.display());
+        assert_eq!(git, shown, "{}", checkout.display());
+    }
     std::fs::remove_dir_all(root).unwrap();
 }
 
