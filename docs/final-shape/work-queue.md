@@ -10507,3 +10507,12 @@ the reuse and session tests to `tests_corpus/src`. One conflict, `reuse.rs`'s `N
 
 Relax: the engine checks clean; the reuse and session tests (30), the converter's overlay, pack, replay and
 reference-fixture tests (4) and rerail-observe (42) pass.
+
+### Q498. Roll-up 73 (django-bugs 2ab40098ce onto Pulling-it-all-together): what the merge chose
+
+Decision 0603's arenas from django-bugs: every stratum one launch within its budget's relaunches, arenas and rooms
+mapped as a recursive component's rounds reach them, and the text arena growing in place. No conflict: every file
+lands in its crate after the crate split (setfix, device_metal, blocks, prof, facts, ukl). No architectural clash.
+
+Relax: the engine checks clean; rerail-blocks (77) passes; the global-state check passes. The new device tests are
+Metal's and do not run on this Mac.

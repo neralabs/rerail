@@ -212,6 +212,20 @@ UKL_INLINE uint32_t ukl_atomic_exchange(UKL_GLOBAL uint32_t* p, uint32_t v) { re
 UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicMin(p, v); }
 UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicMax(p, v); }
 UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return atomicCAS(p, e, n); }
+// The same on a word read coherently (`UKL_COHERENT`, `volatile` here: a block other groups write, `CLIF_BLOCK_SPACE`
+// in a join program): C++ does not take a `volatile` pointer where a plain one is wanted, as Metal's and OpenCL's do.
+// An atomic reaches the device's memory either way.
+UKL_INLINE uint32_t ukl_atomic_load(UKL_COHERENT uint32_t* p) { return *p; }
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_COHERENT uint32_t* p) { return *p; }
+UKL_INLINE void ukl_atomic_store(UKL_COHERENT uint32_t* p, uint32_t v) { *p = v; }
+UKL_INLINE uint32_t ukl_atomic_add(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicAdd((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_sub(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicSub((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_or(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicOr((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_and(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicAnd((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_exchange(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicExch((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_min(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicMin((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_max(UKL_COHERENT uint32_t* p, uint32_t v) { return atomicMax((uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_cas(UKL_COHERENT uint32_t* p, uint32_t e, uint32_t n) { return atomicCAS((uint32_t*)p, e, n); }
 UKL_INLINE void ukl_fence_device() { __threadfence(); }
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomicAdd(p, v); }
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return *(volatile uint32_t*)p; }
@@ -572,6 +586,34 @@ UKL_INLINE uint32_t ukl_mask_rank(ukl_mask_t m, uint32_t l) { return ukl_mask_co
 #define UKL_OFFSETOF(T, f) __builtin_offsetof(T, f)
 #endif
 #endif
+
+// A word record (decision 0603 step 5b): a struct whose words a kernel writes and other groups read one word at a
+// time, coherent: offsets into an arena, counts, sizes, never a pointer. `UKL_WORD_RECORD(T, f, ...)` names every
+// field of `T`, and the compiler refuses the record when one is a pointer (a pointer has no remainder) or not 32 bits,
+// or when a field is left out (their sizes are not the record's). A word is read by its index (`UKL_WORD_INDEX`),
+// which names a record's field only. A coherent load of a struct holding pointers crashed the M1's Metal compiler
+// service at each try, and the offline check did not show it: a pointer in a record is an error here instead.
+#define __UKL_WORD_SIZE(T, f) + (0u * sizeof(((UKL_PRIVATE T*)0)->f % 1u) + (sizeof(((UKL_PRIVATE T*)0)->f) == 4u ? 4u : 1u))
+#define __UKL_EACH_1(m, T, a) m(T, a)
+#define __UKL_EACH_2(m, T, a, ...) m(T, a) __UKL_EACH_1(m, T, __VA_ARGS__)
+#define __UKL_EACH_3(m, T, a, ...) m(T, a) __UKL_EACH_2(m, T, __VA_ARGS__)
+#define __UKL_EACH_4(m, T, a, ...) m(T, a) __UKL_EACH_3(m, T, __VA_ARGS__)
+#define __UKL_EACH_5(m, T, a, ...) m(T, a) __UKL_EACH_4(m, T, __VA_ARGS__)
+#define __UKL_EACH_6(m, T, a, ...) m(T, a) __UKL_EACH_5(m, T, __VA_ARGS__)
+#define __UKL_EACH_7(m, T, a, ...) m(T, a) __UKL_EACH_6(m, T, __VA_ARGS__)
+#define __UKL_EACH_8(m, T, a, ...) m(T, a) __UKL_EACH_7(m, T, __VA_ARGS__)
+#define __UKL_EACH_9(m, T, a, ...) m(T, a) __UKL_EACH_8(m, T, __VA_ARGS__)
+#define __UKL_EACH_10(m, T, a, ...) m(T, a) __UKL_EACH_9(m, T, __VA_ARGS__)
+#define __UKL_EACH_11(m, T, a, ...) m(T, a) __UKL_EACH_10(m, T, __VA_ARGS__)
+#define __UKL_EACH_12(m, T, a, ...) m(T, a) __UKL_EACH_11(m, T, __VA_ARGS__)
+#define __UKL_EACH_N(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, N, ...) N
+#define __UKL_EACH_CAT(a, b) a##b
+#define __UKL_EACH_AT(n) __UKL_EACH_CAT(__UKL_EACH_, n)
+#define __UKL_EACH(m, T, ...) __UKL_EACH_AT(__UKL_EACH_N(__VA_ARGS__, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0))(m, T, __VA_ARGS__)
+#define UKL_WORD_RECORD(T, ...)                                                                                        \
+    enum { T##_is_a_word_record = 1 };                                                                                 \
+    UKL_STATIC_ASSERT(sizeof(T) == 0u __UKL_EACH(__UKL_WORD_SIZE, T, __VA_ARGS__), #T ": a word record's fields are its 32-bit words, all named")
+#define UKL_WORD_INDEX(T, f) ((uint32_t)T##_is_a_word_record * (uint32_t)(UKL_OFFSETOF(T, f) / 4u))
 
 // A program's specialization constant (decision 0440 step B): `UKL_CONSTANT_U32(name)` declares `name`, a uint32_t
 // fixed when the program is made, so the compiler folds it (the label passes' tape format). Metal's function constant

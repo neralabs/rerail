@@ -3120,6 +3120,17 @@ pub struct Report {
     pub stages: u32,
     pub submissions: u32,
     pub dispatches: u32,
+    /// Of the dispatches, programs launched again (decision 0603 point 5): a budget's, where a launch spent its
+    /// budget with items left, and an arena's, where a size script parked and the arena's pages were mapped for it;
+    /// the programs' items taken over all their launches; and a launch's budget of items, the least of theirs.
+    pub relaunches: u32,
+    pub remaps: u32,
+    /// Of the remaps, a gate's rooms' (a recursive component's rows mapped as its rounds reach them).
+    pub room_remaps: u32,
+    pub taken: u64,
+    pub launch_items: u64,
+    /// Its programs: one a stratum (a wave's first stratum's report, its wave's).
+    pub programs: u32,
     /// Runs again from an overflowing stage.
     pub reruns: u32,
     /// Times it waited for the device's memory before it encoded (`gpu::shared::admit`, Q203), and the seconds.
