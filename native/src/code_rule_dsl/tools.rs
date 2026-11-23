@@ -5,7 +5,7 @@
 use rerail_store::Canonical as _;
 pub use super::logic::profile::watch::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
-pub use super::logic::settings::{program_text, program_texts, settings};
+pub use super::logic::settings::{program_text, program_texts, program_texts_read, read_program_file, settings};
 pub use super::logic::settings::process_counters;
 use crate::code_rule_dsl::transducer::packed::rir;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
@@ -1642,9 +1642,11 @@ fn logic_command(args: &[String]) -> Result<String, String> {
         files.sort();
         // A file another one `#include`s is a library of it (`…confusables.rerail`), not a program of its own: alone it
         // has neither the declarations it reads nor the rules that fill its inputs.
-        let included: std::collections::BTreeSet<std::ffi::OsString> = files
+        // Each read once, as the run observes it, and its text handed on to `program_texts_read`.
+        let read: Vec<Result<String, String>> = files.iter().map(|path| crate::tools::read_program_file(path)).collect();
+        let included: std::collections::BTreeSet<std::ffi::OsString> = read
             .iter()
-            .filter_map(|path| std::fs::read_to_string(path).ok())
+            .filter_map(|text| text.as_ref().ok())
             .flat_map(|text| {
                 text.lines()
                     .filter_map(|l| l.trim().strip_prefix("#include"))
@@ -1653,9 +1655,9 @@ fn logic_command(args: &[String]) -> Result<String, String> {
                     .collect::<Vec<_>>()
             })
             .collect();
-        files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
+        let (files, read): (Vec<_>, Vec<_>) = files.into_iter().zip(read).filter(|(path, _)| !path.file_name().is_some_and(|n| included.contains(n))).unzip();
         timeline_mark("the program files listed");
-        let texts = crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?;
+        let texts = crate::tools::program_texts_read(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>(), read.into_iter().map(Result::ok).collect())?;
         _sources = super::logic::rr::profile_join_sources(&files.iter().map(|p| p.as_path()).collect::<Vec<_>>());
         timeline_mark("the program texts read");
         texts

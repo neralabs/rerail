@@ -9,19 +9,32 @@ pub fn program_text(path: &std::path::Path) -> Result<String, String> {
 /// [`program_text`] for each of `paths`: phase 0 resolves all their `#include`s in one run of `bootstrap.rerail`
 /// (`plan::corpus::phase0`), not one run each.
 pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> {
-    use crate::code_rule_dsl::logic::plan::corpus::{observe, phase0};
-    let read = |path: &std::path::Path| -> Result<String, String> {
-        let (bytes, _) = observe(|o| o.read(path)).ok_or_else(|| format!("{}: cannot read the file", path.display()))?;
-        String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))
-    };
+    program_texts_read(paths, paths.iter().map(|_| None).collect())
+}
+
+/// A rule file's text, read as the run observes its reads (`program_texts` reads each so).
+pub fn read_program_file(path: &std::path::Path) -> Result<String, String> {
+    let (bytes, _) = crate::code_rule_dsl::logic::plan::corpus::observe(|o| o.read(path)).ok_or_else(|| format!("{}: cannot read the file", path.display()))?;
+    String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// `program_texts` of `paths`, each one's file text given where its reader read it already (`read_program_file`):
+/// a directory's files are read to find the libraries others include, and each was read a second time here.
+pub fn program_texts_read(paths: &[&std::path::Path], given: Vec<Option<String>>) -> Result<Vec<String>, String> {
+    use crate::code_rule_dsl::logic::plan::corpus::phase0;
+    let read = read_program_file;
     // A JSON policy (decision 0175) is its translation: a text whose `#include`s are library files, read as a text's.
     let json: Vec<bool> = paths.iter().map(|p| crate::code_rule_dsl::logic::json_rules::is_policy_path(p)).collect();
     let translator = json.iter().any(|j| *j).then(crate::code_rule_dsl::logic::json_rules::Translator::new);
     let texts: Vec<String> = paths
         .iter()
         .zip(&json)
-        .map(|(p, j)| {
-            let text = read(p)?;
+        .zip(given)
+        .map(|((p, j), given)| {
+            let text = match given {
+                Some(text) => text,
+                None => read(p)?,
+            };
             if !j {
                 return Ok(text);
             }

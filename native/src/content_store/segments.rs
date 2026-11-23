@@ -23,6 +23,7 @@ pub struct SegmentBytes {
 }
 
 impl SegmentBytes {
+    #[inline]
     pub fn bytes(&self) -> &[u8] {
         self.block.bytes(self.at, self.at + self.len)
     }

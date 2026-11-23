@@ -568,6 +568,7 @@ impl Block {
     }
 
     /// Bytes used so far (the frozen length, once frozen).
+    #[inline]
     pub fn used(&self) -> usize {
         self.ext.top.load(Acquire)
     }
@@ -580,6 +581,7 @@ impl Block {
         unsafe { &*(self.base.add(self.header().root as usize) as *const T) }
     }
 
+    #[inline]
     pub fn bytes(&self, start: usize, end: usize) -> &[u8] {
         assert!(start <= end && end <= self.used());
         unsafe { std::slice::from_raw_parts(self.base.add(start), end - start) }
@@ -855,6 +857,7 @@ pub struct Frozen(Arc<Block>);
 
 impl Deref for Frozen {
     type Target = Block;
+    #[inline]
     fn deref(&self) -> &Block {
         &self.0
     }
