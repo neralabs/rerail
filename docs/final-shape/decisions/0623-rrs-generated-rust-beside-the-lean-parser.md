@@ -601,3 +601,9 @@ gap is the loop's own core (the rows' dispatch, the regions' and the runs' reads
 not the work the grammar asks beyond lean's. Tried and not kept, each slower: the starts as a hint of the block's masks
 (lean's `starts`, put back after each token to stay exact), its interior passed at once after a region, a word's hash
 only at a word's first byte.
+
+Also tried, not kept: a region's end (a string's, a comment's, a tick literal's) read of the block's classes first, the
+escapes found by clearing the bits before the region (`escaped_step(bs & lo)`), windows only past the block, with the
+region classes either in the block's one classify or in one of their own made where a region is first read in the
+block. Both were the same or slower (22.7–23.7 ms against 22.2–23.3 ms, in turns), and lean's micro-lexers read from
+the token as the windows do.
