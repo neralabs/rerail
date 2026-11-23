@@ -450,6 +450,77 @@ index 5e831c36..4dcb73ca 100644
          "x86_64-pc-windows-gnu" => ("", ".dll", ".exe", "lib", ".a", &["off"], false),
          "wasm32-unknown-unknown" | "wasm64-unknown-unknown" => ("", ".wasm", ".wasm", "lib", ".a", &["off"], true),
          t => return Err(format!("no target model for {t}")),
+diff --git a/libs/relax/compiler/src/lower.rs b/libs/relax/compiler/src/lower.rs
+index 28d3fbd3..4e88811c 100644
+--- a/libs/relax/compiler/src/lower.rs
++++ b/libs/relax/compiler/src/lower.rs
+@@ -328,6 +328,11 @@ pub struct Lcx<'a> {
+     /// or-pattern alternatives fixed at compile time (a guarded arm tried one alternative
+     /// combination at a time, rustc's per-candidate guard evaluation)
+     or_force: HashMap<u32, usize>,
++    /// While a guarded arm's or-alternatives are lowered (`enter_arm`), each lowering its guard: the slot
++    /// addresses of the locals the guard declares, made at the arm's start instead of in the first
++    /// alternative's blocks, which the next alternatives do not pass through (their `let` reads the
++    /// address the first made). (instruction, its source position)
++    guard_slots: Option<Vec<(Inst, u64)>>,
+     /// moves out of the scrutinee recorded while binding a guarded arm: they happen only once
+     /// the guard holds (rustc binds by reference for the guard, by value after it)
+     defer_moves: Option<Vec<PendingMove>>,
+@@ -563,6 +568,7 @@ impl<'a> Lcx<'a> {
+             probe_scope: Vec::new(),
+             watch_fields: WATCH_FIELDS.try_with(|p| p.borrow().iter().filter(|x| lowers_slot(u, x.slot, cur_fn)).cloned().collect()).unwrap_or_default(),
+             or_force: HashMap::default(),
++            guard_slots: None,
+             defer_moves: None,
+             drop_misaligned: false,
+             temp_moved: HashMap::default(),
+@@ -1694,6 +1700,16 @@ impl<'a> Lcx<'a> {
+         let l = self.layout(t);
+         let st = match (&l.leaves, self.addr_taken[li as usize]) {
+             (Some(leaves), false) => LocalSt::Regs(self.fresh_leaves(leaves)),
++            // a local a guard declares, while the guarded arm's alternatives are lowered: its
++            // address is made at the arm's start (`guard_slots`)
++            _ if self.guard_slots.is_some() => {
++                let s = self.f.slot(l.size, l.align);
++                self.f.slots[s as usize].born = self.coro.is_none();
++                let d = self.f.vreg(Cls::I);
++                let pos = ((self.b.file as u64) << 32) | self.pos as u64;
++                self.guard_slots.as_mut().expect("tested").push((Inst::SlotAddr(d, s), pos));
++                LocalSt::Slot(d)
++            }
+             _ => {
+                 let a = self.new_slot_for(t);
+                 LocalSt::Slot(a)
+@@ -10492,6 +10508,11 @@ impl<'a> Lcx<'a> {
+             // temporaries and the pattern's bindings (rustc if-let guard scopes)
+             self.push_scope();
+             let n = combos.len();
++            // the guard is lowered once per alternative, and the locals it declares are made at
++            // the first: their addresses go here, where every alternative passes (`guard_slots`);
++            // an enclosing guarded arm's start is earlier still, and takes them
++            let home = (self.cur, self.f.blocks[self.cur as usize].insts.len());
++            let outer_slots = self.guard_slots.replace(Vec::new());
+             for (ci, combo) in combos.into_iter().enumerate() {
+                 let alt_fail = if ci + 1 == n { next } else { self.f.block() };
+                 self.or_force = combo.into_iter().collect();
+@@ -10536,6 +10557,17 @@ impl<'a> Lcx<'a> {
+                     self.switch(alt_fail);
+                 }
+             }
++            let made = std::mem::replace(&mut self.guard_slots, outer_slots).unwrap_or_default();
++            match self.guard_slots.as_mut() {
++                Some(outer) => outer.extend(made),
++                None => {
++                    let b = &mut self.f.blocks[home.0 as usize];
++                    for (k, (i, pos)) in made.into_iter().enumerate() {
++                        b.insts.insert(home.1 + k, i);
++                        b.pos.insert(home.1 + k, pos);
++                    }
++                }
++            }
+             self.switch(body);
+         } else {
+             if test {
 diff --git a/libs/relax/compiler/src/modules.rs b/libs/relax/compiler/src/modules.rs
 index 765aa64e..015d6900 100644
 --- a/libs/relax/compiler/src/modules.rs
