@@ -1,12 +1,13 @@
 /**
  * Overview (`#overview`, the default; `#rules` before v8): the banner the repository's first-open state calls for
- * (`first-open.js`), the range's four tiles, then the rules with the most violations logged and the newest sessions,
+ * (`first-open.js`), the banners that ask for approval, a newer Rerail once the daemon reports one, the range's four tiles, then the rules with the most violations logged and the newest sessions,
  * or the empty block that says what to do next.
  */
 import { h, setText, setAttr, setClass, setContent, syncChildren, icon, pendingIcon } from "../dom.js";
 import { ago, andList, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
 import { awaitingApproval, awaitingYourApproval, isFromPack, isLog, isRunning, worktreeLeftOut } from "../derive.js";
-import { data, ui, ALL_TIME, activityAllOf, allFires, fires, packById, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
+import { data, ui, ALL_TIME, activityAllOf, allFires, fires, isSetUp, packById, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
+import { newerRelease } from "../settings-model.js";
 import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
 import { rangeControl, syncRange } from "../render/range.js";
@@ -55,10 +56,15 @@ function dismissWelcome() {
   try { localStorage.setItem(welcomeKey(), "1"); } catch { /* private mode: dismissed for this visit */ }
 }
 
+/*
+ * The banners for moments where nothing is at stake (day one, a new version, a stop someone may have chosen) carry a
+ * little personality in their icon and a word or two. The ones that ask a person to approve, judge or fix something
+ * keep plain icons and words.
+ */
 function stoppedBanner(repo) {
-  return h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+  return h("div.welcome.warn", { role: "status" }, icon("melting", 22), h("div", null,
     h("b", null, `Rerail is stopped in ${repo}.`),
-    h("p", null, "No rules run here, and nothing is logged; rules and history are kept."),
+    h("p", null, "No rules run here and nothing is logged, but your rules and history are safe. Start it again whenever you’re ready."),
     h("p.acts", null, h("button.btn.sm.solid", { "data-act": "repostart", "data-i": data.repository.repositoryKey, title: `Starts Rerail in every checkout and worktree of ${repo}.` }, "Start Rerail"))));
 }
 
@@ -70,8 +76,8 @@ function stoppedBanner(repo) {
 function welcomeBanner(repo) {
   const running = rulesArray().filter(isRunning), log = running.filter(isLog).length, steer = running.length - log;
   const names = [...data.attachedPacks.keys()].map(id => packById(id)?.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
-  return h("div.welcome", { role: "status" }, icon("done", 22), h("div", null,
-    h("b", null, `Rerail is on in ${repo}: ${fmt(names.length)} ${plural(names.length, "rule pack")}, ${fmt(steer)} ${plural(steer, "rule")} steering${log ? `, ${fmt(log)} on Log only` : ""}.`),
+  return h("div.welcome", { role: "status" }, icon("wave", 22), h("div", null,
+    h("b", null, `Hi! Rerail is on in ${repo}: ${fmt(names.length)} ${plural(names.length, "rule pack")}, ${fmt(steer)} ${plural(steer, "rule")} steering${log ? `, ${fmt(log)} on Log only` : ""}.`),
     names.length ? h("p", null, `${andList(names)}. Each pack starts some of its rules on and the rest off; turn more on from its page.`) : null,
     h("p", null, "Your linter checks code after it’s written; Rerail tells your coding agent as it writes, so problems are fixed in the same turn."),
     h("p.acts", null, h("button.btn.sm", { "data-act": "nav", "data-i": "packs" }, "See your rule packs"))),
@@ -84,6 +90,39 @@ function renderBanner(root, state) {
   const on = rulesArray().filter(isRunning).length;
   setContent(root, JSON.stringify([kind, repo, on, data.repository?.repositoryKey, [...data.attachedPacks.keys()], rulesArray().filter(isRunning).map(r => r.rule.mode)]), () =>
     kind === "stopped" ? stoppedBanner(repo) : kind === "welcome" ? welcomeBanner(repo) : null);
+}
+
+/* A newer Rerail: once per version, until dismissed, on a repository that is set up. */
+
+const updateKey = latest => `rerail-update-dismissed:${latest}`;
+/** The versions dismissed in this visit, which holds when storage is blocked. */
+const updateDismissedHere = new Set();
+
+function updateDismissed(latest) {
+  if (updateDismissedHere.has(latest)) return true;
+  try { return localStorage.getItem(updateKey(latest)) === "1"; } catch { return false; /* storage blocked */ }
+}
+
+function dismissUpdate() {
+  const latest = newerRelease(data.health);
+  if (latest === null) return;
+  updateDismissedHere.add(latest);
+  try { localStorage.setItem(updateKey(latest), "1"); } catch { /* private mode: dismissed for this visit */ }
+}
+
+/**
+ * "Rerail 0.3.0 just launched.", from the newest version the daemon reports (`/healthz.update`), with Open Settings,
+ * which goes to About Rerail: the release notes and how to update are there, so the banner carries neither. It sits
+ * below the banners that ask for something, since it doesn't.
+ */
+function renderUpdate(root) {
+  const latest = data.loaded && isSetUp() ? newerRelease(data.health) : null;
+  const show = latest !== null && !updateDismissed(latest);
+  setContent(root, show ? latest : "", () => (!show ? null : h("div.welcome", { role: "status" }, icon("rocket", 22), h("div", null,
+    h("b", null, `Rerail ${latest} just launched.`),
+    h("p", null, "See what’s new and how to update in Settings. Your rules and history come with you."),
+    h("p.acts", null, h("button.btn.sm", { "data-act": "nav", "data-i": "settings?section=about" }, "Open Settings"))),
+  h("button.x", { "data-act": "dismissupdate", "aria-label": "Dismiss" }, "✕"))));
 }
 
 /** The worktree's `.rerail/rules` files left out, each with why; they run nothing until fixed. Not dismissible. */
@@ -321,6 +360,7 @@ function build() {
   const leftOut = h("div.banners");
   const yours = h("div.banners");
   const approvals = h("div.banners");
+  const update = h("div.banners");
   const range = rangeControl();
   const tiles = TILES.map(tile);
   const empty = h("div.ovempty");
@@ -338,10 +378,10 @@ function build() {
     h("div.colhead.srhead", { "aria-hidden": "true" }, h("span", null, "Session"), h("span", null, "Violations")),
     recentList);
   const lists = h("div.ovlists", null, top, recent);
-  const root = h("div.ov", null, banner, leftOut, yours, approvals,
+  const root = h("div.ov", null, banner, leftOut, yours, approvals, update,
     h("div.rollup", null, h("div.rollhead", null, h("h2", null, "Overview"), range), h("div.tiles", null, tiles)),
     empty, lists);
-  page = { root, banner, leftOut, yours, approvals, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
+  page = { root, banner, leftOut, yours, approvals, update, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
 }
 
 function renderLists(top, repo) {
@@ -368,6 +408,7 @@ export function render(root) {
   renderLeftOut(page.leftOut);
   renderYours(page.yours);
   renderApprovals(page.approvals);
+  renderUpdate(page.update);
   syncRange(page.range);
   renderTiles(page.tiles, sources, ruleCount, sessionsEver);
   renderBody({ ruleCount, sessionsEver }, sources, repo);
@@ -388,4 +429,5 @@ function renderBody({ ruleCount, sessionsEver }, sources, repo) {
 
 export const actions = {
   dismisswelcome: () => { dismissWelcome(); invalidate(); },
+  dismissupdate: () => { dismissUpdate(); invalidate(); },
 };

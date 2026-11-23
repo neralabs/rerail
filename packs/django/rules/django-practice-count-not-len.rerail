@@ -1,0 +1,39 @@
+.policy "django-practice-count-not-len" revision 1
+.description "Use QuerySet.count() instead of len() on a queryset whose rows the code does not otherwise use."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. len() of a queryset written inline fetches every row into memory to count them;
+// count() runs SELECT COUNT(*). The queryset is a chain from a manager written in the call, so no other code
+// can be reading its rows (a queryset in a variable may be iterated later, where len() fills its cache usefully).
+// A len() that only tests for rows (compared with 0 or 1, or read for its truth) is
+// django-practice-exists-for-existence's: the fix there is exists().
+//   len(Book.objects.filter(author=a))              reported
+//   len(Book.objects.all().values_list("id"))       reported
+//   books = Book.objects.filter(author=a)
+//   len(books)                                      not reported: books may be iterated after
+//   Book.objects.filter(author=a).count()           not reported
+//   len(Book.objects.filter(author=a)) == 0         not reported here: django-practice-exists-for-existence
+
+#include "lib/django.rerail"
+
+.violation CountNotLen(at: node) "len() loads every row of this queryset to count them; call .count() on it instead, which runs SELECT COUNT(*)."
+// A len() only tested for being 0 (py_empty_test: compared with 0 or 1, or read for its truth) is
+// django-practice-exists-for-existence's.
+CountNotLen(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, "builtins.len"), posarg(c, 0, a), unparen(a, q),
+    dj_qs(q), !dj_qs_call(q, "raw"), !posarg(c, 1, _), !py_empty_test(c), docof(c, d), !dj_test_doc(d).
+
+// The cases, `cases/django-practice-count-not-len/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "shop/test.py" from "../cases/django-practice-count-not-len/shop/test.py"
+    .fixture "shop/testing/factories.py" from "../cases/django-practice-count-not-len/shop/testing/factories.py"
+    .fixture "shop/tests/test_views.py" from "../cases/django-practice-count-not-len/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "../cases/django-practice-count-not-len/shop/views.py"
+    .fixture "unittests/dojo_test_case.py" from "../cases/django-practice-count-not-len/unittests/dojo_test_case.py"
+    .expect _ at "shop/views.py":7
+    .expect _ at "shop/views.py":8
+    .expect _ at "shop/views.py":9
+    .expect _ at "shop/views.py":20
+    .expect _ at "shop/views.py":22
+.end

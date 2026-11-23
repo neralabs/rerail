@@ -356,10 +356,10 @@ interface RuleActivityCounts {
  * evaluated, so neither is measured.
  */
 function catalogRuleActivity(
-  { id, kind, rule }: ReturnType<typeof activityRules>[number],
+  { id, kind, rule, notRun }: ReturnType<typeof activityRules>[number],
   counts: RuleActivityCounts,
 ): RuleActivity {
-  const { inactive } = inactiveOf(kind, rule);
+  const { inactive } = inactiveOf(kind, rule, notRun);
   const totals = kind === "conversation" ? undefined : counts.activity.get(id);
   return {
     measured: kind !== "conversation" && inactive === undefined,
@@ -415,6 +415,7 @@ const codingAgentSchema = z.object({
   rerailData: z.object({
     access: z.enum(["kept-out", "file-tools", "open"]).describe("kept-out: neither its commands nor its file tools can read Rerail's data; file-tools: its file tools cannot, its shell commands can; open: nothing keeps it out."),
     why: z.string().describe("One sentence for a person saying why."),
+    fix: z.string().nullable().describe("One sentence for a person saying what they can do on this computer to keep the rest of its tools out too; null when Rerail knows of nothing."),
   }).strict().describe("Whether this coding agent's own tools can read Rerail's data (the Rerail home and the content cache), as far as its configuration on this computer shows. Rerail never changes it."),
 }).strict();
 
@@ -550,7 +551,7 @@ export const operations: readonly Operation[] = [
             ...rest,
             ...(localSource === undefined ? {} : { installedFrom: localSource.kind }),
             ...(subject === undefined ? {} : { approval: { subject: { ...subject }, approved: approvals.has(approvalKey(subject)) } }),
-            rules: [...rules],
+            rules: rules.map(rule => ({ ...rule, ...inactiveOf(rule.kind, catalog.documents.get(rule.id)?.rule, catalog.notRun.get(rule.id)) })),
           };
         }),
         skipped: [...catalog.skipped],

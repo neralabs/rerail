@@ -112,13 +112,16 @@ declare module "*/ui/poll.js" {
     configSource: Record<string, object>;
     /** Why the configured options don't apply; the rule then runs nowhere. */
     configError: string | null;
+    /** Why Rerail keeps the rule but never evaluates it; the rule then runs nowhere. */
+    inactive: { code: string; reason: string } | null;
   }
   export function toStoredRules(entries: readonly object[]): Map<string, StoredRule>;
 }
 
 declare module "*/ui/derive.js" {
   export function violationOutcome(finding: { mode?: string; logged: boolean }): "logged" | "steered";
-  export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
+  export function isRunning(stored: { enabled: boolean; configError?: string | null; inactive?: { reason: string } | null }): boolean;
+  export function notRunningReason(stored: { enabled: boolean; configError?: string | null; inactive?: { reason: string } | null }): string | null;
   export function packSuppressions(rules: readonly object[], packId: string, owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
   export function inPack(rule: object, packId: string): boolean;
   /** Whether a stored rule came in a rule pack (`origin` "pack"), rather than from the library ("user"). */
@@ -258,6 +261,7 @@ declare module "*/ui/routes.js" {
   export interface Route {
     view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "logged" | "steered" | "declined";
     sessionFilter?: "all" | "corr" | "declined"; rule?: string; session?: string; jump?: boolean; conflict?: string;
+    section?: "about";
   }
   export function parseRoute(hash: string): Route;
   export function hashOf(route: Partial<Route>): string;
@@ -305,13 +309,16 @@ declare module "*/ui/settings-model.js" {
     tone: "on" | "warn" | "off" | "";
     command: { text: string; label: string } | null;
     problem?: string;
-    data?: { text: string; warn: boolean };
+    data?: { text: string; warn: boolean; fix: string | null };
   }
   export function agentStatus(agent: {
     id: string; name: string; found: boolean; connected: boolean; problem: string | null;
-    rerailData: { access: "kept-out" | "file-tools" | "open"; why: string };
+    rerailData: { access: "kept-out" | "file-tools" | "open"; why: string; fix: string | null };
   }): AgentStatus;
   export function installedLabel(ms: number | null | undefined): string | null;
+  export function releaseUrl(version: string): string;
+  export function isNewerVersion(a: string, b: string): boolean;
+  export function newerRelease(health: { version?: unknown; update?: { latest?: unknown; checkedAt?: unknown } | null } | null | undefined): string | null;
 }
 
 declare module "*/ui/render/rule-sheet-model.js" {
@@ -386,7 +393,8 @@ declare module "*/ui/merge-model.js" {
 }
 
 declare module "*/ui/render/enforcement.js" {
-  type Stored = { rule: { mode: string }; approval?: { approved: boolean } | null };
+  type Stored = { rule: { mode: string }; enabled?: boolean; configError?: string | null; inactive?: { reason: string } | null; approval?: { approved: boolean } | null };
   export const MODE_READ_ONLY: string;
-  export function enforcementOf(stored: Stored): { kind: "log" | "steer"; glyph: string; label: string; tip: string };
+  export function enforcementOf(stored: Stored): { kind: "log" | "steer" | "none"; glyph: string | null; label: string; tip: string };
+  export function modeEnforcementOf(stored: Stored): { kind: "log" | "steer"; glyph: string; label: string; tip: string };
 }
