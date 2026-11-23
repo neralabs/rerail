@@ -1,1 +1,0 @@
-A rule now has a `title`, the rule in your own words, which the dashboard lists it by instead of the message the coding agent reads. `rerail rules add` and the library API refuse a new or edited rule without one, and `/rerail-create` fills it from your wording. Rules added before keep showing their first message until edited.

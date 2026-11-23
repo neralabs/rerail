@@ -12,6 +12,9 @@ updates:
     open-pull-requests-limit: 3
     # Not Rerail's dependencies: test data (sample apps and packs the rule tests read) and the upstream tools' runtimes,
     # which pin upstream's own versions on purpose (docs/upstream.md); a bump there changes upstream's recorded answers.
+    # exclude-paths holds back version updates only: Dependabot still opens security updates for an alert on these
+    # manifests. Close such a pull request and dismiss the alert as not_used; a generated fixture's test fails on the
+    # bump (test/scripts/generate/next-probes.test.ts for packs/next/candidates/probes).
     exclude-paths:
       - "fixtures/**"
       - "packs/*/candidates/**/fixtures/**"
@@ -51,6 +54,11 @@ updates:
       # version of the other: they must move together.
       ast-grep:
         patterns: ["ast-grep-*"]
+      # ruff_python_parser, ruff_python_ast and ruff_text_size are pinned to one release (`=` in native/Cargo.toml) and
+      # build only against each other, so they move together. A ruff release can need a newer Rust than
+      # rust-toolchain.toml pins; that update waits for the toolchain bump.
+      ruff:
+        patterns: ["ruff_*"]
       cargo-minor-patch:
         update-types: [minor, patch]
   # Every action and reusable workflow is pinned to a commit SHA with its release as a `# vX.Y.Z` comment; Dependabot

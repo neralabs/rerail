@@ -1,1 +1,0 @@
-Claude Code's status line no longer runs every five seconds in every open session, idle ones included: Rerail sets no refresh interval, and removes the 5 it set. On macOS and Linux, without a status line of your own, a refresh starts no Node: the shell prints a file the daemon keeps for the session.

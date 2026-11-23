@@ -2,7 +2,7 @@
 
 Research track T4. Source material, read in full:
 
-- `Pulling-it-all-together/docs/rule-engine-direction/prior-work/README.md` (29 lines), cited **PW L**.
+- `<PIAT>/docs/rule-engine-direction/prior-work/README.md` (29 lines), cited **PW L**.
 - `.../prior-work/sql-index-prototype-design-index.md` (1,484 lines), cited **DI L**.
 - `.../prior-work/sql-index-prototype-history-index.md` (1,319 lines), cited **HI L**.
 
@@ -1147,7 +1147,7 @@ Sources: DI L1242-1257; HI L1172-1186.
   - Generic only (R14b).
   - Mechanism in the data layer, policy in the app.
 - **ast-grep on the tape (TAG):** `TapeDoc` implements `ast_grep_core::Doc`/`SgNode` over source + tape; building a private TSTree is neither possible nor wanted.
-  - 100-file sample, 431,936 nodes, 46 Tempo patterns: median parse 511.69 us vs restore 41.93 us (20.06x); median match 4,453 vs 162 us (23.40x); 4,600/4,600 exact.
+  - 100-file sample, 431,936 nodes, 46 of the predecessor's patterns: median parse 511.69 us vs restore 41.93 us (20.06x); median match 4,453 vs 162 us (23.40x); 4,600/4,600 exact.
   - 20 largest files: restore 26.19x, matcher 22.25x, 920 pairs exact.
   - Kinds have uniform extra status over 18.5M nodes (TAG L16-41, L110-146, L229-277; HI L321-337).
 

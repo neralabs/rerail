@@ -21,7 +21,7 @@ import {
   recordCheckout,
   recordedCheckoutsReader,
 } from "../../../src/engine/catalog/repository-registry.js";
-import { repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
+import { outsideGit, repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { shortSpelling } from "../support/short-path.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -844,6 +844,74 @@ describe("the repository registry", () => {
     expect(listRepositories(database)[0]?.checkouts.map(row => [row.checkoutPath, row.started]))
       .toEqual(recorded.map(path => [path, path === main ? false : null]));
     expect(settingOwners(database)).toEqual(recorded.map(path => ({ owner_kind: "checkout", owner_id: path })));
+  });
+
+  it.each([
+    ["deleted", (main: string) => removeFolderSync(main)],
+    ["moved away", (main: string) => renameSync(main, `${main}-moved`)],
+  ])("records a worktree whose main checkout was %s as the checkout it was, with its start state and settings", async (_how, goAway) => {
+    const root = await temporary("rerail-registry-main-gone-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(root, "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    recordCheckout(database, main);
+    const before = recordCheckout(database, worktree);
+    checkoutSetting(database, worktree);
+    database.$client.prepare("UPDATE checkouts SET started = 1 WHERE checkout_path = ?").run(worktree);
+    goAway(main);
+
+    // Git refuses the worktree now: its .git file names a Git folder that is no longer there, and the clone's id file
+    // went with it. A session that starts there records it.
+    const after = recordCheckout(database, worktree);
+    expect([after.repositoryKey, after.cloneId]).toEqual([before.repositoryKey, before.cloneId]);
+    expect(lookupCheckout(database, worktree)?.repositoryKey).toBe(before.repositoryKey);
+    expect(checkoutStatus(database, lookupCheckout(database, worktree))).toMatchObject({ started: true, startedBy: "checkout" });
+    expect(settingOwners(database)).toEqual([{ owner_kind: "checkout", owner_id: worktree }]);
+    expect(database.select({ key: repositories.repositoryKey }).from(repositories).all()).toEqual([{ key: before.repositoryKey }]);
+  });
+
+  it("records a folder outside Git whose id file was deleted under a new clone id, as before", async () => {
+    const root = await temporary("rerail-registry-plain-id-");
+    const database = open(join(root, "rerail.sqlite"));
+    const folder = join(root, "folder");
+    mkdirSync(folder);
+    expect(outsideGit(folder), "the temporary folder is outside every repository").toBe(true);
+    const before = recordCheckout(database, folder);
+    unlinkSync(repositoryIdentityLocation(folder).identityPath);
+
+    // Outside Git the id file in the folder decides, so the folder is taken for a new clone, as a re-clone in Git is.
+    expect(recordCheckout(database, folder).cloneId).not.toBe(before.cloneId);
+  });
+
+  it("records a folder Git refuses with no .git of its own under a new clone id once its id file is deleted, as before", async () => {
+    const root = await temporary("rerail-registry-marker-above-");
+    const database = open(join(root, "rerail.sqlite"));
+    // A file named HEAD is one of the markers Git's search looks for, though no repository is there.
+    writeFileSync(join(root, "HEAD"), "ref: refs/heads/main\n");
+    const folder = join(root, "folder");
+    mkdirSync(folder);
+    expect(outsideGit(folder), "a marker above the folder makes Rerail ask Git").toBe(false);
+    expect(repositoryIdentityLocation(folder).git, "Git places the folder in no repository").toBe(false);
+    const before = recordCheckout(database, folder);
+    unlinkSync(repositoryIdentityLocation(folder).identityPath);
+
+    // Only a linked worktree whose Git folder is gone takes the recorded id; here the id file decides, as outside Git.
+    expect(recordCheckout(database, folder).cloneId).not.toBe(before.cloneId);
+  });
+
+  it("records a clone whose Git folder kept apart was deleted under a new clone id, as before", async () => {
+    const root = await temporary("rerail-registry-kept-apart-gone-");
+    const database = open(join(root, "rerail.sqlite"));
+    const work = join(root, "work");
+    git(root, "init", "-q", `--separate-git-dir=${join(root, "kept.git")}`, work);
+    const before = recordCheckout(database, work);
+    removeFolderSync(join(root, "kept.git"));
+
+    // Its .git file names a Git folder that is gone, as a worktree's does, but no worktree's: the id file decides.
+    const after = recordCheckout(database, work);
+    expect(after.git).toBe(false);
+    expect(after.cloneId).not.toBe(before.cloneId);
   });
 
   it("keeps a worktree moved without Git, at its old path and its new one, until Git prunes its entry", async () => {

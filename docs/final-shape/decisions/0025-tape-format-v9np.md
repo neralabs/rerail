@@ -5,7 +5,7 @@ Status: accepted (2026-11-01, user decision)
 ## Context
 
 O8 asks for five pre-lock measurements of v9np on Rerail's own grammars, then a decision. v9np is
-P decision 0003's proposal (Pulling-it-all-together `docs/rule-engine-direction/decisions/`): a
+P decision 0003's proposal (PIAT `docs/rule-engine-direction/decisions/`): a
 structure-only, regular, column-stored tape. W runs `TMPTAPE8`, which is v7 plus N's supertype
 table. The spike's harness is placed as `tape::v9np`. `tape::v9np::tests::measure_on_a_corpus` runs
 its `measure` mode on a corpus through Rerail's vendored and patched grammars.

@@ -659,8 +659,7 @@ export class RemoteOutbox {
     if (!unsent(probe) || batch.ids.has(`rule\0${provenance.payloadHash}`)) return true;
     const document = provenance.document ?? rules.find(provenance);
     if (document === undefined) return true;
-    const mode = document.kind === "code" ? (document.rule as { mode?: string }).mode ?? null : null;
-    return batch.add(record("rule", provenance.payloadHash, { ruleId: provenance.ruleId, kind: document.kind, mode, document: document.rule }, { hash: provenance.payloadHash }));
+    return batch.add(record("rule", provenance.payloadHash, remoteRuleBody(provenance.ruleId, document), { hash: provenance.payloadHash }));
   }
 
   async #post(remote: RemoteEntry, token: string, records: readonly OutboxRecord[], stop?: AbortSignal): Promise<PostOutcome> {
@@ -924,4 +923,15 @@ export function startRemoteSink(options: OutboxOptions & { intervalMs?: number; 
       await running;
     },
   };
+}
+
+/**
+ * What the remote sink is sent of a rule: its kind, a code rule's mode, and its document; a rule written in `.rerail`
+ * without where its file and the files it includes are on this computer.
+ */
+function remoteRuleBody(ruleId: string, document: RuleDocument): Record<string, unknown> {
+  if (document.kind === "conversation") return { ruleId, kind: document.kind, mode: null, document: document.rule };
+  if (document.kind === "code") return { ruleId, kind: document.kind, mode: document.rule.mode, document: document.rule };
+  const { path: _path, includes: _includes, ...portable } = document.rule;
+  return { ruleId, kind: document.kind, mode: document.rule.mode, document: portable };
 }

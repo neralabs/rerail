@@ -40,9 +40,11 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
 
 - **Bump:** if anything core ships changed since the last `v<version>` tag, it bumps to the next patch (`0.1.0` →
   `0.1.1`) and writes its `CHANGELOG.md` section.
-- **Core ranges:** a pack it releases that an older core cannot load, because it holds a rule off or ships a rule in
-  a language added since, has its core range raised to leave those cores out, once core is at the release that first
-  loads it. The description lists each.
+- **Core ranges:** a pack it releases that an older core cannot load has its core range raised to leave those cores
+  out, once core is at the release that first loads it. Each released core from 0.1.5 checks the pack's rules itself,
+  with the `validateCodeRule` it exports (`acceptedFloor` in `scripts/release/core.mjs`), so any rule it refuses counts. For the
+  cores before 0.1.5, which can't check, a rule held off or a rule in a language or with an ast rule key added since
+  counts. The description lists each raised range, and the run log names the rules each core refuses.
 - **Merge:** tags the merge commit `v<version>`, which starts `release.yml`. Core and the packs publish to `next`.
 
 <details>
@@ -59,9 +61,9 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
   request, is named in a warning not to merge: published so, no released Rerail could load it.
 - The tag is pushed with the `neralabs-ci` app's token.
 - **Anything core ships:** every path except packs, documentation, CI, changesets and pending changelog entries, tests,
-  fixtures, corpora, benchmarks, development and release scripts, and repository files npm does not pack.
-  `package-lock.json` counts only when more than its pack entries moved (`NOT_SHIPPED` in
-  `scripts/release/core-paths.mjs`).
+  fixtures, corpora, benchmarks, development and release scripts, and repository files npm does not pack. The `.rerail`
+  rule library under `docs/rule-syntax/lib/` ships with core, so it counts. `package-lock.json` counts only when more
+  than its pack entries moved (`NOT_SHIPPED` and `SHIPPED_FROM_NOT_SHIPPED` in `scripts/release/core-paths.mjs`).
 
 </details>
 
@@ -100,6 +102,13 @@ Merging publishes the release to `next`; nothing reaches `latest` until a person
 If testing finds a problem, fix it on `main` as any pull request. The next Release pull request releases the fix as the
 next version on `next`, and that version is the one to test and promote. The version that failed stays on `next` and
 never reaches `latest`.
+
+- **Release notes for the promoted version.** Its GitHub Release, once promoted, holds everything since the last
+  version on `latest`: its own entries and those of each candidate it passed over, grouped by type, with a line naming
+  them. Each version keeps its own section in `CHANGELOG.md`. Before approving the promotion, rewrite the promoted
+  version's lead on `main` to describe the whole change from the last stable version: the promotion reads `main`'s
+  changelog, so a lead or note corrected there is what stable users read. The `CHANGELOG.md` inside each published
+  package stays as it was published.
 
 ### Promoting
 
@@ -325,7 +334,9 @@ release.
 ### GitHub Releases
 
 Every released version, core's and each pack's, gets a GitHub Release on its tag, with its `CHANGELOG.md` section as
-notes.
+notes. Once promoted to `latest`, a version's Release is rewritten from `main`'s changelog with everything since the last
+version on `latest`, so a release candidate that never reached `latest` is not lost on the people who update past it
+([Before promoting](#before-promoting)).
 
 **Backfill** creates Releases for tags without one, such as older releases or runs that failed before their Release:
 
@@ -352,6 +363,10 @@ notes.
 - Backfill reads only the remote's tags, and names each tag it skips: local-only, local commit differing from the
   remote's, or no changelog section for its version. So every Release it makes has notes.
 - Only the highest core version on `latest` becomes the latest release.
+- A version above its package's `latest` on npm is still on `next`, so backfill makes its Release a pre-release.
+- A Release's pre-release flag records whether its version reached `latest`, and a promoted Release's notes start
+  after the last version without it. If a promotion's **Promoted GitHub Release** job fails, re-run it before the
+  next promotion, or that promotion lists the version as a candidate that never reached `latest`.
 
 </details>
 

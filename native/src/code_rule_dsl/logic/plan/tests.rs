@@ -3041,3 +3041,67 @@ fn sql_query_builds_the_golden_sql() {
     let golden = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e} (RERAIL_BLESS_SQL=1 writes it)", path.display()));
     assert!(golden == made, "sql_query's SQL differs from {} (RERAIL_BLESS_SQL=1 rewrites it), {}", path.display(), golden_difference(&golden, &made));
 }
+
+/// Decision 0113: a stratum issued ahead of the strata loop reads its inputs as the loop binds them. The loop binds an
+/// input at its first reader, and until then a cross-file run binds an export to an empty placeholder. Here `v` is
+/// issued with `q1` and `q2` while `p`, the producer of `f` (`e`'s first reader), is issued alone (its estimate fills a
+/// component), so `f` is not ready. `v` bound only the inputs it was the first reader of, so its job read the empty
+/// `e` whenever it ran before the loop reached `f`, and `f` then read the view of it that the job kept: the Django
+/// pack's findings varied from run to run (271, 366 or 508 on edx-platform). The run is a child process
+/// (`issued_ahead_child`) whose stream runs each job as it is submitted (`RERAIL_STREAM_AT_SUBMIT`), the schedule that
+/// read the placeholder every time.
+#[test]
+fn a_stratum_issued_ahead_reads_an_input_the_loop_binds_later() {
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "code_rule_dsl::logic::plan::tests::issued_ahead_child", "--ignored", "--nocapture"])
+        .env("RERAIL_THREADS", "2")
+        .env("RERAIL_STREAM_AT_SUBMIT", "1");
+    // The switches that take the issue-ahead path away, or reshape its components, are the test's own.
+    for switch in ["RERAIL_STRANDS", "RERAIL_STRATA_PARALLEL", "RERAIL_STRATA_MERGE", "RERAIL_STRATA_K", "RERAIL_STRATA_FIXED"] {
+        child.env_remove(switch);
+    }
+    let out = super::corpus::switches::started(|| child.output()).unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+#[ignore = "child process of a_stratum_issued_ahead_reads_an_input_the_loop_binds_later"]
+fn issued_ahead_child() {
+    let p = parse(
+        ".decl b(x: number)\n.input b\n.decl s(x: number)\n.input s\n.decl e(x: number)\n.input e\n\
+         .decl p(x: number)\np(x) :- b(x).\n.decl f(x: number)\nf(x) :- p(x), e(x).\n\
+         .decl q1(x: number)\nq1(x) :- s(x).\n.decl q2(x: number)\nq2(x) :- q1(x).\n\
+         .decl v(x: number)\nv(x) :- q2(x), e(x).\n.output f, v\n",
+    )
+    .unwrap();
+    let path = crate::code_rule_dsl::fixtures::temp();
+    let store = ContentStore::open(&path).unwrap();
+    let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+    let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+    let db = Connection::open(&path).unwrap();
+    super::super::native::register(&db).unwrap();
+    super::super::native::register_symbols(&db).unwrap();
+    let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
+    let rows = |rel: &str, v: Vec<i64>| super::super::native::component::columns_source(vec![sql_col(rel, 0)], vec![Some(v)]);
+    let mut stats = Stats::empty_of_lowered(&lowered).unwrap();
+    // `b`'s 60,000 rows put `p`'s estimate past a component's (8 fixed costs of 136 µs, at 20 ns a row).
+    for (rel, v) in [("b", (0..60_000).collect()), ("s", vec![1, 2, 3]), ("e", vec![])] {
+        let source = rows(rel, v);
+        stats.measured(rel, crate::code_rule_dsl::facts::vtab::syntax::statistics(source.as_ref()).into_iter().map(|(c, n, d, q, qd)| (c, [n, d, q, qd])), []);
+        modules.bind(&db, rel, source).unwrap();
+    }
+    let mut load = |rels: &[String]| -> Result<()> {
+        if rels.iter().any(|r| r == "e") {
+            modules.bind(&db, "e", rows("e", vec![1, 2])).map_err(|e| Error::Plan(e.to_string()))?;
+        }
+        Ok(())
+    };
+    let got = run_atoms_native_hooked(&lowered, &db, "main", stats, BTreeSet::new(), "program", Hooks { load: Some(&mut load), ..Default::default() }).unwrap();
+    let shown = got.shown();
+    for rel in ["f", "v"] {
+        let mut o = shown[rel].clone();
+        o.sort();
+        assert_eq!(o.len(), 2, "{rel}: {o:?}");
+    }
+}

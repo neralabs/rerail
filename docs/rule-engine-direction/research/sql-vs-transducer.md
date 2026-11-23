@@ -3,7 +3,7 @@
 Read-only investigation, 2026-10-25. Sources:
 
 - SSC `sql-capture-demand-spikes` at `b87eba3b`, plus its uncommitted fragment pivot in the worktree named after the sql-set-composition branch.
-- DLRE as merged into `Pulling-it-all-together`.
+- DLRE as merged into PIAT.
 - N1562 `sql-rerailer` at `8b6576f0`.
 - The `sql-dl60`, `facts-engine` and `facts-plan` branches.
 - The SQL index prototype decision indexes (`docs/rule-engine-direction/prior-work/`).
@@ -121,7 +121,7 @@ Legend:
 
 ## 3. Transducer IR extensions needed for T+ items
 
-These are named against N1562's IR. Tempo's newer IR may already have some of them; the other investigation covers that.
+These are named against N1562's IR. The predecessor's newer IR may already have some of them; the other investigation covers that.
 
 1. **Seeded start set.** Begin at preorder positions supplied by demand: SQL roots, FTS `instance` positions when selective, or roots bound by a cross-file join. N1562 has a sparse task grid; this generalises it into an input relation.
 2. **Capture-bearing demand.** Inputs carry pre-bound capture values (node ids or text) that `Assert` checks. SSC's pivot lists this as open ("relation-handle contract").
@@ -131,7 +131,7 @@ These are named against N1562's IR. Tempo's newer IR may already have some of th
 6. **Utility calls with parameters, recursion and memo.** `Call{utility, args}` with a bounded stack and a per-(utility, node, args) memo arena. The memo is a performance device only; under decision 0001 its accounting is not observable. On Metal it may stay CPU-only (capability flag below).
 7. **Document switch.** Run a sub-program on a derived or embedded document, or a parsed region, and map nodes back to the host document. The `document_id`/`mapped_document_id` columns exist; this makes it an instruction (`ParseFact` today is a leaf).
 8. **Per-document fact families.** Rule-independent programs that emit typed fact rows once per document version, cached by digest: declared references, imports, definitions with qualname, call sites, scope bindings. They feed `binds`/`resolves` locally and the cross-file graphs (Y1). This generalises `SemanticFact`/`ValueFact`, which are per-predicate today.
-9. **Backend capability flags per program.** Metal, JIT or CPU. A program using 3 or 6 can be routed to CPU while Metal keeps the regular subset. Tempo's full-corpus failure on containment memory (workstream scan) argues for this escape valve rather than for keeping composition in SQL.
+9. **Backend capability flags per program.** Metal, JIT or CPU. A program using 3 or 6 can be routed to CPU while Metal keeps the regular subset. The predecessor's full-corpus failure on containment memory (workstream scan) argues for this escape valve rather than for keeping composition in SQL.
 10. **Completeness only.** Output a per-(program, document) `Complete`/`Unknown` bit. `work_used` stays as a diagnostic only (decision 0001).
 
 Per-function data flow (authored-sql category H) could become a T+ per-document fixpoint program. Cross-function and cross-file flow stays S. This is open and is decided per rule.
@@ -180,15 +180,15 @@ The binding is one `xFilter` per (program group, batch). Programs are grouped by
 - Phase order:
   - Phase 2 (SSC) loses most of its value. Take it for history, the fallback emitter and the fragment-boundary pattern; expect most of `outcomes/` to be deleted.
   - Phase 3 (N1562) becomes the key merge.
-  - The Tempo IR (phase 6) defines the IR and should be read before phase 3's restructure.
+  - The predecessor's IR (phase 6) defines the IR and should be read before phase 3's restructure.
 
 **Revised map** (under `native/src/code_rule_dsl/`):
 
 | Module | Responsibility | Source |
 |---|---|---|
-| `engine/transducer/ir/` | The transducer IR: structural, value, capture, output and reduction programs, plus extensions 1–10 | Tempo Metal IR, N1562 `packed/native_ir.rs`, `value.rs`, `output.rs` |
+| `engine/transducer/ir/` | The transducer IR: structural, value, capture, output and reduction programs, plus extensions 1–10 | The predecessor's Metal IR, N1562 `packed/native_ir.rs`, `value.rs`, `output.rs` |
 | `engine/transducer/lower/` | `AstMatcher` (and utilities, embedded documents, semantic predicates) lowered to transducer programs. In-file composition happens here | N1562 lowering into `packed`, plus the in-file parts of N1562 `relational_ir` and SSC `outcomes`, rewritten as IR lowering |
-| `engine/transducer/exec/{cpu,jit,metal}/` | Executors | N1562 `packed/native_cpu*`, `transducer/jit.rs`; Tempo Metal |
+| `engine/transducer/exec/{cpu,jit,metal}/` | Executors | N1562 `packed/native_cpu*`, `transducer/jit.rs`; the predecessor's Metal |
 | `engine/transducer/facts/` | Rule-independent per-document fact programs (`fact_*`) | N1562 `semantic_facts.rs`, DLRE ownership/reference extraction |
 | `engine/vtab/transducer.rs` | The boundary: demand in, narrow typed relations out, statistics-based estimates | N1562 `transducer/sql_backend.rs`, SSC pivot `fragments.rs`/`fragment_job.rs`, SSC `terminals/` |
 | `engine/vtab/graph.rs` | Cross-file graph producers (closure, forest) | DLRE `relational/reachability.rs`, `forest.rs`; facts-plan Y1 |

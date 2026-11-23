@@ -5,17 +5,22 @@
 // `latest`; a pack's, on `<name>@<version>`, is never the latest release, and is a pre-release while it is on `next`.
 // A release publishes to `next`, so its Releases start as pre-releases. A Release that exists already has its notes,
 // pre-release flag and latest flag rewritten, so any run can be run again, and a promotion or a put-back (release.yml's
-// `latest` input, release-packs.yml's promote) rewrites the flags for `latest`.
+// promote job or `latest` input, release-packs.yml's promote) rewrites the flags for `latest`. Promoted to `latest`, a
+// version's notes are everything since the last version stable users had (previousStable, sinceStableSection): its own
+// entries and those of each version it passed over that never reached `latest`: a candidate on `next`, or one that was
+// never published.
 //
 // Release mode names what a release run published, as dist-tags-check.mjs takes it, and reads the notes from the
-// checkout's changelog: the released commit on a release run (release.yml for core, release-packs.yml for the packs),
-// or main on a put-back, whose changelog keeps every released version's section. A version whose changelog has no
-// section of its own gets a Release saying no entries were written, as the Release pull request says.
+// checkout's changelog: the released commit when a release publishes, and main when it is promoted or put back, whose
+// changelog keeps every released version's section and any note corrected while the release was tested. A version
+// whose changelog has no section of its own gets a Release saying no entries were written, as the Release pull request
+// says. The pre-release flag is the record of which versions reached `latest`: previousStable reads it.
 // Backfill mode makes the Release of every release tag on the remote that has none (the oldest first), with the notes
 // at that tag's commit; fetch the tags first (`git fetch --tags --prune --prune-tags`). It skips, and names, a local
 // tag the remote does not have, a tag whose local commit is not the remote's (fetch it again with `--force`), and a
-// tag whose changelog has no section for its version, so a backfilled Release always has notes. Every backfilled pack
-// Release is taken as published under `latest`, and only the highest core version on `latest` is marked latest.
+// tag whose changelog has no section for its version, so a backfilled Release always has notes. A backfilled plain
+// version is taken as on `latest` unless it is above its package's `latest` on npm, which leaves it on `next` and its
+// Release a pre-release; only the highest core version on `latest` is marked latest.
 // `--dry-run` prints each Release it would make, with its notes, and changes nothing on GitHub. gh needs write access
 // to the repository.
 //
@@ -26,10 +31,10 @@ import { readFileSync } from "node:fs";
 import { join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
-import { changelogLead, changelogSection, CORE_NAME, coreTag, NO_CHANGELOG_ENTRIES } from "./core.mjs";
-import { parseExpectation } from "./dist-tags.mjs";
+import { changelogEntries, changelogLead, changelogSection, CORE_NAME, coreTag, NO_CHANGELOG_ENTRIES } from "./core.mjs";
+import { NEXT_TAG, parseExpectation, readDistTagsOrNone } from "./dist-tags.mjs";
 import { releaseTag, ROOT } from "./packs.mjs";
-import { COMMIT_HASH } from "./release-notes.mjs";
+import { CHANGE_TYPES, changeTypeSections, COMMIT_HASH } from "./release-notes.mjs";
 
 const PACK_PREFIX = "@neralabs/rerail-pack-";
 const CORE_RELEASE_TAG = /^v(\d+\.\d+\.\d+(?:-(beta|next)\.\d+)?)$/u;
@@ -93,19 +98,85 @@ export function fittedNotes(notes, section, path, tag) {
   return [changelogLead(section), `These notes are too long for a GitHub Release: [read them in ${path}](${REPOSITORY}/blob/${tag}/${path}).`].filter((part) => part !== "").join("\n\n");
 }
 
+/** The plain versions `changelog` has a section for (`## <version>` or `## <version> (<date>)`), newest first. */
+function changelogVersions(changelog) {
+  const versions = [...changelog.matchAll(/^## (\d+\.\d+\.\d+)(?: \(|$)/gmu)].map((match) => match[1]);
+  return versions.sort(semver.rcompare);
+}
+
+/** A section's entries, each `{ type, entry }`: its `### <type>` heading's change type, null for one under none. */
+function typedEntries(section) {
+  const chunks = section.split(/^(?=### )/mu);
+  return chunks.flatMap((chunk) => {
+    const heading = /^### (\w+)/u.exec(chunk)?.[1];
+    const type = CHANGE_TYPES.includes(heading) ? heading : null;
+    return changelogEntries(chunk).map((entry) => ({ type, entry }));
+  });
+}
+
+/** `versions` as a sentence lists them, oldest first: `0.2.0`, `0.2.0 and 0.2.1`, `0.2.0, 0.2.1 and 0.2.2`. */
+const listed = (versions) => (versions.length === 1 ? versions[0] : `${versions.slice(0, -1).join(", ")} and ${versions.at(-1)}`);
+
+/**
+ * The notes of `version` promoted to `latest` over `since`, the last version stable users had: what changed for them.
+ * With no version between them, `version`'s own section (`read` as the Release reads it). Otherwise its lead (none when
+ * the section only says no entries were written), a line naming the versions it brings that never reached
+ * `latest`, and the entries of every version after `since` up to `version`, newest first: those under no type heading,
+ * as a section lists them under its lead, then the rest grouped by change type (changeTypeSections). Each version
+ * keeps its own section in the changelog: only the Release brings them together.
+ */
+export function sinceStableSection(changelog, version, since, read = (section) => section) {
+  const own = read(changelogSection(changelog, version));
+  const skipped = changelogVersions(changelog).filter((candidate) => semver.gt(candidate, since) && semver.lt(candidate, version));
+  if (skipped.length === 0) return own;
+  const entries = [version, ...skipped].flatMap((each) => typedEntries(read(changelogSection(changelog, each))));
+  const lead = own === NO_CHANGELOG_ENTRIES ? "" : changelogLead(own);
+  const untyped = entries.filter(({ type }) => type === null).map(({ entry }) => entry);
+  // Only "never reached latest": a version passed over may have been a candidate on next, or never published at all.
+  return [lead, `This release also brings ${listed([...skipped].reverse())}, which never reached \`latest\`.`, untyped.join("\n"), ...changeTypeSections(entries.filter(({ type }) => type !== null))]
+    .filter((part) => part !== "")
+    .join("\n\n");
+}
+
+/**
+ * The changelog text a Release of `name`'s `version` under `distTag` is written from, before githubRelease makes its
+ * links absolute: everything since `since` once promoted (sinceStableSection), else the version's own section, a
+ * pack's as packReleaseNotes reads it.
+ */
+function releaseSection({ name, version, distTag }, changelog, since) {
+  const read = name === CORE_NAME ? (section) => section : packReleaseNotes;
+  if (since !== null && distTag === "latest") return sinceStableSection(changelog, version, since, read);
+  return read(changelogSection(changelog, version));
+}
+
 /**
  * The GitHub Release of `name`'s `version`, published under npm dist-tag `distTag`, given the text of its changelog:
  * `{ tag, title, notes, prerelease, latest }`, its notes the version's changelog section (a pack's as
  * packReleaseNotes reads it) with its links made absolute (absoluteLinks) and fitted to a Release (fittedNotes), or that
- * none was written.
+ * none was written. Promoted to `latest` over `since`, the last version on `latest` (previousStable), its notes are
+ * everything since that version (sinceStableSection), so a release candidate that never reached `latest` is not lost
+ * on the people who update past it.
  */
-export function githubRelease({ name, version, distTag }, changelog) {
+export function githubRelease({ name, version, distTag }, changelog, since = null) {
   const core = name === CORE_NAME;
   const tag = core ? coreTag(version) : releaseTag(name, version);
-  const section = changelogSection(changelog, version);
+  const section = releaseSection({ name, version, distTag }, changelog, since);
   const path = changelogPath(name);
-  const notes = section === "" ? NO_CHANGELOG_ENTRIES : fittedNotes(absoluteLinks(core ? section : packReleaseNotes(section), posix.dirname(path), tag), section, path, tag);
+  const notes = section === "" ? NO_CHANGELOG_ENTRIES : fittedNotes(absoluteLinks(section, posix.dirname(path), tag), section, path, tag);
   return { tag, title: tag, notes, prerelease: distTag !== "latest", latest: core && distTag === "latest" };
+}
+
+/**
+ * The last version of `name` before `version` that stable users had: the newest plain version below it whose GitHub
+ * Release (`releases`, `{ tag, prerelease }` each) is no pre-release, which it is once promoted. Null before any.
+ */
+export function previousStable(name, version, releases) {
+  const stable = releases
+    .filter(({ prerelease }) => !prerelease)
+    .map(({ tag }) => releasedByTag(tag))
+    .filter((released) => released !== null && released.name === name && semver.prerelease(released.version) === null && semver.lt(released.version, version))
+    .map((released) => released.version);
+  return stable.sort(semver.rcompare)[0] ?? null;
 }
 
 /**
@@ -168,13 +239,28 @@ export function backfillTags(local, remote) {
 }
 
 /**
- * The GitHub Releases a backfill makes for `tags`, in their order, given the `existing` tags that have one and
- * `readAt(tag, path)`, a file's text at a tag (null when it has none): `{ releases, noNotes }`, where `noNotes` lists
- * the tags left without a Release because their changelog has no section for their version. Only the highest core
- * version released to `latest` is marked latest, and only when its Release is among them.
+ * The channel a backfill takes `released` (releasedByTag's) to be on, given `latest`, the version its package's npm
+ * `latest` dist-tag points at (undefined when it has none): a version releasedByTag takes for `latest` that is above it
+ * is still on `next`, as a release run that failed before its Release leaves it. Its Release is then a pre-release, as
+ * that run would have made it, so previousStable never takes it for a version stable users had.
  */
-export function backfillPlan(tags, existing, readAt) {
-  const tagged = tags.map((tag) => ({ tag, released: releasedByTag(tag) })).filter(({ released }) => released !== null);
+function backfilledChannel(released, latest) {
+  const onNext = released.distTag === "latest" && (latest === undefined || semver.gt(released.version, latest));
+  return onNext ? { ...released, distTag: NEXT_TAG } : released;
+}
+
+/**
+ * The GitHub Releases a backfill makes for `tags`, in their order, given the `existing` tags that have one,
+ * `readAt(tag, path)`, a file's text at a tag (null when it has none), and `onLatest`, each package's npm `latest`
+ * version by name (backfilledChannel): `{ releases, noNotes }`, where `noNotes` lists the tags left without a Release
+ * because their changelog has no section for their version. Only the highest core version on `latest` is marked
+ * latest, and only when its Release is among them.
+ */
+export function backfillPlan(tags, existing, readAt, onLatest) {
+  const tagged = tags
+    .map((tag) => ({ tag, released: releasedByTag(tag) }))
+    .filter(({ released }) => released !== null)
+    .map(({ tag, released }) => ({ tag, released: backfilledChannel(released, onLatest.get(released.name)) }));
   const [newest] = tagged
     .filter(({ released }) => released.name === CORE_NAME && released.distTag === "latest")
     .map(({ released }) => released.version)
@@ -196,13 +282,15 @@ export function backfillPlan(tags, existing, readAt) {
 
 const run = (command, args, input) => execFileSync(command, args, { cwd: ROOT, encoding: "utf8", input, maxBuffer: 1 << 28 });
 
-/** The tags of every Release on GitHub (`GH_REPO`, else the checkout's remote). */
-const existingReleases = () =>
-  new Set(
-    run("gh", ["api", "--paginate", "repos/{owner}/{repo}/releases", "--jq", ".[].tag_name"])
-      .split("\n")
-      .filter((tag) => tag !== ""),
-  );
+/** Every Release on GitHub (`GH_REPO`, else the checkout's remote), as `{ tag, prerelease }`. */
+const releaseList = () =>
+  run("gh", ["api", "--paginate", "repos/{owner}/{repo}/releases", "--jq", '.[] | "\\(.tag_name)\\t\\(.prerelease)"'])
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => {
+      const [tag, prerelease] = line.split("\t");
+      return { tag, prerelease: prerelease === "true" };
+    });
 
 /** The checkout's tags, the oldest first, each with the commit it marks (an annotated tag's peeled). */
 const localTags = () =>
@@ -240,35 +328,44 @@ function makeReleases(releases, existing, dryRun) {
   }
 }
 
+/** The npm `latest` version of the package of each of `tags` that has no Release yet, by name (undefined for none). */
+async function latestOnNpm(tags, existing) {
+  const names = [...new Set(tags.filter((tag) => !existing.has(tag)).map((tag) => releasedByTag(tag).name))];
+  return new Map(await Promise.all(names.map(async (name) => [name, (await readDistTagsOrNone(name)).latest])));
+}
+
 /** Makes the Release of every release tag on the remote that has none, skipping and naming what it cannot read. */
-function backfill(existing, dryRun) {
+async function backfill(existing, dryRun) {
   const { tags, localOnly, diverged, missing } = backfillTags(localTags(), parseRemoteTags(run("git", ["ls-remote", "--tags", REMOTE])));
   if (missing.length > 0) throw new Error(`${REMOTE} has release tag(s) this checkout lacks: ${missing.join(", ")}; run git fetch --tags first`);
   if (localOnly.length > 0) console.log(`Skipped ${localOnly.length} local release tag(s) ${REMOTE} does not have (prune them with git fetch --prune --prune-tags): ${localOnly.join(", ")}`);
   if (diverged.length > 0) console.log(`Skipped ${diverged.length} release tag(s) not at ${REMOTE}'s commit in this checkout (fetch them again with git fetch --force --tags): ${diverged.join(", ")}`);
-  const { releases, noNotes } = backfillPlan(tags, existing, readAt);
+  const { releases, noNotes } = backfillPlan(tags, existing, readAt, await latestOnNpm(tags, existing));
   if (noNotes.length > 0) console.log(`Skipped ${noNotes.length} release tag(s) whose changelog has no section for the version: ${noNotes.join(", ")}`);
   makeReleases(releases, existing, dryRun);
   const had = tags.filter((tag) => existing.has(tag)).length;
   console.log(`${dryRun ? "Would create" : "Created"} ${releases.length} GitHub Release(s); ${had} release tag(s) already have one.`);
 }
 
-function main(args) {
+async function main(args) {
   const dryRun = args.includes("--dry-run");
   const backfillMode = args.includes("--backfill");
   const rest = args.filter((arg) => arg !== "--dry-run" && arg !== "--backfill");
-  const existing = existingReleases();
+  const releases = releaseList();
+  const existing = new Set(releases.map(({ tag }) => tag));
   if (backfillMode) {
     if (rest.length > 0) throw new Error(`--backfill reads every release tag on ${REMOTE}; it takes no ${rest.join(" ")}`);
-    backfill(existing, dryRun);
+    await backfill(existing, dryRun);
     return;
   }
   const named = rest.length > 0 ? rest : (process.env.RELEASED ?? "").split(/\s+/u).filter((entry) => entry !== "");
   if (named.length === 0) throw new Error("nothing released: name <name>@<version>[:<dist-tag>] or set RELEASED, or pass --backfill");
-  const releases = named
-    .map(parseExpectation)
-    .map(({ name, version, tag }) => githubRelease({ name, version, distTag: tag }, readFileSync(join(ROOT, changelogPath(name)), "utf8")));
-  makeReleases(releases, existing, dryRun);
+  // Promoted to latest, a version's notes run from the last version stable users had.
+  const made = named.map(parseExpectation).map(({ name, version, tag }) => {
+    const since = tag === "latest" ? previousStable(name, version, releases) : null;
+    return githubRelease({ name, version, distTag: tag }, readFileSync(join(ROOT, changelogPath(name)), "utf8"), since);
+  });
+  makeReleases(made, existing, dryRun);
 }
 
-if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main(process.argv.slice(2));
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main(process.argv.slice(2));

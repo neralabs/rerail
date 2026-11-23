@@ -25,6 +25,7 @@ import {
   renderRecommendedPacks,
   renderSkipped,
   renderSummary,
+  notRunLine,
   renderTips,
   renderUnsupportedPlatform,
   renderWslNote,
@@ -559,6 +560,25 @@ describe("T6 / C6 summary", () => {
     expect(text).toContain("  Type /rerail in any session for help and every command.");
     expect(text).not.toMatch(/Connected|Rule packs {2}|Your own/);
     expect(text).not.toMatch(/close this/i);
+  });
+
+  it.each(LANES)("says which added packs have rules this Rerail does not run, under the count that leaves them out (%s)", lane => {
+    const notRun = [{ name: "JavaScript", version: "0.1.9", ruleCount: 4 }, { name: "TypeScript", version: "0.1.8", ruleCount: 2 }];
+    const lines = stripAnsi(renderSummary({ ...SUMMARY, ruleCount: 160, notRun }, lane)).split("\n");
+    const at = lines.indexOf("● Rerail is on in acme-web · 2 rule packs, 160 rules");
+    const note = lines.slice(at + 1, lines.indexOf("", at));
+    expect(note.every(line => line.startsWith("  ") && line.length <= 74)).toBe(true);
+    expect(note.map(line => line.trim()).join(" ")).toBe(
+      "This Rerail does not run 6 rules of JavaScript 0.1.9 (4) and TypeScript 0.1.8 (2): they test a token parsed files now leave out. Each pack's next version runs them again; rerail packs list names them.",
+    );
+    expect(stripAnsi(renderSummary(SUMMARY, lane))).not.toContain("does not run");
+  });
+
+  it("says the same of one rule of one pack in the singular", () => {
+    expect(notRunLine([{ name: "Python", version: "0.1.10", ruleCount: 1 }])).toBe(
+      "This Rerail does not run 1 rule of Python 0.1.10 (1): it tests a token parsed files now leave out. The pack's next version runs it again; rerail packs list names it.",
+    );
+    expect(notRunLine([])).toBeUndefined();
   });
 
   it("puts the tips below the divider, after the link, in the terminal", () => {

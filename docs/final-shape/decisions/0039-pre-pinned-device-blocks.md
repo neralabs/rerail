@@ -86,7 +86,7 @@ the pool built here.
 
 ## What the prior work says
 
-- **The Tempo evidence in the PIAT spec, §20 preamble:** first-use Metal mapping cost 213 ms
+- **The predecessor's evidence in the PIAT spec, §20 preamble:** first-use Metal mapping cost 213 ms
   against 6.1 ms of GPU, and reused buffers cut the wait 30–60×. **Agrees:** buffers that are
   reused, not made per call. Here the cost per call is smaller (0.4–0.6 ms), because the buffers
   are 2 MB, not hundreds.

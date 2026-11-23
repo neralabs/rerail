@@ -98,9 +98,18 @@ function locateCalls(folder: string): number {
 
 /** Rerail's answer for each folder, in order, against Git's own; returns how many Git processes Rerail started for them. */
 function expectGitsAnswers(...folders: string[]): number {
+  return expectAnswers(folders, folder => gitsAnswer(folder));
+}
+
+/** {@link expectGitsAnswers} for linked worktrees whose Git folder is gone, where Rerail's answer also says so, and no main checkout. */
+function expectGoneWorktreesAnswers(...folders: string[]): number {
+  return expectAnswers(folders, folder => ({ ...gitsAnswer(folder), main: false, gitFolderGone: true }));
+}
+
+function expectAnswers(folders: readonly string[], answer: (folder: string) => RepositoryIdentityLocation): number {
   const asked = [...new Set(folders.map(folder => resolve(folder)))];
   const before = asked.reduce((sum, folder) => sum + locateCalls(folder), 0);
-  for (const folder of folders) expect(repositoryIdentityLocation(folder), folder).toEqual(gitsAnswer(folder));
+  for (const folder of folders) expect(repositoryIdentityLocation(folder), folder).toEqual(answer(folder));
   return asked.reduce((sum, folder) => sum + locateCalls(folder), 0) - before;
 }
 
@@ -161,7 +170,7 @@ describe("every other folder, and every worktree whose files Git might read othe
     expect(expectGitsAnswers(main, join(main, "src"), join(root, "work"), join(main, "sub"))).toBe(4);
   });
 
-  it("a bare repository, a folder inside a Git folder, an empty .git folder, and a .git file whose Git folder is gone", async () => {
+  it("a bare repository, a folder inside a Git folder and an empty .git folder; not a .git file whose worktree Git folder is gone", async () => {
     const root = await temporaryRoot();
     git(root, "init", "--quiet", "--bare", join(root, "bare.git"));
     git(root, "init", "--quiet", `--separate-git-dir=${join(root, "kept-apart.git")}`, join(root, "work"));
@@ -169,8 +178,10 @@ describe("every other folder, and every worktree whose files Git might read othe
     mkdirSync(join(root, "orphan"));
     await writeFile(join(root, "orphan", ".git"), `gitdir: ${join(root, "gone", ".git", "worktrees", "orphan")}\n`);
 
-    const folders = [join(root, "bare.git"), join(root, "bare.git", "refs"), join(root, "kept-apart.git", "refs"), join(root, "stray"), join(root, "orphan")];
+    const folders = [join(root, "bare.git"), join(root, "bare.git", "refs"), join(root, "kept-apart.git", "refs"), join(root, "stray")];
     expect(expectGitsAnswers(...folders)).toBe(folders.length);
+    // Git refuses a linked worktree whose Git folder is gone, reading its .git file first: answered so with no Git process.
+    expect(expectGoneWorktreesAnswers(join(root, "orphan"))).toBe(0);
   });
 
   it("a link into a checkout, a link inside a checkout to a folder outside one, a plain folder and a folder that is gone", async () => {
@@ -245,7 +256,8 @@ describe("every other folder, and every worktree whose files Git might read othe
     expect(expectGitsAnswers(join(root, "moved"), join(root, "mover"))).toBe(1);
 
     await rename(main, join(root, "relocated"));
-    expect(expectGitsAnswers(join(root, "linked"))).toBe(1);
+    // The worktree's Git folder moved with the repository, so Git refuses it: answered so with no Git process.
+    expect(expectGoneWorktreesAnswers(join(root, "linked"))).toBe(0);
     git(join(root, "relocated"), "worktree", "repair", join(root, "linked"));
     expect(expectGitsAnswers(join(root, "relocated"))).toBe(1);
     expect(expectGitsAnswers(join(root, "linked"))).toBe(0);

@@ -131,7 +131,7 @@ Fixed now:
 
 **Normative text: `spec-transducer.md`.** It states the lowering principle (local, navigational conditions lower into the transducer; shared and relational intermediates are named derived facts, §21), the machine model, every operation with encoding and semantics, value/capture/output programs, text and regex handling, the complete lowering of the rule language, the verifier, inputs and outputs, and backend obligations. This section summarises it.
 
-Base: Tempo's IR (`research/transducer-ir.md` §1). That is one 32-bit word per instruction, path-forking execution over one document from root nodes, and typed output arenas, with:
+Base: the predecessor's IR (`research/transducer-ir.md` §1). That is one 32-bit word per instruction, path-forking execution over one document from root nodes, and typed output arenas, with:
 
 - **tests:** `KIND`, `FIELD`, `FLAGS`, `TEXT`/`TEXT_EVAL`, `SIZE`, `SUPERTYPE`;
 - **navigation:** `CHILD`, `NEXT`, `PARENT`, `DESCEND`, `FOLLOWING`;
@@ -173,10 +173,10 @@ Verifier obligations:
 
 ## 7. Lowering and fusion
 
-**Normative text: `spec-fusion.md`.** It gives the formal set-mode semantics; exact encodings of every new operation in Tempo's word layout; the group header format; the fusion algorithm in pseudo-code; the cost model with every parameter sourced; legality per transformation; limitations with the planner's response to each; and the test and debug obligations. The evidence is measured on CPU in `research/fusion.md` (8.54M-node Python corpus; code in `experiments/fusion/`, removed; at 7efcac9c67). The Metal side is in `research/metal-recursion.md`.
+**Normative text: `spec-fusion.md`.** It gives the formal set-mode semantics; exact encodings of every new operation in the predecessor's word layout; the group header format; the fusion algorithm in pseudo-code; the cost model with every parameter sourced; legality per transformation; limitations with the planner's response to each; and the test and debug obligations. The evidence is measured on CPU in `research/fusion.md` (8.54M-node Python corpus; code in `experiments/fusion/`, removed; at 7efcac9c67). The Metal side is in `research/metal-recursion.md`.
 
 **Two-level execution model.**
-- **Instruction programs** handle node-local tests and bounded paths (Tempo classes 1–3).
+- **Instruction programs** handle node-local tests and bounded paths (the predecessor's classes 1–3).
 - **The set stage (E14)** handles relations and nesting: an inner rule is materialized as a per-node set by a pass over the regular tape, and the outer rule tests membership.
 - Both the Metal stratified-range design and the CPU mask passes are this model.
 
@@ -318,9 +318,9 @@ As in `README.md`: end-to-end CPU, wall time, RSS and parity under §12, on the 
 | `tape/` | regular structure-only tape (v9np), document table, sidecars | main v7 → v9np |
 | `content_store/` | storage, indexes, publication | main; DLRE anchor store |
 | `engine/stats/` | statistics views and readers | new; N1562 stats tables; SSC `engine/statistics.rs` + `search_kind_counts` (moved to global `k%06x` tokens) |
-| `engine/transducer/ir/` | IR, verifier, packed ABI | Tempo; N1562 `packed/` |
+| `engine/transducer/ir/` | IR, verifier, packed ABI | The predecessor; N1562 `packed/` |
 | `engine/transducer/lower/` | `AstMatcher` → IR, in-file composition, fusion | N1562 lowering; in-file parts of SSC and N1562 relational IR |
-| `engine/transducer/exec/{cpu,jit,metal}/` | executors | N1562, Tempo |
+| `engine/transducer/exec/{cpu,jit,metal}/` | executors | N1562, the predecessor |
 | `engine/vtab/transducer.rs`, `engine/vtab/demand.rs` | the boundary, demand handles, typed cells, outcome codes | SSC `sql/fragments/` at `c17d2e47`; N1562 `sql_backend` |
 | `engine/vtab/graph.rs` | cross-file graph producers | DLRE reachability/forest, facts-plan Y1 |
 | `engine/compose/` | cross-file operators → SQL | N1562 cross-file nodes, SSC crossfile/select_when |
@@ -340,7 +340,7 @@ See `decisions/README.md`: 0001 findings contract; 0002 no authored SQL; 0003 re
 
 Normative text: `spec-tooling.md`. In summary:
 
-- **Memory.** Every allocation belongs to a pool whose limit is sized at plan time from statistics. The pools are tape columns, set stages, outputs, device-side queues, facts, SQL temp and caches. Host and device caps are configuration. Exceeding a pool yields `Unknown(resource)` with its details, counted against coverage, and is never rerouted. CI gates on peak RSS, peak device bytes and the Unknown rate. Tempo's launch accounting is kept and checked against the plan's dispatch count; its fixed caps are removed.
+- **Memory.** Every allocation belongs to a pool whose limit is sized at plan time from statistics. The pools are tape columns, set stages, outputs, device-side queues, facts, SQL temp and caches. Host and device caps are configuration. Exceeding a pool yields `Unknown(resource)` with its details, counted against coverage, and is never rerouted. CI gates on peak RSS, peak device bytes and the Unknown rate. The predecessor's launch accounting is kept and checked against the plan's dispatch count; its fixed caps are removed.
   - **Resident-batch pool.** CPU batches are cut by resident bytes (decoded tape, navigation and semantic caches), not by file count. SSC measured 760 MB of navigation data retained across 4 whole-job partitions; a 4 MiB-of-source partition target cut peak RSS from 2,933 MB to 1,233 MB at unchanged CPU, with prepared plans reused across partitions.
 - **Debugging.**
   - a stable, diffable text dump of IR programs, fused groups, label tables and set-stage plans, with an assembler whose round trip is exact;
@@ -366,7 +366,7 @@ Normative text: `spec-tooling.md`. In summary:
   - SQLite per-statement stats and `dbstat`;
   - one JSON-lines profile format, consumed by `full_repository.py`;
   - proxy metrics flagged as diagnostics only.
-- **Reused:** `code-rule-profile` and `profile::trace`, the SQL statement profiler, `full_repository.py`, Tempo's launch guard, N1562's task status records and arena quotas.
+- **Reused:** `code-rule-profile` and `profile::trace`, the SQL statement profiler, `full_repository.py`, the predecessor's launch guard, N1562's task status records and arena quotas.
 - **New:** dumps and assembler, Metal counters, fuzzing, `dbstat`, repro bundles.
 
 ## 19. Performance model, heavy-rule profiles and the gap to target
@@ -442,9 +442,9 @@ M1–M9 and the phase each one gates are listed in `architecture.md` (Integratio
 
 ## 20. Tape residency and caching
 
-Evidence and the Tempo/main survey: `research/tempo-residency.md`. Bare document paths below are in the Tempo tree (`scale-test-the-re-railer/tempo/docs/`).
+Evidence and the predecessor/main survey: `research/predecessor-residency.md`. Bare document paths below are in the predecessor's tree (`<predecessor>/docs/` on a branch of the predecessor repository).
 
-Tempo evidence: first-use Metal mapping cost 213 ms against 6.1 ms of GPU time, and reused buffers cut the wait 30–60× (`shared-sparse-bump-arena-design.md:14-35,260`). A 32 MiB / 30 s decompressed cache got 0 hits on full scans and spent 37.6 worker-seconds decompressing in a warm run. Heap decompression left 3.3 GiB of malloc high-water (`workspace-store-runtime-journal.md:536-681`). Per-object mappings were rejected for VM metadata cost (`:517-520`).
+The predecessor's evidence: first-use Metal mapping cost 213 ms against 6.1 ms of GPU time, and reused buffers cut the wait 30–60× (`shared-sparse-bump-arena-design.md:14-35,260`). A 32 MiB / 30 s decompressed cache got 0 hits on full scans and spent 37.6 worker-seconds decompressing in a warm run. Heap decompression left 3.3 GiB of malloc high-water (`workspace-store-runtime-journal.md:536-681`). Per-object mappings were rejected for VM metadata cost (`:517-520`).
 
 ### 20.1 Forms
 
@@ -465,7 +465,7 @@ No other copy of tape or source bytes may exist during evaluation. Executors, th
 2. Objects are bump-allocated in a slab at 16-byte alignment.
 3. The at-rest v9np blob is laid out so that every column starts at a 16-byte offset from the blob start. One zstd decompression **directly into the slab** (known `raw_length`) therefore produces aligned, ready columns. Decompressing into an intermediate heap buffer is forbidden.
 4. A slab is append-only until it is retired. Compaction copies live objects into a **new** slab, publishes new handles, and retires the old slab when its lease count reaches zero. At most two generations of a slab exist at once. If a third would be needed, the load waits.
-5. A slab is released with `MADV_DONTNEED` then `munmap`, only after its `MTLBuffer` is gone. Partial `MADV_DONTNEED` on a live slab is forbidden, because Metal treats re-touched pages as new mappings (Tempo: 84.94 s, `packed-result-bottleneck-profile.md:102`).
+5. A slab is released with `MADV_DONTNEED` then `munmap`, only after its `MTLBuffer` is gone. Partial `MADV_DONTNEED` on a live slab is forbidden, because Metal treats re-touched pages as new mappings (the predecessor: 84.94 s, `packed-result-bottleneck-profile.md:102`).
 6. Transparent huge pages, superpages and `mlock`/wired memory are not used. `mlock` does not keep a GPU mapping.
 
 ### 20.3 Identity, admission and validation
@@ -535,7 +535,7 @@ Residency classes:
 
 ### 20.11 Forbidden
 
-Per-batch repacking into node records, such as Tempo's 44-byte `MetalNode`. Per-batch source concatenation or line rescans. Heap-`Vec` decompression. Copying source on cache hit. Re-hashing on restore. Per-object `mmap`. TTL-only caches smaller than the working set. Partial `MADV_DONTNEED` on mapped slabs. `mlock` as pinning. Fixed byte caps in code.
+Per-batch repacking into node records, such as the predecessor's 44-byte `MetalNode`. Per-batch source concatenation or line rescans. Heap-`Vec` decompression. Copying source on cache hit. Re-hashing on restore. Per-object `mmap`. TTL-only caches smaller than the working set. Partial `MADV_DONTNEED` on mapped slabs. `mlock` as pinning. Fixed byte caps in code.
 
 ### 20.12 Open measurements before locking
 
@@ -545,7 +545,7 @@ Per-batch repacking into node records, such as Tempo's 44-byte `MetalNode`. Per-
 - **Q-R4:** slab size (16/64/256 MiB) vs VM metadata and compaction cost.
 - **Q-R5:** a file-backed, read-only shared mapping of a snapshot image for multi-daemon sharing, and whether GPU no-copy over file-backed pages is safe.
 - **Q-R6:** whether no-copy buffers count in `currentAllocatedSize`.
-- **Q-R7:** pin cost per GB of tape and source slabs, to check the about-27 µs/MB extrapolation from Tempo's scratch measurement.
+- **Q-R7:** pin cost per GB of tape and source slabs, to check the about-27 µs/MB extrapolation from the predecessor's scratch measurement.
 - **Q-R8:** cold admission throughput (zstd into slab) at 4/8/16 workers against the 1–2 s audit target.
 
 ## 21. Named derived facts

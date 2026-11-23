@@ -16,8 +16,9 @@ Core lists published packs by name only, in `src/engine/catalog/pack-list.genera
 ([rule packs](rule-packs.md#installing-packs)). Like every By Rerail rule, a pack's rules run only in repositories that
 add them or the pack.
 
-A pack adds no file format: it combines the two schemas the repository already has. Code rules compile against the
-engine's `capabilities.json`, `native/src/code_rule_dsl/capabilities.json`.
+A pack adds no file format: it combines the formats the repository already has. JSON code rules compile against the
+engine's `capabilities.json`, `native/src/code_rule_dsl/capabilities.json`; a rule written in `.rerail` is read by the
+engine and runs through the `.rerail` runner ([Rules written in .rerail](#rules-written-in-rerail)).
 
 </details>
 
@@ -52,7 +53,9 @@ packs/<id>/
 ├── README.md           what the pack covers, for people: the rules it ships, never a candidate's details
 ├── LICENSE, NOTICE     the pack's licence and notice
 ├── rules/
-│   └── <rule id>.json  rule documents, each named for its id: code rules (rerail.policy/v1) or conversation rules
+│   ├── <rule id>.json  rule documents, each named for its id: code rules (rerail.policy/v1) or conversation rules
+│   ├── <rule id>.rerail  or a code rule written in .rerail, named for its .policy id
+│   └── lib/*.rerail    the pack's own library files its .rerail rules include, if any
 ├── licenses/
 │   └── <project>/      upstream LICENSE (verbatim) and UPSTREAM.md (per repository: source, path patterns taken, not copied)
 │
@@ -89,10 +92,13 @@ packs/<id>/
 ```
 
 - **`peerDependencies`**: the core range. A pack has no `dependencies`. A pack that ships a rule in a language core first
-  reads in a later release (`LANGUAGE_SINCE` in `scripts/release/core.mjs`: Java, 0.1.5) leaves older cores out
-  from that release on, as for `heldOff` below: they refuse the document and would drop the whole pack. Once core is at
-  that release the pack validation fails a range that admits them, and the Release pull request raises the range of
-  each such pack it releases ([release](release.md#release-pull-request)).
+  reads in a later release (`LANGUAGE_SINCE` in `scripts/release/core.mjs`), whose ast rule uses a key core first
+  reads in a later release (`RULE_KEY_SINCE` there), or that ships a rule written in `.rerail` (`RERAIL_DOCUMENTS_SINCE`:
+  0.2.1), leaves older cores out from that release on, as for `heldOff` below: they refuse the document and would drop
+  the whole pack. Once core is at that release the pack validation fails a range that admits them, and the Release pull
+  request raises the range of each such pack it releases ([release](release.md#release-pull-request)). The Release pull
+  request also has each released core from 0.1.5 check the pack's rules, so a rule an older core refuses for any other
+  reason raises the range too; the pack validation reads only the maps.
 - **`files`**: the pack and its licence records. Validation material never reaches npm.
 - **`repository`**: this repository and the pack's directory. `publishConfig.access` is `public`, like core.
 - **`private`**: `true` makes a pack that is never published. It needs no `publishConfig`; `false` is refused (a
@@ -156,7 +162,8 @@ packs/<id>/
 - **`honourSuppressionComments`** (optional, default `true`): whether its rules honour their linters' suppression
   comments.
 - **`rules`**: the pack's rules. Each entry has an `id` ([Rule ids](#rule-ids)), a `document` (required,
-  `rules/<id>.json`), a `title` and `group`, and optional `mode`, `on`, `heldOff` and `examples`.
+  `rules/<id>.json` or `rules/<id>.rerail`), a `title` and `group`, and optional `mode`, `on`, `heldOff` and
+  `examples`.
 
 <details>
 <summary>Field details</summary>
@@ -203,7 +210,9 @@ packs/<id>/
     admits an older core, and the Release pull request raises the range of each such pack it releases to `>=0.1.5-0`.
   - `examples` is `{ "caught": { "path"?, "text" }, "passes": { … } }`. A code rule's examples need a `path` inside
     the rule's scope, which decides the file's language; a conversation rule's have none. The complexity pack has one
-    pair per rule.
+    pair per rule. An example of a rule written in `.rerail` may add `with`: `[{ "path", "text" }, …]`, the other
+    files of the repository it is read in, for a rule that reads across files. Each `with` path is relative, stays
+    inside that repository and is not the example's own `path`; JSON and conversation rules take no `with`.
 
 **Conversation rules.** A pack may also ship a conversation rule: the rule object of
 [rule-schema.ts](../src/engine/catalog/rule-schema.ts) (`id`, `mode`, `match`, `sample`, `action`, optional `repeat`)
@@ -252,6 +261,45 @@ An id must not change once its pack is published, because people turn rules on a
 The id is the same string in `pack.json`, in the document's `id`, in its file name and in its port's `id` in
 `conformance.json`. The file is `rules/<id>.json`, or `candidates/rules/<id>.json` while a candidate, so the id
 survives shipping. Check 1 enforces this; the pack tests reject an id two documents in any packs share.
+
+</details>
+
+### Rules written in .rerail
+
+A code rule may be a `.rerail` file instead of a JSON document: `"document": "rules/<id>.rerail"`. The file is the
+rule. Its `.policy` id is its file name and the entry's `id`. Core asks the engine to read it, with every file it
+includes, and takes from it what it says: its revision, `.description`, `.mode`, `.language`, `.scope` and the
+violation codes it reports. `pack.json` restates none of it; `title`, `group`, `mode`, `on`, `heldOff` and `examples`
+are given there as for every rule.
+
+```json
+{ "id": "django-practice-count-not-len", "document": "rules/django-practice-count-not-len.rerail", "title": "Use count() instead of len() on a queryset", "group": "Django", "examples": { "caught": { "path": "shop/views.py", "text": "…" }, "passes": { "path": "shop/views.py", "text": "…" } } }
+```
+
+- **Includes.** `#include` finds core's `.rerail` library, which core ships, and then files beside the including
+  file. A library file only the pack's rules use belongs to the pack: put it under `rules/` (`rules/lib/<name>.rerail`,
+  included as `#include "lib/<name>.rerail"`), where it is published with the rules and takes no `pack.json` entry.
+- **Tests.** The file's `.test` blocks are its own tests. Their fixtures may be written inline, or read from files
+  outside `rules/` (`cases/<id>/…`) that `files` does not publish.
+- **Digest.** A rule's digest covers its text and the bytes of every file it includes, core's library among them, so
+  an edit to any of them, or a core update that changes the library, asks for the pack's approval again where it
+  needs one and checks the pack with the engine again.
+- **A pack the engine refuses.** A file the engine cannot read or check leaves the whole pack out, with the engine's
+  words, as a JSON rule that does not compile does.
+- **When it runs.** After a session's writes, once the checkout is quiet or the turn ends, and in every scan: see
+  [Rules written in .rerail](reference.md#rules-written-in-rerail) in the reference.
+
+<details>
+<summary>What a rule written in .rerail cannot do yet</summary>
+
+Core refuses these with a message that says they are not supported yet; the pack is left out:
+
+- `.mode block`, or `"mode": "block"` in `pack.json`; a setting that puts the rule on Block is refused too.
+- `.scope tool_calls`: a rule that reads the coding agent's tool calls.
+- A violation that carries a `fix`.
+- Options: a setting that gives the rule `config` is a configuration error, and the rule runs nowhere.
+- A rule created by you, or a worktree's own rule in `.rerail/rules/`, written in `.rerail`; and `rerail rules add` of
+  an edited copy of a pack's `.rerail` rule (`rerail rules show <id>` prints its file).
 
 </details>
 
@@ -615,14 +663,14 @@ To see every false positive and false negative of one ported rule:
 
 | # | Check | Fails when |
 |---|---|---|
-| 1 | Rules | A rule document or candidate is unlisted, missing, misnamed or doesn't compile (a conversation rule: doesn't parse, or has a pattern the engine refuses); an id breaks the [id rule](#packjson) |
-| 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json`; an id in `own` isn't a rule `pack.json` ships, or its document sets `violation.suppress` |
-| 3 | Examples | An example isn't caught, or doesn't pass, as it says (a conversation rule: doesn't fire, or fires) |
+| 1 | Rules | A rule document or candidate is unlisted, missing, misnamed or doesn't compile (a conversation rule: doesn't parse, or has a pattern the engine refuses; a `.rerail` rule: the engine refuses it, or it does what a pack's `.rerail` rule cannot do yet); an id breaks the [id rule](#packjson) |
+| 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json`; an id in `own` isn't a rule `pack.json` ships, or its document sets `violation.suppress`; a `.rerail` rule sets `suppress` or has no `.test` block |
+| 3 | Examples | An example isn't caught, or doesn't pass, as it says (a conversation rule: doesn't fire, or fires); a `.rerail` rule's `.test` block fails |
 | 4 | Ports | A shipped port disagrees with its expected findings outside `divergences.json`; suppression data is missing or stale |
-| 5 | Package | `package.json` (`public` or `"private": true`), its `license` or a README's rule details are wrong |
+| 5 | Package | `package.json` (`public` or `"private": true`), its core range, its `license` or a README's rule details are wrong |
 | 6 | Licences | Provenance records are malformed or disagree with the pulled test data |
 | 7 | Manifest | `pack.json` has no valid `match`; core's generated pack list lacks a published pack, names a private one, or is stale |
-| 8 | Text | A code rule's description fails a machine-checkable [description](#description) criterion |
+| 8 | Text | A code rule's description (a `.rerail` rule's `.description`) fails a machine-checkable [description](#description) criterion |
 
 <details>
 <summary>Where the checks run</summary>
@@ -659,12 +707,14 @@ conformance check (`npm run test:conformance`), not here.
 <summary>Exact conditions: checks 1 to 3</summary>
 
 1. **Rules.** `pack.json` must parse (`rulePackFileSchema`) and its `id` must be the directory name.
-   - Every file in `rules/` is listed in `pack.json`, and every listed `document` exists. Each rule's `id` is lowercase
-     letters, digits and dashes; its `document` is `rules/<id>.json` and carries the same `id`.
+   - Every file in `rules/` is listed in `pack.json`, or included by a listed `.rerail` rule (the pack's own library
+     files, as the engine reports them), and every listed `document` exists. Each rule's `id` is lowercase letters,
+     digits and dashes; its `document` is `rules/<id>.json` or `rules/<id>.rerail` and carries the same `id`.
    - Each document is a valid code rule (`rerail.policy/v1`, the host's schema) and compiles in the engine with core's
      `native/src/code_rule_dsl/capabilities.json`, as the catalog compiles it; or a valid conversation rule (a JSON
      object with a `match` and no `format`, `parseConversationRule`) whose every pattern the engine accepts
-     (`engineRegexIssues`).
+     (`engineRegexIssues`); or a `.rerail` file the engine reads and checks (types and domains, with its includes) and
+     whose `.policy` id is the entry's, that is on no `block` mode, reads no tool calls and carries no fix.
    - Candidates need not compile. Every rule document under `candidates/` (each JSON file in a `rules/` directory
      there, and any file there whose `format` names a policy, an older `<name>.policy/v<n>` included) must be
      `rerail.policy/v1` or a conversation rule, sit in a `rules/` directory and be named `<id>.json`
@@ -675,7 +725,9 @@ conformance check (`npm run test:conformance`), not here.
 2. **Proof.** A port entry is a `conformance.json` rule whose `policy` is the rule's `document`. Every id in
    `conformance.json`'s `own` must be a rule `pack.json` ships, whose document sets `violation.suppress` in no clause:
    every port carries `suppress`, for its upstream tool's comments, and an own rule has no upstream tool, so one that
-   sets it is a port moved into `own`, out of the gates that compare it with its upstream.
+   sets it is a port moved into `own`, out of the gates that compare it with its upstream. A rule written in `.rerail`
+   is the pack's own: it needs `examples`, sets `suppress` on no violation, and carries at least one `.test` block. The
+   conformance gate counts it as own without a `conformance.json`.
 3. **Examples.** A `caught` example must produce a violation of its rule and a `passes` example none, for `pack.json`'s
    examples and a candidate's in `conformance.json`. Each is evaluated alone through the engine, as a one-file
    repository at its `path` (`evaluateExample` in `conformance/pack-validation.ts`). The path must be in the rule's
@@ -683,6 +735,10 @@ conformance check (`npm run test:conformance`), not here.
    clauses' codes. A candidate's pair is held to the same against its document under `candidates/`. A conversation
    rule's examples are matched alone through the conversation engine (`ConversationRuleRegistry`, repeat ignored),
    built as [Conversation rules](#packjson) says: the caught one must fire the rule, the passes one must not.
+   A `.rerail` rule's examples run through the `.rerail` runner over a repository of the example's file and the files
+   its `with` names (`conformance/rerail-pack-rules.ts`): the run must complete with no failure, a `caught` example
+   must give a finding of the rule on its own `path` with one of the codes the rule reports, and a `passes` example
+   none there. Every `.test` block of the file must pass, as `rerail rules test <file>.rerail` runs it.
 
 </details>
 
@@ -739,6 +795,8 @@ conformance check (`npm run test:conformance`), not here.
    `{ "type": "git", "url": <the root package.json's repository url>, "directory": "packs/<id>" }`.
    - `files` publishes `pack.json`, `rules`, `LICENSE` and, when present, `licenses`. No entry may cover
      `conformance.json`, `divergences.json`, `upstream` or `candidates`.
+   - Once core is at the release that first reads what the pack ships (`heldOff`, a language added since 0.1.0, a rule
+     written in `.rerail`), the core range leaves every older core out.
    - Some way to satisfy `license` names exactly Apache-2.0 plus, per `licenses/<project>/UPSTREAM.md`, one way to
      satisfy the SPDX expression its `License:` line records. An `OR` there lets the package elect either side
      (`MIT OR Apache-2.0` with `Apache-2.0 AND MIT`); an `AND` must be named whole.
@@ -764,9 +822,10 @@ conformance check (`npm run test:conformance`), not here.
    them; `listed: true` checks the list for them too.
 8. **Text.** Every code-rule description, shipped and candidate (not probes), meets the machine-checkable
    [description](#description) criteria (`textFailures`): present, one sentence ending in a period, at most 200
-   characters, no backticks, no upstream tool named outside quoted text (`'…'` or `` `…` ``). Messages are not
-   checked; the [message](#message) criteria are for review. Check 1 covers a message's `$` placeholders: a message
-   naming a capture its clause doesn't bind does not compile. A conversation rule has no description and is left out.
+   characters, no backticks, no upstream tool named outside quoted text (`'…'` or `` `…` ``). A `.rerail` rule's is its
+   `.description`, as the engine reads it. Messages are not checked; the [message](#message) criteria are for review.
+   Check 1 covers a message's `$` placeholders: a message naming a capture its clause doesn't bind does not compile. A
+   conversation rule has no description and is left out.
 
 </details>
 
@@ -957,7 +1016,8 @@ summaries.
   (`scripts/release/github-release.mjs`), beside the npm publish rather than after it, so npm can neither hold back
   nor skip a Release. Rerun, it rewrites an existing Release's notes and flags.
 - A pack's Release is never the repository's latest release, which is core's. It is a pre-release while its version is
-  on `next`, and the promote makes it a full release.
+  on `next`, and the promote makes it a full release, its notes then everything since the pack's last version on
+  `latest`, a version that never reached `latest` included ([release.md](release.md#before-promoting)).
 - Releases missing for older tags, or from a run that failed before its Release, are made by hand with the script's
   backfill, which skips a version whose changelog has no section ([release.md](release.md#release)).
 
