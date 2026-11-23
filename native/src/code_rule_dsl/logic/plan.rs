@@ -14830,9 +14830,13 @@ fn walk_repeat() -> usize {
 }
 
 impl WalkSnap {
-    /// `None` where a positive atom's relation is not the engine's (the walk could not probe it).
+    /// `None` where a positive atom's relation is not the engine's (the walk could not probe it), or is a view held in
+    /// place (`hold_view_in_place`): a view's rows are its source's, so holding it holds the source whole, and a
+    /// batch's view a chunk's every relation, in its block of sources, until the search runs. Decision 0243 bounds
+    /// what a request holds by its line's relations; the line is priced instead. A negated view is not held (a walk
+    /// takes a negated relation it does not hold as passing).
     /// Read by the scope alone (`Db`): a stratum off the run's thread asks too, and reads no SQL (decision 0113).
-    fn take(db: crate::code_rule_dsl::facts::vtab::Db<'_>, name: &str, line: usize, b: &Body<'_>, first: Option<usize>, heavy_of: &dyn Fn(&str, usize) -> Option<Vec<i64>>) -> Option<WalkSnap> {
+    pub fn take(db: crate::code_rule_dsl::facts::vtab::Db<'_>, name: &str, line: usize, b: &Body<'_>, first: Option<usize>, heavy_of: &dyn Fn(&str, usize) -> Option<Vec<i64>>) -> Option<WalkSnap> {
         use super::native::component as engine;
         let mut rels = HashMap::new();
         let mut syms = HashMap::new();
@@ -14845,7 +14849,7 @@ impl WalkSnap {
                     if t.var().is_some() && let Some(h) = heavy_of(rel, c) { heavy.insert((rel.to_string(), c), h); }
                 }
             }
-            match engine::held(db, rel) {
+            match engine::held(db, rel).filter(|held| held.view.is_none()) {
                 Some(held) => { rels.insert(rel.to_string(), held); }
                 None if !a.neg() => return None,
                 None => {}
