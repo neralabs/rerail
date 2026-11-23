@@ -18,13 +18,15 @@ pub type Matchers = [(String, String, Vec<String>)];
 /// `Projection::with_long_text_parts`).
 pub fn projection(v: &Version, reads: BTreeSet<String>, matchers: &Matchers) -> Projection {
     let demand = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the text kinds demanded".into()); text_kind_demand(v, matchers) };
-    projection_with(v, reads, matchers, demand)
+    let spans = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the spans whose text is read".into()); span_text_demand(v) };
+    projection_with(v, reads, matchers, demand, spans)
 }
 
 /// `projection`, with the text kinds demanded found by the caller (`text_kind_demand`'s, kept: `plan::kept_analyses`).
-pub fn projection_with(v: &Version, reads: BTreeSet<String>, matchers: &Matchers, demand: TextDemand) -> Projection {
+/// `spans`: the spans and tokens whose text a rule reads (`span_text_demand`'s, kept as the text kinds are).
+pub fn projection_with(v: &Version, reads: BTreeSet<String>, matchers: &Matchers, demand: TextDemand, spans: (BTreeSet<SpanIn>, bool)) -> Projection {
     let anchors = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the node anchors".into()); if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|x| x == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(v, &v.settings().expect("a version's settings are read"), matchers) } };
-    let p = projection_of(v, reads);
+    let p = projection_of_spans(v, reads, spans);
     let _s = crate::code_rule_dsl::logic::profile::span(|| "the long text's parts".into());
     p.with_long_text_parts(demand, anchors)
 }
@@ -33,7 +35,12 @@ pub fn projection_with(v: &Version, reads: BTreeSet<String>, matchers: &Matchers
 /// program that includes `core.rerail` (declares every relation it declares as an input), T's for one that declares its
 /// base relations itself (T's programs, the converter's, O74).
 pub fn projection_of(v: &Version, reads: BTreeSet<String>) -> Projection {
-    let (spans, token_text) = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the spans whose text is read".into()); span_text_demand(v) };
+    let spans = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the spans whose text is read".into()); span_text_demand(v) };
+    projection_of_spans(v, reads, spans)
+}
+
+/// `projection_of`, with the spans whose text is read found by the caller (`span_text_demand`'s).
+pub fn projection_of_spans(v: &Version, reads: BTreeSet<String>, (spans, token_text): (BTreeSet<SpanIn>, bool)) -> Projection {
     let derived: BTreeSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
     let outputs: BTreeSet<String> = v.output_names().into_iter().collect();
     { let _s = crate::code_rule_dsl::logic::profile::span(|| "the projection's plan, for the profile".into()); crate::code_rule_dsl::logic::profile::projection_plan_of(|| users(v), &outputs, &reads); }
@@ -233,6 +240,52 @@ fn fold(columns: &[Vec<Kinds>], fixes: &[Fix]) -> Kinds {
 
 /// `text_kind_demand`'s answer as rows, to keep with a run's kept plans (t33 K4): tagged `long`, `any`, `negated`,
 /// `read` (its sets', each tagged by its set; no `read` row: every node) and `wide`.
+/// `span_text_demand`'s answer as rows, for the store to keep (`plan::kept_analyses::kept_value`): `token` and
+/// whether a token's text is read, then a row a span (its place's name, and its kind, pattern and group as it has them).
+pub fn span_rows((spans, token_text): &(BTreeSet<SpanIn>, bool)) -> Vec<crate::code_rule_dsl::logic::program_image::manager::Row> {
+    use crate::code_rule_dsl::logic::front::Value;
+    let s = |x: &str| Value::Str(x.into());
+    let mut out: Vec<crate::code_rule_dsl::logic::program_image::manager::Row> = vec![vec![s("token"), Value::Int(i64::from(*token_text))]];
+    out.extend(spans.iter().map(|span| match span {
+        SpanIn::Source => vec![s("source")],
+        SpanIn::Line => vec![s("line")],
+        SpanIn::Comment => vec![s("comment")],
+        SpanIn::Kind(k) => vec![s("kind"), s(k)],
+        SpanIn::ChildOf(k) => vec![s("child_of"), s(k)],
+        SpanIn::Capture(p, g) => vec![s("capture"), s(p), s(g)],
+    }));
+    out
+}
+
+/// `span_rows`' answer back; `None` where a row is not one it writes.
+pub fn span_of_rows(rows: &[crate::code_rule_dsl::logic::program_image::manager::Row]) -> Option<(BTreeSet<SpanIn>, bool)> {
+    use crate::code_rule_dsl::logic::front::Value;
+    let text = |v: &Value| match v {
+        Value::Str(x) => Some(x.to_string()),
+        _ => None,
+    };
+    let (first, rest) = rows.split_first()?;
+    let token_text = match first.as_slice() {
+        [tag, Value::Int(t)] if text(tag)? == "token" => *t != 0,
+        _ => return None,
+    };
+    let mut spans = BTreeSet::new();
+    for row in rest {
+        let (tag, args) = row.split_first()?;
+        let args: Vec<String> = args.iter().map(text).collect::<Option<_>>()?;
+        spans.insert(match (text(tag)?.as_str(), args.as_slice()) {
+            ("source", []) => SpanIn::Source,
+            ("line", []) => SpanIn::Line,
+            ("comment", []) => SpanIn::Comment,
+            ("kind", [k]) => SpanIn::Kind(k.clone()),
+            ("child_of", [k]) => SpanIn::ChildOf(k.clone()),
+            ("capture", [p, g]) => SpanIn::Capture(p.clone(), g.clone()),
+            _ => return None,
+        });
+    }
+    Some((spans, token_text))
+}
+
 pub fn demand_rows(d: &TextDemand) -> Vec<crate::code_rule_dsl::logic::program_image::manager::Row> {
     use crate::code_rule_dsl::logic::front::Value;
     let s = |x: &str| Value::Str(x.into());

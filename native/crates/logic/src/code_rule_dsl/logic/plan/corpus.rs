@@ -2783,7 +2783,12 @@ fn run_observed_within(
             }
             super::kept_analyses::kept_value(source, "text kinds demanded", 1, &[&given], || super::text_demand::text_kind_demand(source, matchers), super::text_demand::demand_rows, super::text_demand::demand_of_rows)
         };
-        super::text_demand::projection_with(source, read.clone(), matchers, demand)
+        // The spans whose text a rule reads, a function of the program, kept with it as the text kinds are (t33 K4).
+        let spans = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the spans whose text is read".into());
+            super::kept_analyses::kept_value(source, "spans whose text is read", 1, &[], || super::text_demand::span_text_demand(source), super::text_demand::span_rows, super::text_demand::span_of_rows)
+        };
+        super::text_demand::projection_with(source, read.clone(), matchers, demand, spans)
     };
     let base_rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the projection's digest".into()); projection.rows_digest() };
     let memo_ids = {
