@@ -126,25 +126,26 @@ kernel with its own epilogue, or with a loop that interleaves other work, uses l
 ### 6. What a kernel looks like
 
 ```c
-// C[64×64] of this owner's block += A[64×K] · B[K×64], f16 into f32, on any device.
+// C[64×64] of this owner's block += A[64×K] · B[K×64], f16 into f32, on any device (`ukl/matrix.h`).
 #define M_ UKL_MMA_M(f16)
 #define N_ UKL_MMA_N(f16)
 #define K_ UKL_MMA_K(f16)
+UklMmaAt at = ukl_mma_at(lid);
 ukl_mma_c_f32 c[64 / M_][64 / N_];
-for (uint i = 0; i < 64 / M_; i++) for (uint j = 0; j < 64 / N_; j++) ukl_mma_fill_c(&c[i][j], 0.0f);
+for (uint i = 0; i < 64 / M_; i++) for (uint j = 0; j < 64 / N_; j++) ukl_mma_fill_c_f32(&c[i][j], 0.0f, at);
 for (uint k = 0; k < K; k += K_) {
     for (uint i = 0; i < 64 / M_; i++) {
-        ukl_mma_a_f16 a; ukl_mma_load_a(&a, A + i * M_ * lda + k, lda, UKL_ROW_MAJOR);
+        ukl_mma_a_f16 a; ukl_mma_load_a_f16(&a, A + i * M_ * lda + k, lda, UKL_ROW_MAJOR, at);
         for (uint j = 0; j < 64 / N_; j++) {
-            ukl_mma_b_f16 b; ukl_mma_load_b(&b, B + k * ldb + j * N_, ldb, UKL_ROW_MAJOR);
-            ukl_mma(&c[i][j], &a, &b);
+            ukl_mma_b_f16 b; ukl_mma_load_b_f16(&b, B + k * ldb + j * N_, ldb, UKL_ROW_MAJOR, at);
+            ukl_mma_f16(&c[i][j], &a, &b, at __UKL_ARGS);
         }
     }
 }
 // The epilogue, by coordinates: a bias per column, then the store.
 for (uint i = 0; i < 64 / M_; i++) for (uint j = 0; j < 64 / N_; j++) {
-    UKL_MMA_EACH(c[i][j], row, col, v) { v += bias[j * N_ + col]; }
-    ukl_mma_store_c(&c[i][j], C + i * M_ * ldc + j * N_, ldc, UKL_ROW_MAJOR);
+    UKL_MMA_EACH(c[i][j], at, row, col, v) { v += bias[j * N_ + col]; }
+    ukl_mma_store_c_f32(&c[i][j], C + i * M_ * ldc + j * N_, ldc, UKL_ROW_MAJOR, at);
 }
 ```
 
@@ -219,7 +220,7 @@ emulated form, which is the reference.
 ## Order of work
 
 1. The interface in `ukl/matrix.h`, with the emulated form and the CPU's shim lanes, and R1-R6 and R9 on the CPU.
-   This fixes the shape before any device adds its form.
+   This fixes the shape before any device adds its form. Done 2026-11-22, on every backend ("Step 1, built" below).
 2. CUDA's `mma.sync` on the Sparks (R2-R7). Then the V100: its form, or the emulation, chosen by test.
 3. Metal's `simdgroup_matrix` on M1-M4 (f16; bf16 where present; i8 emulated). R4 is what checks the coordinates
    behind `thread_elements()`.
@@ -229,6 +230,80 @@ emulated form, which is the reference.
 7. `ukl_gemm_tile`, with one backend override (the M5's or CUDA's) to prove the override path.
 
 Steps 2-6 each add one section of `backend.h` and change nothing in a kernel.
+
+### Step 1, built (2026-11-22)
+
+The user: "please do step 1. Find two uses for it in the existing ukl kernels".
+
+- **`<ukl/matrix.h>`** holds the interface and its emulated form, for every backend.
+- **How it differs from §3, each forced by UKL's C:**
+  - **The names carry the type** (`ukl_mma_load_a_f16`, `ukl_mma_i8`, `ukl_mma_store_c_f32`). UKL is C on the CPU and
+    on OpenCL, so it has no overloading.
+  - **Each operation takes the thread's place, `UklMmaAt`** (its lane, and its SIMD group in the owner), from
+    `ukl_mma_at(lid)`. UKL's SIMD-group operations take their lane from the caller (`ukl/simd.h`), and a backend has
+    no portable lane id. So `UKL_MMA_EACH(c, at, row, col, v)` takes it too, and `ukl_mma_owner(lid)` takes the
+    thread's id.
+  - **A load or store from threadgroup memory is the `_local` form** (`ukl_mma_load_a_f16_local`). Metal and OpenCL
+    type a pointer by its address space.
+  - **Level 2 is `ukl_gemm_tile_<T>`,** one owner's 64×64 block of C, read from and written to device memory. Each
+    of A, B and C has its own leading dimension and layout.
+- **The emulated form:** every type 16×16×16, from `<ukl/dot.h>`'s dot products and the SIMD group's shuffles.
+  - **C:** its 256 elements lie row-major across the owner's lanes.
+  - **A and B:** each SIMD group of the owner holds all of both, packed along K (two 16-bit floats, or four bytes, a
+    word).
+  - **The product:** each shuffle reads the same register in every lane. At 16 lanes or more, that register is a
+    constant, and a lane reads its column of B once a product.
+  - **Narrower groups** (OpenCL's 8 lanes, or 1) read each element's row and column apart. Their register is picked
+    by value, as an owner of several groups knows it only at run time.
+  - **Owners of several groups:** a test's define (`UKL_MMA_EMULATED_GROUPS`) makes the emulation's owners span 2 or
+    4 SIMD groups, so the multi-group path runs where no device has one yet.
+- **The tests:** `rerail-gpu`'s `matrix_tests` (kernels in `matrix_tests.uglykl`).
+
+  | Test | Requirements | What it checks |
+  |---|---|---|
+  | `matrix_shapes_divide_the_block` | R1 | each type's shape divides 64, and an owner's lanes are its groups'; the constants are printed |
+  | `matrix_products_are_exact_on_small_integers` | R2, R9 | small integers, exact, in each type: K = 128 by level 1 and by level 2; K = 32 in all eight layouts from device memory, and in two from threadgroup memory |
+  | `matrix_products_are_within_the_bound_on_random_inputs` | R3, R9 | random floats within `K · 2^-p · (Σ\|a\|\|b\| + \|c\|)`; random bytes exactly; level 2 equal to level 1 to the bit |
+  | `matrix_each_visits_every_element_at_its_coordinates` | R4 | owners of 1, 2 and 4 groups; f32 and i32 |
+  | `matrix_owners_of_several_groups_agree` | R5 | owners of 1, 2 and 4 groups, in threadgroups of 1, 2 and 4 owners |
+
+  - R1's static assertions are in the header.
+  - R6 waits for the first native form (step 2): it compares a native form with the emulation, and every type is
+    emulated today.
+  - R7 and R8 belong to the native forms and the first kernel.
+- **Measured:** all five tests pass on all five backends, every type emulated, each at 32 lanes:
+  - the CPU (its shim lanes, on a Linux host);
+  - CUDA (a GB10);
+  - HIP and OpenCL (the Radeon 680M);
+  - Metal (an M3).
+
+  On the CPU, each test takes 0.15 to 0.6 s. The small-integer test took 1.04 s until two cuts: its large case from
+  K = 256 to K = 128, and its threadgroup-memory cases to two layouts (all row-major, all column-major). It now takes
+  0.59 s. UKL's own tests compile the header for every backend, and as OpenCL C 1.2 at 32, 8 and 1 lanes.
+
+### Uses in the existing kernels (2026-11-22)
+
+All the existing UKL kernels were read for a matrix product: the 21 `.uglykl` files, the forest's kernels and the
+library. One kernel computes a dense product: the relational bit product, `bp_tile` in
+`accel/src/gpu/relational.uglykl`. It computes `C[i][j] = popcount(A_i & B_j)`, in tiles of 64×64. It serves two of
+the engine's workloads from the matrix-offload spikes (`tools/matrix-offload/RESULTS.md`):
+
+1. **W1, the prefilter** (mode 1): which rules a document may match, from its names' bits against each rule's, as a
+   mask.
+2. **W5, co-occurrence** (mode 0): the counts of documents that hold each pair of names (`AᵀA`).
+
+- **Its product is of 1-bit values, not f16, bf16 or i8.** §1 left 1-bit matrices for "a kernel that needs them",
+  and this is that kernel.
+- **NVIDIA's units do it natively:** `mma.sync` over `.b1` with AND and POPC.
+- **Elsewhere, the threads' popcount wins.** On the M-series GPU it beat the int8 units, which would also read 8
+  times the bytes (RESULTS.md, finding 2).
+- **The other kernels are not dense products**, and the spikes measured each one's matrix form slower than the form
+  they use:
+  - the count table and the joins are equality joins: counting arrays, 26 to 200 times faster than all-pairs tiles;
+  - the histograms are group-bys: the one-hot product on the matrix units ran 3 times slower than threadgroup
+    atomics;
+  - the closure is a level-by-level DP over the condensed DAG: squaring was 100 to 600 times slower;
+  - the forest's training sums f32 weights into buckets, which an f16 or bf16 product would round.
 
 ## Open
 

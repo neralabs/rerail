@@ -21,7 +21,7 @@ struct TestArgs {
 unsafe impl Pod for TestArgs {}
 
 /// The tests' program and a queue, or `None` (said) without a device.
-fn setup() -> Option<(&'static Program, ComputeQueue)> {
+pub(crate) fn setup() -> Option<(&'static Program, ComputeQueue)> {
     let Some(shared) = crate::shared::get() else {
         eprintln!("no device: the UKL library's tests did not run");
         return None;
@@ -35,15 +35,15 @@ fn setup() -> Option<(&'static Program, ComputeQueue)> {
 }
 
 /// xorshift64*: the tests' inputs, the same on every run.
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         self.0 ^= self.0 >> 12;
         self.0 ^= self.0 << 25;
         self.0 ^= self.0 >> 27;
         self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
     }
-    fn below(&mut self, n: u64) -> u64 {
+    pub(crate) fn below(&mut self, n: u64) -> u64 {
         self.next() % n
     }
     /// Words with runs of zeros and ones as well as noise: the edge cases of bit searches.

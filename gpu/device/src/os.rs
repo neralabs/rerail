@@ -92,7 +92,7 @@ impl Stacks {
     /// only a thread's own stack, not one a coroutine runs on.
     pub fn new(count: usize, stride: usize) -> Option<Stacks> {
         let page = page_bytes();
-        assert!(stride % page == 0 && stride > page, "a stack is whole pages, more than its guard");
+        assert!(stride.is_multiple_of(page) && stride > page, "a stack is whole pages, more than its guard");
         let len = count * stride;
         let base = sys::map(len)?;
         for k in 0..count {
