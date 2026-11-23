@@ -500,11 +500,15 @@ UKL_INLINE void write_output(UKL_GLOBAL BM* out, uint32_t base, uint32_t gl, uin
     or_word(o, base + (uint32_t)ukl_max(j0, 0), BMC(SEL(BMC(0), hi, j0 >= 0)));
 }
 
-// Each of a lane's set bits `w` as a position, at the count before them `at`, one per set bit (at most BW).
-UKL_INLINE void write_positions(BM w, uint32_t at, uint32_t gl, uint32_t delay, UKL_GLOBAL uint32_t* positions, uint32_t capacity)
+// Each of a lane's set bits `w` as a position, at the count before them `at`, one per set bit (at most BW). Every
+// lane takes the group's `trips` (its most bits), so the group leaves the loop whole: a lane leaving at its own last
+// bit left the lanes still writing out of the next SIMD-group op. Apple's compiler placed the next extract's prefix
+// after the loop, and those lanes added none to it: the next extract's positions overwrote the earlier lanes'.
+UKL_INLINE void write_positions(BM w, uint32_t at, uint32_t gl, uint32_t delay, UKL_GLOBAL uint32_t* positions, uint32_t capacity,
+                                uint32_t trips)
 {
-    for (uint32_t j = 0u; j < (uint32_t)BW && w != BMC(0); j++) {
-        if (at + j < capacity) positions[at + j] = gl * (uint32_t)BW + CTZ_BM(w) - delay;
+    for (uint32_t j = 0u; j < trips; j++) {
+        if (w != BMC(0) && at + j < capacity) positions[at + j] = gl * (uint32_t)BW + CTZ_BM(w) - delay;
         w = BMC(w & BMC(w - BMC(1)));
     }
 }
@@ -533,7 +537,8 @@ UKL_INLINE bool count_sink(BM v, uint32_t gl, uint32_t g, uint32_t l, uint32_t g
     // An extract's count; a total's flag: whether the output has a bit (`BlockProgram::totals`).
     if (l == 0u && g + 1u == groups) *total = write ? prefix + agg : (uint32_t)(prefix + agg != 0u);
     uint32_t at = prefix + ukl_sg_exclusive_sum(n, l __UKL_ARGS);
-    if (write) write_positions(w, at, gl, delay, positions, capacity);
+    uint32_t trips = ukl_sg_max(n __UKL_ARGS);
+    if (write) write_positions(w, at, gl, delay, positions, capacity, trips);
     return true;
 }
 
@@ -553,5 +558,6 @@ UKL_INLINE void count_finish(BM w, uint32_t n, uint32_t agg, uint32_t prefix, ui
 {
     if (l == 0u && g + 1u == groups) *total = prefix + agg;
     uint32_t at = prefix + ukl_sg_exclusive_sum(n, l __UKL_ARGS);
-    if (write) write_positions(w, at, gl, delay, positions, capacity);
+    uint32_t trips = ukl_sg_max(n __UKL_ARGS);
+    if (write) write_positions(w, at, gl, delay, positions, capacity, trips);
 }

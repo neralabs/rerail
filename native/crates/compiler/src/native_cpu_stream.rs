@@ -5160,11 +5160,10 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     if pinned_ctx || pin_one {
         flags.push(("enable_pinned_reg", "true"));
     }
-    // The passed fields come back with a function's result: more results than registers go
-    // through a return area.
-    if clustered && !cut.pass.is_empty() {
-        flags.push(("enable_multi_ret_implicit_sret", "true"));
-    }
+    // More results than the platform's registers go through a return area: the passed fields
+    // coming back with a cluster's result, and the outlined helpers' (`tempo_stream_drop`'s 4).
+    // x86-64's System V returns 2 in registers, AArch64's 8: only a function past those changes.
+    flags.push(("enable_multi_ret_implicit_sret", "true"));
     // A word of another cluster is a tail call of it (`return_call`), which Cranelift's x64
     // backend emits only with frame pointers kept (its `emit` asserts it); AArch64's frames
     // keep them already.

@@ -71,7 +71,16 @@ The bless: a cold compile and the parser's Rust compile, 117 s on an M-series Ma
 holds fewer questions, so it is smaller: 61 KB before, 46 KB now. Of `kotlin_aot`'s generated Rust,
 only tier 1 changed, by the new `code_l` message.
 
-Found on the way and not fixed: on an x86-64 Linux host, a Kotlin compile, cold or warm, fails in
-tier 2's Cranelift compile ("Too many return values to fit in registers"). On a Mac it compiles.
-Tier 2's program is the one before this decision (its generated Rust is unchanged), so this is not
-this decision's.
+Found on the way, and fixed after it:
+
+- On an x86-64 Linux host a Kotlin compile failed in tier 2's Cranelift compile ("Too many return
+  values to fit in registers"). The return area for more results than the platform's registers
+  (`enable_multi_ret_implicit_sret`) was on only for a cluster passing fields; an outlined helper
+  returns 4 (`tempo_stream_drop`), past x86-64 System V's 2 (AArch64 returns 8). It is now always
+  on. Kotlin's quick tier passes on a Linux host: 87 of 87.
+- On Metal (M1 Max, M4), a batch's second extract had its positions written over the first lanes'
+  (rr's numbers, refused and marks tests; parser_tests' start test). A lane leaves the positions loop
+  at its own last bit, and Apple's compiler placed the next extract's SIMD-group prefix after that
+  loop, so the lanes still writing added none to it. Taking the prefix before the loop did not help;
+  neither did the shuffle form of the prefix. Every lane now takes the group's most bits as its trips
+  (`write_positions`, the serial runner's lanes writer), so the group leaves the loop whole.

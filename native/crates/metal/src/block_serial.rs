@@ -1147,8 +1147,8 @@ fn generate_serial(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (Str
             .map(|(e, &k)| {
                 format!(
                     "      {{ uint64_t w = j < seg.z ? out[f.out_base + {k}u * f.groups + j] : 0ul; const uint32_t n = U32(ukl_popcount64(w));\n\
-                     \x20       uint32_t at = bases[s * {counted}u + {e}u] + ukl_sg_exclusive_sum(n, l __UKL_ARGS);\n\
-                     \x20       for (uint32_t i = 0u; i < 64u && w != 0ul; i++) {{ positions[f.pos_base + {e}u * ukl_max(len, 1u) + at] = j * 64u + U32(ukl_ctz64(w)); at++; w &= w - 1ul; }} }}\n"
+                     \x20       uint32_t at = bases[s * {counted}u + {e}u] + ukl_sg_exclusive_sum(n, l __UKL_ARGS); const uint32_t trips = ukl_sg_max(n __UKL_ARGS);\n\
+                     \x20       for (uint32_t i = 0u; i < trips; i++) {{ if (w != 0ul) positions[f.pos_base + {e}u * ukl_max(len, 1u) + at] = j * 64u + U32(ukl_ctz64(w)); at++; w &= w - 1ul; }} }}\n"
                 )
             })
             .collect();
