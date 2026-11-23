@@ -2376,8 +2376,10 @@ impl PlacedHeads {
 /// `fresh`'s: after the last of those (a stratum's earlier group's, for the same head), else past its tail's rows, in
 /// room reserved in their block (decision 0384 step 3: the relation stays one, and a reader binds it whole), else a
 /// relation of their own (`Part::for_writes`) that becomes its tail. The rows' place, and the relation bound for the
-/// writes.
-fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize) -> Result<(super::Placed, mj::DevRel, usize), String> {
+/// writes. `room`: the rows reserved now, at most `n` (a head whose rows are mapped as they are reached reserves its
+/// first room, and `place_growth` the rest); the relation bound for the writes holds `n`.
+fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize, room: usize) -> Result<(super::Placed, mj::DevRel, usize), String> {
+    let (bound, n) = (n, room.min(n));
     // A block with no room for them: the relation's rows moved into one with room (`Part::moved_room`), which the
     // claim makes its tail, so it stays one relation.
     let moved = |l: Option<crate::code_rule_dsl::facts::rows::Lent>, why: &'static str| l.inspect(|_| crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", why, 1));
@@ -2388,7 +2390,12 @@ fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize) -> Resu
     };
     if let Some(lent) = room {
         let at = lent.at;
-        let dst = mj::DevRel::in_block(&lent.tail().in_block(at + n as u32), k).map_err(|e| format!("{e:?}: a head's tail in its block"))?;
+        // Mapped as reached, where its block could not hold its bound: its bound reserved now.
+        if n < bound && !lent.tail().could_hold(u64::from(at) + bound as u64) {
+            drop(lent);
+            return head_room(rel, fresh, k, bound, bound);
+        }
+        let dst = mj::DevRel::in_block(&lent.tail().in_block(at + bound as u32), k).map_err(|e| format!("{e:?}: a head's tail in its block"))?;
         crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into their own tail", 1);
         return Ok((super::Placed::Tail { lent: std::sync::Arc::new(lent), n: 0 }, dst, at as usize));
     }
@@ -2398,8 +2405,11 @@ fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize) -> Resu
     // MB in 247 copies on the M3's 300-file run, ab110). Room for a full directory of them (`ADDED_INDEXES`): with
     // room for one a column and one more, a relation of three columns probed by more keys was copied (ab118). Its
     // block is memory only as it is written. A small one shares the run's block, its copy as small.
-    let part = if n >= ALONE_ROWS { Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, k, n, rerail_blocks::relation::ADDED_INDEXES) } else { Part::for_writes(k, n) };
-    let dst = mj::DevRel::in_block(&part.in_block(n as u32), k).map_err(|e| format!("{e:?}: a head's rows in their block"))?;
+    let part = if n < bound {
+        // Mapped as reached: alone in a block with room for its bound, its first room reserved.
+        Part::with_index_room_for(crate::code_rule_dsl::facts::rows::Life::Run, k, n, bound, rerail_blocks::relation::ADDED_INDEXES)
+    } else if bound >= ALONE_ROWS { Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, k, n, rerail_blocks::relation::ADDED_INDEXES) } else { Part::for_writes(k, n) };
+    let dst = mj::DevRel::in_block(&part.in_block(bound as u32), k).map_err(|e| format!("{e:?}: a head's rows in their block"))?;
     Ok((super::Placed::Part(part), dst, 0))
 }
 
@@ -2453,6 +2463,40 @@ const PLACE_ROOM_BYTES: usize = REACH_BYTES;
 
 /// A head's room's rows at least where its reach is not its room (`encode_place`).
 const PLACE_ROOM_MIN: usize = 1 << 16;
+
+/// A placed head's first room (`encode_place`): its bound, where a mapped page is not real memory or its bound is
+/// small (under `ALONE_ROWS` rows: in the run's block, a few pages); else twice the rows its rules' tables were
+/// encoded for (`guess`), at least `ALONE_ROWS`, within its bound. A test build's `RERAIL_ROOMS_MAPPED=N`: `N` rows.
+fn place_first(rooms: Option<usize>, bound: usize, guess: usize) -> usize {
+    match rooms {
+        Some(n) if n > 0 => n.min(bound),
+        Some(_) if bound > ALONE_ROWS => guess.saturating_mul(2).max(ALONE_ROWS).min(bound),
+        _ => bound,
+    }
+}
+
+/// A placed head's room's growth (`mj::RoomGrow`), its new rows read by `new`: its rows past `at` in `room`'s relation
+/// mapped twice what they need (at least twice what is mapped), within `bound`, in place in their block. Past what
+/// its block has, an error: the program stops there, and `place` places the head.
+fn place_growth(room: &super::Placed, at: usize, first: usize, bound: usize, new: impl Fn() -> u32 + 'static) -> mj::RoomGrow {
+    let part = match room {
+        super::Placed::Part(p) => p.clone(),
+        super::Placed::Tail { lent, .. } => lent.tail().clone(),
+    };
+    let now = std::cell::Cell::new(first);
+    Box::new(move || {
+        let need = new() as usize;
+        if need <= now.get() || need > bound {
+            return Ok(None);
+        }
+        let to = (2 * need).max(2 * now.get()).min(bound);
+        if !part.reserve_room((at + to) as u64) {
+            return Err(format!("a placed head of {to} rows past its block's room"));
+        }
+        now.set(to);
+        Ok(Some(mj::Grown { cap: to, rels: vec![(part.facts().clone(), part.rel_at() as u64, (at + to) as u32)], maps: Vec::new() }))
+    })
+}
 
 /// `place`'s work encoded into the stratum's own program, after its joins (decision 0603: a stratum is one launch):
 /// each head's union of its rules' distinct rows from their counts on the device (`append_rows`, a placed table),
@@ -2543,13 +2587,32 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
     if pre.heads.is_empty() {
         return Ok(None);
     }
-    // The gate: each head's rows within the room reserved for them, before any is written there.
-    let checks: Vec<(mj::At<'_>, Option<mj::At<'_>>, usize)> = made.iter().map(|(_, _, slot, words, bound)| (mj::At::Word(words, slot.unwrap_or(0)), None, *bound)).collect();
-    b.gate(&checks).map_err(e)?;
-    drop(checks);
+    // Each head's room reserved: its bound, or where a mapped page is real memory (`mj::rooms_mapped`), its first room
+    // (`place_first`), mapped further as its rows reach it.
+    let rooms = mj::rooms_mapped();
+    let mut placed = Vec::new();
     for (h, rows, slot, words, bound) in made {
         let k = store.rels[h].k;
-        let (room, dst, at) = head_room(&store.rels[h], &fresh[h], k, bound)?;
+        let first = place_first(rooms, bound, rows.cap);
+        let (room, dst, at) = head_room(&store.rels[h], &fresh[h], k, bound, first)?;
+        placed.push((h, rows, slot, words, bound, first, room, dst, at));
+    }
+    // The gate: each head's rows within its bound, before any is written there; and within its first room, where it
+    // is less: past it the program parks, its room grows (`place_growth`), and it goes on.
+    let mut checks: Vec<(mj::At<'_>, Option<mj::At<'_>>, usize)> = Vec::new();
+    let mut grows: Vec<(usize, mj::RoomGrow)> = Vec::new();
+    for (_, _, slot, words, bound, first, room, _, at) in &placed {
+        let n = mj::At::Word(words, slot.unwrap_or(0));
+        checks.push((n, None, *bound));
+        if first < bound {
+            grows.push((checks.len(), place_growth(room, *at, *first, *bound, words.reader(slot.unwrap_or(0)))));
+            checks.push((mj::At::Word(words, slot.unwrap_or(0)), None, *first));
+        }
+    }
+    b.gate_rooms(&checks, grows).map_err(e)?;
+    drop(checks);
+    for (h, rows, slot, words, bound, _, room, dst, at) in placed {
+        let k = store.rels[h].k;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
         b.place_rows(mj::Rows::Table(&rows), bound, slot, &words, &ident, dst, at).map_err(|e| format!("{e:?}: a head's rows placed"))?;
         pre._hold.0.push(rows);
@@ -2640,7 +2703,7 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
             }
             _ => (rows, slot),
         };
-        let (room, dst, at) = head_room(rel, &fresh[h], k, cap)?;
+        let (room, dst, at) = head_room(rel, &fresh[h], k, cap, cap)?;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
         b.place_rows(mj::Rows::Table(&rows), cap, slot, &words, &ident, dst, at).map_err(|e| format!("{e:?}: a head's rows placed"))?;
         hold.push(rows);

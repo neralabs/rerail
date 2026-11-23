@@ -1,6 +1,6 @@
 # 0603. A stratum's device work is one launch: a work queue whose phases and rounds are continuations
 
-Status: accepted (2026-11-22), steps open. Follows 0601 (every launch counts, and past the budget is a hard failure)
+Status: accepted (2026-11-22); done (2026-11-22): its steps, its tests, and its rooms mapped as reached. Follows 0601 (every launch counts, and past the budget is a hard failure)
 and takes 0540 step 6's scheme (a level's formulas as a work queue with continuations) to the device joins
 (`metal_join::Batch`, `setfix::device`).
 
@@ -602,8 +602,8 @@ whole (0295 §7), so the reach was real memory there. They are now mapped as the
   The first run found the two templates' gates of a head growing it apart: one gate's growth took 3,350 rows and the
   other 1,204, and its index kept the first. Its anti-join then missed rows, and the device made rows twice. A head's
   gates now share one mapped size.
-- **What is still committed on Metal:** a lattice head's room was its bound (done below), and a non-recursive
-  stratum's heads' rooms (`encode_place`, within `PLACE_ROOM_BYTES`).
+- **What is still committed on Metal:** a lattice head's room was its bound, and a non-recursive stratum's heads'
+  rooms (`encode_place`, within `PLACE_ROOM_BYTES`). Both are done below.
 - **OpenCL runs no join program.** Its memory wrapped in place has no address, and a program names every buffer by
   one (`metal_join::address`): a stratum there is refused (`UnsupportedBackend: a stage's space for 1 rows`, on
   the mini's OpenCL) and runs on the host. The strict check has no launch of it to check.
@@ -653,3 +653,35 @@ reach them, as a set head's are (above):
   Decided (2026-11-22, the user): OpenCL is out of point 3's scope. Point 3 holds on the backends that run
   programs (the CPU backend, CUDA, Metal), and an OpenCL stratum stays on the host.
 - **#311 again:** the forced setfix device set three more times on the mini, 39 of 39 each: 24 runs without it.
+
+## Done (2026-11-22): a non-recursive stratum's heads' rooms mapped as their rows reach them
+
+A head placed in its stratum's own program (`encode_place`) reserved room for its bound: the rows it can reach,
+within `PLACE_ROOM_BYTES`. Where a mapped page is real memory (`mj::rooms_mapped`), it now reserves a first room
+only, and the program grows it as the head's rows reach it:
+
+- **Its first room** (`place_first`): twice the rows its rules' tables were encoded for, at least `ALONE_ROWS`, within
+  its bound. A bound under `ALONE_ROWS` stays whole: a few pages in the run's block. A test build's
+  `RERAIL_ROOMS_MAPPED=N`: `N` rows.
+- **Its room's place** (`head_room`, its first room reserved, its relation bound for the writes at its bound):
+  - in a relation of its own, the block has address space for the bound, and its first room is reserved
+    (`Part::with_index_room_for`);
+  - after a tail's rows, only where the tail's block could hold its bound (`Part::could_hold`). Otherwise its bound
+    is reserved now, as before.
+  - Both are sized as `Rows::try_reserve_keeping` reserves: rows rounded to its chunks' steps, with its indexes'
+    room kept for them. The first try sized the block for the bound's rows exactly, and the room kept for its
+    indexes at the next chunk's rows did not fit.
+- **The gate's room check** (`Batch::gate_rooms`): past the first room, the program parks after the gate.
+  `place_growth` reserves the head's rows in place (`Part::reserve_room`), twice what they need, within the bound.
+  The program goes on, as a recursive head's does. Where its block has no more room, the program stops there, and
+  `place` places the head, as past the bound.
+- **The test:** `a_strata_seeds_on_the_device_are_the_cpus_rows_and_counts` runs again with each head's room one row
+  past its rows, with the head held and not. It asserts one program, no rerun, a room remap, and the CPU's rows and
+  counts.
+- **Measured** (the setfix device, join and parity tests, 49; every stratum strict):
+
+  | Backend | Rooms | Tests |
+  |---|---|---|
+  | spark2's CPU backend | its bound / one row first | 49 of 49 / 49 of 49 |
+  | spark2's CUDA (GB10) | one row first | 49 of 49 |
+  | The mini's Metal (M1) | as reached / one row first | 49 of 49 / 49 of 49 |

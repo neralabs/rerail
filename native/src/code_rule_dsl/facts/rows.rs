@@ -1487,6 +1487,19 @@ impl Part {
         part
     }
 
+    /// `with_index_room` whose block has room for `most` rows and their indexes, `rows` of them reserved: a writer
+    /// whose rows are mapped as it reaches them grows into it (`reserve_room`, decision 0603). The room is address
+    /// space, its pages taken as they are written.
+    pub fn with_index_room_for(life: Life, k: usize, rows: usize, most: usize, indexes: usize) -> Part {
+        let indexes = indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES);
+        // As `Rows::try_reserve_keeping` reserves: its chunks' rows, rounded to their steps, and room kept for them.
+        let cap = capacity_for(most.max(rows));
+        let extra = room_for(k, cap as usize).saturating_sub(room_for(k, rows)) + index_room(indexes, cap);
+        let mut part = Part::try_new_with(life, k, rows, extra, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {most} rows: {e}"));
+        Arc::get_mut(&mut part.held).expect("a new relation's one holder").ix_room = indexes as u8;
+        part
+    }
+
     /// `with_index_room` of `k` columns of ids under key runs (an axis's solve, decision 0494 step 7): each column 4
     /// bytes a row, its ids' low bits, their high bits (a document's key) the runs' of one table of `runs` runs in
     /// the relation's block (`rows::ColDir`'s `runs`), which every column reads. The writer sets each run (`KeyRuns::put`)
@@ -1642,6 +1655,25 @@ impl Part {
         }
         let moved = self.moved_whole(self.len(), 2 * n as usize);
         *self = moved;
+    }
+
+    /// Room for `rows` rows in all in its block, not moved, leaving the room its indexes take there: for a writer
+    /// other than the host whose rows are mapped as it reaches them (a placed head's, decision 0603). Whether the block
+    /// had it.
+    pub fn reserve_room(&self, rows: u64) -> bool {
+        !self.capped() && self.reserve_keeping(rows)
+    }
+
+    /// Whether its block could hold `rows` of its rows in all, with its indexes' room, past what it reserved: the room
+    /// a writer whose rows are mapped as reached grows into (`reserve_room`). Counted as 8-byte columns.
+    pub fn could_hold(&self, rows: u64) -> bool {
+        let (b, k) = (&self.facts.block, self.cols.len());
+        let have = self.rel().rows.reserved() as usize;
+        // As `Rows::try_reserve_keeping` reserves: its chunks' rows, rounded to their steps, and room kept for them.
+        let cap = capacity_for(rows as usize);
+        let ix = if self.ix_room == 0 { 0 } else { index_room(self.ix_room as usize, cap) };
+        let need = room_for(k, cap as usize).saturating_sub(room_for(k, have)) + ix;
+        b.reserved().saturating_sub(b.used()) >= need
     }
 
     /// Room for `n` rows in all in its block, leaving the room its indexes take there (`ix_room`).

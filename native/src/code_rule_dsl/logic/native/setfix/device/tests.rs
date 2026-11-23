@@ -10,7 +10,8 @@
     /// after a step that binds nothing, a `let`, constants in keys and heads; one rule whose second join's rows
     /// overflow the first guess of its table. The rules' rows, one head's, are written in place on the device
     /// (decision 0325 step 4): made distinct across the rules, and, with the head holding rows before the run (some
-    /// of them derived again, some not), less those, read where they lie.
+    /// of them derived again, some not), less those, read where they lie. Again with the head's room one row past its
+    /// rows (`RERAIL_ROOMS_MAPPED=1`, decision 0603): mapped as its rows reach it, grown in its one program.
     #[test]
     fn a_strata_seeds_on_the_device_are_the_cpus_rows_and_counts() {
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
@@ -62,9 +63,10 @@
             // h0(x, n) :- c(x), n = count : { b(_, _) }: no keys, the whole relation.
             format!("pos {c} v0\ncount {b} _ _ v1\nhead v0 v1"),
         ];
-        for held in [false, true] {
+        for (held, rooms) in [(false, None), (true, None), (false, Some("1")), (true, Some("1"))] {
         let mut got = Vec::new();
         for device in [false, true] {
+            let _rooms = rooms.filter(|_| device).map(|n| crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_ROOMS_MAPPED", n)]));
             db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
             if held {
                 // Rows the fourth rule derives again, and rows no rule derives.
@@ -89,6 +91,7 @@
                 assert!(r.reruns == 0 && r.programs == 1, "the large join in one program, run once: {r:?}");
                 assert!(r.placed > 1000 && r.placed == r.distinct, "the head's rows written in place: {r:?}");
                 assert!(!held || r.in_place >= 1, "the rows held read in place: {r:?}");
+                assert!(rooms.is_none() || r.room_remaps > 0, "the head's room grown as its rows reach it: {r:?}");
             }
             let counts = super::super::step_counts(&db, "dev_test").unwrap();
             let ranged = super::super::step_ranged(&db, "dev_test").unwrap();
