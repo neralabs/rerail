@@ -83,10 +83,15 @@ fn tier2_checked_marks() -> u32 {
         let ::bitlex::syntax::Stmt::Tree { body, .. } = s else { continue };
         for t in body {
             let ::bitlex::syntax::Stmt::Refuse { mark, .. } = t else { continue };
+            // Its bit: the loop's (`marks |= 1 << B`), or the arm of a function that asks it (`B => …`).
             let at = tier1.find(&format!("// `{mark}`\n")).unwrap_or_else(|| panic!("mark {mark} in tier1.rs"));
             let rest = &tier1[at..];
-            let b = rest.find("marks |= 1 << ").map(|i| &rest[i + 14..]).and_then(|r| r[..r.find(';')?].parse::<u32>().ok()).expect("the mark's bit");
-            out |= 1 << b;
+            let next = rest.lines().nth(1).unwrap_or_default().trim();
+            let b = match next.strip_prefix("if ").and_then(|_| rest.find("marks |= 1 << ")) {
+                Some(i) => rest[i + 14..].split(';').next().and_then(|b| b.parse::<u32>().ok()),
+                None => next.split(" =>").next().and_then(|b| b.parse::<u32>().ok()),
+            };
+            out |= 1 << b.expect("the mark's bit");
         }
     }
     out

@@ -428,10 +428,11 @@ impl<'a, L: Layout> P<'a, L> {
         self.recs.get(j).map_or(0, |r| r.code >> 8 & 0xff)
     }
 
-    /// Mark `b` at record `j`: its code's bit, else, for a gap mark tier 1 leaves to tier 2 (`tier1::ASKED`), the bytes.
+    /// Mark `b` at record `j`: its code's bit, else, for a gap mark tier 1 leaves to tier 2 (`tier1::ASKED`), the bytes;
+    /// for a mark whose token tests it leaves (`tier1::TESTED`, decision 0655 step 6), the tokens.
     #[inline(always)]
     fn bit_at(&self, j: usize, b: u32) -> bool {
-        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b))
+        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b) || crate::tier1::TESTED >> b & 1 == 1 && crate::tier1::tested(self.src, self.recs, self.xs, j, b))
     }
 
     /// Gap mark `b` at token `j`, asked of the bytes since the grammar token before's first byte, as tier 1 reads a
@@ -442,14 +443,15 @@ impl<'a, L: Layout> P<'a, L> {
         crate::tier1::gap(self.src, from, self.recs[j].start as usize, before, b)
     }
 
-    /// Whether one of the marks `bits` holds at record `j`: its code's, and the gap marks tier 2 asks of the bytes.
+    /// Whether one of the marks `bits` holds at record `j`: its code's, the gap marks tier 2 asks of the bytes, and the
+    /// marks whose token tests it asks.
     fn marks_hold(&self, j: usize, bits: u32) -> bool {
         if self.recs[j].code >> 16 & bits != 0 {
             return true;
         }
-        let mut ask = crate::tier1::ASKED & bits;
+        let mut ask = (crate::tier1::ASKED | crate::tier1::TESTED) & bits;
         while ask != 0 {
-            if self.gap(j, ask.trailing_zeros()) {
+            if self.bit_at(j, ask.trailing_zeros()) {
                 return true;
             }
             ask &= ask - 1;

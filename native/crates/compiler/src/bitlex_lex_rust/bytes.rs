@@ -343,6 +343,18 @@ impl<'a> Bytes<'a> {
         }))
     }
 
+    /// `code` with each read of a mask in the windows' form, as a region's: tests of a token asked apart from the loop
+    /// (decision 0655 step 6), with no block's words.
+    pub(super) fn rewrite_windows(&mut self, code: &str) -> Result<String, String> {
+        let mut out = String::new();
+        self.in_region = true;
+        for line in code.split_inclusive('\n') {
+            out.push_str(&self.rewrite_line(line, line)?);
+        }
+        self.in_region = false;
+        Ok(out)
+    }
+
     /// `code` with each read of a mask in the bytes' form.
     pub(super) fn rewrite(&mut self, code: &str) -> Result<String, String> {
         let mut out = String::new();
@@ -813,9 +825,19 @@ unsafe fn window<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> O
         return None;
     }
     let q = p.max(0);
-    let block: &[u8; 64] = src[q as usize..q as usize + 64].try_into().expect("the padded source");
     // SAFETY: the caller's.
-    Some((unsafe { S::load(block) }, q))
+    Some((
+        match src.get(q as usize..q as usize + 64) {
+            Some(block) => unsafe { S::load(block.try_into().expect("64 bytes")) },
+            // A source with no padding (tier 2's, asking a token's tests): its last bytes, and spaces as the padding's.
+            None => {
+                let mut block = [b' '; 64];
+                block[..src.len() - q as usize].copy_from_slice(&src[q as usize..]);
+                unsafe { S::load(&block) }
+            }
+        },
+        q,
+    ))
 }
 
 /// The bits `b` of the window loaded at `q`, as the window from `p`'s: none past the file or before it.

@@ -85,3 +85,25 @@ the tapes of the generated Rust to the interpreter's and the JIT's on every case
 the regions' walk.
 
 JSON's and Kotlin's tier 1 read their masks in stage 1 and are unchanged.
+
+## Step 6: tier 2 asks the marks' token tests (done)
+
+Tier 1's loop made a word of hits for every token (`hits`), carried a token's "after" hits to the next grammar token
+(`pending`), and joined them into each record's marks (`tested`). Rows of tests for every token, where tier 2 reads
+two marks (`float_after` and `json_bad`) at a few places. Lean's lexer makes no marks: its parser asks what it reads of
+a token where it reads it.
+
+Where tier 1's loop reads the bytes (0623 step 1) and a byte's kind is `TOKEN`'s, `bitlex_lex_rust` writes the token
+tests into a function of their own, `token_test` (one arm a mark: each row's tests, the row known by its first byte,
+its kind and whether it is an extra), and `tested`: whether a test holds at grammar token `j`, its own or one of the
+token after it at the grammar token before or a comment between, as the loop carried them. `TESTED` names those marks,
+and no record holds them (`UNRECORDED`). Tier 2's `bit_at` and `marks_hold` ask `tested` for them, as they ask `gap` for
+the gap marks: at a number's next token where `numeric` reads `float_after`, and at a JSON level's tokens for
+`json_bad`.
+
+The loop holds no hits, no `pending`, no `tested`, and with them none of the gap's state (`from`, `before`): a record is
+its kind, its word and an extra's own bits. A float the file ends with (`float_after`'s `else escape`) is asked once,
+after the loop, of the last tokens. The tests are of the windows from the token's first byte (`Bytes::rewrite_windows`);
+a window past the end of a source with no padding (tier 2's) is its last bytes and spaces, as the padding's.
+
+JSON's and Kotlin's tier 1 read their masks in stage 1 and keep their hits: their `TESTED` is none.

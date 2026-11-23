@@ -3926,9 +3926,18 @@ fn load8_at_end(src: &[u8], i: usize) -> u64 {
 }
 
 
-/// The marks tier 1's records leave to tier 2 (decision 0623): those it asks of the bytes (`ASKED`: a record holds only
-/// its token tests' hits of them), and the token marks its code reads no bit of (it asks them of the tokens).
+/// The marks tier 1's records leave to tier 2 (decisions 0623, 0655): those it asks of the bytes (`ASKED`), those whose
+/// token tests it asks (`TESTED`), and the token marks its code reads no bit of (it asks them of the tokens).
 pub const UNRECORDED: u32 = 0x0;
+
+/// The marks whose token tests tier 2 asks (decision 0655 step 6): none, the records hold them.
+pub const TESTED: u32 = 0;
+
+/// Whether a token test of mark `b` holds at grammar token `j`: never asked.
+pub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {
+    let _ = (src, recs, xs, j, b);
+    false
+}
 
 /// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's
 /// records hold only its token tests' hits of them.

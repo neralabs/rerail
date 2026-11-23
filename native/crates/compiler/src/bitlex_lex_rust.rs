@@ -5019,11 +5019,17 @@ impl Gen<'_> {
         self.skipped = skipped;
         let mut gaps: Vec<Gap> = Vec::new();
         let mut unplaced_code = String::new();
+        // The same where tier 2 asks the token tests (`tested`, decision 0655 step 6): each `else escape` mark's bit and
+        // why; whether one reads a gap mask besides (then the tests stay the loop's).
+        let mut unplaced_asks: Vec<(u8, String, String)> = Vec::new();
+        let mut mark_names: HashMap<u8, String> = HashMap::new();
+        let mut unplaced_masked = false;
         // Each mark's token tests: the kind, `after`, the test, the mask, the least, the bit.
         let mut tests: Vec<(String, bool, TokenTest, Expr, u32, u8)> = Vec::new();
         for (m, s) in marks.iter().enumerate() {
             let Stmt::Mark { kind, at, unless, unplaced, checks, .. } = s else { continue };
             let Some(bit) = x.mark_bits.get(m).copied().flatten() else { continue };
+            mark_names.insert(bit, kind.clone());
             // A mask made of the regions: kept by the loop where it is known in each place.
             let mut acc = None;
             if !matches!(at, Expr::Empty) && self.regional(at) && self.opens.is_some() {
@@ -5079,6 +5085,8 @@ impl Gen<'_> {
             };
             // `else escape`: a bit of it with no grammar token at or after it refuses, at the file's end.
             if let Some(why) = unplaced {
+                unplaced_asks.push((bit, kind.clone(), why.clone()));
+                unplaced_masked |= mask.is_some();
                 let left = match &mask {
                     Some(m) => format!("pending >> {bit} & 1 == 1 || any_in(&{m}, from, n)"),
                     None => format!("pending >> {bit} & 1 == 1"),
@@ -5130,6 +5138,10 @@ impl Gen<'_> {
         let mut tails: std::collections::BTreeSet<usize> = Default::default();
         // Each row's start, its test build's checks and its code: picked by `dispatch`.
         let mut row_arms: Vec<RowArm> = Vec::new();
+        // The marks' token tests, for tier 2 to ask where it reads a mark (decision 0655 step 6): each one's bit, `after`,
+        // its row's kind and its test; and each row's kind, whether an extra, its extra bits, its first bytes, its kind.
+        let mut test_asks: Vec<(u8, bool, String, String)> = Vec::new();
+        let mut row_ids: Vec<(String, bool, u32, [bool; 256], String)> = Vec::new();
         for (row, s) in &rows {
             let Stmt::Token { kind, start, last, rule, .. } = s else { continue };
             if matches!(rule, Some(TokenRule::Inside(..))) {
@@ -5321,6 +5333,7 @@ impl Gen<'_> {
                 };
                 let at = if *after { 16 + u32::from(*bit) } else { u32::from(*bit) };
                 let _ = write!(hits, "            if {holds} {{\n                hits |= 1 << {at};\n            }}\n");
+                test_asks.push((*bit, *after, kind.clone(), holds));
             }
             // The gap masks the loop keeps, over a token of code's bytes after its start.
             if !matches!(rule, Some(TokenRule::Read(_) | TokenRule::ReadParts(..))) {
@@ -5473,6 +5486,7 @@ impl Gen<'_> {
                 Some(o) => ("            let mut open_bad = false;\n".to_owned(), if *o == k { k } else { format!("if open_bad {{ {o} }} else {{ {k} }}") }, if extra { "!open_bad".to_owned() } else { "false".to_owned() }, if hits.is_empty() { hits } else { format!("            if !open_bad {{\n{}            }}\n", indent(&hits, "    ")) }),
                 None => (String::new(), k, extra.to_string(), hits),
             };
+            row_ids.push((kind.clone(), extra, bits, sb, self.kind_of(*row)));
             row_arms.push(RowArm { resume, word, open: open_k.is_some(), row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n{decl}            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra_is}, "), bits });
         }
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
@@ -5481,6 +5495,9 @@ impl Gen<'_> {
         // The same where tier 2 asks the one-byte gap marks (`asked`) of the bytes: only the token tests' hits of them.
         let mut gap_asked = String::new();
         let mut asked: Vec<(u8, u8, String, String)> = Vec::new();
+        // The same where tier 2 asks the token tests too (`tested`): no hits; and each gap mark's `unless`, by its bit.
+        let mut gap_tested = String::new();
+        let mut unless_of: HashMap<u8, String> = HashMap::new();
         for g in &gaps {
             let since = match (&g.mask, g.acc) {
                 (_, Some(j)) => format!("tested >> {0} & 1 == 1 || acc_{j}{1}", g.bit, if accs[j].here == "false" { String::new() } else { format!(" || here_{j}") }),
@@ -5488,6 +5505,17 @@ impl Gen<'_> {
                 (None, None) => format!("tested >> {} & 1 == 1", g.bit),
             };
             let unless = if g.unless.is_empty() { String::new() } else { format!(" && !matches!(before, {})", g.unless.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(" | ")) };
+            if !unless.is_empty() {
+                unless_of.insert(g.bit, unless.clone());
+            }
+            let untested = match (&g.mask, g.acc, g.byte) {
+                (_, _, Some(_)) | (None, None, None) => None,
+                (_, Some(j), None) => Some(format!("acc_{j}{}", if accs[j].here == "false" { String::new() } else { format!(" || here_{j}") })),
+                (Some(m), None, None) => Some(format!("any_in(&{m}, from, s)")),
+            };
+            if let Some(since) = untested {
+                let _ = write!(gap_tested, "                // `{}`\n                if ({since}){unless} {{\n                    marks |= 1 << {};\n                }}\n", g.name, g.bit);
+            }
             let _ = write!(gap_code, "                // `{}`\n                if ({since}){unless} {{\n                    marks |= 1 << {};\n                }}\n", g.name, g.bit);
             match g.byte {
                 Some(b) => {
@@ -6031,6 +6059,13 @@ impl Gen<'_> {
         // The one pass with its masks read from the bytes where the loop reads them (decision 0623 step 1), as the lean
         // lexer's window: no stage 1, no mask of the whole file, and so no block to wait for. Where stage 1 tests
         // nothing of its own and every mask the loop reads has that form.
+        // Tier 2 asks the marks' token tests where it reads a mark (decision 0655 step 6), as the lean parser asks what it
+        // reads of a token: where the loop reads the bytes alone, each byte's kind is `TOKEN`'s, an `else escape` reads
+        // no gap mask, and a token's row is known by its first byte (no two grammar rows with tests share one).
+        let asking = token_form.is_some() && readers(x.stmts).is_empty() && !test_asks.is_empty() && !unplaced_masked && {
+            let tested: Vec<&(String, bool, u32, [bool; 256], String)> = row_ids.iter().filter(|r| !r.1 && test_asks.iter().any(|a| a.2 == r.0)).collect();
+            tested.iter().enumerate().all(|(i, a)| tested[i + 1..].iter().all(|b| (0..256).all(|c| !(a.3[c] && b.3[c]))))
+        };
         let from_bytes = if fused && self.stage1_parts(true).finals.trim().is_empty() && !self.body.lines().any(|l| l.trim_start().starts_with("refused |=")) {
             let locals: HashMap<String, Expr> = self.nodes.iter().filter_map(|n| n.expr.clone().map(|e| (n.name.clone(), e))).collect();
             // Each class stage 1 writes, by the nibble tables the file holds (`stage1_codes`).
@@ -6038,6 +6073,7 @@ impl Gen<'_> {
             let class_code: HashMap<String, String> = self.nodes.iter().zip(&live).zip(&codes).filter(|((n, l), _)| **l && n.class.is_some()).filter_map(|((n, _), c)| n.what.strip_prefix("class ").map(|w| (w.to_owned(), c.clone()))).collect();
             let mut by = bytes::Bytes::new(x.stmts, locals, class_code);
             let firsts: Vec<[bool; 256]> = row_arms.iter().map(|a| a.first).collect();
+            let ask = if asking { token_tests_fn(&test_asks, &row_ids, &mark_names) } else { None };
             let mut go = || -> Result<_, String> {
                 let mut pieces = Vec::new();
                 // An operator's last byte by its bit in the block's pairs mask (`k_pairs_K`).
@@ -6047,7 +6083,12 @@ impl Gen<'_> {
                     Some((o, b, _)) => (o, b),
                     None => (&open_code, &branches),
                 };
-                for t in [open_t, branches_t, if alone { &token_read } else { &token_code }, &own_code, if alone { &gap_asked } else { &gap_code }, &acc_after] {
+                // Where tier 2 asks the token tests (decision 0655 step 6), the loop makes no hits of them.
+                let (branches_t, gap_t) = match &ask {
+                    Some(_) => (&no_hits(branches_t), &gap_tested),
+                    None => (branches_t, if alone { &gap_asked } else { &gap_code }),
+                };
+                for t in [open_t, branches_t, if alone { &token_read } else { &token_code }, &own_code, gap_t, &acc_after] {
                     let t = bytes::fuse_tests(&by.rewrite(&bytes::strip_scans(&bytes::strip_pauses(&pairs_read(t))))?, &by.escapes);
                     if uses(&t, "made") || uses(&t, "wait") || t.contains("'pass") {
                         return Err("a pause the loop still reads".into());
@@ -6056,6 +6097,11 @@ impl Gen<'_> {
                 }
                 // A row's region end and its tests in one window loop, where its first bytes start no escape.
                 pieces[1] = bytes::fuse_read(&pieces[1], &firsts, &by.escapes, &by.escape_bytes);
+                // The token tests tier 2 asks: each a test of the windows from the token's first byte.
+                pieces.push(match &ask {
+                    Some(a) => by.rewrite_windows(a)?,
+                    None => String::new(),
+                });
                 let starts = by.starts(&skip)?;
                 // The pairs masks the loop reads: of the block's classes, as its other masks (`Bytes::pairs`).
                 by.pairs = pair_rows.iter().filter(|(f, _)| pieces.iter().any(|q| q.contains(&format!("k_{f}")))).cloned().collect();
@@ -6137,6 +6183,51 @@ impl Gen<'_> {
             out = out.replacen(&alone_text, "", 1);
             out = no_test_checks(&out);
         }
+        // Where tier 2 asks the token tests: no hits, nothing carried to the next grammar token; an `else escape` asks
+        // them at the file's end.
+        let asked_tests = from_bytes.as_ref().is_some_and(|f| !f.0[6].is_empty());
+        if asked_tests {
+            for (from, to) in [
+                ("    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n", "    // The gap's start, since the grammar token before and since the record before; the grammar token before's word.\n    let (mut from, mut from_record, mut before) = (0usize, 0usize, 0u32);\n"),
+                ("        let mut hits = 0u32;\n", ""),
+                ("        // The token marks: tier 2 tests the rest of each.\n", "        // The token marks: tier 2 asks the rest of each, and the marks' token tests (`tested`).\n"),
+                ("            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n", "            // An extra keeps the marks of its own gap.\n"),
+                ("            pending |= hits & 0xffff | hits >> 16;\n", ""),
+                ("            let tested = pending | hits;\n", ""),
+                ("            pending = hits >> 16;\n", ""),
+                ("    let _ = (from, from_record, before, pending);\n", "    let _ = (from, from_record, before);\n"),
+            ] {
+                out = out.replacen(from, to, 1);
+            }
+            if !unplaced_code.is_empty() {
+                out = out.replacen(&unplaced_code, "", 1);
+                let mut end = String::new();
+                for (bit, kind, why) in &unplaced_asks {
+                    let _ = write!(end, "    // `{kind}`, else escape: {why}\n    if tested(&src[..n], &recs, &extras, len, {bit}) {{\n        refused = true;\n    }}\n");
+                }
+                out = out.replacen("    // SAFETY: `len` records written.\n    unsafe { recs.set_len(len) };\n", &format!("    // SAFETY: `len` records written.\n    unsafe {{ recs.set_len(len) }};\n{end}"), 1);
+            }
+            let body = &out[out.find("unsafe fn lex_on<").unwrap_or(0)..];
+            if !body[..body.find("\n}\n").unwrap_or(body.len())].contains("marks |=") {
+                out = out.replacen("let (l, kind, extra, mut marks, word)", "let (l, kind, extra, marks, word)", 1);
+            }
+            // The gap's start and the word before, where nothing in the loop reads them: the lean lexer keeps neither.
+            let kept = [
+                "    // The gap's start, since the grammar token before and since the record before; the grammar token before's word.\n    let (mut from, mut from_record, mut before) = (0usize, 0usize, 0u32);\n",
+                "        // The token marks: tier 2 asks the rest of each, and the marks' token tests (`tested`).\n        if extra {\n            // An extra keeps the marks of its own gap.\n        } else {\n            from = s + 1;\n            before = word;\n        }\n        from_record = s + 1;\n",
+                "    let _ = (from, from_record, before);\n",
+            ];
+            if kept.iter().all(|k| out.contains(k)) {
+                let none = kept.iter().fold(out.clone(), |o, k| o.replacen(k, "", 1));
+                let at = none.find("unsafe fn lex_on<").unwrap_or(0);
+                let body = &none[at..];
+                // Its code, not its comments.
+                let body: String = body[..body.find("\n}\n").unwrap_or(body.len())].lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n").replace("::from(", "");
+                if !["from", "from_record", "before"].iter().any(|v| uses(&body, v)) {
+                    out = none;
+                }
+            }
+        }
         if fused {
             out.push_str("\nrerail_simd8::dispatch! {\n    fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;\n}\n\n/// The spaces after a file `lex` reads, as simdjson's `SIMDJSON_PADDING`: each block of it is loaded where it is.\npub const PADDING: usize = 64;\n\n/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    lex_best(buf, n)\n}\n");
         }
@@ -6194,7 +6285,24 @@ impl Gen<'_> {
         let alone = from_bytes.is_some() && readers(x.stmts).is_empty();
         let (asked, unread) = if alone { (asked, unread) } else { (Vec::new(), 0) };
         let bits = asked.iter().fold(0u32, |m, a| m | 1 << a.0);
-        let _ = write!(out, "\n/// The marks tier 1's records leave to tier 2 (decision 0623): those it asks of the bytes (`ASKED`: a record holds only\n/// its token tests' hits of them), and the token marks its code reads no bit of (it asks them of the tokens).\npub const UNRECORDED: u32 = {:#x};\n", bits | unread);
+        // The marks whose token tests tier 2 asks (decision 0655 step 6).
+        let tested_bits = match &from_bytes {
+            Some((p, ..)) if !p[6].is_empty() => test_asks.iter().fold(0u32, |m, a| m | 1 << a.0),
+            _ => 0,
+        };
+        let _ = write!(out, "\n/// The marks tier 1's records leave to tier 2 (decisions 0623, 0655): those it asks of the bytes (`ASKED`), those whose\n/// token tests it asks (`TESTED`), and the token marks its code reads no bit of (it asks them of the tokens).\npub const UNRECORDED: u32 = {:#x};\n", bits | tested_bits | unread);
+        match &from_bytes {
+            Some((p, ..)) if !p[6].is_empty() => {
+                let unless: String = (0..32u8).filter(|b| tested_bits >> b & 1 == 1).filter_map(|b| unless_of.get(&b).map(|u| format!("        {b} => {},\n", u.trim_start_matches(" && ")))).collect();
+                let unless = if unless.is_empty() { String::new() } else { format!("    // A mark's `unless after`: none at a token after those words.\n    let before = j.checked_sub(1).map_or(0, |p| recs[p].code >> 8 & 0xff);\n    let unless = match b {{\n{unless}        _ => true,\n    }};\n    if !unless {{\n        return false;\n    }}\n") };
+                let _ = write!(
+                    out,
+                    "\n/// The marks whose token tests tier 2 asks where a rule reads the mark (decision 0655 step 6), as the lean parser asks\n/// what it reads of a token where it reads it: no record holds them.\npub const TESTED: u32 = {tested_bits:#x};\n\n/// Whether token `r` (an extra, where `extra`) holds a token test of mark `b`: one of the token after it (`after`), else\n/// one of its own. Its row by its first byte, its kind and whether it is an extra.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn token_test_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -> bool {{\n    let (s, l, kind) = (r.start as usize, r.last as usize, r.code & 0xff);\n    let _ = (l, kind);\n{}}}\n\nrerail_simd8::dispatch! {{\n    fn token_test(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -> bool = token_test_on, on token_test_on_best;\n}}\n\n/// Whether a token test of mark `b` holds at grammar token `j` of `recs` (`recs.len()`: the file's end), as tier 1's loop\n/// carried them: `j`'s own, or one of the token after it at the grammar token before or at an extra (`xs`) between.\npub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {{\n    let n = src.len();\n{unless}    let p = j.checked_sub(1);\n    let (from, to) = (p.map_or(0, |p| recs[p].start + 1), recs.get(j).map_or(u32::MAX, |r| r.start));\n    let k = xs.partition_point(|x| x.start < from);\n    (j < recs.len() && token_test(src, n, &recs[j], false, b, false))\n        || p.is_some_and(|p| token_test(src, n, &recs[p], false, b, true))\n        || xs[k..].iter().take_while(|x| x.start < to).any(|x| token_test(src, n, x, true, b, false) || token_test(src, n, x, true, b, true))\n}}\n",
+                    p[6]
+                );
+            }
+            _ => out.push_str("\n/// The marks whose token tests tier 2 asks (decision 0655 step 6): none, the records hold them.\npub const TESTED: u32 = 0;\n\n/// Whether a token test of mark `b` holds at grammar token `j`: never asked.\npub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {\n    let _ = (src, recs, xs, j, b);\n    false\n}\n"),
+        }
         let _ = write!(out, "\n/// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's\n/// records hold only its token tests' hits of them.\npub const ASKED: u32 = {bits:#x};\n\n/// Whether gap mark `b` holds over `src[from..to]`, the bytes since the grammar token before's first byte (`before` its\n/// word), as the lean parser asks whether a token is on a line.\n#[inline]\npub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {{\n");
         if asked.is_empty() {
             out.push_str("    let _ = (src, from, to, before, b);\n    false\n}\n");
@@ -7135,6 +7243,83 @@ pub fn tier1(x: &Input<'_>) -> Result<String, String> {
 /// `code` with no test build's checks (decision 0655 step 3): each `#[cfg(feature = "test-hooks")]` assert and the
 /// comment that says why, and a block left holding its value alone (`if {\n    E\n} {`) as that value (`if E {`), as
 /// the lean lexer holds no checker.
+/// A byte's test of being in `set`, as a `matches!` of its ranges.
+fn byte_set_test(b: &str, set: &[bool; 256]) -> String {
+    let mut arms = Vec::new();
+    let mut c = 0;
+    while c < 256 {
+        if !set[c] {
+            c += 1;
+            continue;
+        }
+        let lo = c;
+        while c + 1 < 256 && set[c + 1] {
+            c += 1;
+        }
+        arms.push(if lo == c { format!("{lo:#04x}") } else { format!("{lo:#04x}..={c:#04x}") });
+        c += 1;
+    }
+    if arms.is_empty() { "false".to_owned() } else { format!("matches!({b}, {})", arms.join(" | ")) }
+}
+
+/// The body of the token tests tier 2 asks (`token_test_on`, decision 0655 step 6): a `match` on the mark's bit, each arm
+/// its tests at the rows they are of, each row known by its first byte, its kind and whether it is an extra (its extra
+/// bits). In the whole file's form: the bytes' form rewrites it. None where a test's row is not found.
+fn token_tests_fn(asks: &[(u8, bool, String, String)], rows: &[(String, bool, u32, [bool; 256], String)], names: &HashMap<u8, String>) -> Option<String> {
+    let mut bits: Vec<u8> = asks.iter().map(|a| a.0).collect();
+    bits.sort_unstable();
+    bits.dedup();
+    let mut out = String::from("    match b {\n");
+    for b in bits {
+        // Each row's tests of the mark, `after` or not: one arm, its tests joined.
+        let mut rows_of: Vec<(&String, bool, Vec<&String>)> = Vec::new();
+        for (_, after, kind, holds) in asks.iter().filter(|a| a.0 == b) {
+            match rows_of.iter_mut().find(|r| r.0 == kind && r.1 == *after) {
+                Some(r) => r.2.push(holds),
+                None => rows_of.push((kind, *after, vec![holds])),
+            }
+        }
+        let mut arms = Vec::new();
+        for (kind, after, holds) in rows_of {
+            let (_, extra, xb, first, k) = rows.iter().find(|r| r.0 == *kind)?;
+            let who = if *extra { format!("extra && r.code >> 16 & {xb:#x} == {xb:#x}") } else { format!("!extra && kind == {}", k.replace("u32::from(KINDS[usize::from(src[s])])", "u32::from(TOKEN[usize::from(src[s])].1)")) };
+            let holds = if holds.len() == 1 { holds[0].clone() } else { format!("({})", holds.iter().map(|h| h.as_str()).collect::<Vec<_>>().join(" || ")) };
+            arms.push(format!("({}after && {who} && {} && {holds})", if after { "" } else { "!" }, byte_set_test("src[s]", first)));
+        }
+        let name = names.get(&b).map_or(String::new(), |n| format!("        // `{n}`\n"));
+        let _ = writeln!(out, "{name}        {b} => {},", arms.join("\n            || "));
+    }
+    out.push_str("        _ => false,\n    }\n");
+    Some(out)
+}
+
+/// `code` (the rows' `match`) with no hits of the marks' token tests (`if T { hits |= 1 << B; }`), which tier 2 asks
+/// (decision 0655 step 6), nor a test of an open region left with nothing in it.
+fn no_hits(code: &str) -> String {
+    let lines: Vec<&str> = code.split_inclusive('\n').collect();
+    let mut keep: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if i + 2 < lines.len() && lines[i].trim_end().ends_with(" {") && lines[i + 1].trim_start().starts_with("hits |= 1 << ") && lines[i + 2].trim() == "}" {
+            i += 3;
+            continue;
+        }
+        keep.push(lines[i]);
+        i += 1;
+    }
+    let mut out = String::new();
+    let mut i = 0;
+    while i < keep.len() {
+        if i + 1 < keep.len() && keep[i].trim() == "if !open_bad {" && keep[i + 1].trim() == "}" {
+            i += 2;
+            continue;
+        }
+        out.push_str(keep[i]);
+        i += 1;
+    }
+    out
+}
+
 fn no_test_checks(code: &str) -> String {
     let lines: Vec<&str> = code.lines().collect();
     let mut kept: Vec<String> = Vec::with_capacity(lines.len());
