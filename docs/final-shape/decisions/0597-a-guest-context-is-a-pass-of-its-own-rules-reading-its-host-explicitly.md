@@ -458,8 +458,9 @@ The template's findings stand at the file's lines.
    holding the pass's frontier rows with a document column; not a block format of its own.
 
    Done (2026-11-22):
-   - **The rewrite** (`preparation::kept::Kept`, in `front_of` for a whole program, before `BaseInputs`). For each
-     kept pass (`kept::groups`):
+   - **The rewrite** (`preparation::kept::Kept`: in `front_of` for a whole program, before `BaseInputs`; for a pack,
+     in `parts::front` on its whole program before it is split, since a pass's relations and their readers may lie
+     in different parts). For each kept pass (`kept::groups`):
      - each tape-local relation `R` becomes `R_rr_kd(rr_kd, …)`, led by its value's document;
      - the pass's nodes become `rr_pass_<p>_rr_fresh(rr_kd, n)`, the nodes of its fresh roots;
      - `rr_fresh_roots_<p>(r) :- roots(r), !rr_kept_roots_<p>(r)`: the roots no entry gave;
@@ -485,11 +486,14 @@ The template's findings stand at the file's lines.
    - **Rungs.**
      - 7.1 `a_memo_edit_that_changes_no_root_runs_no_stratum_of_the_context` (rule 7 on the memo path): a comment added
        to a file runs no stratum of the pass, and its rows stand; a new annotation text runs it, with the new rows.
+     - 7.2 `a_text_a_later_chunk_places_runs_no_stratum_of_the_context` (rule 8 across chunks): two files holding one
+       annotation text, each a chunk of its own, do the pass's work of one file, and both files' rows stand. With the
+       entry lookup off, the second chunk doubles the work, so the rung fails then.
      - 2.10 now names the pass's relation `rr_pass_quoted_ann_ident_rr_kd`.
-   - **Checks.** The pass, context, tape and memo tests of rerail-tests-corpus and rerail-rr-root (47) pass.
-     corpus0 x B-now, normal packs, gives 463 findings, digest 75193ca656bd.
-
-   Not yet kept: a pack's parts path (`whole = false`), where `Kept` does not run; there the passes run as before.
+   - **Checks.** The pass, context, tape and memo tests of rerail-tests-corpus and rerail-rr-root (48) pass.
+     corpus0 x B-now, normal packs, gives 463 findings, digest 75193ca656bd. Its profile keeps the annotation pass:
+     23 tape-local relations, 5 in its frontier (`def_outside`, `dotted_expr`, `in_first_iter`, `nameref`,
+     `tp_ref`).
 
 ## Rule 8, measured (2026-11-22)
 

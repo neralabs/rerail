@@ -233,7 +233,8 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
     // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as; the base relations the program
     // reads and does not derive are inputs, as an authored file's are.
     p.program(&mut simplify::CpythonFunctors);
-    // A pass's tape-local facts kept by its tape (decision 0597 rule 8): its kept rows are inputs (`BaseInputs`).
+    // A pass's tape-local facts kept by its tape (decision 0597 rule 8): its kept rows are inputs (`BaseInputs`). A
+    // pack's parts were rewritten whole before they were split (`parts::front`).
     if whole {
         p.program(&mut kept::Kept);
     }
