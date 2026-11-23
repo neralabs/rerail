@@ -752,6 +752,12 @@ impl<'a, L: Layout> P<'a, L> {
         if at + n != self.w.len() {
             return self.refuse();
         }
+        // A leaf gone (no extra, kept as it is; no dead node held in it): nothing to read again, the tape one node
+        // shorter (`drop`'s, at a list's separator).
+        if n == 1 && root == Some(None) && self.w.plain_key(at) >> 16 & 1 == 0 && !self.dead.contains(&(at as u32)) {
+            self.w.plain_truncate(at);
+            return Ok(());
+        }
         // The nodes as they are, then written again in preorder.
         let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.plain_key(i), self.w.plain_start(i), self.w.plain_end(i), self.w.plain_size(i) as usize)).collect();
         if self.dead.iter().any(|&o| (o as usize).wrapping_sub(at) < n) {
@@ -6856,7 +6862,10 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.reread(Some(None), |_| None, |f| f)?;
-        self.dead.push(open);
+        // Held once: a node open held dead again is held as before (a drop at each of a list's separators).
+        if !self.dead.contains(&open) {
+            self.dead.push(open);
+        }
         self.set_made(NONE);
         Ok(())
     }

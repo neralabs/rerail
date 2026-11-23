@@ -1642,6 +1642,7 @@ impl<'a> G<'a> {
                 ("gone: Vec::new(), lost: None,", "gone: Vec::new(), dead: Vec::new(), lost: None,"),
                 ("    /// The node a wrap moved (the wrap's first child) a `kind` now.\n", "    /// The nodes a `drop` took out past a wrap's place `at`, one later: the wrap went in before them.\n    #[cold]\n    #[inline(never)]\n    fn shift_dead(&mut self, at: usize) {\n        // A dropped node no reading can reach again goes: a reading starts at a level's node made last, which only\n        // moves on, so one before every open level's is passed for good (and one a reading took out, `NONE`).\n        let bound = self.levels.iter().chain(std::iter::once(&self.top)).filter(|l| l.1 != NONE).fold(self.w.len() as u32, |b, l| b.min(l.1));\n        self.dead.retain(|&o| o != NONE && o >= bound);\n        for o in &mut self.dead {\n            if *o != NONE && *o as usize >= at {\n                *o += 1;\n            }\n        }\n    }\n\n    /// The node a wrap moved (the wrap's first child) a `kind` now.\n"),
                 ("        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));\n", "        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));\n        if !self.dead.is_empty() {\n            self.shift_dead(at);\n        }\n"),
+                ("        if n == 1 && root == Some(None) && self.w.key(at) >> 16 & 1 == 0 {\n", "        if n == 1 && root == Some(None) && self.w.key(at) >> 16 & 1 == 0 && !self.dead.contains(&(at as u32)) {\n"),
                 ("        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.key(i), self.w.start(i), self.w.end(i), self.w.size(i) as usize)).collect();\n", "        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.key(i), self.w.start(i), self.w.end(i), self.w.size(i) as usize)).collect();\n        if self.dead.iter().any(|&o| (o as usize).wrapping_sub(at) < n) {\n            self.read_dead(&nodes, at, root, way)?;\n        }\n"),
             ] {
                 if out.matches(a).count() != 1 {
@@ -1911,7 +1912,10 @@ const MORE: &[(&str, &str)] = &[
             }
         }
         self.reread(Some(None), |_| None, |f| f)?;
-        self.dead.push(open);
+        // Held once: a node open held dead again is held as before (a drop at each of a list's separators).
+        if !self.dead.contains(&open) {
+            self.dead.push(open);
+        }
         self.set_made(NONE);
         Ok(())
     }
@@ -2452,6 +2456,12 @@ impl<'a, L: Layout> P<'a, L> {
         let n = self.w.size(at) as usize;
         if at + n != self.w.len() {
             return self.refuse();
+        }
+        // A leaf gone (no extra, kept as it is; no dead node held in it): nothing to read again, the tape one node
+        // shorter (`drop`'s, at a list's separator).
+        if n == 1 && root == Some(None) && self.w.key(at) >> 16 & 1 == 0 {
+            self.w.truncate(at);
+            return Ok(());
         }
         // The nodes as they are, then written again in preorder.
         let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.key(i), self.w.start(i), self.w.end(i), self.w.size(i) as usize)).collect();

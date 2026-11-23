@@ -695,3 +695,13 @@ written before it is read).
 
 Comments kept apart would change the records' layout, which the engine's executors share (`records::MARK_SHIFT`, read by
 the stream walk and the JIT's record loops), not only tier 2's.
+
+## A dropped leaf goes without a reading, and a node held dead is held once (done)
+
+A `drop` (an aggregate's separator) read the node made last again (`reread`): its nodes collected into a vector and
+written back, for a leaf of no extra with nothing inside it to keep. That leaf now just goes (the tape one node
+shorter). And each drop pushed its node open onto the list of nodes held dead (`dead`), once a separator: a list of the
+same node, each `wrap` walking it. A node already held is not pushed again, as every use reads it the same once.
+
+The same on spark1 and in tier 2's instruction count on m3, in turns: the profile's samples there were not tier 2's
+cost. Kept as the shape of the work: no allocation and no list for a separator. All tests pass.

@@ -1107,6 +1107,12 @@ impl<'a, L: Layout> P<'a, L> {
         if at + n != self.w.len() {
             return self.refuse();
         }
+        // A leaf gone (no extra, kept as it is; no dead node held in it): nothing to read again, the tape one node
+        // shorter (`drop`'s, at a list's separator).
+        if n == 1 && root == Some(None) && self.w.plain_key(at) >> 16 & 1 == 0 {
+            self.w.plain_truncate(at);
+            return Ok(());
+        }
         // The nodes as they are, then written again in preorder.
         let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.plain_key(i), self.w.plain_start(i), self.w.plain_end(i), self.w.plain_size(i) as usize)).collect();
         self.w.plain_truncate(at);
