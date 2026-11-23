@@ -72,14 +72,19 @@ impl Entries {
 
     /// The entry of partition `part`, as kept; `None` when the store keeps none (or one that no longer reads).
     pub fn get(&self, store: &ContentStore, part: i64) -> Option<Facts> {
-        self.read(store, Some(part), None).remove(&part)
+        self.read(store, Some(&[part]), None).remove(&part)
+    }
+
+    /// The entries of partitions `parts`, by partition, in one read: those the store keeps (`get`'s).
+    pub fn get_many(&self, store: &ContentStore, parts: &[i64]) -> BTreeMap<i64, Facts> {
+        self.read(store, Some(parts), None)
     }
 
     /// The entry of partition `part` as `get` reads it, but relation `rel`'s rows of numbers alone (every column `i`)
     /// handed to `each` as the block holds them, without their place, in no order, and left out of the facts: a
     /// reader that decodes its own rows reads them in place, not through values (the kept plans, t33 K4).
     pub fn get_numbers(&self, store: &ContentStore, part: i64, rel: &str, each: &mut dyn FnMut(&[i64])) -> Option<Facts> {
-        self.read(store, Some(part), Some((rel, each))).remove(&part)
+        self.read(store, Some(&[part]), Some((rel, each))).remove(&part)
     }
 
     /// Every entry of the space, by partition.
@@ -87,7 +92,7 @@ impl Entries {
         self.read(store, None, None)
     }
 
-    fn read(&self, store: &ContentStore, only: Option<i64>, mut numbers: Option<(&str, &mut dyn FnMut(&[i64]))>) -> BTreeMap<i64, Facts> {
+    fn read(&self, store: &ContentStore, only: Option<&[i64]>, mut numbers: Option<(&str, &mut dyn FnMut(&[i64]))>) -> BTreeMap<i64, Facts> {
         let mut out: BTreeMap<i64, Facts> = BTreeMap::new();
         let mut placed: BTreeMap<i64, BTreeMap<String, Vec<(i64, Vec<Value>)>>> = BTreeMap::new();
         let mut bad = BTreeSet::new();
@@ -95,7 +100,7 @@ impl Entries {
         let chain = kept.view();
         // One partition's read merges its own entries alone: the space holds one a program, every engine build's.
         let entries: Box<dyn Iterator<Item = rerail_blocks::kept::Kept<'_>> + '_> = match only {
-            Some(p) => Box::new(chain.of_part(p).into_iter()),
+            Some(parts) => Box::new(parts.iter().flat_map(|&p| chain.of_part(p))),
             None => chain.all(),
         };
         // Each atom's text read once for the entry, shared by the rows that hold it (the relations' and rules' names
