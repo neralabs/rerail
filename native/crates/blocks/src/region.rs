@@ -530,8 +530,14 @@ impl<T: crate::Pod> Mutable<T> {
     /// `n` zeroed `T`s in `block`, named `name` for what fails: a chunk of its free list (given back when the last
     /// handle goes), or from its front. `None` when it has no room.
     pub fn alloc(block: &Arc<Block>, n: usize, name: &'static str) -> Option<Mutable<T>> {
+        Self::alloc_aligned(block, n, align_of::<T>(), name)
+    }
+
+    /// `alloc`, its first byte at a multiple of `align` (at least the `T`'s, and 8): a region that holds a wider type
+    /// than its own (a structure's bytes, `maps::Room`).
+    pub fn alloc_aligned(block: &Arc<Block>, n: usize, align: usize, name: &'static str) -> Option<Mutable<T>> {
         let bytes = (n * size_of::<T>()).max(1);
-        let align = align_of::<T>().max(8);
+        let align = align.max(align_of::<T>()).max(8);
         let (at, kept) = if block.has_free_list() { block.try_alloc_chunk_fit_zeroed(bytes, align)? } else { (block.try_alloc(bytes, align)?, 0) };
         let r = Region {
             block: block.clone(),

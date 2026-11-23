@@ -2,6 +2,7 @@
 // `library_tests.rs` compares each primitive with its Rust reference, on random inputs and edge sizes, on the device.
 
 #include <ukl/memory.h>
+#include <ukl/dot.h>
 #include <ukl/group.h>
 #include <ukl/lz4.h>
 #include <ukl/workqueue.h>
@@ -233,16 +234,14 @@ DEFINE_KERNEL2(tests, t_workqueue,
                GID0,     uint32_t, i,       )
 {
     UklWorkQueue q = test_queue(slots, control, args);
-    uint32_t polls = 0u, taken = 0u;
+    uint32_t taken = 0u;
     for (uint32_t turn = 0u; turn < UKL_WQ_TURNS && !ukl_wq_spent(q, taken); turn++) {
         uint32_t item = 0u;
-        if (ukl_wq_take(q, &item)) {
-            visit(q, visits, args.w, item);
-            polls = 0u;
-            taken++;
-        } else if (ukl_wq_idle(q, &polls, args.n)) {
+        // None to take: the worker ends (decision 0540 step 7).
+        if (!ukl_wq_take(q, &item))
             break;
-        }
+        visit(q, visits, args.w, item);
+        taken++;
     }
 }
 
@@ -254,16 +253,17 @@ DEFINE_KERNEL2(tests, t_workqueue_sg,
                LANE,     uint16_t, lane,    )
 {
     UklWorkQueue q = test_queue(slots, control, args);
-    uint32_t polls = 0u, taken = 0u;
+    uint32_t taken = 0u;
     for (uint32_t turn = 0u; turn < UKL_WQ_TURNS && !ukl_wq_spent(q, taken); turn++) {
         uint32_t item = 0u;
         bool got = ukl_wq_take_sg(q, lane, &item __UKL_ARGS);
         if (got)
             visit(q, visits, args.w, item);
-        // The group's takes that got any item: the same count in every lane.
-        taken += ukl_sg_count(got __UKL_ARGS) != 0u ? 1u : 0u;
-        if (ukl_wq_idle_sg(q, got, &polls, args.n __UKL_ARGS))
+        // The group's takes that got any item: the same count in every lane. None: the group ends (0540 step 7).
+        bool any = ukl_sg_count(got __UKL_ARGS) != 0u;
+        if (!any)
             break;
+        taken++;
     }
 }
 
@@ -389,3 +389,30 @@ DEFINE_KERNEL2(tests, t_grid_sort,
                       (UKL_COHERENT uint32_t*)hist, (UKL_COHERENT uint32_t*)sums, l, scratch, flag __UKL_ARGS);
 }
 #endif
+
+// ukl/dot.h: each dot product, the backend's form and the reference, on `a[i]`, `b[i]` and `c[i]` (the accumulator:
+// an i32, a u32 or an f32's bits); and the f16 conversion of `i`'s low 16 bits, the backend's and the reference's.
+DEFINE_KERNEL2(tests, t_dot,
+               ARGS,     TestArgs, args, ,
+               ROBUFFER, uint32_t, a,    "[n]",
+               ROBUFFER, uint32_t, b,    "[n]",
+               ROBUFFER, uint32_t, c,    "[n]",
+               RWBUFFER, uint32_t, out,  "[n * 10]",
+               GID0,     uint32_t, i,    )
+{
+    if (i >= args.n)
+        return;
+    uint32_t x = a[i], y = b[i], z = c[i];
+    float zf = reinterpretIntAsFloat((int32_t)z);
+    RWBUFFER(uint32_t) o = out + i * 10u;
+    o[0] = (uint32_t)ukl_dot4_i8(x, y, (int32_t)z);
+    o[1] = (uint32_t)ukl_dot4_i8_ref(x, y, (int32_t)z);
+    o[2] = ukl_dot4_u8(x, y, z);
+    o[3] = ukl_dot4_u8_ref(x, y, z);
+    o[4] = (uint32_t)reinterpretFloatAsInt(ukl_dot2_f16(x, y, zf));
+    o[5] = (uint32_t)reinterpretFloatAsInt(ukl_dot2_f16_ref(x, y, zf));
+    o[6] = (uint32_t)reinterpretFloatAsInt(ukl_dot2_bf16(x, y, zf));
+    o[7] = (uint32_t)reinterpretFloatAsInt(ukl_dot2_bf16_ref(x, y, zf));
+    o[8] = (uint32_t)reinterpretFloatAsInt(ukl_f16_to_f32(i & 0xffffu));
+    o[9] = (uint32_t)reinterpretFloatAsInt(ukl_f16_to_f32_ref(i & 0xffffu));
+}

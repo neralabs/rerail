@@ -142,7 +142,7 @@ describe("#10 fixture features map to engine modules", () => {
   it("maps features to native/src/code_rule_dsl modules and documented groups", () => {
     const result = featureModules(
       memoryRepo({
-        "native/src/code_rule_dsl/scope/mod.rs": "",
+        "native/crates/adapters/src/code_rule_dsl/scope/mod.rs": "",
         "native/src/code_rule_dsl/value.rs": "",
         "fixtures/php/scope/a.json": "{}",
         "fixtures/php/value/b.json": "{}",

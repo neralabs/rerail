@@ -547,7 +547,7 @@ pub fn compile_step_shaped(name: &str, source: &str, shape: crate::bitlex_masks:
     let compiled = {
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+        let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
     phase("bitlex compile");
@@ -571,7 +571,7 @@ pub fn compile_error_shaped(source: &str, shape: crate::bitlex_masks::Shape) -> 
     let ids = Ids::default();
     let kind = |n: &str| Some(ids.of(n));
     let field = |n: &str| Some(ids.of(&format!("field {n}")));
-    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).err()
 }
 
@@ -581,7 +581,7 @@ pub fn compile_error(source: &str) -> Option<String> {
     let ids = Ids::default();
     let kind = |n: &str| Some(ids.of(n));
     let field = |n: &str| Some(ids.of(&format!("field {n}")));
-    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     crate::bitlex_masks::compile(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols)).err()
 }
 
@@ -752,7 +752,7 @@ pub(crate) fn tier1_agrees(cpu: &crate::block::BlockRun, interpreted: &crate::bl
 /// The outputs tier 1 on the CPU does not make as the interpreter does: those its record pass
 /// makes and the totals no one reads by their rows (`BlockNative::cpu_unstored`), and all of them
 /// where a pass has no block loop (`PassShape::block_loop`).
-fn tier1_made(c: &Compiled) -> Vec<usize> {
+fn tier1_made(c: &Compiled) -> rerail_blocks::vector::Vector<usize> {
     let block = &c.native.block_programs[0];
     let looped = c.parser.tier1.passes.iter().all(|p| p.back || p.block_loop);
     if !looped {

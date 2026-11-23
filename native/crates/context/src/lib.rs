@@ -49,6 +49,19 @@ pub fn run_own() -> Option<std::sync::Arc<dyn RunOwn>> {
 
 pub type AnyArc = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 
+/// The value of type `T` in `values`, made the first time it is asked for. It is made with the lock let go: a value's
+/// default may ask for another of the same values (a map's room, `rerail_blocks::maps::default_room`), and the lock is
+/// not reentrant. Two threads that both find none may both make one: the first put in is kept, and the other dropped.
+fn made<T: Default + Send + Sync + 'static>(values: &parking_lot::Mutex<std::collections::HashMap<std::any::TypeId, AnyArc>>) -> AnyArc {
+    let key = std::any::TypeId::of::<T>();
+    if let Some(v) = values.lock().get(&key) {
+        return std::sync::Arc::clone(v);
+    }
+    let fresh: AnyArc = std::sync::Arc::new(T::default());
+    std::sync::Arc::clone(values.lock().entry(key).or_insert(fresh))
+}
+
+
 /// The place a setting is read (its file, line and column) and the type it is read as.
 type SettingPlace = (&'static str, u32, u32, std::any::TypeId);
 
@@ -87,8 +100,7 @@ impl Machine {
     }
     /// Its value of type `T`, made the first time it is asked for.
     pub fn get<T: Default + Send + Sync + 'static>(&self) -> std::sync::Arc<T> {
-        let v = std::sync::Arc::clone(self.values.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
-        v.downcast::<T>().expect("a machine value's type is its key")
+        made::<T>(&self.values).downcast::<T>().expect("a machine value's type is its key")
     }
 }
 
@@ -107,8 +119,7 @@ impl Shared {
     }
     /// Its value of type `T`, made the first time it is asked for.
     pub fn get<T: Default + Send + Sync + 'static>(&self) -> std::sync::Arc<T> {
-        let v = std::sync::Arc::clone(self.values.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
-        v.downcast::<T>().expect("a shared value's type is its key")
+        made::<T>(&self.values).downcast::<T>().expect("a shared value's type is its key")
     }
     /// Its value of type `T`, if it was made.
     pub fn get_if_any<T: Send + Sync + 'static>(&self) -> Option<std::sync::Arc<T>> {
@@ -117,10 +128,10 @@ impl Shared {
 }
 
 /// The shared object of a run handed none: in a product build, one of its own (as apart from every other run as one in
-/// another process); in a test build (`test-hooks`), the tests' one (`TESTS`), as the process's statics were.
+/// another process); in a test build (`test-hooks`), the test's (`tests_object`).
 pub fn default_shared() -> std::sync::Arc<Shared> {
     #[cfg(feature = "test-hooks")]
-    return std::sync::Arc::clone(&TESTS);
+    return tests_object();
     #[cfg(not(feature = "test-hooks"))]
     Shared::new()
 }
@@ -134,7 +145,7 @@ pub fn default_shared() -> std::sync::Arc<Shared> {
 fn outside_a_run(what: &'static str) -> std::sync::Arc<Shared> {
     #[cfg(feature = "test-hooks")]
     if on_a_tests_thread() {
-        return std::sync::Arc::clone(&TESTS);
+        return tests_object();
     }
     missed(what);
     Shared::new()
@@ -200,6 +211,27 @@ pub fn misses() -> Vec<&'static str> {
 /// The tests' shared object (`default_shared`): test builds only.
 #[cfg(feature = "test-hooks")]
 static TESTS: std::sync::LazyLock<std::sync::Arc<Shared>> = std::sync::LazyLock::new(Shared::new);
+
+#[cfg(feature = "test-hooks")]
+thread_local! {
+    /// The object of the test whose thread this is (`tests_object`).
+    static TEST_OWN: std::cell::OnceCell<std::sync::Arc<Shared>> = const { std::cell::OnceCell::new() };
+}
+
+/// The shared object of a test build's caller with no entry point: on a test's own thread (libtest runs each on a
+/// thread named for it), the test's, on the tests' machine (`Shared::on`): its caches, learned models and kept plans its
+/// own, as a test in a process of its own has them: what a test counts or plans of its runs depends on no other test's
+/// (in one process beside 185 others, three tests that pass alone counted or planned otherwise). Elsewhere (the main thread, a thread a test starts), the tests' one (`TESTS`): a test that hands its object to
+/// threads it starts does so (`within`).
+#[cfg(feature = "test-hooks")]
+fn tests_object() -> std::sync::Arc<Shared> {
+    let named = std::thread::current().name().is_some_and(|n| n != "main");
+    // As the thread ends (a thread-local's drop reads it), its own is gone: the tests' one.
+    if named && on_a_tests_thread() && let Ok(own) = TEST_OWN.try_with(|o| std::sync::Arc::clone(o.get_or_init(|| Shared::on(TESTS.machine())))) {
+        return own;
+    }
+    std::sync::Arc::clone(&TESTS)
+}
 
 /// The value of type `T` that the run under way shares by design (`Shared`), made the first time it is asked for.
 /// Outside a run: `outside_a_run`'s.
@@ -441,7 +473,7 @@ pub fn shared_object() -> Option<std::sync::Arc<Shared>> {
 pub fn starter_object() -> Option<std::sync::Arc<Shared>> {
     #[cfg(feature = "test-hooks")]
     if run_own().is_none() && on_a_tests_thread() {
-        return Some(std::sync::Arc::clone(&TESTS));
+        return Some(tests_object());
     }
     shared_object()
 }
@@ -648,6 +680,43 @@ impl Context {
     }
 }
 
+/// The engine's switches (`RERAIL_*`) a caller set for its own runs (a test's, `switches::set`), latest last: read
+/// before the process's environment (`var`), so a test's mode reaches its runs and their jobs, and no other test's.
+/// The process's variables are the whole process's: a test that set them held every other test's runs off meanwhile.
+#[derive(Clone, Default)]
+pub struct Switches(pub std::sync::Arc<Vec<(String, String)>>);
+
+/// Switch `name` as `std::env::var` reads it, the context's (`Switches`) before the process's.
+pub fn var(name: &str) -> Result<String, std::env::VarError> {
+    match with_bound(|s: &Switches| s.0.iter().rev().find(|(k, _)| k == name).map(|(_, v)| v.clone())) {
+        Some(v) => Ok(v),
+        None => std::env::var(name),
+    }
+}
+
+/// Switch `name` as `std::env::var_os` reads it, the context's (`Switches`) before the process's.
+pub fn var_os(name: &str) -> Option<std::ffi::OsString> {
+    match with_bound(|s: &Switches| s.0.iter().rev().find(|(k, _)| k == name).map(|(_, v)| v.clone())) {
+        Some(v) => Some(v.into()),
+        None => std::env::var_os(name),
+    }
+}
+
+/// Every `RERAIL_*` switch set, by name: the process's variables, each the context sets (`Switches`) in its place. What
+/// a key of every switch hashes (a run's, `reuse`).
+pub fn vars() -> Vec<(String, String)> {
+    let mut out: std::collections::BTreeMap<String, String> = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
+        .filter(|(k, _)| k.starts_with("RERAIL_"))
+        .collect();
+    with_bound(|s: &Switches| {
+        for (k, v) in s.0.iter() {
+            out.insert(k.clone(), v.clone());
+        }
+    });
+    out.into_iter().collect()
+}
+
 /// The value of type `T` the run's context binds here (the nearest `bind`), else `T`'s default.
 pub fn bound<T: Clone + Default + Send + Sync + 'static>() -> T {
     context_here().find::<T>().cloned().unwrap_or_default()
@@ -846,7 +915,7 @@ fn local_slow<T: Default + Send + Sync + 'static>() -> std::sync::Arc<T> {
         missed(std::any::type_name::<T>());
         return std::sync::Arc::new(T::default());
     };
-    let v = std::sync::Arc::clone(run.values().locals.lock().entry(std::any::TypeId::of::<T>()).or_insert_with(|| std::sync::Arc::new(T::default())));
+    let v = made::<T>(&run.values().locals);
     let _ = SEEN.try_with(|seen| seen.borrow_mut().of(&run).locals.insert(std::any::TypeId::of::<T>(), v.clone()));
     v.downcast::<T>().expect("a local's type is its key")
 }

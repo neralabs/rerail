@@ -71,35 +71,35 @@ transducer::packed::compile_matcher::matcher_metal	rerail-device-metal
 
 # W: the language-neutral evaluator
 blade	rerail-lang-php
-calls	rerail-classic
-compile	rerail-classic
-eval	rerail-classic
-findings	rerail-classic
-literal	rerail-classic
-matcher	rerail-classic
-model	rerail-classic
-origin	rerail-classic
-placement	rerail-classic
-query	rerail-classic
-scope	rerail-classic
-soundness	rerail-classic
-stats	rerail-classic
-suppress	rerail-classic
-value	rerail-classic
-violations	rerail-classic
-workspace	rerail-classic
-hooks	rerail-classic
-crypto	rerail-classic
-profile	rerail-classic
-test_support	rerail-classic
-residency::admission	rerail-classic
-transducer::semantic_facts	rerail-classic
-language::adapter	rerail-classic
-facts::facts_a	rerail-classic
+calls	rerail-workspace
+compile	rerail-workspace
+eval	rerail-workspace
+findings	rerail-workspace
+literal	rerail-workspace
+matcher	rerail-workspace
+model	rerail-workspace
+origin	rerail-workspace
+placement	rerail-workspace
+query	rerail-workspace
+scope	rerail-workspace
+soundness	rerail-workspace
+stats	rerail-workspace
+suppress	rerail-workspace
+value	rerail-workspace
+violations	rerail-workspace
+workspace	rerail-workspace
+hooks	rerail-workspace
+crypto	rerail-workspace
+profile	rerail-workspace
+test_support	rerail-workspace
+residency::admission	rerail-workspace
+transducer::semantic_facts	rerail-workspace
+language::adapter	rerail-workspace
+facts::facts_a	rerail-workspace
 
 # Language packs
 cpython	rerail-lang-python
-identifier	rerail-classic
+identifier	rerail-workspace
 module_path	rerail-lang-python
 calls::python	rerail-lang-python
 facts::producers::python	rerail-lang-python
@@ -127,7 +127,7 @@ compile::import_target	rerail-lang-ecma
 module_graph	rerail-lang-ecma
 npm_ignore	rerail-lang-ecma
 package_manifest	rerail-lang-ecma
-semver	rerail-classic
+semver	rerail-workspace
 scope::ecma	rerail-lang-ecma
 scope::usage::ecma	rerail-lang-ecma
 value::ecma	rerail-lang-ecma
@@ -176,7 +176,7 @@ language::adapter::json	rerail-lang-json
 transducer::packed::json_parser	rerail-lang-json
 
 # The engine: napi (its code_rule_dsl/mod.rs items, the slice's object, the CLI's entry points) and the tests that
-# read them. Every other test is a test crate's (native/crates/tests_*, tools/cratify/test_crates.py).
+# read them. Every other test is a test crate's (native/crates/tests_*, tools/cratify/split_test_crates.py).
 crate	rerail-engine
 dsl_root	rerail-engine
 slice::napi	rerail-engine
@@ -286,14 +286,14 @@ scope::usage::lang_rust	rerail-lang-rust
 scope::usage::lang_php	rerail-lang-php
 scope::usage::lang_sql	rerail-lang-sql
 scope::usage::lang_python	rerail-lang-python
-residency::admission::relational::ast_stage	rerail-classic
+residency::admission::relational::ast_stage	rerail-workspace
 literal::semantic	rerail-lang-python
-crate::git_ignore	rerail-classic
-crate::panic_boundary	rerail-classic
+crate::git_ignore	rerail-workspace
+crate::panic_boundary	rerail-workspace
 crate::content_store	rerail-store
 crate::git_workspace	rerail-store
-resolution	rerail-classic
-matcher::term	rerail-classic
+resolution	rerail-workspace
+matcher::term	rerail-workspace
 matcher::arguments::lang_python	rerail-lang-python
 matcher::arguments::lang_php	rerail-lang-php
 matcher::format_args::python	rerail-lang-python
@@ -302,15 +302,15 @@ matcher::format_args::scanf	rerail-lang-php
 compile::resolve::php	rerail-lang-php
 search_index	rerail-facts
 facts::nearest	rerail-facts
-walks	rerail-classic
+walks	rerail-workspace
 semver	rerail-lang
 matcher::arguments_sql	rerail-lang-sql
 functors	rerail-engine
 stats::identity	rerail-facts
 waves::schedule::batches	rerail-engine
-waves::relational	rerail-classic
+waves::relational	rerail-workspace
 waves::relational::execution	rerail-engine
-rule_api	rerail-classic
+rule_api	rerail-workspace
 logic::front::name	rerail-rr-syntax
 compile::format_args::php	rerail-engine
 compile::binds::eslint	rerail-engine

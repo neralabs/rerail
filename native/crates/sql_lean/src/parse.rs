@@ -58,7 +58,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
             at: start,
             last_end: start,
             look: None,
-            w: Writer::new(0, widths, src.len() / 3 + 16).to(finish.target(), src),
+            w: Writer::new(0, widths, src.len() / 3 + 16).to(finish.target(), src).omitting(finish.omissions()),
             frames: Vec::with_capacity(64),
             held: Vec::with_capacity(64),
             extras: Vec::with_capacity(16),

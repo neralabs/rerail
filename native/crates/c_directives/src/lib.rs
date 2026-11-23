@@ -9,7 +9,8 @@
 //! it does not read) goes to the lean scan, so a row is never wrong.
 
 use rerail_bitlex::bitlex_masks as bitlex_compile;
-use rerail_compiler::{native_ir, rir_asm as rir};
+use rerail_compiler::native_ir;
+use rerail_rir::rir_asm as rir;
 use rerail_compiler::native_cpu_clusters;
 use rerail_cpu_stream::native_cpu_stream;
 
@@ -102,7 +103,7 @@ pub(crate) fn lower_kinds(grammar: &str, kinds: &[&str], fields: &[&str]) -> Res
         })
     };
     let field = |name: &str| fields.iter().position(|&f| f == name).map(|i| i as u16 + 1);
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let compiled = bitlex_compile::compile_shaped(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules)?;
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
@@ -126,7 +127,7 @@ pub struct Row {
 
 impl Compiled {
     /// `src`'s tape image, or `None` where the grammar refuses the file.
-    pub fn image(&self, src: &[u8]) -> Option<Vec<u8>> {
+    pub fn image(&self, src: &[u8]) -> Option<rerail_tape_format::Vector<u8>> {
         self.parser.image(src).ok()
     }
 
@@ -147,7 +148,7 @@ impl Compiled {
     }
 
     /// `src`'s tape by the interpreter: its tier 1 and its tier 2, the program's meaning.
-    pub fn interpreter_image(&self, src: &[u8]) -> Option<Vec<u8>> {
+    pub fn interpreter_image(&self, src: &[u8]) -> Option<rerail_tape_format::Vector<u8>> {
         let run = self.program.block_programs[0].run(src);
         let nodes = rerail_compiler::stream::run(&self.program, src, &run).ok()?;
         Some(rerail_compiler::stream::image(&nodes, &self.program.readings.extras, 0, src))
@@ -163,8 +164,8 @@ impl Compiled {
     /// Each of `files`' tapes, tier 1 on Metal and tier 2 over its buffers; `None` for a file
     /// refused; the device's error where it cannot run the batch.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    pub fn metal_images(&self, files: &[&[u8]]) -> Result<Vec<Option<Vec<u8>>>, rerail_compiler::Error> {
-        use rerail_metal::block_program::serial::{Segments, run_resident};
+    pub fn metal_images(&self, files: &[&[u8]]) -> Result<Vec<Option<rerail_tape_format::Vector<u8>>>, rerail_compiler::Error> {
+        use rerail_metal_programs::block_program::serial::{Segments, run_resident};
         let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f, program: 0 }).collect();
         match run_resident(&[&self.native], &batch, Segments { blocks: 29, warm: 1 }) {
             Ok((_, run)) => Ok((0..files.len()).map(|i| rerail_cpu_stream::tier2_on::image_on(&self.parser, &run, i).ok()).collect()),

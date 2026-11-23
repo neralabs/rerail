@@ -28,3 +28,7 @@ grammar implies (`native/src/code_rule_dsl/tape/tokens.rs`). Every change is mar
   trails under the strictness (`should_skip_trailing`), as after upstream's last token goal:
   `case $V:` matches `case 2: break;`. Otherwise it refuses as before: `f($A)` refuses `f(a, b)`,
   whose gap after `a` is `,`.
+- **`NodeWalker::size_hint`** (`tree_sitter/mod.rs`): exact, as `ExactSizeIterator` requires.
+  Upstream implements `len` alone, so an adapter or a std that answers `len` from `size_hint`
+  reads 0: under Relax, every pattern built over tree-sitter's tree was `NoContent`
+  (scripts/dev/relax/README.md, fork change 13).

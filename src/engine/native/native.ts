@@ -522,6 +522,8 @@ export interface NativeAnalysisScopeRun {
 
 export interface NativeLoadedRrPolicies {
   load(path: string, source?: NativeGitRevisionSource): string;
+  /** The policy a failed `load` of `path` names: the one `.policy` its own text declares, read without lowering it. */
+  failedPolicy(path: string, source?: NativeGitRevisionSource): string | null;
 }
 
 export interface NativeBinding {
@@ -595,7 +597,7 @@ export interface NativeBinding {
    * other platform. A binary built before it lacks it.
    */
   pathsOwnedByCurrentUser?(paths: string[]): boolean;
-  /** The content-store file name this binary's store schema owns (`content-v9.sqlite` at store floor 9). */
+  /** The content-store file name this binary's store schema owns (`content-v10.sqlite` at store floor 10). */
   contentStoreFileName(): string;
   deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string, expectedStore?: string, recorded?: boolean): void;
   releaseNamedAnalysisScope(store: string, name: string, expectedIdentities: string[]): { identity: string; hadMembers: boolean } | null;

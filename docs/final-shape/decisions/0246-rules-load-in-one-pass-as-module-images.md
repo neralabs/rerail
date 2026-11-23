@@ -423,7 +423,7 @@ Both steps are built.
    its digest (each file looked at once for the call, however many graphs name it). A newly derived graph is kept
    in the build's image store and exported into the bundle. A seed's key names the seed, not what its graph
    reached, so an edited library gives a key another graph: the store keeps the first under the key
-   (`keep_graph_image` looks first), and a run finds it no longer holds and derives the graph again.
+   (`keep_graph_images` looks first), and a run finds it no longer holds and derives the graph again.
 
 The image store is opened once for a call's seeds. Opened once per seed, its 316 opens cost 3.2 G, more than the
 derivation they replaced.

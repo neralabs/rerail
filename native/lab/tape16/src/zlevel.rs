@@ -81,7 +81,7 @@ pub fn run(files: &[&File]) -> Result<Report, String> {
         let t = F15::new(&f.image, columns, &table)?;
         let Some(lang) = f16::lang(f.tag) else { return Err(format!("no format 16 table for tag {}", f.tag)) };
         let number = f16::numbers(lang, &table)?;
-        let Written::F16(t16) = f16::write_from(lang, &t, &number, &f.source, f.tag, false)? else { unreachable!() };
+        let Written::F16(t16) = f16::write_from(lang, &t, &number, &f.source, crate::f16::terminators(f.tag), f.tag, false)? else { unreachable!() };
         let bytes = t16.as_bytes();
         r.files += 1;
         r.nodes += u64::from_le_bytes(bytes[24..32].try_into().unwrap());
@@ -148,7 +148,7 @@ pub fn ops(files: &[&File]) -> Result<Ops, String> {
             r.ns_ref[k] += t0.elapsed().as_nanos() as u64;
             r.in_ref[k] += crate::measure::retired().0 - i0;
             let (t0, i0) = (std::time::Instant::now(), crate::measure::retired().0);
-            let got = f16::write_from(lang, &t, &number, &f.source, f.tag, z)?;
+            let got = f16::write_from(lang, &t, &number, &f.source, crate::f16::terminators(f.tag), f.tag, z)?;
             r.ns_ops[k] += t0.elapsed().as_nanos() as u64;
             r.in_ops[k] += crate::measure::retired().0 - i0;
             let bytes = |w: &Written| match w {
@@ -272,7 +272,7 @@ pub fn ranges(files: &[&File]) -> Result<Ranges, String> {
         let t = F15::new(&f.image, columns, &table)?;
         let Some(lang) = f16::lang(f.tag) else { return Err(format!("no format 16 table for tag {}", f.tag)) };
         let number = f16::numbers(lang, &table)?;
-        let Written::F16(t16) = f16::write_from(lang, &t, &number, &f.source, f.tag, false)? else { unreachable!() };
+        let Written::F16(t16) = f16::write_from(lang, &t, &number, &f.source, crate::f16::terminators(f.tag), f.tag, false)? else { unreachable!() };
         let tb = t16.as_bytes();
         r.files += 1;
         let n = t.len();

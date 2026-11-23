@@ -75,14 +75,67 @@ or read `guest_of` (784 to 809 G) were unsound, and are not counted.
 
 ## Then: no copy built where its readers allow
 
-6. **A diffed copy is read in place** (`combining::Unnarrow`). It is its original less its candidates, and the
-   candidates its recheck finds (`rr_recheck_X`, the narrow rule over the candidates). A rule reading it reads, for
-   each read, the original less the candidates, or the recheck; negated, neither the original nor the recheck, or a
-   candidate the recheck does not hold. Its rows gone and added are read off the recheck. The copy stays built where
-   a read cannot be so written: an aggregate's, a gated one, a term not a variable or a constant (a negated `_` has
-   no such form), a native operator's rule, more than 3 in one rule (each rule is one per way), or where the program
-   lists it. 87 of the 174 are read in place. Writing a positive read's `_` as a variable, and allowing 5 reads a
-   rule, built fewer copies but cost more (764 G, 768 G): not done.
+6. **A diffed copy is read in place** (`combining::Unnarrow`): `N = X \ G ∪ A`, its original less its rows gone,
+   and its rows added. `A` is known empty where the copy can only lose rows (`adds`: nothing it reads is a copy read
+   negated, in an aggregate, or one that may gain rows). A read is written:
+   - positive, its terms named: `X(t), !G(t)`, and `A(t)` where it may gain rows;
+   - positive with `_` (a test that a row is there): `X(t, _), !G_s(t_s)`, and the few keys with rows gone checked
+     row by row (`G_s`: the rows gone on the read's named columns);
+   - negated: `!X(t)` or `G(t)`; with `_`, `!X(t, _)` or `G_s(t_s), !M_s(t_s)` (`M_s`: the keys with a row gone and
+     one left); each with `!A` where it may gain rows;
+   - inside the recheck's recursion, where a read of `G` would close a cycle through a negation, the original less
+     the candidates, or the recheck's rows.
+
+   A rule is written once a way, the product of its reads' ways, at most 16. The limit of 3 reads an earlier form
+   had was that form's own (each read two ways, 2^k rules), not the engine's. The copy stays where a read cannot be
+   so written: an aggregate's, a gated one, a native operator's rule, or where the program lists it. 154 of 174 are
+   read in place. The candidates, recheck and deltas are `no_inline` and `no_magic`: inlined, a candidate's filter
+   rule made the deltas' joins start from the whole original.
+9. **A copy kept is its original's rows, read where they are** (`plan::based_rule`). A rule `n(xs) :- x(xs),
+   !g(xs)` (distinct variables, one order, both held by the engine, `g` at most an eighth of `x`) opens `n` as `x`'s
+   rows and orders, shared (`Rel::based`, which a maintained stratum's survivors used), `g`'s rows marked dead in
+   place; its other rules add to it. A copy kept (`n :- x, !rr_cand_x`, and the recheck's rows) is so: one literal for
+   its readers, no row of `x` copied or derived again. The recognition is on the rule's shape.
+10. **A rule over an input bound with no rows is not run**, as one over a held empty relation was not: a copy's rows
+    added, which the per-file part hands on and most runs have none of. Each such way of a recursive rule ran from the
+    recursive delta before finding none.
+11. **A mixed component keeps its guests' copies apart** (`Diffed::mixed`). Where an original of a component reaches a
+    copy of a member (§3's mixed points-to components), its guests' copies are not folded: each holds the
+    annotations' rows alone, reading what the annotations see (`Narrowing::apart`), and the originals stay narrow, so
+    no copy of them is derived. 44 copies. Every copy unfolded instead costs 857 G.
+12. **Whether a copy is read in place is a rule's choice.** A rule whose reads cannot all be written in place (an
+    aggregate's, past 16 ways) reads the copies it reads as relations, kept for it (§9's form); every other rule
+    reads them in place. A copy goes when no rule reads it. Kept for every reader instead, one rule of
+    `rr_cand_pt_outside_dec` kept `pt_nameref`'s copy for all of them. 183 read in place, 19 of them kept for 27
+    rules.
+13. **A pushed join is named by its literals in one order** (`PushLocalJoins`: by their text, the interface by first
+    sight in it). The recheck of `pt_walk` and `pt_walk`'s seed push one join written in two orders, so it was made
+    twice in every chunk (449 K rows).
+14. **A whole plan's first scan of a member is priced by its rows** (`plan.rs`, `atom_rows`). A whole plan runs in
+    the wave whose delta is each member's whole relation (the seeds' rows), replanned from their live counts. Floored
+    at the corpus, as a member nothing measured is, `rr_cand_pt_walk` (2,635 rows) was priced at 1.76 M, and its
+    whole plan scanned `rr_nearest_pt_fscope` (1.83 M rows) to probe it, in each of 10 calls: 1.1 s of CPU and
+    631 MB allocated, now 2.5 ms and 1.3 MB. `pt_walk`'s whole plans gain the same way.
+15. **A first scan bounded on a node view's own column reads that range alone** (`setfix::scan_within`).
+    `rr_ann_node(n) :- kind(n, _), n >= a, n < b` read every `kind` row (4.46 M) for the annotations' 2,454. The
+    bounds after a first scan now cut it as they cut a probe: by two searches where its rows are in the column's
+    order, else by the view's source's range read (`range_lookup`), which `Layered` (a chunk's batch and the tape
+    values' parts) now passes through. 155 ms to 0.8 ms.
+16. **A copy's candidates are seeded once a document** (`Diffed::one_document_each`). The wide rule's rows that
+    differ are those with a bounded variable in the annotations' keys, and a node's key is its document's shifted up
+    32 bits: the bounded variables one document holds (joined through a base or file-local relation's same-document
+    columns, `FileLocal::same_doc`, or a node and its `@doc`) are in those keys together. Each was seeded apart:
+    `pt_impmod`'s rule bounds `$i`, `$mn`, `$pre`, `$dn` and their document `$d`, five candidates' rules where one
+    finds the rows, and each pushed into the chunks as a join, a stratum a chunk. The candidates' strata run went
+    from 349 to 232, the run's strata from 2,162 to 2,003.
+17. **A probe by a few documents is priced by their nodes** (`Source::column_counts`, `JoinCounts::of_counts`,
+    `rows_held`). `docof`'s documents are counted by the batch without reading a row (each one's rows at its
+    offsets), and a probe from a relation whose keys are kept is priced by the rows of the values those keys hold.
+    `rr_ann_doc`'s documents (an annotation's, about 40 nodes each) were priced at the chunk's average, 2,192 to
+    3,000 a document (a light value's share of the heavy values' estimate), so `rr_cand_pt_ownq` led from `kind`
+    (190 K rows, 0.16 s); priced at 1,095 rows for 94 documents, it leads from them.
+18. **An anti-join with a relation held empty is left out** (`setfix::join_rule_bound`). A copy read in place reads
+    its rows gone, `!rr_gone_<x>`, empty for most copies: 286 such steps read 2 M rows (145 ms).
 7. **A rule beside its annotation twin reads only the copies' deltas** (`Folding::beside_twin`). Since #923 a rule
    that reads an original (narrow, so its copy) sits beside a twin of the same head that reads an annotation's copy
    (folded, so the whole original) and is the rule otherwise: each derivation was made twice (`pt_vopen`). The rule is
@@ -99,7 +152,22 @@ as its own rules again (781 G: the work moves into its readers).
 | step 1 (above) | 794 G | 1.52 GB |
 | 7, twins | 781 G | 1.51 GB |
 | 8, bounds handed on | 775 G | 1.53 GB |
-| 6, read in place | 761 G | 1.52 GB |
+| 6, read in place (candidates' form) | 761 G | 1.52 GB |
+| 6, rows gone and added | 762-770 G | 1.44-1.49 GB |
+| 10, inputs bound empty | 741.6 G | 1.49 GB |
+| 9, copies kept read in place | 737.7 G | 1.49 GB |
+| 11, mixed copies apart | 730.2 G | 1.48 GB |
+| 12, read in place by rule | 735.6-737.2 G | 1.48-1.49 GB |
+| 13, one pushed join | 724.8 G | 1.49 GB |
+| 14, whole plans by members' rows | 697.1 G | 1.49 GB |
+| 15, a first scan's range read alone | 695.8 G | 1.44 GB |
+| 16, candidates seeded once a document | 676.9 G | 1.37 GB |
+| 17, a probe by a few documents | 674.2 G | 1.42 GB |
+| 18, no anti-join with an empty relation | 672.0 G | 1.41 GB |
+| merged with the hub: copies within one document, narrow reads by the columns shown | 570.1 G | 1.34 GB |
+
+Two runs of one binary differed by up to 8 G at loads of 20 to 30.
+
 ## Beside the copies within one document (rr-align, 2026-11-21)
 
 On rr-align this sits beside 15e8c73191 (0165, from cost-classifier-metal-rf): a copy whose original holds rows of
@@ -109,7 +177,18 @@ rows gone are its original's with a node column past the bound (`rr_gone_<orig>`
 is added (`rr_added_<orig>`, declared with no rule). So an original that reads a copy within one document is still
 diffed. The rest are derived again, as before.
 
-## Not done
+## What is left
 
-The mixed components (decision 0165 §3's cross-file part) need another design: the wide and narrow relations are one
-recursive component there.
+Measured after the hub's merge (2026-11-22): leg-083 in 570.1 G and 1.34 GB peak, findings 0, against the baseline's
+581 G and 1.36 GB. The hub reads an original narrow only where a rule's head shows what it reads (`Narrowing::redirect`,
+0165 "A pack's rules find what they find alone"), so 14 copies are read narrow, not 174: 12 within one document,
+filters of their originals, and 2 diffed (`calls`, `eager`). No component is mixed, so none is kept apart. The diffing
+still pays: `RERAIL_NARROW_DIFF=off` derives the two again, 577.6 G and the same findings. The engine's own strata
+(candidates, rechecks, rows gone and added, the annotations' keys) take 7.7 ms of CPU in 12 spans, where they took
+1.9 s in 1,765, and preparation 0.35 s where it took 1.41 s.
+
+Before the merge (at step 16), over the baseline's own tree (its rules and typing programs, commit 8e14e2bb8c,
+exported whole), the baseline engine ran in 578.9 G and this engine in 694.1 G; over today's rules it took 695.8 G, so
+the rules merged since cost nothing then. The strata of the engine's own were then 1,062: four for each of the 168
+diffed copies and one for each candidates' join pushed into the chunks, most of them run each chunk to find none. The
+base inputs' indexes are built once a chunk, not by each stratum.

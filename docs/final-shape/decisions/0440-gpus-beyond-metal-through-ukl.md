@@ -202,7 +202,7 @@ templates are needed) plus UKL's macros. The shims are:
 |---|---|---|---|
 | Metal | Metal front end, then the binary archive (0395) | `ukl_metal_shim.h` (exists) | output must equal today's MSL in behaviour, checked per kernel |
 | CUDA | NVRTC to PTX, then nvJitLink to cubin per `sm_XX` | `ukl_cuda_shim.h` (upstream's draft, repaired) | first new target |
-| ROCm (HIP) | hipRTC | near-copy of CUDA's | wave64 on CDNA (see below) |
+| ROCm (HIP) | hiprtc | the CUDA shim, with HIP's SIMD-group operations (`UKL_HIP`) | done 2026-11-22, on a Radeon 680M (progress, "The HIP backend"); wave64 on CDNA (see below) |
 | OpenCL | `clBuildProgram` (C 1.2 or 2.0), or SPIR-V | upstream had one | in-place reads need OpenCL 2.0 shared virtual memory (SVM) |
 | CPU | the host's C++ compiler, at run time (`RERAIL_GPU=cpu`) | Rerail's `builtin/cpu/ukl/ukl_cpu_shim.h` (stackful coroutines; upstream's, over MLDB's runtime, is not carried) | for debugging kernels, not a product path (progress, "The CPU backend") |
 | WebGPU | not by macros | — | §3.4 |
@@ -1306,7 +1306,7 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
 
 - **`clif_ukl`** (was `clif_msl`) prints the C preprocessor's compiled words (`native_cpu_pp::ukl_source`) as UKL's C:
   C types and casts, the library's bit counts, `ukl_min`/`ukl_max`, and one kernel, `pp_batch`, by `DEFINE_KERNEL2`.
-  Its functions are `UKL_CALLED` (the compiler inlines as it chooses; `UKL_FUNCTION` is MLDB's shims' own, a
+  Its functions are `UKL_FUNC` (the compiler inlines as it chooses; named `UKL_CALLED` until 0523 gave that name to a forced call; `UKL_FUNCTION` is MLDB's shims' own, a
   versioned macro). The words read and write their arena at several widths, so every access is a byte or an
   aligned 64-bit word: the library's new `ukl_ldw_*` and `ukl_stw_*` (`ukl/memory.h`), where MSL had its aliasing
   typedefs and direct accesses. The library has `ukl_umulhi64` and `ukl_reverse32`/`64` too, each tested
@@ -1619,6 +1619,218 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
 - **So both need the GPU's own driver:** native Windows (AMD's driver ships OpenCL and the HIP runtime; the
   workspace's Windows build, plan step 4), or native Linux on the machine (radeonsi under rusticl; ROCm, which
   runs gfx1035 only as gfx1030, with `HSA_OVERRIDE_GFX_VERSION`).
+
+**The Radeon 680M through AMD's Windows OpenCL: its waves are the SIMD groups (2026-11-22).**
+
+- **The device:** the same Ryzen 7 7735HS's Radeon 680M (gfx1035), from native Windows: AMD's OpenCL 2.0
+  (AMD-APP 3652.0, PAL with the LLVM compiler, driver 32.0.21030.2001). It has `cl_khr_subgroups` (reductions, scans,
+  broadcast, barrier) and `cl_amd_device_attribute_query`, and neither shuffle extension, no ballot one, no
+  required sub-group size and no USM. So `lanes` (above) gave it the emulated groups: every SIMD-group operation a
+  threadgroup barrier and a word of threadgroup memory a thread.
+- **Its waves are 32 lanes, and the compiler takes the wave's own operations:** a kernel run on it (`clc run`) gave
+  `get_sub_group_size()` 32, and right answers from `__builtin_amdgcn_ds_bpermute` (a lane's read of another, by
+  byte address), `__builtin_amdgcn_ballot_w32`, `mbcnt` and `cl_khr_subgroups`' reductions and scans.
+- **So the device layer has three kinds of groups (`Groups`):** emulated; required (Intel's: OpenCL 3.0's
+  sub-groups at a width each kernel requires); and AMD's (`UKL_OPENCL_AMD`, with `UKL_OPENCL_SUBGROUPS`, built as
+  OpenCL C 2.0): a device of 32-lane waves (`CL_DEVICE_WAVEFRONT_WIDTH_AMD`), its shuffles `ds_bpermute`, its ballot
+  `ballot_w32`, its scans and reductions the shuffles', its kernels with no width attribute. With no attribute to require the width,
+  the device's opening runs a kernel that checks it (`sub_groups_are`: each thread's sub-group size, maximum, lane,
+  and a shuffle's read), and a device that fails it keeps the emulated groups.
+- **Its scans and reductions are the shuffles':** in the engine's kernels the driver's `cl_khr_subgroups`
+  functions worked on each 16-lane row of the wave apart, while the small probe kernels' were right.
+  - In the block interpreter, `sub_group_scan_inclusive_add` and `_exclusive_add` scanned the second row without
+    the first row's total. The extract test's positions at 64-byte lanes showed lane 16 at lane 0's offset, and at
+    16-byte lanes a quote in lane 29 at offset 0, without the quote in lane 2.
+  - In the device scan (`ukl_grid_scan`), `sub_group_reduce_add` gave a 1,024-value tile half its sum: the
+    kind-set axis `Inside` counted 45,219 rows right, and the scan of the counts gave 22,347
+    (`the_kind_set_axes_hold_exactly_their_pairs`).
+  - So neither is native: both are built from `ds_bpermute` (`ukl/simd.h`'s forms), and those kernels are right.
+- **Tests on the Radeon:** the device layer's OpenCL tests, and every GPU test of the parser library (`block_tests`,
+  `compile_tests` with the batch of files and programs, `json_tests`, `metal_tests`, `corpus_tests`), pass. The
+  dumped kernels are OpenCL C 2.0 with `ds_bpermute` and none of the emulation's threadgroup words. AMD's compiler
+  builds a `tempo_batch` in 0.3-0.6 s, the interpreter's `block_batch` in 0.5-0.8 s and the 12 serial kernels in
+  1.4-1.5 s, with none of Intel's slowdown within a process (decision 0576).
+- **The engine's GPU tests on the Radeon:** the tape's (`tape::tests`, `tape::resident`), the residency's, the
+  tokens', the embeddings' and the virtual tables' pass. Of the transducer's and the residency's 231 quick-tier
+  tests, every one that ran passes, except four that read the packs' test data, which that host has not pulled.
+  Not yet run there: about twenty, mostly CPU tests and benchmarks that outran a run's minute. One CPU test,
+  `native_cpu::tests::nested_optional_types_keep_interpreter_candidate_ordinals`, ended its process with no
+  result there (the host went off the network soon after, but a compile was running on its Linux guest then,
+  which has reset it before). It passes on Linux.
+  - A batch over two slabs needs the slabs' device addresses, and AMD's OpenCL has no USM, so its buffers have none.
+    So `DocTable` refuses such a batch for every format, as it does on Apple's OpenCL, and its caller splits it by
+    slab. The residency test now expects that refusal wherever the device has no addresses, not for format 16z
+    alone. Addresses on AMD would come from OpenCL 2.0's SVM, which is still open (above).
+- **Found on the way, not the GPU's:** on x86-64 the stream JIT's clustered form (a cluster's word in another a tail
+  call) needs Cranelift's frame pointers (`preserve_frame_pointers`, set there on x86-64 alone); the old Rust
+  lowering's AOT test (`grammars_rust_tapes_are_the_jits`) writes `core::arch::aarch64` and cannot build on x86-64;
+  and `rr_tests::a_reading_is_checked` takes over a minute on x86-64 Windows' debug build.
+- **Found on the way, the engine's:** reads side by side of one batch (`Batch::ensure`) found the documents they
+  needed under one lock and claimed them under another, so two reads could both make a document and one group be
+  set aside (`reads_side_by_side_make_each_document_once`, which the Windows host's scheduling showed). A read now
+  claims them in the lock that found them unclaimed.
+
+**HIP on the Radeon 680M (2026-11-22).** The user: "you can install the HIP SDK", with AMD's full install.
+
+- **What is installed:** AMD's HIP SDK 7.2 for Windows, by its silent install (`-install`), from
+  `AMD-Software-PRO-Edition-26.Q3-Win11-For-HIP.exe`.
+  - It installed `hipcc` and AMD's clang, the HIP runtime (`amdhip64_7`), `hiprtc` (`hiprtc0702`), `comgr`, and
+    the HIP libraries.
+  - The display driver stayed 32.0.21030.2001, although the bundle carries the PRO 25.30 driver.
+  - The first attempt hard-reset the host 18 s after the installer unpacked itself (Kernel-Power 41, no log). The
+    second ran to the end in about a minute.
+- **gfx1035 works,** though AMD does not list it as supported:
+  - `hipInfo` gives the device as gfx1035, with 32-lane waves and 6 compute units (12 CUs as WGPs).
+  - A kernel built by `hipcc --offload-arch=gfx1035` ran right: a wave's sum by `__shfl_xor`, and
+    `__builtin_amdgcn_sdot4`.
+- **So a HIP backend can be the CUDA backend's port:** `hiprtc` compiles at run time, as NVRTC does there, and
+  device pointers give the addresses OpenCL lacks (a batch over several slabs, above). It is done: the next entry.
+
+**The HIP backend (2026-11-22).** The user: "please do the HIP port of the CUDA one". One backend, not a second
+copy of it: `compute_kernel_cuda.rs` runs on either vendor's driver, and UKL's CUDA shim and library section take
+HIP's language.
+
+- **The host: CUDA's driver API and HIP's are one table** (`Api`, with `Vendor`).
+  - HIP's calls have CUDA's signatures under other names: `hipModuleLoadData`, `hipModuleLaunchKernel`,
+    `hipHostMalloc`, `hipEventQuery`, `hiprtcGetCode` for `nvrtcGetCUBIN`, and so on.
+  - Every constant read is the same number on both but the device attributes'. Those are a table per vendor
+    (`Attributes`), each value measured from HIP 7.2's header by a probe on the host.
+  - The calls whose shapes differ are their own entries:
+    - `hipStreamWaitValue64` takes a pointer and a mask.
+    - HIP has no opt-in to more dynamic shared memory: a block may take all its LDS.
+    - The architecture's name (`gfx1035`), which hiprtc compiles for, is read from `hipDeviceProp_tR0600`'s
+      `gcnArchName`, at its measured offset.
+  - The process opens CUDA's driver where there is one, else HIP's (`RERAIL_GPU=hip` asks for HIP). On Windows,
+    HIP comes before OpenCL, so the Radeon's host runs HIP by default. (HIP was opt-in for the hours between the
+    reset below and its fix.)
+  - The libraries are found in the system's search and in the SDK's directory (`HIP_PATH`, else each version under
+    ROCm's install). On Windows, a library named by its path now finds its own dependencies beside it
+    (`LoadLibraryExW`'s altered search: hiprtc needs comgr).
+- **The kernels: `Backend::Hip { wave }`** preprocesses UKL for hip-clang's device compile (`__HIP_DEVICE_COMPILE__`,
+  `__AMDGCN_WAVEFRONT_SIZE`), through the CUDA shim (`UKL_CUDA` and `UKL_HIP`). HIP is CUDA's language, so only these
+  differ:
+  - A wavefront takes the place of a warp, at 32 or 64 lanes.
+  - The shuffles and the ballot are AMD's (`__shfl*`, `__ballot`, with no mask). The ballot is 64 bits; `ukl_mask_t`
+    holds a wave64's.
+  - `ukl_sg_barrier` is a wavefront barrier between release and acquire fences, as CUDA's `__syncwarp`.
+  - The integer types are as the compiler names them (`__UINT64_TYPE__`).
+  - Every unmarked function is a device's (`#pragma clang force_cuda_host_device`), as NVRTC's `-default-device`
+    makes it.
+  - `UKL_OFFSETOF` is clang's builtin, not EDG's `__INTADDR__`.
+  - There is no native match. HIP 7.2's compiler has no wavefront-reduction builtins (a probe's
+    `__has_builtin(__builtin_amdgcn_wave_reduce_*)` is false), so the reductions are the shuffles' reference.
+  - `ukl/dot.h` takes the f16 conversion through `_Float16`, and on RDNA2 (`UKL_HIP_AMD_DOT`, the device's define for
+    a `gfx103*` name) `sdot4`, `udot4` and `fdot2`, as OpenCL's AMD section does.
+- **A kernel's residency, from the driver** (`ComputeFunction::resident_groups`): CUDA's and HIP's occupancy of
+  the kernel, times the multiprocessors (SMs, or a Radeon's work-group processors).
+  - The grid tests ran their grids at 1, 8 and 32 groups. The grid sort's kernel holds only 12 groups of 256 on the
+    680M (its registers), so its 32-group grid failed its barrier there, under OpenCL before and under HIP.
+  - A grid past residency fails by design (`a_grid_past_residency_fails_its_barrier`). The tests now run no fixed
+    size past the kernel's residency, and run at the residency itself: 12 groups for the sort, 24 for the scans, on
+    the 680M; 192 and 288 on a GB10.
+- **Measured:** `rerail-gpu`'s library tests, 19 of 19, on HIP (the Radeon 680M, gfx1035) and on CUDA (a GB10),
+  `dot_products_equal_their_references` with RDNA2's dot products among them. UKL's tests preprocess every library
+  header for HIP at 32 and 64 lanes, as clang does.
+- **The engine's tests on HIP reset the host, and why.** Four slab tests (`residency::slabs::tests`) under
+  `RERAIL_GPU=hip` lost the connection 26 s in. The host had rebooted from bugcheck 0x133 (DPC_WATCHDOG_VIOLATION).
+  - The minidump, read with cdb (the Windows SDK's debuggers, installed for it), puts the stalled DPC in Hyper-V's
+    root scheduler (`winhvr!WinHvpXSchedulerDpcRoutine`), with AMD's driver on no frame.
+  - A second run did not reset the host. It lost the connection for minutes, and one test,
+    `the_device_reads_every_format_as_the_document_does`, read zeros. At that moment the IOMMU logged a fault from
+    the GPU (HAL event 15, reason 6). On this host the hypervisor owns the IOMMU, so the GPU's faults land in the
+    hypervisor's DPCs: the reset was very likely a worse case of the same faults.
+  - **The cause:** HIP on Windows says registered host memory is the device's at the host's address
+    (`hipDeviceAttributeCanUseHostPointerForRegisteredMem` = 1). It maps it elsewhere: a probe registered three
+    allocations, and `hipHostGetDevicePointer` gave another address for each, which kernels read right. The backend
+    trusted the attribute and gave the device host addresses for wrapped memory (`wrap_host_memory`), which the
+    IOMMU did not map.
+  - **The fix:** the attribute is confirmed at open by registering a page and comparing the two addresses
+    (`registered_at_host_address`). Where they differ, each registered run keeps its device base, and a wrap's
+    device address is that base and its offset (`register_mapped`). A wrap inside a run the driver pinned itself
+    (`hipHostMalloc`'s, error 712) takes the driver's pointer, checked to be one span. A wrap over several
+    registrations is an error, never an address the device does not map. The old "own registration" path, which
+    had no such check, is gone.
+  - After the fix: the four slab tests pass in 3.5 s (21 s before), with no IOMMU fault; `rerail-gpu`'s 25 tests
+    pass on HIP and on CUDA. Of the engine's transducer and residency tests under HIP, 185 pass and none fails, with no IOMMU fault and
+    no reset. The rest are the tests whose data the host lacks, slow ones past the runs' minute (as under OpenCL),
+    and `nested_optional_types_keep_interpreter_candidate_ordinals`, which ends its process on this host under
+    OpenCL too.
+
+**HIP's copies and fills, and its other overheads (2026-11-22).** The library's bench (`bench_device_and_host`) first ran
+HIP several times slower than OpenCL on the same Radeon 680M: a 256K-key sort 13.8 ms against 0.94, a copy or a scan
+7 times OpenCL's. The user: "no, figure out where the overhead is coming from and address it". There were four
+sources, each found by a probe on the host:
+
+- **The measure.** The two backends' device times are not the same quantity:
+  - OpenCL's is the sum of its kernels' execution (`CL_PROFILING_COMMAND_START` to `_END`), without the gaps between
+    them or the first kernel's start.
+  - HIP's (as CUDA's) runs from an event before the first operation to one after the last, gaps included.
+  - So a 1 MB copy alone took 0.05 ms by OpenCL's measure and 0.15 to 0.4 ms by HIP's, in about the same wall time.
+  - The bench now also reports each stage's wall time, from the flush to the event's end, and backends are compared
+    by it.
+- **The runtime's copies and fills.** HIP's runtime is slow at copies and fills on host memory, which every buffer
+  here is:
+  - `hipMemsetD8Async` fills 1 MB in 2.7 ms and 16 MB in 31 ms (0.5 ms in device memory).
+  - `hipMemcpyDtoDAsync` copies 1 MB in 0.25 ms, against 0.1 ms for a kernel.
+  - The grid's sort and scan fill and copy between their passes, so they ran 4 to 15 times OpenCL's time.
+  - So on HIP, copies and fills are kernels (`Blit`), which move 16, 4 or 1 bytes an element, the widest that
+    divides both addresses and the length. That is how OpenCL's driver does them.
+- **Fine-grained memory's atomics.** `hipHostMalloc`'s default memory is fine-grained, which the host and the device
+  keep coherent while a kernel runs, and AMD's device does atomics on it past its caches.
+  - A 1 Mi-key histogram took 150 ms there, against 0.76 ms in coarse-grained memory and 0.94 ms in the device's own.
+    Reads ran alike in all three.
+  - The pool's memory is now coarse-grained. Only a shared event's word, which the host writes while the device waits
+    on it, stays fine-grained.
+- **The scatter of the radix sort.** After those fixes, the 4M-key sort still took 68 ms against OpenCL's 54. One
+  timing a part found the gap in the scatter: 19.2 ms a pass against 13.8. The cases, each measured:
+  - **Not the kernel's code.** The two compilers' code for it is nearly the same, instruction for instruction: 128
+    `ds_bpermute`s, the same loads, stores and barriers, wave32 in WGP mode on both.
+  - **Not its registers.** HIP's build took 51 VGPRs, against 20 when the shuffle was `ds_bpermute` itself (then
+    `v_readlane`s), at the same time.
+  - **Not the clocks.** A compute-bound kernel took 97.3 ms on HIP and 96.4 ms on OpenCL.
+  - **Not CU mode** (`-mcumode`), and not the memory for one stream of writes. Random or bucketed writes of one array
+    took the same time in each kind of memory and on each backend.
+  - **Its stores alone made the gap.** Without them the scatter took 1.6 ms on both.
+  - **The barriers.** HIP's `__syncthreads()` fences every address space. At each of the scatter's barriers, the wave
+    waited for its global stores (`s_waitcnt_vscnt 0`) and invalidated its vector L0 cache (`buffer_gl0_inv`).
+    `ukl_tg_barrier` orders threadgroup memory alone, as Metal's (`mem_threadgroup`) and OpenCL's
+    (`CLK_LOCAL_MEM_FENCE`) do. So on HIP it is now `s_barrier` between workgroup fences on LDS. The waits are gone
+    from the code; alone, this was worth about 1 ms a pass. `ukl_tg_barrier_device` keeps `__syncthreads()`.
+  - **The pool's memory: the gap.** Two streams of writes spread over many pages (a radix pass's: a row to each of 256
+    buckets, keys and values) took 4M rows in:
+
+    | Memory | ms |
+    |---|---|
+    | `hipHostMalloc`'s coarse-grained (the pool's) | 65.8 |
+    | the device's own (`hipMalloc`) | 62.7 |
+    | the host's own, registered (`malloc` and `hipHostRegister`) | 52.6 |
+    | OpenCL's buffers | 57 |
+
+    OpenCL's buffers are the host's own memory (`CL_MEM_USE_HOST_PTR`), as the engine's wrapped blocks are on HIP.
+    Registered memory's atomics ran as coarse-grained memory's (a 0.91 ms histogram). So on HIP, a pool block of a page
+    or more is now the host's memory, page-aligned and registered (`registered_block`). A smaller block stays
+    `hipHostMalloc`'s, as registering it would pin a page for it. The scatter then took 13.6 ms a pass, against
+    OpenCL's 14.7.
+
+The bench after these changes, in wall ms:
+
+| Rows | Stage | HIP | OpenCL |
+|---|---|---|---|
+| 256K | sort | 1.04 | 2.60 |
+| 256K | copy | 0.33 | 0.43 |
+| 256K | scan | 0.16 | 0.99 |
+| 256K | hash build and probe | 4.38 | 4.15 |
+| 1M | sort | 4.99 | 8.75 |
+| 1M | copy | 0.69 | 0.56 |
+| 1M | scan | 0.54 | 1.52 |
+| 1M | hash build and probe | 20.8 | 21.7 |
+| 4M | sort | 45.2 | 48.5 |
+| 4M | copy | 1.33 | 1.86 |
+| 4M | scan | 1.69 | 2.92 |
+| 4M | hash build and probe | 132 | 126 |
+
+`rerail-gpu`'s 25 tests pass on HIP and on CUDA (a GB10). The engine's slab tests and a sample of 20 of its tests that
+passed under HIP before pass again, with no IOMMU fault.
 
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's

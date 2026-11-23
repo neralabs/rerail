@@ -149,7 +149,7 @@ impl Gather<'_> {
 }
 
 /// `src`'s preprocessor tape, read as `opts` say.
-pub fn image(src: &[u8], opts: Options) -> Vec<u8> {
+pub fn image(src: &[u8], opts: Options) -> rerail_tape_format::Vector<u8> {
     let nodes = nodes(src, opts);
     let mut widths = Widths::guess(src.len());
     loop {
@@ -166,7 +166,7 @@ pub fn image(src: &[u8], opts: Options) -> Vec<u8> {
 pub fn image_16(src: &[u8], opts: Options) -> Tape16 {
     let nodes = nodes(src, opts);
     let mut widths = Widths::guess(src.len());
-    let target = Target::F16(Sixteen { lang: lang(), tag: TAG, z: false, blocks: false, number: std::sync::Arc::new(number) });
+    let target = Target::F16(Sixteen { lang: lang(), terminators: LINE_ENDS, tag: TAG, z: false, blocks: false, number: std::sync::Arc::new(number) });
     loop {
         match write(&nodes, src, widths, target.clone()).and_then(|mut w| w.finish_16()) {
             Ok(Ok(f)) => match f.tape {
@@ -182,6 +182,35 @@ pub fn image_16(src: &[u8], opts: Options) -> Tape16 {
 /// The tape's tag (its language's; the preprocessor tape is no grammar's, so its language is
 /// given to every reader, `lang`, never looked up by tag).
 pub const TAG: u8 = 0;
+
+/// A file's line (from 1) at a position, counted as a scan goes forward (a directive's): the terminators of C's lines
+/// (`LINE_ENDS`, decision 0612) whose last byte is before it.
+#[derive(Default)]
+pub struct LineCount {
+    /// Past the last terminator counted.
+    at: usize,
+    line: u32,
+}
+
+impl LineCount {
+    /// The line (from 1) of the file's position `to` (not before the last asked). A terminator ending at `to` or
+    /// after is on its line, and is seen again by the next ask.
+    pub fn of(&mut self, src: &[u8], to: usize) -> u32 {
+        let from = self.at.min(to);
+        let (mut line, mut at) = (self.line, self.at);
+        LINE_ENDS.each(&src[from..(to + 1).min(src.len())], |k, len| {
+            if from + k + len - 1 < to {
+                line += 1;
+                at = from + k + len;
+            }
+        });
+        (self.line, self.at) = (line, at);
+        self.line + 1
+    }
+}
+/// C's line terminators, clang's and GCC's: `\r\n`, `\r` and `\n` (decision 0612, the C adapter's), which the
+/// tape's line index holds and `__LINE__` counts.
+pub const LINE_ENDS: rerail_tape_format::newlines::Terminators = rerail_tape_format::newlines::Terminators::Newlines;
 
 /// The tape's format 16 language: a code a kind with no field first (its number is its kind's,
 /// below the one-byte cut), then each kind with each field (`number`).

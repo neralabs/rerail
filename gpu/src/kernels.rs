@@ -58,11 +58,32 @@ pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<
     let slot: Slot = std::sync::Arc::clone(PROGRAMS.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).entry(key.clone()).or_default());
     slot.get_or_init(|| {
         let shared = crate::shared::get().ok_or("no device")?;
-        let source = preprocess_with(name, text, defines)?;
-        let library = ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?;
+        let started = std::time::Instant::now();
+        let (library, preprocessed, bytes) = if crate::vec::on(&shared.device) {
+            (crate::vec::library(name, &format!("/<kernels>/{name}"), text, defines)?, started.elapsed(), text.len())
+        } else {
+            let source = preprocess_with(name, text, defines)?;
+            let preprocessed = started.elapsed();
+            (ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?, preprocessed, source.len())
+        };
+        // `RERAIL_GPU_TIMES`, a measurement aid: each program's preprocessing and compile (or load), on stderr.
+        if std::env::var_os("RERAIL_GPU_TIMES").is_some() {
+            eprintln!("gpu program {name}: preprocessed {:.3} s ({bytes} bytes), compiled {:.3} s", preprocessed.as_secs_f64(), (started.elapsed() - preprocessed).as_secs_f64());
+        }
         Ok(&*Box::leak(Box::new(Program { name: key, library, functions: Default::default() })))
     })
     .clone()
+}
+
+/// The backend's text of `text`'s compiled instructions (CUDA's PTX), its defines `defines`, for a test to read which
+/// instructions a kernel took (decision 0617, R7): None where the backend has none, or there is no device.
+pub fn native_code(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<Option<String>, String> {
+    let Some(shared) = crate::shared::get() else { return Ok(None) };
+    if crate::vec::on(&shared.device) {
+        return Ok(None);
+    }
+    let source = preprocess_with(name, text, defines)?;
+    ComputeFunctionLibrary::native_code(&shared.device, &source, name)
 }
 
 /// A program compiled ahead of its first use (decision 0395's tiers on the device layer): `make` asks for it as its

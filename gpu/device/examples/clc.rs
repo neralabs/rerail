@@ -6,6 +6,9 @@
 //! clc build <file.cl> [options]            clBuildProgram; keeps the binary as <file.cl>.bin
 //! clc load <file.bin> [options]            clCreateProgramWithBinary and clBuildProgram
 //! clc link <options> <file.cl>...          clCompileProgram each file (with -create-library none), then clLinkProgram
+//! clc run <file.cl> <n> <local> <words>   builds it and runs its kernel `probe(global uint* out, global const uint*
+//!                                          in)` over `n` items in groups of `local`, `in[i] = i`; prints each
+//!                                          item's `words` words of `out` (`out[i * words + k]`)
 //! clc usm [mb]                             host USM (cl_intel_unified_shared_memory): a kernel reads through an
 //!                                          address held in memory, as a block's directory is
 //! ```
@@ -90,6 +93,9 @@ struct Cl {
     enqueue_nd_range_kernel: unsafe extern "C" fn(Ptr, Ptr, u32, *const usize, *const usize, *const usize, u32, *const Ptr, *mut Ptr) -> i32,
     finish: unsafe extern "C" fn(Ptr) -> i32,
     set_kernel_exec_info: unsafe extern "C" fn(Ptr, u32, usize, *const c_void) -> i32,
+    create_buffer: unsafe extern "C" fn(Ptr, u64, usize, Ptr, *mut i32) -> Ptr,
+    set_kernel_arg: unsafe extern "C" fn(Ptr, u32, usize, *const c_void) -> i32,
+    enqueue_read_buffer: unsafe extern "C" fn(Ptr, Ptr, u32, usize, usize, Ptr, u32, *const Ptr, *mut Ptr) -> i32,
     ext: unsafe extern "C" fn(Ptr, *const c_char) -> Ptr,
 }
 
@@ -129,6 +135,9 @@ impl Cl {
                 enqueue_nd_range_kernel: f!(lib, "clEnqueueNDRangeKernel", _),
                 finish: f!(lib, "clFinish", _),
                 set_kernel_exec_info: f!(lib, "clSetKernelExecInfo", _),
+                create_buffer: f!(lib, "clCreateBuffer", _),
+                set_kernel_arg: f!(lib, "clSetKernelArg", _),
+                enqueue_read_buffer: f!(lib, "clEnqueueReadBuffer", _),
                 ext: f!(lib, "clGetExtensionFunctionAddressForPlatform", _),
             };
         }
@@ -179,6 +188,25 @@ impl Cl {
     }
 }
 
+/// The process's CPU time (user and kernel, every thread), in seconds.
+#[cfg(windows)]
+fn cpu_seconds() -> f64 {
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> Ptr;
+        fn GetProcessTimes(p: Ptr, created: *mut u64, exited: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
+    }
+    let (mut a, mut b, mut k, mut u) = (0u64, 0u64, 0u64, 0u64);
+    unsafe { GetProcessTimes(GetCurrentProcess(), &mut a, &mut b, &mut k, &mut u) };
+    (k + u) as f64 * 1e-7
+}
+#[cfg(not(windows))]
+fn cpu_seconds() -> f64 {
+    let mut r: libc::rusage = unsafe { std::mem::zeroed() };
+    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut r) };
+    let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 * 1e-6;
+    s(r.ru_utime) + s(r.ru_stime)
+}
+
 /// A file's text and the options its dump recorded.
 fn read(path: &str) -> (String, String) {
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
@@ -204,6 +232,24 @@ fn main() {
             println!("version {}", cl.info(CL_DEVICE_VERSION));
             for e in cl.info(CL_DEVICE_EXTENSIONS).split_whitespace() {
                 println!("ext     {e}");
+            }
+        }
+        Some("builds") => {
+            let fresh = std::env::var("CLC_FRESH").is_ok();
+            let mut cl = cl;
+            for path in &args[1..] {
+                if fresh {
+                    cl = Cl::new();
+                }
+                let (text, options) = read(path);
+                let p = cl.source(&text);
+                let o = CString::new(options.as_str()).unwrap();
+                let (t, c) = (Instant::now(), cpu_seconds());
+                let e = unsafe { (cl.build_program)(p, 1, &cl.device, o.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) };
+                let (w, c) = (t.elapsed().as_secs_f64(), cpu_seconds() - c);
+                let bin = cl.binary(p);
+                let h = bin.iter().fold(0xcbf29ce484222325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100000001b3));
+                println!("build {path}: {e} in {w:.2} s, {c:.2} s of CPU, binary {} bytes {h:016x}", bin.len());
             }
         }
         Some("build") => {
@@ -259,8 +305,14 @@ fn main() {
                 println!("{}", cl.log(p));
             }
         }
+        Some("run") => {
+            let n: usize = args[2].parse().unwrap();
+            let local: usize = args[3].parse().unwrap();
+            let words: usize = args[4].parse().unwrap();
+            run(&cl, &args[1], n, local, words);
+        }
         Some("usm") => usm(&cl, args.get(1).and_then(|v| v.parse().ok()).unwrap_or(64)),
-        Some(other) => panic!("clc {other}: info, build, load, link or usm"),
+        Some(other) => panic!("clc {other}: info, build, load, link, run or usm"),
     }
 }
 
@@ -312,5 +364,35 @@ fn usm(cl: &Cl, mb: usize) {
         let s = t.elapsed().as_secs_f64();
         let wrong = (0..n).filter(|&i| unsafe { *out.add(i) } != i as i64 * 3 + 1).count();
         println!("round {round}: launch {r}, finish {f}, {s:.4} s ({:.1} GB/s read+write), {wrong} wrong of {n}", 2.0 * bytes as f64 / s / 1e9);
+    }
+}
+
+/// `clc run`: the probe kernel over `n` items, its `words` words an item printed.
+fn run(cl: &Cl, path: &str, n: usize, local: usize, words: usize) {
+    const CL_MEM_READ_WRITE: u64 = 1;
+    const CL_MEM_COPY_HOST_PTR: u64 = 32;
+    let (text, options) = read(path);
+    let p = cl.source(&text);
+    let o = CString::new(options.as_str()).unwrap();
+    let e = unsafe { (cl.build_program)(p, 1, &cl.device, o.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) };
+    assert_eq!(e, 0, "build: {}", cl.log(p));
+    let mut e = 0;
+    let k = unsafe { (cl.create_kernel)(p, c"probe".as_ptr(), &mut e) };
+    assert_eq!(e, 0, "clCreateKernel");
+    let input: Vec<u32> = (0..n as u32).collect();
+    let mut out = vec![0u32; n * words];
+    let ib = unsafe { (cl.create_buffer)(cl.context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, n * 4, input.as_ptr() as Ptr, &mut e) };
+    assert_eq!(e, 0, "clCreateBuffer in");
+    let ob = unsafe { (cl.create_buffer)(cl.context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, out.len() * 4, out.as_mut_ptr().cast(), &mut e) };
+    assert_eq!(e, 0, "clCreateBuffer out");
+    unsafe { (cl.set_kernel_arg)(k, 0, std::mem::size_of::<Ptr>(), (&raw const ob).cast()) };
+    unsafe { (cl.set_kernel_arg)(k, 1, std::mem::size_of::<Ptr>(), (&raw const ib).cast()) };
+    let q = unsafe { (cl.create_command_queue)(cl.context, cl.device, 0, &mut e) };
+    let r = unsafe { (cl.enqueue_nd_range_kernel)(q, k, 1, std::ptr::null(), &n, &local, 0, std::ptr::null(), std::ptr::null_mut()) };
+    assert_eq!(r, 0, "clEnqueueNDRangeKernel");
+    let r = unsafe { (cl.enqueue_read_buffer)(q, ob, 1, 0, out.len() * 4, out.as_mut_ptr().cast(), 0, std::ptr::null(), std::ptr::null_mut()) };
+    assert_eq!(r, 0, "clEnqueueReadBuffer");
+    for (i, row) in out.chunks(words).enumerate() {
+        println!("{i:4}: {}", row.iter().map(|w| format!("{w:#010x}")).collect::<Vec<_>>().join(" "));
     }
 }

@@ -11,7 +11,7 @@ extern crate rerail_engine;
 use rerail_facts::code_rule_dsl::facts::core::{self, Facts};
 use rerail_facts::code_rule_dsl::facts::vtab::syntax::{Dialect, Projected, Shape};
 use rerail_facts::code_rule_dsl::language::GrammarDialect;
-use rerail_facts::code_rule_dsl::lines::{LineTable, Terminators};
+use rerail_facts::code_rule_dsl::lines::terminators;
 use rerail_facts::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -75,7 +75,7 @@ fn main() {
             .iter()
             .zip(&images)
             .map(|(s, image)| {
-                let lines = Arc::new(LineTable::new(s, Terminators::of(lang)));
+                let lines = Arc::new(image.lines(s, terminators(lang), false));
                 Arc::new(core::from_image(Arc::clone(s), &grammar, image.clone().in_format(format, s.as_bytes()), lines).unwrap())
             })
             .collect();
@@ -97,8 +97,10 @@ fn main() {
             for (k, &x) in items.iter().enumerate() {
                 let got = table.id(p.ranks(), x).map(|(l, _)| l);
                 if got != Some(low[k]) {
+                    let file = files[facts.iter().position(|g| Arc::ptr_eq(g, f)).unwrap()].display();
+                    let f = p.f();
                     let parent = f.parent(x).map(|q| (q, dialect.name(f, q), f.named(q)));
-                    panic!("{}: item {k} (tape {x}, {:?} {:?}, parent {parent:?}): in place {got:x?}, numbered {:x}", files[facts.iter().position(|g| Arc::ptr_eq(g, f)).unwrap()].display(), dialect.name(f, x), f.text(x), low[k]);
+                    panic!("{file}: item {k} (tape {x}, {:?} {:?}, parent {parent:?}): in place {got:x?}, numbered {:x}", dialect.name(f, x), f.text(x), low[k]);
                 }
             }
             let mut least = [Cost::default(); 6];

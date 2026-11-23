@@ -17,19 +17,20 @@
 //!
 //! For each file and input, two checks:
 //!
-//! 1. every executor (Cranelift, the Metal interpreter and generated MSL at each lane width and
-//!    class strategy) gives the CPU interpreter's outputs, bit for bit;
+//! 1. every executor (Cranelift, Metal's forward carry) gives the CPU interpreter's outputs, bit
+//!    for bit;
 //! 2. the CPU interpreter gives the evaluator's masks.
 
+use rerail_blocks::vector::Vector;
 #[allow(unused_imports)]
 use rerail_compiler::*;
 use rerail_cpu_block::*;
 use rerail_cpu_stream::*;
 use rerail_compiler::program::Words as Program;
-use rerail_compiler::rir_asm as rir;
+use rerail_rir::rir_asm as rir;
 use rerail_bitlex::bitlex_masks as bitlex_compile;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-use rerail_metal as metal_program_backend;
+use rerail_metal_programs as metal_program_backend;
 use ::bitlex::syntax::{Stmt, parse};
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -460,7 +461,7 @@ struct Case {
     stmts: Vec<Stmt>,
     program: Program,
     checked: Vec<(String, usize)>,
-    fallbacks: Vec<usize>,
+    fallbacks: Vector<usize>,
     /// It has a count: below zero the compiled program falls back where the evaluator holds 0.
     counts: bool,
 }
@@ -489,7 +490,7 @@ fn compile_case(name: &str, source: &str) -> Result<Case, String> {
     Ok(Case { name: name.to_owned(), stmts, program, checked, fallbacks, counts })
 }
 
-fn cut(mut words: Vec<u64>, n: usize) -> Vec<u64> {
+fn cut(mut words: Vector<u64>, n: usize) -> Vector<u64> {
     words.truncate(n.div_ceil(64));
     if !n.is_multiple_of(64)
         && let Some(last) = words.last_mut()
@@ -501,7 +502,7 @@ fn cut(mut words: Vec<u64>, n: usize) -> Vec<u64> {
 
 /// Check 2: the interpreter's outputs for `case` over `bytes` against the evaluator's masks:
 /// whether the file fell back, or the first difference.
-fn against_the_evaluator(case: &Case, bytes: &[u8], got: &[Vec<u64>]) -> Result<bool, String> {
+fn against_the_evaluator(case: &Case, bytes: &[u8], got: &[Vector<u64>]) -> Result<bool, String> {
     let n = bytes.len();
     let at = || format!("{n} bytes: {:?}", String::from_utf8_lossy(&bytes[..n.min(80)]));
     let out = ::bitlex::eval::Ev::run(&case.stmts, bytes, &HashMap::new()).map_err(|e| format!("evaluates: {e}"))?;
@@ -594,7 +595,7 @@ fn corpus_cranelift_equals_the_interpreter() {
     executors_equal_the_interpreter(false);
 }
 
-/// Check 1 on the Metal executors (minutes: Metal compiles generated MSL slowly).
+/// Check 1 on the Metal executor (minutes: Metal compiles generated UKL slowly).
 #[test]
 #[ignore = "minutes of Metal compiling; run by name"]
 fn corpus_metal_equals_the_interpreter() {
@@ -609,14 +610,14 @@ fn executors_equal_the_interpreter(metal: bool) {
     let inputs = corpus_inputs();
     let blocks: Vec<&block::BlockProgram> = cases.iter().map(|c| &c.program.block_programs[0]).collect();
     let files = batch(&cases, &inputs);
-    let want: Vec<Vec<Vec<u64>>> = block::run_batch(&blocks, &files).into_iter().map(|r| r.outputs).collect();
+    let want: Vec<Vec<Vector<u64>>> = block::run_batch(&blocks, &files).into_iter().map(|r| r.outputs).collect();
     let natives: Vec<block_native::BlockNative> = cases.iter().map(|c| native_ir::lower(&c.program, 0, 0).expect("lowers").block_programs.remove(0)).collect();
     let compiled: Vec<native_cpu_block::CompiledBlock> =
         natives.iter().zip(&cases).map(|(n, c)| native_cpu_block::compile(n).unwrap_or_else(|e| panic!("{}: cranelift: {e:?}", c.name))).collect();
     let refs: Vec<&native_cpu_block::CompiledBlock> = compiled.iter().collect();
     eprintln!("interpreted and compiled in {:.1} s", seconds(t));
     #[cfg_attr(not(any(target_os = "macos", target_os = "linux", windows)), allow(unused_mut))]
-    let mut runs: Vec<(String, Vec<Vec<Vec<u64>>>)> =
+    let mut runs: Vec<(String, Vec<Vec<Vector<u64>>>)> =
         vec![("cranelift".to_owned(), native_cpu_block::run_batch(&refs, &files).into_iter().map(|r| r.outputs).collect())];
     if metal {
         runs.extend(metal_corpus_runs(&natives, &files, t));
@@ -648,46 +649,34 @@ fn executors_equal_the_interpreter(metal: bool) {
     assert!(list.is_empty(), "{} runs differ from the interpreter:\n{}", list.len(), list.join("\n"));
 }
 
-/// The Metal executors' runs of the corpus' batch (`executors_equal_the_interpreter`): each lane width's interpreter
-/// and generated MSL, in chunks of programs.
+/// The Metal executor's runs of the corpus' batch (`executors_equal_the_interpreter`): the forward carry in tier 1's
+/// segments, in chunks of programs.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-fn metal_corpus_runs(natives: &[block_native::BlockNative], files: &[block::BatchFile<'_>], t: std::time::Instant) -> Vec<(String, Vec<Vec<Vec<u64>>>)> {
-    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-    let mut runs = Vec::new();
-    let forms: Vec<&block_native::BlockNative> = natives.iter().collect();
-    for width in LaneWidth::ALL {
-        let mut executors = vec![(format!("metal interpreter, {}-byte lanes", width.bytes()), Executor::Interpreter)];
-        for s in ClassStrategy::ALL {
-            executors.push((format!("generated msl, {}-byte lanes, {s:?}", width.bytes()), Executor::Generated(s)));
-        }
-        // `RERAIL_CORPUS_EXECUTORS`: only the executors whose names hold it.
-        let only = std::env::var("RERAIL_CORPUS_EXECUTORS").ok();
-        executors.retain(|(n, _)| only.as_deref().is_none_or(|o| n.contains(o)));
-        for (name, executor) in executors {
-            // Generated MSL in chunks of programs: one source of every program takes Metal's
-            // compiler minutes; its time grows faster than the source.
-            let chunk = std::env::var("RERAIL_CORPUS_CHUNK").ok().and_then(|c| c.parse().ok()).unwrap_or(32usize);
-            let mut got: Vec<Vec<Vec<u64>>> = Vec::with_capacity(files.len());
-            for (c, programs) in forms.chunks(chunk).enumerate() {
-                let base = c * chunk;
-                let mine: Vec<block::BatchFile<'_>> = files
-                    .iter()
-                    .filter(|f| (base..base + programs.len()).contains(&f.program))
-                    .map(|f| block::BatchFile { bytes: f.bytes, program: f.program - base })
-                    .collect();
-                let run = run_split(programs, &mine, width, executor, 64).unwrap_or_else(|e| panic!("{name}: {e:?}"));
-                got.extend(run.files.into_iter().map(|r| r.outputs));
-            }
-            eprintln!("{name}: {:.1} s", seconds(t));
-            runs.push((name, got));
-        }
+fn metal_corpus_runs(natives: &[block_native::BlockNative], files: &[block::BatchFile<'_>], t: std::time::Instant) -> Vec<(String, Vec<Vec<Vector<u64>>>)> {
+    use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+    if crate::executors::no_device() {
+        return Vec::new();
     }
-    runs
+    let forms: Vec<&block_native::BlockNative> = natives.iter().collect();
+    let name = "metal forward carry".to_owned();
+    // In chunks of programs: one source of every program takes Metal's compiler minutes; its time grows faster than
+    // the source.
+    let chunk = std::env::var("RERAIL_CORPUS_CHUNK").ok().and_then(|c| c.parse().ok()).unwrap_or(32usize);
+    let mut got: Vec<Vec<Vector<u64>>> = Vec::with_capacity(files.len());
+    for (c, programs) in forms.chunks(chunk).enumerate() {
+        let base = c * chunk;
+        let mine: Vec<block::BatchFile<'_>> =
+            files.iter().filter(|f| (base..base + programs.len()).contains(&f.program)).map(|f| block::BatchFile { bytes: f.bytes, program: f.program - base }).collect();
+        let run = run_serial_split(programs, &mine, Segments { blocks: 29, warm: 1 }).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        got.extend(run.run.files.into_iter().map(|r| r.outputs));
+    }
+    eprintln!("{name}: {:.1} s", seconds(t));
+    vec![(name, got)]
 }
 
 /// No Metal executors off the device layer's targets.
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-fn metal_corpus_runs(_: &[block_native::BlockNative], _: &[block::BatchFile<'_>], _: std::time::Instant) -> Vec<(String, Vec<Vec<Vec<u64>>>)> {
+fn metal_corpus_runs(_: &[block_native::BlockNative], _: &[block::BatchFile<'_>], _: std::time::Instant) -> Vec<(String, Vec<Vec<Vector<u64>>>)> {
     Vec::new()
 }
 
@@ -696,7 +685,7 @@ const GAPS: [&str; 0] = [];
 
 
 /// A node as ids: kind, field, supertypes (sorted), start, end, size.
-type IdNode = (u16, u16, Vec<u16>, usize, usize, usize);
+type IdNode = (u16, u16, Vector<u16>, usize, usize, usize);
 
 /// Documents of `p`'s language: random values, nested, with random spacing; then each with one
 /// byte changed, dropped or doubled, so that many go to tree-sitter; and long atoms, deep
@@ -793,7 +782,7 @@ fn reference_nodes(stmts: &[Stmt], bytes: &[u8], ids: &Ids) -> Option<Vec<IdNode
             .iter()
             .map(|n| {
                 let field = n.field.as_deref().map_or(0, |f| ids.of(&format!("field {f}")));
-                let mut supers: Vec<u16> = n.supertypes.iter().map(|s| ids.of(s)).collect();
+                let mut supers: Vector<u16> = n.supertypes.iter().map(|s| ids.of(s)).collect();
                 supers.sort_unstable();
                 (ids.of(&n.kind), field, supers, n.start, n.end, n.size)
             })
@@ -812,7 +801,7 @@ fn tier2_nodes(p: &Program, bytes: &[u8]) -> Option<Vec<IdNode>> {
             .map(|n| {
                 let mut supers = n.supers;
                 supers.sort_unstable();
-                (n.kind, n.field, supers, n.start as usize, n.end as usize, n.size as usize)
+                (n.kind, n.field, Vector::from(&supers[..]), n.start as usize, n.end as usize, n.size as usize)
             })
             .collect(),
     )
@@ -833,7 +822,7 @@ fn corpus_trees_equal_the_evaluator() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+        let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         let compiled = match bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)) {
             Ok(c) => c,
             Err(e) => {
@@ -881,7 +870,7 @@ fn corpus_trees_compiled_equal_the_interpreters() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+        let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: {e}"));
         let program = rir::assemble(&compiled.text()).unwrap_or_else(|e| panic!("{name}: assembles: {e}"));
         let native = native_ir::lower(&program, 0, 0).expect("lowers");
@@ -906,7 +895,7 @@ fn corpus_trees_compiled_equal_the_interpreters() {
 }
 
 /// For a difference found above: one Bitlex source (`RERAIL_BITLEX`, a path) on one input
-/// (`RERAIL_INPUT`, a path), each mask on the interpreter and generated MSL at every width.
+/// (`RERAIL_INPUT`, a path), each mask on the interpreter and the forward carry.
 #[test]
 #[ignore = "a debugging aid; run by name with RERAIL_BITLEX and RERAIL_INPUT"]
 fn a_file_on_every_executor() {
@@ -917,7 +906,7 @@ fn a_file_on_every_executor() {
     let case = if path.ends_with(".rir") {
         let program = rir::assemble(&source).unwrap_or_else(|e| panic!("{e}"));
         let checked = (0..program.block_programs[0].outputs.len()).map(|k| (format!("out {k}"), k)).collect();
-        Case { name: path.clone(), stmts: Vec::new(), program, checked, fallbacks: Vec::new(), counts: false }
+        Case { name: path.clone(), stmts: Vec::new(), program, checked, fallbacks: rerail_blocks::vector::Vector::new(), counts: false }
     } else {
         compile_case(&path, &source).unwrap_or_else(|e| panic!("{e}"))
     };
@@ -930,19 +919,23 @@ fn a_file_on_every_executor() {
     metal_differences(&native, &bytes, &case.checked, &want);
 }
 
-/// Generated MSL's outputs over `bytes` where they differ from the interpreter's (`want`), each lane width's, for
-/// the outputs `checked` names; `RERAIL_DUMP_MSL=<file>` writes the 16-byte lanes' source.
+/// The forward carry's outputs over `bytes` where they differ from the interpreter's (`want`), in segments of three
+/// blocks and of tier 1's 29, for the outputs `checked` names; `RERAIL_DUMP_MSL=<file>` writes its source.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-fn metal_differences(native: &block_native::BlockNative, bytes: &[u8], checked: &[(String, usize)], want: &[Vec<u64>]) {
-    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with, run_generated_with};
-    if let Some(dump) = std::env::var_os("RERAIL_DUMP_MSL") {
-        std::fs::write(&dump, generate_with(&native.planes_form(), LaneWidth::W16, ClassStrategy::Planes)).expect("writes");
+fn metal_differences(native: &block_native::BlockNative, bytes: &[u8], checked: &[(String, usize)], want: &[Vector<u64>]) {
+    use metal_program_backend::block_program::serial::{Segments, run_serial_split, source};
+    if crate::executors::no_device() {
+        return;
     }
-    for width in LaneWidth::ALL {
-        let (got, _) = run_generated_with(native, bytes, width, ClassStrategy::Planes).expect("runs");
+    if let Some(dump) = std::env::var_os("RERAIL_DUMP_MSL") {
+        std::fs::write(&dump, source(&[native])).expect("writes");
+    }
+    let file = [block::BatchFile { bytes, program: 0 }];
+    for blocks in [3, 29] {
+        let got = run_serial_split(&[native], &file, Segments { blocks, warm: 1 }).expect("runs").run.files.remove(0).outputs;
         for (name, k) in checked {
             if got[*k] != want[*k] {
-                eprintln!("{name:>8} msl {:>2} bytes {:x?}", width.bytes(), got[*k]);
+                eprintln!("{name:>8} forward carry, segments of {blocks}: {:x?}", got[*k]);
             }
         }
     }
@@ -950,4 +943,4 @@ fn metal_differences(native: &block_native::BlockNative, bytes: &[u8], checked: 
 
 /// No Metal executors off the device layer's targets.
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-fn metal_differences(_: &block_native::BlockNative, _: &[u8], _: &[(String, usize)], _: &[Vec<u64>]) {}
+fn metal_differences(_: &block_native::BlockNative, _: &[u8], _: &[(String, usize)], _: &[Vector<u64>]) {}

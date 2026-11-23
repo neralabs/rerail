@@ -27,7 +27,7 @@
 //!   error, never an empty document.
 //! - **A resident source** is a file's bytes alone, keyed by their SHA-256: a parser's input,
 //!   which has no tape yet (decision 0067). Block programs read it in place
-//!   (`metal_block_program::run_batch`); it shares the slabs, the budget, retirement and the drop
+//!   (`metal_block_program::serial`); it shares the slabs, the budget, retirement and the drop
 //!   with the documents.
 //! - **Leases** are the `Arc`s a batch holds: a retired slab's memory goes when the last batch
 //!   reading it lets go.
@@ -99,18 +99,26 @@ impl Slab {
         // The device first, whatever its backend: making it installs the one block policy (decision 0342), without
         // which no block is a device slab (`alloc::plain` refuses `Device::Must`). A process that leases a slab before
         // anything else touched the device (the parser crate's tests) had every lease refused as over capacity.
-        let device = crate::lane::device()?;
+        // `RERAIL_POOL_DEBUG` prints why a lease is refused, as the pool's does.
+        let said = |what: &str, e: &dyn std::fmt::Debug| {
+            if std::env::var_os("RERAIL_POOL_DEBUG").is_some() {
+                eprintln!("slab of {bytes} bytes: {what}: {e:?}");
+            }
+        };
+        let device = crate::lane::device().map_err(|e| {
+            said("no device", &e);
+            e
+        })?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
-        // `RERAIL_POOL_DEBUG` prints why a lease is refused, as the pool's does.
-        let refused = |what: &str, e: String| {
-            if std::env::var_os("RERAIL_POOL_DEBUG").is_some() {
-                eprintln!("slab of {bytes} bytes: {what}: {e}");
-            }
+        let block = rerail_blocks::alloc::block(&need).map_err(|e| {
+            said("block", &e);
             Error::BackendCapacity
-        };
-        let block = rerail_blocks::alloc::block(&need).map_err(|e| refused("block", format!("{e:?}")))?;
-        let buffer = block.device_buffer(device).map_err(|e| refused("device buffer", e))?;
+        })?;
+        let buffer = block.device_buffer(device).map_err(|e| {
+            said("device buffer", &e);
+            Error::BackendCapacity
+        })?;
         Ok(Slab { id, block, buffer, tables: Mutex::default() })
     }
 
@@ -465,18 +473,14 @@ impl State {
                     // to make: the caller's, as it is (a block program skips a machine without one); a caller that
                     // took it for capacity split its batch down to one file before failing.
                     Err(Error::BackendCapacity) => {
-                        if std::env::var_os("RERAIL_POOL_DEBUG").is_some() {
-                            eprintln!("residency: a slab of {length} bytes refused");
-                        }
-                        rerail_prof::count("capacity.residency_slab", 1)
+                        rerail_prof::count("capacity.residency_slab", 1);
+                        refused(&format!("a slab of {length} bytes refused"));
                     }
                     Err(e) => return Err(e),
                 }
             }
             if !self.retire(keep) {
-                if std::env::var_os("RERAIL_POOL_DEBUG").is_some() {
-                    eprintln!("residency: no room for {bytes} bytes: {held} held of {} with {length} more", limit());
-                }
+                refused(&format!("no room for a slab of {length} bytes: {held} held of {}, none to retire", limit()));
                 return Err(Error::BackendCapacity);
             }
         }
@@ -530,7 +534,7 @@ fn source_room(len: usize) -> usize {
 /// Zero bytes past each source in its slab (a slab is mapped zeroed, and nothing else is written
 /// there): tier 2 reads its words in place, a window past the file's end reading zeros, as the
 /// batch's layout (`block_native::BACK`).
-pub const SOURCE_MARGIN: usize = rerail_compiler::block_native::BACK;
+pub const SOURCE_MARGIN: usize = 256;
 
 /// Files' bytes resident as sources, in order: hits by SHA-256 from the residency, misses copied
 /// into slabs once (the one copy a file's bytes take on their way to the device). The slabs of
@@ -576,7 +580,7 @@ pub fn admit_sources_digested(files: &[&[u8]], digests: &[[u8; 32]]) -> Result<V
     }
     rerail_prof::count("residency.source_hits", files.len() - misses);
     rerail_prof::count("residency.source_misses", misses);
-    digests.iter().map(|digest| state.sources.get(digest).cloned().ok_or(Error::BackendCapacity)).collect()
+    digests.iter().map(|digest| state.sources.get(digest).cloned().ok_or_else(|| refused("a source not resident after its admission"))).collect()
 }
 
 /// The digests the residency does not hold (each once); the hits' slabs are marked used.
@@ -606,7 +610,17 @@ pub fn misses(digests: &[[u8; 32]]) -> Result<Vec<[u8; 32]>, Error> {
 pub fn resident(digests: &[[u8; 32]]) -> Result<Vec<Arc<Resident>>, Error> {
     let st_ = residency();
     let state = st_.state.lock().map_err(|_| Error::BackendFailure)?;
-    digests.iter().map(|digest| state.documents.get(digest).cloned().ok_or(Error::BackendCapacity)).collect()
+    digests.iter().map(|digest| state.documents.get(digest).cloned().ok_or_else(|| refused("a document not resident"))).collect()
+}
+
+/// A refusal for room (`BackendCapacity`), which says why under `RERAIL_POOL_DEBUG` or `RERAIL_PP_WHY`.
+fn refused(why: &str) -> Error {
+    // The pool's switch (`RERAIL_POOL_DEBUG`, as the pool's refusals print) and the preprocessor's (`RERAIL_PP_WHY`,
+    // decision 0588: every refusal of its run says why).
+    if std::env::var_os("RERAIL_POOL_DEBUG").is_some() || std::env::var_os("RERAIL_PP_WHY").is_some() {
+        eprintln!("residency: {why}");
+    }
+    Error::BackendCapacity
 }
 
 /// A document to place: its digest, the bytes it takes, the language's table it reads (format 16), and how to

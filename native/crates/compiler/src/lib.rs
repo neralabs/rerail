@@ -7,8 +7,8 @@
 //!
 //! The compilers and backends are the crates above, each its own so that an edit to one rebuilds it and what reads
 //! it, not the front end's readers: the Bitlex compiler (`rerail-bitlex`), tier 1 on the CPU (`rerail-cpu-block`),
-//! tier 2 on the CPU (`rerail-cpu-stream`), both tiers as Rust source (`rerail-rust-stream`), the C preprocessor on
-//! the CPU (`rerail-cpu-pp`) and Metal's (`rerail-metal`). Their sources stay in this folder; they mount them. The engine
+//! tier 2 on the CPU (`rerail-cpu-stream`), the C preprocessor on the
+//! CPU (`rerail-cpu-pp`) and Metal's (`rerail-metal`). Their sources stay in this folder; they mount them. The engine
 //! (`code_rule_dsl::transducer::packed`) re-exports each module under the same name.
 
 // The compiler's passes hand each other plain tuples of tables; naming each would add nothing.
@@ -23,7 +23,6 @@ pub mod block_native;
 pub mod clif_fold;
 pub mod clif_text;
 pub mod grammar;
-mod error;
 pub mod native_cpu_codegen;
 pub mod native_cpu_edge;
 /// Which of tier 1's values are byte-local (`Plan`), for every vector backend.
@@ -35,12 +34,9 @@ pub mod native_cpu_pressure;
 pub mod native_cpu_shape;
 pub mod native_ir;
 pub mod program;
-pub mod pp_expr;
-pub mod pp_words;
-#[cfg(test)]
-mod pp_words_tests;
+// The RIR assembler and the preprocessor's words (`rir_asm`, `pp_words`, `pp_expr`) are rerail-rir's, over this
+// crate (step 7a).
 pub mod records;
-pub mod rir_asm;
 pub mod rir_text;
 pub mod set_mode;
 pub mod stream;
@@ -56,7 +52,7 @@ pub mod stream_ir;
 /// Which tier 1 values are token-level checks (doc 25): local windows, anchors, readers.
 pub mod token_local;
 
-pub use error::Error;
+pub use rerail_error::Error;
 
 #[cfg(test)]
 mod grammar_tests;

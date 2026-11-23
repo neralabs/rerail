@@ -1,7 +1,7 @@
 //! The system's calls the backends make, on macOS and Linux and on Windows:
 //!
 //! - the libraries a backend loads when it is first asked for (OpenCL's, CUDA's driver and NVRTC, the CPU backend's
-//!   kernels): `dlopen`, `LoadLibraryW`. No backend has a link dependency, so a machine without a driver still runs,
+//!   kernels): `dlopen`, `LoadLibraryExW`. No backend has a link dependency, so a machine without a driver still runs,
 //!   with no device of that kind (decision 0440);
 //! - the size of a page;
 //! - the CPU backend's thread stacks, a guard page below each (`Stacks`).
@@ -42,6 +42,17 @@ impl Lib {
     }
 }
 
+/// Asks NVIDIA's driver for `n` hardware queues (`CUDA_DEVICE_MAX_CONNECTIONS`), before it loads: the CUDA driver and
+/// NVIDIA's OpenCL, which is built on it, both read it. Each queue costs the context's creation about 18 ms, in every
+/// process (a GB10: CUDA's primary context 0.63 s at 32, 0.19 s at 8, 0.09 s at 2; OpenCL's context 0.65 s at 32,
+/// 0.17 s at its default, 0.09 s at 2). A value the environment sets is kept. Other drivers ignore it.
+pub fn nvidia_hardware_queues(n: usize) {
+    if std::env::var_os("CUDA_DEVICE_MAX_CONNECTIONS").is_none() {
+        // SAFETY: called before the driver loads, as the process's first use of the device.
+        unsafe { std::env::set_var("CUDA_DEVICE_MAX_CONNECTIONS", n.to_string()) };
+    }
+}
+
 /// The size of the system's pages.
 pub fn page_bytes() -> usize {
     sys::page_bytes().max(4096)
@@ -51,6 +62,21 @@ pub fn page_bytes() -> usize {
 /// system does so (`mmap`; Windows commits them at once). Given back with [`unmap`].
 pub fn map_zeroed(len: usize) -> Option<*mut u8> {
     sys::map(len)
+}
+
+/// `len` bytes (whole pages) of address space, zeroed by the system, committed only as [`commit`] commits a prefix of
+/// it (Unix: at once as address space, its pages committed as they are touched). Given back with [`unmap`].
+pub fn reserve(len: usize) -> Option<*mut u8> {
+    sys::reserve(len)
+}
+
+/// `[at, at + len)` of a [`reserve`]d range committed (Windows; Unix commits pages as they are touched): false where
+/// the system refused.
+///
+/// # Safety
+/// The range lies in one range `reserve` gave.
+pub unsafe fn commit(at: *mut u8, len: usize) -> bool {
+    unsafe { sys::commit(at, len) }
 }
 
 /// Gives back memory [`map_zeroed`] gave.
@@ -180,6 +206,16 @@ mod sys {
         (p != libc::MAP_FAILED).then_some(p.cast())
     }
 
+    pub fn reserve(len: usize) -> Option<*mut u8> {
+        map(len)
+    }
+
+    /// # Safety
+    /// The caller's (`super::commit`): nothing to do, pages are committed as they are touched.
+    pub unsafe fn commit(_at: *mut u8, _len: usize) -> bool {
+        true
+    }
+
     /// # Safety
     /// `[at, at + len)` is whole pages of a mapping `map` made.
     pub unsafe fn guard(at: *mut u8, len: usize) {
@@ -214,7 +250,7 @@ mod sys {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
-        fn LoadLibraryW(name: *const u16) -> *mut c_void;
+        fn LoadLibraryExW(name: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
         fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void;
         fn GetLastError() -> u32;
         fn GetSystemInfo(info: *mut SystemInfo);
@@ -265,8 +301,13 @@ mod sys {
 
     pub fn open(name: &str, _: super::Scope) -> Option<*mut c_void> {
         let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
-        // SAFETY: a NUL-terminated name; a library the system's search finds (System32 for a driver's).
-        let h = unsafe { LoadLibraryW(wide.as_ptr()) };
+        // A path's library finds the libraries it needs beside it (a toolkit's: HIP's hiprtc needs its comgr), as
+        // `dlopen` finds them through the library's own run path; a bare name, the system's search (System32 for a
+        // driver's).
+        const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x8;
+        let flags = if name.contains(['\\', '/']) { LOAD_WITH_ALTERED_SEARCH_PATH } else { 0 };
+        // SAFETY: a NUL-terminated name.
+        let h = unsafe { LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), flags) };
         (!h.is_null()).then_some(h)
     }
 
@@ -292,6 +333,19 @@ mod sys {
         // SAFETY: fresh memory, zeroed by the system.
         let p = unsafe { VirtualAlloc(std::ptr::null_mut(), len, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) };
         (!p.is_null()).then_some(p.cast())
+    }
+
+    pub fn reserve(len: usize) -> Option<*mut u8> {
+        // SAFETY: fresh address space, nothing committed.
+        let p = unsafe { VirtualAlloc(std::ptr::null_mut(), len, MEM_RESERVE, PAGE_READWRITE) };
+        (!p.is_null()).then_some(p.cast())
+    }
+
+    /// # Safety
+    /// The caller's (`super::commit`).
+    pub unsafe fn commit(at: *mut u8, len: usize) -> bool {
+        // SAFETY: within a range `reserve` gave; committed pages are zeroed by the system.
+        !unsafe { VirtualAlloc(at.cast(), len, MEM_COMMIT, PAGE_READWRITE) }.is_null()
     }
 
     /// # Safety

@@ -6,7 +6,7 @@ paths, through the same facades (incremental-plan.md, step 1). What it does not 
 keeps: each `mod x;` whose path is not in KEEP is dropped, with its attributes and doc comments. The test modules
 the engine hosts stay the engine's (step 2 moves them).
 
-Ran once, for step 1b. Since step 2 (test_crates.py) the engine's mod.rs is boot's glob and boot's lib.rs is
+Ran once, for step 1b. Since step 2 (split_test_crates.py) the engine's mod.rs is boot's glob and boot's lib.rs is
 source: this script no longer applies.
 
 Usage: boot_mounts.py NATIVE_DIR (writes native/crates/boot/src/lib.rs)."""
@@ -119,8 +119,8 @@ pub use rerail_store::content_store;
 pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
 pub use rerail_store::source_tree;
-pub use rerail_classic::git_ignore;
-pub use rerail_classic::panic_boundary;
+pub use rerail_workspace::git_ignore;
+pub use rerail_workspace::panic_boundary;
 pub use rerail_logic::threads;
 pub use rerail_tree_watch::tree_watch;
 extern crate self as rerail_boot;
@@ -143,7 +143,7 @@ WAVES = """    /// The waves: the core's (`rerail-logic`), and the glue boot own
     pub mod waves {
         pub use rerail_logic::code_rule_dsl::waves::{owner, storage};
         #[cfg(any(test, feature = "test-hooks"))]
-        pub use rerail_classic::code_rule_dsl::waves::relational;
+        pub use rerail_workspace::code_rule_dsl::waves::relational;
         pub mod schedule {
             pub use rerail_logic::code_rule_dsl::waves::schedule::*;
             pub mod batches;

@@ -180,7 +180,7 @@ describe(`relational semantics match ast-grep ${UPSTREAM_VERSION}`, () => {
 /**
  * `message` and `fix` rendered by the CLI (`message`, `replacement`, `replacementOffsets`) against Rerail's violation
  * `message` and `fix`. Messages are compared where every interpolated capture is one line of at most 80 characters;
- * past that Rerail cuts the capture (see native/src/code_rule_dsl/violations.rs) where upstream inlines it whole.
+ * past that Rerail cuts the capture (see native/crates/rules_base/src/code_rule_dsl/violations.rs) where upstream inlines it whole.
  */
 interface OutputCase {
   id: string;

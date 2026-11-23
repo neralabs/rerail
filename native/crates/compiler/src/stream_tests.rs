@@ -37,7 +37,7 @@ fn tier1(bytes: &[u8], starts: &[u32], lasts: &[u32]) -> crate::block::BlockRun 
     let lasts = if lasts.is_empty() { starts } else { lasts };
     let n = starts.len().min(lasts.len());
     let codes = starts[..n].iter().map(|&s| u32::from(bytes.get(s as usize).copied().unwrap_or(0))).collect();
-    crate::block::BlockRun { outputs: vec![vec![0], vec![0]], positions: vec![starts.to_vec(), lasts.to_vec()], totals: vec![0], codes }
+    crate::block::BlockRun { outputs: vec![rerail_blocks::vector![0], rerail_blocks::vector![0]], positions: vec![rerail_blocks::vector::Vector::from(starts), rerail_blocks::vector::Vector::from(lasts)], totals: rerail_blocks::vector![0], codes }
 }
 
 #[test]
@@ -388,7 +388,7 @@ fn edits_of_nodes_passed_reach_the_ops() {
         let (columns, table) = f15_columns(&image).expect("a format 15 tape");
         let t = F15::new(&image, columns, &table).expect("reads");
         // The language: the image's codes, and the program's other kinds (the root's before its retag).
-        let mut entries = table.entries().to_vec();
+        let mut entries: Vec<rerail_tape_format::tape::Entry> = table.entries().map(|e| e.to_owned()).collect();
         for kind in 1..8 {
             if !entries.iter().any(|e| e.kind == kind) {
                 entries.push(rerail_tape_format::tape::Entry { kind, field: 0, flags: 0, alias: None, classes: Vec::new() });
@@ -398,8 +398,8 @@ fn edits_of_nodes_passed_reach_the_ops() {
         let number = f16::numbers(&lang, &table).expect("numbers");
         let numbers = sixteen.numbers(&lang);
         for z in [false, true] {
-            let want = f16::write_from(&lang, &t, &number, src, native.tag, z).expect("the writer's tape");
-            let got = sixteen.image16_on(src, &t1, &lang, &numbers, z).unwrap_or_else(|e| panic!("{src:?} 16z {z}: {e}"));
+            let want = f16::write_from(&lang, &t, &number, src, rerail_tape_format::newlines::Terminators::Newlines, native.tag, z).expect("the writer's tape");
+            let got = sixteen.image16_on(src, rerail_tape_format::newlines::Terminators::Newlines, &t1, &lang, &numbers, z).unwrap_or_else(|e| panic!("{src:?} 16z {z}: {e}"));
             assert!(bytes_of(&got) == bytes_of(&want), "{src:?} 16z {z}: the writer's tape of the image");
         }
     }

@@ -37,8 +37,8 @@ pub struct TapeView {
     pub codes: u32,
     pub source: u32,
     pub source_len: u32,
-    /// Format 15: line starts (u32, document-local bytes), the first 0. Format 16: its newline index
-    /// (`rerail_tape_format::newlines`). And how many lines.
+    /// The document's line index (`rerail_tape_format::newlines`, decision 0612): format 16's in its tape, format 15's
+    /// placed beside it. And how many lines.
     pub lines: u32,
     pub line_count: u32,
     /// The code table's length.
@@ -160,7 +160,7 @@ pub mod z {
 /// counts a failure (`FAILED`) and reads the dead entry, so a caller that shares the cache refuses its work.
 pub mod cache {
     mod lookup;
-    pub use lookup::{FAILS, NO, PASSES, UNKNOWN, YES, done, text_find, text_open, verdict_get, verdict_put};
+    pub use lookup::{FAILS, NO, PASSES, UNKNOWN, YES, done, get, is_dead, still, text_find, text_open, verdict_get, verdict_put};
 
     /// The header's u32s, from the cache's first byte.
     pub const EPOCH: i32 = 0;
@@ -227,6 +227,11 @@ pub mod cache {
     /// is an entry given back (not filled): its slot no key's.
     pub const TAG_SHIFT: u32 = 16;
     pub const NUMBER: u32 = (1 << TAG_SHIFT) - 1;
+    /// Index slots a generation at most: `Spec::new`'s for the most entries. A slot's index is masked by it too, on
+    /// every backend, so the offset of a slot's compare-and-swap has a bound the compiler sees. On the M3 Max's GPU a
+    /// swap at an index masked only by the header's count did not act on the slot: two threads both won one
+    /// (decision 0540).
+    pub const SLOTS_MAX: u32 = (2 * NUMBER).next_power_of_two();
     /// The room past the dead entry: an entry's masked loads reach at most an entry and a word past it.
     pub const SLACK: usize = 256;
     /// A guard after the slack, of `GUARD_BYTE`s: no read or write of the cache reaches it (decision 0463), and
@@ -320,7 +325,7 @@ pub mod cache {
             let max = word(MAX)?;
             let mut spec = Spec { gens: word(GENS)?, entries: word(ENTRIES)?, arena: 0, max, slots: word(SLOTS)?, stats: word(STATS)? != 0 };
             spec.arena = u32::try_from(stride.saturating_sub(first)).unwrap_or(0);
-            if spec.gens < 3 || max == 0 || !(max as usize).is_multiple_of(ALIGN) || spec.arena < max || !spec.slots.is_power_of_two() || spec.entries == 0 || spec.entries >= NUMBER || spec.slots < 2 * spec.entries {
+            if spec.gens < 3 || max == 0 || !(max as usize).is_multiple_of(ALIGN) || spec.arena < max || !spec.slots.is_power_of_two() || spec.entries == 0 || spec.entries >= NUMBER || spec.slots < 2 * spec.entries || spec.slots > SLOTS_MAX {
                 return Err(format!("a cache's shape overwritten: {spec:?}"));
             }
             let stated = [(GEN_STRIDE, spec.gen_stride()), (FIRST_ENTRY, spec.first_entry()), (DEAD, spec.dead())];
@@ -346,7 +351,7 @@ pub mod cache {
         /// `init` of a `buf` whose bytes are zero already (fresh anonymous memory): only the header, the stamps and
         /// the guard written, so the pages of entries never taken are never touched (decision 0478 step 2d).
         pub fn init_zeroed(&self, buf: &mut [u8]) -> Result<(), String> {
-            if buf.len() < self.bytes() || !self.slots.is_power_of_two() || self.gens < 3 {
+            if buf.len() < self.bytes() || !self.slots.is_power_of_two() || self.slots > SLOTS_MAX || self.gens < 3 {
                 return Err(format!("a cache of {} bytes for {self:?}", buf.len()));
             }
             let word = |v: usize| u32::try_from(v).map_err(|_| format!("a cache past 4 GiB: {self:?}"));
@@ -414,70 +419,6 @@ pub mod cache {
         }
     }
 }
-
-/// A reader's view of a tape (decision 0353 step 4b): the view, and for a 16z tape a cache of its own after it,
-/// which its reads write: one thread reads through a reader at a time.
-pub struct Reader {
-    words: *mut u128,
-    len: usize,
-}
-
-/// Where a reader's cache starts, from its view.
-const READER_CACHE: usize = 128;
-
-impl Reader {
-    /// `view`'s reader over `tape` (the bytes its offsets count from): the view alone for format 15 or 16; for 16z,
-    /// a cache of two live generations of two blocks after it, which the view names.
-    pub fn new(view: &TapeView, tape: *const u8) -> Reader {
-        let spec = (view.format == F16Z_FORMAT).then(|| cache::Spec::new(3, 2, view.columns[3] as usize));
-        let bytes = READER_CACHE + spec.map_or(0, |s| s.bytes());
-        let len = bytes.div_ceil(16);
-        let words = Box::into_raw(vec![0u128; len].into_boxed_slice()).cast::<u128>();
-        let mut view = *view;
-        if let Some(spec) = spec {
-            // SAFETY: the cache's bytes, after the view, in the buffer just made.
-            let buf = unsafe { std::slice::from_raw_parts_mut(words.cast::<u8>().add(READER_CACHE), spec.bytes()) };
-            spec.init(buf).expect("a reader's cache");
-            let rel = (buf.as_ptr() as i64).wrapping_sub(tape as i64);
-            (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32);
-            view.columns[4] = 0;
-        }
-        // SAFETY: the buffer is at least `READER_CACHE` bytes, 16-aligned; the view is plain words.
-        unsafe { words.cast::<TapeView>().write(view) };
-        Reader { words, len }
-    }
-
-    /// The view the reads take: its address, its cache after it.
-    pub fn view(&self) -> *const TapeView {
-        self.words.cast()
-    }
-
-    /// Its 16z cache's counts (`None` for another format), checked (`cache::Spec::check`).
-    pub fn counts(&self) -> Option<cache::Counts> {
-        (16 * self.len > READER_CACHE).then(|| {
-            // SAFETY: the cache's bytes after the view, in the buffer `new` made; no read runs while this borrows it.
-            cache::Counts::checked(unsafe { std::slice::from_raw_parts(self.words.cast::<u8>().add(READER_CACHE), 16 * self.len - READER_CACHE) })
-        })
-    }
-}
-
-impl Drop for Reader {
-    fn drop(&mut self) {
-        // A 16z reader's cache checked as its reads leave it (decision 0463).
-        if 16 * self.len > READER_CACHE {
-            // SAFETY: the cache's bytes after the view, in the buffer `new` made, which no read uses now.
-            let cache = unsafe { std::slice::from_raw_parts(self.words.cast::<u8>().add(READER_CACHE), 16 * self.len - READER_CACHE) };
-            if let Err(e) = cache::Spec::check(cache) {
-                panic!("a 16z reader's block cache (decision 0463): {e}");
-            }
-        }
-        // SAFETY: the buffer `new` made, of `len` words.
-        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(self.words, self.len)) });
-    }
-}
-
-// SAFETY: a reader owns its buffer; it is read (and its cache written) by one thread at a time.
-unsafe impl Send for Reader {}
 
 /// Format 15's checkpoint stride (`base`'s, a u32 every 16 nodes) and its tails-from-start flag.
 pub const F15_STRIDE_SHIFT: u32 = 4;

@@ -28,7 +28,7 @@ pub enum Error {
 /// parse goes, with no statements built and no conversion after it. It is `engine_tape`'s tree
 /// through the writer, byte for byte (`lean_tape_is_the_engines`, every `.rerail` file of the
 /// repository and seven cuts of each).
-pub fn tape(src: &str) -> Vec<u8> {
+pub fn tape(src: &str) -> rerail_tape_format::Vector<u8> {
     lean::tape(src)
 }
 
@@ -46,7 +46,7 @@ pub fn engine_tape(src: &str) -> Vec<tape::Node> {
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 extern crate self as rerail_rr_syntax;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {

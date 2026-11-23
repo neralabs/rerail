@@ -56,7 +56,7 @@ unreachable_cls(c, d, x) :- node(d, c, "class_definition", _, _), unreachable_do
 // raw_decorators: (definition, decorator name): `^@\s*([^\s(]+)` over the decorator's text, read on its first line
 // (a decorator starts its line, so the line's match at its column is the one W's regex finds).
 .decl unreachable_deco(o: node, x: symbol)
-unreachable_deco(o, x) :- unreachable_deco_at(o, d, l, c), tape_line(d, l, sp),
+unreachable_deco(o, x) :- unreachable_deco_at(o, d, l, c), src_line(d, l, sp),
     match_group("@\\s*(?P<n>[^\\s(]+)", sp, m, "n", g), col(m, c), text(g, x).
 // A decorator of definition o: its document, line and column.
 .decl unreachable_deco_at(o: node, d: number, l: number, c: number)

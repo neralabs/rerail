@@ -262,6 +262,13 @@ impl<'a, 'b, 'c> generated_code::Context for IsleContext<'a, 'b, 'c> {
         value
     }
 
+    fn value_is_iconst(&mut self, value: Value) -> bool {
+        matches!(
+            self.ctx.func.dfg.value_def(value).inst().map(|i| self.ctx.func.dfg.insts[i].opcode()),
+            Some(crate::ir::Opcode::Iconst)
+        )
+    }
+
     fn subsume(&mut self, value: Value) -> Value {
         trace!("subsume: {}", value);
         self.ctx.subsume_values.insert(value);

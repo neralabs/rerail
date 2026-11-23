@@ -530,8 +530,8 @@ pub mod heap {
             let mut buf = [0u8; NAME_WORDS * 8];
             // SAFETY: the calling thread's own handle; the name is written NUL-ended into `buf`, of its length.
             if unsafe { libc::pthread_getname_np(libc::pthread_self(), buf.as_mut_ptr().cast(), buf.len()) } == 0 {
-                for (w, bytes) in slot.iter().zip(buf.chunks_exact(8)) {
-                    w.store(u64::from_le_bytes(bytes.try_into().unwrap_or([0; 8])), Relaxed);
+                for (w, bytes) in slot.iter().zip(buf.as_chunks::<8>().0) {
+                    w.store(u64::from_le_bytes(*bytes), Relaxed);
                 }
             }
         }
@@ -665,6 +665,52 @@ pub mod heap {
                 return;
             }
             at = (at + 1) & (SLOTS - 1);
+        }
+    }
+
+    /// jemalloc, with the heap sampler around it (`RERAIL_HEAP_SAMPLE`): off, one load more an allocation. The
+    /// global allocator of every binary of the engine: the engine's own (`rerail-engine`'s `lib.rs`) and each test
+    /// crate's. A test crate that declared none ran on the system allocator, which the engine never runs on (on glibc,
+    /// a mapping made and unmapped for each large allocation, its pages faulted in again each time).
+    /// Tree-sitter's allocations go to jemalloc directly and are not sampled.
+    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+    pub struct Sampled;
+
+    // Every allocation of every crate calls these through the allocator shim (`__rust_alloc`): inlined into it, as
+    // jemalloc's own are, they cost the shim one load more an allocation and not a call of their own.
+    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+    unsafe impl std::alloc::GlobalAlloc for Sampled {
+        #[inline]
+        unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+            let p = unsafe { tikv_jemallocator::Jemalloc.alloc(layout) };
+            if on() {
+                alloc(p as usize, layout.size());
+            }
+            p
+        }
+        #[inline]
+        unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+            let p = unsafe { tikv_jemallocator::Jemalloc.alloc_zeroed(layout) };
+            if on() {
+                alloc(p as usize, layout.size());
+            }
+            p
+        }
+        #[inline]
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+            if on() {
+                free(ptr as usize);
+            }
+            unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
+        }
+        #[inline]
+        unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+            let q = unsafe { tikv_jemallocator::Jemalloc.realloc(ptr, layout, new_size) };
+            if on() && !q.is_null() {
+                free(ptr as usize);
+                alloc(q as usize, new_size);
+            }
+            q
         }
     }
 
@@ -877,7 +923,7 @@ pub mod heap {
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 extern crate self as rerail_prof;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {

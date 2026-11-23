@@ -43,6 +43,7 @@ pub fn released<T>(f: impl FnOnce() -> T) -> T {
 
 pub mod join;
 pub mod kernels;
+pub mod launch;
 pub mod shared;
 pub mod space;
 pub mod tile;
@@ -65,11 +66,11 @@ enum Pipe {
     CtCount,
     CtScatter,
     ClInit,
-    ClLevel,
+    ClDag,
     ClGather,
 }
 
-const PIPES: [&str; 7] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl_init", "cl_level", "cl_gather"];
+const PIPES: [&str; 7] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl_init", "cl_dag", "cl_gather"];
 
 /// `f`, a compile that is fatal where it fails (decision 0382), as a result: what compiling ahead reports (its use
 /// still stops the run, naming the kernel).
@@ -376,7 +377,10 @@ impl crate::exec::Pending for Running {
     fn finish_counted(self: Box<Self>) -> (Result<Vec<Output>, String>, f64) {
         match self.0.recv() {
             Ok((Ok(r), cpu)) => (r, cpu),
-            Ok((Err(_), cpu)) => (Err("its submission panicked".into()), cpu),
+            Ok((Err(p), cpu)) => {
+                crate::exec::resume_over_budget(p);
+                (Err("its submission panicked".into()), cpu)
+            }
             Err(_) => (Err("its submission's thread ended without a result".into()), 0.0),
         }
     }
@@ -386,8 +390,10 @@ impl crate::exec::Pending for Running {
 }
 
 impl GpuBackend {
-    /// Runs `ks` as one submission, with what it took on the device.
+    /// Runs `ks` as one submission, with what it took on the device: an evaluation of the launch budget (`launch`),
+    /// or the caller's when it is in one, its pairs' scatter again a rerun's.
     pub fn run(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Stats), String> {
+        let _evaluation = launch::LaunchScope::enter();
         let mut plan = Planner { gpu: &self.gpu, inputs: HashMap::new(), leases: Default::default() };
         let t = std::time::Instant::now();
         let jobs: Vec<Job> = crate::score::phase("upload", || ks.iter().map(|k| plan.job(k)).collect::<Result<_, _>>())?;
@@ -413,6 +419,7 @@ impl GpuBackend {
             }
         }
         if !rerun.is_empty() {
+            let _rerun = launch::rerun();
             let stage = [Stage { steps: rerun }];
             self.execute(std::iter::once(&stage[..]), &mut stats)?;
         }
@@ -425,6 +432,12 @@ impl GpuBackend {
             {
                 return Err(format!("launch {i} ({}): a code is not below the width", ks[i].form().name()));
             }
+            if let Some(q) = &j.queue {
+                let c = read::<u32>(q, 4);
+                if c[2] != 0 || c[3] != 0 {
+                    return Err(format!("launch {i} ({}): its work queue ended with {} items not done{}", ks[i].form().name(), c[2], if c[3] != 0 { ", past its room" } else { "" }));
+                }
+            }
             outs.push(match j.read {
                 Read::Ready(o) => o,
                 Read::Counts { rows, cols, buf } => Output::Counts { rows, cols, data: read::<u32>(&buf, rows * cols) },
@@ -433,7 +446,7 @@ impl GpuBackend {
                 Read::Pairs { total, buf, .. } => {
                     let t = total.read() as usize;
                     let buf = exact.remove(&i).map_or(buf, |(b, _)| b);
-                    Output::Pairs(read::<(u32, u32)>(&buf, t))
+                    Output::Pairs(read::<[u32; 2]>(&buf, t))
                 }
             });
         }
@@ -447,6 +460,9 @@ impl GpuBackend {
         let gpu = &*self.gpu;
         let (c0, t0) = (crate::score::thread_cpu(), std::time::Instant::now());
         let q = shared::Queue::new()?;
+        // The submission's key in the evaluation's records.
+        let key = Box::new(0u8);
+        let pointer = std::ptr::from_ref::<u8>(&key) as usize;
         let depth = jobs.clone().map(|j| j.len()).max().unwrap_or(0);
         for s in 0..depth {
             if s > 0 {
@@ -454,14 +470,17 @@ impl GpuBackend {
             }
             for stage in jobs.clone().filter_map(|j| j.get(s)) {
                 for step in &stage.steps {
-                    stats.dispatches += step.enqueue(gpu, &q)?;
+                    stats.dispatches += step.enqueue(gpu, &q, pointer)?;
                 }
             }
         }
         crate::score::add("encode", crate::score::thread_cpu() - c0, t0.elapsed().as_secs_f64());
+        launch::check_submission();
+        launch::mark(pointer, false);
         let event = crate::score::phase("gpu commit", || q.flush());
         // What the steps read and write is held until the submission completes (decision 0487 step 2).
         crate::score::phase("gpu wait", || event.await_()).map_err(|e| format!("the submission failed: {e}"))?;
+        launch::mark(pointer, true);
         stats.device += event.gpu_seconds();
         stats.command_buffers += 1;
         Ok(())
@@ -481,14 +500,14 @@ impl Drop for ReadPhase {
 const _: () = assert!(size_of::<(u32, u32)>() == 8 && std::mem::offset_of!((u32, u32), 0) == 0 && std::mem::offset_of!((u32, u32), 1) == 4);
 
 /// `n` values from the start of a buffer the host shares.
-fn read<T: Copy>(buf: &Buffer, n: usize) -> Vec<T> {
+fn read<T: rerail_blocks::Pod + Copy>(buf: &Buffer, n: usize) -> rerail_blocks::vector::Vector<T> {
     if n == 0 {
-        return Vec::new();
+        return rerail_blocks::vector::Vector::new();
     }
     assert!(buf.length() as usize >= n * size_of::<T>(), "gpu lane: reading past a buffer");
     // copy: not block data (a kernel's output, handed to the caller as its own)
     // SAFETY: a buffer the device finished writing (the submission completed); `n` values fit it.
-    unsafe { std::slice::from_raw_parts(buf.contents() as *const T, n) }.to_vec()
+    unsafe { std::slice::from_raw_parts(buf.contents() as *const T, n) }.iter().copied().collect()
 }
 
 /// A `#[repr(C)]` value's bytes, as a kernel's `ARGS` row takes them.
@@ -521,10 +540,9 @@ struct ClosureArgs {
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct LevelArgs {
-    lo: u32,
-    hi: u32,
+struct DagArgs {
     words: u32,
+    capacity: u32,
 }
 
 #[derive(Clone)]
@@ -571,13 +589,20 @@ enum Step {
 }
 
 impl Step {
-    /// Enqueued on `q`: the launches it took.
-    fn enqueue(&self, gpu: &Gpu, q: &ComputeQueue) -> Result<usize, String> {
+    /// Enqueued on `q`, each launch charged first to the launch budget as the command `pointer`'s (`launch`): the
+    /// launches it took. A launch past the budget is the hard failure (decision 0601), before it is enqueued.
+    fn enqueue(&self, gpu: &Gpu, q: &ComputeQueue, pointer: usize) -> Result<usize, String> {
+        let charge = |kernel: &str, groups: [u64; 3], threads: [u64; 3]| {
+            let grid = [groups[0] * threads[0], groups[1] * threads[1], groups[2] * threads[2]];
+            launch::attempt(pointer, kernel, grid, threads, false, Vec::new());
+            Ok::<(), String>(())
+        };
         match self {
             Step::Kernel(d) => {
                 if d.groups.iter().product::<u64>() == 0 {
                     return Ok(0);
                 }
+                charge(&format!("{:?}", d.pipe), d.groups, d.threads)?;
                 let mut l = rerail_gpu::kernels::launch(q, &gpu.functions[d.pipe as usize]);
                 for (name, b) in &d.binds {
                     l = match b {
@@ -589,20 +614,22 @@ impl Step {
                 Ok(1)
             }
             Step::Scan { input, output, n, pop } => {
-                if *pop {
-                    rerail_gpu::library::scan_exclusive_popcount_u32(q, input, output, *n)?;
-                } else {
-                    rerail_gpu::library::scan_exclusive_u32(q, input, output, *n)?;
-                }
-                Ok(1)
+                // The library says its launches once it has made them (its levels' count): charged then, past the
+                // budget the hard failure.
+                let made = rerail_gpu::library::scan_exclusive_u32_in(q, input, output, *n, *pop, &rerail_gpu::library::ScanSpace::new(*n)?)?;
+                launch::charge_made(pointer, "ukl_scan_u32", made);
+                Ok(made)
             }
             Step::Histogram { codes, offsets, parts, width, h, bad } => {
+                // One launch of the library's (`histogram`).
+                charge("ukl_histogram", [u64::from(*parts), 1, 1], [1, 1, 1])?;
                 rerail_gpu::library::histogram::<u16>(q, codes, offsets, *parts, *width, h, bad)?;
                 Ok(1)
             }
             Step::Zero { buf, words } => {
+                // A fill, not a compute launch (as a `lane::Command`'s fill).
                 q.enqueue_fill_array(buf, &0u32, 0, Some(*words));
-                Ok(1)
+                Ok(0)
             }
         }
     }
@@ -653,11 +680,14 @@ struct Job {
     read: Read,
     /// A flag the device sets on invalid input.
     bad: Option<Buffer>,
+    /// A persistent dispatch's queue's control words (ukl/workqueue.h): work left on it at the end (an item pushed and
+    /// not done, or a push past its room) is an error, not a result.
+    queue: Option<Buffer>,
 }
 
 impl Job {
     fn ready(o: Output) -> Self {
-        Job { stages: Vec::new(), read: Read::Ready(o), bad: None }
+        Job { stages: Vec::new(), read: Read::Ready(o), bad: None, queue: None }
     }
 }
 
@@ -731,7 +761,7 @@ impl Planner<'_> {
 
     fn job(&mut self, k: &Kernel) -> Result<Job, String> {
         match k {
-            Kernel::BitProduct { a, b, min } => self.bit_product(a, b, min.as_deref()),
+            Kernel::BitProduct { a, b, min } => self.bit_product(a, b, min.as_deref().map(|m| &m[..])),
             Kernel::CountTable { loff, left, roff, right, emit } => self.count_table(loff, left, roff, right, *emit),
             Kernel::Histogram { off, codes, width } => self.histogram(off, codes, *width),
             Kernel::Closure { n, off, dst } => self.closure(*n, off, dst),
@@ -747,8 +777,8 @@ impl Planner<'_> {
         let (n, m, kw) = (a.rows as u64, b.rows as u64, a.words as u64);
         if n == 0 || m == 0 {
             return Ok(Job::ready(match min {
-                None => Output::Counts { rows: a.rows, cols: b.rows, data: Vec::new() },
-                Some(_) => Output::Pairs(Vec::new()),
+                None => Output::Counts { rows: a.rows, cols: b.rows, data: rerail_blocks::vector::Vector::new() },
+                Some(_) => Output::Pairs(rerail_blocks::vector::Vector::new()),
             }));
         }
         let (ba, bb) = (self.input(&a.data), self.input(&b.data));
@@ -761,7 +791,7 @@ impl Planner<'_> {
         };
         let Some(min) = min else {
             let c = self.alloc(n * m * 4);
-            return Ok(Job { stages: vec![Stage::one(tile(&c, &dummy, &dummy, 0))], read: Read::Counts { rows: a.rows, cols: b.rows, buf: c }, bad: None });
+            return Ok(Job { stages: vec![Stage::one(tile(&c, &dummy, &dummy, 0))], read: Read::Counts { rows: a.rows, cols: b.rows, buf: c }, bad: None, queue: None });
         };
         let nw = n * mw;
         let mask = self.alloc(nw * 4);
@@ -773,7 +803,7 @@ impl Planner<'_> {
         let args = move |cap: u32| bytes_of(&ScatterArgs { cap, mw: mw as u32, nw: nw as u32 });
         let scatter = Dispatch::per(Pipe::BpScatter, vec![("mask", Bind::Buf(mask.clone())), ("ex", Bind::Buf(ex)), ("pairs", Bind::Buf(pairs.clone())), ("args", Bind::Bytes(args(cap as u32)))], nw);
         st.push(Stage::one(Step::Kernel(scatter.clone())));
-        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None })
+        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None, queue: None })
     }
 
     fn count_table(&mut self, loff: &[u32], left: &[u16], roff: &[u32], right: &[u16], emit: bool) -> Result<Job, String> {
@@ -784,7 +814,7 @@ impl Planner<'_> {
         }
         let nparts = (loff.len() - 1) as u64;
         if left.is_empty() {
-            return Ok(Job::ready(if emit { Output::Pairs(Vec::new()) } else { Output::PerRow(Vec::new()) }));
+            return Ok(Job::ready(if emit { Output::Pairs(rerail_blocks::vector::Vector::new()) } else { Output::PerRow(rerail_blocks::vector::Vector::new()) }));
         }
         let nl = left.len() as u64;
         let (bl, br, blo, bro) = (self.input(left), self.input(right), self.input(loff), self.input(roff));
@@ -792,7 +822,7 @@ impl Planner<'_> {
         let count = Dispatch::new(Pipe::CtCount, vec![("left", Bind::Buf(bl.clone())), ("right", Bind::Buf(br.clone())), ("loff", Bind::Buf(blo.clone())), ("roff", Bind::Buf(bro.clone())), ("counts", Bind::Buf(counts.clone()))], nparts);
         let mut st = vec![Stage::one(Step::Kernel(count))];
         if !emit {
-            return Ok(Job { stages: st, read: Read::PerRow { n: left.len(), buf: counts }, bad: None });
+            return Ok(Job { stages: st, read: Read::PerRow { n: left.len(), buf: counts }, bad: None, queue: None });
         }
         let (ex, total) = self.scan(&mut st, &counts, nl, false);
         let bound: u64 = loff.windows(2).zip(roff.windows(2)).map(|(l, r)| (l[1] - l[0]) as u64 * (r[1] - r[0]) as u64).sum();
@@ -805,7 +835,7 @@ impl Planner<'_> {
             nparts,
         );
         st.push(Stage::one(Step::Kernel(scatter.clone())));
-        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None })
+        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None, queue: None })
     }
 
     fn histogram(&mut self, off: &[u32], codes: &[u16], width: u32) -> Result<Job, String> {
@@ -813,13 +843,13 @@ impl Planner<'_> {
         let nparts = off.len() - 1;
         // No counts to make: the reference reads no codes either.
         if nparts == 0 || width == 0 {
-            return Ok(Job::ready(Output::Counts { rows: nparts, cols: width as usize, data: vec![0; nparts * width as usize] }));
+            return Ok(Job::ready(Output::Counts { rows: nparts, cols: width as usize, data: rerail_blocks::vector![0; nparts * width as usize] }));
         }
         let (bc, bo) = (self.input(codes), self.input(off));
         let h = self.alloc(nparts as u64 * width as u64 * 4);
         let bad = self.upload(&[0u32; 4]);
         let step = Step::Histogram { codes: bc, offsets: bo, parts: nparts as u32, width, h: h.clone(), bad: bad.clone() };
-        Ok(Job { stages: vec![Stage::one(step)], read: Read::Counts { rows: nparts, cols: width as usize, buf: h }, bad: Some(bad) })
+        Ok(Job { stages: vec![Stage::one(step)], read: Read::Counts { rows: nparts, cols: width as usize, buf: h }, bad: Some(bad), queue: None })
     }
 
     fn closure(&mut self, n: u32, off: &[u32], dst: &[u32]) -> Result<Job, String> {
@@ -830,7 +860,7 @@ impl Planner<'_> {
             return Err(format!("closure: not a CSR of {n} nodes"));
         }
         if nu == 0 {
-            return Ok(Job::ready(Output::Bits(Bits::new(0, words, Vec::<u64>::new()))));
+            return Ok(Job::ready(Output::Bits(Bits::new(0, words, rerail_blocks::vector::Vector::<u64>::new()))));
         }
         // The condensed DAG on the host: components, their successor components (deduplicated), cycles, levels.
         let (comp, ncomp) = crate::cpu::components(nu, off, dst);
@@ -849,7 +879,6 @@ impl Planner<'_> {
         }
         let (mut soff, mut sdst) = (Vec::with_capacity(ncomp + 1), Vec::new());
         let mut cyclic = vec![0u32; ncomp];
-        let mut level = vec![0u32; ncomp];
         let mut seen = vec![u32::MAX; ncomp];
         for c in 0..ncomp {
             soff.push(sdst.len() as u32);
@@ -864,47 +893,61 @@ impl Planner<'_> {
                     if d as usize != c && seen[d as usize] != c as u32 {
                         seen[d as usize] = c as u32;
                         sdst.push(d);
-                        // Tarjan's numbering puts successors first: their levels are known.
-                        level[c] = level[c].max(level[d as usize] + 1);
                     }
                 }
             }
         }
         soff.push(sdst.len() as u32);
-        let levels = level.iter().copied().max().unwrap_or(0) as usize + 1;
-        let mut lstart = vec![0u32; levels + 1];
-        for &l in &level {
-            lstart[l as usize + 1] += 1;
+        // Each component's successors' count, and its predecessors (the successor CSR's transpose): a finished
+        // component counts its predecessors' down, and the last count pushes one (`cl_dag`).
+        let pending: Vec<u32> = (0..ncomp).map(|c| soff[c + 1] - soff[c]).collect();
+        let mut poff = vec![0u32; ncomp + 1];
+        for &d in &sdst {
+            poff[d as usize + 1] += 1;
         }
-        for l in 0..levels {
-            lstart[l + 1] += lstart[l];
+        for c in 0..ncomp {
+            poff[c + 1] += poff[c];
         }
-        let mut order = vec![0u32; ncomp];
-        let mut lfill = lstart.clone();
-        for (c, &l) in level.iter().enumerate() {
-            order[lfill[l as usize] as usize] = c as u32;
-            lfill[l as usize] += 1;
+        let mut pdst = vec![0u32; sdst.len()];
+        let mut pfill = poff.clone();
+        for c in 0..ncomp {
+            for &d in &sdst[soff[c] as usize..soff[c + 1] as usize] {
+                pdst[pfill[d as usize] as usize] = c as u32;
+                pfill[d as usize] += 1;
+            }
         }
+        // The queue starts with the components of no successors (their rows final after the init). Its room: every
+        // other component is pushed once, and a push takes another slot where a taker gave one up (ukl/workqueue.h),
+        // at most a SIMD group's worth a take, a few for each worker.
+        let sinks: Vec<u32> = (0..ncomp as u32).filter(|&c| pending[c as usize] == 0).collect();
+        let groups = (ncomp as u64).div_ceil(TG);
+        let capacity = 2 * ncomp + 4 * 32 * (groups * TG / 32) as usize;
+        let mut slots = vec![0u32; capacity];
+        for (i, &c) in sinks.iter().enumerate() {
+            slots[i] = c + 1;
+        }
+        let control = self.upload(&[0, sinks.len() as u32, sinks.len() as u32, 0u32]);
         let (boff, bdst) = (self.input(off), self.input(dst));
-        let (bcomp, bcyc, border, bsoff, bsdst) = (self.upload(&comp), self.upload(&cyclic), self.upload(&order), self.upload(&soff), self.upload(&sdst));
+        let (bcomp, bcyc) = (self.upload(&comp), self.upload(&cyclic));
+        let (bsoff, bsdst, bpoff, bpdst, bpend, bslots) = (self.upload(&soff), self.upload(&sdst), self.upload(&poff), self.upload(&pdst), self.upload(&pending), self.upload(&slots));
         let row32 = (ncomp * words * 2) as u64;
         let r = self.alloc(row32 * 4);
         let out = self.alloc((nu * words * 8) as u64);
         let args = Bind::Bytes(bytes_of(&ClosureArgs { n, words: words as u32 }));
-        let mut st = vec![
+        let dag = Bind::Bytes(bytes_of(&DagArgs { words: words as u32, capacity: capacity as u32 }));
+        let total = (nu * words) as u64;
+        let st = vec![
             Stage::one(Step::Zero { buf: r.clone(), words: row32 as usize }),
             Stage::one(Step::Kernel(Dispatch::per(Pipe::ClInit, vec![("off", Bind::Buf(boff)), ("dst", Bind::Buf(bdst)), ("comp", Bind::Buf(bcomp.clone())), ("cyclic", Bind::Buf(bcyc)), ("R", Bind::Buf(r.clone())), ("args", args.clone())], n as u64))),
+            // One launch however deep the DAG: its levels are the queue's continuations, not launches.
+            Stage::one(Step::Kernel(Dispatch::new(
+                Pipe::ClDag,
+                vec![("R", Bind::Buf(r.clone())), ("soff", Bind::Buf(bsoff)), ("sdst", Bind::Buf(bsdst)), ("poff", Bind::Buf(bpoff)), ("pdst", Bind::Buf(bpdst)), ("pending", Bind::Buf(bpend)), ("slots", Bind::Buf(bslots)), ("control", Bind::Buf(control.clone())), ("args", dag)],
+                groups,
+            ))),
+            Stage::one(Step::Kernel(Dispatch::per(Pipe::ClGather, vec![("R", Bind::Buf(r)), ("comp", Bind::Buf(bcomp)), ("out", Bind::Buf(out.clone())), ("args", args)], total))),
         ];
-        // Level 0 has no successors: its rows are final after the init.
-        for l in 1..levels {
-            let (lo, hi) = (lstart[l], lstart[l + 1]);
-            let level = Bind::Bytes(bytes_of(&LevelArgs { lo, hi, words: words as u32 }));
-            let d = Dispatch::new(Pipe::ClLevel, vec![("R", Bind::Buf(r.clone())), ("order", Bind::Buf(border.clone())), ("soff", Bind::Buf(bsoff.clone())), ("sdst", Bind::Buf(bsdst.clone())), ("args", level)], ((hi - lo) as u64).div_ceil(TG / 32));
-            st.push(Stage::one(Step::Kernel(d)));
-        }
-        let total = (nu * words) as u64;
-        st.push(Stage::one(Step::Kernel(Dispatch::per(Pipe::ClGather, vec![("R", Bind::Buf(r)), ("comp", Bind::Buf(bcomp)), ("out", Bind::Buf(out.clone())), ("args", args)], total))));
-        Ok(Job { stages: st, read: Read::Bits { rows: nu, words, buf: out }, bad: None })
+        Ok(Job { stages: st, read: Read::Bits { rows: nu, words, buf: out }, bad: None, queue: Some(control) })
     }
 }
 

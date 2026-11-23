@@ -385,6 +385,12 @@ fn word_end(b: &[u8], w: &micro::Window, from: usize) -> usize {
 /// end by the run of `word` bits, the word's code by one load and a table. A rare token is
 /// read by its micro-lexer, and the starts it covers are cleared; one that ends past the block
 /// starts the next block where it ends.
+/// Whether bytes between two tokens hold a line end of the rule files' terminators (decision 0612). Of `Newlines`, any
+/// `\r` or `\n` between tokens ends a line: a `\r` before a `\n` has the `\n` after it, which no token starts at.
+fn ends_a_line(between: &[u8]) -> bool {
+    between.iter().any(|c| crate::syntax::TERMINATORS.last_bytes().contains(c))
+}
+
 fn lex(src: &str) -> Lexed {
     let b = src.as_bytes();
     let n = b.len();
@@ -609,15 +615,34 @@ pub fn token_count(src: &str) -> usize {
 }
 
 /// `src`'s tape: the engine's (`code_rule_dsl::tape`'s image of `crate::tape(src)`), its bytes.
-pub fn tape(src: &str) -> Vec<u8> {
+pub fn tape(src: &str) -> rerail_tape_format::Vector<u8> {
     struct Image<'s>(&'s str);
     impl Finish for Image<'_> {
-        type Out = Vec<u8>;
-        fn finish<L: Layout>(&mut self, w: Writer<L>) -> Result<Vec<u8>, Redo> {
+        type Out = rerail_tape_format::Vector<u8>;
+        fn finish<L: Layout>(&mut self, w: Writer<L>) -> Result<rerail_tape_format::Vector<u8>, Redo> {
             w.finish(self.0.as_bytes())
         }
     }
     tape_into(src, &mut Image(src))
+}
+
+/// `src`'s tape in format 16 or 16z (`sixteen`'s target), written by its ops as the statements are committed: an error
+/// where a code is not in its language's table or the nodes pass format 16's bounds (the engine holds format 16 alone,
+/// decision 0626). Not generic, so the parser is compiled here (optimized in dev builds), not in the engine's crate
+/// (`tape_into`'s caller).
+#[inline(never)]
+pub fn tape_to(src: &str, sixteen: rerail_tape_format::Sixteen) -> Result<rerail_tape_format::f16::Finished, String> {
+    struct To(rerail_tape_format::Sixteen);
+    impl Finish for To {
+        type Out = Result<rerail_tape_format::f16::Finished, String>;
+        fn target(&self) -> rerail_tape_format::Target {
+            rerail_tape_format::Target::F16(self.0.clone())
+        }
+        fn finish<L: Layout>(&mut self, mut w: Writer<L>) -> Result<Self::Out, Redo> {
+            w.finish_16()
+        }
+    }
+    tape_into(src, &mut To(sixteen))
 }
 
 /// [`tape`], the writer writing to `finish`'s target and finished by it: format 15's image (`tape`), or format 16
@@ -692,11 +717,11 @@ impl<L: Layout> Parser<'_, L> {
     }
 
     /// Whether the next token is on the line of byte `*seen`, the bytes up to `*seen` known
-    /// to be on it: no newline from there to the token's start. `*seen` moves to the start, so
+    /// to be on it: no line end from there to the token's start. `*seen` moves to the start, so
     /// a line's bytes are read once. As `syntax::Lines` compares lines, with no index of them.
     fn on_line(&self, seen: &mut u32) -> bool {
         let start = self.start();
-        let same = !self.b[(*seen as usize).min(start as usize)..start as usize].contains(&b'\n');
+        let same = !ends_a_line(&self.b[(*seen as usize).min(start as usize)..start as usize]);
         *seen = start;
         same
     }
@@ -1070,7 +1095,7 @@ impl<L: Layout> Parser<'_, L> {
         let first = save.i;
         self.reset(save);
         let b = self.b;
-        let line_start = |at: usize| b[..at].iter().rev().take_while(|&&c| c != b'\n').all(|c| c.is_ascii_whitespace());
+        let line_start = |at: usize| b[..at].iter().rev().take_while(|c| !crate::syntax::TERMINATORS.last_bytes().contains(c)).all(|c| c.is_ascii_whitespace());
         let n = self.n;
         let mut k = first + 1;
         while k < n {
@@ -1918,7 +1943,7 @@ mod tests {
 
     /// The lean parser's tape of `src` when it is the engine's, byte for byte; else how the two differ: their
     /// lengths, and the first byte that differs, placed in the engine's tape.
-    fn lean_tape_or_difference(src: &str) -> Result<Vec<u8>, String> {
+    fn lean_tape_or_difference(src: &str) -> Result<rerail_tape_format::Vector<u8>, String> {
         let (lean, engine) = (super::tape(src), crate::tape::image(&crate::engine_tape(src), src));
         if lean == engine {
             return Ok(lean);

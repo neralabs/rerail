@@ -18,6 +18,17 @@ mod tier2;
 pub use tier1::{Lexed, lex};
 
 /// `src`'s tape, or the byte the parser refused it at (0: tier 1 sends it to tree-sitter).
+/// The columns, as the lean parser finishes them (`kotlin_lean::Tape`).
 pub fn parse(src: &[u8]) -> Result<rerail_tape_format::Columns, u32> {
-    tier2::parse(src, &tier1::lex(src))
+    tier2::parse(src, &tier1::lex(src), &mut Columns)
+}
+
+/// The writer finished into its columns.
+struct Columns;
+
+impl rerail_tape_format::Finish for Columns {
+    type Out = rerail_tape_format::Columns;
+    fn finish<L: rerail_tape_format::Layout>(&mut self, w: rerail_tape_format::Writer<L>) -> Result<rerail_tape_format::Columns, rerail_tape_format::Redo> {
+        w.finish_columns()
+    }
 }

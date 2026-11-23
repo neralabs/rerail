@@ -49,7 +49,7 @@ through the shell (`sed -i`) is not caught; the read-back said so.
               "all": [
                 {
                   "field": "input.file_path",
-                  "regex": "^(?:[^\\s\\[\\]#]*\\.generated\\.[^\\s\\[\\]#/]*|(?:[^\\s\\[\\]#]*/)?packs/node/(?:rules|candidates)/[^\\s\\[\\]#]+|(?:[^\\s\\[\\]#]*/)?packs/typescript/rules/vitest-(?:expect-expect|no-disabled-tests|no-focused-tests)\\.json|(?:[^\\s\\[\\]#]*/)?model/(?:model\\.safetensors|tokenizer\\.json|config\\.json|manifest\\.json)|(?:[^\\s\\[\\]#]*/)?native/src/code_rule_dsl/value/names/names\\.bin)$"
+                  "regex": "^(?:[^\\s\\[\\]#]*\\.generated\\.[^\\s\\[\\]#/]*|(?:[^\\s\\[\\]#]*/)?packs/node/(?:rules|candidates)/[^\\s\\[\\]#]+|(?:[^\\s\\[\\]#]*/)?packs/typescript/rules/vitest-(?:expect-expect|no-disabled-tests|no-focused-tests)\\.json|(?:[^\\s\\[\\]#]*/)?model/(?:model\\.safetensors|tokenizer\\.json|config\\.json|manifest\\.json)|(?:[^\\s\\[\\]#]*/)?native/crates/adapters/src/code_rule_dsl/value/names/names\\.bin)$"
                 },
                 {
                   "not": {
@@ -63,7 +63,7 @@ through the shell (`sed -i`) is not caught; the read-back said so.
               "all": [
                 {
                   "field": "input.path",
-                  "regex": "^(?:[^\\s\\[\\]#]*\\.generated\\.[^\\s\\[\\]#/]*|(?:[^\\s\\[\\]#]*/)?packs/node/(?:rules|candidates)/[^\\s\\[\\]#]+|(?:[^\\s\\[\\]#]*/)?packs/typescript/rules/vitest-(?:expect-expect|no-disabled-tests|no-focused-tests)\\.json|(?:[^\\s\\[\\]#]*/)?model/(?:model\\.safetensors|tokenizer\\.json|config\\.json|manifest\\.json)|(?:[^\\s\\[\\]#]*/)?native/src/code_rule_dsl/value/names/names\\.bin)$"
+                  "regex": "^(?:[^\\s\\[\\]#]*\\.generated\\.[^\\s\\[\\]#/]*|(?:[^\\s\\[\\]#]*/)?packs/node/(?:rules|candidates)/[^\\s\\[\\]#]+|(?:[^\\s\\[\\]#]*/)?packs/typescript/rules/vitest-(?:expect-expect|no-disabled-tests|no-focused-tests)\\.json|(?:[^\\s\\[\\]#]*/)?model/(?:model\\.safetensors|tokenizer\\.json|config\\.json|manifest\\.json)|(?:[^\\s\\[\\]#]*/)?native/crates/adapters/src/code_rule_dsl/value/names/names\\.bin)$"
                 },
                 {
                   "not": {

@@ -699,7 +699,7 @@ describe("shippedRuleKeys", () => {
   // 0.1.5 fails here until RULE_KEY_SINCE names the release that first reads it.
   it("names the release that first reads each ast rule key added after 0.1.5", () => {
     const readSince015 = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "calls", "embedded", "host", "importTarget"];
-    const source = readFileSync(join(ROOT, "native/src/code_rule_dsl/compile/ast_rule.rs"), "utf8");
+    const source = readFileSync(join(ROOT, "native/crates/rules_base/src/code_rule_dsl/compile/ast_rule.rs"), "utf8");
     // The first list is the product's; the second, under cfg(test), adds a test-only key.
     const list = /const AST_RULE_KEYS: &\[&str\] = &\[([^\]]*)\];/u.exec(source);
     expect(list).not.toBeNull();

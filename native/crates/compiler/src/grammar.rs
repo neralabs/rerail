@@ -783,6 +783,36 @@ struct Raw {
 
 /// The tree section's rules, desugared: the nodes (the root first), the choices inlined where
 /// used, the nested choices, and each `balanced` level's `(K, O, C)`.
+/// The `n`th `balanced K O C`'s level, its name and body: any token but `O` or `C` merged into the leaf, an inner
+/// `O` merged and its own pair taken by the level again, then the closer merged; no node of its own.
+fn balanced_level(n: usize, kind: &str, open: &str, close: &str, tokens: &[String]) -> (String, Gram) {
+    let name = format!("{kind}{BALANCED}{n}");
+    let merge = |t: &str| Gram::Merge(kind.to_owned(), Box::new(Gram::Sym(t.to_string())));
+    let mut alts: Vec<Gram> = tokens.iter().filter(|t| *t != open && *t != close).map(|t| merge(t)).collect();
+    alts.push(Gram::Seq(vec![merge(open), Gram::Sym(name.clone())]));
+    (name.clone(), Gram::Seq(vec![Gram::Star(Box::new(Gram::Alt(alts))), merge(close)]))
+}
+
+/// The tree statements as the build reads them (`build_shaped`): each rule's `any` and `balanced` desugared, each
+/// `balanced` level a nested choice after them, every other statement as it is. Tier 2 as Rust is written from them
+/// (`bitlex_rust`), so its rules are the machine's.
+pub fn desugared(stmts: &[Stmt], tokens: &[String]) -> Vec<Stmt> {
+    let mut balanced = Vec::new();
+    let mut out: Vec<Stmt> = stmts
+        .iter()
+        .map(|s| match s {
+            Stmt::Node { kind, nested, whole, padded, body } => Stmt::Node { kind: kind.clone(), nested: *nested, whole: *whole, padded: *padded, body: desugar(body, &mut balanced, tokens) },
+            Stmt::Choice { name, supertype, nested, body } => Stmt::Choice { name: name.clone(), supertype: supertype.clone(), nested: *nested, body: desugar(body, &mut balanced, tokens) },
+            s => s.clone(),
+        })
+        .collect();
+    for (n, (kind, open, close)) in balanced.iter().enumerate() {
+        let (name, body) = balanced_level(n, kind, open, close, tokens);
+        out.push(Stmt::Choice { name, supertype: None, nested: true, body });
+    }
+    out
+}
+
 fn gather(stmts: &[Stmt], tokens: &[String]) -> (Vec<Rule>, Vec<(String, Option<String>, Gram)>, Vec<Rule>, Vec<(String, String, String)>) {
     let mut rules = Vec::new();
     let mut choices = Vec::new();
@@ -790,7 +820,7 @@ fn gather(stmts: &[Stmt], tokens: &[String]) -> (Vec<Rule>, Vec<(String, Option<
     let mut balanced = Vec::new();
     for s in stmts {
         match s {
-            Stmt::Node { kind, nested, whole, body } => rules.push(Rule { kind: kind.clone(), nested: *nested, whole: *whole, body: desugar(body, &mut balanced, tokens), own: true, supertype: None }),
+            Stmt::Node { kind, nested, whole, body, .. } => rules.push(Rule { kind: kind.clone(), nested: *nested, whole: *whole, body: desugar(body, &mut balanced, tokens), own: true, supertype: None }),
             Stmt::Choice { name, supertype, nested: true, body } => nested_choices.push(Rule { kind: name.clone(), nested: true, whole: false, body: desugar(body, &mut balanced, tokens), own: false, supertype: supertype.clone() }),
             Stmt::Choice { name, supertype, body, .. } => choices.push((name.clone(), supertype.clone(), desugar(body, &mut balanced, tokens))),
             _ => {}
@@ -1162,14 +1192,8 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
             choices.push((name, supertype, body));
         }
     }
-    // Each `balanced K O C`'s level: any token but `O` or `C` merged into the leaf, an inner `O`
-    // merged and its own pair taken by the level again, then the closer merged; no node of its own.
     for (n, (kind, open, close)) in balanced.iter().enumerate() {
-        let name = format!("{kind}{BALANCED}{n}");
-        let merge = |t: &str| Gram::Merge(kind.clone(), Box::new(Gram::Sym(t.to_string())));
-        let mut alts: Vec<Gram> = ids.tokens.iter().filter(|t| *t != open && *t != close).map(|t| merge(t)).collect();
-        alts.push(Gram::Seq(vec![merge(open), Gram::Sym(name.clone())]));
-        let body = Gram::Seq(vec![Gram::Star(Box::new(Gram::Alt(alts))), merge(close)]);
+        let (name, body) = balanced_level(n, kind, open, close, ids.tokens);
         nested_choices.push(Rule { kind: name, nested: true, whole: false, body, own: false, supertype: None });
     }
     if rules.is_empty() {

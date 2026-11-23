@@ -270,7 +270,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
             next: if src.starts_with("\u{feff}".as_bytes()) { 3 } else { 0 },
             extras: Vec::new(),
             e: 0,
-            w: Writer::new(0, widths, src.len() / 3 + 16).to(finish.target(), src),
+            w: Writer::new(0, widths, src.len() / 3 + 16).to(finish.target(), src).omitting(finish.omissions()),
             last_end: 0,
             depth: 0,
             no_struct: false,

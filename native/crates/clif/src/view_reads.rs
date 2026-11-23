@@ -44,11 +44,9 @@ pub struct ViewDoc {
     pub own_text: u32,
     pub ends: u32,
     pub source_len: u32,
-    /// core.rerail's lines (`core_rr::Lines`' words, `[ns, starts[ns], ne, ends[ne]]`), in the block: 0 items where the
-    /// document has no `Loc` rows on the device. A guest's are its host's (decision 0055).
-    pub lines: Run,
     /// A guest's placement in its host (`Placement`): 0 none (a file's own tree), `PLACED_COPIED` (host byte = guest
-    /// byte + `delta`, clamped to `within`), `PLACED_AT` (every span at `within`).
+    /// byte + `delta`, clamped to `within`), `PLACED_AT` (every span at `within`), `PLACED_TABLE` (each position's
+    /// host span in `placed`).
     pub placement: u32,
     /// The key of the file the document is part of (decision 0431 §4): its own, or a program's file's. Its
     /// `docof`; its ids keep `key`.
@@ -56,39 +54,131 @@ pub struct ViewDoc {
     pub delta: i64,
     pub within_lo: u32,
     pub within_hi: u32,
+    /// `PLACED_TABLE`'s: by local id (a node, then each position past them), the host span `start << 32 | end` the
+    /// guest's placement gives its span (`Placement::host`; u64s). A placement no word maps (an embedder's segments,
+    /// a string's normalized pieces): its spans placed once, as the host places them.
+    pub placed: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 16 + 24);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 5 + 16 + 24);
 
 /// `ViewDoc::placement`'s kinds.
 pub const PLACED_COPIED: u32 = 1;
 pub const PLACED_AT: u32 = 2;
+pub const PLACED_TABLE: u32 = 3;
 
-/// A document of a batch, as a kernel finds its views' rows (decision 0353 step 4d): its entry's offset in the
-/// batch's block, its tape's and its lines' GPU addresses, its tape's view (the reads' own), and its first row in
-/// each view (`VIEWS`).
+/// A document of a batch, as an executor finds its views' rows (decision 0353 step 4d, and step 3 on the CPU): its
+/// entry's offset in the batch's block, its tape's and its lines' places (a home of the directory's, `ViewHome`, and
+/// an offset in it), its tape's view (the reads' own), and its first row in each view (`VIEWS`). Nothing in it is an
+/// address: the host and the device read the same row.
+///
+/// The view's 16z cache offset (`TapeView::side`, the cache's address less the tape's) is the device's, as the
+/// kernels read the view where it lies; the host's reads take the view with their own, from the same homes
+/// (`ViewDir::cache`).
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ViewRow {
     pub entry: u64,
-    /// Device addresses: `UKL_GLOBAL const uint8_t*` in the kernels.
+    /// Offsets in their homes (`homes`: the tape's, then the lines').
     pub tape: u64,
     pub lines: u64,
+    pub homes: [u32; 2],
     pub rows: [u32; VIEWS.len()],
     pub view: crate::view::TapeView,
 }
-const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 4 * VIEWS.len() + std::mem::size_of::<crate::view::TapeView>()).next_multiple_of(8));
+const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 8 + 4 * VIEWS.len() + std::mem::size_of::<crate::view::TapeView>()).next_multiple_of(8));
 
-/// A batch's documents as its views' reads find them: the batch's block's GPU address (the entries' base), its
-/// documents' rows (their GPU address), how many.
+/// Where a home of a directory's tapes and lines lies for each executor: a slab's (or a tape's vector's) host
+/// address, and its device address (`gpu`; 0 where the device has none: no device, or the home is a vector of the
+/// host's). A row's tape is at its home's base plus its offset, the executor's base.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ViewHome {
+    pub host: u64,
+    pub gpu: u64,
+}
+const _: () = assert!(std::mem::size_of::<ViewHome>() == 16);
+
+/// A batch's documents as its views' reads find them, in the batch's block and self-relative: its own offset in the
+/// block (`at`: the block's start is the directory's address less it, whoever reads it), its documents' rows and its
+/// homes (offsets in the block), how many of each, and its 16z cache's home (its number + 1, 0 for none: a block of
+/// its own, which both executors' reads share and write).
 #[repr(C)]
 #[derive(Debug, Default)]
 pub struct ViewDir {
-    pub chunk: u64,
+    pub at: u64,
     pub ndocs: u32,
-    pub pad: u32,
+    pub nhomes: u32,
     pub rows: u64,
+    pub homes: u64,
+    pub cache: u64,
 }
-const _: () = assert!(std::mem::size_of::<ViewDir>() == 24);
+const _: () = assert!(std::mem::size_of::<ViewDir>() == 40);
+
+/// No document (`ViewDir::doc_of_key`).
+pub const NO_DOC: u32 = u32::MAX;
+
+/// The directory's searches on the host, written directly beside their CLIF (`dir_doc_of_row`, `dir_doc_of_key`,
+/// decision 0353 step 3 on the CPU, step 2), which the kernels and the JIT read: each takes a memo, the document its
+/// caller found last, tried before the bisection. A stale memo costs a comparison, never a wrong document.
+impl ViewDir {
+    /// The batch's block's start: the directory's address less its offset in it.
+    fn block(&self) -> *const u8 {
+        (self as *const Self).cast::<u8>().wrapping_sub(self.at as usize)
+    }
+    /// Its rows.
+    ///
+    /// # Safety
+    /// The directory lies in its block as `build_dir` wrote it, and the block is alive.
+    pub unsafe fn rows(&self) -> &[ViewRow] {
+        // SAFETY: the caller's.
+        unsafe { std::slice::from_raw_parts(self.block().add(self.rows as usize).cast::<ViewRow>(), self.ndocs as usize) }
+    }
+    /// Its homes.
+    ///
+    /// # Safety
+    /// As `rows`.
+    pub unsafe fn homes(&self) -> &[ViewHome] {
+        // SAFETY: the caller's.
+        unsafe { std::slice::from_raw_parts(self.block().add(self.homes as usize).cast::<ViewHome>(), self.nhomes as usize) }
+    }
+    /// Row `m`'s entry.
+    ///
+    /// # Safety
+    /// As `rows`, and `m` below `ndocs`.
+    pub unsafe fn entry(&self, m: u32) -> &ViewDoc {
+        // SAFETY: the caller's.
+        unsafe { &*self.block().add(self.rows()[m as usize].entry as usize).cast::<ViewDoc>() }
+    }
+    /// The document whose rows of view `k` (`VIEWS`) hold row `r`: the last whose first row is at or before it (an
+    /// empty one starts where the next does); 0 for a directory of none.
+    ///
+    /// # Safety
+    /// As `rows`.
+    pub unsafe fn doc_of_row(&self, k: u32, r: u32, memo: u32) -> u32 {
+        // SAFETY: the caller's.
+        let rows = unsafe { self.rows() };
+        let first = |m: u32| rows[m as usize].rows[k as usize];
+        let n = self.ndocs;
+        if memo < n && first(memo) <= r && (memo + 1 == n || first(memo + 1) > r) {
+            return memo;
+        }
+        crate::ids::bisect_n(n, |m| first(m) <= r).saturating_sub(1)
+    }
+    /// The document of key `key` (the batch's documents are in key order), or `NO_DOC`.
+    ///
+    /// # Safety
+    /// As `rows`.
+    pub unsafe fn doc_of_key(&self, key: u32, memo: u32) -> u32 {
+        // SAFETY: the caller's.
+        let key_of = |m: u32| unsafe { self.entry(m) }.key;
+        let n = self.ndocs;
+        if memo < n && key_of(memo) == key {
+            return memo;
+        }
+        let c = crate::ids::bisect_n(n, |m| key_of(m) <= key);
+        if c > 0 && key_of(c - 1) == key { c - 1 } else { NO_DOC }
+    }
+}
 
 /// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
 /// `line`, then core.rerail's places (`Loc`): `line`, `end_line`, `col`, `docof`; then `tape`, `ast_depth` and
@@ -111,12 +201,12 @@ pub mod at {
     pub const OWN_TEXT: i32 = offset_of!(ViewDoc, own_text) as i32;
     pub const ENDS: i32 = offset_of!(ViewDoc, ends) as i32;
     pub const SOURCE_LEN: i32 = offset_of!(ViewDoc, source_len) as i32;
-    pub const LINES: i32 = offset_of!(ViewDoc, lines) as i32;
     pub const PLACEMENT: i32 = offset_of!(ViewDoc, placement) as i32;
     pub const FILE: i32 = offset_of!(ViewDoc, file) as i32;
     pub const DELTA: i32 = offset_of!(ViewDoc, delta) as i32;
     pub const WITHIN_LO: i32 = offset_of!(ViewDoc, within_lo) as i32;
     pub const WITHIN_HI: i32 = offset_of!(ViewDoc, within_hi) as i32;
+    pub const PLACED: i32 = offset_of!(ViewDoc, placed) as i32;
 }
 
 /// The `node` view's columns (`Viewed::columns`): the document, the node's id, its kind, start and end.
@@ -152,23 +242,34 @@ pub fn ukl() -> String {
         ("uint32_t", "own_text", offset_of!(ViewDoc, own_text)),
         ("uint32_t", "ends", offset_of!(ViewDoc, ends)),
         ("uint32_t", "source_len", offset_of!(ViewDoc, source_len)),
-        ("Run", "lines", offset_of!(ViewDoc, lines)),
         ("uint32_t", "placement", offset_of!(ViewDoc, placement)),
         ("uint32_t", "file", offset_of!(ViewDoc, file)),
         ("int64_t", "delta", offset_of!(ViewDoc, delta)),
         ("uint32_t", "within_lo", offset_of!(ViewDoc, within_lo)),
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
+        ("Run", "placed", offset_of!(ViewDoc, placed)),
     ];
     let mut s = format!(
-        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    UKL_GLOBAL const uint8_t* tape;\n    UKL_GLOBAL const uint8_t* lines;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
-         typedef struct ViewDir {{\n    UKL_GLOBAL const uint8_t* chunk;\n    uint32_t ndocs;\n    uint32_t pad;\n    UKL_GLOBAL const ViewRow* rows;\n}} ViewDir;\n",
+        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
+         typedef struct ViewHome {{\n    uint64_t host;\n    UKL_GLOBAL const uint8_t* gpu;\n}} ViewHome;\n\
+         typedef struct ViewDir {{\n    uint64_t at;\n    uint32_t ndocs;\n    uint32_t nhomes;\n    uint64_t rows;\n    uint64_t homes;\n    uint64_t cache;\n}} ViewDir;\n",
         VIEWS.len(),
         std::mem::size_of::<crate::view::TapeView>() / 4,
     );
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, homes) == {}, \"ViewRow.homes\");\n", std::mem::offset_of!(ViewRow, homes));
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
+    s += &format!("UKL_STATIC_ASSERT(sizeof(ViewHome) == {}, \"ViewHome: size\");\n", std::mem::size_of::<ViewHome>());
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDir) == {}, \"ViewDir: size\");\n", std::mem::size_of::<ViewDir>());
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, cache) == {}, \"ViewDir.cache\");\n", std::mem::offset_of!(ViewDir, cache));
+    // A directory's places as a kernel reads them: the block's start, a row, and a row's tape and lines at their
+    // homes' device bases.
+    s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_block(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const uint8_t*)d - d->at; }\n";
+    s += "UKL_INLINE UKL_GLOBAL const ViewRow* view_rows(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const ViewRow*)(view_block(d) + d->rows); }\n";
+    s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_home(UKL_GLOBAL const ViewDir* d, uint32_t h, uint64_t at) { return ((UKL_GLOBAL const ViewHome*)(view_block(d) + d->homes))[h].gpu + at; }\n";
+    s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_tape(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[0], e->tape); }\n";
+    s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_lines(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[1], e->lines); }\n";
     s += "typedef struct ViewDoc {\n";
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");
@@ -327,20 +428,6 @@ pub fn core(b: &mut B<'_, '_>) -> Value {
     })
 }
 
-/// `lines_line(at)`: the lines starting at or before byte `at` (`Facts::start_line`: `LineTable::line` + 1), by
-/// bisection of the starts.
-#[cfg(feature = "ir")]
-pub fn lines_line(b: &mut B<'_, '_>) -> Value {
-    let at_ = b.arg(0);
-    let n = b.word_at(I32, b.tape, 0);
-    b.bisect(n, &mut |b, i| {
-        let starts = b.f.ins().iadd_imm(b.tape, 4);
-        let p = b.item(starts, i, 4);
-        let start = b.word_at(I32, p, 0);
-        b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, start, at_)
-    })
-}
-
 /// `view_line(l, col)`: column `col` of the `line` view's row of numbered node `l`: its id, the line its start is
 /// on.
 #[cfg(feature = "ir")]
@@ -406,11 +493,14 @@ impl B<'_, '_> {
         let low = self.f.ins().uextend(I64, low);
         self.f.ins().bor(high, low)
     }
-    /// A word of core.rerail's lines (`ViewDoc::lines`) at index `i`.
-    fn loc_word(&mut self, i: Value) -> Value {
-        let lines = self.follow(self.tape, at::LINES);
-        let p = self.item(lines, i, 4);
-        self.word_at(I32, p, 0)
+    /// The document's lines (`lines_count`), read off its line index at the view's lines' base: the one definition
+    /// of a line and a place (decision 0612); a guest's are its host's.
+    fn loc_count(&mut self) -> Value {
+        self.call_lines("lines_count", &[])
+    }
+    /// Line `k`'s first byte (from 0, `lines_start`).
+    fn loc_start(&mut self, k: Value) -> Value {
+        self.call_lines("lines_start", &[k])
     }
     /// `Loc` position `l`'s byte span, as `start << 32 | end` (`Projected::span`): a node's or token's off the tape,
     /// the whole text, a line's text, or a node's end point.
@@ -438,10 +528,8 @@ impl B<'_, '_> {
                 let j = b.f.ins().isub(i, tokens);
                 // The end points follow the whole text and the lines where the text is the document's own.
                 let own = b.word_at(I32, b.tape, at::OWN_TEXT);
-                let ns = b.loc_word_at(0);
-                let ns1 = b.f.ins().iadd_imm(ns, 1);
-                let ne = b.loc_word(ns1);
-                let texts = b.f.ins().iadd_imm(ne, 1);
+                let n = b.loc_count();
+                let texts = b.f.ins().iadd_imm(n, 1);
                 let zero = b.c32(0);
                 let owned = b.f.ins().icmp_imm(IntCC::NotEqual, own, 0);
                 let ends_from = b.f.ins().select(owned, texts, zero);
@@ -458,21 +546,15 @@ impl B<'_, '_> {
                         let len = b.word_at(I32, b.tape, at::SOURCE_LEN);
                         b.pair(zero, len)
                     }, |b| {
-                        // Line `j`'s text: its start (word `j`) and its end (word `ns + 1 + j`).
-                        let s = b.loc_word(j);
-                        let ns = b.loc_word_at(0);
-                        let at_ = b.f.ins().iadd(ns, j);
-                        let at_ = b.f.ins().iadd_imm(at_, 1);
-                        let e = b.loc_word(at_);
-                        b.pair(s, e)
+                        // Line `j`'s (from 1) place, from its start alone: its text's end is on it (a terminator's
+                        // bytes are the line's they end), so its start stands for both ends here.
+                        let k = b.f.ins().iadd_imm(j, -1);
+                        let s = b.loc_start(k);
+                        b.pair(s, s)
                     })
                 })
             })
         })
-    }
-    fn loc_word_at(&mut self, i: i64) -> Value {
-        let i = self.c32(i);
-        self.loc_word(i)
     }
     /// A guest's span `start << 32 | end` where it stands in its host (`Placement::host`): copied, each end moved by
     /// `delta` and kept within `within`; at `within`. A file's own, as it is.
@@ -509,14 +591,11 @@ impl B<'_, '_> {
         let e = self.f.ins().uextend(I64, e);
         self.f.ins().bor(s, e)
     }
-    /// The 1-based line of core.rerail's lines holding byte `at` (`core_rr::Lines::line`).
+    /// The 1-based line holding byte `at` (`LineTable::line` + 1: the `line` view's read, `lines_line`).
     fn loc_line(&mut self, at_: Value) -> Value {
-        let lines = self.follow(self.tape, at::LINES);
-        let n = self.call_at("loc_line", lines, &[at_]);
-        let one = self.c32(1);
-        self.f.ins().umax(n, one)
+        self.call_lines("lines_line", &[at_])
     }
-    /// A `Loc` view's row: the id, then its place (`Viewed::loc_value`, `core_rr::Lines::place`).
+    /// A `Loc` view's row: the id, then its place (`Viewed::loc_value`, `LineTable::place`).
     fn loc(&mut self, place: Place) -> Value {
         let (l, col) = (self.arg(0), self.arg(1));
         let c = self.f.ins().icmp_imm(IntCC::Equal, col, 0);
@@ -524,24 +603,29 @@ impl B<'_, '_> {
             if place == Place::Docof {
                 return b.entry_u32(at::FILE);
             }
-            let span = b.loc_span(l);
-            let span = b.placed(span);
+            // Placed by its table, else its span as read, placed (`Placement::host`).
+            let placement = b.word_at(I32, b.tape, at::PLACEMENT);
+            let tabled = b.f.ins().icmp_imm(IntCC::Equal, placement, i64::from(PLACED_TABLE));
+            let span = b.either(I64, tabled, |b| {
+                let items = b.follow(b.tape, at::PLACED);
+                let p = b.item(items, l, 8);
+                b.word_at(I64, p, 0)
+            }, |b| {
+                let span = b.loc_span(l);
+                b.placed(span)
+            });
             let s = b.f.ins().ushr_imm(span, 32);
             let s = b.f.ins().ireduce(I32, s);
             let e = b.f.ins().ireduce(I32, span);
             let line = b.loc_line(s);
             let v = match place {
                 Place::Line => line,
-                Place::EndLine => {
-                    let past = b.f.ins().icmp(IntCC::UnsignedGreaterThan, e, s);
-                    b.either(I32, past, |b| {
-                        let last = b.f.ins().iadd_imm(e, -1);
-                        b.loc_line(last)
-                    }, |_| line)
-                }
+                // The line holding its end offset: a span ending with a terminator ends on the line after it.
+                Place::EndLine => b.loc_line(e),
                 Place::Col => {
-                    // Its line's start: word `line` (the starts from word 1).
-                    let start = b.loc_word(line);
+                    // Its line's start (`line` from 1).
+                    let k = b.f.ins().iadd_imm(line, -1);
+                    let start = b.loc_start(k);
                     b.f.ins().isub(s, start)
                 }
                 Place::Docof => unreachable!(),
@@ -568,6 +652,108 @@ pub fn loc_col(b: &mut B<'_, '_>) -> Value {
 #[cfg(feature = "ir")]
 pub fn loc_docof(b: &mut B<'_, '_>) -> Value {
     b.loc(Place::Docof)
+}
+
+#[cfg(feature = "ir")]
+mod dir_at {
+    use super::{ViewDir, ViewDoc, ViewRow};
+    use std::mem::{offset_of, size_of};
+    pub const AT: i32 = offset_of!(ViewDir, at) as i32;
+    pub const NDOCS: i32 = offset_of!(ViewDir, ndocs) as i32;
+    pub const ROWS: i32 = offset_of!(ViewDir, rows) as i32;
+    pub const ROW_SIZE: i64 = size_of::<ViewRow>() as i64;
+    pub const ROW_ENTRY: i32 = offset_of!(ViewRow, entry) as i32;
+    pub const ROW_ROWS: i32 = offset_of!(ViewRow, rows) as i32;
+    pub const KEY: i32 = offset_of!(ViewDoc, key) as i32;
+}
+
+#[cfg(feature = "ir")]
+impl B<'_, '_> {
+    /// The directory's rows (`self.tape` is the directory, in its block): their address, and how many.
+    fn dir_rows(&mut self) -> (Value, Value) {
+        let at = self.word_at(I64, self.tape, dir_at::AT);
+        let block = self.f.ins().isub(self.tape, at);
+        let rows = self.word_at(I64, self.tape, dir_at::ROWS);
+        let rows = self.f.ins().iadd(block, rows);
+        let n = self.word_at(I32, self.tape, dir_at::NDOCS);
+        (rows, n)
+    }
+    /// Row `m`'s first row of view `k`.
+    fn dir_first(&mut self, rows: Value, m: Value, k: Value) -> Value {
+        let row = self.item(rows, m, dir_at::ROW_SIZE);
+        let p = self.item(row, k, 4);
+        self.word_at(I32, p, dir_at::ROW_ROWS)
+    }
+    /// Row `m`'s document's key (its entry's).
+    fn dir_key(&mut self, rows: Value, m: Value) -> Value {
+        let row = self.item(rows, m, dir_at::ROW_SIZE);
+        let entry = self.word_at(I64, row, dir_at::ROW_ENTRY);
+        let at = self.word_at(I64, self.tape, dir_at::AT);
+        let block = self.f.ins().isub(self.tape, at);
+        let p = self.f.ins().iadd(block, entry);
+        self.word_at(I32, p, dir_at::KEY)
+    }
+}
+
+/// `dir_doc_of_row(k, r, memo)`: the document whose rows of view `k` hold row `r` (`ViewDir::doc_of_row`), memo
+/// `memo` tried first.
+#[cfg(feature = "ir")]
+pub fn dir_doc_of_row(b: &mut B<'_, '_>) -> Value {
+    let (k, r, memo) = (b.arg(0), b.arg(1), b.arg(2));
+    let (rows, n) = b.dir_rows();
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, memo, n);
+    let held = b.either(I32, inside, |b| {
+        let first = b.dir_first(rows, memo, k);
+        let from = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, first, r);
+        let next = b.f.ins().iadd_imm(memo, 1);
+        let last = b.f.ins().icmp(IntCC::Equal, next, n);
+        let before = b.either(I32, last, |b| b.c32(1), |b| {
+            let after = b.dir_first(rows, next, k);
+            let past = b.f.ins().icmp(IntCC::UnsignedGreaterThan, after, r);
+            b.f.ins().uextend(I32, past)
+        });
+        let from = b.f.ins().uextend(I32, from);
+        b.f.ins().band(from, before)
+    }, |b| b.c32(0));
+    let hit = b.f.ins().icmp_imm(IntCC::NotEqual, held, 0);
+    b.either(I32, hit, |_| memo, |b| {
+        let c = b.bisect(n, &mut |b, m| {
+            let first = b.dir_first(rows, m, k);
+            b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, first, r)
+        });
+        let one = b.c32(1);
+        let c = b.f.ins().umax(c, one);
+        b.f.ins().isub(c, one)
+    })
+}
+
+/// `dir_doc_of_key(key, memo)`: the document of key `key` (`ViewDir::doc_of_key`), or `NO_DOC`, memo `memo` tried
+/// first.
+#[cfg(feature = "ir")]
+pub fn dir_doc_of_key(b: &mut B<'_, '_>) -> Value {
+    let (key, memo) = (b.arg(0), b.arg(1));
+    let (rows, n) = b.dir_rows();
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, memo, n);
+    let held = b.either(I32, inside, |b| {
+        let k = b.dir_key(rows, memo);
+        let same = b.f.ins().icmp(IntCC::Equal, k, key);
+        b.f.ins().uextend(I32, same)
+    }, |b| b.c32(0));
+    let hit = b.f.ins().icmp_imm(IntCC::NotEqual, held, 0);
+    b.either(I32, hit, |_| memo, |b| {
+        let c = b.bisect(n, &mut |b, m| {
+            let k = b.dir_key(rows, m);
+            b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, k, key)
+        });
+        let any = b.f.ins().icmp_imm(IntCC::NotEqual, c, 0);
+        b.either(I32, any, |b| {
+            let m = b.f.ins().iadd_imm(c, -1);
+            let k = b.dir_key(rows, m);
+            let same = b.f.ins().icmp(IntCC::Equal, k, key);
+            let no = b.c32(i64::from(NO_DOC));
+            b.f.ins().select(same, m, no)
+        }, |b| b.c32(i64::from(NO_DOC)))
+    })
 }
 
 /// No row: a parent probe's end (`view_child_first`, `view_child_next`, `view_number`).

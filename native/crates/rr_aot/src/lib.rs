@@ -1,130 +1,44 @@
-//! **Deprecated** (decision 0550): Rust from an intermediate form. A grammar's Rust is the Bitlex compiler's own (`bitlex_lex_rust`, `bitlex_rust`); no new use. Kept until Go-C-and-C-support and Parser-generators-final-shape remove theirs.
+//! The `.rerail` parser as Rust, written by the Bitlex compiler from the grammar (`rr_parser/rr.bitlex`), never by
+//! hand: tier 1 (`tier1.rs`) from the lexer's statements (`rerail_bitlex::bitlex_lex_rust`), tier 2 (`tier2.rs`) from
+//! the tree rules as one loop over tier 1's records (`rerail_bitlex::bitlex_rust`'s `tier2_loop`, decision 0618). It is
+//! the compile's that `rerail_rr_parser::compiled` makes, so its codes are the JIT's. `rerail-rr-parser`'s `rust_is_current`
+//! checks they are the compiler's output, and writes them again with `RERAIL_BLESS=1`; its tests check tier 1's
+//! records against the interpreter's, and the tapes against the JIT's.
 //!
-//! The `.rerail` parser built ahead of time, run on the JIT's harness, compiled by rustc and LLVM
-//! from Rust the build script writes: tier 1's the JIT's own functions (their Cranelift IR,
-//! `clif_rust`); tier 2's the structured backend of the native IR (`rust_stream`), a function a
-//! rule, as the lean parser's.
-//!
-//! The generated tiers are the `generated` feature's; without it `aot` refuses. Build it optimized
-//! (`cargo test -p rerail-rr-aot --features generated --profile profiling`): a dev build leaves
-//! this crate unoptimized.
+//! This replaces the crate's lowerings of the JIT's IR (`clif_rust`, `rust_stream`, decision 0550).
 
-#[cfg(feature = "generated")]
-#[allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_imports, clippy::all)]
-mod tier1_aot {
-    include!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
-}
-#[cfg(feature = "generated")]
-// The lints `rust_stream` allows in what it writes (its own `#![allow]`, which the build script drops).
-#[allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, non_snake_case, dead_code, clippy::all)]
-mod tier2_aot {
-    include!(concat!(env!("OUT_DIR"), "/tier2_aot.rs"));
-}
-#[cfg(feature = "generated")]
-// Tier 2 writing format 16 by the writer's ops (decision 0434), the lints as `tier2_aot`'s.
-#[allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, non_snake_case, dead_code, clippy::all)]
-mod tier2_16_aot {
-    include!(concat!(env!("OUT_DIR"), "/tier2_16_aot.rs"));
+#[rustfmt::skip]
+#[allow(clippy::all, unused_parens, unused_mut, dead_code, unreachable_code, unused_variables, unused_assignments)]
+mod tier1;
+
+#[rustfmt::skip]
+#[allow(clippy::all, unused_parens, unused_mut, dead_code, unreachable_code, unused_variables)]
+mod tier2;
+
+pub use tier1::{Lexed, PADDING, lex};
+
+/// The tape of `buf[..n]`, format 15's image as the lean parser finishes it (`Writer::finish`), or the byte the parser
+/// refused it at (0: tier 1 sends it to the engine). `buf` is the file padded, as simdjson's: `PADDING` spaces after it
+/// (`padded`), so that tier 1 loads each block where it is.
+pub fn parse(buf: &[u8], n: usize) -> Result<Vec<u8>, u32> {
+    tier2::parse(&buf[..n], &tier1::lex(buf, n), &mut Image(&buf[..n]))
 }
 
-#[cfg(feature = "generated")]
+/// The writer finished into the image of the source it read.
+struct Image<'s>(&'s [u8]);
 
-// Each of tier 1's functions is structured control, as rustc lays out a hand-written loop: none
-// is the irreducible fallback, a loop over a `match` (`clif_rust`).
-const _: () = assert!(tier1_aot::STRUCTURED.0 == tier1_aot::STRUCTURED.1, "a tier 1 function is irreducible: a loop over a match");
-
-#[cfg(feature = "generated")]
-use rerail_compiler::native_ir;
-#[cfg(feature = "generated")]
-use rerail_cpu_block::native_cpu_block;
-#[cfg(feature = "generated")]
-use rerail_cpu_stream::{clif_rust, native_cpu_stream};
-#[cfg(feature = "generated")]
-use rerail_rust_stream::rust_stream;
-
-/// Which tiers run the ahead-of-time build.
-#[derive(Clone, Copy, Debug)]
-pub struct Tiers {
-    pub one: bool,
-    pub two: bool,
-}
-
-/// The grammar compiled as `rerail_rr_parser::compile_with` does, the tiers of `tiers` running
-/// the ahead-of-time build; or why not: the JIT's program does not translate to the source the
-/// build script wrote.
-#[cfg(feature = "generated")]
-pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
-    // Its compile's options are a run's (decision 0442): its caller's, else one of its own.
-    let _run = rerail_context::run_own().is_none().then(|| rerail_context::within(rerail_context::default_shared()));
-    let options = rerail_compiler::native_cpu_codegen::options();
-    options.keep_ir.store(true, std::sync::atomic::Ordering::Relaxed);
-    // Compiled for Rust's NEON as the source was (`rr_aot_gen`): its bit tests (`bit_test`).
-    // The same meaning either way; the flag back as it was for the JIT's compiles after.
-    let bit_test = options.bit_test.swap(true, std::sync::atomic::Ordering::Relaxed);
-    let c = rerail_rr_parser::compile_with(rerail_bitlex::bitlex_masks::Shape::Rules);
-    options.bit_test.store(bit_test, std::sync::atomic::Ordering::Relaxed);
-    let mut c = c?;
-    let one = clif_rust::rust_source(&c.parser)?;
-    let (widths, tag) = c.parser.tier2.widths_tag();
-    let native = native_ir::lower(&c.program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
-    let two = rust_stream::rust_source_at(&native, widths, tag)?;
-    let (widths16, tag16) = c.parser.sixteen().ok_or("no format 16 tier 2")?.widths_tag();
-    let sixteen = rust_stream::rust_source_16(&native, widths16, tag16, lang())?;
-    let sealed = |src: &str| src.lines().last().and_then(|l| l.strip_prefix("pub const SOURCE: u64 = 0x")?.strip_suffix(';').and_then(|h| u64::from_str_radix(h, 16).ok()));
-    if sealed(&one) != Some(tier1_aot::SOURCE) || sealed(&two) != Some(tier2_aot::SOURCE) || sealed(&sixteen) != Some(tier2_16_aot::SOURCE) {
-        return Err("the ahead-of-time source is of another program than the JIT compiles".into());
+impl rerail_tape_format::Finish for Image<'_> {
+    type Out = Vec<u8>;
+    fn finish<L: rerail_tape_format::Layout>(&mut self, w: rerail_tape_format::Writer<L>) -> Result<Vec<u8>, rerail_tape_format::Redo> {
+        w.finish(self.0)
     }
-    c.parser.tier1.ir.clear();
-    c.parser.tier2.ir.clear();
-    if tiers.one {
-        // The code reads its own copy of the tables (`TABLES_DATA`): the program's.
-        if c.parser.tier1.tables_words() != Some(&tier1_aot::TABLES_DATA[..]) {
-            return Err("the ahead-of-time tables are of another program: run `cargo run -p rerail-rr-aot-gen`".into());
-        }
-        type Raw = unsafe extern "C" fn(u64, u64, u64, u64, u64, u64, u64);
-        let raw: &[Raw] = tier1_aot::ENTRIES;
-        // SAFETY: each is the pass's code (the fingerprint), taking the JIT's entry's
-        // arguments, all 64-bit integers or pointers in the same registers.
-        let entries = raw.iter().map(|&e| unsafe { std::mem::transmute::<Raw, native_cpu_block::Entry>(e) }).collect();
-        // SAFETY: as above, in the passes' order.
-        unsafe { c.parser.tier1.set_entries(entries) };
-    }
-    if tiers.two {
-        // SAFETY: the source is this program's code (the fingerprint), reading and writing
-        // `Ctx` as the JIT's does. It counts its calls open itself (the frame shift unused).
-        unsafe { c.parser.tier2.set_entry(entry, 4) };
-        // SAFETY: as above, the format 16 source on the format 16 run's harness (`write16`: the writer and numbers
-        // set).
-        unsafe { c.parser.sixteen_mut().ok_or("no format 16 tier 2")?.set_entry(entry16, 4) };
-    }
-    Ok(c)
 }
 
-/// The language the format 16 source is generated for, rr's shipped table (`f16::lang`, decision 0535): the run's
-/// node numbers are its, literals in the source, so a format 16 run of the ahead-of-time build takes it.
-pub fn lang() -> &'static rerail_tape_format::f16::Lang {
-    rerail_tape_format::f16::lang(rerail_tape_format::RR_TAG).expect("rr's format 16 table")
+/// `src` padded for `parse` and `lex`: a buffer of it and `PADDING` spaces (a caller that reads files makes its buffer
+/// so).
+pub fn padded(src: &[u8]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(src.len() + PADDING);
+    b.extend_from_slice(src);
+    b.resize(src.len() + PADDING, b' ');
+    b
 }
-
-/// Without the generated tiers there is no ahead-of-time build.
-#[cfg(not(feature = "generated"))]
-pub fn aot(_: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
-    Err("built without the `generated` feature (`--features generated`)".into())
-}
-
-/// The generated entry, on the harness's `Ctx`.
-#[cfg(feature = "generated")]
-unsafe extern "C" fn entry(ctx: *const native_cpu_stream::Ctx) -> u64 {
-    // SAFETY: the harness's contract (`CompiledStream::call`).
-    unsafe { tier2_aot::tier2_entry(ctx as u64) }
-}
-
-/// The generated format 16 entry, on the harness's `Ctx`.
-#[cfg(feature = "generated")]
-unsafe extern "C" fn entry16(ctx: *const native_cpu_stream::Ctx) -> u64 {
-    // SAFETY: the harness's contract (`CompiledStream::write16`).
-    unsafe { tier2_16_aot::tier2_entry(ctx as u64) }
-}
-
-#[cfg(all(test, feature = "generated"))]
-mod tests;

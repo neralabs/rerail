@@ -112,9 +112,15 @@ pub const CHECK: u8 = 0x66;
 /// lost: of no width, after the token (decision 0451, the lean lexer's `asi`). `m=19`, and
 /// `m=20+F` where flag `F` is set (`mark … , refuses …`): where gap pattern `operand` holds, the
 /// file is refused (what the lean lexer's `asi` reads there the grammar does not say yet).
+/// `m=36`, and `m=37+F` where flag `F` is set (`mark … , loses since …`): where gap pattern
+/// `operand` holds, the first extra pending is of no width at the start of the one after it, in
+/// its place (the lean lexer's `asi` reads a block comment through to another comment, loses its
+/// bytes there, and is asked again after that one).
 pub const SETTLE: u8 = 0x84;
 /// `SETTLE`'s first refusing mode (`m=19`; `m=20+F` with a flag).
 pub const SETTLE_REFUSE: u8 = 19;
+/// `SETTLE`'s first moving mode (`m=36`; `m=37+F` with a flag).
+pub const SETTLE_MOVE: u8 = 36;
 
 // The preprocessing words (decision 0348, `pp_words`): tier 2's words over a stack of token
 // sources (a file's tape, a range of the TU's arena), with a token register `T`, a macro register
@@ -253,8 +259,7 @@ pub fn split(word: u32) -> (u8, u8, u16) {
 
 /// The grammar's names for a program's numbers (`name rule R "N"`, `name kind #K "N"`, `name
 /// field F "N"`, `name token K "N"`, `name mark K "N"`): each rule's (by its place among
-/// `Words::rules`), each node kind's and field's (rising by number: what `rust_stream`'s labels
-/// are named by too), each record kind's (the token kinds tier 1's records give), and each mark's
+/// `Words::rules`), each node kind's and field's (rising by number; no word reads them), each record kind's (the token kinds tier 1's records give), and each mark's
 /// in the records' code (`Records::marks`, by its bit).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Names {
@@ -268,10 +273,10 @@ pub struct Names {
 /// A program's words and the tables they index.
 #[derive(Clone, Default)]
 pub struct Words {
-    pub words: Vec<u32>,
+    pub words: rerail_blocks::vector::Vector<u32>,
     pub strings: Vec<Vec<u8>>,
-    pub labels: Vec<u16>,
-    pub longs: Vec<u64>,
+    pub labels: rerail_blocks::vector::Vector<u16>,
+    pub longs: rerail_blocks::vector::Vector<u64>,
     pub tree_sitter_query: bool,
     /// Set mode (t1 spec-transducer §1, list step 14): the program's consumer reads its output
     /// as a set of (task, label) keys, so an executor may stop a label at its first emit in a

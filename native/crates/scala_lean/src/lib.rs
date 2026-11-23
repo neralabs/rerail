@@ -56,6 +56,15 @@ pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
     parse::parse(src)
 }
 
+/// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 15's columns (`tape`), or
+/// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0434).
+pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
+    if src.len() >= u32::MAX as usize / 2 {
+        return Err(Refusal::TooLarge);
+    }
+    parse::parse_into(src, finish)
+}
+
 /// A kind's name as the tape prints it: tree-sitter names the `(` token's symbol after the alias
 /// that shares it (`_constructor_annotation`'s immediate `(`, aliased `arguments`).
 fn display(kind: u16) -> &'static str {
@@ -120,6 +129,15 @@ pub fn lex_only(src: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An argument that is `*` alone (`f(*)`, `g(a, *)`): the vararg test looks no further back than the argument's
+    /// first token (it read two before it, past the start, and overflowed on a Scala repository).
+    #[test]
+    fn a_lone_star_argument_is_no_vararg_and_no_overflow() {
+        for src in ["object A { f(*) }", "object A { g(a, *) }", "object A { h(b)(*) }"] {
+            let _ = tape(src.as_bytes());
+        }
+    }
 
     #[test]
     fn tables_fit_the_keys() {

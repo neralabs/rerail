@@ -2,16 +2,17 @@
 //! (`tools/bitlex`): each named mask of the compiled block program equals the evaluator's mask on
 //! every input and every executor (`docs/parser-generators/13-tape-on-the-gpu.md` §7, step 2).
 
+use rerail_blocks::vector::Vector;
 use crate::block_tests::{Executors, inputs, runs};
 #[allow(unused_imports)]
 use rerail_compiler::*;
 use rerail_cpu_block::*;
 use rerail_cpu_stream::*;
 use rerail_compiler::program::Words as Program;
-use rerail_compiler::rir_asm as rir;
+use rerail_rir::rir_asm as rir;
 use rerail_bitlex::bitlex_masks as bitlex_compile;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-use rerail_metal as metal_program_backend;
+use rerail_metal_programs as metal_program_backend;
 
 /// The masks the compiler handles so far: classes, logic, `prev`, `starts`, `after`, `span`,
 /// `toggle`, `after_odd_run` and `fill`.
@@ -55,7 +56,7 @@ fn evaluated(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8], names: &[&str]) -> 
         .collect()
 }
 
-fn cut(mut words: Vec<u64>, n: usize) -> Vec<u64> {
+fn cut(mut words: Vector<u64>, n: usize) -> Vector<u64> {
     words.truncate(n.div_ceil(64));
     if !n.is_multiple_of(64)
         && let Some(last) = words.last_mut()
@@ -76,9 +77,10 @@ fn forward_masks_equal_the_evaluator_on_every_executor() {
     let ex = Executors::new(&p);
     let mut cases = inputs();
     cases.push(br#"{"a\"b": [1, -2.5e3, "x\\"], "c": true}"#.to_vec());
-    for bytes in cases {
+    let runs_of = ex.every_of(&cases);
+    for (bytes, runs) in cases.into_iter().zip(runs_of) {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in ex.every(&bytes) {
+        for (executor, got) in runs {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes\n{}", bytes.len(), compiled.rows);
             }
@@ -136,7 +138,8 @@ fn errors_and_escapes_are_the_fallback_output() {
     let mut cases = inputs();
     cases.extend([b"{\"a/b\": 1}".to_vec(), b"{\"a\": 1} // c".to_vec(), b"\"a\nb\"".to_vec(), b"/".to_vec()]);
     let (mut clean, mut falls) = (0, 0);
-    for bytes in cases {
+    let runs_of = ex.every_of(&cases);
+    for (bytes, runs) in cases.into_iter().zip(runs_of) {
         let tables = std::collections::HashMap::new();
         let out = ::bitlex::eval::Ev::run(&stmts, &bytes, &tables).expect("evaluates");
         let vars = |name: &str| match out.vars.get(name) {
@@ -149,7 +152,7 @@ fn errors_and_escapes_are_the_fallback_output() {
         // The program has no tokens, so the evaluator's "in no token" errors are not its own.
         let falls_back = out.errors.iter().any(|e| !e.contains("is in no token"));
         assert_eq!(want.iter().any(|&w| w != 0), falls_back, "{} bytes: {:?}", bytes.len(), out.errors);
-        for (executor, got) in ex.every(&bytes) {
+        for (executor, got) in runs {
             // The fallback's outputs, one per delay, ORed: the OR of the masks.
             let mut any = vec![0u64; bytes.len().div_ceil(64)];
             for &k in &compiled.fallbacks {
@@ -198,19 +201,15 @@ fn every_total_is_one_flag_on_every_executor() {
     }
 }
 
-/// The Metal executors' runs of a batch: generated MSL, and the forward carry in segments of three blocks. None
+/// The Metal executor's runs of a batch: the forward carry in segments of three blocks and of tier 1's 29. None
 /// without a device (`executors::no_device`).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn metal_batch_runs(native: &block_native::BlockNative, batch: &[block::BatchFile<'_>]) -> Vec<(String, Vec<block::BlockRun>)> {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
-    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
     if crate::executors::no_device() {
         return Vec::new();
     }
-    vec![
-        ("metal generated".into(), run_split(&[native], batch, LaneWidth::ALL[0], Executor::Generated(ClassStrategy::ALL[0]), 64).expect("runs").files),
-        ("metal forward carry".into(), run_serial_split(&[native], batch, Segments { blocks: 3, warm: 1 }).expect("runs").run.files),
-    ]
+    [3, 29].into_iter().map(|blocks| (format!("metal forward carry, segments of {blocks}"), run_serial_split(&[native], batch, Segments { blocks, warm: 1 }).expect("runs").run.files)).collect()
 }
 
 /// No Metal executors off the device layer's targets.
@@ -253,9 +252,10 @@ fn later_masks_equal_the_evaluator_on_every_executor() {
     let ex = Executors::new(&p);
     let mut cases = inputs();
     cases.extend([b"1e+5 2E-x 3e 4e9 \"\\\\\\\"\0".to_vec(), vec![0u8; 70], b"\"\"\"".to_vec()]);
-    for bytes in cases {
+    let runs_of = ex.every_of(&cases);
+    for (bytes, runs) in cases.into_iter().zip(runs_of) {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in ex.every(&bytes) {
+        for (executor, got) in runs {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes\n{}", bytes.len(), compiled.rows);
             }
@@ -313,7 +313,7 @@ fn numbers_equal_the_evaluator_on_every_executor() {
     cases.extend([b"a````b``c`````d````e`````".to_vec(), b"````````".to_vec(), fences(60), [vec![b'.'; 65_530], fences(40)].concat()]);
     for bytes in cases {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in Executors::new(&p).run(&bytes, false).0 {
+        for (executor, got) in Executors::new(&p).run(&bytes, false) {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes", bytes.len());
             }
@@ -340,7 +340,7 @@ fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
             // Metal runs a backward pass in its forward carry only (`run_passes`), not in its
             // interpreter or generated kernels.
             #[allow(unused_mut)]
-            let mut got = Executors::new(&p).run(&bytes, false).0;
+            let mut got = Executors::new(&p).run(&bytes, false);
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             {
                 use metal_program_backend::block_program::serial::{Segments, run_serial_split};
@@ -430,8 +430,7 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
             want_starts[t.start / 64] |= 1 << (t.start % 64);
             want_lasts[(t.end - 1) / 64] |= 1 << ((t.end - 1) % 64);
         }
-        let (runs, over) = prepared.run(&bytes, true);
-        assert!(over.is_empty(), "over the launch budget: {over:?}");
+        let runs = prepared.run(&bytes, true);
         for (executor, got) in runs {
             if compiled.fallbacks.iter().any(|&k| cut(got[usize::from(k)].clone(), n).iter().any(|&w| w != 0)) {
                 conservative += 1;
@@ -450,53 +449,13 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
     assert!(compared > 0 && rejected > 0);
 }
 
-/// All of `json.bitlex` as generated UKL: one kernel, a few lines per instruction (it was 0.7 to
-/// 1.1 MB of round kernels, each recomputing what came before it, and took Metal minutes). The lines
-/// counted are those generated for the program, after the head every source shares
-/// (`block_program::head`: the carries, the sinks and the interpreter's helpers, 0440 step C).
+/// A batch (decision 0066): files of several languages, interleaved, each under its own program.
+/// Every file's outputs and positions equal its program's CPU interpreter on that file alone, in
+/// the forward carry, in segments of three blocks and of tier 1's 29.
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-fn json_ukl_is_one_kernel() {
-        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
-    let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
-    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
-        0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
-        id => Some(id),
-    };
-    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
-    let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
-    let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).expect("compiles");
-    let text = compiled.text();
-    let p = rir::assemble(&text).expect("assembles");
-    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
-    for width in LaneWidth::ALL {
-        for strategy in ClassStrategy::ALL {
-            let ukl = generate_with(&native, width, strategy);
-            assert_eq!(ukl.matches("DEFINE_KERNEL2(").count(), 1);
-            let generated = ukl.strip_prefix(&metal_program_backend::block_program::head(width)).expect("a source starts with the shared head");
-            let lines = generated.lines().count();
-            // Counted on the form generated: `Planes` writes each class out as the planes' logic.
-            let insts = match strategy {
-                ClassStrategy::Lookup => native.insts.len(),
-                ClassStrategy::Planes => native.planes_form().insts.len(),
-            };
-            // A fixed preamble (the kernel's arguments, tables and stores), then a few lines per
-            // instruction in each of three bodies (general, full group, ASCII full group).
-            assert!(lines < 200 + 15 * insts, "{}-byte {strategy:?}: {lines} lines for {insts} instructions", width.bytes());
-        }
-    }
-}
-
-/// A batch (decision 0066): files of several languages, interleaved, each under its own program,
-/// in one launch. Every file's outputs and positions equal its program's CPU interpreter on that
-/// file alone, on the Metal interpreter and on generated MSL at every lane width. With the
-/// default polls it is one launch; with one poll per predecessor and none after it, groups leave unfinished and the launch is repeated; the
-/// results are the same.
-#[test]
-#[cfg(any(target_os = "macos", target_os = "linux", windows))]
-fn a_batch_of_files_and_programs_is_one_launch() {
-    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, SPINS, run_batch};
+fn a_batch_of_files_and_programs_runs_in_the_forward_carry() {
+    use metal_program_backend::block_program::serial::{Segments, run_serial_split};
     let programs = batch_programs();
     let blocks: Vec<&block::BlockProgram> = programs.iter().map(|p| &p.block_programs[0]).collect();
     let natives: Vec<block_native::BlockNative> = programs.iter().map(|p| native_ir::lower(p, 0, 0).expect("lowers").block_programs.remove(0)).collect();
@@ -504,19 +463,12 @@ fn a_batch_of_files_and_programs_is_one_launch() {
     let bytes = batch_bytes();
     let files = batch_files(&bytes, blocks.len());
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
-    for width in LaneWidth::ALL.into_iter().filter(|_| !crate::executors::no_device()) {
-        for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes)] {
-            for spins in [SPINS, 0] {
-                let run = run_batch(&natives, &files, width, executor, spins).unwrap_or_else(|e| panic!("{executor:?}: {e:?}"));
-                if spins > 0 {
-                    assert_eq!(run.launches, 1, "{executor:?}, {}-byte lanes", width.bytes());
-                }
-                for (k, (got, want)) in run.files.iter().zip(&want).enumerate() {
-                    let what = format!("file {k} ({} bytes, program {}), {executor:?}, {}-byte lanes, {spins} polls", files[k].bytes.len(), files[k].program, width.bytes());
-                    assert_eq!(got.outputs, want.outputs, "{what}");
-                    assert_eq!(got.positions, want.positions, "{what}");
-                }
-            }
+    for blocks in [3, 29].into_iter().filter(|_| !crate::executors::no_device()) {
+        let run = run_serial_split(&natives, &files, Segments { blocks, warm: 1 }).unwrap_or_else(|e| panic!("segments of {blocks}: {e:?}"));
+        for (k, (got, want)) in run.run.files.iter().zip(&want).enumerate() {
+            let what = format!("file {k} ({} bytes, program {}), segments of {blocks}", files[k].bytes.len(), files[k].program);
+            assert_eq!(got.outputs, want.outputs, "{what}");
+            assert_eq!(got.positions, want.positions, "{what}");
         }
     }
 }
@@ -531,7 +483,7 @@ fn batch_programs() -> Vec<Program> {
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let compiled = |src: &str, names: &[&str], symbols: Option<&bitlex_compile::Symbols<'_>>| {
         let stmts = ::bitlex::syntax::parse(src).expect("parses");
         let text = bitlex_compile::compile(&stmts, names, symbols).unwrap_or_else(|e| panic!("compiles: {e}")).text();
@@ -578,12 +530,12 @@ fn the_cpu_executors_take_a_batch() {
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
     // The rows the CPU's tier 1 does not store (0406): a total no one reads by its rows is its
     // flag only, compared below.
-    let unstored: Vec<Vec<usize>> = blocks.iter().map(|b| rerail_compiler::block_native::BlockNative::lower(b).cpu_unstored()).collect();
+    let unstored: Vec<Vector<usize>> = blocks.iter().map(|b| rerail_compiler::block_native::BlockNative::lower(b).cpu_unstored()).collect();
     for (name, got) in [("interpreter", block::run_batch(&blocks, &files)), ("cranelift", native_cpu_block::run_batch(&compiled, &files))] {
         assert_eq!(got.len(), files.len());
         for (k, (got, want)) in got.iter().zip(&want).enumerate() {
             let what = format!("{name}: file {k} ({} bytes, program {})", files[k].bytes.len(), files[k].program);
-            let rows = |r: &block::BlockRun| -> Vec<Vec<u64>> {
+            let rows = |r: &block::BlockRun| -> Vec<Vector<u64>> {
                 r.outputs.iter().enumerate().filter(|&(o, _)| name == "interpreter" || !unstored[files[k].program].contains(&o)).map(|(_, w)| w.clone()).collect()
             };
             assert_eq!(rows(got), rows(want), "{what}");
@@ -598,8 +550,8 @@ fn the_cpu_executors_take_a_batch() {
 
 /// The batch's cost per 64-byte block on real files: JSON's program (masks, tree rows and the
 /// fallback) over every file listed in `RERAIL_JSON_FILES` (one path a line), in one batch.
-/// Generated MSL and the Metal interpreter at every lane width (GPU seconds, best of 3), and
-/// Cranelift's one call per program (thread CPU time, best of 3). Run by name: a measurement.
+/// The forward carry (GPU seconds, best of 3), and Cranelift's one call per program (thread CPU
+/// time, best of 3). Run by name: a measurement.
 #[test]
 #[ignore = "a measurement; run by name with RERAIL_JSON_FILES"]
 fn json_batch_cost_per_block() {
@@ -626,29 +578,15 @@ fn json_batch_cost_per_block() {
     println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if std::env::var_os("RERAIL_CPU_ONLY").is_none() {
-        use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, RepeatedLaunches, run_split};
-        // The count is the run's (decision 0442).
-        let _run = rerail_context::test_run();
-        let repeated = rerail_context::local::<RepeatedLaunches>();
-        let before = repeated.0.load(std::sync::atomic::Ordering::Relaxed);
-        for executor in [Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes), Executor::Interpreter] {
-            for width in LaneWidth::ALL {
-                let (mut best, mut launches) = (f64::MAX, 0);
-                for _ in 0..3 {
-                    let run = run_split(&[&native], &files, width, executor, 64).unwrap_or_else(|e| panic!("{executor:?}: {e:?}"));
-                    assert!(run.files == runs, "{executor:?} equals Cranelift");
-                    best = best.min(run.seconds);
-                    launches = run.launches;
-                }
-                println!(
-                    "{executor:?}, {:2}-byte lanes, {launches} launches: {:.3} ns per block, {:.2} GB/s (GPU time, best of 3)",
-                    width.bytes(),
-                    best / blocks as f64 * 1e9,
-                    total as f64 / best / 1e9
-                );
-            }
+        use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+        let (mut best, mut launches) = (f64::MAX, 0);
+        for _ in 0..3 {
+            let run = run_serial_split(&[&native], &files, Segments { blocks: 29, warm: 1 }).unwrap_or_else(|e| panic!("forward carry: {e:?}"));
+            assert!(run.run.files.iter().zip(&runs).all(|(a, b)| a.outputs == b.outputs), "the forward carry equals Cranelift");
+            best = best.min(run.run.seconds);
+            launches = run.run.launches;
         }
-        println!("repeated launches: {}", repeated.0.load(std::sync::atomic::Ordering::Relaxed) - before);
+        println!("forward carry, {launches} launches: {:.3} ns per block, {:.2} GB/s (GPU time, best of 3)", best / blocks as f64 * 1e9, total as f64 / best / 1e9);
     }
 }
 
@@ -669,7 +607,7 @@ fn json_tier2_switches_on_the_first_byte_alone() {
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     let text = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}")).text();
     let rows: Vec<&str> = text.lines().filter(|l| l.split_whitespace().nth(1) == Some("ROW")).collect();
@@ -685,7 +623,7 @@ fn json_fallbacks() -> Vec<u16> {
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).expect("compiles").fallbacks
 }
@@ -1017,13 +955,13 @@ fn only_the_compiler_reads_tier2s_states() {
     // The compiler crate's `grammar` and `bitlex_tier2`, its Bitlex compiler (`bitlex_masks`, which
     // hands the table to them), and this file, which names them.
     const ALLOWED: [&str; 4] = ["grammar.rs", "bitlex_masks.rs", "bitlex_tier2.rs", "compile_tests.rs"];
-    // The engine's transducer and every crate beside it.
+    // Every crate: the engine's transducer is in its crates too.
     let native = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..");
     // The table's types and its arms (`.states` is a common name; a state row is read through
     // its type).
     let needles = [".arms", "ArmRow", "StateRow", "grammar::Act", "Act::Open", "Act::Close", "Act::Leaf"];
     let mut readers = Vec::new();
-    let mut dirs = vec![native.join("src/code_rule_dsl/transducer"), native.join("crates")];
+    let mut dirs = vec![native.join("crates")];
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(&dir).expect("reads the source") {
             let path = entry.expect("an entry").path();
@@ -1162,7 +1100,7 @@ fn json_compiled_text(json: &str) -> Result<(Program, bitlex_compile::Compiled),
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let stmts = ::bitlex::syntax::parse(json).map_err(|e| format!("{e:?}"))?;
     let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols))?;
     let text = compiled.text();
@@ -1170,7 +1108,7 @@ fn json_compiled_text(json: &str) -> Result<(Program, bitlex_compile::Compiled),
 }
 
 /// A node as ids: kind, field, supertypes (sorted), start, end, size.
-type IdNode = (u16, u16, Vec<u16>, usize, usize, usize);
+type IdNode = (u16, u16, Vector<u16>, usize, usize, usize);
 
 /// The reference parser's nodes for `bytes` as ids, or `None` where the file goes to tree-sitter.
 fn reference_nodes(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8]) -> Option<Vec<IdNode>> {
@@ -1189,7 +1127,7 @@ fn reference_nodes(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8]) -> Option<Vec
             .iter()
             .map(|n| {
                 let field = n.field.as_deref().map_or(0, |f| grammar.field_id_for_name(f).expect("a field").get());
-                let mut supers: Vec<u16> = n.supertypes.iter().map(|s| kind(s)).collect();
+                let mut supers: Vector<u16> = n.supertypes.iter().map(|s| kind(s)).collect();
                 supers.sort_unstable();
                 (kind(&n.kind), field, supers, n.start, n.end, n.size)
             })
@@ -1227,7 +1165,7 @@ fn tier2_nodes(p: &Program, bytes: &[u8]) -> Option<Vec<IdNode>> {
             .map(|n| {
                 let mut supers = n.supers;
                 supers.sort_unstable();
-                (n.kind, n.field, supers, n.start as usize, n.end as usize, n.size as usize)
+                (n.kind, n.field, Vector::from(&supers[..]), n.start as usize, n.end as usize, n.size as usize)
             })
             .collect(),
     )
@@ -1408,7 +1346,7 @@ fn rounds_equal_the_evaluator() {
     }
     for bytes in cases {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in run.run(&bytes, false).0 {
+        for (executor, got) in run.run(&bytes, false) {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {:?}\n{}", String::from_utf8_lossy(&bytes), compiled.rows);
             }

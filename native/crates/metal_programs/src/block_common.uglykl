@@ -1,0 +1,257 @@
+// Block programs' shared code in UKL (decision 0440 step C; was block_carry.metal, block_sinks.metal and the
+// helpers block_program.rs wrote as MSL): the file table and a file's bytes, the carries and the sinks. The forward
+// carry's kernels (block_serial.rs) are compiled after it.
+//
+// Compiled for one lane word: `BW` its bits (16, 32 or 64) and `BM` its type, defined in front of the source. A
+// group is one SIMD group of the device's width (`GROUP_LANES`: 16 or 32 lanes), each lane owning `BW / 8` bytes of
+// a file; the host lays a batch out for the same width (`block_program::group_lanes`).
+//
+// Carries (`docs/parser-generators/06-block-parallel.md` §2): each carried operation has a lane summary, an
+// associative combine and an apply. A group combines its lanes' summaries with SIMD-group operations; between
+// segments the carries go forward only (block_serial.rs): no group waits on another (decision 0540 step 7). `prev`
+// needs no scan: its carry is a halo, the 64 bits before a lane, from the lanes before it.
+#include <ukl/backend.h>
+#include <ukl/bits.h>
+#include <ukl/simd.h>
+
+// Metal's `select(a, b, c)`: `b` where `c`, else `a`. A C conditional, so it evaluates one of `a` and `b`: a
+// SIMD-group operation is never in an operand (a lane that skips it leaves its lanes reading an inactive lane, and
+// under emulation stops the group), but a statement of its own before.
+#define SEL(a, b, c) ((c) ? (b) : (a))
+// Conversions, as the generated code writes them.
+#define BMC(x) ((BM)(x))
+#define U32(x) ((uint32_t)(x))
+#define U64(x) ((uint64_t)(x))
+#define I32(x) ((int32_t)(x))
+// A group's lanes: the device's SIMD group, 16 or 32 lanes (a ballot is a word of its lanes' bits, and the borrow's
+// carry-lookahead adds two of them in 64 bits).
+#define GROUP_LANES UKL_SIMD_WIDTH
+#if GROUP_LANES != 16 && GROUP_LANES != 32
+#  error "block_common: a group is a SIMD group of 16 or 32 lanes"
+#endif
+
+// The lane code is straight-line (parser_tests' `check_lowering`): selects, never branches.
+UKL_INLINE int32_t clamp_i32(int32_t x, int32_t lo, int32_t hi) { return SEL(SEL(x, hi, x > hi), lo, x < lo); }
+// A rotate right by `n` (0..63): at 0 both halves are `x`.
+UKL_INLINE uint64_t rotr64(uint64_t x, uint64_t n) { n &= 63ul; return (x >> n) | (x << ((64ul - n) & 63ul)); }
+// The bits of `x` in reverse order (Metal's `reverse_bits`), by swaps of halves: six steps, no loop.
+UKL_INLINE uint64_t reverse64(uint64_t x)
+{
+    x = ((x >> 1) & 0x5555555555555555ul) | ((x & 0x5555555555555555ul) << 1);
+    x = ((x >> 2) & 0x3333333333333333ul) | ((x & 0x3333333333333333ul) << 2);
+    x = ((x >> 4) & 0x0f0f0f0f0f0f0f0ful) | ((x & 0x0f0f0f0f0f0f0f0ful) << 4);
+    x = ((x >> 8) & 0x00ff00ff00ff00fful) | ((x & 0x00ff00ff00ff00fful) << 8);
+    x = ((x >> 16) & 0x0000ffff0000fffful) | ((x & 0x0000ffff0000fffful) << 16);
+    return (x >> 32) | (x << 32);
+}
+
+UKL_INLINE uint64_t sg_bcast64(uint64_t x, uint32_t lane __UKL_PARAMS)
+{
+    return (uint64_t)ukl_sg_shuffle((uint32_t)x, lane __UKL_ARGS) | ((uint64_t)ukl_sg_shuffle((uint32_t)(x >> 32), lane __UKL_ARGS) << 32);
+}
+UKL_INLINE uint64_t sg_up64(uint64_t x, uint32_t d __UKL_PARAMS)
+{
+    return (uint64_t)ukl_sg_shuffle_up((uint32_t)x, d __UKL_ARGS) | ((uint64_t)ukl_sg_shuffle_up((uint32_t)(x >> 32), d __UKL_ARGS) << 32);
+}
+UKL_INLINE uint64_t sg_down64(uint64_t x, uint32_t d __UKL_PARAMS)
+{
+    return (uint64_t)ukl_sg_shuffle_down((uint32_t)x, d __UKL_ARGS) | ((uint64_t)ukl_sg_shuffle_down((uint32_t)(x >> 32), d __UKL_ARGS) << 32);
+}
+#if BW == 64
+#define SG_UP_BM(x, d) sg_up64((x), (d) __UKL_ARGS)
+#define SG_BCAST_BM(x, l) sg_bcast64((x), (l) __UKL_ARGS)
+#else
+#define SG_UP_BM(x, d) ((BM)ukl_sg_shuffle_up((uint32_t)(x), (d) __UKL_ARGS))
+#define SG_BCAST_BM(x, l) ((BM)ukl_sg_shuffle((uint32_t)(x), (l) __UKL_ARGS))
+#endif
+UKL_INLINE bool sg_any(bool b __UKL_PARAMS) { return ukl_sg_ballot(b __UKL_ARGS) != 0u; }
+UKL_INLINE bool sg_all(bool b __UKL_PARAMS) { return ukl_sg_ballot(!b __UKL_ARGS) == 0u; }
+
+// A lane word's set bits, and its lowest set bit's place.
+#if BW == 64
+#define POPCOUNT_BM(x) ukl_popcount64((uint64_t)(x))
+#define CTZ_BM(x) ukl_ctz64((uint64_t)(x))
+#else
+#define POPCOUNT_BM(x) ukl_popcount32((uint32_t)(x))
+#define CTZ_BM(x) ukl_ctz32((uint32_t)(x))
+#endif
+
+// 16 bytes of a file, as four 32-bit words (`uint4` in MSL): a 16-byte chunk.
+typedef struct B4 { uint32_t x, y, z, w; } B4;
+UKL_INLINE B4 b4(uint32_t x, uint32_t y, uint32_t z, uint32_t w) { B4 v; v.x = x; v.y = y; v.z = z; v.w = w; return v; }
+UKL_INLINE B4 b4_or(B4 a, B4 b) { return b4(a.x | b.x, a.y | b.y, a.z | b.z, a.w | b.w); }
+UKL_INLINE B4 b4_and(B4 a, B4 b) { return b4(a.x & b.x, a.y & b.y, a.z & b.z, a.w & b.w); }
+UKL_INLINE B4 b4_ands(B4 a, uint32_t s) { return b4(a.x & s, a.y & s, a.z & s, a.w & s); }
+UKL_INLINE uint32_t b4_any(B4 a) { return a.x | a.y | a.z | a.w; }
+
+// A file of the batch (decision 0066). Lane words are indexed in the file: output k of lane gl at
+// out_base + k * groups * GROUP_LANES + gl; carry j of group g at state_base + j * groups + g (a halo's three words from
+// halo_base + (j * groups + g) * 3); counted output c's state of group g at ext_base + c * groups + g, and its total
+// at tot_base + c; extract e's positions from pos_base + e * max(len, 1); in passes, block b's slot k at
+// slot_base + b * SLOTS + k.
+typedef struct FileRow { uint32_t src16, len, program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, slab, tot_base, slot_base; } FileRow;
+// A slab's bytes, as the kernels bind it: 32-bit words, four a chunk.
+typedef UKL_GLOBAL const uint32_t* Bytes;
+
+// The word of a chunk's `k`-th four bytes that a file of `have` bytes in the chunk keeps.
+UKL_INLINE uint32_t keep_word(uint32_t v, int32_t have, int32_t k)
+{
+    int32_t keep = clamp_i32(have - 4 * k, 0, 4);
+    return SEL(v & ((1u << ((uint32_t)keep * 8u)) - 1u), v, keep == 4);
+}
+// Chunk `c` of a file, read in place in its slab: zero at and past its length (a neighbour's bytes never read as its
+// own).
+UKL_INLINE B4 load16(Bytes bytes, FileRow f, uint32_t c)
+{
+    uint32_t chunks = ukl_max((f.len + 15u) / 16u, 1u);
+    uint64_t at = 4ul * (uint64_t)(f.src16 + ukl_min(c, chunks - 1u));
+    int32_t have = clamp_i32((int32_t)f.len - (int32_t)(c * 16u), 0, 16);
+    return b4(keep_word(bytes[at], have, 0), keep_word(bytes[at + 1ul], have, 1), keep_word(bytes[at + 2ul], have, 2), keep_word(bytes[at + 3ul], have, 3));
+}
+// The byte before chunk c of a file (0x00 before its first byte).
+UKL_INLINE uint32_t file_byte_before(Bytes bytes, FileRow f, uint32_t c) { return SEL(0u, load16(bytes, f, ukl_max(c, 1u) - 1u).w >> 24, c > 0u); }
+// 16 bytes one back: each byte replaced by the byte before it, `before` the byte before the first.
+UKL_INLINE B4 bytes_before(B4 v, uint32_t before)
+{
+    return b4((v.x << 8) | before, (v.y << 8) | (v.x >> 24), (v.z << 8) | (v.y >> 24), (v.w << 8) | (v.z >> 24));
+}
+
+// Four bytes' high bits (`z`, each byte's bit 7) as four bits.
+UKL_INLINE uint32_t gather4(uint32_t z) { return (((z >> 7) * 0x00204081u) >> 21) & 0xfu; }
+UKL_INLINE uint32_t gather16(B4 z) { return gather4(z.x) | (gather4(z.y) << 4) | (gather4(z.z) << 8) | (gather4(z.w) << 12); }
+// An exact zero-byte test: each zero byte's high bit.
+UKL_INLINE uint32_t zero_bytes(uint32_t x) { return ~(((x & 0x7f7f7f7fu) + 0x7f7f7f7fu) | x) & 0x80808080u; }
+UKL_INLINE uint32_t nonzero_bytes(uint32_t x) { return (((x & 0x7f7f7f7fu) + 0x7f7f7f7fu) | x) & 0x80808080u; }
+// 16 bytes equal to c (repeated in c4) as 16 bits, by SWAR on four words.
+UKL_INLINE uint32_t eq16(B4 v, uint32_t c4) { return gather16(b4(zero_bytes(v.x ^ c4), zero_bytes(v.y ^ c4), zero_bytes(v.z ^ c4), zero_bytes(v.w ^ c4))); }
+// 16 bytes that are not zero as 16 bits.
+UKL_INLINE uint32_t nz16(B4 v) { return gather16(b4(nonzero_bytes(v.x), nonzero_bytes(v.y), nonzero_bytes(v.z), nonzero_bytes(v.w))); }
+// Hacker's Delight's 8x8 bit transpose: byte `i` bit `j` to byte `j` bit `i`.
+UKL_INLINE uint64_t transpose8(uint64_t x)
+{
+    uint64_t t = (x ^ (x >> 7)) & 0x00AA00AA00AA00AAul;
+    x = x ^ t ^ (t << 7);
+    t = (x ^ (x >> 14)) & 0x0000CCCC0000CCCCul;
+    x = x ^ t ^ (t << 14);
+    t = (x ^ (x >> 28)) & 0x00000000F0F0F0F0ul;
+    return x ^ t ^ (t << 28);
+}
+
+// The lane word's bits, as a 64-bit value with nothing above the lane's width. The parity is of those bits only:
+// for 16-bit lanes Metal's compiler has been seen to count bits above 16 that the conversion should have dropped (a
+// `prev` by 25 to 31 there, in the Bitlex corpus).
+UKL_INLINE uint64_t lane_bits(BM a) { return (uint64_t)a & (~0ul >> (64u - (uint32_t)BW)); }
+
+// The lane's bits of a 64-bit pattern that repeats every 64 bytes.
+UKL_INLINE BM pattern(uint64_t c, uint32_t lane) { return BMC(c >> ((lane * (uint32_t)BW) & 63u)); }
+
+// The 64 bits before lane l (the newest at bit 63): the words of the lanes before it, then the group before's last
+// 64 bits `P` where the group runs out. Lane l - d's word: `w` (shuffled up by d) inside the group, else the word
+// `d - l` back in `P`.
+UKL_INLINE uint64_t halo_word(uint64_t w, uint32_t d, uint32_t l, uint64_t P, uint32_t bits)
+{
+    uint32_t back = (uint32_t)ukl_max((int32_t)d - (int32_t)l, 1);
+    return SEL(w, P >> (64u - back * bits), l < d);
+}
+#if BW == 16
+UKL_INLINE uint64_t halo_before(BM a, uint32_t l, uint64_t P __UKL_PARAMS)
+{
+    uint64_t m = 0xfffful;
+    uint32_t x = (uint32_t)a;
+    return ((halo_word(ukl_sg_shuffle_up(x, 1u __UKL_ARGS), 1u, l, P, 16u) & m) << 48) |
+           ((halo_word(ukl_sg_shuffle_up(x, 2u __UKL_ARGS), 2u, l, P, 16u) & m) << 32) |
+           ((halo_word(ukl_sg_shuffle_up(x, 3u __UKL_ARGS), 3u, l, P, 16u) & m) << 16) |
+           (halo_word(ukl_sg_shuffle_up(x, 4u __UKL_ARGS), 4u, l, P, 16u) & m);
+}
+#elif BW == 32
+UKL_INLINE uint64_t halo_before(BM a, uint32_t l, uint64_t P __UKL_PARAMS)
+{
+    uint64_t m = 0xfffffffful;
+    return ((halo_word(ukl_sg_shuffle_up(a, 1u __UKL_ARGS), 1u, l, P, 32u) & m) << 32) | (halo_word(ukl_sg_shuffle_up(a, 2u __UKL_ARGS), 2u, l, P, 32u) & m);
+}
+#else
+UKL_INLINE uint64_t halo_before(BM a, uint32_t l, uint64_t P __UKL_PARAMS)
+{
+    uint64_t up = sg_up64(a, 1u __UKL_ARGS);
+    return SEL(up, P, l == 0u);
+}
+#endif
+// `prev` by k (1..63): the word shifted up, the newest k bits of the halo below.
+UKL_INLINE BM apply_prev(BM a, uint32_t k, uint64_t before) { return BMC(lane_bits(BMC(((uint64_t)a << k) | (before >> (64u - k))))); }
+
+// A word's prefix XOR (bit i: the parity of bits 0..=i).
+UKL_INLINE BM prefix_xor(BM x)
+{
+    x = BMC(x ^ BMC(x << 1)); x = BMC(x ^ BMC(x << 2)); x = BMC(x ^ BMC(x << 4)); x = BMC(x ^ BMC(x << 8));
+#if BW >= 32
+    x = BMC(x ^ BMC(x << 16));
+#endif
+#if BW == 64
+    x = BMC(x ^ BMC(x << 32));
+#endif
+    return x;
+}
+UKL_INLINE uint32_t summary_toggle(BM a) { return POPCOUNT_BM(lane_bits(a)) & 1u; }
+UKL_INLINE BM apply_toggle(BM a, uint32_t cin) { return BMC(prefix_xor(a) ^ BMC(BMC(0) - BMC(cin))); }
+
+// simdjson's find_escaped_branchless on a lane word, with the carry in; `overflow` is the carry out.
+UKL_INLINE BM escaped(BM run, BM cin, UKL_PRIVATE uint32_t* overflow)
+{
+    BM even = BMC(0x5555555555555555ul);
+    BM b = BMC(run & BMC(~cin));
+    BM follows = BMC(BMC(b << 1) | cin);
+    BM odd_starts = BMC(b & BMC(~even) & BMC(~follows));
+    BM sequences = BMC(odd_starts + b);
+    *overflow = (uint32_t)(sequences < odd_starts);
+    return BMC(BMC(even ^ BMC(sequences << 1)) & follows);
+}
+
+// Bitlex's `fill(s, e)` on a lane word (`block::carry::fill`): the carry into each bit of s + (s | ~e) + cin is the
+// fill coming into that byte; `out` is the carry out, the last bit. Computed on 64 bits with the lane's mask: on
+// 16-bit words the arithmetic in the word gave a correct result but a wrong ballot of the summary on Apple's
+// compiler.
+UKL_INLINE BM fill_word(BM s, BM e, BM cin, UKL_PRIVATE uint32_t* out)
+{
+    uint64_t mask = ~0ul >> (64u - (uint32_t)BW);
+    uint64_t S = (uint64_t)s, b = S | (~(uint64_t)e & mask);
+    uint64_t into = (S + b + (uint64_t)cin) ^ S ^ b;
+    uint64_t f = (S | (~(uint64_t)e & into)) & mask;
+    *out = (uint32_t)(f >> ((uint32_t)BW - 1u)) & 1u;
+    return BMC(f);
+}
+
+// `within`: the bits of the word whose bytes, from stream byte `first`, are below the stream's end `len`. Two
+// shifts, so a full 64-bit word needs no shift by 64.
+UKL_INLINE BM within_lane(uint32_t len, uint32_t first)
+{
+    uint32_t t = (uint32_t)clamp_i32((int32_t)len - (int32_t)first, 0, (int32_t)BW);
+    return BMC(((1ul << (t >> 1)) << (t - (t >> 1))) - 1ul);
+}
+
+// Tables of 1-bit carry vectors (`table_helpers(1)` for 1, block_program.rs): apply, compose (`a` then `b`), the
+// identity, and the group's exclusive scan with the group's total.
+UKL_INLINE uint32_t tapply1(uint32_t t, uint32_t c) { return (t >> (c * 1u)) & 1u; }
+UKL_INLINE uint32_t tcompose1(uint32_t a, uint32_t b) { return (tapply1(b, tapply1(a, 0u)) << 0u) | (tapply1(b, tapply1(a, 1u)) << 1u); }
+#define TID1 2u
+UKL_INLINE uint32_t texclusive1(uint32_t t, uint32_t l, UKL_PRIVATE uint32_t* total __UKL_PARAMS)
+{
+    uint32_t x = t, u;
+    u = ukl_sg_shuffle_up(x, 1u __UKL_ARGS); x = SEL(x, tcompose1(u, x), l >= 1u);
+    u = ukl_sg_shuffle_up(x, 2u __UKL_ARGS); x = SEL(x, tcompose1(u, x), l >= 2u);
+    u = ukl_sg_shuffle_up(x, 4u __UKL_ARGS); x = SEL(x, tcompose1(u, x), l >= 4u);
+    u = ukl_sg_shuffle_up(x, 8u __UKL_ARGS); x = SEL(x, tcompose1(u, x), l >= 8u);
+#if GROUP_LANES > 16
+    u = ukl_sg_shuffle_up(x, 16u __UKL_ARGS); x = SEL(x, tcompose1(u, x), l >= 16u);
+#endif
+    *total = ukl_sg_shuffle(x, GROUP_LANES - 1u __UKL_ARGS);
+    u = ukl_sg_shuffle_up(x, 1u __UKL_ARGS);
+    return SEL(u, TID1, l == 0u);
+}
+
+// The sinks' cut (`native_ir::BlockNative::outputs`): a lane's word cut to the stream at delay `d`, the bits
+// `d <= gl * BW + i < len + d`.
+UKL_INLINE BM stream_cut(BM v, uint32_t gl, uint32_t len, uint32_t d)
+{
+    return BMC(v & within_lane(len + d, gl * (uint32_t)BW) & BMC(~within_lane(d, gl * (uint32_t)BW)));
+}
+
