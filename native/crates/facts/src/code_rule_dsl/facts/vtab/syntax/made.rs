@@ -1436,33 +1436,10 @@ impl MadeRows {
     /// `hint`: the step's cursor's (`ProbeCursor::hint`): the last probe's document plus one and the row its search
     /// ended at, each checked before it is used.
     fn read_one(&self, column: usize, value: i64, columns: &[usize], hint: &mut [u32; 2], each: &mut dyn FnMut(usize, &[i64])) -> bool {
-        let by = self.by();
-        if by.column() != Some(column) || matches!(by, ByDocument::Host(_)) || columns.len() > 16 {
+        if columns.len() > 16 {
             return false;
         }
-        let Some(key) = by.document(value) else { return false };
-        let docs = &self.batch.docs;
-        let last = hint[0].wrapping_sub(1) as usize;
-        let doc = if last < docs.len() && docs.key(last) == key {
-            last
-        } else {
-            let Some(doc) = docs.position(key) else { return false };
-            *hint = [doc as u32 + 1, u32::MAX];
-            doc
-        };
-        // The document's group as it went on: read with no lock, nothing counted.
-        let p = match self.batch.rows.published[doc].get() {
-            Some(p) => p,
-            None => {
-                let before = self.batch.rows.groups();
-                self.batch.ensure(&[doc]);
-                if self.batch.rows.groups() > before {
-                    profile::decision("a batch's documents made by a probe (decision 0494)", || format!("{} column {column}", self.batch.rows.names[self.rel]));
-                }
-                let Some(p) = self.batch.rows.published[doc].get() else { return false };
-                p
-            }
-        };
+        let Some(Some(p)) = self.group_of(column, value, hint) else { return false };
         let (g, r) = (&p.group, &p.rels[self.rel]);
         let mut v = [0i64; 16];
         g.each_match(self.rel, column, r, value, &mut hint[1], |row| {
@@ -1470,6 +1447,34 @@ impl MadeRows {
             each(row, &v[..columns.len()]);
         });
         true
+    }
+    /// The group of the document that `value` of the document column names, made if it is not (`read_one`'s):
+    /// `None` for another column or a value that names no document, `Some(None)` for a document the batch has not.
+    fn group_of(&self, column: usize, value: i64, hint: &mut [u32; 2]) -> Option<Option<&Arc<Published>>> {
+        let by = self.by();
+        if by.column() != Some(column) || matches!(by, ByDocument::Host(_)) {
+            return None;
+        }
+        let key = by.document(value)?;
+        let docs = &self.batch.docs;
+        let last = hint[0].wrapping_sub(1) as usize;
+        let doc = if last < docs.len() && docs.key(last) == key {
+            last
+        } else {
+            let Some(doc) = docs.position(key) else { return Some(None) };
+            *hint = [doc as u32 + 1, u32::MAX];
+            doc
+        };
+        // The document's group as it went on: read with no lock, nothing counted.
+        if let Some(p) = self.batch.rows.published[doc].get() {
+            return Some(Some(p));
+        }
+        let before = self.batch.rows.groups();
+        self.batch.ensure(&[doc]);
+        if self.batch.rows.groups() > before {
+            profile::decision("a batch's documents made by a probe (decision 0494)", || format!("{} column {column}", self.batch.rows.names[self.rel]));
+        }
+        self.batch.rows.published[doc].get().map(Some)
     }
     /// Whether every read of `column` is routed (`route`): its document column (not a host's, whose guests may not
     /// be known), a node of the row's own document, or its document's key.
@@ -1631,6 +1636,18 @@ impl Source for MadeRows {
     }
     fn for_rows(&self, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) {
         self.target().for_rows(columns, each)
+    }
+    /// By the document column, the document's group's rows of the value, each compared where it lies (`group_of`,
+    /// `each_match`): no row's values copied out, no match handed on. Another column's test is the matches'.
+    fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> Option<bool> {
+        // A document the batch has not: no rows.
+        let Some(p) = self.group_of(column, value, &mut cursor.hint)? else { return Some(false) };
+        let (g, r) = (&p.group, &p.rels[self.rel]);
+        let mut found = false;
+        g.each_match(self.rel, column, r, value, &mut cursor.hint[1], |row| {
+            found = found || columns.iter().zip(want).all(|(&c, &w)| Source::value(r.as_ref(), row, c) == w);
+        });
+        Some(found)
     }
     /// By the document column, the step's cursor leads: the last probe's document and row (`read_one`).
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {

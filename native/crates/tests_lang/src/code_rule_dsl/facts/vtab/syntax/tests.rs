@@ -2858,6 +2858,47 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
     assert_eq!(probed.groups(), 3, "the scan made the rest as one group");
 }
 
+/// A made relation's membership test (`Source::test_at` by the column that names its row's document, `text(n, s)`)
+/// is what the eager batch's rows say: every row's own values held, a value no row of that key has not, through one
+/// cursor in row order, each document's group made by the probe that first needs it; another column has no test.
+#[test]
+fn a_made_relations_membership_test_is_its_rows() {
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
+    let store = ContentStore::open(&temp("made-test-at")).unwrap();
+    let docs = || -> Vec<Document> {
+        (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    # c{k}\n    return g(x, {k}) + \"s{k}\"\n"))).collect()
+    };
+    let reads = ["node", "text", "comment", "op", "str", "name", "child", "doc"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let (_, eager, _, _) = Batch::build(&store, docs(), &projection, &[], &[], false).unwrap();
+    let probed = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let mut tried = 0;
+    for (name, _, s) in made_sources(&probed) {
+        let Some((_, e)) = eager.iter().find(|(n, _)| *n == name) else { continue };
+        let width = e.columns().len();
+        if e.len() == 0 || width < 2 {
+            continue;
+        }
+        let mut cursor = ProbeCursor::default();
+        if s.test_at(0, e.value(0, 0), &[1], &[e.value(0, 1)], &mut cursor).is_none() {
+            assert!(s.test_at(1, e.value(0, 1), &[0], &[e.value(0, 0)], &mut cursor).is_none(), "{name}: no test by another column");
+            continue;
+        }
+        let mut cursor = ProbeCursor::default();
+        for r in 0..e.len() {
+            let key = e.value(r, 0);
+            let others: Vec<usize> = (1..width).collect();
+            let want: Vec<i64> = others.iter().map(|&c| e.value(r, c)).collect();
+            assert_eq!(s.test_at(0, key, &others, &want, &mut cursor), Some(true), "{name} row {r}");
+            let held = |w: i64| (0..e.len()).any(|q| e.value(q, 0) == key && e.value(q, 1) == w);
+            let absent = (e.value(r, 1) + 1..).find(|&w| !held(w)).unwrap();
+            assert_eq!(s.test_at(0, key, &[1], &[absent], &mut cursor), Some(false), "{name} row {r}: {absent}");
+        }
+        tried += 1;
+    }
+    assert!(tried >= 3, "made relations with a membership test: {tried}");
+}
+
 /// Decision 0353: core.rerail's places are the `Loc` view's with span rows only where a span relation is read
 /// (`places::Places`), and their statistics, counted in a block, are what their rows measure: the view's and the
 /// span rows' together, as one relation's.
