@@ -150,6 +150,22 @@ export function closePanel() {
 
 /* ---------- navigation ---------- */
 
+/** What a route can carry within its view, each of which runs the view's `enter(route)` again. */
+const CARRIED = ["filterRule", "outcome", "session", "sessionFilter", "conflict", "section"];
+
+/** Whether `route` leaves the view shown: another view, or another pack's page. */
+const leavesView = route => route.view !== ui.view || (route.view === "pack" && route.pack !== ui.pack);
+
+/** Switch to `route`'s view: close the sheet, forget what the catalog removed when leaving it, and start at the top. */
+function moveTo(route) {
+  closePanel();
+  if (ui.view === "packs") ui.removedPacks.clear();
+  ui.view = route.view;
+  ui.pack = route.view === "pack" ? route.pack : null;
+  ui.removeAsk = null;
+  window.scrollTo(0, 0);
+}
+
 /**
  * Show `route` (`routes.js`; `view` set): another view closes the sheet and polls for the new view's data now; leaving
  * the catalog forgets the packs it removed. The view's `enter(route)` runs when it is entered, and again when the
@@ -157,17 +173,9 @@ export function closePanel() {
  * Assist's page too: the page brings the conflict into view only from a status read after the link.
  */
 export function go(route) {
-  const moved = route.view !== ui.view || (route.view === "pack" && route.pack !== ui.pack);
-  if (moved) {
-    closePanel();
-    if (ui.view === "packs") ui.removedPacks.clear();
-    ui.view = route.view;
-    ui.pack = route.view === "pack" ? route.pack : null;
-    ui.removeAsk = null;
-    window.scrollTo(0, 0);
-  }
-  const carries = route.filterRule !== undefined || route.outcome !== undefined || route.session !== undefined || route.sessionFilter !== undefined || route.conflict !== undefined || route.section !== undefined;
-  if (moved || carries) hooks.enter(route);
+  const moved = leavesView(route);
+  if (moved) moveTo(route);
+  if (moved || CARRIED.some(key => route[key] !== undefined)) hooks.enter(route);
   invalidate();
   if (moved || route.conflict !== undefined) refreshNow();
 }

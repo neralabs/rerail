@@ -34,15 +34,33 @@ function parseVersion(text) {
   return m === null ? null : [Number(m[1]), Number(m[2]), Number(m[3]), m[4] ?? null];
 }
 
-/** Whether version `a` comes after `b`; a prerelease comes before its release. False when either can't be read. */
+/** Sign of `x - y`: -1, 0 or 1. */
+const sign = (x, y) => (x === y ? 0 : x < y ? -1 : 1);
+
+/** One prerelease identifier against another (semver 11.4.1–3): numbers by value, below any word; words in ASCII order. */
+function compareIdentifier(x, y) {
+  const nx = /^\d+$/.test(x), ny = /^\d+$/.test(y);
+  if (nx !== ny) return nx ? -1 : 1;
+  return nx ? sign(Number(x), Number(y)) : sign(x, y);
+}
+
+/** Prerelease `a` against `b` (semver 11.3–4): no prerelease ranks above any; else identifier by identifier, then the longer. */
+function comparePrerelease(a, b) {
+  if (a === null || b === null) return sign(Number(a === null), Number(b === null));
+  const xs = a.split("."), ys = b.split(".");
+  for (let i = 0; i < Math.min(xs.length, ys.length); i += 1) {
+    const order = compareIdentifier(xs[i], ys[i]);
+    if (order !== 0) return order;
+  }
+  return sign(xs.length, ys.length);
+}
+
+/** Whether version `a` comes after `b` in semver precedence; a prerelease comes before its release. False when either can't be read. */
 export function isNewerVersion(a, b) {
   const pa = parseVersion(a), pb = parseVersion(b);
   if (pa === null || pb === null) return false;
-  for (let i = 0; i < 3; i += 1) if (pa[i] !== pb[i]) return pa[i] > pb[i];
-  if (pa[3] === pb[3]) return false;
-  if (pa[3] === null) return true;
-  if (pb[3] === null) return false;
-  return pa[3].localeCompare(pb[3], undefined, { numeric: true }) > 0;
+  const core = [0, 1, 2].map(i => sign(pa[i], pb[i])).find(order => order !== 0) ?? 0;
+  return (core || comparePrerelease(pa[3], pb[3])) > 0;
 }
 
 /**

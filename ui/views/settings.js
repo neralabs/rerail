@@ -29,6 +29,8 @@ let clearing = false;
 let countsRound = -1;
 /** A link to About Rerail (`#settings?section=about`) waits to scroll there until the sections above it have loaded. */
 let scrollToAbout = false;
+/** Whether this visit's read of the coding agents has answered; a list from an earlier visit may still be showing. */
+let agentsAnswered = false;
 
 function row(label, sub, right, attrs = null) {
   return h("div.srow2", attrs, h("div.rt", null, label, sub ? h("span.sub", null, sub) : null), right);
@@ -97,11 +99,19 @@ function repos() {
 function agentRow(agent) {
   const status = agentStatus(agent);
   return h(`div.agent${status.tone === "off" ? ".off" : ""}`, { "data-agent": agent.id },
-    h("div.rt2", null, h("span", null, agent.name), h(`span.st${status.tone && status.tone !== "off" ? `.${status.tone}` : ""}`, null, status.state),
-      status.data ? h(`span.st${status.data.warn ? ".warn" : ""}`, null, status.data.text) : null,
-      status.data?.fix ? h("span.st.fix", null, status.data.fix) : null,
+    h("div.rt2", null, h("span", null, agent.name), h(`span.st${stateTone(status.tone)}`, null, status.state),
+      ...dataLines(status.data),
       status.problem ? h("span.tip", null, status.problem) : null),
     status.command === null ? null : copyButton(status.command.text, status.command.label));
+}
+
+/** The state's colour class: none for a plain state, and none for "off", which greys the whole row instead. */
+const stateTone = tone => (tone && tone !== "off" ? `.${tone}` : "");
+
+/** Whether a connected agent's tools can read Rerail's data, in warning colour only with a fix, which follows it. */
+function dataLines(data) {
+  if (!data) return [];
+  return [h(`span.st${data.warn ? ".warn" : ""}`, null, data.text), data.fix ? h("span.st.fix", null, data.fix) : null];
 }
 
 function agents() {
@@ -125,19 +135,33 @@ const releaseLink = (version, label) =>
 function about() {
   const version = data.health?.version ?? null, installed = installedLabel(data.health?.installedAt);
   if (version === null && installed === null) return null;
-  const latest = newerRelease(data.health), knows = typeof data.health?.update?.latest === "string";
-  const how = ["Rerail never updates on its own. To update, run ", h("code", null, UPDATE_COMMAND), " in a terminal or ask your coding agent: ", h("code", null, "/rerail-update"), "."];
+  const latest = newerRelease(data.health);
   return h("section", { id: "about" }, h("div.ghead", null, h("h2", null, "About Rerail")),
     h("div.list", null,
-      version === null ? null : row("Version",
-        [...(knows ? ["Rerail never updates on its own."] : how), latest === null ? h("span.relline", null, releaseLink(version, `${version} release notes`)) : null],
-        h("span.val.vrow", null, latest === null ? null : h("span.badge.info", { title: `Rerail ${latest} is out` }, "Update available"), h("span", null, version))),
+      version === null ? null : versionRow(version, latest),
       installed === null ? null : row("Installed", null, h("span.val", null, installed)),
-      latest === null ? null : row(`Update to ${latest}`,
-        ["Run ", h("code", null, UPDATE_COMMAND), " in a terminal, or ask your coding agent: ", h("code", null, "/rerail-update"),
-          ". It backs up your rules and history first; new sessions use the new version.",
-          h("span.relline", null, releaseLink(latest, `What’s new in ${latest}`))],
-        copyButton(UPDATE_COMMAND, "Copy update command"))));
+      latest === null ? null : updateRow(latest)));
+}
+
+/**
+ * Version: how to update while the daemon can't say whether a newer version is out, and only "never updates on its
+ * own" once it can, since the Update row then carries the steps. Its release notes show unless a newer one is out.
+ */
+function versionRow(version, latest) {
+  const knows = typeof data.health?.update?.latest === "string";
+  const how = knows ? [] : [" To update, run ", h("code", null, UPDATE_COMMAND), " in a terminal or ask your coding agent: ", h("code", null, "/rerail-update"), "."];
+  const notes = latest === null ? h("span.relline", null, releaseLink(version, `${version} release notes`)) : null;
+  const badge = latest === null ? null : h("span.badge.info", { title: `Rerail ${latest} is out` }, "Update available");
+  return row("Version", ["Rerail never updates on its own.", ...how, notes], h("span.val.vrow", null, badge, h("span", null, version)));
+}
+
+/** Update to <latest>: the command, what it keeps, and that version's release notes. */
+function updateRow(latest) {
+  return row(`Update to ${latest}`,
+    ["Run ", h("code", null, UPDATE_COMMAND), " in a terminal, or ask your coding agent: ", h("code", null, "/rerail-update"),
+      ". It backs up your rules and history first; new sessions use the new version.",
+      h("span.relline", null, releaseLink(latest, `What’s new in ${latest}`))],
+    copyButton(UPDATE_COMMAND, "Copy update command"));
 }
 
 function uninstall() {
@@ -160,20 +184,28 @@ export function render(root) {
   const sig = JSON.stringify([ui.theme, data.presence, ui.scope, data.followGitignore, data.health?.installedAt, data.health?.version, data.health?.update, data.health?.database.path,
     data.repositories, data.repository?.repositoryKey, data.repository?.name, counts, data.agents, data.agentsError, clearAsk, clearing]);
   setContent(root, sig, () => h("div.settings", null, general(), repos(), agents(), about(), uninstall()));
-  if (scrollToAbout) {
-    document.getElementById("about")?.scrollIntoView({ block: "start" });
-    // The coding agents above load after the page opens and push About Rerail down: scroll again once they are in.
-    if (data.agents !== null || data.agentsError !== null) scrollToAbout = false;
-  }
+  if (scrollToAbout) scrollToAboutSection();
+}
+
+/**
+ * Scroll to About Rerail, which shows once `/healthz` is in. The coding agents above it load after the page opens and
+ * push it down, so the link keeps scrolling until the section is there and the agents' answer is in, whichever is last.
+ */
+function scrollToAboutSection() {
+  const section = document.getElementById("about");
+  if (!section) return;
+  section.scrollIntoView({ block: "start" });
+  if (agentsAnswered) scrollToAbout = false;
 }
 
 /** The coding agents, the status line and Follow .gitignore are read on demand, each time Settings opens. */
 export function enter(route) {
   scrollToAbout = route?.section === "about";
+  agentsAnswered = false;
   clearAsk = false;
   countsRound = -1;
   data.agentsError = null;
-  loadAgents().catch(error => { data.agentsError = error.message; }).then(invalidate);
+  loadAgents().catch(error => { data.agentsError = error.message; }).then(() => { agentsAnswered = true; invalidate(); });
   loadPresence().then(invalidate, error => toast(failed("Couldn’t load the footer setting", error)));
   if (ui.scope !== null) loadFollowGitignore().then(invalidate, error => toast(failed("Couldn’t load Follow .gitignore", error)));
 }

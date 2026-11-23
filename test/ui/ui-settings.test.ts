@@ -65,6 +65,19 @@ describe("the version in About Rerail and the top bar", () => {
     expect(isNewerVersion("latest", "0.2.0")).toBe(false);
   });
 
+  it("orders prereleases by semver precedence, the release candidates' -next.N included", () => {
+    // semver 11.4's own example, each one after the one before.
+    const chain = ["1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta", "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0"];
+    for (const [i, later] of chain.entries()) {
+      if (i === 0) continue;
+      expect(isNewerVersion(later, chain[i - 1]!)).toBe(true);
+      expect(isNewerVersion(chain[i - 1]!, later)).toBe(false);
+    }
+    expect(isNewerVersion("0.3.0-next.10", "0.3.0-next.9")).toBe(true);
+    // ASCII order, not the browser's locale: uppercase sorts before lowercase.
+    expect(isNewerVersion("1.0.0-alpha", "1.0.0-Beta")).toBe(true);
+  });
+
   it("names a newer version only when the daemon reports one above the version running", () => {
     expect(newerRelease({ version: "0.2.0", update: { latest: "0.3.0", checkedAt: 1 } })).toBe("0.3.0");
     expect(newerRelease({ version: "0.2.0", update: { latest: "0.2.0", checkedAt: 1 } })).toBeNull();

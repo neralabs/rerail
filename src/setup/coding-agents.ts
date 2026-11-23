@@ -109,14 +109,7 @@ export function claudeManagedSettingsPath(platform: NodeJS.Platform = process.pl
 function rerailDataAccess(id: Harness, connected: boolean, home: string, platform: NodeJS.Platform, claudeManagedSettings: string | undefined): CodingAgentState["rerailData"] {
   switch (id) {
     case "claude-code":
-      if (!connected) return { access: "open", why: "Rerail is not connected to Claude Code, so nothing keeps it out of Rerail's data.", fix: null };
-      if (platform === "win32") {
-        return { access: "file-tools", why: "Claude Code has no sandbox on Windows, so its file tools cannot read Rerail's data but its shell commands can.", fix: null };
-      }
-      return claudeSandboxOn(platform, join(home, ".claude", "settings.json"), claudeManagedSettings)
-        ? { access: "kept-out", why: "Claude Code's sandbox is on, so its commands and file tools cannot read Rerail's data.", fix: null }
-        : { access: "file-tools", why: "Claude Code's sandbox is off (sandbox.enabled), so its file tools cannot read Rerail's data but its shell commands can.",
-          fix: "Turn it on to keep them out too: run /sandbox in Claude Code." };
+      return claudeCodeDataAccess(connected, home, platform, claudeManagedSettings);
     case "cursor":
       return connected && existsSync(join(home, ".cursor", "cli-config.json"))
         ? { access: "file-tools", why: "The Cursor CLI's file tools cannot read Rerail's data; Cursor's editor agent and shell commands can.", fix: null }
@@ -130,12 +123,24 @@ function rerailDataAccess(id: Harness, connected: boolean, home: string, platfor
 }
 
 /**
- * Whether Claude Code's sandbox is on: `sandbox.enabled`, where managed settings that set it win over the user's. Native
- * Windows has no sandbox, whatever the settings say.
+ * Claude Code's set-up deny entries hold for its file tools once it is connected, and for its shell commands only while
+ * its sandbox is on. Native Windows has no sandbox, whatever the settings say, so there is nothing to turn on there.
  */
-function claudeSandboxOn(platform: NodeJS.Platform, userSettings: string, managedSettings: string | undefined): boolean {
+function claudeCodeDataAccess(connected: boolean, home: string, platform: NodeJS.Platform, claudeManagedSettings: string | undefined): CodingAgentState["rerailData"] {
+  if (!connected) return { access: "open", why: "Rerail is not connected to Claude Code, so nothing keeps it out of Rerail's data.", fix: null };
+  if (platform === "win32") {
+    return { access: "file-tools", why: "Claude Code has no sandbox on Windows, so its file tools cannot read Rerail's data but its shell commands can.", fix: null };
+  }
+  return claudeSandboxOn(join(home, ".claude", "settings.json"), claudeManagedSettings)
+    ? { access: "kept-out", why: "Claude Code's sandbox is on, so its commands and file tools cannot read Rerail's data.", fix: null }
+    : { access: "file-tools", why: "Claude Code's sandbox is off (sandbox.enabled), so its file tools cannot read Rerail's data but its shell commands can.",
+      fix: "Turn it on to keep them out too: run /sandbox in Claude Code." };
+}
+
+/** Whether Claude Code's sandbox is on: `sandbox.enabled`, where managed settings that set it win over the user's. */
+function claudeSandboxOn(userSettings: string, managedSettings: string | undefined): boolean {
   const managed = managedSettings === undefined ? undefined : sandboxEnabled(managedSettings);
-  return platform !== "win32" && (managed ?? sandboxEnabled(userSettings)) === true;
+  return (managed ?? sandboxEnabled(userSettings)) === true;
 }
 
 /** The part of a Claude Code settings file that says whether its sandbox is on. */
