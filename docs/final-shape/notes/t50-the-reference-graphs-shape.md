@@ -915,6 +915,14 @@ Then, step by step (each device run's step counts against a CPU run of the same 
   remade at a new device address while a directory holds the old one (`Block::device_buffer`: 959 remakes at 512
   MB, 1,122 at 4 GB, where every relation is right). So neither the residency nor the wraps make 512 MB differ; the
   device-side dump of the failed probes' keys (above) is the next instrument.
+- **Two chunks at once on the device are needed (2026-11-23).** With one chunk at a time (`RERAIL_CHUNKS_AT_ONCE=1`)
+  the 512 MB run is right (`finding` 20,046, `mn_class` 266,996, `dbg_rd` 480,367, `mn_dec_fn` 116,511), where 17 of
+  18 runs with eight at once were short. Nor is a rerun after an overflow the cause (every overflowing run
+  encoded again from its first stage: still short). No smaller corpus shows it: s1000 at 4 GB, 64 MB and 32 MB (and
+  in chunks of 20,000 nodes), and `big1` at 4 GB, 256 and 128 MB, give the same rows. So the loss is between
+  chunks sharing the device under the budget: what one chunk's run can take or change of another's while both are
+  in flight (the pool's admission and leases, the device lane's submissions), not a chunk's own reads. Two of the
+  runs (one of each kind) took 310–340 s at a peak of 18 GB, a mode of their own, not yet looked at.
 
 ## Open
 
