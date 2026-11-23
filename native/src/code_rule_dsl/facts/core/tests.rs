@@ -112,7 +112,7 @@ fn every_format_reads_the_same_facts_off_the_tape() {
         assert_eq!(digest(&old), digest(&same), "{label}");
         let (kinds, classes) = old.histogram();
         for format in Format::ALL {
-            let new = from_image(Arc::clone(&source), &grammar, image.primary.clone().in_format(format, source.as_bytes()), Arc::clone(&lines)).unwrap();
+            let new = from_image(Arc::clone(&source), &grammar, crate::code_rule_dsl::tape::formats::as_run(format, || TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary), Arc::clone(&lines)).unwrap();
             let at = format!("{label} in {}: {source}", format.name());
             assert_eq!(old.len(), new.len(), "{at}");
             for id in 0..new.len() as u32 {

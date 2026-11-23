@@ -32,6 +32,7 @@ pub fn text(tag: u8) -> Option<&'static str> {
         32 => Some(include_str!("32.tsv")),
         33 => Some(include_str!("33.tsv")),
         34 => Some(include_str!("34.tsv")),
+        250 => Some(include_str!("250.tsv")),
         _ => None,
     }
 }

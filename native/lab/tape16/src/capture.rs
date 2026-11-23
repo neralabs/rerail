@@ -57,6 +57,7 @@ pub fn language(tag: u8) -> &'static str {
         32 => "html-element",
         33 => "regex",
         34 => "python-pattern",
+        250 => "test-html",
         _ => "other",
     }
 }

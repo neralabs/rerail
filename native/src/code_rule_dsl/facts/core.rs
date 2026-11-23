@@ -280,7 +280,7 @@ fn with_programs(built: Built, grammar: &Arc<crate::code_rule_dsl::tape::Grammar
         let doc = TapeDoc::over(Arc::clone(tape), Arc::clone(grammar), Arc::clone(&facts.lines));
         for program in embedder.build_in_doc(&doc, &|| false) {
             let image = crate::code_rule_dsl::tape::DerivedImage::encode(via, program, 0, grammar, &facts.source, &|| false)?;
-            programs.push(image.in_format(crate::code_rule_dsl::tape::formats::Format::of_run()));
+            programs.push(image);
         }
     }
     facts.programs = Some(programs.into());

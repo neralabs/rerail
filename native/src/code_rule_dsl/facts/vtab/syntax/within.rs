@@ -35,7 +35,7 @@
 //! node's containers and reads ids `0..len`, so it sees each pair once. The planner's statistics come from the tree (depths and subtree sizes), not the rows.
 use super::{Batch, NONE, Projected, View};
 use crate::code_rule_dsl::facts::vtab::Source;
-use crate::code_rule_dsl::tape::formats::{DocTape, Format};
+use crate::code_rule_dsl::tape::formats::DocTape;
 use rerail_tape_format::tape::{CodeSet, Tape, nearest_all};
 use rerail_tape_format::with_tape;
 use parking_lot::Mutex;
@@ -128,8 +128,6 @@ pub struct Within {
     solved: OnceLock<Arc<Solved>>,
     /// The solves of the batch's axes over its set (`Solves`), where it shares them.
     solves: Option<Arc<Solves>>,
-    /// The format a test reads the documents' tapes in (`reading`); else each is read as held.
-    format: Option<Format>,
     /// Per document, the axis's set as its tape's code numbers (all of them for the tree's containment).
     sets: Box<[OnceLock<Arc<CodeSet>>]>,
     /// The sets made, by language and table: format 16's documents share their language's table (decision 0336 §7),
@@ -196,7 +194,6 @@ impl Within {
             chosen: std::sync::atomic::AtomicBool::new(false),
             solved: OnceLock::new(),
             solves: None,
-            format: None,
             sets: (0..batch.docs.len()).map(|_| OnceLock::new()).collect(),
             shared: Mutex::new(FxHashMap::default()),
             batch,
@@ -213,17 +210,9 @@ impl Within {
         Within { binding, ..self }
     }
 
-    /// The same, reading the documents' tapes in `format` rather than as held (a test's comparison of formats).
-    pub fn reading(self, format: Format) -> Self {
-        Within { format: Some(format), ..self }
-    }
-
-    /// `dt`'s tape: as held, or in the format a test asked for.
+    /// `dt`'s tape, as held.
     fn tape_of<'d>(&self, dt: &'d DocTape) -> rerail_tape_format::tape::AnyTape<'d> {
-        match self.format {
-            Some(format) => dt.tape_in(format),
-            None => dt.tape(),
-        }
+        dt.tape()
     }
 
     /// Document `doc`'s tape, which the tree's containment and the kind-set axes read (not spans).

@@ -219,14 +219,8 @@ fn matched(
         (vec![vec![BTreeSet::new(); docs.len()]; matchers.len()], Vec::new())
     } else {
         // The GPU's form only once its generated kernels are at hand (decision 0395): till then, the cores'.
-        // The batch's one tape format, the label kernels' constant (`DocTable::format`: 15, or 16 for 16 and 16z),
-        // 0 for a mixed batch.
-        let format = || {
-            use crate::code_rule_dsl::tape::formats::Format;
-            let of = |d: &crate::code_rule_dsl::tape::TapeDoc| if d.image.format() == Format::F15 { 15 } else { 16 };
-            let first = docs.first().map_or(0, of);
-            if docs.iter().all(|d| of(d) == first) { first } else { 0 }
-        };
+        // The batch's one tape format, the label kernels' constant (`DocTable::format`: 16, for 16 and 16z).
+        let format = || 16;
         let gpu = cfg!(any(target_os = "macos", target_os = "linux", windows)) && metal && wave.metal_ready(format());
         let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu };
         let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(program)));

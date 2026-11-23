@@ -690,7 +690,18 @@ fn within_with_both_given_is_an_interval_test() {
 /// The documents with errors and empty bodies bring nodes of zero width.
 #[test]
 fn within_holds_exactly_the_contained_pairs() {
-    let store = ContentStore::open(&temp("within")).unwrap();
+    // The tree's containment reads the documents' tapes (decision 0293), in each format they are made in.
+    use crate::code_rule_dsl::tape::formats::{Format, as_run};
+    for format in Format::ALL {
+        as_run(format, || contained_pairs_in(format));
+    }
+}
+
+/// `within_holds_exactly_the_contained_pairs` over documents whose tapes are made in `format`: the tree's
+/// containment read off them, and spans (which read the facts) once, in format 16.
+fn contained_pairs_in(format: crate::code_rule_dsl::tape::formats::Format) {
+    use crate::code_rule_dsl::tape::formats::Format;
+    let store = ContentStore::open(&temp(&format!("within{}", format.name()))).unwrap();
     let mut docs: Vec<Document> = documents().into_iter().take(3).collect();
     for (at, source) in ["x = (1,\nif y:\n", "def f(a, b:\n    return [a for\n", "", "class C:\n"].into_iter().enumerate() {
         let path = format!("broken{at}.py");
@@ -718,10 +729,9 @@ fn within_holds_exactly_the_contained_pairs() {
     assert!(zero > 0, "the broken documents have nodes of zero width");
     let cpu = || { let (u, s) = crate::code_rule_dsl::prof::thread_usage(); u + s };
     let (mut reference_cpu, mut relation_cpu) = (0.0, 0.0);
-    // The tree's containment reads the documents' tapes (decision 0293), in every format; spans read the facts.
-    use crate::code_rule_dsl::tape::formats::Format;
     assert!(batch.docs.iter().all(|p| p.facts.tape.is_some()), "every document holds its tape");
-    for mode in [within::Mode::Tree, within::Mode::Span] {
+    let modes: &[within::Mode] = if format == Format::F16 { &[within::Mode::Tree, within::Mode::Span] } else { &[within::Mode::Tree] };
+    for &mode in modes {
         let before_reference = cpu();
         let mut expected = BTreeSet::new();
         for a in 0..nodes {
@@ -739,9 +749,8 @@ fn within_holds_exactly_the_contained_pairs() {
             }
         }
         reference_cpu += cpu() - before_reference;
-        let formats: &[Format] = if mode == within::Mode::Tree { &Format::ALL } else { &[Format::F15] };
-        for &format in formats {
-            let within = within::Within::new(Arc::clone(&batch), mode).reading(format);
+        {
+            let within = within::Within::new(Arc::clone(&batch), mode);
             let before_relation = cpu();
             let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (within.value(r, 0), within.value(r, 1))).collect() };
             let ids: Vec<i64> = (0..nodes).map(id).collect();
@@ -767,7 +776,7 @@ fn within_holds_exactly_the_contained_pairs() {
             }
             // Read whole first (the device's keyed read, decision 0277): the tree by the batch's solve, every pair once,
             // and the lookups after it read the same rows; spans have no solve.
-            let whole = within::Within::new(Arc::clone(&batch), mode).reading(format);
+            let whole = within::Within::new(Arc::clone(&batch), mode);
             assert_eq!(whole.complete_rows(), mode == within::Mode::Tree, "containment is solved for the batch, spans are not");
             if mode == within::Mode::Tree {
                 let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (whole.value(r, 0), whole.value(r, 1))).collect() };
@@ -786,8 +795,17 @@ fn within_holds_exactly_the_contained_pairs() {
 /// node's strict ancestors gives, looked up by either column and scanned, and their statistics count the rows.
 #[test]
 fn the_kind_set_axes_hold_exactly_their_pairs() {
+    // Each read off the documents' tapes in each format they are made in (decision 0293).
+    use crate::code_rule_dsl::tape::formats::{Format, as_run};
+    for format in Format::ALL {
+        as_run(format, || axes_pairs_in(format));
+    }
+}
+
+/// `the_kind_set_axes_hold_exactly_their_pairs` over documents whose tapes are made in `format`.
+fn axes_pairs_in(format: crate::code_rule_dsl::tape::formats::Format) {
     use crate::code_rule_dsl::facts::core::kind_atom;
-    let store = ContentStore::open(&temp("axes")).unwrap();
+    let store = ContentStore::open(&temp(&format!("axes{}", format.name()))).unwrap();
     let mut docs: Vec<Document> = documents().into_iter().take(4).collect();
     // A document with ERROR nodes: an ERROR node's kind is ERROR's atom (`Facts::kind`, slot 0), whatever kind its tape
     // entry holds: a member of a set that names ERROR, on the host, the device and the tape's code set alike (0289).
@@ -853,17 +871,15 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
         expected
     };
     use crate::code_rule_dsl::typing::file_local::Binding;
-    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0143) on the CPU and on Metal;
-    // each read off the documents' tapes in every format (decision 0293).
-    use crate::code_rule_dsl::tape::formats::Format;
+    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0143) on the CPU and on Metal.
     assert!(batch.docs.iter().all(|p| p.facts.tape.is_some()), "the axes read every document's tape");
     let ways = [(Binding::Cpu, false), (Binding::Cpu, true), (Binding::Metal, true)];
     let axes = [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has];
     let expected_by: Vec<BTreeSet<(i64, i64)>> = axes.iter().map(|&a| expected_of(a)).collect();
-    let cases = axes.into_iter().zip(&expected_by).flat_map(|a| ways.map(|w| (a, w))).flat_map(|c| Format::ALL.map(|f| (c, f)));
-    for (((axis, expected), (binding, solve)), format) in cases {
+    let cases = axes.into_iter().zip(&expected_by).flat_map(|a| ways.map(|w| (a, w)));
+    for ((axis, expected), (binding, solve)) in cases {
         let expected = expected.clone();
-        let source = within::Within::axis(Arc::clone(&batch), axis, &set, binding).reading(format);
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set, binding);
         if solve {
             source.expect_lookups(0, 1e12);
         }
@@ -1781,10 +1797,10 @@ fn node_ids_in_place_equal_the_numbered_ones() {
         let lang = dialect_by_label(label).unwrap_or_else(|| panic!("no dialect {label}"));
         let grammar = Grammar::new(lang).unwrap();
         let source = Arc::new(source.to_owned());
-        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
+            let image = crate::code_rule_dsl::tape::formats::as_run(format, || TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary);
             let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
-            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image, lines).unwrap());
             let f = &*facts;
             let dialect = Dialect::new(core::facts_tag(f)).unwrap();
             // Whole, and narrowed to anchors (the root and each outermost anchor's subtree, as `node_anchors` asks).
@@ -2111,10 +2127,10 @@ fn id_read_cases() -> Vec<(String, Projected, u32)> {
         let lang = dialect_by_label(label).unwrap();
         let grammar = Grammar::new(lang).unwrap();
         let source = Arc::new(source.to_owned());
-        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
+            let image = crate::code_rule_dsl::tape::formats::as_run(format, || TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary);
             let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
-            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image, lines).unwrap());
             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
             for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
                 let p = if narrowed { Projected::anchored(1, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(1, Arc::clone(&facts), Some(&dialect), shape, false, None) };
@@ -2181,7 +2197,7 @@ fn the_jits_id_reads_are_the_hosts() {
         }
         tried += 1;
     }
-    assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
+    assert_eq!(tried, 3 * crate::code_rule_dsl::tape::formats::Format::ALL.len() * 3, "every case, format and shape");
 }
 
 /// Decision 0353 step 2: the numbering's reads as UKL (`<ukl/reads/ids.h>`, written once in CLIF), run on the device
@@ -2333,12 +2349,12 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
         let lang = dialect_by_label(label).unwrap();
         let grammar = Grammar::new(lang).unwrap();
         let source = Arc::new(source.to_owned());
-        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
+            let image = crate::code_rule_dsl::tape::formats::as_run(format, || TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary);
             let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
             // The lines' index and a word of room past it, as the device reads them: the test's buffer of them.
             let words: Vec<u8> = [lines.index(), &[0u8; 8]].concat();
-            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image, lines).unwrap());
             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
             let (tape, view) = facts.tape.as_ref().unwrap().in_place().unwrap();
             // A 16z tape's reads decode its blocks into the reader's slots (0353 step 4b).
@@ -2447,7 +2463,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
             }
         }
     }
-    assert_eq!(tried, 2 * 3 * 3, "every case, format and shape");
+    assert_eq!(tried, 2 * Format::ALL.len() * 3, "every case, format and shape");
 }
 
 /// Decision 0494, R1 and R3: a batch read whole makes one group, whose relations hold the rows the eager batch's do;

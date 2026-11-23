@@ -3,8 +3,8 @@
 //! compiler to tier 1 and tier 2 on Cranelift, and shared by every thread.
 //!
 //! The grammar's kinds, fields and supertype take tree-sitter-json's ids by name, and tier 2 writes
-//! the engine's image of a JSON file itself, its bytes (decision 0140: no node table, no conversion), with
-//! JSON's tape tag; supertype memberships are in its codes. A file the grammar refuses (invalid JSON,
+//! the engine's tape of a JSON file itself, in format 16 through the writer's ops as it parses (decisions 0140,
+//! 0434 §6: no node table, no conversion), each key numbered in JSON's table. A file the grammar refuses (invalid JSON,
 //! an empty file, a comment holding a quote) goes to tree-sitter-json.
 
 use rerail_bitlex::bitlex_masks as bitlex_compile;
@@ -15,9 +15,10 @@ use rerail_cpu_stream::native_cpu_stream;
 /// The grammar: JSONC.
 const GRAMMAR: &str = include_str!("../../../../crates/json_parser/jsonc.bitlex");
 
-/// The compiled parser.
+/// The compiled parser, and its format 16 tier 2's keys numbered in JSON's table (`CompiledStream::numbers`).
 struct Compiled {
     parser: native_cpu_stream::Parser,
+    numbers: native_cpu_stream::Numbers,
 }
 
 // SAFETY: as `rr_parser::Compiled`: nothing changes a compiled parser once it is made; `parse`
@@ -53,11 +54,11 @@ fn compile() -> Result<Compiled, String> {
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     native.tag = crate::code_rule_dsl::language::tape_tag(GrammarDialect::Json).ok_or("JSON has no tape tag")?;
     let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser })
+    let lang = crate::code_rule_dsl::tape::f16::lang(native.tag).ok_or("JSON has no format 16 table")?;
+    let numbers = parser.sixteen().ok_or("tier 2 does not compile for format 16")?.numbers(lang);
+    Ok(Compiled { parser, numbers })
 }
 
-/// `src`'s image, the engine's bytes as tier 2 wrote them, with tree-sitter-json's ids; `None` where
-/// the grammar refuses the file (or did not compile: the reason is [`compile_error`]).
 // Its tape (`tape::TreeParser`).
 pub mod tape;
 // The engine's JSON parser: simdjson's stage 1 (the source hashed in it) and a stage 2 of ours, which
@@ -68,8 +69,14 @@ pub mod simdjson;
 #[cfg(not(target_family = "wasm"))]
 pub mod fallback;
 
-pub fn image(src: &str) -> Option<Vec<u8>> {
-    compiled().ok()?.parser.image(src.as_bytes()).ok()
+/// `src`'s tape as tier 2 wrote it, in the run's format (16, or 16z), with tree-sitter-json's ids; `None` where the
+/// grammar refuses the file (or did not compile: the reason is [`compile_error`]).
+pub fn image(src: &str) -> Option<crate::code_rule_dsl::tape::f16::Finished> {
+    use crate::code_rule_dsl::language::GrammarDialect;
+    let c = compiled().ok()?;
+    let (lang, _, z) = crate::code_rule_dsl::tape::formats::run_16(GrammarDialect::Json).ok()?;
+    let tape = c.parser.image16(src.as_bytes(), crate::code_rule_dsl::lines::terminators(GrammarDialect::Json), lang, &c.numbers, z).ok()?;
+    Some(crate::code_rule_dsl::tape::f16::Finished { tape })
 }
 
 /// Why the grammar did not compile, if it did not.

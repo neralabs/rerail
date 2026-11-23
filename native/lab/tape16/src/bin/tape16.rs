@@ -1835,7 +1835,7 @@ fn cmd_gcodes(path: &str) {
 #[cfg(feature = "grammar")]
 fn cmd_table(tags: &[&str], out: &str) {
     // Every tape tag the engine stores (the languages' registry, `languages/*.json`), or those named.
-    const ALL: [u8; 31] = [1, 2, 3, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34];
+    const ALL: [u8; 32] = [1, 2, 3, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 250];
     let tags: Vec<u8> = if tags.is_empty() || tags == ["all"] { ALL.to_vec() } else { tags.iter().map(|t| t.parse().unwrap_or_else(|_| die(&format!("{t}: not a tape tag")))).collect() };
     let scratch = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tmp/e25");
     let out = std::path::Path::new(out);

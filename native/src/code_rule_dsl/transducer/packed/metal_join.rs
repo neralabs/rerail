@@ -355,7 +355,6 @@ fn view_source(format: u32) -> String {
 /// The format a run's views are of, as it stores its tapes (`Format::of_run`): the view kernels compiled ahead.
 pub(in crate::code_rule_dsl) fn run_view_format() -> u32 {
     match crate::code_rule_dsl::tape::formats::Format::of_run() {
-        crate::code_rule_dsl::tape::formats::Format::F15 => 15,
         crate::code_rule_dsl::tape::formats::Format::F16 => 16,
         crate::code_rule_dsl::tape::formats::Format::F16Z => rerail_clif::view::F16Z_FORMAT,
     }

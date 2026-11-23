@@ -92,7 +92,8 @@ pub fn ids_tag(tag: u8) -> u8 {
     match tag {
         30 | 34 => 1,
         31 => 6,
-        32 => 20,
+        // html-element (a fragment), and the tests' HTML (`GrammarDialect::TestHtml`): HTML's grammar.
+        32 | 250 => 20,
         t => t,
     }
 }
