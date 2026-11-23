@@ -21,6 +21,7 @@ pub mod simplify;
 mod nearest;
 pub mod parts;
 pub mod text;
+pub mod kept;
 pub use merge::{DropRepeated, MergeIdentical, congruence};
 pub use prune::Prune;
 pub use nearest::Nearest;
@@ -232,6 +233,10 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
     // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as; the base relations the program
     // reads and does not derive are inputs, as an authored file's are.
     p.program(&mut simplify::CpythonFunctors);
+    // A pass's tape-local facts kept by its tape (decision 0597 rule 8): its kept rows are inputs (`BaseInputs`).
+    if whole {
+        p.program(&mut kept::Kept);
+    }
     p.program(&mut simplify::BaseInputs);
     // Only the rules an output reads, directly or through other rules (T's front prunes the same way).
     p.program(&mut prune::Prune::default());

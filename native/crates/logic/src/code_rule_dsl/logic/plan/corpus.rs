@@ -988,6 +988,72 @@ impl Collecting {
     }
 }
 
+/// Tape value `key`'s entry (decision 0597 rule 8): its text by its digest, and a path of its own, `tape:<grammar>:<key>`
+/// (a run admits each path's newest entry before its first wave, `admit_memo_entries`; the waves read them there and
+/// in what the run queued, no statement). Its key is its text's (`GuestKeys`, decision 0391).
+fn value_entry(memo: memo::Memo<'_>, grammar: &str, text: &str, key: i64) -> (memo::Content, String) {
+    use sha2::{Digest as _, Sha256};
+    let digest: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+    let content = match memo {
+        memo::Memo::Stored(_) => memo::Content::Unstored(digest),
+        memo::Memo::Held(_) => memo::Content::Held(digest),
+    };
+    (content, format!("tape:{grammar}:{key}"))
+}
+
+/// `flat`'s rows, `width` values each, as a source (columns `c0`, …).
+fn flat_source(width: usize, flat: &[i64]) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
+    let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
+    let cols: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut relation = crate::code_rule_dsl::facts::vtab::Relation::new(&cols);
+    for row in flat.chunks(width.max(1)) {
+        relation.push(row);
+    }
+    Arc::new(relation)
+}
+
+/// The entries of the tape values a chunk's passes made rows of (decision 0597 rule 8): each value whose root a
+/// pass ran on (`rr_fresh_roots_<pass>`), with its roots there (`rr_kept_roots_<pass>`) and its rows of each frontier
+/// relation (those whose document column, the first, is the value's). A value made no frontier row of has an entry
+/// all the same: a later chunk is given its roots, and none of its rows.
+fn kept_rows(db: &Connection, v: &crate::code_rule_dsl::logic::program_image::Version, made: &guests::Guests) -> Vec<(i64, String, String, memo::Entry)> {
+    // A relation the engine holds is read from it; one a SQL stratum derived, from its table (as a chunk's exports).
+    let derived = |rel: &str| -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+        crate::code_rule_dsl::logic::native::component::derived(db, rel)
+            .or_else(|| Rows::of(db, rel, &format!("temp.{}", crate::code_rule_dsl::logic::sql::ident(rel))).ok().map(|r| Arc::new(r) as Arc<dyn crate::code_rule_dsl::facts::vtab::Source>))
+    };
+    let inputs: Vec<&str> = v.inputs().map(|a| v.text(a)).filter(|r| guests::kept_input(r)).collect();
+    let mut by: BTreeMap<i64, memo::Entry> = BTreeMap::new();
+    for kept_roots in inputs.iter().filter(|r| r.contains(guests::KEPT_ROOTS)) {
+        let Some(rows) = derived(&kept_roots.replace(guests::KEPT_ROOTS, guests::FRESH_ROOTS)) else { continue };
+        for i in 0..rows.len() {
+            let root = rows.value(i, 0);
+            let key = root >> 32;
+            if made.tape_text(key).is_none() {
+                continue;
+            }
+            let e = by.entry(key).or_insert_with(|| memo::Entry { key, ..Default::default() });
+            e.rows.entry((*kept_roots).to_owned()).or_insert_with(|| (1, Vec::new())).1.push(root);
+        }
+    }
+    for kept in inputs.iter().filter(|r| r.ends_with(guests::KEPT)) {
+        let rel = &kept[..kept.len() - guests::KEPT.len()];
+        let Some(rows) = derived(&format!("{rel}{}", guests::TAPE)) else { continue };
+        let width = rows.columns().len();
+        for i in 0..rows.len() {
+            if let Some(e) = by.get_mut(&rows.value(i, 0)) {
+                e.rows.entry(rel.to_owned()).or_insert_with(|| (width, Vec::new())).1.extend((0..width).map(|c| rows.value(i, c)));
+            }
+        }
+    }
+    by.into_iter()
+        .filter_map(|(key, entry)| {
+            let (grammar, text) = made.tape_text(key)?;
+            Some((key, grammar.to_owned(), text.to_owned(), entry))
+        })
+        .collect()
+}
+
 /// A tape value made of a string asked as `grammar` (`Got::New`), counted for rule 8's measure (`tape_texts`): a
 /// program (a Vue piece, a file's own) is no tape value and is not counted.
 fn tape_text_made(texts: &parking_lot::Mutex<BTreeMap<String, (usize, usize, std::collections::HashSet<[u8; 32]>)>>, grammar: &str, d: &syntax::Document) {
@@ -5102,6 +5168,9 @@ fn run_observed_within(
         held: usize,
         /// What its blocks wrote (`in_chunk_measured`): its next chunks' size (`sizing`).
         written: crate::code_rule_dsl::logic::native::setfix::Written,
+        /// The tape values its passes made rows of, each its entry (decision 0597 rule 8, `kept_rows`): key, grammar,
+        /// text and rows.
+        kept_values: Vec<(i64, String, String, memo::Entry)>,
     }
     /// What the main thread keeps of a chunk between its `Begin` and its `Finish`.
     struct Ctx {
@@ -5152,6 +5221,20 @@ fn run_observed_within(
         // Each source the chunk binds holds the tape values admitted inside its fixpoint, past the batch's rows
         // (decision 0431 §8, `syntax::values`).
         let values = kept_guests.as_ref().map(|_| Arc::new(syntax::values::Values::default()));
+        // Decision 0597 rule 8: a pass's kept rows are inputs a tape value's entry fills as it is admitted
+        // (`kept_of`): bound empty, and grown with the chunk's values.
+        let keeping = values.is_some() && local.version.inputs().any(|a| guests::kept_input(local.version.text(a)));
+        // What the chunk's end reads of them (`kept_rows`), held to the end with its exports: each pass's fresh roots
+        // and its frontier relations' tape rows.
+        let by_name: Vec<String> = if keeping { local.version.inputs().map(|a| local.version.text(a)).filter(|r| guests::kept_input(r)).map(|r| r.replace(guests::KEPT_ROOTS, guests::FRESH_ROOTS).replace(guests::KEPT, guests::TAPE)).collect() } else { Vec::new() };
+        let mut sources = sources;
+        if keeping {
+            for rel in local.version.inputs().map(|a| local.version.text(a)).filter(|r| guests::kept_input(r)) {
+                if !sources.iter().any(|(r, _)| r == rel) {
+                    sources.push((rel.to_owned(), flat_source(local.version.columns_of(rel).map_or(1, |c| c.len()), &[])));
+                }
+            }
+        }
         let sources: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = match &values {
             Some(values) => sources.into_iter().map(|(rel, s)| {
                 let layered: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(syntax::values::Layered::new(&rel, s, Arc::clone(values)));
@@ -5221,18 +5304,32 @@ fn run_observed_within(
         let asked_here = guests::answering(&local_v);
         // Each request answered with a value, in order: the chunk's entries keep them (`memo::VALUES`).
         let mut answered: Vec<memo::Answered> = Vec::new();
+        // Decision 0597 rule 8: tape value `key`'s entry, where an earlier chunk or run made its passes' rows of it:
+        // its rows, as the kept inputs' parts (`R_rr_kept`, `rr_kept_roots_<pass>`), so the strata over it hold none.
+        let kept_of = |made: &guests::Guests, key: u32| -> Result<Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>> {
+            let (true, Some(m)) = (keeping, memo) else { return Ok(Vec::new()) };
+            let Some((grammar, text)) = made.tape_text(i64::from(key)) else { return Ok(Vec::new()) };
+            let (content, path) = value_entry(m, grammar, text, i64::from(key));
+            let found = m.found_all(&memo_plan, &[(content, path.as_str())]).map_err(|e| Error::Plan(e.to_string()))?;
+            let Some(Some(found)) = found.into_iter().next() else { return Ok(Vec::new()) };
+            let Some(entry) = found.entry(i64::from(key)).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(Vec::new()) };
+            Ok(entry.rows.into_iter().map(|(rel, (width, flat))| (if guests::kept_input(&rel) { rel } else { format!("{rel}{}", guests::KEPT) }, flat_source(width, &flat))).collect())
+        };
         // The values a chunk of partial hits' files answered before (`memo::VALUES`), admitted before its run where its
         // cone can see them (`made.admit` asks `seen`). No entry keeps their rows (decision 0458 step 4): they are made
         // again, each found by its text's sha or parsed once a run.
         if let (false, Some((made, docs)), Some(values), Some(grower)) = (asked_before.is_empty(), kept_guests.as_mut(), values.as_ref(), grower.as_mut()) {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "tape values asked before, admitted".into());
             for asked in &asked_before {
+                // A value made here: its passes' kept rows, where its entry holds them (rule 8).
+                let mut fresh: Option<u32> = None;
                 // Its value and the keys of the nodes its rows hold, as `parse_answer` admits it.
                 let (key, owner) = match asked {
                     memo::Answered::Embed { at, grammar } => match made.admit(docs, *at, grammar, &guest_parses).map_err(Error::Plan)? {
                         guests::Got::New(d) => {
                             values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             tape_text_made(&tape_texts, grammar, &d);
+                            fresh = Some(d.key);
                             (d.key, Some((at >> 32) as u32))
                         }
                         guests::Got::Placed(key, _) => {
@@ -5255,6 +5352,9 @@ fn run_observed_within(
                 let doc = docs.iter().find(|d| d.key == key).cloned().ok_or_else(|| Error::Plan(format!("tape value {key} is not the chunk's")))?;
                 let made_rows = grower.admit(store, doc, sets, &vocabulary, binding, admit_projection.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
                 values.add(&[Some(key), owner].into_iter().flatten().collect::<Vec<u32>>(), made_rows);
+                if let Some(k) = fresh {
+                    values.add(&[k], kept_of(made, k)?);
+                }
             }
         }
         let mut parse_answer = |req: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
@@ -5268,6 +5368,8 @@ fn run_observed_within(
             let text = |a: i64| atoms.value(a as _).map_err(|e| Error::Plan(e.to_string()));
             let mut given_rows: BTreeMap<String, Vec<Vec<i64>>> = given.iter().map(|g| (g.clone(), Vec::new())).collect();
             for row in rows {
+                // A value made here: its passes' kept rows, where its entry holds them (rule 8).
+                let mut fresh: Option<u32> = None;
                 // The value asked, and the keys of the nodes its rows hold: its own, and its place's or its node's
                 // document's (`Values::add`).
                 let (key, owner) = match (req, &row[..]) {
@@ -5277,6 +5379,7 @@ fn run_observed_within(
                             guests::Got::New(d) => {
                                 values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                 tape_text_made(&tape_texts, &grammar, &d);
+                                fresh = Some(d.key);
                                 d.key
                             }
                             guests::Got::Placed(key, _) => {
@@ -5315,12 +5418,20 @@ fn run_observed_within(
                     given_rows.entry(name.clone()).or_default().extend((0..p.len()).map(|r| (0..width).map(|c| p.value(r, c)).collect()));
                 }
                 values.add(&[Some(key), owner].into_iter().flatten().collect::<Vec<u32>>(), made_rows);
+                if let Some(k) = fresh {
+                    let kept = kept_of(made, k)?;
+                    for (name, p) in kept.iter().filter(|(name, _)| given.contains(name)) {
+                        let width = p.columns().len();
+                        given_rows.entry(name.clone()).or_default().extend((0..p.len()).map(|r| (0..width).map(|c| p.value(r, c)).collect()));
+                    }
+                    values.add(&[k], kept);
+                }
             }
             Ok(std::mem::take(&mut given_rows).into_iter().collect())
         };
         let answering = values.is_some();
         let got = match hand {
-            None => super::run_atoms_native_hooked(local, db, "main", stats, split.exports.iter().filter(|r| cone.as_ref().is_none_or(|c| c.contains(*r))).cloned().collect(), modes, super::Hooks { texts: Some(Arc::clone(&vocabulary)), answer: answering.then_some(&mut parse_answer as super::Answer<'_>), ..Default::default() })?,
+            None => super::run_atoms_native_hooked(local, db, "main", stats, split.exports.iter().filter(|r| cone.as_ref().is_none_or(|c| c.contains(*r))).cloned().chain(by_name.iter().cloned()).collect(), modes, super::Hooks { texts: Some(Arc::clone(&vocabulary)), answer: answering.then_some(&mut parse_answer as super::Answer<'_>), ..Default::default() })?,
             Some(file) => {
                 let mut hand = |rel: &str| -> Result<bool> {
                     if !split.exports.iter().any(|e| e == rel) {
@@ -5330,7 +5441,7 @@ fn run_observed_within(
                     let rows = crate::code_rule_dsl::logic::native::component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
                     file(rel, rows).map(|()| true)
                 };
-                super::run_atoms_native_hooked(local, db, "main", stats, split.exports.iter().cloned().collect(), modes, super::Hooks { hand_off: Some(&mut hand), texts: Some(Arc::clone(&vocabulary)), answer: answering.then_some(&mut parse_answer as super::Answer<'_>), ..Default::default() })?
+                super::run_atoms_native_hooked(local, db, "main", stats, split.exports.iter().cloned().chain(by_name.iter().cloned()).collect(), modes, super::Hooks { hand_off: Some(&mut hand), texts: Some(Arc::clone(&vocabulary)), answer: answering.then_some(&mut parse_answer as super::Answer<'_>), ..Default::default() })?
             }
         };
         drop(running);
@@ -5338,7 +5449,11 @@ fn run_observed_within(
         // The tape values' files, for the memo: each value's askers, each program's host. Where the fixpoint parsed
         // strings, the chunk's documents were held with them (`kept_guests`), the values admitted among them.
         let mut documents = documents;
+        let mut kept_values = Vec::new();
         if let Some((mut made, docs)) = kept_guests.take() {
+            if keeping {
+                kept_values = kept_rows(db, &local.version, &made);
+            }
             host_of.extend(std::mem::take(&mut made.host_of));
             askers = made.askers();
             documents = docs;
@@ -5374,7 +5489,7 @@ fn run_observed_within(
             }
             t.iter().map(|(g, (made, placed, texts))| format!("{g}: {made} made in chunks, {placed} places more, {} texts in the run", texts.len())).collect::<Vec<_>>().join("; ")
         });
-        Ok(Evaluated { got, host_of, askers, answered, totals_add, export_rows, documents, held, written: Default::default() })
+        Ok(Evaluated { got, host_of, askers, answered, totals_add, export_rows, documents, held, written: Default::default(), kept_values })
     };
     // A chunk's relations go in blocks of its own, given back with it (Q58): not in blocks every chunk at once
     // shares, which a few rows of each kept whole and the memory line counted whole.
@@ -5618,7 +5733,7 @@ fn run_observed_within(
         phase("wait", statements.count());
         statements.enter("local");
         let Ctx { chunk_nodes_built, chunk_docs, chunk_own, at_once, mut chunk_partials, cone } = ctx;
-        let Evaluated { got, host_of, askers, answered, totals_add, export_rows, documents, held, written } = ev;
+        let Evaluated { got, host_of, askers, answered, totals_add, export_rows, documents, held, written, kept_values } = ev;
         corpus_docs.extend(documents);
         for (rel, rows, measured) in &totals_add {
             totals.add(rel, *rows, measured);
@@ -5921,6 +6036,13 @@ fn run_observed_within(
                 memo::cover(&mut entry, memo_ids.values());
                 let stands = standing(d, &entry);
                 publish.push((*id, world::store_path(path).to_owned(), *d, entry, stands, *digest));
+            }
+            // The tape values the chunk's passes made rows of, each kept under its text (decision 0597 rule 8).
+            if let Some(m) = memo {
+                for (key, grammar, text, entry) in kept_values {
+                    let (content, path) = value_entry(m, &grammar, &text, key);
+                    publish.push((content, path, key, entry, false, None));
+                }
             }
             // Decision 0458 R4: no entry keeps a base relation's rows; the cross part reads them off the corpus batch.
             if let Some((path, rel)) = publish.iter().find_map(|(_, p, _, e, _, _)| e.rows.keys().find(|k| k.starts_with("base:") || stored.iter().any(|(r, _)| r == *k)).map(|k| (p, k))) {
