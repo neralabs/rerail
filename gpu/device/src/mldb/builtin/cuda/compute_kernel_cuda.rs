@@ -301,6 +301,66 @@ fn needs_for_arch(sm: u32, nvrtc: (i32, i32), archs: &[i32]) -> Option<String> {
     ))
 }
 
+/// Whether HIP's runtime compiler compiles for `arch`: a kernel of nothing, compiled as every kernel is
+/// (`options_for`); its log where it does not. The answer is kept in the store by hiprtc's version and the
+/// architecture, so a machine compiles it once.
+fn hip_compiles_for(a: &Api, arch: &str) -> Result<(), String> {
+    let (mut major, mut minor) = (0, 0);
+    unsafe { (a.nvrtc_version)(&mut major, &mut minor) };
+    let key = crate::store::key(&[b"hip arch probe", format!("{major}.{minor}").as_bytes(), arch.as_bytes()]);
+    if crate::store::load("hip", &key, "probe").is_some_and(|b| b == b"ok") {
+        return Ok(());
+    }
+    let src = CString::new("extern \"C\" __global__ void rerail_arch_probe(int* p) { if (p) *p = 0; }\n").unwrap();
+    let name = CString::new("rerail_arch_probe.hip").unwrap();
+    let opts: Vec<CString> = options_for(Vendor::Hip, arch).into_iter().map(|o| CString::new(o).unwrap()).collect();
+    let ptrs: Vec<*const c_char> = opts.iter().map(|o| o.as_ptr()).collect();
+    let mut prog = std::ptr::null_mut();
+    unsafe {
+        if (a.nvrtc_create_program)(&mut prog, src.as_ptr(), name.as_ptr(), 0, std::ptr::null(), std::ptr::null()) != 0 {
+            return Err("hiprtc's program creation failed".to_owned());
+        }
+        let r = (a.nvrtc_compile_program)(prog, ptrs.len() as i32, ptrs.as_ptr());
+        let mut n = 0;
+        (a.nvrtc_get_program_log_size)(prog, &mut n);
+        let mut log = vec![0u8; n.max(1)];
+        (a.nvrtc_get_program_log)(prog, log.as_mut_ptr().cast());
+        (a.nvrtc_destroy_program)(&mut prog);
+        if r != 0 {
+            let log = String::from_utf8_lossy(&log);
+            let log = log.trim_matches(|c: char| c == '\0' || c.is_whitespace());
+            let line = log.lines().find(|l| l.contains("error")).unwrap_or(log).trim();
+            // hiprtc's results (hiprtc.h): an architecture it does not know is an invalid option, with no log.
+            let code = match r {
+                5 => "HIPRTC_ERROR_INVALID_OPTION".to_owned(),
+                6 => "HIPRTC_ERROR_COMPILATION".to_owned(),
+                n => format!("hiprtc result {n}"),
+            };
+            return Err(if line.is_empty() { code } else { format!("{code}: {line}") });
+        }
+    }
+    crate::store::save("hip", &key, "probe", b"ok");
+    Ok(())
+}
+
+/// What the user must install where hiprtc (its version `hiprtc`) does not compile for the AMD GPU `arch` (its
+/// first error, `error`): a ROCm, or on Windows a HIP SDK, that supports the GPU.
+fn needs_for_hip(arch: &str, hiprtc: (i32, i32), error: &str) -> String {
+    let (what, url, var) = if cfg!(windows) {
+        ("AMD's HIP SDK", "https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html", "HIP_PATH")
+    } else {
+        ("ROCm", "https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/system-requirements.html", "ROCM_PATH")
+    };
+    format!(
+        "This machine's AMD GPU is {arch}, and its hiprtc ({}.{}, {what}'s compiler) does not compile for it ({}); \
+         Rerail runs on the CPU until it can. Install {what} in a version that supports {arch}: {url}. Installed \
+         elsewhere, set {var} to it.",
+        hiprtc.0,
+        hiprtc.1,
+        error.trim()
+    )
+}
+
 /// Where to get the CUDA Toolkit, in each message that asks for it.
 const CUDA_TOOLKIT: &str = "https://developer.nvidia.com/cuda-toolkit-archive";
 
@@ -747,6 +807,14 @@ impl CudaDevice {
                     let name = name.split(':').next().unwrap_or_default();
                     if !name.starts_with("gfx") {
                         return Err(format!("HIP's architecture is {name:?}, not a gfx name"));
+                    }
+                    // hiprtc lists no architectures (NVRTC's `needs_for_arch`): one small compile for this one says,
+                    // once a machine (the store keeps the answer by hiprtc's version and the architecture).
+                    if let Err(log) = hip_compiles_for(a, name) {
+                        let (mut major, mut minor) = (0, 0);
+                        (a.nvrtc_version)(&mut major, &mut minor);
+                        let _ = NEEDS.set(needs_for_hip(name, (major, minor), &log));
+                        return Err(format!("hiprtc {major}.{minor} does not compile for {name}"));
                     }
                     Box::leak(name.to_owned().into_boxed_str())
                 }
@@ -1822,5 +1890,27 @@ mod needs_tests {
         assert!(newer.contains("a newer CUDA Toolkit"), "{newer}");
         assert_eq!(needs_for_arch(121, (13, 0), &without_sm70), None);
         assert_eq!(needs_for_arch(70, (13, 0), &[]), None, "an empty list says nothing");
+    }
+
+    /// Decision 0645 §6: an AMD GPU hiprtc does not compile for is told what to install, with hiprtc's reason.
+    #[test]
+    fn an_amd_gpu_hiprtc_does_not_compile_for_is_told_what_to_install() {
+        let m = super::needs_for_hip("gfx1250", (7, 2), "error: unsupported HIP gpu architecture: gfx1250");
+        assert!(m.contains("gfx1250") && m.contains("hiprtc (7.2") && m.contains("unsupported HIP gpu architecture") && m.contains("https://"), "{m}");
+        assert!(m.contains(if cfg!(windows) { "HIP_PATH" } else { "ROCM_PATH" }), "{m}");
+    }
+
+    /// The probe on a real HIP device: its own architecture compiles; one that is no GPU's does not, with a reason.
+    #[test]
+    fn hiprtc_is_asked_whether_it_compiles_for_the_gpu() {
+        let Ok(a) = super::api() else { return };
+        if a.vendor != super::Vendor::Hip {
+            return;
+        }
+        let Some(d) = super::CudaDevice::system_default() else { return };
+        assert_eq!(super::hip_compiles_for(a, d.arch), Ok(()));
+        let e = super::hip_compiles_for(a, "gfx9999").expect_err("no GPU is gfx9999");
+        eprintln!("gfx9999: {e}");
+        assert!(!e.is_empty());
     }
 }

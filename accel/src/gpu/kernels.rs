@@ -1181,6 +1181,36 @@ pub fn spawn_maintenance(engine: &Path) -> Option<u32> {
 mod tests {
     use super::*;
 
+    /// Decision 0645 §4: on an `apple10` device (the M5), a lower tier's shipped AIR is taken where its text is the
+    /// device's, and not where it differs (a source taking the matrix header, whose `apple10` text has the M5's unit).
+    #[test]
+    fn a_lower_tiers_air_is_taken_only_for_the_same_text() {
+        if super::super::shared::get().is_none() || places().target != "apple10" {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("rerail-air-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let plain = "#include <ukl/backend.h>\nDEFINE_KERNEL2(air, air_tier_test, RWBUFFER, uint32_t, o, \"[n]\", GID0, uint32_t, i, ) { o[i] = i * 7u; }\n";
+        let matrix = format!("#include <ukl/matrix.h>\n{plain}");
+        for (source, same) in [(plain.to_owned(), true), (matrix, false)] {
+            let own = msl_for("apple10", &source, "air_tier_test").unwrap().into_owned();
+            let lower = msl_for("apple7", &source, "air_tier_test").unwrap().into_owned();
+            assert_eq!(own == lower, same, "the tiers' texts are {}", if same { "the same" } else { "different" });
+            let code = rerail_device::device::compile_offline("apple7", Some(310), &lower, "air_tier_test").unwrap_or_else(|e| panic!("{e}"));
+            let file = dir.join(format!("{}.metallib", hex(&Key::for_target("apple7", &source, "air_tier_test", None).library)));
+            std::fs::write(&file, code).unwrap();
+            let library = Key::for_target("apple10", &source, "air_tier_test", None).library;
+            let found = shipped_air(&dir, &library, &source, &own, "air_tier_test");
+            assert_eq!(found.as_deref(), same.then_some(file.as_path()), "apple7's AIR taken exactly where its text is the M5's");
+            if let Some(f) = found {
+                let device = &super::super::shared::get().unwrap().device;
+                let l = device.new_library_with_file(&f).unwrap();
+                assert!(l.get_function("air_tier_test", None).is_ok(), "the kernel is in apple7's library");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Decision 0395: a pipeline compiled once is in the store, and made from its archive once this process's
     /// memory is released (as a process that never compiled it would); `ready` in `defer` says `None` for one not
     /// compiled and records it as wanted; once compiled (as maintenance does), `ready` finds it.
