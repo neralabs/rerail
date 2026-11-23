@@ -414,7 +414,11 @@ describe("the daemons of a Rerail home", () => {
     await writeFile(slowStart, "");
     const told: number[] = [];
     const starting = startDaemon({ ...control(), onWaiting: pid => void told.push(pid) }, { dev: true, env });
-    await launchWaitedForOutsideLock(slowStart);
+    // A start that ends before its daemon is held, as a failed launch does, fails the case with its own error at once.
+    const ended = starting.then(() => {
+      throw new Error("the start ended before its daemon was held in its start");
+    });
+    await Promise.race([launchWaitedForOutsideLock(slowStart), ended]);
     releaseSlowStart(slowStart);
     const first = await starting;
     expect(first.started).toBe(true);
