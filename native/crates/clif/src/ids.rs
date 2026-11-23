@@ -19,8 +19,10 @@
 pub const ITEMS: u32 = 10;
 /// A group's words: one of bits an item, then the counts before it, two to a word.
 pub const WORDS: u32 = ITEMS + ITEMS.div_ceil(2);
-/// Items a select sample stands for.
-pub const SAMPLE: u32 = 64;
+/// Items a select sample stands for: 16, so a select's sample is nearly always its item's group or the one before
+/// (at 64, a probe's select read two to three groups past it; 4 bytes a sample, a quarter of a byte an item).
+pub const SAMPLE: u32 = 16;
+const _: () = assert!(SAMPLE.is_power_of_two());
 /// An id's low 32 bits: its granule's slot, then its index in it (`INDEX_BITS`).
 pub const SLOT_BITS: u32 = 14;
 pub const INDEX_BITS: u32 = 32 - SLOT_BITS;
@@ -233,7 +235,7 @@ impl Numbering {
             return NONE;
         }
         // SAFETY: the caller's; an item's sample of every `SAMPLE`th number, and `r` a number.
-        let mut g = unsafe { Self::u32_at(&self.samples[item as usize], r >> 6) };
+        let mut g = unsafe { Self::u32_at(&self.samples[item as usize], r >> SAMPLE.trailing_zeros()) };
         loop {
             // SAFETY: the caller's; number `r` lies in a group from its sample's on.
             let (m, before) = unsafe { (self.group(g)[item as usize], self.before(g, item)) };

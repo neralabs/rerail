@@ -7,7 +7,7 @@
 //! so:
 //! - a local id is a node's rank among the numbered nodes (`rank`), and a tape node's local id is its rank when its bit
 //!   is set (`local`);
-//! - the tape node of a local id is a select (`select`): a sample gives the group of every 64th item, and the bits from
+//! - the tape node of a local id is a select (`select`): a sample gives the group of every `SAMPLE`-th item (16), and the bits from
 //!   there;
 //! - a pass over the nodes walks the set bits (`iter`).
 //!
