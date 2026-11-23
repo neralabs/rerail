@@ -2080,7 +2080,11 @@ mod tests {
         for (restore, restoring) in [(1, &workspace), (2, &workspace), (3, &next)] {
             reset_source_alias_hashes();
             assert!(restoring.holds_blob_bytes("a.py", 9), "restore {restore}");
-            assert_eq!(source_alias_hashes(), 1, "restore {restore} hashes the file");
+            assert_eq!(
+                source_alias_hashes(),
+                1,
+                "restore {restore} hashes the file"
+            );
         }
 
         rewrite_keeping_its_time(&path, b"pront(1)\n");
