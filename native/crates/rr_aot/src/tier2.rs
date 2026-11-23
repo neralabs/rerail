@@ -369,6 +369,8 @@ pub struct P<'a, L: Layout> {
     /// The marks found at this token (`held`): which, and whether each holds.
     known: u64,
     holds: u64,
+    /// The token's code (none past the last record), read as the token is reached.
+    cur: u32,
     flags: u32,
     /// The level's word (`remember`): the kind of the token of a `remember` choice it took last; a call's is its caller's
     /// again where it returns.
@@ -397,16 +399,17 @@ impl<'a, L: Layout> P<'a, L> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L) -> R<Self> {
         let recs = &lx.recs[..];
         let n = recs.len();
-        let mut p = P { src, recs, n, i: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, dead: Vec::new(), strings: 0, stack: Vec::with_capacity(64) };
+        let mut p = P { src, recs, n, i: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, cur: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, dead: Vec::new(), strings: 0, stack: Vec::with_capacity(64) };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
     }
 
-    /// At record `i`: no mark known there yet.
+    /// At record `i`: its code read, no mark known there yet.
     #[inline(always)]
     fn arrive(&mut self) -> R {
         self.known = 0;
+        self.cur = if self.i < self.n { self.recs[self.i].code } else { 0 };
         Ok(())
     }
 
@@ -451,7 +454,7 @@ impl<'a, L: Layout> P<'a, L> {
 
     #[inline(always)]
     fn word(&self) -> u32 {
-        self.word_at(self.i)
+        self.cur >> 8 & 0xff
     }
 
     #[inline(always)]
@@ -6238,6 +6241,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `float_after` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_float_after(&mut self) -> bool {
         self.taken >> 0 & 1 == 0 && self.held(0, Self::h_float_after)
     }
@@ -6262,6 +6266,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `line` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_line(&mut self) -> bool {
         self.taken >> 1 & 1 == 0 && self.held(1, Self::h_line)
     }
@@ -6286,6 +6291,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `fix_on` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_fix_on(&mut self) -> bool {
         matches!(self.word(), w::FIX_40) && self.taken >> 2 & 1 == 0 && self.held(2, Self::h_fix_on)
     }
@@ -6310,6 +6316,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `suppress_on` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_suppress_on(&mut self) -> bool {
         matches!(self.word(), w::SUPPRESS_42) && self.taken >> 3 & 1 == 0 && self.held(3, Self::h_suppress_on)
     }
@@ -6334,6 +6341,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `options_on` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_options_on(&mut self) -> bool {
         matches!(self.word(), w::OPTIONS_44) && self.taken >> 4 & 1 == 0 && self.held(4, Self::h_options_on)
     }
@@ -6358,6 +6366,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `over_on` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_over_on(&mut self) -> bool {
         matches!(self.word(), w::OVER_43) && self.taken >> 5 & 1 == 0 && self.held(5, Self::h_over_on)
     }
@@ -6382,6 +6391,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `policy_on` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_policy_on(&mut self) -> bool {
         matches!(self.word(), w::POLICY_53) && self.taken >> 6 & 1 == 0 && self.held(6, Self::h_policy_on)
     }
@@ -6406,6 +6416,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `one_name` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_one_name(&mut self) -> bool {
         matches!(self.word(), w::LBRACE_20) && self.taken >> 7 & 1 == 0 && self.held(7, Self::h_one_name)
     }
@@ -6430,6 +6441,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `empty_parens` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_empty_parens(&mut self) -> bool {
         matches!(self.word(), w::LPAREN_10) && self.taken >> 8 & 1 == 0 && self.held(8, Self::h_empty_parens)
     }
@@ -6454,6 +6466,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `no_value` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_no_value(&mut self) -> bool {
         matches!(self.word(), w::LPAREN_10) && self.taken >> 9 & 1 == 0 && self.held(9, Self::h_no_value)
     }
@@ -6478,6 +6491,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `newline` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_newline(&mut self) -> bool {
         self.taken >> 10 & 1 == 0 && self.held(10, Self::h_newline)
     }
@@ -6502,6 +6516,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `end_on` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_end_on(&mut self) -> bool {
         matches!(self.word(), w::DOT_13) && self.taken >> 11 & 1 == 0 && self.held(11, Self::h_end_on)
     }
@@ -6526,6 +6541,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `json_bad` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_json_bad(&mut self) -> bool {
         self.taken >> 12 & 1 == 0 && self.held(12, Self::h_json_bad)
     }
@@ -6550,6 +6566,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `fn_uncalled` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_fn_uncalled(&mut self) -> bool {
         matches!(self.word(), w::AT_23) && self.taken >> 13 & 1 == 0 && self.held(13, Self::h_fn_uncalled)
     }
@@ -6574,6 +6591,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `io_bare` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_io_bare(&mut self) -> bool {
         matches!(self.word(), w::DOT_13) && self.taken >> 14 & 1 == 0 && self.held(14, Self::h_io_bare)
     }

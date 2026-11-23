@@ -310,3 +310,13 @@ Now a mark whose every definition's run starts with words (`.`, `@`, `(`) asks f
 tier 2 went from 41.0 ms to 37.5 ms. Kotlin's file gets the same guards.
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
+
+## Tier 2 holds its token's code, as lean holds its token (done)
+
+Each `word()` read the token's record: a bounds check on the record index, then the load. The rules ask it hundreds
+of times (318 reads in `.rerail`'s file). Where no region is read in parts, a token is its record. There tier 2 now
+reads the code once, as it reaches the token (`arrive`, into `cur`), and `word()` takes the word from it. The marks'
+tests (`m_*`) are `#[inline]`, so `open_mark`'s word guards read that once. On spark2 tier 2 went from 37.5 ms to
+35.9 ms. Kotlin's file gets the `#[inline]` only: its tokens can be a record's pieces.
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.

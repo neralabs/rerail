@@ -7856,6 +7856,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `head_ctor` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_head_ctor(&mut self) -> bool {
         self.taken >> 0 & 1 == 0 && self.held(0, Self::h_head_ctor)
     }
@@ -7883,6 +7884,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `by_lf` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_by_lf(&mut self) -> bool {
         self.taken >> 1 & 1 == 0 && self.held(1, Self::h_by_lf)
     }
@@ -7907,6 +7909,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `ann_lf` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_ann_lf(&mut self) -> bool {
         self.taken >> 2 & 1 == 0 && self.held(2, Self::h_ann_lf)
     }
@@ -7931,6 +7934,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `semi` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_semi(&mut self) -> bool {
         self.taken >> 3 & 1 == 0 && self.held(3, Self::h_semi)
     }
@@ -7976,6 +7980,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `semi_close` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_semi_close(&mut self) -> bool {
         self.taken >> 4 & 1 == 0 && self.held(4, Self::h_semi_close)
     }
@@ -8001,6 +8006,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `apart` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_apart(&mut self) -> bool {
         self.taken >> 5 & 1 == 0 && self.held(5, Self::h_apart)
     }
@@ -8025,6 +8031,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `real` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_real(&mut self) -> bool {
         self.taken >> 6 & 1 == 0 && self.held(6, Self::h_real)
     }
@@ -8049,6 +8056,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `bt_cref` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_bt_cref(&mut self) -> bool {
         self.taken >> 7 & 1 == 0 && self.held(7, Self::h_bt_cref)
     }
@@ -8073,6 +8081,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `label_at` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_label_at(&mut self) -> bool {
         self.taken >> 8 & 1 == 0 && self.held(8, Self::h_label_at)
     }
@@ -8097,6 +8106,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `lab_loop` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_lab_loop(&mut self) -> bool {
         self.taken >> 9 & 1 == 0 && self.held(9, Self::h_lab_loop)
     }
@@ -8121,6 +8131,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `lab_lam` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_lab_lam(&mut self) -> bool {
         self.taken >> 10 & 1 == 0 && self.held(10, Self::h_lab_lam)
     }
@@ -8145,6 +8156,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `this_at` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_this_at(&mut self) -> bool {
         matches!(self.word(), w::THIS_37) && self.taken >> 11 & 1 == 0 && self.held(11, Self::h_this_at)
     }
@@ -8169,6 +8181,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `jump_at` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_jump_at(&mut self) -> bool {
         matches!(self.word(), w::BREAK_62 | w::CONTINUE_61 | w::RETURN_60) && self.taken >> 12 & 1 == 0 && self.held(12, Self::h_jump_at)
     }
@@ -8193,6 +8206,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `as_q` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_as_q(&mut self) -> bool {
         matches!(self.word(), w::AS_10) && self.taken >> 13 & 1 == 0 && self.held(13, Self::h_as_q)
     }
@@ -8217,6 +8231,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `qdot` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_qdot(&mut self) -> bool {
         matches!(self.word(), w::QUEST_40) && self.taken >> 14 & 1 == 0 && self.held(14, Self::h_qdot)
     }
@@ -8241,6 +8256,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `ge` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_ge(&mut self) -> bool {
         matches!(self.word(), w::GT_27) && self.taken >> 15 & 1 == 0 && self.held(15, Self::h_ge)
     }
@@ -8265,6 +8281,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `sfx` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_sfx(&mut self) -> bool {
         self.taken >> 16 & 1 == 0 && self.held(16, Self::h_sfx)
     }
@@ -8289,6 +8306,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `blk` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_blk(&mut self) -> bool {
         matches!(self.word(), w::LBRACE_17) && self.taken >> 17 & 1 == 0 && self.held(17, Self::h_blk)
     }
@@ -8313,6 +8331,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `lam_bare` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_lam_bare(&mut self) -> bool {
         matches!(self.word(), w::LBRACE_17) && self.taken >> 18 & 1 == 0 && self.held(18, Self::h_lam_bare)
     }
@@ -8337,6 +8356,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `lam_params` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_lam_params(&mut self) -> bool {
         matches!(self.word(), w::LBRACE_17) && self.taken >> 19 & 1 == 0 && self.held(19, Self::h_lam_params)
     }
@@ -8361,6 +8381,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `ann_expr` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_ann_expr(&mut self) -> bool {
         matches!(self.word(), w::AT_2) && self.taken >> 20 & 1 == 0 && self.held(20, Self::h_ann_expr)
     }
@@ -8385,6 +8406,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `decl_mod` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_decl_mod(&mut self) -> bool {
         matches!(self.word(), w::ABSTRACT_100 | w::ACTUAL_108 | w::ANNOTATION_1 | w::CONST_99 | w::CROSSINLINE_105 | w::DATA_52 | w::EXPECT_107 | w::EXTERNAL_98 | w::FINAL_101 | w::INFIX_96 | w::INLINE_97 | w::INNER_85 | w::INTERNAL_91 | w::LATEINIT_88 | w::NOINLINE_104 | w::OPEN_102 | w::OPERATOR_95 | w::OVERRIDE_87 | w::PRIVATE_90 | w::PROTECTED_92 | w::PUBLIC_89 | w::SEALED_84 | w::SUSPEND_24 | w::TAILREC_94 | w::VALUE_86 | w::VARARG_103) && self.taken >> 21 & 1 == 0 && self.held(21, Self::h_decl_mod)
     }
@@ -8409,6 +8431,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `use_site` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_use_site(&mut self) -> bool {
         matches!(self.word(), w::DELEGATE_114 | w::FIELD_109 | w::GET_34 | w::PARAM_112 | w::PROPERTY_110 | w::RECEIVER_111 | w::SETPARAM_113 | w::SET_35) && self.taken >> 22 & 1 == 0 && self.held(22, Self::h_use_site)
     }
@@ -8433,6 +8456,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `file_at` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_file_at(&mut self) -> bool {
         matches!(self.word(), w::AT_2) && self.taken >> 23 & 1 == 0 && self.held(23, Self::h_file_at)
     }
@@ -8457,6 +8481,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `trail` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_trail(&mut self) -> bool {
         matches!(self.word(), w::COMMA_20) && self.taken >> 24 & 1 == 0 && self.held(24, Self::h_trail)
     }
@@ -8481,6 +8506,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `wild` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_wild(&mut self) -> bool {
         matches!(self.word(), w::DOT_32) && self.taken >> 25 & 1 == 0 && self.held(25, Self::h_wild)
     }
@@ -8505,6 +8531,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `obj_lit` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_obj_lit(&mut self) -> bool {
         matches!(self.word(), w::OBJECT_31) && self.taken >> 26 & 1 == 0 && self.held(26, Self::h_obj_lit)
     }
@@ -8529,6 +8556,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `ft_dot_at` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_ft_dot_at(&mut self) -> bool {
         matches!(self.word(), w::DOT_32) && self.taken >> 27 & 1 == 0 && self.held(27, Self::h_ft_dot_at)
     }
@@ -8553,6 +8581,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `generic` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_generic(&mut self) -> bool {
         matches!(self.word(), w::LT_26) && self.taken >> 28 & 1 == 0 && self.held(28, Self::h_generic)
     }
@@ -8577,6 +8606,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `fn_paren` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_fn_paren(&mut self) -> bool {
         matches!(self.word(), w::LPAREN_19) && self.taken >> 29 & 1 == 0 && self.held(29, Self::h_fn_paren)
     }
@@ -8601,6 +8631,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `ty_susp` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_ty_susp(&mut self) -> bool {
         matches!(self.word(), w::SUSPEND_24) && self.taken >> 30 & 1 == 0 && self.held(30, Self::h_ty_susp)
     }
@@ -8625,6 +8656,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `ds_susp` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_ds_susp(&mut self) -> bool {
         matches!(self.word(), w::SUSPEND_24) && self.taken >> 31 & 1 == 0 && self.held(31, Self::h_ds_susp)
     }
@@ -8649,6 +8681,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `cp_mod` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_cp_mod(&mut self) -> bool {
         matches!(self.word(), w::ABSTRACT_100 | w::ACTUAL_108 | w::ANNOTATION_1 | w::CONST_99 | w::CROSSINLINE_105 | w::DATA_52 | w::EXPECT_107 | w::EXTERNAL_98 | w::FINAL_101 | w::INFIX_96 | w::INLINE_97 | w::INNER_85 | w::INTERNAL_91 | w::LATEINIT_88 | w::NOINLINE_104 | w::OPEN_102 | w::OPERATOR_95 | w::OVERRIDE_87 | w::PRIVATE_90 | w::PROTECTED_92 | w::PUBLIC_89 | w::SEALED_84 | w::SUSPEND_24 | w::TAILREC_94 | w::VALUE_86 | w::VARARG_103) && self.taken >> 32 & 1 == 0 && self.held(32, Self::h_cp_mod)
     }
@@ -8673,6 +8706,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `cref` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_cref(&mut self) -> bool {
         self.taken >> 33 & 1 == 0 && self.held(33, Self::h_cref)
     }
@@ -8697,6 +8731,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `named` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_named(&mut self) -> bool {
         self.taken >> 34 & 1 == 0 && self.held(34, Self::h_named)
     }
@@ -8721,6 +8756,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `enum_class` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_enum_class(&mut self) -> bool {
         matches!(self.word(), w::ENUM_16) && self.taken >> 36 & 1 == 0 && self.held(36, Self::h_enum_class)
     }
@@ -8745,6 +8781,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `fun_iface` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_fun_iface(&mut self) -> bool {
         matches!(self.word(), w::FUN_14) && self.taken >> 37 & 1 == 0 && self.held(37, Self::h_fun_iface)
     }
@@ -8769,6 +8806,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `fn_recv` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_fn_recv(&mut self) -> bool {
         self.taken >> 38 & 1 == 0 && self.held(38, Self::h_fn_recv)
     }
@@ -8793,6 +8831,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `acc` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_acc(&mut self) -> bool {
         matches!(self.word(), w::GET_34 | w::SET_35) && self.taken >> 39 & 1 == 0 && self.held(39, Self::h_acc)
     }
@@ -8817,6 +8856,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `recv` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_recv(&mut self) -> bool {
         self.taken >> 41 & 1 == 0 && self.held(41, Self::h_recv)
     }
@@ -8841,6 +8881,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     /// Mark `dotted` holds at the token, not taken there; once a token (`held`).
+    #[inline]
     fn m_dotted(&mut self) -> bool {
         matches!(self.word(), w::DOT_32) && self.taken >> 42 & 1 == 0 && self.held(42, Self::h_dotted)
     }

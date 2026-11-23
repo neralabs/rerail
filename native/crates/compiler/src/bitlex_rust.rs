@@ -1227,7 +1227,7 @@ impl<'a> G<'a> {
                 }
                 _ => String::new(),
             };
-            let _ = writeln!(out, "    /// Mark `{}` holds at the token, not taken there; once a token (`held`).\n    fn m_{n}(&mut self) -> bool {{\n        {guard}self.taken >> {order} & 1 == 0 && self.held({order}, Self::h_{n})\n    }}\n\n    fn h_{n}(&self) -> bool {{\n        {}\n    }}\n", m.name, holds.join(" || "));
+            let _ = writeln!(out, "    /// Mark `{}` holds at the token, not taken there; once a token (`held`).\n    #[inline]\n    fn m_{n}(&mut self) -> bool {{\n        {guard}self.taken >> {order} & 1 == 0 && self.held({order}, Self::h_{n})\n    }}\n\n    fn h_{n}(&self) -> bool {{\n        {}\n    }}\n", m.name, holds.join(" || "));
             // Taken: `refuses taken` asked; the extras before its bit settled; `drops` asked.
             let qs = |f: fn(&Mark<'a>) -> &'a [::bitlex::syntax::GapPattern]| -> Vec<::bitlex::syntax::GapPattern> { defs.iter().flat_map(|(_, d)| f(d).iter().cloned()).collect() };
             let mut take = String::new();
@@ -1633,8 +1633,13 @@ impl<'a> G<'a> {
                 ("    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).\n    m: &'a crate::tier1::Masks,\n", ""),
                 ("let (recs, m) = (&lx.recs[..], &lx.masks);", "let recs = &lx.recs[..];"),
                 ("P { src, recs, m, n,", "P { src, recs, n,"),
-                ("    /// At record `i`: split it where tier 2 reads its region in parts.\n", "    /// At record `i`: no mark known there yet.\n"),
-                ("        if self.i < self.n {\n            self.split(self.i)?;\n        }\n", ""),
+                ("    /// At record `i`: split it where tier 2 reads its region in parts.\n", "    /// At record `i`: its code read, no mark known there yet.\n"),
+                ("        if self.i < self.n {\n            self.split(self.i)?;\n        }\n", "        self.cur = if self.i < self.n { self.recs[self.i].code } else { 0 };\n"),
+                // The token's code held as the token is reached (a token is its record), as the lean parser holds its
+                // token: its word read of it.
+                ("    known: u64,\n    holds: u64,\n", "    known: u64,\n    holds: u64,\n    /// The token's code (none past the last record), read as the token is reached.\n    cur: u32,\n"),
+                ("known: 0, holds: 0, ", "known: 0, holds: 0, cur: 0, "),
+                ("    fn word(&self) -> u32 {\n        self.word_at(self.i)\n    }\n", "    fn word(&self) -> u32 {\n        self.cur >> 8 & 0xff\n    }\n"),
                 ("    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {\n        let s = self.recs[j].start as usize;\n        let _ = s;\n        Ok(())\n    }\n\n", ""),
             ] {
                 if !out.contains(a) {
