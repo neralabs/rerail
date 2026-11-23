@@ -58,13 +58,53 @@ fn set_for_tests() {
     use std::hash::{Hash, Hasher};
     let exe = std::env::current_exe().unwrap_or_default();
     let built = std::fs::metadata(&exe).and_then(|m| m.modified()).ok();
+    let sources = sources_stamp();
     let id = |salt: &str| {
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (salt, &exe, built).hash(&mut h);
+        (salt, &exe, built, sources).hash(&mut h);
         h.finish()
     };
     let hex = |salt: &str| format!("{:016x}{:016x}", id(salt), id(&format!("{salt}+")));
     set(Box::leak(hex("engine").into_boxed_str()), Box::leak(hex("grammar").into_boxed_str()));
+}
+
+/// The engine's sources as a test build reads them: each file's path, size and modification time under what
+/// `build.rs`'s identity covers (the engine's sources, the crates it builds on, the language registry, the rule
+/// library and the lock), by `stat` alone. The binary's own identity is not enough: under Relax every checkout's
+/// tests run in one host binary that an edit does not rebuild, so stores and templates kept by other code (another
+/// checkout's, or this one's before an edit) were taken as this build's.
+#[cfg(any(test, feature = "test-hooks"))]
+fn sources_stamp() -> u64 {
+    use std::hash::{Hash, Hasher};
+    fn walk(dir: &std::path::Path, root: &std::path::Path, h: &mut std::collections::hash_map::DefaultHasher) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        for e in entries {
+            let name = e.file_name();
+            if matches!(name.to_str(), Some("target" | "vendor" | "tmp" | "node_modules" | ".git")) {
+                continue;
+            }
+            let Ok(meta) = e.metadata() else { continue };
+            let path = e.path();
+            if meta.is_dir() {
+                walk(&path, root, h);
+            } else {
+                (path.strip_prefix(root).unwrap_or(&path), meta.len(), meta.modified().ok()).hash(h);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for part in ["native/src", "native/crates", "native/build.rs", "native/Cargo.toml", "accel", "gpu", "languages", "docs/rule-syntax", "Cargo.lock"] {
+        let path = root.join(part);
+        if path.is_dir() {
+            walk(&path, &root, &mut h);
+        } else if let Ok(meta) = std::fs::metadata(&path) {
+            (part, meta.len(), meta.modified().ok()).hash(&mut h);
+        }
+    }
+    h.finish()
 }
 
 /// The grammars' build identity as a number: its first 15 hex digits.

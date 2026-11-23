@@ -902,7 +902,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::facts::vtab::syntax::{Families as LazyFamilies, families};
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeDoc, TapeImage};
+            use crate::code_rule_dsl::tape::{self, FileImage, TapeDoc, TapeImage};
             #[allow(unused_imports)]
             use crate::code_rule_dsl::build_ids::grammar_version;
             #[allow(unused_imports)]

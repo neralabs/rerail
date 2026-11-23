@@ -462,18 +462,23 @@ impl Source for LongTexts {
     fn len(&self) -> usize {
         self.nodes.len()
     }
-    /// The nodes' estimate, made of no rows (`Source::estimated_len`'s default is `len`, which makes them).
+    /// Its rows, made of none (`Source::estimated_len`'s default is `len`, which makes them): counted on the tape, or
+    /// for a batch whose documents' counts were given (`Batch::lazy`), the counts' estimate, which projects none. The
+    /// relation's own estimate makes every document's rows where no count was given (`MadeRows::estimated_len`): the
+    /// planner's measure made the whole group that way (36 MB of node rows at the M3's 300-file peak, ab160).
     fn estimated_len(&self) -> usize {
-        self.nodes.estimated_len()
+        if self.batch.lazy() { self.nodes.estimated_len() } else { self.tape_len() }
     }
     /// Its one column's statistics, of its rows counted on the tape (decision 0353): one row a node, so each of its
     /// counts is its rows. Measured as rows (`sampled_statistics_unanswered`), the measure made its whole group's
     /// rows, every relation's of every document's (the M3's 300-file peak held 77 MB of them, and a 158 MB block).
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
-        if let Some(known) = self.nodes.statistics() {
+        // The made rows' own, once made; before, counted on the tape (the nodes' sampled statistics make documents).
+        let made = self.nodes.as_any().and_then(|a| a.downcast_ref::<made::MadeRows>()).is_none_or(made::MadeRows::is_done);
+        if made && let Some(known) = self.nodes.statistics() {
             return Some(known);
         }
-        let n = self.tape_len() as i64;
+        let n = self.estimated_len() as i64;
         Some(self.nodes.columns().into_iter().map(|c| (c, n, n, n, n)).collect())
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
@@ -513,7 +518,7 @@ pub fn made_sources(batch: &Arc<Batch>) -> Vec<(&str, Option<&'static str>, Arc<
         .iter()
         .enumerate()
         .filter(|(rel, name)| *rel >= rows.relations || !batch.projection.derived.contains(name.as_str()))
-        .map(|(rel, name)| (name.as_str(), rows.statics.get(rel).copied(), as_source(name, Arc::new(made::MadeRows { batch: Arc::clone(batch), rel }), batch)))
+        .map(|(rel, name)| (name.as_str(), rows.statics.get(rel).copied(), as_source(name, Arc::new(made::MadeRows { batch: Arc::clone(batch), rel, sampled: OnceLock::new() }), batch)))
         .collect()
 }
 
@@ -1437,7 +1442,7 @@ pub use ranks::Item;
 /// Whether this process numbers nodes per definition: the default; `RERAIL_NODE_IDS=preorder` numbers them in
 /// preorder, to compare.
 pub fn definition_ids() -> bool {
-    rerail_prof::code_rule_dsl::logic::profile::setting(|| !std::env::var("RERAIL_NODE_IDS").is_ok_and(|v| v == "preorder"))
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| !crate::code_rule_dsl::logic::profile::var("RERAIL_NODE_IDS").is_ok_and(|v| v == "preorder"))
 }
 
 /// How an output shows a node id's low 32 bits: its preorder index, or by definition `slot.index` (`DefIds`). A
@@ -1498,7 +1503,7 @@ impl Locs {
     fn file_line(&self, l: u32) -> u32 {
         match &self.host {
             Some((lines, place)) => {
-                let at = self.lines.text_of((l as usize).clamp(1, self.lines.count()))[0];
+                let at = self.lines.start((l as usize).clamp(1, self.lines.count()) - 1) as u32;
                 lines.line(place.host([at, at])[0] as usize) as u32 + 1
             }
             None => l,
@@ -1881,7 +1886,7 @@ impl Projected {
                 } else if i == x.tokens {
                     [0, self.facts.source.len() as u32]
                 } else {
-                    x.lines.text_of((i - x.tokens) as usize)
+                    x.lines.text_of((i - x.tokens) as usize, self.facts.source.as_bytes())
                 }
             }),
         }
@@ -2113,8 +2118,7 @@ impl KindRows {
 
 /// A span's id (core.rerail's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
 /// its kind's past every node of its document, so no node view has a row of it (`Batch::node`). `ExtraSpan::Line` `0`
-/// is the whole source (`source`), `Line` `l` physical line `l` (`src_line`), `Lf` `l` the `\n`-line `l`
-/// (`src_line_lf`), `Tape` `l` the tape's line `l` (`tape_line`), `Comment` `k` the document's `k`-th comment from 1,
+/// is the whole source (`source`), `Line` `l` line `l` (`src_line`), `Comment` `k` the document's `k`-th comment from 1,
 /// in source order, of those no node is (`comment`: T's nodes leave out a grammar's `comment` kind, as Python's, but
 /// keep Rust's `line_comment`, which is then the comment's id) and `Match` `i` the document's `i`th match or group of
 /// a `match_all`, `match_group` or `rx_span` regex. A document with more of a kind than its capacity fails, named.
@@ -2467,7 +2471,8 @@ impl Extra {
         self.source || self.src_line || self.comment || self.rx_span
     }
 
-    /// Whether `line` is made as rows rather than read off the node view: spans have lines too.
+    /// Whether `line` is made as rows rather than read off the node view: spans have lines too (in core.rerail's shape
+    /// the spans' alone, after the `Loc` view's rows: `places::Places`).
     fn line_rows(&self) -> bool {
         self.line && self.spans()
     }
@@ -2670,7 +2675,7 @@ impl Extra {
             lines_at.start = made.len();
             for l in 1..=lines.count() {
                 let sp = span(ExtraSpan::Line, l)?;
-                let [a, b] = lines.text_of(l).map(|at| at as usize);
+                let [a, b] = lines.text_of(l, source.as_bytes()).map(|at| at as usize);
                 self.src_lines.push([key, l as i64, sp]);
                 self.span(sp, l, l, 0, &source[a..b], self.line_text, text, string);
                 made.push((sp, a..b));
@@ -4955,6 +4960,30 @@ pub fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
         return known;
     }
     measured(source)
+}
+
+/// A relation's column statistics (`syntax::statistics`: rows, ndv, sq, sqd) measured over `first` rows, scaled to
+/// `rows`. A key column stays a key; a column with many values (over one row in 16 distinct: node ids, strings) gains
+/// values in proportion, one with few (kinds, field names) keeps them and its postings grow. `sq` keeps the postings'
+/// sizes against the values, and `sqd` grows with the documents, whose postings keep their sizes.
+pub fn scaled_statistics(measured: &[(String, i64, i64, i64, i64)], first: usize, rows: usize) -> Vec<(String, i64, i64, i64, i64)> {
+    let r = rows as f64 / first as f64;
+    let n = rows as i64;
+    measured
+        .iter()
+        .map(|(name, m_rows, ndv, sq, sqd)| {
+            if n == 0 {
+                return (name.clone(), 0, 0, 0, 0);
+            }
+            if ndv == m_rows {
+                return (name.clone(), n, n, n, n);
+            }
+            let ndv_scaled = if ndv * 16 > *m_rows { (*ndv as f64 * r).round() as i64 } else { *ndv }.clamp(1, n);
+            let sq_scaled = (*sq as f64 * r * r * (*ndv as f64 / ndv_scaled as f64)).round() as i64;
+            let sqd_scaled = (*sqd as f64 * r).round() as i64;
+            (name.clone(), n, ndv_scaled, sq_scaled.max(n), sqd_scaled.max(n))
+        })
+        .collect()
 }
 
 /// `statistics`, measured from the rows (a source that keeps its own calls this once).

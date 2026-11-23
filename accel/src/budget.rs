@@ -112,17 +112,25 @@ struct Count {
     heap: std::sync::OnceLock<fn() -> usize>,
     /// The most the count has been when read (`written`), for the profile.
     most: AtomicUsize,
+    /// Whether the sampler that keeps `most` is started (`keep_most`).
+    sampling: std::sync::OnceLock<()>,
 }
 
 fn count() -> std::sync::Arc<Count> {
     rerail_context::machine::<Count>()
 }
 
-/// Sets the machine's reader of the heap's live bytes (once; a second call is ignored), and starts the sampler that
-/// keeps the count's most (`written_most`): every `SAMPLE` while the process lives.
+/// Sets the machine's reader of the heap's live bytes (once; a second call is ignored).
 pub fn set_heap_reader(f: fn() -> usize) {
+    let _ = count().heap.set(f);
+}
+
+/// Starts the sampler that keeps the count's most (`written_most`), once: every `SAMPLE` while the process lives.
+/// Only the profile reads the most, so only a profiled process samples it: each read merges the allocator's arena
+/// statistics, and sampled in every process it was about 5% of a test process's CPU (a cone test's, 0.48 s of 8.4 s).
+pub fn keep_most() {
     let c = count();
-    if c.heap.set(f).is_ok() {
+    if c.sampling.set(()).is_ok() {
         // A service of the machine's (decision 0100 §12: a sampler on its clock is no job). It reads its caller's
         // shared and machine values (the pool, the host blocks): the run's, else those outside a run (`shared_here`),
         // as it may be started before any run.

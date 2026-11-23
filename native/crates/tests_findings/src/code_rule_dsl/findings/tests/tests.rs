@@ -111,11 +111,7 @@ fn native_run_at(
             let path = v["path"].as_str().unwrap();
             let doc = ids[path];
             let start = v["span"]["startByte"].as_u64().unwrap() as usize;
-            let line = sources[doc as usize].as_bytes()[..start]
-                .iter()
-                .filter(|&&c| c == b'\n')
-                .count()
-                + 1;
+            let line = crate::code_rule_dsl::lines::line_at_path(path, &sources[doc as usize], start);
             (v["code"].as_str().unwrap().to_owned(), doc, line)
         })
         .collect()
@@ -603,7 +599,7 @@ fn complete_async_family_producer_profile() {
     use crate::code_rule_dsl::{
         facts::{core, producers::python::families},
         language::tape_tag,
-        lines::{LineTable, Terminators},
+        lines::LineTable,
     };
     use std::sync::Arc;
     let root = std::env::var("RERAIL_SHARED_CORPUS").expect("RERAIL_SHARED_CORPUS");
@@ -621,7 +617,7 @@ fn complete_async_family_producer_profile() {
         let tape = parsed(std::slice::from_ref(&source));
         parse_ns += cpu_ns() - started;
         let started = cpu_ns();
-        let facts = core::from_tape(tape[0].root().get_doc(), Arc::new(LineTable::new(&source, Terminators::of(GrammarDialect::Python)))).unwrap();
+        let facts = core::from_tape(tape[0].root().get_doc(), Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(GrammarDialect::Python)))).unwrap();
         core_ns += cpu_ns() - started;
         nodes += facts.len();
         let roots = [(0, tape[0].root())];

@@ -14,8 +14,8 @@
 //!   2,048-code window up to the partition's largest code. Pairs: the per-row counts, a scan, and a scatter in
 //!   which each left row walks its partition's right rows in order (the units price exactly that).
 //! - **histogram**: a threadgroup per partition, threadgroup atomics, a pass per 2,048-code window of `width`.
-//! - **closure**: components and the condensed DAG's levels on the host (Tarjan's, linear), then the components'
-//!   bit rows filled on the device level by level, each level one dispatch.
+//! - **closure**: components and the condensed DAG on the host (Tarjan's, linear), then the components' bit rows
+//!   filled on the device in one dispatch: a work queue that takes a component once its successors are done.
 //!
 //! Inputs are wrapped without a copy when page-aligned, and copied otherwise (an `Arc<[T]>`'s data follows its
 //! counts, so it is page-aligned only when the caller made it so). Outputs are counted, then scattered: deterministic, and equal to [`crate::cpu::run`]'s. A pairs output is
@@ -66,11 +66,11 @@ enum Pipe {
     CtCount,
     CtScatter,
     ClInit,
-    ClLevel,
+    ClDag,
     ClGather,
 }
 
-const PIPES: [&str; 7] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl_init", "cl_level", "cl_gather"];
+const PIPES: [&str; 7] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl_init", "cl_dag", "cl_gather"];
 
 /// `f`, a compile that is fatal where it fails (decision 0382), as a result: what compiling ahead reports (its use
 /// still stops the run, naming the kernel).
@@ -534,10 +534,10 @@ struct ClosureArgs {
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct LevelArgs {
-    lo: u32,
-    hi: u32,
+struct DagArgs {
+    components: u32,
     words: u32,
+    capacity: u32,
 }
 
 #[derive(Clone)]
@@ -854,7 +854,7 @@ impl Planner<'_> {
         if nu == 0 {
             return Ok(Job::ready(Output::Bits(Bits::new(0, words, Vec::<u64>::new()))));
         }
-        // The condensed DAG on the host: components, their successor components (deduplicated), cycles, levels.
+        // The condensed DAG on the host: components, their successor components (deduplicated), cycles.
         let (comp, ncomp) = crate::cpu::components(nu, off, dst);
         let mut start = vec![0u32; ncomp + 1];
         for &c in &comp {
@@ -871,7 +871,6 @@ impl Planner<'_> {
         }
         let (mut soff, mut sdst) = (Vec::with_capacity(ncomp + 1), Vec::new());
         let mut cyclic = vec![0u32; ncomp];
-        let mut level = vec![0u32; ncomp];
         let mut seen = vec![u32::MAX; ncomp];
         for c in 0..ncomp {
             soff.push(sdst.len() as u32);
@@ -886,44 +885,55 @@ impl Planner<'_> {
                     if d as usize != c && seen[d as usize] != c as u32 {
                         seen[d as usize] = c as u32;
                         sdst.push(d);
-                        // Tarjan's numbering puts successors first: their levels are known.
-                        level[c] = level[c].max(level[d as usize] + 1);
                     }
                 }
             }
         }
         soff.push(sdst.len() as u32);
-        let levels = level.iter().copied().max().unwrap_or(0) as usize + 1;
-        let mut lstart = vec![0u32; levels + 1];
-        for &l in &level {
-            lstart[l as usize + 1] += 1;
+        // The condensed graph's predecessors (a CSR by successor), each component's successors to wait for, and the
+        // queue seeded with the components that have none: `cl_dag` pushes the rest as their successors finish.
+        let mut poff = vec![0u32; ncomp + 1];
+        for &d in &sdst {
+            poff[d as usize + 1] += 1;
         }
-        for l in 0..levels {
-            lstart[l + 1] += lstart[l];
+        for c in 0..ncomp {
+            poff[c + 1] += poff[c];
         }
-        let mut order = vec![0u32; ncomp];
-        let mut lfill = lstart.clone();
-        for (c, &l) in level.iter().enumerate() {
-            order[lfill[l as usize] as usize] = c as u32;
-            lfill[l as usize] += 1;
+        let mut pdst = vec![0u32; sdst.len()];
+        let mut pfill = poff.clone();
+        for c in 0..ncomp {
+            for &d in &sdst[soff[c] as usize..soff[c + 1] as usize] {
+                pdst[pfill[d as usize] as usize] = c as u32;
+                pfill[d as usize] += 1;
+            }
         }
+        let pending: Vec<u32> = (0..ncomp).map(|c| soff[c + 1] - soff[c]).collect();
+        // A queue item is its component plus one (`UKL_WQ_EMPTY` is 0).
+        let mut slots = vec![0u32; ncomp.max(1)];
+        let mut seeded = 0u32;
+        for c in (0..ncomp).filter(|&c| pending[c] == 0) {
+            slots[seeded as usize] = c as u32 + 1;
+            seeded += 1;
+        }
+        // head, tail, active, overflow.
+        let control = [0, seeded, seeded, 0u32];
         let (boff, bdst) = (self.input(off), self.input(dst));
-        let (bcomp, bcyc, border, bsoff, bsdst) = (self.upload(&comp), self.upload(&cyclic), self.upload(&order), self.upload(&soff), self.upload(&sdst));
+        // copy: not block data (the condensed graph the host made: components, cycles, successors)
+        let (bcomp, bcyc, bsoff, bsdst) = (self.upload(&comp), self.upload(&cyclic), self.upload(&soff), self.upload(&sdst));
+        // copy: not block data (its predecessors, the counts to wait for, the queue's seed and control words)
+        let (bpoff, bpdst, bpending, bslots, bcontrol) = (self.upload(&poff), self.upload(&pdst), self.upload(&pending), self.upload(&slots), self.upload(&control));
         let row32 = (ncomp * words * 2) as u64;
         let r = self.alloc(row32 * 4);
         let out = self.alloc((nu * words * 8) as u64);
         let args = Bind::Bytes(bytes_of(&ClosureArgs { n, words: words as u32 }));
+        let dag = Bind::Bytes(bytes_of(&DagArgs { components: ncomp as u32, words: words as u32, capacity: slots.len() as u32 }));
+        // Workers: as many as components to a point; more than the queue keeps busy only contend for its head.
+        let workers = (ncomp as u64).clamp(1, 1024);
         let mut st = vec![
             Stage::one(Step::Zero { buf: r.clone(), words: row32 as usize }),
             Stage::one(Step::Kernel(Dispatch::per(Pipe::ClInit, vec![("off", Bind::Buf(boff)), ("dst", Bind::Buf(bdst)), ("comp", Bind::Buf(bcomp.clone())), ("cyclic", Bind::Buf(bcyc)), ("R", Bind::Buf(r.clone())), ("args", args.clone())], n as u64))),
+            Stage::one(Step::Kernel(Dispatch::per(Pipe::ClDag, vec![("R", Bind::Buf(r.clone())), ("soff", Bind::Buf(bsoff)), ("sdst", Bind::Buf(bsdst)), ("poff", Bind::Buf(bpoff)), ("pdst", Bind::Buf(bpdst)), ("pending", Bind::Buf(bpending)), ("slots", Bind::Buf(bslots)), ("control", Bind::Buf(bcontrol)), ("args", dag)], workers))),
         ];
-        // Level 0 has no successors: its rows are final after the init.
-        for l in 1..levels {
-            let (lo, hi) = (lstart[l], lstart[l + 1]);
-            let level = Bind::Bytes(bytes_of(&LevelArgs { lo, hi, words: words as u32 }));
-            let d = Dispatch::new(Pipe::ClLevel, vec![("R", Bind::Buf(r.clone())), ("order", Bind::Buf(border.clone())), ("soff", Bind::Buf(bsoff.clone())), ("sdst", Bind::Buf(bsdst.clone())), ("args", level)], ((hi - lo) as u64).div_ceil(TG / 32));
-            st.push(Stage::one(Step::Kernel(d)));
-        }
         let total = (nu * words) as u64;
         st.push(Stage::one(Step::Kernel(Dispatch::per(Pipe::ClGather, vec![("R", Bind::Buf(r)), ("comp", Bind::Buf(bcomp)), ("out", Bind::Buf(out.clone())), ("args", args)], total))));
         Ok(Job { stages: st, read: Read::Bits { rows: nu, words, buf: out }, bad: None })

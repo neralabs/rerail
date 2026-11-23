@@ -10,6 +10,8 @@
 pub mod code_rule_dsl {
     pub use rerail_adapters::code_rule_dsl::literal;
     pub use rerail_lang::code_rule_dsl::language;
+    // Blade's rows, tree-sitter's `Lf` lines (decision 0612).
+    pub use rerail_lang::code_rule_dsl::lines;
     pub mod blade {
         pub mod forte;
     }

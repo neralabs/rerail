@@ -34,7 +34,7 @@ fn found(result: &Value, source: &str) -> Vec<String> {
         .map(|violation| {
             let start = violation["span"]["startByte"].as_u64().expect("start") as usize;
             let end = violation["span"]["endByte"].as_u64().expect("end") as usize;
-            let line = source[..start].matches('\n').count() + 1;
+            let line = crate::code_rule_dsl::lines::line_at_path(violation["path"].as_str().unwrap_or(""), source, start);
             format!("{line}:{}", &source[start..end])
         })
         .collect()

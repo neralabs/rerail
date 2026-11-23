@@ -46,7 +46,10 @@ const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_RE
     "RERAIL_COSTS", "RERAIL_IMAGE_STORE", "RERAIL_EXPORT_IMAGES",
     "RERAIL_FRAMES_TRACE",
     // The memory ceiling (decision 0462): a run past it is stopped and keeps nothing; one under it outputs the same.
-    "RERAIL_MEMORY_MAX_MB"];
+    "RERAIL_MEMORY_MAX_MB",
+    // The observer's racy window (`content_store::racy_ns`): which answers a run trusts by their stat, never what it
+    // outputs.
+    "RERAIL_RACY_MS"];
 
 /// Whether a switch only measures a run, never changes what it outputs: left out of the run's key.
 pub fn measures_only(name: &str) -> bool {
@@ -56,11 +59,8 @@ pub fn measures_only(name: &str) -> bool {
 /// Every engine switch that can change what a run outputs (`RERAIL_*` less `NOT_OUTPUTS`), in name order, as bytes for
 /// the run's key.
 fn switches() -> Vec<u8> {
-    let mut switches: Vec<(String, String)> = std::env::vars_os()
-        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
-        .filter(|(k, _)| k.starts_with("RERAIL_") && !measures_only(k))
-        .collect();
-    switches.sort();
+    // The process's and those the run's context sets for its runs (`profile::vars`, a test's `switches::set`), by name.
+    let switches: Vec<(String, String)> = crate::code_rule_dsl::logic::profile::vars().into_iter().filter(|(k, _)| !measures_only(k)).collect();
     let mut out = Vec::new();
     for (k, v) in switches {
         out.extend_from_slice(k.as_bytes());
@@ -290,7 +290,13 @@ pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
     let owner = super::ThreadStore::owner(root).filter(|owner| owner.is_staged());
     let programs = given.programs;
     let checking = super::thread_usage();
-    let key = key(given, &settings(root, options)?, root, options, modes, typing);
+    // The key's settings, where they read: a root whose settings file does not read (a revision whose tree is not
+    // there) is no key, and the run then reads the file only where its program needs it (`metadata_without_env`).
+    let Ok(settings) = settings(root, options) else {
+        miss("the root's settings do not read");
+        return Ok(None);
+    };
+    let key = key(given, &settings, root, options, modes, typing);
     let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
         miss(&format!("no record under the run's key {} (programs {}; {})", &key[..CUTOFF.len() + 12], programs.len(), key_parts(programs, root, options, typing)));
         return Ok(None);
@@ -406,7 +412,12 @@ pub fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
         miss("not recorded: nothing consulted");
         return Ok(());
     }
-    let key = key(given, &settings(root, options)?, root, options, modes, typing);
+    // As `reused` keys it: settings that do not read are no key, so nothing is recorded under one.
+    let Ok(settings) = settings(root, options) else {
+        miss("not recorded: the root's settings do not read");
+        return Ok(());
+    };
+    let key = key(given, &settings, root, options, modes, typing);
     let mut consulted = rule_files(given, options)?;
     let mut read: Vec<(String, String, String)> = report.consulted.iter().cloned().chain(report.phase_runs.iter().flat_map(|r| r.report.consulted.iter().cloned())).collect();
     read.sort();

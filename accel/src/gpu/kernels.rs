@@ -210,6 +210,17 @@ struct Linked {
     library: Library,
     depth: Option<u64>,
     _units: Vec<metal::DynamicLibrary>,
+    /// The function constant's value is in the library's source (`baked`), not given to its functions.
+    baked: bool,
+}
+
+/// What a source's library is: one library, or (a split source that declares the function constant) one library a
+/// value of the constant, each made from the split with the value baked in.
+#[cfg(target_os = "macos")]
+#[derive(Clone)]
+enum Libraries {
+    Linked(Linked),
+    PerValue(Arc<rerail_ukl::split::Split>),
 }
 
 /// The process's compiled libraries and pipelines, by key (one manager, decision 0100 §2). A thread that asks
@@ -217,7 +228,9 @@ struct Linked {
 #[derive(Default)]
 struct Made {
     #[cfg(target_os = "macos")]
-    libraries: HashMap<[u8; 32], Slot<Linked>>,
+    /// By the source's digest, and for a split source that declares the function constant (`Libraries::PerValue`), each
+    /// value's by the digest and the value.
+    libraries: HashMap<([u8; 32], Option<u32>), Slot<Libraries>>,
     pipelines: HashMap<[u8; 32], Slot<Arc<Function>>>,
     /// Pipelines a background compile is making (`Mode::Background`).
     #[cfg(target_os = "macos")]
@@ -503,10 +516,10 @@ fn make_uncounted(key: Key, source: &str, name: &str, constant: Option<u32>, com
     if !compile && archive.is_none() {
         return None;
     }
-    let linked = library(key.library, source, name);
+    let linked = library(key.library, source, name, constant);
     let library = &linked.library;
     let function = objc::rc::autoreleasepool(|| {
-        let constants = constant.map(|value| {
+        let constants = constant.filter(|_| !linked.baked).map(|value| {
             let c = metal::FunctionConstantValues::new();
             c.set_constant_value_at_index((&value as *const u32).cast(), metal::MTLDataType::UInt, 0);
             c
@@ -625,15 +638,61 @@ pub fn msl<'a>(source: &'a str, name: &str) -> Result<std::borrow::Cow<'a, str>,
     rerail_ukl::metal_source(name, source).map(std::borrow::Cow::Owned).map_err(|e| format!("{name}: {e}"))
 }
 
-/// The library of `source` (its digest `library`): this process's, else, where the source splits (decision 0571),
-/// its units linked, else the shipped AIR library, else the front end's compile.
+/// The function constant's declaration as Metal's front end reads it (`UKL_CONSTANT_U32`, `ukl/backend.h`).
 #[cfg(target_os = "macos")]
-fn library(library: [u8; 32], source: &str, name: &str) -> Linked {
-    let slot = Arc::clone(made().0.lock().unwrap_or_else(|p| p.into_inner()).libraries.entry(library).or_default());
-    let mut s = slot.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(l) = &*s {
+const FUNCTION_CONSTANT: &str = "[[function_constant(0)]];";
+
+/// `source` with its function constant's declaration given `value`: a dynamic library holds no unresolved function
+/// constant (Metal: "cannot lower module with unresolved function constants").
+#[cfg(target_os = "macos")]
+fn baked(source: &str, value: u32) -> String {
+    source.replace(FUNCTION_CONSTANT, &format!("= {value}u;"))
+}
+
+/// The library of `source` (its digest `library`): this process's, else, where the source splits (decision 0571),
+/// its units linked, else the shipped AIR library, else the front end's compile. A split source that declares the
+/// function constant (`UKL_CONSTANT_U32`) has `constant`'s value baked into its units and kernel, since a unit is a
+/// dynamic library: one library a value, whose functions take no constant values.
+#[cfg(target_os = "macos")]
+fn library(library: [u8; 32], source: &str, name: &str, constant: Option<u32>) -> Linked {
+    let slot = |key| Arc::clone(made().0.lock().unwrap_or_else(|p| p.into_inner()).libraries.entry(key).or_default());
+    let first = slot((library, None));
+    let made = {
+        let mut s = first.lock().unwrap_or_else(|p| p.into_inner());
+        if s.is_none() {
+            *s = Some(compiled(library, source, name));
+        }
+        s.clone().expect("the library made")
+    };
+    let split = match made {
+        Libraries::Linked(l) => return l,
+        Libraries::PerValue(split) => split,
+    };
+    let value = constant.unwrap_or_else(|| panic!("the Metal kernel {name} declares a function constant and is given none"));
+    let of_value = slot((library, Some(value)));
+    let mut s = of_value.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(Libraries::Linked(l)) = &*s {
         return l.clone();
     }
+    let started = std::time::Instant::now();
+    let mut split = (*split).clone();
+    split.kernel = baked(&split.kernel, value);
+    for u in &mut split.units {
+        u.source = baked(&u.source, value);
+    }
+    let device = &super::shared::get().expect("a Metal device").device;
+    let (l, units) = crate::score::phase("msl units", || linked(device, &split)).unwrap_or_else(|e| panic!("the Metal library of kernel {name} ({}, constant {value}): {e}", hex(&library[..8])));
+    let seconds = started.elapsed().as_secs_f64();
+    count(|c| c.front_end_s += seconds);
+    let l = Linked { library: l, depth: Some(split.depth), _units: units, baked: true };
+    *s = Some(Libraries::Linked(l.clone()));
+    l
+}
+
+/// `library`'s compile: its split's units linked (or, declaring the function constant, the split, for each value's
+/// library), else the shipped AIR library, else the front end's.
+#[cfg(target_os = "macos")]
+fn compiled(library: [u8; 32], source: &str, name: &str) -> Libraries {
     let device = &super::shared::get().expect("a Metal device").device;
     // A measurement aid: `RERAIL_DEVICE_TRACE` prints where each library is loaded.
     if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
@@ -644,12 +703,13 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Linked {
     // A measurement aid: `RERAIL_METAL_UNITS=off` compiles a split source whole, as before decision 0571.
     let whole = std::env::var("RERAIL_METAL_UNITS").is_ok_and(|v| v == "off");
     if let Some(split) = rerail_ukl::split::split(&source_msl).filter(|_| !whole) {
+        if source_msl.contains(FUNCTION_CONSTANT) {
+            return Libraries::PerValue(Arc::new(split));
+        }
         let (l, units) = crate::score::phase("msl units", || linked(device, &split)).unwrap_or_else(|e| panic!("the Metal library of kernel {name} ({}): {e}", hex(&library[..8])));
         let seconds = started.elapsed().as_secs_f64();
         count(|c| c.front_end_s += seconds);
-        let linked = Linked { library: l, depth: Some(split.depth), _units: units };
-        *s = Some(linked.clone());
-        return linked;
+        return Libraries::Linked(Linked { library: l, depth: Some(split.depth), _units: units, baked: false });
     }
     let shipped = places().shipped.as_ref().map(|d| d.join(format!("{}.metallib", hex(&library)))).filter(|f| f.is_file());
     let l = match shipped {
@@ -685,9 +745,7 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Linked {
             l
         }
     };
-    let linked = Linked { library: l, depth: None, _units: Vec::new() };
-    *s = Some(linked.clone());
-    linked
+    Libraries::Linked(Linked { library: l, depth: None, _units: Vec::new(), baked: false })
 }
 
 /// A split source's library (decision 0571): each unit a dynamic library, compiled level by level, a level's units
@@ -713,7 +771,8 @@ fn linked(device: &Device, split: &rerail_ukl::split::Split) -> Result<(Library,
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut made: HashMap<&str, metal::DynamicLibrary> = HashMap::new();
     for level in split.levels() {
-        let built: Vec<(&str, Result<metal::DynamicLibrary, String>)> = std::thread::scope(|scope| {
+        // Each unit of a level compiles beside the others, on the executor's scoped threads (decision 0100 §2).
+        let built: Vec<(&str, Result<metal::DynamicLibrary, String>)> = crate::exec::scoped(|scope| {
             let running: Vec<_> = level
                 .iter()
                 .map(|u| {
@@ -1138,6 +1197,42 @@ pub fn spawn_maintenance(engine: &Path) -> Option<u32> {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+
+    /// Decision 0571: a split source that declares the function constant (as the JIT's, whose barriered functions read
+    /// the batch's tape format) is a library a value, the value baked into its units, since a dynamic library holds no
+    /// unresolved function constant. Each value's pipeline is made.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_split_source_with_a_function_constant_is_a_library_a_value() {
+        if super::super::shared::get().is_none() {
+            return;
+        }
+        let source = r#"#include <metal_stdlib>
+using namespace metal;
+constant uint32_t c [[function_constant(0)]];
+static __attribute__((noinline)) uint low(threadgroup uint* t, uint x) {
+    t[0] = x + c;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return t[0];
+}
+kernel void kernels_constant_split_test(device uint* out [[buffer(0)]], uint i [[thread_position_in_grid]]) {
+    threadgroup uint t[1];
+    out[i] = low(t, i);
+}
+"#;
+        let name = "kernels_constant_split_test";
+        assert!(rerail_ukl::split::split(source).is_some(), "the source splits");
+        let library = Key::of(source, name, None).library;
+        for value in [16, 3] {
+            let linked = super::library(library, source, name, Some(value));
+            assert!(linked.baked && linked.depth.is_some(), "value {value}: split, the value baked in");
+            let _ = function(source, name, Some(value));
+        }
+        let held = made();
+        let m = held.0.lock().unwrap();
+        assert!(matches!(m.libraries.get(&(library, None)).and_then(|s| s.lock().unwrap().clone()), Some(Libraries::PerValue(_))), "the source's split kept");
+        assert!([16, 3].iter().all(|v| m.libraries.contains_key(&(library, Some(*v)))), "a library a value");
+    }
 
     /// Decision 0395: a pipeline compiled once is in the store, and made from its archive once this process's
     /// memory is released (as a process that never compiled it would); `ready` in `defer` says `None` for one not

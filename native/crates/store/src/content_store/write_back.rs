@@ -1282,10 +1282,17 @@ mod tests {
     /// A job busy past its deadline is given up, busy; any other error is not run again.
     #[test]
     fn a_job_busy_past_its_deadline_or_failing_otherwise_is_given_up() {
+        // Busy is run again: twice busy, then done, well within the deadline.
+        let mut runs = 0;
+        let (outcome, busy) = run_job(|| { runs += 1; if runs <= 2 { Err(StoreError::Busy) } else { Ok(()) } }, JOB_DEADLINE);
+        assert!(outcome.is_ok());
+        assert_eq!((runs, busy), (3, 2));
+        // Busy past the deadline is given up, busy: each run counted. How many runs fit in it is the clock's (a
+        // first run slower than the deadline leaves one), so it is not asserted.
         let mut runs = 0;
         let (outcome, busy) = run_job(|| { runs += 1; Err(StoreError::Busy) }, Duration::from_millis(20));
         assert!(matches!(outcome, Err(StoreError::Busy)));
-        assert!(busy == runs && runs > 1, "{runs} runs");
+        assert!(busy == runs && runs >= 1, "{runs} runs");
         let mut runs = 0;
         let (outcome, busy) = run_job(|| { runs += 1; Err(StoreError::Invalid("no".into())) }, JOB_DEADLINE);
         assert!(matches!(outcome, Err(StoreError::Invalid(_))));

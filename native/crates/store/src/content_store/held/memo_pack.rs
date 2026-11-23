@@ -339,6 +339,12 @@ impl ContentStore {
         self.compact_memo_pack_within(floor, SEGMENT_BUDGET)
     }
 
+    /// Every memo segment merged into one (`compact_memo_pack` with no budget): for a store copied whole many times
+    /// (a test template). Returns the bytes freed.
+    pub fn pack_memo_pack(&self) -> StoreResult<u64> {
+        self.compact_memo_pack_within(u64::MAX, 0)
+    }
+
     /// `compact_memo_pack`, keeping at most `budget` segments. Chosen again in the write transaction
     /// (`SegmentKind::compact`); read before it too, so a store with nothing due takes no write lock.
     pub(in crate::content_store) fn compact_memo_pack_within(&self, floor: u64, budget: usize) -> StoreResult<u64> {

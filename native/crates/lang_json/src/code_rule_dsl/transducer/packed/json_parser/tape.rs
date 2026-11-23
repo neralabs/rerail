@@ -19,7 +19,7 @@ impl TreeParser for Bitlex {
             return None;
         };
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
-        // The image is tier 2's bytes, read as stored: nothing is packed again (decision 0140).
-        Some(TapeImage::parsed(&image, grammar, source, &budget).map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
+        // The tape is tier 2's, as it wrote it: nothing is packed again (decisions 0140, 0434 §6).
+        Some(TapeImage::written_16(image, grammar.lang, source, None, &budget).map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
     }
 }

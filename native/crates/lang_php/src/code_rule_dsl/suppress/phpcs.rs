@@ -746,7 +746,7 @@ fn before_on_line(source: &str, at: usize, lines: &LineTable) -> (Neighbours, bo
 
 /// The tokens after byte `at` on its line.
 fn after_on_line(source: &str, at: usize, lines: &LineTable) -> Neighbours {
-    let end = lines.end(lines.line(at)).max(at);
+    let end = lines.end(lines.line(at), source.as_bytes()).max(at);
     let mut rest = &source[at..end];
     let mut found = Neighbours::default();
     loop {

@@ -646,3 +646,19 @@ pub mod code_rule_dsl {
     use std::sync::Arc;
 }
 // cratify: mounts end
+
+/// This crate's own test binary, which the engine does not load: JavaScript and TypeScript's language pack is registered as the binary
+/// loads, as the engine registers it (`boot::install_languages`), so its tests parse JavaScript and TypeScript here (as
+/// rerail-lang-python's do Python).
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        use crate::code_rule_dsl::language::{self, Family, adapter::{pack::{Pack, register}, ecma::Ecma}};
+        register(Family::Ecma, &Pack::<Ecma>::NEW);
+        language::register_base(Family::Ecma, &Pack::<Ecma>::NEW);
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}

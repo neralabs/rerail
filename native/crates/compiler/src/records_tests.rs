@@ -40,7 +40,7 @@ fn records_are_each_tokens_bytes_and_code() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = Symbols { kind: &kind, field: &field };
+        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
         let words = rir_asm::assemble(&compiled.text()).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{}", compiled.text().lines().filter(|l| !l.contains(" %")).take(40).collect::<Vec<_>>().join("\n")));
         let block = &words.block_programs[0];

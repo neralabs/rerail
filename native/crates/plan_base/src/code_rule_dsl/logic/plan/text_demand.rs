@@ -77,6 +77,13 @@ fn is_var(t: Option<&TermRef<'_>>, s: Slot) -> bool {
 /// a per-file scan: only copying a span (including variable equality) carries its origin. Regex captures have their
 /// own bounded ranges and do not demand the container text.
 pub fn span_text_demand(v: &Version) -> (BTreeSet<SpanIn>, bool) {
+    let (_, requested) = span_columns(v);
+    ([(SpanIn::Source, 1), (SpanIn::Line, 2)].into_iter().filter_map(|(span, bit)| (requested & bit != 0).then_some(span)).collect(), requested & 4 != 0)
+}
+
+/// The columns that hold a span (bit 1 the source, 2 a line, 4 a token), each relation's to a fixpoint, and the spans
+/// whose text a rule reads (the same bits).
+fn span_columns(v: &Version) -> (HashMap<(&str, usize), u8>, u8) {
     // Bit 1 the source, 2 a line, 4 a token (the second column of the four token relations).
     let mut columns: HashMap<(&str, usize), u8> = [(("source", 1), 1), (("src_line", 2), 2)]
         .into_iter()
@@ -132,7 +139,7 @@ pub fn span_text_demand(v: &Version) -> (BTreeSet<SpanIn>, bool) {
             break;
         }
     }
-    ([(SpanIn::Source, 1), (SpanIn::Line, 2)].into_iter().filter_map(|(span, bit)| (requested & bit != 0).then_some(span)).collect(), requested & 4 != 0)
+    (columns, requested)
 }
 
 /// A kind as the program holds it (`python:call`) or as a grammar names it (`call`).
@@ -339,11 +346,18 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
         })
         .collect();
     let twinned = |head: &str, var: &str| twins.contains(&(head, var));
-    // Whether `s` is a span (a `span` column binds it): its text is a span's (`text_spans`), not a node's.
+    // Whether `s` is a span: a `span` column binds it, or a column a span's origin reaches (`span_columns`: a line, the
+    // source, a token, and their copies; the lowering declares a `span` column as a node's). Its text is a span's
+    // (`text_spans`), not a node's.
+    let (span_cols, _) = span_columns(v);
     let span = |r: RuleRef<'_>, s: Slot| {
         r.body().filter_map(|l| l.atom()).filter(|a| !a.neg() && v.rel_name(a.rel()) != "text").any(|a| {
-            let types: Option<Vec<&str>> = v.decl_of(v.rel_name(a.rel())).map(|d| d.cols().map(|(_, t)| v.text(t)).collect());
-            a.args().enumerate().any(|(c, t)| matches!(t, TermRef::Var(x) if x == s) && types.as_ref().and_then(|ts| ts.get(c)).is_some_and(|ty| *ty == "span"))
+            let rel = v.rel_name(a.rel());
+            let types: Option<Vec<&str>> = v.decl_of(rel).map(|d| d.cols().map(|(_, t)| v.text(t)).collect());
+            a.args().enumerate().any(|(c, t)| {
+                matches!(t, TermRef::Var(x) if x == s)
+                    && (types.as_ref().and_then(|ts| ts.get(c)).is_some_and(|ty| *ty == "span") || span_cols.get(&(rel, c)).is_some_and(|&m| m != 0))
+            })
         })
     };
     // A matcher capture's node: the kinds and fields its matcher gives it (`{"pattern": "$N", "field": "name"}`, or a
@@ -461,6 +475,9 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
                 _ if text.neg() && short_constant(v, text) => {}
                 Some(k) => kinds.extend(k),
                 None if !redefined.contains("field") && leaf_field(v, rule, s) || short_constant(v, text) => {}
+                // A span's text (a line's, the source's) is made at any length where a rule reads it
+                // (`span_text_demand`): no node's long text, and no twin reads it.
+                None if span(rule, s) => {}
                 None if text.neg() => negated_any += 1,
                 None if twinned(head, name) => {}
                 None => any.push((ri, i)),

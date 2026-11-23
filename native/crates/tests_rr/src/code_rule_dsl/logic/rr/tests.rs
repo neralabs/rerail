@@ -2325,7 +2325,8 @@ Subtree(n) :- kind(n, "module"), text(n, _).
     let mut lines: Vec<_> = rows.iter().filter(|row| row["code"] == "LINE")
         .map(|row| (row["line"].as_i64().unwrap(), row["parameters"]["body"].as_str().unwrap())).collect();
     lines.sort();
-    assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass")]);
+    // The empty line after the final terminator is a line too (decision 0612).
+    assert_eq!(lines, [(1, source.split('\n').next().unwrap()), (2, "pass"), (3, "")]);
     // Decision 0108: a kind the rule reads by `kind` has its text at any length (the module's here, named by
     // `Subtree`); the source span and the lines are exact either way.
     assert_eq!(rows.iter().filter(|row| row["code"] == "TREE").count(), 1, "the module, a kind the rule reads, has its whole text");
@@ -3641,13 +3642,52 @@ fn rule_files_pass_their_own_tests() {
 /// file has with its tests' lines blank.
 #[test]
 fn a_rule_files_tests_are_no_part_of_its_program() {
-    for file in files_with_tests() {
-        let text = std::fs::read_to_string(&file).unwrap();
-        let with = super::parse_version(&text).unwrap();
-        let without = super::parse_version(&without_tests(&text)).unwrap();
-        assert_eq!(format!("{with:?}"), format!("{without:?}"), "{}", file.display());
-        assert!(!super::testing::tests(&file).unwrap().is_empty());
+    let files: Vec<(PathBuf, String)> = files_with_tests().into_iter().map(|f| {
+        let text = std::fs::read_to_string(&f).unwrap();
+        (f, text)
+    }).collect();
+    let blank: Vec<String> = files.iter().map(|(_, t)| without_tests(t)).collect();
+    keep_graphs(files.iter().map(|(_, t)| t.as_str()).chain(blank.iter().map(String::as_str)));
+    let printed = in_parallel(&files.iter().zip(&blank).collect::<Vec<_>>(), |((file, text), blank)| {
+        let with = super::parse_version(text).unwrap();
+        let without = super::parse_version(blank).unwrap();
+        assert!(!super::testing::tests(file).unwrap().is_empty(), "{}", file.display());
+        (format!("{with:?}"), format!("{without:?}"))
+    });
+    for ((file, _), (with, without)) in files.iter().zip(printed) {
+        assert_eq!(with, without, "{}", file.display());
     }
+}
+
+/// Each text's include graph derived by one run of phase 0 over all of them and kept for the process
+/// (`phase0::graphs`), as `phase0::keep_files` does a pack's files: lowered one by one with none kept, each text that
+/// includes a module asked for a run of its own.
+fn keep_graphs<'t>(texts: impl IntoIterator<Item = &'t str>) {
+    let seeds: Vec<_> = texts.into_iter().filter_map(|t| super::text_seed(t).ok().flatten()).collect();
+    let _ = crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds);
+}
+
+/// `f` of each of `items` on a few threads, in `items`' order: each lowering is a second or less, one after another
+/// they were a test of a minute (57 policies lowered twice, at the tests' opt-level).
+fn in_parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let out: Vec<std::sync::Mutex<Option<R>>> = items.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    // The test's object (decision 0442), which holds what it kept (`keep_graphs`), handed to each thread.
+    let object = crate::code_rule_dsl::logic::profile::shared_here();
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                let _within = crate::code_rule_dsl::logic::profile::within(std::sync::Arc::clone(&object));
+                loop {
+                    let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(item) = items.get(at) else { break };
+                    *out[at].lock().unwrap() = Some(f(item));
+                }
+            });
+        }
+    });
+    out.into_iter().map(|r| r.into_inner().unwrap().expect("each item's result")).collect()
 }
 
 /// A failed `.expect` names its line and what the run had instead; `exactly` names the findings no `.expect` lists.
@@ -4005,16 +4045,20 @@ fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
     let dir = crate::source_tree::native().join("../docs/rule-syntax/data-layer");
     let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     paths.sort();
-    let (mut read, mut demanded) = (0, 0);
-    for path in &paths {
-        let text = std::fs::read_to_string(path).unwrap();
+    let texts: Vec<String> = paths.iter().map(|p| std::fs::read_to_string(p).unwrap()).collect();
+    keep_graphs(texts.iter().map(String::as_str));
+    let lowered = in_parallel(&texts, |text| {
         let lowered = |full: bool| {
             super::aggregate_demand::FULL_CHECKS.with(|c| c.set(full));
-            let p = super::read_text(&text).and_then(|t| t.lower_version(true)).map(|p| print_version(&p).unwrap());
+            let p = super::read_text(text).and_then(|t| t.lower_version(true)).map(|p| print_version(&p).unwrap());
             super::aggregate_demand::FULL_CHECKS.with(|c| c.set(false));
             p
         };
-        let (Ok(short), Ok(whole)) = (lowered(false), lowered(true)) else { continue };
+        (lowered(false).ok(), lowered(true).ok())
+    });
+    let (mut read, mut demanded) = (0, 0);
+    for (path, lowered) in paths.iter().zip(lowered) {
+        let (Some(short), Some(whole)) = lowered else { continue };
         read += 1;
         demanded += usize::from(short.contains("rr_demand_agg_"));
         assert_eq!(short, whole, "{}", path.display());
@@ -5491,7 +5535,8 @@ fn a_host_files_own_nodes_are_not_shown() {
     assert!(own.is_empty(), "the host file's own nodes are not: {own:?}");
     // The run's own rule file (`g.rerail`) is a file of another grammar in its root too, shown as this one is.
     let lines: Vec<&Vec<String>> = lines.iter().filter(|r| r[0] == "rules/r.rerail").collect();
-    assert_eq!(lines, [&["rules/r.rerail", "1", ".decl a(x: symbol)"], &["rules/r.rerail", "2", "a({\"k\": 1})."]], "the host file's lines and their text are shown");
+    // Every line, the empty one after the final terminator too (decision 0612: `src_line` is the lines `line` numbers).
+    assert_eq!(lines, [&["rules/r.rerail", "1", ".decl a(x: symbol)"], &["rules/r.rerail", "2", "a({\"k\": 1})."], &["rules/r.rerail", "3", ""]], "the host file's lines and their text are shown");
 }
 
 /// Q324 (decision 0431 §4, "a program is named by its file and place"): where a program declares `docof` over nodes

@@ -2128,6 +2128,21 @@ fn kind_names_command(args: &[String]) -> Result<String, String> {
     use crate::code_rule_dsl::language::{from_tape_tag, tape_tag};
     use crate::code_rule_dsl::language::GrammarDialect;
     let [out] = args else { return Err("usage: rerail-engine kind-names <out file>".to_owned()) };
+    // A name escaped, so each kind and field is one line of four cells: C's and Go's tokens hold a newline and a NUL.
+    let escaped = |name: &str| {
+        let mut s = String::with_capacity(name.len());
+        for c in name.chars() {
+            match c {
+                '\\' => s.push_str("\\\\"),
+                '\n' => s.push_str("\\n"),
+                '\r' => s.push_str("\\r"),
+                '\t' => s.push_str("\\t"),
+                '\0' => s.push_str("\\0"),
+                c => s.push(c),
+            }
+        }
+        s
+    };
     let mut text = String::new();
     let mut tags = 0;
     for &lang in GrammarDialect::all() {
@@ -2136,15 +2151,20 @@ fn kind_names_command(args: &[String]) -> Result<String, String> {
             continue;
         }
         tags += 1;
+        // Each kind's public symbol: the id a node of its name and kind has (`ts_node_symbol`). A grammar's symbols of
+        // one name and kind share one; an own parser's kinds are their own.
+        let grammar = lang.kinds().grammar();
         for id in 0..lang.kind_count() {
             let id = id as u16;
             if let Some(name) = lang.kind_name(id) {
-                text.push_str(&format!("{tag}\t{id}\t{name}\t{}\n", u8::from(lang.kinds().kind_is_named(id))));
+                let named = lang.kinds().kind_is_named(id);
+                let public = grammar.map_or(id, |g| g.id_for_node_kind(name, named));
+                text.push_str(&format!("{tag}\t{id}\t{}\t{}\t{public}\n", escaped(name), u8::from(named)));
             }
         }
         for id in 1..=lang.kinds().field_count() {
             if let Some(name) = lang.kinds().field_name(id as u16) {
-                text.push_str(&format!("{tag}\tfield {id}\t{name}\t\n"));
+                text.push_str(&format!("{tag}\tfield {id}\t{}\t\n", escaped(name)));
             }
         }
     }

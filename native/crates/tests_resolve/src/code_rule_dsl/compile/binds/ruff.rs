@@ -76,7 +76,7 @@ fn check(code: &str, rule: Value, source: &str, conservative: &[&str]) {
         let (start, end) = (*start as usize, *end as usize);
         format!(
             "{}:{}",
-            source[..start].matches('\n').count() + 1,
+            crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::Python, start),
             &source[start..end]
         )
     };

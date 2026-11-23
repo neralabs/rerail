@@ -207,7 +207,8 @@ fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
     let edit = how(&mut c);
     profile::set(false);
     let patched = |x: &String| x.ends_with(": patched by the changed documents");
-    assert!(all(&cold, "counted", "counted"), "a cold run counts them: {cold:?}");
+    // Counted, or a source's own from its structure (`doc`'s from its documents, `within`'s from the tree): no row made.
+    assert!(cold_counted(&cold), "a cold run counts them: {cold:?}");
     assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
     assert!(edit.iter().any(patched), "an edit patches them: {edit:?}");
     // After an edit every base relation's are patched, unless the run is inside another run's waves.
@@ -242,7 +243,7 @@ fn a_session_holds_its_corpus_batch_and_keeps_its_base_statistics() {
     c.write("d.py", "from c import h\nfrom a import f\n\ndef i():\n    h()\n");
     let (edit, edit_batch, rows) = run(&mut c);
     profile::set(false);
-    assert!(all(&cold, "counted", "counted"), "a session's first run counts them: {cold:?}");
+    assert!(cold_counted(&cold), "a session's first run counts them: {cold:?}");
     assert_eq!(cold_batch, BTreeSet::from(["4 documents made, none held".to_owned()]), "and makes every document");
     assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
     assert_eq!(warm_batch, BTreeSet::from(["0 documents made, 4 held from the session's last run".to_owned()]), "and makes none");
@@ -259,6 +260,8 @@ fn a_session_holds_its_corpus_batch_and_keeps_its_base_statistics() {
 fn r5_the_runs_read_no_sql_inside_the_waves() {
     let c = Corpus::new("r5");
     let store = c.store();
+    // Begun from the template (`test_store::begun`): its child processes would each fill an empty one first.
+    super::test_store::begun(&store);
     let run = |n: usize| {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap());
         child
@@ -269,16 +272,24 @@ fn r5_the_runs_read_no_sql_inside_the_waves() {
             .env("RERAIL_CHILD_PROGRAM", c.dir.join("program.rerail"))
             .env("RERAIL_COSTS", c.dir.join("costs.sqlite"))
             .env("RERAIL_IMAGE_STORE", c.dir.join("images"))
-            .env("RERAIL_SQL_STRICT", "1");
+            .env("RERAIL_SQL_STRICT", "1")
+            .env("RERAIL_RACY_MS", super::test_store::TEST_RACY_MS);
         let output = child.output().unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
         let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(200).collect();
         assert!(output.status.success(), "run {n}: {}; {}", output.status, fault.join(" "));
     };
     run(0);
-    // Past the observer's racy window, so the next run knows the unchanged files by their stat (`RACY_NS`).
-    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 100_000_000));
+    // Past the observer's racy window, so the next run knows the unchanged files by their stat (`TEST_RACY_MS`).
+    super::test_store::past_test_racy_window();
     c.write("a.py", "def f(x, y):\n    return y\n\ndef k():\n    pass\n");
     run(1);
     run(2);
+}
+
+/// A cold run's statistics: each counted (at the held nodes, for a semi-join's), or the source's own from its
+/// structure, which makes no row (`Source::statistics`).
+fn cold_counted(made: &BTreeSet<String>) -> bool {
+    let own = ": the source's own, from its structure (no row made)";
+    !made.is_empty() && made.iter().all(|x| x.ends_with(": counted") || x.ends_with(": counted at the held nodes") || x.ends_with(own))
 }

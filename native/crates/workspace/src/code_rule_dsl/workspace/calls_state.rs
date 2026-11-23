@@ -732,9 +732,10 @@ pub(super) fn summarize_file(
                     Arc::clone(&file.input.source),
                     grammar,
                     image,
-                    Arc::new(LineTable::new(
+                    Arc::new(image.primary.lines(
                         &file.input.source,
-                        Terminators::of(language),
+                        crate::code_rule_dsl::lines::terminators(language),
+                        false,
                     )),
                     &matcher_budget_exhausted,
                 ),

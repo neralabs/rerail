@@ -17,16 +17,22 @@
         names.sort();
         names.truncate(40);
         let order = |text: &str| -> Vec<PathBuf> { crate::code_rule_dsl::logic::rr::included_files(text).unwrap() };
-        for name in &names {
-            let text = format!("#include \"{name}\"\n.decl x(s: symbol)\n");
-            let graph = order(&text);
+        let texts: Vec<String> = names.iter().map(|name| format!("#include \"{name}\"\n.decl x(s: symbol)\n")).collect();
+        let pairs = ["#include \"python/env.rerail\"\n#include \"python/imports.rerail\"\n", "#include \"python/env.rerail\"\n.decl doc(d: number, p: symbol, m: symbol)\n"];
+        // Every text's graph derived in one run of `bootstrap.rerail`, as a run's program files' are, not one run each
+        // (42 at the tests' opt-level were most of the test): a seed's graph is its own whatever run derived it
+        // (`a_seeds_graph_is_its_own_whatever_run_derived_it`).
+        let seeds: Vec<super::Seed> = texts.iter().map(String::as_str).chain(pairs).filter_map(|t| crate::code_rule_dsl::logic::rr::text_seed(t).unwrap()).collect();
+        super::graphs(&seeds).unwrap();
+        for text in &texts {
+            let graph = order(text);
             let phase_0 = super::in_phase_0();
-            let builtin = order(&text);
+            let builtin = order(text);
             drop(phase_0);
-            assert_eq!(graph, builtin, "{name}");
+            assert_eq!(graph, builtin, "{text}");
         }
         // Two names, and a text in T's shape (no `core.rerail`).
-        for text in ["#include \"python/env.rerail\"\n#include \"python/imports.rerail\"\n", "#include \"python/env.rerail\"\n.decl doc(d: number, p: symbol, m: symbol)\n"] {
+        for text in pairs {
             let graph = order(text);
             let phase_0 = super::in_phase_0();
             let builtin = order(text);

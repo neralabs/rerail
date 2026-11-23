@@ -20,7 +20,7 @@ use crate::code_rule_dsl::eval::{
 };
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::lines::LineTable;
 #[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
 use crate::code_rule_dsl::matcher::{AnchorPlan, FileAnchorIndex, Selection};
 use crate::code_rule_dsl::matcher::{FileGates, FileScopeSlot, GrammarMatcher, UtilLimit};
@@ -98,7 +98,7 @@ fn prepare_candidates(jobs: &mut [Job], context: &JobContext<'_>) -> Result<()> 
         let language = file_language(&file.input).expect("eligible AST source");
         let lines = Arc::new(LineTable::new(
             &file.input.source,
-            Terminators::of(language),
+            crate::code_rule_dsl::lines::terminators(language),
         ));
         #[cfg(any(test, feature = "test-hooks"))]
         crate::code_rule_dsl::matcher::note_line_table_construction();
@@ -617,9 +617,7 @@ pub fn evaluate_file(
                 )
         });
     let line_index_started = Instant::now();
-    let terminators = file_language(&file.input)
-        .map(Terminators::of)
-        .unwrap_or(Terminators::Eslint);
+    let terminators = crate::code_rule_dsl::lines::terminators_of(file_language(&file.input));
     let prepared_lines = file
         .prepared
         .as_ref()

@@ -42,7 +42,7 @@ pub fn api(device: &Device, kernel: &ComputeFunction, threads: u64) -> Option<u6
     match (device, kernel) {
         (Device::Cpu(_), _) => Some(crate::compute_kernel_cpu::resident_groups(threads as usize) as u64),
         #[cfg(not(target_os = "macos"))]
-        (Device::Native(d), ComputeFunction::Native(f)) => f.resident_groups(d, threads as u32, 0).ok().filter(|&g| g > 0),
+        (Device::Native(_), ComputeFunction::Native(f)) => f.resident_groups(threads as u32, 0).filter(|&g| g > 0),
         _ => None,
     }
 }

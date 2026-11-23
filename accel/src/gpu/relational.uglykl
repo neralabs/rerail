@@ -7,6 +7,8 @@
 
 #include <ukl/backend.h>
 #include <ukl/simd.h>
+#include <ukl/workqueue.h>
+#include <ukl/memory.h>
 
 // Threads a threadgroup of the 1-D kernels.
 #define REL_TG 256u
@@ -218,7 +220,11 @@ UKL_REFLECT_STRUCT(ClosureArgs, n, words)
 //
 // 1. cl_init: each node sets, in its component's row, its own bit when the component is cyclic, and the bit of
 //    every successor in another component (device atomics on u32 halves: the result is the same in any order);
-// 2. cl_level, once per level from 1 up: each component ORs in its successors' rows, which are final (lower levels);
+// 2. cl_dag, one launch (decisions 0601, 0603): a work queue whose items are components. A component is pushed when
+//    its last successor component is done (its `pending` count reaches zero), and the host queues those with none.
+//    A worker takes a component, ORs its successors' rows into its row (they are final: each was done before it was
+//    pushed), and decrements each predecessor's count, pushing the one it brings to zero: a continuation, so no
+//    worker waits for another, and a level is no launch of its own;
 // 3. cl_gather: node v's row is its component's.
 DEFINE_KERNEL2(relational, cl_init,
                ROBUFFER, uint32_t, off,    "[n + 1]",
@@ -239,30 +245,52 @@ DEFINE_KERNEL2(relational, cl_init,
   }
 }
 
-typedef struct LevelArgs { uint32_t lo; uint32_t hi; uint32_t words; } LevelArgs;
-UKL_REFLECT_STRUCT(LevelArgs, lo, hi, words)
+// `capacity`: the queue's slots, one per component (each is pushed once).
+typedef struct DagArgs { uint32_t components; uint32_t words; uint32_t capacity; } DagArgs;
+UKL_REFLECT_STRUCT(DagArgs, components, words, capacity)
 
-// One SIMD group per component of the level; lanes stride over the row's words.
-DEFINE_KERNEL2(relational, cl_level,
-               RWBUFFER, uint64_t, R,     "[components * words]",
-               ROBUFFER, uint32_t, order, "[components]",
-               ROBUFFER, uint32_t, soff,  "[components + 1]",
-               ROBUFFER, uint32_t, sdst,  "[soff[components]]",
-               ARGS,     LevelArgs, args, ,
-               TGID0,    uint32_t, tg,    ,
-               LID0,     uint32_t, lid,   ,
-               LSZ0,     uint32_t, lsz,   )
+// A thread a worker. Rows are read and written coherently: another threadgroup of the dispatch wrote a successor's.
+DEFINE_KERNEL2(relational, cl_dag,
+               RWBUFFER, uint64_t, R,       "[components * words]",
+               ROBUFFER, uint32_t, soff,    "[components + 1]",
+               ROBUFFER, uint32_t, sdst,    "[soff[components]]",
+               ROBUFFER, uint32_t, poff,    "[components + 1]",
+               ROBUFFER, uint32_t, pdst,    "[poff[components]]",
+               RWBUFFER, uint32_t, pending, "[components]",
+               RWBUFFER, uint32_t, slots,   "[capacity]",
+               RWBUFFER, uint32_t, control, "[4]",
+               ARGS,     DagArgs, args,     ,
+               GID0,     uint32_t, worker,  )
 {
-  const uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, nsg = lsz / UKL_SIMD_WIDTH;
-  const uint32_t idx = args.lo + tg * nsg + sg;
-  if (idx >= args.hi) return;
-  const uint32_t c = order[idx];
-  const uint32_t s0 = soff[c], s1 = soff[c + 1u];
-  UKL_GLOBAL uint64_t* row = R + (uint64_t)c * args.words;
-  for (uint32_t w = lane; w < args.words; w += UKL_SIMD_WIDTH) {
-    uint64_t acc = row[w];
-    for (uint32_t k = s0; k < s1; k++) acc |= R[(uint64_t)sdst[k] * args.words + w];
-    row[w] = acc;
+  (void)worker;
+  UKL_COHERENT uint8_t* rows = (UKL_COHERENT uint8_t*)R;
+  UklWorkQueue q = {slots, control, args.capacity, 0u, 0u};
+  uint32_t c = 0u;
+  // Each take is a component, each pushed once: the turns are bounded by the components.
+  for (uint32_t turn = 0u; turn <= args.components; turn++) {
+    // None to take: the worker ends (decision 0540 step 7); a component's pusher is running and takes on.
+    if (!ukl_wq_take(q, &c)) break;
+    ukl_fence_device();
+    const uint32_t s0 = soff[c], s1 = soff[c + 1u];
+    const uint64_t base = (uint64_t)c * args.words;
+    for (uint32_t w = 0u; w < args.words; w++) {
+      uint64_t acc = ukl_ldc_u64(rows, (base + w) * 8u);
+      for (uint32_t k = s0; k < s1; k++) acc |= ukl_ldc_u64(rows, ((uint64_t)sdst[k] * args.words + w) * 8u);
+      ukl_stc_u64(rows, (base + w) * 8u, acc);
+    }
+    // The row is final before any predecessor that reads it is pushed.
+    ukl_fence_device();
+    for (uint32_t k = poff[c]; k < poff[c + 1u]; k++) {
+      const uint32_t p = pdst[k];
+      // The last successor done: every other successor's row was fenced before its decrement, which this one saw;
+      // fenced again here, before the push, those rows are ordered before the taker's reads too (a count's
+      // decrements carry each writer's release, not to the push's taker on their own).
+      if (ukl_atomic_sub(&pending[p], 1u) == 1u) {
+        ukl_fence_device();
+        ukl_wq_push(q, p);
+      }
+    }
+    ukl_wq_done(q);
   }
 }
 

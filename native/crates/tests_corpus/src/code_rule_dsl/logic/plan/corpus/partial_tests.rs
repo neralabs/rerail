@@ -93,7 +93,8 @@ fn a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows() {
     let dir = corpus("outputs-alone", &marker, FILES);
     let program = program("try_statement");
     // Past the stat index's racy window (git's rule), so every run finds the unchanged files by their stat.
-    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 200_000_000));
+    let _racy = super::switches::set(&[("RERAIL_RACY_MS", super::test_store::TEST_RACY_MS)]);
+    super::test_store::past_test_racy_window();
     let (cold, _) = run(&dir, &program, OUTPUTS);
     assert_eq!(cold.stats_kept, Some(Ok((3, 0))), "a cold run counts every file in");
     assert_unchanged(&run(&dir, &program, OUTPUTS).0, "a rerun with nothing changed");
@@ -148,7 +149,8 @@ fn a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady() {
     let marker = format!("{:?}", std::time::SystemTime::now());
     let dir = corpus("new-build", &marker, FILES);
     let program = program("try_statement");
-    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 200_000_000));
+    let _racy = super::switches::set(&[("RERAIL_RACY_MS", super::test_store::TEST_RACY_MS)]);
+    super::test_store::past_test_racy_window();
     let edit = |tail: &str| {
         std::fs::write(dir.join("c.py"), format!("# {marker}\n{}{tail}", FILES[2].1)).unwrap();
         run(&dir, &program, OUTPUTS)
@@ -190,7 +192,8 @@ fn an_edit_after_a_stopped_run_of_the_same_program_is_steady() {
     let marker = format!("{:?}", std::time::SystemTime::now());
     let dir = corpus("stopped", &marker, FILES);
     let program = program("try_statement");
-    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 200_000_000));
+    let _racy = super::switches::set(&[("RERAIL_RACY_MS", super::test_store::TEST_RACY_MS)]);
+    super::test_store::past_test_racy_window();
     let edit = |tail: &str| std::fs::write(dir.join("c.py"), format!("# {marker}\n{}{tail}", FILES[2].1)).unwrap();
     let (cold, _) = run(&dir, &program, OUTPUTS);
     assert_eq!(cold.stats_kept, Some(Ok((3, 0))), "a cold run counts every file in");
@@ -219,7 +222,8 @@ fn a_stopped_run_of_another_program_leaves_nothing_kept_trusted() {
     let marker = format!("{:?}", std::time::SystemTime::now());
     let dir = corpus("stopped-other", &marker, FILES);
     let (first, edited) = (program("try_statement"), program("while_statement"));
-    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 200_000_000));
+    let _racy = super::switches::set(&[("RERAIL_RACY_MS", super::test_store::TEST_RACY_MS)]);
+    super::test_store::past_test_racy_window();
     let (cold, _) = run(&dir, &first, OUTPUTS);
     assert_eq!(cold.stats_kept, Some(Ok((3, 0))), "a cold run counts every file in");
     super::STOP_AFTER_ENTRIES.with(|s| s.set(true));

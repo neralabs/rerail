@@ -18,11 +18,6 @@ fn grammar(id: i64) -> Result<Arc<Grammar>, String> {
     Grammar::new(lang)
 }
 
-#[allow(dead_code)]
-fn u32s(document: &Resident, offset: u32, count: usize) -> Vec<u32> {
-    document.bytes_at(offset, 4 * count).as_chunks::<4>().0.iter().map(|word| u32::from_le_bytes(*word)).collect()
-}
-
 use std::sync::Mutex;
 
 /// The residency is process-wide: the tests that admit and drop take turns. Other tests' label
@@ -35,12 +30,7 @@ fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
         return;
     }
     let _serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    // Format 15's columns, read through `resident::layout`; every format's admission is
-    // `the_device_reads_every_format_as_the_document_does`.
-    crate::code_rule_dsl::tape::formats::as_run(crate::code_rule_dsl::tape::formats::Format::F15, stored_tapes_of_format_15_are_admitted);
-}
-
-fn stored_tapes_of_format_15_are_admitted() {
+    // The run's format; every format's admission is `the_device_reads_every_format_as_the_document_does`.
     drop_all();
     let path = temp();
     let store = ContentStore::open(&path).unwrap();
@@ -49,7 +39,7 @@ fn stored_tapes_of_format_15_are_admitted() {
     for (source, lang) in SOURCES {
         // The device reads the stored image in place.
         let (tape, stored) = document(source, lang);
-        assert!(resident::layout(&stored).is_ok(), "a stored image is read in place");
+        assert!(resident::stored(&stored).is_ok(), "a stored image is read in place");
         let bytes = tape.resident_parts(None).unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
         store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(crate::code_rule_dsl::tape::formats::stored_version()), &bytes).unwrap();
@@ -62,13 +52,17 @@ fn stored_tapes_of_format_15_are_admitted() {
         // The image is the stored bytes, the source the file's.
         assert_eq!(document.image(), bytes.as_slice());
         assert_eq!(document.bytes_at(document.view.source, document.view.source_len as usize), source.as_bytes());
-        for offset in document.view.columns.into_iter().chain([document.view.codes, document.view.source, document.view.lines]) {
-            assert_eq!(offset % 16, 0, "every part at 16 bytes in its slab");
+        for offset in [document.view.codes, document.view.source] {
+            assert_eq!(offset % 16, 0, "the code table and the source at 16 bytes in their slab");
         }
         assert_eq!(document.view.nodes as usize, tape.transducer_len());
-        let lines = u32s(document, document.view.lines, document.view.line_count as usize);
-        let expected = std::iter::once(0).chain(source.bytes().enumerate().filter(|(_, byte)| *byte == b'\n').map(|(at, _)| at as u32 + 1)).collect::<Vec<_>>();
-        assert_eq!(lines, expected);
+        // Its line index, its language's (decision 0612), where its tape holds it: each line's start read off it is
+        // the document's.
+        let head = document.bytes_at(document.view.lines, rerail_tape_format::newlines::HEAD);
+        let index = document.bytes_at(document.view.lines, rerail_tape_format::newlines::len_of(head).unwrap() + 8);
+        let view = rerail_clif::view::TapeView::default();
+        let starts: Vec<u32> = (0..document.view.line_count).map(|k| rerail_tape_format::reads::f16::line_start(index, &view, k)).collect();
+        assert_eq!(starts, tape.line_table().starts().collect::<Vec<_>>());
     }
     // Admitted again: the same documents, read from the residency, not the store.
     let again = admit(&store, &digests, &grammar).unwrap();
@@ -140,7 +134,7 @@ fn a_batch_over_several_slabs_reads_each_document_where_it_lies() {
     }
     use crate::code_rule_dsl::tape::formats::Format;
     let _serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    for format in [Format::F15, Format::F16, Format::F16Z] {
+    for format in Format::ALL {
         drop_all();
         let docs: Vec<crate::code_rule_dsl::tape::TapeDoc> = SOURCES
             .iter()
@@ -148,7 +142,7 @@ fn a_batch_over_several_slabs_reads_each_document_where_it_lies() {
                 let native = ast_grep_core::tree_sitter::StrDoc::new(source, lang);
                 let grammar = Grammar::new(lang).unwrap();
                 crate::code_rule_dsl::tape::formats::as_run(format, || {
-                    let image = crate::code_rule_dsl::tape::TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary.in_format(format, source.as_bytes());
+                    let image = crate::code_rule_dsl::tape::TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
                     crate::code_rule_dsl::tape::TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
                 })
             })
@@ -160,9 +154,10 @@ fn a_batch_over_several_slabs_reads_each_document_where_it_lies() {
         let rest = admit_docs(&docs[1..]).unwrap();
         assert_ne!(first[0].slab.id, rest[0].slab.id, "the documents are in two slabs");
         let documents: Vec<Arc<Resident>> = first.iter().chain(&rest).cloned().collect();
-        // A 16z batch needs its cache's address in each view: refused where buffers have none (OpenCL 1.2).
-        if format == Format::F16Z && !rerail_metal::lane::device().unwrap().has_addresses() {
-            assert!(DocTable::new(documents).is_none(), "a 16z batch refused without device addresses");
+        // A batch over two slabs reaches the second by the slabs' device addresses (and a 16z batch its cache's):
+        // refused where buffers have none (OpenCL without host USM: Apple's, AMD's), and its caller splits it by slab.
+        if !rerail_metal::lane::device().unwrap().has_addresses() {
+            assert!(DocTable::new(documents).is_none(), "{format:?}: a batch over two slabs refused without device addresses");
             drop(held_big);
             continue;
         }
@@ -194,7 +189,7 @@ fn a_batch_over_several_slabs_reads_each_document_where_it_lies() {
 }
 
 /// The device reads a resident tape as its document reads it (decision 0293), in every format the run may store:
-/// format 15's columns, format 16's arrays, and a 16z tape as stored, read through its table's cache of decoded blocks
+/// format 16's arrays, and a 16z tape as stored, read through its table's cache of decoded blocks
 /// (decision 0353 step 4b) with no failures, with no parent
 /// column, child list or index of nodes by code beside them. Every node's code (kind, field, flags, classes), its
 /// parent, next and next named siblings, children, subtree and span. One document of more than a side-list part
@@ -246,7 +241,7 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
         + &(0..300).map(|i| format!("v{i} = [{i}, \"{}\", f(a, b=c)]  # {}\n", "s".repeat(i % 40), "c".repeat(260 * usize::from(i % 50 == 0)))).collect::<String>();
     let mut sources = SOURCES.iter().map(|&(source, lang)| (source.to_owned(), lang)).collect::<Vec<_>>();
     sources.push((long, GrammarDialect::Python));
-    for format in [Format::F15, Format::F16, Format::F16Z] {
+    for format in Format::ALL {
         let docs = sources
             .iter()
             .map(|(source, lang)| {
@@ -254,7 +249,7 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
                 let grammar = Grammar::new(*lang).unwrap();
                 // Made as a run of `format` makes it, whatever the process's run stores.
                 crate::code_rule_dsl::tape::formats::as_run(format, || {
-                    let image = crate::code_rule_dsl::tape::TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary.in_format(format, source.as_bytes());
+                    let image = crate::code_rule_dsl::tape::TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
                     crate::code_rule_dsl::tape::TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap()
                 })
             })
@@ -301,15 +296,14 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
         let table = DocTable::new(documents).unwrap();
         assert_eq!(table.slabs.len(), usize::from(split), "{format:?}: the batch's other slabs");
         let expected_format = match format {
-            Format::F15 => 15,
             Format::F16 => 16,
-            _ => rerail_clif::view::F16Z_FORMAT,
+            Format::F16Z => rerail_clif::view::F16Z_FORMAT,
         };
         assert!(table.views.iter().all(|view| view.format == expected_format), "{format:?} placed as format {expected_format}");
         // The device reads the presence where the tape's home holds it (decision 0434 §4, step 6), 16 and 16z alike.
-        assert!(table.views.iter().all(|view| (view.presence != 0) == (format != Format::F15)), "{format:?}: the views name the presence");
+        assert!(table.views.iter().all(|view| view.presence != 0), "{format:?}: the views name the presence");
         assert_eq!(table.cache.is_some(), format == Format::F16Z, "a cache for 16z tapes alone");
-        if format != Format::F15 && !split {
+        if !split {
             // One code table a language in the block (decision 0336 §7): documents of a language read the same one.
             let mut tables = std::collections::HashMap::new();
             for (view, (_, lang)) in table.views.iter().zip(&sources) {
@@ -347,7 +341,7 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
         // SAFETY: the kernel wrote `nodes * FIELDS` u32s, and the command finished.
         let read = unsafe { std::slice::from_raw_parts(out.contents().cast::<u32>(), table.nodes * FIELDS) };
         for (doc, (tape, view)) in docs.iter().zip(&table.views).enumerate() {
-            let source = sources[doc].0.as_bytes();
+            let lines = crate::code_rule_dsl::lines::LineTable::new(&sources[doc].0, crate::code_rule_dsl::lines::terminators(sources[doc].1));
             let global = |node: Option<u32>| node.map_or(u32::MAX, |node| node + view.node_base);
             let mut classes = vec![0u32; tape.transducer_len()];
             for (node, _) in tape.transducer_supertypes() {
@@ -368,9 +362,9 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
                     span.end as u32,
                     global(tape.transducer_children(node).next()),
                     classes[node as usize],
-                    // The line of the node's start, and that line's first byte: from the source's newlines.
-                    source[..span.start].iter().filter(|&&byte| byte == b'\n').count() as u32,
-                    source[..span.start].iter().rposition(|&byte| byte == b'\n').map_or(0, |at| at as u32 + 1),
+                    // The line of the node's start, and that line's first byte: the language's lines.
+                    lines.line(span.start) as u32,
+                    lines.start(lines.line(span.start)) as u32,
                 ];
                 let g = (view.node_base + node) as usize;
                 assert_eq!(&read[g * FIELDS..][..FIELDS], &expected, "{format:?}, over two slabs {split}: document {doc} node {node}");

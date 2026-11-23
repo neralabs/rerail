@@ -2,122 +2,110 @@
 //! (`native/crates/tape_format/tables/<tag>.tsv`, read by `rerail_tape_format::f16::lang`).
 //!
 //! - **The table**: every code the grammar allows (E25, `gcodes`), as the engine's ids: a kind name expanded to
-//!   every id of that name, a field by its id, supertypes by theirs. The codes the captures show come first, the
-//!   most frequent first (E21), as the engine's format 15 code tables hold them (an alias by its name); the rest
-//!   follow in a fixed order. A code the captures show that the grammar's list lacks is kept, and counted.
-//! - **The widths**: learned on the captures as E24 learned them (`F16Lang::learn`).
+//!   every id of that name, a field by its id, supertypes by theirs; the plain codes first, then by kind, field and
+//!   memberships. No corpus orders or bounds it (decision 0626): a file of any shape is written in format 16.
+//! - **The widths**: a byte each; a wider value is escaped to its side list.
 //! - **The revision**: the language's (`f16::revision`).
 
-use crate::capture::File;
 use crate::gcodes::{Ids, Tuple};
 use rerail_tape_format::f16::Lang;
-use rerail_tape_format::tape::{CodeTable, Entry, F15, Tape, f15_columns};
+use rerail_tape_format::tape::{CodeTable, Entry};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
+/// A node's kind on the tape: its public symbol, and its type's name where that symbol is named otherwise.
+type Kind = (u16, Option<(String, bool)>);
+
 pub struct Report {
     pub tag: u8,
-    pub files: usize,
-    pub nodes: u64,
     pub codes: usize,
-    pub seen: usize,
-    /// Seen codes the grammar's list lacks, and their nodes.
-    pub holes: usize,
-    pub hole_nodes: u64,
-    pub widths: [usize; 3],
+    /// No node types declared (an own parser): the grammar's list is the bound.
     pub bound: bool,
 }
 
-/// The engine's entries for a code the grammar allows, by names: each kind and supertype name expanded to every id
-/// of that name.
-fn entries_of(t: &Tuple, tag: u8, by_name: &HashMap<(String, bool), Vec<u16>>, fields: &HashMap<String, u16>, supers: &HashMap<String, Vec<u16>>) -> Vec<Entry> {
-    let kinds: Vec<u16> = if t.kind.0 == "ERROR" { vec![rerail_tape_format::ERROR_CODE] } else { by_name.get(&t.kind).cloned().unwrap_or_default() };
-    let Some(field) = (if t.field.is_empty() { Some(0) } else { fields.get(&t.field).copied() }) else { return Vec::new() };
+/// The engine's entries for a code the grammar allows, by names: each kind name to its codes' kinds (`by_name`), each
+/// supertype name to every id of that name. A supertype the engine's ids lack is no membership: its grammar names it (`supertypes`), but the
+/// parser the generator wrote keeps no symbol of it (Rust's `_declaration_statement`, Java's `_simple_type`, Scala's
+/// `_pattern`), so no node is under one. `Err` names a kind or field the ids lack: a grammar other than the engine's.
+fn entries_of(t: &Tuple, by_name: &HashMap<(String, bool), Vec<Kind>>, fields: &HashMap<String, u16>, supers: &HashMap<String, Vec<u16>>) -> Result<Vec<Entry>, String> {
+    let kinds: Vec<Kind> = if t.kind.0 == "ERROR" {
+        vec![(rerail_tape_format::ERROR_CODE, None)]
+    } else {
+        // A name as the C API reads it, to its first NUL: Go's `"\0"` token is named "" there.
+        let name = (t.kind.0.split('\0').next().unwrap_or("").to_owned(), t.kind.1);
+        by_name.get(&name).cloned().ok_or_else(|| format!("kind {:?} has no id", t.kind))?
+    };
+    let field = if t.field.is_empty() { 0 } else { *fields.get(&t.field).ok_or_else(|| format!("field {:?} has no id", t.field))? };
     let mut classes: Vec<Vec<u16>> = vec![Vec::new()];
     for s in &t.supers {
-        let ids = supers.get(s).cloned().unwrap_or_default();
+        let Some(ids) = supers.get(s).cloned() else { continue };
         classes = classes.iter().flat_map(|c| ids.iter().map(move |&id| c.iter().copied().chain([id]).collect::<Vec<_>>())).collect();
     }
-    let _ = tag;
     let mut out = Vec::new();
-    for &kind in &kinds {
+    for (kind, alias) in &kinds {
         for c in &classes {
             let mut c = c.clone();
             c.sort_unstable();
             c.dedup();
-            out.push(Entry { kind, field, flags: t.flags, alias: None, classes: c });
+            out.push(Entry { kind: *kind, field, flags: t.flags, alias: alias.clone(), classes: c });
         }
     }
-    out
+    Ok(out)
 }
 
-/// Language `tag`'s choices from `files` (one language), with the grammar's list from `scratch`'s generated node
-/// types; written to `out/<tag>.tsv`.
-pub fn run(tag: u8, files: &[&File], scratch: &Path, out: &Path) -> Result<Report, String> {
+/// Language `tag`'s choices, from its grammar alone (the user, 2026-11-22: "it has to be grammar. We don't have
+/// exhaustive corpora, so how would specializing to a corpus possibly be correct?"): every code the grammar allows
+/// (`gcodes::allowed`, from `scratch`'s generated node types where none are shipped; an own parser's bound), the
+/// plain codes first, then by kind, field and memberships; widths of a byte (a wider value is escaped). Written to
+/// `out/<tag>.tsv`.
+pub fn run(tag: u8, scratch: &Path, out: &Path) -> Result<Report, String> {
     let ids = Ids::load();
+    let of = crate::gcodes::ids_tag(tag);
     let (allowed, bound) = match crate::gcodes::load(tag, scratch) {
         Ok((grammar, types)) => (crate::gcodes::allowed(&grammar, &types), false),
-        Err(_) if ids.kinds.keys().any(|(t, _)| *t == tag) => (crate::gcodes::own_bound(tag, &ids), true),
+        Err(_) if ids.kinds.keys().any(|(t, _)| *t == of) => (crate::gcodes::own_bound(of, &ids), true),
         Err(e) => return Err(e),
     };
-    // Names to the engine's ids, for this language.
-    let mut by_name: HashMap<(String, bool), Vec<u16>> = HashMap::new();
+    // Names to the engine's codes, for this language, as tree-sitter's encoding gives a node them (`encode_node`):
+    // its kind is its type's public symbol (`ts_node_symbol`), so the grammar's other symbols of a name and kind
+    // (Kotlin's four `call_expression`s) are on no tape; where that symbol is named otherwise, the node's type is its
+    // contextual alias (Scala's `(`, whose public symbol is named `arguments`). A supertype is its own symbol (a
+    // cursor's status names it as the parse table does).
+    let mut by_name: HashMap<(String, bool), Vec<Kind>> = HashMap::new();
     let mut supers: HashMap<String, Vec<u16>> = HashMap::new();
     for ((t, id), k) in &ids.kinds {
-        if *t == tag {
-            by_name.entry(k.clone()).or_default().push(*id);
+        if *t == of {
+            let public = ids.public[&(*t, *id)];
+            if let Some(p) = ids.kinds.get(&(*t, public)).filter(|_| public != 0) {
+                by_name.entry(k.clone()).or_default().push((public, (p != k).then(|| k.clone())));
+            }
             supers.entry(k.0.clone()).or_default().push(*id);
         }
     }
-    for v in by_name.values_mut().chain(supers.values_mut()) {
+    for v in by_name.values_mut() {
+        v.sort_unstable();
+        v.dedup();
+    }
+    for v in supers.values_mut() {
         v.sort_unstable();
     }
-    let fields: HashMap<String, u16> = ids.fields.iter().filter(|((t, _), _)| *t == tag).map(|((_, id), name)| (name.clone(), u16::from(*id))).collect();
-    // The codes the captures show, by count, as format 15's tables hold them.
-    let mut seen: HashMap<Entry, u64> = HashMap::new();
-    let mut nodes = 0u64;
-    for f in files {
-        let (columns, table) = f15_columns(&f.image)?;
-        let t = F15::new(&f.image, columns, &table)?;
-        let mut count = vec![0u64; table.len()];
-        for i in 0..t.len() {
-            count[t.code(i) as usize] += 1;
-        }
-        nodes += t.len() as u64;
-        for (k, c) in count.into_iter().enumerate() {
-            if c > 0 {
-                *seen.entry(table.entry(k as u32).clone()).or_default() += c;
-            }
-        }
+    let fields: HashMap<String, u16> = ids.fields.iter().filter(|((t, _), _)| *t == of).map(|((_, id), name)| (name.clone(), u16::from(*id))).collect();
+    let mut codes: BTreeSet<Entry> = BTreeSet::new();
+    for t in allowed.tuples.keys() {
+        codes.extend(entries_of(t, &by_name, &fields, &supers).map_err(|e| format!("{}: {e}", crate::capture::language(tag)))?);
     }
-    let grammar: BTreeSet<Entry> = allowed.tuples.keys().flat_map(|t| entries_of(t, tag, &by_name, &fields, &supers)).collect();
-    let mut first: Vec<(&Entry, u64)> = seen.iter().map(|(e, &c)| (e, c)).collect();
-    first.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-    let holes: Vec<&(&Entry, u64)> = first.iter().filter(|(e, _)| e.alias.is_none() && !grammar.contains(*e)).collect();
-    let (hole_count, hole_nodes) = (holes.len(), holes.iter().map(|h| h.1).sum());
-    let mut table: Vec<Entry> = first.iter().map(|(e, _)| (*e).clone()).collect();
-    table.extend(grammar.iter().filter(|e| !seen.contains_key(*e)).cloned());
-    // The widths, learned on the captures as E24 learned them.
-    let mut codes = crate::inplace::Codes::default();
-    let trees: Vec<crate::tree::Tree> = files.iter().map(|f| crate::v15::read(&f.image)).collect::<Result<_, _>>()?;
-    for t in &trees {
-        codes.learn(t);
-    }
-    let cols: Vec<crate::inplace::Cols> = trees.iter().map(|t| crate::inplace::Cols::of_tree(t, &codes)).collect();
-    let learned = crate::f16::F16Lang::learn(&codes, table.len(), cols.iter());
-    let widths = learned.widths.map(|w| (w as usize).div_ceil(8));
-    let lang = Lang::new(CodeTable::new(table), widths, crate::f16::revision(tag))?;
+    let mut table: Vec<Entry> = codes.into_iter().collect();
+    table.sort_by(|a, b| (a.flags, a.kind, a.field, &a.classes).cmp(&(b.flags, b.kind, b.field, &b.classes)));
+    let lang = Lang::new(CodeTable::new(table), [1, 1, 1], crate::f16::revision(tag))?;
     let comment = format!(
-        "Tape format 16's choices for tape tag {tag} ({}), decision 0293 §3. Written by the lab:\n  tape16 table <captures…> (native/lab/tape16/src/table.rs)\nfrom {} files, {nodes} nodes; {} codes, {} seen first by count{}.",
+        "Tape format 16's choices for tape tag {tag} ({}), decisions 0293 §3 and 0626. Written by the lab from the grammar:\n  tape16 table <tags…> (native/lab/tape16/src/table.rs)\n{} codes{}.",
         crate::capture::language(tag),
-        files.len(),
         lang.table().len(),
-        seen.len(),
         if bound { "; no node types declared: the grammar's list is the bound" } else { "" }
     );
     std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
     std::fs::write(out.join(format!("{tag}.tsv")), lang.to_text(&comment)).map_err(|e| e.to_string())?;
-    Ok(Report { tag, files: files.len(), nodes, codes: lang.table().len(), seen: seen.len(), holes: hole_count, hole_nodes, widths, bound })
+    Ok(Report { tag, codes: lang.table().len(), bound })
 }
 
 /// `index.rs`: each written table's text by tag.

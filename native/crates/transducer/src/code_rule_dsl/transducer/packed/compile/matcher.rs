@@ -2107,7 +2107,7 @@ fn fallback(label: &Label) -> &'static str {
 /// `RERAIL_SETS=walk`.
 pub fn formulas_on() -> bool {
     // Read at each level, so a check may run both ways in one process (`on_metal_anchored_walks_find_the_unanchored_roots`).
-    std::env::var("RERAIL_SETS").map_or(true, |mode| mode != "walk")
+    crate::code_rule_dsl::logic::profile::var("RERAIL_SETS").map_or(true, |mode| mode != "walk")
 }
 
 fn formulas(
@@ -2841,7 +2841,7 @@ impl<'a> Anchoring<'a> {
 /// Whether walks start within their anchors (decision 0365): off with `RERAIL_ANCHORS=off`, read at each batch (the
 /// anchors' check against the walks without them, `anchored_walks_find_the_unanchored_roots`).
 pub fn anchors_on() -> bool {
-    std::env::var("RERAIL_ANCHORS").map_or(true, |mode| mode != "off")
+    crate::code_rule_dsl::logic::profile::var("RERAIL_ANCHORS").map_or(true, |mode| mode != "off")
 }
 
 /// Starts `starts` within `anchor`, counted for the profile: the starts kept and those the anchor dropped.
