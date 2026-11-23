@@ -7374,15 +7374,20 @@ impl JoinRule {
     }
 
     /// The CPU's indexes of its inputs, on the relations its steps hold: what `join_rule` gives a rule parsed with
-    /// them, for one parsed without (a seed placed on the device, which then refused it).
+    /// them, for one parsed without (a seed placed on the device, which then refused it). Every step that probes an
+    /// input gets its index: an atom, a count, a min or max, a strjoin. One parsed without holds a probe of no index,
+    /// which finds no rows (t50 step 9: a refused seed's counts over an input were 0, and Metal's bench lost rows).
+    /// Its keys go in the index's column order, as the parse puts them (`in_index_order`).
     fn indexed(&mut self) {
         for (st, r) in self.steps.iter_mut().zip(&self.ranges) {
-            if let Step::Atom { src: Src::In(rel, ix), .. } = st {
-                *ix = rel.index(&ix.cols);
-                if let Some(r) = r && ix.ordered.is_some() && ix.then.is_none() {
-                    *ix = rel.index_then(&ix.cols, r.col);
-                }
+            // A ranged probe is an atom's (`ranges`).
+            let atom = matches!(st, Step::Atom { .. });
+            let (Step::Atom { src: Src::In(rel, ix), keys, .. } | Step::Scalar { src: Src::In(rel, ix), keys, .. } | Step::StrJoin { src: Src::In(rel, ix), keys, .. }) = st else { continue };
+            *ix = rel.index(&ix.cols);
+            if atom && let Some(r) = r && ix.ordered.is_some() && ix.then.is_none() {
+                *ix = rel.index_then(&ix.cols, r.col);
             }
+            in_index_order(ix, keys);
         }
     }
 }
@@ -7653,6 +7658,13 @@ fn join_rule(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner) -> Result<
     join_rule_with(conn, spec, syms, true)
 }
 
+/// A step's keys in its index's column order (`ix`): a probe reads its key in that order (`candidates`).
+fn in_index_order(ix: &Csr, keys: &mut [(usize, Key)]) {
+    if ix.cols.len() == keys.len() && ix.cols.iter().zip(keys.iter()).any(|(&c, &(k, _))| c != k) {
+        keys.sort_by_key(|&(c, _)| ix.cols.iter().position(|&x| x == c).unwrap_or(usize::MAX));
+    }
+}
+
 /// `join_rule`, with the CPU's indexes of its input relations (`index`) or without them: a join the device runs
 /// reads its relations by its own sorts (`device`), so building the CPU's would be work for nothing. Without them
 /// the join must not run on the CPU (`open` parses it again with them when the device refuses it).
@@ -7766,8 +7778,8 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                 // the same columns looked a node up in a constant's chain and found nothing (t50 step 1: `rf_ref` by
                 // `[0, 1, 2, 3]` through an index made for `[1, 0, 2, 3]`, a handoff's replacement that derived none
                 // of its 295 rows).
-                if let Src::In(_, ix) = &src && ix.cols.len() == keys.len() && ix.cols.iter().zip(&keys).any(|(&c, &(k, _))| c != k) {
-                    keys.sort_by_key(|&(c, _)| ix.cols.iter().position(|&x| x == c).unwrap_or(usize::MAX));
+                if let Src::In(_, ix) = &src {
+                    in_index_order(ix, &mut keys);
                 }
                 match item {
                     JoinItem::StrJoin { x, by, sep, out: o, .. } => {

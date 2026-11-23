@@ -1039,6 +1039,22 @@ Then, step by step (each device run's step counts against a CPU run of the same 
   (`RERAIL_CHUNKS_AT_ONCE=1`: 462, 468), with `RERAIL_DEVICE_WAVES=off` (485, 530), and in one of two runs with
   `RERAIL_LEVEL_JOINS=off` (475, 247). So at the default budget the loss needs neither two chunks at once nor the
   budget's refusals. The branch's side before this merge gave the full bench's 463 on Metal every run.
+- **Its cause: a refused seed's counts read no index (2026-11-23).** A temporary check recounted each count step by a
+  scan of its input. In the wrong runs, `up_arglist`'s count (and `rr_shown_agg0`'s, `p155_rr_agg3`'s,
+  `p293_name_at`'s) was 0 by its probe and 1 to 3 by the scan. The probe held no index of any kind: the device's
+  unindexed one, which `join_rule_with(.., false)` gives a seed parsed for the device. A seed the device refuses
+  at run time (a submission failed, a table past the budget) runs on the CPU after `JoinRule::indexed` gives its steps
+  their indexes (510780dd8d), and `indexed` did that for atoms only: a count, a min or max, or a strjoin over an input
+  kept the probe that finds no rows. So the loss came with the device's run-time refusals, which vary between runs.
+  `indexed` now gives every step that probes an input its index, its keys in that index's column order, as the parse
+  orders them (`in_index_order`); `a_refused_seeds_count_reads_its_inputs_index`. On Metal after the fix: the 100
+  files 247 in five of five runs (four with device failures), the full bench 463, hogql 1629 (d82234cb). Whether
+  the s1000 loss at 512 MB above (`mn_class`, `dbg_rd`) is the same is not yet run: its budget refuses more seeds, so
+  it is worth that run first.
+- **Open: a run ended by the GPU's errors.** A second full bench on the M1 Max stopped about 200 s in, after five
+  device failures: macOS refused the process's further submissions ("Ignored (for causing prior/excessive GPU
+  errors)"), and the GPU lane's error ended the run. The failures before it (preempted, a GPU hang) appear in runs
+  from before the merge too.
 
 ## Open
 
