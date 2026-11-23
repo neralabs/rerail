@@ -7563,8 +7563,8 @@ impl CompiledStream {
 
     /// `Parser::image16` over tier 1's run `tier1` (a test's), by this tier 2, compiled to write format 16.
     #[cfg(test)]
-    pub fn image16_on(&self, bytes: &[u8], tier1: &crate::block::BlockRun, lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
-        let scan = |out: &mut rerail_tape_format::Vector<u8>| rerail_tape_format::newlines::index_into(out, bytes);
+    pub fn image16_on(&self, bytes: &[u8], terminators: rerail_tape_format::newlines::Terminators, tier1: &crate::block::BlockRun, lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
+        let scan = |out: &mut rerail_tape_format::Vector<u8>| rerail_tape_format::newlines::index_into(out, bytes, terminators);
         let doc = Doc16 { source: bytes, lang, numbers, z, lines: &scan };
         self.write16(&mut rerail_tape_format::f16::Writer::empty(), self.tokens(self.records_of(tier1), bytes.len()), &doc, |tape| self.run_raw(bytes, tier1, tape))
     }
@@ -7984,32 +7984,34 @@ impl Parser {
     /// 16 tier 2's keys (`CompiledStream::numbers`). The writer's room is reserved for the bound's nodes and a
     /// guess of the depth; a run that found a part full (the open nodes past the guess, or tier 2's own room past
     /// its guess) runs again with the bound's room. `Err` for a file tier 2 refuses, or a failure of the ops.
-    pub fn image16(&self, bytes: &[u8], lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
-        self.image16_in(&mut rerail_tape_format::f16::Writer::empty(), bytes, lang, numbers, z)
+    /// Its line index is of the lines `terminators` end (decision 0612).
+    pub fn image16(&self, bytes: &[u8], terminators: rerail_tape_format::newlines::Terminators, lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
+        self.image16_in(&mut rerail_tape_format::f16::Writer::empty(), bytes, terminators, lang, numbers, z)
     }
 
     /// `image16` in `w`, a writer the caller keeps from one document to the next (`f16::Writer::begin`), as simdjson's
     /// caller keeps its parser: no room made or zeroed for a document no larger than one before. A tape given back
     /// (`f16::Writer::recycle`) is the next one's room.
-    pub fn image16_in(&self, w: &mut rerail_tape_format::f16::Writer, bytes: &[u8], lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
+    pub fn image16_in(&self, w: &mut rerail_tape_format::f16::Writer, bytes: &[u8], terminators: rerail_tape_format::newlines::Terminators, lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
         let t2 = self.sixteen().ok_or("no format 16 tier 2 for this parser")?;
         let mut batch = crate::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
         batch.call(&self.tier1);
         let tokens = t2.tokens(self.records_bound(&batch, t2.starts), bytes.len());
-        // The newline index from tier 1's newline bits (`CompiledBlock::newlines`), where it has them: no scan of the
-        // source. Bit `p` of the output's words is byte `p` of the file: the host puts a stripped prefix's bytes back
+        // The line index from tier 1's line-end bits (`CompiledBlock::newlines`), where it has them for the
+        // document's terminators: no scan of the source. Bit `p` of the output's words is byte `p` of the file: the host puts a stripped prefix's bytes back
         // (`Batch::call`), and a prefix holds no newline.
         let row = batch.rows[0];
         let from_bits = |out: &mut rerail_tape_format::Vector<u8>| {
-            let (o, n) = (self.tier1.newlines.expect("tier 1's newlines"), self.tier1.outputs);
+            let (o, n) = (self.tier1.newlines.expect("tier 1's line ends").0, self.tier1.outputs);
             let at = |w: usize| batch.out[row.out as usize + o + w * n];
-            let (m, offsets) = rerail_tape_format::newlines::bits_of(row.len, 0, row.blocks as usize, at);
-            rerail_tape_format::newlines::index_of(out, bytes.len() as u64, m, offsets);
+            // The candidates kept where they end a terminator: a test of the bytes at each, no scan.
+            let ends = || rerail_tape_format::newlines::bits_of(row.len, 0, row.blocks as usize, at).1.filter(|&o| terminators.ends_at(bytes, o as usize));
+            rerail_tape_format::newlines::index_of(out, bytes.len() as u64, ends().count() as u64, ends());
             #[cfg(debug_assertions)]
-            debug_assert!(out[..] == rerail_tape_format::newlines::index(bytes)[..], "the newline index from tier 1's bits is the scan's");
+            debug_assert!(out[..] == rerail_tape_format::newlines::index(bytes, terminators)[..], "the line index from tier 1's bits is the scan's");
         };
-        let scan = |out: &mut rerail_tape_format::Vector<u8>| rerail_tape_format::newlines::index_into(out, bytes);
-        let lines: &dyn Fn(&mut rerail_tape_format::Vector<u8>) = if self.tier1.newlines.is_some() { &from_bits } else { &scan };
+        let scan = |out: &mut rerail_tape_format::Vector<u8>| rerail_tape_format::newlines::index_into(out, bytes, terminators);
+        let lines: &dyn Fn(&mut rerail_tape_format::Vector<u8>) = if self.tier1.newlines.is_some_and(|(_, set)| set == terminators) { &from_bits } else { &scan };
         t2.write16(w, tokens, &Doc16 { source: bytes, lang, numbers, z, lines }, |tape| self.words_raw(t2, &batch, tape))
     }
 }

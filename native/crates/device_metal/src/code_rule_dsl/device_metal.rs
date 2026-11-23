@@ -95,8 +95,8 @@ impl SolverDevice for Metal {
         joins::run(&plans(rules)?, store, names, fresh)
     }
 
-    fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
-        joins::submit(&plans(rules)?, names)
+    fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner) -> Result<Option<u64>, String> {
+        joins::submit(&plans(rules)?, store, names)
     }
 
     fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<rerail_blocks::vector::Vector<u64>, String> {

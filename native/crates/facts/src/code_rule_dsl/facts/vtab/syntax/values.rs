@@ -218,10 +218,13 @@ impl Values {
             self.batches.write().push(b);
         }
         for (name, src) in sources {
-            // A relation made on lookup (containment, an axis) has its rows only once a lookup asks.
-            if src.len() == 0 && !src.made_on_lookup() {
+            // A relation made on lookup (containment, an axis) has its rows only once a lookup asks. The long-text
+            // nodes are the binding a node read goes through (`LongTexts::of`): kept with none, a value's node is read
+            // in its own batch (a string's value in a Vue piece, decision 0597), not looked for in the chunk's.
+            if src.len() == 0 && !src.made_on_lookup() && name != super::LONG_TEXT_NODES {
                 continue;
             }
+            let own = if name == super::LONG_TEXT_NODES { &keys[..keys.len().min(1)] } else { keys };
             let p = Arc::make_mut(parts.entry(name).or_default());
             let i = p.list.len();
             // Its rows past the chunk's and the parts' before, in their block relation: the device binds that whole.
@@ -230,7 +233,10 @@ impl Values {
             p.whole = slice.filter(|_| p.sliced).map(|sl| Arc::clone(&sl.whole));
             p.list.push(Part { start: p.total, src: Arc::clone(&src) });
             p.total += src.len();
-            for &k in keys {
+            // The long-text nodes are the value's own nodes: the binding a node read goes through is the value's for
+            // its own key alone. Under its places' hosts' keys too, a host file's node read (`value` of a `getattr`'s
+            // string) went to a string annotation's batch, which holds no node of the file, and found nothing.
+            for &k in own {
                 p.by_key.add(k, i);
             }
         }
@@ -326,6 +332,67 @@ struct Made {
     /// value given a place more) makes it again.
     /// Under (column, value): [first row, rows, parts].
     runs: rerail_blocks::maps::BlockHash<[i64; 2], [u64; 3]>,
+    /// The values' rows as a scan reads them (`Layered::scanned`), once one has.
+    scan: Option<Arc<Scan>>,
+}
+
+/// A layered source made on lookup, scanned: its values' rows past the base's, which the scan made whole, so a scan
+/// reads the rows a lookup does (decision 0597: a rule over a Vue template's pieces, `vcode(_, g, _), has(g, r, S)`,
+/// planned the axis's scan first, and the scan held none of the pieces' rows). Every part's rows are made whole once,
+/// at the first scan; the parts admitted since add a segment past them, each written once where it is made (decision
+/// 0353), a reader holding the segments it read. A lookup then reads the same rows (`Seg::index`).
+struct Scan {
+    /// The first row: the base's count, every one of its rows made by its scan.
+    at: usize,
+    /// The parts made whole.
+    parts: usize,
+    segs: Vec<Arc<Seg>>,
+}
+
+/// The rows of some parts, made whole: from row `first` of the scan's.
+struct Seg {
+    first: usize,
+    rows: Vector<i64>,
+    /// Each row's (column, value, row), sorted: the rows that hold a value are one run of it (`holding`), read in
+    /// place (decision 0628: a run's data in blocks).
+    index: Vector<[i64; 3]>,
+}
+
+impl Scan {
+    fn len(&self, width: usize) -> usize {
+        self.segs.last().map_or(0, |s| s.first + s.rows.len() / width)
+    }
+    /// Whether row `row` of the source is the scan's: the base's rows made on lookup are past its count too
+    /// (`within`'s at `1 << 30` and `1 << 31`).
+    fn holds(&self, row: usize, width: usize) -> bool {
+        (self.at..self.at + self.len(width)).contains(&row)
+    }
+    /// Row `i` of the scan's (from `at`).
+    fn row(&self, i: usize, width: usize) -> &[i64] {
+        let k = self.segs.partition_point(|s| s.first <= i) - 1;
+        let s = &self.segs[k];
+        let at = (i - s.first) * width;
+        &s.rows[at..at + width]
+    }
+    /// Every row, by its number in the source.
+    fn each(&self, width: usize, f: &mut dyn FnMut(usize, &[i64]) -> bool) {
+        for s in &self.segs {
+            for (i, r) in s.rows.chunks(width).enumerate() {
+                if !f(self.at + s.first + i, r) {
+                    return;
+                }
+            }
+        }
+    }
+    /// The rows whose `column` is `v`, by their numbers in the source.
+    fn holding(&self, column: usize, v: i64) -> impl Iterator<Item = usize> + '_ {
+        let key = [column as i64, v];
+        self.segs.iter().flat_map(move |s| {
+            let lo = s.index.partition_point(|e| [e[0], e[1]] < key);
+            let hi = lo + s.index[lo..].partition_point(|e| [e[0], e[1]] == key);
+            s.index[lo..hi].iter().map(move |e| self.at + s.first + e[2] as usize)
+        })
+    }
 }
 
 /// A chunk's source of relation `name`: the batch's (`base`), and the values admitted since, past its rows.
@@ -365,6 +432,54 @@ impl Layered {
     }
     fn has_parts(&self) -> bool {
         self.values.total(&self.name) > 0
+    }
+    /// Made on lookup, with values admitted: the scan's rows of the values (`Scan`), made up to the parts admitted
+    /// now; `f` reads them.
+    fn scanned<T>(&self, f: impl FnOnce(&Scan) -> T) -> Option<T> {
+        let made = self.made.as_ref()?;
+        if !self.has_parts() {
+            return None;
+        }
+        let width = self.width.max(1);
+        let mut made = made.lock();
+        if made.scan.is_none() {
+            made.scan = Some(Arc::new(Scan { at: self.base.len(), parts: 0, segs: Vec::new() }));
+        }
+        let scan = made.scan.as_ref().expect("made above");
+        let more = self.parts(|p| {
+            (scan.parts < p.list.len()).then(|| {
+                let first = scan.len(width);
+                let mut seg = Seg { first, rows: Vector::new(), index: Vector::new() };
+                for part in (&p.list).into_iter().skip(scan.parts) {
+                    for r in 0..part.src.len() {
+                        let row = (seg.rows.len() / width) as u32;
+                        for c in 0..self.width {
+                            let x = part.src.value(r, c);
+                            seg.rows.push(x);
+                            seg.index.push([c as i64, x, i64::from(row)]);
+                        }
+                    }
+                }
+                seg.index.sort_unstable();
+                (p.list.len(), seg)
+            })
+        });
+        if let Some((parts, seg)) = more.flatten() {
+            // The segments are shared, never their rows: the scan a reader holds keeps the segments it read.
+            let mut next = Scan { at: scan.at, parts, segs: scan.segs.clone() };
+            next.segs.push(Arc::new(seg));
+            assert!(next.at + next.len(width) <= MADE_AT, "{}: more rows scanned of the tape values than their room", self.name);
+            made.scan = Some(Arc::new(next));
+        }
+        // Read with the lock released: a reader may read this source again.
+        let scan = Arc::clone(made.scan.as_ref().expect("made above"));
+        drop(made);
+        Some(f(&scan))
+    }
+    /// The scan's rows of the values, when a scan has made them: `f` reads them.
+    fn if_scanned<T>(&self, f: impl FnOnce(&Scan) -> T) -> Option<T> {
+        let scanned = self.made.as_ref()?.lock().scan.is_some();
+        if scanned { self.scanned(f) } else { None }
     }
 }
 
@@ -431,9 +546,10 @@ impl Source for Layered {
         self.base.text_column(column)
     }
     fn len(&self) -> usize {
-        // Made on lookup, the base's rows grow as it is read; a value's are past them (`MADE_AT`), never scanned.
+        // Made on lookup, the base's rows grow as it is read; a scan's are every one of them, then the values' made
+        // whole past them (`Scan`). A lookup's of a value not scanned are at `MADE_AT`.
         if self.made.is_some() {
-            return self.base.len();
+            return self.scanned(|s| s.at + s.len(self.width.max(1))).unwrap_or_else(|| self.base.len());
         }
         self.base_len() + self.values.total(&self.name)
     }
@@ -448,6 +564,11 @@ impl Source for Layered {
     }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.base.statistics()
+    }
+    /// The base's counts: the values admitted past its rows are a few (a chunk's tape values), and a count read
+    /// across the rows made the base's batch whole.
+    fn value_counts(&self, wanted: &[(usize, i64)]) -> Option<Vector<i64>> {
+        self.base.value_counts(wanted)
     }
     fn indexed(&self, column: usize) -> bool {
         self.base.indexed(column)
@@ -469,6 +590,10 @@ impl Source for Layered {
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         let mut out = self.base.lookup(column, values)?;
+        if let Some(rows) = self.if_scanned(|s| values.iter().flat_map(|&v| s.holding(column, v)).collect::<Vec<_>>()) {
+            out.extend(rows);
+            return Some(out);
+        }
         if let Some(made) = &self.made {
             self.parts(|p| {
                 let mut made = made.lock();
@@ -562,7 +687,22 @@ impl Source for Layered {
         }) {
             return false;
         }
-        if !going || self.made.is_some() {
+        if !going {
+            return true;
+        }
+        if self.made.is_some() {
+            self.scanned(|s| {
+                let mut row = vec![0i64; columns.len()];
+                s.each(self.width.max(1), &mut |i, r| {
+                    if !keys.contains(&r[column]) {
+                        return true;
+                    }
+                    for (o, &c) in row.iter_mut().zip(columns) {
+                        *o = r[c];
+                    }
+                    each(i, &row)
+                });
+            });
             return true;
         }
         let mut row = vec![0i64; columns.len()];
@@ -600,6 +740,9 @@ impl Source for Layered {
     fn value(&self, row: usize, column: usize) -> i64 {
         if let Some(made) = &self.made {
             if row < MADE_AT {
+                if let Some(x) = self.if_scanned(|s| s.holds(row, self.width.max(1)).then(|| s.row(row - s.at, self.width.max(1))[column])).flatten() {
+                    return x;
+                }
                 return self.base.value(row, column);
             }
             return made.lock().rows.get((row - MADE_AT) * self.width + column).copied().unwrap_or(0);
@@ -611,7 +754,7 @@ impl Source for Layered {
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
         if self.made.is_some() {
-            if row < MADE_AT {
+            if row < MADE_AT && !self.if_scanned(|s| s.holds(row, self.width.max(1))).unwrap_or(false) {
                 return self.base.row_at(row, columns, out);
             }
             for (o, &c) in out.iter_mut().zip(columns) {
@@ -631,6 +774,16 @@ impl Source for Layered {
     fn for_rows(&self, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) {
         self.base.for_rows(columns, each);
         if self.made.is_some() {
+            self.scanned(|s| {
+                let mut row = vec![0i64; columns.len()];
+                s.each(self.width.max(1), &mut |i, r| {
+                    for (o, &c) in row.iter_mut().zip(columns) {
+                        *o = r[c];
+                    }
+                    each(i, &row);
+                    true
+                });
+            });
             return;
         }
         self.parts(|p| {
@@ -642,7 +795,23 @@ impl Source for Layered {
     }
     fn for_rows_in(&self, range: Range<usize>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) {
         if self.made.is_some() {
-            return self.base.for_rows_in(range, columns, each);
+            let Some(at) = self.scanned(|s| s.at) else { return self.base.for_rows_in(range, columns, each) };
+            let mut going = true;
+            if range.start < at {
+                self.base.for_rows_in(range.start..range.end.min(at), columns, &mut |r, row| {
+                    going = each(r, row);
+                    going
+                });
+            }
+            let mut row = vec![0i64; columns.len()];
+            for r in range.start.max(at)..range.end.min(self.len()) {
+                if !going {
+                    return;
+                }
+                self.row_at(r, columns, &mut row);
+                going = each(r, &row);
+            }
+            return;
         }
         let base = range.start.min(self.base_len())..range.end.min(self.base_len());
         let mut going = true;
@@ -666,6 +835,14 @@ impl Source for Layered {
     fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
         self.base.documents_of(column, each);
         if self.made.is_some() {
+            // A value's node is its document's: the key its id holds.
+            self.scanned(|s| {
+                s.each(self.width.max(1), &mut |i, r| {
+                    let id = r[column];
+                    each(i, if id >= 1 << 32 { id >> 32 } else { id });
+                    true
+                });
+            });
             return;
         }
         self.parts(|p| {
@@ -757,6 +934,42 @@ mod tests {
         let (p, row) = after.at(3 * 200 + 2).expect("the last row's part");
         assert_eq!((p.start, row), (600, 2));
         assert!(after.at(3 * 201).is_none());
+    }
+
+    /// A scan of a source made on lookup (an axis) holds its values' rows past its own, and a lookup then reads the
+    /// same rows (decision 0597): scanned, `has` over a Vue template's pieces held only the batch's rows, so a rule
+    /// that planned the scan first found none of the pieces' nodes. A value admitted since adds its rows past them.
+    #[test]
+    fn a_scan_of_a_source_made_on_lookup_holds_its_values_rows() {
+        let values = Arc::new(Values::default());
+        let part = || vec![("r".to_owned(), Arc::new(Counted(AtomicUsize::new(0), false)) as Arc<dyn Source>)];
+        let layered = Layered::new("r", Arc::new(Counted(AtomicUsize::new(0), true)) as Arc<dyn Source>, Arc::clone(&values));
+        values.add(&[1], part());
+        assert_eq!(layered.len(), 6);
+        let mut rows = Vec::new();
+        layered.for_rows(&[0, 1], &mut |r, row| rows.push((r, row.to_vec())));
+        let want: Vec<(usize, Vec<i64>)> = (0..6).map(|r| (r, vec![(r % 3) as i64; 2])).collect();
+        assert_eq!(rows, want);
+        assert_eq!((3..6).map(|r| layered.value(r, 1)).collect::<Vec<_>>(), [0, 1, 2]);
+        assert_eq!(layered.lookup(0, &[1]), Some(rerail_blocks::vector![4]), "a lookup reads the scan's row");
+        assert_eq!(layered.value(1 << 30, 0), (1 << 30) as i64, "a base's row past the scan's is the base's");
+        values.add(&[2], part());
+        assert_eq!(layered.len(), 9);
+        assert_eq!(layered.value(8, 0), 2);
+        assert_eq!(layered.lookup(1, &[2]), Some(rerail_blocks::vector![5, 8]));
+    }
+
+    /// A value's long-text nodes, kept though it has none (a Vue piece's string reads its value in its own batch),
+    /// answer for the value's own nodes alone, not its places' hosts': a host file's node read went to a string
+    /// annotation's batch and found nothing (corpus0: B009's `getattr(b, "x")` in a file with a quoted annotation).
+    #[test]
+    fn a_values_long_text_nodes_answer_for_its_own_nodes_alone() {
+        let values = Values::default();
+        let nodes = Arc::new(Counted(AtomicUsize::new(0), false)) as Arc<dyn Source>;
+        values.add(&[7, 1], vec![(super::super::LONG_TEXT_NODES.to_owned(), nodes), ("r".to_owned(), Arc::new(Counted(AtomicUsize::new(0), false)) as Arc<dyn Source>)]);
+        assert!(values.source_of(super::super::LONG_TEXT_NODES, 7 << 32).is_some(), "the value's own node");
+        assert!(values.source_of(super::super::LONG_TEXT_NODES, 1 << 32).is_none(), "its host's node is the batch's");
+        assert!(values.source_of("r", 1 << 32).is_some(), "another relation's rows of its host's nodes");
     }
 
     /// Every source a chunk binds is layered (decision 0431 §8), read or not: layering one counts none of its rows,

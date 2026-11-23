@@ -1357,10 +1357,7 @@ fn pipeline_of(source: &str, name: &str, format: u32) -> Result<LabelKernel, Err
 /// The label kernels of tape format `format` compiled (`metal_program_backend::kernels_ahead`), as a wave asks for them.
 /// The format a run places its tapes in (a 16z tape as 16), which its label batches are of.
 pub(in crate::code_rule_dsl) fn run_format() -> u32 {
-    match crate::code_rule_dsl::tape::formats::Format::of_run() {
-        crate::code_rule_dsl::tape::formats::Format::F15 => 15,
-        _ => 16,
-    }
+    16
 }
 
 pub(in crate::code_rule_dsl) fn compile_labels(format: u32) -> Result<(), Error> {

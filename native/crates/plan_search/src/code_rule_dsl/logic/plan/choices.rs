@@ -64,7 +64,7 @@ pub fn key(p: &super::body::Placed) -> [u8; 32] {
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     for switch in ["RERAIL_INLINE", "RERAIL_INLINE_ONLY", "RERAIL_OBSERVED_STEPS"] {
         hash.update(b"\0");
-        hash.update(std::env::var(switch).unwrap_or_default().as_bytes());
+        hash.update(crate::code_rule_dsl::logic::profile::var(switch).unwrap_or_default().as_bytes());
     }
     // A finding's message template is beside the program, not of it (decision 0225 §3): its edit plans nothing again.
     // The settings are one `.about` relation of the version's digest (a sum of its fact relations' hashes): its hash

@@ -21,21 +21,21 @@ pub const NO_VERSION: &str = "a read changed without a version";
 /// RERAIL_AGAIN_MIN` (default 1,024 rows: below it, maintaining costs little whatever the share). `RERAIL_AGAIN=off`
 /// maintains every stratum. Read at each choice, so a test can set them.
 pub fn past_threshold(delta: usize, stored: usize) -> bool {
-    if std::env::var("RERAIL_AGAIN").is_ok_and(|v| v == "off") {
+    if crate::code_rule_dsl::logic::profile::var("RERAIL_AGAIN").is_ok_and(|v| v == "off") {
         return false;
     }
-    let theta = std::env::var("RERAIL_AGAIN_THETA").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.25);
-    let min = std::env::var("RERAIL_AGAIN_MIN").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(1024);
+    let theta = crate::code_rule_dsl::logic::profile::var("RERAIL_AGAIN_THETA").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.25);
+    let min = crate::code_rule_dsl::logic::profile::var("RERAIL_AGAIN_MIN").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(1024);
     delta >= min && delta as f64 >= theta * stored as f64
 }
 
 /// Whether a change of `delta` rows is past `RERAIL_AGAIN_MIN` (default 1,024): below it, a stratum is maintained
 /// whatever its share or price.
 pub fn past_floor(delta: usize) -> bool {
-    if std::env::var("RERAIL_AGAIN").is_ok_and(|v| v == "off") {
+    if crate::code_rule_dsl::logic::profile::var("RERAIL_AGAIN").is_ok_and(|v| v == "off") {
         return false;
     }
-    delta >= std::env::var("RERAIL_AGAIN_MIN").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(1024)
+    delta >= crate::code_rule_dsl::logic::profile::var("RERAIL_AGAIN_MIN").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(1024)
 }
 
 /// 0090 §4's second clause (0364 R4): whether maintaining, priced at `mode` work, costs more than deriving again at

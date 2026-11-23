@@ -132,6 +132,42 @@ fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
     crate::code_rule_dsl::logic::settings::program_text(&path).map(Some).map_err(Error::Plan)
 }
 
+/// The phase programs lowered, kept for the process (decision 0442: the shared object's) by their text and include
+/// graph (`rr::graph_digest`, as `combine` keys a text) and the switches set: a phase's program is the same in every run, and each run
+/// lowered it again (phase 1's `sources.rerail`, 0.05-0.07 s of a run at the tests' opt-level).
+#[derive(Default)]
+pub struct PhasePrograms(std::sync::Mutex<HashMap<[u8; 32], std::sync::Arc<Version>>>);
+
+/// Phase program `src` lowered (`rr::parse_version`), or as an earlier run of the process lowered it (`PhasePrograms`).
+fn lowered(src: &str) -> Result<std::sync::Arc<Version>> {
+    use sha2::Digest as _;
+    const KEPT: usize = 16;
+    let mut hash = sha2::Sha256::new();
+    hash.update(src.as_bytes());
+    // Under another value of a switch, the same text may lower to another program: each one set that can change what a
+    // run outputs (`reuse::measures_only` the rest), as a run's key holds them. A test sets them while others run.
+    for (k, v) in crate::code_rule_dsl::logic::profile::vars() {
+        if !super::reuse::measures_only(&k) {
+            hash.update(format!("\0{k}={v}").as_bytes());
+        }
+    }
+    if let Some(graph) = crate::code_rule_dsl::logic::rr::graph_digest(src)? {
+        hash.update(graph);
+    }
+    let key: [u8; 32] = hash.finalize().into();
+    let held = crate::code_rule_dsl::logic::profile::shared::<PhasePrograms>();
+    if let Some(v) = held.0.lock().expect("the phase programs").get(&key) {
+        return Ok(std::sync::Arc::clone(v));
+    }
+    let v = crate::code_rule_dsl::logic::rr::parse_version(src)?;
+    let mut kept = held.0.lock().expect("the phase programs");
+    if kept.len() >= KEPT {
+        kept.clear();
+    }
+    kept.insert(key, std::sync::Arc::clone(&v));
+    Ok(v)
+}
+
 /// The engine's own phase programs' directory: where a phase is found when no `phase_dir` is given (`locate`), and
 /// where phase 0 finds the phases a program names (`phase0::phase_lib`).
 pub(super) fn builtin_dir() -> PathBuf {
@@ -376,7 +412,7 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
         // An earlier phase that reads a phase of its own runs that one first, inside its run (struct, then types).
         let _running = Running::enter(&name)?;
         let src = source(&name, dir.as_deref())?.expect("a phase program");
-        let program = crate::code_rule_dsl::logic::rr::parse_version(&src)?;
+        let program = lowered(&src)?;
         // A later phase sees the libraries only through what earlier ones hand on (0083 §1: P3 loads nothing).
         if shape.made.contains("load") && loads_documents(&program, dir.as_deref(), &mut BTreeSet::new())? {
             return Err(Error::Plan(format!("a program reading phase {name}, whose fixed point loaded documents, loads documents itself: it reads the libraries through {name}'s exports")));
@@ -539,7 +575,7 @@ pub fn sources(
         let (one, exports) = found;
         return Ok((one, PhaseRun { name: NAME.to_owned(), report: Report::default(), exports }));
     }
-    let program = crate::code_rule_dsl::logic::rr::parse_version(&src)?;
+    let program = lowered(&src)?;
     let declared = declared(&*program).ok_or_else(|| Error::Plan(format!("{NAME}.rerail: no `.phase {NAME}`")))?;
     // Its documents are those it loads: it is given no file of its own, and its language is the run's. The program
     // read, given that language and its exports as its outputs (decision 0249), not its text with directives after it.
@@ -619,7 +655,7 @@ fn loads_documents(program: &Version, dir: Option<&Path>, seen: &mut BTreeSet<St
             continue;
         }
         let src = source(&name, dir)?.expect("a phase program");
-        if loads_documents(&*crate::code_rule_dsl::logic::rr::parse_version(&src)?, dir, seen)? {
+        if loads_documents(&*lowered(&src)?, dir, seen)? {
             return Ok(true);
         }
     }

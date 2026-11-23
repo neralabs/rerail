@@ -17,7 +17,7 @@
 .violation ref_operand(at: node, m: symbol) code "vue/no-ref-as-operand"
     "Must use `.value` to read or write the value wrapped by `{m}()`."
     suppress eslint "vue/no-ref-as-operand"
-ref_operand(r, m) :- ref_read(r, s, m), operand(r, s).
+ref_operand_in(r, m) :- ref_read(r, s, m), operand(r, s).
 
 // ref_var(s, m, decl): declaration site s holds a ref made by m; decl is "const", "let" or "var".
 .decl ref_var(s: node, m: symbol, decl: symbol)
@@ -90,3 +90,10 @@ emitter(p) :- vsetup(_, f), fn_param(f, q, 1), kind(q, "object_pattern"), child(
 setup_context(p) :- vsetup(_, f), fn_param(f, p, 1), kind(p, "identifier").
 .decl fn_param(f: node, p: node, i: number)  // the i-th parameter's pattern
 fn_param(f, p, i) :- field(f, "parameters", ps), child(ps, q, i), (field(q, "pattern", p) ; !field(q, "pattern", _), p = q).
+
+// The rules above are the context `script`'s (decision 0597): they read the scripts' nodes. The host reports what
+// they find, at each node's own bytes.
+.decl ref_operand_in(at: node, m: symbol)
+.context script of vue roots vscript_root exports ref_operand_in
+.from script ref_operand_in
+ref_operand(at, m) :- ref_operand_in(at, m).

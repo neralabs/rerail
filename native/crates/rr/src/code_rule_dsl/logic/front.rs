@@ -142,7 +142,7 @@ pub fn orders_nodes() -> bool {
     }
     // A measurement, never a mode to run in: comparisons of the node ids themselves, which an edit leaves alone outside
     // the granules it touches but which are not in preorder. What a stable order key could save at most.
-    if std::env::var_os("RERAIL_ORDER_RAW").is_some() {
+    if crate::code_rule_dsl::logic::profile::var_os("RERAIL_ORDER_RAW").is_some() {
         crate::code_rule_dsl::logic::profile::decision("node comparisons (RERAIL_ORDER_RAW)", || "node ids compared as they are, not by node_order: a measurement only".into());
         return false;
     }

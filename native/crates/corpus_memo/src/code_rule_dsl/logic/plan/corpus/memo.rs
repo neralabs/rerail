@@ -41,8 +41,8 @@ pub fn outputs_alone(rel: &str) -> bool {
 /// requests, `Answered`), in the order answered. A chunk that reads the entry makes its values in the corpus batch
 /// from them, as the fixpoint admitted them (`Guests::admit`, `Guests::admit_value`): each tape found by its text among
 /// the root's last runs' and its source named in the manifest (0431 R6), as the run that parsed it named it. A chunk of
-/// partial hits whose cone sees guests admits them before its run, as far as the cone sees them (a cone reading a
-/// relation hiding widened to annotations, `FoldOwn`, asks none itself): no entry keeps a base relation's rows
+/// partial hits whose cone sees guests admits them before its run, as far as the cone sees them: no entry keeps a
+/// base relation's rows
 /// (decision 0458 step 4), so they are made again. Not an output.
 pub const VALUES: &str = "values:";
 

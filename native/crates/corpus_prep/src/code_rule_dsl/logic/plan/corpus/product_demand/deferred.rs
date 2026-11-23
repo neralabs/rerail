@@ -150,6 +150,23 @@ fn void_request(v: &Version, rel: &str, cols: &[usize], proof: &upstream::Proof)
     keyed
 }
 
+/// Whether a reader's request (`proof`) of `rel`, a context's instance (decision 0597), reads a relation no rule derives:
+/// a scan of the batch, which lists no tape value's nodes (decision 0431 §8: a value's nodes are reached by lookup),
+/// so the request holds none of the context's nodes and the join it guards finds nothing. A join left as written is
+/// always right. vue's `getter(f, x) :- vcomputed(_, x, f), docof(f, d)` in the context `script` asked
+/// `rr_deferred_pairs_…_vcomputed(f) :- docof(f, _)` and found no computed getter of a component's script.
+fn blind_in_a_context(v: &Version, rel: &str, proof: &upstream::Proof) -> bool {
+    if !crate::code_rule_dsl::logic::passes_made::of_a_context(rel) {
+        return false;
+    }
+    let Some(reader) = v.rule(proof.rule) else { return true };
+    let derived = |a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>| v.heads(a.rel()).next().is_some();
+    proof.parts.iter().any(|part| match *part {
+        super::Part::Lit(j) => reader.body().nth(j).and_then(|l| l.atom()).is_some_and(|a| !a.neg() && !derived(a)),
+        _ => false,
+    })
+}
+
 /// The pass over `p` (its input `input`): which restrictions the readers give each binary join (the module comment),
 /// and the rewrites made. `adaptive`: endpoints shared and reduced factors for broad readers; `cache_pairs`: pair
 /// caches admitted besides.
@@ -276,7 +293,7 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
     };
     // The requests installed, once every read is classified: in rounds, each one derivation of the program.
     let requests: Vec<(String, &[usize])> = pairs.iter().map(|(rel, cols, _)| (rel.clone(), *cols)).collect();
-    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r)))?;
+    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r) || blind_in_a_context(v, rel, r)))?;
     let mut no_inline = Vec::new();
     for ((rel, cols, positive), installed) in pairs.into_iter().zip(installed) {
         if !installed {

@@ -377,10 +377,9 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
 }
 
 /// A policy's findings are its run alone's whatever else shares its pack (RUF060 beside C417; main's #923). `anns`
-/// reads `list_like` from a string annotation, so hiding copies it for the annotation, and folding the copy widens
-/// `list_like` to take the annotations in (`combining::FoldOwn`). `cmps` reads it through `empty_literal` from the file:
-/// beside `anns` it found the annotation's `1 in []` as well, which it does not alone. Its `Cmp` shows `cmp`'s node,
-/// so it reads `cmp` as hiding left it (`rr_narrow_cmp`, `combining::Narrowing`, decision 0165).
+/// reads `list_like` in a string annotation, as a rule of the annotation context (decision 0597): its own instance,
+/// over the annotations' trees. `cmps` reads `list_like` through `empty_literal` from the file: when the pack folded
+/// the annotation's copy into `list_like`, beside `anns` it found the annotation's `1 in []` as well.
 #[test]
 fn a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("corun-annotations");

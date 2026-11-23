@@ -94,7 +94,8 @@ pub fn compiled_grammars() -> Grammars<'static> {
 struct Unit {
     path: String,
     src: Vec<u8>,
-    lines: Vec<u32>,
+    /// Its lines, C's (`tape::LINE_ENDS`, decision 0612): its own line index, in the tape's format.
+    lines: rerail_tape_format::newlines::Lines,
     found_by: Option<u32>,
     /// Its directives, tape and chains: `None` for a file only embedded (data, never lexed).
     lexed: Option<Lexed>,
@@ -150,12 +151,7 @@ impl<F: rerail_c_pp::files::Files> Tu<'_, F> {
 
     /// A unit of `src`, not lexed yet.
     fn unit(&mut self, path: String, src: Vec<u8>, found_by: Option<u32>) -> usize {
-        let mut lines = Vec::new();
-        let mut i = 0;
-        while let Some(k) = rerail_simd8::micro::find(&src, i, b'\n') {
-            lines.push(k as u32);
-            i = k + 1;
-        }
+        let lines = rerail_tape_format::newlines::Lines::of(&src, rerail_c_pp::tape::LINE_ENDS);
         self.units.push(Unit { path, src, lines, found_by, lexed: None, includes: Vec::new(), named: Vec::new(), resolved: false });
         self.units.len() - 1
     }
@@ -325,7 +321,7 @@ pub fn expand_tus_with<F: rerail_c_pp::files::Files>(tus: &mut [(&str, &mut F, b
                 .zip(&tapes)
                 .map(|(&i, tapes)| {
                     let tu = &states[i];
-                    let mut files: Vec<File> = tu.units.iter().zip(tapes).map(|(u, t)| File { path: u.path.as_bytes(), bytes: &u.src, lines: &u.lines, toks: t, chains: u.lexed.as_ref().map_or(&[][..], |l| &l.chains), includes: &u.includes, named: &u.named }).collect();
+                    let mut files: Vec<File> = tu.units.iter().zip(tapes).map(|(u, t)| File { path: u.path.as_bytes(), bytes: &u.src, lines: u.lines.bytes(), toks: t, chains: u.lexed.as_ref().map_or(&[][..], |l| &l.chains), includes: &u.includes, named: &u.named }).collect();
                     files.push(File { bytes: &tu.spelled, ..File::default() });
                     files
                 })

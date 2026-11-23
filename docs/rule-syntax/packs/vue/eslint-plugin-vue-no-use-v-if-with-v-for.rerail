@@ -15,11 +15,18 @@
     suppress eslint "vue/no-use-v-if-with-v-for"
 v_if_with_v_for(a, "This 'v-if' should be moved to the wrapper element.") :- v_if(e, a), !uses_alias(a, e).
 v_if_with_v_for(a, cat("Replace '", t, "' in this v-for with a computed property that returns the filtered list, and drop the v-if.")) :-
-    uses_alias(a, e), !option("allowUsingIterationVar", "true"), vfor(e, _, _, src), kind(src, "identifier"), text(src, t).
+    uses_alias(a, e), !option("allowUsingIterationVar", "true"), list_text(e, t, "true").
 v_if_with_v_for(a, cat("Replace the '", t, "' expression in this v-for with a computed property that returns the filtered list, and drop the v-if.")) :-
-    uses_alias(a, e), !option("allowUsingIterationVar", "true"), vfor(e, _, _, src), !kind(src, "identifier"), text(src, t).
+    uses_alias(a, e), !option("allowUsingIterationVar", "true"), list_text(e, t, "false").
 .decl v_if(e: node, a: node)
 v_if(e, a) :- vdir(e, a, "if", _), vdir(e, _, "for", _).
 // uses_alias(a, e): v-if a reads a variable e's own v-for declares.
+// list_text(e, t, plain): the text t of e's v-for list, and whether it is a plain name; read in the context
+// `expression`: the list is its node (decision 0597).
+.decl list_text(e: node, t: symbol, plain: symbol)
+list_text(e, t, "true") :- vfor(e, _, _, src), kind(src, "identifier"), text(src, t).
+list_text(e, t, "false") :- vfor(e, _, _, src), !kind(src, "identifier"), text(src, t).
+.context expression of vue roots vexpr_root exports list_text
+.from expression list_text
 .decl uses_alias(a: node, e: node)
 uses_alias(a, e) :- v_if(e, a), tref(_, x, a), tvar(e, x, _, "v-for").

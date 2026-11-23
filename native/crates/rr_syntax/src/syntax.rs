@@ -259,22 +259,27 @@ pub fn lex(src: &str) -> Lexed<'_> {
     Lexed { toks: out, comments, error }
 }
 
+/// The terminators a rule file's lines end at: the rr language's (its adapter's `TERMINATORS`, decision 0612), so a
+/// parser's line is the line a finding in the file names.
+pub const TERMINATORS: rerail_tape_format::newlines::Terminators = rerail_tape_format::newlines::Terminators::Newlines;
+
+/// The line of byte `pos`, from 1.
 pub fn line_of(src: &str, pos: usize) -> usize {
-    src[..pos.min(src.len())].bytes().filter(|&b| b == b'\n').count() + 1
+    Lines::of(src).line(pos)
 }
 
-/// Where each line of a text starts, so a position's line is a binary search, not a count from the start: a parser
-/// asks the line of every statement, and a count from the start made a long file quadratic.
-pub struct Lines(Vec<usize>);
+/// A rule file's lines (decision 0612): its own line index, in the tape's format, read by the tape's reads, so a
+/// position's line is a search of the index, not a count from the start (which made a long file quadratic).
+pub struct Lines(rerail_tape_format::newlines::Lines);
 
 impl Lines {
     pub fn of(src: &str) -> Self {
-        Lines(src.bytes().enumerate().filter(|&(_, b)| b == b'\n').map(|(i, _)| i).collect())
+        Lines(rerail_tape_format::newlines::Lines::of(src.as_bytes(), TERMINATORS))
     }
 
-    /// The line of byte `pos`, from 1, as `line_of` gives it.
+    /// The line of byte `pos`, from 1.
     pub fn line(&self, pos: usize) -> usize {
-        self.0.partition_point(|&newline| newline < pos) + 1
+        self.0.line(pos) + 1
     }
 }
 

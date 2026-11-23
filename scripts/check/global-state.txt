@@ -99,6 +99,7 @@ native/crates/facts_base/src/code_rule_dsl/facts/nearest.rs::NEAREST	stays	compi
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::BLOCK_DEVICE	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::HEAP_NET	stays	code a crate above registers at load (the allocator's net count)
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::HEAP_PEAK	stays	the allocator's per-thread peak a crate above registers once (decision 0469)
+native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::SOURCES_HELD	stays	code registered at load (a hook: the batches' relations held, from the crate above)
 native/crates/facts_base/src/code_rule_dsl/facts/span_prefilter.rs::SPAN_PREFILTER	stays	compiled once from the engine's own code
 native/crates/facts_base/src/code_rule_dsl/facts/vtab.rs::CLOSES	stays	a generation counter: append-only
 native/crates/facts_base/src/code_rule_dsl/facts/vtab.rs::FORGET	stays	code registered at load
@@ -148,7 +149,6 @@ native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::IDS	stays	computed once 
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::JAVASCRIPT	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TSX	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TYPESCRIPT	stays	code registered at load
-native/crates/lang/src/code_rule_dsl/tape/formats.rs::SAID	stays	a warning said once a process
 native/crates/lang/src/code_rule_dsl/tape/go_lean.rs::IDS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/html_lean.rs::IDS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/java_lean.rs::IDS	stays	computed once from the engine's own files
@@ -191,6 +191,7 @@ native/crates/lang_ecma/src/code_rule_dsl/npm_ignore/mod.rs::UNESCAPE_METACHARAC
 native/crates/lang_ecma/src/code_rule_dsl/npm_ignore/mod.rs::WILDCARDS	stays	a regex of a literal
 native/crates/lang_ecma/src/code_rule_dsl/package_manifest.rs::DEFAULT_NODE_RANGE	stays	computed once from the engine's constants
 native/crates/lang_ecma/src/code_rule_dsl/scope/ecma.rs::SCRIPTS	stays	computed once from the engine's own files
+native/crates/lang_ecma/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers its packs)
 native/crates/lang_json/src/code_rule_dsl/transducer/packed/json_parser.rs::PARSER	stays	computed once from the engine's own files
 native/crates/lang_json/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::DOM	stays	code registered at load
 native/crates/lang_json/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::KINDS	stays	computed once from the engine's own files

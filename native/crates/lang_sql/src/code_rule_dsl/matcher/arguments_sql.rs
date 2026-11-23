@@ -226,10 +226,9 @@ pub mod tests {
 
     /// 1-based line and 1-based code point column of a byte offset.
     fn position(source: &str, byte: usize) -> (u64, u64) {
-        let before = &source[..byte];
-        let line = before.matches('\n').count() as u64 + 1;
-        let start = before.rfind('\n').map_or(0, |i| i + 1);
-        (line, before[start..].chars().count() as u64 + 1)
+        let lines = crate::code_rule_dsl::lines::LineTable::new(source, crate::code_rule_dsl::lines::terminators(crate::code_rule_dsl::language::GrammarDialect::Sql));
+        let line = lines.line(byte);
+        (line as u64 + 1, source[lines.start(line)..byte].chars().count() as u64 + 1)
     }
 
     /// Oracle calls the grammar does not read as an `invocation`, by (name, line): none; the

@@ -822,7 +822,7 @@ fn corpus_trees_equal_the_evaluator() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+        let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         let compiled = match bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)) {
             Ok(c) => c,
             Err(e) => {
@@ -870,7 +870,7 @@ fn corpus_trees_compiled_equal_the_interpreters() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+        let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: {e}"));
         let program = rir::assemble(&compiled.text()).unwrap_or_else(|e| panic!("{name}: assembles: {e}"));
         let native = native_ir::lower(&program, 0, 0).expect("lowers");

@@ -8,13 +8,15 @@ description = "Tier 1 on the CPU: block programs lowered to Cranelift, their byt
 build = "../compiler/build.rs"
 
 [features]
-test-hooks = ["rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-context/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-context/test-hooks", "rerail-tape-format/test-hooks"]
 
 [dependencies]
 # The block runs' outputs (`BlockRun`), in blocks (decision 0353).
 rerail-blocks = { path = "../blocks" }
 rerail-compiler = { path = "../compiler" }
 rerail-context = { path = "../context" }
+# A stream's line ends' terminators (decision 0612), which the format 16 tape's line index is made for.
+rerail-tape-format = { path = "../tape_format" }
 cranelift-codegen = "=0.125.4"
 cranelift-frontend = "=0.125.4"
 cranelift-module = "=0.125.4"

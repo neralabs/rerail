@@ -103,7 +103,7 @@ pub fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<String>, P
     // pieces (`__` in the name, which `refusals` stores as the engine's). Nothing may be inlined, which the names
     // and qualifiers alone tell, before the strata, refusals and readers of its some 17,000 rules are made (0117
     // step 3: the whole-program passes not made each step).
-    if std::env::var_os("RERAIL_INLINE_ONLY").is_none() && !ids_of.keys().any(|rel| f.qualified(rel, "inline") || !(f.qualified(rel, "no_inline") || rel.contains("__"))) {
+    if crate::code_rule_dsl::logic::profile::var_os("RERAIL_INLINE_ONLY").is_none() && !ids_of.keys().any(|rel| f.qualified(rel, "inline") || !(f.qualified(rel, "no_inline") || rel.contains("__"))) {
         super::super::profile::decision("inline or store (decision 0099)", || "no relation may be inlined (each `.decl … no_inline` or a session's piece): nothing estimated".to_owned());
         return Ok(None);
     }
@@ -125,7 +125,7 @@ pub fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<String>, P
     }
     // `RERAIL_INLINE_ONLY=r,…` (the lab's comparison): those relations inlined where they can be, every other stored.
     // Read before the cone (below) is chosen.
-    let only: Option<Vec<String>> = std::env::var("RERAIL_INLINE_ONLY").ok().map(|v| v.split(',').map(str::to_owned).collect());
+    let only: Option<Vec<String>> = crate::code_rule_dsl::logic::profile::var("RERAIL_INLINE_ONLY").ok().map(|v| v.split(',').map(str::to_owned).collect());
     // The estimates below plan rules, which a maintained program has about ten times of. They price only a relation
     // that may be inlined: none (a session's part stores its relations, decision 0099), none are made.
     let open = |rel: &str| !f.qualified(rel, "no_inline") && !reasons.contains_key(rel) && readers.contains_key(rel);

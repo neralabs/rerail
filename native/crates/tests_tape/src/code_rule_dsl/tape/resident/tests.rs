@@ -1,22 +1,15 @@
     use super::*;
 
-    /// Node `i` read from the image's bytes in place, as the device reads it.
-    fn read(bytes: &[u8], layout: &Layout, codes: &[DeviceCode], i: usize) -> (DeviceCode, u32, u32, u32) {
-        let code = codes[cell_at(bytes, layout.code, 2, i) as usize];
-        let start = |i: usize| cell_at(bytes, layout.base, 4, i / CHECKPOINT_STRIDE) + cell_at(bytes, layout.off, layout.widths[1], i);
-        let size = size_at(bytes, layout, i);
-        let tail = cell_at(bytes, layout.tail, layout.widths[2], i);
-        let end = if layout.from_start { start(i) } else { start(i + size as usize - 1) } + tail;
-        (code, start(i), end, size)
-    }
-
+    /// A stored format 16 tape read in place, as the device reads it (the reads written once in CLIF, decision 0310),
+    /// is the restored tape: each node's code through its language's table (`doc_codes`), its span, its subtree and
+    /// its parent.
     #[test]
     fn an_image_read_in_place_is_the_restored_tape() {
-        // Format 15's columns, which `layout` reads; format 16's arrays are read through the CLIF view (0310).
-        crate::code_rule_dsl::tape::formats::as_run(crate::code_rule_dsl::tape::formats::Format::F15, format_15_images_read_in_place);
+        crate::code_rule_dsl::tape::formats::as_run(crate::code_rule_dsl::tape::formats::Format::F16, format_16_images_read_in_place);
     }
 
-    fn format_15_images_read_in_place() {
+    fn format_16_images_read_in_place() {
+        use rerail_tape_format::reads::f16;
         for (source, lang) in [
             ("value = left + right\nclass A:\n    def f(self, x=[]):\n        return (yield x)\n", GrammarDialect::Python),
             ("const f = (a, b) => { return a?.b ?? `t${b}`; };\n// c\n", GrammarDialect::JavaScript),
@@ -28,23 +21,20 @@
             let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
             let tape = TapeDoc::restore(Arc::new(source.to_owned()), Arc::clone(&grammar), &image, &|| false).unwrap();
             let bytes = tape.resident_parts(None).unwrap().0;
-            let layout = layout(&bytes).unwrap();
-            for column in [layout.code, layout.size, layout.base, layout.off, layout.tail] {
-                assert_eq!(column % COLUMN_ALIGN, 0, "{lang:?}: columns are aligned");
-            }
-            assert_eq!(layout.nodes as usize, tape.transducer_len());
-            assert_eq!(layout.source_len, source.len());
-            let codes = device_codes(&bytes, &layout, &grammar).unwrap();
-            let mut parents_column = vec![0; layout.nodes as usize];
-            parents(&bytes, &layout, &mut parents_column).unwrap();
-            for i in 0..layout.nodes {
-                let (code, start, end, size) = read(&bytes, &layout, &codes, i as usize);
+            assert!(matches!(stored(&bytes), Ok(Stored::F16)), "{lang:?}: a format 16 image");
+            assert!(std::ptr::eq(lang_of(&bytes).unwrap(), tape.doc_tape().image().lang().unwrap()), "{lang:?}: its language's table");
+            let codes = doc_codes(&tape).unwrap();
+            let (t, v) = tape.doc_tape().in_place().unwrap();
+            assert_eq!(v.nodes as usize, tape.transducer_len());
+            for i in 0..v.nodes {
+                let code = codes[f16::number(t, &v, i) as usize];
                 assert_eq!(code.kind, tape.transducer_kind(i), "{lang:?} node {i} kind");
                 assert_eq!(code.field, tape.transducer_field(i), "{lang:?} node {i} field");
                 assert_eq!(code.flags, tape.transducer_flags(i), "{lang:?} node {i} flags");
-                assert_eq!(start as usize..end as usize, tape.transducer_span(i), "{lang:?} node {i} span");
-                assert_eq!(i + 1..i + size, tape.transducer_descendants(i), "{lang:?} node {i} size");
-                assert_eq!((parents_column[i as usize] != NONE).then_some(parents_column[i as usize]), tape.transducer_parent(i), "{lang:?} node {i} parent");
+                assert_eq!(f16::start(t, &v, i) as usize..f16::end(t, &v, i) as usize, tape.transducer_span(i), "{lang:?} node {i} span");
+                assert_eq!(i + 1..i + f16::size(t, &v, i), tape.transducer_descendants(i), "{lang:?} node {i} size");
+                let parent = f16::parent(t, &v, i);
+                assert_eq!((parent != NONE).then_some(parent), tape.transducer_parent(i), "{lang:?} node {i} parent");
                 let classes = tape.transducer_supertypes().filter(|&(node, _)| node == i).map(|(_, class)| class).collect::<Vec<_>>();
                 assert_eq!(&code.classes[..usize::from(code.class_count)], classes.as_slice(), "{lang:?} node {i} classes");
             }

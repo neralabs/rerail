@@ -509,7 +509,7 @@ impl Via {
     pub fn host_family(self) -> Family {
         GrammarDialect::ALL
             .iter()
-            .find(|dialect| dialect.embeds().iter().any(|&(via, _)| via == self))
+            .find(|dialect| dialect.embeds().iter().chain(dialect.demand_embeds()).any(|&(via, _)| via == self))
             .map(|&dialect| Family::of(dialect))
             .expect("an embedding has a host dialect")
     }
@@ -562,10 +562,18 @@ pub fn fragments() -> &'static [(&'static str, GrammarDialect, &'static str, u8)
     FRAGMENTS
 }
 
-/// The grammar a guest's kinds are named in: a fragment's dialect's label, else the grammar itself (a dialect's
-/// label).
+/// The grammar a guest's kinds are named in: a fragment's dialect's label, an on-demand embedding's one dialect's
+/// (`vue-expression`: TypeScript, decision 0597), else the grammar itself (a dialect's label).
 pub fn kinds_label(grammar: &str) -> &str {
-    fragment(grammar).and_then(|(dialect, _)| label(dialect)).unwrap_or(grammar)
+    fragment(grammar).and_then(|(dialect, _)| label(dialect)).or_else(|| demand_dialect(grammar).and_then(label)).unwrap_or(grammar)
+}
+
+/// The one dialect an on-demand embedding of id `via` gives (`GrammarDialect::demand_embeds`); `None` for another
+/// name, or an embedding of several (`vue-script`: a script's `lang` says).
+pub fn demand_dialect(via: &str) -> Option<GrammarDialect> {
+    let mut of = GrammarDialect::ALL.iter().flat_map(|d| d.demand_embeds().iter()).filter(|(v, _)| v.id() == via).map(|&(_, d)| d);
+    let first = of.next()?;
+    of.all(|d| d == first).then_some(first)
 }
 
 /// Whether `name` is a grammar a rule may name in `embed`, `sub_tape` or `parsed`: a supported dialect's label, a
@@ -576,7 +584,7 @@ pub fn is_grammar(name: &str) -> bool {
         || dialect_by_label(name).is_some()
         || GrammarDialect::ALL
             .iter()
-            .any(|d| d.embeds().iter().any(|(via, _)| via.id() == name))
+            .any(|d| d.embeds().iter().chain(d.demand_embeds()).any(|(via, _)| via.id() == name))
 }
 
 /// A dialect by its label. A grammar named as main's rules name theirs, in camel case (`percentFormat`), is the

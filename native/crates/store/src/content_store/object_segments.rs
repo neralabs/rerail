@@ -567,6 +567,13 @@ impl ContentStore {
         self.compact_object_segments_within(floor, super::segments::SEGMENT_BUDGET)
     }
 
+    /// Every object segment merged into one, its placed objects copied (`compact_object_segments` with no budget):
+    /// for a store that is copied whole many times (a test template), whose copies each take its files. Returns the
+    /// bytes freed.
+    pub fn pack_object_segments(&self) -> StoreResult<u64> {
+        self.compact_object_segments_within(u64::MAX, 0)
+    }
+
     /// `compact_object_segments`, keeping at most `budget` segments. Chosen again in the write transaction
     /// (`SegmentKind::compact`); read before it too, so a store with nothing due takes no write lock.
     fn compact_object_segments_within(&self, floor: u64, budget: usize) -> StoreResult<u64> {

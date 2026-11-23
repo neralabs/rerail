@@ -483,6 +483,8 @@ pub struct Symbols<'a> {
     /// A node kind's id (named first, then anonymous), or a supertype's.
     pub kind: &'a dyn Fn(&str) -> Option<u16>,
     pub field: &'a dyn Fn(&str) -> Option<u16>,
+    /// The line terminators of the grammar's language (decision 0612): tier 1's line ends, the tape's line index's.
+    pub terminators: rerail_tape_format::newlines::Terminators,
 }
 
 /// Compile `stmts`, with `outputs` (mask names, or `FALLBACK`) as the block program's first
@@ -660,11 +662,11 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         for &m in mark_masks {
             vals.push((STREAM_MARK.to_owned(), m));
         }
-        // The stream's newlines, for the tape's newline index (`BlockProgram::newlines`).
-        let mut nl = [0u64; 4];
-        nl[0] = 1 << b'\n';
-        vals.push((STREAM_NEWLINE.to_owned(), low.class_set(nl)));
-        newline_at = Some(vals.len() - 1);
+        // The stream's candidate line ends, for the tape's line index (`BlockProgram::newlines`): the bytes a
+        // terminator the grammar's language reads (decision 0612) can end with.
+        let set = symbols.map(|s| s.terminators).ok_or("a tree section needs the grammar's ids")?;
+        vals.push((STREAM_NEWLINE.to_owned(), line_ends(&mut low, set)));
+        newline_at = Some((vals.len() - 1, set));
     }
     let mut delay = vals.iter().map(|x| x.1.d).max().unwrap_or(0);
     // Each output once, at one delay: its value's (`outputs`, the masks and the records find an
@@ -710,7 +712,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     if let Some((text, lowered, _, mark_masks, records)) = tier2 {
         let (s, l) = stream.expect("a tree section's stream");
         low.program.extracts = rerail_blocks::vector![at[s], at[l]];
-        low.program.newlines = newline_at.map(|k| at[k]);
+        low.program.newlines = newline_at.map(|(k, set)| (at[k], set));
         low.program.records = Some(records);
         // Each mark's mask: `MARK`'s operand.
         low.program.masks = (0..mark_masks.len()).map(|k| at[l + 1 + k]).collect();
@@ -2859,6 +2861,17 @@ impl Lowering {
 
 /// The products whose union is the class `ranges`: high nibbles grouped by their set of low
 /// nibbles.
+/// The bytes a line terminator of `set` can end with (`Terminators::last_bytes`), one class: the candidates the tape's
+/// line index keeps where they end one (`Terminators::ends_at`), as simdjson's structurals are a class its stage 2
+/// reads. A test of the bytes around each in the loop (a `\r` not before a `\n`) would hold registers the hot loop needs.
+fn line_ends(low: &mut Lowering, set: rerail_tape_format::newlines::Terminators) -> Val {
+    let mut s = [0u64; 4];
+    for &b in set.last_bytes() {
+        s[usize::from(b >> 6)] |= 1 << (b & 63);
+    }
+    low.class_set(s)
+}
+
 pub fn products(ranges: &[(u32, u32)]) -> Vec<Product> {
     let mut out: Vec<Product> = Vec::new();
     for h in 0..16u32 {
@@ -2940,7 +2953,7 @@ pub fn live_of(program: &BlockProgram, keep: &[bool]) -> BlockProgram {
     out.extracts = program.extracts.iter().map(|&v| n(v)).collect();
     out.totals = program.totals.iter().map(|&v| n(v)).collect();
     out.masks = program.masks.iter().map(|&v| n(v)).collect();
-    out.newlines = program.newlines.map(n);
+    out.newlines = program.newlines.map(|(v, set)| (n(v), set));
     let kept_groups: Vec<usize> = (0..program.rounds.len()).filter(|&g| keep[usize::from(program.rounds[g][0].0)]).collect();
     out.rounds = kept_groups.iter().map(|&g| program.rounds[g].iter().map(|&(c, x)| (n(c), n(x))).collect()).collect();
     out.walks = program

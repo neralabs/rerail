@@ -43,25 +43,6 @@ pub fn visit(
     {
         return Err("tape grammar or source revision mismatch".into());
     }
-    if let Some(c) = image.f15() {
-        let count = c.node_count();
-        let widths_valid = [c.widths[0], c.widths[1], c.widths[2] & !TAIL_FROM_START].iter().all(|width| matches!(width, 2 | 4));
-        if !widths_valid
-            || c.code().len() != count * 2
-            || c.size().len() != count * c.size_width()
-            || c.base().len() != count.div_ceil(CHECKPOINT_STRIDE) * 4
-            || c.off().len() != count * c.off_width()
-            || c.tail().len() != count * c.tail_width()
-        {
-            return Err("malformed v9np tape".into());
-        }
-        // Format 15's code slots: none past the count, and the unused ones zero.
-        if c.codes.iter().any(|code| {
-            usize::from(code.class_count) > MAX_NODE_SUPERTYPES || code.classes[usize::from(code.class_count)..].iter().any(|&unused| unused != 0)
-        }) {
-            return Err("invalid abstract node class entry".into());
-        }
-    }
     // A 16z tape is not walked: its reads hold every offset to its tape, its block and its source, whatever its bytes
     // state (decision 0463; `rerail_clif::reads`, and the host's reads written directly), so a malicious tape reads
     // or writes no memory it should not, and a walk here would decode every block of it (the user, 2026-11-21: "The

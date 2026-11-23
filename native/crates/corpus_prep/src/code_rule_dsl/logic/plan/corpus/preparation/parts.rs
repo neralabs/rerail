@@ -390,7 +390,7 @@ fn key_of(head: &Selected<'_>, by: &ByRelation, common: &[u8; 32], shared: &BTre
     h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.update(format!("\0{dialect:?}\0").as_bytes());
     for s in SWITCHES {
-        h.update(format!("{s}={}\0", std::env::var(s).unwrap_or_default()).as_bytes());
+        h.update(format!("{s}={}\0", crate::code_rule_dsl::logic::profile::var(s).unwrap_or_default()).as_bytes());
     }
     // The fields every part shares (`common_of`, and the shared relations' and the program's inputs: `with_shared`)
     // were hashed once; the part's own are its relations' and what it adds to the inputs.
@@ -1447,7 +1447,7 @@ fn after_key(before: [u8; 32], factorize: bool) -> [u8; 32] {
     h.update(before);
     h.update([u8::from(factorize)]);
     for s in AFTER_SWITCHES {
-        h.update(format!("{s}={}\0", std::env::var(s).unwrap_or_default()).as_bytes());
+        h.update(format!("{s}={}\0", crate::code_rule_dsl::logic::profile::var(s).unwrap_or_default()).as_bytes());
     }
     h.finalize().into()
 }

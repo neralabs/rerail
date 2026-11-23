@@ -296,11 +296,13 @@ pub enum Target {
     F16(Sixteen),
 }
 
-/// A format 16 target: the language's table, its tag, 16z where `z`, each block's presence where `blocks`, and each
-/// key's number in the table (`None`: a code the table lacks, and the writer's tape is format 15's).
+/// A format 16 target: the language's table, the line terminators of its ecosystem (its line index's, decision
+/// 0612), its tag, 16z where `z`, each block's presence where `blocks`, and each key's number in the table (`None`: a
+/// code the table lacks, and the writer's tape is format 15's).
 #[derive(Clone)]
 pub struct Sixteen {
     pub lang: &'static f16::Lang,
+    pub terminators: newlines::Terminators,
     pub tag: u8,
     pub z: bool,
     pub blocks: bool,
@@ -545,11 +547,12 @@ impl<L: Layout> Writer<L> {
         }
     }
 
-    /// Whether an open node starting at `start` may yet be omitted (its end inside the range it starts in).
+    /// Whether an open node starting at `start` may yet be omitted (its end inside the range it starts in), its end
+    /// at least `reached` (the start of a node it holds): one holding a node past the range's end is kept.
     #[inline]
-    fn may_be_omitted(&self, start: u32) -> bool {
+    fn may_be_omitted(&self, start: u32, reached: u32) -> bool {
         let k = self.omit.partition_point(|r| r[1] <= start);
-        self.omit.get(k).is_some_and(|r| r[0] <= start)
+        self.omit.get(k).is_some_and(|r| r[0] <= start && reached <= r[1])
     }
 
     /// Format 15's columns without the omitted subtrees (`omitting`): every node closed and committed, all of them
@@ -627,7 +630,7 @@ impl<L: Layout> Writer<L> {
     pub fn to(mut self, target: Target, src: &[u8]) -> Self {
         assert_eq!(self.n, 0, "a target before the first node");
         if let Target::F16(t) = target {
-            let w = f16::Writer::new(t.lang, src, t.tag, t.z, t.blocks, self.cap);
+            let w = f16::Writer::new(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap);
             self.sixteen = Some(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default() }));
             // The columns hold the window: the nodes since the last commit (more grow it).
             if self.cap > WINDOW {
@@ -679,15 +682,16 @@ impl<L: Layout> Writer<L> {
             let mut i = self.passed;
             while i < to {
                 s.close_to(i);
-                // A closed subtree in an omitted placeholder (`omitting`): its ops never given. An open node that
-                // may yet be one cannot be told: format 15 takes the parse, its columns made without them.
+                // A closed subtree in an omitted placeholder (`omitting`): its ops never given. An open node holds
+                // every node pushed after it (preorder), so it ends at least where the last one starts: past its
+                // range's end, it is kept. One that may yet be omitted cannot be told, and the parse is refused.
                 if !self.omit.is_empty() {
                     let (start, size) = (self.starts[self.cell(i)], self.size(i) as usize);
                     if size > 0 && self.omitted(start, self.end(i)) {
                         i += size;
                         continue;
                     }
-                    if size == 0 && self.may_be_omitted(start) {
+                    if size == 0 && self.may_be_omitted(start, self.starts[self.cell(self.n - 1)]) {
                         s.fail(|| format!("node {i}, open at a commit, may be in an omitted placeholder"));
                         break;
                     }
@@ -1941,7 +1945,7 @@ mod tests {
         for (z, commit) in [(false, false), (true, false), (false, true), (true, true)] {
             let keys = keys.clone();
             let number = move |k: u32| keys.iter().position(|&x| x == k).map(|p| p as u32).or((k == key(2, 0, 0)).then_some(4));
-            let target = Target::F16(Sixteen { lang, tag: 1, z, blocks: false, number: std::sync::Arc::new(number) });
+            let target = Target::F16(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z, blocks: false, number: std::sync::Arc::new(number) });
             let mut w = make(target, commit);
             let written = w.finish_16().unwrap().unwrap().tape;
             let check = |t: &dyn Fn(usize) -> (u32, usize, Option<usize>, u64, u64), n: usize| {
@@ -2004,7 +2008,7 @@ mod tests {
         let f15 = F15::new(&image, columns, &table).unwrap();
         let lang: &'static f16::Lang = Box::leak(Box::new(f16::Lang::new(CodeTable::new(table.entries().map(|e| e.to_owned()).collect()), [1, 1, 1], 1).unwrap()));
         let number = std::sync::Arc::new(move |k: u32| keys.iter().position(|&x| x == k).map(|p| p as u32));
-        let target = |z| Target::F16(Sixteen { lang, tag: 1, z, blocks: true, number: number.clone() });
+        let target = |z| Target::F16(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: number.clone() });
         // A large file's guess is cut to the window.
         assert_eq!(Writer::new(1, Widths::guess(1 << 20), 1 << 16).to(target(false), &src).cap, WINDOW);
         for z in [false, true] {

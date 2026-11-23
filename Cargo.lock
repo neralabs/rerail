@@ -3225,6 +3225,7 @@ dependencies = [
  "rerail-bitlex",
  "rerail-blocks",
  "rerail-compiler",
+ "rerail-tape-format",
  "rustc-hash",
  "sha2 0.11.1",
 ]
@@ -3606,6 +3607,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-context",
  "rerail-cpu-block",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -3893,6 +3895,7 @@ dependencies = [
  "rerail-rules",
  "rerail-section",
  "rerail-store",
+ "rerail-tape-format",
  "rerail-transducer",
  "ruff_python_ast",
  "ruff_python_parser",
@@ -5606,6 +5609,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-compiler",
  "rerail-rir",
+ "rerail-tape-format",
 ]
 
 [[package]]

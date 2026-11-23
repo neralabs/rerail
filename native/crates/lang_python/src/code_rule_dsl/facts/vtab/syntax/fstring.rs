@@ -39,6 +39,18 @@ impl super::Producer for Producer {
     fn start(&self, reads: &BTreeSet<String>, markers: &[String]) -> Box<dyn super::ProducerRun> {
         Box::new(FStrings::new(reads, markers))
     }
+    /// An f-string's template (`literal::python_fstring::template_spans`): a `string` or `concatenated_string` with
+    /// an f-string among its parts. A format spec is its field's, never a template of its own.
+    fn template(&self, doc: &crate::code_rule_dsl::tape::TapeDoc, id: u32, marker: &str) -> Option<(String, Vec<[u32; 3]>)> {
+        let root = ast_grep_core::AstGrep::doc(doc.clone());
+        let node = crate::code_rule_dsl::matcher::node_at(&root, id);
+        if !HOSTS[..2].contains(&&*node.kind()) {
+            return None;
+        }
+        let decoded = literal::python_fstring::template_spans(&node, marker)?;
+        let spans = decoded.spans.iter().map(|s| [s.at, s.start, s.end]).collect();
+        Some((decoded.text, spans))
+    }
 }
 
 impl super::ProducerRun for FStrings {

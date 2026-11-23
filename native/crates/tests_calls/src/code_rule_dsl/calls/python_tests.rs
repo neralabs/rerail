@@ -15,11 +15,7 @@ fn oracle_dir() -> PathBuf {
 }
 
 fn line_of(source: &str, offset: usize) -> u64 {
-    source.as_bytes()[..offset]
-        .iter()
-        .filter(|byte| **byte == b'\n')
-        .count() as u64
-        + 1
+    crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::Python, offset) as u64
 }
 
 /// A workspace file's module: `pkg/util.py` is `pkg.util`, `pkg/__init__.py` `pkg.__init__`.

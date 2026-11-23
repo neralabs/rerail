@@ -323,7 +323,7 @@ fn decode_stored_tape(
     };
     let source = std::str::from_utf8(&unindexed.source).ok()?.to_owned();
     let image = tape::TapeImage::from_bytes(&unindexed.image, &grammar).ok()?;
-    let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
+    let lines = Arc::new(image.lines(&source, crate::code_rule_dsl::lines::terminators(language), false));
     let image = tape::FileImage::single(image, &source);
     tape::TapeDoc::restore_with_lines(
         Arc::new(source),

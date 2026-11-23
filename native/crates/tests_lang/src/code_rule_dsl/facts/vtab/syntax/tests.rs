@@ -433,6 +433,17 @@ fn modules_and_packages_follow_t() {
     assert_eq!(module("src/lib.rs"), "crate");
 }
 
+/// Outside Python, `visit_index` is the tape's order (core.rerail's `earlier`: start offset): a node, then its
+/// children. A TypeScript document had none, and `earlier` held of no node of it.
+#[test]
+fn visit_index_outside_python_is_the_tape_order() {
+    let rows = core_rows(vec![document(1, "m.ts", "typescript", "const a = { x: 1, y: 2 }\n")]);
+    let index = |node: &str| rows["visit_index"].iter().find_map(|r| r.strip_prefix(&format!("{node} "))).and_then(|i| i.parse::<i64>().ok()).unwrap_or_else(|| panic!("no {node}: {:?}", rows["visit_index"]));
+    assert_eq!(index("program"), 0);
+    let (x, y) = (index("pair'x: 1'"), index("pair'y: 2'"));
+    assert!(index("object'{ x: 1, y: 2 }'") < x && x < index("property_identifier'x'") && x < y, "{:?}", rows["visit_index"]);
+}
+
 /// One document of `source` in `label`'s dialect, keyed `key`, with its tape (W's values read it).
 fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
@@ -691,7 +702,18 @@ fn within_with_both_given_is_an_interval_test() {
 /// The documents with errors and empty bodies bring nodes of zero width.
 #[test]
 fn within_holds_exactly_the_contained_pairs() {
-    let store = ContentStore::open(&temp("within")).unwrap();
+    // The tree's containment reads the documents' tapes (decision 0293), in each format they are made in.
+    use crate::code_rule_dsl::tape::formats::{Format, as_run};
+    for format in Format::ALL {
+        as_run(format, || contained_pairs_in(format));
+    }
+}
+
+/// `within_holds_exactly_the_contained_pairs` over documents whose tapes are made in `format`: the tree's
+/// containment read off them, and spans (which read the facts) once, in format 16.
+fn contained_pairs_in(format: crate::code_rule_dsl::tape::formats::Format) {
+    use crate::code_rule_dsl::tape::formats::Format;
+    let store = ContentStore::open(&temp(&format!("within{}", format.name()))).unwrap();
     let mut docs: Vec<Document> = documents().into_iter().take(3).collect();
     for (at, source) in ["x = (1,\nif y:\n", "def f(a, b:\n    return [a for\n", "", "class C:\n"].into_iter().enumerate() {
         let path = format!("broken{at}.py");
@@ -719,10 +741,9 @@ fn within_holds_exactly_the_contained_pairs() {
     assert!(zero > 0, "the broken documents have nodes of zero width");
     let cpu = || { let (u, s) = crate::code_rule_dsl::prof::thread_usage(); u + s };
     let (mut reference_cpu, mut relation_cpu) = (0.0, 0.0);
-    // The tree's containment reads the documents' tapes (decision 0293), in every format; spans read the facts.
-    use crate::code_rule_dsl::tape::formats::Format;
     assert!(batch.docs.iter().all(|p| p.facts.tape.is_some()), "every document holds its tape");
-    for mode in [within::Mode::Tree, within::Mode::Span] {
+    let modes: &[within::Mode] = if format == Format::F16 { &[within::Mode::Tree, within::Mode::Span] } else { &[within::Mode::Tree] };
+    for &mode in modes {
         let before_reference = cpu();
         let mut expected = BTreeSet::new();
         for a in 0..nodes {
@@ -740,9 +761,8 @@ fn within_holds_exactly_the_contained_pairs() {
             }
         }
         reference_cpu += cpu() - before_reference;
-        let formats: &[Format] = if mode == within::Mode::Tree { &Format::ALL } else { &[Format::F15] };
-        for &format in formats {
-            let within = within::Within::new(Arc::clone(&batch), mode).reading(format);
+        {
+            let within = within::Within::new(Arc::clone(&batch), mode);
             let before_relation = cpu();
             let rows = |rows: Vector<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (within.value(r, 0), within.value(r, 1))).collect() };
             let ids: Vector<i64> = (0..nodes).map(id).collect();
@@ -768,7 +788,7 @@ fn within_holds_exactly_the_contained_pairs() {
             }
             // Read whole first (the device's keyed read, decision 0277): the tree by the batch's solve, every pair once,
             // and the lookups after it read the same rows; spans have no solve.
-            let whole = within::Within::new(Arc::clone(&batch), mode).reading(format);
+            let whole = within::Within::new(Arc::clone(&batch), mode);
             assert_eq!(whole.complete_rows(), mode == within::Mode::Tree, "containment is solved for the batch, spans are not");
             if mode == within::Mode::Tree {
                 let rows = |rows: Vector<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (whole.value(r, 0), whole.value(r, 1))).collect() };
@@ -787,8 +807,17 @@ fn within_holds_exactly_the_contained_pairs() {
 /// node's strict ancestors gives, looked up by either column and scanned, and their statistics count the rows.
 #[test]
 fn the_kind_set_axes_hold_exactly_their_pairs() {
+    // Each read off the documents' tapes in each format they are made in (decision 0293).
+    use crate::code_rule_dsl::tape::formats::{Format, as_run};
+    for format in Format::ALL {
+        as_run(format, || axes_pairs_in(format));
+    }
+}
+
+/// `the_kind_set_axes_hold_exactly_their_pairs` over documents whose tapes are made in `format`.
+fn axes_pairs_in(format: crate::code_rule_dsl::tape::formats::Format) {
     use crate::code_rule_dsl::facts::core::kind_atom;
-    let store = ContentStore::open(&temp("axes")).unwrap();
+    let store = ContentStore::open(&temp(&format!("axes{}", format.name()))).unwrap();
     let mut docs: Vec<Document> = documents().into_iter().take(4).collect();
     // A document with ERROR nodes: an ERROR node's kind is ERROR's atom (`Facts::kind`, slot 0), whatever kind its tape
     // entry holds: a member of a set that names ERROR, on the host, the device and the tape's code set alike (0289).
@@ -854,17 +883,15 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
         expected
     };
     use crate::code_rule_dsl::typing::file_local::Binding;
-    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0143) on the CPU and on Metal;
-    // each read off the documents' tapes in every format (decision 0293).
-    use crate::code_rule_dsl::tape::formats::Format;
+    // Each axis made per looked-up node, and with the batch's solve chosen (decision 0143) on the CPU and on Metal.
     assert!(batch.docs.iter().all(|p| p.facts.tape.is_some()), "the axes read every document's tape");
     let ways = [(Binding::Cpu, false), (Binding::Cpu, true), (Binding::Metal, true)];
     let axes = [within::Axis::Nearest, within::Axis::Inside, within::Axis::Has];
     let expected_by: Vec<BTreeSet<(i64, i64)>> = axes.iter().map(|&a| expected_of(a)).collect();
-    let cases = axes.into_iter().zip(&expected_by).flat_map(|a| ways.map(|w| (a, w))).flat_map(|c| Format::ALL.map(|f| (c, f)));
-    for (((axis, expected), (binding, solve)), format) in cases {
+    let cases = axes.into_iter().zip(&expected_by).flat_map(|a| ways.map(|w| (a, w)));
+    for ((axis, expected), (binding, solve)) in cases {
         let expected = expected.clone();
-        let source = within::Within::axis(Arc::clone(&batch), axis, &set, binding).reading(format);
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set, binding);
         if solve {
             source.expect_lookups(0, 1e12);
         }
@@ -1052,7 +1079,7 @@ fn projection_axes_and_token_spans_are_read_without_renumbering() {
     expected.sort_unstable();
     let tokens = expected.len();
     expected.push([0,f.source.len() as u32]);
-    expected.extend((1..=f.lines.count()).map(|l|f.lines.text_of(l)));
+    expected.extend((1..=f.lines.count()).map(|l|f.lines.text_of(l, f.source.as_bytes())));
     assert_eq!(p.extra.as_ref().unwrap().tokens as usize,tokens);
     assert_eq!(p.locs(),p.len()+expected.len() as u32);
     for (i,&span) in expected.iter().enumerate() { assert_eq!(p.span(p.len()+i as u32),span); }
@@ -1142,7 +1169,7 @@ fn span_ids_census() {
                             let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
                             let f_cache = facts.own_cache();
                             let f = facts.read_in(f_cache.as_ref());
-                            let lines: Vec<std::ops::Range<usize>> = (1..=f.lines.count()).map(|l| f.lines.text_of(l)).map(|[a, b]| a as usize..b as usize).collect();
+                            let lines: Vec<std::ops::Range<usize>> = (1..=f.lines.count()).map(|l| f.lines.text_of(l, f.source.as_bytes())).map(|[a, b]| a as usize..b as usize).collect();
                             let comments = (0..f.len() as u32).filter(|&id| f.named(id) && crate::code_rule_dsl::language::adapter::is_comment_kind(dialect.name(f, id))).count();
                             let matches = count(&src) + lines.iter().map(|r| count(&src[r.clone()])).sum::<usize>();
                             let now = [(p.locs() - p.len()) as usize, lines.len() + 1, comments, matches];
@@ -1759,7 +1786,7 @@ fn granule_kinds_are_a_table_by_kind_code() {
 /// `Table::node` inverts it; the scan gives the same ids in preorder; and no other tape node has one.
 #[test]
 fn node_ids_in_place_equal_the_numbered_ones() {
-    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::lines::LineTable;
     use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
     use ranks::Item;
     if !definition_ids() {
@@ -1785,10 +1812,10 @@ fn node_ids_in_place_equal_the_numbered_ones() {
         let lang = dialect_by_label(label).unwrap_or_else(|| panic!("no dialect {label}"));
         let grammar = Grammar::new(lang).unwrap();
         let source = Arc::new(source.to_owned());
-        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
-            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
-            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
+            let image = crate::code_rule_dsl::tape::formats::as_run(format, || TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary);
+            let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image, lines).unwrap());
             let f_cache = facts.own_cache();
             let f = facts.read_in(f_cache.as_ref());
             let dialect = Dialect::new(core::facts_tag(f.facts)).unwrap();
@@ -2102,7 +2129,7 @@ fn a_solved_axis_is_one_relation_of_ids_in_a_block() {
 /// The numbering reads' cases: a projection of each source, in each format, whole, as T and narrowed, with the tape
 /// nodes to read (every one, and 64 past the last).
 fn id_read_cases() -> Vec<(String, Projected, u32)> {
-    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::lines::LineTable;
     use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
     let mut out = Vec::new();
     let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
@@ -2116,10 +2143,10 @@ fn id_read_cases() -> Vec<(String, Projected, u32)> {
         let lang = dialect_by_label(label).unwrap();
         let grammar = Grammar::new(lang).unwrap();
         let source = Arc::new(source.to_owned());
-        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
-            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
-            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
+            let image = crate::code_rule_dsl::tape::formats::as_run(format, || TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary);
+            let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image, lines).unwrap());
             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
             for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
                 let p = if narrowed { Projected::anchored(1, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(1, Arc::clone(&facts), Some(&dialect), shape, false, None) };
@@ -2186,7 +2213,7 @@ fn the_jits_id_reads_are_the_hosts() {
         }
         tried += 1;
     }
-    assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
+    assert_eq!(tried, 3 * crate::code_rule_dsl::tape::formats::Format::ALL.len() * 3, "every case, format and shape");
 }
 
 /// Decision 0353 step 2: the numbering's reads as UKL (`<ukl/reads/ids.h>`, written once in CLIF), run on the device
@@ -2261,7 +2288,7 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
         }
         tried += 1;
     }
-    assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
+    assert_eq!(tried, 3 * crate::code_rule_dsl::tape::formats::Format::ALL.len() * 3, "every case, format and shape");
 }
 
 /// Decision 0353 step 4c: the `node`, `child`, `field`, `core_node` and `line` views' rows read through the views' reads (written once in CLIF), by the JIT on
@@ -2272,7 +2299,7 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_view_reads_are_the_hosts_rows() {
-    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::lines::LineTable;
     use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
     use ranks::Item;
     use rerail_clif::view::TapeView;
@@ -2338,11 +2365,12 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
         let lang = dialect_by_label(label).unwrap();
         let grammar = Grammar::new(lang).unwrap();
         let source = Arc::new(source.to_owned());
-        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
-            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
-            let words: Vector<u32> = Vector::from(lines.words());
-            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
+            let image = crate::code_rule_dsl::tape::formats::as_run(format, || TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary);
+            let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
+            // The lines' index and a word of room past it, as the device reads them: the test's buffer of them.
+            let words: Vector<u8> = lines.index().iter().copied().chain([0u8; 8]).collect();
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image, lines).unwrap());
             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
             let (tape, view) = facts.tape.as_ref().unwrap().in_place().unwrap();
             // A 16z tape's reads decode its blocks into a cache made for it (0353 step 4b).
@@ -2383,7 +2411,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     .collect();
                 let e = entry.desc();
                 let t = tape.as_ptr();
-                let ll = words.as_ptr().cast::<u8>();
+                let ll = words.as_ptr();
                 let jitted: Vector<i64> = (0..n)
                     .flat_map(|l| {
                         let mut row: Vector<i64> = (0..5).map(|c| node(e, t, v, ll, l, c)).collect();
@@ -2402,7 +2430,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     bytes.resize(tape.len() + 16, 0);
                     let tt = buffer_of(&bytes).unwrap();
                     let out = alloc::<i64>(n.max(1) as usize * WIDE).unwrap();
-                    // Its lines where the device reads them: a test's buffer of their words.
+                    // Its lines where the device reads them: a test's buffer of their index.
                     let lb = buffer_of(&words).unwrap();
                     let (tt_at, lb_at) = (tt.device_address().unwrap(), lb.device_address().unwrap());
                     // A 16z tape's blocks through a cache every thread shares (0353 step 4b): one of a block a
@@ -2452,7 +2480,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
             }
         }
     }
-    assert_eq!(tried, 2 * 3 * 3, "every case, format and shape");
+    assert_eq!(tried, 2 * Format::ALL.len() * 3, "every case, format and shape");
 }
 
 /// Decision 0494, R1 and R3: a batch read whole makes one group, whose relations hold the rows the eager batch's do;
@@ -2493,6 +2521,98 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
     assert_eq!(probed.groups(), 3, "the scan made the rest as one group");
 }
 
+/// Decision 0353: core.rerail's places are the `Loc` view's with span rows only where a span relation is read
+/// (`places::Places`), and their statistics, counted in a block, are what their rows measure: the view's and the
+/// span rows' together, as one relation's.
+#[test]
+fn places_are_the_view_and_the_spans_rows_measured_in_a_block() {
+    let store = ContentStore::open(&temp("places")).unwrap();
+    let docs: Vec<Document> = (1..=3).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    # c{k}\n    return g(x,\n      {k})\n"))).collect();
+    let reads = ["node", "line", "end_line", "col", "docof", "src_line", "source", "comment", "doc"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let sources = shaped(&store, docs, &projection).unwrap();
+    let of = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name} bound")).1);
+    let node = of("node");
+    let src_line = of("src_line");
+    for name in ["line", "end_line", "col", "docof"] {
+        let s = of(name);
+        assert!(s.as_any().is_some_and(|a| a.downcast_ref::<places::Places>().is_some()), "{name}: the view and the spans' rows");
+        // Every node has a place, and so does every line span.
+        let ids: BTreeSet<i64> = (0..s.len()).map(|r| s.value(r, 0)).collect();
+        assert!((0..node.len()).all(|r| ids.contains(&node.value(r, 1))), "{name}: every node's place");
+        assert!((0..src_line.len()).all(|r| ids.contains(&src_line.value(r, 2))), "{name}: every line span's place");
+        let got = s.statistics().expect("counted in a block");
+        assert_eq!(got, measured(&*s), "{name}: its statistics, as its rows measure");
+    }
+    let line = of("line");
+    let at = |n: i64| (0..line.len()).find(|&r| line.value(r, 0) == n).map(|r| line.value(r, 1));
+    // `src_line(d, l, sp)`: line span `sp` is on line `l`.
+    for r in 0..src_line.len() {
+        assert_eq!(at(src_line.value(r, 2)), Some(src_line.value(r, 1)), "a line span's line");
+    }
+}
+
+/// A place relation's keyed walk (`Places::for_rows_keyed`: the cross part's count of `docof` at the exports' nodes,
+/// decision 0458) gives the rows a per-row read finds at node and span keys alike, and at nodes alone makes no group
+/// of its batch: a span's id is never a node's (`granules::is_extra`). It made the whole batch before (ab200).
+#[test]
+fn a_places_keyed_walk_at_nodes_makes_no_span_row() {
+    let store = ContentStore::open(&temp("places-keyed")).unwrap();
+    let docs = || -> Vec<Document> { (1..=3).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    # c{k}\n    return g(x,\n      {k})\n"))).collect() };
+    let reads = ["node", "line", "docof", "src_line", "source", "comment", "doc"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let walk = |s: &Arc<dyn Source>, keys: &rustc_hash::FxHashSet<i64>| {
+        let mut got: Vec<(usize, Vec<i64>)> = Vec::new();
+        let walked = s.for_rows_keyed(0, keys, &[0, 1], &mut |r, row| {
+            got.push((r, row.to_vec()));
+            true
+        });
+        got.sort();
+        walked.then_some(got)
+    };
+    // Node keys and span keys: the rows a per-row read finds.
+    let sources = shaped(&store, docs(), &projection).unwrap();
+    let of = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap().1);
+    let (node, src_line) = (of("node"), of("src_line"));
+    for name in ["line", "docof"] {
+        let s = of(name);
+        let keys: rustc_hash::FxHashSet<i64> = (0..node.len()).step_by(2).map(|r| node.value(r, 1)).chain((0..src_line.len()).step_by(2).map(|r| src_line.value(r, 2))).collect();
+        assert!(keys.iter().any(|&k| granules::is_extra(k as u32)), "{name}: span keys among them");
+        let per_row: Vec<(usize, Vec<i64>)> = (0..s.len()).filter(|&r| keys.contains(&s.value(r, 0))).map(|r| (r, vec![s.value(r, 0), s.value(r, 1)])).collect();
+        let places = s.as_any().is_some_and(|a| a.downcast_ref::<places::Places>().is_some());
+        assert_eq!(walk(&s, &keys), Some(per_row), "{name} (places: {places}): the keyed walk at nodes and spans");
+    }
+    // Node keys alone: no group of the batch made.
+    let batch = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let mut made: Vec<(&'static str, Arc<dyn Source>)> = made_sources(&batch).into_iter().filter_map(|(_, name, source)| Some((name?, source))).collect();
+    made.extend(views(&batch));
+    places::join(&mut made, &batch);
+    let docof = Arc::clone(&made.iter().find(|(n, _)| *n == "docof").unwrap().1);
+    let ids: rustc_hash::FxHashSet<i64> = (0..3).flat_map(|d| (0..4).map(move |i| ((d + 1) << 32) | i)).filter(|&k| !granules::is_extra(k as u32)).collect();
+    let places = docof.as_any().is_some_and(|a| a.downcast_ref::<places::Places>().is_some());
+    assert!(walk(&docof, &ids).is_some(), "the made docof (places: {places}) walked by key");
+    assert_eq!(batch.groups(), 0, "a walk at nodes made no span row");
+}
+
+/// Decision 0494: a place relation measured before its spans' rows are made counts the view on the tape and the spans
+/// on a sample of their documents (`view_and_sampled`): its statistics are had with no whole read, its rows' count as
+/// its rows give it, once made.
+#[test]
+fn places_are_measured_before_their_spans_are_made() {
+    let store = ContentStore::open(&temp("places-sampled")).unwrap();
+    let docs: Vec<Document> = (1..=40).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    # c{k}\n    return g(x,\n      {k})\n"))).collect();
+    let reads = ["node", "line", "col", "src_line", "source", "comment"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let sources = shaped(&store, docs, &projection).unwrap();
+    let of = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name} bound")).1);
+    for name in ["line", "col"] {
+        let s = of(name);
+        let got = s.statistics().expect("the view's counted, the spans' sampled");
+        let want = measured(&*s);
+        assert_eq!(got[0].1, want[0].1, "{name}: the documents are alike, so the sample's rows scale to the batch's");
+    }
+}
+
 /// Decision 0353: `rr_long_text_node`'s statistics are counted on the tape, with no group made: the planner's measure
 /// of it made every document's rows of every relation before (a 158 MB block at the M3's 300-file peak). They are
 /// what its rows, once made, measure.
@@ -2512,6 +2632,52 @@ fn long_text_nodes_are_measured_on_the_tape_with_no_row_made() {
     let want = measured(&*texts);
     assert!(want[0].1 >= 6, "each document's long string and the nodes holding it: {want:?}");
     assert_eq!(got, want, "the tape's count, as the rows measure");
+}
+
+/// Decision 0353: `doc`'s statistics are its documents' (their paths and modules), with no row made, and are what its
+/// rows measure: a module two files share counted once.
+#[test]
+fn doc_is_measured_by_its_documents_with_no_row_made() {
+    let store = ContentStore::open(&temp("doc-stats")).unwrap();
+    let mut docs: Vec<Document> = (1..=3).map(|k| document(k, &format!("p/m{k}.py"), "python", &format!("def f{k}(x):\n    return {k}\n"))).collect();
+    docs.push(document(4, "p/m1.pyi", "python", "def f1(x): ...\n"));
+    docs.push(document(5, "data.json", "json", "{\"a\": 1}\n"));
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "doc"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let doc = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "doc").unwrap().2);
+    let got = doc.statistics().expect("its documents'");
+    assert_eq!(doc.estimated_len(), 5, "a row a file");
+    assert_eq!(batch.groups(), 0, "the statistics and the estimate made no group");
+    let want = measured(&*doc);
+    assert_eq!(want[0].1, 5, "a row a file: {want:?}");
+    assert_eq!(got, want, "its documents' counts, as the rows measure");
+}
+
+/// Decision 0494: a batch's relation no count gives is measured on a sample of its documents (one in 16, its first),
+/// those made and no other, its statistics scaled to the batch: the planner's measure made the whole batch to measure
+/// one. Made whole later, its rows are in the order of their ids.
+#[test]
+fn a_relation_with_no_counts_is_measured_on_a_sample_of_its_documents() {
+    let store = ContentStore::open(&temp("sampled-stats")).unwrap();
+    let docs: Vec<Document> = (1..=1024).map(|k| document(k, &format!("p{}/m{k}.py", k % 4), "python", &format!("def f{k}(x):\n    return g(x, {k}) + \"s{k}\"\n"))).collect();
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "pkg", "text"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let of = |name: &str| Arc::clone(&sources.iter().find(|(n, _, _)| *n == name).unwrap().2);
+    let (pkg, text) = (of("pkg"), of("text"));
+    let got = [pkg.statistics().expect("sampled"), text.statistics().expect("sampled")];
+    let estimates = [pkg.estimated_len(), text.estimated_len()];
+    assert_eq!(batch.groups(), 1, "one group of the sample's documents");
+    assert_eq!(batch.documents_with_rows(), 64, "one document in 16 made");
+    for (rel, (got, estimate)) in [pkg, text].iter().zip(got.iter().zip(estimates)) {
+        let want = measured(&**rel);
+        assert_eq!(estimate, want[0].1 as usize, "the documents are alike: the sample's rows, scaled, are the batch's");
+        assert_eq!(got[0].1, want[0].1, "{got:?} against {want:?}");
+        // The sample is the batch's first documents, so the rest go on after them: the rows stay in their ids' order.
+        let ids: Vec<i64> = (0..rel.len()).map(|r| rel.value(r, 0)).collect();
+        assert!(ids.is_sorted(), "a made relation's rows in the order of their ids");
+    }
 }
 
 /// Decision 0494 (Q396): reads of a batch side by side make each document once. Each thread reads a relation whole;
@@ -2684,6 +2850,47 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
     assert_eq!(seen, ["m1.py", "m2.py"], "the started files matched once, and none again when a value is admitted");
 }
 
+/// Q216 (decision 0353 step 3): where a program reads spans, a node's and a token's places are the `Loc` view's, and
+/// the place rows made are the spans' alone. The bound relation is the view's rows, then the spans', and a span's
+/// place is read by its id: a line's own line, its start's column 0.
+#[test]
+fn a_span_reader_s_places_are_the_view_s_then_the_spans() {
+    let store = ContentStore::open(&temp("span-places")).unwrap();
+    let docs = || vec![document(1, "a.py", "python", "x = 1\n# c\ny = 2\n")];
+    let projection = |reads: &[&str]| Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let places = ["line", "end_line", "col", "docof"];
+    let spans = projection(&["node", "line", "end_line", "col", "docof", "source", "src_line"]);
+    let batch = Batch::new(&store, docs(), &spans, &[], &[], false, None, &HashMap::new()).unwrap();
+    let mut made: HashMap<&str, usize> = HashMap::new();
+    for (name, _, s) in made_sources(&batch) {
+        if places.contains(&name) {
+            assert!(s.len() > 0, "{name}: the spans' places are made");
+            assert!((0..s.len()).all(|r| granules::is_extra(s.value(r, 0) as u32)), "{name}: no node's or token's place is made");
+            made.insert(name, s.len());
+        }
+    }
+    let out = shaped(&store, docs(), &spans).unwrap();
+    let views = shaped(&store, docs(), &projection(&["node", "line", "end_line", "col", "docof"])).unwrap();
+    let bound = |name: &str| Arc::clone(&out.iter().find(|(n, _)| *n == name).unwrap().1);
+    for name in places {
+        let (whole, view) = (bound(name), Arc::clone(&views.iter().find(|(n, _)| *n == name).unwrap().1));
+        assert_eq!(whole.len(), view.len() + made[name], "{name}: the view's rows, then the spans'");
+        assert!((0..view.len()).all(|r| whole.value(r, 0) == view.value(r, 0) && whole.value(r, 1) == view.value(r, 1)), "{name}: the view's rows first");
+        let node = view.value(0, 0);
+        assert_eq!(whole.lookup(0, &[node]).unwrap(), view.lookup(0, &[node]).unwrap(), "{name}: a node's place is the view's");
+    }
+    let src_line = bound("src_line");
+    assert_eq!(src_line.len(), 4, "every line, the empty last one too");
+    for r in 0..src_line.len() {
+        let (l, sp) = (src_line.value(r, 1), src_line.value(r, 2));
+        for (name, want) in [("line", l), ("end_line", l), ("col", 0)] {
+            let s = bound(name);
+            let rows = s.lookup(0, &[sp]).unwrap();
+            assert_eq!(rows.iter().map(|&row| s.value(row, 1)).collect::<Vec<_>>(), [want], "{name} of line {l}'s span");
+        }
+    }
+}
+
 /// Decision 0353, step 3 on the CPU (step 1): a batch's views' directory is made with or without a device, and
 /// self-relative. Read from its offset in the batch's block, at the host's bases of its homes, each document's row
 /// names that document's entry, its tape's bytes and its lines' words where they lie. The device's address of it is
@@ -2711,7 +2918,7 @@ fn the_views_directory_is_the_hosts_too() {
         let (bytes, view) = p.facts.tape.as_ref().unwrap().in_place().unwrap();
         assert_eq!(homes[row.homes[0] as usize].host + row.tape, bytes.as_ptr() as u64, "document {}'s tape, where it lies", p.key);
         assert_eq!((row.view.format, row.view.nodes), (view.format, view.nodes));
-        assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.words().as_ptr() as u64, "document {}'s lines", p.key);
+        assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.index().as_ptr() as u64, "document {}'s line index, in its tape or its own", p.key);
     }
     let all_on_device = crate::code_rule_dsl::tape::placed::device().is_some() && homes.iter().all(|h| h.gpu != 0);
     assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every home");

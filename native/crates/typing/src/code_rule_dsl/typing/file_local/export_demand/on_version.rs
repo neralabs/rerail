@@ -260,8 +260,8 @@ impl<'a> Pass<'a> {
 
     /// Whether `rel`'s column `at` holds every node but those of a few kinds: one of its rules binds the column by its
     /// node's kind alone (`kind(n, k)`, `k` free or compared with constants), or by such a column of one other relation,
-    /// with nothing else in its body but comparisons with constants (`unparen(e, e) :- kind(e, k), k != #k1249`, and
-    /// its narrow copy, `rr_narrow_unparen(a, b) :- unparen(a, b), a < …`).
+    /// with nothing else in its body but comparisons with constants (`unparen(e, e) :- kind(e, k), k != #k1249`, or
+    /// `u(a, b) :- unparen(a, b), a < …`).
     fn every_node(&self, rel: &str, at: usize, depth: usize) -> bool {
         if rel == "kind" {
             return at == 0;

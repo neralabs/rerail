@@ -94,7 +94,7 @@ impl<'t> InFile<'t> {
             dialect,
             lines: Lines::Read(crate::code_rule_dsl::matcher::file_lines(
                 source,
-                Terminators::of(dialect),
+                crate::code_rule_dsl::lines::terminators(dialect),
             )),
             origin: &Same,
         })

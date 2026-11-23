@@ -3,7 +3,7 @@ use crate::code_rule_dsl::facts::core;
 use crate::code_rule_dsl::facts::producers::python::call_batch::{collect, collect_arguments};
 use crate::code_rule_dsl::facts::producers::python::python_structure::{ContextKind, Spread};
 use crate::code_rule_dsl::language::{GrammarDialect, tape_tag};
-use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::tape::{Grammar as TapeGrammar, TapeDoc, TapeImage};
 use ast_grep_core::{AstGrep, tree_sitter::StrDoc};
 use std::path::Path;
@@ -58,7 +58,7 @@ fn sorted<T: Ord + Clone>(rows: &[T]) -> Vec<T> {
 /// The families' rows equal S's producers' on `source`.
 fn check(source: &str, what: &str) -> usize {
     let root = tape(source);
-    let facts = core::from_tape(root.root().get_doc(), Arc::new(LineTable::new(source, Terminators::of(GrammarDialect::Python)))).unwrap();
+    let facts = core::from_tape(root.root().get_doc(), Arc::new(LineTable::new(source, crate::code_rule_dsl::lines::terminators(GrammarDialect::Python)))).unwrap();
     let facts_cache = facts.own_cache();
     let facts = facts.read_in(facts_cache.as_ref());
     let grammar = Grammar::new(tape_tag(GrammarDialect::Python).unwrap(), &GrammarDialect::Python.kinds());

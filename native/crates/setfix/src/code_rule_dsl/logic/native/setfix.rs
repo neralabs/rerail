@@ -286,8 +286,10 @@ pub struct OnConn {
     noted: std::sync::atomic::AtomicBool,
     /// The histograms `step_histograms` counted off its runs' input relations, by the relation's id, the step's
     /// constants, the columns and the sample's cap: an input's rows do not change while it lives, and a rule split
-    /// by constants into many lines (one per pair of kinds) asks the same of each.
-    histograms: parking_lot::Mutex<HashMap<(u64, Vec<(usize, i64)>, Vector<usize>, usize), Histogram>>,
+    /// by constants into many lines (one per pair of kinds) asks the same of each. Each kept while its relation lives:
+    /// a relation released (decision 0592) took its histograms with it only when the chunk's relations went, and they
+    /// were what stood at the peak of them (ab197).
+    histograms: parking_lot::Mutex<HashMap<(u64, Vec<(usize, i64)>, Vector<usize>, usize), (std::sync::Weak<InRel>, Histogram)>>,
 }
 
 /// What the evaluator keeps for `conn` (`OnConn`).
@@ -440,7 +442,7 @@ pub fn symbol_text(conn: &Connection, atom: i64) -> Result<String> {
 /// decision 0122 §2): the default; `RERAIL_WAVE0=kept` makes the kept rows the first wave's delta, as before (a
 /// measurement aid). Read at each stratum planned, so a test can set it; the spec carries the choice (`KeptOld`).
 pub fn wave0_changes() -> bool {
-    !std::env::var("RERAIL_WAVE0").is_ok_and(|v| v == "kept")
+    !crate::code_rule_dsl::logic::profile::var("RERAIL_WAVE0").is_ok_and(|v| v == "kept")
 }
 
 /// Appends the symbols pending in `conn`'s database if a flush is due (decision 0049 §4.2): a run's end.
@@ -2712,7 +2714,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             Body::Join(j) => (plan, &**j, comp.probes[*pi].head),
             Body::Sql(_) | Body::Unplanned => unreachable!("a device plan is a join's"),
         }).collect();
-        let submitted = { let syms = symbols.read().unwrap(); dev.submit(&rules, &syms) };
+        let submitted = { let syms = symbols.read().unwrap(); let s = comp.store.read().unwrap(); dev.submit(&rules, &s, &syms) };
         if let Ok(Some(t)) = submitted {
             comp.device_wait = Some(t);
             let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
@@ -3425,12 +3427,15 @@ pub fn step_tails(conn: impl Scoped, name: &str) -> Result<Vector<usize>> {
 pub type Histogram = (u64, Arc<Counts>);
 
 /// A histogram's counts by key (decision 0203 §3), in a block of the run's (decision 0353): an open-addressed table of
-/// a power of two slots, each a key and its count (a count of 0: an empty slot), half full at most. A map on the heap
-/// before (`pth_unpack`'s held 25.6 MB at a run's peak on the M3's 300 files), cloned into the cache.
+/// a power of two slots, each a key and its count (a count of 0: an empty slot), three quarters full at most. A map on
+/// the heap before (`pth_unpack`'s held 25.6 MB at a run's peak on the M3's 300 files), cloned into the cache. A count
+/// is of the rows read (at most `HISTOGRAM_ROWS`, so a `u32`), times the stride they were read at (`scale`): 12 bytes
+/// a slot, not 16, and a quarter more of them used (`pth_unpack`'s and `unparen`'s 72 MB at the peak, ab197).
 pub struct Counts {
     keys: BlockVec<u64>,
-    counts: BlockVec<u64>,
+    counts: BlockVec<u32>,
     len: usize,
+    scale: u64,
 }
 
 impl Counts {
@@ -3442,7 +3447,7 @@ impl Counts {
         let (mut keys, mut counts) = (BlockVec::with_capacity_in(None, n), BlockVec::with_capacity_in(None, n));
         keys.resize(n, 0);
         counts.resize(n, 0);
-        Counts { keys, counts, len: 0 }
+        Counts { keys, counts, len: 0, scale: 1 }
     }
 
     /// Key `key`'s slot: where it is, or the empty one it would go in.
@@ -3458,10 +3463,11 @@ impl Counts {
 
     /// Adds `n` (more than 0) to `key`'s count.
     fn add(&mut self, key: u64, n: u64) {
-        if 2 * (self.len + 1) > self.keys.len() {
+        debug_assert_eq!(self.scale, 1, "counted before it is scaled");
+        if 4 * (self.len + 1) > 3 * self.keys.len() {
             let mut next = Counts::with_slots(2 * self.keys.len());
-            for (k, c) in self.iter() {
-                next.add(k, c);
+            for (&k, &c) in self.keys.iter().zip(self.counts.iter()).filter(|(_, c)| **c != 0) {
+                next.add(k, c as u64);
             }
             *self = next;
         }
@@ -3470,17 +3476,17 @@ impl Counts {
             self.keys[i] = key;
             self.len += 1;
         }
-        self.counts[i] += n;
+        self.counts[i] += u32::try_from(n).expect("a histogram counts at most HISTOGRAM_ROWS rows");
     }
 
     /// Every count times `by`: a strided read's, scaled to the rows read past.
     fn scale(&mut self, by: u64) {
-        self.counts.iter_mut().for_each(|c| *c *= by);
+        self.scale *= by;
     }
 
     /// Key `key`'s count: 0 when no row has it.
     pub fn get(&self, key: u64) -> u64 {
-        self.counts[self.slot(key)]
+        self.counts[self.slot(key)] as u64 * self.scale
     }
 
     /// How many keys it counts.
@@ -3494,7 +3500,7 @@ impl Counts {
 
     /// Each key and its count, in no order.
     pub fn iter(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
-        self.keys.iter().zip(self.counts.iter()).filter(|(_, c)| **c != 0).map(|(&k, &c)| (k, c))
+        self.keys.iter().zip(self.counts.iter()).filter(|(_, c)| **c != 0).map(|(&k, &c)| (k, c as u64 * self.scale))
     }
 }
 
@@ -3560,7 +3566,7 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
                 let rel = j.bound(rel);
                 // Counted once per input, constants and columns (`OnConn::histograms`).
                 let key = (rel.uid.0, consts.clone(), cols.clone(), cap);
-                if let Some(h) = on.histograms.lock().get(&key) {
+                if let Some((_, h)) = on.histograms.lock().get(&key) {
                     return Some(h.clone());
                 }
                 let stride = count(rel.len(), &|i, c| (!is_dead(&rel.dead, i)).then(|| rel.at(i as usize).read().at(c)));
@@ -3568,7 +3574,9 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
                     counts.scale(stride);
                 }
                 let h = (passed * stride, Arc::new(counts));
-                on.histograms.lock().insert(key, h.clone());
+                let mut cached = on.histograms.lock();
+                cached.retain(|_, (r, _)| r.strong_count() > 0);
+                cached.insert(key, (Arc::downgrade(rel), h.clone()));
                 return Some(h);
             }
         };

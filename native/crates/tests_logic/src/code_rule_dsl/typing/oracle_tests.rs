@@ -53,7 +53,7 @@ fn python_files(root: &Path) -> BTreeMap<String, String> {
 
 /// 1-based line of a byte offset.
 fn line(source: &str, offset: usize) -> u64 {
-    source.as_bytes()[..offset].iter().filter(|b| **b == b'\n').count() as u64 + 1
+    crate::code_rule_dsl::lines::line_of(source, crate::code_rule_dsl::language::GrammarDialect::Python, offset) as u64
 }
 
 /// The spans the scorer reads, added to the program as one more output: each answered call's and each named

@@ -54,7 +54,7 @@ impl Bound {
     /// The entry of `rel` (its name and identity) at partition `part`, if the space keeps one.
     pub(in crate::code_rule_dsl) fn entry(self: &Arc<Self>, rel: &str, ident: &[u8; 32], part: i64) -> Option<Entry> {
         let kept = self.view().entry(&FactKey { rel, ident, part })?;
-        let (rows, digest, types): (*const rerail_blocks::packed::Packed, u64, Vec<u8>) = (kept.rows, kept.digest, kept.types.to_vec());
+        let (rows, digest, types, atoms_max): (*const rerail_blocks::packed::Packed, u64, Vec<u8>, Option<i64>) = (kept.rows, kept.digest, kept.types.to_vec(), kept.atoms_max);
         // Found: the run's program reads it, and its reader record names it (decision 0401 step 8). A miss keeps
         // nothing; what the run puts in its place, its puts' record names.
         crate::code_rule_dsl::logic::profile::with_bound::<KeptReader, _>(|r| {
@@ -62,7 +62,7 @@ impl Bound {
                 log.asked(&self.id, ident, |key| self.view().get(&FactKey { rel: READERS, ident: key, part: 0 }).map(|k| record_idents(&k).collect()).unwrap_or_default());
             }
         });
-        Some(Entry { bound: Arc::clone(self), rel: rel.to_owned(), ident: *ident, part, rows, digest, types })
+        Some(Entry { bound: Arc::clone(self), rel: rel.to_owned(), ident: *ident, part, rows, digest, types, atoms_max })
     }
 }
 
@@ -80,6 +80,8 @@ pub(in crate::code_rule_dsl) struct Entry {
     /// 20,217 kept granules was looked up twice, `gathered` asking each one's types).
     digest: u64,
     types: Vec<u8>,
+    /// The greatest atom its rows hold, as their write recorded it (`KeptEntry::atoms_max`).
+    atoms_max: Option<i64>,
 }
 
 // SAFETY: `rows` lies in a read-only mapping `bound` holds, shared by every thread that reads it.
@@ -181,15 +183,9 @@ fn readable(kept: &Entry, atoms: &Atoms) -> bool {
     if !atoms.holds_by_reading() {
         return true;
     }
-    let rel = kept.packed();
-    let mut max: Option<i64> = None;
-    for (c, _) in kept.types.iter().enumerate().filter(|(_, t)| **t == b's') {
-        if c >= rel.arity as usize {
-            continue;
-        }
-        rel.col(c).for_each(|v| max = Some(max.map_or(v, |m| m.max(v))));
-    }
-    let Some(max) = max else { return true };
+    // The greatest atom its write recorded: its rows are not read (each of an edit's 20,217 kept granules had its atom
+    // columns scanned for it).
+    let Some(max) = kept.atoms_max else { return true };
     match atoms.reads_in_place(max) {
         Ok(true) => true,
         _ => {

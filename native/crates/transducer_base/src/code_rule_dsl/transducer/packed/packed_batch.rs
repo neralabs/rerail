@@ -391,7 +391,8 @@ impl PackedBatch {
         for tape in files.iter().take(file_count) {
             if layout == Layout::Resident {
                 let source = tape.transducer_source();
-                let lines = 1 + source.iter().filter(|&&byte| byte == b'\n').count();
+                // The document's lines, its language's (decision 0612): the ones its resident line index holds.
+                let lines = tape.line_table().count();
                 let nodes = tape.transducer_len();
                 batch.files.push(BatchFile {
                     node_start: checked_u32(navigation[0])?,
@@ -417,14 +418,8 @@ impl PackedBatch {
             batch.source.extend_from_slice(source);
             let line_start = checked_u32(navigation[3])?;
             let first_line = batch.line_starts.len();
-            batch.line_starts.push(source_start);
-            batch.line_starts.extend(
-                source
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, byte)| **byte == b'\n')
-                    .map(|(index, _)| source_start + index as u32 + 1),
-            );
+            // The document's lines, its language's (decision 0612), read off its line index.
+            batch.line_starts.extend(tape.line_table().starts().map(|start| source_start + start));
             if !tape.transducer_labels().is_empty() {
                 derived.push((node_start, tape.transducer_labels_shared()));
             }

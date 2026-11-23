@@ -214,7 +214,7 @@ fn a_key_put_twice_outside_a_wave_is_written_once() {
 /// corpus's `the_run_after_a_cold_one_writes_nothing`).
 #[test]
 fn a_waves_two_puts_of_a_programs_record_are_one_naming_both() {
-    let (path, c) = store("wave-readers");
+    let (path, c) = store("wave-reader-puts");
     let store = crate::content_store::ContentStore::open(&path).unwrap();
     let program = [0x33u8; 32];
     let (one, two, asked) = ([1u8; 32], [2u8; 32], [3u8; 32]);

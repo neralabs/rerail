@@ -9,12 +9,14 @@ build = "../compiler/build.rs"
 
 [features]
 # The ladder's and the tests' hooks, as the front end's.
-test-hooks = ["rerail-blocks/test-hooks", "rerail-compiler/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-tape-format/test-hooks"]
 
 [dependencies]
 # The provers' tables in blocks (decision 0353), as the compiler's sources it mounts hold them.
 rerail-blocks = { path = "../blocks" }
 rerail-compiler = { path = "../compiler" }
+# A grammar's line terminators (decision 0612): tier 1's line ends, the tape's line index's.
+rerail-tape-format = { path = "../tape_format" }
 # Bitlex's parser. No dependencies of its own.
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 # A fixed hasher, so a compile is the same each run (the questions asked, and so the program, follow the maps' order).

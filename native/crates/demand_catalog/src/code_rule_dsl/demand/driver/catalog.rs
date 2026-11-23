@@ -21,7 +21,7 @@ pub mod relational_ir;
 pub mod sql_backend;
 
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::model::CompiledCodeRule;
 use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
 use crate::code_rule_dsl::tape::TapeDoc;
@@ -425,7 +425,7 @@ impl SqlPlans {
             file_metadata.push(serde_json::json!({
                 "path": file.path,
                 "source": source,
-                "lineStarts": LineTable::new(source, Terminators::of(file.language)).starts(),
+                "lineStarts": LineTable::new(source, crate::code_rule_dsl::lines::terminators(file.language)).starts().collect::<Vec<_>>(),
                 "syntaxFailures": syntax_failures,
             }));
             file_paths.push(file.path);

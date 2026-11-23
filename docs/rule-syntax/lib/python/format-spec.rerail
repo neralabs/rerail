@@ -1,0 +1,72 @@
+// python/format-spec: the format-spec context (decision 0597): an f-string field's format spec, read in its own
+// mini-language by rules of its own.
+//
+// A format spec (`>10.2f` in `f"{x:>10.2f}"`) is a region root: its subtree, parsed already as the file's
+// (`format_specifier`), bounded at each read. A nested field (`{w}` in `f"{x:>{w}}"`) is the host's code, as Ruff
+// checks it: a hole of the region (`holes`), never a node of the context. A spec with a nested field is known only
+// when it runs, so the context parses a spec whose text is a constant.
+//
+// The extraction is the host's (rule 3):
+//   fspec_root(s)        s is a field's format spec: an interpolation's, or a nested field's (`{w:>3}` in a spec)
+//   fspec_hole(h)        h is a nested field of a spec: the host's code
+// The context's, exported:
+//   fspec_part(s, p, v)  s's constant text is the standard format spec, and its part p is v as written: p is
+//                        "fill", "align", "sign", "z", "alt", "zero", "width", "grouping", "precision" or "type"; a
+//                        part not written has no row
+//   fspec_std(s)         s's constant text is the standard format spec (CPython's format_spec mini-language,
+//                        [[fill]align][sign][z][#][0][width][grouping][.precision][type]); "" is one
+//   fspec_other(s)       s's constant text is no standard spec: a type's own (`f"{d:%Y-%m-%d}"` for a datetime)
+// The host's, what it reads of them (rule 5), for policies: fmt_spec_part(s, p, v), fmt_spec_std(s), fmt_spec_other(s).
+//
+//   f"{x:>10.2f}"        fspec_part(s, "align", ">"), (s, "width", "10"), (s, "precision", "2"), (s, "type", "f")
+//   f"{d:%Y}"            fspec_other(s)
+//   f"{x:>{w}}"          none: the spec has a nested field
+#include "core.rerail"
+.decl fspec_root(s: node)
+fspec_root(s) :- (kind(i, "interpolation") ; kind(i, "format_expression")), field(i, "format_specifier", s).
+.decl fspec_hole(h: node)
+fspec_hole(h) :- fspec_root(s), child(s, h, _), kind(h, "format_expression").
+.context format_spec of python roots fspec_root holes fspec_hole exports fspec_part, fspec_std, fspec_other
+.from format_spec fspec_part as fspec_q_part, fspec_std as fspec_q_std, fspec_other as fspec_q_other
+.decl fmt_spec_part(s: node, p: symbol, v: symbol)
+fmt_spec_part(s, p, v) :- fspec_q_part(s, p, v).
+.decl fmt_spec_std(s: node)
+fmt_spec_std(s) :- fspec_q_std(s).
+.decl fmt_spec_other(s: node)
+fmt_spec_other(s) :- fspec_q_other(s).
+
+// ---- the context's rules --------------------------------------------------------------------------------------------
+// The spec's value is its literal piece (fstring_piece, without the `:`); an empty spec (`f"{x:}"`) has none.
+.decl fspec_text(s: node, v: symbol)
+fspec_text(s, v) :- fspec_root(s), !fspec_nested(s), fstring_piece(s, 0, "literal", v).
+fspec_text(s, "") :- fspec_root(s), !fstring_piece(s, _, _, _).
+.decl fspec_nested(s: node)
+fspec_nested(s) :- fstring_piece(s, _, "interpolation", _).
+// Fill and align, as CPython reads them: a fill is any character before an align character; else an align
+// character first; else neither.
+.decl fspec_fa(s: node, fill: symbol, align: symbol, rest: symbol)
+fspec_fa(s, f, a, r) :- fspec_text(s, v), match("(?<f>[\\s\\S])(?<a>[<>=^])(?<r>[\\s\\S]*)", v).
+fspec_fa(s, "", a, r) :- fspec_text(s, v), !match("[\\s\\S][<>=^][\\s\\S]*", v), match("(?<a>[<>=^])(?<r>[\\s\\S]*)", v).
+fspec_fa(s, "", "", v) :- fspec_text(s, v), !match("[\\s\\S]?[<>=^][\\s\\S]*", v).
+// The rest: sign, `z`, `#`, `0`, width, grouping, precision (after its `.`) and type, each "" where not written.
+.decl fspec_rest(s: node, sign: symbol, z: symbol, alt: symbol, zero: symbol, width: symbol, grouping: symbol,
+    precision: symbol, ty: symbol)
+fspec_rest(s, sign, z, alt, zero, width, grouping, precision, ty) :- fspec_fa(s, _, _, r),
+    match("(?<sign>[-+ ]?)(?<z>z?)(?<alt>#?)(?<zero>0?)(?<width>[0-9]*)(?<grouping>[_,]?)\\.(?<precision>[0-9]+)(?<ty>[bcdeEfFgGnosxX%]?)", r).
+fspec_rest(s, sign, z, alt, zero, width, grouping, "", ty) :- fspec_fa(s, _, _, r),
+    match("(?<sign>[-+ ]?)(?<z>z?)(?<alt>#?)(?<zero>0?)(?<width>[0-9]*)(?<grouping>[_,]?)(?<ty>[bcdeEfFgGnosxX%]?)", r).
+.decl fspec_std(s: node)
+fspec_std(s) :- fspec_rest(s, _, _, _, _, _, _, _, _).
+.decl fspec_other(s: node)
+fspec_other(s) :- fspec_text(s, _), !fspec_std(s).
+.decl fspec_part(s: node, p: symbol, v: symbol)
+fspec_part(s, "fill", f) :- fspec_std(s), fspec_fa(s, f, _, _), f != "".
+fspec_part(s, "align", a) :- fspec_std(s), fspec_fa(s, _, a, _), a != "".
+fspec_part(s, "sign", v) :- fspec_rest(s, v, _, _, _, _, _, _, _), v != "".
+fspec_part(s, "z", v) :- fspec_rest(s, _, v, _, _, _, _, _, _), v != "".
+fspec_part(s, "alt", v) :- fspec_rest(s, _, _, v, _, _, _, _, _), v != "".
+fspec_part(s, "zero", v) :- fspec_rest(s, _, _, _, v, _, _, _, _), v != "".
+fspec_part(s, "width", v) :- fspec_rest(s, _, _, _, _, v, _, _, _), v != "".
+fspec_part(s, "grouping", v) :- fspec_rest(s, _, _, _, _, _, v, _, _), v != "".
+fspec_part(s, "precision", v) :- fspec_rest(s, _, _, _, _, _, _, v, _), v != "".
+fspec_part(s, "type", v) :- fspec_rest(s, _, _, _, _, _, _, _, v), v != "".
