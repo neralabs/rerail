@@ -1658,11 +1658,15 @@ impl Projected {
             if root_tokens {
                 let outside = |c: u32| !ranges.iter().any(|&(a, b)| a <= c && c < b);
                 for c in f.children(first) {
-                    if !f.named(c) && f.end(c) > f.start(c) && outside(c) {
-                        marks.mark(Item::Token, c);
+                    if !f.named(c) && outside(c) {
+                        marks.mark(Item::Op, c);
+                        if f.end(c) > f.start(c) {
+                            marks.mark(Item::Token, c);
+                        }
                     }
                 }
             }
+
             let mut n = 0usize;
             // The numbered nodes on the walk's path, each with whether a numbered direct child of it was marked yet (a
             // later one is after a sibling: `next_sibling`'s rows). A node's tape parent comes with the walk, so the
@@ -1671,8 +1675,12 @@ impl Projected {
             for (id, above) in ranges.iter().flat_map(|&(a, b)| f.with_parents(a, b)) {
                 if !f.named(id) {
                     // A token (`Facts::tokens`) of an included node: its span is made on first read (`Projected::span`).
-                    if core_tokens && f.end(id) > f.start(id) && above.is_some_and(|q| marks.has(Item::Node, q)) {
-                        marks.mark(Item::Token, id);
+                    // Any anonymous child of one, zero-width too, is one of `op`'s rows.
+                    if core_tokens && above.is_some_and(|q| marks.has(Item::Node, q)) {
+                        marks.mark(Item::Op, id);
+                        if f.end(id) > f.start(id) {
+                            marks.mark(Item::Token, id);
+                        }
                     }
                     continue;
                 }
@@ -1915,6 +1923,10 @@ impl Projected {
     /// The spread nodes (`spread`'s rows).
     pub fn spreads(&self) -> u32 {
         self.ranks.count(Item::Spread)
+    }
+    /// `op`'s rows: the numbered nodes' anonymous children (`Item::Op`).
+    pub fn ops(&self) -> u32 {
+        self.ranks.count(Item::Op)
     }
     /// Local id `local`'s depth, the root's 0: its numbered tape ancestors, by a climb (decision 0353 step 3). A scan
     /// carries it in its walk.
@@ -3487,11 +3499,11 @@ impl Batch {
         // `core.rerail`'s (decision 0046).
         let mut c = core_rr::CoreRows::default();
         // Node identity/ancestry and line views do not require scalar rows or text interning.
-        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","comment","op","op_at","op_t","intval","str_part","str_part_start","str_part_word"]
+        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","comment","op_at","op_t","intval","str_part","str_part_start","str_part_word"]
             .into_iter().any(|r|projection.wants(r));
         let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
         c.skip = core_rr::Skip {
-            ops: !wants_any(&["op", "op_at"]),
+            ops: !wants_any(&["op_at"]),
             comment: !projection.wants("comment"),
             name: !projection.wants("name"),
             literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "rr_value_lit", "text"]),
@@ -3895,7 +3907,7 @@ impl Batch {
             View::Field => o.fields.get_or_init(|| counted(&|c| if self.projection.wants("field") { c[fielded] as usize } else { 0 })),
             View::Sibling => o.siblings.get_or_init(|| counted(&|c| if self.projection.wants("next_sibling") { c[siblings] as usize } else { 0 })),
             View::Loc(_) => o.locs.get_or_init(|| counted(&|c| c[locs] as usize)),
-            View::Op => o.tokens.get_or_init(|| counted(&|c| c[4] as usize)),
+            View::Op => o.tokens.get_or_init(|| counted(&|c| c[9] as usize)),
             View::Tok(rel) => o.toks[rel as usize].get_or_init(|| {
                 let at = 6 + match rel.rows() {
                     Item::Leads => 0,
@@ -4016,7 +4028,7 @@ impl Batch {
             View::Sibling => self.docs[doc].ranks().local(Item::Sibling, x).map(|r| r as usize),
             View::Spread => self.docs[doc].ranks().local(Item::Spread, x).map(|r| r as usize),
             View::Tok(rel) => self.docs[doc].token_row_of(rel, local).map(|r| r as usize),
-            View::Op => self.docs[doc].ranks().local(Item::Token, x).map(|r| r as usize),
+            View::Op => self.docs[doc].ranks().local(Item::Op, x).map(|r| r as usize),
         }?;
         Some(self.offsets(view)[doc] + within)
     }
@@ -4528,7 +4540,7 @@ impl Viewed {
                     }
                 }
             } else if matches!(self.view, View::Op) && column == 0 {
-                // A node's tokens: its tape children that are tokens.
+                // A node's anonymous children.
                 if let Some((doc, local)) = b.node(v) {
                     let p = &b.docs[doc];
                     p.facts.each_child(p.node(local), |x| rows.extend(b.row_of_node(self.view, doc, local, x)));
@@ -4726,11 +4738,12 @@ impl Viewed {
                 }
             }
         } else if matches!(self.view, View::Op) && column == 0 {
-            // A node's tokens, each with its tape node; the node's id is the key.
+            // A node's anonymous children, each with its tape node; the node's id is the key.
             if let Some((doc, local)) = b.node_near(value, doc_hint) {
                 let p = &b.docs[doc];
+                let r = p.ranks();
                 p.facts.each_child(p.node(local), |x| {
-                    if p.ranks().is(Item::Token, x) {
+                    if r.is(Item::Op, x) {
                         emit(doc, local, x, Some(value), None, Known::default());
                     }
                 });
@@ -4803,9 +4816,10 @@ impl Viewed {
                 }
                 return;
             }
-            // The tokens in preorder, each with its node.
+            // The anonymous children in preorder, each with its node.
             View::Op => {
-                for (i, (x, l)) in p.token_order().into_iter().enumerate().take(n) {
+                for (i, (_, x)) in p.ranks().iter(Item::Op).enumerate().take(n) {
+                    let l = p.facts.parent(x).map_or(0, |q| p.local_of_node(q));
                     let id = if needs & NEED_ID != 0 { p.global(l) } else { 0 };
                     let up = if needs & NEED_UP != 0 { Self::parent_id(p, l) } else { 0 };
                     fill(i, l, x, id, up, Known::default());
@@ -4984,7 +4998,7 @@ impl Viewed {
                 (p.ranks().rank(Item::Node, x), x)
             }
             View::Op => {
-                let x = p.ranks().select(Item::Token, i as u32).expect("a token row");
+                let x = p.ranks().select(Item::Op, i as u32).expect("an op row");
                 (p.facts.parent(x).map_or(0, |q| p.local_of_node(q)), x)
             }
             View::Tok(rel) => p.token_row(rel, i as u32),
@@ -5059,7 +5073,6 @@ pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Proje
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = made_sources(&batch).into_iter().filter_map(|(_, name, source)| Some((name?, source))).collect();
     out.extend(views(&batch));
     places::join(&mut out, &batch);
-    places::join_ops(&mut out, &batch);
     Ok(out)
 }
 
@@ -5082,6 +5095,7 @@ fn named_views(shape: Shape) -> Vec<(&'static str, View)> {
             ("next_sibling", View::Sibling),
             ("end_point", View::End),
             ("spread", View::Spread),
+            ("op", View::Op),
             ("first_token", View::Tok(tokens::TokRel::First)),
             ("last_token", View::Tok(tokens::TokRel::Last)),
             ("token_before", View::Tok(tokens::TokRel::Before)),
@@ -5415,7 +5429,6 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
     let viewing = crate::code_rule_dsl::logic::profile::span(|| "views".into());
     out.extend(views(&batch).into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, source)| (name.to_owned(), source)));
     places::join(&mut out, &batch);
-    places::join_ops(&mut out, &batch);
     drop(viewing);
     // The kind-set axes, made per looked-up node like containment (decision 0050): a set no join reads, and the nodes
     // no join binds, cost nothing. Their statistics come from the tree.

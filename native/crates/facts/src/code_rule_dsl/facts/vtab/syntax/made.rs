@@ -14,10 +14,10 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// A document's views' counts (decision 0494): its nodes, fielded nodes, siblings after it, places, tokens (`op`'s
-/// rows), spread nodes (`spread`'s) and the token order's places (`tokens`: with a token, one before, one after), as
+/// A document's views' counts (decision 0494): its nodes, fielded nodes, siblings after it, places, tokens, spread
+/// nodes (`spread`'s), the token order's places (`tokens`: with a token, one before, one after) and `op`'s rows, as
 /// its projection has them; the documents' table keeps them.
-pub type ViewCounts = [u32; 9];
+pub type ViewCounts = [u32; 10];
 
 /// A document's row of the documents' table's counts (`Batch::kept_counts`, `retain::put_base_counts`): its key, path,
 /// digest, views' counts and facts' size, and whether it is a file's own tree (a guest's path is its host's).
@@ -36,7 +36,7 @@ pub struct Kept {
 /// A projection's views' counts.
 pub(super) fn view_counts(p: &Projected) -> ViewCounts {
     use super::tokens::TokRel;
-    [p.len(), p.fielded(), p.after_siblings(), p.locs(), p.tokens(), p.spreads(), p.token_rows(TokRel::First), p.token_rows(TokRel::Before), p.token_rows(TokRel::After)]
+    [p.len(), p.fielded(), p.after_siblings(), p.locs(), p.tokens(), p.spreads(), p.token_rows(TokRel::First), p.token_rows(TokRel::Before), p.token_rows(TokRel::After), p.ops()]
 }
 
 /// A batch's documents (decision 0494): each one's projection made on its first read; its key and tag known before.

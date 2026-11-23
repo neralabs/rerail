@@ -40,6 +40,10 @@ pub enum Item {
     Follows = 7,
     /// One with a lexeme after its subtree (`token_after`'s rows).
     Precedes = 8,
+    /// An anonymous child of a numbered node, of any width (`op`'s rows: a token, or a zero-width child the tape
+    /// stores, which no token numbers). A Python two-word operator is one (`not in`, `is not`: the grammar's alias
+    /// of the two words, one anonymous node).
+    Op = 9,
 }
 
 /// The items, as `Item`'s numbers.
@@ -184,7 +188,7 @@ impl Ranks {
             })
             .expect("a batch's block holds its projection")
         };
-        let samples = [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread, Item::Lexeme, Item::Leads, Item::Follows, Item::Precedes].map(sample);
+        let samples = [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread, Item::Lexeme, Item::Leads, Item::Follows, Item::Precedes, Item::Op].map(sample);
         let desc = Desc::<Numbering>::new(block);
         let d = desc.as_ptr();
         // SAFETY: the descriptor is this build's alone, and the runs point at cells of the same block, which live

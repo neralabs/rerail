@@ -477,7 +477,6 @@ pub(super) struct CoreRows {
     /// `text_nodes` and `op_nodes` as the walked document's dialect's codes (`for_dialect`).
     text_codes: Option<super::NodesOf>,
     op_codes: Option<super::NodesOf>,
-    op: Vec<[i64; 2]>,
     op_at: Vec<[i64; 3]>,
     text: Vec<[i64; 2]>,
     name: Vec<[i64; 2]>,
@@ -504,7 +503,7 @@ pub(super) struct CoreRows {
 impl CoreRows {
     /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
     pub(super) fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+        std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
     }
 }
 
@@ -622,16 +621,13 @@ impl CoreRows {
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
-        // `op`: every anonymous child the tape stores (none the grammar implies); `op_at`: those that are no
-        // punctuation, in order, Python's two-word operators as one ("not in", "is not"), which `op` has too.
+        // `op_at`: the anonymous children the tape stores that are no punctuation, in order, Python's two-word
+        // operators as one ("not in", "is not"). `op`, every anonymous child and each two-word operator, is the
+        // projection's view (`View::Op`: `Item::Op`, `Item::OpPair`): no row is made.
         let mut ops: Vec<String> = Vec::new();
         let op_read = !self.skip.ops && self.reads_op(p, dialect, id);
         for &c in children.iter().filter(|&&c| op_read && !f.named(c)) {
             let t = dialect.name(f, c);
-            // A token the projection numbers is the `op` view's row (`View::Op`, `places::join_ops`): none is made.
-            if !p.ranks().is(super::ranks::Item::Token, c) {
-                self.op.push([n, string(t) as i64]);
-            }
             if !is_punct(t) {
                 let two = dialect.family == Family::Python && matches!((ops.last().map(String::as_str), t), (Some("not"), "in") | (Some("is"), "not"));
                 match ops.last_mut() {
@@ -642,9 +638,6 @@ impl CoreRows {
         }
         for (i, t) in ops.iter().enumerate() {
             self.op_at.push([n, i as i64, string(t) as i64]);
-            if t.contains(' ') {
-                self.op.push([n, string(t) as i64]);
-            }
         }
         // `structural_before`, `structural_after`: the source between each stored child and its
         // neighbours (the sibling before or after it, else the parent's edge); a root's, between
@@ -971,7 +964,6 @@ impl CoreRows {
         let mut value_type: Vec<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
         value_type.sort_unstable();
         vec![
-            ("op", node_sym(&self.op)),
             ("op_at", make(&["n", "i", "s"], &self.op_at, [false, false, true], atom)),
             ("text", node_sym(&self.text)),
             ("name", node_sym(&self.name)),

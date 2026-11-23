@@ -27,10 +27,6 @@ pub(super) const NAMES: [&str; 4] = ["line", "end_line", "col", "docof"];
 pub struct Places {
     view: Arc<dyn Source>,
     spans: Arc<dyn Source>,
-    /// Whether a row's id (column 0) names its side: a place relation's, whose spans' ids are `Extra`'s
-    /// (`is_span`) and every other id the view's. `op`'s made rows (`join_ops`) are of nodes and tokens too, so both
-    /// sides are read.
-    by_id: bool,
     /// Where the device reads it, made on the first ask (`device_view`); `None` where it cannot.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     device: std::sync::OnceLock<Option<OnDevice>>,
@@ -71,18 +67,10 @@ struct OnDevice {
 
 impl Places {
     pub fn new(view: Arc<dyn Source>, spans: Arc<dyn Source>) -> Self {
-        Self::with(view, spans, true)
-    }
-    /// A relation of the view's rows then the made ones', neither side known by a row's id (`op`'s).
-    pub fn unrouted(view: Arc<dyn Source>, spans: Arc<dyn Source>) -> Self {
-        Self::with(view, spans, false)
-    }
-    fn with(view: Arc<dyn Source>, spans: Arc<dyn Source>, by_id: bool) -> Self {
         debug_assert_eq!(view.columns().len(), spans.columns().len());
         Places {
             view,
             spans,
-            by_id,
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             device: std::sync::OnceLock::new(),
         }
@@ -96,9 +84,6 @@ impl Places {
     /// The rows of the ids `values` on `column`, each id from the side that holds it on column 0 (a node's from the
     /// view, a span's from the spans), from both on another column: `None` when a part asked cannot answer.
     fn by_side(&self, column: usize, values: &[i64], of: impl Fn(&dyn Source, &[i64]) -> Option<Vec<usize>>) -> Option<Vec<usize>> {
-        if !self.by_id {
-            return self.both(|s| of(s, values));
-        }
         let (spans, nodes): (Vec<i64>, Vec<i64>) = if column == 0 { values.iter().partition(|&&v| is_span(v)) } else { (values.to_vec(), values.to_vec()) };
         let mut rows = if nodes.is_empty() { Vec::new() } else { of(&*self.view, &nodes)? };
         if !spans.is_empty() {
@@ -275,13 +260,13 @@ impl Source for Places {
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         // A row's id is one row, the view's or a span's.
-        if column == 0 && self.by_id { self.view.estimated_matches(column, batch) } else { self.view.estimated_matches(column, batch) + self.spans.estimated_matches(column, batch) }
+        if column == 0 { self.view.estimated_matches(column, batch) } else { self.view.estimated_matches(column, batch) + self.spans.estimated_matches(column, batch) }
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         self.by_side(column, values, |s, v| s.lookup(column, v))
     }
     fn keys_rows(&self, column: usize) -> bool {
-        self.by_id && column == 0 && self.view.keys_rows(0)
+        column == 0 && self.view.keys_rows(0)
     }
     fn key_row(&self, column: usize, value: i64) -> Option<usize> {
         if is_span(value) {
@@ -295,14 +280,14 @@ impl Source for Places {
     }
     /// The view's matches read as found (its cursor), then the spans' (read as found, else looked up, else
     /// filtered, and read): a place relation's probe reads no row of the view a point read each. By a row's id, the
-    /// side that holds it alone (`by_id`). Only the view may refuse, before any row is given; the spans always answer.
+    /// side that holds it alone (`is_span`). Only the view may refuse, before any row is given; the spans always answer.
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         let width = columns.len();
         if width > 8 {
             return false;
         }
         let mut row = [0i64; 8];
-        let routed = self.by_id && column == 0;
+        let routed = column == 0;
         if !(routed && is_span(value)) {
             if !self.view.lookup_read_at(column, value, columns, cursor, each) {
                 let Some(rows) = self.view.lookup(column, &[value]) else { return false };
@@ -339,9 +324,6 @@ impl Source for Places {
     /// Counted in an array in a block of the run's (`place_statistics`). Counted as a view's rows by `RelStats`, its counts took 48 bytes a row on the heap (`line`'s and `col`'s 49.5 MB each at the
     /// M3's 300-file peak, ab160).
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
-        if !self.by_id {
-            return None;
-        }
         place_statistics(self)
     }
     fn failure(&self) -> Option<String> {
@@ -366,20 +348,6 @@ pub fn join<N: AsRef<str>>(out: &mut [(N, Arc<dyn Source>)], batch: &Arc<super::
             let view: Arc<dyn Source> = Arc::new(super::Viewed { batch: Arc::clone(batch), view: place, home: std::sync::OnceLock::new() });
             *source = Arc::new(Places::new(view, Arc::clone(source)));
         }
-    }
-}
-
-/// `out`'s `op` (core.rerail's shape), made as rows only for what the tape does not number (`core_rr`: a zero-width
-/// anonymous child, Python's two-word operators), bound with the `op` view of its tokens before them
-/// (`View::Op`): the batch makes no token's `op` row. The view's rows first, then the made ones', as a place
-/// relation's.
-pub(super) fn join_ops<N: AsRef<str>>(out: &mut [(N, Arc<dyn Source>)], batch: &Arc<super::Batch>) {
-    if batch.shape != super::Shape::Core {
-        return;
-    }
-    if let Some((_, source)) = out.iter_mut().find(|(n, _)| n.as_ref() == "op") {
-        let view: Arc<dyn Source> = Arc::new(super::Viewed { batch: Arc::clone(batch), view: super::View::Op, home: std::sync::OnceLock::new() });
-        *source = Arc::new(Places::unrouted(view, Arc::clone(source)));
     }
 }
 

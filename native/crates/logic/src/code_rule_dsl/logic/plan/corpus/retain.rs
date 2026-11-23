@@ -2144,9 +2144,13 @@ pub(in crate::code_rule_dsl) type BaseCounts = HashMap<u32, BaseCount>;
 
 const BASE_COUNTS: &str = "#base-counts";
 
-/// A counts row's words: key, digest (4), views' counts (9), facts' size (2), content (its kind, then 4 words: as the
+/// A counts row's words: key, digest (4), views' counts (`VIEW_COUNTS`), facts' size (2), content (its kind, then 4 words: as the
 /// documents' table's; 2 for none; 3 for a host file's guest, then its host, file, 1 for its tree and its tape tag).
-const COUNTS_WIDTH: usize = 21;
+const COUNTS_WIDTH: usize = KIND_AT + 5;
+/// The views' counts in a row (`ViewCounts`' length), and where the facts' size and the content's kind are.
+const VIEW_COUNTS: usize = std::mem::size_of::<crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts>() / 4;
+const SIZE_AT: usize = 5 + VIEW_COUNTS;
+const KIND_AT: usize = SIZE_AT + 2;
 
 /// The counts the store's frames in `space` keep for the cross part of `binds`; empty when none are kept (or kept in
 /// an earlier width, which a run counts again).
@@ -2161,24 +2165,25 @@ pub(in crate::code_rule_dsl) fn base_counts(store: &ContentStore, space: [u8; 32
     let mut out = HashMap::with_capacity(entry.len());
     let small = |w: i64| u32::try_from(w).ok();
     for r in words.as_chunks::<COUNTS_WIDTH>().0 {
-        let (Some(key), Some(counts), [Some(nodes), Some(codes)]) = (small(r[0]), <[i64; 9]>::try_from(&r[5..14]).unwrap().map(small).into_iter().collect::<Option<Vec<u32>>>(), [r[14], r[15]].map(small)) else { continue };
+        let (Some(key), Some(counts), [Some(nodes), Some(codes)]) = (small(r[0]), <[i64; VIEW_COUNTS]>::try_from(&r[5..SIZE_AT]).unwrap().map(small).into_iter().collect::<Option<Vec<u32>>>(), [r[SIZE_AT], r[SIZE_AT + 1]].map(small)) else { continue };
         let mut digest = [0u8; 32];
         for (i, w) in r[1..5].iter().enumerate() {
             digest[i * 8..i * 8 + 8].copy_from_slice(&w.to_le_bytes());
         }
-        let content = match r[16] {
-            0 => Some(super::memo::Content::Stored(crate::content_store::SourceId::from_raw(r[17]))),
+        let k = KIND_AT;
+        let content = match r[k] {
+            0 => Some(super::memo::Content::Stored(crate::content_store::SourceId::from_raw(r[k + 1]))),
             1 => {
                 let mut d = [0u8; 32];
-                for (i, w) in r[17..21].iter().enumerate() {
+                for (i, w) in r[k + 1..k + 5].iter().enumerate() {
                     d[i * 8..i * 8 + 8].copy_from_slice(&w.to_le_bytes());
                 }
                 Some(super::memo::Content::Unstored(d))
             }
             _ => None,
         };
-        let guest = (r[16] == 3).then(|| (small(r[17]), small(r[18]), u8::try_from(r[20]).ok())).and_then(|g| match g {
-            (Some(host), Some(file), Some(tag)) => Some(KeptGuest { host, file, tree: r[19] == 1, tag }),
+        let guest = (r[k] == 3).then(|| (small(r[k + 1]), small(r[k + 2]), u8::try_from(r[k + 4]).ok())).and_then(|g| match g {
+            (Some(host), Some(file), Some(tag)) => Some(KeptGuest { host, file, tree: r[k + 3] == 1, tag }),
             _ => None,
         });
         out.insert(key, BaseCount { digest, counts: counts.try_into().unwrap(), size: [nodes, codes], content, guest });

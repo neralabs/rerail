@@ -492,6 +492,40 @@ fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, Arc::new(file))), guest: None, module: None, unpackaged: false }
 }
 
+/// `op` is a view of the rank index (decision 0353): a row each anonymous child of a numbered node stores (a token,
+/// or a zero-width child no token numbers), by its node. A Python two-word operator (`not in`, `is not`) is one such
+/// child, the grammar's alias of the two words. `op_at`, which `core_rr` makes walking each node's children itself
+/// (and joining two words, where a tape stores them apart), agrees: its rows' operators are each one of `op`'s, and
+/// its two-word ones are `op`'s, exactly.
+#[test]
+fn op_is_every_anonymous_child_and_op_ats_two_word_operators() {
+    let src = "x = a not in b\ny = a is not b\nz = not a\nif a in b and c is d:\n    pass\nw = [i for i in a if i not in b]\n";
+    let store = ContentStore::open(&temp("op")).unwrap();
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "op", "op_at"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let docs = vec![document(1, "m.py", "python", src), document(2, "bad.py", "python", "x = (a not\n")];
+    let sources = shaped(&store, docs, &projection).unwrap();
+    let source = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no {name}")).1);
+    let sym = |v: i64| store.atom_value(v as u32).unwrap().unwrap();
+    let (op, op_at) = (source("op"), source("op_at"));
+    let ops: BTreeSet<(i64, String)> = (0..op.len()).map(|r| (op.value(r, 0), sym(op.value(r, 1)))).collect();
+    assert_eq!(ops.len(), op.len(), "no row twice");
+    let ats: BTreeSet<(i64, String)> = (0..op_at.len()).map(|r| (op_at.value(r, 0), sym(op_at.value(r, 2)))).collect();
+    for at in &ats {
+        assert!(ops.contains(at), "op_at's {at:?} is one of op's: {ops:?}");
+    }
+    let two = |s: &BTreeSet<(i64, String)>| s.iter().filter(|(_, t)| t.contains(' ')).cloned().collect::<BTreeSet<_>>();
+    assert_eq!(two(&ops), two(&ats), "the two-word operators");
+    assert_eq!(two(&ops).iter().map(|(_, t)| t.as_str()).collect::<BTreeSet<_>>(), ["is not", "not in"].into(), "both kinds");
+    // Each probe by node is the node's rows, the scan's.
+    for &(n, _) in &ops {
+        let mut got = BTreeSet::new();
+        assert!(op.lookup_read(0, n, &[0, 1], &mut |_, row| { got.insert((row[0], sym(row[1]))); }), "a probe of op by node reads as found");
+        assert_eq!(got, ops.iter().filter(|(m, _)| *m == n).cloned().collect(), "node {n}'s rows");
+        let rows = op.lookup(0, &[n]).unwrap();
+        assert_eq!(rows.iter().map(|&r| (op.value(r, 0), sym(op.value(r, 1)))).collect::<BTreeSet<_>>(), got, "node {n}'s rows by lookup");
+    }
+}
+
 /// `core.rerail`'s relations of `docs` for a program that includes `core.rerail` and reads them (`text_demand::projection_of`'s shape
 /// and reads), each row as text: a node as `kind'text'`, a span as `'text'`, a symbol as itself. The relations made
 /// for what a program reads are the batch's (`Extra`'s W's values, source lines and places, `tree`'s `op_at` and
@@ -601,6 +635,9 @@ fn core_rr_relations_hold_what_core_rr_says() {
     has("next_sibling", "comment'# top' import_statement'import os.path as p'");
     has("op", "comparison_operator'a not in b' not in");
     has("op_at", "comparison_operator'a not in b' 0 not in");
+    // `op` is a view (`Item::Op`): each anonymous child its own row, `not in` one (the grammar's alias of the two
+    // words: `op_is_every_anonymous_child_and_op_ats_two_word_operators`).
+    lacks("op", "comparison_operator'a not in b' not");
     // `def` is kept (`async def` holds it beside a choice); the parentheses and the separators are
     // delimiters the grammar implies: no tape holds them, and no relation.
     has("op", "function_definition def");
@@ -1095,7 +1132,7 @@ fn candidate_demands_preserve_document_scope_and_receiver_independence() {
     let projection=Projection{reads:Some(["doc","node","line"].into_iter().map(str::to_owned).collect()),..Projection::core()};
     let (batch,relations,_,(strings,_))=Batch::build(&store,docs.clone(),&projection,&[],&[],false).unwrap();
     assert!(!strings.iter().any(|s|s=="url" || s=="requests" || s==source),"unrequested AST strings must not be interned");
-    for name in ["text","name","str","value","op","op_at"] {
+    for name in ["text","name","str","value","op_at"] {
         assert_eq!(relations.iter().find(|(n,_)|*n==name).unwrap().1.len(),0,"{name}");
     }
     let targets=BTreeSet::from(["requests.get".to_owned()]);
@@ -2090,7 +2127,7 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 }
                 // The rank index's point reads (written once, `id_reads`) agree with its walk over the set bits.
                 let r = p.ranks();
-                for item in [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread, Item::Lexeme, Item::Leads, Item::Follows, Item::Precedes] {
+                for item in [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread, Item::Lexeme, Item::Leads, Item::Follows, Item::Precedes, Item::Op] {
                     let walked: Vec<(u32, u32)> = r.iter(item).collect();
                     assert_eq!(walked.len() as u32, r.count(item), "{at}: {item:?}'s count");
                     let set: HashMap<u32, u32> = walked.iter().map(|&(k, x)| (x, k)).collect();
