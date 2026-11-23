@@ -709,6 +709,65 @@ Tier 1 against `index`:
 | A control byte in a string | ORed into the error word, tested after the loop | the same (`errors \|= v_t2`) |
 | UTF-8 | `utf8_checker` | `utf8_checker`, derived from the grammar (0591); a block's end tested by three byte compares, not a vector compare |
 
+### The six differences after the twelve fixes: done (decision 0602, 2026-11-22)
+
+The same reading, after 0602.
+
+Tier 2 against `walk`:
+
+| | `walk` | `tier2.rs` |
+|---|---|---|
+| A string's read | `backslash_quote`, 32 bytes a step | the same: `S::marks32`, `x += 32`, the backend chosen once (`run_best`) |
+| A primitive | `primitive`, called from each place's `_` | the same: `value_primitive`, written once, each place's `_` (the byte matched at the place, then in it, as `walk`'s) |
+| `\u`'s digits and surrogates | the four digits a number; the surrogates its ranges; a high one's low one checked and marked (`low_checked`) | the four digits a number (`cp`, `HEX_VALUE`); `high` and `low` ranges of it; a high one's pair from its next escape's two digits, a number too; a low one's high one one position (`after2`) |
+| A node's write | the columns' stores, through pointers in `Walk`'s locals | the cells' stores through `Cursor`, `run`'s local; the state's op only at a block's first node, a close of a block before, or a bound that fails |
+
+Tier 1 against `index`:
+
+| | `index` | `tier1.rs` |
+|---|---|---|
+| The masks made of the strings | `scalar`, `follows`, `in_string`, `string_tail` | the same names and expressions; `body` too, for the escapes |
+| The structurals | `(op \| scalar & ~follows) & ~string_tail` | `((q \| op) \| nonquote_scalar & ~follows) & ~string_tail`: the quote outside `~follows`, as the grammar refuses `1"a"` in tier 2's tree, not in a number's end |
+| UTF-8's end | `is_incomplete`: one compare against `max_value` | the same (`gt_bits`, `MAX_VALUE`) |
+
+### The generated Rust in the lean parser's shape: done (decision 0604, 2026-11-22)
+
+The same reading, after 0604. Each row was a difference after 0602.
+
+Tier 2 against `walk`:
+
+| | `walk` | `tier2.rs` |
+|---|---|---|
+| The `\u` pair | a high one's low one read as four digits; that escape's checks skipped (`low_checked`) | the same: `n7` four digits, a range of it; `if after2 != y { … }`; a low one reached otherwise lone (`if m3`) |
+| A node's bounds | none: the walk's order is its contract | the same: `Cursor::begin`'s contract, checked in a debug build |
+| A run of closers | `ScopeEnd`'s loop, `object[d]` deciding | the places returned to one arm, `'ret: loop { match st { … } }`, a closer `continue 'ret` |
+| A separator, an opener, a `:` | `take!()` | `i += 1` alone; a closer's end kept, its node's |
+| A record's byte | `*v` | `peek`, a `u8` |
+| A stride's or a block's first node | `base[n / STRIDE] = start`, inline | the cursor makes the block inline (`start_block`), then writes the node in its own path; the block before settled |
+| A close of a node in a block before | stored at `ord` | stored in its block's cells; the block settled once final |
+| A string's end bound | none: stage 1 refused an open string | none (tier 1 refuses it, `c_m_in_string`) |
+| An escape's second byte | one branch: `u`, else `ESCAPE_MAP` | one `match src[y]`: `0x75` the checks, the other words, else refused |
+| A number's first byte | a digit or `-` | `0x2d \| 0x30..=0x39`, else refused |
+| A number's reads | `*p`, the padding ending it; the sign one test | `b[j]`; the sign one test |
+| A scalar's end | `is_not_structural_or_whitespace`, refused otherwise (`[1"a"]`) | the same: `ends(b)`, `matches!(ROWS[b], 0 \| 2)`, from tier 1's records |
+
+Tier 1 against `index`:
+
+| | `index` | `tier1.rs` |
+|---|---|---|
+| The records | `structural_start = (op \| scalar & ~follows) & ~string_tail` | the same expression (`v_m_structural_start`) |
+| The errors | the control byte, UTF-8, the open string | the same: a quote after a scalar is tier 2's (`run_end_covers`) |
+| The file's bits | none: the last block padded with spaces | none (no record or error holds at a space, proved) |
+| The byte order mark | the blocks start after it | the same (`off`) |
+| The string mask's name | `in_string` | the same |
+| A string open at the end | `prev_in_string != 0` (`finish`) | `c_m_in_string != 0` |
+| The records' write | `bit_indexer::write`, the block before's at each block, the last after the loop | the same (`write_indexes`, `prev_structurals`) |
+
+The files accepted differ in one way, which is not shape:
+- **The numbers accepted.** `number_end` keeps no value, but works one out where it decides the answer: it refuses a
+  float past the doubles' range (`1e400`) and an integer past 64 bits. The grammar states neither bound, so tier 2
+  and the JIT accept those numbers. This is the user's choice (2026-11-22): JSON accepts them, as RFC 8259 states it.
+
 ## Step 58, done: the benchmark on the generated Rust, `rust_stream`'s tests gone (decision 0555)
 
 `simdjson_form_against_simdjson` now times `rerail-json-aot` (tier 1 and tier 2 from the grammar) against simdjson.

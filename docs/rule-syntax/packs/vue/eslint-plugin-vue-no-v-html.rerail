@@ -15,4 +15,9 @@
     suppress eslint "vue/no-v-html"
 no_v_html(a) :- vdir(_, a, "html", _), !ignored(a).
 .decl ignored(a: node)
-ignored(a) :- option("ignorePattern", p), vexpr(a, x), text(x, t), match(cat(".*(?:", p, ").*"), t).
+ignored(a) :- option("ignorePattern", p), value_text(a, t), match(cat(".*(?:", p, ").*"), t).
+// value_text(a, t): a's expression's text, read in the context `expression`: the expression is its node (0597).
+.decl value_text(a: node, t: symbol)
+value_text(a, t) :- vexpr(a, x), text(x, t).
+.context expression of vue roots vexpr_root exports value_text
+.from expression value_text

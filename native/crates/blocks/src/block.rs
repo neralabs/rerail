@@ -418,6 +418,16 @@ impl Block {
         self.gpu.lock().unwrap().take();
     }
 
+    /// The wrap `device_buffer` keeps as it is now, and its length (none made yet, or a slab's block): what a program
+    /// bound before the block grew, for a remap to find again (decision 0603).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub fn kept_device_buffer(&self) -> Option<(rerail_device::device::Buffer, usize)> {
+        if self.backing.as_ref().is_some_and(|b| b.buffer().is_some()) {
+            return None;
+        }
+        self.gpu.lock().unwrap().clone()
+    }
+
     /// The device buffer to bind this block with: its slab's own, or a wrap of its used extent in place
     /// (`rerail_device::device::wrap_host_memory`: no copy, decision 0353) made once and kept (remade, twice as long,
     /// only when the block has outgrown it).

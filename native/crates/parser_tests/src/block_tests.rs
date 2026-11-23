@@ -42,13 +42,26 @@ fn reference(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vec<u64> {
 
 /// Check a program's outputs against references on every input and every executor.
 fn check_all(rows: &str, want: impl Fn(&[u8]) -> Vec<Vec<u64>>) {
-    let p = program(rows);
-    let ex = Executors::new(&p);
-    for bytes in inputs() {
-        let want = want(&bytes);
-        // Every executor that disagrees, so one run shows where a lowering is wrong.
-        let wrong: Vec<String> = ex.every(&bytes).into_iter().filter(|(_, got)| *got != want).map(|(name, _)| name).collect();
-        assert!(wrong.is_empty(), "{} bytes: wrong on {wrong:?}, program:\n{rows}", bytes.len());
+    check_each(&[(rows.to_owned(), &want)]);
+}
+
+/// A program's rows and its references.
+type Check<'a> = (String, &'a dyn Fn(&[u8]) -> Vec<Vec<u64>>);
+
+/// [`check_all`] for several programs, run together: each device executor runs every program over every input in
+/// one batch (`Executors::every_of_all`), so the test builds each executor's kernel once.
+fn check_each(checks: &[Check<'_>]) {
+    let programs: Vec<Program> = checks.iter().map(|(rows, _)| program(rows)).collect();
+    let executors: Vec<Executors<'_>> = programs.iter().map(Executors::new).collect();
+    let cases = inputs();
+    let runs_of = Executors::every_of_all(&executors.iter().collect::<Vec<_>>(), &cases);
+    for ((rows, want), runs_of) in checks.iter().zip(runs_of) {
+        for (bytes, runs) in cases.iter().zip(runs_of) {
+            let want = want(bytes);
+            // Every executor that disagrees, so one run shows where a lowering is wrong.
+            let wrong: Vec<String> = runs.into_iter().filter(|(_, got)| *got != want).map(|(name, _)| name).collect();
+            assert!(wrong.is_empty(), "{} bytes: wrong on {wrong:?}, program:\n{rows}", bytes.len());
+        }
     }
 }
 
@@ -84,16 +97,8 @@ fn eq_refusals() {
 
 #[test]
 fn eq_equals_reference_on_every_executor() {
-    for byte in [b'"', b'\\', 0x00, 0xff, b'a'] {
-        let p = program(&format!("  block 0 %0 = eq {byte:#04x}\n  block 0 output %0\n"));
-        let ex = Executors::new(&p);
-        for bytes in inputs() {
-            let want = reference(&bytes, |b| b == byte);
-            for (name, got) in ex.every(&bytes) {
-                assert_eq!(got, std::slice::from_ref(&want), "{name}, eq {byte:#04x}, {} bytes", bytes.len());
-            }
-        }
-    }
+    let wants: Vec<_> = [b'"', b'\\', 0x00, 0xff, b'a'].map(|byte| (byte, move |bytes: &[u8]| vec![reference(bytes, |b| b == byte)])).into();
+    check_each(&wants.iter().map(|(byte, want)| (format!("  block 0 %0 = eq {byte:#04x}\n  block 0 output %0\n"), want as &dyn Fn(&[u8]) -> Vec<Vec<u64>>)).collect::<Vec<_>>());
 }
 
 #[test]
@@ -176,7 +181,7 @@ fn check_lowering(name: &str, p: &Program) {
     println!("== {name}: {instructions} machine instructions in the function ==");
     for (form, ukl) in metal_program_backend_generate(&native) {
         println!("== {name}: the forward carry's UKL ({form}) ==\n{ukl}");
-        assert!(ukl.contains("UKL_INLINE void lanes_0("), "{name}: the forward carry has no lane function");
+        assert!(ukl.contains("UKL_LARGE void lanes_0("), "{name}: the forward carry has no lane function (a large body, 0576 §24)");
         // The look-back is gone: no group polls another (decision 0540 step 7).
         for word in ["look_back(", "halo_exchange(", "exchange_word(", "poll("] {
             assert!(!ukl.contains(word), "{name}: the forward carry's UKL has `{word}`");
@@ -246,11 +251,10 @@ fn zip(a: &[u64], b: &[u64], f: impl Fn(u64, u64) -> u64) -> Vec<u64> {
 
 #[test]
 fn const_equals_reference_on_every_executor() {
-    for c in [0xaaaa_aaaa_aaaa_aaaau64, 0x0123_4567_89ab_cdef, 0, u64::MAX, 1 << 63 | 1] {
-        check_all(&format!("  block 0 %0 = const {c:#018x}\n  block 0 output %0\n"), |bytes| {
-            vec![tail(vec![c; bytes.len().div_ceil(64)], bytes.len())]
-        });
-    }
+    let wants: Vec<_> = [0xaaaa_aaaa_aaaa_aaaau64, 0x0123_4567_89ab_cdef, 0, u64::MAX, 1 << 63 | 1]
+        .map(|c| (c, move |bytes: &[u8]| vec![tail(vec![c; bytes.len().div_ceil(64)], bytes.len())]))
+        .into();
+    check_each(&wants.iter().map(|(c, want)| (format!("  block 0 %0 = const {c:#018x}\n  block 0 output %0\n"), want as &dyn Fn(&[u8]) -> Vec<Vec<u64>>)).collect::<Vec<_>>());
 }
 
 #[test]
@@ -265,15 +269,16 @@ fn binary_operators_equal_reference_on_every_executor() {
     type Op = fn(u64, u64) -> u64;
     let cases: [(&str, Op); 4] =
         [("and", |x, y| x & y), ("or", |x, y| x | y), ("xor", |x, y| x ^ y), ("andnot", |x, y| x & !y)];
-    for (name, f) in cases {
-        // Each operator on the two masks, and on a mask with itself.
-        check_all(&format!("{QUOTE_AND_BACKSLASH}  block 0 %2 = {name} %0, %1\n  block 0 output %2\n"), |bytes| {
-            vec![zip(&quote(bytes), &backslash(bytes), f)]
-        });
-        check_all(&format!("{QUOTE_AND_BACKSLASH}  block 0 %2 = {name} %0, %0\n  block 0 output %2\n"), |bytes| {
-            vec![zip(&quote(bytes), &quote(bytes), f)]
-        });
-    }
+    // Each operator on the two masks, and on a mask with itself.
+    let wants: Vec<_> = cases
+        .iter()
+        .flat_map(|&(name, f)| {
+            let two: Box<dyn Fn(&[u8]) -> Vec<Vec<u64>>> = Box::new(move |bytes| vec![zip(&quote(bytes), &backslash(bytes), f)]);
+            let one: Box<dyn Fn(&[u8]) -> Vec<Vec<u64>>> = Box::new(move |bytes| vec![zip(&quote(bytes), &quote(bytes), f)]);
+            [(format!("{QUOTE_AND_BACKSLASH}  block 0 %2 = {name} %0, %1\n  block 0 output %2\n"), two), (format!("{QUOTE_AND_BACKSLASH}  block 0 %2 = {name} %0, %0\n  block 0 output %2\n"), one)]
+        })
+        .collect();
+    check_each(&wants.iter().map(|(rows, want)| (rows.clone(), want.as_ref())).collect::<Vec<_>>());
 }
 
 /// Combinations through operators, with several outputs: simdjson's first lines, in the small.
@@ -525,10 +530,10 @@ fn carried_round_trip_and_refusals() {
 
 #[test]
 fn prev_equals_reference_on_every_executor() {
-    for k in [1usize, 2, 7, 15, 16, 17, 31, 32, 33, 48, 63] {
-        let rows = format!("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, {k}\n  block 0 output %1\n");
-        check_all(&rows, |bytes| vec![words_of(&prev_reference(&bits(bytes, |b| b == b'\\'), k))]);
-    }
+    let wants: Vec<_> = [1usize, 2, 7, 15, 16, 17, 31, 32, 33, 48, 63]
+        .map(|k| (k, move |bytes: &[u8]| vec![words_of(&prev_reference(&bits(bytes, |b| b == b'\\'), k))]))
+        .into();
+    check_each(&wants.iter().map(|(k, want)| (format!("  block 0 %0 = eq 0x5c\n  block 0 %1 = prev %0, {k}\n  block 0 output %1\n"), want as &dyn Fn(&[u8]) -> Vec<Vec<u64>>)).collect::<Vec<_>>());
 }
 
 #[test]
@@ -903,7 +908,19 @@ fn extract_equals_reference_on_every_executor() {
         let soh: Vec<u32> = (0..bytes.len() as u32).filter(|&i| bytes[i as usize] == 0x01).collect();
         let want = vec![ones.clone(), quotes.clone(), soh.clone()];
         for (name, got) in extract_executors(&p, &bytes) {
-            assert_eq!(got.positions, want, "{name}, {} bytes", bytes.len());
+            // Where each extract first differs, not its thousands of positions.
+            let differ: Vec<String> = got
+                .positions
+                .iter()
+                .zip(&want)
+                .enumerate()
+                .filter(|(_, (g, w))| g != w)
+                .map(|(k, (g, w))| {
+                    let at = g.iter().zip(w.iter()).position(|(a, b)| a != b).unwrap_or(g.len().min(w.len()));
+                    format!("extract {k}: {} positions, {} wanted, first differs at {at}: {:?} for {:?}", g.len(), w.len(), g.get(at..(at + 4).min(g.len())), w.get(at..(at + 4).min(w.len())))
+                })
+                .collect();
+            assert!(got.positions.len() == want.len() && differ.is_empty(), "{name}, {} bytes: {differ:?}", bytes.len());
         }
     }
 }
@@ -988,13 +1005,14 @@ fn stage1_utf8_equals_std_on_every_executor() {
     let ex = Executors::new(&p);
     let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
-    for bytes in utf8_inputs() {
-        let want = std::str::from_utf8(&bytes).is_err();
+    let cases = utf8_inputs();
+    for (bytes, runs) in cases.iter().zip(ex.every_of(&cases)) {
+        let want = std::str::from_utf8(bytes).is_err();
         let tail = &bytes[bytes.len().saturating_sub(12)..];
         // The compiled code's flag; the others' rows (no totals in `every`).
-        assert_eq!(utf8_invalid(&compiled.extract(&bytes)), want, "cranelift's total: {tail:x?}");
-        assert_eq!(utf8_invalid(&p.block_programs[0].run(&bytes)), want, "the interpreter's total: {tail:x?}");
-        for (name, got) in ex.every(&bytes) {
+        assert_eq!(utf8_invalid(&compiled.extract(bytes)), want, "cranelift's total: {tail:x?}");
+        assert_eq!(utf8_invalid(&p.block_programs[0].run(bytes)), want, "the interpreter's total: {tail:x?}");
+        for (name, got) in runs {
             if name == "cranelift" {
                 continue;
             }
@@ -1122,20 +1140,26 @@ fn within_and_delay_round_trip_and_refusals() {
 /// the padding's zero bytes, `within & eq 0x00` does not.
 #[test]
 fn within_and_delay_equal_reference_on_every_executor() {
-    check_all("  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 output %0\n  block 0 output %2\n", |bytes| {
-        vec![words_of(&vec![true; bytes.len()]), words_of(&bits(bytes, |b| b == 0))]
-    });
+    type Want = Box<dyn Fn(&[u8]) -> Vec<Vec<u64>>>;
+    let mut wants: Vec<(String, Want)> = vec![(
+        "  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 output %0\n  block 0 output %2\n".to_owned(),
+        Box::new(|bytes| vec![words_of(&vec![true; bytes.len()]), words_of(&bits(bytes, |b| b == 0))]),
+    )];
     for d in [1usize, 2, 3, 15, 16, 17, 33, 63] {
         let rows = format!(
             "  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 %3 = eq 0x22\n  block 0 %4 = toggle %3\n\
              \x20 block 0 %5 = and %4, %0\n  block 0 output %2\n  block 0 output %3\n  block 0 output %5\n  block 0 delay {d}\n"
         );
-        check_all(&rows, |bytes| {
-            let nul = bits(bytes, |b| b == 0);
-            let q = bits(bytes, |b| b == b'"');
-            vec![words_of(&next_reference(&nul, d)), words_of(&next_reference(&q, d)), words_of(&next_reference(&toggle_reference(&q), d))]
-        });
+        wants.push((
+            rows,
+            Box::new(move |bytes| {
+                let nul = bits(bytes, |b| b == 0);
+                let q = bits(bytes, |b| b == b'"');
+                vec![words_of(&next_reference(&nul, d)), words_of(&next_reference(&q, d)), words_of(&next_reference(&toggle_reference(&q), d))]
+            }),
+        ));
     }
+    check_each(&wants.iter().map(|(rows, want)| (rows.clone(), want.as_ref())).collect::<Vec<_>>());
 }
 
 #[test]

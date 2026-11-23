@@ -9,7 +9,7 @@
 use rerail_bitlex::bitlex_masks as bitlex_compile;
 use rerail_compiler::native_ir;
 use rerail_rir::rir_asm as rir;
-use rerail_cpu_stream::native_cpu_clusters;
+use rerail_compiler::native_cpu_clusters;
 use rerail_cpu_stream::native_cpu_stream;
 use rerail_kotlin_lean as lean;
 
@@ -102,7 +102,7 @@ pub fn tiers_rust(grammar: &str) -> Result<(String, String), String> {
             Some(*own.entry(name.to_owned()).or_insert(next))
         })
     };
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, shipped_answers())?;
     let tier1 = compiled.lexer_rust.ok_or_else(|| "no tree section".to_owned())??;
     let tier2 = compiled.rust.ok_or_else(|| "no tree section".to_owned())??;
@@ -134,7 +134,7 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
             Some(*own.entry(name.to_owned()).or_insert(next))
         })
     };
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known)?;
     lap("bitlex compiler");
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;

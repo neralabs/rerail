@@ -104,9 +104,9 @@ impl Writer {
     /// A writer of a document of `source` in `lang`, of about `nodes` nodes, in 16z where `z`, with each block's
     /// presence where `blocks`. Its parts' room is reserved for `nodes` nodes, their side lists' usual share and the
     /// source's newline index: more nodes grow them.
-    pub fn new(lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+    pub fn new(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
         let mut w = Writer::empty();
-        w.begin(lang, source, tag, z, blocks, nodes);
+        w.begin(lang, source, terminators, tag, z, blocks, nodes);
         w
     }
 
@@ -119,8 +119,9 @@ impl Writer {
     /// where it is short, so a writer used again zeroes no room), as simdjson's parser keeps its tape from one document to
     /// the next. A buffer's bytes are the last document's: the ops write each byte before they read it (in tests every
     /// part kept is filled with `FRESH`, so a byte read before it is written shows).
-    pub fn begin(&mut self, lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) {
-        self.begin_with(&Document { lang, source, tag, z, blocks, nodes }, |out| crate::newlines::index_into(out, source));
+    /// The line index is of the source's lines as its language's `terminators` end them (decision 0612).
+    pub fn begin(&mut self, lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) {
+        self.begin_with(&Document { lang, source, tag, z, blocks, nodes }, |out| crate::newlines::index_into(out, source, terminators));
     }
 
     /// `begin`, the newline index written into its part by `lines` (`newlines::index_of`), in the part's own buffer: a
@@ -591,8 +592,6 @@ impl Lz {
 /// `finish`. A writer's ops are one thread's, in a group of its own; the writers are many groups.
 #[cfg(any(test, feature = "test-hooks"))]
 pub const REPLAY: &str = r#"
-// Its kernel uses no SIMD group (ukl/backend.h, decision 0576 §14).
-#define UKL_SIMD_GROUP_FREE 1
 #include <ukl/writer.h>
 
 typedef struct ReplayArgs {
@@ -660,8 +659,8 @@ pub(super) mod device {
     }
 
     impl DeviceOps {
-        pub(in crate::f16) fn new(lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
-            DeviceOps { host: Writer::new(lang, source, tag, z, blocks, nodes), made: Writer::new(lang, source, tag, z, blocks, nodes), calls: Vec::new() }
+        pub(in crate::f16) fn new(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+            DeviceOps { host: Writer::new(lang, source, terminators, tag, z, blocks, nodes), made: Writer::new(lang, source, terminators, tag, z, blocks, nodes), calls: Vec::new() }
         }
         pub(in crate::f16) fn open(&mut self, number: u32, start: u64) -> usize {
             self.calls.push([0, number.into(), start, 0]);

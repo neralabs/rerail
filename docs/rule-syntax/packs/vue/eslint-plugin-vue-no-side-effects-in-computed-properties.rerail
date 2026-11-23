@@ -17,11 +17,11 @@
 // When the file has <script setup>, only <script setup> is checked, as the plugin does.
 .violation side_effect(at: node, msg: symbol) code "vue/no-side-effects-in-computed-properties" "{msg}"
     suppress eslint "vue/no-side-effects-in-computed-properties"
-side_effect(p, cat("Remove this assignment from the \"", x, "\" computed and make the change in a method or watcher instead.")) :-
+side_effect_in(p, cat("Remove this assignment from the \"", x, "\" computed and make the change in a method or watcher instead.")) :-
     options_getter(x, f), member_of(n, m), own(n, f), vue_set(n, m), field(m, "property", p).
-side_effect(at, cat("Remove this mutation from the \"", x, "\" computed and make the change in a method or watcher instead.")) :-
+side_effect_in(at, cat("Remove this mutation from the \"", x, "\" computed and make the change in a method or watcher instead.")) :-
     options_getter(x, f), member_of(n, m), kind(n, "this"), own(n, f), !vue_set(n, m), vmutation(m, at, _).
-side_effect(at, "Remove this mutation from the computed getter and make the change in a function or watcher instead.") :-
+side_effect_in(at, "Remove this mutation from the computed getter and make the change in a function or watcher instead.") :-
     composition_getter(g), member_of(n, _), kind(n, "identifier"), own(n, g), ref_site(n, d), state(d, g),
     vmutation(n, at, _).
 
@@ -47,3 +47,10 @@ state(d, g) :- composition_getter(g), site_form(d, f), f != "import", in_setup(d
 .decl in_setup(d: node)
 in_setup(d) :- vin_setup(d).
 in_setup(d) :- vsetup(_, f), field(f, "body", b), within(d, b).
+
+// The rules above are the context `script`'s (decision 0597): they read the scripts' nodes. The host reports what
+// they find, at each node's own bytes.
+.decl side_effect_in(at: node, msg: symbol)
+.context script of vue roots vscript_root exports side_effect_in
+.from script side_effect_in
+side_effect(at, msg) :- side_effect_in(at, msg).

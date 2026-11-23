@@ -43,7 +43,7 @@ fn main() {
                 let k = format!("{:?}", d.2);
                 if matches!(d.2, Diag::BadExpr(_)) && !diag_kinds.contains_key(&k) {
                     let f = facts.paths.get(d.0 as usize).map_or("?", |s| s.as_str());
-                    let line = std::fs::read(f).map_or(0, |b| b[..(d.1 as usize).min(b.len())].iter().filter(|&&c| c == b'\n').count() + 1);
+                    let line = std::fs::read(f).map_or(0, |b| rerail_tape_format::newlines::Lines::of(&b, rerail_c_pp::tape::LINE_ENDS).line(d.1 as usize) + 1);
                     println!("DIAG {k} at {f}:{line}");
                 }
                 *diag_kinds.entry(k).or_default() += 1;

@@ -37,8 +37,8 @@ pub struct TapeView {
     pub codes: u32,
     pub source: u32,
     pub source_len: u32,
-    /// Format 15: line starts (u32, document-local bytes), the first 0. Format 16: its newline index
-    /// (`rerail_tape_format::newlines`). And how many lines.
+    /// The document's line index (`rerail_tape_format::newlines`, decision 0612): format 16's in its tape, format 15's
+    /// placed beside it. And how many lines.
     pub lines: u32,
     pub line_count: u32,
     /// The code table's length.

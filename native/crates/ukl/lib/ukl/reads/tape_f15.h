@@ -4,6 +4,7 @@
 
 #pragma once
 #include <ukl/reads/tape_common.h>
+#include <ukl/reads/tape_f16.h>
 
 // Row `i` of a column of width 2 or 4.
 UKL_INLINE uint32_t clif_f15_cell(UKL_GLOBAL const uint8_t* t, uint32_t column, uint32_t width, uint32_t i)
@@ -74,20 +75,7 @@ UKL_INLINE uint32_t clif_f15_parent(CLIF_T_ARGS, uint32_t i)
     }
 }
 
-// The last line start at or before byte `x`.
-UKL_INLINE uint32_t clif_f15_line(CLIF_T_ARGS, uint32_t x)
-{
-    uint32_t lines = clif_view(v, CLIF_T_LINES);
-    uint32_t lo = 1u, hi = clif_view(v, CLIF_T_LINE_COUNT);
-    while (lo < hi) {
-        uint32_t middle = (lo + hi) >> 1;
-        if ((uint32_t)clif_t_ld(t, lines, middle * 4u, 4u) > x)
-            hi = middle;
-        else
-            lo = middle + 1u;
-    }
-    return lo - 1u;
-}
-
-// Line `k`'s first byte.
-UKL_INLINE uint32_t clif_f15_line_start(CLIF_T_ARGS, uint32_t k) { return (uint32_t)clif_t_ld(t, clif_view(v, CLIF_T_LINES), k * 4u, 4u); }
+// The line byte `x` lies in, and line `k`'s first byte: the document's line index (decision 0612), placed beside a
+// format 15 tape where its view names it, read as format 16's.
+UKL_INLINE uint32_t clif_f15_line(CLIF_T_ARGS, uint32_t x) { return clif_f16_line(t, v, x); }
+UKL_INLINE uint32_t clif_f15_line_start(CLIF_T_ARGS, uint32_t k) { return clif_f16_line_start(t, v, k); }

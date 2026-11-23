@@ -1,6 +1,6 @@
 <?php
 // What Forte 1.1.0 parses a template to, as the oracle files record it (`generate.php` writes
-// them, the Rust port's tests read them: `native/src/code_rule_dsl/blade/forte/tests.rs`).
+// them, the Rust port's tests read them: `native/crates/tests_value/src/code_rule_dsl/blade/forte/tests.rs`).
 //
 // A case is `{ "source" | "source_base64", "registry", "tree" }`. `registry` names the directive
 // registry the template was parsed with: "default" (`Directives::withDefaults()`, what

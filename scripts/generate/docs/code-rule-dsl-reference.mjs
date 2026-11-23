@@ -1229,7 +1229,7 @@ function unbalancedTags(html) {
 function checkGrammar() {
   const schema = SCHEMA_SOURCES.map(path => readFileSync(join(RERAIL, path), "utf8")).join("\n");
   const sources = ENUM_SOURCES.map(path => readFileSync(join(RERAIL, path), "utf8")).join("\n");
-  const compiler = readFileSync(join(RERAIL, "native/src/code_rule_dsl/compile/ast_rule.rs"), "utf8");
+  const compiler = readFileSync(join(RERAIL, "native/crates/rules_base/src/code_rule_dsl/compile/ast_rule.rs"), "utf8");
   const html = readFileSync(REFERENCE, "utf8");
   let failures = 0;
   let productions = 0;

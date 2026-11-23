@@ -270,7 +270,7 @@ export const LANGUAGE_SINCE = new Map([
 
 /**
  * The first core release that reads each ast rule key added after 0.1.5 (`AST_RULE_KEYS` in
- * native/src/code_rule_dsl/compile/ast_rule.rs): an older core refuses a rule document whose ast rule uses it.
+ * native/crates/rules_base/src/code_rule_dsl/compile/ast_rule.rs): an older core refuses a rule document whose ast rule uses it.
  */
 export const RULE_KEY_SINCE = new Map([
   ["filePath", "0.2.0"],

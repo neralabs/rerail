@@ -32,25 +32,29 @@ struct QueueArgs {
 unsafe impl Pod for QueueArgs {}
 
 /// The tests' program and a queue, or `None` (said) without a device.
-fn setup() -> Option<(&'static Program, ComputeQueue)> {
+pub(crate) fn setup() -> Option<(&'static Program, ComputeQueue)> {
     let Some(shared) = crate::shared::get() else {
         eprintln!("no device: the UKL library's tests did not run");
         return None;
     };
     let p = program("library_tests.uglykl", TESTS).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    // The device the tests ran on, said once: a backend that fails to open falls back to another (CUDA's to HIP's, to
+    // OpenCL's on Windows).
+    static SAID: std::sync::Once = std::sync::Once::new();
+    SAID.call_once(|| eprintln!("the UKL library's tests on {} ({})", crate::device::backend(), shared.device.name()));
     Some((p, ComputeQueue::new(&shared.queue)))
 }
 
 /// xorshift64*: the tests' inputs, the same on every run.
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         self.0 ^= self.0 >> 12;
         self.0 ^= self.0 << 25;
         self.0 ^= self.0 >> 27;
         self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
     }
-    fn below(&mut self, n: u64) -> u64 {
+    pub(crate) fn below(&mut self, n: u64) -> u64 {
         self.next() % n
     }
     /// Words with runs of zeros and ones as well as noise: the edge cases of bit searches.
@@ -699,11 +703,14 @@ fn hash_tables_build_and_probe() {
 }
 
 /// The grids a grid test runs at: 1, 8 and 32 groups, and the device's resident count for `f` at `lsz` threads a
-/// group (`Device::resident_groups`, R5 of decision 0468), when the device gives its cores.
+/// group (`ComputeFunction::resident_groups`, R5 of decision 0468), when the device says it; none past it.
 fn grid_sizes(f: &crate::device::ComputeFunction, lsz: u32) -> Vec<u32> {
     let mut g = vec![1u32, 8, 32];
-    if let Some(r) = crate::shared::get().and_then(|s| s.device.resident_groups(lsz, f.threadgroup_bytes())) {
-        eprintln!("{}: the device holds {r} groups of {lsz} at {} bytes of threadgroup memory", crate::device::backend(), f.threadgroup_bytes());
+    if let Some(r) = crate::shared::get().and_then(|s| f.resident_groups(&s.device, lsz, 0)) {
+        eprintln!("{}: the device holds {r} groups of {lsz} of the kernel", crate::device::backend());
+        // A grid past what the device holds fails its barrier by design (`a_grid_past_residency_fails_its_barrier`):
+        // a small GPU's (a Radeon 680M's six work-group processors) is below 32 groups of some kernels.
+        g.retain(|&n| n as u64 <= r);
         if !g.contains(&(r as u32)) {
             g.push(r as u32);
         }
@@ -745,8 +752,9 @@ fn grid_barriers_see_every_groups_writes() {
         let wrong: Vec<u32> = read(&out, groups as usize);
         eprintln!("{}: {groups} groups dispatched, {} took part; arrived {}, generation {} (barrier {}), failed {}", crate::device::backend(), c[3] & 0x7fff_ffff, c[0], c[1], c[1] / 2, c[2]);
         assert_eq!(c[2], 0, "{}: {groups} groups: a barrier failed, at generation {} of {}", crate::device::backend(), c[1], 4 * rounds);
-        grid_joined(&c);
-        assert_eq!(c[1], 4 * rounds, "{}: {groups} groups: the barriers' generation (two a barrier)", crate::device::backend());
+        // A grid of one group waits at its threadgroup's barrier, and writes no control word (`ukl/grid.h`).
+        let want = if grid_joined(&c) == 1 { 0 } else { 4 * rounds };
+        assert_eq!(c[1], want, "{}: {groups} groups: the barriers' generation (two a barrier)", crate::device::backend());
         assert!(wrong.iter().all(|&w| w == 0), "{}: {groups} groups: reads before the barrier's writes: {wrong:?}", crate::device::backend());
     }
 }
@@ -774,7 +782,8 @@ fn a_grid_past_residency_is_the_groups_that_run() {
     eprintln!("{}: {groups} groups of {lsz}: {joined} took part, failed {}, after {:?}", crate::device::backend(), c[2], start.elapsed());
     assert_eq!(c[2], 0, "{}: a grid of {joined} of {groups} groups of {lsz} failed a barrier", crate::device::backend());
     assert!((1..=groups).contains(&joined), "{}: {joined} groups of {groups}", crate::device::backend());
-    assert_eq!(c[1], 4 * 4, "{}: the barriers' generation (two a barrier)", crate::device::backend());
+    // A grid of one group writes no control word at a barrier (its threadgroup's: `ukl/grid.h`).
+    assert_eq!(c[1], if joined == 1 { 0 } else { 4 * 4 }, "{}: the barriers' generation (two a barrier)", crate::device::backend());
     assert!(wrong.iter().all(|&w| w == 0), "{}: reads before the barrier's writes: {wrong:?}", crate::device::backend());
 }
 
@@ -944,9 +953,14 @@ fn the_grid_sort_is_stable_and_equals_the_host() {
 
 /// A measurement of a machine's GPU and CPU on one workload, the same on every backend: the library's sort (32-bit
 /// keys with their rows), exclusive scan and hash join (build, then a probe of every key) of 4 Mi keys, each the median
-/// of 9 device times after a warm run; and the host's sorts of the same keys, on one core and on every core at once
+/// of 9 device times after a warm run, and of 9 wall times, each from the work's flush to its end; and the host's sorts of the same keys, on one core and on every core at once
 /// (one sort each, of their own copy). A line a size, for comparing machines: 256 Ki, 1 Mi, then 4 Mi keys, so a device
 /// not yet measured meets the larger sizes last, or `RERAIL_BENCH_N` keys alone.
+///
+/// Compare backends by the wall times: each backend's device time is its own measure. OpenCL's sums its kernels'
+/// execution alone (`CL_PROFILING_COMMAND_START` to `_END`), without the gaps between them or the start of the
+/// first; CUDA's and HIP's run from an event before the first operation to one after the last, gaps included. On a
+/// Radeon 680M a 1 MB copy alone was 0.05 ms by OpenCL's and 0.15 to 0.4 by HIP's, in about the same wall time.
 #[test]
 #[ignore = "a measurement: run by name with --nocapture, on a profiling build"]
 fn bench_device_and_host() {
@@ -959,7 +973,7 @@ fn bench_device_and_host() {
 
 fn bench_at(q: &mut ComputeQueue, n: usize) {
     // Each stage said as it ends: a device that stops shows where.
-    let said = |what: &str, ms: f64| eprintln!("bench: {what} {ms:.2} ms");
+    let said = |what: &str, (ms, wall): (f64, f64)| eprintln!("bench: {what} {ms:.2} ms, {wall:.2} ms wall");
     let mut rng = Rng(47);
     let keys: Vec<u32> = (0..n).map(|_| rng.next() as u32).collect();
     let rows: Vec<u32> = (0..n as u32).collect();
@@ -967,17 +981,20 @@ fn bench_at(q: &mut ComputeQueue, n: usize) {
         v.sort_by(f64::total_cmp);
         v[v.len() / 2]
     };
+    // The medians of the device's time and the wall's, in ms.
     let time = |q: &mut ComputeQueue, f: &dyn Fn(&mut ComputeQueue)| {
-        let mut t = Vec::new();
+        let (mut t, mut w) = (Vec::new(), Vec::new());
         for i in 0..10 {
             f(q);
+            let wall = std::time::Instant::now();
             let e = q.flush();
             e.await_().unwrap();
             if i > 0 {
+                w.push(wall.elapsed().as_secs_f64() * 1e3);
                 t.push(e.gpu_seconds() * 1e3);
             }
         }
-        median(t)
+        (median(t), median(w))
     };
     let (kb, vb) = (buffer_of(&keys).unwrap(), buffer_of(&rows).unwrap());
     let (tk, tv) = (alloc::<u32>(n).unwrap(), alloc::<u32>(n).unwrap());
@@ -1018,13 +1035,133 @@ fn bench_at(q: &mut ComputeQueue, n: usize) {
     });
     let all = t.elapsed().as_secs_f64() * 1e3;
     let mkeys = |ms: f64| n as f64 / ms / 1e3;
+    let ((sort, sort_wall), (copy, copy_wall), (scan, scan_wall), (join, join_wall)) = (sort, copy, scan, join);
     println!(
-        "BENCH {} ({}) | {n} rows | device ms: sort {:.2} ({:.0} Mkeys/s), copy {copy:.2}, scan {scan:.2}, hash build+probe {join:.2} | host: sort one core {one:.1} ms ({:.0} Mkeys/s), {cores} cores at once {all:.1} ms ({:.0} Mkeys/s)",
+        "BENCH {} ({}) | {n} rows | device ms: sort {:.2} ({:.0} Mkeys/s), copy {copy:.2}, scan {scan:.2}, hash build+probe {join:.2} | wall ms: sort {:.2} ({:.0} Mkeys/s), copy {copy_wall:.2}, scan {scan_wall:.2}, hash build+probe {join_wall:.2} | host: sort one core {one:.1} ms ({:.0} Mkeys/s), {cores} cores at once {all:.1} ms ({:.0} Mkeys/s)",
         crate::device::backend(),
         crate::shared::get().map_or_else(String::new, |s| s.device.name()),
         sort - copy,
         mkeys(sort - copy),
+        sort_wall - copy_wall,
+        mkeys(sort_wall - copy_wall),
         mkeys(one),
         mkeys(all / cores as f64),
     );
 }
+
+/// An f16's bits as an f32, exactly (ukl/dot.h's reference, written again here).
+fn f16_to_f32(h: u32) -> f32 {
+    let (s, e, m) = ((h & 0x8000) << 16, (h >> 10) & 31, h & 0x3ff);
+    if e == 31 {
+        return f32::from_bits(s | 0x7f80_0000 | (m << 13));
+    }
+    if e == 0 {
+        let f = m as f32 * 5.960_464_5e-8;
+        return if s != 0 { -f } else { f };
+    }
+    f32::from_bits(s | ((e + 112) << 23) | (m << 13))
+}
+
+/// The distance between an f32 of magnitude `x` and the next (at least the smallest subnormal's).
+fn ulp32(x: f64) -> f64 {
+    let x = (x.abs() as f32).max(f32::MIN_POSITIVE);
+    (f32::from_bits(x.to_bits() + 1) - x) as f64
+}
+
+/// ukl/dot.h (decision 0617 §7): the byte dot products exact, and the backend's form the reference's; the float ones'
+/// references the host's to the bit, and the backend's within one rounding of them, to the bit where the sums are
+/// exact; the f16 conversion of every one of its 65,536 values, the backend's and the reference's.
+#[test]
+fn dot_products_equal_their_references() {
+    let Some((p, mut q)) = setup() else { return };
+    let mut rng = Rng(17);
+    let n = 65_536u32;
+    // An f16 of moderate size (2^-7..2^8), or (`small`) a small integer (every product and sum exact in f32).
+    let f16 = |r: &mut Rng, small: bool| -> u32 {
+        if small {
+            let v = r.below(129) as i32 - 64;
+            let f = (v.unsigned_abs() as f32).to_bits();
+            // The integer's f16: exponent re-biased, the top 10 significand bits (exact: |v| <= 64).
+            let h = if v == 0 { 0 } else { (((f >> 23) - 112) << 10) | ((f >> 13) & 0x3ff) };
+            h | if v < 0 { 0x8000 } else { 0 }
+        } else {
+            (r.below(2) as u32) << 15 | ((r.below(16) as u32 + 8) << 10) | r.below(1024) as u32
+        }
+    };
+    // A bf16 of moderate size (exponents 2^-30..2^30, no flush to zero nor overflow), or a small integer.
+    let bf16 = |r: &mut Rng, small: bool| -> u32 {
+        if small {
+            ((r.below(129) as f32 - 64.0).to_bits()) >> 16
+        } else {
+            (r.below(2) as u32) << 15 | ((r.below(61) as u32 + 97) << 7) | r.below(128) as u32
+        }
+    };
+    let (mut a, mut b, mut c) = (Vec::new(), Vec::new(), Vec::new());
+    for i in 0..n {
+        // The first quarter's floats are small integers.
+        let small = i < n / 4;
+        let (fa, fb) = (f16(&mut rng, small) | f16(&mut rng, small) << 16, f16(&mut rng, small) | f16(&mut rng, small) << 16);
+        let (ga, gb) = (bf16(&mut rng, small) | bf16(&mut rng, small) << 16, bf16(&mut rng, small) | bf16(&mut rng, small) << 16);
+        let acc = if small { rng.below(2001) as f32 - 1000.0 } else { (rng.below(1 << 20) as f32 - (1 << 19) as f32) / 64.0 };
+        // Thread `i`'s words by `i % 3`: two f16s each, two bf16s each, or any bits (the byte forms' inputs; every
+        // thread's bytes are checked).
+        let (x, y) = match i % 3 {
+            0 => (fa, fb),
+            1 => (ga, gb),
+            _ => (rng.next() as u32, rng.next() as u32),
+        };
+        a.push(x);
+        b.push(y);
+        c.push(acc.to_bits());
+    }
+    let (ab, bb, cb) = (buffer_of(&a).unwrap(), buffer_of(&b).unwrap(), buffer_of(&c).unwrap());
+    let out = alloc::<u32>(n as usize * 10).unwrap();
+    launch(&q, p.function("t_dot").unwrap())
+        .value("args", &TestArgs { n, w: 0 })
+        .buffer("a", &ab)
+        .buffer("b", &bb)
+        .buffer("c", &cb)
+        .buffer("out", &out)
+        .run(&[(n / 64) as u64], &[64])
+        .unwrap();
+    q.flush().await_().unwrap();
+    let got: Vec<u32> = read(&out, n as usize * 10);
+    let backend = crate::device::backend();
+    let (mut exact, mut rounded) = (0usize, 0usize);
+    for i in 0..n as usize {
+        let o = &got[i * 10..i * 10 + 10];
+        let (x, y, z) = (a[i], b[i], c[i]);
+        let bytes = |w: u32| w.to_le_bytes();
+        let i8s: i32 = bytes(x).iter().zip(bytes(y)).fold(z as i32, |s, (&p, q)| s.wrapping_add(p as i8 as i32 * q as i8 as i32));
+        let u8s: u32 = bytes(x).iter().zip(bytes(y)).fold(z, |s, (&p, q)| s.wrapping_add(p as u32 * q as u32));
+        assert_eq!([o[0], o[1], o[2], o[3]], [i8s as u32, i8s as u32, u8s, u8s], "{backend}: {x:#010x} · {y:#010x} + {z:#x}: dot4 i8 (backend, reference), u8 (backend, reference)");
+        // The f16 conversion of `i`'s low bits: both the host's, NaNs as NaNs.
+        let want = f16_to_f32(i as u32 & 0xffff);
+        for (k, g) in [o[8], o[9]].into_iter().enumerate() {
+            let g = f32::from_bits(g);
+            assert!(g.to_bits() == want.to_bits() || (g.is_nan() && want.is_nan()), "{backend}: f16 {:#06x} as f32 ({}): {g} against {want}", i & 0xffff, ["backend", "reference"][k]);
+        }
+        // The float form this thread's inputs are, and its slots.
+        let (conv, slot): (fn(u32) -> f32, usize) = match i % 3 {
+            0 => (f16_to_f32, 4),
+            1 => (|h| f32::from_bits(h << 16), 6),
+            _ => continue,
+        };
+        let (x0, x1, y0, y1) = (conv(x & 0xffff), conv(x >> 16), conv(y & 0xffff), conv(y >> 16));
+        let acc = f32::from_bits(z);
+        let first = x0.mul_add(y0, acc);
+        let reference = x1.mul_add(y1, first);
+        let (native, refd) = (f32::from_bits(o[slot]), f32::from_bits(o[slot + 1]));
+        assert_eq!(refd.to_bits(), reference.to_bits(), "{backend}: thread {i}: dot2 reference {refd} against the host's {reference}");
+        if native.to_bits() == reference.to_bits() {
+            exact += 1;
+        } else {
+            // Within one rounding: the first sum's (whose size bounds its error) and the last's.
+            let bound = ulp32(x0 as f64 * y0 as f64 + acc as f64) + ulp32(reference.abs().max(native.abs()) as f64);
+            assert!(i >= n as usize / 4 && ((native - reference) as f64).abs() <= bound, "{backend}: thread {i}: dot2's form {native} against the reference {reference} (bound {bound}; small integers must be exact)");
+            rounded += 1;
+        }
+    }
+    eprintln!("{backend}: dot2 forms equal to the reference {exact}, within one rounding {rounded}");
+}
+

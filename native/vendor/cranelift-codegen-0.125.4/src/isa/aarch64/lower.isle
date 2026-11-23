@@ -2877,6 +2877,11 @@
 (rule 2 (lower (has_type (ty_scalar_float _) (extractlane val (u8_from_uimm8 0))))
       val)
 
+;; A 32-bit lanes' sum, two pairwise sums of a vector with itself (rerail's
+;; patch): `addv`, one instruction.
+(rule 3 (lower (has_type $I32 (extractlane (iadd_pairwise p @ (iadd_pairwise x @ (value_type $I32X4) x) p) (u8_from_uimm8 0))))
+      (mov_from_vec (addv x (VectorSize.Size32x4)) 0 (ScalarSize.Size32)))
+
 (rule 0 (lower (has_type (ty_int ty)
                        (extractlane val
                                     (u8_from_uimm8 lane))))

@@ -70,6 +70,15 @@ pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
     parse::parse(src)
 }
 
+/// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 15's columns (`tape`), or
+/// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0434).
+pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
+    if src.len() >= u32::MAX as usize / 2 {
+        return Err(Refusal::TooLarge);
+    }
+    parse::parse_into(src, finish)
+}
+
 /// The tokens of `src`, lexed alone (no parse), as the parser's buffer lexes them: their count,
 /// and comments; `None` where the lexer refuses one. For the cost examples (`*_costs lex`).
 #[doc(hidden)]

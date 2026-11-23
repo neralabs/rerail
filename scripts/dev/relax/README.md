@@ -248,6 +248,25 @@ payload and the location the panic hook records beside it (`std::panic::record_l
 same section reaches `live-test-remote`, which now prints each failure's section whole (it
 showed only the lines naming a panic).
 
+### 13. `ExactSizeIterator::len` as rustc's core has it
+
+Relax's std adapters had empty `ExactSizeIterator` impls, so `len` came from `size_hint`. rustc's
+core forwards `len` through `Map`, `Enumerate`, `Rev`, `Cloned`, `Copied`, `Fuse`, `Inspect` and
+`&mut I`. Ast-grep's `NodeWalker` implements `len` but not `size_hint`, so under Relax
+`node.children().len()` was 0 and every pattern built over tree-sitter's tree failed with
+`NoContent` (rerail-tests-tape's tape tests). The adapters now forward `len`, and the default
+asserts that `size_hint` is exact, as rustc's does. The walker gets its `size_hint` too
+(`native/vendor/ast-grep-core-0.51.0/PATCHES.md`).
+
+### 14. A fatal fault in program code runs the program's handler first
+
+Relax contains a fault in JIT code. When the run ends by it, the process used to go straight to
+the signal's default action, so a handler the program installed with `sigaction` never ran. That
+includes the test watchdog's `SIGSEGV` handler, which names the tests running. A rustc build's
+kernel runs that handler first. `progsig::fatal_fault` now delivers the fault to the program's
+handler on the faulting thread, at its recovery point and outside any compile. The handler gets
+a siginfo naming the address and no context. The process then ends by the signal as before.
+
 ## Sharing between worktrees
 
 Relax keys a run's stores by the workspace's absolute paths. Under `RELAX_SHARE=rerail` every

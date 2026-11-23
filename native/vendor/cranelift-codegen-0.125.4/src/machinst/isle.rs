@@ -771,6 +771,10 @@ macro_rules! isle_lower_prelude_methods {
             self.lower_ctx.value_is_unused(val)
         }
 
+        fn value_is_multiply_used(&mut self, val: Value) -> bool {
+            self.lower_ctx.value_is_multiply_used(val)
+        }
+
         fn block_exn_successor_label(&mut self, block: &Block, exn_succ: u64) -> MachLabel {
             // The first N successors are the exceptional edges, and
             // the normal return is last; so the `exn_succ`'th

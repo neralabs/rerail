@@ -17,7 +17,7 @@ export const LANGUAGE_REGISTRY_MODULE_PATH = resolve(ROOT, "src", "engine", "cod
 export const TEST_LANGUAGES_DIRECTORY = resolve(ROOT, "native", "test-languages");
 
 export const LANGUAGE_REGISTRY_FORMAT = "rerail.language/v1";
-/** The parser implementations a dialect may name: tree-sitter, Forte (Rerail's port, native/src/code_rule_dsl/blade/forte/), or the rule engine's own `.rerail` parser (native/src/code_rule_dsl/logic/rr/syntax.rs). */
+/** The parser implementations a dialect may name: tree-sitter, Forte (Rerail's port, native/crates/forte/src/code_rule_dsl/blade/forte/), or the rule engine's own `.rerail` parser (native/crates/rr_syntax/src/syntax.rs). */
 export const LANGUAGE_PARSERS = ["tree-sitter", "forte", "rr", "bitlex", "literal"] as const;
 
 const name = z.string().regex(/^[a-z][a-z0-9-]*$/u, "Must be lowercase letters, digits and dashes, starting with a letter.");
@@ -48,6 +48,7 @@ export const languageEntrySchema = z
     suppressions: z.array(name),
     /** `dialects`: the embedded language's dialects the embedding gives, every one where absent; a language embeds itself only through dialects it names (Markdown's inline grammar). */
     /** `places` (decision 0470): a `call-argument` embed's calls whose positional argument holds the language, by the callee's qualified name. */
+    /** `demand` (decision 0597): built only where a rule asks for a program at its place, never at a file's load (a Vue template's code, each piece a program of its own). */
     embeds: z
       .array(
         z
@@ -56,6 +57,7 @@ export const languageEntrySchema = z
             via: name,
             dialects: z.array(name).min(1).optional(),
             places: z.array(z.object({ callee: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/), argument: z.number().int().min(0) }).strict()).min(1).optional(),
+            demand: z.boolean().optional(),
           })
           .strict(),
       )
@@ -82,6 +84,7 @@ export const languageEntrySchema = z
     if (new Set(entry.suppressions).size !== entry.suppressions.length) issue(["suppressions"], "Suppressions repeat.");
     for (const embed of entry.embeds ?? []) if (embed.language === entry.id && embed.dialects === undefined) issue(["embeds"], "A language embeds itself only through dialects it names.");
     for (const embed of entry.embeds ?? []) if ((embed.via === "call-argument") !== (embed.places !== undefined)) issue(["embeds"], "Places belong to `call-argument`, which has at least one.");
+    for (const embed of entry.embeds ?? []) if (embed.demand && embed.places !== undefined) issue(["embeds"], "A program built on demand has no places.");
   });
 
 export type LanguageEntry = z.infer<typeof languageEntrySchema>;

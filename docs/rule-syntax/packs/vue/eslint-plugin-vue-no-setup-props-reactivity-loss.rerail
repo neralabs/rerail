@@ -18,9 +18,9 @@
 // A name destructured from defineProps (`const { x } = defineProps()`) counts as a read wherever it is used so.
 .violation lost(at: node, msg: symbol) code "vue/no-setup-props-reactivity-loss" "{msg}"
     suppress eslint "vue/no-setup-props-reactivity-loss"
-lost(p, "Destructuring the `props` will cause the value to lose reactivity.") :- destructured(p).
-lost(c, m) :- kind(c, "call_expression"), nearest(c, sc, fn_scope), accessed(c, sc), msg(sc, m).
-lost(at, m) :- assigned(l, r, sc), verify(l, r, sc, at), msg(sc, m).
+lost_in(p, "Destructuring the `props` will cause the value to lose reactivity.") :- destructured(p).
+lost_in(c, m) :- kind(c, "call_expression"), nearest(c, sc, fn_scope), accessed(c, sc), msg(sc, m).
+lost_in(at, m) :- assigned(l, r, sc), verify(l, r, sc, at), msg(sc, m).
 .decl msg(sc: node, m: symbol)
 msg(sc, cat("Getting a value from the `props` in root scope of `", y, "` will cause the value to lose reactivity.")) :-
     src(sc, _, _), (kind(sc, "program"), y = "<script setup>" ; !kind(sc, "program"), y = "setup()").
@@ -114,3 +114,10 @@ wrapper_hit(r, sc) :- assigned(_, r, sc), (kind(r, "array") ; kind(r, "object"))
 .decl pattern_hit(l: node, r: node, sc: node)
 pattern_hit(l, r, sc) :- assigned(l, r, sc), !wrapper_hit(r, sc), (kind(l, "array_pattern") ;
     kind(l, "object_pattern")), base(r, b), part(b, x), pref(sc, x, "props").
+
+// The rules above are the context `script`'s (decision 0597): they read the scripts' nodes. The host reports what
+// they find, at each node's own bytes.
+.decl lost_in(at: node, msg: symbol)
+.context script of vue roots vscript_root exports lost_in
+.from script lost_in
+lost(at, msg) :- lost_in(at, msg).

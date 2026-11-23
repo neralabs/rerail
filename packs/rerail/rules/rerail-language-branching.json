@@ -7,12 +7,22 @@
   "scope": {
     "include": [
       "native/src/**/*.rs",
+      "native/crates/*/src/code_rule_dsl/**/*.rs",
+      "native/crates/*/src/content_store/**/*.rs",
+      "native/crates/*/src/git_access/**/*.rs",
+      "native/crates/*/src/tree_watch/**/*.rs",
+      "native/crates/*/src/git_*.rs",
+      "native/crates/*/src/source_tree.rs",
+      "native/crates/*/src/threads.rs",
+      "native/crates/*/src/panic_boundary.rs",
       "src/**/*.ts"
     ],
     "exclude": [
-      "native/src/code_rule_dsl/language.rs",
+      "native/crates/lang/src/code_rule_dsl/language.rs",
       "native/src/code_rule_dsl/language/**",
+      "native/crates/*/src/code_rule_dsl/language/**",
       "native/src/build_languages.rs",
+      "native/crates/*/src/build_languages.rs",
       "**/*tests.rs",
       "**/tests/**",
       "**/test_support.rs",
@@ -20,17 +30,18 @@
       "**/*.generated.ts",
       "**/*.generated.rs",
       "native/src/build_identity.rs",
-      "native/src/code_rule_dsl/tape/corpus_parity.rs",
-      "native/src/code_rule_dsl/value/eslint_rules.rs",
-      "native/src/code_rule_dsl/value/rules.rs",
-      "native/src/code_rule_dsl/compile/parse/ruff.rs",
-      "native/src/code_rule_dsl/compile/binds/ruff.rs",
-      "native/src/code_rule_dsl/compile/binds/eslint.rs",
-      "native/src/code_rule_dsl/compile/format_args/php.rs",
-      "native/src/code_rule_dsl/compile/format_args/ruff.rs",
-      "native/src/code_rule_dsl/suppress/ruff.rs",
-      "native/src/code_rule_dsl/lines/eslint.rs",
-      "native/src/code_rule_dsl/embed/test_script.rs"
+      "native/crates/*/src/build_identity.rs",
+      "native/crates/tests_tape/src/code_rule_dsl/tape/corpus_parity.rs",
+      "native/crates/tests_value/src/code_rule_dsl/value/eslint_rules.rs",
+      "native/crates/tests_value/src/code_rule_dsl/value/rules.rs",
+      "native/crates/tests_resolve/src/code_rule_dsl/compile/parse/ruff.rs",
+      "native/crates/tests_resolve/src/code_rule_dsl/compile/binds/ruff.rs",
+      "native/crates/tests_resolve/src/code_rule_dsl/compile/binds/eslint.rs",
+      "native/crates/tests_compile/src/code_rule_dsl/compile/format_args/php.rs",
+      "native/crates/tests_compile/src/code_rule_dsl/compile/format_args/ruff.rs",
+      "native/crates/tests_matcher/src/code_rule_dsl/suppress/ruff.rs",
+      "native/crates/tests_scope/src/code_rule_dsl/lines/eslint.rs",
+      "native/crates/lang/src/code_rule_dsl/embed/test_script.rs"
     ]
   },
   "clauses": [

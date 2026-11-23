@@ -182,13 +182,13 @@ impl<'l> Writer<'l> {
     /// A writer of a document of `source` in `lang`, of about `nodes` nodes, in 16z where `z`, with each block's
     /// presence where `blocks`. The tape's room is reserved for `nodes` nodes, their side lists' usual share and the
     /// source's newline index: more nodes grow it.
-    pub fn new(lang: &'l Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+    pub fn new(lang: &'l Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
         let source_len = source.len() as u64;
         let w = lang.widths;
         let cw = bytes_for(source_len);
         let stride = stride_of(w, cw);
         let (kind_words, field_words) = lang.presence_words();
-        let lines = crate::newlines::index(source);
+        let lines = crate::newlines::index(source, terminators);
         let newlines = crate::newlines::count(&lines).unwrap_or(0);
         let count = nodes.div_ceil(Z).max(1);
         let tail = 4 * 8 + nodes / 2 + 64 + 16 * (count + 1) + lines.len() + 16;
@@ -604,7 +604,7 @@ fn part_into(out: &mut Vec<u8>, e: &[(u16, u64)], nb: usize, vw: usize) {
 
 /// `f16::write_from` by the reference writer.
 pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Written, String> {
-    write_with(Writer::new(lang, source, tag, z, false, t.len()), t.len(), nodes_of(t, number)).map(|f| f.tape)
+    write_with(Writer::new(lang, source, crate::newlines::Terminators::Lf, tag, z, false, t.len()), t.len(), nodes_of(t, number)).map(|f| f.tape)
 }
 
 impl Tape16 {
