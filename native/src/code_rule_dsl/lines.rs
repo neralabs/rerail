@@ -121,7 +121,7 @@ impl LineTable {
         } else {
             let mut v = vec![0u8; room];
             fill(&mut v).expect("an index");
-            rerail_tape_format::home::Home::Own(v)
+            rerail_tape_format::home::Home::from(v)
         };
         Self { home: Index::Own(home), at: 0, len }
     }

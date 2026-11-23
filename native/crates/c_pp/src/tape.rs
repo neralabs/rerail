@@ -166,7 +166,7 @@ pub fn image(src: &[u8], opts: Options) -> Vec<u8> {
 pub fn image_16(src: &[u8], opts: Options) -> Tape16 {
     let nodes = nodes(src, opts);
     let mut widths = Widths::guess(src.len());
-    let target = Target::F16(Sixteen { lang: lang(), terminators: LINE_ENDS, tag: TAG, z: false, blocks: false, number: std::sync::Arc::new(number) });
+    let target = Target::F16(Sixteen { lang: lang(), terminators: LINE_ENDS, tag: TAG, z: false, blocks: false, number: std::sync::Arc::new(number), rooms: None });
     loop {
         match write(&nodes, src, widths, target.clone()).and_then(|mut w| w.finish_16()) {
             Ok(Ok(f)) => match f.tape {

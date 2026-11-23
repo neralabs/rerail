@@ -404,7 +404,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 0: gone | Done (step 4, 2026-11-22) |
 | 15 | Gone (step 4b, 2026-11-18): a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went first (the CPU reads 16z in place); then the transducer's residency's (`unblock_into` into its slab, for the kernels: the label and program kernels read the stored bytes through the batch's cache), and a 16z batch's views made on the device (they are read in place through a cache). `unblock_into` is deleted. | — | — | Done |
 | 16 | Gone (0446, 2026-11-19): a label level's fact rows, uploaded as `(node, label)` pairs for the pattern kernels (`Pass::Fact`). The host writes the findings once into the batch's fact block, and the CPU and the kernels read them there | — | — | Done |
-| 17 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`, and `TapeImage::housed` for an image restored from a vector); a queued tape not in a room read into a vector (`queued_image`); a source made in memory (a test's literal, an edit's text) written into its room (`placed::housed`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image`; `tape/placed.rs`, `housed` | 4.1 MB a run on hogql 16z | Step 4a |
+| 17 | Gone (step 4a, 2026-11-23): a parser's tape copied into its room, a queued tape read into a vector, a source in hand written into its room. A format 16 writer writes its tape in a region of a tape slab and gives it out where it lies (`home::Rooms`, `placed::rooms`); a tape's own bytes are shared, not cloned (`Home::Own`); a guest's text that is one stretch of its host's source reads in the host's room (`placed::within`); a rule's pattern is not housed. Left, marked and 0 on hogql and the bench: format 15's columns, a gathered segment's entry, and a guest text with escapes, each written into a room only where a device reads it | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image`; `tape/placed.rs`, `housed` | 0: gone (4.1 MB a run on hogql 16z before) | Done (step 4a, 2026-11-23) |
 | 18 | Gone (2026-11-22, t52 step 4): each chunk's export rows written again into the export's relation (`Exports::add`, decision 0384 step 1). An export now holds the chunk's parts where they lie (`Rows::append_segment`), and a repeat or a dead row is dead in it. The memo's hits (warm runs, `append_own`) still write their rows, under row 12 | `plan/corpus/exports.rs`, `Exports::add` | 2,264 MB of 10.1 GB on 3,089 files (102 exports) | t52 step 4 |
 
 ## The plan
@@ -1242,6 +1242,31 @@ transducer's Metal and in-place tests on the M1 Max (232), and the tape, text, s
 tapes placed by their parse, 5 sources in hand housed; row 7: 2,018 node-row calls, 0.0 MB); the 300-file bench 463
 violations, copies 52.9 MB (row 7's node rows 49.9 MB; row 17 3.0 MB, 20 sources housed). Row 13 copies nothing:
 its site is deleted. The copies left are rows 7 (step 3) and 17 (step 4a).
+
+### Step 4a, row 17: a parser writes its tape in its room (2026-11-23)
+
+The format 16 writer (`f16::ops::Writer`) is given rooms (`home::Rooms`): its tape part is a region of a tape slab
+(`placed::rooms`, the engine's; `Region::free`), which its ops write as the parser goes, and `finish` gives the tape
+out of the region where it lies (`Region::give`), its presence laid after it there. The region grows as a vector does
+(a larger region, the bytes moved: the writer's working room, `copy: growth`), and a refused region leaves the tape in
+a vector of the writer's own. A region's bytes never given out go back to the slab where no room came after it
+(`Slab::give_back`, zeroed first). Tree-sitter's writer (`TreeOps`), the Bitlex parsers' (`Sixteen::rooms`) and
+simdjson's are given the rooms.
+
+- `Home::Own` holds its bytes shared (`Arc<Vec<u8>>`): a tape's image and the store's queue hold one tape, so
+  `place_stored` gives a tape its own home where no device reads tapes or no room is given, and copies only into a room
+  a device needs.
+- `queued_image` reads a queued tape in its home, whatever it is, and a decompressed frame as it is where no device
+  reads tapes.
+- A guest's text that is one stretch of its host's source copied whole (`SegmentMap::whole_copy`) is a room within
+  the host's (`placed::within`). A rule's pattern document, read by the matchers' compiler alone, is not housed: the 5
+  sources housed on hogql and 18 on the bench were patterns.
+
+Tests: `a_writer_with_rooms_writes_the_references_tape` (R13's cases, with regions grown and refused) and
+`a_writer_with_rooms_gives_its_tape_out_where_it_lies`; `a_parse_writes_its_tape_in_its_room` (Python, JSON, Go and
+Rust parses placed where their writer wrote them); the tape, guest and pattern tests on spark1 (CUDA: 193).
+Measured on the M1 Max, Metal, cold: hogql 1,629 findings with the CPU run's digest, row 17 0 MB (602 tapes written
+in place); the 300-file bench 463 violations, row 17 0 MB. Row 7 is the one copy left.
 
 ## What it replaces
 

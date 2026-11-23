@@ -92,6 +92,11 @@ pub struct Writer {
     /// The tape `finish` gave out: its buffer's address and the bytes of it written (its length before it was cut to
     /// the tape's), which `recycle` takes back as they are.
     given: (usize, usize),
+    /// Where its tapes go (decision 0353 step 4a, row 17): rooms every reader reads, the device too. With them the OUT
+    /// part is `region`'s free bytes, and `finish` gives the tape out where it lies; without them, or where none is
+    /// given, it is `parts[OUT]`, a vector of the writer's own.
+    rooms: Option<std::sync::Arc<dyn crate::home::Rooms>>,
+    region: Option<Box<dyn crate::home::Region>>,
     /// A part held at its capacity (a test's: the device's region, which the host does not grow).
     #[cfg(test)]
     fixed: Option<(u32, u64)>,
@@ -112,7 +117,13 @@ impl Writer {
 
     /// A writer of no document yet, its parts empty: `begin` starts each.
     pub fn empty() -> Self {
-        Writer { state: Box::default(), parts: Default::default(), presence_words: (0, 0), keep_blocks: false, z: false, given: (0, 0), #[cfg(test)] fixed: None, #[cfg(test)] jit: None }
+        Writer { state: Box::default(), parts: Default::default(), presence_words: (0, 0), keep_blocks: false, z: false, given: (0, 0), rooms: None, region: None, #[cfg(test)] fixed: None, #[cfg(test)] jit: None }
+    }
+
+    /// A writer of no document yet whose tapes go to `rooms` where it is given them (decision 0353 step 4a): each
+    /// written in a region's free bytes and given out there by `finish`, never copied into a room after.
+    pub fn placing(rooms: Option<std::sync::Arc<dyn crate::home::Rooms>>) -> Self {
+        Writer { rooms, ..Writer::empty() }
     }
 
     /// The next document, in this writer: as `new`, its parts' buffers kept from the documents before (each grown only
@@ -195,7 +206,22 @@ impl Writer {
         // The kinds' table and the newline index are their parts, made where they are computed.
         self.parts[part::KINDS as usize] = kinds;
         self.parts[part::LINES as usize] = lines;
+        // The tape's part in a region of the writer's rooms, where it has them: its free bytes kept from the document
+        // before where they hold the hint, else a region of the hint's size (the one before given back).
+        if let Some(rooms) = &self.rooms
+            && self.region.as_mut().is_none_or(|r| r.free().len() < caps[part::OUT as usize])
+        {
+            self.region = None;
+            self.region = rooms.region(caps[part::OUT as usize]);
+        }
+        #[cfg(test)]
+        if let Some(r) = self.region.as_mut() {
+            r.free().fill(FRESH);
+        }
         for (k, (buf, &cap)) in self.parts.iter_mut().zip(&caps).enumerate() {
+            if k as u32 == part::OUT && self.region.is_some() {
+                continue;
+            }
             // Kept from the document before; in tests made `FRESH`, as a byte the ops read before they write it shows.
             #[cfg(test)]
             if k as u32 != part::KINDS && k as u32 != part::LINES {
@@ -265,8 +291,16 @@ impl Writer {
     fn bind(&mut self) {
         let base = std::ptr::from_ref::<State>(&self.state) as i64;
         let mut state = *self.state;
+        let region = self.region.as_mut().map(|r| {
+            let free = r.free();
+            (free.as_mut_ptr() as i64, free.len())
+        });
         for k in 0..part::COUNT {
-            let (at, cap) = (self.parts[k].as_ptr() as i64, self.parts[k].len().saturating_sub(8) as u64);
+            let (at, len) = match region {
+                Some(r) if k as u32 == part::OUT => r,
+                _ => (self.parts[k].as_ptr() as i64, self.parts[k].len()),
+            };
+            let cap = len.saturating_sub(8) as u64;
             #[cfg(test)]
             let cap = match self.fixed {
                 Some((f, fixed)) if f as usize == k => fixed,
@@ -306,6 +340,33 @@ impl Writer {
     fn reserve(&mut self, k: u32, need: usize) {
         #[cfg(test)]
         if self.fixed.is_some_and(|f| f.0 == k) {
+            return;
+        }
+        if k == part::OUT
+            && let Some(old) = self.region.as_mut()
+        {
+            let had = old.free().len();
+            if need + 8 <= had {
+                return;
+            }
+            // Grown as a vector grows (the writer's own working room): a region twice the size, its bytes moved
+            // there, the one before given back; a refused region leaves the tape in a vector of the writer's own.
+            let cap = (need + 8).max(2 * had);
+            let mut grown = self.rooms.as_ref().and_then(|rooms| rooms.region(cap));
+            match grown.as_mut() {
+                // copy: growth
+                Some(new) => new.free()[..had].copy_from_slice(&old.free()[..had]),
+                None => {
+                    let mut own = std::mem::take(&mut self.parts[k as usize]);
+                    own.clear();
+                    // copy: growth
+                    own.extend_from_slice(old.free());
+                    own.resize(cap, FRESH);
+                    self.parts[k as usize] = own;
+                }
+            }
+            self.region = grown;
+            self.bind();
             return;
         }
         if need + 8 <= self.parts[k as usize].len() {
@@ -501,6 +562,16 @@ impl Writer {
         self.finish_ops()?;
         let count = (self.state.n as usize).div_ceil(Z);
         let end = self.len_of(part::OUT);
+        if let Some(region) = self.region.as_mut() {
+            // The tape where it lies in its region, its presence laid after it there (the room `finish_ops` reserved).
+            let words = &self.parts[part::PRESENCE as usize];
+            let blocks = self.keep_blocks.then_some(count);
+            let len = lay_presence(region.free(), end, words, self.presence_words, blocks);
+            let home = crate::home::Home::Placed(region.give(len));
+            let tape = if self.z { Written::F16Z(Tape16Z::from_bytes(home)?) } else { Written::F16(Tape16::from_bytes(home)?) };
+            self.given = (0, 0);
+            return Ok(Finished { tape });
+        }
         let mut out = std::mem::take(&mut self.parts[part::OUT as usize]);
         self.given = (out.as_ptr() as usize, out.len());
         out.truncate(end);
@@ -544,6 +615,22 @@ impl Writer {
         }
         Ok(())
     }
+}
+
+/// A finished writer's presence laid in `out` after its tape's `end` bytes, as `presence::lay_words` lays it in a
+/// vector: the home's length.
+fn lay_presence(out: &mut [u8], end: usize, presence: &[u8], (kind_words, field_words): (usize, usize), blocks: Option<usize>) -> usize {
+    let count = 1 + blocks.unwrap_or(0);
+    let at = super::presence::at(end);
+    out[end..at].fill(0);
+    for (k, v) in [kind_words, field_words, count, 0].into_iter().enumerate() {
+        out[at + 4 * k..at + 4 * k + 4].copy_from_slice(&(v as u32).to_le_bytes());
+    }
+    let n = 8 * (kind_words + field_words) * count;
+    let words = at + super::presence::HEAD;
+    // copy: derived (the presence the writer accumulated, written once into the tape's home, as `lay_words` does)
+    out[words..words + n].copy_from_slice(&presence[..n]);
+    words + n
 }
 
 /// A finished writer's tape (`out`, its OUT part at its length), with its presence laid after it in its home

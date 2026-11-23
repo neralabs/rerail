@@ -7389,6 +7389,29 @@ fn every_tape_format_reads_the_document_as_restored() {
     }
 }
 
+/// Decision 0353 step 4a (row 17): a parser writes its tape in its room where a device reads tapes (`placed::rooms`),
+/// whichever parser it is (tree-sitter's, a Bitlex parser's, simdjson's): the image a parse gives is placed there, and
+/// placing it (`place_stored`) is its home as it is, with the bytes it would be stored as.
+#[test]
+fn a_parse_writes_its_tape_in_its_room() {
+    for (language, source) in [
+        (GrammarDialect::Python, "def f(a):\n    return len(a)\n"),
+        (GrammarDialect::Json, "{\"a\": [1, 2, {\"b\": null}]}\n"),
+        (GrammarDialect::Go, "package p\n\nfunc f(a int) int { return a }\n"),
+        (GrammarDialect::Rust, "fn f(a: u8) -> u8 { a }\n"),
+    ] {
+        let grammar = Arc::new(Grammar::new(language).unwrap());
+        let image = TapeImage::parse(&grammar, source, &|| false).expect("parsed").expect("encoded").primary;
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        assert_eq!(image.placed(), super::placed::device().is_some(), "{language:?}: written in a slab's room where there is a device");
+        let home = image.place_stored().unwrap();
+        assert_eq!(&*home, &image.to_bytes().unwrap()[..], "{language:?}: the bytes as stored");
+        if image.placed() {
+            assert_eq!(home.as_ptr(), image.room().unwrap().bytes().as_ptr(), "{language:?}: placed where its parser wrote it");
+        }
+    }
+}
+
 /// Decision 0353 step 4a: a stored tape placed in its home (a slab's room, where the host has a device) and read
 /// there answers every node question as the same tape read from a buffer of its own, in each format.
 #[test]

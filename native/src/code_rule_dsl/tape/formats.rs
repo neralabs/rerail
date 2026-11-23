@@ -191,7 +191,7 @@ impl Code {
 /// its code (`number`): `None` where the run stores format 15, or the language has no format 16 table (said once).
 fn sixteen(language: GrammarDialect, number: impl Fn(&'static Lang, u32) -> Option<u32> + Send + Sync + 'static) -> Option<rerail_tape_format::Sixteen> {
     let (lang, tag, z) = run_16(language)?;
-    Some(rerail_tape_format::Sixteen { lang, terminators: crate::code_rule_dsl::lines::terminators(language), tag, z, blocks: true, number: Arc::new(move |key| number(lang, key)) })
+    Some(rerail_tape_format::Sixteen { lang, terminators: crate::code_rule_dsl::lines::terminators(language), tag, z, blocks: true, number: Arc::new(move |key| number(lang, key)), rooms: super::placed::rooms() })
 }
 
 /// The language's format 16 table, its tag and whether the run stores 16z: `None` where the run stores format 15, or
@@ -231,7 +231,8 @@ impl TreeOps {
     /// run stores format 15 (`run_16`).
     pub(super) fn of_run(language: GrammarDialect, source: &[u8], nodes: usize) -> Option<Self> {
         let (lang, tag, z) = run_16(language)?;
-        let w = f16::Writer::new(lang, source, crate::code_rule_dsl::lines::terminators(language), tag, z, true, nodes);
+        let mut w = f16::Writer::placing(super::placed::rooms());
+        w.begin(lang, source, crate::code_rule_dsl::lines::terminators(language), tag, z, true, nodes);
         Some(TreeOps { language, lang, tag, w, ends: Vec::with_capacity(64), numbers: Default::default(), aliases: Vec::new(), bad: None })
     }
 

@@ -743,14 +743,11 @@ impl Written {
     /// Its bytes, where it owns them (a writer's tape, not a placed one): for the writer to write the next tape in
     /// (`ops::Writer::recycle`).
     pub fn into_own(self) -> Option<Vec<u8>> {
-        let home = match self {
+        match self {
             Written::F16(t) => t.buf,
             Written::F16Z(t) => t.buf,
-        };
-        match home {
-            crate::home::Home::Own(v) => Some(v),
-            crate::home::Home::Placed(_) => None,
         }
+        .into_own()
     }
     pub fn extent(&self) -> &[u8] {
         match self {
@@ -3195,6 +3192,99 @@ mod tests {
         let again = Writer::finish(&mut w).expect("the second tape").tape;
         assert_eq!(again.extent(), &want[..], "the tape written in the room given back");
         assert_eq!(again.extent().as_ptr(), at, "the tape is the room given back");
+    }
+
+    /// Test rooms (`home::Rooms`): regions of leaked memory, every `refuse`-th asked refused (0: none).
+    struct TestRooms {
+        asked: std::sync::atomic::AtomicUsize,
+        refuse: usize,
+    }
+
+    struct TestRegion(&'static mut [u8]);
+
+    #[derive(Debug)]
+    struct TestRoom(&'static [u8]);
+
+    impl crate::home::Room for TestRoom {
+        fn bytes(&self) -> &[u8] {
+            self.0
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    impl crate::home::Rooms for TestRooms {
+        fn region(&self, len: usize) -> Option<Box<dyn crate::home::Region>> {
+            let k = self.asked.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if self.refuse != 0 && k % self.refuse == 0 {
+                return None;
+            }
+            Some(Box::new(TestRegion(Box::leak(vec![0x5au8; len].into_boxed_slice()))))
+        }
+    }
+
+    impl crate::home::Region for TestRegion {
+        fn free(&mut self) -> &mut [u8] {
+            self.0
+        }
+        fn give(&mut self, len: usize) -> std::sync::Arc<dyn crate::home::Room> {
+            let (tape, rest) = std::mem::take(&mut self.0).split_at_mut(len);
+            self.0 = rest;
+            std::sync::Arc::new(TestRoom(tape))
+        }
+    }
+
+    fn test_rooms(refuse: usize) -> Option<std::sync::Arc<dyn crate::home::Rooms>> {
+        Some(std::sync::Arc::new(TestRooms { asked: Default::default(), refuse }))
+    }
+
+    /// Decision 0353 step 4a (row 17): a writer given rooms writes the reference writer's tape and presence in them,
+    /// R13's cases: its tape in a region from the start, the region grown as it fills (each case's hint a third of
+    /// its nodes), and a region refused in the middle of a tape leaving it in a vector of the writer's own.
+    #[test]
+    fn a_writer_with_rooms_writes_the_references_tape() {
+        for refuse in [0, 2, 3] {
+            writes_the_references_tape(|lang, source, z, blocks, nodes| {
+                let mut w = Writer::placing(test_rooms(refuse));
+                w.begin(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3);
+                w
+            });
+        }
+    }
+
+    /// A writer given rooms gives its tape out where it wrote it: placed, the bytes a writer without rooms writes, and
+    /// a writer used again writes the next tape in bytes of its own (the rest of its region, or a new one), the first
+    /// as it was.
+    #[test]
+    fn a_writer_with_rooms_gives_its_tape_out_where_it_lies() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        for z in [false, true] {
+            let mut own = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
+            by_ops(&mut own, &nodes, 1);
+            let want = Writer::finish(&mut own).expect("the tape").tape;
+            let mut w = Writer::placing(test_rooms(0));
+            let mut tapes = Vec::new();
+            for _ in 0..2 {
+                w.begin(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
+                by_ops(&mut w, &nodes, 1);
+                tapes.push(Writer::finish(&mut w).expect("the tape").tape);
+            }
+            for t in &tapes {
+                let home = match t {
+                    Written::F16(t) => t.home(),
+                    Written::F16Z(t) => t.home(),
+                };
+                assert!(home.placed(), "z {z}: the tape given out of its region");
+                assert_eq!(t.extent(), want.extent(), "z {z}: the tape a writer without rooms writes");
+            }
+            let (a, b) = (tapes[0].extent().as_ptr_range(), tapes[1].extent().as_ptr_range());
+            assert!(b.start >= a.end || b.end <= a.start, "z {z}: the second tape in bytes of its own, the first kept");
+        }
     }
 
     /// Decision 0434 §6, R15: the writer's ops compiled by the JIT write the reference writer's tape and presence:

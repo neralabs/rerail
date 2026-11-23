@@ -304,6 +304,8 @@ pub struct Sixteen {
     pub z: bool,
     pub blocks: bool,
     pub number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
+    /// Where the tape goes: rooms every reader reads it in (decision 0353 step 4a), or `None`, a vector of its own.
+    pub rooms: Option<std::sync::Arc<dyn home::Rooms>>,
 }
 
 /// What a lean parser's writer writes to and is finished into: its target, given when the writer is made
@@ -489,7 +491,8 @@ impl<L: Layout> Writer<L> {
     pub fn to(mut self, target: Target, src: &[u8]) -> Self {
         assert_eq!(self.n, 0, "a target before the first node");
         if let Target::F16(t) = target {
-            let w = f16::Writer::new(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap);
+            let mut w = f16::Writer::placing(t.rooms.clone());
+            w.begin(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap);
             self.sixteen = Some(Box::new(Passing { w, number: t.number, numbers: Vec::new(), open: Vec::new(), bad: None, lost: Default::default() }));
             // The columns hold the window: the nodes since the last commit (more grow it).
             if self.cap > WINDOW {
@@ -1763,7 +1766,7 @@ mod tests {
         for (z, commit) in [(false, false), (true, false), (false, true), (true, true)] {
             let keys = keys.clone();
             let number = move |k: u32| keys.iter().position(|&x| x == k).map(|p| p as u32).or((k == key(2, 0, 0)).then_some(4));
-            let target = Target::F16(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z, blocks: false, number: std::sync::Arc::new(number) });
+            let target = Target::F16(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z, blocks: false, number: std::sync::Arc::new(number), rooms: None });
             let mut w = make(target, commit);
             let written = w.finish_16().unwrap().unwrap().tape;
             let check = |t: &dyn Fn(usize) -> (u32, usize, Option<usize>, u64, u64), n: usize| {
@@ -1825,7 +1828,7 @@ mod tests {
         let f15 = F15::new(&image, columns, &table).unwrap();
         let lang: &'static f16::Lang = Box::leak(Box::new(f16::Lang::new(CodeTable::new(table.entries().to_vec()), [1, 1, 1], 1).unwrap()));
         let number = std::sync::Arc::new(move |k: u32| keys.iter().position(|&x| x == k).map(|p| p as u32));
-        let target = |z| Target::F16(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: number.clone() });
+        let target = |z| Target::F16(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: number.clone(), rooms: None });
         // A large file's guess is cut to the window.
         assert_eq!(Writer::new(1, Widths::guess(1 << 20), 1 << 16).to(target(false), &src).cap, WINDOW);
         for z in [false, true] {
