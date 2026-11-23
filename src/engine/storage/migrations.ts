@@ -190,6 +190,29 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       addColumn(database, "rules", "title", "text");
     },
   },
+  {
+    // An audit may belong to the repository instead of a session: a change the walk of the other worktrees found that
+    // no session made is recorded once, under the repository, with no `session_id` (`audits.repository_id`,
+    // `audits.recorded_by`). `session_id` loses its NOT NULL in `audits` and the derived tables, and the derived tables
+    // gain the owner's `repository_id`. The history triggers are dropped first, so no rename rewrites them, and the DDL
+    // right after creates them again matching either owner. `audits` is not rebuilt: its rows are large (1.5 GB for
+    // 6,000 audits), and copying them and building its indexes again held the open's write lock for 18 s, where other
+    // writers give up after 5 s. Its new columns are added in place, and its NOT NULL is dropped in place
+    // (`dropNotNull`). The derived tables' rows are small, so they are rebuilt. No floor: an older build writes
+    // audits with a session as before, which the new triggers derive as before; its repository-scoped reads match
+    // `session_id IN (...)` and so leave the repository's audits out, and it creates a trigger only when the trigger
+    // is missing, so it keeps these. Its unscoped reads return them with no session, and its dashboard reads unscoped
+    // while it knows no repository: there its History by rule and rule panel fail on such a violation (they read every
+    // violation's session id). A floor would lock that build out of the file instead, its hooks included.
+    id: "audits-repository-owner",
+    up(database) {
+      for (const trigger of AUDIT_HISTORY_TRIGGERS) database.run(sql.raw(`DROP TRIGGER IF EXISTS \`${trigger}\``));
+      addColumn(database, "audits", "repository_id", "text");
+      addColumn(database, "audits", "recorded_by", "text");
+      dropNotNull(database, "audits", "`session_id` text NOT NULL");
+      for (const [table, ddl] of OWNED_HISTORY_TABLES) rebuildTable(database, table, ddl);
+    },
+  },
 ];
 
 /**
@@ -329,6 +352,20 @@ const AUDIT_HISTORY_BACKFILL: readonly string[] = [
     FROM audits audit JOIN audit_rule_sets rule_set ON rule_set.rule_revisions_json = audit.rule_revisions_json`,
 ];
 
+/** `audits-repository-owner`: every trigger that names `audits` or a derived history table, as `audit-history.ts` creates them. */
+const AUDIT_HISTORY_TRIGGERS = [
+  "audit_violations_rollup_insert", "audit_violations_rollup_delete", "audits_history_insert", "audits_history_violations_append",
+  "audits_history_violations_update", "audits_history_rule_set_update", "audits_history_delete", "audits_rule_provenance_delete",
+] as const;
+
+/** The derived audit history tables as `audits-repository-owner` introduced them. */
+const OWNED_HISTORY_TABLES: ReadonlyArray<readonly [string, string]> = [
+  ["audit_violations", "CREATE TABLE IF NOT EXISTS `audit_violations` (\n\t`audit_id` text NOT NULL,\n\t`ordinal` integer NOT NULL,\n\t`session_id` text,\n\t`started_at` integer NOT NULL,\n\t`rule_id` text,\n\t`violation_key` text NOT NULL,\n\t`logged` integer NOT NULL,\n\t`repository_id` text,\n\tPRIMARY KEY(`audit_id`, `ordinal`)\n)"],
+  ["audit_violations_staging", "CREATE TABLE IF NOT EXISTS `audit_violations_staging` (\n\t`audit_id` text NOT NULL,\n\t`ordinal` integer NOT NULL,\n\t`session_id` text,\n\t`started_at` integer NOT NULL,\n\t`rule_id` text,\n\t`violation_key` text NOT NULL,\n\t`logged` integer NOT NULL,\n\t`repository_id` text,\n\tPRIMARY KEY(`audit_id`, `ordinal`)\n)"],
+  ["rule_violation_rollup", "CREATE TABLE IF NOT EXISTS `rule_violation_rollup` (\n\t`session_id` text,\n\t`rule_id` text NOT NULL,\n\t`violation_key` text NOT NULL,\n\t`last_seen_at` integer NOT NULL,\n\t`last_logged_at` integer,\n\t`repository_id` text\n)"],
+  ["audit_rule_set_uses", "CREATE TABLE IF NOT EXISTS `audit_rule_set_uses` (\n\t`audit_id` text PRIMARY KEY NOT NULL,\n\t`session_id` text,\n\t`started_at` integer NOT NULL,\n\t`rule_set_id` integer NOT NULL,\n\t`repository_id` text\n)"],
+];
+
 /** The schema version `migrations` leave a file at: the baseline, or the highest floor a step raises it to. */
 export function schemaVersionOf(migrations: readonly Migration[]): number {
   return Math.max(RERAIL_BASELINE_SCHEMA_VERSION, ...migrations.map(migration => migration.floor ?? RERAIL_BASELINE_SCHEMA_VERSION));
@@ -379,6 +416,31 @@ export function rebuildTable(database: RerailDatabase, table: string, ddl: strin
   const copied = columns.map(column => identifier(column.name)).join(", ");
   database.run(sql.raw(`INSERT INTO ${identifier(table)} (${copied}) SELECT ${copied} FROM ${identifier(previous)}`));
   database.run(sql.raw(`DROP TABLE ${identifier(previous)}`));
+}
+
+/**
+ * Drops a column's NOT NULL from `table` in place, unless the table does not exist yet or its definition no longer
+ * holds `column` (the column as its definition reads, `` `name` type NOT NULL ``): SQLite's documented procedure for a
+ * change that leaves every row and index valid (https://www.sqlite.org/lang_altertable.html#otheralter), which rewrites
+ * neither. Only the stored definition changes, so the columns stay in the order the file has them, whichever steps
+ * added them. Defensive mode refuses an edit of `sqlite_schema`, so it is lifted for the edit alone; the schema
+ * version moves on, so every other connection to the file reads the new definition.
+ */
+function dropNotNull(database: RerailDatabase, table: string, column: string): void {
+  const client = database.$client;
+  const stored = client.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?").pluck().get(table) as string | undefined;
+  if (stored === undefined || !stored.includes(column)) return;
+  if (stored.indexOf(column) !== stored.lastIndexOf(column)) throw new Error(`${table} defines ${column} more than once`);
+  const version = client.pragma("schema_version", { simple: true }) as number;
+  client.unsafeMode(true);
+  try {
+    client.pragma("writable_schema = ON");
+    client.prepare("UPDATE sqlite_schema SET sql = ? WHERE type = 'table' AND name = ?").run(stored.replace(column, column.replace(/ NOT NULL$/u, "")), table);
+    client.pragma(`schema_version = ${version + 1}`);
+  } finally {
+    client.pragma("writable_schema = RESET");
+    client.unsafeMode(false);
+  }
 }
 
 /**

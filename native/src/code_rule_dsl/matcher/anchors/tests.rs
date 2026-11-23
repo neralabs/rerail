@@ -514,9 +514,9 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             }
         }
     }
-    // The t31 rewrites ask the operation a token stood for: six more queries (RER-131); main's #740 adds four and
-    // #743 one.
-    assert_eq!(queries.len(), 1680, "pinned catalog query inventory");
+    // The t31 rewrites ask the operation a token stood for: six more queries (RER-131); main's #740 adds four, #743
+    // one, and typescript-eslint-no-invalid-this's callback clause one.
+    assert_eq!(queries.len(), 1681, "pinned catalog query inventory");
     // Every catalog grammar needs a fixture here; an unknown language fails rather than being skipped.
     let fixtures = [
         (

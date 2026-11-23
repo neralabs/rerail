@@ -124,6 +124,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 - **`list`**: installed packs with versions, and any left out, with why.
 - **`add <id[@version]> …`**: installs a Rerail pack by id, or any pack by package name.
 - **`remove <id | package> …`**: uninstalls a package by name, or every installed package holding a pack id.
+- **`update`**: moves each installed pack to the newest version the active core accepts; `rerail update` ends with it.
 - **`recommend [--repo <dir>]`**: runs set-up's discovery and prints what fits, or why nothing does; installs nothing.
 - **`calibrate [--repo <dir>] [--dry-run] [--json]`**: reads the repository's lint config again and updates the settings it gave the repository's packs, keeping yours ([calibrate later](rule-scoping.md#calibrate-later)).
 
@@ -132,7 +133,8 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 
 - **`list`** names Rerail's packs by id and a third party's by package name.
 - **`add`** takes ids or package names (`@neralabs/rerail-pack-typescript`, `@acme/rerail-pack-sql`, `rerail-pack-lint`). It takes a version, range, dist-tag, or an existing tarball or folder; it refuses npm options, `npm:` aliases, git and URL specs. If a pack it installed is left out, or another stops loading, it puts the change back and fails with why.
-- **Updating a pack.** A pack is pinned to the version installed, so `add <id>` with no version leaves an installed pack where it is. Name the version (`add typescript@0.1.6`) or the tag (`add typescript@latest`); `rerail update` prints the command with the versions.
+- **Updating a pack.** A pack is pinned to the version installed, so `add <id>` with no version leaves an installed pack where it is. `update` moves every pack; to move one, name the version (`add typescript@0.1.6`) or the tag (`add typescript@latest`).
+- **`update`** takes each pack npm installed up to the version under the update channel's tag, or `next`'s for a pack the channel has no version of, and installs the newest version in between whose core range takes the active core: a newest version made for a later core gives way to an older one that fits. A prerelease counts only when the tag's version is one. It never moves a pack to an older version (one installed from `next`, say), and leaves one from a folder or tarball alone. Each pack installs and is checked on its own: one that fails or does not load is put back alone, the others still move, and the command exits 1, naming why. A third party's new version runs in Log until you approve it. A pack npm cannot be asked about gets a `warning:` line.
 - **`remove`** refuses to remove, by name, the package holding an id (the one loading under it, or Rerail's own) while another holder stays. Repositories adding the id would then run the other.
 
 </details>
@@ -144,9 +146,9 @@ Pack changes run one at a time, a running daemon picks them up without a restart
 <details>
 <summary>Lock, reload and core-range details</summary>
 
-- **Lock.** Set-up's install, `rerail packs add` and `remove` hold `$RERAIL_HOME/locks/packs.lock`. Others wait up to five minutes; the lock is free the moment the process holding it ends.
+- **Lock.** Set-up's install, `rerail packs add`, `remove` and `update` hold `$RERAIL_HOME/locks/packs.lock`. Others wait up to five minutes; the lock is free the moment the process holding it ends.
 - **Reload.** A running daemon re-reads the catalog at once after an install, removal or active-core change (`rerail update`), and rebuilds every checkout's rules and the dashboard's activity. Edits inside a folder-linked pack are seen only when its `pack.json` or `package.json` changes.
-- **Core range.** `peerDependencies["@neralabs/rerail"]` names the core versions a pack fits. Rerail's own packs published since 17 November 2026 name the oldest and no newest (`>=0.1.0-0`, or `>=<release>-0` when a pack ships something only that core release and newer can read), so a newer core never leaves one out by its range. Versions published before then name `<0.2.0` as their newest, so Rerail 0.2.0 and later leave them out until a newer version is installed (`rerail packs add <id>@latest`). A third party's pack may name a newest too. When `rerail update` activates a core outside an installed pack's range, it names the pack and range. Repositories adding it run none of its rules until a fitting version is installed (`rerail packs add <package>@<version>`; `rerail update` ends by listing the newer versions that fit).
+- **Core range.** `peerDependencies["@neralabs/rerail"]` names the core versions a pack fits. Rerail's own packs published since 17 November 2026 name the oldest and no newest (`>=0.1.0-0`, or `>=<release>-0` when a pack ships something only that core release and newer can read), so a newer core never leaves one out by its range. Versions published before then name `<0.2.0` as their newest, so Rerail 0.2.0 and later leave them out until a newer version is installed (`rerail packs add <id>@latest`). A third party's pack may name a newest too. When `rerail update` activates a core outside an installed pack's range, it names the pack and range. Repositories adding it run none of its rules until a fitting version is installed, which `rerail update` does next when npm has one (`rerail packs update`).
 
 </details>
 
@@ -211,7 +213,7 @@ It must be named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` (`<id>` from 
 - **Warning.** `rerail packs add`, and set-up before its question, say Rerail has not reviewed the pack, that its rules run in Log until a person approves this version, and that their steer text then reaches the coding agent.
 - **Approval.** Approve with `rerail rules approve <package>` or Approve on the pack's dashboard sheet. Each new version waits again. Rerail's own packs from npm need none.
 - **Clashes.** Pack and rule ids are not namespaced; repositories add packs by id. A third party's pack sharing a pack id or rule id with Rerail's is left out with why, and `rerail packs add` puts it back and fails.
-- **Set-up and updates.** Set-up fetches only Rerail's packs, but offers an installed third party's pack wherever it fits; `--packs` names it by package name (`@acme/rerail-pack-sql@1.0.0`). `rerail update` installs no pack: it ends by listing each installed pack with a newer version on its channel (or on `next`, for a pack the channel has no version of) that fits the active core, a third party's marked as waiting for approval again, and the `rerail packs add <id>@<version>` command that installs them. A pack from a folder or tarball is not listed, and one installed newer than the channel's (from `next`) is never offered an older version.
+- **Set-up and updates.** Set-up fetches only Rerail's packs, but offers an installed third party's pack wherever it fits; `--packs` names it by package name (`@acme/rerail-pack-sql@1.0.0`). `rerail update` ends by updating each installed pack, a third party's included, to the newest version on its channel (or on `next`, for a pack the channel has no version of) that fits the active core (`rerail packs update`). A third party's new version is marked as waiting for approval, and runs in Log until you approve it. A pack from a folder or tarball is left alone, and one installed newer than the channel's (from `next`) is never moved to an older version.
 
 </details>
 

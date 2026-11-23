@@ -69,9 +69,11 @@ concurrency:
 # decides, from the pull request's whole diff against its base, so a pull request that ever touched an input runs the
 # job on every later push; a push to main, and any other event, runs everything. A job may be skipped only when nothing
 # it reads changed: each filter is derived from its jobs' imports and runtime reads, and
-# scripts/check/check-ci-paths.mjs keeps the imports inside it (the changes job). The licence, lint, audit, test data,
-# build and unit jobs (on Linux and on Windows), and the tools job's script tests and reference examples, run on every
-# pull request: the unit tests read nearly the whole tree, docs included.
+# scripts/check/check-ci-paths.mjs keeps the imports inside it (the changes job). The licence, lint, audit, test data
+# and build jobs, and the tools job's script tests and reference examples, run on every pull request. The unit jobs (on
+# Linux and on Windows) run the test files the change can affect (the select-tests job), and Windows' none for a change
+# of prose alone (scripts/check/ci/prose.mjs: changesets, changelog entries, the root's and docs/'s Markdown), which
+# changes no code and reads the same on Windows.
 #
 # The Release pull request (changeset-release/main, from release-pr.yml) changes only versions (the packs', and
 # core's in package.json), changelogs and package-lock.json, and is rewritten on every push to main. It runs the
@@ -440,8 +442,9 @@ jobs:
   # Which unit test files a pull request can affect (scripts/check/ci/test-selection.mjs): those whose import closure, or
   # the paths its files name, hold a changed file. The unit jobs run only those, on as many shards as their share needs
   # (`unit-shards`, `windows-shards`), or none ('[]': their jobs and the Windows engine's build skip). Everything off pull
-  # requests, past 3000 files, and when the step fails: `unit` 'all', `unit-tests` empty, every shard. Its own job, so
-  # the `npm ci` it needs is off the path of the jobs that need `changes` alone.
+  # requests, past 3000 files, and when the step fails: `unit` 'all', `unit-tests` empty, every shard. A change of prose
+  # alone (scripts/check/ci/prose.mjs) gets no Windows shard: Linux's run what it selects. Its own job, so the `npm ci`
+  # it needs is off the path of the jobs that need `changes` alone.
   select-tests:
     name: Select the unit tests
     needs: changes
@@ -1307,13 +1310,13 @@ jobs:
           mode: save
 
   # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch, the path
-  # owner read) are compiled out on Linux, where the rust job runs every other test; these filters select them and the
-  # Windows-neutral tests beside them: the process and path owner tests are the engine's, the tree watch's
-  # rerail-tree-watch's, the import roots' rerail-lang-ecma's, which mounts `import_target`. The `.rerail` library's
-  # canonical path is joined with `/` by `bootstrap.rerail`, which only Windows' verbatim paths broke: its test runs here
-  # too. A debug build, as in the rust job, through its own compile cache. Its own job, beside build-windows and the
-  # shards rather than on one of them. Gated as the rust job is, and only when the change selects the engine's tests
-  # (`rust-engine`).
+  # owner read, the named pipe lookup's open) are compiled out on Linux, where the rust job runs every other test;
+  # these filters select them and the Windows-neutral tests beside them: the process, path owner and pipe lookup
+  # tests are the engine's, the tree watch's rerail-tree-watch's, the import roots' rerail-lang-ecma's, which mounts
+  # `import_target`. The `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only
+  # Windows' verbatim paths broke: its test runs here too. A debug build, as in the rust job, through its own compile
+  # cache. Its own job, beside build-windows and the shards rather than on one of them. Gated as the rust job is, and
+  # only when the change selects the engine's tests (`rust-engine`).
   rust-windows:
     name: Rust engine (Windows)
     needs: changes
@@ -1368,7 +1371,7 @@ jobs:
           ref: ${{ env.WARM_REF }}
 
       - name: Engine Windows tests
-        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma -p rerail-tree-watch --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
+        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma -p rerail-tree-watch --lib -- process:: code_rule_dsl::import_target:: tree_watch:: path_owner:: pipe_server:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
 
       - name: Save the compile cache
         if: ${{ !cancelled() && env.SAVE_WARM == 'true' }}

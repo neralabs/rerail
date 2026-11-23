@@ -46,6 +46,6 @@ export function updateEnforcementTag(el, stored) {
   el.replaceChildren(...e.glyph === null ? [] : [icon(e.glyph, 12)], e.label);
 }
 
-/** The column labels over a rule table: Rule · Violations · Enforcement · On/off. */
+/** The column labels over a rule table: Rule · Enforcement · Violations · On/off. */
 export const ruleTableHead = () => h("div.colhead.enfcols", { "aria-hidden": "true" },
-  h("span", null, "Rule"), h("span", null, "Violations"), h("span", null, "Enforcement"), h("span", null, "On/off"));
+  h("span", null, "Rule"), h("span", null, "Enforcement"), h("span", null, "Violations"), h("span", null, "On/off"));

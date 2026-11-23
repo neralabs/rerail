@@ -139,7 +139,7 @@ describe("the engine service and the other worktrees of a repository", () => {
     }
   });
 
-  it("opens one Git ignore matcher for a worktree whose change the live sessions audit, each session in a worktree of its own", { timeout: 60_000 }, async () => {
+  it("opens one Git ignore matcher for a worktree whose changes the live sessions audit, each session in a worktree of its own", { timeout: 60_000 }, async () => {
     const root = await folder();
     const databasePath = join(root, "rerail.sqlite");
     const { worktrees } = repository(root, databasePath, ["w1", "w2", "w3", "w4"]);
@@ -159,12 +159,16 @@ describe("the engine service and the other worktrees of a repository", () => {
       await vi.waitFor(() => expect(opens.mock.results).toHaveLength(sessions.length), { timeout: 30_000, interval: 20 });
       await Promise.all(opens.mock.results.map(result => result.value));
       await turns();
-      // A change in `w4`, which no session works in: each session's runtime audits it in its own router, which asks
-      // Git's ignore rules there.
-      await writeFile(join(worktrees[3]!, "src", "x.py"), "print(1)\n");
+      // A change in `w4`, which no session works in, by a command of each session that ran there: each session's runtime
+      // audits its own in its own router, which asks Git's ignore rules there.
+      for (const [index, bridge] of (opens.mock.contexts as CodeRuleBridge[]).entries()) {
+        await bridge.begin(`shell-${index}`, "Bash", { command: "python3 generate.py" }, undefined, worktrees[3]);
+        await writeFile(join(worktrees[3]!, "src", `x${index}.py`), "print(1)\n");
+        await bridge.finish(`shell-${index}`);
+      }
       await turns();
-      const audited = () => audits.mock.calls.filter(([, batch]) => batch.mode === "log" && batch.edits.some(edit => edit.path.endsWith("w4/src/x.py")));
-      await vi.waitFor(() => expect(audited()).toHaveLength(sessions.length), { timeout: 30_000, interval: 20 });
+      const audited = () => audits.mock.calls.filter(([, batch]) => batch.edits.some(edit => /w4\/src\/x\d\.py$/u.test(edit.path)));
+      await vi.waitFor(() => expect(new Set(audited().map(([sessionId]) => sessionId)).size).toBe(sessions.length), { timeout: 30_000, interval: 20 });
       await Promise.all(audits.mock.results.map(result => result.value));
 
       // A matcher holds the worktree's index: the runtimes share the daemon's one.

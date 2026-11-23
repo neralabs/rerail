@@ -11,7 +11,7 @@ import type * as WalkReads from "../../../../src/engine/code-rule/walk-read-buff
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
 import { lookMoved, WorktreeLooks } from "../../../../src/engine/code-rule/worktree-look.js";
 import { WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
-import { RepositoryWorktreeWalks, WorktreeWalks, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
+import { RepositoryWorktreeWalks, type WatcherWalk, WorktreeWalks, type WorktreeWatcher } from "../../../../src/engine/code-rule/worktree-walks.js";
 import type { WorktreeListLearning } from "../../../../src/engine/catalog/repository-identity.js";
 import { GitReads } from "../../../../src/engine/git.js";
 import type * as Git from "../../../../src/engine/git.js";
@@ -257,8 +257,14 @@ function audited({ auditGeneratedEdits }: Session): Array<[string[], string | un
   ]);
 }
 
-async function shell(bridge: CodeRuleBridge, id: string, run: () => unknown): Promise<void> {
-  await bridge.begin(id, "shell", { command: "./run.sh" });
+/** Runs `run` as a shell call of `bridge`, in `cwd` where its host names one. */
+/** `audited`, with whom each batch's audit belongs to (`CodeRuleEditBatch.owner`; the session's when absent). */
+function owned({ auditGeneratedEdits }: Session): Array<[string[], string | undefined, string | undefined]> {
+  return auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode, batch.owner]);
+}
+
+async function shell(bridge: CodeRuleBridge, id: string, run: () => unknown, cwd?: string): Promise<void> {
+  await bridge.begin(id, "shell", { command: "./run.sh" }, undefined, cwd);
   await run();
   await bridge.finish(id);
 }
@@ -299,26 +305,141 @@ describe("WorktreeWalks", () => {
     expect(reads.get(join(worktrees[2]!, "src", "a.py"))).toBe(1);
   });
 
-  it("hands a shell write in a worktree to every session watching it, read once, and recorded by each in Log", async () => {
+  // #534: each session watching the worktree recorded the change, sessions that never touched it included.
+  it("records a shell write in a worktree that no session watching it made once, for the repository, read once", async () => {
     const { checkouts, worktrees } = await repository();
     const walks = new WorktreeWalks({ gapMs: 0 });
     const first = await session(worktrees[0]!, checkouts, walks);
     const second = await session(worktrees[1]!, checkouts, walks);
     const path = join(worktrees[2]!, "src", "a.py");
-    await first.bridge.begin("shell-1", "shell", { command: "./write.sh" });
-    await writeFile(path, "old\nmine\n");
-    await first.bridge.finish("shell-1");
-    await first.bridge.settleWorktreeWalk();
-    await second.bridge.settleWorktreeWalk();
-    for (const { auditGeneratedEdits } of [first, second]) {
-      expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
-        [[{ path: "../w3/src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }], "log"],
-      ]);
-    }
+    // The call runs in the second session's own folder, not in `w3`: no session made the write there.
+    await shell(second.bridge, "shell-1", () => writeFile(path, "old\nmine\n"), worktrees[1]!);
+    await turn(second, first);
+    expect(first.auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode, batch.owner])).toEqual([
+      [[{ path: "../w3/src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }], "log", "repository"],
+    ]);
+    expect(second.auditGeneratedEdits).not.toHaveBeenCalled();
     expect(reads.get(path)).toBe(2);
   });
 
-  it("reads a worktree added while two sessions in the main checkout are open once for both, and each still records a shell write there in Log", async () => {
+  // #535 and #534: the writer was told nothing, and every other session recorded its write.
+  it("steers the session whose call ran in a worktree on its shell write there, and no other session records it", async () => {
+    const { checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const first = await session(worktrees[0]!, checkouts, walks);
+    const second = await session(worktrees[1]!, checkouts, walks);
+    await shell(second.bridge, "shell-1", () => writeFile(join(worktrees[2]!, "src", "a.py"), "old\nmine\n"), join(worktrees[2]!, "src"));
+    await turn(second, first);
+    expect([owned(first), owned(second)]).toEqual([[], [[["../w3/src/a.py"], undefined, undefined]]]);
+  });
+
+  it("leaves a worktree a session is open in to that session: its shell write there steers it, and no other session records it", async () => {
+    const { main, checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    // The session in the main checkout watches `w1` and would record for the repository there.
+    const watcher = await session(main, checkouts, walks);
+    const inside = await session(worktrees[0]!, checkouts, walks);
+    await shell(inside.bridge, "shell-1", () => writeFile(join(worktrees[0]!, "src", "a.py"), "old\nmine\n"));
+    await turn(inside, watcher);
+    expect([owned(inside), owned(watcher)]).toEqual([[[["src/a.py"], undefined, undefined]], []]);
+  });
+
+  it("takes an edit tool's write into another worktree as its writer's, wherever the agent was, and no session records a copy", async () => {
+    const { checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const watcher = await session(worktrees[1]!, checkouts, walks);
+    const writer = await session(worktrees[0]!, checkouts, walks);
+    const path = join(worktrees[2]!, "src", "a.py");
+    // The edit tool runs where the agent is, in its own folder, and names the file it writes.
+    await writer.bridge.begin("write-1", "write", { file_path: path, content: "old\nmine\n" }, undefined, worktrees[0]!);
+    await writeFile(path, "old\nmine\n");
+    await writer.bridge.finish("write-1");
+    await turn(writer, watcher);
+    expect(owned(watcher)).toEqual([]);
+    expect(owned(writer).every(([, , owner]) => owner === undefined)).toBe(true);
+  });
+
+  // Review of #738 (B1): a session opened in a subfolder judges that folder alone, not its whole checkout.
+  it("records once for the repository a change in a worktree outside the folder of a session open in a subfolder of it", async () => {
+    const { main, checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const watcher = await session(main, checkouts, walks);
+    await mkdir(join(worktrees[0]!, "pkg"), { recursive: true });
+    const inside = await session(join(worktrees[0]!, "pkg"), checkouts, walks);
+    await writeFile(join(worktrees[0]!, "pkg", "own.py"), "own = 1\n");
+    await writeFile(join(worktrees[0]!, "src", "a.py"), "old\nmine\n");
+    // The subfolder session's edit tool writes outside its folder: its result checked it, so no one records a copy.
+    const edited = join(worktrees[0]!, "src", "b.py");
+    await inside.bridge.begin("write-1", "write", { file_path: edited, content: "b = 1\n" });
+    await writeFile(edited, "b = 1\n");
+    await inside.bridge.finish("write-1");
+    await turn(inside, watcher);
+    expect(owned(watcher)).toEqual([[["../w1/src/a.py"], "log", "repository"]]);
+  });
+
+  // Review of #738 (F1): the session's own folder walk recorded its write before it closed.
+  it("records no copy of a session's write in its own worktree once it closed before another session's walk", async () => {
+    const { main, checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const watcher = await session(main, checkouts, walks);
+    const inside = await session(worktrees[0]!, checkouts, walks);
+    await shell(inside.bridge, "shell-1", () => writeFile(join(worktrees[0]!, "src", "a.py"), "old\nmine\n"));
+    await inside.bridge.checkpoint("turn");
+    await inside.bridge.close();
+    await turn(watcher);
+    expect(owned(watcher)).toEqual([]);
+    // A later change there, which no session made, is recorded once.
+    await writeFile(join(worktrees[0]!, "src", "a.py"), "old\nmine\ntheirs\n");
+    await turn(watcher);
+    expect(owned(watcher)).toEqual([[["../w1/src/a.py"], "log", "repository"]]);
+  });
+
+  // Review of #738 (F4): a session whose start failed this walk is still open, in the folder its last start named.
+  it("leaves a session's folder to it in a walk its start failed, as its last start named it", async () => {
+    const { main, checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const watcher = await session(main, checkouts, walks);
+    let failing = false;
+    walks.watch({ clock: async () => Date.now(), start: () => (failing ? undefined : quietWalk(worktrees[0]!)) });
+    await turn(watcher);
+    failing = true;
+    await writeFile(join(worktrees[0]!, "src", "a.py"), "old\nmine\n");
+    await turn(watcher);
+    expect(owned(watcher)).toEqual([]);
+  });
+
+  // Review of #738 (F6): until a closed session's close time is known, a walk cannot tell its writes from later ones.
+  it("records a change no session made after a session closed in its folder, once the walk knows when it closed", async () => {
+    const { main, checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const watcher = await session(main, checkouts, walks);
+    const closedAt = Promise.withResolvers<number>();
+    const closing = walks.watch({ clock: () => closedAt.promise, start: () => quietWalk(worktrees[0]!) });
+    await turn(watcher);
+    const closed = closing.close();
+    await writeFile(join(worktrees[0]!, "src", "a.py"), "old\nmine\n");
+    const walked = turn(watcher);
+    // The close came before the write; its time answers only after the walk has read the write, as a slow clock can.
+    await new Promise(wake => setTimeout(wake, 1_000));
+    closedAt.resolve(0);
+    await Promise.all([walked, closed]);
+    expect(owned(watcher)).toEqual([[["../w1/src/a.py"], "log", "repository"]]);
+  });
+
+  it("credits a write in a worktree to no session whose call was running elsewhere as it was made", async () => {
+    const { checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const first = await session(worktrees[0]!, checkouts, walks);
+    const second = await session(worktrees[1]!, checkouts, walks);
+    // The first session's long command runs in its own folder while the second writes in `w3` from there.
+    await first.bridge.begin("long-1", "shell", { command: "npm test" }, undefined, worktrees[0]!);
+    await shell(second.bridge, "shell-1", () => writeFile(join(worktrees[2]!, "src", "a.py"), "old\nmine\n"), worktrees[2]!);
+    await first.bridge.finish("long-1");
+    await turn(second, first);
+    expect([owned(first), owned(second)]).toEqual([[], [[["../w3/src/a.py"], undefined, undefined]]]);
+  });
+
+  it("reads a worktree added while two sessions in the main checkout are open once for both, and records a shell write there once", async () => {
     const { main, checkouts } = await repository([]);
     const walks = new WorktreeWalks({ gapMs: 0 });
     const first = await session(main, checkouts, walks);
@@ -343,10 +464,11 @@ describe("WorktreeWalks", () => {
     await turn(first);
     await shell(second.bridge, "shell-4", () => undefined);
     await turn(second, first);
-    // One walk reads the file for both sessions, as the worktree first and after the write; each session still files
-    // its own record of the write, where one record of it would do.
+    // One walk reads the file for both sessions, as the worktree first and after the write. The first session's call ran
+    // in the main checkout, so no session made the write: the first session to watch the worktree records it once, for
+    // the repository.
     expect(reads.get(path)).toBe(2);
-    expect([audited(first), audited(second)]).toEqual([[[["written ../w/src/a.py"], "log"]], [[["written ../w/src/a.py"], "log"]]]);
+    expect([owned(first), owned(second)]).toEqual([[[["../w/src/a.py"], "log", "repository"]], []]);
   });
 
   it("reads through another session once the one it read through closes, and drops what no session watches", async () => {
@@ -456,9 +578,9 @@ describe("WorktreeWalks", () => {
     await session(worktrees[0]!, checkouts, walks, { rules });
     const other = await session(worktrees[1]!, checkouts, walks, { rules });
     rules.extensions.add(".ts");
-    await shell(other.bridge, "shell-1", () => writeFile(join(worktrees[2]!, "src", "b.ts"), "export const b = 1;\n"));
+    await shell(other.bridge, "shell-1", () => writeFile(join(worktrees[2]!, "src", "b.ts"), "export const b = 1;\n"), worktrees[2]!);
     await other.bridge.settleWorktreeWalk();
-    expect(audited(other)).toEqual([[["written ../w3/src/b.ts"], "log"]]);
+    expect(audited(other)).toEqual([[["written ../w3/src/b.ts"], undefined]]);
   });
 
   it("records a file that changed again after the walk it takes read it, from the text it last recorded", async () => {
@@ -467,14 +589,14 @@ describe("WorktreeWalks", () => {
     const first = await session(worktrees[0]!, checkouts, walks);
     const second = await session(worktrees[1]!, checkouts, walks);
     const { path, release } = await heldTake(first, second, worktrees[2]!);
-    // `a.py` changes again before the second session reads it.
+    // `a.py` changes again before the first session reads it.
     await writeFile(path, "old\nmine\nmore\n");
     release();
-    await second.bridge.settleWorktreeWalk();
-    await turn(first);
-    await second.bridge.settleWorktreeWalk();
+    await first.bridge.settleWorktreeWalk();
+    await turn(second);
+    await first.bridge.settleWorktreeWalk();
     // It records the whole change from the text Git holds, which it saw last, as its own walk read it.
-    expect(second.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+    expect(first.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "../w3/src/g.py", language: "python", generatedText: "g = 1\n" }],
       [{ path: "../w3/src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\nmore\n" }],
     ]);
@@ -486,13 +608,13 @@ describe("WorktreeWalks", () => {
     const first = await session(worktrees[0]!, checkouts, walks);
     const second = await session(worktrees[1]!, checkouts, walks);
     const { path, release } = await heldTake(first, second, worktrees[2]!);
-    // Another process holds `a.py` as the second session reads it.
+    // Another process holds `a.py` as the first session reads it.
     counted.busy.add(path);
     release();
-    await second.bridge.settleWorktreeWalk();
-    await turn(first);
-    await second.bridge.settleWorktreeWalk();
-    expect(second.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+    await first.bridge.settleWorktreeWalk();
+    await turn(second);
+    await first.bridge.settleWorktreeWalk();
+    expect(first.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "../w3/src/g.py", language: "python", generatedText: "g = 1\n" }],
       [{ path: "../w3/src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }],
     ]);
@@ -500,27 +622,28 @@ describe("WorktreeWalks", () => {
 });
 
 /**
- * Holds `second`'s take of the walk that finds `g.py` written in `worktree`, on its audit of it; then one walk sees
- * `a.py` there change and the next sees nothing new, so `second`, still taking the first, takes only the last, which
- * keeps no text of `a.py`. `release` lets the take go on.
+ * Holds `recorder`'s take of the walk that finds `g.py` written in `worktree`, on its audit of it; then one walk sees
+ * `a.py` there change and the next sees nothing new, so `recorder`, still taking the first, takes only the last, which
+ * keeps no text of `a.py`. `release` lets the take go on. `writer` writes both from calls that run elsewhere, so no
+ * session made them and `recorder`, the first session watching the worktree, records them for the repository.
  */
-async function heldTake(first: Session, second: Session, worktree: string): Promise<{ path: string; release: () => void }> {
+async function heldTake(recorder: Session, writer: Session, worktree: string): Promise<{ path: string; release: () => void }> {
   const entered = Promise.withResolvers<void>();
   const held = Promise.withResolvers<void>();
   releases.push(held.resolve);
-  const audit = second.auditGeneratedEdits.getMockImplementation()!;
-  second.auditGeneratedEdits.mockImplementationOnce(async (sessionId, batch) => {
+  const audit = recorder.auditGeneratedEdits.getMockImplementation()!;
+  recorder.auditGeneratedEdits.mockImplementationOnce(async (sessionId, batch) => {
     entered.resolve();
     await held.promise;
     return await audit(sessionId, batch);
   });
-  await shell(first.bridge, "shell-1", () => writeFile(join(worktree, "src", "g.py"), "g = 1\n"));
-  await first.bridge.settleWorktreeWalk();
+  await shell(writer.bridge, "shell-1", () => writeFile(join(worktree, "src", "g.py"), "g = 1\n"));
+  await writer.bridge.settleWorktreeWalk();
   await entered.promise;
   const path = join(worktree, "src", "a.py");
-  await shell(first.bridge, "shell-2", () => writeFile(path, "old\nmine\n"));
-  await first.bridge.settleWorktreeWalk();
-  await turn(first);
+  await shell(writer.bridge, "shell-2", () => writeFile(path, "old\nmine\n"));
+  await writer.bridge.settleWorktreeWalk();
+  await turn(writer);
   return { path, release: held.resolve };
 }
 /** How many times `lstat` was asked about each of `roots` or anything in it. */
@@ -630,7 +753,7 @@ describe("a walk of the other worktrees with change notices", () => {
     expect(edits(noticed)).toEqual(edits(everyWorktree));
   });
 
-  it("stats only the worktree a file changed in, and each session watching it records the change", async () => {
+  it("stats only the worktree a file changed in, and one session watching it records the change for the repository", async () => {
     const { main, worktrees, checkouts } = await repository();
     const noticing = noticingWalks();
     const first = await session(worktrees[0]!, checkouts, noticing.walks);
@@ -641,7 +764,7 @@ describe("a walk of the other worktrees with change notices", () => {
     await turn(first, second);
     // `w3`, its `src` and `src/a.py`, once for both sessions.
     expect(statsUnder(main, worktrees[2]!)).toEqual([0, 3]);
-    expect([audited(first), audited(second)]).toEqual([[[["written ../w3/src/a.py"], "log"]], [[["written ../w3/src/a.py"], "log"]]]);
+    expect([owned(first), owned(second)]).toEqual([[[["../w3/src/a.py"], "log", "repository"]], []]);
   });
 
   it("asks Git for no worktree's HEAD at the walks after their first, while the files Git reads it from hold", async () => {
@@ -874,10 +997,13 @@ describe("a walk of the other worktrees with change notices", () => {
     expect([watch.folders.has(w3), watch.folders.has(registry), watch.unwatched.includes(registry)]).toEqual([false, true, false]);
     git(main, "worktree", "add", "--quiet", "--force", "--detach", w3);
     await watch.until(() => watch.folders.has(w3));
+    // The session let go of the worktree, so the walk that reads it again is its first read there, its baseline: the
+    // write comes after it, and its change notice alone starts the walk that records it.
+    await turn(watching);
     const delivered = nextAudit(watching);
     await writeFile(join(w3, "src", "a.py"), "old\nmine\n");
     await delivered;
-    expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]);
+    expect(owned(watching)).toEqual([[["../w3/src/a.py"], "log", "repository"]]);
     await watching.bridge.close();
     expect(watch.unwatched).toContain(registry);
   });
@@ -1073,6 +1199,14 @@ describe("what a walk looks at in a watched worktree that no notice tells of", (
   });
 });
 
+/** A session's part in a walk where it watches no worktree, its folder the checkout at `folder`, and claims nothing. */
+function quietWalk(folder: string): WatcherWalk {
+  return {
+    worktrees: new Set(), checkout: folder, folder, firstSight: new Set(), fresh: new Set(), startedAt: 0, heads: new Set(), unmerged: new Set(),
+    scan: async () => undefined, holdsRefusal: () => false, claims: async () => new Set(), take: async () => undefined,
+  };
+}
+
 /**
  * A session watching `roots` whose reads find nothing, each read of a root put in `scans`, and which takes nothing. With
  * `gaveUp`, each read gave up on a path it met (`SourceScan.gaveUp`).
@@ -1081,7 +1215,7 @@ function watcherOf(roots: readonly string[], scans: string[], gaveUp = false): W
   return {
     clock: async () => Date.now(),
     start: () => ({
-      worktrees: new Set(roots), checkout: undefined, firstSight: new Set(), startedAt: 0, heads: new Set(), unmerged: new Set(),
+      worktrees: new Set(roots), checkout: undefined, folder: "/nowhere", firstSight: new Set(), fresh: new Set(), startedAt: 0, heads: new Set(), unmerged: new Set(),
       scan: async ({ root }) => {
         scans.push(root);
         return {
@@ -1090,6 +1224,7 @@ function watcherOf(roots: readonly string[], scans: string[], gaveUp = false): W
         };
       },
       holdsRefusal: () => false,
+      claims: async () => new Set(),
       take: async () => undefined,
     }),
   };

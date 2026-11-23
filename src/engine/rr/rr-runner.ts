@@ -7,7 +7,7 @@
 import { resolve } from "node:path";
 import type { RrDescription, RrFinding, RrRunRequest, RrRunResult } from "../native/native.js";
 import { PACKAGE_ROOT } from "../package-root.js";
-import { type RrBudgets, rrBudgets } from "./rr-budgets.js";
+import { describeBudgets, RR_DESCRIBE_DEADLINE, type RrBudgets, rrBudgets } from "./rr-budgets.js";
 import { type RrChildOutcome, type RrKillReason, runChild, runChildSync } from "./rr-child-process.js";
 
 export type { RrDescription, RrFinding, RrRunRequest } from "../native/native.js";
@@ -34,10 +34,10 @@ export type RrRunOutcome =
     }
   | { status: "failed"; message: string };
 
-/** The budgets of a call (`deadlineMs`: the caller's deadline), or the error an override gives. */
-function budgets(deadlineMs?: number): RrBudgets | Error {
+/** The budgets `read` gives (`rrBudgets`, `describeBudgets`), or the error an override gives. */
+function budgets(read: () => RrBudgets): RrBudgets | Error {
   try {
-    return rrBudgets(deadlineMs);
+    return read();
   } catch (error) {
     return error instanceof Error ? error : new Error(String(error));
   }
@@ -54,10 +54,15 @@ function noAnswer(outcome: Exclude<RrChildOutcome, { status: "completed" }>, bud
   return `the .rerail engine was stopped: ${limits[outcome.reason]}`;
 }
 
-/** The description of each of `paths`, from a child's answer, or a row for each saying why there is none. */
+/**
+ * The description of each of `paths`, from a child's answer, or a row for each saying why there is none. A describe
+ * past its deadline says so and names the setting that raises it: the catalog leaves the pack out with that error.
+ */
 function descriptions(paths: string[], outcome: RrChildOutcome, budget: RrBudgets): RrDescription[] {
   if (outcome.status === "completed") return outcome.value as RrDescription[];
-  const error = noAnswer(outcome, budget);
+  const error = outcome.status === "killed" && outcome.reason === "deadline"
+    ? `the engine did not finish reading it within ${budget.deadlineMs} ms, the limit for reading rule files (${RR_DESCRIBE_DEADLINE} raises it)`
+    : noAnswer(outcome, budget);
   return paths.map(path => ({ path, ok: false, error }));
 }
 
@@ -67,26 +72,22 @@ function describeRequest(paths: string[]): () => { kind: "describe"; paths: stri
 }
 
 /**
- * The deadline of a describe: 30 seconds. The catalog describes synchronously (`describeRerailPoliciesSync`), so the
- * daemon answers nothing while it does; the 27 Django rules take about 3 s cold, so 30 s is ten times that, and an
- * engine that hangs holds the daemon for 30 s, not for a run's 10 minutes. `RERAIL_RR_DEADLINE_MS` replaces it too.
- */
-const DESCRIBE_DEADLINE_MS = 30_000;
-
-/**
  * What each `.rerail` file of `paths` states of itself (`describeRr`), read and checked by the engine in one child
  * process for all of them. Never rejects: a file that does not read or check, or a child that fails or is killed,
  * gives `ok: false` rows that say why.
  */
 export async function describeRerailPolicies(paths: string[]): Promise<RrDescription[]> {
-  const budget = budgets(DESCRIBE_DEADLINE_MS);
+  const budget = budgets(describeBudgets);
   if (budget instanceof Error) return paths.map(path => ({ path, ok: false, error: budget.message }));
   return descriptions(paths, await runChild(describeRequest(paths), { cwd: PACKAGE_ROOT, budgets: budget }), budget);
 }
 
-/** `describeRerailPolicies` for a caller that cannot wait for a promise: this process waits for the child. */
+/**
+ * `describeRerailPolicies` for a caller that cannot wait for a promise: this process waits for the child, at most the
+ * describe's own deadline (`describeBudgets`).
+ */
 export function describeRerailPoliciesSync(paths: string[]): RrDescription[] {
-  const budget = budgets(DESCRIBE_DEADLINE_MS);
+  const budget = budgets(describeBudgets);
   if (budget instanceof Error) return paths.map(path => ({ path, ok: false, error: budget.message }));
   return descriptions(paths, runChildSync(describeRequest(paths), { cwd: PACKAGE_ROOT, budgets: budget }), budget);
 }
@@ -102,7 +103,7 @@ function runRequest(run: RrRun): (out: string) => { kind: "run"; run: RrRunReque
  * each with its span, and the policies that failed; or `killed` with the budget it passed, or `failed`.
  */
 export async function runRerailPolicies(run: RrRun): Promise<RrRunOutcome> {
-  const budget = budgets(run.deadlineMs);
+  const budget = budgets(() => rrBudgets(run.deadlineMs));
   if (budget instanceof Error) return { status: "failed", message: budget.message };
   const outcome = await runChild(runRequest(run), { cwd: resolve(run.root), budgets: budget, signal: run.signal });
   if (outcome.status === "killed") return { ...outcome, budgets: budget };

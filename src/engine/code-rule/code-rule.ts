@@ -1,5 +1,5 @@
 import type { SteerRule } from "../adapter-contract.js";
-import type { AuditFailure, AuditMode, AuditScope } from "../audit/audit.js";
+import type { AuditFailure, AuditMode, AuditOwner, AuditScope } from "../audit/audit.js";
 import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 import type { GitReads } from "../git.js";
@@ -1477,6 +1477,11 @@ export interface CodeRuleEditBatch {
    * in `log` mode, so the restored source is judged and recorded but steers nothing.
    */
   mode?: AuditMode;
+  /**
+   * Who these edits' audits belong to; `session` when absent. `repository`: changes the walk of the other worktrees
+   * found that no session made, recorded once for the repository by the one session the walk handed them to.
+   */
+  owner?: AuditOwner;
 }
 
 export interface CodeRuleSourceSpan {
