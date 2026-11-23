@@ -343,3 +343,64 @@ fn a_kernel_compiled_once_is_loaded_from_the_store() {
     assert_ne!(std::fs::read(&entry).unwrap(), b"not a kernel", "and replaced");
     let _ = std::fs::remove_file(&entry);
 }
+
+/// Decision 0645 §4: a kernel compiled ahead of time for a target the device runs (`Target::runs`: its own, then
+/// lower ones) is loaded from where it ships, and runs, where it was compiled from the device's own text; another
+/// target's text is not taken.
+#[test]
+fn a_kernel_shipped_for_a_target_the_device_runs_is_loaded() {
+    use crate::Preprocessing;
+    let Some(shared) = crate::shared::get() else { return };
+    let own = shared.device.target();
+    if own.form().is_none() {
+        return;
+    }
+    let name = "device_tests_ship.uglykl";
+    let source = crate::kernels::preprocess(name, KERNELS).unwrap();
+    let dir = std::env::temp_dir().join(format!("rerail-ship-test-{}-{}", std::process::id(), rerail_device::store::unique()));
+    let run = |lib: &crate::device::ComputeFunctionLibrary| {
+        let f = Box::leak(Box::new(lib.get_function(&shared.device, "d_in_place").unwrap()));
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct Args {
+            n: u32,
+            add: u32,
+        }
+        unsafe impl crate::Pod for Args {}
+        let b = crate::kernels::buffer_of(&[5u32; 64]).unwrap();
+        let mut q = crate::device::ComputeQueue::new(&shared.queue);
+        launch(&q, f).value("args", &Args { n: 64, add: 1 }).buffer("w", &b).run(&[1], &[64]).unwrap();
+        q.flush().await_().unwrap();
+        assert_eq!(read::<u32>(&b, 64), [11u32; 64]);
+    };
+    assert!(crate::kernels::shipped(&shared.device, &dir, &source).is_none(), "nothing ships yet");
+    for t in own.runs().iter().map(|n| rerail_ukl::Target::named(n).unwrap()) {
+        // The target's own text, compiled for it, as a build ships it.
+        let text = crate::kernels::preprocess_for(&t, name, KERNELS, &[]).unwrap();
+        let version = match t.backend {
+            rerail_ukl::Backend::Metal { version } => Some(version),
+            _ => None,
+        };
+        // The device's own target compiles with its own compiler; a lower one may need a toolkit this machine lacks
+        // (CUDA 13 compiles no sm_70: a build names a 12.x one; the HIP SDK compiles no generic AMD target).
+        let code = match rerail_device::device::compile_offline(&t.name, version, &text, name) {
+            Ok(code) => code,
+            Err(e) if t != own && (e.contains("no NVRTC found compiles for it") || e.contains("cannot find ROCm device library")) => {
+                eprintln!("{} under {}: not compiled here: {e}", t.name, own.name);
+                continue;
+            }
+            Err(e) => panic!("{}: {e}", t.name),
+        };
+        let path = crate::kernels::shipped_path(&dir, &t, &text).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &code).unwrap();
+        let found = crate::kernels::shipped(&shared.device, &dir, &source);
+        eprintln!("{} under {}: its text the device's: {}; taken: {}", t.name, own.name, text == source, found.is_some());
+        assert_eq!(found.is_some(), text == source, "{}: taken exactly where its text is the device's", t.name);
+        if let Some(lib) = found {
+            run(&lib);
+        }
+        std::fs::remove_file(&path).unwrap();
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -67,6 +67,7 @@
   "files": [
     "dist",
     "native/*.node",
+    "native/rerail-kernels",
     "model",
     "native/src/code_rule_dsl/capabilities.json",
     "native/src/code_rule_dsl/typing/programs",

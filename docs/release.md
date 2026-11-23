@@ -25,9 +25,12 @@ test-installs it on each platform before publishing.
    - A Windows kernel importing the Visual C++ runtime is rejected. The kernels link it statically, so a clean Windows
      install needs no redistributable.
 2. Smoke-test native loading and device storage on each host.
-3. Build the runtime and bundled UI; pack only if all six `native/*.node` files are present.
-4. Install the tarball into a scratch prefix; check `rerail --help`, the bundled UI and `nativeHealth()`.
-5. On Windows x64, Linux x64 and macOS arm64, install it as a user would and exercise the managed runtime:
+3. Compile the fixed GPU kernels ahead of time for every target a release ships (decision 0645), without a GPU:
+   Metal's tiers on macOS, CUDA's (NVRTC 13, and 12 for the V100) and AMD's (ROCm's hiprtc) on Linux, CUDA's on
+   Windows. They are packed in `native/rerail-kernels/`, beside the engines.
+4. Build the runtime and bundled UI; pack only if all six `native/*.node` files are present.
+5. Install the tarball into a scratch prefix; check `rerail --help`, the bundled UI and `nativeHealth()`.
+6. On Windows x64, Linux x64 and macOS arm64, install it as a user would and exercise the managed runtime:
    `scripts/host/windows-install-smoke.ps1` on Windows, the environment matrix's `scripts/host/azure/guest.sh` through
    `matrix.mjs local` on Linux and macOS. Nothing publishes unless all three pass.
 

@@ -67,23 +67,31 @@ The second compile is per chip anyway: on the user's machine, or ahead of time w
 |---|---|---|
 | Metal | `apple7` (M1-M4: `simdgroup_matrix`, bf16 from Metal 3.1; `__METAL_VERSION__` 310); `apple10` (M5: `matmul2d`, Metal 4, 400). A tier for the M2, M3 or M4 only when a feature changes the text. | AIR per target. Per-chip archives (`metal-tt`) optional: Metal refuses another OS version's. |
 | CUDA | `sm_<N>`. Ship SASS for sm_70 (the V100) and sm_75, 80, 86, 89, 90, 100, 120, 121, and PTX for compute_70 and compute_80, which the driver compiles for GPUs newer than the table. sm_70 is built with a 12.x toolkit (CUDA 13 is believed to have dropped it; the build checks NVRTC's own list), the rest with the newest. An architecture-specific variant (`sm_90a`, `sm_100a`) as exact SASS only, once a kernel uses one. | A fatbin per library |
-| HIP | the `gfx` target: `gfx10-3-generic` (RDNA2), `gfx11-generic` (RDNA3's WMMA), `gfx12-generic` (RDNA4), exact `gfx90a`, `gfx942`, `gfx950` (CDNA's MFMA). The wave is the name's: 64 on gfx9's, 32 on RDNA's; `UKL_HIP_AMD_DOT` on the exact RDNA2 targets (`gfx103*`). An exact object only where a generic one measures slower. | Code objects per target |
+| HIP | the `gfx` target, exact: RDNA2 (`gfx1030`-`gfx1036`, with `UKL_HIP_AMD_DOT`), RDNA3 (`gfx1100`-`gfx1103`, `gfx1150`, `gfx1151`), RDNA4 (`gfx1200`, `gfx1201`), CDNA (`gfx90a`, `gfx942`, `gfx950`). The wave is the name's: 64 on gfx9's, 32 on RDNA's. Not the generic targets (`gfx10-3-generic`): the HIP SDK's hiprtc has no device library for them (step 3). A generic object shipped would still be taken. | Code objects per target |
 | OpenCL, the CPU | local | nothing |
 
 A HIP device whose wave is not its name's takes a local target with its own wave: its text is then no shipped one's.
 
 ### 4. Shipped kernels are keyed by target; the store by the exact machine
 
-- A shipped kernel's key: its target's name, the source's digest and the options. The store's key stays exact, the
+- A shipped kernel's key: its target's name and its prepared text (`<dir>/gpu/<target>/<key>.<form>`); the options
+  are the backend's fixed ones, the device's compile's and the build's alike. The store's key stays exact, the
   local compiler's and driver's versions in it.
-- Lookup: this process; the store; the shipped kernels, of the best target the device runs; a local compile.
+- Lookup: this process; the shipped kernels; the store; a local compile. The shipped kernels are searched under each
+  target the device runs (`Target::runs`), best first: its own; Metal's lower tier (`apple7` under `apple10`);
+  CUDA's SASS of the same major architecture and a lower minor one, then PTX up to it; an AMD target's generic
+  family. The device looks up its own text under each, so another target's code is taken only where it was compiled
+  from the very text the device prepared: no feature of the device's text is lost (an M5's matrix kernels never take
+  an M1's AIR; its other kernels do).
 - A GPU backend runs only with its compiler installed (§6). Without it the process runs on the CPU, and says what
   to install.
 
 ### 5. Builds cross-compile; devices validate
 
 - `kernels ship --targets` runs where the compilers are, without the GPUs: a Mac with the Metal Toolchain
-  (`xcrun metal`, `metal-tt`), Linux with the CUDA toolkit and ROCm. The release job ships `rerail-kernels/`.
+  (`xcrun metal`), Linux with NVRTC and ROCm's hiprtc, Windows with NVRTC (its CUDA text differs: `long` is 32
+  bits). The engine runs on its CPU device there: a kernel's text is the target's, not the device's (measured,
+  step 4). The release ships `native/rerail-kernels/`, beside the engines.
 - A target ships only once its tests pass on a device of it. The farm has `apple7` (the M1, the M1 Max, the M3
   Max), `apple10` (the M5 Max), sm_70 (the V100), sm_121 (the GB10s), gfx1035 (the Radeon 680M, by HIP and by
   OpenCL) and the Arc 140V (OpenCL). Without a device: the M2 and M4, sm_75 to sm_120, RDNA3 and 4, CDNA. Those
@@ -111,9 +119,9 @@ stderr, with what to install, where to get it, and the variable that names an in
 
 1. The target, the names' table and the features; every preparation through it; the test of the rule. Done
    2026-11-23 ("Step 1, built").
-2. Shipped kernels keyed by target, and the lookup of the best target a device runs.
-3. `kernels ship --targets`: Metal's AIR per target, CUDA's fatbin, HIP's code objects.
-4. The release workflow ships `rerail-kernels/`.
+2. Shipped kernels keyed by target, and the lookup of the best target a device runs. Done 2026-11-23.
+3. `kernels ship --targets`: Metal's AIR per target, CUDA's SASS and PTX, HIP's code objects. Done 2026-11-23.
+4. The release workflow ships `rerail-kernels/`. Done 2026-11-23, not yet run in CI.
 5. The message where the GPU's compiler is missing or does not compile for it (§6). Done 2026-11-23 ("Step 5,
    built").
 
@@ -143,9 +151,57 @@ stderr, with what to install, where to get it, and the variable that names an in
   newer than the toolkit), on Linux; the GB10 opens as before, its sm_121 in its NVRTC's list. The missing-compiler
   messages are not run on a device: the farm's machines have their compilers in the system's search.
 
+### Steps 2-4, built (2026-11-23)
+
+- **The targets** (`rerail_ukl::target`): `SHIPPED`, the release's; `AMD_GENERIC`; `compute_<N>` (PTX);
+  `Target::form` (`metallib`, `cubin`, `ptx`, `hsaco`) and `Target::runs`.
+- **The lookup** (`rerail_gpu::kernels::shipped`, `shipped_path`): in `program_with`, before the store, for the
+  device's text under each target it runs. `ComputeFunctionLibrary::from_compiled` loads the code (Metal's
+  `newLibraryWithData:`, CUDA's and HIP's `cuModuleLoadData`). `accel`'s Metal kernels look up their AIR the same
+  way (`shipped_air`: the device's tier, then a lower tier's of the same text), keyed per tier
+  (`Key::for_target`).
+- **The compiles without a GPU** (`rerail_device::device::compile_offline`):
+  - Metal: `xcrun metal` with `-include metal_stdlib` (the device's compile includes it itself); `apple7` as Metal
+    3.2 for macOS 15 (UKL's atomics take 3.2's coherent memory and thread scopes; 3.1 refused them), `apple10` as
+    Metal 4 for macOS 26.
+  - CUDA: NVRTC loaded alone (`Rtc`), the newest that lists the architecture, of `RERAIL_SHIP_CUDA_HOMES`'
+    toolkits and the system's. CUDA 13's NVRTC lists no sm_70: the V100's kernels need 12.x (NVIDIA's
+    `nvidia-cuda-nvrtc-cu12` wheel is enough).
+  - AMD: hiprtc alone. The HIP SDK's (7.2, Windows) compiles the exact targets, not the generic ones: "cannot find
+    ROCm device library for gfx10-3-generic". So the release ships exact targets.
+- **The build** (`rerail-engine kernels ship <dir> --targets <t,...>|metal|cuda|amd|all`, `rerail_gpu::kernels::
+  ship_for`): each program the process compiles is prepared and compiled for each target too. A program that does
+  not compile for a target fails the command. Without a Metal device `accel`'s Metal part is skipped, and said so.
+  `accel`'s part ships only this build's libraries of its manifest (an older build's are counted and left).
+- **Found beside the engine:** `store::shipped_dir` looks beside the program, then beside the library the engine
+  was loaded from (`os::own_image`: `dladdr`, Windows' `GetModuleHandleExW`), the Node addon in the package's
+  `native/`. `accel` takes the same directory.
+- **The release** (`.github/workflows/package.yml`, job `kernels`): macOS (Xcode 26's Metal Toolchain), Linux
+  (NVRTC 13 and 12 from NVIDIA's wheels; ROCm's `hip-runtime-amd`, `comgr` and `rocm-device-libs`) and Windows
+  (NVRTC), each on the CPU device. The package job puts them in `native/rerail-kernels/gpu/`, checks that each
+  backend's targets are there, and `package.json` packs the directory. AMD's on Windows are compiled where they run.
+- **Measured:**
+  - Loaded and run, each target the device runs, from a kernel compiled without the device
+    (`a_kernel_shipped_for_a_target_the_device_runs_is_loaded`): on the M5 Max `apple10` and `apple7`; on a GB10
+    `sm_121`, `sm_120` and `compute_80`; `compute_70`'s text is not the GB10's (sm_70 has no `__reduce_add_sync`),
+    and is not taken; on the Radeon 680M `gfx1035` by HIP.
+  - End to end on a GB10: `kernels ship --targets sm_121,sm_80,compute_70 --only join` compiled the joins' 6
+    programs for each; a run with an empty store then loaded all 6 and compiled none (`join_run`: 10.6 s compiled,
+    0.12 s loaded).
+  - Shipped from the CPU device, as the release does: all 20 programs a GB10's CUDA device asked for loaded, none
+    compiled.
+  - On the M5 Max: `--targets all` shipped the device layer's programs for both tiers, and `accel`'s relational
+    library as AIR for both (a split library ships no AIR: decision 0571).
+  - Size: about 12 MB a CUDA target (11.7 MB sm_121, 11.2 MB sm_70, 12.8 MB compute_80; 2 MB a target
+    compressed), so about 130 MB for CUDA's 11; AMD's not measured.
+
 ## Open
 
-- **The build's toolkits** (step 3): a 12.x CUDA toolkit beside the newest, for sm_70; which ROCm version's
-  generic targets (`gfx10-3-generic` and on) hiprtc compiles.
+- **The release job has not run.** The wheels' names and versions (`nvidia-cuda-nvrtc==13.*`,
+  `nvidia-cuda-nvrtc-cu12==12.9.*`), ROCm 7.2's packages on Ubuntu 24.04, and Xcode 26 on the macOS runner are
+  checked at its first run.
+- **The package's size:** about 130 MB of CUDA's kernels and AMD's besides, in every platform's install.
 - **HIP's architectures:** hiprtc lists none; a GPU it does not compile for fails at its first compile, with
   hiprtc's log, not with `needs`.
+- **A target ships only once its tests pass on a device of it (§5):** the release ships the whole table; the farm
+  has no device of most of it.

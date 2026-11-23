@@ -1805,11 +1805,15 @@ pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
 ///                                  seconds and none waited for past <s> + 60 (the next goes on from the store), then
 ///                                  (Metal) the last run's (--all: every run's) wanted kernels
 ///                                  (--idle: at the background priority, as after a run)
-/// kernels ship <dir> [--from <s>] [--air]
+/// kernels ship <dir> [--from <s>] [--air] [--targets <t,...>|metal|cuda|amd|all]
 ///                                  the fixed kernels as the engine's bundle: this device's forms under
 ///                                  <dir>/<backend>/ by the store's keys (compiled first where the store lacks them);
 ///                                  Metal: the archives a run compiled (store <s>, else this machine's); --air: AIR
-///                                  libraries too (Xcode's Metal Toolchain)
+///                                  libraries too (Xcode's Metal Toolchain); --targets: each kernel compiled ahead
+///                                  of time for each target (decision 0645: `apple7`, `sm_80`, `compute_80`,
+///                                  `gfx1035`; metal, cuda, amd: that backend's of `rerail_ukl::target::SHIPPED`;
+///                                  all: this system's, Metal's on macOS, CUDA's and AMD's elsewhere), under
+///                                  <dir>/gpu/<target>/; CUDA's from two toolkits by RERAIL_SHIP_CUDA_HOMES
 /// kernels prune [--mb <n>]         each store within n MB (default RERAIL_GPU_KERNELS_MB and RERAIL_METAL_KERNELS_MB,
 ///                                  2048)
 /// ```
@@ -1943,8 +1947,33 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             }
         }
         Some("ship") => {
-            let dir = Path::new(args.get(1).ok_or("kernels ship <dir> [--from <store dir>] [--air]")?);
+            let dir = Path::new(args.get(1).ok_or("kernels ship <dir> [--from <store dir>] [--air] [--targets <t,...>|metal|cuda|amd|all]")?);
             let started = std::time::Instant::now();
+            // `--targets`: every program compiled below is shipped for each (decision 0645 step 3). Metal's tiers ship
+            // from macOS, CUDA's and AMD's from Linux or Windows: `all` is this system's.
+            let targets: Vec<rerail_gpu::ukl::Target> = match args.iter().position(|a| a == "--targets") {
+                None => Vec::new(),
+                Some(i) => {
+                    let list = args.get(i + 1).ok_or("--targets takes a list of targets, or all")?;
+                    // A backend's group of the shipped targets, or `all` of this system's.
+                    let group = |g: &str| -> Option<Vec<&str>> {
+                        let of = |f: fn(&str) -> bool| rerail_gpu::ukl::target::SHIPPED.iter().copied().filter(|n| f(n)).collect();
+                        Some(match g {
+                            "metal" => of(|n| n.starts_with("apple")),
+                            "cuda" => of(|n| n.starts_with("sm_") || n.starts_with("compute_")),
+                            "amd" => of(|n| n.starts_with("gfx")),
+                            "all" if cfg!(target_os = "macos") => of(|n| n.starts_with("apple")),
+                            "all" => of(|n| !n.starts_with("apple")),
+                            _ => return None,
+                        })
+                    };
+                    let names: Vec<&str> = list.split(',').filter(|n| !n.is_empty()).flat_map(|n| group(n).unwrap_or_else(|| vec![n])).collect();
+                    names.iter().map(|n| rerail_gpu::ukl::Target::named(n).ok_or_else(|| format!("--targets: {n} is no target (rerail_ukl::Target::named)"))).collect::<Result<_, _>>()?
+                }
+            };
+            if !targets.is_empty() {
+                rerail_gpu::kernels::ship_for(dir, targets.clone())?;
+            }
             // The device layer's forms: each fixed kernel's entries as its compile looked them up (in the store,
             // or shipped already), by their own names under the backend's directory. Metal's device layer keeps
             // none (its archives are below).
@@ -1967,19 +1996,32 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
                 shipped += 1;
             }
             out += &format!("{shipped} device-layer kernels shipped into {}\n", dir.display());
+            let (counts, failed) = rerail_gpu::kernels::shipped_counts();
+            for (target, made, there) in &counts {
+                out += &format!("{target:>16}: {made} programs compiled ahead of time, {there} shipped already\n");
+            }
+            // The engine's Metal kernels (`rerail_accel::gpu::kernels`): their archives are a Metal device's, and their
+            // manifest a Metal run's. Without one (`RERAIL_GPU=cpu`, a build machine without a GPU), the device layer's
+            // programs above are what ships for Metal's tiers.
             #[cfg(target_os = "macos")]
-            {
+            if rerail_gpu::device::backend() != "Metal" {
+                out += "the engine's Metal kernels (accel): no Metal device, not shipped\n";
+            } else {
                 use rerail_accel::gpu::kernels as k;
                 let from = match args.iter().position(|a| a == "--from") {
                     Some(i) => std::path::PathBuf::from(args.get(i + 1).ok_or("--from requires a directory")?),
                     None => k::store_dir().ok_or("no store (RERAIL_METAL_KERNELS=off): name one with --from")?,
                 };
-                for line in k::ship(dir, &from, args.iter().any(|a| a == "--air"))? {
+                for line in k::ship(dir, &from, args.iter().any(|a| a == "--air"), &targets)? {
                     out += &line;
                     out += "\n";
                 }
             }
             out += &format!("shipped into {} in {:.2} s\n", dir.display(), started.elapsed().as_secs_f64());
+            // A target a program did not compile for is a failed build: the release ships no part of a target.
+            if !failed.is_empty() {
+                return Err(format!("{out}{} programs did not compile for their targets:\n{}", failed.len(), failed.join("\n")));
+            }
             Ok(out)
         }
         Some("prune") => {

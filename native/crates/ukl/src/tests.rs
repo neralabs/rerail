@@ -218,3 +218,25 @@ fn targets_are_their_names() {
     }
     assert_eq!(Target::named("sm_80"), Target::named("sm_80"));
 }
+
+/// Decision 0645 step 2: the targets whose code a device runs, best first; the forms they ship as.
+#[test]
+fn a_target_runs_its_own_and_its_compatible_targets_code() {
+    let runs = |n: &str| Target::named(n).unwrap().runs();
+    assert_eq!(runs("apple10"), ["apple10", "apple7"]);
+    assert_eq!(runs("apple7"), ["apple7"]);
+    assert_eq!(runs("sm_86"), ["sm_86", "sm_80", "compute_80", "compute_70"]);
+    assert_eq!(runs("sm_121"), ["sm_121", "sm_120", "compute_80", "compute_70"]);
+    assert_eq!(runs("sm_70"), ["sm_70", "compute_70"]);
+    assert_eq!(runs("gfx1035"), ["gfx1035", "gfx10-3-generic"]);
+    assert_eq!(runs("gfx942"), ["gfx942", "gfx9-4-generic"]);
+    assert_eq!(Target::named("compute_80").unwrap().backend, Backend::Cuda { sm: 80 });
+    let form = |n: &str| Target::named(n).unwrap().form();
+    assert_eq!((form("apple7"), form("sm_70"), form("compute_80"), form("gfx11-generic")), (Some("metallib"), Some("cubin"), Some("ptx"), Some("hsaco")));
+    assert_eq!(Target::local(Backend::OpenCl, Vec::new()).form(), None);
+    assert!(Target::named("gfx10-3-generic").unwrap().defines.is_empty(), "the generic RDNA2 target takes no dot products");
+    assert_eq!(Target::named("gfx9-4-generic").unwrap().backend, Backend::Hip { wave: 64 });
+    for n in crate::target::SHIPPED {
+        assert!(Target::named(n).is_some_and(|t| t.form().is_some()), "{n} ships");
+    }
+}

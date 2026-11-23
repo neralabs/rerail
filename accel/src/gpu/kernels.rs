@@ -85,13 +85,18 @@ pub struct Key {
 
 impl Key {
     pub fn of(source: &str, name: &str, constant: Option<u32>) -> Key {
+        Key::for_target(&places().target, source, name, constant)
+    }
+
+    /// The key of `source`'s kernel prepared for the Metal tier `target` (decision 0645): a build ships each tier's.
+    pub fn for_target(target: &str, source: &str, name: &str, constant: Option<u32>) -> Key {
         // A source that takes UKL's library names its headers, not their text: the library's fingerprint keys it too,
         // and the target its text is prepared for (decision 0645: an M1's and an M5's texts differ).
         let library: [u8; 32] = if rerail_ukl::takes_library(source) {
             let mut d = Sha256::new();
             d.update(source.as_bytes());
             d.update(rerail_ukl::fingerprint().to_le_bytes());
-            d.update(places().target.as_bytes());
+            d.update(target.as_bytes());
             d.finalize().into()
         } else {
             Sha256::digest(source.as_bytes()).into()
@@ -138,11 +143,8 @@ fn places() -> Arc<Places> {
             Ok(v) if !v.is_empty() => Some(PathBuf::from(v)),
             _ => std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Caches/rerail/metal-kernels")),
         };
-        let shipped = match std::env::var("RERAIL_SHIPPED_KERNELS") {
-            Ok(v) if v == "off" => None,
-            Ok(v) if !v.is_empty() => Some(PathBuf::from(v)),
-            _ => std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join("rerail-kernels"))).filter(|p| p.is_dir()),
-        };
+        // The device layer's (one definition: beside the program, or the library the engine was loaded from).
+        let shipped = rerail_device::store::shipped_dir().map(Path::to_path_buf);
         #[cfg(target_os = "macos")]
         let tag = super::shared::get().map(|s| device_tag(&s.device)).unwrap_or_else(|| "no-device".to_owned());
         // Elsewhere the device layer's store keeps the backend's compiled kernels, by its own device and driver.
@@ -629,10 +631,16 @@ fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescript
 /// 0645), any other as it is.
 #[cfg(target_os = "macos")]
 pub fn msl<'a>(source: &'a str, name: &str) -> Result<std::borrow::Cow<'a, str>, String> {
+    msl_for(&places().target, source, name)
+}
+
+/// `source` prepared for the Metal tier `target` (decision 0645), as `msl` prepares it for the device's.
+#[cfg(target_os = "macos")]
+pub fn msl_for<'a>(target: &str, source: &'a str, name: &str) -> Result<std::borrow::Cow<'a, str>, String> {
     if !rerail_ukl::takes_library(source) {
         return Ok(std::borrow::Cow::Borrowed(source));
     }
-    let target = rerail_ukl::Target::named(&places().target).ok_or_else(|| format!("{name}: no target {}", places().target))?;
+    let target = rerail_ukl::Target::named(target).ok_or_else(|| format!("{name}: no target {target}"))?;
     rerail_ukl::metal_source(&target, name, source).map(std::borrow::Cow::Owned).map_err(|e| format!("{name}: {e}"))
 }
 
@@ -662,7 +670,7 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Linked {
         *s = Some(linked.clone());
         return linked;
     }
-    let shipped = places().shipped.as_ref().map(|d| d.join(format!("{}.metallib", hex(&library)))).filter(|f| f.is_file());
+    let shipped = places().shipped.as_ref().and_then(|d| shipped_air(d, &library, source, &source_msl, name));
     let l = match shipped {
         Some(file) => crate::score::phase("msl from shipped", || objc::rc::autoreleasepool(|| device.new_library_with_file(&file)))
             .unwrap_or_else(|e| panic!("the shipped Metal library {} (kernel {name}) does not load: {e}", file.display())),
@@ -699,6 +707,21 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Linked {
     let linked = Linked { library: l, depth: None, _units: Vec::new() };
     *s = Some(linked.clone());
     linked
+}
+
+/// The shipped AIR library of `source` (`library` its digest for the device's tier, `msl` its text): the device's
+/// tier's, else a lower tier's whose text is the same (decision 0645 §4: no feature of the device's text lost).
+#[cfg(target_os = "macos")]
+fn shipped_air(dir: &Path, library: &[u8; 32], source: &str, msl: &str, name: &str) -> Option<PathBuf> {
+    let own = dir.join(format!("{}.metallib", hex(library)));
+    if own.is_file() {
+        return Some(own);
+    }
+    let target = rerail_ukl::Target::named(&places().target)?;
+    target.runs().into_iter().skip(1).find_map(|lower| {
+        let file = dir.join(format!("{}.metallib", hex(&Key::for_target(&lower, source, name, None).library)));
+        (file.is_file() && msl_for(&lower, source, name).ok()?.as_ref() == msl).then_some(file)
+    })
 }
 
 /// A split source's library (decision 0571): each unit a dynamic library, compiled level by level, a level's units
@@ -1048,7 +1071,7 @@ impl crate::upkeep::Job for Maintenance {
 /// front end), made by Xcode's offline compiler (its Metal Toolchain component). Run on another device into the same
 /// `dir`, it adds that device's archives. A source that does not compile is an error.
 #[cfg(target_os = "macos")]
-pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
+pub fn ship(dir: &Path, from: &Path, air: bool, targets: &[rerail_ukl::Target]) -> Result<Vec<String>, String> {
     let device = &super::shared::get().ok_or("no Metal device")?.device;
     let tag = device_tag(device);
     let manifest = std::fs::read_to_string(from.join("fixed.list")).map_err(|e| format!("{}: {e} (run the engine with this store first)", from.join("fixed.list").display()))?;
@@ -1063,9 +1086,16 @@ pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
         }
     }
     let mut lines = Vec::new();
+    let mut stale = 0;
     for (library, kernels) in &by_library {
-        let source = std::fs::read_to_string(from.join("src").join(format!("{library}.metal"))).map_err(|e| format!("the source of {library}: {e}"))?;
-        let source = msl(&source, library)?.into_owned();
+        let raw = std::fs::read_to_string(from.join("src").join(format!("{library}.metal"))).map_err(|e| format!("the source of {library}: {e}"))?;
+        // The manifest keeps every build's fixed kernels: a library this build keys apart (another UKL library, or
+        // another tier) is an older build's, and not shipped.
+        if hex(&Key::of(&raw, "", None).library) != *library {
+            stale += 1;
+            continue;
+        }
+        let source = msl(&raw, library)?.into_owned();
         // A split source (decision 0571) is its units, compiled in seconds where it runs: no AIR or archive shipped.
         if let Some(split) = rerail_ukl::split::split(&source) {
             lines.push(format!("{} {:>3} kernels  split into {} units: compiled where it runs", &library[..16], kernels.len(), split.units.len()));
@@ -1073,21 +1103,19 @@ pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
         }
         let lib = dir.join(format!("{library}.metallib"));
         let started = std::time::Instant::now();
-        if air && !lib.is_file() {
-            let src = dir.join("src").join(format!("{library}.metal"));
-            write_whole(&src, source.as_bytes()).map_err(|e| format!("{}: {e}", src.display()))?;
-            let air = lib.with_extension("air");
-            let run = |args: &[&std::ffi::OsStr]| -> Result<(), String> {
-                let out = std::process::Command::new("xcrun").args(args).output().map_err(|e| format!("xcrun: {e} (shipping kernels needs Xcode's Metal compiler)"))?;
-                if out.status.success() {
-                    Ok(())
-                } else {
-                    Err(format!("{library}: {} (the Metal Toolchain: `xcodebuild -downloadComponent MetalToolchain`)", String::from_utf8_lossy(&out.stderr).trim()))
-                }
-            };
-            run(&["-sdk".as_ref(), "macosx".as_ref(), "metal".as_ref(), "-c".as_ref(), src.as_os_str(), "-o".as_ref(), air.as_os_str()])?;
-            run(&["-sdk".as_ref(), "macosx".as_ref(), "metallib".as_ref(), air.as_os_str(), "-o".as_ref(), lib.as_os_str()])?;
-            let _ = std::fs::remove_file(&air);
+        // AIR for each tier asked for (decision 0645 step 3; `--air` alone: the device's), each from its own text by its
+        // own key. The library store's name is the device's tier's key.
+        let own = rerail_ukl::Target::named(&places().target).into_iter().collect::<Vec<_>>();
+        for t in if targets.is_empty() && air { &own[..] } else { targets } {
+            let rerail_ukl::Backend::Metal { version } = t.backend else { continue };
+            let key = Key::for_target(&t.name, &raw, library, None);
+            let file = dir.join(format!("{}.metallib", hex(&key.library)));
+            if file.is_file() {
+                continue;
+            }
+            let text = msl_for(&t.name, &raw, library)?;
+            let code = rerail_device::device::compile_offline(&t.name, Some(version), &text, &format!("{library} ({})", t.name))?;
+            write_whole(&file, &code).map_err(|e| format!("{}: {e}", file.display()))?;
         }
         let l = if lib.is_file() {
             device.new_library_with_file(&lib).map_err(|e| format!("{}: {e}", lib.display()))?
@@ -1121,6 +1149,9 @@ pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
         }
         let names: Vec<&str> = kernels.iter().map(|(n, _)| n.as_str()).take(3).collect();
         lines.push(format!("{} {:>3} kernels  front end {:>7.2} s  back end {:>7.2} s  {}{}", &library[..16], kernels.len(), front, started.elapsed().as_secs_f64(), names.join(" "), if kernels.len() > 3 { " …" } else { "" }));
+    }
+    if stale > 0 {
+        lines.push(format!("{stale} libraries of other builds in the manifest, not shipped"));
     }
     Ok(lines)
 }

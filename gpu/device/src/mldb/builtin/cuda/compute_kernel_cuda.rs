@@ -122,6 +122,167 @@ pub fn needs() -> Option<&'static str> {
     NEEDS.get().map(String::as_str)
 }
 
+/// The compile's options for `target` (`sm_<N>`, `compute_<N>`, a `gfx` target): the device's compile and a build's
+/// for a target (`compile_offline`) take the same, so a kernel shipped for the device's target is the one its own
+/// compile makes.
+fn options_for(vendor: Vendor, target: &str) -> Vec<String> {
+    match vendor {
+        Vendor::Cuda => vec![format!("--gpu-architecture={target}"), "-std=c++20".into(), "-default-device".into()],
+        // hiprtc's functions are host functions unless marked; UKL's HIP shim marks every one a device's
+        // (`force_cuda_host_device`), as NVRTC's `-default-device` does.
+        Vendor::Hip => vec![format!("--offload-arch={target}"), "-std=c++20".into(), "-O3".into()],
+    }
+}
+
+/// A runtime compiler alone (NVRTC or hiprtc), without the driver or a GPU: what a build compiles ahead of time
+/// with (decision 0645 step 3).
+struct Rtc {
+    _lib: crate::os::Lib,
+    name: &'static str,
+    create: unsafe extern "C" fn(*mut Ptr, *const c_char, *const c_char, i32, *const *const c_char, *const *const c_char) -> i32,
+    compile: unsafe extern "C" fn(Ptr, i32, *const *const c_char) -> i32,
+    log_size: unsafe extern "C" fn(Ptr, *mut usize) -> i32,
+    log: unsafe extern "C" fn(Ptr, *mut c_char) -> i32,
+    /// SASS (`nvrtcGetCUBIN`), PTX, or hiprtc's code object.
+    code_size: unsafe extern "C" fn(Ptr, *mut usize) -> i32,
+    code: unsafe extern "C" fn(Ptr, *mut c_char) -> i32,
+    destroy: unsafe extern "C" fn(*mut Ptr) -> i32,
+    version: unsafe extern "C" fn(*mut i32, *mut i32) -> i32,
+    archs: Option<(unsafe extern "C" fn(*mut i32) -> i32, unsafe extern "C" fn(*mut i32) -> i32)>,
+}
+
+impl Rtc {
+    /// The compiler in the library at the first of `names` that opens, its entry points for `form` (`cubin`, `ptx`,
+    /// `hsaco`).
+    fn open(names: &[String], form: &str) -> Option<Rtc> {
+        use crate::os::{Lib, Scope};
+        let lib = Lib::open(names, Scope::Local)?;
+        let f = |n: &str| -> Option<*mut c_void> { Some(lib.sym(n)).filter(|p| !p.is_null()) };
+        let hip = f("hiprtcCreateProgram").is_some();
+        let p = if hip { "hiprtc" } else { "nvrtc" };
+        let g = |n: &str| f(&format!("{p}{n}"));
+        let (size, code) = match form {
+            "ptx" => ("GetPTXSize", "GetPTX"),
+            "cubin" => ("GetCUBINSize", "GetCUBIN"),
+            _ => ("GetCodeSize", "GetCode"),
+        };
+        Some(Rtc {
+            name: if hip { "hiprtc" } else { "NVRTC" },
+            create: sym_as(g("CreateProgram")?),
+            compile: sym_as(g("CompileProgram")?),
+            log_size: sym_as(g("GetProgramLogSize")?),
+            log: sym_as(g("GetProgramLog")?),
+            code_size: sym_as(g(size)?),
+            code: sym_as(g(code)?),
+            destroy: sym_as(g("DestroyProgram")?),
+            version: sym_as(g("Version")?),
+            archs: g("GetNumSupportedArchs").zip(g("GetSupportedArchs")).map(|(n, l)| (sym_as(n), sym_as(l))),
+            _lib: lib,
+        })
+    }
+
+    /// The architectures the compiler lists (NVRTC's; hiprtc lists none).
+    fn archs(&self) -> Option<Vec<i32>> {
+        let (count, list) = self.archs?;
+        let mut n = 0;
+        if unsafe { count(&mut n) } != 0 || n <= 0 {
+            return None;
+        }
+        let mut v = vec![0i32; n as usize];
+        (unsafe { list(v.as_mut_ptr()) } == 0).then_some(v)
+    }
+
+    fn version(&self) -> (i32, i32) {
+        let (mut major, mut minor) = (0, 0);
+        unsafe { (self.version)(&mut major, &mut minor) };
+        (major, minor)
+    }
+
+    fn compile(&self, options: &[String], source: &str, name: &str) -> Result<Vec<u8>, String> {
+        let src = CString::new(source).map_err(|e| e.to_string())?;
+        let cname = CString::new(name).map_err(|e| e.to_string())?;
+        let opts: Vec<CString> = options.iter().map(|o| CString::new(o.as_str()).unwrap()).collect();
+        let ptrs: Vec<*const c_char> = opts.iter().map(|o| o.as_ptr()).collect();
+        let mut prog = std::ptr::null_mut();
+        unsafe {
+            if (self.create)(&mut prog, src.as_ptr(), cname.as_ptr(), 0, std::ptr::null(), std::ptr::null()) != 0 {
+                return Err(format!("{}'s program creation failed", self.name));
+            }
+            let r = (self.compile)(prog, ptrs.len() as i32, ptrs.as_ptr());
+            if r != 0 {
+                let mut n = 0;
+                (self.log_size)(prog, &mut n);
+                let mut log = vec![0u8; n.max(1)];
+                (self.log)(prog, log.as_mut_ptr().cast());
+                (self.destroy)(&mut prog);
+                let log = String::from_utf8_lossy(&log);
+                let errors: Vec<&str> = log.lines().filter(|l| l.contains("error")).take(20).collect();
+                return Err(format!("{} compiling {name} ({}): {}", self.name, options.join(" "), errors.join("\n")));
+            }
+            let mut n = 0;
+            (self.code_size)(prog, &mut n);
+            let mut code = vec![0u8; n];
+            (self.code)(prog, code.as_mut_ptr().cast());
+            (self.destroy)(&mut prog);
+            Ok(code)
+        }
+    }
+}
+
+/// Compiles `source` (prepared for `target`) ahead of time, without a GPU (decision 0645 step 3): `sm_<N>`'s SASS
+/// and `compute_<N>`'s PTX by NVRTC, a `gfx` target's code object by hiprtc, with the options the device's own
+/// compile takes (`options_for`).
+///
+/// NVRTC is the newest that compiles for the architecture, of the toolkits in `RERAIL_SHIP_CUDA_HOMES` (a path
+/// list: no one toolkit compiles for every architecture from sm_70 to the newest, so a release names a 12.x one
+/// beside the newest) and `CUDA_HOME`'s and the system's.
+pub fn compile_offline(target: &str, source: &str, name: &str) -> Result<Vec<u8>, String> {
+    if target.starts_with("gfx") {
+        let rtc = Rtc::open(&hip_library_names().1, "hsaco").ok_or("no hiprtc (ROCm, or the HIP SDK on Windows): a build ships AMD's targets with it")?;
+        return rtc.compile(&options_for(Vendor::Hip, target), source, name);
+    }
+    let form = if target.starts_with("compute_") { "ptx" } else { "cubin" };
+    let sm: i32 = target.trim_start_matches("sm_").trim_start_matches("compute_").parse().map_err(|_| format!("{target}: no CUDA target"))?;
+    // A toolkit's libraries: Windows' `bin`; Linux's `lib64`, or `lib` (NVIDIA's NVRTC wheel, `nvidia-cuda-nvrtc-cu12`);
+    // or the directory holding them, named itself.
+    let (sep, libs): (char, &[&str]) = if cfg!(windows) { (';', &["bin", "."]) } else { (':', &["lib64", "lib", "."]) };
+    let homes: Vec<String> = std::env::var("RERAIL_SHIP_CUDA_HOMES").unwrap_or_default().split(sep).filter(|h| !h.is_empty()).map(str::to_owned).collect();
+    let mut candidates: Vec<Vec<String>> = homes
+        .iter()
+        .map(|h| {
+            libs.iter()
+                .flat_map(|lib| std::fs::read_dir(format!("{h}/{lib}")))
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(if cfg!(windows) { "nvrtc64_" } else { "libnvrtc.so" }) && !n.contains("builtins")))
+                .map(|p| p.display().to_string())
+                .collect()
+        })
+        .collect();
+    candidates.push(cuda_library_names().1);
+    // The newest that compiles for the architecture.
+    let mut tried = Vec::new();
+    let mut best: Option<Rtc> = None;
+    for names in candidates {
+        let Some(rtc) = Rtc::open(&names, form) else { continue };
+        let (major, minor) = rtc.version();
+        if rtc.archs().is_some_and(|a| !a.contains(&sm)) {
+            tried.push(format!("NVRTC {major}.{minor}"));
+        } else if best.as_ref().is_none_or(|b| b.version() < (major, minor)) {
+            best = Some(rtc);
+        }
+    }
+    if let Some(rtc) = best {
+        return rtc.compile(&options_for(Vendor::Cuda, target), source, name);
+    }
+    Err(if tried.is_empty() {
+        format!("{target}: no NVRTC (the CUDA Toolkit): a build ships CUDA's targets with it")
+    } else {
+        format!("{target}: no NVRTC found compiles for it ({}): name a CUDA Toolkit that does in RERAIL_SHIP_CUDA_HOMES (12.x for sm_70)", tried.join(", "))
+    })
+}
+
 /// What the user must install where NVRTC (its version `nvrtc`) does not compile for the GPU's `sm`, among the
 /// architectures it lists (`archs`): an older toolkit for a GPU older than it compiles for (CUDA 13 dropped sm_70,
 /// the V100), a newer one for a newer GPU. None where it compiles for it.
@@ -1006,10 +1167,8 @@ impl CudaComputeFunctionLibrary {
     pub fn compile_from_source(device: &CudaDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = device.current();
         let (mut options, kind, target): (Vec<String>, &str, String) = match device.vendor {
-            Vendor::Cuda => (vec![format!("--gpu-architecture=sm_{}", device.sm), "-std=c++20".into(), "-default-device".into()], "cuda", format!("sm_{}", device.sm)),
-            // hiprtc's functions are host functions unless marked; UKL's HIP shim marks every one a device's
-            // (`force_cuda_host_device`), as NVRTC's `-default-device` does.
-            Vendor::Hip => (vec![format!("--offload-arch={}", device.arch), "-std=c++20".into(), "-O3".into()], "hip", device.arch.to_string()),
+            Vendor::Cuda => (options_for(Vendor::Cuda, &format!("sm_{}", device.sm)), "cuda", format!("sm_{}", device.sm)),
+            Vendor::Hip => (options_for(Vendor::Hip, device.arch), "hip", device.arch.to_string()),
         };
         // `RERAIL_CUDA_OPTIONS`: more of NVRTC's (or hiprtc's) options, a measurement aid (they are in the key).
         options.extend(std::env::var("RERAIL_CUDA_OPTIONS").unwrap_or_default().split_whitespace().map(str::to_owned));
@@ -1059,6 +1218,16 @@ impl CudaComputeFunctionLibrary {
             crate::store::save(kind, &key, "cubin", &cubin);
             Ok(CudaComputeFunctionLibrary { module, device: *device })
         }
+    }
+
+    /// A library of code compiled ahead of time for a target this device runs (decision 0645: a shipped kernel):
+    /// CUDA's SASS or PTX (which the driver compiles), or an AMD code object.
+    pub fn from_compiled(device: &CudaDevice, code: &[u8]) -> Result<Self, String> {
+        let a = device.current();
+        let mut module = std::ptr::null_mut();
+        ck(unsafe { (a.cu_module_load_data)(&mut module, code.as_ptr().cast()) }, "cuModuleLoadData")?;
+        crate::store::count(true);
+        Ok(CudaComputeFunctionLibrary { module, device: *device })
     }
 
     /// The PTX NVRTC makes of `preprocessed_source` for the device's virtual architecture (`compute_<sm>`), as its
