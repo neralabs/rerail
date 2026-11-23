@@ -26,3 +26,5 @@ cranelift-jit = "=0.125.4"
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-ukl-vec = { path = ".", features = ["test-hooks"] }
+# The view a tape's reads are told where it lies by (`view::ukl`): the label passes' source, as the engine assembles it.
+rerail-clif = { path = "../clif", default-features = false, features = ["test-hooks"] }

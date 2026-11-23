@@ -1329,7 +1329,7 @@ fn the_nearest_kernels_rust_is_the_checked_in_one() {
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("nearest_jump").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
-    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()));
+    let rust = super::rs::kernel(&p, &k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()));
     let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_aot/src/nearest_jump_w8.rs");
     if std::env::var_os("UKL_RS_WRITE").is_some() {
         std::fs::write(at, &rust).unwrap();
@@ -1354,7 +1354,7 @@ fn the_nearest_kernels_rust_masks_only_where_its_lanes_part() {
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("nearest_jump").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
-    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&p, &k, 8).unwrap_or_else(|e| panic!("{}", e.0));
     let lines: Vec<&str> = rust.lines().collect();
     // (1) Full chunks, then the group's last threads.
     assert!(rust.contains("while lid0 + 8 <= n {") && rust.contains("if lid0 < n {"), "no chunks of all lanes:\n{rust}");
@@ -1421,7 +1421,7 @@ fn mix_rust() -> String {
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("mix_lanes").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
-    super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()))
+    super::rs::kernel(&p, &k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()))
 }
 
 /// `wide.uglykl` (rerail-ukl-aot's test kernel of 64-bit lanes) as Rust at 8 lanes, checked in as `mix` is: its
@@ -1433,7 +1433,7 @@ fn the_wide_kernels_rust_is_the_checked_in_one() {
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("wide_lanes").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
-    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()));
+    let rust = super::rs::kernel(&p, &k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()));
     let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_aot/src/wide_lanes_w8.rs");
     if std::env::var_os("UKL_RS_WRITE").is_some() {
         std::fs::write(at, &rust).unwrap();
@@ -1493,7 +1493,7 @@ fn f16_parent_rust(kernel: &str) -> Result<String, super::Error> {
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel(kernel).unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
-    super::rs::kernel(&k, 8).map_err(|e| super::Error(format!("{}\n{}", e.0, super::k::View::new(&k.tape).listing())))
+    super::rs::kernel(&p, &k, 8).map_err(|e| super::Error(format!("{}\n{}", e.0, super::k::View::new(&k.tape).listing())))
 }
 
 /// `f16_parent`'s kernel of one launch as Rust at 8 lanes, as checked in: its barrier parts it in two phases, each
@@ -1537,7 +1537,7 @@ fn a_barrier_not_at_the_top_of_the_kernels_function_is_refused() {
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("branch").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
-    let e = super::rs::kernel(&k, 8).expect_err("a barrier in a branch");
+    let e = super::rs::kernel(&p, &k, 8).expect_err("a barrier in a branch");
     assert!(e.0.contains("Barrier"), "{}", e.0);
 }
 
@@ -1565,7 +1565,7 @@ fn a_store_of_lanes_values_at_one_address_is_the_last_running_lanes() {
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("race").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
-    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&p, &k, 8).unwrap_or_else(|e| panic!("{}", e.0));
     let stores = rust.lines().filter(|l| l.contains(".write_unaligned(")).count();
     assert!(stores == 2 && rust.matches(".leading_zeros() as usize;").count() == 2 && !rust.contains("if vgetq_lane_u32::<"), "not one store of the last running lane's:\n{rust}");
 }
@@ -1584,7 +1584,7 @@ fn a_lanes_loop_of_few_lanes_ends_as_each_ones_rounds() {
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let rust = |name: &str| {
         let k = super::vector::vectorize(&p, p.kernel(name).unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
-        super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}", e.0))
+        super::rs::kernel(&p, &k, 8).unwrap_or_else(|e| panic!("{}", e.0))
     };
     let chase = rust("chase");
     assert!(chase.contains(".count_ones() <= 2 {") && chase.contains("let mut x") && chase.contains("_j: u32 = ") && chase.contains("[j] = x"), "no lane's own rounds:\n{chase}");
@@ -1603,8 +1603,53 @@ fn a_uniform_atomic_add_is_each_lanes() {
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("take").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
-    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&p, &k, 8).unwrap_or_else(|e| panic!("{}", e.0));
     assert!(rust.contains(").wrapping_mul(8u32), Relaxed)"), "no add of every lane where all run:\n{rust}");
     assert!(rust.contains("vmlaq_u32(vdupq_n_u32("), "the lanes' old values are not their own:\n{rust}");
     assert!(rust.contains("+= ") && rust.contains("& 1; }"), "no count of the running lanes where some run:\n{rust}");
+}
+
+/// The label passes' source (`label_passes.uglykl`) as the engine assembles it for a batch of format 16
+/// (`metal_program_backend::VIEW_PIECES`, `metal_label_passes::pipelines`): the view's struct, the format as its
+/// specialization constant, the tape's reads, the device's tape helpers, and the passes.
+fn label_passes_source() -> super::Source {
+    let text = format!(
+        "#define UKL_CONSTANT_0 16\n{}UKL_CONSTANT_U32(tape_format)\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n#include <ukl/reads/tape.h>\n{}{}",
+        rerail_clif::view::ukl(),
+        std::mem::offset_of!(rerail_clif::view::TapeView, format),
+        include_str!("../../../src/code_rule_dsl/transducer/packed/device_tape.h"),
+        include_str!("../../device_metal/src/code_rule_dsl/transducer/packed/label_passes.uglykl"),
+    );
+    super::source("/<kernels>/label_passes.uglykl", &text, &[]).unwrap()
+}
+
+/// The label passes' `label_parents` (the engine's batch parents, decision 0475) as Rust at 8 lanes, as checked in
+/// (rerail-ukl-aot's tests run it against the host's parents): its phases, one of a call of a function with phases
+/// and of each round of a loop a barrier parts, and a struct copied from bytes no lane writes read in place.
+#[test]
+fn the_label_parents_kernels_rust_is_the_checked_in_one() {
+    let src = label_passes_source();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("label_parents").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&p, &k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()));
+    assert!(rust.contains("if phase == 4 {") && !rust.contains("Barrier"), "not the kernel's phases:\n{rust}");
+    // What keeps it under the CPU device's c++ (rerail-ukl-aot's `the_label_passes_parents_take_no_more_instructions`):
+    // each round of the pointer jumps (phases 3 to 5, a loop whose `continue`s are some lanes') is rounds of one
+    // condition; `up[lane * 32 + b]` is a load and a store of each lane at its step, not a gather of indexes; a
+    // view's field at one file for all lanes is one load; and `/ 32` of lanes is a shift.
+    for phase in 3..6 {
+        let at = rust.find(&format!("if phase == {phase} {{")).unwrap_or_else(|| panic!("no phase {phase}"));
+        let first = rust[at..].find("loop {").map(|l| at + l).unwrap();
+        assert!(rust[first..].lines().nth(1).is_some_and(|l| l.trim() == "// Rounds of one condition: every lane goes on."), "phase {phase}'s rounds are each lane's");
+    }
+    assert!(rust.contains(".add(1 * t") && rust.contains("vst1q_lane_u32::<1>(core::hint::select_unpredictable("), "no lanes a stride apart");
+    assert!(rust.contains("== vmaxvq_u32("), "no load of one index for all lanes");
+    assert!(!rust.contains("x[j] as u32).checked_div("), "a division of each lane's");
+    let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_aot/src/label_parents_w8.rs");
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(at, &rust).unwrap();
+    }
+    let kept = std::fs::read_to_string(at).unwrap_or_default();
+    assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it)");
 }

@@ -8560,6 +8560,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "rerail-c-lean",
+ "rerail-clif",
  "rerail-tape-format",
  "rerail-ukl",
  "rerail-ukl-vec",

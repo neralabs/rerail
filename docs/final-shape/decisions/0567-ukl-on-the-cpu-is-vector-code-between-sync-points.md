@@ -685,6 +685,49 @@ Left: numbers' link (55 a node, half of its two). Its chains are long and many l
 round is a gather. Those rounds' indices are consecutive only among the running lanes, and a vector over them
 reads past every address the C proves valid.
 
+## Step 3, the engine's bulk parents: `label_parents` (the user's, 2026-11-23)
+
+The user: "if we don't call it directly, then find which UKL kernel we _do_ run inlines this and use it from there"
+and "improve current host performance on a kernel which actually runs (the "engine bulk pass")". The engine has no
+host caller of the step. Its bulk parent pass is `label_passes.uglykl`'s `label_parents` (decision 0475), which the
+CPU device runs as c++ of its UKL. It has a thread per word of 32 nodes, its slot read inlined (`tape_parent`,
+`clif_tape_slot`), heads on a local atomic list, and 3 rounds of pointer jumping in threadgroup memory, between 6
+barriers.
+
+rs.rs now writes it (`ukl_aot/src/label_parents_w8.rs`, from the source as the engine assembles it, the format 16
+define for its specialization constant). That took these, each in the compiler:
+
+1. **Phases inside a callee.** A call of a function with phases spans them (`Part::Sub`): its first phase in the
+   caller's, each next one a phase of its own, its state after the caller's. A loop of a constant count (at most
+   16) whose body a barrier parts is its rounds one after another (`unrolled`, `Part::Set`).
+2. **A struct copied from bytes no lane writes** (`DocView d = docs[file]`): read in place where its copy is only
+   read, with no copy kept (decision 0353). An aggregate argument is each lane's address.
+3. **Constant memory** (`static DATA`); a scalar loaded from it is its literal.
+4. **A load at one index for all lanes:** where the running lanes' indexes are one (a view's fields, when a group's
+   words are one file's), one load and a broadcast.
+5. **Lanes a stride apart** (`up[lane * 32 + b]`): each lane's load and store at its step from the first's
+   (`vld1q_lane_u32` / `vst1q_lane_u32`, a lane that does not run storing to the stack), where no index wraps;
+   else each lane's index.
+6. **A loop whose `continue`s are some lanes'** is rounds of one condition, with a mask of the round's lanes that
+   continued; every lane comes to the step.
+7. **Unsigned `/` and `%` of lanes by a power of two** are a shift and a mask, not each lane's division.
+
+Instructions (cycles) a node, one run of `label_bench` (20 runs less 1, the setup and the c++ compile out), this Mac
+under load. `cpu` is the CPU device's c++ of the same UKL (`RERAIL_GPU=cpu`):
+
+| | records (700,002 nodes) | numbers (700,002) | random (190,963) |
+|---|---|---|---|
+| Rust, first run | 129.9 (29.8) | 155.7 (40.7) | 136.0 (41.6) |
+| Rust, 4 | 116.9 (25.7) | 136.2 (30.7) | 122.3 (29.3) |
+| Rust, 5 to 7 | 99.7 (21.1) | 119.4 (25.3) | 105.3 (23.3) |
+| c++ (`cpu`) | 111.7 (40.5) | 157.0 (49.9) | 118.7 (58.0) |
+
+The guard: `the_label_passes_parents_take_no_more_instructions` (ukl-aot) counts the test thread's instructions
+(`thread_selfcounts`) and fails above a tenth over 98.1, 117.3 and 103.3 a node, or at the host's scalar read
+(105.3, 491.9, 132.1). The checked-in test asserts the shapes of 4 to 7.
+
+Not yet wired in: the CPU device still runs the c++ of `label_parents`.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one

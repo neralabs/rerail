@@ -268,3 +268,62 @@ fn the_kernels_rust_wide_is_the_scalar_one() {
         }
     }
 }
+
+/// rerail-ukl-vec's Rust of the label passes' `label_parents` (the engine's batch parents, decision 0475) at 8
+/// lanes: the host's parents, on every node of every test document, each alone and all in one batch (a link out
+/// of a group's block, a head, and files whose regions follow each other).
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn the_label_passes_parents_are_the_hosts() {
+    let lang = crate::parent::json_lang();
+    let docs = crate::parent::documents(&lang);
+    let all: Vec<&crate::parent::Doc> = docs.iter().collect();
+    for batch in docs.iter().map(|d| vec![d]).chain([all]) {
+        let b = crate::label::Batch::new(&batch);
+        let got = unsafe { crate::label::run_parents(crate::label_parents_w8::label_parents_w8, &b) };
+        for (d, got) in batch.iter().zip(got) {
+            assert!(got == crate::parent::scalar(d), "{}: not the host's parents ({} files)", d.name, batch.len());
+        }
+    }
+}
+
+
+/// The label passes' parents as rerail-ukl-vec's Rust do not grow slower (decision 0567 step 3): the thread's
+/// instructions a node, the fewest of 5 runs, at most a tenth over what it took when its lowering was last made
+/// faster (2026-11-23: 98.1, 117.3, 103.3; the CPU device's c++ of the same UKL took 111.7, 157.0, 118.7), and
+/// under the host's read of each node's parent (`parent::scalar`). A lowering that makes it faster lowers these.
+/// Where the thread's counter is not read (`counts::instructions`), only its parents are checked.
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn the_label_passes_parents_take_no_more_instructions() {
+    let lang = crate::parent::json_lang();
+    for (kind, most) in [("records", 108.0), ("numbers", 129.0), ("random", 114.0)] {
+        let text = match kind {
+            "numbers" => format!("[{}]", (0..100_000).map(|k| k.to_string()).collect::<Vec<_>>().join(",")),
+            "random" => {
+                let mut g = crate::parent::Gen::new(100_000);
+                let mut s = String::from("[");
+                for k in 0..100_000 / 64 {
+                    if k > 0 {
+                        s.push(',');
+                    }
+                    g.value(&mut s, 6, 6);
+                }
+                s.push(']');
+                s
+            }
+            _ => crate::parent::records(3000),
+        };
+        let d = crate::parent::json_doc(&lang, kind, text.as_bytes());
+        let b = crate::label::Batch::new(&[&d]);
+        let got = unsafe { crate::label::run_parents(crate::label_parents_w8::label_parents_w8, &b) };
+        assert!(got[0] == crate::parent::scalar(&d), "{kind}: not the host's parents");
+        let n = f64::from(d.nodes());
+        let Some(rust) = crate::counts::fewest(5, || drop(std::hint::black_box(unsafe { crate::label::run_parents(crate::label_parents_w8::label_parents_w8, &b) }))) else {
+            continue;
+        };
+        let host = crate::counts::fewest(5, || drop(std::hint::black_box(crate::parent::scalar(&d)))).unwrap_or(u64::MAX);
+        let (rust, host) = (rust as f64 / n, host as f64 / n);
+        assert!(rust <= most && rust < host, "{kind}: {rust:.1} instructions a node (at most {most}, and under the host read's {host:.1})");
+    }
+}
