@@ -1190,7 +1190,7 @@ impl Exp {
             cu_slot: zeroed(2 * cnt_cap)?,
             cu_sub: zeroed(2 * cnt_cap)?,
             cu_unit: zeroed(2 * cnt_cap)?,
-            trn: zeroed(24)?,
+            trn: zeroed(32)?,
             lread: zeroed(dirs)?,
             cnt_cap: cnt_cap as u32,
             lb_cap: lb_cap as u32,
@@ -1295,19 +1295,19 @@ impl Exp {
 
     /// The longest piece's steps in the run (`TRN[16]`, decision 0588).
     pub fn steps(&self) -> u32 {
-        // SAFETY: the device finished; `trn` holds 24 words.
+        // SAFETY: the device finished; `trn` holds 32 words.
         unsafe { *self.trn.host().cast::<u32>().add(16) }
     }
 
     /// The last text pass's pieces (`TRN[13]`, decision 0588).
     pub fn loop_pieces(&self) -> u32 {
-        // SAFETY: the device finished; `trn` holds 24 words.
+        // SAFETY: the device finished; `trn` holds 32 words.
         unsafe { *self.trn.host().cast::<u32>().add(13) }
     }
 
     /// P1's iterations and the text passes the run made (`TRN[11]`, `TRN[10]`).
     pub fn passes(&self) -> (u32, u32) {
-        // SAFETY: the device finished; `trn` holds 24 words.
+        // SAFETY: the device finished; `trn` holds 32 words.
         unsafe { (*self.trn.host().cast::<u32>().add(11), *self.trn.host().cast::<u32>().add(10)) }
     }
 
@@ -1558,6 +1558,21 @@ pub fn expand_teams(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
                     let (k, m, team) = &made[0];
                     eprintln!("TRACE the largest of {} teams: unit {k}, {team} groups, nodes {}", made.len(), members[*k].node_bound);
                     crate::pp_eval::report_trace(&m.front.trace(), gpu_seconds, m.front.barriers());
+                    // Every team's start and end on the device's clock, from the round's first start: the latest ends.
+                    let spans: Vec<(usize, u64, u64, usize, u64)> = made
+                        .iter()
+                        .filter_map(|(k, m, team)| {
+                            let t = m.front.trace();
+                            Some((*k, t.first()?.1, t.last()?.1, t.len(), *team))
+                        })
+                        .collect();
+                    let t0 = spans.iter().map(|s| s.1).min().unwrap_or(0);
+                    let mut by_end = spans.clone();
+                    by_end.sort_by_key(|s| std::cmp::Reverse(s.2));
+                    eprintln!("TEAMS {} teams on {groups} groups ({seats} seats); the latest ends (unit: start..end us, phases, groups, nodes):", spans.len());
+                    for (k, a, b, n, team) in by_end.iter().take(6) {
+                        eprintln!("TEAMS   unit {k}: {:.1}..{:.1}, {n} phases, {team} groups, nodes {}", (a - t0) as f64 / 1e3, (b - t0) as f64 / 1e3, members[*k].node_bound);
+                    }
                 }
                 for (k, m, team) in made {
                     // A team's barrier past its bound: the unit again, its team one group.
@@ -1650,9 +1665,9 @@ impl<'u> Runs<'u> {
         let (p1, x, def_rung) = (self.p1, self.x, self.def_rung);
         let rung = x.rung;
         if std::env::var_os("RERAIL_PP_LOOP_LOG").is_some() {
-            // SAFETY: the device finished; `trn` holds 24 words, 16 to 19 the longest piece's, 20 to 23 the slowest's.
+            // SAFETY: the device finished; `trn` holds 32 words, 16 to 19 the longest piece's, 20 to 23 the slowest's.
             let w = |k: usize| unsafe { *exp.trn.host().cast::<u32>().add(k) };
-            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {})", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound);
+            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25));
         }
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
         let expanded = |refused: u32, p1_flags: u32, requests: Vec<Request>, out: Vec<u32>, unit_out: Vec<u32>, scratch: Vec<u8>, stoks: Vec<[u32; 3]>| -> Result<Expanded, Error> {

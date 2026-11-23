@@ -316,6 +316,25 @@ So:
      batch of one unit, which Metal does not clock by piece). The node frames' reads inlined into the look for a
      `(` crashed the M3's back end (a segfault in a machine pass, whatever form the read took), so
      `lp_next_is_lparen` is called, not inlined.
+   **Where the batch's time goes** (2026-11-22, GB10 under CUDA, warm, the corpus's 100 units; `RERAIL_PP_TRACE`
+   now gives every team's span, and `RERAIL_PP_LOOP_LOG` the pieces' summed time and steps). The four rounds take
+   9.4 ms of GPU time in all, the serial pass 55 to 83 ms of one CPU core:
+   - **The rounds.** A unit with an `#include` runs twice: round 1 stops at its requests, round 2 runs it from the
+     start with the files in. Round 1 is 1.3 ms (C) and 1.6 ms (C++) of the 9.4, and answers 7 units of 100.
+   - **One unit sets each answer round.** C's round 2 is 3.1 ms: `tif_getimage.c`'s team ends at 3.03 ms, the
+     next at 1.98 ms. C++'s is 3.5 ms: unit 1's team (51k nodes) ends at 3.40 ms, the next at 1.90 ms.
+   - **In those units, the loop.** `tif_getimage.c`: its pass is 2.0 ms on its team of 4 groups (of 48, its
+     share by nodes). Its 480 pieces take 41 ms summed over 17,905 steps, 2.3 us a step: 1.3 ms on its 32 SIMD
+     groups if they were even, so a piece's group by its position costs the rest. C++ unit 1: the text pass is
+     1.6 ms (the loop's pass 1.22 ms, of which 0.35 ms the other groups finishing after group 0; the output's
+     places 0.31 ms), and P1's 4 iterations 0.28 ms each (the `#if` lines' loop 75 us of each). Its pieces
+     average 1.3 us a step.
+   - **The teams queue.** A round's teams ask 64 to 74 groups of the 48 resident, so some start up to 0.48 ms
+     late.
+   - **The process's first command** costs about 10 ms more, whichever batch it is (12.5 against 1.6 ms for the
+     same round). It is not the module's loading (eager or lazy alike) nor the pages' first touch (populated at
+     mapping alike).
+
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 

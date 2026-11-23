@@ -1696,6 +1696,8 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     uint64_t dt = ukl_clock_ns() - t0;
                     uint32_t ns = dt > 0xffffffffull ? 0xffffffffu : (uint32_t)dt;
                     if (ukl_atomic_max(&trn[20], ns) < ns) { trn[21] = s0; trn[22] = step; trn[23] = ee; }
+                    // The pieces' time (us, where the device has a clock) and steps, summed (`TRN` 24, 25), for measurements.
+                    ukl_atomic_add(&trn[24], ns / 1000u); ukl_atomic_add(&trn[25], step);
                     v[s0] = o.nv; opv[s0] = o.np;
                     for (uint32_t s = s0 + 1u; s < e; s++) { v[s] = 0u; opv[s] = 0u; ovr[s] = 0u; }
                     ovr[s0] = ee > e ? 1u : 0u;
