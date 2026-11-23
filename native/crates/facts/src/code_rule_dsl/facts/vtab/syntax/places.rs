@@ -129,19 +129,19 @@ impl Source for Places {
     /// The view read in place, its rows then the spans' where they lie (`OnDevice`). With no spans, the view's. Where
     /// the view is not read in place, none: the stage reads its rows from the host (0353 step 6's upload).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
+    fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView> {
         let mut d = self.view.device_view()?;
         if self.spans.len() == 0 {
             return Some(d);
         }
-        let v = d.in_place.as_mut()?;
+        let v = &mut d.in_place;
         let on = self.device.get_or_init(|| self.on_device(v.dir)).as_ref()?;
         v.dir = on.dir.device_address()?;
         v.kind |= VIEW_PLACED;
         v.buffers.push(on.dir.clone());
         v.buffers.push(on.tail.clone());
         d.rows = self.len();
-        d.home = Some(on.home.clone());
+        d.home = on.home.clone();
         Some(d)
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -222,10 +222,6 @@ impl Source for Places {
         }
         self.spans.for_rows_in(0..self.spans.len(), &all, &mut |r, row| !spans.contains(&row[k]) || each(first + r, &row[..k]));
         true
-    }
-    fn rows_of(&self, columns: &[usize], out: &mut Vector<i64>) {
-        self.view.rows_of(columns, out);
-        self.spans.rows_of(columns, out);
     }
     fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
         self.view.documents_of(column, each);

@@ -104,6 +104,107 @@ pub(in crate::code_rule_dsl) struct Retained {
 /// A source's rows by document: each document's sum of row hashes and its row count.
 pub(in crate::code_rule_dsl) type DocDigests = rustc_hash::FxHashMap<i64, (u64, u64)>;
 
+/// An input's rows' digests by document, as a run reads them: those it computed (`Made`, a derived fact), or a kept
+/// documents' entry read where it lies (`Kept`, decision 0353 step 8: rows of (document, sum, count) in canonical
+/// order, a document found by a search of its leading column; `Docs::kept` checks it).
+pub(in crate::code_rule_dsl) enum Docs {
+    Made(DocDigests),
+    Kept(kept_read::Entry),
+    /// `base` with the documents of `changed` as given there (`None`: gone): an edit's documents over the kept ones,
+    /// none of the kept read into a table of its own. `n`: how many documents it holds.
+    Over { base: Arc<Docs>, changed: rustc_hash::FxHashMap<i64, Option<(u64, u64)>>, n: usize },
+}
+
+impl Docs {
+    /// A kept documents' entry, when it is three columns led by the document, each document once, and its digest is
+    /// `digest` (`None`: not checked, a relation's count).
+    fn kept(entry: &kept_read::Entry, digest: Option<u64>) -> Option<Docs> {
+        let rows = entry.packed();
+        if rows.arity != 3 || (rows.len() > 1 && !rows.leads(0)) {
+            return None;
+        }
+        if (1..rows.len()).any(|i| rows.get(i, 0) == rows.get(i - 1, 0)) {
+            return None;
+        }
+        let docs = Docs::Kept(entry.clone());
+        digest.is_none_or(|d| docs.digest() == d).then_some(docs)
+    }
+    /// `base`, to be changed (`set`).
+    pub(in crate::code_rule_dsl) fn over(base: Arc<Docs>) -> Docs {
+        let n = base.len();
+        Docs::Over { base, changed: Default::default(), n }
+    }
+    /// Document `doc`'s digest now `v` (`None`: gone): in a table the run made, or over the kept one.
+    pub(in crate::code_rule_dsl) fn set(&mut self, doc: i64, v: Option<(u64, u64)>) {
+        let had = self.contains_key(&doc);
+        match self {
+            Docs::Made(m) => {
+                match v {
+                    Some(v) => m.insert(doc, v),
+                    None => m.remove(&doc),
+                };
+            }
+            Docs::Kept(_) => {
+                let base = Arc::new(std::mem::replace(self, Docs::Made(DocDigests::default())));
+                *self = Docs::over(base);
+                self.set(doc, v);
+            }
+            Docs::Over { changed, n, .. } => {
+                *n = *n + v.is_some() as usize - had as usize;
+                changed.insert(doc, v);
+            }
+        }
+    }
+    pub(in crate::code_rule_dsl) fn get(&self, doc: &i64) -> Option<(u64, u64)> {
+        match self {
+            Docs::Made(m) => m.get(doc).copied(),
+            Docs::Over { base, changed, .. } => match changed.get(doc) {
+                Some(v) => *v,
+                None => base.get(doc),
+            },
+            Docs::Kept(e) => {
+                let rows = e.packed();
+                let (lo, hi) = rows.col(0).dec().equal_range(0, rows.len(), *doc);
+                (lo < hi).then(|| (rows.get(lo, 1) as u64, rows.get(lo, 2) as u64))
+            }
+        }
+    }
+    pub(in crate::code_rule_dsl) fn contains_key(&self, doc: &i64) -> bool {
+        self.get(doc).is_some()
+    }
+    pub(in crate::code_rule_dsl) fn len(&self) -> usize {
+        match self {
+            Docs::Made(m) => m.len(),
+            Docs::Kept(e) => e.len(),
+            Docs::Over { n, .. } => *n,
+        }
+    }
+    pub(in crate::code_rule_dsl) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// Each document and its digest.
+    pub(in crate::code_rule_dsl) fn iter(&self) -> Box<dyn Iterator<Item = (i64, (u64, u64))> + '_> {
+        match self {
+            Docs::Made(m) => Box::new(m.iter().map(|(d, v)| (*d, *v))),
+            Docs::Over { base, changed, .. } => Box::new(
+                base.iter().filter(|(d, _)| !changed.contains_key(d)).chain(changed.iter().filter_map(|(d, v)| v.map(|v| (*d, v)))),
+            ),
+            Docs::Kept(e) => {
+                let rows = e.packed();
+                Box::new((0..rows.len()).map(move |i| (rows.get(i, 0), (rows.get(i, 1) as u64, rows.get(i, 2) as u64))))
+            }
+        }
+    }
+    pub(in crate::code_rule_dsl) fn keys(&self) -> impl Iterator<Item = i64> + '_ {
+        self.iter().map(|(d, _)| d)
+    }
+    /// Their digest, as `digest_of_docs` takes it.
+    pub(in crate::code_rule_dsl) fn digest(&self) -> u64 {
+        let (sum, n) = self.iter().fold((0u64, 0u64), |(s, n), (_, (ds, dn))| (s.wrapping_add(ds), n + dn));
+        sum ^ n.wrapping_mul(0xff51_afd7_ed55_8ccd)
+    }
+}
+
 /// A relation's statistics as bound (`syntax::statistics`), and its counts of the constants rules test it by.
 /// The counts are of the constants tested when they were measured (the third): taken again only for the same.
 pub(in crate::code_rule_dsl) type Measured = (Vec<(String, i64, i64, i64, i64)>, Vec<(String, i64, i64)>, BTreeSet<(usize, i64)>);
@@ -148,7 +249,7 @@ pub(in crate::code_rule_dsl) fn cells_of<'a>(atoms: &'a crate::content_store::at
 /// one (`r__plus :- r, !r__old`), which read each base relation whole every run however few files changed. Exact
 /// whatever the documents are: one whose rows all moved is a document that differs. `None` when the two hold other
 /// columns. Each is named as the planner reads its statistics (`sql_col` of `rel__plus`, `rel__minus`).
-pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &Arc<dyn Source>, was: Option<&DocDigests>, new: &Arc<dyn Source>, g: usize, cells: &Cells) -> Option<((Arc<dyn Source>, Arc<dyn Source>), Arc<DocDigests>)> {
+pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &Arc<dyn Source>, was: Option<&Docs>, new: &Arc<dyn Source>, g: usize, cells: &Cells) -> Option<((Arc<dyn Source>, Arc<dyn Source>), Arc<Docs>)> {
     document_delta_except(rel, old, was, new, g, cells, None, None)
 }
 
@@ -161,7 +262,7 @@ pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &Arc<dyn Source>,
 /// `old_ranges`: each owner's rows in `old` (a kept input's layout), by which the old rows of a document that
 /// differs are read, not found by reading every row's owner.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::code_rule_dsl) fn document_delta_except(rel: &str, old: &Arc<dyn Source>, was: Option<&DocDigests>, new: &Arc<dyn Source>, g: usize, cells: &Cells, same: Option<&rustc_hash::FxHashSet<i64>>, old_ranges: Option<&Ranges>) -> Option<((Arc<dyn Source>, Arc<dyn Source>), Arc<DocDigests>)> {
+pub(in crate::code_rule_dsl) fn document_delta_except(rel: &str, old: &Arc<dyn Source>, was: Option<&Docs>, new: &Arc<dyn Source>, g: usize, cells: &Cells, same: Option<&rustc_hash::FxHashSet<i64>>, old_ranges: Option<&Ranges>) -> Option<((Arc<dyn Source>, Arc<dyn Source>), Arc<Docs>)> {
     use rustc_hash::FxHashSet;
     let width = new.columns().len();
     // By position: both are the relation's rows in its declared order, whatever their sources name the columns
@@ -203,7 +304,7 @@ pub(in crate::code_rule_dsl) fn document_delta_except(rel: &str, old: &Arc<dyn S
         by
     };
     // The other owners' rows alone, hashed as `by_doc` hashes them; the documents of `same` as `was` has them.
-    let except = |was: &DocDigests, same: &FxHashSet<i64>| -> Option<(DocDigests, Vector<usize>)> {
+    let except = |was: &Docs, same: &FxHashSet<i64>| -> Option<(DocDigests, Vector<usize>)> {
         // Each row's document as the source gives it (`documents_of`: a view of a batch's documents names each
         // document's rows by its key, reading no row).
         let _s = crate::code_rule_dsl::logic::profile::span(|| "document delta: its owners counted".into());
@@ -221,7 +322,7 @@ pub(in crate::code_rule_dsl) fn document_delta_except(rel: &str, old: &Arc<dyn S
         }
         drop(_s);
         let _s = crate::code_rule_dsl::logic::profile::span(|| "document delta: the other owners' rows hashed".into());
-        let mut by: DocDigests = same.iter().filter_map(|d| was.get(d).map(|w| (*d, *w))).collect();
+        let mut by: DocDigests = same.iter().filter_map(|d| was.get(d).map(|w| (*d, w))).collect();
         let (mut row, mut keyed) = (vec![0i64; width], vec![0i64; width]);
         for &r in &others {
             new.row_at(r, &all, &mut row);
@@ -237,7 +338,7 @@ pub(in crate::code_rule_dsl) fn document_delta_except(rel: &str, old: &Arc<dyn S
     let was = match was {
         Some(w) => w,
         None => {
-            taken = by_doc(old.as_ref(), &mut row);
+            taken = Docs::Made(by_doc(old.as_ref(), &mut row));
             &taken
         }
     };
@@ -255,7 +356,7 @@ pub(in crate::code_rule_dsl) fn document_delta_except(rel: &str, old: &Arc<dyn S
             by_doc(new.as_ref(), &mut row)
         }
     };
-    let differ: FxHashSet<i64> = was.iter().filter(|(d, h)| now.get(*d) != Some(*h)).map(|(d, _)| *d).chain(now.keys().filter(|d| !was.contains_key(*d)).copied()).collect();
+    let differ: FxHashSet<i64> = was.iter().filter(|(d, h)| now.get(d) != Some(h)).map(|(d, _)| d).chain(now.keys().filter(|d| !was.contains_key(d)).copied()).collect();
     // The rows of the documents that differ, each with its values' hash, read once: where the source finds them
     // without reading every row (a kept input's by its owners' ranges, a view's by its documents: `rows_owned`), else
     // every row's owner is read.
@@ -299,7 +400,7 @@ pub(in crate::code_rule_dsl) fn document_delta_except(rel: &str, old: &Arc<dyn S
             None => ids_of(new.as_ref(), &mut row),
         }
     };
-    Some((rows_delta(rel, width, old, &gone_ids, new, &made_ids), Arc::new(now)))
+    Some((rows_delta(rel, width, old, &gone_ids, new, &made_ids), Arc::new(Docs::Made(now))))
 }
 
 /// A row's values' hash, by which `rows_delta` matches the rows of two sources: two independent 64-bit hashes (Fx,
@@ -633,7 +734,7 @@ pub(in crate::code_rule_dsl) fn after(
     outputs: &BTreeMap<String, (std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>, Vector<usize>)>,
     sources: &[(String, Arc<dyn Source>)],
     measured: HashMap<(String, usize), Measured>,
-    input_docs: HashMap<String, Arc<DocDigests>>,
+    input_docs: HashMap<String, Arc<Docs>>,
     docs: (super::input_delta::Docs, [u8; 32]),
     budget: usize,
     indexes: bool,
@@ -936,7 +1037,7 @@ impl Retained {
     }
 
     /// That source's rows hashed by document, if a run took them (`document_delta`).
-    pub(in crate::code_rule_dsl) fn input_docs(&self, rel: &str) -> Option<&Arc<DocDigests>> {
+    pub(in crate::code_rule_dsl) fn input_docs(&self, rel: &str) -> Option<&Arc<Docs>> {
         match self.input_docs.get(rel) {
             Some(d) => d.get(),
             None => self.frames.as_ref()?.inputs.get(rel).filter(|(d, _)| self.inputs.get(rel) == Some(d))?.1.get(),
@@ -1430,13 +1531,23 @@ impl Layered {
     }
 
     /// Owner `owner`'s rows, flat: its new rows if it changed, else its kept ones.
-    pub(in crate::code_rule_dsl) fn owner_rows(&self, owner: i64) -> Vector<i64> {
+    /// Where `owner`'s rows lie: the source that holds them (its new rows', or the kept ones'), their first row
+    /// there and how many.
+    pub(in crate::code_rule_dsl) fn owner_range(&self, owner: i64) -> (&Arc<dyn Source>, u32, u32) {
+        match self.appended.get(&owner) {
+            Some(&(start, n)) => (&self.added, start, n),
+            None => {
+                let (start, n) = self.ranges.get(&owner).copied().unwrap_or((0, 0));
+                (&self.kept, start, n)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn owner_rows(&self, owner: i64) -> Vector<i64> {
         let width = self.names.len();
         let all: Vector<usize> = (0..width).collect();
-        let (from, (start, n)): (&dyn Source, (u32, u32)) = match self.appended.get(&owner) {
-            Some(r) => (self.added.as_ref(), *r),
-            None => (self.kept.as_ref(), self.ranges.get(&owner).copied().unwrap_or((0, 0))),
-        };
+        let (from, start, n) = self.owner_range(owner);
         let mut out = rerail_blocks::vector![0i64; width * n as usize];
         for (i, r) in (start..start + n).enumerate() {
             from.row_at(r as usize, &all, &mut out[i * width..(i + 1) * width]);
@@ -1639,26 +1750,20 @@ pub(in crate::code_rule_dsl) struct FramedDocs {
     digest: u64,
     /// A relation of no columns: its frame is its count (`write_kept`), one entry whose digest is not its rows'.
     counted: bool,
-    docs: std::sync::OnceLock<Option<Arc<DocDigests>>>,
+    docs: std::sync::OnceLock<Option<Arc<Docs>>>,
 }
 
 impl FramedDocs {
     /// Documents a run hashed itself, held as they are.
-    fn ready(docs: Arc<DocDigests>) -> Arc<FramedDocs> {
+    fn ready(docs: Arc<Docs>) -> Arc<FramedDocs> {
         Arc::new(FramedDocs { frame: None, digest: 0, counted: false, docs: std::sync::OnceLock::from(Some(docs)) })
     }
-    pub(in crate::code_rule_dsl) fn get(&self) -> Option<&Arc<DocDigests>> {
+    pub(in crate::code_rule_dsl) fn get(&self) -> Option<&Arc<Docs>> {
         self.docs
             .get_or_init(|| {
                 let _span = crate::code_rule_dsl::logic::profile::span(|| "an input's documents, from its kept entry where first asked".into());
-                let entry = self.frame.as_ref()?;
-                if entry.width() != 3 {
-                    return None;
-                }
-                // copy (0353 step 8): an input's documents read into a table by document, a lookup a run probes.
-                let mut docs = DocDigests::default();
-                entry.each_rows(&mut |rows| docs.extend(rows.as_chunks::<3>().0.iter().map(|r| (r[0], (r[1] as u64, r[2] as u64)))));
-                (docs.len() == entry.len() && (self.counted || digest_of_docs(&docs) == self.digest)).then(|| Arc::new(docs))
+                // The entry read where it lies, found by its documents' search (decision 0353 step 8).
+                Docs::kept(self.frame.as_ref()?, (!self.counted).then_some(self.digest)).map(Arc::new)
             })
             .as_ref()
     }
@@ -1670,15 +1775,12 @@ fn kept_stats_of(frames: &InKept, rel: &str) -> Option<kept_stats::ByDigest> {
     let d = frames.derived.get(rel)?.digest;
     let name = frames.names.get(rel)?;
     let entry = frames.bound.as_ref()?.entry(&name.name, &name.ident, kept_stats::PART).filter(|e| e.digest() == d)?;
-    kept_stats::from_words(&entry_words(&entry))
-}
-
-/// A one-column entry's values (statistics' words), read where they lie into the vector their decoder takes.
-fn entry_words(entry: &kept_read::Entry) -> Vector<i64> {
-    // copy (0353 step 8): a kept entry's words read for their decoder (statistics, a few hundred words).
-    let mut words = rerail_blocks::vector::Vector::with_capacity(entry.len());
-    entry.each_rows(&mut |w| words.extend_from_slice(w));
-    words
+    // Its words read where they lie (decision 0353 step 8): one column of them.
+    let rows = entry.packed();
+    if rows.arity != 1 {
+        return None;
+    }
+    kept_stats::from_words(rows.len(), &|i| rows.get(i, 0))
 }
 
 /// What an input's documents frame records beside its digest (an input's frame has no reads of its own): the
@@ -1940,13 +2042,13 @@ impl KeptInput {
     /// An input whose documents and ranges are held already (a test's).
     #[cfg(test)]
     pub(in crate::code_rule_dsl) fn laid(source: Arc<dyn Source>, docs: DocDigests, ranges: Ranges) -> KeptInput {
-        let laid = LaidOut { docs: Arc::new(docs), ranges: Arc::new(ranges), owners: Vec::new() };
-        let digest = digest_of_docs(&laid.docs);
+        let digest = digest_of_docs(&docs);
+        let laid = LaidOut { docs: Arc::new(Docs::Made(docs)), ranges: Arc::new(ranges), owners: Vec::new() };
         let layout = InputLayout { rel: String::new(), frame: None, digest, atoms: None, granules: Vec::new(), laid: std::sync::OnceLock::from(Ok(laid)) };
         KeptInput { source, layout: Arc::new(layout), digest, stats: None }
     }
     /// Its rows' digests by owner (its documents' frame, decoded and checked where first asked).
-    pub(in crate::code_rule_dsl) fn docs(&self) -> std::result::Result<&Arc<DocDigests>, String> {
+    pub(in crate::code_rule_dsl) fn docs(&self) -> std::result::Result<&Arc<Docs>, String> {
         Ok(&self.layout.laid_out()?.docs)
     }
     /// Each owner's rows as a range of its rows.
@@ -1972,7 +2074,7 @@ pub(in crate::code_rule_dsl) struct InputLayout {
 
 /// A kept input's documents, ranges and each granule's owners (`InputLayout::laid_out`).
 pub(in crate::code_rule_dsl) struct LaidOut {
-    docs: Arc<DocDigests>,
+    docs: Arc<Docs>,
     ranges: Arc<Ranges>,
     /// Each granule (in `InputLayout::granules`' order): its owners and their rows' counts, owners ascending.
     owners: Vec<Vec<(i64, u32)>>,
@@ -2000,18 +2102,17 @@ fn lay_out(rel: &str, frame: &kept_read::Entry, digest: u64, atoms: &crate::cont
     if frame.width() != 3 {
         return Err(format!("{rel}: its documents' entry is not three columns a row"));
     }
-    // copy (0353 step 8): an input's documents read into its layout (each owner's range, each granule's owners).
-    let mut rows: Vector<i64> = rerail_blocks::vector::Vector::with_capacity(frame.len() * 3);
-    frame.each_rows(&mut |r| rows.extend_from_slice(r));
-    let docs: DocDigests = rows.as_chunks::<3>().0.iter().map(|r| (r[0], (r[1] as u64, r[2] as u64))).collect();
-    if docs.len() != frame.len() || digest_of_docs(&docs) != digest {
+    // Its documents read where they lie (decision 0353 step 8); each owner's range and each granule's owners are
+    // laid out from them.
+    let Some(docs) = Docs::kept(frame, Some(digest)) else {
         return Err(format!("{rel}: its documents' entry does not match its digest"));
-    }
-    let mut keys: Vector<i64> = rows.as_chunks::<3>().0.iter().map(|r| r[0]).collect();
+    };
+    let rows = frame.packed();
+    let mut keys: Vec<i64> = (0..rows.len()).map(|i| rows.get(i, 0)).collect();
     if frame.types().first() == Some(&b's') {
         atoms.content_keys(&mut keys);
     }
-    let mut owners: Vec<(i64, i64, u64)> = rows.as_chunks::<3>().0.iter().zip(keys).map(|(r, k)| (1 + k.rem_euclid(GRANULES), r[0], r[2] as u64)).collect();
+    let mut owners: Vec<(i64, i64, u64)> = keys.into_iter().enumerate().map(|(i, k)| (1 + k.rem_euclid(GRANULES), rows.get(i, 0), rows.get(i, 2) as u64)).collect();
     owners.sort_unstable();
     let mut ranges = Ranges::default();
     ranges.reserve(owners.len());
@@ -2092,11 +2193,15 @@ fn documents_table(store: &ContentStore, entry: &kept_read::Entry) -> Result<Opt
         return Ok(None);
     }
     let atoms = store.atoms_handle();
-    // copy (0353 step 8): a documents' table's words read for their decoder (a row a file).
-    let mut rows: Vector<i64> = rerail_blocks::vector::Vector::with_capacity(entry.len() * width);
-    entry.each_rows(&mut |r| rows.extend_from_slice(r));
+    // Each row read where it lies into one row's words (decision 0353 step 8).
+    let packed = entry.packed();
+    let mut row = [0i64; PLACED_WORDS];
     let mut out = Vec::with_capacity(entry.len());
-    for r in rows.chunks_exact(width) {
+    for i in 0..packed.len() {
+        for (c, w) in row[..width].iter_mut().enumerate() {
+            *w = packed.get(i, c);
+        }
+        let r = &row[..width];
         let Ok(atom) = u32::try_from(r[0]) else { return Ok(None) };
         let Some(path) = atoms.value(atom).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(None) };
         let content = match r[2] {
@@ -2120,11 +2225,14 @@ pub(in crate::code_rule_dsl) fn base_stats(store: &ContentStore, space: [u8; 32]
     let mut out = HashMap::new();
     for rel in rels {
         let Some(entry) = bound.entry(&base_stats_name(rel), &ident, DOCS_PART) else { continue };
-        let mut words: Vector<i64> = rerail_blocks::vector::Vector::with_capacity(entry.len());
-        entry.each_rows(&mut |r| words.extend_from_slice(r));
-        let Some((&n, words)) = words.split_first() else { continue };
-        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).take(usize::try_from(n).unwrap_or(0)).collect();
-        if let Some(stats) = crate::code_rule_dsl::logic::plan::statkeep::RelStats::decode(&bytes, &mut 0) {
+        // Its words read where they lie (decision 0353 step 8): the blob's length, then its bytes eight to a word.
+        let words = entry.packed();
+        if words.arity != 1 || words.is_empty() {
+            continue;
+        }
+        let n = usize::try_from(words.get(0, 0)).unwrap_or(0).min(8 * (words.len() - 1));
+        let byte = |i: usize| (words.get(1 + i / 8, 0) >> (8 * (i % 8))) as u8;
+        if let Some(stats) = crate::code_rule_dsl::logic::plan::statkeep::RelStats::decode_at(&byte, n, &mut 0) {
             out.insert(rel.clone(), (entry.digest(), stats));
         }
     }
@@ -2550,7 +2658,11 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         let stats = keyed
             .entry(kept_stats::PART)
             .filter(|p| kept_stats::on() && stats_of.contains(rel) && p.digest() == digest)
-            .and_then(|p| kept_stats::from_words(&entry_words(&p)))
+            .and_then(|p| {
+                // Its words read where they lie (decision 0353 step 8): one column of them.
+                let rows = p.packed();
+                (rows.arity == 1).then(|| kept_stats::from_words(rows.len(), &|i| rows.get(i, 0))).flatten()
+            })
             .and_then(|all| all.get(&(rel.clone(), digest)).map(|(columns, _, _)| columns.clone()));
         out.insert(rel.clone(), KeptInput { source, layout, digest, stats });
     }
@@ -3008,7 +3120,7 @@ impl Retained {
                 let width = f.arity(rel)?;
                 let name = &frames.names[rel];
                 let owners = frames.atom_owned.contains(rel).then_some(&*atoms);
-                let granules: BTreeSet<i64> = frames.inputs[rel].1.get().into_iter().flat_map(|docs| docs.keys()).filter(|d| changed_doc(rel, d)).map(|d| granule(*d, owners)).collect();
+                let granules: BTreeSet<i64> = frames.inputs[rel].1.get().into_iter().flat_map(|docs| docs.keys()).filter(|d| changed_doc(rel, d)).map(|d| granule(d, owners)).collect();
                 let parts: Vec<kept_read::Entry> = granules.iter().map(|g| bound.entry(&name.name, &name.ident, *g)).collect::<Option<_>>()?;
                 if parts.iter().any(|p| p.width() != width) {
                     return None;
@@ -3043,7 +3155,7 @@ impl Retained {
                         pick.extend_from_slice(ids);
                     }
                     let was = frames.inputs[rel].1.get()?;
-                    if was.iter().any(|(d, w)| !same.contains(d) && by.get(d).map_or(0, |ids| ids.len() as u64) != w.1) {
+                    if was.iter().any(|(d, w)| !same.contains(&d) && by.get(&d).map_or(0, |ids| ids.len() as u64) != w.1) {
                         return None;
                     }
                     rows += pick.len();
@@ -3173,11 +3285,11 @@ impl Retained {
         let Some(frames) = self.frames.as_ref() else { return Ok(Ok(None)) };
         let Some(by_doc) = frames.inputs.get(rel).and_then(|(_, d)| d.get()) else { return Ok(Ok(None)) };
         if width == 0 {
-            return Ok(Ok(Some(vec![rerail_blocks::vector::Vector::new(); by_doc.values().map(|(_, n)| *n as usize).sum()])));
+            return Ok(Ok(Some(vec![rerail_blocks::vector::Vector::new(); by_doc.iter().map(|(_, (_, n))| n as usize).sum()])));
         }
         let atoms = store.atoms_handle();
         let owners = frames.atom_owned.contains(rel).then_some(&*atoms);
-        let granules: BTreeSet<i64> = by_doc.keys().filter(|d| docs.is_none_or(|f| f(**d))).map(|d| granule(*d, owners)).collect();
+        let granules: BTreeSet<i64> = by_doc.keys().filter(|d| docs.is_none_or(|f| f(*d))).map(|d| granule(d, owners)).collect();
         let _span = crate::code_rule_dsl::logic::profile::span(|| format!("{rel}: {} granules, from the kept blocks", granules.len()));
         let Some(bound) = frames.bound.as_ref() else { return Ok(Ok(None)) };
         let name = &frames.names[rel];
@@ -3404,7 +3516,7 @@ pub(in crate::code_rule_dsl) struct InputsWritten {
 /// by document, queued as each input's job makes them. They depend on the inputs alone, so a run that lets its inputs
 /// go after their last reader (Q74) writes them before it runs, and hands what it wrote to `write_kept`.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &(dyn Fn(&str) -> Option<Arc<DocDigests>> + Sync), input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeMap<String, Option<usize>>) -> InputsWritten {
+pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &(dyn Fn(&str) -> Option<Arc<Docs>> + Sync), input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeMap<String, Option<usize>>) -> InputsWritten {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the inputs' frames".into());
     let mut now: HashMap<String, u64> = HashMap::new();
     let mut written = 0;
@@ -3470,38 +3582,55 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
         let atom_owner = types.len() == width && atom_owners(&types, g);
         let owners = atom_owner.then_some(atoms);
         let granule = |d: i64| granule(d, owners);
-        let docs = input_docs(rel).filter(|d| digest_of_docs(d) == digest).unwrap_or_else(|| Arc::new(docs_of(source.as_ref(), g, &cells)));
+        let docs = input_docs(rel).filter(|d| d.digest() == digest).unwrap_or_else(|| Arc::new(Docs::Made(docs_of(source.as_ref(), g, &cells))));
         let old = was.inputs.get(rel).and_then(|(_, d)| d.get()).map(Arc::clone);
         // The granules whose documents differ, or that hold a document come or gone.
         let differ = |doc: &i64| old.as_ref().is_none_or(|o| o.get(doc) != docs.get(doc));
-        let mut changed: BTreeSet<i64> = docs.keys().filter(|d| differ(d)).map(|d| granule(*d)).collect();
+        let mut changed: BTreeSet<i64> = docs.keys().filter(|d| differ(d)).map(granule).collect();
         if let Some(o) = &old {
-            changed.extend(o.keys().filter(|d| !docs.contains_key(*d)).map(|d| granule(*d)));
+            changed.extend(o.keys().filter(|d| !docs.contains_key(d)).map(granule));
         }
         // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's rows as
-        // one range), each in the source's order. Never gathered: their row ids are an index written in a block of
-        // the run (`picked_ids`), and the store's writer reads each granule's rows from the input where they lie,
-        // into its scratch (`KeptWhat::Picked`). Gathered into flat vectors, every changed granule's rows were held
-        // on the heap until written (1.7 GB on 3,089 files), a copy of the input's blocks (decision 0353).
-        if !changed.is_empty() {
-            let (ids, ranges) = picked_ids(source.as_ref(), g, &changed, &granule);
-            for (part, (lo, hi)) in ranges {
-                written += (hi - lo) as usize;
-                let picked = PickedRows { source: Arc::clone(source), ids: Arc::clone(&ids), lo, hi, width };
-                kept.push(KeptPut { rel: name.name.clone(), ident: name.ident, part, digest: 0, reads: Vec::new(), what: KeptWhat::Picked(Box::new(picked)), types: types.clone() });
+        // one range), each in the source's order, read where they lie by the store's writer as it packs them
+        // (`KeptWhat::Picked`, decision 0353 step 8), never gathered: a maintained input (`Layered`) gives each owner's
+        // rows as a range of the source that holds them (`GranuleRows`); another's row ids are an index written in a
+        // block of the run (`picked_ids`), read by them (`PickedRows`). Gathered into flat vectors, every changed
+        // granule's rows were held on the heap until written (1.7 GB on 3,089 files), a copy of the input's blocks.
+        let layered = source.as_any().and_then(|a| a.downcast_ref::<Layered>());
+        match layered {
+            Some(l) => {
+                let mut owners_of: BTreeMap<i64, Vec<i64>> = changed.iter().map(|g| (*g, Vec::new())).collect();
+                for owner in docs.keys().filter(|d| changed.contains(&granule(*d))) {
+                    owners_of.get_mut(&granule(owner)).expect("a changed granule").push(owner);
+                }
+                for (part, mut owners) in owners_of {
+                    owners.sort_unstable();
+                    let mut rows = GranuleRows { sources: Vec::new(), runs: Vec::new(), starts: Vec::new(), memos: Vec::new(), n: 0, width };
+                    for o in &owners {
+                        let (src, start, n) = l.owner_range(*o);
+                        rows.push(src, start, n);
+                    }
+                    written += rows.n;
+                    kept.push(kept_picked(name, part, types.clone(), Box::new(rows)));
+                }
             }
-        }
-        // Its documents' table, written into a block of its own as the documents are found, in canonical order (by
-        // document: the packer sorts it, as a sorted copy did before).
-        let mut rows = BlockFlat::new(docs.len(), 3, false);
-        let mut w = rows.writer();
-        for (d, (s, n)) in docs.iter() {
-            w.extend([*d, *s as i64, *n as i64]);
+            None if !changed.is_empty() => {
+                let (ids, ranges) = picked_ids(source.as_ref(), g, &changed, &granule);
+                for (part, (lo, hi)) in ranges {
+                    written += (hi - lo) as usize;
+                    let picked = PickedRows { source: Arc::clone(source), ids: Arc::clone(&ids), lo, hi, width, memo: std::sync::atomic::AtomicU32::new(crate::code_rule_dsl::facts::vtab::NO_MEMO) };
+                    kept.push(kept_picked(name, part, types.clone(), Box::new(picked)));
+                }
+            }
+            None => {}
         }
         // The granules its rows lie in, recorded with its documents' frame (`GRANULES_READ`): a run that reads none of
         // its owners admits them from this, decoding no frame (`kept_inputs`, Q91).
-        let mask = docs.keys().fold(0u64, |m, d| m | granule_bit(granule(*d)));
-        kept.push(kept_flat(name, DOCS_PART, digest, vec![(GRANULES_READ.to_owned(), mask)], docs_types(atom_owner), rows));
+        let mask = docs.keys().fold(0u64, |m, d| m | granule_bit(granule(d)));
+        // Its documents read where they lie as the writer packs them, in its canonical order (decision 0353 step 8):
+        // a kept entry's by position, others by document (`DocRows`).
+        let what = KeptWhat::Picked(Box::new(DocRows::of(Arc::clone(&docs))));
+        kept.push(KeptPut { rel: name.name.clone(), ident: name.ident, part: DOCS_PART, digest, reads: vec![(GRANULES_READ.to_owned(), mask)], what, types: docs_types(atom_owner) });
         queue(kept);
         Some((digest, written))
     };
@@ -3560,7 +3689,7 @@ fn picked_ids(source: &dyn Source, g: usize, changed: &BTreeSet<i64>, granule: &
         *count = next;
         next += c;
     }
-    let ids = Part::with_index_room(Life::Run, 1, next as usize, 0);
+    let ids = Part::with_index_room(Life::Run, 1, next as usize);
     for r in 0..n {
         let owner = super::memo::document_of(source.value(r, g));
         if let Some(slot) = at.get_mut(&(granule(owner), owner)) {
@@ -3575,29 +3704,35 @@ fn picked_ids(source: &dyn Source, g: usize, changed: &BTreeSet<i64>, granule: &
 }
 
 /// A granule's rows, picked from its input where they lie by their ids (`picked_ids`): the store's writer reads them
-/// into its scratch (`KeptPicked`).
+/// there as it packs them (`KeptPicked`), a row's search starting from the last one's (`Source::value_memo`: a
+/// granule's rows run by owner, so a view finds their document once; any memo is correct, so threads share it).
 struct PickedRows {
     source: Arc<dyn Source>,
     ids: Arc<crate::code_rule_dsl::facts::rows::Part>,
     lo: u32,
     hi: u32,
     width: usize,
+    memo: std::sync::atomic::AtomicU32,
 }
 
-impl crate::content_store::kept_facts::KeptPicked for PickedRows {
-    fn rows(&self) -> usize {
+impl crate::content_store::kept_facts::KeptPicked for PickedRows {}
+
+impl rerail_blocks::packed::RowsIn for PickedRows {
+    fn n(&self) -> usize {
         (self.hi - self.lo) as usize
     }
-    fn width(&self) -> usize {
+    fn arity(&self) -> usize {
         self.width
     }
-    fn fill(&self, cols: &mut [i64], _: Option<&mut [u32]>) {
-        let n = self.rows();
-        for c in 0..self.width {
-            for (k, i) in (self.lo..self.hi).enumerate() {
-                cols[c * n + k] = self.source.value(self.ids.get(i, 0) as usize, c);
-            }
+    fn get(&self, r: usize, c: usize) -> i64 {
+        use std::sync::atomic::Ordering::Relaxed;
+        let was = self.memo.load(Relaxed);
+        let mut memo = was;
+        let x = self.source.value_memo(self.ids.get(self.lo + r as u32, 0) as usize, c, &mut memo);
+        if memo != was {
+            self.memo.store(memo, Relaxed);
         }
+        x
     }
 }
 
@@ -3636,44 +3771,39 @@ pub(in crate::code_rule_dsl) fn kept_put(name: &KeptRel, digest: u64, reads: Vec
     if let Some(put) = kept_rows(name, digest, reads.clone(), types.clone(), rel) {
         return put;
     }
-    // A relation with no block of its rows (a view, read from its source, or none): its live rows read where they
-    // are, by the writer, into its scratch (`LiveRows`).
-    KeptPut { rel: name.name.clone(), ident: name.ident, part: DOCS_PART, digest, reads, what: KeptWhat::Picked(Box::new(LiveRows { rel: Arc::clone(rel) })), types }
+    // A relation with no block of its rows (a view's rows read from its source, or none): its live rows read where
+    // they lie as the writer packs them (decision 0353 step 8), in canonical order, with their levels.
+    let ids = (rel.rows() != rel.len()).then(|| (0..rel.len() as u32).filter(|&id| !crate::code_rule_dsl::logic::native::component::is_dead(&rel.dead, id)).collect());
+    let levels = rel.live_levels();
+    KeptPut { rel: name.name.clone(), ident: name.ident, part: DOCS_PART, digest, reads, what: KeptWhat::Picked(Box::new(LiveRows { rel: Arc::clone(rel), ids, levels })), types }
 }
 
-/// A relation's live rows read where they are (a view's from its source, through it), in canonical order, with
-/// their levels where it has them: for a relation with no block of its rows to lend (`kept_put`).
+/// A relation's live rows where they lie (`InRel::value`, a view's read from its source through it): every row, or
+/// those of `ids`; with each live row's level where it has them.
 struct LiveRows {
     rel: Arc<InRel>,
+    ids: Option<Vector<u32>>,
+    levels: Option<Vector<u32>>,
 }
 
 impl crate::content_store::kept_facts::KeptPicked for LiveRows {
-    fn rows(&self) -> usize {
-        self.rel.rows()
-    }
-    fn width(&self) -> usize {
-        self.rel.k
-    }
     fn given(&self) -> bool {
         false
     }
-    fn has_levels(&self) -> bool {
-        self.rel.has_levels()
+    fn levels(&self) -> Option<std::borrow::Cow<'_, [u32]>> {
+        self.levels.as_deref().map(std::borrow::Cow::Borrowed)
     }
-    fn fill(&self, cols: &mut [i64], levels: Option<&mut [u32]>) {
-        let (n, k) = (self.rows(), self.width());
-        let mut r = 0;
-        self.rel.each_live_batch(0, self.rel.len(), |batch| {
-            for row in batch.chunks_exact(k.max(1)) {
-                for (c, &v) in row.iter().enumerate() {
-                    cols[c * n + r] = v;
-                }
-                r += 1;
-            }
-        });
-        if let Some(out) = levels {
-            self.rel.each_live_level(&mut |i, l| out[i] = l);
-        }
+}
+
+impl rerail_blocks::packed::RowsIn for LiveRows {
+    fn n(&self) -> usize {
+        self.ids.as_ref().map_or(self.rel.len(), Vector::len)
+    }
+    fn arity(&self) -> usize {
+        self.rel.k
+    }
+    fn get(&self, r: usize, c: usize) -> i64 {
+        self.rel.value(self.ids.as_ref().map_or(r, |ids| ids[r] as usize), c)
     }
 }
 
@@ -3683,6 +3813,111 @@ use crate::content_store::kept_facts::BlockFlat;
 
 fn kept_flat(name: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: BlockFlat) -> KeptPut {
     KeptPut { rel: name.name.clone(), ident: name.ident, part, digest, reads, what: KeptWhat::Picked(Box::new(rows)), types }
+}
+
+/// An entry of rows read where they lie (`KeptWhat::Picked`), kept in the order given: an input's granule.
+fn kept_picked(name: &KeptRel, part: i64, types: Vec<u8>, rows: Box<dyn crate::content_store::kept_facts::KeptPicked>) -> KeptPut {
+    KeptPut { rel: name.name.clone(), ident: name.ident, part, digest: 0, reads: Vec::new(), what: KeptWhat::Picked(rows), types }
+}
+
+/// An input's documents as rows of (document, sum, count), read where they lie (`Docs`): a kept entry's by position;
+/// otherwise by document, `keys` naming each row's.
+struct DocRows {
+    docs: Arc<Docs>,
+    keys: Option<Vec<i64>>,
+}
+
+impl DocRows {
+    fn of(docs: Arc<Docs>) -> DocRows {
+        let keys = (!matches!(*docs, Docs::Kept(_))).then(|| docs.keys().collect());
+        DocRows { docs, keys }
+    }
+}
+
+impl crate::content_store::kept_facts::KeptPicked for DocRows {
+    fn given(&self) -> bool {
+        false
+    }
+}
+
+impl rerail_blocks::packed::RowsIn for DocRows {
+    fn n(&self) -> usize {
+        self.docs.len()
+    }
+    fn arity(&self) -> usize {
+        3
+    }
+    fn get(&self, r: usize, c: usize) -> i64 {
+        let (d, (sum, n)) = match (&self.keys, &*self.docs) {
+            (None, Docs::Kept(e)) => return e.packed().get(r, c),
+            (Some(k), docs) => (k[r], docs.get(&k[r]).expect("a document of its keys")),
+            (None, _) => unreachable!("keys for documents not kept"),
+        };
+        [d, sum as i64, n as i64][c]
+    }
+}
+
+/// An input's granule's rows where they lie (decision 0353 step 8): runs of rows, each a range of one of its
+/// sources (`sources`, each held once), the granule's rows in the runs' order. A row is read by a search of the
+/// runs' starts, and its source's search for it starts from its run's memo (`Source::value_memo`: a run is an
+/// owner's rows, so a view finds their document once; any memo is correct, so readers on several threads share it).
+struct GranuleRows {
+    sources: Vec<Arc<dyn Source>>,
+    /// Each run's source, its first row there, its rows.
+    runs: Vec<(u32, u32, u32)>,
+    /// Each run's first row in the granule.
+    starts: Vec<u32>,
+    memos: Vec<std::sync::atomic::AtomicU32>,
+    n: usize,
+    width: usize,
+}
+
+impl GranuleRows {
+    /// Rows `start..start + n` of `src` after the rows held, joined to the last run where they follow it.
+    fn push(&mut self, src: &Arc<dyn Source>, start: u32, n: u32) {
+        if n == 0 {
+            return;
+        }
+        let k = match self.sources.iter().position(|s| Arc::ptr_eq(s, src)) {
+            Some(k) => k as u32,
+            None => {
+                self.sources.push(Arc::clone(src));
+                (self.sources.len() - 1) as u32
+            }
+        };
+        match self.runs.last_mut() {
+            Some((w, at, m)) if *w == k && *at + *m == start => *m += n,
+            _ => {
+                self.runs.push((k, start, n));
+                self.starts.push(self.n as u32);
+                self.memos.push(std::sync::atomic::AtomicU32::new(crate::code_rule_dsl::facts::vtab::NO_MEMO));
+            }
+        }
+        self.n += n as usize;
+    }
+}
+
+impl crate::content_store::kept_facts::KeptPicked for GranuleRows {}
+
+impl rerail_blocks::packed::RowsIn for GranuleRows {
+    fn n(&self) -> usize {
+        self.n
+    }
+    fn arity(&self) -> usize {
+        self.width
+    }
+    fn get(&self, r: usize, c: usize) -> i64 {
+        let k = self.starts.partition_point(|&s| s as usize <= r) - 1;
+        use std::sync::atomic::Ordering::Relaxed;
+        let (w, at, _) = self.runs[k];
+        let was = self.memos[k].load(Relaxed);
+        let mut memo = was;
+        let x = self.sources[w as usize].value_memo(at as usize + (r - self.starts[k] as usize), c, &mut memo);
+        if memo != was {
+            self.memos[k].store(memo, Relaxed);
+        }
+        x
+    }
 }
 
 /// The entry's rows as they are, with `reads` (a frame's retag).
@@ -3776,7 +4011,5 @@ pub mod kept_tests;
 /// The frame digest of `held`'s live rows (`rows_digest`), read where they lie a batch at a time: no copy of the
 /// relation (it was copied whole for each frame written, 460 MB of a 300-file run's peak); a view's through it.
 pub(in crate::code_rule_dsl) fn held_digest(cells: &Cells, held: &InRel) -> Option<u64> {
-    Some(cells.digest_batches(held.len(), held.rows(), &|lo, hi, f| {
-        held.each_live_batch(lo, hi, |rows| f(rows));
-    }))
+    crate::code_rule_dsl::logic::plan::source_rows::held_digest(cells, held)
 }

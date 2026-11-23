@@ -466,7 +466,7 @@ pub(super) struct CoreRows {
     pub(super) skip: Skip,
     /// The values of the format string document being read (decision 0176: `literal::format_tape::values`), by
     /// node id, with the document's source they were read off: one parse a document, not one a node.
-    format_values: Option<(std::sync::Arc<String>, Vec<Option<(String, &'static str)>>)>,
+    format_values: Option<(std::sync::Arc<crate::code_rule_dsl::tape::Text>, Vec<Option<(String, &'static str)>>)>,
     /// The node kinds whose `text` is made at any length (`Projection::long_text`).
     pub(super) long_text: BTreeSet<String>,
     /// Every node's `text` at any length (`Projection::long_text_any`).
@@ -604,6 +604,27 @@ impl CoreRows {
             return Visits::All;
         }
         if !text && !op { Visits::None } else { Visits::Read { text, op } }
+    }
+
+    /// The per-node relations the walk makes, as the profile names them (`node rows`' spans).
+    pub(super) fn making(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool, long_texts: bool) -> String {
+        let s = &self.skip;
+        let named = [
+            (!s.ops, "op"),
+            (!s.comment, "comment"),
+            (!s.name, "name"),
+            (!s.literal, "literal"),
+            (!s.literal_rows, "literal rows"),
+            (!s.literal_value, "literal values"),
+            (!s.structural, "structural"),
+            (wants_text, "text"),
+            (wants_parts, "parts"),
+            (wants_part_starts, "part starts"),
+            (wants_words, "words"),
+            (long_texts, "rr_long_text_node"),
+        ];
+        let made: Vec<&str> = named.iter().filter(|(on, _)| *on).map(|(_, n)| *n).collect();
+        if made.is_empty() { "none".into() } else { made.join(", ") }
     }
 
     /// Whether `visits` takes node `local` of `p`.
@@ -746,7 +767,7 @@ impl CoreRows {
 
     /// A withheld document's one row: its first error (`verdict`).
     pub(super) fn withheld(&mut self, p: &Projected, (l, msg): &(u32, String), string: &mut dyn FnMut(&str) -> usize) {
-        self.syntax_error.push([i64::from(p.key), i64::from(*l), string(msg) as i64]);
+        self.syntax_error.push([i64::from(p.key()), i64::from(*l), string(msg) as i64]);
     }
 
     /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
@@ -755,7 +776,7 @@ impl CoreRows {
     pub(super) fn document(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
         let f = p.f();
         let x = p.extra.as_ref().expect("core.rerail's spans");
-        let key = i64::from(p.key);
+        let key = i64::from(p.key());
         let lines_span = crate::code_rule_dsl::logic::profile::span(|| "lines".into());
         if own_text {
             let source = p.len() + x.tokens;

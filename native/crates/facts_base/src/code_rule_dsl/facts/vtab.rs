@@ -51,34 +51,32 @@ pub trait RowCells: Send+Sync {
 }
 pub struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
 pub trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
-/// A view the device makes in place from a chunk block (`Source::device_view`, decision 0289).
+/// A view the device reads in place (`Source::device_view`, decision 0353 step 4): nothing makes its rows.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub struct DeviceView<'a> {
-    pub block: &'a rerail_blocks::Block,
-    pub root: usize,
+pub struct DeviceView {
     pub view: u32,
     pub rows: usize,
-    /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
-    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    pub in_place: Option<ViewInPlace>,
-    /// With `in_place`, the view's relation of no columns, whose block its probes' indexes go in (decision 0478 step
-    /// 3, R4): made once by the source, which holds it (its batch's life), so every stratum on any thread finds them.
-    pub home: Option<crate::code_rule_dsl::facts::rows::Part>,
+    /// Where a stage reads it: its batch's directory, the buffers its reads reach.
+    pub in_place: ViewInPlace,
+    /// The view's relation of no columns, whose block its probes' indexes go in (decision 0478 step 3, R4): made once
+    /// by the source, which holds it (its batch's life), so every stratum on any thread finds them.
+    pub home: crate::code_rule_dsl::facts::rows::Part,
 }
 
 /// A view a stage reads in place (decision 0353 step 4d): its batch's directory's GPU address, the view's number in
 /// the kernels' reads (1 + `device_chunk::VIEW_*`), the buffers its reads reach by address (the device layer's, as
 /// the stages bind them), and what keeps them. Made where the process's device is Metal: the directory is of Metal's
 /// addresses (`device_chunk::views_in_place`).
-/// A 16z batch's views read their blocks through its cache (`cache`, decision 0353 step 4b), which its reads write:
-/// a stage that reads the view is refused when the cache's failures rise past `failed` (no room found).
+/// A 16z batch's views read their blocks through its cache (`caches`, decision 0353 step 4b), which its reads write:
+/// a stage that reads the view is refused when the caches' failures rise past `failed` (no room found). A layered
+/// source's view reads each of its batches' caches.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[derive(Clone)]
 pub struct ViewInPlace {
     pub dir: u64,
     pub kind: u32,
     pub buffers: Vec<rerail_device::device::Buffer>,
-    pub cache: Option<ZCache>,
+    pub caches: Vec<ZCache>,
     pub failed: u32,
     /// Its batch's tape format (`ViewsInPlace::format`; 0: several), which the stages reading it are compiled for.
     pub format: u32,
@@ -102,6 +100,8 @@ pub struct HasWalk {
 pub struct ZCache {
     pub cache: Arc<rerail_tape_format::f16::ZCache>,
     pub buffer: Option<rerail_device::device::Buffer>,
+    /// The most bytes an entry takes (`Spec::entry_bytes`): a view's entry size where its reads share the cache.
+    pub entry: usize,
 }
 
 impl ZCache {
@@ -114,14 +114,14 @@ impl ZCache {
 
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl ViewInPlace {
-    /// Its batch's cache's counts (`None` without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
-    pub fn cache_counts(&self) -> Option<rerail_clif::view::cache::Counts> {
-        self.cache.as_ref().map(ZCache::counts)
+    /// Its batches' caches' counts (none without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
+    pub fn cache_counts(&self) -> Vec<rerail_clif::view::cache::Counts> {
+        self.caches.iter().map(ZCache::counts).collect()
     }
 
-    /// The failures its batch's cache has counted (0 without one).
+    /// The failures its batches' caches have counted (0 without one).
     pub fn cache_failed(&self) -> u32 {
-        self.cache_counts().map_or(0, |c| c.failed)
+        self.cache_counts().iter().map(|c| c.failed).sum()
     }
 }
 
@@ -169,6 +169,9 @@ impl ReadPlan {
     }
 }
 
+
+/// A reader's memo of a source's search before its first read (`Source::row_at_memo`): none found yet.
+pub const NO_MEMO: u32 = rerail_clif::view_reads::NO_DOC;
 /// The relation of the nodes whose text `@rr_node_text` reads, bound with the batch every node read goes through
 /// (the syntax table's `LongTexts`).
 pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
@@ -226,13 +229,21 @@ pub trait Source: Send + Sync {
             *o = self.value(row, c);
         }
     }
+    /// `row_at`, with the caller's memo: what the source's search for a row last found (the document a views
+    /// directory's search found, `ViewDir::doc_of_row`), handed back on the caller's next read (decision 0353 step 3
+    /// on the CPU). Any value is correct, a stale one costs a comparison: a reader starts one at `NO_MEMO` and keeps
+    /// it across its reads of this source. A source with no search ignores it.
+    fn row_at_memo(&self, row: usize, columns: &[usize], out: &mut [i64], memo: &mut u32) {
+        let _ = memo;
+        self.row_at(row, columns, out)
+    }
     /// Each row's values of `columns`, row after row, given to `each` with the row's number: `row_at` a row at a time
     /// by default; a view of a batch's documents walks each document's nodes once, finding no row's place and
     /// selecting no node.
     fn for_rows(&self, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) {
-        let mut row = vec![0i64; columns.len()];
+        let (mut row, mut memo) = (vec![0i64; columns.len()], NO_MEMO);
         for r in 0..self.len() {
-            self.row_at(r, columns, &mut row);
+            self.row_at_memo(r, columns, &mut row, &mut memo);
             each(r, &row);
         }
     }
@@ -254,9 +265,9 @@ pub trait Source: Send + Sync {
     /// so (decision 0353 step 2), a view of a batch's documents walking the documents the range holds once, each row's
     /// node, id and parent coming from the walk, not a point read a row.
     fn for_rows_in(&self, range: Range<usize>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) {
-        let mut row = vec![0i64; columns.len()];
+        let (mut row, mut memo) = (vec![0i64; columns.len()], NO_MEMO);
         for r in range {
-            self.row_at(r, columns, &mut row);
+            self.row_at_memo(r, columns, &mut row, &mut memo);
             if !each(r, &row) {
                 return;
             }
@@ -275,17 +286,6 @@ pub trait Source: Send + Sync {
     /// row's id.
     fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
         self.for_rows(&[column], &mut |r, row| each(r, if row[0] >= 1 << 32 { row[0] >> 32 } else { row[0] }));
-    }
-    /// Every row's values of `columns`, row after row, appended to `out`: `row_at` a row at a time by default; a
-    /// view of a batch's documents reads each document's rows in turn, finding no row's place.
-    fn rows_of(&self, columns: &[usize], out: &mut Vector<i64>) {
-        let k = columns.len();
-        out.reserve(self.len() * k);
-        for row in 0..self.len() {
-            let at = out.len();
-            out.resize(at + k, 0);
-            self.row_at(row, columns, &mut out[at..]);
-        }
     }
     fn estimated_len(&self) -> usize {
         self.len()
@@ -366,10 +366,10 @@ pub trait Source: Send + Sync {
     fn has_walk(&self) -> Option<HasWalk> {
         None
     }
-    /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
-    /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.
+    /// A view the device reads in place (decision 0353 step 4): its code (`syntax::device_chunk::VIEW_*`), its rows,
+    /// its directory. `None`: the device does not read it where it lies.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    fn device_view(&self) -> Option<DeviceView<'_>> {
+    fn device_view(&self) -> Option<DeviceView> {
         None
     }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
@@ -462,6 +462,11 @@ pub trait Source: Send + Sync {
         None
     }
     fn value(&self, row: usize, column: usize) -> i64;
+    /// `value`, with the caller's memo (`row_at_memo`).
+    fn value_memo(&self, row: usize, column: usize, memo: &mut u32) -> i64 {
+        let _ = memo;
+        self.value(row, column)
+    }
     /// The rows whose `column` is `value`, as a slice of the source's own sorted index (no allocation); `None`
     /// where the source keeps none.
     fn sorted_rows(&self, _column: usize, _value: i64) -> Option<&[u32]> {

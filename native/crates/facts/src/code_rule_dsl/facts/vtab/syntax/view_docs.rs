@@ -8,9 +8,17 @@ use rerail_clif::ids::Run;
 use rerail_clif::view_reads::ViewDoc;
 use std::sync::Arc;
 
-/// A document's entry and its codes' table, in `block`.
+/// A document's entry, in its projection's block (`Projected::entry`): its address.
 pub struct ViewEntry {
-    desc: Desc<ViewDoc>,
+    desc: *const ViewDoc,
+}
+
+// SAFETY: the entry is written once, inside its projection's `OnceLock` (`new`), and only read after.
+unsafe impl Send for ViewEntry {}
+unsafe impl Sync for ViewEntry {}
+
+/// An entry's codes' table: each code's kind atom and field atom.
+pub struct Codes {
     _kinds: Cells<u32>,
     _fields: Cells<u32>,
     /// A guest's spans as its host places them (`ViewDoc::placed`), where no word of the entry maps them.
@@ -18,8 +26,18 @@ pub struct ViewEntry {
 }
 
 impl ViewEntry {
-    /// `p`'s entry, in `block` (the block its numbering is in), its kinds as `dialect` holds them.
+    /// `p`'s entry, in `block` (its projection's, which its numbering is in), its kinds as `dialect` holds them:
+    /// written whole on the first ask, the same entry after.
     pub fn new(block: &Arc<Block>, p: &Projected, dialect: &Dialect) -> Self {
+        assert!(Arc::ptr_eq(p.block(), block), "an entry is in its projection's block");
+        let (desc, codes) = p.entry();
+        codes.get_or_init(|| Self::fill(block, p, dialect, desc));
+        ViewEntry { desc: desc.as_ptr() }
+    }
+
+    /// Writes the rest of `p`'s entry `desc` (its key, file and tag are there from the start), and returns its codes'
+    /// table.
+    fn fill(block: &Arc<Block>, p: &Projected, dialect: &Dialect, desc: &Desc<ViewDoc>) -> Codes {
         let f = p.f();
         let n = f.code_count();
         // copy: derived (each code's kind and field atom, computed once from the tape's code table and the dialect)
@@ -32,7 +50,7 @@ impl ViewEntry {
         .expect("a batch's block holds its entries");
         let fields = Cells::build(block, n.max(1), |out| {
             for (c, k) in out.iter_mut().enumerate().take(n) {
-                *k = field_atom(p.tag, f.code_entry(c as u32).1);
+                *k = field_atom(p.tag(), f.code_entry(c as u32).1);
             }
             n
         })
@@ -51,14 +69,10 @@ impl ViewEntry {
             })
             .expect("a batch's block holds its entries")
         });
-        let desc = Desc::<ViewDoc>::new(block);
         let d = desc.as_ptr();
-        // SAFETY: the entry is this build's alone, and its runs point at cells of the same block (the numbering's
-        // descriptor among them), which live as long as it.
+        // SAFETY: the entry is written by this alone (inside its projection's `OnceLock`), and its runs point at cells
+        // of the same block (the numbering's descriptor among them), which live as long as it.
         unsafe {
-            (*d).key = p.key;
-            (*d).file = p.file;
-            (*d).tag = u32::from(p.tag);
             (*d).preorder = u32::from(p.defs.is_none());
             (*d).nodes = p.len();
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
@@ -94,7 +108,7 @@ impl ViewEntry {
                 }
             }
         }
-        ViewEntry { desc, _kinds: kinds, _fields: fields, _placed: placed }
+        Codes { _kinds: kinds, _fields: fields, _placed: placed }
     }
 
     /// `p`'s positions where the views' reads answer its `Loc` rows: core.rerail's; a guest's through its host's
@@ -106,6 +120,6 @@ impl ViewEntry {
 
     /// The entry's address, for the reads written once.
     pub fn desc(&self) -> *const u8 {
-        self.desc.as_ptr().cast()
+        self.desc.cast()
     }
 }

@@ -10,7 +10,7 @@ pub struct TapeSearchIndex {
     pub node_count: u32,
     pub kind_tokens: Arc<String>,
     pub value_tokens: Arc<String>,
-    pub source_text: Arc<String>,
+    pub source_text: Arc<rerail_tape_format::home::Text>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

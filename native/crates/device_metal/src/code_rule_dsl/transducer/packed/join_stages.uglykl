@@ -68,6 +68,19 @@ UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, v_dir) == 2304, "Stage.v_dir");
 typedef JSPACE const Stage* StageP;
 typedef JSPACE const int64_t* Longs;
 
+// A relation the device reads in its block, and the block its chain's far base lies in (decision 0353 step 6: a
+// kept relation in its block, this run's rows continuing it in another): `far` is that block's offset from this one,
+// made here from the two bindings (`rel_b`), never stored; the reads take it (`clif_rel_get`'s last argument). A
+// relation with no far base binds its own block there too (0).
+typedef struct RelB { Longs p; uint64_t far; } RelB;
+UKL_INLINE RelB rel_b(Longs r, JSPACE const uint8_t* far) {
+    if (far == 0) far = (JSPACE const uint8_t*)r;
+    RelB b;
+    b.p = r;
+    b.far = (uint64_t)(far - (JSPACE const uint8_t*)r);
+    return b;
+}
+
 // A view's row `r`'s value in column `col` (decision 0353 step 4d): the document whose rows hold it (the
 // directory's search written once, `clif_dir_doc_of_row`, the caller's `memo` tried first and set to it), then the
 // view's read written once, over the document's entry, tape and view where they lie. `kind`: 1 + `device_chunk::VIEW_*`.
@@ -81,20 +94,21 @@ UKL_COLD int64_t vread_dir(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t 
     UKL_GLOBAL const uint32_t* v = e->view;
     UKL_GLOBAL const uint8_t* c = view_block(d);
     UKL_GLOBAL const uint8_t* t = view_tape(d, e);
-    UKL_GLOBAL const uint8_t* l = view_lines(d, e);
+    UKL_GLOBAL const uint8_t* l = view_lines_base(d, e);
+    uint64_t la = e->lines;
     switch (k) {
-        case 0u: return (int64_t)clif_view_node(c, e->entry, t, v, l, i, col);
-        case 1u: return (int64_t)clif_view_child(c, e->entry, t, v, l, i, col);
-        case 2u: return (int64_t)clif_view_field(c, e->entry, t, v, l, i, col);
-        case 3u: return (int64_t)clif_view_core(c, e->entry, t, v, l, i, col);
-        case 4u: return (int64_t)clif_view_line(c, e->entry, t, v, l, i, col);
-        case 5u: return (int64_t)clif_view_loc_line(c, e->entry, t, v, l, i, col);
-        case 6u: return (int64_t)clif_view_loc_end(c, e->entry, t, v, l, i, col);
-        case 7u: return (int64_t)clif_view_loc_col(c, e->entry, t, v, l, i, col);
-        case 8u: return (int64_t)clif_view_loc_docof(c, e->entry, t, v, l, i, col);
-        case 9u: return (int64_t)clif_view_tape(c, e->entry, t, v, l, i, col);
-        case 10u: return (int64_t)clif_view_depth(c, e->entry, t, v, l, i, col);
-        default: return (int64_t)clif_view_order(c, e->entry, t, v, l, i, col);
+        case 0u: return (int64_t)clif_view_node(c, e->entry, t, v, l, la, i, col);
+        case 1u: return (int64_t)clif_view_child(c, e->entry, t, v, l, la, i, col);
+        case 2u: return (int64_t)clif_view_field(c, e->entry, t, v, l, la, i, col);
+        case 3u: return (int64_t)clif_view_core(c, e->entry, t, v, l, la, i, col);
+        case 4u: return (int64_t)clif_view_line(c, e->entry, t, v, l, la, i, col);
+        case 5u: return (int64_t)clif_view_loc_line(c, e->entry, t, v, l, la, i, col);
+        case 6u: return (int64_t)clif_view_loc_end(c, e->entry, t, v, l, la, i, col);
+        case 7u: return (int64_t)clif_view_loc_col(c, e->entry, t, v, l, la, i, col);
+        case 8u: return (int64_t)clif_view_loc_docof(c, e->entry, t, v, l, la, i, col);
+        case 9u: return (int64_t)clif_view_tape(c, e->entry, t, v, l, la, i, col);
+        case 10u: return (int64_t)clif_view_depth(c, e->entry, t, v, l, la, i, col);
+        default: return (int64_t)clif_view_order(c, e->entry, t, v, l, la, i, col);
     }
 }
 
@@ -116,7 +130,8 @@ UKL_COLD int64_t vread(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, u
     if ((kind & VIEW_PLACED) == 0u) return vread_dir(kind, d, r, col, memo);
     UKL_GLOBAL const PlacedDir* p = (UKL_GLOBAL const PlacedDir*)d;
     if (r < p->rows) return vread_dir(kind & ~VIEW_PLACED, p->dir, r, col, memo);
-    return (int64_t)clif_rel_get(p->tail, p->at, r - p->rows, col);
+    // The tail, one relation in its own block: no far base.
+    return (int64_t)clif_rel_get(p->tail, p->at, r - p->rows, col, 0ul);
 }
 
 // A key's hash, one value at a time: `rerail_blocks::key_hash`, the read written once (`clif_rel_key_mix`, decision
@@ -138,15 +153,15 @@ UKL_INLINE int64_t lane_of(int64_t v, uint32_t w) {
 
 // A value of the probed relation: row `r`'s in column `col`, read in its block through the generated reads (`r_at`,
 // decision 0325). Every relation the device reads lies in a block (step 5).
-UKL_SHARED int64_t rget(StageP s, Longs R, uint32_t r, uint32_t col) {
+UKL_SHARED int64_t rget(StageP s, RelB R, uint32_t r, uint32_t col) {
     uint32_t memo = NONE;
     // A `has` walk's candidate is the node of the column not probed (`by_has`): either column reads its id.
     if (s->v_has != 0u) return vread(1u, s->v_dir, r, 1u, &memo);
     if (s->r_view != 0u) return vread(s->r_view, s->v_dir, r, col, &memo);
-    return (int64_t)clif_rel_get((JSPACE const uint8_t*)R, s->r_at, r, col);
+    return (int64_t)clif_rel_get((JSPACE const uint8_t*)R.p, s->r_at, r, col, R.far);
 }
 
-UKL_INLINE int64_t colval(StageP s, uint32_t k, Longs L, uint32_t t, Longs R, uint32_t r) {
+UKL_INLINE int64_t colval(StageP s, uint32_t k, Longs L, uint32_t t, RelB R, uint32_t r) {
     int64_t v = s->col_kind[k] == 0 ? rget(s, R, r, s->col_idx[k]) : L[(uint64_t)s->col_idx[k] * s->cap_in + t];
     return s->col_doc[k] != 0 ? (v >> 32) : v;
 }
@@ -158,7 +173,7 @@ UKL_INLINE int64_t parval(StageP s, uint32_t k, Longs L, uint32_t t) {
 
 // Arithmetic bind j's value for one row, as the CPU's checked arithmetic gives it: false where it has none (an
 // overflow, a zero divisor). Wrapping operations on uint64_t, then the overflow tested, so nothing is undefined.
-UKL_INLINE bool arith(StageP s, uint32_t j, Longs L, uint32_t t, Longs R, uint32_t r, UKL_PRIVATE int64_t* out) {
+UKL_INLINE bool arith(StageP s, uint32_t j, Longs L, uint32_t t, RelB R, uint32_t r, UKL_PRIVATE int64_t* out) {
     JSPACE const uint32_t* a = s->arith[j];
     int64_t x = (a[3] & 1u) != 0 ? parval(s, a[1], L, t) : colval(s, a[1], L, t, R, r);
     int64_t y = (a[3] & 2u) != 0 ? parval(s, a[2], L, t) : colval(s, a[2], L, t, R, r);
@@ -191,7 +206,7 @@ UKL_INLINE bool arith(StageP s, uint32_t j, Longs L, uint32_t t, Longs R, uint32
 }
 
 // Whether every arithmetic bind of the stage has a value for this row.
-UKL_SHARED bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
+UKL_SHARED bool defined(StageP s, Longs L, uint32_t t, RelB R, uint32_t r) {
     for (uint32_t b = 0; b < s->nbinds && b < 16; b++) {
         if (s->bind_kind[b] != 3) continue;
         int64_t v = 0;
@@ -201,7 +216,7 @@ UKL_SHARED bool defined(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
 }
 
 // The row program's operations for one row: bit x of the result is operation x's value.
-UKL_LARGE uint64_t eval(StageP s, Longs L, uint32_t t, Longs R, uint32_t r) {
+UKL_LARGE uint64_t eval(StageP s, Longs L, uint32_t t, RelB R, uint32_t r) {
     uint64_t v = 0;
     for (uint32_t x = 0; x < s->nops && x < 64; x++) {
         JSPACE const uint32_t* o = s->ops[x];
@@ -236,15 +251,15 @@ UKL_INLINE bool out_bit(StageP s, uint64_t v, uint32_t k) {
 }
 
 // Entry `q` of the probed relation's index `r_index` (its rows grouped by key, in its block): a row id.
-UKL_INLINE uint32_t group_row(StageP s, Longs R, uint32_t q) {
-    return clif_rel_group_row((JSPACE const uint8_t*)R, s->r_at, s->r_index, q);
+UKL_INLINE uint32_t group_row(StageP s, RelB R, uint32_t q) {
+    return clif_rel_group_row((JSPACE const uint8_t*)R.p, s->r_at, s->r_index, q);
 }
 
 // The group of index `index` of the relation at `at` for the keys `kv`: [lo, hi) of its entries (every row whose key
 // falls in the key's bucket; `matches` tests the key itself).
-UKL_INLINE void group_of(Longs R, uint64_t at, uint32_t index, UKL_PRIVATE const int64_t* kv, uint32_t n,
+UKL_INLINE void group_of(RelB R, uint64_t at, uint32_t index, UKL_PRIVATE const int64_t* kv, uint32_t n,
                          UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi) {
-    uint64_t g = clif_rel_group((JSPACE const uint8_t*)R, at, index, key_hash(kv, n));
+    uint64_t g = clif_rel_group((JSPACE const uint8_t*)R.p, at, index, key_hash(kv, n));
     *lo = (uint32_t)(g >> 32);
     *hi = *lo + (uint32_t)(g & 0xfffffffful);
 }
@@ -255,8 +270,8 @@ UKL_INLINE void group_of(Longs R, uint64_t at, uint32_t index, UKL_PRIVATE const
 // parent's children from row lo, each step the next sibling's row (`NONE` ends it), 3 a node's numbered ancestors
 // from row lo, each step the next one up (`has_up`; `NONE` ends it).
 
-// A parent `key`'s children: its document by bisection of the directory on its key (the batch's documents are in
-// key order), its numbered node (`clif_view_number`), then its first child. The root's children are also the nodes
+// A parent `key`'s children: its document by the directory's search on its key (`clif_dir_doc_of_key`; the batch's
+// documents are in key order), its numbered node (`clif_view_number`), then its first child. The root's children are also the nodes
 // under unnumbered ones (a narrowed projection): its probe walks its document's rows, which `matches` tests.
 UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
@@ -267,12 +282,13 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
     UKL_GLOBAL const uint8_t* ch = view_block(d);
     UKL_GLOBAL const uint8_t* t = view_tape(d, e);
-    UKL_GLOBAL const uint8_t* ls = view_lines(d, e);
-    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, (uint32_t)((uint64_t)key & 0xfffffffful));
+    UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
+    uint64_t la = e->lines;
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
     uint32_t first = e->rows[1];
     if (l == 0u) { *lo = first; *hi = a + 1u < d->ndocs ? view_rows(d)[a + 1u].rows[1] : s->nr; return; }
-    uint32_t c = clif_view_child_first(ch, e->entry, t, e->view, ls, l);
+    uint32_t c = clif_view_child_first(ch, e->entry, t, e->view, ls, la, l);
     if (c == NONE) return;
     *lo = first + c; *hi = NONE; *how = 2u;
 }
@@ -281,7 +297,7 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
 UKL_INLINE uint32_t child_next(StageP s, uint32_t r) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[clif_dir_doc_of_row(view_block(d), d->at, 1u, r, NONE)];
-    uint32_t n = clif_view_child_next(view_block(d), e->entry, view_tape(d, e), e->view, view_lines(d, e), r - e->rows[1]);
+    uint32_t n = clif_view_child_next(view_block(d), e->entry, view_tape(d, e), e->view, view_lines_base(d, e), e->lines, r - e->rows[1]);
     return n == NONE ? NONE : e->rows[1] + n;
 }
 
@@ -303,7 +319,8 @@ UKL_INLINE bool has_member(StageP s, uint32_t q) {
     return lo < s->v_nset && s->v_set[lo] == k;
 }
 
-// The candidates of node `key`: its document by bisection of the directory on its key, its number, then its walk.
+// The candidates of node `key`: its document by the directory's search on its key (`clif_dir_doc_of_key`), its
+// number, then its walk.
 UKL_INLINE void by_has(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     *lo = 0u; *hi = 0u; *how = 0u;
@@ -313,31 +330,32 @@ UKL_INLINE void by_has(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_PRIV
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
     UKL_GLOBAL const uint8_t* ch = view_block(d);
     UKL_GLOBAL const uint8_t* t = view_tape(d, e);
-    UKL_GLOBAL const uint8_t* ls = view_lines(d, e);
-    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, (uint32_t)((uint64_t)key & 0xfffffffful));
+    UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
+    uint64_t la = e->lines;
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
     uint32_t first = e->rows[0];
     if (s->v_has == 1u) {
         if (!has_member(s, first + l)) return;
-        uint32_t u = clif_view_up(ch, e->entry, t, e->view, ls, l);
+        uint32_t u = clif_view_up(ch, e->entry, t, e->view, ls, la, l);
         if (u == NONE) return;
         *lo = first + u; *hi = NONE; *how = 3u;
         return;
     }
     *lo = first + l + 1u;
-    *hi = first + clif_view_end(ch, e->entry, t, e->view, ls, l);
+    *hi = first + clif_view_end(ch, e->entry, t, e->view, ls, la, l);
 }
 
 // The next numbered ancestor's row of node row `q`, or `NONE`: its document as `vread` finds it, then the climb.
 UKL_INLINE uint32_t has_up(StageP s, uint32_t q) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[clif_dir_doc_of_row(view_block(d), d->at, 0u, q, NONE)];
-    uint32_t u = clif_view_up(view_block(d), e->entry, view_tape(d, e), e->view, view_lines(d, e), q - e->rows[0]);
+    uint32_t u = clif_view_up(view_block(d), e->entry, view_tape(d, e), e->view, view_lines_base(d, e), e->lines, q - e->rows[0]);
     return u == NONE ? NONE : e->rows[0] + u;
 }
 
 // A walk's candidate `q`: its row, and the next candidate.
-UKL_INLINE uint32_t cand_row(StageP s, Longs R, uint32_t how, uint32_t q) {
+UKL_INLINE uint32_t cand_row(StageP s, RelB R, uint32_t how, uint32_t q) {
     return how == 1u ? group_row(s, R, q) : q;
 }
 UKL_INLINE uint32_t cand_next(StageP s, uint32_t how, uint32_t q) {
@@ -345,14 +363,14 @@ UKL_INLINE uint32_t cand_next(StageP s, uint32_t how, uint32_t q) {
 }
 
 // R's rows from `r_from`: `nr`, or its length on the device past `r_from` (`r_len`), at most `nr`.
-UKL_INLINE uint32_t stage_rows(StageP s, Longs R) {
+UKL_INLINE uint32_t stage_rows(StageP s, RelB R) {
     if (s->r_len == 0u) return s->nr;
-    uint32_t len = clif_rel_len((JSPACE const uint8_t*)R, s->r_at);
+    uint32_t len = clif_rel_len((JSPACE const uint8_t*)R.p, s->r_at);
     return len > s->r_from ? ukl_min(len - s->r_from, s->nr) : 0u;
 }
 
 // The candidates of keys `kv` in relation R (`s`'s): its index group, a parent's children, or every row.
-UKL_INLINE void probe(StageP s, Longs R, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi,
+UKL_INLINE void probe(StageP s, RelB R, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi,
                       UKL_PRIVATE uint32_t* how) {
     if (s->nkeys == 0) { *lo = s->r_from; *hi = s->r_from + stage_rows(s, R); *how = 0u; return; }
     if (s->v_has != 0u) { by_has(s, kv[0], lo, hi, how); return; }
@@ -364,7 +382,7 @@ UKL_INLINE void probe(StageP s, Longs R, UKL_PRIVATE const int64_t* kv, UKL_PRIV
 // A binding's candidates (`probe`), and its key values.
 // A key the probed relation's screen refuses (`Stage::screen`, a column's kept filter: decision 0488) has none, and
 // its index group is not read. `F` is the screen's buffer.
-UKL_LARGE void candidates(StageP s, Longs L, uint32_t t, Longs R, JSPACE const uint8_t* F, UKL_PRIVATE int64_t* kv,
+UKL_LARGE void candidates(StageP s, Longs L, uint32_t t, RelB R, JSPACE const uint8_t* F, UKL_PRIVATE int64_t* kv,
                            UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     *how = 0u;
     if (s->mode == 3) { *lo = 0; *hi = 1; return; }
@@ -378,12 +396,12 @@ UKL_LARGE void candidates(StageP s, Longs L, uint32_t t, Longs R, JSPACE const u
 
 // Whether row `r` of the probed relation is live: not marked by its dead rows' delta (`r_dead`, the generated
 // `clif_rel_dead`).
-UKL_INLINE bool row_live(StageP s, Longs R, uint32_t r) {
-    return s->r_dead == 0ul || clif_rel_dead((JSPACE const uint8_t*)R, s->r_dead, r) == 0u;
+UKL_INLINE bool row_live(StageP s, RelB R, uint32_t r) {
+    return s->r_dead == 0ul || clif_rel_dead((JSPACE const uint8_t*)R.p, s->r_dead, r) == 0u;
 }
 
 // Whether row r matches the binding's keys and the relation's column tests.
-UKL_SHARED bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
+UKL_SHARED bool matches(StageP s, RelB R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
     // A `has` walk's candidates hold its key by their making (`by_has`); a descendant is a row where it is in the set.
     // Its two columns are never one node (an ancestor is strict), so a test of them holds for no row.
     if (s->v_has != 0u) return s->ntests == 0u && (s->v_has == 1u || has_member(s, r));
@@ -395,7 +413,7 @@ UKL_SHARED bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t
 
 // An aggregate's value over the binding's matching rows (mode 4, `Stage::agg`): 0 with `v`, 1 when it has none (a min
 // or max of no rows, or a tested value that differs), 2 when a sum passes 64 bits.
-UKL_LARGE uint32_t aggregate(StageP s, Longs L, uint32_t t, Longs R, uint32_t lo, uint32_t hi, uint32_t how,
+UKL_LARGE uint32_t aggregate(StageP s, Longs L, uint32_t t, RelB R, uint32_t lo, uint32_t hi, uint32_t how,
                               UKL_PRIVATE const int64_t* kv, UKL_PRIVATE int64_t* v) {
     uint32_t kind = s->agg[0] & 0xff;
     int64_t cnt = 0, sum = 0, mn = 0, mx = 0;
@@ -566,9 +584,10 @@ UKL_INLINE int64_t strcmp_value(StageP s, Longs L, uint32_t t, JSPACE const uint
 }
 
 // Each binding's rows out (`stage_scatter` writes them at their scanned offsets).
-UKL_INLINE void stage_count_one(Longs L, Longs R, JSPACE const uint32_t* totals, JSPACE uint32_t* counters, JSPACE uint32_t* counts,
+UKL_INLINE void stage_count_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, JSPACE const uint32_t* totals, JSPACE uint32_t* counters, JSPACE uint32_t* counts,
                             JSPACE uint32_t* A, JSPACE const uint8_t* D, JSPACE const uint8_t* F, StageP s, uint32_t t)
 {
+    RelB R = rel_b(R_rows, R_far);
     if (t > s->cap_in) return;
     uint32_t n = ukl_min(totals[s->in_slot], s->cap_in);
     if (t >= n) { counts[t] = 0; return; }
@@ -615,7 +634,7 @@ UKL_INLINE void stage_count_one(Longs L, Longs R, JSPACE const uint32_t* totals,
     }
 }
 
-UKL_LARGE void write_row(StageP s, Longs L, uint32_t t, Longs R, uint32_t r, JSPACE int64_t* O, uint32_t at) {
+UKL_LARGE void write_row(StageP s, Longs L, uint32_t t, RelB R, uint32_t r, JSPACE int64_t* O, uint32_t at) {
     for (uint32_t k = 0; k < s->nslots; k++) O[(uint64_t)k * s->cap_out + at] = L[(uint64_t)k * s->cap_in + t];
     for (uint32_t b = 0; b < s->nbinds && b < 16; b++) {
         uint32_t kind = s->bind_kind[b];
@@ -627,9 +646,10 @@ UKL_LARGE void write_row(StageP s, Longs L, uint32_t t, Longs R, uint32_t r, JSP
 }
 
 // Each binding's rows at its offset; the rows' count into `totals[out_slot]`.
-UKL_INLINE void stage_scatter_one(Longs L, Longs R, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O,
+UKL_INLINE void stage_scatter_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O,
                               JSPACE uint32_t* A, JSPACE uint32_t* counters, JSPACE const uint8_t* D, JSPACE const uint8_t* F, StageP s, uint32_t t)
 {
+    RelB R = rel_b(R_rows, R_far);
     // Its offsets are its own: the level's scan's, less its first (`Batch::level`).
     uint32_t o0 = offsets[0];
     uint32_t n = ukl_min(totals[s->in_slot], s->cap_in);
@@ -682,7 +702,7 @@ UKL_INLINE void stage_scatter_one(Longs L, Longs R, JSPACE uint32_t* totals, JSP
 
 // A witness's probe (decision 0277): whether relation R has a row of `b`'s keys (a binding's slots, constants or the
 // candidate's columns) and column tests; an anti-join's, whether it has none. One loop over the keys' run.
-UKL_LARGE bool witness_probe(StageP b, Longs L, uint32_t t, uint32_t cap_in, StageP a, Longs RA, uint32_t ra, Longs R) {
+UKL_LARGE bool witness_probe(StageP b, Longs L, uint32_t t, uint32_t cap_in, StageP a, RelB RA, uint32_t ra, RelB R) {
     int64_t kv[8];
     for (uint32_t i = 0; i < b->nkeys && i < 8; i++) {
         uint32_t k = b->key_kind[i];
@@ -700,9 +720,14 @@ UKL_LARGE bool witness_probe(StageP b, Longs L, uint32_t t, uint32_t cap_in, Sta
 
 // A witness's count (mode 11): 1 for a binding with a candidate of the stage's relation that every probe passes,
 // found in the candidates' order, the loop ending at the first; else 0. `stage_scatter` (as a semi-join) writes them.
-UKL_INLINE void witness_count_one(Longs L, Longs R, JSPACE const uint32_t* totals, JSPACE uint32_t* counts, StageP bs, Longs R0, Longs R1, Longs R2,
+UKL_INLINE void witness_count_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, JSPACE const uint32_t* totals, JSPACE uint32_t* counts, StageP bs, Longs R0_rows, Longs R1_rows, Longs R2_rows,
+                              JSPACE const uint8_t* R0_far, JSPACE const uint8_t* R1_far, JSPACE const uint8_t* R2_far,
                               JSPACE const uint8_t* F, StageP s, uint32_t t)
 {
+    RelB R = rel_b(R_rows, R_far);
+    RelB R0 = rel_b(R0_rows, R0_far);
+    RelB R1 = rel_b(R1_rows, R1_far);
+    RelB R2 = rel_b(R2_rows, R2_far);
     if (t > s->cap_in) return;
     uint32_t n = ukl_min(totals[s->in_slot], s->cap_in);
     if (t >= n) { counts[t] = 0; return; }
@@ -1192,7 +1217,7 @@ typedef struct Copy {
 UKL_STATIC_ASSERT(sizeof(Copy) == 264, "Copy: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(Copy, v_dir) == 248, "Copy.v_dir");
 
-UKL_INLINE void rows_copy_one(JSPACE const uint8_t* S, JSPACE uint8_t* D, JSPACE const uint32_t* totals, JSPACE const Copy* c, uint32_t t)
+UKL_INLINE void rows_copy_one(JSPACE const uint8_t* S, JSPACE uint8_t* D, JSPACE const uint32_t* totals, JSPACE const Copy* c, JSPACE const uint8_t* S_far, uint32_t t)
 {
     uint32_t n = c->count_slot == NONE ? c->n : ukl_min(totals[c->count_slot], c->n);
     if (t >= n) return;
@@ -1203,7 +1228,7 @@ UKL_INLINE void rows_copy_one(JSPACE const uint8_t* S, JSPACE uint8_t* D, JSPACE
         int64_t v = from == NONE ? c->konst[k]
                   : c->r_view != 0u ? vread(c->r_view, c->v_dir, t, from, &memo)
                   : c->src_at == 0ul ? ((JSPACE const int64_t*)S)[(uint64_t)from * c->src_stride + t]
-                  : (int64_t)clif_rel_get(S, c->src_at, c->src_from + t, from);
+                  : (int64_t)clif_rel_get(S, c->src_at, c->src_from + t, from, (uint64_t)(S_far - S));
         if (c->dst_rows_at == 0ul) ((JSPACE int64_t*)D)[(uint64_t)k * c->dst_stride + at] = v;
         else clif_rows_put((JSPACE const uint8_t*)D, c->dst_rows_at, at, k, (uint64_t)v);
     }
@@ -1228,8 +1253,9 @@ UKL_INLINE void stage_map_one(JSPACE int64_t* B, JSPACE const uint32_t* totals, 
 }
 
 // A join from one binding (a rule's first table): a thread per candidate row, not one thread walking them all.
-UKL_INLINE void scan_count_one(Longs L, Longs R, JSPACE uint32_t* counters, JSPACE uint32_t* counts, JSPACE const uint32_t* totals, StageP s, uint32_t r)
+UKL_INLINE void scan_count_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, JSPACE uint32_t* counters, JSPACE uint32_t* counts, JSPACE const uint32_t* totals, StageP s, uint32_t r)
 {
+    RelB R = rel_b(R_rows, R_far);
     if (r > s->nr) return;
     // Past R's rows (its length on the device, at most `nr`): no candidate, a count of none.
     if (r >= stage_rows(s, R) || totals[s->in_slot] == 0) { counts[r] = 0; return; }
@@ -1251,8 +1277,9 @@ UKL_INLINE void scan_count_one(Longs L, Longs R, JSPACE uint32_t* counters, JSPA
     counts[r] = c;
 }
 
-UKL_INLINE void scan_scatter_one(Longs L, Longs R, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, StageP s, uint32_t r)
+UKL_INLINE void scan_scatter_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, StageP s, uint32_t r)
 {
+    RelB R = rel_b(R_rows, R_far);
     // Its offsets are its own: the level's scan's, less its first (`Batch::level`).
     uint32_t o0 = offsets[0];
     uint32_t rows = stage_rows(s, R);
@@ -1369,8 +1396,12 @@ typedef struct Job {
     JSPACE const uint32_t* cnt;
     // Its words, some its level's size script writes (a word record).
     JobWords at;
+    // The blocks the far bases of the relations it reads through `clif_rel_get` lie in (decision 0353 step 6, `RelB`):
+    // `RF` the stage's `R`'s (a copy's or an index's, `L`'s), `WF` the witness probes'. 0: the relation's own block.
+    JSPACE const uint8_t* RF;
+    JSPACE const uint8_t* WF[3];
 } Job;
-UKL_STATIC_ASSERT(sizeof(Job) == 208, "Job: size");
+UKL_STATIC_ASSERT(sizeof(Job) == 240, "Job: size");
 
 
 // A relation's index built on the device (decision 0325 step 5): each row's bucket, its key's hash (`key_hash`, as
@@ -1403,7 +1434,7 @@ UKL_INLINE uint32_t ix_rows(JSPACE const uint8_t* B, JSPACE const IxP* p) {
     return len > p->from ? ukl_min(len - p->from, p->n) : 0u;
 }
 
-UKL_INLINE void ix_key_one(JSPACE const uint8_t* B, JSPACE uint32_t* out, JSPACE uint32_t* places, JSPACE const IxP* p, uint32_t kb, uint32_t eb, uint32_t t)
+UKL_INLINE void ix_key_one(JSPACE const uint8_t* B, JSPACE uint32_t* out, JSPACE uint32_t* places, JSPACE const IxP* p, JSPACE const uint8_t* B_far, uint32_t kb, uint32_t eb, uint32_t t)
 {
     // A live index's keys are its rows as claimed (decision 0603 step 5e): the level's sort holds them only.
     if (t >= ix_rows(B, p)) return;
@@ -1411,7 +1442,7 @@ UKL_INLINE void ix_key_one(JSPACE const uint8_t* B, JSPACE uint32_t* out, JSPACE
     uint64_t h = KEY_SEED;
     uint32_t memo = NONE;
     for (uint32_t i = 0; i < (p->ncols & ~IX_LIVE) && i < 8; i++)
-        h = key_mix(h, p->kind != 0ul ? vread((uint32_t)p->kind, p->dir, t, p->cols[i], &memo) : (int64_t)clif_rel_get(B, p->at, p->from + t, p->cols[i]));
+        h = key_mix(h, p->kind != 0ul ? vread((uint32_t)p->kind, p->dir, t, p->cols[i], &memo) : (int64_t)clif_rel_get(B, p->at, p->from + t, p->cols[i], (uint64_t)(B_far - B)));
     out[eb + t] = kb + (uint32_t)(h & p->mask);
 }
 
@@ -1452,7 +1483,8 @@ UKL_STATIC_ASSERT(sizeof(LatP) == 80, "LatP: size");
 // (decision 0325 step 5), its descriptor at `r_at`, its rows' at `r_rows_at`; written through the writer written
 // once, bounded by its chunks (decision 0463).
 UKL_INLINE int64_t lat_r(JSPACE const uint8_t* R, UKL_PRIVATE const LatP* p, uint32_t row, uint32_t c) {
-    return (int64_t)clif_rel_get(R, p->r_at, row, c);
+    // The device's own relation, one part in its block: no far base.
+    return (int64_t)clif_rel_get(R, p->r_at, row, c, 0ul);
 }
 UKL_INLINE void lat_put(JSPACE uint8_t* R, UKL_PRIVATE const LatP* p, uint32_t row, uint32_t c, int64_t v) {
     clif_rows_put((JSPACE const uint8_t*)R, p->r_rows_at, row, c, (uint64_t)v);
@@ -2020,21 +2052,21 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
     }
     for (uint32_t pass = 0u; pass < PHASE_TURNS; pass++) {
     switch (kind) {
-        case PK_COPY: rows_copy_one((JSPACE const uint8_t*)L, (JSPACE uint8_t*)O, j->totals, (JSPACE const Copy*)j->P, t); break;
-        case PK_IX_KEY: ix_key_one((JSPACE const uint8_t*)L, H, (JSPACE uint32_t*)j->S, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
+        case PK_COPY: rows_copy_one((JSPACE const uint8_t*)L, (JSPACE uint8_t*)O, j->totals, (JSPACE const Copy*)j->P, j->RF != 0 ? j->RF : (JSPACE const uint8_t*)L, t); break;
+        case PK_IX_KEY: ix_key_one((JSPACE const uint8_t*)L, H, (JSPACE uint32_t*)j->S, (JSPACE const IxP*)j->P, j->RF != 0 ? j->RF : (JSPACE const uint8_t*)L, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
         case PK_IX_PLACE: ix_place_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)V, (JSPACE const uint32_t*)j->VC, j->A, j->counters, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
         case PK_DEDUP_CLEAR: dedup_clear_one(H, j->dd, t); break;
         case PK_DEDUP_CLAIM: dedup_claim_one(L, j->totals, H, j->dd, t); break;
         case PK_MAP: stage_map_one(O, j->totals, j->s, t); break;
-        case PK_STAGE_COUNT: stage_count_one(L, j->R, j->totals, j->counters, c, j->A, j->D, j->F, j->s, t); break;
-        case PK_SCAN_COUNT: scan_count_one(L, j->R, j->counters, c, j->totals, j->s, t); break;
-        case PK_WITNESS_COUNT: witness_count_one(L, j->R, j->totals, c, j->bs, j->W[0], j->W[1], j->W[2], j->F, j->s, t); break;
+        case PK_STAGE_COUNT: stage_count_one(L, j->R, j->RF, j->totals, j->counters, c, j->A, j->D, j->F, j->s, t); break;
+        case PK_SCAN_COUNT: scan_count_one(L, j->R, j->RF, j->counters, c, j->totals, j->s, t); break;
+        case PK_WITNESS_COUNT: witness_count_one(L, j->R, j->RF, j->totals, c, j->bs, j->W[0], j->W[1], j->W[2], j->WF[0], j->WF[1], j->WF[2], j->F, j->s, t); break;
         case PK_ROW_TEXT:
             row_text_one(L, j->A, j->totals, j->counters, c, V, j->G, j->S, j->P, j->D, j->VC, ctl, j->s, g * (JOIN_TG / SGW) + l / SGW, l % SGW __UKL_ARGS);
             break;
         case PK_DEDUP_MARK: dedup_mark_one(L, j->totals, H, c, j->dd, t); break;
-        case PK_STAGE_SCATTER: stage_scatter_one(L, j->R, j->totals, c, O, j->A, j->counters, j->D, j->F, j->ws, t); break;
-        case PK_SCAN_SCATTER: scan_scatter_one(L, j->R, j->totals, c, O, j->s, t); break;
+        case PK_STAGE_SCATTER: stage_scatter_one(L, j->R, j->RF, j->totals, c, O, j->A, j->counters, j->D, j->F, j->ws, t); break;
+        case PK_SCAN_SCATTER: scan_scatter_one(L, j->R, j->RF, j->totals, c, O, j->s, t); break;
         case PK_ROW_SCATTER: row_scatter_one(L, V, j->totals, c, O, j->s, t); break;
         case PK_DEDUP_SCATTER: dedup_scatter_one(L, j->totals, c, O, j->dd, t); break;
         // A fold's buffers: `L` its rows, `A` its places, `totals` the best row a place, `H` its flags, `S` the relation's
@@ -2287,3 +2319,98 @@ DEFINE_KERNEL2(join, join_chain,
     if (l == 0u) ukl_atomic_store(&ctl[13], q);
 }
 #endif
+
+// A kind-set axis's batch solve over a views' directory (decision 0353 step 4, `Within::solved_in`): a thread per row
+// of the `node` view, its ancestors read off the tape by the climb written once (`clif_view_up`), as `by_has` reads
+// them, each a member where its kind atom's bit is set (`AxisP::bits`, the host's `member`: tag × 1024 + its slot, as
+// the `node` view's `kind` column holds it). No node column is made for it. `inside`: every ancestor in the set
+// (containment), else the nearest. A climb is bounded by its document's rows.
+typedef struct AxisP {
+    UKL_GLOBAL const ViewDir* dir;
+    // The `node` view's rows; 1 where `bits` holds the set (0: every kind is one); 1 for every ancestor.
+    uint32_t n, bits, inside, pad;
+    // The relation's rows' descriptor's offset in `out`'s block, and the rows it holds.
+    uint64_t rows_at, rows;
+} AxisP;
+UKL_STATIC_ASSERT(sizeof(AxisP) == 40, "AxisP: size");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(AxisP, rows_at) == 24, "AxisP.rows_at");
+
+UKL_INLINE bool axis_in(UKL_GLOBAL const AxisP* p, UKL_GLOBAL const uint32_t* bits, uint32_t q) {
+    if (p->bits == 0u) return true;
+    uint32_t memo = NONE;
+    uint32_t at = (uint32_t)vread(1u, p->dir, q, 2u, &memo);
+    return ((bits[at >> 5] >> (at & 31u)) & 1u) != 0u;
+}
+
+// Node row `v`'s document's row in the directory, its first `node` row and its rows' end.
+UKL_INLINE UKL_GLOBAL const ViewRow* axis_doc(UKL_GLOBAL const ViewDir* d, uint32_t v, UKL_PRIVATE uint32_t* end) {
+    uint32_t i = clif_dir_doc_of_row(view_block(d), d->at, 0u, v, NONE);
+    UKL_GLOBAL const ViewRow* rows = view_rows(d);
+    *end = i + 1u < d->ndocs ? rows[i + 1u].rows[0] : d->ends[0];
+    return &rows[i];
+}
+
+// Each node row's rows (its ancestors in the set), into `start`; the extra value past the last row is 0, so the scan
+// after leaves the total there.
+DEFINE_KERNEL2(join, axis_count,
+               ROBUFFER, uint32_t, bits,  "[8192]",
+               RWBUFFER, uint32_t, start, "[p->n + 1]",
+               ROBUFFER, AxisP,    p,     "[1]",
+               GID0,     uint32_t, v,     )
+{
+    uint32_t n = p->n;
+    if (v > n) return;
+    if (v == n) { start[v] = 0u; return; }
+    UKL_GLOBAL const ViewDir* d = p->dir;
+    uint32_t end = 0u;
+    UKL_GLOBAL const ViewRow* e = axis_doc(d, v, &end);
+    UKL_GLOBAL const uint8_t* ch = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
+    uint64_t la = e->lines;
+    uint32_t first = e->rows[0];
+    uint32_t count = 0u;
+    uint32_t up = clif_view_up(ch, e->entry, t, e->view, ls, la, v - first);
+    for (uint32_t k = first; k < end && up != NONE; k++) {
+        if (axis_in(p, bits, first + up)) {
+            count++;
+            if (p->inside == 0u) break;
+        }
+        up = clif_view_up(ch, e->entry, t, e->view, ls, la, up);
+    }
+    start[v] = count;
+}
+
+// Each node row's rows from its start (the scanned counts), nearest first: the ids of `n` and `a` (the `node` view's
+// `n`), written once into the axis's relation (decision 0353 step 5) through the writer written once, bounded by its
+// chunks. A solve whose total is past the rows the relation holds writes nothing.
+DEFINE_KERNEL2(join, axis_write,
+               ROBUFFER, uint32_t, bits,  "[8192]",
+               ROBUFFER, uint32_t, start, "[p->n + 1]",
+               RWBUFFER, uint8_t,  out,   "[block]",
+               ROBUFFER, AxisP,    p,     "[1]",
+               GID0,     uint32_t, v,     )
+{
+    if (v >= p->n || (uint64_t)start[p->n] > p->rows) return;
+    UKL_GLOBAL const ViewDir* d = p->dir;
+    uint32_t end = 0u;
+    UKL_GLOBAL const ViewRow* e = axis_doc(d, v, &end);
+    UKL_GLOBAL const uint8_t* ch = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
+    uint64_t la = e->lines;
+    uint32_t first = e->rows[0];
+    uint32_t at = start[v];
+    uint32_t memo = NONE;
+    int64_t n_id = vread(1u, d, v, 1u, &memo);
+    uint32_t up = clif_view_up(ch, e->entry, t, e->view, ls, la, v - first);
+    for (uint32_t k = first; k < end && up != NONE; k++) {
+        if (axis_in(p, bits, first + up)) {
+            clif_rows_put((UKL_GLOBAL const uint8_t*)out, p->rows_at, at, 0u, (uint64_t)n_id);
+            clif_rows_put((UKL_GLOBAL const uint8_t*)out, p->rows_at, at, 1u, (uint64_t)vread(1u, d, first + up, 1u, &memo));
+            at++;
+            if (p->inside == 0u) break;
+        }
+        up = clif_view_up(ch, e->entry, t, e->view, ls, la, up);
+    }
+}

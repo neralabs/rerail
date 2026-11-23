@@ -13,7 +13,7 @@ fn tape(source: &str) -> AstGrep<TapeDoc> {
     let grammar = TapeGrammar::new(GrammarDialect::Python).unwrap();
     let parsed = StrDoc::new(source, GrammarDialect::Python);
     let image = TapeImage::encode(parsed.tree.root_node(), &grammar, source, &|| false).unwrap();
-    AstGrep::doc(TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap())
+    AstGrep::doc(TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap())
 }
 
 type Arg = (u32, u32, u32, Option<String>, u32, u32);

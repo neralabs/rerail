@@ -12,6 +12,9 @@ pub mod home;
 pub mod newlines;
 /// The tape's reads in Rust, written directly (decision 0534): this crate's readers'.
 pub mod reads;
+/// The views' reads in Rust, written directly (decision 0353 step 3 on the CPU): the host executor's reads of a
+/// document's views' rows, through its entry in its batch's views' directory.
+pub mod view_reads;
 /// The tape's writer in Rust, written directly (decision 0532): the host's, and a generated tier 2's `ops` module.
 pub mod writer16;
 

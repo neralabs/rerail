@@ -146,16 +146,17 @@ impl Room for HeapRoom {
 }
 
 /// The run's room, as the blocks crate gives it (`install_default_room`): registered once, at load.
-static DEFAULT_ROOM: std::sync::OnceLock<fn() -> Arc<dyn Room>> = std::sync::OnceLock::new();
+static DEFAULT_ROOM: rerail_registry::Slot<fn() -> Arc<dyn Room>> = rerail_registry::Slot::new("the run's room every structure made with no room takes (rerail_vector::DEFAULT_ROOM)");
 
-/// Installs the run's room: what a structure made with no room (`Vector::new`) takes its regions from.
-pub fn install_default_room(room: fn() -> Arc<dyn Room>) {
-    let _ = DEFAULT_ROOM.set(room);
+/// Installs the run's room: what a structure made with no room (`Vector::new`) takes its regions from. Once, at load
+/// (a second registration is a bug in the program's composition: `rerail_registry::Slot`).
+pub fn install_default_room(provider: &'static str, room: fn() -> Arc<dyn Room>) {
+    DEFAULT_ROOM.register(provider, room);
 }
 
 /// The room of the run under way (the blocks', once installed), else the heap's.
 pub fn default_room() -> Arc<dyn Room> {
-    match DEFAULT_ROOM.get() {
+    match DEFAULT_ROOM.try_get() {
         Some(room) => room(),
         None => Arc::new(HeapRoom),
     }

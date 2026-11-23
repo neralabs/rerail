@@ -65,7 +65,7 @@ pub mod code_rule_dsl {
                 pub use super::setfix::{DeviceReport, device_report};
                 pub use super::setfix::probed;
                 pub use super::setfix::{CutReport, TrialRun, symbol_id, cut_counts, cut_step, keep_trial_rows, set_budgets, take_cut, thread_cpu, trial, trial_ids, trial_over, trial_own};
-                pub use super::setfix::{InRel, Live, Ver, LIVE_BATCH, RelMark, add, cat_symbols, prime, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, held_rows, each_held_batch, hold_as, hold_maintained, hold_empty, hold_source, hold_view_in_place, held_source, hold_bound, is_dead, live, give_versions, take_versions, materialize, open_spec, pending, defer, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, maint_step_counts, driver_step_counts, step_cpu, step_histograms, unindex, hold_rows, kept_source, live_changed, table_source, tables_built, output_rows, source_rows, finding_rows, key_breaks};
+                pub use super::setfix::{InRel, Live, Ver, LIVE_BATCH, RelMark, add, cat_symbols, prime, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, held_rows, each_held_batch, hold_as, hold_maintained, hold_empty, hold_source, hold_view_in_place, held_source, hold_bound, is_dead, live, give_versions, take_versions, materialize, open_spec, pending, defer, retain_with, Asked, kept_rel, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, maint_step_counts, driver_step_counts, step_cpu, step_histograms, unindex, hold_rows, kept_source, live_changed, table_source, tables_built, output_rows, source_rows, finding_rows, key_breaks};
             }
         }
     }
@@ -90,3 +90,9 @@ mod test_load {
     #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
     static LOAD: extern "C" fn() = load;
 }
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

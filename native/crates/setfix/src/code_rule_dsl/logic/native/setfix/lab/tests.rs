@@ -113,8 +113,8 @@ use rerail_blocks::vector::Vector;
                         device.strata_cpu += cpu;
                         device.strata_gpu += r.gpu_seconds * 1e3;
                         device.strata_submissions += r.submissions as usize;
-                        println!("    device: {} ({cpu:.1} ms process CPU, GPU {:.2} ms, {} submissions, {} rules, {} stages, uploads {}, read in place {})",
-                            if ok { "same" } else { "DIFF" }, r.gpu_seconds * 1e3, r.submissions, r.rules, r.stages, r.uploads, r.in_place);
+                        println!("    device: {} ({cpu:.1} ms process CPU, GPU {:.2} ms, {} submissions, {} rules, {} stages, read in place {})",
+                            if ok { "same" } else { "DIFF" }, r.gpu_seconds * 1e3, r.submissions, r.rules, r.stages, r.in_place);
                     }
                     Some(r) => {
                         device.strata_refused += 1;
@@ -178,7 +178,7 @@ use rerail_blocks::vector::Vector;
     struct Device { strata: usize, strata_same: usize, strata_refused: usize, strata_cpu: f64, strata_cpu_host: f64, strata_gpu: f64, strata_submissions: usize, probe: Probe, sort_cpu: f64, sort_same: usize, joins: usize, joins_same: usize, pairs: usize, tile_pairs: usize, compared: u64, join_cpu: f64, join_gpu: f64, tile_host: f64, cases: usize, same: usize, unsupported: usize, rows: usize, passed: usize, cpu: f64, gpu: f64, bytes: usize, wide: usize, forms: [usize; 3] }
 
     /// The device's sort and probe joins: joins run and right, sorts and the joins that found theirs resident, GPU and
-    /// host CPU (the uploads, the sorts' and probes' encoding and the pairs' read), and the keys' bytes.
+    /// host CPU (the sorts' and probes' encoding and the pairs' read), and the keys' bytes.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[derive(Default)]
     struct Probe { upload: f64, submissions: usize, joins: usize, same: usize, off: usize, sorts: usize, resident: usize, sort_gpu: f64, probe_gpu: f64, host: f64, right_host: f64, bytes: usize, wide: usize }

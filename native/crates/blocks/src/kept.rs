@@ -565,27 +565,15 @@ impl KeptW {
         })
     }
 
-    /// `n` rows of `a` columns written by `fill` straight into the calling thread's scratch (column-major, and each
-    /// row's level where `levels`), then prepared and packed as `put_cols` does: a relation's rows read where they lie
-    /// in its block, never staged on the heap.
-    pub fn put_filled<E: From<io::Error>>(&mut self, meta: Meta, n: usize, a: usize, levels: bool, given: crate::packed::Order, fill: impl FnOnce(&mut [i64], Option<&mut [u32]>) -> Result<(), E>) -> Result<Put, E> {
+    /// `rows`, read where they lie (decision 0353 step 8), packed as `put_cols` packs columns: nothing is read into
+    /// columns first.
+    pub fn put_rows(&mut self, meta: Meta, rows: &dyn crate::packed::RowsIn, levels: Option<&[u32]>, given: crate::packed::Order) -> io::Result<Put> {
+        let a = rows.arity();
         let order = (0..a.min(MAX_ORDER) as u16).collect();
         let spec = crate::relation::Spec { widths: vec![8; a], order, indexes: Vec::new(), min_log: 0 };
         crate::scratch::with(|s| {
-            let raw: &mut [i64] = s.take(n * a);
-            let lv: Option<&mut [u32]> = levels.then(|| s.take(n));
-            let lv = match lv {
-                Some(l) => {
-                    fill(raw, Some(&mut *l))?;
-                    Some(&*l)
-                }
-                None => {
-                    fill(raw, None)?;
-                    None
-                }
-            };
-            let prepared = crate::packed::prepare(s, raw, n, a, &spec, lv, given);
-            Ok(self.put(meta, &prepared)?)
+            let prepared = crate::packed::prepare_rows(s, rows, &spec, levels, given);
+            self.put(meta, &prepared)
         })
     }
 
@@ -728,7 +716,7 @@ mod tests {
     fn dir(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("rerail-kept-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
+        crate::mapped::make_folder(&d).unwrap();
         d
     }
 

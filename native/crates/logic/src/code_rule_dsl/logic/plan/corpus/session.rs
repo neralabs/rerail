@@ -63,7 +63,7 @@ pub struct Handle {
 impl Handle {
     /// A new session, its store in `dir`.
     pub fn open(dir: &Path) -> std::result::Result<Handle, String> {
-        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        crate::content_store::prepare_cache_directory(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = dir.join("session.sqlite");
         let store = ContentStore::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

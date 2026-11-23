@@ -255,6 +255,7 @@ pub fn install_languages(tests: bool) {
     facts::rows::install_heap_peak(heap_peak, heap_peak_reset);
     // `core.rerail`'s names, as the rule language reads them.
     facts::core::install_core_names(logic::rr::core_shape);
+    facts::core::install_core_node_columns(logic::rr::core_node_columns);
     // What the evaluator keeps per connection, dropped with it.
     facts::vtab::install_forget(facts::vtab::Forget { scope: logic::native::forget_scope, engine: logic::native::forget_engine });
     // core.rerail's functors whose meaning is W's or a language's.

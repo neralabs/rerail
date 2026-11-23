@@ -14,7 +14,8 @@
 use super::atoms::stored::{clone_file, new_tag, private_dir, sync_dir};
 use super::{StoreError, StoreResult};
 use rerail_blocks::kept::{FactKey, KeptChain, KeptFacts, KeptRead, KeptW, Meta, Newest};
-use rerail_blocks::relation::View;
+use rerail_blocks::packed::RowsIn;
+use rerail_blocks::relation::{Relation, View};
 use rusqlite::Connection;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -147,16 +148,13 @@ pub fn record_idents<'a>(record: &'a rerail_blocks::kept::Kept<'_>) -> impl Iter
     })
 }
 
-/// The identities a reader record's put names (`readers_put`): its rows, column-major as a picked put fills them.
+/// The identities a reader record's put names (`readers_put`): its rows, read where they lie.
 fn put_idents(p: &KeptPut) -> Vec<[u8; 32]> {
     let KeptWhat::Picked(rows) = &p.what else { return Vec::new() };
-    let n = rows.rows();
-    let mut cols = vec![0i64; n * 4];
-    rows.fill(&mut cols, None);
-    (0..n).map(|r| {
+    (0..rows.n()).map(|r| {
         let mut id = [0u8; 32];
         for (c, w) in id.as_chunks_mut::<8>().0.iter_mut().enumerate() {
-            *w = cols[c * n + r].to_le_bytes();
+            *w = rows.get(r, c).to_le_bytes();
         }
         id
     })
@@ -379,64 +377,121 @@ fn link_staged(t: &Connection, f: &StagedFile) -> StoreResult<()> {
     Ok(())
 }
 
-/// Writes `p`'s rows (`KeptWhat::Rows` or `Flat`) into `w`: a relation's live rows (neither its own dead nor the
-/// run's) read where they lie in its block, or a granule's flat rows, each column filled straight into the packer's
-/// scratch (`KeptW::put_filled`); atom columns (`types` `s`) mapped there through `map` (a forked process's ids to the
-/// store's). Nothing is staged on the heap: copied into vectors first, every kept relation was a second copy of its
-/// block on the writer (blocks are never copied, decision 0353).
-fn put_rows(w: &mut KeptW, meta: Meta, p: &KeptPut, map: Option<MapIds>) -> StoreResult<()> {
-    let given = if matches!(&p.what, KeptWhat::Picked(k) if k.given()) { rerail_blocks::packed::Order::AsGiven } else { rerail_blocks::packed::Order::Canonical };
-    let types = &p.types;
-    let mapped = |raw: &mut [i64], n: usize, a: usize| -> StoreResult<()> {
-        if let Some(map) = map {
-            for (c, _) in types.iter().enumerate().filter(|(_, t)| **t == b's').take_while(|(c, _)| *c < a) {
-                map(&mut raw[c * n..(c + 1) * n])?;
-            }
+/// A put's rows read where they lie, for the packer (decision 0353 step 8: nothing is read into columns or a
+/// scratch first): a relation's live rows (neither its own dead nor the run's), down its chain for a continuation; or
+/// the rows a picked put reads where they lie (`KeptPicked`).
+enum PutRows<'a> {
+    Rel { rel: &'a Relation, ids: Option<Vec<u32>>, n: usize },
+    Picked(&'a dyn KeptPicked),
+}
+
+impl RowsIn for PutRows<'_> {
+    fn n(&self) -> usize {
+        match self {
+            PutRows::Rel { n, .. } => *n,
+            PutRows::Picked(r) => r.n(),
         }
-        Ok(())
-    };
-    match &p.what {
+    }
+    fn arity(&self) -> usize {
+        match self {
+            PutRows::Rel { rel, .. } => rel.arity as usize,
+            PutRows::Picked(r) => r.arity(),
+        }
+    }
+    #[inline]
+    fn get(&self, r: usize, c: usize) -> i64 {
+        match self {
+            PutRows::Rel { rel, ids, .. } => {
+                let id = ids.as_ref().map_or(r as u32, |ids| ids[r]);
+                // A continuation (decision 0384 steps 7 and 8) is kept with every row it reads, its base's first.
+                if rel.continues() { rel.get(id, c) } else { rel.rows.get(id, c) }
+            }
+            PutRows::Picked(rows) => rows.get(r, c),
+        }
+    }
+}
+
+/// `rows` with each atom column's ids mapped (a forked process's to the store's, `map`): each column's distinct ids
+/// mapped once, a value then read through its column's table.
+struct Mapped<'a> {
+    rows: &'a dyn RowsIn,
+    tables: Vec<Option<HashMap<i64, i64>>>,
+}
+
+impl RowsIn for Mapped<'_> {
+    fn n(&self) -> usize {
+        self.rows.n()
+    }
+    fn arity(&self) -> usize {
+        self.rows.arity()
+    }
+    #[inline]
+    fn get(&self, r: usize, c: usize) -> i64 {
+        let v = self.rows.get(r, c);
+        match &self.tables[c] {
+            Some(t) => t[&v],
+            None => v,
+        }
+    }
+}
+
+impl<'a> Mapped<'a> {
+    fn of(rows: &'a dyn RowsIn, types: &[u8], map: MapIds) -> StoreResult<Mapped<'a>> {
+        let mut tables = Vec::with_capacity(rows.arity());
+        for c in 0..rows.arity() {
+            if types.get(c) != Some(&b's') {
+                tables.push(None);
+                continue;
+            }
+            let mut ids: Vec<i64> = (0..rows.n()).map(|r| rows.get(r, c)).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+            let from = ids.clone();
+            map(&mut ids)?;
+            tables.push(Some(from.into_iter().zip(ids).collect()));
+        }
+        Ok(Mapped { rows, tables })
+    }
+}
+
+/// A put's rows (`PutRows`) and their levels.
+fn rows_of<'a>(what: &'a KeptWhat) -> (PutRows<'a>, Option<std::borrow::Cow<'a, [u32]>>) {
+    use std::borrow::Cow;
+    match what {
         KeptWhat::Rows(r) => {
             let rel = r.relation();
-            // A continuation (decision 0384 steps 7 and 8) is kept with every row it reads, its base's first: its
-            // ids run down the chain, its base's dead bits read through its view (as `packed::pack_open` reads it).
-            let (total, a) = (rel.len_all() as usize, rel.arity as usize);
+            let total = rel.len_all() as usize;
             let view = if rel.continues() { View { base: rel.base(), top: rel } } else { View::full(rel) };
             let dead = r.dead();
             let live = |id: usize| view.live(id as u32) && dead.get(id / 64).is_none_or(|w| w >> (id % 64) & 1 == 0);
-            let all_live = (0..total).all(live);
-            let n = if all_live { total } else { (0..total).filter(|&id| live(id)).count() };
             let levels = r.levels();
             let levels = (levels.len() == total && total > 0).then_some(levels);
-            w.put_filled(meta, n, a, levels.is_some(), given, |raw, lv| {
-                for c in 0..a {
-                    let col = &mut raw[c * n..(c + 1) * n];
-                    if all_live && !rel.continues() {
-                        rel.rows.read_col(c, total as u32, col);
-                    } else {
-                        for (o, id) in col.iter_mut().zip((0..total).filter(|&id| live(id))) {
-                            *o = rel.get(id as u32, c);
-                        }
-                    }
-                }
-                if let (Some(out), Some(l)) = (lv, levels) {
-                    for (o, id) in out.iter_mut().zip((0..total).filter(|&id| live(id))) {
-                        *o = l[id];
-                    }
-                }
-                mapped(raw, n, a)
-            })?;
+            if (0..total).all(live) {
+                (PutRows::Rel { rel, ids: None, n: total }, levels.map(Cow::Borrowed))
+            } else {
+                let ids: Vec<u32> = (0..total).filter(|&id| live(id)).map(|id| id as u32).collect();
+                let lv = levels.map(|l| Cow::Owned(ids.iter().map(|&id| l[id as usize]).collect()));
+                (PutRows::Rel { rel, n: ids.len(), ids: Some(ids) }, lv)
+            }
         }
-        KeptWhat::Picked(picked) => {
-            let (n, a) = (picked.rows(), picked.width());
-            w.put_filled(meta, n, a, picked.has_levels() && n > 0, given, |raw, lv| {
-                picked.fill(raw, lv);
-                mapped(raw, n, a)
-            })?;
+        KeptWhat::Picked(rows) => {
+            let n = rows.n();
+            (PutRows::Picked(rows.as_ref()), rows.levels().filter(|l| l.len() == n && n > 0))
         }
         KeptWhat::Reads | KeptWhat::Gone => unreachable!("a put with rows"),
         KeptWhat::Documents { .. } => unreachable!("a documents' table is resolved first (`write_space`)"),
     }
+}
+
+/// Writes `p`'s rows (`KeptWhat::Rows` or `Picked`) into `w`, the packer reading them where they lie (`PutRows`): a
+/// relation's live rows in its block, a picked put's in its source or block; atom columns (`types` `s`) mapped as they
+/// are read through `map` (a forked process's ids to the store's, `Mapped`). Nothing is gathered into columns or the
+/// writer's scratch first: that was a second copy of every kept row, at eight bytes a value (blocks are never copied,
+/// decision 0353).
+fn put_rows(w: &mut KeptW, meta: Meta, p: &KeptPut, map: Option<MapIds>) -> StoreResult<()> {
+    let given = if matches!(&p.what, KeptWhat::Picked(k) if k.given()) { rerail_blocks::packed::Order::AsGiven } else { rerail_blocks::packed::Order::Canonical };
+    let (rows, levels) = rows_of(&p.what);
+    let mapped = map.map(|m| Mapped::of(&rows, &p.types, m)).transpose()?;
+    let rows: &dyn RowsIn = match &mapped { Some(m) => m, None => &rows };
+    w.put_rows(meta, rows, levels.as_deref(), given).map_err(StoreError::Io)?;
     Ok(())
 }
 
@@ -447,7 +502,7 @@ fn room_of(what: &KeptWhat) -> usize {
             let rel = r.relation();
             (rel.len_all() as usize) * (rel.arity as usize * 8 + 8) + (rel.arity as usize + 2) * 256
         }
-        KeptWhat::Picked(p) => p.rows() * p.width() * 8 + (p.width() + 2) * 256,
+        KeptWhat::Picked(p) => p.n() * p.arity() * 8 + (p.arity() + 2) * 256,
         KeptWhat::Documents { rows, .. } => rows.len() * super::PLACED_WORDS * 8 + (super::PLACED_WORDS + 2) * 256,
         KeptWhat::Reads | KeptWhat::Gone => 0,
     }
@@ -462,7 +517,7 @@ const MERGE_FLOOR: usize = 1 << 16;
 fn expected_bytes(what: &KeptWhat) -> usize {
     match what {
         KeptWhat::Rows(r) => r.relation().len_all() as usize * r.relation().arity as usize * 3,
-        KeptWhat::Picked(p) => p.rows() * p.width() * 3,
+        KeptWhat::Picked(p) => p.n() * p.arity() * 3,
         KeptWhat::Documents { rows, .. } => rows.len() * super::PLACED_WORDS * 3,
         KeptWhat::Reads | KeptWhat::Gone => 0,
     }

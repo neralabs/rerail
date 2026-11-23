@@ -195,7 +195,7 @@ impl KeptStrata for Kept<'_> {
         self.strata = Some((evaluated, of));
     }
 
-    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Box<dyn crate::content_store::kept_facts::KeptPicked>, usize, Vec<(String, u64)>)>) {
+    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, crate::code_rule_dsl::logic::plan::RanRows, usize, Vec<(String, u64)>)>) {
         let Some(frame) = self.rels.get(rel).cloned() else { return };
         match got {
             Some((digest, types, rows, n, reads)) => {
@@ -203,9 +203,13 @@ impl KeptStrata for Kept<'_> {
                     return;
                 }
                 let types = self.types.get(rel).filter(|t| t.len() == types.len()).cloned().unwrap_or(types);
-                self.values += n * rows.width();
+                self.values += n * types.len();
                 self.written_rows += n;
-                self.puts.push(flat_put(&frame, digest, reads, types, rows));
+                self.puts.push(match rows {
+                    crate::code_rule_dsl::logic::plan::RanRows::Picked(rows) => flat_put(&frame, digest, reads, types, rows),
+                    // The engine's relation, lent where its rows lie (decision 0353 step 8).
+                    crate::code_rule_dsl::logic::plan::RanRows::Held(held) => super::retain::kept_put(&frame, digest, reads, types, &held),
+                });
                 if self.values >= FLUSH_VALUES {
                     self.flush();
                 }
@@ -402,9 +406,9 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         let w = source.columns().len();
         // Its symbols typed, so the writer maps them; an input of no declared width is not kept.
         let Some(types) = part.types.get(rel).filter(|t| t.len() == w).cloned() else { continue };
-        // Its rows read where they lie by the writer (`SourceRows`), never gathered for it.
+        // Its rows read where they lie by the writer as it packs them (`SourceRows`, decision 0353 step 8).
         written += source.len();
-        puts.push(flat_put(f, digest, Vec::new(), types, Box::new(super::retain::SourceRows { source: Arc::clone(source) })));
+        puts.push(flat_put(f, digest, Vec::new(), types, Box::new(super::retain::SourceRows::new(Arc::clone(source)))));
     }
     for (rel, width, held) in rels {
         let Some((f, was)) = part.frames.get(rel) else { continue };

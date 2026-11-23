@@ -34,7 +34,7 @@
             let image = TapeImage::parse(&grammar, source, &|| false)
                 .expect("parses")
                 .expect("encodes");
-            let doc = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
+            let doc = TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false)
                 .expect("restores");
             let dialects = doc
                 .guests()

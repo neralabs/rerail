@@ -200,6 +200,8 @@ fn the_file_holds_each_image_as_a_frozen_block() {
     assert_eq!(first.length + second.length, file.len(), "two blocks, nothing else");
     assert_eq!(shown(&dir, "n").unwrap(), [["5"]]);
     let refused = |bytes: &[u8]| {
+        // The file is written read-only (decision 0574): replaced, as a write replaces it whole.
+        let _ = std::fs::remove_file(dir.join(FILE));
         std::fs::write(dir.join(FILE), bytes).unwrap();
         read(&dir).is_err()
     };

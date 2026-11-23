@@ -186,6 +186,9 @@ pub struct Started {
 /// still running is waited for by whoever reads its runs). The space is not held after: the lane's next batch may
 /// read what this one keeps.
 pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started, String> {
+    // An evaluation of the launch budget (decision 0601), or the caller's when it is in one, as `run`'s: a lane starts
+    // a submission on its pool's thread, outside any other.
+    let _evaluation = super::launch::LaunchScope::enter();
     let mut space = space.lock().map_err(|_| "the gpu lane's space was poisoned")?;
     // Each submission on the other scratch set from the one before: at most two are in flight.
     let set = super::join::scratch_set(0) ^ 1;
@@ -306,6 +309,8 @@ pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started,
 impl Started {
     /// [`run`]'s second half: waits for the first submission, runs the second when needed, and reads the pairs.
     pub fn finish(self) -> Result<Vec<Output>, String> {
+        // Its second pass's launches: an evaluation of the budget, or the caller's (`start`'s is on another thread).
+        let _evaluation = super::launch::LaunchScope::enter();
         let before = super::join::scratch_set(self.set);
         let r = self.finish_on_set();
         super::join::scratch_set(before);

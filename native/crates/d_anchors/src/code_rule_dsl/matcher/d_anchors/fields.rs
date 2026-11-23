@@ -3,7 +3,7 @@ use super::*;
 
 impl<'tree, D> FileAnchorIndex<'tree, D>
 where
-    D: Doc<Source = String, Lang = GrammarDialect>,
+    D: Doc<Lang = GrammarDialect, Source: std::ops::Deref<Target = str>>,
     D::Node<'tree>: AnchorNode<'tree>,
 {
     pub(super) fn field_selection<'index>(

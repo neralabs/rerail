@@ -39,6 +39,9 @@ const COL_CHUNK: i32 = offset_of!(ColDir, chunk) as i32;
 const COL_SIZE: i64 = size_of::<ColDir>() as i64;
 const REL_BASE_ROWS: i32 = offset_of!(Relation, base_rows) as i32;
 const REL_BASE_OFF: i32 = offset_of!(Relation, base_off) as i32;
+const REL_FLAGS: i32 = offset_of!(Relation, flags) as i32;
+const REL_JUMP_OFF: i32 = offset_of!(Relation, jump_off) as i32;
+const REL_JUMP_ROWS: i32 = offset_of!(Relation, jump_rows) as i32;
 const REL_ROWS: i64 = offset_of!(Relation, rows) as i64;
 const REL_DEAD: i32 = offset_of!(Relation, dead) as i32;
 const REL_INDEXES: i32 = offset_of!(Relation, indexes) as i32;
@@ -266,9 +269,13 @@ pub fn rows_get(b: &mut B<'_, '_>) -> Value {
 /// `rel_get(rel, id, c)`: row `id` in column `c`: the relation's own row (counted from its `base_rows`), or, for a
 /// continuation (decision 0384 step 7: `base_off` set), an id below `base_rows` its base's row, the base's descriptor
 /// `base_off` bytes from its own in the same block. A base may continue another (a fork of a fork, step 8): the read
-/// walks the chain until the relation whose own rows hold `id` (a chain's length is bounded: `rows::MAX_SEGMENTS`).
+/// walks the chain until the relation whose own rows hold `id`, taking a descriptor's jump (`jump_off`, an ancestor
+/// in the same block) when `id` lies at or past it: O(log n) steps down a chain of `n`.
+/// A base in another block (`FAR_BASE`, decision 0353 step 6: a kept relation, this run's rows continuing it) is
+/// `base_off` bytes from that block's start, `far` (as the descriptor is: the host's address, or a kernel's offset
+/// from its bound block to the far one's, made from its two bindings); a read past it goes on down its chain there.
 pub fn rel_get(b: &mut B<'_, '_>) -> Value {
-    let (id, c) = (b.arg(0), b.arg(1));
+    let (id, c, far) = (b.arg(0), b.arg(1), b.arg(2));
     let off = b.word_at(I64, b.tape, REL_BASE_OFF);
     let continues = b.f.ins().icmp_imm(IntCC::NotEqual, off, 0);
     // A relation that continues none (nearly every one): its own row, one load and one branch more than before.
@@ -291,8 +298,19 @@ pub fn rel_get(b: &mut B<'_, '_>) -> Value {
             let in_base = b.f.ins().band(below, more);
             b.f.ins().brif(in_base, step, &[], done, &[rel.into(), base_rows.into()]);
             b.f.switch_to_block(step);
-            let base = b.f.ins().iadd(rel, off);
-            b.f.ins().jump(head, &[base.into()]);
+            let flags = b.word_at(I32, rel, REL_FLAGS);
+            let is_far = b.f.ins().band_imm(flags, i64::from(rerail_blocks::relation::FAR_BASE));
+            let from = b.f.ins().select(is_far, far, rel);
+            let base = b.f.ins().iadd(from, off);
+            // Its jump, when `id` lies at or past it.
+            let jump = b.word_at(I64, rel, REL_JUMP_OFF);
+            let jump_rows = b.word_at(I32, rel, REL_JUMP_ROWS);
+            let has = b.f.ins().icmp_imm(IntCC::NotEqual, jump, 0);
+            let past = b.f.ins().icmp(IntCC::UnsignedLessThan, id, jump_rows);
+            let take = b.f.ins().band(has, past);
+            let jumped = b.f.ins().iadd(rel, jump);
+            let next = b.f.ins().select(take, jumped, base);
+            b.f.ins().jump(head, &[next.into()]);
             b.f.switch_to_block(done);
             let (rel, base_rows) = (b.f.block_params(done)[0], b.f.block_params(done)[1]);
             let i = b.f.ins().isub(id, base_rows);
@@ -484,15 +502,16 @@ mod tests {
     fn the_jits_relation_reads_are_the_hosts() {
         let reads = crate::jit::Reads::new();
         type Two = extern "C" fn(*const u8, u32, u32) -> u64;
+        type Three = extern "C" fn(*const u8, u32, u32, u64) -> u64;
         type One = extern "C" fn(*const u8, u32) -> u32;
         type Group = extern "C" fn(*const u8, u32, u64) -> u64;
         // SAFETY: each read's signature: its descriptor's address, then its parameters.
-        let (rows_get, col_get, rel_get): (Two, Two, Two) =
+        let (rows_get, col_get, rel_get): (Two, Two, Three) =
             unsafe {
                 (
                     std::mem::transmute::<*const u8, Two>(reads.function("rows_get")),
                     std::mem::transmute::<*const u8, Two>(reads.function("col_get")),
-                    std::mem::transmute::<*const u8, Two>(reads.function("rel_get")),
+                    std::mem::transmute::<*const u8, Three>(reads.function("rel_get")),
                 )
             };
         let rel_dead: One = unsafe { std::mem::transmute(reads.function("rel_dead")) };
@@ -531,7 +550,7 @@ mod tests {
                     assert_eq!(rows_get(rows, i, c) as i64, want, "rows_get row {i} column {c}");
                     let dir = std::ptr::from_ref(cols[c as usize]).cast::<u8>();
                     assert_eq!(col_get(dir, rel.rows.min_log, i) as i64, want, "col_get row {i} column {c}");
-                    assert_eq!(rel_get(desc, id, c) as i64, want, "rel_get row {id} column {c}");
+                    assert_eq!(rel_get(desc, id, c, 0) as i64, want, "rel_get row {id} column {c}");
                 }
                 assert_eq!(rel_dead(desc, i) != 0, rel.dead_bit(i), "rel_dead row {i}");
                 let key = rel.own(id, 1);
@@ -545,6 +564,52 @@ mod tests {
         }
     }
 
+    /// A chain of 500 forks of forks (decision 0353 step 6: never compacted) reads every id in the JIT as on the host,
+    /// down its jumps: from the newest, any id is reached in O(log n) steps, not n.
+    #[test]
+    fn a_deep_chain_of_forks_reads_down_its_jumps() {
+        let reads = crate::jit::Reads::new();
+        type Three = extern "C" fn(*const u8, u32, u32, u64) -> u64;
+        // SAFETY: the read's signature: its descriptor's address, then its parameters.
+        let rel_get: Three = unsafe { std::mem::transmute::<*const u8, Three>(reads.function("rel_get")) };
+        let spec = Spec { widths: vec![8], order: Vec::new(), indexes: Vec::new(), min_log: 4 };
+        let block = Block::anon(kind::FACTS, 64 << 20);
+        let put = |r: &Relation, v: i64| {
+            assert!(r.rows.try_reserve(&block, u64::from(r.rows.len() + 1)));
+            let at = r.rows.len();
+            unsafe {
+                r.rows.claim_reserved(1);
+                r.rows.put(at, 0, v);
+            }
+        };
+        let mut rel = Relation::create(&block, &spec, None);
+        put(rel, 0);
+        let levels = 500u32;
+        for l in 1..=levels {
+            rel = Relation::try_continue(&block, &spec, rel, l).expect("room");
+            put(rel, i64::from(l));
+        }
+        assert_eq!(rel.len_all(), levels + 1);
+        // The steps a read takes: its jump when the id lies at or past it, else its base.
+        let steps = |id: u32| {
+            let (mut r, mut n) = (rel, 0);
+            while id < r.base_rows && r.base_off.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+                let jump = r.jump_off.load(std::sync::atomic::Ordering::Relaxed);
+                let off = if jump != 0 && id < r.jump_rows { jump } else { r.base_off.load(std::sync::atomic::Ordering::Relaxed) };
+                r = unsafe { &*std::ptr::from_ref(r).cast::<u8>().offset(off as isize).cast::<Relation>() };
+                n += 1;
+            }
+            n
+        };
+        let desc = std::ptr::from_ref(rel).cast::<u8>();
+        for id in 0..=levels {
+            assert_eq!(rel.get(id, 0), i64::from(id), "the host's row {id}");
+            assert_eq!(rel_get(desc, id, 0, 0) as i64, i64::from(id), "the JIT's row {id}");
+        }
+        let most = (0..=levels).map(steps).max().unwrap();
+        assert!(most <= 3 * (32 - levels.leading_zeros()), "{most} steps at most down a chain of {levels}");
+    }
+
     /// A column under key runs (an axis's node ids: each document's key over its nodes' low bits, `rows::ColDir`'s
     /// `runs`) reads in the JIT as on the host: each row's value through its rows, a column resolved once and the
     /// relation, beside an uncoded 4-byte column and an 8-byte one, with the run table before the relation and after.
@@ -552,12 +617,13 @@ mod tests {
     fn the_jits_key_run_reads_are_the_hosts() {
         let reads = crate::jit::Reads::new();
         type Two = extern "C" fn(*const u8, u32, u32) -> u64;
+        type Three = extern "C" fn(*const u8, u32, u32, u64) -> u64;
         // SAFETY: each read's signature: its descriptor's address, then its parameters.
-        let (rows_get, col_get, rel_get): (Two, Two, Two) = unsafe {
+        let (rows_get, col_get, rel_get): (Two, Two, Three) = unsafe {
             (
                 std::mem::transmute::<*const u8, Two>(reads.function("rows_get")),
                 std::mem::transmute::<*const u8, Two>(reads.function("col_get")),
-                std::mem::transmute::<*const u8, Two>(reads.function("rel_get")),
+                std::mem::transmute::<*const u8, Three>(reads.function("rel_get")),
             )
         };
         let spec = Spec { widths: vec![4, 4, 4, 8], order: vec![], indexes: vec![], min_log: 4 };
@@ -598,7 +664,7 @@ mod tests {
                 assert_eq!(rows_get(rows, i, c) as i64, w, "rows_get row {i} column {c}");
                 let dir = std::ptr::from_ref(rel.rows.col(c as usize)).cast::<u8>();
                 assert_eq!(col_get(dir, rel.rows.min_log, i) as i64, w, "col_get row {i} column {c}");
-                assert_eq!(rel_get(desc, i, c) as i64, w, "rel_get row {i} column {c}");
+                assert_eq!(rel_get(desc, i, c, 0) as i64, w, "rel_get row {i} column {c}");
             }
         }
     }

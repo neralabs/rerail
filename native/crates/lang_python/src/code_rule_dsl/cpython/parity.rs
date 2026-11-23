@@ -296,7 +296,7 @@ fn string_annotation_parity() {
                     .zip(&texts)
                     .map(|((_, shown), s)| {
                         let s = s.as_ref()?;
-                        let file = crate::code_rule_dsl::model::FileInput::new(shown.clone(), "python".to_owned(), std::sync::Arc::new(s.clone()), None, None, "core").ok()?;
+                        let file = crate::code_rule_dsl::model::FileInput::new(shown.clone(), "python".to_owned(), std::sync::Arc::new(s.clone().into()), None, None, "core").ok()?;
                         let (_, tape) = crate::code_rule_dsl::facts::core::build_with_tape(&file, true).ok()?;
                         let tape = tape?;
                         let found = string_annotations(&tape).ok()?;

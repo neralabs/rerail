@@ -41,6 +41,9 @@ mod test_watchdog;
 #[cfg(test)]
 #[path = "../../../src/test_flush.rs"]
 mod test_flush;
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;
 pub use code_rule_dsl::prof::{lower_hex, purge_allocator_pages};
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {

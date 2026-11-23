@@ -851,7 +851,7 @@ impl RelStats {
             let k = self.cols.kept.as_ref().expect("columns made or kept");
             crate::code_rule_dsl::prof::count("statkeep.kept_decoded", 1);
             let mut at = k.at;
-            let mut cols = Self::columns_of(&k.bytes, &mut at, k.format, self.columns.len()).unwrap_or_else(|| vec![Column::default(); self.columns.len()]);
+            let mut cols = Self::columns_of(&|i| k.bytes[i], k.bytes.len(), &mut at, k.format, self.columns.len()).unwrap_or_else(|| vec![Column::default(); self.columns.len()]);
             for (c, pairs) in &k.exact {
                 if let Some(col) = cols.get_mut(*c) {
                     col.exact = Some(pairs.iter().copied().collect());
@@ -958,10 +958,16 @@ impl RelStats {
 
     /// `encode`'s statistics back from `bytes` at `*at`, which moves past them; `None` if they are not.
     pub fn decode(bytes: &[u8], at: &mut usize) -> Option<RelStats> {
+        RelStats::decode_at(&|i| bytes[i], bytes.len(), at)
+    }
+
+    /// `decode` of a blob of `n` bytes, each read by position where it lies (`byte`): a blob in a kept entry's words
+    /// is not read into bytes first (decision 0353 step 8).
+    pub fn decode_at(byte: &dyn Fn(usize) -> u8, n: usize, at: &mut usize) -> Option<RelStats> {
         // Format 3: format 2's `sqd` held the document-key rows' part, summed by document (not to be patched).
         // Format 4: format 3 with each column's watched values; a format 3 column watches none.
-        let (format, columns, rows, partial) = Self::header(bytes, at)?;
-        let cols = Self::columns_of(bytes, at, format, columns.len())?;
+        let (format, columns, rows, partial) = Self::header(byte, n, at)?;
+        let cols = Self::columns_of(byte, n, at, format, columns.len())?;
         Some(RelStats { columns, rows, partial, cols: Cols::of(cols) })
     }
 
@@ -969,7 +975,7 @@ impl RelStats {
     /// (each column's, `summary`) answering `statistics` until then. `None` if they are not statistics.
     pub fn kept(bytes: std::sync::Arc<[u8]>, summary: Option<Vec<(i64, i64, i64)>>) -> Option<RelStats> {
         let mut at = 0;
-        let (format, columns, rows, partial) = Self::header(&bytes, &mut at)?;
+        let (format, columns, rows, partial) = Self::header(&|i| bytes[i], bytes.len(), &mut at)?;
         let start = at;
         let (has_exact, has_watched) = Self::walk(&bytes, &mut at, format, columns.len())?;
         (at == bytes.len()).then_some(())?;
@@ -977,26 +983,21 @@ impl RelStats {
         Some(RelStats { columns, rows, partial, cols: Cols { decoded: std::sync::OnceLock::new(), kept: Some(kept) } })
     }
 
-    /// `encode`'s first part: its format, columns, rows and whether it is partial.
-    fn header(bytes: &[u8], at: &mut usize) -> Option<(u8, Vec<String>, i64, bool)> {
-        let take = |at: &mut usize, n: usize| -> Option<&[u8]> {
-            let b = bytes.get(*at..*at + n)?;
-            *at += n;
-            Some(b)
-        };
-        let int = |at: &mut usize| -> Option<i64> { Some(i64::from_le_bytes(take(at, 8)?.try_into().ok()?)) };
-        let format = take(at, 1)?[0];
+    /// `encode`'s first part: its format, columns, rows and whether it is partial, from a blob of `n` bytes read by
+    /// position (`byte`).
+    fn header(byte: &dyn Fn(usize) -> u8, n: usize, at: &mut usize) -> Option<(u8, Vec<String>, i64, bool)> {
+        let format = byte(take(n, at, 1)?.start);
         if format != 3 && format != 4 {
             return None;
         }
-        let k = usize::try_from(int(at)?).ok()?;
+        let k = usize::try_from(int(byte, n, at)?).ok()?;
         let mut columns = Vec::with_capacity(k.min(1024));
         for _ in 0..k {
-            let l = usize::try_from(int(at)?).ok()?;
-            columns.push(String::from_utf8(take(at, l)?.to_vec()).ok()?);
+            let l = usize::try_from(int(byte, n, at)?).ok()?;
+            columns.push(String::from_utf8(take(n, at, l)?.map(byte).collect()).ok()?);
         }
-        let rows = int(at)?;
-        let partial = take(at, 1)?[0] != 0;
+        let rows = int(byte, n, at)?;
+        let partial = byte(take(n, at, 1)?.start) != 0;
         Some((format, columns, rows, partial))
     }
 
@@ -1036,20 +1037,16 @@ impl RelStats {
         Some((has_exact, has_watched))
     }
 
-    /// `k` columns of format `format` decoded from `bytes` at `*at`, which moves past them.
-    fn columns_of(bytes: &[u8], at: &mut usize, format: u8, k: usize) -> Option<Vec<Column>> {
-        fn take<'a>(bytes: &'a [u8], at: &mut usize, n: usize) -> Option<&'a [u8]> {
-            let b = bytes.get(*at..*at + n)?;
-            *at += n;
-            Some(b)
-        }
-        let int = |at: &mut usize| -> Option<i64> { Some(i64::from_le_bytes(take(bytes, at, 8)?.try_into().ok()?)) };
+    /// `k` columns of format `format` decoded from a blob of `n` bytes read by position (`byte`) at `*at`, which
+    /// moves past them.
+    fn columns_of(byte: &dyn Fn(usize) -> u8, n: usize, at: &mut usize, format: u8, k: usize) -> Option<Vec<Column>> {
+        let int = |at: &mut usize| int(byte, n, at);
         let exact = |at: &mut usize| -> Option<Option<Exact>> {
             let e = int(at)?;
             if e < 0 {
                 return Some(None);
             }
-            let mut m = Exact::with_room(usize::try_from(e).ok()?.min(bytes.len() / 16));
+            let mut m = Exact::with_room(usize::try_from(e).ok()?.min(n / 16));
             for _ in 0..e {
                 let v = int(at)?;
                 m.insert(v, int(at)?);
@@ -1063,10 +1060,15 @@ impl RelStats {
             let (local_ndv, crossing) = (int(at)?, int(at)?);
             let exact = exact(at)?;
             let l = usize::try_from(int(at)?).ok()?;
-            let sketch = Sketch::decode(take(bytes, at, l)?)?;
+            let r = take(n, at, l)?;
+            let sketch = Sketch::decode_at(byte, r.start, l)?;
             let pairs = match int(at)? {
                 l if l < 0 => None,
-                l => Some(Sketch::decode(take(bytes, at, usize::try_from(l).ok()?)?)?),
+                l => {
+                    let l = usize::try_from(l).ok()?;
+                    let r = take(n, at, l)?;
+                    Some(Sketch::decode_at(byte, r.start, l)?)
+                }
             };
             let mut watched = FxHashMap::default();
             if format == 4 {
@@ -1079,6 +1081,19 @@ impl RelStats {
         }
         Some(cols)
     }
+}
+
+/// The next `k` of a blob's `n` bytes at `*at`, which moves past them: their positions.
+fn take(n: usize, at: &mut usize, k: usize) -> Option<std::ops::Range<usize>> {
+    let end = at.checked_add(k).filter(|&e| e <= n)?;
+    let r = *at..end;
+    *at = end;
+    Some(r)
+}
+
+/// The next little-endian word of a blob of `n` bytes read by position (`byte`) at `*at`, which moves past it.
+fn int(byte: &dyn Fn(usize) -> u8, n: usize, at: &mut usize) -> Option<i64> {
+    Some(take(n, at, 8)?.rev().fold(0u64, |w, i| w << 8 | u64::from(byte(i))) as i64)
 }
 
 #[cfg(test)]

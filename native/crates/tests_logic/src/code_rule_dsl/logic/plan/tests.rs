@@ -4095,6 +4095,29 @@ fn join_counts_price_a_join_of_two_skewed_columns_by_its_rows() {
 /// 233 targets through both `unparen` scans unjoined (69,690 rows each a target), priced at 461 work, and ran past
 /// 100 s on 300 files; probed by `child` first, a target reads a few rows.
 #[test]
+fn a_probe_by_a_cross_products_two_sides_is_not_one_combinations_rows() {
+    // `rr_narrow_tp_list($tp)`'s shape on hogql: the head bound after `tp`, a node of one kind (671) and one of another
+    // (2,437) drawn apart. `child` by both is a pair it seldom holds, not a combination's rows: led from `ty`, the
+    // cross product read 1.68 M rows of work where `child` by `$t` reads 52 K.
+    let p = parse_version(".decl tp(t:number)\n.decl ty(y:number)\n.decl child(p:number,c:number,i:number)\n.input tp, ty, child\n.decl h(t:number)\nh(t) :- tp(t), ty(y), child(t,y,_).\n.output h\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
+    for (rel, rows, ndv) in [("tp", 671.0, vec![671.0]), ("ty", 2_437.0, vec![2_437.0]), ("child", 71_876.0, vec![24_000.0, 71_876.0, 100.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
+        }
+    }
+    let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "h").unwrap();
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
+    let b = body::nth(&p, r);
+    let order: Vec<_> = order.iter().filter_map(|s| b.atom(s.at)).map(|a| b.rel(a)).collect();
+    assert_eq!(order, ["tp", "child", "ty"], "work={work}");
+}
+
+#[test]
 fn a_cross_product_past_a_bound_head_is_not_priced_as_one_witness() {
     let p = parse_version(".decl tgt(t:number)\n.decl child(p:number,c:number,i:number)\n.decl unparen(e:number,t:number)\n.input tgt, child, unparen\n.decl h(t:number)\nh(t) :- tgt(t), child(t,k0,i), child(t,v0,j), unparen(k0,k), unparen(v0,v).\n.output h\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };

@@ -220,7 +220,7 @@ impl ContentStore {
                 let (from, to) = (super::object_segments::object_dir(&self.database_path), super::object_segments::object_dir(path));
                 if let Ok(entries) = std::fs::read_dir(&from) {
                     let io = |e: std::io::Error| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
-                    std::fs::create_dir_all(&to).map_err(io)?;
+                    crate::content_store::prepare_cache_directory(&to).map_err(io)?;
                     for e in entries.flatten() {
                         std::fs::copy(e.path(), to.join(e.file_name())).map_err(io)?;
                     }
@@ -249,7 +249,7 @@ impl ContentStore {
             for space in &spaces {
                 let (from, to) = (super::kept_facts::space_dir(&self.database_path, space), super::kept_facts::space_dir(path, space));
                 if let Ok(entries) = std::fs::read_dir(&from) {
-                    std::fs::create_dir_all(&to).map_err(io)?;
+                    crate::content_store::prepare_cache_directory(&to).map_err(io)?;
                     for e in entries.flatten().filter(|e| !e.file_name().to_string_lossy().ends_with(".new")) {
                         std::fs::copy(e.path(), to.join(e.file_name())).map_err(io)?;
                     }

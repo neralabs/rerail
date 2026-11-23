@@ -45,6 +45,9 @@ pub mod positional_search;
 #[allow(dead_code)]
 pub mod prefilter;
 pub use prefilter::TapePrefilter;
+pub use private_files::check_mapped_folder;
+pub use held::pack_dir;
+pub use atoms::atoms_dir;
 mod publication;
 mod archive;
 pub use archive::{ARCHIVED, place_archived_tape_at};

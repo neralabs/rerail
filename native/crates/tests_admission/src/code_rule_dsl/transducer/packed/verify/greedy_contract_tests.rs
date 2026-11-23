@@ -88,7 +88,7 @@ fn greedy_contract_keeps_nonquery_branch_multiplicity() {
     let grammar = Grammar::new(GrammarDialect::Python).unwrap();
     let tree = StrDoc::new(source, GrammarDialect::Python);
     let image = TapeImage::encode(tree.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
-    let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+    let tape = TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
     let program = program(rerail_blocks::vector![
         word(FORK, GREEDY, 2),
         word(EMIT, 0, 0),
@@ -148,7 +148,7 @@ fn greedy_contract_preserves_compiled_query_captures_against_native() {
             let grammar = Grammar::new(GrammarDialect::Python).unwrap();
             let image = TapeImage::encode(tree.root_node(), &grammar, &source, &|| false).unwrap().primary;
             let tape =
-                TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap();
+                TapeDoc::restore(Arc::new(source.clone().into()), grammar, &image, &|| false).unwrap();
             let query = tree_sitter::Query::new(&language, query_source).unwrap();
             let mut cursor = tree_sitter::QueryCursor::new();
             let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());

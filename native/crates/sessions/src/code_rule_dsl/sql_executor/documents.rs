@@ -14,14 +14,14 @@ type Sources = BTreeMap<String, Arc<dyn Source>>;
 pub struct File {
     pub path: String,
     pub language: String,
-    pub source: Arc<String>,
+    pub source: Arc<crate::code_rule_dsl::tape::Text>,
 }
 
 impl crate::code_rule_dsl::facts::core::SourceFile for File {
     fn language(&self) -> &str {
         &self.language
     }
-    fn source(&self) -> &Arc<String> {
+    fn source(&self) -> &Arc<crate::code_rule_dsl::tape::Text> {
         &self.source
     }
     fn as_any(&self) -> &dyn std::any::Any {

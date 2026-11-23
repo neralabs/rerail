@@ -230,7 +230,9 @@ pub struct NativeTaskContext {
     pub repeat_quota_limit: u32,
     pub results: *mut ResultRecord,
     pub result_quota_limit: u32,
-    pub line_starts: *const u32,
+    /// Its document's line index (decision 0612: `LineTable::index`, its language's lines), read where it lies by
+    /// the lines' reads (`lines_line`, `lines_start`).
+    pub lines: *const u8,
     pub line_count: u32,
     pub final_captures: *mut FinalCaptureRecord,
     pub final_capture_capacity: u32,
@@ -2894,8 +2896,12 @@ fn build_task_contexts(
         context.node_base = view.node_base;
         context.source_base = view.source_base;
         context.node_count = node_count;
-        context.source = batch.source.as_ptr();
-        context.source_length = batch.source.len() as u32;
+        // The document's source where its tape holds it (decision 0353 step 7), based so the batch's numbering of
+        // source bytes indexes it: its bytes lie at `source_start..source_start + source_length`, its nodes' spans
+        // with them.
+        let doc = &files[task.file as usize];
+        context.source = doc.transducer_source().as_ptr().wrapping_sub(file.source_start as usize);
+        context.source_length = file.source_start + file.source_length;
         context.values = unsafe { batch.values.as_ptr().add(program.value_start as usize) };
         context.value_count = value_count;
         context.nfa_states = batch.nfa_states.as_ptr();
@@ -2976,7 +2982,8 @@ fn build_task_contexts(
                 .add(totals.candidates as usize + arena_starts[ArenaKind::Result as usize] as usize)
         };
         context.result_quota_limit = batch.evaluation_limit(task, ArenaKind::Result);
-        context.line_starts = unsafe { batch.line_starts.as_ptr().add(file.line_start as usize) };
+        // Its lines, the document's own line index, read where it lies (`line_start` adds `source_base`).
+        context.lines = doc.line_table().index().as_ptr();
         context.line_count = file.line_count;
         context.final_captures = unsafe {
             final_captures

@@ -155,6 +155,29 @@ pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     })
 }
 
+/// Each relation `core.rerail` declares with columns of type `node`, and those columns: a node's alone, never a span
+/// or another location's (`loc`). The declarations' own types, read off its text: a version lowers `node`, `span` and
+/// `loc` alike (`lower::ty`). Empty when `core.rerail` does not read.
+pub fn core_node_columns() -> &'static std::collections::HashMap<String, Vec<usize>> {
+    static NODES: std::sync::OnceLock<std::collections::HashMap<String, Vec<usize>>> = std::sync::OnceLock::new();
+    NODES.get_or_init(|| std::fs::read_to_string(library().join("core.rerail")).map(|src| node_columns_declared(&src)).unwrap_or_default())
+}
+
+/// The columns of type `node` of each relation `.decl`ared in `src` (`.decl r(a: node, b: span)` gives `r: [0]`).
+pub fn node_columns_declared(src: &str) -> std::collections::HashMap<String, Vec<usize>> {
+    let mut out = std::collections::HashMap::new();
+    for line in src.lines() {
+        let Some(rest) = line.trim_start().strip_prefix(".decl ") else { continue };
+        let Some((name, cols)) = rest.split_once('(') else { continue };
+        let Some((cols, _)) = cols.split_once(')') else { continue };
+        let nodes: Vec<usize> = cols.split(',').enumerate().filter(|(_, c)| c.split_once(':').is_some_and(|(_, t)| t.trim() == "node")).map(|(i, _)| i).collect();
+        if !nodes.is_empty() {
+            out.insert(name.trim().to_owned(), nodes);
+        }
+    }
+    out
+}
+
 /// `core_names` less the relations decision 0174's rewrite adds (`lower::made_on_request`): what a program in
 /// `core.rerail`'s shape declares whichever attributes it answers on request (a round may be undone, `lower::undo_round`).
 pub fn core_shape() -> &'static std::collections::BTreeSet<String> {

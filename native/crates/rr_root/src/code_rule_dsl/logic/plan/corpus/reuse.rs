@@ -359,7 +359,7 @@ pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
         }
     }
     crate::code_rule_dsl::logic::profile::decision("the run's frame (t33 K4)", || "every read as it was: the kept outputs written, nothing evaluated".into());
-    if captured.is_none() { std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?; }
+    if captured.is_none() { crate::content_store::prepare_cache_directory(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?; }
     let mut report = Report { plans, ..Report::default() };
     for (name, bytes) in &outputs {
         if name != crate::code_rule_dsl::logic::plan::output::FILE {

@@ -405,14 +405,17 @@ pub struct Run<'a, 'b> {
 
 /// The runner's answer to requests (`Run::answer`): a request relation and its new rows (atoms and integers), to the
 /// rows each produced relation gains.
-pub type Answer<'a> = &'a mut dyn FnMut(&str, &[Vector<i64>]) -> Result<Vec<(String, Vec<Vector<i64>>)>>;
+/// A request's answerer: given a request relation's rows (read where they lie, `component::Asked`), the rows each
+/// produced relation gains.
+pub type Answer<'a> = &'a mut dyn FnMut(&str, &super::native::component::Asked) -> Result<Vec<(String, Vec<Vector<i64>>)>>;
 
 /// A complete request relation has no pending recursive work before its consumer. Resume held keys at once,
 /// grouped by request family, as a quiet recursive component does. Never publish the protocol rows as facts.
 /// (Ported from Data-layer-rule-expressivity d659df1c4: held-back keys of a complete request were lost before its
 /// non-recursive consumer ran.)
-fn answer_complete(answer: Answer<'_>, request: &str, keys: &[Vector<i64>]) -> Result<BTreeMap<String, Vec<Vector<i64>>>> {
-    let mut pending = BTreeMap::from([(request.to_owned(), keys.to_vec())]);
+fn answer_complete(answer: Answer<'_>, request: &str, keys: super::native::component::Asked) -> Result<BTreeMap<String, Vec<Vector<i64>>>> {
+    use super::native::component::Asked;
+    let mut pending = BTreeMap::from([(request.to_owned(), keys)]);
     let mut produced: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
     while !pending.is_empty() {
         let mut held: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
@@ -423,7 +426,8 @@ fn answer_complete(answer: Answer<'_>, request: &str, keys: &[Vector<i64>]) -> R
                 } else { produced.entry(rel).or_default().extend(rows); }
             }
         }
-        pending = held;
+        // The rows an answer held back, asked again: rows the answers made.
+        pending = held.into_iter().map(|(r, rows)| (r, Asked::rows(rows))).collect();
     }
     Ok(produced)
 }
@@ -434,7 +438,7 @@ fn answer_complete(answer: Answer<'_>, request: &str, keys: &[Vector<i64>]) -> R
 /// event, taken when it has come.
 pub trait Asking {
     /// Posts a request relation's new rows: the ticket its answer comes back with.
-    fn post(&mut self, rel: &str, rows: &[Vector<i64>]) -> Result<u64>;
+    fn post(&mut self, rel: &str, rows: &super::native::component::Asked) -> Result<u64>;
     /// The answers that have come, each with its ticket; when none has, waits up to `wait` for one. The rows
     /// each produced relation gains, as `Answer` gives them.
     fn arrived(&mut self, wait: std::time::Duration) -> Result<Vec<(u64, Vec<(String, Vec<Vector<i64>>)>)>>;
@@ -5279,6 +5283,8 @@ impl<'a> Run<'a, '_> {
 /// one input, typed tables for the rest, then each stratum planned from the statistics and the counts of the strata
 /// before it, non-recursive ones once and recursive ones semi-naively.
 pub fn run_sql(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, facts: &Path) -> Result<Outcome> {
+    // The facts file is mapped (`mmap_size` below): it and its folder the user's alone (`rerail_blocks::mapped`).
+    rerail_blocks::mapped::open_read(facts, false).map_err(|e| Error::Plan(e.to_string()))?;
     let db = Connection::open_in_memory()?;
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     // Map the facts file, so probes of the input relations' indexes are memory reads, and keep ephemeral b-trees
@@ -5295,6 +5301,8 @@ pub fn run_sql_native(
     modes: &str,
     load: impl FnOnce(&Connection) -> rusqlite::Result<()>,
 ) -> Result<Outcome> {
+    // The facts file is mapped (`mmap_size` below): it and its folder the user's alone (`rerail_blocks::mapped`).
+    rerail_blocks::mapped::open_read(facts, false).map_err(|e| Error::Plan(e.to_string()))?;
     let db = Connection::open_in_memory()?;
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
@@ -5476,9 +5484,9 @@ pub trait KeptStrata {
     /// The earlier run's rows of `rel`: its columns' types as kept, and its rows as a relation the engine holds under
     /// `types` (its own), bound where they lie (decision 0401 F3).
     fn rows(&mut self, rel: &str, types: &[u8]) -> Option<(Vec<u8>, Arc<super::native::component::InRel>)>;
-    /// This run derived `rel`: its digest, and its rows (types, flat, count), with the digest each relation its
+    /// This run derived `rel`: its digest, and its rows (types, rows, count), with the digest each relation its
     /// stratum read had; `None` when SQL derived it, or a read's digest is not known.
-    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Box<dyn crate::content_store::kept_facts::KeptPicked>, usize, Vec<(String, u64)>)>);
+    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, RanRows, usize, Vec<(String, u64)>)>);
     /// The run's end: the strata it evaluated, of all.
     fn counted(&mut self, evaluated: usize, of: usize);
 }
@@ -5997,6 +6005,15 @@ fn with_answers(f: Fields<'_>, db: &Connection, scc: &super::front::Comp, reads:
     Some(reads)
 }
 
+/// A stratum's relation's rows as `KeptStrata::ran` takes them: the engine's relation, read where its rows lie
+/// (decision 0353 step 8), or SQL's answers in a block of their own (rows the engine does not hold).
+pub enum RanRows {
+    /// Rows read where they lie (SQL's in a block of their own, `produced_rows`).
+    Picked(Box<dyn crate::content_store::kept_facts::KeptPicked>),
+    /// The engine's relation, lent whole where its rows lie.
+    Held(Arc<super::native::component::InRel>),
+}
+
 /// After a stratum ran: each of its relations' digest and rows, given to `ks` with what the stratum read
 /// (`reads`, each with its digest then), and its digest to this run's `fresh`.
 fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &super::front::Comp, reads: Option<&Vec<(String, u64)>>, fresh: &mut HashMap<String, Option<u64>>) {
@@ -6007,13 +6024,13 @@ fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &su
     let f = run.fields();
     for r in scc.iter().filter(|r| !run.views.contains(*r)) {
         let atoms = crate::content_store::atoms::Atoms::for_connection(db);
-        // Its rows where they lie, and their digest: a native relation's read in its block (`kept_source`), SQL's
-        // written into a block of their own as the query gives them (`produced_rows`).
-        let got: Option<(Vec<u8>, u64, Box<dyn crate::content_store::kept_facts::KeptPicked>, usize)> = if run.native_rels.contains(r) {
-            super::native::component::kept_source(db, r).map(|(types, source)| {
-                let digest = source_rows::digest(source.as_ref(), &Cells::new(&atoms, &stored_types(f, r, types.clone())));
-                let n = source.len();
-                (types, digest, Box::new(source_rows::SourceRows { source }) as Box<dyn crate::content_store::kept_facts::KeptPicked>, n)
+        // Its rows where they lie, and their digest: the engine's relation lent whole where its rows lie, its digest
+        // taken there (`RanRows::Held`, decision 0353 step 8); SQL's written into a block of their own as the query
+        // gives them (`produced_rows`).
+        let got = if run.native_rels.contains(r) {
+            super::native::component::kept_rel(db, r).and_then(|rel| {
+                let cells = Cells::new(&atoms, &stored_types(f, r, rel.types().to_vec()));
+                Some((rel.types().to_vec(), source_rows::held_digest(&cells, &rel)?, rel.rows(), RanRows::Held(rel)))
             })
         } else if f.produced(r) && !f.is_input(r) {
             // SQL holds the answers when the relation is outside the native component.
@@ -6028,7 +6045,7 @@ fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &su
                     }
                     sum = sum.wrapping_add(cells.sum(&row));
                 }
-                (types, sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd), Box::new(rows) as Box<dyn crate::content_store::kept_facts::KeptPicked>, n)
+                (types, sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd), n, RanRows::Picked(Box::new(rows)))
             })
         } else {
             None
@@ -6036,7 +6053,7 @@ fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &su
         let digest = got.as_ref().map(|g| g.1);
         fresh.insert(r.to_owned(), digest);
         members.push((r.to_owned(), digest));
-        ks.ran(r, got.zip(reads).map(|((types, digest, rows, n), reads)| (digest, stored_types(f, r, types), rows, n, reads.clone())));
+        ks.ran(r, got.zip(reads).map(|((types, digest, n, rows), reads)| (digest, stored_types(f, r, types), rows, n, reads.clone())));
     }
     for v in scc.iter().filter(|r| run.views.contains(*r)) {
         fresh.insert(v.to_owned(), view_digest(reads.map(|v| v.as_slice()), &members));
@@ -6202,15 +6219,14 @@ fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel
 }
 
 /// A clean relation's kept rows (`KeptStrata::rows`), as the requests it answers again take them.
-fn kept_strata_rows(ks: &mut dyn KeptStrata, f: Fields<'_>, rel: &str) -> Result<Vec<Vector<i64>>> {
+fn kept_strata_rows(ks: &mut dyn KeptStrata, f: Fields<'_>, rel: &str) -> Result<super::native::component::Asked> {
     let types = vec![b'i'; f.types(rel).len()];
     let (_, held) = ks.rows(rel, &types).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
-    let k = types.len();
-    if k == 0 {
-        return Ok(Vec::new());
+    if types.is_empty() {
+        return Ok(super::native::component::Asked::default());
     }
-    // copy: not block data: the requests a replayed stratum asks again, as its answer function takes them.
-    Ok(held.live_rows().unwrap_or_default().chunks_exact(k).map(Vector::<i64>::from).collect())
+    // The requests a replayed stratum asks again, read where the kept rows lie (decision 0353 step 8).
+    Ok(super::native::component::Asked::of_rel(&held))
 }
 
 /// `rows_digest` of a relation of `n` rows whose digest was `digest`, after its rows `gone` went and `added` came
@@ -7342,8 +7358,15 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     // apart. (Measured against the stratum's own kept rows, a selective stratum over the whole tree,
                     // `rr_cover41` with 644 rows over `child`, `docof`, `col`, was derived again at every 2-file edit
                     // of the data layer: the edit cost the first run's 500 s at 2,410 files.)
+                    // An input's rows read are those its statistics planned the run with (`model.stats.card`): a
+                    // semi-join's at the nodes the exports hold, which is all its strata read, where its source's `len`
+                    // made every document's rows to count them, the unchanged ones too (Q332).
+                    let read_rows = |r: &str, now: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>| match run.model.stats.card.get(r) {
+                        Some(&n) if f0.is_input(r) => n as usize,
+                        _ => now.len(),
+                    };
                     let sizes: BTreeMap<String, (usize, usize)> = moved.iter().map(|r| (r.clone(), match ins.get(r) {
-                        Some((srcs, _)) => (srcs[1].len() + srcs[2].len(), srcs[3].len()),
+                        Some((srcs, _)) => (srcs[1].len() + srcs[2].len(), read_rows(r, &srcs[3])),
                         None => super::native::component::held(db, r).map_or((0, 0), |x| {
                             ([super::native::component::Ver::Minus, super::native::component::Ver::Plus].into_iter().filter_map(|v| x.version_view(v)).map(|v| v.rows()).sum(), x.rows())
                         }),
@@ -7598,21 +7621,23 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                         let width = f0.width(&req);
                         // The request's rows where they are: the engine's (a relation it holds), none (one still to be
                         // made: no table, no rows), or its table's.
-                        let native = run.native_rels.contains(&req).then(|| super::native::component::kept_source(db, &req)).flatten();
-                        let asked: Vec<Vector<i64>> = if let Some((_, source)) = native.filter(|_| width > 0) {
-                            (0..source.len()).map(|r| (0..width).map(|c| source.value(r, c)).collect()).collect()
+                        // The engine's relation read where its rows lie (decision 0353 step 8).
+                        let native = run.native_rels.contains(&req).then(|| super::native::component::kept_rel(db, &req)).flatten();
+                        let asked = if let Some(rel) = native.filter(|_| width > 0) {
+                            super::native::component::Asked::of_rel(&rel)
                         } else if run.pending.contains_key(&req) && !run.native_rels.contains(&req) {
-                            Vec::new()
+                            super::native::component::Asked::default()
                         } else {
                             run.materialize(std::slice::from_ref(&req))?;
                             let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
-                            db.prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::ident(&req)))?
+                            // SQL's rows (a relation the engine does not hold).
+                            super::native::component::Asked::rows(db.prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::ident(&req)))?
                                 .query_map([], |r| (0..width).map(|c| r.get::<_, i64>(c)).collect::<rusqlite::Result<Vector<_>>>())?
-                                .collect::<rusqlite::Result<_>>()?
+                                .collect::<rusqlite::Result<_>>()?)
                         };
                         let answer = run.answer.as_deref_mut().ok_or_else(|| Error::Plan(format!("{req}: a request, and no one to answer it")))?;
                         let mut mine = Vec::new();
-                        for (p, got) in answer_complete(answer, &req, &asked)? {
+                        for (p, got) in answer_complete(answer, &req, asked)? {
                             if p == *rel { mine.extend(got) } else { run.answered.entry(p).or_default().extend(got) }
                         }
                         mine
@@ -7636,13 +7661,12 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 let types: Vec<u8> = f0.types(rel).iter().map(|t| sym_char(&run.model.inputs, t)).collect::<String>().into_bytes();
                 // `retain` replaces what the engine holds: rows it already holds (the relation's program facts) stay,
                 // so its readers read the facts and the answers both.
-                let mut rows = rows;
-                if run.native_rels.contains(rel)
-                    && let Some((_, source)) = super::native::component::kept_source(db, rel).filter(|(_, s)| s.columns().len() == types.len() && !types.is_empty()) {
-                        let k = types.len();
-                        rows.extend((0..source.len()).map(|r| (0..k).map(|c| source.value(r, c)).collect::<Vector<i64>>()));
-                    }
-                super::native::component::retain(db, rel, rows, types)?;
+                // Held with the rows the engine holds now, those shared where they lie (decision 0353 step 8).
+                if run.native_rels.contains(rel) {
+                    super::native::component::retain_with(db, rel, rows, types)?;
+                } else {
+                    super::native::component::retain(db, rel, rows, types)?;
+                }
                 run.native_rels.insert(rel.to_owned());
             }
             continue;

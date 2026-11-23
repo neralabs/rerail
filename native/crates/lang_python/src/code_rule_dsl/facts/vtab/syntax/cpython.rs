@@ -82,7 +82,7 @@ impl CPython {
         if self.syntax_error
             && let Some((line, msg)) = error
         {
-            self.syntax_errors.push([i64::from(p.key), i64::from(*line), string(msg) as i64]);
+            self.syntax_errors.push([i64::from(p.key()), i64::from(*line), string(msg) as i64]);
         }
         if self.literal_json {
             let literals = crate::code_rule_dsl::cpython::literal::literals(source);

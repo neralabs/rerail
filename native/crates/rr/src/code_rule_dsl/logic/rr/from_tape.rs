@@ -53,7 +53,7 @@ impl RrFile {
     /// `src` and its tape, ERRORs and all: a reader that reads a file that may not parse (`rr::message_masked`).
     pub fn parsed(src: impl Into<String>) -> Result<RrFile, Error> {
         use crate::code_rule_dsl::tape::{Grammar, TapeImage};
-        let src = std::sync::Arc::new(src.into());
+        let src = std::sync::Arc::new(crate::code_rule_dsl::tape::Text::from(src.into()));
         let grammar = Grammar::embedded(crate::code_rule_dsl::language::GrammarDialect::Rr).map_err(Error::Syntax)?;
         let image = TapeImage::encode_rr(&grammar, &src, &|| false).map_err(|e| Error::Syntax(format!("tape: {e}")))?;
         // Its own batch's cache: the file is read alone (`TapeDoc::alone`'s).

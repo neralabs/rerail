@@ -98,7 +98,7 @@ tempfile = { version = "=3.27.0", optional = true }
 rerail-prof = { path = "../prof" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 # The tape's format and the writer the parsers write it with (decision 0140).
-rerail-tape-format = { path = "../tape_format" }
+rerail-tape-format = { path = "../tape_format", features = ["ast-grep"] }
 # The view the tape's reads take a document by (decision 0310), without the reads' IR.
 rerail-clif = { path = "../clif", default-features = false }
 # Python's lean parser: tree-sitter-python's tape, written as the parse goes (`tape::python_lean`).

@@ -99,14 +99,13 @@ struct RunRoom(std::sync::OnceLock<Arc<dyn Room>>);
 
 /// The room of the run under way (its `AnonRoom`; outside a run, its shared object's: `run_room`).
 pub fn default_room() -> Arc<dyn Room> {
-    // A vector made with no room, in any crate (`rerail_vector::default_room`), takes the run's too.
-    rerail_vector::install_default_room(run_room);
     run_room()
 }
 
-/// Installs the run's room as every crate's (`rerail_vector::default_room`): the engine's, at load.
+/// Installs the run's room as every crate's (`rerail_vector::default_room`): the engine's, at load (boot's, once a
+/// process). A crate's own tests, run without it, make their vectors with no room on the heap.
 pub fn install() {
-    rerail_vector::install_default_room(run_room);
+    rerail_vector::install_default_room("rerail-blocks", run_room);
 }
 
 fn run_room() -> Arc<dyn Room> {

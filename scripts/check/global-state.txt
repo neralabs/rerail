@@ -73,37 +73,6 @@ native/crates/d_relational/src/lib.rs::LOAD	stays	code registered at load (an in
 native/crates/demand_catalog/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/device_metal/src/code_rule_dsl/device_metal.rs::LOAD	stays	code registered at load
 native/crates/device_metal/src/code_rule_dsl/device_metal.rs::METAL	stays	code registered at load
-native/crates/lang/src/code_rule_dsl/embed.rs::EMBEDDERS	stays	code registered at load
-native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::EXPRESSION	stays	a constant (an embedder with no state)
-native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::FOR_ALIAS	stays	a constant (an embedder with no state)
-native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::FOR_SOURCE	stays	a constant (an embedder with no state)
-native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::PARAMS	stays	a constant (an embedder with no state)
-native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::SCRIPT	stays	a constant (an embedder with no state)
-native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::STATEMENTS	stays	a constant (an embedder with no state)
-native/crates/rules_base/src/code_rule_dsl/eval/mod.rs::ANCHOR_CORPUS	stays	code registered at load (a slot a crate above fills: rerail-registry)
-native/crates/rules_base/src/code_rule_dsl/eval/mod.rs::SNAPSHOT_CONTEXT	stays	computed once from the engine's constants
-native/crates/facts_base/src/code_rule_dsl/facts/core.rs::CORE_NAMES	stays	code a crate above registers at load
-native/crates/facts_base/src/code_rule_dsl/facts/core.rs::EMPTY	stays	a constant
-native/crates/facts_base/src/code_rule_dsl/facts/core.rs::EXECUTORS	stays	code a crate above registers at load
-native/crates/facts_base/src/code_rule_dsl/facts/core.rs::FAMILY_COLUMNS	stays	code registered at load (a slot a crate above fills: rerail-registry)
-native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::SOURCES_HELD	stays	code a crate above registers at load (a hook: the batches' relations held)
-native/crates/facts_base/src/code_rule_dsl/facts/core.rs::VALUE_READER	stays	code a crate above registers at load
-native/crates/workspace/src/code_rule_dsl/facts/facts_a/facts.rs::GRAMMAR	stays	computed once from the engine's own grammar
-native/crates/workspace/src/code_rule_dsl/facts/facts_a/facts.rs::MADE	stays	process-unique numbers of the symbols' objects (a thread's copy of names is of one numbered object)
-native/crates/facts/src/code_rule_dsl/facts/families.rs::PREFILTER_IMAGE	stays	computed once from the engine's own files
-native/crates/facts_base/src/code_rule_dsl/facts/grammar_shape.rs::GRAMMAR	stays	computed once from the engine's own grammar
-native/crates/facts_base/src/code_rule_dsl/facts/grammar_shape.rs::KEPT	stays	computed from the engine's own grammar, per kind
-native/crates/facts/src/code_rule_dsl/facts/vtab/syntax/device_chunk.rs::CHUNK_AXIS	stays	code a crate above registers at load (the device's kind-set axis in a chunk)
-native/crates/facts_base/src/code_rule_dsl/facts/nearest.rs::NEAREST	stays	compiled once from the engine's own code
-native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::BLOCK_DEVICE	stays	code a crate above registers at load
-native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::HEAP_NET	stays	code a crate above registers at load (the allocator's net count)
-native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::HEAP_PEAK	stays	the allocator's per-thread peak a crate above registers once (decision 0469)
-native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::SOURCES_HELD	stays	code a crate above registers at load (what lists the batches' relations held)
-native/crates/facts_base/src/code_rule_dsl/facts/span_prefilter.rs::SPAN_PREFILTER	stays	compiled once from the engine's own code
-native/crates/facts_base/src/code_rule_dsl/facts/vtab.rs::CLOSES	stays	a generation counter: append-only
-native/crates/facts_base/src/code_rule_dsl/facts/vtab.rs::FORGET	stays	code registered at load
-native/crates/facts_base/src/code_rule_dsl/facts/vtab.rs::NODE_TABLES	stays	code registered at load
-native/crates/facts_base/src/code_rule_dsl/facts/vtab/demand.rs::NEXT	stays	an id counter: append-only
 native/crates/device_metal/src/code_rule_dsl/logic/native/setfix/device.rs::TICKETS	stays	a ticket counter: append-only
 native/crates/device_metal/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	stays	an id counter: append-only, unique across threads
 native/crates/device_metal/src/code_rule_dsl/transducer/packed/metal_join.rs::SOURCE	stays	computed once from the engine's own source
@@ -111,20 +80,22 @@ native/crates/device_metal/src/code_rule_dsl/transducer/packed/metal_label_passe
 native/crates/device_metal/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::EVICTOR	stays	registers the workspaces' evictor once (code registered at load, a hook)
 native/crates/device_metal/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::VIEW_PIECES	stays	computed once from the engine's own source (was metal_label_passes.rs::TAPE_VIEWS)
 native/crates/device_metal/src/lib.rs::ONCE	stays	registers the engine's languages once (code registered at load)
+native/crates/facts/src/code_rule_dsl/facts/families.rs::PREFILTER_IMAGE	stays	computed once from the engine's own files
 native/crates/facts/src/code_rule_dsl/facts/vtab/syntax.rs::AST_COMPILER	stays	code a crate above registers at load
 native/crates/facts/src/code_rule_dsl/facts/vtab/syntax.rs::BATCHES	stays	a test's record of its batches
 native/crates/facts/src/code_rule_dsl/facts/vtab/syntax.rs::FAMILIES	stays	code registered at load
 native/crates/facts/src/code_rule_dsl/facts/vtab/syntax.rs::PRODUCERS	stays	code registered at load
 native/crates/facts/src/code_rule_dsl/facts/vtab/syntax.rs::SEMANTIC	stays	code a crate above registers at load
 native/crates/facts/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs::DIALECT_FACTS	stays	code a crate above registers at load
-native/crates/facts/src/code_rule_dsl/facts/vtab/syntax/device_chunk.rs::CHUNK_AXIS	stays	code a crate above registers at load (the device's kind-set axis in a chunk)
 native/crates/facts_base/src/code_rule_dsl/facts/core.rs::CORE_NAMES	stays	code a crate above registers at load
+native/crates/facts_base/src/code_rule_dsl/facts/core.rs::CORE_NODE_COLUMNS	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/facts/core.rs::EMPTY	stays	a constant
 native/crates/facts_base/src/code_rule_dsl/facts/core.rs::EXECUTORS	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/facts/core.rs::FAMILY_COLUMNS	stays	code registered at load (a slot a crate above fills: rerail-registry)
 native/crates/facts_base/src/code_rule_dsl/facts/core.rs::VALUE_READER	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/facts/grammar_shape.rs::GRAMMAR	stays	computed once from the engine's own grammar
 native/crates/facts_base/src/code_rule_dsl/facts/grammar_shape.rs::KEPT	stays	computed from the engine's own grammar, per kind
+native/crates/facts_base/src/code_rule_dsl/facts/nearest.rs::AXIS_SOLVE	stays	compiled once from the engine's own code
 native/crates/facts_base/src/code_rule_dsl/facts/nearest.rs::NEAREST	stays	compiled once from the engine's own code
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::BLOCK_DEVICE	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::HEAP_NET	stays	code a crate above registers at load (the allocator's net count)
@@ -171,30 +142,12 @@ native/crates/lang/src/code_rule_dsl/semver/mod.rs::REGEXES	stays	computed once 
 native/crates/lang/src/code_rule_dsl/suppress/kinds.rs::KINDS	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape.rs::GRAMMARS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape.rs::ROUTER	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/c_lean.rs::C	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/c_lean.rs::CPP	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/csharp_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/css_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::IDS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::JAVASCRIPT	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TSX	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TYPESCRIPT	stays	code registered at load
-native/crates/lang/src/code_rule_dsl/tape/go_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/html_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/java_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/kotlin_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/markdown_inline_lean.rs::KINDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/markdown_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/php_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/python_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/rust_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/scala_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/sql_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/swift_lean.rs::IDS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/token_census.rs::BY_DIALECT	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/tokens.rs::BY_DIALECT	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/tokens.rs::KEPT	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/vue_lean.rs::IDS	stays	computed once from the engine's own files
 native/crates/lang_ecma/src/code_rule_dsl/import_target/mod.rs::FALLBACK	stays	computed once from the engine's constants
 native/crates/lang_ecma/src/code_rule_dsl/import_target/resolver.rs::INVALID_OR_EMPTY_SEGMENT	stays	a regex of a literal
 native/crates/lang_ecma/src/code_rule_dsl/import_target/resolver.rs::INVALID_SEGMENT	stays	a regex of a literal
@@ -221,51 +174,6 @@ native/crates/lang_ecma/src/code_rule_dsl/npm_ignore/mod.rs::UNESCAPE_METACHARAC
 native/crates/lang_ecma/src/code_rule_dsl/npm_ignore/mod.rs::WILDCARDS	stays	a regex of a literal
 native/crates/lang_ecma/src/code_rule_dsl/package_manifest.rs::DEFAULT_NODE_RANGE	stays	computed once from the engine's constants
 native/crates/lang_ecma/src/code_rule_dsl/scope/ecma.rs::SCRIPTS	stays	computed once from the engine's own files
-native/crates/adapters/src/code_rule_dsl/scope/mod.rs::PROGRAM_SCOPES	stays	code registered at load
-native/crates/adapters/src/code_rule_dsl/scope/options.rs::INTERNED	stays	an append-only interner of immutable typing settings (`&'static`, leaked once each): a `Reading` compares them by value, so no id of it can differ between callers
-native/crates/adapters/src/code_rule_dsl/scope/options.rs::TABLE	stays	computed once from the engine's own files
-native/crates/lang_php/src/code_rule_dsl/scope/php_names.rs::BUILTINS	stays	computed once from the engine's own files
-native/crates/lang_python/src/code_rule_dsl/scope/python.rs::PYTHON	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/semver/mod.rs::MINIMUM_VERSION	stays	computed once from the engine's constants
-native/crates/lang/src/code_rule_dsl/semver/mod.rs::REGEXES	stays	computed once from the engine's constants
-native/crates/sessions/src/code_rule_dsl/sql_executor/documents.rs::SNAPSHOT_FILES	stays	code registered at load
-native/crates/sessions_base/src/code_rule_dsl/sql_executor/maintenance.rs::TEMPORAL	stays	code registered at load (a slot a crate above fills: rerail-registry)
-native/crates/sessions_base/src/code_rule_dsl/sql_executor/work_graph.rs::NEXT_GRAPH	stays	an id counter: append-only
-native/crates/lang/src/code_rule_dsl/suppress/kinds.rs::KINDS	stays	code registered at load
-native/crates/lang_python/src/code_rule_dsl/suppress/nosec.rs::NOSEC_COMMENT	stays	a regex of a literal
-native/crates/lang_python/src/code_rule_dsl/suppress/nosec.rs::NOSEC_COMMENT_TESTS	stays	a regex of a literal
-native/crates/lang_php/src/code_rule_dsl/suppress/psalm.rs::STAR_LINE	stays	a regex of a literal
-native/crates/lang/src/code_rule_dsl/tape.rs::GRAMMARS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape.rs::ROUTER	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/c_lean.rs::C	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/c_lean.rs::CPP	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/csharp_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/css_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::JAVASCRIPT	stays	code registered at load
-native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TSX	stays	code registered at load
-native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TYPESCRIPT	stays	code registered at load
-native/crates/lang/src/code_rule_dsl/tape/go_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/html_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/java_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/kotlin_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/markdown_inline_lean.rs::KINDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/markdown_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/php_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/python_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/rust_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/scala_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/sql_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/swift_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/token_census.rs::BY_DIALECT	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/tokens.rs::BY_DIALECT	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/tokens.rs::KEPT	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/vue_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/facts_base/src/code_rule_dsl/text.rs::NAMES	stays	counter names leaked once each (`&'static str`), from the engine's own text productions: an append-only interner of the engine's names
-native/crates/transducer_base/src/code_rule_dsl/transducer/packed.rs::CPU	stays	code registered at load (a slot a crate above fills: rerail-registry)
-native/crates/transducer/src/code_rule_dsl/transducer/packed/compile/matcher.rs::NAMES	stays	names leaked once each (`&'static str`), from the engine's own fallback reasons: an append-only interner of the engine's names
-native/crates/transducer/src/code_rule_dsl/transducer/packed/compile/matcher.rs::WAVES	stays	code registered at load (a slot a crate above fills: rerail-registry)
-native/crates/transducer_base/src/code_rule_dsl/transducer/packed/device.rs::MATCHER	stays	code a crate above registers at load
 native/crates/lang_ecma/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers its packs)
 native/crates/lang_json/src/code_rule_dsl/transducer/packed/json_parser.rs::PARSER	stays	computed once from the engine's own files
 native/crates/lang_json/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::DOM	stays	code registered at load
@@ -370,6 +278,7 @@ native/crates/rr_root/src/code_rule_dsl/logic/plan/corpus/base.rs::RUNNER	stays	
 native/crates/rr_root/src/code_rule_dsl/logic/plan/corpus/switches.rs::CHANGED	stays	guards the process's environment variables, which the OS keeps per process (a test's switches)
 native/crates/rr_root/src/code_rule_dsl/logic/plan/corpus/switches.rs::STATE	stays	guards the process's environment variables, which the OS keeps per process (a test's switches)
 native/crates/rr_root/src/code_rule_dsl/logic/rr.rs::CORE	stays	computed once from the engine's own files
+native/crates/rr_root/src/code_rule_dsl/logic/rr.rs::NODES	stays	computed once from the engine's own files
 native/crates/rr_root/src/code_rule_dsl/logic/rr.rs::SHAPE	stays	computed once from the engine's own files
 native/crates/rr_root/src/lib.rs::LOAD	stays	code registered at load (an init-array entry)
 native/crates/rules/src/code_rule_dsl/residency/admission/relational/ast_stage.rs::PRODUCER	stays	code a crate above registers at load
@@ -402,13 +311,14 @@ native/crates/store/src/content_store/atoms.rs::GIVEN	stays	a test's counter
 native/crates/store/src/content_store/connection.rs::CONNECTION_FUNCTIONS	stays	code a crate above registers at load
 native/crates/store/src/content_store/connection.rs::MADE	stays	process-unique numbers of the connection registries (a thread's connections are kept by them)
 native/crates/store/src/content_store/connection.rs::ONCE	stays	a hook registered once
+native/crates/store/src/content_store/prefilter.rs::REJECT_TERM	stays	test hooks only: the terms a test makes a publication fail on
 native/crates/store/src/content_store/record.rs::KINDS	stays	code a crate above registers at load
 native/crates/store/src/content_store/record.rs::LOG	stays	a test's log
 native/crates/store/src/content_store/schema.rs::SCHEMA_OBJECTS	stays	computed once from the engine's own files
 native/crates/store/src/content_store/write_back.rs::RUNS	stays	an id counter: append-only
 native/crates/store/src/content_store/write_back.rs::T0	stays	the process's start, for timestamps
 native/crates/store/src/content_store/write_back.rs::TOLD	stays	a warning said once a process
-native/crates/store/src/lib.rs::LOAD	stays	code registered at load (an init-array entry)
+native/crates/store/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers the store with the observer)
 native/crates/store_base/src/content_store/base.rs::SEARCH_INDEX_FAMILY_WRITES	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/crates/store_base/src/content_store/journal.rs::COUNTER	stays	an id counter: append-only
 native/crates/store_base/src/content_store/observer_store/base.rs::STORE	stays	code a crate above registers at load (the content store, as the observer and git reach it)
@@ -421,27 +331,48 @@ native/crates/swift_lean/src/lex.rs::OCT	stays	a byte class of a literal
 native/crates/swift_lean/src/lex.rs::TICK_BODY	stays	a byte class of a literal
 native/crates/tape_format/src/f16.rs::LANGS	stays	languages registered at load
 native/crates/tape_format/src/f16.rs::NEXT	stays	an id counter: append-only
+native/crates/tape_format/src/lib.rs::LANG	stays	a test's language, made once from constants
 native/crates/tape_format/src/tape.rs::PLACE	stays	the engine's placement of code tables in blocks, registered at load
+native/crates/tests_admission/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_admission/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_anchors/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_anchors/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_calls/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_calls/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_compile/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_compile/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_conformance/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_conformance/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/tests_corpus/src/code_rule_dsl/logic/plan/coverage.rs::CENSUS	stays	computed once from the engine's own files
+native/crates/tests_corpus/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_corpus/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_cpu/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_cpu/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_demand/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_demand/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_findings/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_findings/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_lang/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_lang/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_logic/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_logic/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_matcher/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_matcher/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_resolve/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_resolve/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_rr/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_rr/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_scope/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_scope/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_sql/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_sql/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_tape/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_tape/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_transducer/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_transducer/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_value/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_value/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_workspace/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
 native/crates/tests_workspace/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/transducer/src/code_rule_dsl/transducer/packed/compile/matcher.rs::NAMES	stays	names leaked once each (`&'static str`), from the engine's own fallback reasons: an append-only interner of the engine's names
 native/crates/transducer/src/code_rule_dsl/transducer/packed/compile/matcher.rs::WAVES	stays	code registered at load (a slot a crate above fills: rerail-registry)
@@ -466,31 +397,3 @@ native/src/lib.rs::ONCE	stays	a hook registered once
 native/src/lib.rs::SQLITE_ALLOCATOR	stays	code registered at load
 native/src/model.rs::SHARED_MODELS	shared	the loaded embedding models: shared by design
 native/src/process.rs::LAUNCHED	stays	this process's children's handles (Windows): an OS object of the process
-native/crates/store_base/src/source_tree.rs::IMAGE	stays	computed once from the engine's own files
-native/crates/metal/src/pp_arena.rs::T	stays	computed once from the process's device (a group's threads: the GPU's, or the CPU's 32)
-native/crates/observe/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers the store its tests keep the observer's answers in)
-native/crates/store/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers the store with the observer)
-native/crates/tests_admission/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_anchors/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_calls/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_compile/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_conformance/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_corpus/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_cpu/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_demand/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_findings/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_lang/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_logic/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_matcher/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_resolve/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_rr/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_scope/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_sql/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_tape/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_transducer/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_value/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/tests_workspace/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary
-native/crates/store_base/src/content_store/observer_store/base.rs::STORE	stays	code a crate above registers at load (the content store, as the observer and git reach it)
-native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::RANGED	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
-native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::BY_NAME	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
-native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::BY_SPAN	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
