@@ -79,7 +79,7 @@ mod worktree_stat;
 #[cfg(windows)]
 pub use worktree_stat::recalls_data;
 use worktree_stat::{VolumeAnswers, WorktreeStat, stat_decides};
-pub use worktree_stat::file_clock;
+pub use worktree_stat::{changed_before, file_clock};
 
 #[cfg(any(test, feature = "test-hooks"))]
 static SOURCE_ALIAS_HASHES: AtomicUsize = AtomicUsize::new(0);

@@ -622,10 +622,10 @@ impl Stamp {
     }
 
     /// Whether NTFS's change time is older than the file clock's reading `clock`, so every later
-    /// change moves it (`git_workspace::file_clock`).
+    /// change moves it (`git_workspace::changed_before`).
     #[cfg(windows)]
     fn changed_before(&self, clock: Option<i64>) -> bool {
-        clock.is_some_and(|clock| self.changed < clock)
+        crate::git_workspace::changed_before(self.changed, clock)
     }
 
     /// No file clock is read off Windows (`git_workspace::file_clock`): the modification time
@@ -814,6 +814,15 @@ fn source_text(absolute: &Path, length: u64) -> std::io::Result<String> {
 /// (`git_workspace::file_clock`), is settled: no later rewrite can leave its stamp as it is. Its
 /// modification time is `SETTLED_AFTER` old and, on Windows, its change time older than the
 /// reading, which a rewrite in the change's own tick shares (`Stamp::stands_for`).
+///
+/// On a network share the change time comes from the server's clock and the reading from this
+/// machine's, so with a server clock behind this one a summary can be cached under a change time
+/// that a rewrite in the same tick of the server's clock also gets. The walk takes a share's
+/// change time all the same, where a restore leaves a share's file to its stat
+/// (`git_workspace::holds_blob_bytes`): the listing gives it with no query, and one that moved
+/// costs the walk one source's read, where a restore would read the whole file over the network
+/// at every scan; without it, a rewrite that keeps the size and modification time would keep its
+/// summary however long after its read it came.
 fn settled(stamp: &Stamp, now: SystemTime, clock: Option<i64>) -> bool {
     now.duration_since(stamp.modified)
         .is_ok_and(|age| age >= SETTLED_AFTER)

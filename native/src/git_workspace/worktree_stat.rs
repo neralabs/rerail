@@ -15,6 +15,14 @@ pub fn file_clock() -> Option<i64> {
     platform::file_clock()
 }
 
+/// Whether the change time `changed` is older than the file clock's reading `clock`
+/// (`file_clock`), so that no change after the reading carries it: each gets a time no earlier
+/// than the reading. One equal to the reading may be shared by a write in the same tick, and with
+/// no reading no change time is.
+pub fn changed_before(changed: i64, clock: Option<i64>) -> bool {
+    clock.is_some_and(|clock| changed < clock)
+}
+
 /// A worktree file's stat, as `lstat` gives it without following a link, with what this system
 /// keeps beside it.
 pub(super) struct WorktreeStat {
@@ -404,8 +412,20 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use super::{keeps_change_times, on_this_machine, stat_decides};
+    use super::{changed_before, keeps_change_times, on_this_machine, stat_decides};
     use std::io::{Error, ErrorKind};
+
+    /// A change time is older than the file clock's reading only when it is below it: every later
+    /// write gets a time no earlier than the reading, so one on the reading itself may be a later
+    /// write's too (a write in the same tick of the clock), and with no reading none is older.
+    #[test]
+    fn only_a_change_time_below_the_file_clocks_reading_changed_before_it() {
+        let changed = 134_000_000_000_000_000;
+        for clock in [None, Some(changed - 1), Some(changed)] {
+            assert!(!changed_before(changed, clock), "{clock:?}");
+        }
+        assert!(changed_before(changed, Some(changed + 1)));
+    }
 
     /// A read that failed for any reason but the file being gone or grown leaves the stat's
     /// answer: its permissions, another process holding or locking it (Windows' sharing and lock
