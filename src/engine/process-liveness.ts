@@ -133,13 +133,14 @@ let engineReadFailureReported = false;
 
 /**
  * Writes the first failure of the engine's process reads to stderr, which a daemon keeps in its log, once per process:
- * without them a daemon of Rerail 0.1.4 or earlier is neither told from a stale record nor ended.
+ * without them neither a busy daemon nor one of Rerail 0.1.4 or earlier is told from a stale record by its start, and
+ * the latter is not ended. The line names neither, since every Windows start read goes through the engine.
  */
 function reportEngineReadFailure(error: unknown): void {
   if (engineReadFailureReported) return;
   engineReadFailureReported = true;
   const reason = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`rerail: the engine could not read or end a process, so a daemon of Rerail 0.1.4 or earlier is kept as it runs: ${reason}\n`);
+  process.stderr.write(`rerail: the engine could not read or end a process, so Rerail could not tell whether the recorded daemon is still running: ${reason}\n`);
 }
 
 /**

@@ -339,8 +339,9 @@ describe("processStartedAtThroughEngine", () => {
     expect(asked).toEqual([7]);
   });
 
-  // A daemon keeps its stderr in its log: without the engine's read a daemon of 0.1.4 or earlier is kept as it runs,
-  // and the first failure says why, once per process.
+  // A daemon keeps its stderr in its log, and the first failure says why, once per process. Every Windows start read
+  // goes through the engine, a busy daemon's of any release as well as one of 0.1.4 or earlier, so the line names no
+  // release.
   it("reports the first failure of the engine's read once, and reads nothing", async () => {
     vi.resetModules();
     const fresh = await import("../../src/engine/process-liveness.js");
@@ -349,7 +350,7 @@ describe("processStartedAtThroughEngine", () => {
       const failing = () => {
         throw new Error("Unsupported platform or missing native addon");
       };
-      const line = "rerail: the engine could not read or end a process, so a daemon of Rerail 0.1.4 or earlier is kept as it runs: Unsupported platform or missing native addon\n";
+      const line = "rerail: the engine could not read or end a process, so Rerail could not tell whether the recorded daemon is still running: Unsupported platform or missing native addon\n";
       expect(fresh.processStartedAtThroughEngine(7, "win32", failing)).toBeUndefined();
       expect(written.mock.calls.map(([text]) => String(text))).toEqual([line]);
       expect(fresh.endProcessStartedBy(7, 1_700_000_000_000, 5_000, failing)).toBe("unread");
