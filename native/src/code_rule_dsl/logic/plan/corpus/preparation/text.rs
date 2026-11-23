@@ -41,7 +41,7 @@ pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::Gra
     let text = p.current()?.decl_of("text").is_some();
     if text {
         p.rules(&mut NodeSubjects);
-        p.rules(&mut TextByNode { matchers: matchers.iter().map(|(rel, _, _)| rel.clone()).collect(), nodes: HashMap::new(), made: 0, kept: BTreeSet::new() });
+        p.rules(&mut NodeReads { matchers: matchers.iter().map(|(rel, _, _)| rel.clone()).collect(), nodes: HashMap::new(), made: 0, kept: BTreeMap::new() });
         p.rules(&mut Twins { matchers: matchers.clone(), by_rule: HashMap::new(), made: 0 });
         // Again, on the twins.
         p.rules(&mut NodeSubjects);
@@ -80,11 +80,11 @@ pub fn long_text_twins(v: Arc<Version>, matchers: &Matchers) -> Result<(Arc<Vers
     Ok((p.finish()?.0, twins.made))
 }
 
-/// Version `v` with the `text` atoms of the nodes its rules bind read as the node's text (`TextByNode`, decision 0353
+/// Version `v` with the `text` atoms of the nodes its rules bind read as the node's text (`NodeReads`, decision 0353
 /// step 3), `matchers` its matchers' relations: that version and the number of atoms read so.
 pub fn text_by_node(v: Arc<Version>, matchers: BTreeSet<String>) -> Result<(Arc<Version>, usize)> {
     let mut p = Pipeline::new("text by node", v);
-    let mut pass = TextByNode { matchers, nodes: HashMap::new(), made: 0, kept: BTreeSet::new() };
+    let mut pass = NodeReads { matchers, nodes: HashMap::new(), made: 0, kept: BTreeMap::new() };
     p.rules(&mut pass);
     Ok((p.finish()?.0, pass.made))
 }
@@ -484,28 +484,43 @@ impl RulePass for NodeSubjects {
     }
 }
 
-// ---- a bound node's text is read ----
+// ---- a bound node's per-node values are read ----
 
-/// `text(v, t)` of a node `v` the rest of the body binds reads `v`'s text where the join reaches it:
-/// `t = @rr_node_text_any(v)`, at any length (decision 0353 step 3: a derived value computed on demand). No `text`
-/// row is made for it, and no walk of every node of every document makes them: on cold hogql that walk was 0.34 s of
-/// CPU, for the texts of the few nodes the rules bind.
+/// `core.rerail`'s per-node relations a node read answers (decision 0353 step 3), each with its read: `text`'s at any
+/// length, and the values `CoreRows::node` makes (`syntax::LongTexts`).
+const NODE_READ_OF: [(&str, &str); 6] = [
+    ("text", "rr_node_text_any"),
+    ("structural_before", "rr_node_before"),
+    ("structural_after", "rr_node_after"),
+    ("name", "rr_node_name"),
+    ("comment", "rr_node_comment"),
+    ("strprefix", "rr_node_strprefix"),
+];
+
+/// `r(v, x)` of a per-node relation `r` of `core.rerail` (`NODE_READ_OF`), of a node `v` the rest of the body binds,
+/// reads `v`'s value where the join reaches it: `x = @rr_node_<r>(v)` (decision 0353 step 3: a derived value computed
+/// on demand; `text`'s at any length). No row of `r` is made for it, and no walk of every node of every document
+/// makes them: on cold hogql that walk was 0.34 s of CPU for `text` alone, for the texts of the few nodes the rules
+/// bind; on the bench's 300 files `structural_before` and `structural_after` were 27 MB of rows, for the few nodes
+/// two rules read them of.
 ///
-/// Only in `core.rerail`'s shape, where a node's `text` is its source text (T's holds some nodes' alone), and only for
-/// a `v` that is a node a base or file-local relation binds, in a column that holds nodes alone (`node_columns`): its
-/// read goes into the file's chunk (`file_local::passes::push`, decision 0292 §3), where the batch holds the document
-/// the node is of. A `v` only a cross-file relation binds is bound in the cross part, where a warm run's retraction
-/// would read the node's id in the edited file's document: its `text` stays a relation, with versions (decision 0458). A span's `text` (`src_line`'s, a
-/// match's) is no node read's, and a `text` atom that binds `v` itself (`text(v, "x")`, or `v` read only by other
-/// `text` atoms) is a lookup by text: both stay, and their rows are `text`'s.
-struct TextByNode {
+/// Only in `core.rerail`'s shape, where these are the values of a node's own source (T's holds some nodes' alone),
+/// and only for a `v` that is a node a base or file-local relation binds, in a column that holds nodes alone
+/// (`node_columns`): its read goes into the file's chunk (`file_local::passes::push`, decision 0292 §3), where the
+/// batch holds the document the node is of. A `v` only a cross-file relation binds is bound in the cross part, where a
+/// warm run's retraction would read the node's id in the edited file's document: its relation stays, with versions
+/// (decision 0458). A span's `text` (`src_line`'s, a match's) is no node read's, and an atom that binds `v` itself
+/// (`text(v, "x")`, or `v` read only by other such atoms) is a lookup by its value: both stay, and their rows are the
+/// relation's.
+struct NodeReads {
     /// The matchers' relations (`MatcherRelations`): their root and captures are tree nodes, declared `node`.
     matchers: BTreeSet<String>,
-    /// Each relation's columns that hold nodes alone; empty outside `core.rerail`'s shape.
+    /// Each relation's columns that hold nodes alone; empty outside `core.rerail`'s shape. Without the per-node
+    /// relations themselves: their atoms are what is read, and bind no node (`r(v, "x")` alone is a lookup by value).
     nodes: HashMap<String, BTreeSet<usize>>,
     made: usize,
-    /// The heads of the rules whose `text` atoms stay (their location not known to be a node), for the decision.
-    kept: BTreeSet<String>,
+    /// By relation, the heads of the rules whose atoms of it stay (their node not known to be bound), for the decision.
+    kept: BTreeMap<&'static str, BTreeSet<String>>,
 }
 
 /// The columns of `v`'s relations that hold nodes alone: a base relation's, `core.rerail`'s declared `node`
@@ -513,7 +528,7 @@ struct TextByNode {
 /// relation's (`local`, the split's), each column every rule of it fills with a variable its body binds in such a
 /// column: the greatest such set, so a recursive relation keeps a column its base cases fill with nodes. Not a
 /// cross-file relation's: a node it binds is read in the cross part, where an edit's old document is not the batch's,
-/// so the read of a node a maintained rule retracts would read the edited file's (`TextByNode`).
+/// so the read of a node a maintained rule retracts would read the edited file's (`NodeReads`).
 fn node_columns(v: &Version, matchers: &BTreeSet<String>, local: &BTreeSet<String>) -> HashMap<String, BTreeSet<usize>> {
     let core = crate::code_rule_dsl::facts::core::core_node_columns();
     let derived: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
@@ -567,8 +582,8 @@ fn node_bound(v: &Version, r: RuleRef<'_>, cols: &HashMap<String, BTreeSet<usize
     bound
 }
 
-impl RulePass for TextByNode {
-    const NAME: &'static str = "a bound node's text is read";
+impl RulePass for NodeReads {
+    const NAME: &'static str = "a bound node's per-node values are read";
     fn begin(&mut self, cx: &Cx<'_>) -> Result<Select> {
         let v = cx.v();
         // `core.rerail`'s shape, as the projection takes it (`text_demand::projection_of`).
@@ -578,51 +593,51 @@ impl RulePass for TextByNode {
         }
         let split = cx.get::<crate::code_rule_dsl::typing::file_local::FileLocal>()?;
         self.nodes = node_columns(v, &self.matchers, &split.local);
+        self.nodes.retain(|rel, _| !NODE_READ_OF.iter().any(|(r, _)| r == rel));
         Ok(Select::All)
     }
     fn rule(&mut self, cx: &Cx<'_>, r: RuleRef<'_>, out: &mut RuleOut<'_, '_>) -> Result<Step> {
         let v = cx.v();
         let body: Vec<LitRef<'_>> = r.body().collect();
         let bound = node_bound(v, r, &self.nodes);
-        let read: Vec<usize> = body
-            .iter()
-            .enumerate()
-            .filter(|(_, l)| match l.view() {
-                Lit::Atom(a) if !a.neg() && v.rel_name(a.rel()) == "text" => {
-                    let a = args(a);
-                    a.len() == 2 && matches!(a[0], TermRef::Var(x) if bound.contains(&x))
+        // Each body atom of a per-node relation: its read, and whether its node is bound.
+        let of = |l: &LitRef<'_>| match l.view() {
+            Lit::Atom(a) if !a.neg() => NODE_READ_OF.iter().find(|(rel, _)| v.rel_name(a.rel()) == *rel).map(|&(rel, read)| {
+                let a = args(a);
+                (rel, read, a.len() == 2 && matches!(a[0], TermRef::Var(x) if bound.contains(&x)))
+            }),
+            _ => None,
+        };
+        let mut read: Vec<(usize, &'static str)> = Vec::new();
+        for (i, l) in body.iter().enumerate() {
+            match of(l) {
+                Some((_, f, true)) => read.push((i, f)),
+                Some((rel, _, false)) => {
+                    self.kept.entry(rel).or_default().insert(v.rel_name(r.head().rel()).to_owned());
                 }
-                _ => false,
-            })
-            .map(|(i, _)| i)
-            .collect();
-        let texts = body.iter().filter(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && v.rel_name(a.rel()) == "text")).count();
-        if texts > read.len() {
-            self.kept.insert(v.rel_name(r.head().rel()).to_owned());
+                None => {}
+            }
         }
         if read.is_empty() {
             return Ok(Step::Keep);
         }
-        // A fresh name for each `text(v, _)`'s text, the first a rule does not hold.
+        // A fresh name for each `r(v, _)`'s value, the first a rule does not hold.
         let mut held: HashSet<String> = r.vars().map(|a| v.text(a).to_owned()).collect();
         let mut count = 0;
         let fresh_names: Vec<String> = read.iter().map(|_| fresh(&mut held, &mut count, "rr_text_of")).collect();
         let mut w = out.rule().head_from(v, r, r.head());
         for (i, l) in body.iter().enumerate() {
-            if !read.contains(&i) {
+            let Some(k) = read.iter().position(|&(x, _)| x == i) else {
                 w = w.lit(v, r, *l);
                 continue;
-            }
-            let Lit::Atom(text) = l.view() else { unreachable!("a text atom") };
-            let a = args(text);
+            };
+            let Lit::Atom(atom) = l.view() else { unreachable!("a per-node atom") };
+            let a = args(atom);
             let TermRef::Var(node) = a[0] else { unreachable!("a bound node") };
-            let call = T::Call("rr_node_text_any", vec![T::Var(name(v, r, node))]);
+            let call = T::Call(read[k].1, vec![T::Var(name(v, r, node))]);
             w = match a[1] {
-                // `text(v, _)`: `v` has a text.
-                TermRef::Wild => {
-                    let k = read.iter().position(|&x| x == i).expect("read");
-                    w.cmp(T::Var(&fresh_names[k]), CmpOp::Eq, call)
-                }
+                // `r(v, _)`: `v` has a value.
+                TermRef::Wild => w.cmp(T::Var(&fresh_names[k]), CmpOp::Eq, call),
                 t => w.cmp(t_of(r, t), CmpOp::Eq, call),
             };
             self.made += 1;
@@ -632,8 +647,8 @@ impl RulePass for TextByNode {
     }
     fn finish(&mut self, cx: &Cx<'_>, b: &mut Builder<'_>) -> Result<()> {
         let (made, kept) = (self.made, std::mem::take(&mut self.kept));
-        if !kept.is_empty() {
-            cx.decide("a bound node's text is read (decision 0353 step 3)", || format!("text read as rows (a location not known to be a node) by {}", kept.into_iter().collect::<Vec<_>>().join(", ")));
+        for (rel, heads) in kept {
+            cx.decide("a bound node's per-node values are read (decision 0353 step 3)", || format!("{rel} read as rows (a location not known to be a node) by {}", heads.into_iter().collect::<Vec<_>>().join(", ")));
         }
         if made == 0 {
             return Ok(());
@@ -646,7 +661,7 @@ impl RulePass for TextByNode {
             inputs.push("rr_long_text_node".into());
             b.fields().set_inputs(&inputs);
         }
-        cx.decide("a bound node's text is read (decision 0353 step 3)", || format!("{made} text atoms of nodes their rules bind read the node's text"));
+        cx.decide("a bound node's per-node values are read (decision 0353 step 3)", || format!("{made} atoms of per-node relations of nodes their rules bind read the node's value"));
         Ok(())
     }
 }

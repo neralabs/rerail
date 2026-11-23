@@ -133,6 +133,14 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // A node's string literal's content (the syntax table's `LongTexts::str_any`): `str`'s answer (decisions 0174,
     // 0353 step 3).
     ("rr_node_str", &[Number], Text),
+    // `core.rerail`'s per-node values of a node (the syntax table's `LongTexts::core_read`), each read where a rule binds
+    // the node instead of a row a node (decision 0353 step 3): `structural_before`, `structural_after`, `name`,
+    // `comment`, `strprefix`.
+    ("rr_node_before", &[Number], Text),
+    ("rr_node_after", &[Number], Text),
+    ("rr_node_name", &[Number], Text),
+    ("rr_node_comment", &[Number], Text),
+    ("rr_node_strprefix", &[Number], Text),
     // `.rerail`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
@@ -378,7 +386,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rr_to_string" => Some(numbers[0].to_string()),
         "zero_pad" => Some(format!("{:0w$}", numbers[0], w = usize::try_from(numbers[1].clamp(0, 64)).unwrap_or(0))),
         // Read through the run's binding of its batch (`node_read`), never by value alone.
-        "rr_node_text" | "rr_node_text_any" | "rr_node_value" | "rr_node_str" => None,
+        name if NODE_READS.contains(&name) => None,
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
         "semver_subset" => {

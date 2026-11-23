@@ -192,6 +192,59 @@ pub fn node_str(f: &Facts, dialect: &Dialect, id: u32) -> Option<String> {
     literal(dialect.family, kind, f.text(id), interpolated(f, dialect, kind, &f.children(id))).str
 }
 
+/// Tape node `id`'s `name(n, s)` in `core.rerail`'s shape: an identifier's text, or a dotted chain's (`name`), or an
+/// rr `variable`'s text; none for a comment. What `CoreRows::node` makes and `@rr_node_name` reads (decision 0353 step 3).
+pub fn node_name(f: &Facts, dialect: &Dialect, id: u32) -> Option<String> {
+    let (kind, text) = (dialect.name(f, id), f.text(id));
+    if is_comment(kind) {
+        return None;
+    }
+    name(kind, text).or_else(|| (dialect.family == Family::Rr && kind == "variable").then(|| text.to_owned()))
+}
+
+/// Tape node `id`'s `comment(n, s)`: a comment's text without its marker; none for another node (`@rr_node_comment`).
+pub fn node_comment<'f>(f: &'f Facts, dialect: &Dialect, id: u32) -> Option<&'f str> {
+    is_comment(dialect.name(f, id)).then(|| comment_body(f.text(id)))
+}
+
+/// Tape node `id`'s `strprefix(n, p)`: a literal's prefix letters, lowercased; none for a comment or a node that is no
+/// literal with a prefix (`@rr_node_strprefix`).
+pub fn node_strprefix(f: &Facts, dialect: &Dialect, id: u32) -> Option<String> {
+    let kind = dialect.name(f, id);
+    if is_comment(kind) {
+        return None;
+    }
+    literal(dialect.family, kind, f.text(id), interpolated(f, dialect, kind, &f.children(id))).prefix
+}
+
+/// Child `k` of tape node `parent` (`children`, its stored children): the source before it, from its stored sibling
+/// before (or the parent's start), and after it, to its stored sibling after (or the parent's end). Its
+/// `structural_before` and `structural_after`.
+fn around<'f>(f: &'f Facts, parent: u32, children: &[u32], k: usize) -> (&'f str, &'f str) {
+    let between = |a: u32, b: u32| if a < b { &f.source[a as usize..b as usize] } else { "" };
+    let c = children[k];
+    let a = if k == 0 { f.start(parent) } else { f.end(children[k - 1]) };
+    let b = children.get(k + 1).map_or(f.end(parent), |&d| f.start(d));
+    (between(a, f.start(c)), between(f.end(c), b))
+}
+
+/// Tape node `id`'s `structural_before` and `structural_after` (a root's, to the source's edges), as `CoreRows::node`
+/// makes them: the walk makes a child's when it visits its parent, so a node whose parent the projection does not
+/// number has none. What `@rr_node_before` and `@rr_node_after` read (decision 0353 step 3).
+pub fn node_structural<'f>(p: &Projected, f: &'f Facts, id: u32) -> Option<(&'f str, &'f str)> {
+    if id == 0 {
+        let between = |a: u32, b: u32| if a < b { &f.source[a as usize..b as usize] } else { "" };
+        return Some((between(0, f.start(id)), between(f.end(id), f.source.len() as u32)));
+    }
+    let parent = f.parent(id)?;
+    if p.local_of_node(parent) == crate::code_rule_dsl::facts::core::NONE {
+        return None;
+    }
+    let children = f.children(parent);
+    let k = children.iter().position(|&c| c == id)?;
+    Some(around(f, parent, &children, k))
+}
+
 /// The literal facts of a node of `kind` with source `text`; `interpolated` when it has a part other than
 /// constant text (a Python `interpolation`, a PHP `encapsed_string`'s variable).
 pub fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Literal {
@@ -649,40 +702,40 @@ impl CoreRows {
         // neighbours (the sibling before or after it, else the parent's edge); a root's, between
         // it and the source's edges.
         if !self.skip.structural {
-            let (start, end) = (f.start(id), f.end(id));
-            let between = |a: u32, b: u32| if a < b { &f.source[a as usize..b as usize] } else { "" };
             // Only the root has no parent.
-            if id == 0 {
-                self.structural_before.push([n, string(between(0, start)) as i64]);
-                self.structural_after.push([n, string(between(end, f.source.len() as u32)) as i64]);
+            if id == 0
+                && let Some((before, after)) = node_structural(p, f, id)
+            {
+                self.structural_before.push([n, string(before) as i64]);
+                self.structural_after.push([n, string(after) as i64]);
             }
             for (k, &c) in children.iter().enumerate() {
                 let local_c = p.local_of_node(c);
                 if local_c == crate::code_rule_dsl::facts::core::NONE {
                     continue;
                 }
-                let a = if k == 0 { start } else { f.end(children[k - 1]) };
-                let b = children.get(k + 1).map_or(end, |&d| f.start(d));
+                let (before, after) = around(f, id, &children, k);
                 let c_global = p.global(local_c);
-                self.structural_before.push([c_global, string(between(a, f.start(c))) as i64]);
-                self.structural_after.push([c_global, string(between(f.end(c), b)) as i64]);
+                self.structural_before.push([c_global, string(before) as i64]);
+                self.structural_after.push([c_global, string(after) as i64]);
             }
         }
         let mut token_like = children.is_empty();
         if is_comment(kind) {
-            if !self.skip.comment {
-                self.comment.push([n, string(comment_body(text)) as i64]);
+            if !self.skip.comment
+                && let Some(body) = node_comment(f, dialect, id)
+            {
+                self.comment.push([n, string(body) as i64]);
             }
             token_like = true;
         } else {
             if !self.skip.spread && is_spread(kind) {
                 self.spread.push(n);
             }
-            if self.skip.name {
-            } else if let Some(s) = name(kind, text) {
+            if !self.skip.name
+                && let Some(s) = node_name(f, dialect, id)
+            {
                 self.name.push([n, string(&s) as i64]);
-            } else if dialect.family == Family::Rr && kind == "variable" {
-                self.name.push([n, string(text) as i64]);
             }
             let interpolated = !self.skip.literal && interpolated(f, dialect, kind, &children);
             let mut lit = if self.skip.literal { Literal::default() } else { literal(dialect.family, kind, text, interpolated) };
@@ -1017,6 +1070,27 @@ impl CoreRows {
                 r.push(&row);
             }
             r
+        }
+        // Decision 0353's row 7, by relation: the per-node rows the walk made (`node`), in the profile's stages.
+        for (name, bytes) in [
+            ("op", std::mem::size_of_val(self.op.as_slice())),
+            ("op_at", std::mem::size_of_val(self.op_at.as_slice())),
+            ("text", std::mem::size_of_val(self.text.as_slice())),
+            ("name", std::mem::size_of_val(self.name.as_slice())),
+            ("str", std::mem::size_of_val(self.str.as_slice())),
+            ("strprefix", std::mem::size_of_val(self.strprefix.as_slice())),
+            ("value", std::mem::size_of_val(self.value.as_slice())),
+            ("comment", std::mem::size_of_val(self.comment.as_slice())),
+            ("spread", std::mem::size_of_val(self.spread.as_slice())),
+            ("str_part", std::mem::size_of_val(self.str_part.as_slice())),
+            ("str_part_word", std::mem::size_of_val(self.str_part_word.as_slice())),
+            ("str_part_start", std::mem::size_of_val(self.str_part_start.as_slice())),
+            ("structural_before", std::mem::size_of_val(self.structural_before.as_slice())),
+            ("structural_after", std::mem::size_of_val(self.structural_after.as_slice())),
+        ] {
+            if bytes > 0 {
+                crate::code_rule_dsl::prof::count_named(format!("row 7 (decision 0353) bytes: {name}"), bytes);
+            }
         }
         let node_sym = |rows: &[[i64; 2]]| make(&["n", "s"], rows, [false, true], atom);
         let pair = |columns: &[&str; 2], rows: &[[i64; 2]]| make(columns, rows, [false, false], atom);

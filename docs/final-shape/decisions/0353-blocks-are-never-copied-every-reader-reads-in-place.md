@@ -394,7 +394,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 0: gone | Done (step 4, 2026-11-22) |
 | 5 | Views and flat relations uploaded from the host. Symbols' names no longer (0478 step 2e, 2026-11-19: every text kernel reads them through the atoms directory; `texts` and `DevText` are deleted). `tape`, `ast_depth` and `node_order` are read in place since 2026-11-20 (`view_tape`, `view_depth`, `view_order`, written once in CLIF: a node's parent, its numbered nodes under it by `view_end`'s rank, its depth by a climb, its order key by `num_order_of`): on the M3's 300-file run they were 69.8 MB (`ast_depth`) and 13.7 MB (`tape`) of 176.3 MB uploaded (ab111). Each upload is counted by why it was not read in place and by its columns (`device.upload (...)`) | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident` | 0: gone. On cold hogql its last 39 calls were relations of no rows | Done (step 6, 2026-11-22) |
 | 6 | Gone (step 5, 2026-11-18): an axis's pairs copied into the chunk, then expanded to ids. The solve writes ids once into a relation of its own, which every reader reads where it lies; `put_pairs` and `VIEW_AXIS` are deleted. `has` probed by its node or its ancestor is walked on the tape on the device (6fdbc1eb2, `DevRel::has`); read whole or by both columns it is still uploaded (row 5). Measured (ab98, 2026-11-20, the M3, 300 files, `--metal`, 1 GB, load 5–9; each arm with 960374749f's planner fix): 463 violations each run; instructions 544 G without the walk, 554 G with it (means of three runs, within their spread of about 30 G), wall 24 s each; `has` walked 6 times a run; row 5's uploads rose from 312.1 MB in 863 calls to 454.3 MB in 949, since strata a keyed `has` kept on the CPU now run on the device and upload their other inputs | — | — | Done |
-| 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`). In core.rerail's shape a node's `text` is read in place (2026-11-22); left: T's shape's `NodeRows` (Q121) and `text` of a span or of a node only a cross-file relation binds | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.0 MB, 0.3 ms on cold hogql (0.45–0.49 s of CPU a run before) | Step 3 |
+| 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`). In core.rerail's shape a node's `text` is read in place (2026-11-22); left: T's shape's `NodeRows` (Q121), `op` and `op_at`, and `text` of a span, by its text, or of a node only a cross-file relation binds; a node's `structural_*`, `name`, `comment` and `strprefix` are read where a rule binds it (2026-11-23) | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.0 MB, 0.3 ms on cold hogql (0.45–0.49 s of CPU a run before) | Step 3 |
 | 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | 0: gone (21 MB in 972 calls on cold hogql before: push_fresh 15.6, absorb 5.3, the device's staged 0.1) | Done (step 6, 2026-11-22) |
 | 9 | A relation of many parts merged for the device (`in_block`). The key's copy is gone (step 6, 2026-11-22), and a relation alone in a block has room for its whole directory. Before: a second key's index copied the relation (`DevIndex::moved`). Gone (step 6, 2026-11-22): parts in two blocks are bound through links, a key past a full directory goes in a block beside it (`Relation::try_link`, `FAR_BASE`, `Part::far_link`), a chain reads down its jumps with no compaction, and parts in more blocks are read by part. Since 0384 (steps 1–8, 2026-11-18) a relation is one relation or a chain of continuations read in place, so the merge is left only where a part is appended after another relation's rows (`append_part`, counted), with a chain's newest two segments compacted past `MAX_SEGMENTS`. A recursive component's deltas on the device are made with room for an index of each key its plans probe them by (`Own::keyed`, `Part::for_device_indexed`, 2026-11-20), and its totals grow in a block with room for theirs (row 10). That was not most of the row: on the M3's 300-file run it copied 852.4 MB in 279 copies before (ab108) and 901.8 MB in 322 after (ab109). The site now says where the relation copied lies, the device's own (an upload, a delta) or in a block of the run's with no room left, and the device's report counts each (`moved`): 766.4 MB in 247 copies were in a block with no room (ab110). A head relation the device writes of 4,096 rows or more is now alone in a block with room for its indexes (`head_room`, `Part::with_index_room`, anonymous memory taken as written): 621.7 MB in 114 copies left (ab111), each about 5 MB, of relations not yet told apart | `metal_join.rs`; `facts/rows.rs`; `device.rs` | Q85 counts them; 0 merges on cold 300-file runs; 0 on cold hogql since 2026-11-22 (8.3 MB in 2 before: the axis relation, room for 2 indexes, probed by 3 keys) | Done |
 | 10 | Gone (2026-11-20): a device fixpoint's total copied into a run's block at its end, and each round's total made anew with the last round's rows copied into it (rounds × rows). A set head's relation is now one relation in a block of the run's life from its first round, each round's new rows written past its rows, its indexes forgotten as it grows, taken by the store as it lies (`SetHead`), as a lattice head's is (decision 0384 step 5). Measured before: 187.4 MB in 225 copies at the end on the M3's 300-file run (ab109); the rounds' copies were not counted | `device.rs` (0325 step 4) | 0 | Done |
@@ -1267,6 +1267,33 @@ Tests: `a_writer_with_rooms_writes_the_references_tape` (R13's cases, with regio
 Rust parses placed where their writer wrote them); the tape, guest and pattern tests on spark1 (CUDA: 193).
 Measured on the M1 Max, Metal, cold: hogql 1,629 findings with the CPU run's digest, row 17 0 MB (602 tapes written
 in place); the 300-file bench 463 violations, row 17 0 MB. Row 7 is the one copy left.
+
+### Step 3, row 7: a bound node's per-node values are read, not made rows (2026-11-23)
+
+The profile now names row 7's bytes by relation (`row 7 (decision 0353) bytes: <relation>`, `CoreRows::relations`).
+On the 300-file bench they were 49.9 MB: `text` 19.6, `structural_before` and `structural_after` 13.7 each, `name`
+5.2, `value` 1.3, `op` 0.9, `op_at` 0.8, `strprefix` 0.6, `comment` 0.1. Two rule files read `structural_*`, of nodes
+`child` binds.
+
+What `text`'s pass did for `text` (`t = @rr_node_text_any(v)`) the same pass, `NodeReads`, now does for every
+single-valued per-node relation of `core.rerail` (`NODE_READ_OF`): `r(v, x)` of a node `v` the rest of the body binds
+reads `x = @rr_node_<r>(v)`, through the run's binding of the batch (`LongTexts::core_read`): `rr_node_before`,
+`rr_node_after`, `rr_node_name`, `rr_node_comment`, `rr_node_strprefix`. Each value has one definition, which the walk
+makes its row with and the read answers (`core_rr::node_structural`, `node_name`, `node_comment`, `node_strprefix`).
+A per-node atom binds no node for this (`name(n, "x")` alone is a lookup by value), and the rules the pass leaves
+(their node bound by no other atom, or only cross-file) are named per relation in the profile, as `text`'s were. A
+relation no rule reads as rows any more is not made: the walk's skips follow the projection.
+
+With `strprefix` no longer read, `rr_value_lit` is the only reader of literal values, so a document whose values W
+reads makes none (`value_lit_only`): the 1.3 MB of `value` rows the walk made and `relations` dropped are gone too.
+
+Tests: `a_node_read_answers_the_row_the_walk_makes` (every node of two Python files, each read against the walk's row),
+`per_node_values_of_a_bound_node_are_read_in_place`, and the core relations' and text tests, on spark1. On the M1
+Max: the bench 463 violations, CPU and Metal, row 7 49.9 MB to 15.4 MB (`text` 19.6 MB before rounding, `op` and
+`op_at` the rest); hogql 1,629 findings (d82234cb), row 7 0.0 MB.
+
+Left in row 7: `text` read as rows (22 rule heads on the bench: a span's text, a lookup by text, a node only a
+cross-file relation binds), `op` and `op_at` (several rows a node), and T's shape's `NodeRows`.
 
 ## What it replaces
 

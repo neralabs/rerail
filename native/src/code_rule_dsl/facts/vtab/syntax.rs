@@ -434,6 +434,35 @@ impl LongTexts {
     }
 }
 
+impl LongTexts {
+    /// Node `n`'s document in the batch, its tape node, and its grammar: in `core.rerail`'s shape, whose per-node
+    /// relations these reads answer. None for a span, a node of a document not in the batch, or T's shape.
+    fn core_node(&self, n: i64) -> Option<(&Projected, u32, &Dialect)> {
+        if self.batch.shape != Shape::Core {
+            return None;
+        }
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        let p = &self.batch.docs[*self.docs.get(&key)?];
+        let x = p.ranks().select(Item::Node, p.local_of(low)?)?;
+        Some((p, x, self.batch.dialects.get(p.tag())?))
+    }
+
+    /// A node read of `core.rerail`'s per-node relations (decision 0353 step 3), each the value `CoreRows::node` makes:
+    /// `structural_before`, `structural_after`, `name`, `comment`, `strprefix`.
+    fn core_read(&self, name: &str, n: i64) -> Option<String> {
+        let (p, x, dialect) = self.core_node(n)?;
+        let f = &*p.facts;
+        match name {
+            "rr_node_before" => core_rr::node_structural(p, f, x).map(|(before, _)| before.to_owned()),
+            "rr_node_after" => core_rr::node_structural(p, f, x).map(|(_, after)| after.to_owned()),
+            "rr_node_name" => core_rr::node_name(f, dialect, x),
+            "rr_node_comment" => core_rr::node_comment(f, dialect, x).map(str::to_owned),
+            "rr_node_strprefix" => core_rr::node_strprefix(f, dialect, x),
+            _ => None,
+        }
+    }
+}
+
 impl Source for LongTexts {
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         Some(Arc::clone(&self.batch) as _)
@@ -444,7 +473,7 @@ impl Source for LongTexts {
             "rr_node_text_any" => self.text_any(n),
             "rr_node_value" => self.value_any(n),
             "rr_node_str" => self.str_any(n),
-            _ => None,
+            _ => self.core_read(name, n),
         }
     }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {

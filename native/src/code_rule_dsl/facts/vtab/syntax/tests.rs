@@ -576,6 +576,36 @@ fn core_rr_relations_hold_what_core_rr_says() {
     lacks("token_after", "identifier'f' '('");
 }
 
+/// Decision 0353 step 3: a node read of `core.rerail`'s per-node relations (`@rr_node_before`, `@rr_node_after`,
+/// `@rr_node_name`, `@rr_node_comment`, `@rr_node_strprefix`, through the batch's long-text binding) answers, for every
+/// node, exactly the row the walk makes of it (`CoreRows::node`), and none where it makes none: a rule that binds the
+/// node reads it instead of the relation's rows, and must read the same.
+#[test]
+fn a_node_read_answers_the_row_the_walk_makes() {
+    let src = "# top\nimport os.path as p\ndef f(a, b):  # tail\n    \"\"\"d\\x41\"\"\"\n    x = a not in b\n    g(*a, f\"v{a}w\", 0xff, rb'z', obj.attr.c)\n    return x\n";
+    let store = ContentStore::open(&temp("node-reads")).unwrap();
+    let reads = ["node", "structural_before", "structural_after", "name", "comment", "strprefix", crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let docs = vec![document(1, "m.py", "python", src), document(2, "bad.py", "python", "x = (\n")];
+    let sources = shaped(&store, docs, &projection).unwrap();
+    let source = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no {name}")).1);
+    let sym = |v: i64| store.atom_value(v as u32).unwrap().unwrap();
+    let nodes = source("node");
+    let long = source(crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES);
+    let mut checked = 0;
+    for (rel, read) in [("structural_before", "rr_node_before"), ("structural_after", "rr_node_after"), ("name", "rr_node_name"), ("comment", "rr_node_comment"), ("strprefix", "rr_node_strprefix")] {
+        let s = source(rel);
+        let made: HashMap<i64, String> = (0..s.len()).map(|r| (s.value(r, 0), sym(s.value(r, 1)))).collect();
+        assert!(!made.is_empty(), "{rel}: the walk made rows");
+        for r in 0..nodes.len() {
+            let n = nodes.value(r, 1);
+            assert_eq!(long.node_read(read, n), made.get(&n).cloned(), "{rel} of node {n}");
+            checked += 1;
+        }
+    }
+    assert!(checked > 100, "every node of both documents, {checked} reads");
+}
+
 /// The shape follows the program: one that includes `core.rerail` reads `core.rerail`'s, one that declares its base
 /// relations itself (T's, the converter's) T's.
 #[test]
@@ -1466,6 +1496,30 @@ fn text_of_a_bound_node_is_read_in_place() {
     // Outside `core.rerail`'s shape (T's, whose `text` holds some nodes' alone): no atom is read so.
     let t_shape = crate::code_rule_dsl::logic::rr::parse_version(".decl kind(n: node, k: symbol)\n.input kind\n.decl text(n: node, t: symbol)\n.input text\n.decl out(t: symbol)\nout(t) :- kind(n, \"call\"), text(n, t).\n.output out\n").unwrap();
     assert_eq!(crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(t_shape, Default::default()).unwrap().1, 0, "T's shape");
+}
+
+/// Decision 0353 step 3: an atom of another per-node relation of `core.rerail` (`structural_before`,
+/// `structural_after`, `name`, `comment`, `strprefix`) of a node the rest of the body binds reads the node's value
+/// (`@rr_node_before`, ...), as `text`'s does. Its own atom binds no node: `name(n, "x")` alone is a lookup by value,
+/// kept as rows, as is one whose node only another such atom binds.
+#[test]
+fn per_node_values_of_a_bound_node_are_read_in_place() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    for (rules, read, call) in [
+        ("out(s) :- kind(n, \"call\"), structural_after(n, s).", 1, "@rr_node_after("),
+        ("out(s) :- child(m, n, 0), structural_before(n, s), structural_after(n, \")\").", 2, "@rr_node_"),
+        ("out(\"x\") :- kind(n, \"identifier\"), name(n, \"x\").", 1, "@rr_node_name("),
+        ("out(s) :- kind(n, \"comment\"), comment(n, s).", 1, "@rr_node_comment("),
+        ("out(p) :- kind(n, \"string\"), strprefix(n, p).", 1, "@rr_node_strprefix("),
+        ("out(\"x\") :- name(n, \"x\").", 0, "@rr_node_"),
+        ("out(s) :- name(n, \"x\"), structural_after(n, s).", 0, "@rr_node_"),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
+        let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(program, Default::default()).unwrap();
+        assert_eq!(made, read, "{rules}");
+        let printed = crate::code_rule_dsl::logic::rr::print_version(&program).unwrap();
+        assert_eq!(printed.matches(call).count(), read, "{rules}: {printed}");
+    }
 }
 
 /// The nodes given `text` are the ones the rules read (decision 0110): a fixed kind, a node's field, or a matcher
@@ -3008,6 +3062,7 @@ DEFINE_KERNEL2(syntax_tests, dir_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, D
         assert_eq!(g, w, "ask {:?}", asks[i]);
     }
     assert!(m > 100);
+}
 
 /// A batch with no counts given (a cold run's corpus batch): whether a relation may hold rows is answered making no
 /// document (a rule over an empty input is left out by it, `plan::native_stratum_`), and a probe of a group's node
