@@ -415,6 +415,7 @@ const codingAgentSchema = z.object({
   rerailData: z.object({
     access: z.enum(["kept-out", "file-tools", "open"]).describe("kept-out: neither its commands nor its file tools can read Rerail's data; file-tools: its file tools cannot, its shell commands can; open: nothing keeps it out."),
     why: z.string().describe("One sentence for a person saying why."),
+    fix: z.string().nullable().describe("One sentence for a person saying what they can do on this computer to keep the rest of its tools out too; null when Rerail knows of nothing."),
   }).strict().describe("Whether this coding agent's own tools can read Rerail's data (the Rerail home and the content cache), as far as its configuration on this computer shows. Rerail never changes it."),
 }).strict();
 

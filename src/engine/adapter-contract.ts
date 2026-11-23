@@ -17,7 +17,12 @@ export interface CodingAgentState {
   /** Why its connection could not be checked, such as a config file that is not valid JSON; null when it could. */
   problem: string | null;
   /** Whether this coding agent's own tools can read Rerail's data (the Rerail home and the content cache), as far as its configuration on this computer shows. Read-only: Rerail never changes it. */
-  rerailData: { access: "kept-out" | "file-tools" | "open"; why: string };
+  rerailData: {
+    access: "kept-out" | "file-tools" | "open";
+    why: string;
+    /** What a person can do on this computer to keep the rest of its tools out too; null when Rerail knows of nothing. */
+    fix: string | null;
+  };
 }
 export type AssistantObservation = "streaming" | "completed";
 export type ToolSurface = "native" | "event";
