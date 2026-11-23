@@ -13,12 +13,6 @@
 
 #include <ukl>
 
-// A source written for one SIMD width says so before its includes (`UKL_SIMD_WIDTH_NEEDED`); compiled at another, it
-// is refused here, not run wrong.
-#if defined(UKL_SIMD_WIDTH_NEEDED) && UKL_SIMD_WIDTH != UKL_SIMD_WIDTH_NEEDED
-#error "this source is written for UKL_SIMD_WIDTH_NEEDED lanes, and the device's SIMD groups have another width"
-#endif
-
 // A SIMD group's lanes as bits, lane `l` at bit `l` (a ballot's, a match's): 32 bits, or 64 where the group is wider
 // (AMD's 64 lanes; the CPU at `RERAIL_CPU_SIMD_WIDTH=64`). `ukl_mask_*` below read it whatever its width.
 #if UKL_SIMD_WIDTH > 32
@@ -57,6 +51,13 @@ typedef uint32_t ukl_mask_t;
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
 #endif
+// A small read many places of a kernel reach (a tape read, a node's, a relation's column): `UKL_SHARED`. A large
+// body many reach (an interpreter's step, its evaluators, a join stage's row writer): `UKL_LARGE`. Both inlined
+// here; calls on CUDA and OpenCL (decision 0576 §22). A rare case's body, called on every
+// backend but OpenCL: `UKL_RARE`.
+#define UKL_SHARED UKL_INLINE
+#define UKL_LARGE UKL_INLINE
+#define UKL_RARE UKL_COLD
 #define UKL_GLOBAL device
 #define UKL_COHERENT device coherent(device)
 #define UKL_LOCAL threadgroup
@@ -115,21 +116,6 @@ UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t 
     }
     return ~e;
 }
-// The same atomics on a coherent word (`UKL_COHERENT`): an atomic is served where the word's writes meet already.
-#define __UKL_COHERENT_ATOMIC(op)                                                                                     \
-    UKL_INLINE uint32_t ukl_atomic_##op(UKL_COHERENT uint32_t* p, uint32_t v) { return ukl_atomic_##op((UKL_GLOBAL uint32_t*)p, v); }
-__UKL_COHERENT_ATOMIC(add)
-__UKL_COHERENT_ATOMIC(sub)
-__UKL_COHERENT_ATOMIC(or)
-__UKL_COHERENT_ATOMIC(and)
-__UKL_COHERENT_ATOMIC(exchange)
-__UKL_COHERENT_ATOMIC(min)
-__UKL_COHERENT_ATOMIC(max)
-#undef __UKL_COHERENT_ATOMIC
-UKL_INLINE uint32_t ukl_atomic_load(UKL_COHERENT uint32_t* p) { return ukl_atomic_load((UKL_GLOBAL uint32_t*)p); }
-UKL_INLINE uint32_t ukl_atomic_poll(UKL_COHERENT uint32_t* p) { return ukl_atomic_poll((UKL_GLOBAL uint32_t*)p); }
-UKL_INLINE void ukl_atomic_store(UKL_COHERENT uint32_t* p, uint32_t v) { ukl_atomic_store((UKL_GLOBAL uint32_t*)p, v); }
-UKL_INLINE uint32_t ukl_atomic_cas(UKL_COHERENT uint32_t* p, uint32_t e, uint32_t n) { return ukl_atomic_cas((UKL_GLOBAL uint32_t*)p, e, n); }
 UKL_INLINE void ukl_fence_device() { atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device); }
 // A relaxed add on a threadgroup word.
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomic_fetch_add_explicit((threadgroup atomic_uint*)p, v, memory_order_relaxed); }
@@ -146,6 +132,10 @@ UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return simd_max
 #define UKL_NATIVE_SG_SCAN 1
 UKL_INLINE uint32_t ukl_sg_inclusive_sum_native(uint32_t v __UKL_PARAMS) { return simd_prefix_inclusive_sum(v); }
 UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { return simd_prefix_exclusive_sum(v); }
+// An f16's bits as an f32 (ukl/dot.h): Metal's half. Metal has no integer or mixed-precision dot product, so
+// ukl/dot.h's are the reference's arithmetic over this conversion.
+#define UKL_NATIVE_F16 1
+UKL_INLINE float ukl_f16_to_f32_native(uint32_t h) { return float(as_type<half>((ushort)h)); }
 
 #elif defined(UKL_CUDA)
 
@@ -164,6 +154,15 @@ UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { retur
 #ifndef UKL_ONCE
 #define UKL_ONCE static __device__ __noinline__
 #endif
+// A small read many places of a kernel reach (a tape read, a node's, a relation's column): `UKL_SHARED`. A large body
+// many reach (an interpreter's step, its evaluators, a join stage's row writer): `UKL_LARGE`. Both calls here
+// (decision 0576 §22): NVRTC compiles each inlined copy, and the transducer's tests' interpreter and JIT kernels
+// (`all_backends_execute_every_verified_instruction_and_mode`, `wildcard_and_missing_flags_preserve_native_node_meaning`)
+// took it 40 s and 26 s with both called, 187 s and 131 s with the reads inlined, over 240 s with both, forced or at
+// its choice. A rare case's body, called: `UKL_RARE`.
+#define UKL_SHARED static __device__ __noinline__
+#define UKL_LARGE UKL_SHARED
+#define UKL_RARE UKL_COLD
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile
 #define UKL_LOCAL
@@ -180,14 +179,39 @@ UKL_INLINE uint64_t ukl_umulhi64(uint64_t a, uint64_t b) { return __umul64hi(a, 
 UKL_INLINE uint32_t ukl_ctz32(uint32_t x) { return x == 0u ? 32u : (uint32_t)(__ffs(x) - 1); }
 UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0u ? 64u : (uint32_t)(__ffsll(x) - 1); }
 
+#if defined(UKL_HIP)
+// HIP (AMD's wavefronts, 32 or 64 lanes): the shuffles take no mask, as every lane of a wavefront runs them together;
+// a lane past the group's edge keeps its own value (`__shfl_up`, `__shfl_down`), as CUDA's. The ballot is 64 bits,
+// a 32-lane wavefront's in its low half.
+UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return __shfl(v, (int)lane, UKL_SIMD_WIDTH); }
+UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d __UKL_PARAMS) { return __shfl_up(v, d, UKL_SIMD_WIDTH); }
+UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS) { return __shfl_down(v, d, UKL_SIMD_WIDTH); }
+UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return __shfl_xor(v, (int)m, UKL_SIMD_WIDTH); }
+UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return (ukl_mask_t)__ballot(b); }
+UKL_INLINE void ukl_sg_barrier() { __UKL_SYNCWARP(); }
+#else
 UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return __shfl_sync(0xffffffffu, v, lane); }
 UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d __UKL_PARAMS) { return __shfl_up_sync(0xffffffffu, v, d); }
 UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS) { return __shfl_down_sync(0xffffffffu, v, d); }
 UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return __shfl_xor_sync(0xffffffffu, v, m); }
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return __ballot_sync(0xffffffffu, b); }
-
 UKL_INLINE void ukl_sg_barrier() { __syncwarp(); }
+#endif
+#if defined(UKL_HIP)
+// A threadgroup barrier orders threadgroup memory alone, as Metal's (`mem_threadgroup`) and OpenCL's
+// (`CLK_LOCAL_MEM_FENCE`): the fences are the workgroup's on LDS ("local"). HIP's `__syncthreads()` fences every
+// address space, so at each barrier it waited for the wave's global stores (`s_waitcnt_vscnt 0`) and invalidated the
+// vector L0 cache (`buffer_gl0_inv`): in the radix sort's scatter, after each round's writes. That was about 1 ms of
+// a 19 ms pass of 4M rows on a Radeon 680M (0440, "HIP's copies and fills, and its other overheads").
+UKL_INLINE void ukl_tg_barrier()
+{
+    __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup", "local");
+    __builtin_amdgcn_s_barrier();
+    __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup", "local");
+}
+#else
 UKL_INLINE void ukl_tg_barrier() { __syncthreads(); }
+#endif
 UKL_INLINE void ukl_tg_barrier_device() { __syncthreads(); }
 
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return *(volatile uint32_t*)p; }
@@ -207,11 +231,46 @@ UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { re
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return *(volatile uint32_t*)p; }
 UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { *(volatile uint32_t*)p = v; }
 
+#if defined(UKL_HIP)
+// ukl/dot.h on HIP: an f16's conversion (the compiler's `_Float16`), and on RDNA2 (`UKL_HIP_AMD_DOT`, the device's
+// define, `CudaDevice::defines`) the byte and f16 dot products, as OpenCL's AMD section (`v_dot2_f32_f16` rounds
+// the exact sum once). No bf16 form before RDNA3's.
+#define UKL_NATIVE_F16 1
+UKL_INLINE float ukl_f16_to_f32_native(uint32_t h) { return (float)__builtin_bit_cast(_Float16, (uint16_t)h); }
+#if defined(UKL_HIP_AMD_DOT)
+typedef _Float16 __ukl_half2 __attribute__((ext_vector_type(2)));
+#define UKL_NATIVE_DOT4 1
+UKL_INLINE int32_t ukl_dot4_i8_native(uint32_t a, uint32_t b, int32_t acc) { return __builtin_amdgcn_sdot4((int)a, (int)b, acc, false); }
+UKL_INLINE uint32_t ukl_dot4_u8_native(uint32_t a, uint32_t b, uint32_t acc) { return __builtin_amdgcn_udot4(a, b, acc, false); }
+#define UKL_NATIVE_DOT2_F16 1
+UKL_INLINE float ukl_dot2_f16_native(uint32_t a, uint32_t b, float acc)
+{
+    return __builtin_amdgcn_fdot2(__builtin_bit_cast(__ukl_half2, a), __builtin_bit_cast(__ukl_half2, b), acc, false);
+}
+#endif
+#else
 // The lanes holding the same value as this one (Volta and later).
 #define UKL_NATIVE_SG_MATCH 1
 UKL_INLINE ukl_mask_t ukl_sg_match_native(uint32_t v __UKL_PARAMS) { return __match_any_sync(0xffffffffu, v); }
 
-#if __CUDA_ARCH__ >= 800
+// ukl/dot.h: an f16's conversion (PTX's, with no header), and the byte dot products (`dp4a`, sm_61 and later). CUDA
+// has no f32-accumulating dot product of f16s or bf16s: those are the reference's arithmetic.
+#define UKL_NATIVE_F16 1
+UKL_INLINE float ukl_f16_to_f32_native(uint32_t h)
+{
+    float f;
+    asm("cvt.f32.f16 %0, %1;" : "=f"(f) : "h"((unsigned short)h));
+    return f;
+}
+#if __CUDA_ARCH__ >= 610
+#define UKL_NATIVE_DOT4 1
+UKL_INLINE int32_t ukl_dot4_i8_native(uint32_t a, uint32_t b, int32_t acc) { return __dp4a((int)a, (int)b, acc); }
+UKL_INLINE uint32_t ukl_dot4_u8_native(uint32_t a, uint32_t b, uint32_t acc) { return __dp4a(a, b, acc); }
+#endif
+
+#endif
+
+#if !defined(UKL_HIP) && __CUDA_ARCH__ >= 800
 #define UKL_NATIVE_SG_REDUCE 1
 UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v __UKL_PARAMS) { return __reduce_add_sync(0xffffffffu, v); }
 UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v __UKL_PARAMS) { return __reduce_min_sync(0xffffffffu, v); }
@@ -235,6 +294,13 @@ UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __reduce
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
 #endif
+// A small read many places of a kernel reach (a tape read, a node's, a relation's column): `UKL_SHARED`. A large
+// body many reach (an interpreter's step, its evaluators, a join stage's row writer): `UKL_LARGE`. Both inlined
+// here; calls on CUDA and OpenCL (decision 0576 §22). A rare case's body, called on every
+// backend but OpenCL: `UKL_RARE`.
+#define UKL_SHARED UKL_INLINE
+#define UKL_LARGE UKL_INLINE
+#define UKL_RARE UKL_COLD
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile
 #define UKL_LOCAL
@@ -354,6 +420,14 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __at
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
 #endif
+// Intel's compiler (IGC) compiles each inlined copy of a body apart, and its time follows the code reached through
+// inlining: the interpreter inlined took 10.7 s on an Arc 140V, its shared bodies called 5.8 s (decision 0576 §13).
+// So here a shared read and a large body (`UKL_SHARED`, `UKL_LARGE`) are calls. A rare case's body is inlined:
+// called from a kernel with a required sub-group size (every kernel here), IGC misread the 16 format's side read at
+// 16 lanes (decision 0576 §19).
+#define UKL_SHARED static __attribute__((noinline))
+#define UKL_LARGE UKL_SHARED
+#define UKL_RARE UKL_INLINE
 #define UKL_GLOBAL __global
 #define UKL_COHERENT volatile __global
 #define UKL_LOCAL __local
@@ -375,6 +449,30 @@ UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0ul ? 64u : 63u - (uint3
 
 UKL_INLINE void ukl_tg_barrier() { barrier(CLK_LOCAL_MEM_FENCE); }
 UKL_INLINE void ukl_tg_barrier_device() { barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
+
+// ukl/dot.h: an f16's conversion, OpenCL C's own (`vload_half`, which needs no `cl_khr_fp16`).
+#define UKL_NATIVE_F16 1
+UKL_INLINE float ukl_f16_to_f32_native(uint32_t h)
+{
+    ushort v = (ushort)h;
+    return vload_half(0, (const __private half*)&v);
+}
+#if defined(UKL_OPENCL_AMD_DOT)
+// AMD's dot products (RDNA2, `gfx103x`: the host defines `UKL_OPENCL_AMD_DOT` for those alone, whose instructions
+// these are): `v_dot4_i32_i8`, `v_dot4_u32_u8` and `v_dot2_f32_f16`, none clamping. The last rounds the exact sum once
+// (ukl/dot.h).
+#pragma OPENCL EXTENSION cl_khr_fp16 : enable
+#define UKL_NATIVE_DOT4 1
+UKL_INLINE int32_t ukl_dot4_i8_native(uint32_t a, uint32_t b, int32_t acc) { return __builtin_amdgcn_sdot4((int)a, (int)b, acc, false); }
+UKL_INLINE uint32_t ukl_dot4_u8_native(uint32_t a, uint32_t b, uint32_t acc) { return __builtin_amdgcn_udot4(a, b, acc, false); }
+#define UKL_NATIVE_DOT2_F16 1
+UKL_INLINE float ukl_dot2_f16_native(uint32_t a, uint32_t b, float acc) { return __builtin_amdgcn_fdot2(as_half2(a), as_half2(b), acc, false); }
+#elif defined(UKL_OPENCL_INT_DOT)
+// `cl_khr_integer_dot_product` (OpenCL C 3.0): the bytes' dot product, added to `acc` wrapping.
+#define UKL_NATIVE_DOT4 1
+UKL_INLINE int32_t ukl_dot4_i8_native(uint32_t a, uint32_t b, int32_t acc) { return (int32_t)((uint32_t)acc + (uint32_t)dot(as_char4(a), as_char4(b))); }
+UKL_INLINE uint32_t ukl_dot4_u8_native(uint32_t a, uint32_t b, uint32_t acc) { return acc + dot(as_uchar4(a), as_uchar4(b)); }
+#endif
 
 #if defined(UKL_OPENCL_EMULATED_SG)
 // The SIMD group through threadgroup memory: each thread writes its value to its word of `__ukl_sg`, and reads its
@@ -415,8 +513,34 @@ UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS)
     return m;
 }
 UKL_INLINE void ukl_sg_barrier() { barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
+#elif defined(UKL_OPENCL_SUBGROUPS) && defined(UKL_OPENCL_AMD)
+// AMD's waves, `UKL_SIMD_WIDTH` (32) lanes (the host checks the width at the device's opening): AMD's OpenCL 2.0 has
+// `cl_khr_subgroups` (reductions, scans, broadcast, barrier) but no shuffle or ballot extension, so those are the
+// wave's own: `ds_bpermute` (each lane reads the lane at its byte address, a lane's 4 bytes) and `ballot_w32`. A lane
+// outside the group, or the group's own (`shuffle_up` below lane `d`, `shuffle_down` past the last lane), reads its own
+// value, as CUDA's and the emulation's do.
+UKL_INLINE uint32_t __ukl_amd_read(uint32_t v, uint32_t from) { return (uint32_t)__builtin_amdgcn_ds_bpermute((int)((from & (UKL_SIMD_WIDTH - 1u)) << 2), (int)v); }
+UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return __ukl_amd_read(v, lane); }
+UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d __UKL_PARAMS)
+{
+    uint32_t l = __UKL_CL_LANE;
+    return __ukl_amd_read(v, l >= d ? l - d : l);
+}
+UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS)
+{
+    uint32_t l = __UKL_CL_LANE;
+    return __ukl_amd_read(v, l + d < UKL_SIMD_WIDTH ? l + d : l);
+}
+UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return __ukl_amd_read(v, __UKL_CL_LANE ^ m); }
+UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return (ukl_mask_t)__builtin_amdgcn_ballot_w32(b); }
+UKL_INLINE void ukl_sg_barrier() { sub_group_barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
+// No native forms: on a Radeon 680M (gfx1035, driver 32.0.21030.2001) `cl_khr_subgroups`' scans and reductions in
+// the engine's kernels worked on each 16-lane row of the 32-lane wave apart, while a small kernel's were right: the
+// block interpreter's `sub_group_scan_inclusive_add` scanned the second row without the first row's total, and the
+// device scan's `sub_group_reduce_add` gave a 1,024-value tile half its sum (a kind-set axis lost half its rows). So
+// both are the shuffles' (`ukl/simd.h`), `ds_bpermute` above.
 #elif defined(UKL_OPENCL_SUBGROUPS)
-// The device's sub-groups, 32 lanes (the shim requires it of each kernel): OpenCL 3.0's functions. A lane outside
+// The device's sub-groups, `UKL_SIMD_WIDTH` lanes (the shim requires it of each kernel): OpenCL 3.0's functions. A lane outside
 // the group, or the group's own (`shuffle_up` below lane `d`, `shuffle_down` past the last lane), reads its own
 // value, as CUDA's and the emulation's do; the device's functions leave those undefined.
 UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return sub_group_shuffle(v, lane & (UKL_SIMD_WIDTH - 1u)); }
@@ -433,26 +557,6 @@ UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS)
 UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return sub_group_shuffle_xor(v, m & (UKL_SIMD_WIDTH - 1u)); }
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return sub_group_ballot(b ? 1 : 0).x; }
 UKL_INLINE void ukl_sg_barrier() { sub_group_barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
-#if defined(UKL_SIMD_GROUP_FREE)
-// A program whose source says its kernels use no SIMD group (`UKL_SIMD_GROUP_FREE`, defined before its includes,
-// decision 0576 §14) requires no sub-group size: the driver chooses its width. Intel's compiles a kernel required to
-// run 32 lanes wide 2-5x slower than at its own 16 (on an Arc 140V the interpreter 10.4 s against 5.5 s,
-// `stage_scatter` 11.1 s against 2.4 s). What it says is checked: every SIMD-group operation, and the lane, call a
-// function nothing defines, so a kernel that reaches one is refused at its build ("unresolved external symbol"); the
-// library's functions that no kernel reaches are not built. (16z's block decode is a SIMD group's: a kernel that
-// reads 16z uses one.) Nothing on the other backends.
-uint32_t __ukl_simd_group_in_a_kernel_declared_without_one(void);
-#undef __UKL_SG_ATTR
-#define __UKL_SG_ATTR
-#undef __UKL_CL_LANE
-#define __UKL_CL_LANE __ukl_simd_group_in_a_kernel_declared_without_one()
-#define ukl_sg_shuffle(...) __ukl_simd_group_in_a_kernel_declared_without_one()
-#define ukl_sg_shuffle_up(...) __ukl_simd_group_in_a_kernel_declared_without_one()
-#define ukl_sg_shuffle_down(...) __ukl_simd_group_in_a_kernel_declared_without_one()
-#define ukl_sg_shuffle_xor(...) __ukl_simd_group_in_a_kernel_declared_without_one()
-#define ukl_sg_ballot(...) ((ukl_mask_t)__ukl_simd_group_in_a_kernel_declared_without_one())
-#define ukl_sg_barrier(...) ((void)__ukl_simd_group_in_a_kernel_declared_without_one())
-#endif
 #if defined(__UKL_VEC)
 // The CPU's vector code (rerail-ukl-vec, decision 0567): the group's reductions in one operation each, whose value
 // is the group's (the butterfly of shuffles is every lane's too, but that it agrees is not the shuffles' to show).
@@ -519,8 +623,8 @@ UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return 
 UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return atomic_cmpxchg((volatile __global uint32_t*)p, e, n); }
 // A fence between this thread's device accesses as other threads see them. OpenCL 1.2's `mem_fence` orders a
 // work-item's own accesses alone; OpenCL C 3.0 (the device's sub-groups, `UKL_OPENCL_SUBGROUPS`) has a fence of device
-// scope. Without it, on an Arc 140V a pool's taker read a pushed block's link from before its push, and a block was
-// handed out twice (`ukl/pool.h`).
+// scope (2.0's too: AMD's waves). Without it, on an Arc 140V a pool's taker read a pushed block's link from before its
+// push, and a block was handed out twice (`ukl/pool.h`).
 // The CPU's vector code (rerail-ukl-vec, decision 0567) reads OpenCL 1.2's fence, its one fence.
 #if defined(UKL_OPENCL_SUBGROUPS) && !defined(__UKL_VEC)
 UKL_INLINE void ukl_fence_device() { atomic_work_item_fence(CLK_GLOBAL_MEM_FENCE, memory_order_seq_cst, memory_scope_device); }
@@ -534,6 +638,27 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { atom
 
 #else
 #  error "the UKL library has no intrinsics for this backend (ukl/backend.h)"
+#endif
+
+// The same atomics on a coherent word (`UKL_COHERENT`): an atomic is served where the word's writes meet already.
+// Overloads in C++ backends whose coherent memory is a qualifier of its own: Metal's `coherent(device)`, and CUDA's
+// (and HIP's) `volatile`, which C++ does not drop on its own (a join program's worker, decision 0603, did not compile
+// on NVRTC). OpenCL C takes a `volatile` pointer where a plain one is asked; the CPU's blocks are never coherent.
+#if defined(UKL_METAL) || defined(UKL_CUDA)
+#define __UKL_COHERENT_ATOMIC(op)                                                                                     \
+    UKL_INLINE uint32_t ukl_atomic_##op(UKL_COHERENT uint32_t* p, uint32_t v) { return ukl_atomic_##op((UKL_GLOBAL uint32_t*)p, v); }
+__UKL_COHERENT_ATOMIC(add)
+__UKL_COHERENT_ATOMIC(sub)
+__UKL_COHERENT_ATOMIC(or)
+__UKL_COHERENT_ATOMIC(and)
+__UKL_COHERENT_ATOMIC(exchange)
+__UKL_COHERENT_ATOMIC(min)
+__UKL_COHERENT_ATOMIC(max)
+#undef __UKL_COHERENT_ATOMIC
+UKL_INLINE uint32_t ukl_atomic_load(UKL_COHERENT uint32_t* p) { return ukl_atomic_load((UKL_GLOBAL uint32_t*)p); }
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_COHERENT uint32_t* p) { return ukl_atomic_poll((UKL_GLOBAL uint32_t*)p); }
+UKL_INLINE void ukl_atomic_store(UKL_COHERENT uint32_t* p, uint32_t v) { ukl_atomic_store((UKL_GLOBAL uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_cas(UKL_COHERENT uint32_t* p, uint32_t e, uint32_t n) { return ukl_atomic_cas((UKL_GLOBAL uint32_t*)p, e, n); }
 #endif
 
 // Written once for every backend whose language is C++ (Metal, CUDA, the CPU); a C backend (OpenCL) defines them in
@@ -561,12 +686,40 @@ UKL_INLINE uint32_t ukl_mask_rank(ukl_mask_t m, uint32_t l) { return ukl_mask_co
 // A field's offset, as a constant for `UKL_STATIC_ASSERT`. NVRTC (its front end is EDG's) has no `offsetof` nor
 // `__builtin_offsetof`, and no standard headers; EDG's own `__INTADDR__` makes the address a constant.
 #ifndef UKL_OFFSETOF
-#if defined(UKL_CUDA)
+#if defined(UKL_CUDA) && !defined(UKL_HIP)
 #define UKL_OFFSETOF(T, f) ((unsigned long)__INTADDR__(&(((T*)0)->f)))
 #else
 #define UKL_OFFSETOF(T, f) __builtin_offsetof(T, f)
 #endif
 #endif
+
+// A word record (decision 0603 step 5b): a struct whose words a kernel writes and other groups read one word at a
+// time, coherent: offsets into an arena, counts, sizes, never a pointer. `UKL_WORD_RECORD(T, f, ...)` names every
+// field of `T`, and the compiler refuses the record when one is a pointer (a pointer has no remainder) or not 32 bits,
+// or when a field is left out (their sizes are not the record's). A word is read by its index (`UKL_WORD_INDEX`),
+// which names a record's field only. A coherent load of a struct holding pointers crashed the M1's Metal compiler
+// service at each try, and the offline check did not show it: a pointer in a record is an error here instead.
+#define __UKL_WORD_SIZE(T, f) + (0u * sizeof(((UKL_PRIVATE T*)0)->f % 1u) + (sizeof(((UKL_PRIVATE T*)0)->f) == 4u ? 4u : 1u))
+#define __UKL_EACH_1(m, T, a) m(T, a)
+#define __UKL_EACH_2(m, T, a, ...) m(T, a) __UKL_EACH_1(m, T, __VA_ARGS__)
+#define __UKL_EACH_3(m, T, a, ...) m(T, a) __UKL_EACH_2(m, T, __VA_ARGS__)
+#define __UKL_EACH_4(m, T, a, ...) m(T, a) __UKL_EACH_3(m, T, __VA_ARGS__)
+#define __UKL_EACH_5(m, T, a, ...) m(T, a) __UKL_EACH_4(m, T, __VA_ARGS__)
+#define __UKL_EACH_6(m, T, a, ...) m(T, a) __UKL_EACH_5(m, T, __VA_ARGS__)
+#define __UKL_EACH_7(m, T, a, ...) m(T, a) __UKL_EACH_6(m, T, __VA_ARGS__)
+#define __UKL_EACH_8(m, T, a, ...) m(T, a) __UKL_EACH_7(m, T, __VA_ARGS__)
+#define __UKL_EACH_9(m, T, a, ...) m(T, a) __UKL_EACH_8(m, T, __VA_ARGS__)
+#define __UKL_EACH_10(m, T, a, ...) m(T, a) __UKL_EACH_9(m, T, __VA_ARGS__)
+#define __UKL_EACH_11(m, T, a, ...) m(T, a) __UKL_EACH_10(m, T, __VA_ARGS__)
+#define __UKL_EACH_12(m, T, a, ...) m(T, a) __UKL_EACH_11(m, T, __VA_ARGS__)
+#define __UKL_EACH_N(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, N, ...) N
+#define __UKL_EACH_CAT(a, b) a##b
+#define __UKL_EACH_AT(n) __UKL_EACH_CAT(__UKL_EACH_, n)
+#define __UKL_EACH(m, T, ...) __UKL_EACH_AT(__UKL_EACH_N(__VA_ARGS__, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0))(m, T, __VA_ARGS__)
+#define UKL_WORD_RECORD(T, ...)                                                                                        \
+    enum { T##_is_a_word_record = 1 };                                                                                 \
+    UKL_STATIC_ASSERT(sizeof(T) == 0u __UKL_EACH(__UKL_WORD_SIZE, T, __VA_ARGS__), #T ": a word record's fields are its 32-bit words, all named")
+#define UKL_WORD_INDEX(T, f) ((uint32_t)T##_is_a_word_record * (uint32_t)(UKL_OFFSETOF(T, f) / 4u))
 
 // A program's specialization constant (decision 0440 step B): `UKL_CONSTANT_U32(name)` declares `name`, a uint32_t
 // fixed when the program is made, so the compiler folds it (the label passes' tape format). Metal's function constant

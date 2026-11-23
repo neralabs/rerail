@@ -356,6 +356,12 @@ it counts pages that are not resident. The different store states may be the cau
 writable shared mapping of `d4` (50 MB): the writer is opened only to append, and this warm run appended one atom.
 Neither `footprint` nor `vmmap` can attach to a process over the farm's ssh session, so it is not yet known (Q230).
 
+Answered (Q230, 2026-11-19), measured from inside the process: the profile reads the footprint and its high-water
+mark (`proc_pid_rusage`'s `ri_phys_footprint` and `ri_lifetime_max_phys_footprint`, `profile::memory`) every 5 ms,
+with each holder's share, so neither tool is needed. The peak was the cost model's training, begun in every process
+beside its run and never finished; it now waits until no run is under way. On 2026-11-22 the warm run's peak is
+70.1 MB profiled and 28 MB without the profile.
+
 ### The keep beside the frames (step 6, 2026-11-18)
 
 ep2 on m3 with the profiling build, at load 40–60. A fresh store `k0` (cold), then `k1` and `k2` (warm). The old v6
@@ -481,7 +487,52 @@ What stays above 6fc580233a's edit, by the run's instructions a phase (42.6 G ag
   0.026 s of it counting the constants the rules test in the rows held), and binds the kept inputs where they lie
   (0.037 s); 6fc580233a's edit profile has no span of the first, and read its kept inputs from the frames
   (0.012 s).
-- The deferred joins install each of their 10 requests as a derivation of the whole program with its components
-  found again (0.097 s), each install reading the program the one before made.
 - A profiled run's first phase is 1.0 s more than 6fc580233a's: the profile's join locations
   (`profile_join_sources`) look up each file's graph and retain it. No run without the profile does that work.
+
+After the hub's merge (a8919bd06e), the edit took 37.9 G (prepare 23.9 G, combine 6.7 G, stats 1.1 G), cold 875 G,
+warm 2.1 G. The deferred joins installed each of their 10 requests as a derivation of the whole program, with its
+components found again and the relations' readers walked again for each. They install in rounds now
+(`upstream::install_requests`): a round's requests are planned on one version and made in one derivation, with
+its components found once. A round ends before a request whose plan an earlier one of the round would change: one
+that reads the earlier one's relation, or a relation its demand reads. If any guard in a round is not apart from
+its relation, the round falls back to one request at a time. A guard only adds edges, so a round whose guards are
+all apart installs what one request at a time would (the rounds test). The edit is 36.4 G (prepare 22.5 G), cold
+874 G, warm 2.0 G, the rows h1's.
+
+The combine read and parsed all 317 program texts on every edit, and built their include graphs, before the splice
+(decision 0373). The splice needs only each text's modules: its files with their digests and declared names, and
+its heads and declarations. A record kept in the store (`corpus::kept_texts`) holds those by text digest. A text
+is read again only when its digest is not in the record, or when one of its files no longer reads as kept (checked
+by stat). The others take their modules from the record, and their files are noted as read in program order.
+Combine is 4.0 G (from 6.6 G).
+
+The stats phase had two costs that grew with the program rather than the edit. Each export given whole was first
+forgotten by scanning every relation's constants and value columns, so the cost was quadratic in the 1,366 exports.
+The constants are kept by relation now, and an export's columns are removed by their own range. And the constants
+the rules test, in columns with too many values for an exact map, were counted in the held rows on every run. A
+column now watches those constants (`RelStats::watch`): it counts each exactly as documents come and go, and keeps
+the counts in the blob. A constant new to the keeper is counted once. Stats is 0.66 G after an edit or two (from
+1.16 G), and the edit is 33.4 G, cold 874 G, warm 2.1 G, the rows h1's.
+
+Three costs left after the hub merge (2026-11-22, m3, ep2):
+- The warm run looked at each file twice. `settings::program_texts` and `Texts::of` each check that the graphs of
+  phase 0 hold, and the second check looked at every file again: 0.42 G of the warm run's 1.9 G. One call's graphs
+  now share their looks (`phase0::Looks`), so the second check is 0.06 G and the warm run is 1.6 G.
+- Stats after an edit was not the counting of constants new to the keeper. The cold run already watches all 61
+  tested constants, and the first edit counted none. The cost was binding all 1,181 kept inputs (20,217 granules):
+  each lookup compared the relation names as strings, and each granule's entry was looked up again for its types and
+  digest. The lookup now compares bytes (`KeptFacts::rel_bytes`), and the entry keeps what it read. Stats was 0.75 G
+  on the first edit and 0.71 G on the second.
+- Each kept granule's atom columns were scanned for their greatest atom, to check that the store's numbering holds
+  its atoms (decision 0170, `readable`). The greatest is recorded as the granule is written: packing finds each
+  column's greatest value as it chooses the column's encoding, and the entry keeps the greatest of its atom columns
+  (`KeptEntry::atoms_max`; a roll-up's copy carries it, a reads-only entry reads its rows'). The entry's layout
+  changed, so the store's floor is 10 (`content-v10.sqlite`). Stats is 0.54 G on the first edit and 0.58 G on the
+  second.
+- The edit's extra 1.6 G in prepare was the fold of own guests' copies (`one_document`, decision 0165). It found what
+  each relation keeps in every row (`Kept::of`) by rounds over every rule, remaking each rule's graph and searching it
+  once a pair, and it did so again for each round of `same`: 2.98 G of the edit. `Kept::of` is now a worklist over
+  readers, with each variable's reach found once, and the shape it reads (`Shape`) is made once a fold.
+
+The edit is 30.9 G (35.0 G after the merge, 33.4 G before it), cold 712.3 G, warm 1.5 G, the rows h1's.

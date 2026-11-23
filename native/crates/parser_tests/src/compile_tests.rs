@@ -76,9 +76,10 @@ fn forward_masks_equal_the_evaluator_on_every_executor() {
     let ex = Executors::new(&p);
     let mut cases = inputs();
     cases.push(br#"{"a\"b": [1, -2.5e3, "x\\"], "c": true}"#.to_vec());
-    for bytes in cases {
+    let runs_of = ex.every_of(&cases);
+    for (bytes, runs) in cases.into_iter().zip(runs_of) {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in ex.every(&bytes) {
+        for (executor, got) in runs {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes\n{}", bytes.len(), compiled.rows);
             }
@@ -136,7 +137,8 @@ fn errors_and_escapes_are_the_fallback_output() {
     let mut cases = inputs();
     cases.extend([b"{\"a/b\": 1}".to_vec(), b"{\"a\": 1} // c".to_vec(), b"\"a\nb\"".to_vec(), b"/".to_vec()]);
     let (mut clean, mut falls) = (0, 0);
-    for bytes in cases {
+    let runs_of = ex.every_of(&cases);
+    for (bytes, runs) in cases.into_iter().zip(runs_of) {
         let tables = std::collections::HashMap::new();
         let out = ::bitlex::eval::Ev::run(&stmts, &bytes, &tables).expect("evaluates");
         let vars = |name: &str| match out.vars.get(name) {
@@ -149,7 +151,7 @@ fn errors_and_escapes_are_the_fallback_output() {
         // The program has no tokens, so the evaluator's "in no token" errors are not its own.
         let falls_back = out.errors.iter().any(|e| !e.contains("is in no token"));
         assert_eq!(want.iter().any(|&w| w != 0), falls_back, "{} bytes: {:?}", bytes.len(), out.errors);
-        for (executor, got) in ex.every(&bytes) {
+        for (executor, got) in runs {
             // The fallback's outputs, one per delay, ORed: the OR of the masks.
             let mut any = vec![0u64; bytes.len().div_ceil(64)];
             for &k in &compiled.fallbacks {
@@ -249,9 +251,10 @@ fn later_masks_equal_the_evaluator_on_every_executor() {
     let ex = Executors::new(&p);
     let mut cases = inputs();
     cases.extend([b"1e+5 2E-x 3e 4e9 \"\\\\\\\"\0".to_vec(), vec![0u8; 70], b"\"\"\"".to_vec()]);
-    for bytes in cases {
+    let runs_of = ex.every_of(&cases);
+    for (bytes, runs) in cases.into_iter().zip(runs_of) {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in ex.every(&bytes) {
+        for (executor, got) in runs {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes\n{}", bytes.len(), compiled.rows);
             }
@@ -479,7 +482,7 @@ fn batch_programs() -> Vec<Program> {
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let compiled = |src: &str, names: &[&str], symbols: Option<&bitlex_compile::Symbols<'_>>| {
         let stmts = ::bitlex::syntax::parse(src).expect("parses");
         let text = bitlex_compile::compile(&stmts, names, symbols).unwrap_or_else(|e| panic!("compiles: {e}")).text();
@@ -603,7 +606,7 @@ fn json_tier2_switches_on_the_first_byte_alone() {
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     let text = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}")).text();
     let rows: Vec<&str> = text.lines().filter(|l| l.split_whitespace().nth(1) == Some("ROW")).collect();
@@ -619,7 +622,7 @@ fn json_fallbacks() -> Vec<u16> {
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
     bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).expect("compiles").fallbacks
 }
@@ -951,13 +954,13 @@ fn only_the_compiler_reads_tier2s_states() {
     // The compiler crate's `grammar` and `bitlex_tier2`, its Bitlex compiler (`bitlex_masks`, which
     // hands the table to them), and this file, which names them.
     const ALLOWED: [&str; 4] = ["grammar.rs", "bitlex_masks.rs", "bitlex_tier2.rs", "compile_tests.rs"];
-    // The engine's transducer and every crate beside it.
+    // Every crate: the engine's transducer is in its crates too.
     let native = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..");
     // The table's types and its arms (`.states` is a common name; a state row is read through
     // its type).
     let needles = [".arms", "ArmRow", "StateRow", "grammar::Act", "Act::Open", "Act::Close", "Act::Leaf"];
     let mut readers = Vec::new();
-    let mut dirs = vec![native.join("src/code_rule_dsl/transducer"), native.join("crates")];
+    let mut dirs = vec![native.join("crates")];
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(&dir).expect("reads the source") {
             let path = entry.expect("an entry").path();
@@ -1096,7 +1099,7 @@ fn json_compiled_text(json: &str) -> Result<(Program, bitlex_compile::Compiled),
         id => Some(id),
     };
     let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let stmts = ::bitlex::syntax::parse(json).map_err(|e| format!("{e:?}"))?;
     let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols))?;
     let text = compiled.text();
@@ -1262,10 +1265,10 @@ fn json_in_clusters_equals_one_function() {
         ("by traffic, at most 40 words", native_cpu_clusters::by_traffic(&native, &traffic, 40)),
         ("a function a rule, native calls", native_cpu_clusters::by_rules(&native)),
         ("a function a rule, optimized", native_cpu_clusters::Cut { speed: true, ..native_cpu_clusters::by_rules(&native) }),
-        ("a word a cluster", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: rerail_cpu_stream::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
+        ("a word a cluster", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
         // The state in registers: every field, in clusters and in the one function.
         ("by traffic, the state in registers", native_cpu_clusters::Cut { held: (0..23).collect(), ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
-        ("a word a cluster, the state in registers", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: (0..23).collect(), reload: true, inline_span: true, pass: Vec::new(), speed: false, pick: rerail_cpu_stream::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
+        ("a word a cluster, the state in registers", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: (0..23).collect(), reload: true, inline_span: true, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
         ("one function, the state in registers", native_cpu_clusters::Cut { held: (0..23).collect(), ..native_cpu_clusters::Cut::one(n) }),
         ("one function, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::Cut::one(n) }),
         ("by traffic, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),

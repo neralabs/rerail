@@ -1,6 +1,6 @@
 <?php
 // Writes what Forte 1.1.0 parses templates to (`forte_tree.php` documents a case), for the Rust
-// port's tests (`native/src/code_rule_dsl/blade/forte/tests.rs`):
+// port's tests (`native/crates/tests_value/src/code_rule_dsl/blade/forte/tests.rs`):
 //
 // - suite.expected.json: every template Forte's own test suite lexes, with the registry it lexed
 //   it with (`record_suite.php` records them; with no `--suite-inputs` the templates are read

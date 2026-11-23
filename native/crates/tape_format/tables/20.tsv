@@ -1,0 +1,52 @@
+# Tape format 16's choices for tape tag 20 (html), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+#   tape16 table <tags…> (native/lab/tape16/src/table.rs)
+# 47 codes.
+revision	2
+widths	1	1	1
+code	1	0	0	-	-
+code	3	0	0	-	-
+code	4	0	0	-	-
+code	5	0	0	-	-
+code	6	0	0	-	-
+code	7	0	0	-	-
+code	8	0	0	-	-
+code	9	0	0	-	-
+code	10	0	0	-	-
+code	11	0	0	-	-
+code	12	0	0	-	-
+code	14	0	0	-	-
+code	16	0	0	-	-
+code	17	0	0	-	-
+code	21	0	0	-	-
+code	23	0	0	-	-
+code	25	0	0	-	-
+code	26	0	0	-	-
+code	28	0	0	-	-
+code	29	0	0	-	-
+code	30	0	0	-	-
+code	31	0	0	-	-
+code	34	0	0	-	-
+code	35	0	0	-	-
+code	36	0	0	-	-
+code	37	0	0	-	-
+code	38	0	0	-	-
+code	24	0	1	-	-
+code	0	0	2	-	-
+code	0	0	3	-	-
+code	1	0	4	-	-
+code	3	0	4	-	-
+code	4	0	4	-	-
+code	5	0	4	-	-
+code	6	0	4	-	-
+code	7	0	4	-	-
+code	8	0	4	-	-
+code	9	0	4	-	-
+code	10	0	4	-	-
+code	11	0	4	-	-
+code	12	0	4	-	-
+code	14	0	4	-	-
+code	16	0	4	-	-
+code	17	0	4	-	-
+code	21	0	4	-	-
+code	23	0	4	-	-
+code	26	0	4	-	-

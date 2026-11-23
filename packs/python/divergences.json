@@ -69,7 +69,7 @@
     "path": "pyupgrade/UP037_2.pyi",
     "line": 32,
     "kind": "rerail-unknown",
-    "evidence": "The annotation `'''\\\\` + newline + `list[int]'''` has the decoded value backslash, newline, `list[int]`. Ruff 0.16.9 reads such a string with parse_complex_type_annotation (crates/ruff_python_parser/src/typing.rs:85), which runs parse_expression on the value, accepts the leading line continuation and reports PYI020 at 32:4. Rerail's annotation grammar (native/src/code_rule_dsl/literal/annotation.rs, `expression`) refuses a value that begins with a backslash continuation, so the string gets an ERROR root and the port's `parse: annotation` never matches. Probes run with port-check.mts showed this: `\"\\\\\\nlist[int]\"` is missed (ruff 1, rule 0), while `'''list\\\\` + newline + `[int]'''`, `\"\\N{...}ist[int]\"` and `\"\\x6cist[int]\"` all agree."
+    "evidence": "The annotation `'''\\\\` + newline + `list[int]'''` has the decoded value backslash, newline, `list[int]`. Ruff 0.16.9 reads such a string with parse_complex_type_annotation (crates/ruff_python_parser/src/typing.rs:85), which runs parse_expression on the value, accepts the leading line continuation and reports PYI020 at 32:4. Rerail's annotation grammar (native/crates/lang_python/src/code_rule_dsl/literal/annotation.rs, `expression`) refuses a value that begins with a backslash continuation, so the string gets an ERROR root and the port's `parse: annotation` never matches. Probes run with port-check.mts showed this: `\"\\\\\\nlist[int]\"` is missed (ruff 1, rule 0), while `'''list\\\\` + newline + `[int]'''`, `\"\\N{...}ist[int]\"` and `\"\\x6cist[int]\"` all agree."
   },
   {
     "rule": "ruff-pyi024-collections-named-tuple",

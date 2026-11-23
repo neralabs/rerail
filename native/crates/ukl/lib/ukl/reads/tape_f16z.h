@@ -555,7 +555,7 @@ UKL_INLINE uint64_t clif_tc_get(CLIF_T_ARGS, uint64_t cache, uint64_t key, uint3
 // The address of the cache entry that holds the tape's block `block` decoded: found in the cache the view names, or
 // decoded into its head. The dead entry (its zeros) where the cache had no room, or for a block past the tape's last
 // (a node read that is no node of it: a failure counted, so its run is refused, decision 0463).
-UKL_COLD uint64_t clif_z_block(CLIF_T_ARGS, uint32_t block)
+UKL_LARGE uint64_t clif_z_block(CLIF_T_ARGS, uint32_t block)
 {
     uint64_t cache = clif_tz_cache(v);
     uint32_t blocks = (clif_view(v, CLIF_T_NODES) + (CLIF_T_Z_BLOCK - 1u)) >> 10;

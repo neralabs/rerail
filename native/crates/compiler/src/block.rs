@@ -480,10 +480,11 @@ pub struct BlockProgram {
     /// the last byte of each token whose end its row does not know (`SPAN m=1`), found as the
     /// next set bit. Nothing flattens them.
     pub masks: Vec<u16>,
-    /// The value, also an output, whose bits are the stream's `\n` bytes, where the program has a tree section: the
-    /// format 16 tape's newline index is made from its words (`rerail_tape_format::newlines::index_of`), with no scan of
-    /// the source of its own.
-    pub newlines: Option<u16>,
+    /// The value, also an output, whose bits are the bytes a line terminator of its set can end with, the set its
+    /// grammar's language reads (decision 0612, `Terminators::last_bytes`), where the program has a tree section: the
+    /// format 16 tape's line index is made from its words, each kept where it ends one (`Terminators::ends_at`), with
+    /// no scan of the source of its own.
+    pub newlines: Option<(u16, rerail_tape_format::newlines::Terminators)>,
     /// How many bytes late the outputs are (0..=63): each executor runs over the stream and
     /// `delay` bytes past it, and an output's bit `i + delay` is byte `i`'s. The compiler delays
     /// values so that `next` reads earlier bits (`bitlex_compile`).
@@ -805,7 +806,7 @@ impl BlockProgram {
             _ => true,
         });
         // The extract pass writes positions from the undelayed outputs.
-        let extracts = self.extracts.iter().chain(&self.totals).chain(&self.masks).chain(&self.newlines).all(|v| self.outputs.contains(v));
+        let extracts = self.extracts.iter().chain(&self.totals).chain(&self.masks).chain(self.newlines.as_ref().map(|(v, _)| v)).all(|v| self.outputs.contains(v));
         let delay = self.delay <= 63
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
@@ -911,9 +912,10 @@ impl BlockProgram {
             }
         }
         // Likewise the newlines, tagged.
-        if let Some(v) = self.newlines {
+        if let Some((v, set)) = self.newlines {
             out.extend_from_slice(b"newlines");
             out.extend_from_slice(&v.to_le_bytes());
+            out.push(set.index() as u8);
         }
         // Likewise the delay, tagged.
         if self.delay != 0 {
@@ -1008,9 +1010,9 @@ impl BlockProgram {
             .collect()
     }
 
-    /// Each mask's output index.
-    pub fn newline_output(&self) -> Option<usize> {
-        self.newlines.map(|v| self.outputs.iter().position(|&o| o == v).expect("verified: the newlines are an output"))
+    /// The line ends' output index, and their terminators.
+    pub fn newline_output(&self) -> Option<(usize, rerail_tape_format::newlines::Terminators)> {
+        self.newlines.map(|(v, set)| (self.outputs.iter().position(|&o| o == v).expect("verified: the line ends are an output"), set))
     }
 
     /// Each mask's output index.
@@ -1839,8 +1841,8 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
     for value in &block.masks {
         let _ = writeln!(out, "  block {at} mask %{value}");
     }
-    if let Some(value) = block.newlines {
-        let _ = writeln!(out, "  block {at} newlines %{value}");
+    if let Some((value, set)) = block.newlines {
+        let _ = writeln!(out, "  block {at} newlines %{value} {}", set.index());
     }
     if block.delay != 0 {
         let _ = writeln!(out, "  block {at} delay {}", block.delay);

@@ -41,6 +41,12 @@ pub mod records;
 pub mod rir_text;
 pub mod set_mode;
 pub mod stream;
+/// What tier 2's stream program is, apart from any lowering of it.
+pub mod stream_analysis;
+/// Tier 2's stream program as a whole: where a direct run takes it, apart from any lowering.
+pub mod stream_facts;
+/// The functions tier 2's program is cut into, by the calls between its words.
+pub mod native_cpu_clusters;
 /// Tier 1's record tables, as the token loop reads them.
 pub mod record_tables;
 pub mod stream_ir;

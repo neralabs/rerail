@@ -287,7 +287,7 @@ struct Read {
 /// `list` read alone and expanded, `__COUNTER__` from `counter`.
 fn isolated(pp: &mut Pp, list: Vec<Tk>, counter: u64) -> Read {
     let outer = pp.stack.len();
-    pp.stack.push(Src::Toks { toks: list, pos: 0, def: None, stop: true });
+    pp.stack.push(Src::Toks { toks: list, pos: 0, def: None, stop: true, req: 0 });
     pp.par = Some(Isolated { outer, peeked: false, cut: false, events: Vec::new() });
     pp.counter = counter;
     let mut out = Vec::new();

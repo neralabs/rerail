@@ -50,12 +50,31 @@
 #define FK_DEAD (4u)
 // A piece's tokens read in place (a region's piece entry, below): no macro of its own.
 #define FK_SPAN (5u)
+// A node's entries read one by one (`lp_lex`), from the store's place `at` (not a region's offset):
+// no macro of its own; its first token takes the node's space (`nsp`).
+#define FK_NODE (6u)
+// The region a list frame's entries are in: a node's the token store itself (region 3), else region 0.
+#define LP_REGION(f) ((f).kind == FK_NODE ? 3u : 0u)
 // A region's entry is a token, or a piece (0520's, in a region: `P_SPAN`): a run of tokens that
 // follow on in the text (`LP_TOPSRC`) or in a body (its definition), from `st`, its length past
 // `flags`' 4 bits and its first token's space set there. A parameter's use, an argument's raw
 // tokens and its expansion are then a piece where they are a run of a source, not its copies.
 #define P_SPAN (3u << 30)
 #define LP_TOPSRC (0x3fffffffu)
+// A node (decision 0613 §3): an argument's expansion, written once where its expansion ends, and
+// read by reference wherever a body uses it, its tokens not read again. Its entries are in the
+// tokens' store at a place of their own (`lp_node`), never moved or given back in the pass: a header
+// (`psrc` its entries' count, `pst` its delimiters' summary `LN_*`, `pn` its live names, `pexp` 1
+// where a node is among its entries), its first
+// token (a look for a `(` reads it), and the entries after them (`LN_ENTRIES` on). An entry that is a node is a piece of the source `LP_NODESRC`: `st` its header,
+// its entries' count past `flags`' 4 bits and its first token's space set there, as a piece's.
+#define LP_NODESRC (0x3ffffffeu)
+// The summary, made the first time a call's arguments are read through the node (`lp_node_sum`):
+// known; its parentheses balanced, none closing below its start; a comma at its depth 0.
+#define LN_ENTRIES (2u)
+#define LN_KNOWN (1u)
+#define LN_BALANCED (2u)
+#define LN_COMMA (4u)
 
 // A frame: its kind, its macro (disabled while it is live), its tokens' range, region 0's top to
 // go back to when it ends, and (an object-like body read in place) its first token's space: the
@@ -79,6 +98,8 @@ typedef struct LpTok { uint32_t src, st, flags, org; } LpTok;
 // expanded, and where its expansion began; its name's space (its expansion's first token takes it);
 // its end's origin (`)`'s, an object-like name's), and the body item its next argument's search
 // starts from (`lp_next_param`). An argument not yet expanded has its table entry's `pst` `LP_NONE`.
+// While argument `p` is expanded, its table entry's `pn` counts the names it keeps that a rescan may
+// still act on (`lp_node`'s `live`); its length once it is expanded.
 typedef struct LpCall { uint32_t def, nargs, tab, cstart, o1, p, ocur, nsp, cfree, org, bi; } LpCall;
 typedef struct LpMem { uint32_t base, cap, top; } LpMem;
 
@@ -106,7 +127,8 @@ typedef struct LpOut {
 typedef struct LpRun {
     LpFrame fr[LP_DEPTH];
     LpCall calls[LP_CALLS];
-    LpMem mem[3];
+    // Region 3 is the token store itself (base 0, never grown): a node's entries, read by its frame.
+    LpMem mem[4];
     uint32_t sp, nc, last, s0;
     // Region 0's lowest mark of a frame left while a call's arguments are read: what is above it is
     // that call's, and its substitution gives it back.
@@ -118,6 +140,10 @@ typedef struct LpRun {
     // name's space and token; its table, its arguments so far, the `(` depth, the argument's start,
     // the `)`'s origin; the regions' tops at its `(`.
     bool cl_on, cl_var;
+    // Whether the call's body reads a parameter raw (`#`, `##`): 0 not known yet, 1 no, 2 yes. Its
+    // arguments then take no node whole (`lp_collect_whole`). A byte, in the bools' padding: the runs
+    // are the group's memory, 8 a group.
+    uint8_t cl_raw;
     uint32_t cl_m, cl_n, cl_nsp, cl_tab, cl_nargs, cl_depth, cl_astart, cl_org, cl_cstart, cl_o1;
     LpTok cl_name;
     // The group's window (`LQ_PUNCT`): tokens `w_at..w_end` of source `w_src` (a span's, `LP_TOPSRC`
@@ -284,13 +310,25 @@ UKL_INLINE LpTok lp_span_of(LpTok t, uint32_t n, uint32_t first) {
     return p;
 }
 
+UKL_INLINE bool lp_is_node(LpTok t) { return t.src == (P_SPAN | LP_NODESRC); }
+// The store's entry at `i` (a node's: not a region's offset).
+UKL_INLINE LpTok lp_gget(Ar a, uint32_t i) {
+    LpTok t; t.src = a.psrc[i]; t.st = a.pst[i]; t.flags = a.pn[i]; t.org = a.pexp[i];
+    return t;
+}
+// An entry's first token: a piece's first, a node's (its header's).
+UKL_INLINE LpTok lp_first_tok(Ar a, LpTok t) {
+    if (lp_is_node(t)) return lp_gget(a, t.st + 1u);
+    return lp_is_span(t) ? lp_span_tok(t, 0u) : t;
+}
 UKL_INLINE LpTok lp_frame_tok(UKL_LOCAL LpRun* r, Ar a, LpFrame f, uint32_t k) {
     if (f.kind == FK_TOP) { LpTok t; t.src = P_TOP; t.st = k; t.flags = 0u; t.org = k; return t; }
     if (f.kind == FK_BODY) { LpTok t; t.src = P_BODY | f.def; t.st = k; t.flags = k == 0u ? (LT_SPSET | f.nsp) : 0u; t.org = f.org; return t; }
     if (f.kind == FK_SPAN) { LpTok t; t.src = lp_span_src(f.def); t.st = k; t.flags = 0u; t.org = f.def == LP_TOPSRC ? k : f.org; return t; }
-    // A list's or an argument's entry: a piece's first token (where a look for a `(` reads it).
-    LpTok t = lp_get(r, a, 0u, k);
-    return lp_is_span(t) ? lp_span_tok(t, 0u) : t;
+    // A list's, an argument's or a node's entry (a list's in region 0, a node's in region 3: `LP_REGION`):
+    // a piece's or a node's first token (where a look for a `(` reads it). One read for them all: the M3's
+    // back end crashed (a segfault in a machine pass) on any branch of its own for a node's.
+    return lp_first_tok(a, lp_get(r, a, LP_REGION(f), k));
 }
 
 // `t` appended to region `x`, past entry `floor`: the last entry's piece grown where `t` follows it
@@ -300,7 +338,8 @@ UKL_INLINE bool lp_push(UKL_LOCAL LpRun* r, Ar a, uint32_t x, uint32_t floor, Lp
     if ((kind == P_TOP || kind == P_BODY) && (t.flags & (T_NOEXP | LT_PASTE | LT_SPSET)) == 0u && r->mem[x].top > floor) {
         uint32_t i = r->mem[x].top - 1u;
         LpTok l = lp_get(r, a, x, i);
-        if (lp_is_span(l)) {
+        if (lp_is_node(l)) {
+        } else if (lp_is_span(l)) {
             if (lp_span_src(l.src & ~P_KIND) == t.src && l.st + lp_span_len(l) == t.st && (kind == P_TOP || l.org == t.org)) { l.flags += 16u; lp_put(r, a, x, i, l); return true; }
         } else if (l.src == t.src && (l.flags & (T_NOEXP | LT_PASTE)) == 0u && l.st + 1u == t.st && (kind == P_TOP || l.org == t.org)) {
             lp_put(r, a, x, i, lp_span_of(l, 2u, l.flags & (LT_SPSET | T_SPACE)));
@@ -341,8 +380,9 @@ UKL_INLINE bool lp_after_directive(Ux u, uint32_t s0, uint32_t s) {
 }
 
 // Whether the next token is a `(`, looked at, not read (`next_is_lparen`): past the frames that end
-// here, not past an argument's end, nor a directive, nor the run's end.
-UKL_INLINE bool lp_next_is_lparen(UKL_LOCAL LpRun* r, Ux u, Ar a) {
+// here, not past an argument's end, nor a directive, nor the run's end. Called, not inlined: inlined with
+// the node frames' reads (`LP_REGION`), `lp_loop` crashed the M3's back end (a segfault in a machine pass).
+UKL_ONCE bool lp_next_is_lparen(UKL_LOCAL LpRun* r, Ux u, Ar a) {
     for (uint32_t k = r->sp; k > 0u; k--) {
         LpFrame f = r->fr[(k - 1u) & (LP_DEPTH - 1u)];
         if (f.at < f.end) {
@@ -383,16 +423,22 @@ UKL_INLINE bool lp_lex(UKL_LOCAL LpRun* r, Ar a, PP_GLOBAL uint32_t* lob, uint32
     for (;;) {
         UKL_LOCAL LpFrame* f = &r->fr[(r->sp - 1u) & (LP_DEPTH - 1u)];
         if (f->at < f->end) {
-            if (f->kind == FK_LIST || f->kind == FK_STOP) {
-                LpTok e = lp_get(r, a, 0u, f->at);
+            if (f->kind == FK_LIST || f->kind == FK_STOP || f->kind == FK_NODE) {
+                LpTok e = lp_get(r, a, LP_REGION(*f), f->at);
+                // A node's first entry takes the node's space.
+                uint32_t sp = f->nsp;
+                f->nsp = 0u;
                 if (lp_is_span(e)) {
-                    // A piece: its tokens read in place, from a frame of its own.
+                    // A piece, or a node: its tokens read in place, or its entries, from a frame of its own.
                     f->at++;
                     if (r->sp == LP_DEPTH) { r->stop = LP_DEEP; *at_stop = false; return false; }
+                    bool node = lp_is_node(e);
                     UKL_LOCAL LpFrame* g = &r->fr[(r->sp++) & (LP_DEPTH - 1u)];
-                    g->kind = FK_SPAN; g->def = e.src & ~P_KIND; g->at = e.st; g->end = e.st + lp_span_len(e); g->mark = r->mem[0].top; g->nsp = e.flags & 15u; g->org = e.org;
+                    g->kind = node ? FK_NODE : FK_SPAN; g->def = node ? LP_NONE : (e.src & ~P_KIND); g->at = node ? e.st + LN_ENTRIES : e.st;
+                    g->end = g->at + lp_span_len(e); g->mark = r->mem[0].top; g->nsp = sp != 0u ? sp : (e.flags & 15u); g->org = node ? LP_NONE : e.org;
                     continue;
                 }
+                if (sp != 0u) e.flags = (e.flags & ~(T_SPACE | LT_SPSET)) | sp;
                 *t = e;
                 f->at++;
                 return true;
@@ -427,6 +473,7 @@ UKL_INLINE bool lp_plain_use(Ux u, PpDef d, uint32_t i) {
 UKL_INLINE void lp_expand_arg(UKL_LOCAL LpRun* r, Ar a, uint32_t q) {
     UKL_LOCAL LpCall* c = &r->calls[(r->nc - 1u) & (LP_CALLS - 1u)];
     c->p = q; c->ocur = r->mem[1].top;
+    a.pn[r->mem[1].base + c->tab + q] = 0u;
     if (r->sp == LP_DEPTH) { r->stop = LP_DEEP; return; }
     UKL_LOCAL LpFrame* f = &r->fr[(r->sp++) & (LP_DEPTH - 1u)];
     f->kind = FK_STOP; f->def = LP_NONE; f->nsp = 0u; f->org = LP_NONE;
@@ -434,6 +481,28 @@ UKL_INLINE void lp_expand_arg(UKL_LOCAL LpRun* r, Ar a, uint32_t q) {
     f->mark = r->mem[0].top;
 }
 
+// The node of an argument's expansion, region 1's `n` entries from `at` (decision 0613 §3): its
+// header's place in the store, written once here; the one node it is, where it is one; none where
+// it is empty or one entry (a body reads that as it is). `live`: its names a rescan may act on.
+UKL_INLINE uint32_t lp_node(UKL_LOCAL LpRun* r, Ar a, uint32_t at, uint32_t n, uint32_t live) {
+    if (n == 0u) return LP_NONE;
+    if (n == 1u) {
+        LpTok e = lp_get(r, a, 1u, at);
+        return lp_is_node(e) ? e.st : LP_NONE;
+    }
+    uint32_t nb = ukl_atomic_add(&a.ctl[0], n + LN_ENTRIES);
+    if (nb + n + LN_ENTRIES > a.tok_cap || nb + n + LN_ENTRIES < nb) { r->stop = LP_ROOM; return LP_NONE; }
+    a.psrc[nb] = n; a.pst[nb] = 0u; a.pn[nb] = live; a.pexp[nb] = 0u;
+    LpTok f = lp_first_tok(a, lp_get(r, a, 1u, at));
+    a.psrc[nb + 1u] = f.src; a.pst[nb + 1u] = f.st; a.pn[nb + 1u] = f.flags; a.pexp[nb + 1u] = f.org;
+    uint32_t b = r->mem[1].base + at, w = nb + LN_ENTRIES, nested = 0u;
+    for (uint32_t k = 0u; k < n; k++) {
+        a.psrc[w + k] = a.psrc[b + k]; a.pst[w + k] = a.pst[b + k]; a.pn[w + k] = a.pn[b + k]; a.pexp[w + k] = a.pexp[b + k];
+        nested |= a.psrc[b + k] == (P_SPAN | LP_NODESRC) ? 1u : 0u;
+    }
+    a.pexp[nb] = nested;
+    return nb;
+}
 // Argument `q`'s raw tokens' range in region 0.
 UKL_INLINE uint32_t lp_raw_at(UKL_LOCAL const LpRun* r, Ar a, LpCall c, uint32_t q) { return a.psrc[r->mem[1].base + c.tab + q]; }
 UKL_INLINE uint32_t lp_raw_end(UKL_LOCAL const LpRun* r, Ar a, LpCall c, uint32_t q) { return a.psrc[r->mem[1].base + c.tab + q + 1u]; }
@@ -576,7 +645,17 @@ UKL_INLINE void lp_substitute(UKL_LOCAL LpRun* r, Ux u, Ar a, uint32_t name_sp) 
             bool after = i + 1u < d.n_body && (u.items[d.ifirst + i + 1u] & I_PASTE) != 0u;
             uint32_t lo, hi, x;
             if (before || after) { lo = lp_raw_at(r, a, c, q); hi = lp_raw_end(r, a, c, q); x = 0u; }
-            else { uint32_t e = r->mem[1].base + c.tab + q; lo = a.pst[e]; hi = lo + a.pn[e]; x = 1u; }
+            else {
+                uint32_t e = r->mem[1].base + c.tab + q;
+                // Its expansion a node: the node, by reference (decision 0613 §3).
+                uint32_t nd = a.pexp[e];
+                if (nd != LP_NONE) {
+                    LpTok t; t.src = P_SPAN | LP_NODESRC; t.st = nd; t.flags = (a.psrc[nd] << 4) | LT_SPSET | sp; t.org = LP_NONE;
+                    lp_put(r, a, 0u, w++, t);
+                    continue;
+                }
+                lo = a.pst[e]; hi = lo + a.pn[e]; x = 1u;
+            }
             // GNU's `, ## __VA_ARGS__`: with no variadic arguments the comma goes, and with some the `##`.
             if (before && q == va && w - s >= 2u) {
                 LpTok cm = lp_get(r, a, 0u, w - 2u), op = lp_get(r, a, 0u, w - 1u);
@@ -656,7 +735,7 @@ UKL_INLINE void lp_substitute(UKL_LOCAL LpRun* r, Ux u, Ar a, uint32_t name_sp) 
     // pending levels each hold their rest only.
     // (A piece being read above it holds no memory: its frame's mark follows.)
     uint32_t jl = j0 - 1u;
-    while (jl > 0u && r->fr[(jl) & (LP_DEPTH - 1u)].kind == FK_SPAN) jl--;
+    while (jl > 0u && (r->fr[(jl) & (LP_DEPTH - 1u)].kind == FK_SPAN || r->fr[(jl) & (LP_DEPTH - 1u)].kind == FK_NODE)) jl--;
     UKL_LOCAL LpFrame* lf = &r->fr[(jl) & (LP_DEPTH - 1u)];
     if (lf->kind == FK_LIST && lf->at < lf->end && lf->at > lf->mark) {
         uint32_t rest = lf->end - lf->at;
@@ -779,8 +858,9 @@ UKL_INLINE uint32_t lp_count(UKL_LOCAL LpRun* r, Ux u, Ar a, uint32_t x, uint32_
     uint32_t n = 0u;
     for (uint32_t k = lo; k < hi; k++) {
         LpTok e = lp_get(r, a, x, k);
-        if (n == 0u) *one = lp_ref(u, lp_is_span(e) ? lp_span_tok(e, 0u) : e);
-        n += lp_is_span(e) ? lp_span_len(e) : 1u;
+        if (n == 0u) *one = lp_ref(u, lp_first_tok(a, e));
+        // A node holds two tokens at least (`lp_node`).
+        n += lp_is_node(e) ? 2u : lp_is_span(e) ? lp_span_len(e) : 1u;
     }
     return n;
 }
@@ -921,7 +1001,7 @@ UKL_INLINE bool lp_collect_open(UKL_LOCAL LpRun* r, Ux u, Ar a, PP_GLOBAL uint32
     if (tab == LP_NONE) return false;
     a.psrc[r->mem[1].base + tab] = r->mem[0].top;
     r->cl_tab = tab; r->cl_nargs = 1u; r->cl_depth = 0u; r->cl_astart = r->mem[0].top; r->cl_org = LP_NONE;
-    r->cl_m = m; r->cl_nsp = nsp; r->cl_name = name; r->cl_on = true;
+    r->cl_m = m; r->cl_nsp = nsp; r->cl_name = name; r->cl_on = true; r->cl_raw = (uint8_t)(0);
     return true;
 }
 // One token of the arguments, `c` its byte if it is a one-byte punctuator: 0 read on, 1 the call's
@@ -1004,7 +1084,7 @@ UKL_INLINE bool lp_collect_close(UKL_LOCAL LpRun* r, Ux u, Ar a) {
     UKL_LOCAL LpCall* c = &r->calls[(r->nc++) & (LP_CALLS - 1u)];
     c->def = r->cl_m; c->nargs = nargs; c->tab = tab; c->cstart = r->cl_cstart; c->o1 = r->cl_o1; c->p = LP_NONE; c->ocur = 0u; c->nsp = r->cl_nsp; c->cfree = r->cfree; c->org = r->cl_org; c->bi = 0u;
     // An argument's expansion is none until it is expanded (a parameter never used reads none).
-    for (uint32_t q = 0u; q < nargs; q++) { a.pst[r->mem[1].base + tab + q] = LP_NONE; a.pn[r->mem[1].base + tab + q] = 0u; }
+    for (uint32_t q = 0u; q < nargs; q++) { a.pst[r->mem[1].base + tab + q] = LP_NONE; a.pn[r->mem[1].base + tab + q] = 0u; a.pexp[r->mem[1].base + tab + q] = LP_NONE; }
     lp_call_next(r, u, a);
     return true;
 }
@@ -1155,6 +1235,84 @@ UKL_INLINE uint8_t lp_delim(Ux u, uint32_t def, uint32_t p) {
     uint8_t c = ref_punct(u, lp_ref(u, t));
     return c == ((uint8_t)('(')) || c == ((uint8_t)(')')) || c == ((uint8_t)(',')) ? c : ((uint8_t)(0));
 }
+// Node `nb`'s delimiters' summary (`LN_*`), made once, the first time a call's arguments are read
+// through it: its tokens' `(`, `)` and `,`, a node in it by its own summary (one not known yet makes
+// it unbalanced, not known: it is read token by token, and made then).
+UKL_INLINE uint32_t lp_node_sum(Ux u, Ar a, uint32_t nb) {
+    uint32_t have = a.pst[nb];
+    if ((have & LN_KNOWN) != 0u) return have;
+    uint32_t n = a.psrc[nb], depth = 0u, at = nb + LN_ENTRIES;
+    bool ok = true, comma = false, known = true;
+    for (uint32_t k = 0u; k < n; k++) {
+        LpTok e = lp_gget(a, at + k);
+        bool node = lp_is_node(e);
+        uint32_t s2 = node ? a.pst[e.st] : 0u;
+        known = known && (!node || (s2 & LN_KNOWN) != 0u);
+        ok = ok && (!node || (s2 & LN_BALANCED) != 0u);
+        comma = comma || (node && (s2 & LN_COMMA) != 0u && depth == 0u);
+        uint32_t m = node ? 0u : lp_is_span(e) ? lp_span_len(e) : 1u;
+        for (uint32_t i = 0u; i < m; i++) {
+            uint8_t c = lp_is_span(e) ? lp_delim(u, e.src & ~P_KIND, e.st + i) : lp_placemarker(e) ? ((uint8_t)(0)) : ref_punct(u, lp_ref(u, e));
+            ok = ok && !(c == ((uint8_t)(')')) && depth == 0u);
+            depth += c == ((uint8_t)('(')) ? 1u : (c == ((uint8_t)(')')) && depth != 0u) ? 0xffffffffu : 0u;
+            comma = comma || (c == ((uint8_t)(',')) && depth == 0u);
+        }
+    }
+    ok = ok && depth == 0u;
+    // A node in it not summarized yet: not known (read token by token now, summarized when read through).
+    uint32_t sum = !known ? 0u : LN_KNOWN | (ok ? LN_BALANCED : 0u) | (comma ? LN_COMMA : 0u);
+    a.pst[nb] = sum;
+    return sum;
+}
+
+// The frames read to their end popped, as `lp_lex` pops them before it reads (an argument's end and
+// the top stay): the entry next is the top frame's.
+UKL_INLINE void lp_settle(UKL_LOCAL LpRun* r) {
+    for (uint32_t k = 0u; k < LP_DEPTH; k++) {
+        UKL_LOCAL LpFrame* f = &r->fr[(r->sp - 1u) & (LP_DEPTH - 1u)];
+        if (f->at < f->end || f->kind == FK_STOP || f->kind == FK_TOP) return;
+        if (!r->collecting) r->mem[0].top = f->mark;
+        else r->cfree = ukl_min(r->cfree, f->mark);
+        if (f->kind == FK_DEAD) r->mem[2].top = f->def;
+        r->sp--;
+    }
+}
+// The entry next where it is a node (`*node`): a list's, an argument's or a node's next entry, its
+// first token's space the frame's where the frame gives it (`lp_lex`'s). Taken whole, `lp_took`.
+UKL_INLINE LpTok lp_next_node(UKL_LOCAL LpRun* r, Ar a, UKL_PRIVATE bool* node) {
+    LpFrame f = r->fr[(r->sp - 1u) & (LP_DEPTH - 1u)];
+    LpTok e; e.src = 0u; e.st = 0u; e.flags = 0u; e.org = 0u;
+    *node = false;
+    if ((f.kind != FK_LIST && f.kind != FK_STOP && f.kind != FK_NODE) || f.at >= f.end) return e;
+    e = lp_get(r, a, LP_REGION(f), f.at);
+    if (!lp_is_node(e)) return e;
+    if (f.nsp != 0u) e.flags = (e.flags & ~15u) | f.nsp;
+    *node = true;
+    return e;
+}
+UKL_INLINE void lp_took(UKL_LOCAL LpRun* r) {
+    UKL_LOCAL LpFrame* f = &r->fr[(r->sp - 1u) & (LP_DEPTH - 1u)];
+    f->at++; f->nsp = 0u;
+}
+// Whether the call whose arguments are being read takes node `e` whole into its argument: its body
+// reads no parameter raw (`#`, `##`: their spellings and edges are tokens'), and the node's
+// parentheses are balanced, with no comma at its depth 0 unless the argument is the variadic rest.
+UKL_INLINE bool lp_collect_whole(UKL_LOCAL LpRun* r, Ux u, Ar a, LpTok e) {
+    if (r->cl_raw == 0u) {
+        PpDef d = u.defs[r->cl_m];
+        bool raw = false;
+        for (uint32_t i = 0u; i < d.n_body && !raw; i++) {
+            uint32_t q = u.items[d.ifirst + i] & 0xffffu;
+            raw = q != NO_PARAM && !lp_plain_use(u, d, i);
+        }
+        r->cl_raw = raw ? ((uint8_t)(2)) : ((uint8_t)(1));
+    }
+    if (r->cl_raw == 2u) return false;
+    uint32_t sum = lp_node_sum(u, a, e.st);
+    if ((sum & LN_BALANCED) == 0u) return false;
+    return (sum & LN_COMMA) == 0u || (r->cl_var && r->cl_nargs == r->cl_n);
+}
+
 // The window `at..end` of source `def` (`LQ_PUNCT`'s, at most `LP_WIN` tokens): a lane reads
 // `LP_WIN / UKL_SIMD_WIDTH` of them, a group's width apart, their reads all issued before the
 // meeting; the thread then makes the masks from them (`wc`).
@@ -1232,8 +1390,7 @@ UKL_INLINE bool lp_ahead(Ux u, Ar a, uint32_t def, uint32_t p, uint32_t slot, ui
 // The thread takes plain entry `e` of the list on top, as its steps would: a token emitted, or pushed onto
 // the argument being expanded; a span's tokens read from a frame of its own (`lp_lex`), a run of them
 // (`lp_plain_run`), and the frame left (`lp_lex`'s). A store past its room stops the run (`stop`).
-UKL_INLINE void lp_list_take(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar a, LpTok e) {
-    r->fr[(r->sp - 1u) & (LP_DEPTH - 1u)].at++;
+UKL_INLINE void lp_take(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar a, LpTok e) {
     if (!lp_is_span(e)) {
         if (r->nc == 0u) lp_emit(o, u, e);
         else lp_push(r, a, 1u, r->calls[(r->nc - 1u) & (LP_CALLS - 1u)].ocur, e);
@@ -1246,6 +1403,21 @@ UKL_INLINE void lp_list_take(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar 
     if (!r->collecting) r->mem[0].top = g->mark;
     else r->cfree = ukl_min(r->cfree, g->mark);
     r->sp--;
+}
+// A node with no name a rescan acts on, and no node among its entries (`LN_*`'s header): its entries
+// taken as a list's are (`lp_take`), its first with the node's space (decision 0613 §3).
+UKL_INLINE void lp_take_node(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar a, LpTok e) {
+    uint32_t at = e.st + LN_ENTRIES, n = a.psrc[e.st], sp = e.flags & 15u;
+    for (uint32_t k = 0u; k < n && r->stop == 0u; k++) {
+        LpTok x = lp_gget(a, at + k);
+        if (k == 0u && sp != 0u) x.flags = lp_is_span(x) ? ((x.flags & ~15u) | sp) : ((x.flags & ~(T_SPACE | LT_SPSET)) | sp);
+        lp_take(r, o, u, a, x);
+    }
+}
+UKL_INLINE void lp_list_take(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar a, LpTok e) {
+    r->fr[(r->sp - 1u) & (LP_DEPTH - 1u)].at++;
+    if (lp_is_node(e)) lp_take_node(r, o, u, a, e);
+    else lp_take(r, o, u, a, e);
 }
 
 // The piece that starts at top token `s0`, written where it is made (`lp_flush`; `trn[13]` counts the
@@ -1271,7 +1443,7 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
         rp->line = u.sc.runs == 0u; rp->state = state; rp->ops = ops; rp->raw = 0u; rp->clast = LP_NONE; rp->crank = 0u;
         rp->cfree = 0u;
         rp->sl_lo = 1u; rp->sl_hi = 0u; rp->sl_base = 0u; rp->fl_lo = 1u; rp->fl_hi = 0u; rp->run = 0u; rp->noask = false; rp->cl_on = false; rp->w_src = LP_NONE; rp->w_at = 0u; rp->w_end = 0u;
-        for (uint32_t x = 0u; x < 3u; x++) { rp->mem[x].base = 0u; rp->mem[x].cap = 0u; rp->mem[x].top = 0u; }
+        for (uint32_t x = 0u; x < 4u; x++) { rp->mem[x].base = 0u; rp->mem[x].cap = 0u; rp->mem[x].top = 0u; }
     }
     bool live = me;
     for (;;) {
@@ -1286,6 +1458,7 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                 // A call's arguments: a token a step, or a run of the group's window none `(`, `)` and `,`; a
                 // span or the top text next, past the window: the group looks.
                 if (rp->cl_on) {
+                    lp_settle(rp);
                     UKL_LOCAL LpFrame* f = &rp->fr[(rp->sp - 1u) & (LP_DEPTH - 1u)];
                     // A source's run: a span, the top text, or an object-like body read in place.
                     // A source's run: a span, the top text, or an object-like body read in place.
@@ -1327,6 +1500,15 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     } else if (flat && f->at + 1u < f->end) {
                         ask = true; q_kind = LQ_PUNCT; q_def = src; q_at = f->at; q_end = ukl_min(f->end, f->at + LP_WIN);
                         break;
+                    } else if (!flat) {
+                        // A node next: into the argument whole, where its delimiters let it (decision 0613 §3).
+                        bool nd = false;
+                        LpTok e = lp_next_node(rp, a, &nd);
+                        if (nd && lp_collect_whole(rp, u, a, e)) {
+                            if (!lp_push(rp, a, 0u, rp->cl_astart, e)) break;
+                            lp_took(rp);
+                            continue;
+                        }
                     }
                     LpTok t; bool at_stop = false;
                     if (!lp_lex(rp, a, lob, o.nv, &t, &at_stop)) { lp_unclosed(rp, a, at_stop); break; }
@@ -1356,6 +1538,26 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     if (!lp_plain_run(rp, &o, u, a, k)) break;
                     continue;
                 }
+                // A node next with no name a rescan acts on, where the group would not look at it (its frame's
+                // last entry, its space to give, or the group's look took none): into an argument's expansion
+                // whole, into the output its entries (`lp_take_node`), a step.
+                {
+                    lp_settle(rp);
+                    bool nd = false;
+                    LpTok e = lp_next_node(rp, a, &nd);
+                    LpFrame f = rp->fr[(rp->sp - 1u) & (LP_DEPTH - 1u)];
+                    if (nd && (f.at + 1u >= f.end || f.nsp != 0u || rp->noask) && a.pn[e.st] == 0u && (rp->nc != 0u || a.pexp[e.st] == 0u)) {
+                        lp_took(rp);
+                        rp->noask = false;
+                        if (rp->nc != 0u) {
+                            if (!lp_push(rp, a, 1u, rp->calls[(rp->nc - 1u) & (LP_CALLS - 1u)].ocur, e)) break;
+                        } else {
+                            lp_take_node(rp, &o, u, a, e);
+                            if (rp->stop != 0u) break;
+                        }
+                        continue;
+                    }
+                }
                 if (!rp->noask) {
                     UKL_LOCAL LpFrame* f = &rp->fr[(rp->sp - 1u) & (LP_DEPTH - 1u)];
                     // A span, or an object-like body read in place (its items a body's span's).
@@ -1366,8 +1568,10 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                         break;
                     }
                     // A list's entries next: the group looks at them, a lane an entry.
-                    if ((f->kind == FK_LIST || f->kind == FK_STOP) && f->at + 1u < f->end) {
-                        ask = true; q_kind = LQ_LIST; q_def = rp->mem[0].base; q_at = f->at; q_end = ukl_min(f->end, f->at + UKL_SIMD_WIDTH);
+                    // A node's entries are the store's, not region 0's; its first takes its space, so the thread reads it.
+                    if ((f->kind == FK_LIST || f->kind == FK_STOP || (f->kind == FK_NODE && f->nsp == 0u)) && f->at + 1u < f->end) {
+                        ask = true; q_kind = LQ_LIST; q_def = rp->mem[LP_REGION(*f)].base; q_at = f->at; q_end = ukl_min(f->end, f->at + UKL_SIMD_WIDTH);
+                        q_fend = rp->nc != 0u ? 1u : 0u;
                         q_slot = lp_slot_of(rp, u, rp->last); q_floor = lp_floor(rp, u, q_slot);
                         break;
                     }
@@ -1378,8 +1582,10 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     if (!at_stop) break;
                     // An argument's end: its expansion is the call's, and the call goes on.
                     UKL_LOCAL LpCall* c = &rp->calls[(rp->nc - 1u) & (LP_CALLS - 1u)];
-                    uint32_t e1 = rp->mem[1].base + c->tab + c->p;
+                    uint32_t e1 = rp->mem[1].base + c->tab + c->p, live = a.pn[e1];
                     a.pst[e1] = c->ocur; a.pn[e1] = rp->mem[1].top - c->ocur;
+                    a.pexp[e1] = lp_node(rp, a, c->ocur, rp->mem[1].top - c->ocur, live);
+                    if (rp->stop != 0u) break;
                     rp->mem[0].top = rp->fr[(rp->sp - 1u) & (LP_DEPTH - 1u)].mark;
                     rp->sp--;
                     lp_call_next(rp, u, a);
@@ -1460,6 +1666,12 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     if (rp->nc == 0u) {
                         lp_emit(&o, u, t);
                     } else {
+                        // A name a rescan may still act on (a function-like macro's with no `(` after it, a test's or
+                        // `_Pragma`'s): its node is read token by token.
+                        if ((t.flags & T_NOEXP) == 0u && (m < L_DEFS || m == L_FEATURE || m == L_PRAGMA)) {
+                            LpCall cc = rp->calls[(rp->nc - 1u) & (LP_CALLS - 1u)];
+                            a.pn[rp->mem[1].base + cc.tab + cc.p] += 1u;
+                        }
                         if (!lp_push(rp, a, 1u, rp->calls[(rp->nc - 1u) & (LP_CALLS - 1u)].ocur, t)) break;
                     }
                     continue;
@@ -1493,6 +1705,8 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     uint64_t dt = ukl_clock_ns() - t0;
                     uint32_t ns = dt > 0xffffffffull ? 0xffffffffu : (uint32_t)dt;
                     if (ukl_atomic_max(&trn[20], ns) < ns) { trn[21] = s0; trn[22] = step; trn[23] = ee; }
+                    // The pieces' time (us, where the device has a clock) and steps, summed (`TRN` 24, 25), for measurements.
+                    ukl_atomic_add(&trn[24], ns / 1000u); ukl_atomic_add(&trn[25], step);
                     v[s0] = o.nv; opv[s0] = o.np;
                     for (uint32_t s = s0 + 1u; s < e; s++) { v[s] = 0u; opv[s] = 0u; ovr[s] = 0u; }
                     ovr[s0] = ee > e ? 1u : 0u;
@@ -1532,7 +1746,8 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
             if (p < q_end) {
                 uint32_t i = q_def + p;
                 x.src = a.psrc[i]; x.st = a.pst[i]; x.flags = a.pn[i]; x.org = a.pexp[i];
-                len = lp_is_span(x) ? lp_span_len(x) : 1u;
+                // A node: one place (taken whole into an argument's expansion, else read by the thread).
+                len = lp_is_span(x) && !lp_is_node(x) ? lp_span_len(x) : 1u;
                 full = len;
                 // A span longer than the row: one place, not plain (the thread reads it).
                 if (len > UKL_SIMD_WIDTH) { longe = true; len = 1u; }
@@ -1553,6 +1768,7 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
             bool tok = ln < tot, ok = true;
             if (tok) {
                 if (ylong) ok = false;
+                else if (lp_is_node(y)) ok = a.pn[y.st] == 0u && (q_fend != 0u || a.pexp[y.st] == 0u);
                 else if (lp_is_span(y)) ok = lp_ahead(u, a, y.src & ~P_KIND, y.st + (ln - yat), q_slot, q_floor);
                 else ok = (y.flags & T_NOEXP) != 0u || lp_tok_plain(u, a, y, q_slot, q_floor);
             }
@@ -1616,13 +1832,22 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
 }
 // The pieces a SIMD group's lanes start (`lp_piece`), one at a time, every lane with each.
 UKL_INLINE void lp_run(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint32_t* state, PP_GLOBAL const uint32_t* lookups, PP_GLOBAL const uint32_t* start, PP_GLOBAL uint32_t* v, PP_GLOBAL uint32_t* opv, PP_GLOBAL uint32_t* lob, PP_GLOBAL uint32_t* plast,
-                       PP_GLOBAL uint32_t* pend, PP_GLOBAL uint32_t* pjoin, PP_GLOBAL uint32_t* joined, PP_GLOBAL uint32_t* trn, PP_GLOBAL uint32_t* ovr, PP_GLOBAL uint32_t* grid, uint32_t s0, uint32_t ln,
+                       PP_GLOBAL uint32_t* pend, PP_GLOBAL uint32_t* pjoin, PP_GLOBAL uint32_t* joined, PP_GLOBAL uint32_t* trn, PP_GLOBAL uint32_t* ovr, PP_GLOBAL uint32_t* grid, PP_GLOBAL const uint32_t* list, uint32_t ln,
                        UKL_LOCAL LpRun* rp __UKL_PARAMS) {
-    bool mine = s0 < u.n_toks && start[s0] != 0u;
-    uint64_t todo = (uint64_t)(ukl_sg_ballot(mine __UKL_ARGS));
-    while (todo != 0u) {
-        uint32_t lead = ukl_ctz64(todo);
-        todo &= todo - 1u;
-        lp_piece(u, a, ops, state, lookups, start, v, opv, lob, plast, pend, pjoin, joined, trn, ovr, grid, s0, rp, ln == lead, ln, lead __UKL_ARGS);
+    // The pieces claimed from the list of starts (`lp_queue`), the next one a SIMD group's lane 0 takes
+    // (`TRN` 26) while one is left: a group that ends a short piece takes another, so the team's groups
+    // end together whatever the pieces' lengths and places (a group a window of 32 tokens ran 1.5 times
+    // the even share on `tif_getimage.c`, 2026-11-22). `ln` is the lane.
+    for (;;) {
+        uint32_t k = 0u;
+        if (ln == 0u) k = ukl_atomic_add(&trn[26], 1u);
+        k = ukl_sg_shuffle(k, 0u __UKL_ARGS);
+        if (k >= trn[27]) break;
+        uint32_t at = ukl_sg_shuffle(ln == 0u ? list[k] : 0u, 0u __UKL_ARGS);
+        lp_piece(u, a, ops, state, lookups, start, v, opv, lob, plast, pend, pjoin, joined, trn, ovr, grid, at, rp, ln == 0u, ln, 0u __UKL_ARGS);
     }
+}
+// The starts in order (`lp_run`'s list): a start `s` at its rank among them (`at`, their scan).
+UKL_INLINE void lp_queue(PP_GLOBAL const uint32_t* start, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL uint32_t* list, uint32_t s) {
+    if (s < n_toks[0] && start[s] != 0u) list[at[s]] = s;
 }

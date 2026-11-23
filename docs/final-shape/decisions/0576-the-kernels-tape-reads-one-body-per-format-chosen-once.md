@@ -63,7 +63,7 @@ format 16's reads alone.
    every use (66 copies each of a node's start and end, 136 of the unaligned load). So the readers the interpreter
    calls (`device_tape.h`'s `tape_*`, the runtime's `Node_*`) and its evaluators (the NFA, the Lua patterns, the
    assertions, the text tests, the output, the query admission, the look-arounds) are called functions
-   (`UKL_COLD`): 39 s for that kernel (the reads stubbed too: 21 s). Calling the reads themselves instead (format
+   (`UKL_COLD` then; `UKL_SHARED` now, a call on OpenCL only, §22): 39 s for that kernel (the reads stubbed too: 21 s). Calling the reads themselves instead (format
    16's side-list read, its line select, the parents) made the join kernels up to 7x slower (`rows_copy` 18 →
    120 s): the reads stay inlined into the readers that call them.
 10. **And the interpreter's task, once.** The sweep ran a task in three places, each the whole interpreter inlined
@@ -86,7 +86,7 @@ format 16's reads alone.
    compiled in 4.0 s against 13.5 s (the whole switch stubbed: 1.6 s). Each is written in the names the case was, and
    works on copies of the task's state it changes, written back when it goes on: as the JIT's steps (which paste the
    case, now a call) already work. The interpreter alone 13.5 → 10.3 s.
-14. **A kernel that uses no SIMD group requires no sub-group size.** UKL's OpenCL shim required 32 lanes of every
+14. **A kernel that uses no SIMD group requires no sub-group size** (superseded by §16 and §22: removed). UKL's OpenCL shim required 32 lanes of every
    kernel (`intel_reqd_sub_group_size(32)`, as Metal's SIMD groups); Intel's compiler builds a kernel required to
    run 32 wide 2-5x slower than at its own 16 (the interpreter 10.4 → 5.5 s, `stage_scatter` 11.1 → 2.4 s,
    `witness_count` 12.2 → 4.1 s, `label_group` 8.0 → 3.9 s, each the same source). A source whose kernels reach no
@@ -99,7 +99,7 @@ format 16's reads alone.
    walks (`label_group`, `label_micro`, `label_phase`) and the sorts use SIMD groups.
 15. **16z's block lookup is called, and a 16z block's load is one read.** `clif_z_block` (the cache's lookup or
    decode of a block, 13 KB expanded) was the compiler's to inline (`UKL_CALLED` then, `UKL_FUNC` now), and Intel's inlined it at every
-   read: 16 copies in the tape reads' test kernel. It is called (`UKL_COLD`). And format 16's body over a decoded
+   read: 16 copies in the tape reads' test kernel. It is called on OpenCL (`UKL_SHARED`, §22). And format 16's body over a decoded
    block read each value through one load per width (`clif_f16b_ld`: four coherent reads, each two 64-bit words
    read by atomics on OpenCL), inlined at each of 142 loads: one coherent read of the words that hold the value,
    masked to its width. The join stages call `witness_probe` (3 copies in `witness_count`: 4.1 → 2.1 s) and
@@ -112,21 +112,34 @@ format 16's reads alone.
    asks for 1, 16 or 32. The engine's kernels already step by `UKL_SIMD_WIDTH` (0440): its device tests pass on the
    CPU at 16 lanes (`RERAIL_CPU_SIMD_WIDTH=16`) as at 32, and on the Arc. The 16z reads' test kernel 14.1 → 5.8 s,
    `label_micro` 10.2 → 5.2 s, `label_group` 7.8 → 3.7 s, each the same source.
-17. **A source written for one width says so.** The block programs (the transducer's batches) are written for SIMD
-   groups of 32 throughout: their generator, their layout on the host and the borrow's carry-lookahead, a 32-lane add.
-   Their source states it (`UKL_SIMD_WIDTH_NEEDED`, before its includes): OpenCL's shim then compiles it at 32 where
-   the device's sub-groups come in 32 (`Device::offers_simd_width`: an Arc's do), and anywhere the width is another
-   the build is refused (`ukl/backend.h`), not run wrong. `block_program::ready` asks the device for 32 lanes, not
-   for its width to be 32; the block interpreter is compiled ahead only where its batches run.
+17. **The block programs take the device's width.** The block programs (the transducer's batches) were written for
+   SIMD groups of 32, and were first kept at 32 on the Arc (a source that stated its width, compiled at 32 where the
+   device's sub-groups came in 32): at the width that compiles 2-5x slower. They now take the device's, 16 or 32 lanes
+   (`block_program::group_lanes`; any other is refused, and the CPU's executors run the batch), and nothing states a
+   width (that mechanism is gone). Where 32 was written in: the kernels' group (`GROUP_LANES`, now `UKL_SIMD_WIDTH`),
+   their scratch slots, the borrow's carry out (the add of the lanes' masks, carried out of bit `GROUP_LANES`), the
+   group's last lanes for the next's halo, the scans' last doubling; on the host the batch's layout, the launch, the
+   exchanges' passes (a word a lane), and the generated text. The serial executor's lanes form holds a segment, its
+   warm-up and the block after it in one group: a segment asked longer than the group holds is cut to it (29 blocks
+   at 32 lanes, 13 at 16), which changes how much a wrong start runs again, never what a run gives.
+   At 16 lanes a test found a bug from before: a delay-0 output's warm-up lanes wrote their own word to the output's
+   last word, taken for one no stream reaches. A file of one group whose last 64-bit word is partly filled reaches
+   it (200 bytes at 16 lanes of 16 bytes; at 32 lanes, about 433-496 bytes). A warm-up lane now stores nothing (the
+   buffer starts zeroed). Sending its store to that word instead, as zeros, raced the last group's own store of it:
+   a file's groups run at once on a GPU, and on the Arc a JSON file of three groups lost its last word.
+   Tests: the block, serial and directive tests on the CPU at 16 and 32 lanes (`RERAIL_CPU_SIMD_WIDTH`), the parser
+   tests' 117 at 16; on Metal (M3) and CUDA at 32; on the Arc at 16. There `prev_equals_reference_on_every_executor`
+   and `binary_operators_equal_reference_on_every_executor` pass in 34 s and 49 s with their kernels built; cold they
+   build about 150 kernels each (14 a program, 0.3-0.5 s of Intel's compiler each), past a minute.
 18. **The tape's load is one read.** `clif_t_ld`, the one load of the tape in place, chose a load by the value's
    width at run time (four loads), and it is inlined at each of a read's loads (38 in `tape_end`, 152 loads): one
    read of the words that hold the value, masked to its width, as 16z's block load (§15). `stage_count` 5.9 → 3.7 s,
    `label_micro` 10.1 → 8.1 s, the 16z test kernel 15.5 → 12.6 s, each interpreter 0.6-0.9 s less.
 19. **Format 16's side read is called.** A value too wide for its array is escaped to a side list, read by a
    binary search over the part's offsets (`side`, in `<ukl/body/tape_f16.h>`): the rare case, inlined in every read
-   that reaches a value (slot, gap, length, number), three copies in `tape_end` alone. It is called (`UKL_COLD`): over a
-   decoded 16z block always, and over the tape in place where the kernel uses no SIMD group (`UKL_SIMD_GROUP_FREE`;
-   each instance says how, `CLIF_16_RARE`). In a kernel that requires a sub-group size, on the Arc at 16 lanes, the
+   that reaches a value (slot, gap, length, number), three copies in `tape_end` alone. It is called (`UKL_COLD`) over a
+   decoded 16z block; over the tape in place it is `UKL_RARE` (§22: called, but inlined on OpenCL), each instance
+   saying how (`CLIF_16_RARE`). In a kernel that requires a sub-group size, on the Arc at 16 lanes, the
    called read over the tape misread (the 16z reads' test: node 1's child 2 read 11 for none), and read right
    inlined, at 32 lanes, and called on CUDA and the CPU: there it stays inlined (the cause, in Intel's compiler or
    ours, not yet found). The 16z test kernel 5.9 → 2.8 s, the interpreters 9.0 → 6.7 s and 9.4 → 7.4 s, the sweep
@@ -140,6 +153,69 @@ format 16's reads alone.
    called function, left the interpreter as it was (8.1 → 8.5 s, 9.3 → 9.3 s), though each emptied saved 0.6-1.1 s:
    Intel's compile of these kernels follows the code they reach, not the size of a function. A read inlined many
    times is the lever (§18, §19), and code that goes; the split was not kept.
+22. **Intel's compile cost is worked around on OpenCL alone; every kernel uses SIMD groups.** §9-§15 made about
+   seventy hot bodies calls on every backend (`UKL_COLD`: every `tape_*` read, the `Node_*` reads, `node_next`, the
+   interpreter's task and steps, its evaluators, the captures' lookups, the queue's insert, the arenas' reservations,
+   the join stages' row helpers, the label walks' `scan_marks` and `micro_test`, 16z's block lookup), and §14 barred
+   SIMD-group operations from the interpreters, the sweep, the join view kernels and the tape tests: Intel's compile
+   time bought with Metal's, CUDA's and the CPU's run time, and with SIMD groups shut out of those kernels. Both were
+   wrong. A device's gap is UKL's to work around, per backend: `ukl/backend.h` defines `UKL_SHARED` (a small read
+   many places reach: the `tape_*` and `Node_*` reads, a relation's column) and `UKL_LARGE` (a large body many reach:
+   the steps, the evaluators, the task, the join stages' row writers, the label walks' scans, 16z's block lookup) as
+   `UKL_INLINE` on Metal and the CPU, as these bodies were before §9; and as calls on CUDA and OpenCL, whose compilers
+   (NVRTC, IGC) compile each inlined copy apart. On CUDA the transducer's tests' interpreter and JIT kernels
+   (`all_backends_execute_every_verified_instruction_and_mode`, `wildcard_and_missing_flags_…`) compiled in 40 s and
+   26 s with both called, 187 s and 131 s with the reads inlined and the large bodies called, and over 240 s with
+   both inlined, forced or at NVRTC's choice: there the lever is fewer copies of the reads in the kernel's code
+   (§18-§20), not inlining; and `UKL_RARE` (a rare case's body) as a call but on OpenCL,
+   where a called side read misread (§19). `UKL_COLD` is left to the paths rare on every device: 16z's take and decode
+   of a missed block (`clif_tc_take`), its side read over a decoded block, a lazy block's creation
+   (`ensure_lazy_block`), the escaped view value (`vread`), and the reads the CLIF marks cold (decision 0310). §14's
+   `UKL_SIMD_GROUP_FREE` is gone: at the Arc's native 16 lanes (§16) a required size costs nothing, and every kernel
+   is compiled with its SIMD groups on every device; a device without them takes UKL's emulation
+   (`UKL_OPENCL_EMULATED_SG`), never a kernel written without them. Tests: the engine's transducer, tape and view
+   tests on the CPU, Metal (M3), CUDA and the Arc give the same results as before: the failures left are the pack
+   data's (not pulled on the hosts), the anchors' and the evaluation budget's (on every backend, the CPU's too), and on
+   the Arc `regex_block`'s and `nested_optional_types`' (before too). On the Arc
+   `all_backends_execute_every_verified_instruction_and_mode` took 194-202 s, the same with the side read called and
+   with no sub-group size required: its JIT kernels' compile (§23; its 24 s of 2026-11-21 were the driver's cache).
+23. **The JIT's kernel reads its programs from a table, over the batch's format.** `all_backends_…` passes in 1.9 s
+   on the Arc with its kernels built; cold, its JIT kernels compiled 45.8 s each. A JIT kernel held every tape
+   format's reads (16z's too: `TAPE_PREFIX`), a function a program (a switch over its steps, each case a call of the
+   opcode's step) and an output wrapper a program, each the same call of `apply_output`: 116 programs, about 260
+   called functions. The steps were calls, so the cases' constant operands were never folded into them: the code per
+   program bought nothing. Now the kernel is compiled for the batch's format (`tape_view`, as the interpreter's, §8:
+   the run's format ahead, a batch of another its own at its launch), the programs' steps are one table
+   (`JIT_START`, `JIT_STEPS`: opcode, mode and operand a step, as the interpreter's words), read by one switch that
+   calls each opcode's step once (each inlined: 11.2 s, 10.3 s called), and `apply_output` is called as the
+   interpreter calls it. That kernel 45.8 → 11.2 s (`clc build`, cold); the test cold 200 → about 88 s on the Arc,
+   on CUDA 41 → 10 s, on Metal (M3) 18 s, on the CPU 6.9 s. A JIT kernel is the interpreter's runtime and 3-4 s more;
+   the runtime's own compile is what is left (§9-§21).
+24. **A test's block programs run as one batch; a program's body is a large function.** A block test checked each of
+   its programs alone (`check_all` in a loop: `prev` at eleven distances, the binary operators eight ways, the delays
+   nine) and each input alone, so each program built its own kernels at every lane width and strategy, and its own
+   serial program: on the Arc, 55 builds for `prev`, 80 s cold and past the 240 s budget for the operators. The batch
+   kernels and the serial passes take a batch of programs (decision 0066), and the programs differed by a few bytes
+   of their sources: `Executors::every_of_all` (and `check_each`) runs every program over every input in one batch
+   for each device executor, so `prev` builds 7 programs, not 55. Its serial program with the eleven in it was
+   176 KB and 20.2 s: each program's bodies (`serial_P`, `lanes_P`, the cones, the groups, the records) were
+   `UKL_INLINE`, and `lanes_P` inlined into two kernels; and `tempo_batch`'s `program_P` the same. They are
+   `UKL_LARGE` now (§22: inlined on Metal and the CPU, a call on CUDA and OpenCL), one body a program per segment or
+   group: 20.2 → 13.3 s, and `tempo_batch` 6.6 → 5.1 s. The 12 serial kernels are made in one build
+   (`kernels::functions`: on OpenCL one program with each name's `__UKL_ONLY_*`, as `UKL_ONE_KERNEL`'s one kernel,
+   since Intel's compiler builds every kernel of a program). Cold on the Arc (no kernel store, the driver's cache
+   off): `prev` 26 s, the binary operators 20 s, the delays 38 s; with the kernels stored, `prev` 2.6 s. On the CPU
+   (16 and 32 lanes), Metal (M3) and CUDA the eight batched block and compile tests pass, in 8-9 s, 15 s and 9 s.
+   What is left is the compiler's slowdown within a process (above, "Measured"): the same 47 KB interpreter source
+   builds in 0.7, 0.4 and 1.6 s as the test goes on, `tempo_batch` in 1.0, 2.8 and 5.1 s.
+25. **Format 16's value read and start are shared reads.** `get` (a value of an array, or its escaped side list's)
+   and `start_stated` (a checkpoint and the gaps after it, `get` in its loop) were `UKL_INLINE`, so every `tape_*`
+   read that reaches them (start, end, end of, size, the line reads, the sibling walks: each its own function on
+   OpenCL and CUDA, §22) compiled its own copy, with the side read inlined in each on OpenCL (§19). They are
+   `UKL_SHARED` (§22) now: one body each on OpenCL and CUDA, inlined on Metal and the CPU as before. Each source of
+   `all_backends_execute_every_verified_instruction_and_mode` built in a fresh process on the Arc 140V (`clc builds`,
+   the driver's cache off), the reads inlined and called: the JIT kernel 12.2 → 9.1 s, the interpreter 5.2 → 3.8 s.
+   The test passes on the Arc, and on CUDA with `wildcard_and_missing_flags_…` in 12.8 s (each kernel 1.3-2.3 s).
 
 ## Measured
 

@@ -303,11 +303,20 @@ program read them, and `Batch::made` bound those rows in place of the views (`li
 no span: 3 interleaved pairs at load 23–25, `extra document rows` 0.094–0.135 s and 254–271 MB allocated to none;
 findings 1,629 in each; 73.5 B instructions (median) against 80.2 B.
 
-Where spans are made, the nodes' and tokens' place rows are still made beside the spans' (the spans' are derived
-facts; the nodes' are copies of tape answers), and bound in place of the view. The view already covers the whole
-source and its lines (`Locs::positions`, the `ExtraSpan::Line` ids); the other spans (`src_line_lf`, `tape_line`,
-matches, comments, `rx_span`) have their byte ranges only in `Extra`. Q216: those ranges written once into the
-batch's block, and the view reading them past its own positions, so nothing makes a node's place.
+**Where spans are made** (Q216, 2026-11-22), no node's or token's place is made either. In core.rr's shape `Extra`
+makes place rows for its spans alone (`Extra::node_places` is false): a match, a comment no node is, `source` and
+`src_line`. A span is a derived fact, placed once where it is made (`LineTable::place`). Each place relation is bound
+as the `Loc` view's rows, then those (`places::Places`, `places::join`). Two branches built this at once (this one
+and benchmarks-on-integration's b5fe5fcaa6, which measured 71 MB of the M3's 150 MB batch block); the merge of
+2026-11-22 keeps one type. A lookup by id goes to the side that holds the id
+(`granules::is_extra`), so a probe of a node's place reads the tape and makes no document. The device reads it in
+place as one relation: the kernels' `vread` of a placed kind reads a row below the view's count through the views'
+reads, and a row past it from the spans' relation where it lies in its block (`PlacedDir`: the view's directory,
+the spans' block and descriptor, the view's rows). `views_made_on_the_device_are_the_hosts_rows` copies and indexes
+each place relation of a span-reading program on the device. Before, such a probe
+made the node's document and its group: on ep2's `body` edit, 38 unchanged documents, about 0.09 s of 4.0 s.
+`a_span_reader_s_places_are_the_view_s_then_the_spans` checks the made rows (spans' alone), the view's rows first,
+and each line span's place.
 
 **Step 3's other relations of row 7** (2026-11-17), each checked against "Not copies":
 - `visit_index` (CPython's visit order), `host_node` (a guest node's innermost host node, an axis's answer) and
@@ -316,7 +325,7 @@ batch's block, and the view reading them past its own positions, so nothing make
 - `intval` and `op_t` are read by no core.rr library rule; in core.rr's shape `NodeRows` runs only where a program
   reads them. In T's shape they come with `NodeRows`' eager `text`, `name` and `str`, deferred with Q121.
 - What row 7 keeps: `core_rr`'s and `NodeRows`' eager derived values (`text`, `name`, `value`'s literals, T's
-  rows), deferred (Q121), and the nodes' place rows beside spans (Q216).
+  rows), deferred (Q121).
 
 Found on the way and fixed:
 - `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by
@@ -396,6 +405,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 15 | Gone (step 4b, 2026-11-18): a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went first (the CPU reads 16z in place); then the transducer's residency's (`unblock_into` into its slab, for the kernels: the label and program kernels read the stored bytes through the batch's cache), and a 16z batch's views made on the device (they are read in place through a cache). `unblock_into` is deleted. | — | — | Done |
 | 16 | Gone (0446, 2026-11-19): a label level's fact rows, uploaded as `(node, label)` pairs for the pattern kernels (`Pass::Fact`). The host writes the findings once into the batch's fact block, and the CPU and the kernels read them there | — | — | Done |
 | 17 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`); a queued tape not in a room read into a vector (`queued_image`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image` | 4.1 MB a run on hogql 16z | Step 4a |
+| 18 | Gone (2026-11-22, t52 step 4): each chunk's export rows written again into the export's relation (`Exports::add`, decision 0384 step 1). An export now holds the chunk's parts where they lie (`Rows::append_segment`), and a repeat or a dead row is dead in it. The memo's hits (warm runs, `append_own`) still write their rows, under row 12 | `plan/corpus/exports.rs`, `Exports::add` | 2,264 MB of 10.1 GB on 3,089 files (102 exports) | t52 step 4 |
 
 ## The plan
 

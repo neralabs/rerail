@@ -326,7 +326,7 @@ export async function stopDevCheckout(checkout = CHECKOUT) {
 
 // Build freshness ------------------------------------------------------------------------------------------------
 
-const NATIVE_INPUTS = ["native/src", "native/grammars", "native/Cargo.toml", "native/build.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
+const NATIVE_INPUTS = ["native/src", "native/crates", "native/grammars", "native/Cargo.toml", "native/build.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 const TS_INPUTS = ["src", "package.json", "tsconfig.json", "tsconfig.build.json"];
 const TS_OUTPUTS = [
   "dist/cli/cli.js", "dist/cli/daemon-entry.js", "dist/presentation/session-presentation.js", "dist/runtime/start-state-reader.js",

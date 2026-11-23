@@ -51,6 +51,8 @@ const CL_DEVICE_MAX_MEM_ALLOC_SIZE: ClUint = 0x1010;
 const CL_DEVICE_EXTENSIONS: ClUint = 0x1030;
 /// `cl_intel_required_subgroup_size`: the sub-group sizes a kernel may require (`size_t`s).
 const CL_DEVICE_SUB_GROUP_SIZES_INTEL: ClUint = 0x4108;
+/// A wavefront's lanes (`cl_amd_device_attribute_query`).
+const CL_DEVICE_WAVEFRONT_WIDTH_AMD: ClUint = 0x4043;
 /// `cl_intel_unified_shared_memory`: what host allocations support (a bit field; bit 0, access).
 const CL_DEVICE_HOST_MEM_CAPABILITIES_INTEL: ClUint = 0x4190;
 /// `cl_intel_unified_shared_memory`: the host allocations a launch reaches through addresses that buffers hold, not
@@ -69,6 +71,7 @@ const CL_PROFILING_COMMAND_END: ClUint = 0x1283;
 const CL_EVENT_COMMAND_EXECUTION_STATUS: ClUint = 0x11D3;
 const CL_COMPLETE: ClInt = 0;
 const CL_FALSE: ClUint = 0;
+const CL_TRUE: ClUint = 1;
 const CL_MAP_READ: u64 = 1;
 const CL_MAP_WRITE_INVALIDATE_REGION: u64 = 1 << 2;
 
@@ -255,31 +258,69 @@ fn device_info_string(a: &Api, d: Ptr, param: ClUint) -> String {
     String::from_utf8_lossy(&v).trim_end_matches('\0').trim().to_string()
 }
 
-/// The SIMD groups of the OpenCL device's kernels: their lanes, and whether they are the device's sub-groups (else
-/// emulated). The device's sub-groups where it has OpenCL 3.0's with their shuffles, relative shuffles and ballot
-/// (`cl_khr_subgroups`, `_subgroup_shuffle`, `_subgroup_shuffle_relative`, `_subgroup_ballot`), and a kernel may
-/// require a width (`cl_intel_required_subgroup_size`): at the device's native width, the narrowest of its sizes from
-/// 16 lanes (16 on Intel's GPUs, which split a 32-lane sub-group into two halves; on an Arc 140V a kernel that requires
-/// 32 lanes compiles 2-3 times slower than at 16). `RERAIL_OPENCL_SIMD_WIDTH` (1, 16 or 32) asks for a width: 1 is one
-/// lane, no group; 16 or 32 the device's sub-groups of it where it has them. Otherwise, or with
-/// `RERAIL_OPENCL_SUBGROUPS=0` (to measure one against the other), the shim emulates 32 lanes in threadgroup memory.
-/// With the device's sub-groups, also the sizes they come in (a source written for one, `UKL_SIMD_WIDTH_NEEDED`,
-/// takes it: the block programs' 32).
-fn lanes(a: &Api, device: Ptr) -> (u32, bool, Vec<u32>) {
+/// How an OpenCL device's kernels make their SIMD groups.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Groups {
+    /// In threadgroup memory, a word a thread (`UKL_OPENCL_EMULATED_SG`): a device whose sub-groups the shim cannot use.
+    Emulated,
+    /// OpenCL 3.0's sub-groups with their shuffles, relative shuffles and ballot, each kernel at a required width
+    /// (`cl_intel_required_subgroup_size`): Intel's GPUs.
+    Required,
+    /// AMD's wavefronts: `cl_khr_subgroups`' reductions, scans and barrier, and the wave's own shuffle and ballot
+    /// (`ds_bpermute`, `ballot_w32`, `UKL_OPENCL_AMD`). AMD's OpenCL is 2.0 and has neither of the shuffle extensions,
+    /// nor a required width; a GPU of 32-lane waves (RDNA) runs every kernel at 32, which the device's opening checks
+    /// (`sub_groups_are`).
+    Amd,
+}
+
+/// The SIMD groups of the OpenCL device's kernels: their lanes, and how they are made (`Groups`). Intel's GPUs: their
+/// sub-groups at the native width, the narrowest of their sizes from 16 lanes (16, which split a 32-lane sub-group
+/// into two halves; on an Arc 140V a kernel that requires 32 lanes compiles 2-3 times slower than at 16). AMD's GPUs
+/// of 32-lane waves: their waves. `RERAIL_OPENCL_SIMD_WIDTH` (1, 16 or 32) asks for a width: 1 is one lane, no group;
+/// 16 or 32 the device's sub-groups of it where it has them. Otherwise, or with `RERAIL_OPENCL_SUBGROUPS=0` (to
+/// measure one against the other), the shim emulates 32 lanes in threadgroup memory.
+/// The device's native dot products (ukl/dot.h), as the define ukl/backend.h reads: AMD's instructions on RDNA2
+/// (`gfx103x`, whose names and forms these are; other AMD chips' differ, and take the reference until one is tested),
+/// or `cl_khr_integer_dot_product` where kernels are built as OpenCL C 3.0. `RERAIL_OPENCL_DOT=0` keeps the reference.
+fn dots(a: &Api, device: Ptr, groups: Groups) -> Option<&'static str> {
+    if std::env::var("RERAIL_OPENCL_DOT").is_ok_and(|v| v == "0") {
+        return None;
+    }
+    let name = device_info_string(a, device, CL_DEVICE_NAME);
+    let ext = device_info_string(a, device, CL_DEVICE_EXTENSIONS);
+    let has = |e: &str| ext.split_ascii_whitespace().any(|x| x == e);
+    if name.trim().starts_with("gfx103") && has("cl_khr_fp16") {
+        Some("UKL_OPENCL_AMD_DOT")
+    } else if groups == Groups::Required && has("cl_khr_integer_dot_product") {
+        Some("UKL_OPENCL_INT_DOT")
+    } else {
+        None
+    }
+}
+
+fn lanes(a: &Api, device: Ptr) -> (u32, Groups) {
     let asked = match std::env::var("RERAIL_OPENCL_SIMD_WIDTH") {
         Err(_) => None,
         Ok(w) => match w.parse::<u32>() {
-            Ok(1) => return (1, false, Vec::new()),
+            Ok(1) => return (1, Groups::Emulated),
             Ok(n @ (16 | 32)) => Some(n),
             _ => panic!("RERAIL_OPENCL_SIMD_WIDTH={w}: 1, 16 or 32"),
         },
     };
-    let emulated = || (32, false, Vec::new());
+    let emulated = || (32, Groups::Emulated);
     if std::env::var("RERAIL_OPENCL_SUBGROUPS").is_ok_and(|v| v == "0") {
         return emulated();
     }
     let ext = device_info_string(a, device, CL_DEVICE_EXTENSIONS);
     let has = |e: &str| ext.split_ascii_whitespace().any(|x| x == e);
+    if has("cl_khr_subgroups") && has("cl_amd_device_attribute_query") {
+        let wave = device_info_bytes(a, device, CL_DEVICE_WAVEFRONT_WIDTH_AMD);
+        let wave = (wave.len() >= 4).then(|| u32::from_ne_bytes(wave[..4].try_into().unwrap()));
+        return match (wave, asked) {
+            (Some(32), None | Some(32)) => (32, Groups::Amd),
+            _ => emulated(),
+        };
+    }
     let wanted = ["cl_khr_subgroups", "cl_khr_subgroup_shuffle", "cl_khr_subgroup_shuffle_relative", "cl_khr_subgroup_ballot", "cl_intel_required_subgroup_size"];
     if !wanted.iter().all(|e| has(e)) {
         return emulated();
@@ -291,7 +332,7 @@ fn lanes(a: &Api, device: Ptr) -> (u32, bool, Vec<u32>) {
         None => [16, 32].into_iter().find(|n| sizes.contains(n)),
     };
     match width {
-        Some(w) => (w, true, sizes),
+        Some(w) => (w, Groups::Required),
         None => emulated(),
     }
 }
@@ -333,12 +374,10 @@ struct DeviceInner {
     context: Ptr,
     name: String,
     max_group: usize,
-    /// Whether its kernels' SIMD groups are the device's sub-groups (`lanes`), else emulated.
-    subgroups: bool,
+    /// How its kernels make their SIMD groups (`lanes`).
+    groups: Groups,
     /// Their lanes (`UKL_SIMD_WIDTH`).
     width: u32,
-    /// The sizes its sub-groups come in (none when emulated).
-    sizes: Vec<u32>,
     /// The alignment of a sub-buffer's origin, in bytes (`CL_DEVICE_MEM_BASE_ADDR_ALIGN`, given in bits).
     base_align: u64,
     /// The largest buffer (`CL_DEVICE_MAX_MEM_ALLOC_SIZE`).
@@ -349,6 +388,8 @@ struct DeviceInner {
     /// whose memory is the host's), which a map and unmap make current: then a submission's buffers are made the
     /// host's at its start and the device's back into the host's at its end (`ClComputeQueue::flush`).
     synced: bool,
+    /// Its dot products' native form (`dots`): the define that turns it on in ukl/backend.h, or none.
+    dot: Option<&'static str>,
 }
 
 unsafe impl Send for DeviceInner {}
@@ -396,20 +437,29 @@ impl ClDevice {
         let base_align = (u32::from_ne_bytes(ba[..4].try_into().unwrap()) as u64 / 8).max(1);
         let ma = device_info_bytes(a, device, CL_DEVICE_MAX_MEM_ALLOC_SIZE);
         let max_alloc = u64::from_ne_bytes(ma[..8].try_into().unwrap());
-        let (width, subgroups, sizes) = lanes(a, device);
+        let (mut width, mut groups) = lanes(a, device);
         // Heap buffers first: memory wrapped in place (a block, a mapped tape) is read through one.
-        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, width, sizes: sizes.clone(), base_align, max_alloc, usm: None, synced: false }));
+        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, groups, width, base_align, max_alloc, usm: None, synced: false, dot: None }));
         // A driver whose kernels' writes reach the host's pages only through a map is made current at each
         // submission's edges (`synced`); a device's own memory holding a buffer while it computes is not a copy (0353).
         // `RERAIL_OPENCL_SYNCED=1` takes this path on any device (its tests on a driver that needs no map).
         let synced = !unified || std::env::var_os("RERAIL_OPENCL_SYNCED").is_some() || probe.reads_host_pages_in_place().is_err();
+        // AMD's waves are the device's width with no kernel requiring it: a kernel whose sub-groups are another
+        // width would read the wrong lanes, so the device's groups are emulated then.
+        if groups == Groups::Amd
+            && let Err(e) = probe.sub_groups_are(width)
+        {
+            eprintln!("rerail-device: {e}: emulated SIMD groups");
+            (width, groups) = (32, Groups::Emulated);
+        }
         drop(probe);
-        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, width, sizes: sizes.clone(), base_align, max_alloc, usm: None, synced }));
+        let dot = dots(a, device, groups);
+        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, groups, width, base_align, max_alloc, usm: None, synced, dot }));
         if synced {
             return Ok(d);
         }
         let Some(usm) = usm(a, platform, device) else { return Ok(d) };
-        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, subgroups, width, sizes, base_align, max_alloc, usm: Some(usm), synced }));
+        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, groups, width, base_align, max_alloc, usm: Some(usm), synced, dot }));
         // Without the check's pass its buffers stay the heap's, with no address (one context; nothing releases it).
         if let Err(e) = with.follows_addresses() {
             eprintln!("rerail-device: {e}: OpenCL buffers without addresses");
@@ -442,6 +492,48 @@ impl ClDevice {
         let seen = unsafe { std::ptr::read_volatile(out.0.ptr.cast::<u32>()) };
         if seen != SEEN {
             return Err(format!("OpenCL device {}: a kernel's write is not in the host's pages without a map", self.0.name));
+        }
+        Ok(())
+    }
+
+    /// Whether a kernel's sub-groups are `width` lanes, each lane's id its own: a kernel of a threadgroup of 64 writes
+    /// each thread's sub-group size, its maximum and its lane, and the lane `width - 1 - lane` reads through the wave's
+    /// shuffle (`ds_bpermute`).
+    fn sub_groups_are(&self, width: u32) -> Result<(), String> {
+        let source = "#pragma OPENCL EXTENSION cl_khr_subgroups : enable\n\
+                      __kernel void ukl_sub_groups(__global uint* o) {\n\
+                      \x20 uint i = get_local_id(0), l = get_sub_group_local_id(), n = get_sub_group_size();\n\
+                      \x20 o[4u * i] = n; o[4u * i + 1u] = get_max_sub_group_size(); o[4u * i + 2u] = l;\n\
+                      \x20 o[4u * i + 3u] = (uint)__builtin_amdgcn_ds_bpermute((int)((n - 1u - l) << 2), (int)i);\n\
+                      }\n";
+        let lib = ClComputeFunctionLibrary::compile_from_source(self, source, "the sub-group probe")?;
+        let a = api()?;
+        let k = lib.kernel("ukl_sub_groups")?;
+        const THREADS: usize = 64;
+        let out = alloc_uninitialized_array_sync::<u32>(self, 4 * THREADS);
+        let mut e = 0;
+        let q = unsafe { (a.create_command_queue)(self.0.context, self.0.device, 0, &mut e) };
+        check("clCreateCommandQueue", e)?;
+        let r = (|| {
+            check("clSetKernelArg", unsafe { set_buffer_arg(a, self.0.usm.as_ref(), k.0, 0, out.mem()) })?;
+            check("the sub-group probe", unsafe { (a.enqueue_nd_range_kernel)(q, k.0, 1, std::ptr::null(), &THREADS, &THREADS, 0, std::ptr::null(), std::ptr::null_mut()) })?;
+            // Read back through the queue, so a driver whose writes reach the host's pages only by a map (`synced`)
+            // answers too.
+            let mut seen = vec![0u32; 4 * THREADS];
+            let Mem::Cl(mem) = out.mem() else { return Err("the sub-group probe: a buffer without an OpenCL buffer".to_owned()) };
+            check("clEnqueueReadBuffer", unsafe {
+                (a.enqueue_read_buffer)(q, mem as Ptr, CL_TRUE, 0, 4 * seen.len(), seen.as_mut_ptr().cast(), 0, std::ptr::null(), std::ptr::null_mut())
+            })?;
+            Ok(seen)
+        })();
+        unsafe { (a.release_command_queue)(q) };
+        let seen = r?;
+        for (i, row) in seen.chunks(4).enumerate() {
+            let (i, w) = (i as u32, width);
+            let want = [w, w, i % w, i - i % w + (w - 1 - i % w)];
+            if row != want {
+                return Err(format!("OpenCL device {}: thread {i}'s sub-group is {row:?}, not {want:?} ({w} lanes)", self.0.name));
+            }
         }
         Ok(())
     }
@@ -517,29 +609,34 @@ impl ClDevice {
     }
 
     /// The defines its kernels' preprocessing takes: the SIMD width, the largest threadgroup, and whether the SIMD
-    /// groups are the device's sub-groups (`UKL_OPENCL_SUBGROUPS`, `lanes`).
+    /// groups are the device's sub-groups (`UKL_OPENCL_SUBGROUPS`), AMD's waves (`UKL_OPENCL_AMD` too) (`lanes`).
     pub fn defines(&self) -> Vec<(&'static str, String)> {
         let mut d = vec![("UKL_SIMD_WIDTH", format!("{}u", self.0.width)), ("UKL_TG_MAX", format!("{}u", self.max_group()))];
-        if self.0.subgroups {
+        if self.0.groups != Groups::Emulated {
             d.push(("UKL_OPENCL_SUBGROUPS", "1".into()));
+        }
+        if self.0.groups == Groups::Amd {
+            d.push(("UKL_OPENCL_AMD", "1".into()));
+        }
+        if let Some(dot) = self.0.dot {
+            d.push((dot, "1".into()));
         }
         d
     }
 
     /// Whether its kernels' SIMD groups are the device's sub-groups (`lanes`), not emulated.
     pub fn subgroups(&self) -> bool {
-        self.0.subgroups
+        self.0.groups != Groups::Emulated
+    }
+
+    /// How its kernels make their SIMD groups (`lanes`).
+    pub fn groups(&self) -> Groups {
+        self.0.groups
     }
 
     /// Its SIMD groups' lanes (`lanes`).
     pub fn simd_width(&self) -> u32 {
         self.0.width
-    }
-
-    /// Whether a source written for `w` lanes (`UKL_SIMD_WIDTH_NEEDED`) runs here: the width, or a size of its
-    /// sub-groups.
-    pub fn offers_simd_width(&self, w: u32) -> bool {
-        self.0.width == w || self.0.sizes.contains(&w)
     }
 
     pub fn new_shared_event(&self) -> ClSharedEvent {
@@ -771,8 +868,13 @@ impl ClComputeFunctionLibrary {
     /// Builds OpenCL C (UKL preprocessed for OpenCL) with the device's driver.
     pub fn compile_from_source(device: &ClDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = api()?;
-        // OpenCL C 3.0 where the kernels use the device's sub-groups (its `sub_group_*` functions are 3.0's), else 1.2.
-        let version = if device.subgroups() { "-cl-std=CL3.0" } else { "-cl-std=CL1.2" };
+        // OpenCL C 3.0 where the kernels use the device's sub-groups (its `sub_group_*` functions are 3.0's); 2.0 for
+        // AMD's waves (its OpenCL's, whose sub-groups are `cl_khr_subgroups`'); else 1.2.
+        let version = match device.groups() {
+            Groups::Required => "-cl-std=CL3.0",
+            Groups::Amd => "-cl-std=CL2.0",
+            Groups::Emulated => "-cl-std=CL1.2",
+        };
         // `RERAIL_OPENCL_OPTIONS`: more of the driver's build options, a measurement aid (they are in the key).
         let options_text = match std::env::var("RERAIL_OPENCL_OPTIONS") {
             Ok(more) if !more.is_empty() => format!("{version} {more}"),

@@ -142,7 +142,7 @@ impl Facts {
             at += n;
         }
         let next: std::collections::HashMap<u32, u32> = r.next.iter().copied().collect();
-        let mut lines = LineCount::default();
+        let mut lines = rerail_c_pp::tape::LineCount::default();
         let mut malformed = Vec::new();
         for (i, row) in r.rows.iter().enumerate() {
             let i = i as u32;
@@ -254,19 +254,3 @@ fn unsplice(b: &[u8]) -> Vec<u8> {
     out
 }
 
-/// The line (from 1) of a file's position, counted forward as the directives go.
-#[derive(Default)]
-struct LineCount {
-    at: usize,
-    line: u32,
-}
-
-impl LineCount {
-    fn of(&mut self, src: &[u8], to: usize) -> u32 {
-        while let Some(k) = rerail_simd8::micro::find(src, self.at, b'\n').filter(|&k| k < to) {
-            self.line += 1;
-            self.at = k + 1;
-        }
-        self.line + 1
-    }
-}

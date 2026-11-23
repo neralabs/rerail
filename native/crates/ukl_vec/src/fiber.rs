@@ -27,6 +27,14 @@ const POOLED: usize = 256;
 
 thread_local! {
     static POOL: std::cell::RefCell<Vec<Box<[std::mem::MaybeUninit<u128>]>>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The fibers this thread has prepared (`prepared`).
+    static PREPARED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The fibers this thread has prepared to run: only a group whose SIMD groups wait for each other (a barrier, a
+/// poll) runs them as fibers.
+pub fn prepared() -> usize {
+    PREPARED.with(std::cell::Cell::get)
 }
 
 impl Stack {
@@ -69,6 +77,7 @@ pub type Start = unsafe extern "C" fn(arg: u64) -> !;
 ///
 /// `stack` outlives every switch to `ctx`, and `f` never returns.
 pub unsafe fn prepare(ctx: &mut Ctx, stack: &mut Stack, f: Start, arg: u64) {
+    PREPARED.with(|p| p.set(p.get() + 1));
     let top = stack.top() & !15;
     #[cfg(target_arch = "aarch64")]
     {
@@ -100,7 +109,7 @@ pub unsafe fn prepare(ctx: &mut Ctx, stack: &mut Stack, f: Start, arg: u64) {
         }
         w(24, arg); // r12
         w(16, f as usize as u64); // r13
-        w(48, trampoline as usize as u64); // the return address
+        w(48, trampoline as *const () as u64); // the return address
         ctx.sp = sp;
     }
 }

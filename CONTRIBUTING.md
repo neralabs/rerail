@@ -173,7 +173,7 @@ One repository holds everything: the core package at the root, rule packs under 
 language conformance fixtures under [`fixtures/`](fixtures/) (test data, never published).
 
 Install [Git LFS](https://git-lfs.com) before you clone, and run `git lfs install` once. The embedding model's weights
-(`model/model.safetensors`) and the engine's Unicode names table (`native/src/code_rule_dsl/value/names/names.bin`,
+(`model/model.safetensors`) and the engine's Unicode names table (`native/crates/adapters/src/code_rule_dsl/value/names/names.bin`,
 compiled into the engine) are stored in LFS (`.gitattributes`); without it a checkout holds pointer files, and neither
 the engine build nor the model works: `npm run build:native` and `rerail install --root` stop on a pointer, naming the
 file. In a checkout made without it, run `git lfs install && git lfs pull`.
@@ -265,8 +265,8 @@ Generated files are listed, with the command that rewrites each, in
 ### Development builds
 
 Everything run from a checkout (tests, benchmarks, `node dist/cli/cli.js`) is a development build: its policy content
-store is `<checkout>/.rerail/content-v9.sqlite`, private to that checkout or worktree. Only the managed installation
-under `~/.rerail/versions/` opens the machine-wide `~/.cache/rerail/content-v9.sqlite`, so a checkout on a newer store
+store is `<checkout>/.rerail/content-v10.sqlite`, private to that checkout or worktree. Only the managed installation
+under `~/.rerail/versions/` opens the machine-wide `~/.cache/rerail/content-v10.sqlite`, so a checkout on a newer store
 schema cannot break the installed Rerail. `RERAIL_CONTENT_STORE_PATH` overrides the location; the test setup gives
 every test file its own store that way. See [The content store](docs/how-setup-works.md#the-content-store).
 

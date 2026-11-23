@@ -654,3 +654,6 @@ reaches no edge and no open definition. It is W's scope model departing from Pyt
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.
 - `public_best_len` (1.1 s cross) and `reach_edges` belong to the program, not to the graph.
+
+- **Memory.** The run lets go of 10.1 GB of columns on `all`: t52 traces them (the export copy, the narrow twins,
+  8-byte columns) and plans their removal.

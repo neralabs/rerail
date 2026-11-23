@@ -3,6 +3,13 @@
 Status: done by the implementer. The direction is the user's (2026-11-21): delete `rust_stream`, and the parts of
 `clif_rust` that can go now. How it is done is the implementer's choice. Follows 0550, 0560, 0562.
 
+Amended 2026-11-22 (roll-up 72, the user's choice of Parser-generators-final-shape's own merge of the hub, f1793ae112):
+the facts are the hub's split of the same analyses into the front end: `stream_facts` (`direct_keys`, `open_bound`,
+`marks`, `word_form`, on the words' own successors, `word_succ`, with no Rust text) and `stream_analysis`.
+`native_cpu_facts` is gone, and with it the Rust text this record says it still built to find successors. Everything
+only the Rust lowering read (`direct_entries`, `refusal`, `STATE_SLOTS`, the JIT's `set_entry` and `asks_feed`) is gone
+too. `native_cpu_clusters` is the compiler's (`rerail_compiler::native_cpu_clusters`).
+
 ## What was there
 
 - `rust_stream` (5480 lines) wrote tier 2 as Rust from the native IR. Decision 0550 deprecated it, and 0560 and 0562

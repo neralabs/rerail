@@ -9,7 +9,7 @@ const POINTER = "version https://git-lfs.github.com/spec/v1\noid sha256:a4264cfe
 const ATTRIBUTES = [
   "# Binaries are stored in Git LFS.",
   "model/model.safetensors filter=lfs diff=lfs merge=lfs -text",
-  "native/src/code_rule_dsl/value/names/names.bin filter=lfs diff=lfs merge=lfs -text",
+  "native/crates/adapters/src/code_rule_dsl/value/names/names.bin filter=lfs diff=lfs merge=lfs -text",
   "native/grammars/*/src/parser.generated.c.gz filter=lfs diff=lfs merge=lfs -text",
   "packs/*/upstream/**/*.expected.json linguist-generated=true",
 ].join("\n");
@@ -43,7 +43,7 @@ describe("Git LFS pointers in a package root", () => {
     const root = packageRoot({
       ".gitattributes": ATTRIBUTES,
       "model/model.safetensors": POINTER,
-      "native/src/code_rule_dsl/value/names/names.bin": Buffer.concat([Buffer.from("TNAMES01"), Buffer.alloc(2048)]),
+      "native/crates/adapters/src/code_rule_dsl/value/names/names.bin": Buffer.concat([Buffer.from("TNAMES01"), Buffer.alloc(2048)]),
       "native/grammars/tree-sitter-sql/src/parser.generated.c.gz": POINTER,
       "packs/x/upstream/a/case.expected.json": POINTER,
     });
@@ -56,7 +56,7 @@ describe("Git LFS pointers in a package root", () => {
   });
 
   it("refuses a root holding pointers, naming each file and how to fetch it", () => {
-    const root = packageRoot({ ".gitattributes": ATTRIBUTES, "model/model.safetensors": POINTER, "native/src/code_rule_dsl/value/names/names.bin": POINTER });
+    const root = packageRoot({ ".gitattributes": ATTRIBUTES, "model/model.safetensors": POINTER, "native/crates/adapters/src/code_rule_dsl/value/names/names.bin": POINTER });
     expect(() => requireLfsContent(root)).toThrow(/model\/model\.safetensors.*names\.bin/u);
     expect(() => requireLfsContent(root)).toThrow(LFS_REMEDY);
     expect(() => requireLfsContent(packageRoot({ "model/model.safetensors": Buffer.alloc(4096) }))).not.toThrow();

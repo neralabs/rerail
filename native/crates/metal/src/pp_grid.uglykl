@@ -269,16 +269,20 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
             }
             BARRIER();
         }
+        // The pieces' starts in order (`lp_queue`), the list the SIMD groups claim from (`TRN` 26 the next, 27
+        // the count). `XAT` and `XPOS` are the overruns' only in a pass run again, before this.
+        SCAN(nt, XFLAG, XAT, XTOTAL);
+        EACH(s, nt) lp_queue(AT(const uint32_t, XFLAG), AT(const uint32_t, XAT), toks, AT(uint32_t, XPOS), s);
+        ONE(x) { AT(uint32_t, TRN)[26] = 0u; AT(uint32_t, TRN)[27] = AT(const uint32_t, XTOTAL)[0]; }
+        BARRIER();
         {
             PX_UA(DR);
-            // A thread a token, the pieces' starts running: a start about every 32 tokens, so a SIMD group
-            // mostly holds one piece, and its other lanes look ahead for it (`lp_piece`). Packed in a
-            // list, a group's pieces branch apart and it runs each one's path in turn (twice the time
-            // on GB10, 2026-11-21). Whole SIMD groups: every lane takes each of its group's turns.
-            EACH(s, (nt + UKL_SIMD_WIDTH - 1u) & ~(UKL_SIMD_WIDTH - 1u))
+            // A piece a SIMD group at a time, claimed from the list (`lp_run`): its lanes look ahead for it
+            // (`lp_piece`). Each thread once: its SIMD group claims until the list is empty.
+            EACH(s, g.groups * g.lsz)
                 lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),
                        AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, LOB), AT(uint32_t, PLAST),
-                       AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl, s,
+                       AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl, AT(const uint32_t, XPOS),
                        g.lid & (UKL_SIMD_WIDTH - 1u), &tg->lp[(g.lid / UKL_SIMD_WIDTH) % LP_SLOTS] __UKL_ARGS);
         }
         BARRIER();

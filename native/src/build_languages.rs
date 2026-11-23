@@ -128,6 +128,11 @@ struct Embed {
     /// The places a host's strings hold the embedded language (decision 0470): `call-argument`'s alone.
     #[serde(default)]
     places: Vec<Place>,
+    /// Built on demand only (decision 0597): a program a rule asks for at its place (`parsed(v, "vue-expression", g)`),
+    /// never at a file's load, so no reader of the file's programs (`GrammarDialect::embeds`) sees one.
+    /// `GrammarDialect::demand_embeds` lists them.
+    #[serde(default)]
+    demand: bool,
 }
 
 /// A call's positional argument that holds code (decision 0470): the callee's qualified name, dot-separated, as the
@@ -517,6 +522,7 @@ fn validate_entry(name: &str, stem: &str, entry: &Entry, vendored: &[&str]) {
             embed.language,
             embed.via
         );
+        assert!(!embed.demand || embed.places.is_empty(), "{name}: embeds {} via `{}`: a program built on demand has no places", embed.language, embed.via);
         for place in &embed.places {
             let dotted = place.callee.split('.').all(|part| {
                 let mut chars = part.chars();
@@ -781,12 +787,19 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
         let _ = writeln!(out, "            Self::{} => {via:?},", pascal(via));
     }
     out.push_str("            #[cfg(any(test, feature = \"test-hooks\"))]\n            Self::TestScript => \"test-script\",\n        }\n    }\n}\n\nimpl GrammarDialect {\n");
-    for (name, doc, places) in [
-        ("embeds", "    /// The dialects a file of this dialect embeds programs of, each with the `Via` that builds\n    /// them: every dialect of each language its registry entry `embeds`, in registry order.\n", None),
+    for (name, doc, places, demand) in [
+        ("embeds", "    /// The dialects a file of this dialect embeds programs of, each with the `Via` that builds\n    /// them: every dialect of each language its registry entry `embeds`, in registry order, but those built on\n    /// demand ([`Self::demand_embeds`]).\n", None, false),
         (
             "program_embeds",
             "    /// [`Self::embeds`] less those at places (decision 0470): the embeddings whose program is the file's own (a Blade\n    /// view's, a Vue component's), which its semantics read, where a string's code at a place never is.\n",
             Some(false),
+            false,
+        ),
+        (
+            "demand_embeds",
+            "    /// The embeddings built on demand only (the registry's `demand`, decision 0597): a program a rule asks for at\n    /// its place, never made at a file's load (a Vue template's code, each piece a program of its own).\n",
+            None,
+            true,
         ),
     ] {
         out.push_str(doc);
@@ -799,6 +812,7 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
                     .iter()
                     .filter(|embed| !omitted.contains(&embed.language))
                     .filter(|embed| places.is_none_or(|placed| embed.places.is_empty() != placed))
+                    .filter(|embed| embed.demand == demand)
                     .flat_map(|embed| {
                         entries
                             .iter()
@@ -823,9 +837,11 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
                 let _ = writeln!(out, "            Self::{host} => &[{embeds}],");
             }
         }
-        out.push_str(
-            "            #[cfg(any(test, feature = \"test-hooks\"))]\n            _ => test_embeds(self),\n        }\n    }\n",
-        );
+        out.push_str(if demand {
+            "            #[cfg(any(test, feature = \"test-hooks\"))]\n            _ => &[],\n        }\n    }\n"
+        } else {
+            "            #[cfg(any(test, feature = \"test-hooks\"))]\n            _ => test_embeds(self),\n        }\n    }\n"
+        });
     }
     out.push_str("\n    /// The places a file of this dialect holds embedded code (decision 0470), each with its embedding's `Via` and the\n    /// embedded dialect: a callee's qualified name and the positional argument's index.\n");
     out.push_str("    pub const fn embed_places(self) -> &'static [(Via, GrammarDialect, &'static str, u32)] {\n        match self {\n");
@@ -1302,6 +1318,24 @@ mod tests {
         let generated = Registry::new("embeds", &[one, two]).generate();
         assert!(generated.contains("pub enum Via {\n    CompiledView,\n"));
         assert!(generated.contains("Self::One => &[(Via::CompiledView, GrammarDialect::Two)],"));
+    }
+
+    /// Decision 0597: an embedding built on demand (`demand`) is no file's program at its load: `embeds` and
+    /// `program_embeds` leave it out, and `demand_embeds` lists it alone.
+    #[test]
+    fn a_demand_embedding_is_listed_apart() {
+        let mut one = supported("one", ".one", 1);
+        one["embeds"] = json!([{ "language": "two", "via": "compiled-view" }, { "language": "two", "via": "piece", "demand": true }]);
+        let mut two = supported("two", ".two", 2);
+        two["dialects"][0]["variant"] = json!("Two");
+        let generated = Registry::new("demand-embeds", &[one, two]).generate();
+        let body = |name: &str| {
+            let start = generated.find(&format!("pub const fn {name}(self)")).expect("generated");
+            generated[start..].split_once("Self::One => ").expect("the host's arm").1.split_once('\n').expect("one line").0.to_owned()
+        };
+        assert_eq!(body("embeds"), "&[(Via::CompiledView, GrammarDialect::Two)],");
+        assert_eq!(body("program_embeds"), "&[(Via::CompiledView, GrammarDialect::Two)],");
+        assert_eq!(body("demand_embeds"), "&[(Via::Piece, GrammarDialect::Two)],");
     }
 
     /// Decision 0470 R1: a `call-argument` embed's places (a callee's qualified name, an argument's index) are

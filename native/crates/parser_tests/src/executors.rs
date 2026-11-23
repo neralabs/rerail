@@ -94,37 +94,61 @@ impl<'a> Executors<'a> {
         self.run(bytes, true)
     }
 
-    /// Every executor's outputs over `bytes` (the Metal ones when `metal`). A Metal run past the
+    /// Every executor's outputs over `bytes` (the device's when `metal`). A device run past the
     /// launch budget is the hard failure (decision 0601), never skipped.
     pub fn run(&self, bytes: &[u8], metal: bool) -> Runs {
-        let mut out = vec![("cpu interpreter".to_owned(), self.block.interpret(bytes)), ("cranelift".to_owned(), self.cranelift.run(bytes))];
         if metal {
-            self.device(bytes, &mut out);
+            return self.every_of(&[bytes.to_vec()]).remove(0);
         }
+        vec![("cpu interpreter".to_owned(), self.block.interpret(bytes)), ("cranelift".to_owned(), self.cranelift.run(bytes))]
+    }
+
+    /// [`every`](Self::every) over each of `inputs`, the device's executors each over all of them in one batch.
+    pub fn every_of(&self, inputs: &[Vec<u8>]) -> Vec<Runs> {
+        Self::every_of_all(&[self], inputs).remove(0)
+    }
+
+    /// [`every_of`](Self::every_of) for several programs at once: each program's runs over each of `inputs`. The
+    /// device's executor runs every program over every input as one batch (decision 0066), so a test of eleven
+    /// programs builds its kernels once, with the eleven in it, not eleven times (decision 0576 §24: on an Arc 140V a
+    /// build is 0.3-3 s).
+    pub fn every_of_all(programs: &[&Executors<'_>], inputs: &[Vec<u8>]) -> Vec<Vec<Runs>> {
+        let mut out: Vec<Vec<Runs>> = programs
+            .iter()
+            .map(|ex| inputs.iter().map(|bytes| vec![("cpu interpreter".to_owned(), ex.block.interpret(bytes)), ("cranelift".to_owned(), ex.cranelift.run(bytes))]).collect())
+            .collect();
+        Self::device_of(programs, inputs, &mut out);
         out
     }
 
-    /// The device's executors' outputs over `bytes` into `out`.
+    /// The device's executor, the forward carry (`metal_block_serial`), over every program and input in one batch,
+    /// into each program's runs of each input: segments of three blocks, so that a file of a few blocks has segments
+    /// that speculate their start and run again, and tier 1's 29.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    fn device(&self, bytes: &[u8], out: &mut Runs) {
+    fn device_of(programs: &[&Executors<'_>], inputs: &[Vec<u8>], out: &mut [Vec<Runs>]) {
         use metal_program_backend::block_program::serial::{Segments, run_serial_split};
         use rerail_compiler::Error;
-        let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
-            Ok(got) => out.push((name, got)),
-            // A device whose SIMD groups are not 32 lanes runs no block program (`block_program::ready`).
-            Err(Error::UnsupportedBackend) if no_device() => {}
-            Err(e) => panic!("{name} runs: {e:?}"),
-        };
-        // The forward carry (`metal_block_serial`): segments of three blocks, so that a file of a few blocks has
-        // segments that speculate their start and run again, and tier 1's 29.
-        let file = [block::BatchFile { bytes, program: 0 }];
+        let files: Vec<block::BatchFile<'_>> =
+            (0..programs.len()).flat_map(|program| inputs.iter().map(move |bytes| block::BatchFile { bytes, program })).collect();
+        let natives: Vec<_> = programs.iter().map(|ex| &ex.native).collect();
         for blocks in [3, 29] {
-            keep(format!("device forward carry, segments of {blocks}"), run_serial_split(&[&self.native], &file, Segments { blocks, warm: 1 }).map(|mut r| r.run.files.remove(0).outputs));
+            let name = format!("device forward carry, segments of {blocks}");
+            match run_serial_split(&natives, &files, Segments { blocks, warm: 1 }) {
+                Ok(r) => {
+                    assert_eq!(r.run.files.len(), files.len(), "{name}: a run per program and input");
+                    for (runs, f) in out.iter_mut().flat_map(|p| p.iter_mut()).zip(r.run.files) {
+                        runs.push((name.clone(), f.outputs));
+                    }
+                }
+                // A device whose SIMD groups are neither 16 nor 32 lanes runs no block program (`block_program::ready`).
+                Err(Error::UnsupportedBackend) if no_device() => {}
+                Err(e) => panic!("{name} runs: {e:?}"),
+            }
         }
     }
 
     /// No device executors off the device layer's targets.
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-    fn device(&self, _bytes: &[u8], _out: &mut Runs) {}
+    fn device_of(_programs: &[&Executors<'_>], _inputs: &[Vec<u8>], _out: &mut [Vec<Runs>]) {}
 }
 

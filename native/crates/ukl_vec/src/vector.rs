@@ -139,7 +139,7 @@ pub fn vectorize(p: &Program, kernel: u32) -> R<Kernel> {
     let mut a = Analysis::new(&b);
     a.run(&b);
     let fields = a.check(&b, p, &f.name)?;
-    let lid = a.lev.contains(&Level::Lid);
+    let lid = a.lev.contains(&Level::Lid) || rows(&b);
     for (n, field) in fields.into_iter().enumerate() {
         b.set_field(n, field);
     }
@@ -337,6 +337,15 @@ fn kind(b: &Builder, n: usize) -> Kind {
 }
 
 /// Node `n`'s value if it is a constant (folded through casts and arithmetic).
+/// Whether a kernel takes a thread's id in its group's second or third dimension (`Level::SimdGroup`'s).
+fn rows(b: &Builder) -> bool {
+    (0..b.len()).any(|i| {
+        kind(b, i) == Kind::Builtin
+            && matches!(Builtin::of(b.word(i, 0)), Builtin::LocalId | Builtin::GlobalId)
+            && b.size(i) > 1 && matches!(constant(b, i + 1), Some(1 | 2))
+    })
+}
+
 fn constant(b: &Builder, n: usize) -> Option<u64> {
     let k = kids(b, n);
     match kind(b, n) {
@@ -1215,6 +1224,9 @@ impl Analysis {
                     // A 1-D group's thread id: its SIMD group's and lane's apart (`run` refuses another group's
                     // shape for a kernel that takes it so); the lane's index, the lane's.
                     Builtin::LocalId if constant(b, k[0]) == Some(0) => Level::Lid,
+                    // A thread's id in the second or third dimension: its SIMD group's (`run` takes such a kernel only
+                    // in a group whose SIMD groups each lie in one row of the first dimension).
+                    Builtin::LocalId | Builtin::GlobalId if matches!(constant(b, k[0]), Some(1 | 2)) => Level::SimdGroup,
                     Builtin::SubGroupLocalId => Level::Lane,
                     Builtin::LocalId | Builtin::GlobalId => Level::Varying,
                     Builtin::LocalSize | Builtin::GlobalSize | Builtin::GroupId | Builtin::NumGroups | Builtin::Barrier | Builtin::MemFence | Builtin::SubGroupBarrier | Builtin::Yield => Level::Uniform,

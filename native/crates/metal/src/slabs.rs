@@ -99,16 +99,26 @@ impl Slab {
         // The device first, whatever its backend: making it installs the one block policy (decision 0342), without
         // which no block is a device slab (`alloc::plain` refuses `Device::Must`). A process that leases a slab before
         // anything else touched the device (the parser crate's tests) had every lease refused as over capacity.
+        // `RERAIL_POOL_DEBUG` prints why a lease is refused, as the pool's does.
+        let said = |what: &str, e: &dyn std::fmt::Debug| {
+            if std::env::var_os("RERAIL_POOL_DEBUG").is_some() {
+                eprintln!("slab of {bytes} bytes: {what}: {e:?}");
+            }
+        };
         let device = crate::lane::device().map_err(|e| {
-            let _ = refused(&format!("no device: {e:?}"));
+            said("no device", &e);
             e
         })?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
-        // Refused for room; `RERAIL_POOL_DEBUG` (the pool's) or `RERAIL_PP_WHY` (the preprocessor's) says by what.
-        let why = |what: &str, e: &dyn std::fmt::Debug| refused(&format!("a slab of {bytes} bytes: {what}: {e:?}"));
-        let block = rerail_blocks::alloc::block(&need).map_err(|e| why("the block", &e))?;
-        let buffer = block.device_buffer(device).map_err(|e| why("its device buffer", &e))?;
+        let block = rerail_blocks::alloc::block(&need).map_err(|e| {
+            said("block", &e);
+            Error::BackendCapacity
+        })?;
+        let buffer = block.device_buffer(device).map_err(|e| {
+            said("device buffer", &e);
+            Error::BackendCapacity
+        })?;
         Ok(Slab { id, block, buffer, tables: Mutex::default() })
     }
 

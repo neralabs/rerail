@@ -2,7 +2,7 @@
 """Refuses a commit that adds a thread-local the run-state list does not name (decision 0192).
 
 The engine's run context lives in thread-locals, and a job on another thread sees it only if it is carried
-(`native/src/code_rule_dsl/logic/run_state.rs`). Every thread-local outside the tests is listed there with its class:
+(`native/crates/run/src/code_rule_dsl/logic/run_state.rs`). Every thread-local outside the tests is listed there with its class:
 carried, the thread's own, one call's, the outermost run's, or not carried yet. An unlisted one is state no one has
 decided about: a nested run on another thread would silently not see it.
 
@@ -17,7 +17,7 @@ import re
 import subprocess
 import sys
 
-RUN_STATE = "native/src/code_rule_dsl/logic/run_state.rs"
+RUN_STATE = "native/crates/run/src/code_rule_dsl/logic/run_state.rs"
 ENTRY = re.compile(r'^\s*\(\s*"([^"]+)"\s*,\s*"([A-Z_][A-Z_0-9]*)"\s*,\s*(\w+)\s*,')
 STATIC = re.compile(r'(?:^|[\s{])static\s+([A-Z_][A-Z0-9_]*)\s*:')
 

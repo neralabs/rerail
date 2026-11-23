@@ -19,17 +19,19 @@ pub struct Names {
 }
 
 impl Names {
+    /// The named kinds and the fields of `kinds.tsv`, read once (`ids::Ids::load`).
     pub fn load() -> Names {
-        let (mut kinds, mut fields) = (HashMap::<(u8, String), Vec<u16>>::new(), HashMap::new());
-        for line in include_str!("../kinds.tsv").lines() {
-            let c: Vec<&str> = line.split('\t').collect();
-            let Ok(tag) = c[0].parse::<u8>() else { continue };
-            if let Some(id) = c[1].strip_prefix("field ") {
-                fields.insert((tag, c[2].to_string()), id.parse().unwrap());
-            } else if c.get(3) == Some(&"1") {
-                kinds.entry((tag, c[2].to_string())).or_default().push(c[1].parse().unwrap());
+        let ids = crate::ids::Ids::load();
+        let mut kinds = HashMap::<(u8, String), Vec<u16>>::new();
+        for (&(tag, id), (name, named)) in &ids.kinds {
+            if *named {
+                kinds.entry((tag, name.clone())).or_default().push(id);
             }
         }
+        for v in kinds.values_mut() {
+            v.sort_unstable();
+        }
+        let fields = ids.fields.into_iter().map(|((tag, id), name)| ((tag, name), id)).collect();
         Names { kinds, fields }
     }
     pub fn kind_ids(&self, tag: u8, names: &[&str]) -> Vec<u16> {

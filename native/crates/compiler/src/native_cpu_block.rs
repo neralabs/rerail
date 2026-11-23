@@ -92,10 +92,10 @@ pub struct CompiledBlock {
     /// them out.
     pub pad: usize,
     pub extracts: Vec<usize>,
-    /// The output of the stream's newlines (`BlockNative::newlines`), where the body stores its rows: the format 16
-    /// tape's newline index is made from its words. None where the CPU's body makes no row of it (`cpu_unstored`):
+    /// The output of the stream's line ends and their terminators (`BlockNative::newlines`), where the body stores
+    /// its rows: the format 16 tape's line index is made from its words. None where the CPU's body makes no row of it (`cpu_unstored`):
     /// a token loop's tier 1 (0177), which makes no mask, as the lean lexer makes none; its index is the scan's.
-    pub newlines: Option<usize>,
+    pub newlines: Option<(usize, rerail_tape_format::newlines::Terminators)>,
     totals: Vec<usize>,
     /// The outputs with a running count, extracts' and totals' together.
     counted: Vec<usize>,
@@ -2856,7 +2856,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         delay: native.delay,
         pad: usize::from(native.pad),
         extracts: native.extracts.clone(),
-        newlines: native.newlines.filter(|o| !native.cpu_unstored().contains(o)),
+        newlines: native.newlines.filter(|(o, _)| !native.cpu_unstored().contains(o)),
         totals: native.totals.clone(),
         counted: counted(native),
         ascii_branch: last.ascii_branch,

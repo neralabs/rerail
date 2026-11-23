@@ -13,15 +13,8 @@ UKL_INLINE uint64_t clif_f16_ld(CLIF_T_ARGS, uint32_t base, uint32_t off, uint32
 #define CLIF_16(name) clif_f16_##name
 #define CLIF_16_ARGS CLIF_T_ARGS
 #define CLIF_16_PASS t, v
-// The side read, the rare case, a call where the kernel uses no SIMD group (`UKL_SIMD_GROUP_FREE`: the interpreters,
-// the sweep, the join view kernels). In a kernel that requires a sub-group size, on an Arc 140V at 16 lanes, the
-// called read misread (the 16z reads' test: node 1's child 2 read 11 for none); inlined, or at 32 lanes, it read
-// right, and on CUDA and the CPU called too. So there it is inlined (decision 0576 §19).
-#if defined(UKL_SIMD_GROUP_FREE)
-#define CLIF_16_RARE UKL_COLD
-#else
-#define CLIF_16_RARE UKL_INLINE
-#endif
+// The side read, the rare case (`UKL_RARE`: a call, but on OpenCL, ukl/backend.h).
+#define CLIF_16_RARE UKL_RARE
 #include <ukl/body/tape_f16.h>
 
 // The node's parent, or NONE at the root: the node before is the parent (an inner node), or a leaf naming the

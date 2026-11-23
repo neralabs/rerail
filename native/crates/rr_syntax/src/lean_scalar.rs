@@ -235,30 +235,22 @@ fn find_str(b: &[u8], needle: &[u8]) -> Option<usize> {
     None
 }
 
-fn newlines(b: &[u8]) -> u32 {
-    let (mut n, mut i) = (0, 0);
-    while i + 8 <= b.len() {
-        n += equal(word_at(b, i), b'\n').count_ones();
-        i += 8;
-    }
-    n + b[i..].iter().filter(|&&c| c == b'\n').count() as u32
-}
-
 /// `syntax::lex`'s tokens, without their text.
 fn lex(src: &str) -> Lexed {
     let b = src.as_bytes();
     let n = b.len();
     let mut toks = Vec::with_capacity(n / 4 + 8);
     let mut comments = Vec::new();
-    let (mut pos, mut line) = (0usize, 1u32);
+    // A token's line is the file's (decision 0612), read off its index.
+    let lines = crate::syntax::Lines::of(src);
+    let mut pos = 0usize;
     macro_rules! tok {
         ($kind:expr, $start:expr, $end:expr, $word:expr) => {
-            toks.push(Tok { start: $start as u32, end: $end as u32, line, kind: $kind, word: $word })
+            toks.push(Tok { start: $start as u32, end: $end as u32, line: lines.line($start) as u32, kind: $kind, word: $word })
         };
     }
     'read: loop {
         while pos < n && CLASS[b[pos] as usize] & WS != 0 {
-            line += u32::from(b[pos] == b'\n');
             pos += 1;
         }
         if pos >= n {
@@ -276,7 +268,6 @@ fn lex(src: &str) -> Lexed {
             b'/' if d == b'*' => match find_str(&b[pos + 1..], b"*/") {
                 Some(e) => {
                     let end = pos + 1 + e + 2;
-                    line += newlines(&b[pos..end]);
                     pos = end;
                     comments.push((start as u32, pos as u32));
                 }
@@ -313,7 +304,6 @@ fn lex(src: &str) -> Lexed {
                 }
                 let ok = !u || crate::syntax::unescape(&src[pos + 1..end]).is_ok();
                 tok!(if ok { STR } else { BAD }, start, end + 1, 0);
-                line += newlines(&b[start..end]);
                 pos = end + 1;
             }
             b'`' => {
@@ -326,7 +316,6 @@ fn lex(src: &str) -> Lexed {
                     Some(close) => {
                         let end = body + close + k;
                         tok!(TICK, start, end, 0);
-                        line += newlines(&b[start..end]);
                         pos = end;
                     }
                     None if k == 2 => {
@@ -399,8 +388,8 @@ fn lex(src: &str) -> Lexed {
         }
     }
     let real = toks.len();
-    // The file's end: its line counts every newline, also after a token that ended the read.
-    let eof_line = if pos >= n { line } else { newlines(b) + 1 };
+    // The file's end: its last line, also after a token that ended the read.
+    let eof_line = lines.line(n) as u32;
     for _ in 0..4 {
         toks.push(Tok { start: n as u32, end: n as u32, line: eof_line, kind: EOF, word: 0 });
     }
