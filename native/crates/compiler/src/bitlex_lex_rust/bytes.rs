@@ -173,15 +173,21 @@ impl<'a> Bytes<'a> {
                     }
                     let here = format!("unsafe {{ {f}::<S>(src, n, p) }}");
                     // (A neighbour byte is in the padded source: before the file's end, or `PADDING` past it.)
-                    // A byte on or back: the window's own bits shifted, the neighbour's one byte tested where it is, as the
+                    // At a distance: the window's own bits shifted, its neighbours' bytes tested where they are, as the
                     // lean lexer derives its masks from its window's one classify (`shift_in`), not a window loaded again.
-                    // Further, the window there (as the block's form: a shift of more than a byte reads its neighbour's).
                     let rs = self.classes[n.as_str()];
                     let test = |bound: String, q: String| format!("u64::from({bound} && matches!(unsafe {{ *src.get_unchecked({q} as usize) }}, {}))", rs.iter().map(|&(lo, hi)| if lo == hi { format!("{lo:#04x}") } else { format!("{lo:#04x}..={hi:#04x}") }).collect::<Vec<_>>().join(" | "));
                     match off {
                         0 => here,
-                        1 if !rs.is_empty() => format!("({here} >> 1 | {} << 63)", test("p + 64 < n as isize".into(), "(p + 64)".into())),
-                        -1 if !rs.is_empty() => format!("({here} << 1 | {})", test("p >= 1".into(), "(p - 1)".into())),
+                        k if k > 0 && k < 64 && !rs.is_empty() => {
+                            let next: Vec<String> = (0..k).map(|j| format!("{} << {}", test(format!("p + {} < n as isize", 64 + j), format!("(p + {})", 64 + j)), 64 - k + j)).collect();
+                            format!("({here} >> {k} | {})", next.join(" | "))
+                        }
+                        k if k < 0 && k > -64 && !rs.is_empty() => {
+                            let k = -k;
+                            let before: Vec<String> = (0..k).map(|j| format!("{}{}", test(format!("p >= {}", k - j), format!("(p - {})", k - j)), if j == 0 { String::new() } else { format!(" << {j}") })).collect();
+                            format!("({here} << {k} | {})", before.join(" | "))
+                        }
                         _ => format!("unsafe {{ {f}::<S>(src, n, {p}) }}"),
                     }
                 } else if let Some(d) = self.defs.get(n).cloned() {
@@ -276,6 +282,14 @@ impl<'a> Bytes<'a> {
             }
             Ok(f)
         };
+        // A token's one-byte test at its start (`first_clear(&M, s, s + 1)`, `bit(&M, s)`): a bit of the block's mask,
+        // as lean's masks of its one `Window`, where the mask reads no escapes.
+        let one = name == "first_clear" && args.len() == 3 && args[1].trim() == "s" && args[2].trim() == "s + 1";
+        if (one || (name == "bit" && args.len() == 2 && args[1].trim() == "s")) && !self.in_region && !self.window_fn(&m)?.1 {
+            let k = self.block_word(&m);
+            let holds = format!("({k} >> (s - base) & 1 == 1)");
+            return Ok(Some(if one { format!("(!{holds}).then_some(s)") } else { holds }));
+        }
         // A read of one byte (`first_clear(&M, a, a + 1)`): a test of the bytes there.
         if name == "first_clear" && args.len() == 3 && args[2].trim() == format!("{} + 1", args[1].trim()) {
             let e = self.expr(&m)?;
@@ -389,9 +403,8 @@ impl<'a> Bytes<'a> {
 
     /// The block's words, made once a block where the loop comes to it, as the lean lexer's `Window`: each class the
     /// words read classified once a block (`block_classes`, one load and one classify a pair of nibble tables), a class
-    /// a few bytes on or back its bits shifted, the neighbour block's shifted in. Each block's classes are made once: the
-    /// next block's are its `ahead`, and the last block's its `behind`. With the declarations the loop's head needs
-    /// before it. A word of escapes, or of a class 64 bytes away, reads its windows as a window past the block.
+    /// a few bytes on or back its bits shifted, the neighbour block's bytes tested where they are and shifted in (lean's
+    /// `shift_in`). With the declarations the loop's head needs before it. A word of escapes, or of a class 64 bytes away, reads its windows as a window past the block.
     pub(super) fn block_words(&mut self) -> (String, String) {
         match self.block_from_classes() {
             Some(r) => r,
@@ -411,11 +424,10 @@ impl<'a> Bytes<'a> {
     /// `block_words` from the block's classes: none where a word reads escapes or a class 64 bytes away.
     fn block_from_classes(&mut self) -> Option<(String, String)> {
         let mut used: Vec<String> = Vec::new();
-        let (mut back, mut on) = (false, false);
         let mut words = Vec::new();
         for m in self.block.clone() {
             let e = self.expr(&m).ok()?;
-            words.push((m, self.blk(&e, 0, 0, &mut used, &mut back, &mut on)?));
+            words.push((m, self.blk(&e, 0, 0, &mut used)?));
         }
         // Each pairs mask of the block's one load too, as lean's `pair`: the byte's nibble tables name the pairs it
         // starts, the next byte's (`shift_in`) the pairs it ends; a pair is a bit of both, packed once. Eight pairs a
@@ -466,19 +478,9 @@ impl<'a> Bytes<'a> {
             used.iter().map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", "),
             bits.iter().map(|b| format!("{b} & lv")).collect::<Vec<_>>().join(", ")
         );
-        let mut decl = String::new();
+        let decl = String::new();
         let mut head = String::from("        // The block's masks, from its classes (the lean lexer's `Window`): what its tokens read of it.\n");
-        if on {
-            let _ = writeln!(decl, "    // The next block's classes, made with the block before it: the block's own, where the loop goes on to it.\n    let (mut ahead_b, mut ahead) = (usize::MAX, [0u64; {k}]);");
-            let _ = writeln!(head, "        // SAFETY: `base` is in the file.\n        let cur = if ahead_b == b {{ ahead }} else {{ unsafe {{ block_classes::<S>(src, n, base) }} }};");
-            let _ = writeln!(head, "        // SAFETY: `base + 64` is in the file.\n        let next = if base + 64 < n {{ unsafe {{ block_classes::<S>(src, n, base + 64) }} }} else {{ [0u64; {k}] }};\n        (ahead_b, ahead) = (b + 1, next);");
-        } else {
-            let _ = writeln!(head, "        // SAFETY: `base` is in the file.\n        let cur = unsafe {{ block_classes::<S>(src, n, base) }};");
-        }
-        if back {
-            let _ = writeln!(decl, "    // The last block's classes: the block before's, where the loop came to it from there.\n    let (mut behind_b, mut behind) = (usize::MAX, [0u64; {k}]);");
-            let _ = writeln!(head, "        // SAFETY: `base - 64` is in the file.\n        let prev = if behind_b.wrapping_add(1) == b {{ behind }} else if b > 0 {{ unsafe {{ block_classes::<S>(src, n, base - 64) }} }} else {{ [0u64; {k}] }};\n        (behind_b, behind) = (b, cur);");
-        }
+        let _ = writeln!(head, "        // SAFETY: `base` is in the file.\n        let cur = unsafe {{ block_classes::<S>(src, n, base) }};");
         if words.iter().any(|(_, w)| w.contains("lv")) {
             head.push_str("        let lv = valid(n, base as isize);\n");
         }
@@ -506,10 +508,9 @@ impl<'a> Bytes<'a> {
         Some(if bits.is_empty() { "0".to_owned() } else { format!("({})", bits.join(" | ")) })
     }
 
-    /// `e`'s bits in the block, `off` bytes on (back, negative), from the block's classes (`cur`, and the neighbours'
-    /// `prev` and `next`): none where it reads escapes or a class 64 bytes away.
-    #[allow(clippy::too_many_arguments)]
-    fn blk(&self, e: &Expr, off: i64, depth: usize, used: &mut Vec<String>, back: &mut bool, on: &mut bool) -> Option<String> {
+    /// `e`'s bits in the block, `off` bytes on (back, negative), from the block's classes (`cur`, and the neighbour
+    /// block's bytes tested where they are): none where it reads escapes or a class 64 bytes away.
+    fn blk(&self, e: &Expr, off: i64, depth: usize, used: &mut Vec<String>) -> Option<String> {
         if depth > 64 || off.abs() >= 64 {
             return None;
         }
@@ -526,28 +527,27 @@ impl<'a> Bytes<'a> {
                 let rs = self.classes[n.as_str()];
                 match off {
                     0 => format!("cur[{i}]"),
-                    // A byte on or back: the neighbour block's one byte, tested where it is (lean's `shift_in`), not
+                    // Bytes on or back: the neighbour block's bytes, each tested where it is (lean's `shift_in`), not
                     // the block classified.
-                    1 => format!("(cur[{i}] >> 1 | u64::from(base + 64 < n && {}) << 63)", pattern_test("src[base + 64]", rs)),
-                    -1 => format!("(cur[{i}] << 1 | u64::from(base > 0 && {}))", pattern_test("src[base - 1]", rs)),
                     o if o > 0 => {
-                        *on = true;
-                        format!("(cur[{i}] >> {o} | next[{i}] << {})", 64 - o)
+                        let next: Vec<String> = (0..o).map(|j| format!("u64::from(base + {} < n && {}) << {}", 64 + j, pattern_test(&format!("src[base + {}]", 64 + j), rs), 64 - o + j)).collect();
+                        format!("(cur[{i}] >> {o} | {})", next.join(" | "))
                     }
                     o => {
-                        *back = true;
-                        format!("(cur[{i}] << {} | prev[{i}] >> {})", -o, 64 + o)
+                        let k = -o;
+                        let before: Vec<String> = (0..k).map(|j| format!("u64::from(base >= {} && {}){}", k - j, pattern_test(&format!("src[base - {}]", k - j), rs), if j == 0 { String::new() } else { format!(" << {j}") })).collect();
+                        format!("(cur[{i}] << {k} | {})", before.join(" | "))
                     }
                 }
             }
-            Expr::Name(n) => self.blk(self.defs.get(n)?, off, depth + 1, used, back, on)?,
-            Expr::Not(a) => format!("(!{} & lv)", self.blk(a, off, depth + 1, used, back, on)?),
-            Expr::And(a, b) => format!("({} & {})", self.blk(a, off, depth + 1, used, back, on)?, self.blk(b, off, depth + 1, used, back, on)?),
-            Expr::Or(a, b) => format!("({} | {})", self.blk(a, off, depth + 1, used, back, on)?, self.blk(b, off, depth + 1, used, back, on)?),
-            Expr::Xor(a, b) => format!("({} ^ {})", self.blk(a, off, depth + 1, used, back, on)?, self.blk(b, off, depth + 1, used, back, on)?),
+            Expr::Name(n) => self.blk(self.defs.get(n)?, off, depth + 1, used)?,
+            Expr::Not(a) => format!("(!{} & lv)", self.blk(a, off, depth + 1, used)?),
+            Expr::And(a, b) => format!("({} & {})", self.blk(a, off, depth + 1, used)?, self.blk(b, off, depth + 1, used)?),
+            Expr::Or(a, b) => format!("({} | {})", self.blk(a, off, depth + 1, used)?, self.blk(b, off, depth + 1, used)?),
+            Expr::Xor(a, b) => format!("({} ^ {})", self.blk(a, off, depth + 1, used)?, self.blk(b, off, depth + 1, used)?),
             Expr::Call(f, args) => {
                 let (a, k) = Self::shift(f, args)?;
-                self.blk(&a, off + k, depth + 1, used, back, on)?
+                self.blk(&a, off + k, depth + 1, used)?
             }
             Expr::Test { .. } => return None,
         })
@@ -590,6 +590,11 @@ fn split_args(s: &str) -> Vec<String> {
         out.last_mut().expect("one").push(c);
     }
     out
+}
+
+/// A call `unsafe { f }` as it reads inside an `unsafe` block: `f`.
+fn in_unsafe(call: &str) -> &str {
+    call.strip_prefix("unsafe { ").and_then(|c| c.strip_suffix(" }")).unwrap_or(call)
 }
 
 /// A byte's test of a class's ranges.
@@ -647,7 +652,7 @@ pub(super) fn fuse_read(code: &str, firsts: &[[bool; 256]], escapes: &HashMap<St
             let mut t = String::new();
             let _ = writeln!(t, "{pad}// The region's end and its tests in one window loop from its opener, the escapes found once a window, as the");
             let _ = writeln!(t, "{pad}// lean lexer reads a string once: no first byte of the row starts an escape.");
-            let _ = writeln!(t, "{pad}let (l, hit) = match wfirst_any(n, s, |p: isize, esc: &mut u64| unsafe {{ let escaped = escaped_step({b}, esc); (e_{e}::<S>(src, n, p, escaped), [{calls}]) }}) {{");
+            let _ = writeln!(t, "{pad}let (l, hit) = match wfirst_any(n, s, |p: isize, esc: &mut u64| unsafe {{ let escaped = escaped_step({}, esc); (e_{e}::<S>(src, n, p, escaped), [{calls}]) }}) {{", in_unsafe(b));
             let _ = writeln!(t, "{pad}    Some((c, hit)) => (c, hit),");
             for x in &none {
                 let _ = writeln!(t, "{x}");
@@ -723,7 +728,7 @@ pub(super) fn fuse_tests(code: &str, escapes: &HashMap<String, String>) -> Strin
         let _ = writeln!(out, "{pad}// The token's tests of its bytes, in one window loop: their classes loaded once a window.");
         if let (true, Some(Some(b))) = (shared, of.first()) {
             let calls: Vec<String> = tests.iter().map(|(_, f)| format!("e_{}::<S>(src, n, p, escaped)", f.trim_start_matches("w_"))).collect();
-            let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ let escaped = escaped_step({b}, &mut esc[0]); [{}] }});", tests.len(), calls.join(", "));
+            let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ let escaped = escaped_step({}, &mut esc[0]); [{}] }});", tests.len(), in_unsafe(b), calls.join(", "));
         } else {
             let calls: Vec<String> = tests.iter().enumerate().map(|(k, (_, f))| format!("{f}::<S>(src, n, p, &mut esc[{k}])")).collect();
             let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ [{}] }});", tests.len(), calls.join(", "));
@@ -1099,10 +1104,19 @@ fn key8(w: &[u8]) -> u64 {
     w.iter().take(8).enumerate().fold(0, |k, (i, &c)| k | u64::from(c) << (8 * i))
 }
 
+/// A word's bytes after its 8th, to its 16th, as one word of memory: zeros past its end.
+fn tail8(w: &[u8]) -> u64 {
+    key8(w.get(8..).unwrap_or(&[]))
+}
+
 /// A token's word from one load (decision 0623 step 4, the lean lexer's `word_code`): its first 8 bytes masked to its
 /// length, and the length, hashed by one multiply into a table where each of the grammar's words (`words`, code
-/// `i + 1`) has a slot of its own. `None` where no multiplier the search tries gives each its own slot.
+/// `i + 1`) has a slot of its own; a word of 9 to 16 bytes compares its rest as a second word of memory in the same
+/// test, as lean's `ninth`. `None` where a word is longer, or no multiplier the search tries gives each its own slot.
 pub(super) fn word_table(words: &[Vec<u8>]) -> Option<String> {
+    if words.iter().any(|w| w.len() > 16) {
+        return None;
+    }
     let keys: Vec<u64> = words.iter().map(|w| key8(w) ^ w.len() as u64).collect();
     let least = usize::BITS - words.len().max(1).leading_zeros();
     let mut x = 0x9e37_79b9_7f4a_7c15u64;
@@ -1128,18 +1142,15 @@ pub(super) fn word_table(words: &[Vec<u8>]) -> Option<String> {
             for slot in &slots {
                 match words.get(*slot) {
                     Some(w) => {
-                        let _ = writeln!(table, "    ({:#018x}, {}, {}),", key8(w), w.len(), slot + 1);
+                        let _ = writeln!(table, "    ({:#018x}, {:#018x}, {}, {}),", key8(w), tail8(w), w.len(), slot + 1);
                     }
-                    None => table.push_str("    (0, 0, 0),\n"),
+                    None => table.push_str("    (0, 0, 0, 0),\n"),
                 }
             }
-            // The bytes after the 8th of each word longer, by its code: compared only for a word that long.
-            let long: Vec<String> = words.iter().enumerate().filter(|(_, w)| w.len() > 8).map(|(i, w)| format!("        {} => b\"{}\",", i + 1, w[8..].iter().map(|c| std::ascii::escape_default(*c).to_string()).collect::<String>())).collect();
             return Some(format!(
-                "/// Each slot's word (`word_at`): its first 8 bytes, its length, its code (0: none), as the lean lexer's `WORDS`.\nstatic WORDS: [(u64, u32, u32); {}] = [\n{table}];\n\n/// A token's word: the code of the word its `len` bytes from `s` are, 0 for none, as the lean lexer's `word_code`. Its\n/// first 8 bytes, masked to its length, and the length, hashed by one multiply into `WORDS`, compared without a branch;\n/// a word of more than 8 compares the rest.\n#[inline(always)]\nfn word_at(src: &[u8], s: usize, len: usize) -> u32 {{\n    let raw = u64::from_le_bytes(src[s..s + 8].try_into().expect(\"the padded source\"));\n    let k = raw & (u64::MAX >> (64 - 8 * len.min(8)));\n    let (key, l, code) = WORDS[((k ^ len as u64).wrapping_mul({mul:#018x}) >> {}) as usize];\n    let code = code & 0u32.wrapping_sub(u32::from((key == k) & (l as usize == len)));\n    if len > 8 && code != 0 && src[s + 8..s + len] != *long_tail(code) {{ 0 }} else {{ code }}\n}}\n\n/// The bytes after the 8th of the word of `code`, of those longer than 8.\nfn long_tail(code: u32) -> &'static [u8] {{\n    match code {{\n{}\n        _ => b\"\",\n    }}\n}}\n\n",
+                "/// Each slot's word (`word_at`): its first 8 bytes, the next 8, its length, its code (0: none), as the lean lexer's\n/// `WORDS`.\nstatic WORDS: [(u64, u64, u32, u32); {}] = [\n{table}];\n\n/// A token's word: the code of the word its `len` bytes from `s` are, 0 for none, as the lean lexer's `word_code`. Its\n/// first 8 bytes, masked to its length, and the length, hashed by one multiply into `WORDS`; its bytes 8 to 16 masked\n/// the same, compared with the first and the length in one test (lean's `ninth`), without a branch.\n#[inline(always)]\nfn word_at(src: &[u8], s: usize, len: usize) -> u32 {{\n    let raw = u64::from_le_bytes(src[s..s + 8].try_into().expect(\"the padded source\"));\n    let rest = u64::from_le_bytes(src[s + 8..s + 16].try_into().expect(\"the padded source\"));\n    let k = raw & (u64::MAX >> (64 - 8 * len.clamp(1, 8)));\n    let t = rest & u64::MAX.checked_shr(128 - 8 * len.clamp(8, 16) as u32).unwrap_or(0);\n    let (key, tail, l, code) = WORDS[((k ^ len as u64).wrapping_mul({mul:#018x}) >> {}) as usize];\n    code & 0u32.wrapping_sub(u32::from((key == k) & (tail == t) & (l as usize == len)))\n}}\n\n",
                 1usize << bits,
-                64 - bits,
-                long.join("\n")
+                64 - bits
             ));
         }
     }

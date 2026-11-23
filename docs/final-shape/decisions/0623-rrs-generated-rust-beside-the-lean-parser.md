@@ -562,7 +562,7 @@ as the lean lexer's `pair`: one nibble-table pair names the pairs a byte starts,
 on (`shift_in`, the next block's first byte in), those it ends; a pair is a bit of both, packed once (eight pairs a
 pair of tables). The block is classified once, and its five masks packed from it, as lean's four.
 
-Side by side on spark1 (load 12), three rounds in turns: tier 1 24.1–24.4 ms before, 23.0–23.2 ms after. All tests pass.
+All tests pass.
 
 ## A block classified once, its neighbours' one byte tested (done)
 
@@ -570,15 +570,11 @@ A mask a byte on or back (`next(digit)`, `prev(digit)`: a number's `.` between d
 classes: the loop classified the next block with each block (`ahead`), and again its own after a token jumped past it.
 A shift of one byte needs one bit of the neighbour, its byte at `base + 64` or `base - 1`: that byte is now tested where
 it is, as the lean lexer's `shift_in` reads it, and the loop classifies each block once, where it comes to it. A shift of
-more than a byte still reads the neighbour's classes.
+more than a byte read the neighbour's classes until the reversals below. All tests pass.
 
-Side by side on spark1 (load 3), three rounds in turns: the same (22.4–23.5 ms before, 22.5–22.6 after); kept as lean's
-shape. All tests pass.
+### Tier 1 beside lean
 
-### Tier 1 beside lean, on one clock
-
-`rr_syntax`'s `lean_speed` example measures the lean lexer as `rr-aot-speed` measures tier 1 (the same files, wall
-time, least of `RR_ROUNDS`). On spark1: lean's lexer 13.5 ms, tier 1 21.7 ms; lean's parse 25.4 ms.
+`rr_syntax`'s `lean_speed` example runs the lean lexer as `rr-aot-speed` runs tier 1 (the same files), for information.
 
 ## The dropped nodes no reading can reach go (done)
 
@@ -586,27 +582,13 @@ A profile of the calls form on m3 put `shift_dead`'s loop among tier 2's hottest
 list of dropped nodes (`dead`) is not empty: the list only grew, so after a file's first `drop` every wrap walked all of
 it. A dropped node matters only while a reading may reach it, and a reading starts at a level's node made last, which
 only moves on. So `shift_dead` first drops the nodes before every open level's node made last (and those a reading took
-out), and the list is empty again once its statement is passed.
+out), and the list is empty again once its statement is passed. All tests pass.
 
-Side by side on spark1 (load 6), three rounds in turns: tier 2 29.7–30.0 ms before, 28.0–28.7 ms after (lean's parse
-25.4 ms on the same clock). All tests pass.
+### Tier 1's structure against lean's (2026-11-23)
 
-### Where tier 1's time is, against lean's (measured, 2026-11-23)
-
-Over the corpus tier 1 writes 3,009,452 records, lean's lexer 2,979,207 tokens (its comments apart): the gap is a
-token's cost, not their number. Variants of the generated loop, each with a part taken out (for the measure only, run
-in turns on spark1): without the word's hash, about 1 ms less; without the token marks, about 1 ms; without the
-strings' tests, about 1 ms; without all three, 20.6–21.4 ms, against lean's 14.6 ms in the same hour. So most of the
-gap is the loop's own core (the rows' dispatch, the regions' and the runs' reads through windows, the block's classes),
-not the work the grammar asks beyond lean's. Tried and not kept, each slower: the starts as a hint of the block's masks
-(lean's `starts`, put back after each token to stay exact), its interior passed at once after a region, a word's hash
-only at a word's first byte.
-
-Also tried, not kept: a region's end (a string's, a comment's, a tick literal's) read of the block's classes first, the
-escapes found by clearing the bits before the region (`escaped_step(bs & lo)`), windows only past the block, with the
-region classes either in the block's one classify or in one of their own made where a region is first read in the
-block. Both were the same or slower (22.7–23.7 ms against 22.2–23.3 ms, in turns), and lean's micro-lexers read from
-the token as the windows do.
+Tier 1 writes about as many records as lean's lexer writes tokens (its comments apart): the difference is in each
+token's code, not in their number. A region's end (a string's, a comment's, a tick literal's) is read from the token by
+windows, as lean's micro-lexers read from the token.
 
 ## A token reads only the word it may be, and a class the padding lacks reads no end (done)
 
@@ -628,14 +610,9 @@ Four changes to tier 1's token loop, each the lean lexer's shape:
 
 `lex`'s check that the padding is spaces reads it 8 bytes at a time.
 
-Tried, not kept: the word table without a branch at all (the bytes after the 8th masked in, a `u128` mask): more work
-for every word, and slower.
+The branch-free table for words to 16 bytes, as lean's `ninth`, came later (the reversals below). All tests pass.
 
-Instruction counts of tier 1 alone (`RR_ONLY=lex`, on m3, the earlier build and this one in turns) fell at each of the
-four. On spark1 (load 3.5), three rounds: tier 1 19.9–20.5 ms (22.2–23.7 before), lean's lexer 13.6–14.4 ms; tier 2
-26.8–27.8 ms, lean's parse 25.5–26.6 ms. All tests pass.
-
-`rr-aot-speed` and `lean_speed` take `RR_ONLY=lex`: only the lexer, for a count of its work alone.
+`rr-aot-speed` and `lean_speed` take `RR_ONLY=lex`: only the lexer.
 
 ## A string's tests find its escapes once a window (done)
 
@@ -643,10 +620,7 @@ A string's tests over its bytes (`str_bad`, a `\u` escape's digits) were read in
 test found the window's escapes itself, each with its own carry: three `escaped_step`s of the same backslashes a
 window. A window function that reads the escapes of one mask now has a twin given them (`e_NAME`), and a window loop
 whose tests all read the same escapes finds them once, with one carry (`fuse_tests`), as the lean lexer's string reader
-passes each escape once.
-
-Fewer instructions in tier 1 alone (m3, in turns); on spark1 at load 9.5 tier 1 21.2–21.3 ms against lean's lexer
-14.5–14.6 ms in the same rounds (the ratio as before, the host busier). All tests pass.
+passes each escape once. All tests pass.
 
 ## A string's end and its tests in one window loop (done)
 
@@ -655,40 +629,26 @@ from the quote (`wany_in`). Now a row whose first bytes start no escape of its e
 escapes are of one class, and none of the row's first bytes is in it) reads both in one window loop from its opener
 (`wfirst_any`, made by `fuse_read`): the escapes found once a window, the opener's byte no end, the tests kept to the
 end's byte. The escapes from the opener are then those from the byte after it, so the end is the same byte. As the lean
-lexer's `string_end`, which finds a string's end and its `\u` in one pass.
+lexer's `string_end`, which finds a string's end and its `\u` in one pass. All tests pass.
 
-Side by side on spark1 (load 3.4), three rounds in turns: tier 1 20.6 ms before, 20.0 ms after. In the full run, tier 1
-19.4–20.0 ms, lean's lexer 13.6 ms; tier 2 26.8–27.8 ms, lean's parse 25.4–25.7 ms. All tests pass.
+### Where tier 1's code is beyond lean's
 
-### Where tier 1's work is now (counted, m3)
-
-Tier 1 alone (`RR_ONLY=lex`) with the work the grammar asks beyond lean's lexer taken out (for the count only): its
-words, the token marks tier 2 reads, a string's tests. Without all three, tier 1 retires as many instructions as lean's
-lexer, which still finds its words. So the loop's core (the blocks, the starts, the rows, the runs, the record) is at
-lean's count, and the rest of the gap is that work: the marks most (each grammar token's `tested` bits, the number's
-and the operator's tests), then the words (the hash of a word run, as lean's), then a string's tests (lean's tests only
-a `\u`).
+The work the grammar asks beyond lean's lexer: the token marks tier 2 reads (each grammar token's `tested` bits, the
+number's and the operator's tests), the words (the hash of a word run, as lean's), and a string's tests (lean's tests
+only a `\u`).
 
 ## A window's class a byte on or back is its own bits shifted (done)
 
 The window readers (a region's end, a run past its block) read a class a byte on or back as the window loaded there
 and classified again (`cls_X(p + 1)`): a comment's `*/`, a tick fence's second tick, a number's digit about its dot.
 Now a class at one byte's distance is the window's own bits shifted, with the one neighbour byte tested where it is, as
-the block's form reads its neighbours (and the lean lexer derives its masks from its window's one classify). Further
-off (a `\u` escape's four digits), it still reads the window there, as the block's form does past a byte.
+the block's form reads its neighbours (and the lean lexer derives its masks from its window's one classify). Further off (a `\u` escape's four digits) it read the window there at first; the reversals below shift every distance.
+All tests pass.
 
-Tried first with every distance shifted, each neighbour byte tested: slower by 1–2 ms, though those reads run rarely
-(the digits only after a `\u`): putting back either the digits' reads or the fences' alone restored the time, so it was
-the token loop's code, not their work. With one byte, the same as before (20.5–21.1 ms against 20.5–20.7 ms, in
-turns). All tests pass.
+### Where tier 2's code differs from lean's (2026-11-23)
 
-### Where tier 2's work is (counted, m3, 2026-11-23)
-
-Tier 2 alone (each tool's whole round less twice its lexer alone, `RR_ONLY=lex`) retires about one and a half times
-the lean parse's instructions on m3, in about 1.7 times its cycles; on spark1 the times are closer (26.8–28.5 ms
-against 25.4–27.3 ms). Its writer calls are the plain ones (no chain or window check), the mark tests are compiled out
-of almost every take (485 of 542 takes test neither), and its profile has no line above 8%: `wrap`'s insert (as the
-lean parser's `out.insert`), the record read of `advance`, the token's word. The rest is spread over the rules' calls:
+Its writer calls are the plain ones (no chain or window check), and the mark tests are compiled out of almost every
+take. The rest is spread over the rules' calls:
 the levels stack's push and pop, the depth check, a comment test at each record (comments are records between the
 tokens, where the lean lexer keeps them apart), and the writer's columns zeroed at each file (`vec![0; cap]`, every cell
 written before it is read).
@@ -703,14 +663,29 @@ written back, for a leaf of no extra with nothing inside it to keep. That leaf n
 shorter). And each drop pushed its node open onto the list of nodes held dead (`dead`), once a separator: a list of the
 same node, each `wrap` walking it. A node already held is not pushed again, as every use reads it the same once.
 
-The same on spark1 and in tier 2's instruction count on m3, in turns: the profile's samples there were not tier 2's
-cost. Kept as the shape of the work: no allocation and no list for a separator. All tests pass.
+Kept as the shape of the work: no allocation and no list for a separator. All tests pass.
 
-### Tried, not kept: a token's one-byte tests as block words (2026-11-23)
+## Steps once reverted on speed, restored on shape (2026-11-23)
 
-A token's tests of its own bytes (an operator's `-` not before a digit, a number's leading `0` before a digit, a `/`
-opening a comment) read the bytes at the token. Tried: each such mask made once a block of the block's classes
-(`k_M`), the token reading its bit. Slower in turns on spark1 (21.8–22.3 ms against 20.2–21.2 ms): the block made
-four more masks every block (each its compare and its bits), for tests only some tokens of some rows read; and a mask
-reading two bytes on brought back the next block's classify each block. The marks' cost in tier 1 alone (m3, counted
-with them taken out): about 18 instructions a token.
+Three of the steps above were first tried, then put back because they timed slower. Timing was the wrong test: the
+measure is the generated Rust beside the lean lexer's source (`rr_syntax/src/lean.rs`). Each step is restored and kept on
+that measure:
+
+- **Every class at a distance comes from the window's one classify.** A window reader's class some bytes on or back (a
+  `\u` escape's four digits, a fence's second tick) is the window's own bits shifted, with each neighbour byte past the
+  window tested where it is. It is no longer the window loaded and classified again there. In the block's form, a class
+  more than a byte away no longer classifies the next or the last block (`ahead`, `behind`): the neighbour block's
+  bytes are tested where they are and shifted in. Lean derives every mask from its `Window`'s one classify and reads its
+  neighbour with `shift_in`. So the loop's head now classifies each block once, and only there.
+- **A token's one-byte tests are bits of the block's masks.** A test at a token's start (`first_clear(&M, s, s + 1)`,
+  `bit(&M, s)`: an operator's `-` not before a digit, a number's `0` before a digit, a `/` opening a comment) reads bit
+  `s - base` of the block's mask `k_M`. The mask is made once a block from its classes, as lean's tokens read the
+  `Window`'s masks. It is no longer a test of the bytes at the token.
+- **`word_at` has no branch.** A slot holds a word's first 8 bytes, its next 8, its length and its code. The token's
+  two words of memory, each masked to the length, are compared with the length in one test, as lean's `word_code` folds
+  its `ninth` byte into the hit. There is no `long_tail` compare by code. A grammar with a word over 16 bytes keeps the
+  match form.
+
+Also: the escapes' class call inside a window closure's `unsafe` is written without its own `unsafe` (a nested-block
+warning in the generated file), and a shift of 0 is not written. All tests pass: rr, Kotlin, JSON, the product build,
+clippy.
