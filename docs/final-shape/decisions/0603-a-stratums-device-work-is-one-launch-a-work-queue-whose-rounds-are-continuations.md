@@ -554,13 +554,58 @@ arena parking as a size script does.
 
   The Windows arm64 guest builds no CPU kernels: its clang targets x64, and the kernels' `asm` is arm64's. win2 was
   not used: it reset under this work's load before.
-- **Still committed on Metal: a recursive component's rooms.** Its heads' relations and deltas are blocks, and each
-  reserves its bound's row chunks (`Part::reserve(bound)`, `reserve(slack)`), as do its live indexes' rooms (a live
-  relation's rows are its bound, `live_rel`). A block's device buffer wraps its used extent, and on Metal a wrap is
-  wired whole (0295 §7). So the reach within `REACH_BYTES` is real memory there. Mapping them as reached needs the
-  head gate to park instead of stop, and the host to grow the rooms and re-point the program between launches:
-  - The rows grow by chunks, read through the block's directory (`clif_rows_put`), so they need only the block's
-    new wrap address.
-  - The gate's caps, a live index's room (`IxParams::mask`, `desc.a`, `desc.counters`) and the probes that read it
-    are encoded in the program, so they must either be patched in place or read from the block at run time.
-  That is the next step.
+- **A recursive component's rooms** were still committed on Metal at this step: the next section maps them.
+
+## Done (2026-11-22): a recursive component's rooms mapped as its rounds reach them
+
+A set head's rows, its deltas' and its live indexes' rooms were reserved for its bound (the reach, within
+`REACH_BYTES`) when its program began. A block's device buffer wraps its used extent, and on Metal a wrap is wired
+whole (0295 §7), so the reach was real memory there. They are now mapped as the rounds reach them
+(`mj::rooms_mapped`, where `device::map_commits`):
+
+- **Its first room** is its rows now and twice what a round could add (`LiveHead::mapped`), within its bound. The
+  bound is still the reach, and only past the bound does the head gate stop a round.
+- **A second check of the head gate is the room's** (`Batch::gate_rooms`, `GateCheck::has` bit 1). Past it the gate
+  sets flag 128, and the finisher of the gate's phase parks the program (`ctl[9]`, the phase with its top two bits).
+  The host then grows the rooms (`Kit::grow_rooms`), and the next launch's first group pushes the phase after the gate
+  (released by bit 29), as the finisher would have. Nothing runs again.
+- **The host's growth, between launches:**
+  - Each head's growth (`room_growth`) reserves its rows' chunks and its deltas' further: twice what they need,
+    within the bound. A head's rounds' gates share what it maps (`LiveHead::mapped_now`), and each gate's cap is
+    written again.
+  - A live index's rows get room for the rows mapped (`Relation::grow_index_rows`); their old room goes back to the
+    block. Its row clamp (`IxP::n`) is written again. Its buckets stay as reserved: its bound's keys' at most
+    `LIVE_BUCKETS`, at least its first rows'. A reader checks each row's key, so more rows a bucket is correct.
+  - A level sort whose live indexes are mapped as reached has its buffers and histograms as reserved address space
+    (`SortRoom`: private storage on Metal), mapped for its indexes' rows as mapped. Their addresses do not move.
+  - A block that outgrew its wrap is wrapped again, at another address on Metal. Everything the program holds into it
+    is re-pointed (`Kit::rebind`): its descriptors' addresses, its segments' counts, its scans' levels, its sorts'
+    passes, its size scripts' absolute addresses (in `Rebase::ops` too), and its parameters' words that held an
+    address their job reached. `flush` records those words, by exact value, from each job's reached addresses
+    (`Job::reached`, `Rooms::relocs`). The launch's resident buffers are the new wrap's.
+  - A remap of the rooms is a remap (`Done::room_remaps`, counted in `remaps`): the strict check allows it.
+- **Where mapping commits nothing** (the CPU backend, CUDA on pageable memory), a head's room is its bound, as it
+  was. A test build's `RERAIL_ROOMS_MAPPED=N` maps every set head's room `N` rows past its rows on any device.
+- **The test:** `a_recursive_components_rooms_are_mapped_as_its_rounds_reach_them` runs the closure with each room
+  one row past its rows. It asserts one program, no rerun, at least two room remaps, its launches one, its
+  relaunches and its remaps, and its rows the CPU's.
+- **Measured** (the setfix device, join and parity tests, 49 with the new one; every stratum strict):
+
+  | Backend | Rooms | Tests | Strata one launch |
+  |---|---|---|---|
+  | spark2's CPU backend | as reached, one row first (`RERAIL_ROOMS_MAPPED=1`) | 49 of 49 | 5,532 of 5,532 |
+  | spark2's CPU backend | its bound | 49 of 49 | 5,532 of 5,532 |
+  | The mini's Metal (M1) | as reached | 49 of 49 | 5,532 of 5,532 |
+  | The mini's Metal (M1) | as reached, one row first | 49 of 49 | 5,532 of 5,532 |
+  | spark2's CUDA (GB10) | as reached, one row first | 49 of 49 | 5,532 of 5,532 |
+
+  The first run found the two templates' gates of a head growing it apart: one gate's growth took 3,350 rows and the
+  other 1,204, and its index kept the first. Its anti-join then missed rows, and the device made rows twice. A head's
+  gates now share one mapped size.
+- **What is still committed on Metal:**
+  - A lattice head's room is its bound: its key map (`KeyMap`, twice its bound's slots) is a hash table placed by
+    key, which grows only by placing every key again (`Batch::lattice_grow`), a device job of its own.
+  - A non-recursive stratum's heads' rooms (`encode_place`, within `PLACE_ROOM_BYTES`).
+- **OpenCL runs no join program.** Its memory wrapped in place has no address, and a program names every buffer by
+  one (`metal_join::address`): a stratum there is refused (`UnsupportedBackend: a stage's space for 1 rows`, on
+  the mini's OpenCL) and runs on the host. The strict check has no launch of it to check.

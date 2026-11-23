@@ -3125,6 +3125,8 @@ pub struct Report {
     /// the programs' items taken over all their launches; and a launch's budget of items, the least of theirs.
     pub relaunches: u32,
     pub remaps: u32,
+    /// Of the remaps, a gate's rooms' (a recursive component's rows mapped as its rounds reach them).
+    pub room_remaps: u32,
     pub taken: u64,
     pub launch_items: u64,
     /// Its programs: one a stratum (a wave's first stratum's report, its wave's).

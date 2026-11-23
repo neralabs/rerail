@@ -247,7 +247,8 @@
                 // its claims map no more pages. On Metal a mapped page is real memory: its first arena is its claims'
                 // guess, the rest mapped as they reach it, a remap each, a doubling each, none a rerun.
                 let commits = crate::code_rule_dsl::transducer::packed::metal_join::map_commits();
-                assert!(if commits { r.remaps <= 8 } else { r.remaps == 0 }, "budget {b}: the closure's first arena (mapping commits: {commits}): {r:?}");
+                let arena = r.remaps - r.room_remaps;
+                assert!(if commits { arena <= 8 } else { arena == 0 }, "budget {b}: the closure's first arena (mapping commits: {commits}): {r:?}");
             }
             if budget.is_some() {
                 assert!(r.relaunches > 0, "budget {b}: the closure's items past one launch's budgets: {r:?}");
@@ -256,6 +257,23 @@
                 assert!(r.remaps > 0, "a first arena of 16 bytes: its pages mapped as its claims reach them: {r:?}");
             }
         }
+    }
+
+    /// Decision 0603's fewer reruns where a mapped page is real memory: a recursive component's rooms (its heads' rows,
+    /// their deltas' and their live indexes') mapped as its rounds reach them, not its reach. Each head's first room
+    /// one row past its rows (`RERAIL_ROOMS_MAPPED=1`, on any device): its gate parks past it, the host maps the room
+    /// further and re-points the program, and the program goes on from the gate, one launch and its remaps, none a
+    /// rerun, its rows the CPU's.
+    #[test]
+    fn a_recursive_components_rooms_are_mapped_as_its_rounds_reach_them() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let r = closure(&[("RERAIL_ROOMS_MAPPED", "1")]);
+        assert_eq!(r.programs, 1, "one program: {r:?}");
+        assert_eq!(r.reruns, 0, "no round runs again: {r:?}");
+        assert!(r.room_remaps >= 2, "its rooms grown as its rounds reach them: {r:?}");
+        assert_eq!(r.dispatches, 1 + r.relaunches + r.remaps, "one launch, its relaunches and its remaps: {r:?}");
     }
 
     /// A recursive component that keeps levels (decision 0311): the device's rows and each row's level are the CPU's,

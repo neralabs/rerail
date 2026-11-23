@@ -1688,8 +1688,10 @@ UKL_INLINE void gate_one(JSPACE const GateP* p, UKL_GLOBAL uint32_t* ctl, uint32
     if (t >= p->m) return;
     // Its fields read through `p` (coherent, `JSPACE`): C++ (CUDA) copies no `volatile` struct whole.
     JSPACE const GateCheck* c = &p->check[t];
-    uint64_t n = (uint64_t)*c->count + (c->has != 0u ? (uint64_t)*c->plus : 0u);
-    if (n > (uint64_t)c->cap) ukl_atomic_or(&ctl[6], 2u);
+    uint64_t n = (uint64_t)*c->count + ((c->has & 1u) != 0u ? (uint64_t)*c->plus : 0u);
+    // A room mapped as its rows reach it (`has`' bit 1, `Batch::gate_rooms`): past it the program parks (flag 128),
+    // and the host maps more of it and goes on from the phase after the gate.
+    if (n > (uint64_t)c->cap) ukl_atomic_or(&ctl[6], (c->has & 2u) != 0u ? 128u : 2u);
 }
 
 // A recursive component's round's end (`Batch::round_end`, decision 0603 step 3): one thread. Its new rows claimed
@@ -2069,10 +2071,13 @@ UKL_INLINE void phase_texts(UklWorkQueue q, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL
 //
 // `ctl`: 0-4 the queue's control (head, tail, active, overflow, base), 5 the seeds taken, 6 the program's flags (1:
 // a push past the queue's capacity; 2: a gate stopped it; 4, 16: a round's end stopped it past its rounds, ended it;
-// 32: a size script or a phase parked, its claims past its arena's room; 64: a text found the text arena full), `counts`
+// 32: a size script or a phase parked, its claims past its arena's room; 64: a text found the text arena full; 128: a
+// gate's room mapped past), `counts`
 // the arena (each level's counts at the offsets its size script claimed, decision 0603 step 5), 7 a round's end's jump,
 // 8 the items taken (a parked one again as it is put back), 9 the parked item and one, or a parked phase with its top bit
-// (the host puts the item back once the arena's pages are mapped; the phase, the next launch), then each phase's items done (emptied as the phase is
+// (the host puts the item back once the arena's pages are mapped; the phase, the next launch; released, bit 30), or a
+// phase parked after its gate's rooms with its top two bits (released, bit 29: its next phase pushed), then each
+// phase's items done (emptied as the phase is
 // pushed: a round runs a phase again), then each phase's items as pushed (0: all of them; a phase of segments,
 // theirs). `phases`: each phase's first item, its items, its first segment and its segments (`segs`). Ordering: a
 // group's writes, a device barrier and fence, then its count; the pusher's fence, then its pushes; the taker's fence
@@ -2119,10 +2124,23 @@ DEFINE_KERNEL2(join, join_run,
             // A phase parked as its texts found the text arena full, released by the host once it mapped the arena's
             // pages for them (`ctl[9]`'s bit 30, the phase; parked, its top bit): the first group pushes its texts'
             // items again (`phase_texts`).
+            // A phase parked after a gate's room was mapped past, released (bit 29, the phase): its next phase pushed,
+            // as its finisher would have.
             if (l == 0u) {
+                took[2] = 0u;
+                took[3] = 0u;
                 uint32_t pp = ukl_atomic_poll(&ctl[9]);
                 if ((pp >> 30) == 1u && ukl_atomic_cas(&ctl[9], pp, 0u) == pp) phase_texts(q, ctl, items, phases, segs, done, target, pp & 0x3fffffffu);
+                if ((pp >> 29) == 1u && ukl_atomic_cas(&ctl[9], pp, 0u) == pp) {
+                    uint32_t p = pp & 0x1fffffffu;
+                    uint32_t jump = ukl_atomic_poll(&ctl[7]);
+                    if (jump != 0u) ukl_atomic_store(&ctl[7], 0u);
+                    took[2] = jump != 0u ? (jump == 0xFFFFFFFFu ? 0u : jump) : p + 1u < a.phases ? p + 2u : 0u;
+                    if (took[2] != 0u) took[3] = phase_reset(phases, segs, done, target, took[2] - 1u);
+                }
             }
+            ukl_tg_barrier_device();
+            phase_push(q, ctl, phases, segs, took[2], took[3], l);
             ukl_tg_barrier_device();
         }
         if (l == 0u) {
@@ -2165,7 +2183,15 @@ DEFINE_KERNEL2(join, join_run,
             bool all = finished == (want != 0u ? want : phases[4u * p + 1u]);
             took[2] = 0u;
             took[3] = 0u;
-            if (all && (ukl_atomic_poll(&ctl[6]) & 64u) != 0u) {
+            uint32_t flags = all ? ukl_atomic_poll(&ctl[6]) : 0u;
+            // A gate's room mapped past (flag 128): where no check stopped the program, it parks after the gate's
+            // phase (`ctl[9]`: the phase, its top two bits), and the host maps the rooms and releases it (bit 29).
+            if ((flags & 128u) != 0u) ukl_atomic_and(&ctl[6], ~128u);
+            if ((flags & 128u) != 0u && (flags & 2u) == 0u) {
+                ukl_atomic_store(&ctl[9], 0xC0000000u | p);
+                ukl_fence_device();
+                ukl_atomic_or(&ctl[6], 32u);
+            } else if (all && (flags & 64u) != 0u) {
                 // Its texts found the text arena full (`row_text`'s flag 64): the phase parks (`ctl[9]`'s top bit), and
                 // the host maps the arena further and launches the program again, which pushes it again. Its rows are
                 // each written again whole, so the phase runs again as it ran.

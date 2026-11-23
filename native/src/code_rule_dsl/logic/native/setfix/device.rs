@@ -2844,6 +2844,7 @@ fn tally(rep: &mut Report, done: &mj::Done) {
     rep.dispatches += done.dispatches;
     rep.relaunches += done.relaunches;
     rep.remaps += done.remaps;
+    rep.room_remaps += done.room_remaps;
     rep.taken += done.taken;
     rep.programs += done.programs;
     if done.launch_items != 0 {
@@ -3048,13 +3049,36 @@ struct Looped<'a> {
 /// program (a gate stops a round that could pass it); `room`: what a round adds, as guessed (twice what a stopped
 /// one saw); `slack`: each delta's room, its relation's room past its rows when the program starts, within its bound:
 /// a round's new rows (a lattice head's changed ones too) are at most those, so only the bound stops a round.
+/// `mapped`: its rows' room as reserved, within its bound: where a mapped page is real memory (`mj::rooms_mapped`), a
+/// set head's rows, its deltas' and its live indexes' are mapped as its rounds reach them, its gate's room growing
+/// them between launches (`Batch::gate_rooms`); else its bound. `len`: its rows when the program started.
 struct LiveHead {
     total: Part,
     deltas: [Part; 2],
     bound: usize,
     room: usize,
     slack: usize,
+    mapped: usize,
+    len: usize,
+    /// Its rows mapped as its program's gates' rooms grew them (`room_growth`): one for all its rounds' gates.
+    mapped_now: Rc<std::cell::Cell<usize>>,
 }
+
+impl LiveHead {
+    /// Its deltas' rows mapped: a round's new rows at most within its mapped room.
+    fn slack_mapped(&self) -> usize {
+        self.mapped - self.len
+    }
+
+    /// Its live indexes' buckets: its bound's keys' (at most `LIVE_BUCKETS`), at least its rows mapped's.
+    fn buckets(&self) -> usize {
+        self.bound.min(LIVE_BUCKETS).max(self.mapped).next_power_of_two().max(1)
+    }
+}
+
+/// A live relation's index's buckets at most past its first rows mapped (`LiveHead::buckets`): its rows grow into them
+/// (a reader checks each row's key), 4 bytes a bucket.
+const LIVE_BUCKETS: usize = 1 << 16;
 
 /// A relation's bytes at most whose reach (`reach`) is its program's bound outright (`device_rounds`): a block's
 /// room is real memory on Metal once bound, so a reach past this is a bound grown by what the rounds make.
@@ -3316,7 +3340,7 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
             }
         };
         let fresh = || Part::for_writes_with_room(k, 1, DELTA_ROOM).map_err(|e| format!("a recursive head's delta: {e}"));
-        live.insert(h, LiveHead { total, deltas: [fresh()?, fresh()?], bound: 0, room: 1024, slack: 0 });
+        live.insert(h, LiveHead { total, deltas: [fresh()?, fresh()?], bound: 0, room: 1024, slack: 0, mapped: 0, len: 0, mapped_now: Rc::default() });
     }
     let mut side = 0;
     let mut programs = 0;
@@ -3324,6 +3348,8 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
     // Its programs' arenas' bytes at least (decision 0603 step 5): what a round's tables can reach where it fits
     // `ARENA_REACH_BYTES`, so its claims map no more pages, and twice what a stopped one's claims wanted.
     let mut floor = arena_reach.filter(|&b| b <= ARENA_REACH_BYTES).unwrap_or(0);
+    // Whether its heads' rows are mapped as its rounds reach them (`LiveHead::mapped`).
+    let rooms = mj::rooms_mapped();
     loop {
         programs += 1;
         if programs > PROGRAMS_MAX {
@@ -3341,8 +3367,16 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
             }
             .max(len + 1);
             l.slack = l.bound - len;
-            if !l.total.reserve(l.bound as u64) || !l.deltas.iter().all(|d| d.reserve(l.slack as u64)) {
-                return Err(format!("a recursive head of {} rows past its block's room", l.bound));
+            // Its rows mapped (`LiveHead::mapped`): where a mapped page is real memory, a set head's its rows now and
+            // twice what a round could add (or a test's rows past them), within its bound; else its bound.
+            l.len = len;
+            l.mapped = match rooms {
+                Some(first) if !lp.lattices.contains_key(&h) => (len + if first == 0 { len + 2 * l.room } else { first }).min(l.bound),
+                _ => l.bound,
+            };
+            l.mapped_now = Rc::new(std::cell::Cell::new(l.mapped));
+            if !l.total.reserve(l.mapped as u64) || !l.deltas.iter().all(|d| d.reserve(l.slack_mapped() as u64)) {
+                return Err(format!("a recursive head of {} rows past its block's room", l.mapped));
             }
             // Its indexes are the last program's, of rows it read then: each round builds its own.
             for p in std::iter::once(&l.total).chain(&l.deltas) {
@@ -3483,7 +3517,7 @@ fn encode_program<'p>(seeding: Option<(&[(&'p Plan, &JoinRule, usize)], &mut Has
     }
     lp.own.total.clear();
     for (&h, l) in live {
-        lp.own.total.insert(h, live_rel(&l.total, l.bound, store.rels[h].k)?);
+        lp.own.total.insert(h, live_rel(&l.total, l.bound, store.rels[h].k, (l.mapped < l.bound).then(|| (l.mapped, l.buckets())))?);
     }
     // A lattice head's key map with room for its bound's keys at half full: grown once, before the rounds fold into it.
     for (&h, lh) in lp.lattices.iter_mut() {
@@ -3516,8 +3550,39 @@ fn encode_program<'p>(seeding: Option<(&[(&'p Plan, &JoinRule, usize)], &mut Has
 }
 
 /// A recursive relation in its block as the device claims its rows, at most `rows`.
-fn live_rel(p: &Part, rows: usize, k: usize) -> Result<Rc<mj::DevRel>, String> {
-    Ok(Rc::new(mj::DevRel::in_block(&p.in_block(rows as u32), k).map_err(|e| format!("{e:?}: a recursive relation in its block"))?.live()))
+/// Head `l`'s room's growth for one of its rounds' gates (`mj::RoomGrow`), its round's new rows read by `new`: its rows
+/// mapped past its rows and those, twice what they need (at least twice its room), within its bound; its deltas' with
+/// them. Its rounds' gates share what it maps (`LiveHead::mapped_now`): a gate whose cap is behind it is given it.
+fn room_growth(l: &LiveHead, new: impl Fn() -> u32 + 'static) -> mj::RoomGrow {
+    let (total, deltas, bound, len0, now) = (l.total.clone(), l.deltas.clone(), l.bound, l.len, l.mapped_now.clone());
+    let cap = std::cell::Cell::new(l.mapped);
+    Box::new(move || {
+        let need = total.len() as usize + new() as usize;
+        // Past its room, within its bound (past it, the bound's check stops the round): mapped further.
+        let mut rels = Vec::new();
+        if need > now.get() && need <= bound {
+            let to = (2 * need).max(2 * now.get()).min(bound);
+            if !total.reserve(to as u64) || !deltas.iter().all(|d| d.reserve((to - len0) as u64)) {
+                return Err(format!("a recursive head of {to} rows past its block's room"));
+            }
+            now.set(to);
+            rels = std::iter::once((&total, to)).chain(deltas.iter().map(|d| (d, to - len0))).map(|(p, rows)| (p.facts().clone(), p.rel_at() as u64, rows as u32)).collect();
+        }
+        if now.get() <= cap.get() {
+            return Ok(None);
+        }
+        cap.set(now.get());
+        Ok(Some(mj::Grown { cap: now.get(), rels }))
+    })
+}
+
+fn live_rel(p: &Part, rows: usize, k: usize, mapped: Option<(usize, usize)>) -> Result<Rc<mj::DevRel>, String> {
+    let d = mj::DevRel::in_block(&p.in_block(rows as u32), k).map_err(|e| format!("{e:?}: a recursive relation in its block"))?.live();
+    // Mapped as its rounds reach it: its indexes' room for its rows mapped (`LiveHead::mapped`).
+    Ok(Rc::new(match mapped {
+        Some((m, buckets)) => d.mapped(m, buckets),
+        None => d,
+    }))
 }
 
 /// One round of a program of rounds (`encode_program`): `rules`' joins over the component's relations as the device
@@ -3536,7 +3601,7 @@ fn encode_round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], reads: Option<usize>
     lp.own.sorts.clear();
     if let Some(reads) = reads {
         for (&h, l) in live {
-            lp.own.delta.insert(h, live_rel(&l.deltas[reads], l.slack, store.rels[h].k)?);
+            lp.own.delta.insert(h, live_rel(&l.deltas[reads], l.slack, store.rels[h].k, (l.mapped < l.bound).then(|| (l.slack_mapped(), l.buckets())))?);
         }
     }
     let runs = round_runs(rules, lp.own, names, lp.rep, batch, sizes)?;
@@ -3639,12 +3704,21 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
     }
     // The head gate: a round's rows past its relation's rows within its bound (a lattice head's union's rows: its new
     // keys and its changed rows at most). Its delta's room is its relation's past its rows when the program started
-    // (`LiveHead::slack`), so within the bound the round's rows fit it.
-    let checks: Vec<(mj::At<'_>, Option<mj::At<'_>>, usize)> = made.iter().map(|m| {
+    // (`LiveHead::slack`), so within the bound the round's rows fit it. Where its rows are mapped as reached
+    // (`LiveHead::mapped`), a second check of its room: past it the program parks, and its growth reserves its rows,
+    // its deltas' and its live indexes' further (twice what it needs, within its bound) and the program goes on.
+    let mut checks: Vec<(mj::At<'_>, Option<mj::At<'_>>, usize)> = Vec::new();
+    let mut rooms_grow: Vec<(usize, mj::RoomGrow)> = Vec::new();
+    for m in &made {
         let (l, n) = (&live[&m.end.head], mj::At::Word(&m.end.words, m.end.slot()));
-        (mj::At::Len(&lp.own.total[&m.end.head]), Some(n), l.bound)
-    }).collect();
-    batch.gate(&checks).map_err(e)?;
+        let total = &lp.own.total[&m.end.head];
+        checks.push((mj::At::Len(total), Some(n), l.bound));
+        if l.mapped < l.bound {
+            rooms_grow.push((checks.len(), room_growth(l, m.end.words.reader(m.end.slot()))));
+            checks.push((mj::At::Len(total), Some(mj::At::Word(&m.end.words, m.end.slot())), l.mapped));
+        }
+    }
+    batch.gate_rooms(&checks, rooms_grow).map_err(e)?;
     drop(checks);
     let mut ends = Vec::new();
     // The folds together, then their rows' copies: a fold may not run twice, and the claims of the arena are all

@@ -556,6 +556,9 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// Its rows are its length as the device claims it, `rows` at most (`live`): a recursive component's relation that
     /// grows round after round within one launch (decision 0603 step 3).
     live: bool,
+    /// A live relation's rows mapped and its indexes' buckets (`DevRel::mapped`): its indexes' room is for those rows,
+    /// grown with them between its program's launches (`Batch::gate`'s rooms), where `rows` is its bound.
+    mapped: Option<(usize, usize)>,
 }
 
 impl DevRel {
@@ -587,7 +590,7 @@ impl DevRel {
         let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
-        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), from: 0, kept: None, has: None, live: false }.noted())
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), from: 0, kept: None, has: None, live: false, mapped: None }.noted())
     }
 
     /// A view of `cols` columns and `rows` rows read in place (decision 0353 step 4d): a relation of no columns of
@@ -678,7 +681,7 @@ impl DevRel {
 
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
-        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), from: 0, kept: None, has: None, live: false }
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), from: 0, kept: None, has: None, live: false, mapped: None }
     }
 
     /// Whether it is a relation read where it lies (`in_block`): it holds the relation's block while it lives.
@@ -694,7 +697,7 @@ impl DevRel {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
-        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), from: 0, kept: b.part.clone(), has: None, live: false }.noted())
+        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), from: 0, kept: b.part.clone(), has: None, live: false, mapped: None }.noted())
     }
 
     /// Rows `from..from + rows` of `b`'s relation, of `cols` columns, read where they lie (`in_block`): a fixpoint's
@@ -712,6 +715,20 @@ impl DevRel {
     pub(in crate::code_rule_dsl) fn live(mut self) -> DevRel {
         self.live = true;
         self
+    }
+
+    /// `self` (live) with room for `rows` rows mapped of its bound, its indexes' `buckets` (a power of two): its rows'
+    /// room grows as its program's rounds reach it (decision 0603, `Batch::gate`'s rooms), and its indexes' rows with
+    /// it, their buckets as they are.
+    pub(in crate::code_rule_dsl) fn mapped(mut self, rows: usize, buckets: usize) -> DevRel {
+        assert!(self.live && rows <= self.rows && buckets.is_power_of_two(), "a live relation's {rows} rows mapped of {}", self.rows);
+        self.mapped = Some((rows, buckets));
+        self
+    }
+
+    /// The rows its indexes have room for: its mapped rows (a live relation mapped as reached), else its rows.
+    fn index_rows(&self) -> usize {
+        self.mapped.map_or(self.rows, |m| m.0)
     }
 
     /// The address of its rows' length (`Rows::len`) for a job that reaches its buffer: a gate on its room.
@@ -1241,6 +1258,15 @@ impl Words {
         // SAFETY: as `set`'s: a word of the buffer, no command buffer writing it running.
         unsafe { self.word(i).read() }
     }
+
+    /// A reader of word `i` that holds its buffer (a gate's room's growth reads a round's count with it, between
+    /// launches: `RoomGrow`).
+    pub(in crate::code_rule_dsl) fn reader(&self, i: usize) -> impl Fn() -> u32 + 'static {
+        assert!(i < self.len, "word {i} of {}", self.len);
+        let b = self.buffer.buffer.clone();
+        // SAFETY: as `get`'s: word `i` of the buffer it holds, read once no command buffer writing it runs.
+        move || unsafe { b.contents().cast::<u32>().add(i).read() }
+    }
 }
 
 /// An automaton the device reads (a test's table, a regex's replacement automata) where the automata block holds it
@@ -1394,6 +1420,8 @@ pub(in crate::code_rule_dsl) struct Done {
     /// left, and an arena's, where a size script parked and the arena's pages were mapped for it.
     pub(in crate::code_rule_dsl) relaunches: u32,
     pub(in crate::code_rule_dsl) remaps: u32,
+    /// Its remaps of a gate's rooms (`Batch::gate_rooms`): rows mapped as a recursive component's rounds reach them.
+    pub(in crate::code_rule_dsl) room_remaps: u32,
     /// Its programs' items taken, over all their launches, and a launch's budget of items (its workers' shares'), the
     /// least of its programs'.
     pub(in crate::code_rule_dsl) taken: u64,
@@ -1827,7 +1855,7 @@ impl Batch {
             if let Some(i) = r.find_index_from(&key, rel.from, rel.rows as u32).filter(|_| !rel.live) {
                 return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
             }
-            if let Some(b) = self.building.iter().find(|b| b.encoded && b.live == rel.live && std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.from == rel.from && b.room.rows_n as usize == rel.rows) {
+            if let Some(b) = self.building.iter().find(|b| b.encoded && b.live == rel.live && std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.from == rel.from && b.room.rows_n as usize == rel.index_rows()) {
                 let room = b.room;
                 drop(held);
                 let buffer = bound(&home)?;
@@ -1851,7 +1879,13 @@ impl Batch {
             }
             // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
             // before the build, which its passes order).
-            unsafe { r.try_reserve_index_from(&home.block, &key, rel.from, rel.rows as u32) }
+            unsafe {
+                match rel.mapped {
+                    // A live relation mapped as reached: room for its rows mapped, its buckets its bound's keys'.
+                    Some((rows, buckets)) => r.try_reserve_index_live(&home.block, &key, rel.from, rows as u32, buckets),
+                    None => r.try_reserve_index_from(&home.block, &key, rel.from, rel.rows as u32),
+                }
+            }
         };
         let Some(room) = room else {
             // A live relation grows where it lies: its index has room there, or it is refused.
@@ -1921,13 +1955,15 @@ impl Batch {
     /// which probe it. A live relation's (`DevRel::live`) is of its rows as the device claimed them when it runs, at
     /// most `rows`: its keys past them go to its own last bucket (`IX_LIVE`), one more in the level's sort.
     fn queue_index(&mut self, rel: &DevRel, cols: &[usize], room: &rerail_blocks::relation::IndexRoom, buffer: &Held) -> Result<(), Error> {
-        let n = rel.rows;
-        assert!(room.rows as u64 + 4 * n as u64 <= buffer.buffer.length(), "the index's room within the buffer bound");
+        // Its keys at most (its items'), and the rows its room holds: a live relation mapped as reached has room for
+        // its rows mapped, grown with them (`Kit::grow_rooms`), its items its bound's.
+        let (n, m) = (rel.rows, rel.index_rows());
+        assert!(room.rows as u64 + 4 * m as u64 <= buffer.buffer.length(), "the index's room within the buffer bound");
         if n == 0 {
             return Ok(());
         }
         assert!(cols.len() <= 8, "an index of {} columns", cols.len());
-        let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32 | if rel.live { IX_LIVE } else { 0 }, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0, from: rel.from, pad: 0 };
+        let mut ix = IxParams { n: m as u32, ncols: cols.len() as u32 | if rel.live { IX_LIVE } else { 0 }, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0, from: rel.from, pad: 0 };
         for (k, &c) in cols.iter().enumerate() {
             ix.cols[k] = c as u32;
         }
@@ -1946,6 +1982,7 @@ impl Batch {
         // step 5e).
         job.rows = rel.live.then(|| (job.desc.l + rel.at + REL_ROWS + ROWS_LEN, 0));
         job.rows_from = rel.from;
+        job.live_ix = rel.mapped.and(rel.home.clone()).map(|h| (h, rel.at, room.index, m as u32));
         job.order(&[job.desc.l], &[]);
         self.queue(job)
     }
@@ -2364,6 +2401,14 @@ impl Batch {
     /// stopped (`Done::stopped`), and the work after the gate is left undone: the caller grows the tables and
     /// encodes the work again.
     pub(in crate::code_rule_dsl) fn gate(&mut self, checks: &[(At<'_>, Option<At<'_>>, usize)]) -> Result<(), Error> {
+        self.gate_rooms(checks, Vec::new())
+    }
+
+    /// `gate`, where check `t` of each of `rooms` is of a room mapped as its rows reach it (decision 0603's fewer
+    /// reruns): past its cap the program parks after the gate, the host grows the room (`RoomGrow`), writes its cap
+    /// again, re-points what the program reaches of the blocks it grew (`Kit::grow_rooms`), and goes on from the phase
+    /// after the gate. A check past a cap of no room stops the program, as `gate`'s do.
+    pub(in crate::code_rule_dsl) fn gate_rooms(&mut self, checks: &[(At<'_>, Option<At<'_>>, usize)], rooms: Vec<(usize, RoomGrow)>) -> Result<(), Error> {
         if checks.is_empty() {
             return Ok(());
         }
@@ -2378,9 +2423,12 @@ impl Batch {
             };
             reads.extend([wa, pa]);
             let cap = u64::try_from(*cap).ok().filter(|&c| c <= u64::from(u32::MAX)).unwrap_or(u64::from(u32::MAX));
-            p.extend([wa, pa, cap | u64::from(plus.is_some()) << 32]);
+            // Check `t` after the gate's two words, three words a check.
+            let room = rooms.iter().any(|r| r.0 == p.len() / 3);
+            p.extend([wa, pa, cap | u64::from(plus.is_some()) << 32 | u64::from(room) << 33]);
         }
         job.p = Some(as_bytes(&p).to_vec());
+        job.rooms = rooms;
         job.count = checks.len();
         job.order(&reads, &[]);
         // Alone in its level: everything queued before it runs before it (an index queued before a gate is built
@@ -2530,7 +2578,7 @@ impl Batch {
         if self.queued.is_empty() {
             return Ok(());
         }
-        let jobs = std::mem::take(&mut self.queued);
+        let mut jobs = std::mem::take(&mut self.queued);
         // The parameter blocks, each at 16 bytes, in one buffer.
         let mut params: Vec<u8> = Vec::new();
         let mut put = |b: &[u8]| -> u64 {
@@ -2552,21 +2600,74 @@ impl Batch {
                 ]
             })
             .collect();
+        // Each job's parameter words that hold an address it reached, and its rooms and live index, where a room is
+        // mapped as reached: re-pointed when a block they reach is wrapped again (`Kit::grow_rooms`).
+        let rooms = jobs.iter().any(|j| !j.rooms.is_empty() || j.live_ix.is_some()) || !self.program.rooms.gates.is_empty();
+        let mut relocs: Vec<u64> = Vec::new();
+        if rooms {
+            for (j, at) in jobs.iter().zip(&placed) {
+                let lens = [
+                    Some(j.stage.bytes().len()),
+                    j.write.as_ref().map(|w| w.bytes().len()),
+                    j.probes.as_ref().map(|p| p.iter().map(|s| s.bytes().len()).sum()),
+                    j.dedup.as_ref().map(|d| 4 * d.len()),
+                    j.p.as_ref().map(Vec::len),
+                ];
+                for (a, l) in at.iter().zip(lens) {
+                    let (Some(a), Some(l)) = (a, l) else { continue };
+                    for o in (*a as usize..*a as usize + l).step_by(8).filter(|o| o + 8 <= *a as usize + l) {
+                        let w = u64::from_ne_bytes(params[o..o + 8].try_into().expect("a word"));
+                        if j.reached.contains(&w) {
+                            relocs.push(o as u64);
+                        }
+                    }
+                }
+            }
+        }
         let params = self.block(&params)?;
         let pa = address(&params.buffer)?;
         let prog = &mut self.program;
         prog.uses.push((params.buffer.clone(), false));
+        prog.rooms.relocs.extend(relocs.into_iter().map(|o| (params.buffer.clone(), o)));
+        // Its live indexes mapped as reached, and their keys at most (their bounds).
+        let mut level_live: Vec<(usize, usize)> = Vec::new();
+        for (j, at) in jobs.iter_mut().zip(&placed) {
+            let pat = at[4].unwrap_or(0);
+            for (t, grow) in j.rooms.drain(..) {
+                // Check `t`'s cap: after the gate's two words, three words a check, its third.
+                prog.rooms.gates.push(GateRoom { params: params.buffer.clone(), at: pat + 16 + 24 * t as u64 + 16, grow });
+            }
+            if let Some((home, rel, index, rows)) = j.live_ix.take() {
+                level_live.push((prog.rooms.live_ix.len(), j.count));
+                prog.rooms.live_ix.push(LiveIx { home, rel, index, params: params.buffer.clone(), at: pat, rows: std::cell::Cell::new(rows) });
+            }
+        }
         // The level's indexes' keys, sorted at once: each index's buckets from its first (`kb`), its rows' keys from
         // its first (`eb`), each key with its place; the sort's two pairs of buffers and its histograms.
         let (buckets, ix_rows) = jobs.iter().filter(|j| j.kind == JobKind::Index).fold((0usize, 0usize), |(b, e), j| (b + j.buckets, e + j.count));
         if u32::try_from(buckets).is_err() || u32::try_from(ix_rows).is_err() {
             return Err(Error::BackendCapacity);
         }
+        // Where a live index of the level is mapped as reached, its keys at most are its bound's: the sort's buffers
+        // are address space mapped for its indexes' rows as mapped (`SortRoom`), as the device's arena is.
+        let fixed = ix_rows - level_live.iter().map(|l| l.1).sum::<usize>();
+        let rows_now = fixed + level_live.iter().map(|l| prog.rooms.live_ix[l.0].rows.get() as usize).sum::<usize>();
+        let mut sort_room = (!level_live.is_empty()).then(|| SortRoom { reserved: Vec::new(), hist: None, fixed, live: level_live.iter().map(|l| l.0).collect() });
         let sort = if ix_rows > 0 {
-            let pair = || -> Result<[Held; 2], Error> { Ok([Held::new(4 * ix_rows)?, Held::new(4 * ix_rows)?]) };
-            let (a, b) = (pair()?, pair()?);
+            let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
             let tiles = ix_rows.div_ceil(SORT_TILE).max(1);
-            let hist = Held::new(4 * (256 * tiles + 1))?;
+            let mut one = |bytes: usize, now: usize, hist: bool| -> Result<Held, Error> {
+                let Some(room) = &mut sort_room else { return Held::new(bytes).map_err(|_| Error::BackendCapacity) };
+                let r = std::sync::Arc::new(rerail_device::device::reserve(device, bytes, now.min(bytes), false).map_err(|_| Error::BackendCapacity)?);
+                if hist {
+                    room.hist = Some(r.clone());
+                } else {
+                    room.reserved.push(r.clone());
+                }
+                Ok(Held::kept(r.buffer(), Box::new(r)))
+            };
+            let (a, b) = ([one(4 * ix_rows, 4 * rows_now, false)?, one(4 * ix_rows, 4 * rows_now, false)?], [one(4 * ix_rows, 4 * rows_now, false)?, one(4 * ix_rows, 4 * rows_now, false)?]);
+            let hist = one(4 * (256 * tiles + 1), sort_hist_bytes(rows_now), true)?;
             Some((a, b, hist, tiles))
         } else {
             None
@@ -2677,6 +2778,7 @@ impl Batch {
                 std::mem::swap(&mut from, &mut to);
             }
             debug_assert!(std::ptr::eq(from, f), "the sort ends where `sorted` says");
+            prog.rooms.sorts.extend(sort_room.take());
             job_phase(prog, &[(JobKind::Index, PK_IX_PLACE, |j| j.count)]);
         }
         job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLEAR, |j| j.clear), (JobKind::Map, PK_MAP, |j| j.count)]);
@@ -2826,7 +2928,7 @@ impl Batch {
         let capacity = workers * (budget as usize + 1) + 2 * phase_max + 1;
         let format = prog.format.unwrap_or_else(run_view_format);
         self.done.levels += prog.levels;
-        let kit = Kit { descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, capacity, workers, budget, format, uses: prog.uses, hold: prog.hold,
+        let kit = Kit { descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, reserved: self.reserve_arena.then(|| self.reserved.clone()).flatten(), phase_items: prog.phases, capacity, workers, budget, format, uses: prog.uses, hold: prog.hold, rooms: std::mem::take(&mut prog.rooms),
                         rebase: Rebase { ca, ops, scans: arena_scans, at: (da, sa, xa), ta: self.arena.as_ref().map_or(Ok(0), |a| address(&a.buffer()))? } };
         let (ctl, slots) = (Words::zeroed(10 + 2 * kit.phase_items.len())?, Words::zeroed(kit.capacity)?);
         self.launch(kit, ctl, slots)
@@ -2904,7 +3006,7 @@ impl Batch {
     fn programs_done(&mut self) -> Result<(bool, Vec<(Ran, bool)>), Error> {
         let mut whole = true;
         let mut again = Vec::new();
-        for r in std::mem::take(&mut self.programs) {
+        for mut r in std::mem::take(&mut self.programs) {
             let flags = r.ctl.get(6);
             let (overflow, done) = (flags & 1 != 0 || r.ctl.get(3) != 0, r.ctl.get(10 + r.last));
             // Its last phase's items as pushed: its segments' (0: all of them).
@@ -2916,6 +3018,22 @@ impl Batch {
             // what they wanted (`Arena::grow`), and the program launched again, which pushes the phase again; else,
             // stopped, and its runs find the arena full (`wanted` past `cap`): they run again in a larger one, or on
             // the host past the device's text arena.
+            // A gate's room mapped past (`ctl[9]`'s top two bits, the gate's phase): the rooms grown, and the program
+            // launched again from the phase after the gate (bit 29); else stopped there, as a gate stops it.
+            if !overflow && flags & 32 != 0 && r.ctl.get(9) >> 30 == 3 {
+                if r.kit.grow_rooms()? {
+                    self.done.remaps += 1;
+                    self.done.room_remaps += 1;
+                    r.compact();
+                    r.ctl.set(6, flags & !32);
+                    r.ctl.set(9, 0x2000_0000 | (r.ctl.get(9) & 0x1fff_ffff));
+                    again.push((r, true));
+                    continue;
+                }
+                self.done.stopped = true;
+                self.done.taken += u64::from(r.ctl.get(8));
+                continue;
+            }
             if !overflow && flags & 32 != 0 && r.ctl.get(9) & 0x8000_0000 != 0 {
                 let grown = match &self.arena {
                     Some(a) => a.grow()?,
@@ -3367,6 +3485,233 @@ struct Kit {
     format: u32,
     uses: Vec<(Buffer, bool)>,
     hold: Vec<Held>,
+    /// Its gates' rooms, mapped as its rows reach them (`Batch::gate_rooms`), and what a room grown re-points.
+    rooms: Rooms,
+}
+
+/// What a gate's room grew to (`RoomGrow`): its check's new cap, and the live relations grown with it (their block,
+/// their offset there, their rows mapped now), whose indexes' rows and sorts are mapped for those rows.
+pub(in crate::code_rule_dsl) struct Grown {
+    pub(in crate::code_rule_dsl) cap: usize,
+    pub(in crate::code_rule_dsl) rels: Vec<(std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, u64, u32)>,
+}
+
+/// A gate's room's growth (`Batch::gate_rooms`), between its program's launches, once a round's rows passed it: its
+/// relations' rows reserved further where they lie (`Ok(Some)`); `Ok(None)` where its rows are within it; an error
+/// where its block has no more room (the program then stops there, as a gate stops it).
+pub(in crate::code_rule_dsl) type RoomGrow = Box<dyn FnMut() -> Result<Option<Grown>, String>>;
+
+/// A program's rooms mapped as its rows reach them (decision 0603's fewer reruns, on a device whose mapped pages are
+/// real memory): its gates' growths, its live indexes, its levels' sorts of them, and the words of its parameters
+/// that hold an address its jobs reached (`Job::reached`), found again where a block they reach is wrapped again.
+#[derive(Default)]
+struct Rooms {
+    gates: Vec<GateRoom>,
+    live_ix: Vec<LiveIx>,
+    sorts: Vec<SortRoom>,
+    /// A parameters buffer and a word's byte offset in it.
+    relocs: Vec<(Buffer, u64)>,
+}
+
+/// A gate's check of a room: its cap, a `u32` at byte `at` of `params`, and its growth.
+struct GateRoom {
+    params: Buffer,
+    at: u64,
+    grow: RoomGrow,
+}
+
+/// A live relation's index build (`queue_index`): its relation (its block, its offset there), its entry, its rows
+/// as mapped, and its parameters (`IxParams`, whose first word is its rows at most) at byte `at` of `params`.
+struct LiveIx {
+    home: std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>,
+    rel: u64,
+    index: usize,
+    params: Buffer,
+    at: u64,
+    rows: std::cell::Cell<u32>,
+}
+
+/// A level's sort of its indexes' keys whose live ones are mapped as reached: its four buffers reserved for every
+/// index's rows at most, mapped for its other indexes' rows (`fixed`) and its live ones' as mapped (`live`, of
+/// `Rooms::live_ix`).
+struct SortRoom {
+    reserved: Vec<std::sync::Arc<rerail_device::device::Reserved>>,
+    /// Its histograms (`sort_hist_bytes` of its rows).
+    hist: Option<std::sync::Arc<rerail_device::device::Reserved>>,
+    fixed: usize,
+    live: Vec<usize>,
+}
+
+impl Kit {
+    /// Its gates' rooms grown, once a gate parked the program past one (decision 0603): each room's relations'
+    /// rows reserved further (its growth's), its cap written again, its live indexes' rows given room for them and
+    /// their sorts mapped for them, and every address the program holds into a block wrapped again re-pointed. False
+    /// where none grew, or one could not (the program then stops there).
+    fn grow_rooms(&mut self) -> Result<bool, Error> {
+        type Rel = (std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, u64, u32);
+        let mut grew: Vec<Rel> = Vec::new();
+        let mut changed = false;
+        for g in &mut self.rooms.gates {
+            match (g.grow)() {
+                Ok(Some(to)) => {
+                    changed = true;
+                    let cap = u32::try_from(to.cap).unwrap_or(u32::MAX);
+                    // SAFETY: the check's cap, a `u32` within the parameters buffer; no work of the program runs.
+                    unsafe { g.params.contents().cast::<u8>().add(g.at as usize).cast::<u32>().write_unaligned(cap) };
+                    grew.extend(to.rels);
+                }
+                Ok(None) => {}
+                Err(why) => {
+                    crate::code_rule_dsl::prof::count_named(format!("device.a gate's room not grown: {why}"), 1);
+                    return Ok(false);
+                }
+            }
+        }
+        if !changed {
+            return Ok(false);
+        }
+        // The live indexes' rows: room for the rows mapped, in their blocks (their buckets as they are).
+        let mut moved: Vec<(std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, usize, usize)> = Vec::new();
+        for ix in &self.rooms.live_ix {
+            let Some(rows) = grew.iter().filter(|(f, at, _)| std::sync::Arc::ptr_eq(f, &ix.home) && *at == ix.rel).map(|g| g.2).max() else { continue };
+            if rows <= ix.rows.get() {
+                continue;
+            }
+            // SAFETY: the relation at `rel` of its block, which the program's index build of it reaches; no work of
+            // the program runs.
+            let r = unsafe { &*ix.home.block.ptr::<rerail_blocks::relation::Relation>(ix.rel as usize) };
+            let old = ix.home.block.offset_of(r.indexes.as_slice()[ix.index].rows.as_ptr());
+            // SAFETY: the entry is this program's live index, built by the device only, between launches.
+            let Some(new) = (unsafe { r.grow_index_rows(&ix.home.block, ix.index, rows) }) else {
+                crate::code_rule_dsl::prof::count_named("device.a live index's rows not grown: its block is full".into(), 1);
+                return Ok(false);
+            };
+            // SAFETY: its parameters' first word (`IxParams::n`), within the buffer; no work of the program runs.
+            unsafe { ix.params.contents().cast::<u8>().add(ix.at as usize).cast::<u32>().write_unaligned(rows) };
+            ix.rows.set(rows);
+            moved.push((ix.home.clone(), old, new));
+        }
+        // Each block grown wrapped again where it outgrew its wrap: what the program reaches of it re-pointed.
+        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let mut blocks: Vec<std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>> = Vec::new();
+        for (f, _, _) in &grew {
+            if !blocks.iter().any(|b| std::sync::Arc::ptr_eq(b, f)) {
+                blocks.push(f.clone());
+            }
+        }
+        for f in &blocks {
+            let old = f.block.kept_device_buffer();
+            let new = f.block.device_buffer(device).map_err(|_| Error::BackendCapacity)?;
+            if let Some((ob, len)) = old {
+                self.rebind(address(&ob)?, len as u64, &new)?;
+            }
+        }
+        // The index builds' rows, where they moved in their blocks.
+        for (f, old, new) in moved {
+            let base = address(&f.block.device_buffer(device).map_err(|_| Error::BackendCapacity)?)?;
+            self.repoint(base + old as u64, base + new as u64);
+        }
+        // The levels' sorts of the live indexes, mapped for their rows.
+        let mut remapped: Vec<(u64, u64, Buffer)> = Vec::new();
+        for s in &self.rooms.sorts {
+            let rows = s.fixed + s.live.iter().map(|&i| self.rooms.live_ix[i].rows.get() as usize).sum::<usize>();
+            for (r, bytes) in s.reserved.iter().map(|r| (r, 4 * rows)).chain(s.hist.iter().map(|h| (h, sort_hist_bytes(rows)))) {
+                let old = r.buffer();
+                if !r.map(bytes).map_err(|_| Error::BackendCapacity)? {
+                    return Ok(false);
+                }
+                let new = r.buffer();
+                if address(&old)? != address(&new)? || old.length() != new.length() {
+                    remapped.push((address(&old)?, old.length(), new));
+                }
+            }
+        }
+        for (old, len, new) in remapped {
+            self.rebind(old, len, &new)?;
+        }
+        Ok(true)
+    }
+
+    /// A buffer the program reached at `old` (`len` bytes) now `new` (the same memory wrapped again: a block grown, a
+    /// sort's room mapped further): every address into it re-pointed (its jobs' descriptors' addresses, its
+    /// parameters' words that held one, its segments' counts, its scans' levels, its sorts' passes), and the launch's
+    /// resident buffers.
+    fn rebind(&mut self, old: u64, len: u64, new: &Buffer) -> Result<(), Error> {
+        let na = address(new)?;
+        let at = |v: u64| if v >= old && v < old + len { v - old + na } else { v };
+        // Field `o` (a `u64` address) of each record of `stride` bytes the buffer was made of.
+        let words = |b: &Buffer, stride: usize, fields: &[usize]| {
+            let p = b.contents().cast::<u8>();
+            for i in 0..b.length() as usize / stride {
+                for &o in fields {
+                    // SAFETY: within the buffer, a field of its records; no work of the program runs between launches.
+                    unsafe {
+                        let w = p.add(i * stride + o).cast::<u64>();
+                        w.write_unaligned(at(w.read_unaligned()));
+                    }
+                }
+            }
+        };
+        let desc_words: Vec<usize> = (0..std::mem::offset_of!(JobDesc, at) / 8).map(|w| 8 * w).collect();
+        words(&self.descs.buffer, std::mem::size_of::<JobDesc>(), &desc_words);
+        words(&self.segs.buffer, std::mem::size_of::<SegAt>(), &[std::mem::offset_of!(SegAt, count)]);
+        words(&self.scans.buffer, std::mem::size_of::<ScanLevel>(), &[std::mem::offset_of!(ScanLevel, data), std::mem::offset_of!(ScanLevel, sums)]);
+        let sort_words = [
+            std::mem::offset_of!(SortPass, keys),
+            std::mem::offset_of!(SortPass, values),
+            std::mem::offset_of!(SortPass, hist),
+            std::mem::offset_of!(SortPass, out_keys),
+            std::mem::offset_of!(SortPass, out_values),
+        ];
+        words(&self.sorts.buffer, std::mem::size_of::<SortPass>(), &sort_words);
+        // Its size scripts' absolute addresses (a live relation's length, `Job::rows`), in the ops an arena's rebase
+        // resolves again (`Rebase::ops`) and as resolved (`script`, one `SizeOp` an op).
+        let ops = self.script.buffer.contents().cast::<SizeOp>();
+        for (i, o) in self.rebase.ops.iter_mut().enumerate() {
+            for (late, field) in [(&mut o.w, std::mem::offset_of!(SizeOp, w)), (&mut o.c, std::mem::offset_of!(SizeOp, c))] {
+                if let Late::Abs(a) = late
+                    && *a >= old
+                    && *a < old + len
+                {
+                    *a = *a - old + na;
+                    // SAFETY: op `i` of the script's ops, one `SizeOp` each; no work of the program runs.
+                    unsafe { ops.add(i).cast::<u8>().add(field).cast::<u64>().write_unaligned(*a) };
+                }
+            }
+        }
+        for (b, o) in &self.rooms.relocs {
+            // SAFETY: a parameters word that held an address its job reached (`Rooms::relocs`); no work runs.
+            unsafe {
+                let w = b.contents().cast::<u8>().add(*o as usize).cast::<u64>();
+                w.write_unaligned(at(w.read_unaligned()));
+            }
+        }
+        for (b, _) in &mut self.uses {
+            if address(b)? == old {
+                *b = new.clone();
+            }
+        }
+        Ok(())
+    }
+
+    /// Its jobs' descriptors' addresses `old` written `new` (a live index's rows moved in its block).
+    fn repoint(&mut self, old: u64, new: u64) {
+        const WORDS: usize = std::mem::offset_of!(JobDesc, at) / 8;
+        let n = self.descs.buffer.length() as usize / std::mem::size_of::<JobDesc>();
+        let descs = self.descs.buffer.contents().cast::<u8>();
+        for i in 0..n {
+            // SAFETY: descriptor `i`'s addresses, its first `WORDS` words; no work of the program runs.
+            let words = unsafe { &mut *descs.add(i * std::mem::size_of::<JobDesc>()).cast::<[u64; WORDS]>() };
+            for w in words.iter_mut().filter(|w| **w == old) {
+                *w = new;
+            }
+        }
+    }
+}
+
+/// A level sort's histograms' bytes for `rows` keys: a tile's 256 counts, and one.
+fn sort_hist_bytes(rows: usize) -> usize {
+    4 * (256 * rows.div_ceil(SORT_TILE).max(1) + 1)
 }
 
 /// The radix sort's tile (`UKL_RADIX_TILE`): a group's rows of a pass.
@@ -3454,6 +3799,8 @@ struct Program {
     uses: Vec<(Buffer, bool)>,
     /// Its levels' own buffers: parameter blocks, the jobs' own, the scans' sums, the sorts'.
     hold: Vec<Held>,
+    /// Its rooms mapped as its rows reach them (`Kit::rooms`).
+    rooms: Rooms,
 }
 
 impl Program {
@@ -3771,6 +4118,18 @@ const PROGRAM_WORKERS: usize = 1 << 16;
 /// its budget's items, whatever its rules and rounds, and the host launches it again while items are left.
 pub(in crate::code_rule_dsl) const PROGRAM_BUDGET: u32 = 16;
 
+/// Whether a recursive component's rooms are mapped as its rounds reach them (decision 0603's fewer reruns, its gate's
+/// rooms: `Batch::gate_rooms`): where a mapped page is real memory (`rerail_device::device::map_commits`), its rows
+/// past its rows now and twice a round's (0); a test build's `RERAIL_ROOMS_MAPPED=N` maps them on any device, `N`
+/// rows past its rows first, so the CPU backend's tests run the mechanism.
+pub(in crate::code_rule_dsl) fn rooms_mapped() -> Option<usize> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if let Some(n) = std::env::var("RERAIL_ROOMS_MAPPED").ok().and_then(|v| v.parse::<usize>().ok()) {
+        return Some(n);
+    }
+    rerail_accel::gpu::join::device().is_ok_and(rerail_device::device::map_commits).then_some(0)
+}
+
 /// Whether mapping a reserved arena's pages commits real memory on this run's device (Metal's do;
 /// `rerail_device::device::map_commits`).
 #[cfg(test)]
@@ -3973,6 +4332,13 @@ struct Job {
     out_caps: Vec<(usize, WordAt)>,
     d_caps: Vec<(usize, WordAt)>,
     out_slots: usize,
+    /// The addresses it reached (`reach`): its parameters' words that hold one are found again where a block it
+    /// reaches is wrapped again (`Relocs`).
+    reached: Vec<u64>,
+    /// A gate's rooms (`Batch::gate_rooms`): its check, and what grows its room.
+    rooms: Vec<(usize, RoomGrow)>,
+    /// A live relation's index build (`queue_index`): its relation's block, its relation's offset there, its entry.
+    live_ix: Option<(std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, u64, usize, u32)>,
     /// Its output placed by its level's size script at its start, its rows a word's or its input's room, not
     /// after the level's scan (`made_sizes`): a union's (`Batch::append_rows`), a fold's changed rows.
     o_rows: Option<OutRows>,
@@ -4058,6 +4424,9 @@ impl Job {
             h_place: None,
             m: (None, 0),
             out_guess: 0,
+            reached: Vec::new(),
+            rooms: Vec::new(),
+            live_ix: None,
         }
     }
 
@@ -4094,6 +4463,7 @@ impl Job {
     fn reach(&mut self, b: &Buffer, at: u64, write: bool) -> Result<u64, Error> {
         let a = address(b)?;
         self.uses.push((b.clone(), write));
+        self.reached.push(a + at);
         Ok(a + at)
     }
 
