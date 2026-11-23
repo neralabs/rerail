@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, count, desc, eq, getTableColumns, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, getTableColumns, getTableName, sql, type SQL } from "drizzle-orm";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
@@ -97,16 +97,17 @@ function ruleProvenanceText(): SQL<string> {
 
 /**
  * The JSON lists an audit record reads from the database, in the order the failures that mark them come before the
- * audit's own: each one's column, its name in that failure and in the log, whether that name is plural, and the JSON
- * type of its items as SQLite names it (`json_each`'s `type`).
+ * audit's own: each one's column in `audits`, the clause id of the failure that marks it, its name in that failure and
+ * in the log, whether that name is plural, and the JSON type of its items as SQLite names it (`json_each`'s `type`).
  */
 const STORED_LISTS = {
-  ruleRevisions: { column: "rule_revisions_json", clauseId: "rule-revisions", name: "rule revisions", plural: true, item: "object" },
-  ruleProvenance: { column: "rule_provenance_json", clauseId: "rule-provenance", name: "rule provenance", plural: false, item: "object" },
-  paths: { column: "paths_json", clauseId: "paths", name: "paths", plural: true, item: "text" },
-  violations: { column: "violations_json", clauseId: "violations", name: "violations", plural: true, item: "object" },
-  failures: { column: "failures_json", clauseId: "failures", name: "failures", plural: true, item: "object" },
+  ruleRevisions: { column: audits.ruleRevisions, clauseId: "rule-revisions", name: "rule revisions", plural: true, item: "object" },
+  ruleProvenance: { column: audits.ruleProvenance, clauseId: "rule-provenance", name: "rule provenance", plural: false, item: "object" },
+  paths: { column: audits.paths, clauseId: "paths", name: "paths", plural: true, item: "text" },
+  violations: { column: audits.violations, clauseId: "violations", name: "violations", plural: true, item: "object" },
+  failures: { column: audits.failures, clauseId: "failures", name: "failures", plural: true, item: "object" },
 } as const;
+const LIST_NAMES = Object.keys(STORED_LISTS) as StoredList[];
 type StoredList = keyof typeof STORED_LISTS;
 type StoredItem = (typeof STORED_LISTS)[StoredList]["item"];
 /** Whether a parsed item is of each `StoredItem` type: a string, or a plain object. */
@@ -134,6 +135,10 @@ type AuditReadRow = Omit<AuditRow, StoredList> & Record<StoredList, string> & { 
 /** The lists `record` reads from an `AuditReadRow`, each as its `AuditRecord` field holds it. */
 type AuditLists = Pick<AuditRecord, StoredList>;
 
+/** The code and stage of every failure `unreadable` makes; the enforcer's `spool` failures share them. */
+const UNREADABLE = { code: "adapter-error", stage: "persistence" } as const;
+/** The clause ids of the failures `unreadable` makes, one a list. */
+const UNREADABLE_CLAUSES: ReadonlySet<string> = new Set(LIST_NAMES.map(list => STORED_LISTS[list].clauseId));
 /**
  * The failure an audit lists before its own when the text the database holds for `list` is not a JSON array of its
  * items. A CHECK refuses text that is no JSON array for the rule provenance (in `audits` and in
@@ -144,16 +149,17 @@ type AuditLists = Pick<AuditRecord, StoredList>;
 function unreadable(list: StoredList): AuditFailure {
   const { clauseId, name, plural, item } = STORED_LISTS[list];
   return {
-    clauseId, code: "adapter-error", stage: "persistence",
+    clauseId, ...UNREADABLE,
     message: `The audit's ${name} in the database ${plural ? "are" : "is"} not a JSON array of ${ITEMS[item]}, which only a damaged file or a hand edit leaves, so ${plural ? "they read" : "it reads"} as none.`,
   };
 }
 
-/** The messages of the failures `unreadable` makes, one a list. */
-const UNREADABLE_MESSAGES = new Set((Object.keys(STORED_LISTS) as StoredList[]).map(list => unreadable(list).message));
-/** Whether `failure` is one an audit record lists for a stored list it reads as none (`unreadable`). */
+/**
+ * Whether `failure` is one an audit record lists for a stored list it reads as none (`unreadable`): told by its code,
+ * stage and clause id, never its message, which stays free to change.
+ */
 export function isUnreadableList(failure: AuditFailure): boolean {
-  return UNREADABLE_MESSAGES.has(failure.message);
+  return failure.code === UNREADABLE.code && failure.stage === UNREADABLE.stage && UNREADABLE_CLAUSES.has(failure.clauseId);
 }
 
 /** The JSON array of `list`'s items `text` holds, as an audit record reads it, or why it holds none. */
@@ -189,9 +195,10 @@ interface AuditSource {
 function sayUnreadable({ database, log }: AuditSource, row: AuditReadRow, list: StoredList, why: string): void {
   const copy = list === "ruleProvenance" ? row.ruleProvenanceId : null;
   const { column, name, item } = STORED_LISTS[list];
+  // The column and table names the schema gives, so the line names the place a person mends.
   const [where, place] = copy === null
-    ? [`audit ${row.auditId} ${column}`, `the ${column} of its own row`]
-    : [`copy ${copy}`, `${column} of audit_rule_provenances row ${copy}, which every audit naming it reads,`];
+    ? [`audit ${row.auditId} ${column.name}`, `the ${column.name} of its own row`]
+    : [`copy ${copy}`, `${auditRuleProvenances.ruleProvenance.name} of ${getTableName(auditRuleProvenances)} row ${copy}, which every audit naming it reads,`];
   const key = `${database.$client.name}\0${where}`;
   if (NAMED_UNREADABLE.has(key)) return;
   NAMED_UNREADABLE.add(key);
@@ -460,56 +467,53 @@ const FILE_WORK_STOPPED = sql.raw(`(json_extract(value, '$.blind') IS NULL AND j
   AND json_extract(value, '$.ruleId') IS NOT NULL AND coalesce(json_extract(value, '$.stage'), '') NOT IN ('read', 'scan'))`);
 
 /**
- * 1 when `text` holds a JSON array whose items are each of JSON type `item`, as `parsedList` reads it, else 0, in SQL.
- * Each test runs only once the one before it passed, so text that does not parse fails no query.
+ * How many items `text` holds when it is a JSON array whose items are each of JSON type `item`, as `parsedList` reads
+ * it, else NULL, in SQL. Each test runs only once the one before it passed, so text that does not parse fails no
+ * query. SQLite parses the text once: `json_type` and `jsonb` read the parse `json_valid` made, and `json_each` walks
+ * the `jsonb` value it is given without parsing it again.
  */
+function listLength(text: SQL | SQLiteColumn, item: StoredItem): SQL<number | null> {
+  return sql<number | null>`(CASE WHEN NOT json_valid(${text}) THEN NULL WHEN json_type(${text}) <> 'array' THEN NULL
+    ELSE (SELECT CASE WHEN max(entry.type <> ${item}) THEN NULL ELSE count(*) END FROM json_each(jsonb(${text})) entry) END)`;
+}
+/** 1 when `text` holds a JSON array whose items are each of JSON type `item`, as `parsedList` reads it, else 0, in SQL. */
 function holdsList(text: SQL | SQLiteColumn, item: StoredItem): SQL<number> {
-  return sql<number>`(CASE WHEN NOT json_valid(${text}) THEN 0 WHEN json_type(${text}) <> 'array' THEN 0
-    WHEN EXISTS (SELECT 1 FROM json_each(${text}) entry WHERE entry.type <> ${item}) THEN 0 ELSE 1 END)`;
+  return sql<number>`(${listLength(text, item)} IS NOT NULL)`;
+}
+/** The text an audit record reads `list` from, in a select from `audits`: the stored copy's for the rule provenance. */
+function listText(list: StoredList): SQL | SQLiteColumn {
+  return list === "ruleProvenance" ? ruleProvenanceText() : STORED_LISTS[list].column;
 }
 /**
- * A stored list of objects in SQL when it holds one, else an empty one, so that reading it fails no query: an audit
- * record reads such a list as none and lists a failure for it (`readLists`).
+ * How many of an audit's stored lists its record reads as none (`readLists`), the failures it lists for them, from
+ * each list's test in SQL: 1 when it reads.
  */
-function readableList(text: SQLiteColumn): SQL<string> {
-  return sql<string>`(CASE WHEN ${holdsList(text, "object")} THEN ${text} ELSE '[]' END)`;
-}
-/**
- * How many of an audit's stored lists `parsedList` reads as none: the failures its record lists for them (`readLists`).
- * `provenanceHeld` is 1 when the rule provenance the record reads holds a list: by default the text it reads tested.
- */
-function unreadableLists(provenanceHeld = holdsList(ruleProvenanceText(), "object")): SQL<number> {
-  const texts: Record<Exclude<StoredList, "ruleProvenance">, SQLiteColumn> = {
-    ruleRevisions: audits.ruleRevisions, paths: audits.paths, violations: audits.violations, failures: audits.failures,
-  };
-  const held = (Object.keys(texts) as Array<keyof typeof texts>).map(list => holdsList(texts[list], STORED_LISTS[list].item));
-  return sql<number>`(${sql.join([provenanceHeld, ...held].map(test => sql`(1 - ${test})`), sql` + `)})`;
+function unreadableLists(held: Readonly<Record<StoredList, SQL>>): SQL<number> {
+  return sql<number>`(${sql.join(LIST_NAMES.map(list => sql`(1 - ${held[list]})`), sql` + `)})`;
 }
 
 /**
- * The session's latest audit's counts, in SQL, each the audit record's: violations or failures that are no JSON array
- * of objects count as none, and each stored list that reads as none counts the failure its record lists, rather than
- * failing the session's page.
+ * The session's latest audit's counts, each the audit record's: violations or failures that are no JSON array of
+ * objects count as none, and each stored list that reads as none counts the failure its record lists, rather than
+ * failing the session's page. It is read at every presentation request, so each list is tested once (`listLength`), in
+ * a row SQLite makes once (`MATERIALIZED`) and the counts read.
  */
 function latestAuditSummary(database: RerailDatabase, sessionId: string): AuditSummary | undefined {
-  const violations = readableList(audits.violations);
-  const failures = readableList(audits.failures);
-  return database.select({
-    workspaceRoot: audits.workspaceRoot,
-    scope: audits.scope,
-    mode: audits.mode,
-    status: audits.status,
-    violationCount: sql<number>`json_array_length(${violations})`,
-    failureCount: sql<number>`json_array_length(${failures}) + ${unreadableLists()} + ${unlistedFailures(database)}`,
-    unlistedFailureCount: unlistedFailures(database),
-    blindFileCount: sql<number>`(SELECT count(*) FROM json_each(${failures}) WHERE json_extract(value, '$.blind') IS NOT NULL)`,
-    gapCount: sql<number>`(SELECT count(*) FROM json_each(${failures}) WHERE ${COVERAGE_GAP})`,
-    outOfWorkRuleCount: sql<number>`(SELECT count(DISTINCT json_extract(value, '$.ruleId')) FROM json_each(${failures})
-      WHERE ${OUT_OF_WORK})`,
-    fileWorkStoppedRuleCount: sql<number>`(SELECT count(DISTINCT json_extract(value, '$.ruleId')) FROM json_each(${failures})
-      WHERE ${FILE_WORK_STOPPED})`,
-  }).from(audits).where(eq(audits.sessionId, sessionId))
-    .orderBy(desc(audits.startedAt), desc(audits.auditId)).limit(1).get();
+  const lengths = sql.join(LIST_NAMES.map(list => sql`${listLength(listText(list), STORED_LISTS[list].item)} AS ${sql.identifier(list)}`), sql`, `);
+  const held = Object.fromEntries(LIST_NAMES.map(list => [list, sql`(latest.${sql.identifier(list)} IS NOT NULL)`])) as Record<StoredList, SQL>;
+  const failures = sql`(CASE WHEN failures IS NULL THEN '[]' ELSE failures_json END)`;
+  return database.get<AuditSummary | undefined>(sql`WITH latest AS MATERIALIZED (
+      SELECT ${audits.workspaceRoot} AS workspaceRoot, ${audits.scope} AS scope, ${audits.mode} AS mode, ${audits.status} AS status,
+        ${audits.failures} AS failures_json, ${unlistedFailures(database)} AS unlisted, ${lengths}
+      FROM ${audits} WHERE ${audits.sessionId} = ${sessionId} ORDER BY ${audits.startedAt} DESC, ${audits.auditId} DESC LIMIT 1)
+    SELECT workspaceRoot, scope, mode, status, coalesce(violations, 0) AS violationCount,
+      coalesce(failures, 0) + ${unreadableLists(held)} + unlisted AS failureCount, unlisted AS unlistedFailureCount,
+      (SELECT count(*) FROM json_each(${failures}) WHERE json_extract(value, '$.blind') IS NOT NULL) AS blindFileCount,
+      (SELECT count(*) FROM json_each(${failures}) WHERE ${COVERAGE_GAP}) AS gapCount,
+      (SELECT count(DISTINCT json_extract(value, '$.ruleId')) FROM json_each(${failures}) WHERE ${OUT_OF_WORK}) AS outOfWorkRuleCount,
+      (SELECT count(DISTINCT json_extract(value, '$.ruleId')) FROM json_each(${failures}) WHERE ${FILE_WORK_STOPPED})
+        AS fileWorkStoppedRuleCount
+    FROM latest`);
 }
 
 function listRepositoryAudits(
@@ -1046,11 +1050,15 @@ export class SqliteAuditReader implements AuditReader {
   readableAudits(auditIds: readonly string[]): Set<string> {
     const ids = sql`(SELECT value FROM json_each(${JSON.stringify(auditIds)}))`;
     // A copy's test joined by its id, as `ruleProvenanceText` reads the copy; the audit's own text where it names none.
+    const provenance = sql`coalesce(copies.held, ${holdsList(audits.ruleProvenance, "object")})`;
+    const held = Object.fromEntries(LIST_NAMES.map(list => [
+      list, list === "ruleProvenance" ? provenance : holdsList(listText(list), STORED_LISTS[list].item),
+    ])) as Record<StoredList, SQL>;
     const rows = this.#database.open()?.all<{ auditId: string }>(sql`WITH copies AS MATERIALIZED (
         SELECT provenance_id, ${holdsList(sql`rule_provenance_json`, "object")} AS held FROM ${auditRuleProvenances}
         WHERE provenance_id IN (SELECT rule_provenance_id FROM ${audits} WHERE audit_id IN ${ids}))
       SELECT ${audits.auditId} AS auditId FROM ${audits} LEFT JOIN copies ON copies.provenance_id = ${audits.ruleProvenanceId}
-      WHERE ${audits.auditId} IN ${ids} AND ${unreadableLists(sql`coalesce(copies.held, ${holdsList(audits.ruleProvenance, "object")})`)} = 0`) ?? [];
+      WHERE ${audits.auditId} IN ${ids} AND ${unreadableLists(held)} = 0`) ?? [];
     return new Set(rows.map(row => row.auditId));
   }
 

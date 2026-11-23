@@ -330,6 +330,23 @@ describe("remote sink outbox", () => {
     expect(whole.kept).toBe(whole.readable);
   });
 
+  it("marks the hash it keeps for an audit by the stage, code and clause id of the failure that names a stored list, whatever its message says", async () => {
+    const { auditId } = seed();
+    setPathsText(auditId, '["a.ts"');
+    // The record says what a later Rerail may word otherwise.
+    const read = SqliteAuditReader.prototype.get;
+    const reads = vi.spyOn(SqliteAuditReader.prototype, "get").mockImplementation(function (this: SqliteAuditReader, id: string) {
+      const audit = read.call(this, id);
+      return audit && { ...audit, failures: audit.failures.map(failure => ({ ...failure, message: "The audit's paths are damaged." })) };
+    });
+    onTestFinished(() => reads.mockRestore());
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    expect(storedRecords(sink).find(item => item.type === "audit")).toMatchObject({ failures: [{ clauseId: "paths", message: "The audit's paths are damaged." }] });
+    const hashes = auditHashes(auditId);
+    expect(hashes.kept).toBe(hashes.marked);
+  });
+
   it("tests the stored lists of an audit it sent with one that did not read once a sync, over many batches", async () => {
     const { sessionId, auditId } = seed();
     setPathsText(auditId, '["a.ts"');

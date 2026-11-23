@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SqliteAuditReader, SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
+import { isUnreadableList, SqliteAuditReader, SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import type {
   AuditFailure, AuditInput, AuditRecord, AuditRuleProvenance, LegacyAuditRuleProvenance, RepositoryAuditRuleProvenance,
 } from "../../../src/engine/audit/audit.js";
@@ -1828,5 +1828,30 @@ describe("an audit whose other stored lists do not read", () => {
       `rerail: ${path}: audit ${auditIds[2]} reads with no failures, and a failure that says so: the failures_json of its `
       + "own row is not a JSON array of objects (an item of it is another JSON value).",
     ].sort());
+  });
+
+  it("tests each stored list of the session's latest audit once for its summary, in one statement", async () => {
+    const path = await temporaryDatabase();
+    threeAudits(path);
+    const store = new SqliteAuditStore(path);
+    const prepared = vi.spyOn(Database.prototype, "prepare");
+    try {
+      store.latestSummary("session-a");
+    } finally {
+      prepared.mockRestore();
+      store.close();
+    }
+    // Each test of a list in SQL begins with `json_valid`; the summary reads five lists.
+    const tests = prepared.mock.calls.map(([source]) => source.split("json_valid(").length - 1).filter(count => count > 0);
+    expect(tests).toEqual([5]);
+  });
+
+  it.each([
+    ["another message", { message: "The audit's paths are damaged." }, true],
+    ["the clause id of the enforcer's spool failures", { clauseId: "spool" }, false],
+    ["another stage", { stage: "evaluate" }, false],
+    ["another code", { code: "budget-exceeded" }, false],
+  ] as const)("reads a failure for a stored list that does not read with %s by its stage, code and clause id", (_, change, marks) => {
+    expect(isUnreadableList({ ...unreadableList("paths"), ...change })).toBe(marks);
   });
 });
