@@ -791,6 +791,26 @@ Left, by size:
   Not kept. The fix is the tape view: `text(e, x)` in the cross part read from `e`'s document tape for the `e` bound,
   a few hundred thousand reads, not 9.6 M nodes' rows.
 
+### Step 9, measured: Metal at 512 MB loses rows (2026-11-22)
+
+Q379's cause, the run's row blocks leased from the Metal budget, is gone: a block the device may read is host memory
+the device reads through a wrap of its used extent (decision 0435 §1, `accel/src/blocks.rs`). Step 9's test is the
+`all` run at the default 512 MB with rows equal. It fails (m1max, `--metal --metal-mb 512`):
+
+- **Wrong rows.** 59,588 findings against 20,046 (a second run: 20,487). `mn_class`, `mn_class_body`,
+  `mn_dec_class`, `mn_dec_fn` and `mn_function` come out short, by different amounts in each run. The device's
+  budget refuses 170 to 293 leases ("a device path failed: device budget: a lease of N MB past the Metal budget").
+- **Where it shows first.** `mn_class`'s seed (`raw_module_name($w, $d, _), docof($w, $d), rr_ast_3($w)`, on the
+  CPU) keeps 225,217 of 239,695 rows at the `docof` test. At 4 GB, every row passes. The matcher wave's counters
+  are equal in both runs, so `raw_module_name`'s values, or the documents `docof` reads, are wrong after the
+  refusals.
+- **Not the cause:** 0622's sealing. With `RERAIL_SEAL_CHUNKS=off`, the rows are still short. Nor the small corpus:
+  s1000 at 64 MB, with 37 refusals, gives its digest (`373cea39`).
+- **At 4 GB** the run is right (rows equal, no refusal) at a peak of 8.4 GB.
+- **Also seen:** an abort at exit at 512 MB ("cannot access a Thread Local Storage value during or after
+  destruction"), once. And twice, in this and an earlier CPU run, a stall after the run in `keep_image`'s write
+  to the content store (`write_back::queue`): 290–500 s and 18 GB, not reproduced by a rerun of the same binary.
+
 ## Open
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.
