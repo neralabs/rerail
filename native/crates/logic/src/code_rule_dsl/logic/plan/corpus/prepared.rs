@@ -323,7 +323,7 @@ pub fn prepared_of(
     }
     let vocabulary = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the text tests' vocabulary".into());
-        let mut vocabulary = Vocabulary::from_specs(&relations, specs)?;
+        let mut vocabulary = Vocabulary::from_kept_specs(&relations, specs);
         vocabulary.matches = indexed(facts, "prepared_match")?
             .iter()
             .map(|(_, r)| regex::Regex::new(&text(&r[0])?).map(Arc::new).map_err(bad))

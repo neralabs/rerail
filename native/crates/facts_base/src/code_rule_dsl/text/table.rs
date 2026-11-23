@@ -390,7 +390,7 @@ mod tests {
         ];
         for (op, patterns) in cases {
             let m = Matcher::new(op, &patterns.iter().map(|p| (*p).to_owned()).collect::<Vec<_>>()).unwrap();
-            let t = match super::table(&m.plans) {
+            let t = match super::table(m.plans()) {
                 Ok(t) => t,
                 // A Unicode word boundary has no table: the test runs on the CPU.
                 Err(e) => {

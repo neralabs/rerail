@@ -100,9 +100,12 @@ pub const TEXT_COLUMNS: [(&str, &[usize]); 31] = [
 ];
 
 /// One test over a set of patterns, compiled once: each pattern lowered by the text layer to its canonical plan (an
-/// exact set, an affix set, an automaton), equal patterns' plans shared by key.
+/// exact set, an affix set, an automaton), equal patterns' plans shared by key. One made again from a kept program's
+/// specs (`lazy`) lowers them where a string is first tested: a run that tests none (every stratum clean) lowers none.
 pub struct Matcher {
-    pub plans: Vec<Arc<Lowered>>,
+    op: String,
+    patterns: Vec<String>,
+    plans: std::sync::OnceLock<Vec<Arc<Lowered>>>,
 }
 
 /// The words of a phrase: runs of ASCII letters, digits and `_`.
@@ -119,6 +122,22 @@ fn word_regex(phrase: &str) -> Option<String> {
 impl Matcher {
     /// `op` (a test's name) over `patterns`. A pattern that does not parse is an error.
     pub fn new(op: &str, patterns: &[String]) -> Result<Self, String> {
+        let plans = Self::lowered(op, patterns)?;
+        Ok(Matcher { op: op.to_owned(), patterns: patterns.to_vec(), plans: std::sync::OnceLock::from(plans) })
+    }
+
+    /// `op` over `patterns` as a kept program's specs give them, checked when it was prepared (`new`): lowered at the
+    /// first `plans`. Patterns that no longer lower (another engine's text layer) match nothing.
+    pub fn lazy(op: &str, patterns: &[String]) -> Self {
+        Matcher { op: op.to_owned(), patterns: patterns.to_vec(), plans: std::sync::OnceLock::new() }
+    }
+
+    /// Each pattern's plan, equal ones once.
+    pub fn plans(&self) -> &[Arc<Lowered>] {
+        self.plans.get_or_init(|| Self::lowered(&self.op, &self.patterns).unwrap_or_default())
+    }
+
+    fn lowered(op: &str, patterns: &[String]) -> Result<Vec<Arc<Lowered>>, String> {
         let fold = op.starts_with('i') && TESTS.contains(&&op[1..]);
         let base = if fold { &op[1..] } else { op };
         let sources: Vec<Source> = match base {
@@ -139,13 +158,13 @@ impl Matcher {
                 plans.push(lowered);
             }
         }
-        Ok(Matcher { plans })
+        Ok(plans)
     }
 
     /// How the patterns are matched (EXPLAIN): each plan's production, with the rewrites that led to it.
     pub fn describe(&self) -> String {
         let mut by: BTreeMap<String, usize> = BTreeMap::new();
-        for p in &self.plans {
+        for p in self.plans() {
             let how = if p.rewrites.is_empty() { p.production.to_owned() } else { format!("{} after {}", p.production, p.rewrites.join(", ")) };
             *by.entry(how).or_default() += 1;
         }
@@ -155,7 +174,7 @@ impl Matcher {
 
     /// A pattern undecided (a backtracking one past its limits) does not match.
     pub fn is_match(&self, s: &str) -> bool {
-        self.plans.iter().any(|p| p.compiled().is_match(s.as_bytes()) == Some(true))
+        self.plans().iter().any(|p| p.compiled().is_match(s.as_bytes()) == Some(true))
     }
 }
 
@@ -350,7 +369,7 @@ impl Vocabulary {
 
     fn compile_with(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>, dense: bool) -> Compiled {
         let (plans, owner): (Vec<&crate::code_rule_dsl::text::Plan>, Vec<usize>) =
-            self.tests.iter().enumerate().flat_map(|(k, (_, m))| m.plans.iter().map(move |p| (&p.plan, k))).unzip();
+            self.tests.iter().enumerate().flat_map(|(k, (_, m))| m.plans().iter().map(move |p| (&p.plan, k))).unzip();
         Compiled { searchers: crate::code_rule_dsl::text::vocabulary::Searchers::new(&plans, cache, dense), owner }
     }
 
@@ -384,6 +403,13 @@ impl Vocabulary {
     pub fn from_specs(relations: &[String], specs: Vec<(String, Vec<String>)>) -> Result<Vocabulary, String> {
         let tests = relations.iter().zip(&specs).map(|(rel, (op, pats))| Ok((rel.clone(), Arc::new(Matcher::new(op, pats)?)))).collect::<Result<_, String>>()?;
         Ok(Vocabulary { tests, specs, ..Vocabulary::default() })
+    }
+
+    /// `from_specs` over a kept program's specs, checked when it was prepared: each test lowered where a string is
+    /// first tested, so a warm run whose strata are all clean compiles none (t33 K4).
+    pub fn from_kept_specs(relations: &[String], specs: Vec<(String, Vec<String>)>) -> Vocabulary {
+        let tests = relations.iter().zip(&specs).map(|(rel, (op, pats))| (rel.clone(), Arc::new(Matcher::lazy(op, pats)))).collect();
+        Vocabulary { tests, specs, ..Vocabulary::default() }
     }
 }
 

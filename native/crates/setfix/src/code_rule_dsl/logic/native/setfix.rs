@@ -7468,7 +7468,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                     }
                     Key::Slot(_) => None,
                 };
-                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(&m.plans));
+                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(m.plans()));
                 steps.push(Step::Test { op, s, p, matcher, test, want: *want });
             }
             JoinItem::DocOf { out: o, n } => {
@@ -7488,7 +7488,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                 let matcher = strings::Matcher::new(op, &patterns).ok().map(Arc::new);
                 // A set that does not compile matches nothing, as SQL's `str_test`.
                 let p = Key::Const(syms.id(&patterns.join(&strings::SET_SEP.to_string())));
-                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(&m.plans));
+                let test = matcher.as_ref().and_then(|m| crate::code_rule_dsl::text::table::test_id(m.plans()));
                 steps.push(Step::Test { op, s, p, matcher, test, want: *want });
             }
             JoinItem::In { a, want, set } => {
