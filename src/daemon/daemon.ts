@@ -137,6 +137,12 @@ export interface RerailDaemonOptions {
    */
   lateChecked?: (pass: UntakenPass) => void;
   /**
+   * Starts the daily update check `/healthz.update` reports, stopped when the daemon closes. The entry point of a
+   * managed install passes set-up's (`startUpdateChecks`); omitted, as for a checkout's daemon and in tests, nothing
+   * asks npm and `update` is null.
+   */
+  updateChecks?: () => { newest(): DaemonHealth["update"]; stop(): void };
+  /**
    * Keeps what a coding agent's status line shows drawn ahead of time, from the daemon's `stores`, until the daemon
    * closes and stops it. The daemon's entry point passes presentation's (`keepClaudeStatusFiles`), a layer above the
    * daemon's; omitted, nothing is drawn ahead.
@@ -541,6 +547,8 @@ export class RerailDaemon {
   readonly #mergeAssist: MergeAssistRuntime | undefined;
   #remoteSink: RemoteSinkLoop | undefined;
   #checkoutPruning: CheckoutPruning | undefined;
+  /** What `RerailDaemonOptions.updateChecks` started, once nothing can fail the start. */
+  #updateChecks: ReturnType<NonNullable<RerailDaemonOptions["updateChecks"]>> | undefined;
   #recordCheck: NodeJS.Timeout | undefined;
   /** The check of the state file in flight, which a close waits for before it removes the file. */
   #recordChecked: Promise<void> = Promise.resolve();
@@ -666,6 +674,7 @@ export class RerailDaemon {
       await daemon.#announce(remembered);
       daemon.#statusLines = options.statusLines?.(stores);
       daemon.#startCheckoutPruning();
+      daemon.#startUpdateChecks();
       daemon.#startProvenanceMove();
       return daemon;
     } catch (error) {
@@ -687,6 +696,11 @@ export class RerailDaemon {
   #startCheckoutPruning(): void {
     const pruning = this.#options.checkoutPruning;
     if (pruning !== false) this.#checkoutPruning = startCheckoutPruning(this.#databasePath, pruning ?? {});
+  }
+
+  /** Once nothing can fail the start: the daily ask for a newer Rerail, where the entry point passes one. */
+  #startUpdateChecks(): void {
+    this.#updateChecks = this.#options.updateChecks?.();
   }
 
   /**
@@ -840,6 +854,7 @@ export class RerailDaemon {
       workspaceRoot: this.#workspaceRoot,
       installedAt: this.#stores.installedAt(),
       experiments: enabledExperiments(),
+      update: this.#updateChecks?.newest() ?? null,
     };
   }
 
@@ -856,6 +871,7 @@ export class RerailDaemon {
     this.#closed = true;
     clearInterval(this.#recordCheck);
     this.#engineService.untaken.close();
+    this.#updateChecks?.stop();
     // A write in flight lands before the state file is removed below, never after.
     await this.#recordChecked;
     try {
@@ -1414,7 +1430,8 @@ async function packageVersion(): Promise<string> {
  * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
  */
 type RerailDaemonServices = Pick<
-  RerailDaemonOptions, "codingAgents" | "lateChecked" | "statusLines" | "recordCheck" | "homeLease" | "remoteRefused"
+  RerailDaemonOptions,
+  "codingAgents" | "lateChecked" | "updateChecks" | "statusLines" | "recordCheck" | "homeLease" | "remoteRefused"
 >;
 
 /**

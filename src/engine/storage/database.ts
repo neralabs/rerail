@@ -425,6 +425,8 @@ export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds
       }
       // A note names its repository as well as any session, so one recorded where no session was steered goes too.
       database.run(sql`DELETE FROM ${schema.steerFeedback} WHERE ${schema.steerFeedback.repositoryId} = ${repositoryId}`);
+      // So do the audits the repository owns, which name no session.
+      database.run(sql`DELETE FROM ${schema.audits} WHERE ${schema.audits.sessionId} IS NULL AND ${schema.audits.repositoryId} = ${repositoryId}`);
       const ended = schema.sessionsOfRepository(repositoryId, { ended: true });
       database.run(sql`DELETE FROM ${schema.policySessionOwners} WHERE ${schema.policySessionOwners.sessionId} IN (${ended})`);
       // Merge Assist's record of the conflict notes each of those sessions was handed (`delivered:<session id>`).

@@ -949,8 +949,12 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
   an agent, which can run `git worktree add` itself, as it can declare a submodule (`declaredSubmodules`). What it gains
   is another checkout of the same repository, judged by the repository's rules at the same paths within it, its own
   `.rerail/rules` in Log until approved. A `.git` file it writes without registering a worktree takes no files from the
-  checkout around it. Each session walks and reads the files of every such worktree of its repository and records
-  what it finds there, but another session's work never steers it.
+  checkout around it. One walk, shared by the repository's sessions, reads the files of every such worktree. A change
+  there steers only a session whose tool call ran in that worktree as it was written, by the folder the host's hook
+  names; a change no session made is recorded once, in Log, as the repository's. An agent that writes into another
+  worktree from a call running elsewhere is therefore not steered on it, though the write is recorded; and one whose
+  call runs in that worktree at the same moment as another's write takes it too, which only steers it on code it did
+  not write.
 
 </details>
 

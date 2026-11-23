@@ -32,6 +32,7 @@ import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { gateStorageAttachments } from "../support/storage-attach-gate.js";
 import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
 import * as native from "../../../src/engine/native/native.js";
+import { CheckoutRerailRuns } from "../../../src/engine/rr/rr-checkout-runs.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { queryContentStore } from "../../support/engine/content-store-query.js";
@@ -1439,8 +1440,11 @@ describe("mechanical code rule regressions", () => {
     } finally { await enforcer.close(); }
   });
 
-  it("starts no repository audit for a write only a .rerail rule takes, in repository scope", async () => {
-    const { recorder, audits } = recordingAudits();
+  /**
+   * An enforcer in `scope` whose JSON rule reads `api/**` and whose one `.rerail` rule alone takes `lib/**`, with
+   * `lib/report.py` written.
+   */
+  async function rerailOnlyFixture(recorder: AuditRecorder, scope: "repository" | "touched-files") {
     const root = await mkdtemp(join(tmpdir(), "rerail-enforcer-"));
     roots.push(root);
     const capabilitiesPath = join(root, "capabilities.json");
@@ -1451,7 +1455,6 @@ describe("mechanical code rule regressions", () => {
       scope: { include: ["lib/**/*.py"], exclude: [], text: [] }, language: "python",
       provenance: { ruleId: "rr-lib-rule", revision: 1, payloadHash: "hash", source: { kind: "pack", id: "rr", packId: "rr" }, repositoryKey: "repository", checkoutPath: root, placement: [] },
     };
-    // The JSON rule reads `api/**`; the `.rerail` rule alone takes `lib/**`.
     const catalog: CodeRuleDslCatalog = {
       get status() { return json.status; },
       snapshot: () => ({ ...json.snapshot(), rerailRules: [rerailRule] }),
@@ -1460,11 +1463,17 @@ describe("mechanical code rule regressions", () => {
       refresh: () => json.refresh(),
     };
     const enforcer = new NativeCodeRuleEnforcer(catalog, {
-      workspaceRoot: root, steerDelivery: { requestSteer: async () => undefined }, audits: recorder, scope: "repository", mode: "steer",
+      workspaceRoot: root, steerDelivery: { requestSteer: async () => undefined }, audits: recorder, scope, mode: "steer",
     });
+    await mkdir(join(root, "lib"));
+    await writeFile(join(root, "lib", "report.py"), "assert True\n");
+    return enforcer;
+  }
+
+  it("starts no repository audit for a write only a .rerail rule takes, in repository scope", async () => {
+    const { recorder, audits } = recordingAudits();
+    const enforcer = await rerailOnlyFixture(recorder, "repository");
     try {
-      await mkdir(join(root, "lib"));
-      await writeFile(join(root, "lib", "report.py"), "assert True\n");
       await enforcer.openWorkspace("rerail-only-write");
       expect(enforcer.acceptsPath("lib/report.py")).toBe(true);
       await enforcer.auditGeneratedEdits("rerail-only-write", {
@@ -1475,6 +1484,29 @@ describe("mechanical code rule regressions", () => {
       await enforcer.settleGeneratedEdits();
       expect([...audits.values()].filter(audit => audit.scope === "repository" && audit.origin === "ongoing")).toEqual([]);
     } finally { await enforcer.close(); }
+  });
+
+  // A change no session made is recorded once, for the repository, in Log: a `.rerail` run's audit and steer would be
+  // the recording session's own, as if it had made the change.
+  it.each([["session", 1], ["repository", 0]] as const)("gathers a %s-owned write for the checkout's .rerail runs %i times", async (owner, gathered) => {
+    const { recorder } = recordingAudits();
+    const enforcer = await rerailOnlyFixture(recorder, "touched-files");
+    const gather = vi.spyOn(CheckoutRerailRuns.prototype, "gather").mockImplementation(() => undefined);
+    try {
+      await enforcer.openWorkspace(`rerail-${owner}`);
+      await enforcer.auditGeneratedEdits(`rerail-${owner}`, {
+        revision: 1,
+        checkpoints: ["edit"],
+        mode: owner === "repository" ? "log" : "steer",
+        owner,
+        edits: [{ path: "lib/report.py", language: "python", generatedText: "assert True\n" }],
+      });
+      await enforcer.settleGeneratedEdits();
+      expect(gather).toHaveBeenCalledTimes(gathered);
+    } finally {
+      gather.mockRestore();
+      await enforcer.close();
+    }
   });
 
   it("audits a Git checkout through the native repository index and records its clean directories for reuse", async () => {

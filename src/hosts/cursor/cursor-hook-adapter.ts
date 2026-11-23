@@ -130,6 +130,8 @@ export function cursorHookEvent(input: CursorHookInput): AdapterEvent {
         session: descriptor,
         toolName,
         input: input.tool_input,
+        // Without its own `cwd`, the session's folder falls back to the workspace root, which says nothing of the call.
+        ...(optionalText(input, "cwd") === undefined ? {} : { cwd: descriptor.cwd }),
       };
     }
     case "postToolUse":

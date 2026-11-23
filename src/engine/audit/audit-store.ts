@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, count, desc, eq, getTableColumns, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, getTableColumns, inArray, or, sql, type SQL } from "drizzle-orm";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
@@ -32,6 +32,7 @@ import {
   auditRuleSetRules,
   auditRuleSetUses,
   auditViolations,
+  checkouts,
   ruleViolationRollup,
   sessions,
   sessionsOfRepository,
@@ -215,10 +216,13 @@ export interface ViolationHistoryQuery {
   cursor?: string;
 }
 
-/** One violation with the audit that produced it; `at` is the audit's start, `host` its session's coding agent. */
+/**
+ * One violation with the audit that produced it; `at` is the audit's start, `host` its session's coding agent. A
+ * violation the repository's own audit recorded (`AuditOwner`) has neither.
+ */
 export interface ViolationHistoryEntry {
   violation: CodeRuleViolation;
-  sessionId: string;
+  sessionId: string | null;
   auditId: string;
   at: number;
   host: string | null;
@@ -252,11 +256,22 @@ export interface AuditReader {
   sessionsWithViolations(since: number, repositoryIds?: readonly string[]): number;
 }
 
-/** A repository's runs are the runs of its sessions; unscoped (`undefined`) readers see every run. */
+/**
+ * A repository's runs are the runs of its sessions and its own (an audit no session owns, `AuditOwner`); unscoped
+ * (`undefined`) readers see every run.
+ */
 type Repository = string | readonly string[] | undefined;
 
 function scopedSessions(column: SQLiteColumn, repositoryId: Repository): SQL {
   return repositoryId === undefined ? sql`1 = 1` : sql`${column} IN (${sessionsOfRepository(repositoryId)})`;
+}
+
+/** `scopedSessions` for a table whose rows a session or the repository owns (`audits` and the history derived from it). */
+function scopedOwner(session: SQLiteColumn, repository: SQLiteColumn, repositoryId: Repository): SQL {
+  if (repositoryId === undefined) return sql`1 = 1`;
+  const ids = typeof repositoryId === "string" ? [repositoryId] : [...repositoryId];
+  const owned = ids.length === 0 ? sql`0` : inArray(repository, ids);
+  return sql`(${scopedSessions(session, repositoryId)} OR (${session} IS NULL AND ${owned}))`;
 }
 
 /** The column each `AuditQuery` filter matches exactly. */
@@ -268,7 +283,7 @@ const EXACT_FILTERS = Object.keys(EXACT_FILTER_COLUMNS) as Array<keyof typeof EX
 
 function conditions(query: AuditQuery, repositoryId: Repository): SQL | undefined {
   return and(
-    repositoryId === undefined ? undefined : scopedSessions(audits.sessionId, repositoryId),
+    repositoryId === undefined ? undefined : scopedOwner(audits.sessionId, audits.repositoryId, repositoryId),
     ...EXACT_FILTERS.map(filter => (query[filter] === undefined ? undefined : eq(EXACT_FILTER_COLUMNS[filter], query[filter]))),
   );
 }
@@ -285,6 +300,8 @@ function record(row: AuditRow & { unlistedFailureCount: number }): AuditRecord {
   return {
     auditId: row.auditId,
     sessionId: row.sessionId,
+    repositoryId: row.repositoryId,
+    recordedBy: row.recordedBy,
     workspaceRoot: row.workspaceRoot,
     scope: row.scope,
     mode: row.mode,
@@ -304,6 +321,18 @@ function record(row: AuditRow & { unlistedFailureCount: number }): AuditRecord {
     blindFiles,
     blindFileCount: blindFiles.length,
   };
+}
+
+/**
+ * The owner columns of `input`'s audit: its session's, or for one the repository owns (`AuditOwner`) no session, the
+ * repository its checkout is recorded under, and the session that runs it. Rerail records a worktree's checkout the
+ * first time a session looks at it, so the walk that found the change has recorded it.
+ */
+function auditOwner(database: RerailDatabase, input: AuditInput): Pick<typeof audits.$inferInsert, "sessionId" | "repositoryId" | "recordedBy"> {
+  if (input.owner !== "repository") return { sessionId: input.sessionId };
+  const repository = database.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.checkoutPath, input.workspaceRoot)).get();
+  if (repository === undefined) throw new Error(`No repository is recorded for ${input.workspaceRoot}, so it cannot own an audit there`);
+  return { sessionId: null, repositoryId: repository.key, recordedBy: input.sessionId };
 }
 
 function listAudits(database: RerailDatabase, query: AuditQuery = {}, repositoryId?: Repository): AuditPage {
@@ -386,7 +415,7 @@ function listRepositoryAudits(
     total: number;
   }>(sql`
     WITH repositories AS (
-      SELECT workspace_root FROM ${audits} WHERE ${scopedSessions(audits.sessionId, repositoryId)}
+      SELECT workspace_root FROM ${audits} WHERE ${scopedOwner(audits.sessionId, audits.repositoryId, repositoryId)}
       UNION
       SELECT workspace_root FROM ${repositoryAudits} WHERE ${scopedSessions(repositoryAudits.sessionId, repositoryId)}
     )
@@ -529,13 +558,13 @@ function ruleActivity(database: RerailDatabase, since: number, repositoryId?: Re
         count(DISTINCT ${ruleViolationRollup.sessionId}) AS sessions,
         max(${ruleViolationRollup.lastSeenAt}) AS lastSeenAt
       FROM ${ruleViolationRollup}
-      WHERE ${ruleViolationRollup.lastSeenAt} >= ${since} AND ${scopedSessions(ruleViolationRollup.sessionId, repositoryId)}
+      WHERE ${ruleViolationRollup.lastSeenAt} >= ${since} AND ${scopedOwner(ruleViolationRollup.sessionId, ruleViolationRollup.repositoryId, repositoryId)}
       GROUP BY ${ruleViolationRollup.ruleId}
     ),
     uses AS (
       SELECT ${auditRuleSetUses.ruleSetId} AS ruleSetId, count(*) AS audits
       FROM ${auditRuleSetUses}
-      WHERE ${auditRuleSetUses.startedAt} >= ${since} AND ${scopedSessions(auditRuleSetUses.sessionId, repositoryId)}
+      WHERE ${auditRuleSetUses.startedAt} >= ${since} AND ${scopedOwner(auditRuleSetUses.sessionId, auditRuleSetUses.repositoryId, repositoryId)}
       GROUP BY ${auditRuleSetUses.ruleSetId}
     ),
     audited AS (
@@ -570,16 +599,18 @@ function ruleActivity(database: RerailDatabase, since: number, repositoryId?: Re
 
 /**
  * Distinct sessions with a violation from an audit started at or after `since`. The rollup holds only violations
- * that name a rule, so the few stored without one are read from `audit_violations` (index on rule and start).
+ * that name a rule, so the few stored without one are read from `audit_violations` (index on rule and start). The
+ * repository's own violations belong to no session, so they count for none.
  */
 function sessionsWithViolations(database: RerailDatabase, since: number, repositoryId?: Repository): number {
   return database.all<{ sessions: number }>(sql`
     SELECT count(*) AS sessions FROM (
       SELECT ${ruleViolationRollup.sessionId} AS session_id FROM ${ruleViolationRollup}
-      WHERE ${ruleViolationRollup.lastSeenAt} >= ${since} AND ${scopedSessions(ruleViolationRollup.sessionId, repositoryId)}
+      WHERE ${ruleViolationRollup.lastSeenAt} >= ${since} AND ${ruleViolationRollup.sessionId} IS NOT NULL
+        AND ${scopedSessions(ruleViolationRollup.sessionId, repositoryId)}
       UNION
       SELECT ${auditViolations.sessionId} FROM ${auditViolations}
-      WHERE ${auditViolations.ruleId} IS NULL AND ${auditViolations.startedAt} >= ${since}
+      WHERE ${auditViolations.ruleId} IS NULL AND ${auditViolations.startedAt} >= ${since} AND ${auditViolations.sessionId} IS NOT NULL
         AND ${scopedSessions(auditViolations.sessionId, repositoryId)}
     )
   `)[0]?.sessions ?? 0;
@@ -599,7 +630,7 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
   const sessionId = query.sessionId?.trim() || null;
   const matching = and(
     sql`${auditViolations.startedAt} >= ${query.since}`,
-    scopedSessions(auditViolations.sessionId, repositoryId),
+    scopedOwner(auditViolations.sessionId, auditViolations.repositoryId, repositoryId),
     ruleId === null ? undefined : eq(auditViolations.ruleId, ruleId),
     sessionId === null ? undefined : eq(auditViolations.sessionId, sessionId),
   );
@@ -611,7 +642,7 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
   )`;
   // The page and its total from one snapshot, so a commit between them cannot make them disagree.
   const { rows, total } = database.transaction(() => ({
-    rows: database.all<{ payload: string; auditId: string; ordinal: number; sessionId: string; at: number; host: string | null; logged: number }>(sql`
+    rows: database.all<{ payload: string; auditId: string; ordinal: number; sessionId: string | null; at: number; host: string | null; logged: number }>(sql`
     SELECT
       json_extract(${audits.violations}, '$[' || page.ordinal || ']') AS payload,
       page.audit_id AS auditId, page.ordinal AS ordinal, page.session_id AS sessionId, page.started_at AS at,
@@ -676,12 +707,13 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
     const auditId = randomUUID();
     const provenance = input.ruleProvenance ?? [];
     const startedAt = Date.now();
-    // In one immediate transaction (`RecordWrite`): the provenance lookup and the insert take the write lock together.
+    // In one immediate transaction (`RecordWrite`): the owner and provenance lookups and the insert take the write lock
+    // together.
     this.#records.write(database => database
       .insert(audits)
       .values({
         auditId: auditId,
-        sessionId: input.sessionId,
+        ...auditOwner(database, input),
         workspaceRoot: input.workspaceRoot,
         scope: input.scope,
         mode: input.mode,
@@ -769,7 +801,7 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
   }
 
   interrupt(sessionId: string): void {
-    const running = and(eq(audits.sessionId, sessionId), eq(audits.status, "running"));
+    const running = and(eq(audits.status, "running"), or(eq(audits.sessionId, sessionId), eq(audits.recordedBy, sessionId)));
     const finishedAt = Date.now();
     // Read first: an update takes the write lock even when it matches no row, and every evaluator's open asks this of a
     // session that mostly runs nothing. A start still waiting for the lock is no row yet, so the writer then writes.

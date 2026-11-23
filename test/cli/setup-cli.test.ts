@@ -29,6 +29,7 @@ import {
   launcherPathMarker,
   ManagedUpdater,
   SEEN_AGENTS_FILE,
+  UPDATE_CHECK_FILE,
   UPDATE_LOCK_DIR,
   UPDATE_STATE_FILE,
   VERSIONS_DIR,
@@ -292,14 +293,15 @@ describe("rerail install --root", () => {
     const { context, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
     vi.stubEnv("RERAIL_DEVICE_SECRET_STORE", "file");
-    // What `rerail activate`, the daemon, the device secret store and a write cut short leave in the home.
+    // What `rerail activate`, the daemon (its update check's record too), the device secret store and a write cut short
+    // leave in the home.
     await mkdir(join(context.home, PROFILES_DIR, "acme"), { recursive: true });
     await mkdir(join(context.home, DEVICE_SECRETS_DIR), { recursive: true });
     await writeFile(join(context.home, DEVICE_SECRETS_DIR, "acme"), "secret");
     // The daemon's folder for the events hooks leave while it does not read, with its mark of the newest one it took.
     await mkdir(join(context.home, UNTAKEN_EVENTS_DIR));
     await writeFile(join(context.home, UNTAKEN_EVENTS_DIR, "taken"), "");
-    const written = [CONSENT_FILE, ACTIVE_PROFILE_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_PORT_FILE, DAEMON_LOG_FILE, `${DAEMON_LOG_FILE}.1`, "daemon.json.4242.tmp", RULES_DUMP_FILE];
+    const written = [CONSENT_FILE, ACTIVE_PROFILE_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_PORT_FILE, DAEMON_LOG_FILE, `${DAEMON_LOG_FILE}.1`, "daemon.json.4242.tmp", RULES_DUMP_FILE, UPDATE_CHECK_FILE];
     for (const name of written) await writeFile(join(context.home, name), "");
     await writeFile(join(context.home, RERAIL_DATABASE_FILE), "rules and history");
     const before = (await readdir(context.home)).sort();
