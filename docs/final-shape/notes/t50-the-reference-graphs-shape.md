@@ -1025,6 +1025,10 @@ Then, step by step (each device run's step counts against a CPU run of the same 
 - **Not a freed chunk reused (2026-11-23).** With the ledger never freeing a chunk (each one leaked live, the peak
   5.2 GB), the 512 MB run is still short (`mn_class` 257,388, `dbg_rd` 455,996): no host write into a chunk freed
   and handed out again, under work that still reads it, makes the loss.
+- **Not the directory's offsets (2026-11-23).** In-place `Loc` reads go through the views' directory, whose first
+  row of each document comes from the batch's offsets (the documents' table's counts, else the projection's); rows
+  made by `expand_view` walk the chunk's root instead, and those were right. Every document's offsets were checked
+  against its projection's own counts where the directory is made (7,210 documents at 512 MB): none differs.
 
 ## Open
 
