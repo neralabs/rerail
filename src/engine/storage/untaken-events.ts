@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { replaceFile } from "../file-replace.js";
 import { openNoFollowSync } from "../no-follow.js";
+import { processState } from "../process-liveness.js";
 
 /**
  * The Rerail home's untaken events: events whose hook found the home's daemon running but not reading. The first hook
@@ -64,15 +65,18 @@ function earlier(a: Pick<UntakenName, "order">, b: Pick<UntakenName, "order">): 
   return differs === -1 ? 0 : a.order[differs]! - b.order[differs]!;
 }
 
-/** The untaken events in `home`, oldest first; none when the folder is missing or cannot be read. */
-function untakenNames(home: string): UntakenName[] {
-  let names: string[];
+/** The names in `home`'s untaken folder; none when the folder is missing or cannot be read. */
+function folderNames(home: string): string[] {
   try {
-    names = readdirSync(untakenFolder(home));
+    return readdirSync(untakenFolder(home));
   } catch {
     return [];
   }
-  return names.map(parsedName).filter(name => name !== undefined).sort(earlier);
+}
+
+/** The untaken events in `home`, oldest first; none when the folder is missing or cannot be read. */
+function untakenNames(home: string): UntakenName[] {
+  return folderNames(home).map(parsedName).filter(name => name !== undefined).sort(earlier);
 }
 
 /** The newest event the daemon has taken from `home`'s folder; undefined when it has taken none there. */
@@ -235,8 +239,8 @@ const READ_GIVE_UP_MS = 60_000;
  * could not; one that is no event a hook wrote (a folder, a link, a pipe, a size other than its name's) fails in the
  * pass that met it. Each failure, and the first pass that could not read a file, goes to stderr (daemon.log) with the
  * event's name. A pass writes into the folder only for names newer than its taken mark, so a pass its own writes start,
- * or one that reads such a file again, writes nothing. `now` is the clock the give-up is timed by, the monotonic one by
- * default.
+ * or one that reads such a file again, writes nothing. Each pass also removes the sidecars writers that ended left
+ * (`removeOrphanedSidecars`). `now` is the clock the give-up is timed by, the monotonic one by default.
  */
 export function untakenEventTaker(home: string, handler: UntakenHandler, now: () => number = () => performance.now()): UntakenEventTaker {
   const taker = new Taker(home, handler, now);
@@ -290,6 +294,7 @@ class Taker {
   async #pass(): Promise<void> {
     if (this.closed) return;
     for (const name of [...this.#done]) removedName(this.home, name, this.#done);
+    removeOrphanedSidecars(this.home);
     const listed = untakenNames(this.home);
     forgetUnlisted(this.#unread, listed);
     const fresh = listed.filter(name => !this.#done.has(name.name));
@@ -427,6 +432,34 @@ async function reportPass(handed: readonly HandedOn[], handler: UntakenHandler):
     handler.passed({ events: handed.length, from: handed[0]!.name.order[0]!, to: handed.at(-1)!.name.order[0]!, failed });
   } catch {
     // What the daemon says of a pass is its own; the events are checked whatever it could say.
+  }
+}
+
+/**
+ * The new file `replaceFile` writes beside an event or a mark before it renames it over the name:
+ * `<name>.<writer's pid>.<uuid>.tmp`.
+ */
+const SIDECAR = /^.+\.(\d+)\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/u;
+
+/**
+ * Removes each sidecar in `home`'s folder whose writer has ended: a hook killed between the sidecar's open and its
+ * rename leaves one, holding the scrubbed event, which no pass would take. What decides is whether the process whose
+ * pid the sidecar's name holds still runs (`processState`, signal 0): a writer that runs may still be writing, so its
+ * sidecar stays, and a pid another process took since keeps it until that one ends too. A file that cannot be removed
+ * now (Windows holds it) is tried again at the next pass.
+ */
+function removeOrphanedSidecars(home: string): void {
+  for (const name of folderNames(home)) {
+    const writer = SIDECAR.exec(name)?.[1];
+    if (writer !== undefined && processState(Number(writer)) === "gone") removeQuietly(join(untakenFolder(home), name));
+  }
+}
+
+function removeQuietly(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // Windows holds it: the next pass tries again.
   }
 }
 

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { on, once } from "node:events";
 import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, symlinkSync, watch, writeFileSync } from "node:fs";
 import { mkdtemp, readdir, rename } from "node:fs/promises";
@@ -115,6 +116,26 @@ describe("the home's untaken events", () => {
       ]);
       expect(await eventFiles(rerailHome)).toEqual([]);
       expect(untakenFor(rerailHome, 41, folder)).toBe(false);
+    } finally {
+      taker.close();
+    }
+  });
+
+  // A hook killed between its sidecar's open and its rename leaves the sidecar, which holds the scrubbed event.
+  it("lose at a pass the sidecar of a writer that has ended, and keep the one a running writer may still be writing", async () => {
+    const rerailHome = await home();
+    const folder = join(rerailHome, UNTAKEN_EVENTS_DIR);
+    mkdirSync(folder, { recursive: true });
+    const writer = spawn(process.execPath, ["-e", ""], { stdio: "ignore", windowsHide: true });
+    await once(writer, "exit");
+    const ended = `${eventName(1_000)}.${String(writer.pid)}.${randomUUID()}.tmp`;
+    const running = `${eventName(2_000)}.${String(process.pid)}.${randomUUID()}.tmp`;
+    writeFileSync(join(folder, ended), "{}");
+    writeFileSync(join(folder, running), "{}");
+    const taker = untakenEventTaker(rerailHome, keeper());
+    try {
+      await taker.taken();
+      expect(await readdir(folder)).toEqual([running]);
     } finally {
       taker.close();
     }
