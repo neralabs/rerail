@@ -678,8 +678,13 @@ Each step ends with:
          its host's lines through its placement, a copied stretch or a point, from the entry's scalars (decision
          0055). A normalized string's pieces and an embedder's segments live in no block: such a batch makes its
          places (counted, `views.refused.locs.guest_*`). On hogql every guest is a copied stretch.
+         Since 2026-11-23 a guest placed by segments or mapped pieces is read in place too: its places are derived
+         once, as the guest's view entry is made, into a run of host spans (`ViewDoc::hosted`, one `u64` a Loc row,
+         `PLACED_SPANS`), and `loc` reads a row's span there (`view_reads::placed`). That run is a derived fact
+         written once, not a copy of a block; a batch with such a guest no longer makes its `Loc` rows (a Vue
+         `Segments` guest kept `cpu_and_metal_read_the_same_tape_values` from one launch a stratum).
        - Left made: the axis (step 5); a batch whose tapes are not on the device (the device's budget spent); a
-         batch with a guest whose placement is not a copied stretch or a point. `expand_view`, `VIEW_EXPAND`,
+         batch with a guest whose placement is none of a copied stretch, a point, segments or mapped pieces. `expand_view`, `VIEW_EXPAND`,
          ChunkDoc's node columns and `fill_lines`/`fill_locs` (row 14) stay for them.
        - Found on the way: the slabs holding tapes were never retired (4d's first part); now they are retired once
          only the pool holds them, so a long session frees them with its tapes.

@@ -13,6 +13,8 @@ pub struct ViewEntry {
     desc: Desc<ViewDoc>,
     _kinds: Cells<u32>,
     _fields: Cells<u32>,
+    /// A guest's `Loc` rows' host spans, where its placement is no copy or point (`PLACED_SPANS`).
+    _hosted: Option<Cells<u64>>,
 }
 
 impl ViewEntry {
@@ -35,6 +37,21 @@ impl ViewEntry {
             n
         })
         .expect("a batch's block holds its entries");
+        // An embedder's segments and a string's normalized pieces map a span through a search of their own: each `Loc`
+        // row's host span is derived here once (`Placement::host`, as the host's `Locs::place` reads it), and the
+        // views' reads read it by row.
+        let hosted = Self::locs(p).and_then(|x| x.host.as_ref()).filter(|(_, place)| matches!(place, Placement::Segments(_) | Placement::Mapped { .. })).map(|(_, place)| {
+            let n = p.locs() as usize;
+            // copy: derived (each `Loc` row's host span, computed once from the guest's placement)
+            Cells::build(block, n.max(1), |out| {
+                for (l, v) in out.iter_mut().enumerate().take(n) {
+                    let [s, e] = place.host(p.span(l as u32));
+                    *v = u64::from(s) << 32 | u64::from(e);
+                }
+                n
+            })
+            .expect("a batch's block holds its entries")
+        });
         let desc = Desc::<ViewDoc>::new(block);
         let d = desc.as_ptr();
         // SAFETY: the entry is this build's alone, and its runs point at cells of the same block (the numbering's
@@ -69,19 +86,23 @@ impl ViewEntry {
                             (*d).placement = rerail_clif::view_reads::PLACED_AT;
                             ((*d).within_lo, (*d).within_hi) = (at[0], at[1]);
                         }
-                        _ => unreachable!("`locs` takes these placements alone"),
+                        Placement::Segments(_) | Placement::Mapped { .. } => {
+                            let hosted = hosted.as_ref().expect("its spans derived above");
+                            (*d).placement = rerail_clif::view_reads::PLACED_SPANS;
+                            Run::set(&raw mut (*d).hosted, hosted.as_ptr(), hosted.len());
+                        }
                     }
                 }
             }
         }
-        ViewEntry { desc, _kinds: kinds, _fields: fields }
+        ViewEntry { desc, _kinds: kinds, _fields: fields, _hosted: hosted }
     }
 
-    /// `p`'s positions where the views' reads answer its `Loc` rows: core.rerail's; a guest's through its host's
-    /// lines, where its placement is a copied stretch or a point (a string's normalized pieces and an embedder's
-    /// segments are read apart from any block: its places are made).
+    /// `p`'s positions, which the views' reads answer its `Loc` rows by: core.rerail's; a guest's through its host's
+    /// lines, by its placement (a copied stretch or a point read as it is, a string's normalized pieces and an
+    /// embedder's segments by each row's host span, `hosted`).
     pub fn locs(p: &Projected) -> Option<&super::Locs> {
-        p.extra.as_deref().filter(|x| matches!(&x.host, None | Some((_, Placement::Copied { .. } | Placement::At(_)))))
+        p.extra.as_deref()
     }
 
     /// The entry's address, for the reads written once.

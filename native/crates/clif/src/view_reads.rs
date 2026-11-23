@@ -45,7 +45,8 @@ pub struct ViewDoc {
     pub ends: u32,
     pub source_len: u32,
     /// A guest's placement in its host (`Placement`): 0 none (a file's own tree), `PLACED_COPIED` (host byte = guest
-    /// byte + `delta`, clamped to `within`), `PLACED_AT` (every span at `within`).
+    /// byte + `delta`, clamped to `within`), `PLACED_AT` (every span at `within`), `PLACED_SPANS` (each `Loc` row's
+    /// host span in `hosted`).
     pub placement: u32,
     /// The key of the file the document is part of (decision 0431 §4): its own, or a program's file's. Its
     /// `docof`; its ids keep `key`.
@@ -53,12 +54,16 @@ pub struct ViewDoc {
     pub delta: i64,
     pub within_lo: u32,
     pub within_hi: u32,
+    /// `PLACED_SPANS`' column: by `Loc` row, its host span `start << 32 | end` (u64s), derived once where the guest
+    /// is placed (an embedder's segments, `Placement::Segments`: `ViewEntry::new`).
+    pub hosted: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16);
 
 /// `ViewDoc::placement`'s kinds.
 pub const PLACED_COPIED: u32 = 1;
 pub const PLACED_AT: u32 = 2;
+pub const PLACED_SPANS: u32 = 3;
 
 /// A document of a batch, as an executor finds its views' rows (decision 0353 step 4d, and step 3 on the CPU): its
 /// entry's offset in the batch's block, its tape's and its lines' places (a home of the directory's, `ViewHome`, and
@@ -200,6 +205,7 @@ pub mod at {
     pub const DELTA: i32 = offset_of!(ViewDoc, delta) as i32;
     pub const WITHIN_LO: i32 = offset_of!(ViewDoc, within_lo) as i32;
     pub const WITHIN_HI: i32 = offset_of!(ViewDoc, within_hi) as i32;
+    pub const HOSTED: i32 = offset_of!(ViewDoc, hosted) as i32;
 }
 
 /// The `node` view's columns (`Viewed::columns`): the document, the node's id, its kind, start and end.
@@ -222,7 +228,7 @@ pub const ORDER_COLUMNS: u32 = 2;
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 17] = [
+    let fields: [(&str, &str, usize); 18] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -240,6 +246,7 @@ pub fn ukl() -> String {
         ("int64_t", "delta", offset_of!(ViewDoc, delta)),
         ("uint32_t", "within_lo", offset_of!(ViewDoc, within_lo)),
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
+        ("Run", "hosted", offset_of!(ViewDoc, hosted)),
     ];
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
@@ -548,12 +555,25 @@ impl B<'_, '_> {
             })
         })
     }
-    /// A guest's span `start << 32 | end` where it stands in its host (`Placement::host`): copied, each end moved by
-    /// `delta` and kept within `within`; at `within`. A file's own, as it is.
-    fn placed(&mut self, span: Value) -> Value {
+    /// `Loc` row `l`'s span `span`, `start << 32 | end`, where it stands in its host (`Placement::host`): copied,
+    /// each end moved by `delta` and kept within `within`; at `within`; by an embedder's segments, the row's own in
+    /// `hosted`. A file's own, as it is.
+    fn placed(&mut self, l: Value, span: Value) -> Value {
         let placement = self.word_at(I32, self.tape, at::PLACEMENT);
         let own = self.f.ins().icmp_imm(IntCC::Equal, placement, 0);
         self.either(I64, own, |_| span, |b| {
+            let spans = b.f.ins().icmp_imm(IntCC::Equal, placement, i64::from(PLACED_SPANS));
+            b.either(I64, spans, |b| {
+                let hosted = b.follow(b.tape, at::HOSTED);
+                let p = b.item(hosted, l, 8);
+                b.word_at(I64, p, 0)
+            }, |b| b.placed_by(placement, span))
+        })
+    }
+    /// `placed`'s copied and point placements.
+    fn placed_by(&mut self, placement: Value, span: Value) -> Value {
+        {
+            let b = self;
             let lo = b.entry_u32(at::WITHIN_LO);
             let hi = b.entry_u32(at::WITHIN_HI);
             let at_ = b.f.ins().icmp_imm(IntCC::Equal, placement, i64::from(PLACED_AT));
@@ -574,7 +594,7 @@ impl B<'_, '_> {
                 let s = b.f.ins().ishl_imm(s, 32);
                 b.f.ins().bor(s, e)
             })
-        })
+        }
     }
     /// `s << 32 | e`, of u32s.
     fn pair(&mut self, s: Value, e: Value) -> Value {
@@ -596,7 +616,7 @@ impl B<'_, '_> {
                 return b.entry_u32(at::FILE);
             }
             let span = b.loc_span(l);
-            let span = b.placed(span);
+            let span = b.placed(l, span);
             let s = b.f.ins().ushr_imm(span, 32);
             let s = b.f.ins().ireduce(I32, s);
             let e = b.f.ins().ireduce(I32, span);
