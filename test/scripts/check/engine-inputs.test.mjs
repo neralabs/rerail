@@ -70,7 +70,7 @@ const DOCS = {
   "accel/README.md": "",
   "forest/README.md": "",
   "languages/README.md": "",
-  "native/src/code_rule_dsl/semver/UPSTREAM.md": "",
+  "native/crates/run/src/code_rule_dsl/semver/UPSTREAM.md": "",
   "native/vendor/v/PATCHES.md": "",
   "native/vendor/v/README.md": "",
   "native/vendor/v/lib.rs": '#![doc = include_str!("./README.md")]\n',
@@ -85,7 +85,7 @@ describe("unreadDoc", () => {
   });
 
   it("is not a note under native/src/, which the build id hashes, nor a file of another kind", () => {
-    expect(unreadDoc("native/src/code_rule_dsl/semver/UPSTREAM.md")).toBe(false);
+    expect(unreadDoc("native/crates/run/src/code_rule_dsl/semver/UPSTREAM.md")).toBe(false);
     expect(unreadDoc("native/build.rs")).toBe(false);
     expect(unreadDoc("languages/python.json")).toBe(false);
     expect(unreadDoc("native/grammars/tree-sitter-vue/LICENSE")).toBe(false);
@@ -129,7 +129,7 @@ describe("engineSources", () => {
   it("leaves out the Markdown the build never reads, and keeps what a source embeds or native/src/ holds", () => {
     const { paths } = engineSources(repository({ ...CRATES, ...DOCS }));
     expect([...paths].filter((path) => path.endsWith(".md")).sort()).toEqual([
-      "native/src/code_rule_dsl/semver/UPSTREAM.md",
+      "native/crates/run/src/code_rule_dsl/semver/UPSTREAM.md",
       "native/vendor/v/README.md",
     ]);
     expect(paths.has("native/vendor/v/lib.rs")).toBe(true);
@@ -140,7 +140,7 @@ describe("engineSources", () => {
     expect(paths.has("native/README.md")).toBe(false);
     expect(paths.has("languages/README.md")).toBe(false);
     expect(paths.has("native/vendor/tree-sitter-0.27.1/binding_rust/README.md")).toBe(true);
-    expect(paths.has("native/src/code_rule_dsl/semver/UPSTREAM.md")).toBe(true);
+    expect(paths.has("native/crates/run/src/code_rule_dsl/semver/UPSTREAM.md")).toBe(true);
   });
 });
 

@@ -3669,6 +3669,61 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-d-anchors"
+version = "0.1.0"
+dependencies = [
+ "ast-grep-core",
+ "ast-grep-language",
+ "fallible-iterator",
+ "foldhash",
+ "napi",
+ "napi-derive",
+ "parking_lot",
+ "regex",
+ "regex-syntax",
+ "rerail-d-anchors",
+ "rerail-d-relational",
+ "rerail-p-anchors",
+ "rerail-prof",
+ "rerail-registry",
+ "rerail-rules-base",
+ "rusqlite",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "tree-sitter",
+]
+
+[[package]]
+name = "rerail-d-relational"
+version = "0.1.0"
+dependencies = [
+ "ast-grep-core",
+ "ast-grep-language",
+ "fallible-iterator",
+ "foldhash",
+ "napi",
+ "napi-derive",
+ "parking_lot",
+ "regex",
+ "regex-syntax",
+ "rerail-d-relational",
+ "rerail-p-anchors",
+ "rerail-prof",
+ "rerail-registry",
+ "rerail-rules-base",
+ "rusqlite",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "tree-sitter",
+]
+
+[[package]]
 name = "rerail-demand-catalog"
 version = "0.1.0"
 dependencies = [
@@ -5008,6 +5063,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-node-space"
+version = "0.1.0"
+dependencies = [
+ "rerail-node-space",
+ "rerail-store-base",
+]
+
+[[package]]
 name = "rerail-observe"
 version = "0.1.0"
 dependencies = [
@@ -5039,6 +5102,31 @@ dependencies = [
  "tikv-jemalloc-sys",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-p-anchors"
+version = "0.1.0"
+dependencies = [
+ "ast-grep-core",
+ "ast-grep-language",
+ "foldhash",
+ "napi",
+ "napi-derive",
+ "parking_lot",
+ "regex",
+ "regex-syntax",
+ "rerail-p-anchors",
+ "rerail-prof",
+ "rerail-registry",
+ "rerail-rules-base",
+ "rusqlite",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "tree-sitter",
 ]
 
 [[package]]
@@ -5743,9 +5831,12 @@ dependencies = [
  "regex-syntax",
  "rerail-adapters",
  "rerail-blocks",
+ "rerail-d-anchors",
+ "rerail-d-relational",
  "rerail-facts",
  "rerail-lang",
  "rerail-matcher",
+ "rerail-p-anchors",
  "rerail-prof",
  "rerail-rr-syntax",
  "rerail-rules",
@@ -8237,6 +8328,7 @@ dependencies = [
  "rerail-cpu-block",
  "rerail-facts",
  "rerail-lang",
+ "rerail-node-space",
  "rerail-prof",
  "rerail-registry",
  "rerail-rir",

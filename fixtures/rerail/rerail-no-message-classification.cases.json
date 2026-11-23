@@ -49,7 +49,7 @@
       "content": "export function shown(content: string): boolean {\n  return content.split(\"\\n\").some(line => line.startsWith(\"Why? → \") || line.includes(\"Rerail found\"));\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/workspace/results.rs",
+      "path": "native/crates/workspace/src/code_rule_dsl/workspace/results.rs",
       "content": "fn blind_file(file: &FileState) -> Option<Blind> {\n    let (mut budget, mut syntax) = (None, None);\n    for id in &clauses {\n        let (code, message) = file.failures.get(id)?;\n        let first = match (*code, *message) {\n            (\"budget-exceeded\" | crate::code_rule_dsl::model::FILE_BUDGET_EXCEEDED, _) => {\n                &mut budget\n            }\n            (\"source-incomplete\", \"file has syntax errors\" | UNREAD) => &mut syntax,\n            _ => return None,\n        };\n        first.get_or_insert(*message);\n    }\n    None\n}\n"
     },
     {
@@ -61,7 +61,7 @@
       "content": "fn resource_refusal(error: &str) -> bool {\n    error.contains(\"operator count exceeds\") || error.contains(\"SQL text exceeds\")\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/workspace/persisted.rs",
+      "path": "native/crates/workspace/src/code_rule_dsl/workspace/persisted.rs",
       "content": "fn syntax_blind(failure: &Failure, message: &str) -> bool {\n    if message == \"file has syntax errors\" { return true; }\n    match message {\n        \"Binary source cannot be evaluated\" => true,\n        _ => failure.message.starts_with(\"file did not parse\"),\n    }\n}\n"
     },
     {
@@ -119,11 +119,11 @@
       "content": "fn blind_file(code: &str, message: &str) -> Option<Blind> {\n    match code {\n        \"budget-exceeded\" => Some(Blind::Budget),\n        \"source-incomplete\" if message == SYNTAX_ERRORS || message == UNREAD => Some(Blind::Syntax),\n        _ => None,\n    }\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/language.rs",
+      "path": "native/crates/lang/src/code_rule_dsl/language.rs",
       "content": "fn jsx_comment(text: &str) -> Option<&str> {\n    match text.strip_prefix(\"//\") {\n        Some(line) => Some(line),\n        None => text.strip_prefix(\"/*\"),\n    }\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/compile/order.rs",
+      "path": "native/crates/rules_base/src/code_rule_dsl/compile/order.rs",
       "content": "fn order(rule: &Rule) -> Result<(), String> {\n    Ok(())\n}\n\n#[cfg(test)]\n#[allow(clippy::unwrap_used)]\nmod tests {\n    fn rejected(reason: &str) -> bool {\n        reason.contains(\"no order binds both first\")\n    }\n}\n"
     },
     {

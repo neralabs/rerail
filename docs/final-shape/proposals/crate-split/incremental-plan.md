@@ -6,7 +6,7 @@ landed. Nothing here is built yet.
 The user's choices (2026-11-21):
 
 - **Keep mounting.** Each new crate mounts its files in place from `native/src`, as the first split did. The
-  files move into the crates later, as a separate step.
+  files move into the crates later, as a separate step. (Done in step 9, right after a hub merge.)
 - **Split the larger crates**, not only the engine. Logic, W and the compiler are cut to crates of about 20k
   production lines or fewer (§3, steps 4–7).
 
@@ -263,14 +263,8 @@ These are independent and small, one commit each:
 
 ## 4. Measuring it
 
-One `cargo build --timings` on one farm host, before step 1 and after each step. Each is a warm rebuild after a
-one-line edit in each layer (compiler, lang, facts, W, logic, the engine), for:
-
-- the CLI (`--bin rerail-engine --features test-hooks`);
-- the test crate a targeted run of that layer's tests builds.
-
-The numbers: wall time, CPU time, and the longest serial chain in the timings. They are recorded in each step's
-decision record. There are no A/B triples. One run per state, with the host's load noted.
+Each step is measured by its crates' sizes (production lines, less inline tests), not by build timings: the user
+dropped the `--timings` runs (2026-11-22).
 
 ## 5. Guards
 
@@ -286,8 +280,7 @@ decision record. There are no A/B triples. One run per state, with the host's lo
 - **Test crate granularity:** the six in step 2, or one per crate below (`rerail-logic-tests`, …). As the
   library crates split in steps 4–7, the test crates follow them, one per library crate where its tests need the
   providers.
-- **Moving the files** into the crates (after this plan): one step for the whole tree, at a quiet point for the
-  other branches.
+- **Moving the files** into the crates: settled, done in step 9 (below), right after a hub merge.
 
 ## Log
 
@@ -1224,3 +1217,82 @@ decision record. There are no A/B triples. One run per state, with the host's lo
 
     `definition_ids_are_pinned` reads its Ruff fixtures through `pack_test_data`. Tests: on a Linux host, both crates
     in full: 246 of 248. The 2 failures are pack data.
+- **Step 8a** (2026-11-22): rerail-rules-base's test-only engines, 31.4k lines behind `test-hooks`, are now three
+  crates above it. They are P's and D's SQL anchor engines and D's relational waves.
+
+  | crate | lines | what it holds |
+  |---|---:|---|
+  | rerail-p-anchors | 10.0k | `matcher::p_anchors`, its corpus (`Corpus`, `CorpusSlot`), and its part in a rule's evaluation (`p_anchors::evaluation`, the `p-anchor-corpus` path) |
+  | rerail-d-relational | 10.4k | `waves::relational`, over P's (its waves enter P's corpus) |
+  | rerail-d-anchors | 10.7k | `matcher::d_anchors`, over D's waves (its stores keep their database and pools) |
+
+  - rerail-rules-base keeps 18.2k of production code. It reads the engines back through slots:
+    - `compile::DATA_LAYER` is D's compiler of a clause's `relational` object.
+    - `CompiledClause::data_layer` holds D's plan as `Arc<dyn Any + Send + Sync>`. Only D reads it, through
+      `waves::relational::Plan::of`.
+    - `eval::ANCHOR_CORPUS` is P's corpus: `enter`, `prepare` and `roots`. These are the old `prepare_candidates` and
+      `anchor_roots`, moved into P unchanged.
+    - `eval::data_layer_rows` is D's, in `waves::relational`.
+  - rerail-rules re-exports the three engines in its `matcher` and `waves`, so every path above is unchanged.
+  - Boot's `install_with` registers both slots, under `test-hooks` (P's also needs `p-anchor-corpus`). Each new
+    crate's own test binary registers them too.
+  - A build without `test-hooks` mounts nothing in any of the three crates.
+  - Tests:
+    - On a Linux host, the three crates and rules-base: 137 of 137 (33 P, 34 D's waves, 41 D's anchors, 29 rules-base).
+    - On a Linux host, the hosted tests: rerail-tests-anchors (162), and rerail-tests-logic's `waves::` (33). All pass.
+    - Checks: the workspace with `--tests` is clean, and so is the `p-anchor-corpus` build of the four crates.
+- **Step 8b** (2026-11-22): the node space is a crate of its own, and the sizes are measured without inline tests.
+  - rerail-node-space (1.8k, with its 5 tests) holds `space`: a wave's node space and its chunked node sets (0024
+    §1, 0045).
+    - It reads nothing of the engine, so it sits under rerail-transducer-base, which re-exports it. Every path above
+      is unchanged.
+    - Its `test-hooks` keeps the dense reference set (`DenseSet`).
+    - One container test reads its segments back with the postings' decoder, through a dev-dependency on
+      rerail-store-base.
+    - What the crates above read is widened to `pub` (`fill_file`, `segment`, `shape`). `NodeSpace` and `NodeSet`
+      gain `is_empty`.
+  - The earlier figures counted a file's inline `#[cfg(test)] mod` blocks as production. Less those, the largest
+    crates are:
+
+    | crate | production | inline tests |
+    |---|---:|---:|
+    | rerail-store | 20.7k | 1.0k |
+    | rerail-lang-php | 19.5k | 0.3k |
+    | rerail-transducer-cpu | 19.3k | 0.0k |
+    | rerail-transducer-base | 18.0k | 1.6k |
+
+  - rerail-store stays one crate:
+    - 0.46k of its 20.7k is `tree_result_segments`, which is behind `test-hooks`.
+    - Every module left in it adds methods to `ContentStore` (25 files), and a type's methods stay in its crate.
+    - The modules that do not are the atoms, the kept facts and their SQL tables. They reach its connection,
+      write-back and guest keys, and every connection it opens installs the tables.
+    - So a further cut would turn store methods into traits across crates, for about 0.2k.
+  - Tests (Linux): rerail-node-space 5 of 5, rerail-transducer-base 60 of 60. The workspace check with `--tests` and
+    clippy on both crates are clean.
+- **Step 9** (2026-11-22): each crate's sources are in its own `src/`. The move came right after the hub merge
+  (09e8ac2f96), so the other branches meet it as renames.
+  - **9a** (ff01fd8d4a) is the moves alone, every file `R100`. `tools/cratify/move_sources.py plan` reads the module
+    trees as rustc resolves them and writes `tools/cratify/source-moves.tsv` (1,679 files). A file at `native/src/P`
+    goes to `<crate>/src/P`, so module paths, and the paths between two files of one crate, are unchanged.
+    - A file two crates compile goes to the lower one (`crate-order.tsv`). A file the engine compiles stays.
+    - A file that is not Rust goes with the one crate that includes or names it. One no source names goes with its
+      directory's files.
+    - The directories read whole stay where they are (`WHOLE`): the typing programs, which the package ships as a
+      directory, and the planner's goldens.
+  - **9b**: the paths. `move_sources.py repath` rewrote each `#[path]` and `include*!` the move changed (174 in 108
+    files) and added a `#[path]` where a module's file is now in another crate. A hand edit fixed the three that
+    climbed through a directory that no longer exists. Runtime paths were fixed the same way:
+    - the build script's names table and view sources;
+    - the pack rules' scopes (each rule's scope is unchanged for every case and every moved file);
+    - the check scripts' directory lists;
+    - REUSE, the notices, generators and docs.
+    - The tests that read the engine's sources now find them through `source_tree::source_paths` (a module-tree
+      path, in every crate that keeps a part of it). Each scanner reads what it read before.
+    - `check-node-structures.mjs` walks every crate's module tree. It had read only `native/src/lib.rs`'s since the
+      first split.
+  - Found on the way, from the hub: the width census's two maps went unlisted in `facts_only`'s `STATE`, and
+    `run_state` still listed the removed `crates/clif/src/rust.rs`. Both are fixed.
+  - `metal_host_guard_tests.rs` stays in `native/src`, uncompiled. 1b9c360dcf (RER-131) unmounted it when pattern
+    leaves moved to the host on the Metal path, and it fails as it stands.
+  - Checks: the workspace with `--tests` is clean on Linux and macOS. The guards pass. Tests (Linux): the source
+    scanners and the plan and schedule tests, 125. On a Mac: the Metal launch guard.

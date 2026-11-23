@@ -32,7 +32,7 @@ const WORKBENCH = "docs/rule-syntax/";
 /** Exemption `engine-layout`: a generated file and why it is left as it is. */
 const ENGINE_LAYOUT = new Map([
   [
-    "native/src/code_rule_dsl/transducer/packed/admission_spike_interpreter.rs",
+    "native/crates/transducer_cpu/src/code_rule_dsl/transducer/packed/admission_spike_interpreter.rs",
     "an isolated CPU experiment whose generator is outside this repository (its header names it); never a production path",
   ],
 ]);

@@ -6,7 +6,7 @@
 //! rank form and the profile's report and watch. Over setfix. Its `plan` is a facade of the planner's paths;
 //! `plan.rs` (rerail-planner's) re-exports it.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items under the same names:
 // the glob's name and the private one are one item. The mounts also widen what the crates above read (the split's
 // facades, not a design).
@@ -22,7 +22,7 @@ pub use rerail_store::content_store;
 pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
 extern crate self as rerail_plan_base;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;
     pub use rerail_lang::code_rule_dsl::build_ids;

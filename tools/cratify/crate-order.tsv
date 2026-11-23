@@ -66,6 +66,9 @@ rerail-json-rules	core
 rerail-matcher	core
 rerail-run	core
 rerail-rules-base	core
+rerail-p-anchors	core
+rerail-d-relational	core
+rerail-d-anchors	core
 rerail-setfix	core
 rerail-rules	core
 rerail-plan-base	core
@@ -76,6 +79,7 @@ rerail-cpython	provider
 rerail-lang-python	provider
 rerail-lang-rust	provider
 rerail-lang-sql	provider
+rerail-node-space	core
 rerail-transducer-base	core
 rerail-transducer-cpu	core
 rerail-transducer	core

@@ -2,9 +2,9 @@
 //! base (rerail-facts-base), which re-exports it. Unix only (not the browser build, not Windows): it forks its checks
 //! and reads macOS' and Linux' memory counters.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 #![allow(dead_code, unused_imports, clippy::all)]
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub mod logic {
         pub use rerail_prof::code_rule_dsl::logic::profile;

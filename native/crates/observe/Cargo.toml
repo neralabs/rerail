@@ -5,7 +5,7 @@ edition = "2024"
 publish = false
 description = "What the content store observes: the observer of the files a run reads (`observe`), and every git read (`git_access`, `git_workspace` and its snapshot), over the store's base."
 
-# Written by the crate split (step 7b): its sources stay where they were (`native/src`), mounted in place.
+# Written by the crate split (step 7b); its sources are in its own `src/` (step 9).
 
 [features]
 # The store's test hooks (busy-wait overrides, write counters, test-only writers), for the engine's tests. The

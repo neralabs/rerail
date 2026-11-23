@@ -23,7 +23,7 @@ impl<P: AsRef<std::path::Path> + ?Sized> Canonical for P {
     }
 }
 
-#[path = "../../../src/content_store"]
+#[path = "content_store"]
 pub mod content_store {
     pub mod base;
     pub use base::*;
@@ -62,8 +62,8 @@ pub mod content_store {
     pub use rerail_blocks::block::Flush;
 }
 /// The checkout the engine runs from, found as it runs (decision 0224).
-#[path = "../../../src/source_tree.rs"]
+#[path = "source_tree.rs"]
 pub mod source_tree;
 /// A regex's literal probe (the prefilter's; the store's vocabulary uses it too).
-#[path = "../../../src/code_rule_dsl/prefilter/probes.rs"]
+#[path = "code_rule_dsl/prefilter/probes.rs"]
 pub mod probes;

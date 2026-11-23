@@ -1,6 +1,6 @@
 # The engine's composition root (docs/final-shape/proposals/crate-split/incremental-plan.md, step 1): the
-# providers the build selects, registered in one order, and the engine's glue they need. Its sources stay where they
-# were, mounted in place (src/lib.rs). Its manifest is the engine's, re-rooted (tools/cratify/boot_manifest.py), and
+# providers the build selects, registered in one order, and the engine's glue they need. Its sources are in its
+# own src/ (the crate split, step 9). Its manifest is the engine's, re-rooted (tools/cratify/boot_manifest.py), and
 # kept by hand since.
 [package]
 name = "rerail-boot"
@@ -94,9 +94,9 @@ base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 # Relational kernels on every lane and the executor that batches their launches (decision 0098).
 rerail-accel = { path = "../../../accel" }
-# The tree watch, built apart (`crates/tree_watch`) so its tests build without the engine; its sources stay in `src/`.
+# The tree watch, built apart (`crates/tree_watch`) so its tests build without the engine; its sources are in its `src/`.
 rerail-tree-watch = { path = "../tree_watch" }
-# The content store and the git workspace, built apart (`crates/store`): their sources stay in `src/`.
+# The content store and the git workspace, built apart (`crates/store`): their sources are in its `src/`.
 rerail-store = { path = "../store", features = ["test-hooks"] }
 # The kept facts' reads (`rerail_blocks::kept`), as the slice reads its scope's (`slice/kept.rs`).
 rerail-blocks = { path = "../blocks" }

@@ -3,7 +3,7 @@
 //! database registers setfix's symbols. Over the run (`rerail-run`: its state, lanes, device interface, the other
 //! solvers), under the planner, which reads it. Its module tree is the run's, with setfix's modules mounted in it.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
+//! Its sources are in its own `src/`, at their module paths in the engine's tree (the crate split, step 9).
 // A mounted module re-exports its dependency's by glob, and its sources import the same items under the same names:
 // the glob's name and the private one are one item. The mounts also widen what the crates above read (the split's
 // facades, not a design).
@@ -20,7 +20,7 @@ pub use rerail_run::git_access;
 pub use rerail_run::git_workspace;
 pub use rerail_run::threads;
 extern crate self as rerail_setfix;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_run::code_rule_dsl::*;
     #[path = "logic"]

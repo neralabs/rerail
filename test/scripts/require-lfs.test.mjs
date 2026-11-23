@@ -27,7 +27,7 @@ afterEach(() => {
 describe("the build's Git LFS preflight", () => {
   const attributes = [
     "model/model.safetensors filter=lfs diff=lfs merge=lfs -text",
-    "native/src/code_rule_dsl/value/names/names.bin filter=lfs diff=lfs merge=lfs -text",
+    "native/crates/adapters/src/code_rule_dsl/value/names/names.bin filter=lfs diff=lfs merge=lfs -text",
     "*.bin.gz filter=lfs",
   ].join("\n");
 
@@ -35,17 +35,17 @@ describe("the build's Git LFS preflight", () => {
     const root = checkout({
       ".gitattributes": attributes,
       "model/model.safetensors": POINTER,
-      "native/src/code_rule_dsl/value/names/names.bin": POINTER,
+      "native/crates/adapters/src/code_rule_dsl/value/names/names.bin": POINTER,
       "deep/er/table.bin.gz": POINTER,
     });
-    expect(lfsPointerFiles(root)).toEqual(["deep/er/table.bin.gz", "model/model.safetensors", "native/src/code_rule_dsl/value/names/names.bin"]);
+    expect(lfsPointerFiles(root)).toEqual(["deep/er/table.bin.gz", "model/model.safetensors", "native/crates/adapters/src/code_rule_dsl/value/names/names.bin"]);
   });
 
   it("passes the real files, and pointer text outside LFS paths", () => {
     const root = checkout({
       ".gitattributes": attributes,
       "model/model.safetensors": Buffer.alloc(4096),
-      "native/src/code_rule_dsl/value/names/names.bin": Buffer.concat([Buffer.from("TNAMES01"), Buffer.alloc(2048)]),
+      "native/crates/adapters/src/code_rule_dsl/value/names/names.bin": Buffer.concat([Buffer.from("TNAMES01"), Buffer.alloc(2048)]),
       "docs/lfs.md": POINTER,
     });
     expect(lfsPointerFiles(root)).toEqual([]);

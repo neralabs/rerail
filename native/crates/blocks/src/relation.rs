@@ -540,7 +540,7 @@ impl Relation {
         let ix = self.indexes.as_slice();
         // An entry given back is taken first (`give_back_index`) when its room is the block's already; one that keeps
         // its room (a block of no free list) is left for an index that fits it (`dead_room`), and taken last.
-        let dead = |i: usize, room: bool| ix[i].state == DEAD && (ix[i].offs.len() != 0) == room;
+        let dead = |i: usize, room: bool| ix[i].state == DEAD && (!ix[i].offs.is_empty()) == room;
         // Its taker marks it live (`state` 0) once its room is had.
         (0..n).find(|&i| dead(i, false)).or((n < ix.len()).then_some(n)).or_else(|| (0..n).find(|&i| dead(i, true)))
     }

@@ -531,8 +531,8 @@ pub mod heap {
             let mut buf = [0u8; NAME_WORDS * 8];
             // SAFETY: the calling thread's own handle; the name is written NUL-ended into `buf`, of its length.
             if unsafe { libc::pthread_getname_np(libc::pthread_self(), buf.as_mut_ptr().cast(), buf.len()) } == 0 {
-                for (w, bytes) in slot.iter().zip(buf.chunks_exact(8)) {
-                    w.store(u64::from_le_bytes(bytes.try_into().unwrap_or([0; 8])), Relaxed);
+                for (w, bytes) in slot.iter().zip(buf.as_chunks::<8>().0) {
+                    w.store(u64::from_le_bytes(*bytes), Relaxed);
                 }
             }
         }
@@ -877,7 +877,7 @@ pub mod heap {
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 extern crate self as rerail_prof;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {

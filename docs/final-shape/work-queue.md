@@ -10496,3 +10496,14 @@ The pack's stored converter output (`candidates/datalog/`, compared byte for byt
 `the_pack_holds_the_converters_run_over_every_authored_file`) predated t33 K3's `.answer` lines and the Python
 library's later rules. It is regenerated (`convert_the_data_layer_pack`) and staged in the lint tool-pack's
 `publish/` (`npm run fixtures:stage -- --pack data-layer --tool lint`) for the pack-data publish workflow.
+
+### Q497. Roll-up 72 (engine-crating a9b970f074 onto Pulling-it-all-together): what the merge chose
+
+Crate split 9a and 9b: each crate's sources move into its own `src/`, and every source reader follows. The hub's
+changes since the crating branch last merged it (Q495, Q496, the job-scope and gzip fixes) follow their files: the
+converter to `boot/src`, the wave to `run/src`, reuse and world to `rr_root/src`, git snapshots to `observe/src`, and
+the reuse and session tests to `tests_corpus/src`. One conflict, `reuse.rs`'s `NOT_OUTPUTS`: both sides added
+`RERAIL_WIDTH_CENSUS`; theirs' comment, which names the census, is kept. No architectural clash.
+
+Relax: the engine checks clean; the reuse and session tests (30), the converter's overlay, pack, replay and
+reference-fixture tests (4) and rerail-observe (42) pass.

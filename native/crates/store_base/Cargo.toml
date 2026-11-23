@@ -5,7 +5,7 @@ edition = "2024"
 publish = false
 description = "The content store's base: its keys, ids, errors and payloads, the atoms, the segments, the rows, the postings, the vocabulary, the journal and the hazards."
 
-# Written by the crate split (step 7b): its sources stay where they were (`native/src`), mounted in place.
+# Written by the crate split (step 7b); its sources are in its own `src/` (step 9).
 
 [features]
 # The store's test hooks (busy-wait overrides, write counters, test-only writers), for the engine's tests. The

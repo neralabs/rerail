@@ -5,8 +5,8 @@ edition = "2024"
 publish = false
 description = "The engine's content store (SQLite): sources, tapes, memos, run records, over its base and its observer (rerail-store-base, rerail-observe)."
 
-# The sources stay where they were (`native/src/content_store`, `native/src/git_workspace.rs`): this crate
-# compiles them in place (`#[path]`), so the engine builds them once, not with every change of its own.
+# Its sources are in its own src/ (the crate split, step 9), and `git_workspace.rs` is rerail-observe's
+# (`#[path]`): the engine builds them once, not with every change of its own.
 
 [features]
 # The store's test hooks (busy-wait overrides, write counters, test-only writers), for the engine's tests. The

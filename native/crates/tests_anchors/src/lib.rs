@@ -33,7 +33,7 @@ mod test_load {
     static LOAD: extern "C" fn() = load;
 }
 
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_boot::code_rule_dsl::*;
     pub use rerail_boot::code_rule_dsl::rule_api::CodeRuleDslEditor;
@@ -49,10 +49,12 @@ pub mod code_rule_dsl {
                 // Its profiling spikes, which read `tests` (`document`).
                 #[cfg(all(test, feature = "code-rule-profile"))]
                 pub mod retention_spikes;
+                // Its tests' file is beside it: no directory of its own here.
+                #[path = "."]
                 pub mod lower {
                     pub use rerail_boot::code_rule_dsl::matcher::d_anchors::sql::lower::*;
                     #[cfg(test)]
-                    #[path = "../lower_tests.rs"]
+                    #[path = "lower_tests.rs"]
                     pub mod tests;
                     #[allow(unused_imports)]
                     use super::super::{AnchorPlan, Condition, Direction, Required};
@@ -183,10 +185,12 @@ pub mod code_rule_dsl {
                 // Its profiling spikes, which read `tests` (`document`).
                 #[cfg(all(test, feature = "code-rule-profile"))]
                 pub mod retention_spikes;
+                // Its tests' file is beside it: no directory of its own here.
+                #[path = "."]
                 pub mod lower {
                     pub use rerail_boot::code_rule_dsl::matcher::p_anchors::sql::lower::*;
                     #[cfg(test)]
-                    #[path = "../lower_tests.rs"]
+                    #[path = "lower_tests.rs"]
                     pub mod tests;
                     #[allow(unused_imports)]
                     use super::super::{AnchorPlan, Condition, Direction, Required};
@@ -408,5 +412,6 @@ pub mod code_rule_dsl {
         use util::{THREE_VALUED};
     }
     #[cfg(test)]
+    #[path = "../../../../src/code_rule_dsl/test_support.rs"]
     mod test_support;
 }
