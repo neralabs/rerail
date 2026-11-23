@@ -374,14 +374,14 @@ fn elsewhere(source: &str, names: &[&str], constant: Option<u32>) -> Result<Vec<
         // together: a driver builds every kernel of a program, and Intel's took 436 s over the 21 join stages of
         // one source (`UKL_ONE_KERNEL`, the OpenCL shim).
         let only: Vec<String> = missing.iter().map(|(name, _)| format!("__UKL_ONLY_{name}")).collect();
-        let one = rerail_gpu::device::backend() == "OpenCL";
+        let one = rerail_device::device::backend() == "OpenCL";
         if one {
             defines.push(("UKL_ONE_KERNEL", "1"));
             defines.extend(only.iter().map(|o| (o.as_str(), "__UKL_PROBE")));
         }
         let label = if one { format!("{}.{}.ukl", &hex(&library)[..16], missing.iter().map(|(name, _)| *name).collect::<Vec<_>>().join("+")) } else { format!("{}.ukl", &hex(&library)[..16]) };
         let program = rerail_gpu::kernels::program_with(&label, source, &defines)?;
-        let shared = rerail_gpu::shared::get().ok_or("no device")?;
+        let shared = rerail_device::shared::get().ok_or("no device")?;
         for (name, k) in &missing {
             let started = std::time::Instant::now();
             let f = Arc::new(program.library().get_function(&shared.device, name)?);

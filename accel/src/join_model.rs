@@ -160,7 +160,7 @@ pub use on::{DEVICE_ROWS, JoinModel, compare, compare_on};
 /// The GPU seconds of every forest command buffer awaited so far in this process.
 #[cfg(target_os = "macos")]
 pub fn gpu_seconds_awaited() -> f64 {
-    rerail_forest::compute_kernel_metal::gpu_seconds_awaited()
+    rerail_device::compute_kernel_metal::gpu_seconds_awaited()
 }
 
 #[cfg(target_os = "macos")]
@@ -319,7 +319,7 @@ mod on {
             }
             // The feature space's buckets made on the device where there is one (`from_columns_device`, the host's
             // buckets), from the columns prediction sends it.
-            let fs = match rerail_forest::gpu::shared::get() {
+            let fs = match rerail_device::shared::get() {
                 Some(_) => {
                     let all: Vec<&StepSample> = samples.iter().collect();
                     let named: Vec<(String, ColumnData)> = STEP_FEATURES.iter().map(|n| n.to_string()).zip(device_columns(&all)).collect();
