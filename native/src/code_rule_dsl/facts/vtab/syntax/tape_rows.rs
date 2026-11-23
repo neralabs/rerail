@@ -25,16 +25,15 @@ pub(super) struct Marked {
 }
 
 impl Marked {
-    /// The members of items `0..n`, `has` asked of each once.
-    fn build(block: &Arc<Block>, n: u32, mut has: impl FnMut(u32) -> bool) -> Marked {
+    /// The members of items `0..n`, each given to `fill`'s callback (in any order, at most once each).
+    fn build(block: &Arc<Block>, n: u32, fill: impl FnOnce(&mut dyn FnMut(u32))) -> Marked {
         let words = (n as usize).div_ceil(64).max(1);
         // copy: derived (which of a document's items have a view's row: made once on its first read)
         let bits = Cells::build(block, words, |out: &mut [u64]| {
-            for i in 0..n {
-                if has(i) {
-                    out[(i / 64) as usize] |= 1 << (i % 64);
-                }
-            }
+            fill(&mut |i| {
+                debug_assert!(i < n, "a member past the items");
+                out[(i / 64) as usize] |= 1 << (i % 64);
+            });
             words
         })
         .expect("a projection's block holds a view's marks");
@@ -109,8 +108,22 @@ impl Marked {
     }
 }
 
-/// A relation of the tape's answers: a row per item of a document that has one (a node, or a node or token: its
-/// local id), its values read off the tape.
+/// One of a batch's documents, as a `TapeRows` reads it: its projection made only where a relation asks for it
+/// (`p`), so a relation of what the documents are given (`DocRow`) makes none.
+pub(super) struct At<'a> {
+    pub(super) batch: &'a Batch,
+    pub(super) doc: usize,
+}
+
+impl At<'_> {
+    /// Its projection: its document made, if it is not.
+    pub(super) fn p(&self) -> &Projected {
+        &self.batch.docs[self.doc]
+    }
+}
+
+/// A relation of the tape's answers, or of what a batch's documents are given: a row per item of a document that has
+/// one (a node, a node or token: its local id; a document itself), its values read where they are.
 pub(super) trait TapeRows: Send + Sync + 'static {
     /// What a document's rows read beyond its projection, made once per document.
     type Doc: Send + Sync;
@@ -122,14 +135,40 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     fn parent(&self) -> Option<usize> {
         None
     }
-    fn doc(&self, batch: &Batch, p: &Projected) -> Self::Doc;
+    fn doc(&self, at: &At) -> Self::Doc;
+    /// The block a document's marks are kept in: its projection's.
+    fn block(&self, at: &At) -> Arc<Block> {
+        Arc::clone(at.p().block())
+    }
     /// The items the rows are of: `0..items`.
-    fn items(&self, p: &Projected, d: &Self::Doc) -> u32;
-    fn has(&self, p: &Projected, d: &Self::Doc, item: u32) -> bool;
+    fn items(&self, at: &At, d: &Self::Doc) -> u32;
+    /// Each item with a row, once, in any order: a walk of the tape that finds them, not a test of each item (a test
+    /// that reads a node's parent searches the tape for it, on format 15).
+    fn members(&self, at: &At, d: &Self::Doc, each: &mut dyn FnMut(u32));
     /// Item `item`'s row (its `row`th in the document, `marked` its rows), every column.
-    fn row(&self, p: &Projected, d: &Self::Doc, marked: &Marked, item: u32, row: u32, out: &mut [i64]);
+    fn row(&self, at: &At, d: &Self::Doc, marked: &Marked, item: u32, row: u32, out: &mut [i64]);
     /// The items whose `parent()` column is node `local`, in order (a member or not: `RowsView` keeps its rows').
-    fn under(&self, _p: &Projected, _d: &Self::Doc, _local: u32, _each: &mut dyn FnMut(u32)) {}
+    fn under(&self, _at: &At, _local: u32, _each: &mut dyn FnMut(u32)) {}
+    /// Whether a lookup on `column` finds its items (`find`).
+    fn keyed(&self, column: usize) -> bool {
+        column == self.own() || Some(column) == self.parent()
+    }
+    /// The items (each with its document) a lookup of `value` on a `keyed` column may find, a member or not: by the
+    /// row's own id, its item; by a parent's, the items under it.
+    fn find(&self, batch: &Batch, column: usize, value: i64, each: &mut dyn FnMut(usize, u32)) {
+        let Some(doc) = batch.doc(value >> 32) else { return };
+        let at = At { batch, doc };
+        let Some(local) = at.p().local_of((value & 0xffff_ffff) as u32) else { return };
+        if column == self.own() {
+            each(doc, local);
+        } else if local < at.p().len() {
+            self.under(&at, local, &mut |item| each(doc, item));
+        }
+    }
+    /// Its statistics without its rows read (as `syntax::measured` gives them), where it knows them.
+    fn statistics(&self, _batch: &Batch) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        None
+    }
 }
 
 /// A document's rows of a `TapeRows`.
@@ -155,11 +194,15 @@ impl<R: TapeRows> RowsView<R> {
         RowsView { batch: Arc::clone(batch), rows, per, offsets: OnceLock::new() }
     }
 
+    fn at(&self, doc: usize) -> At<'_> {
+        At { batch: &self.batch, doc }
+    }
+
     fn per(&self, doc: usize) -> &Per<R::Doc> {
         self.per[doc].get_or_init(|| {
-            let p = &self.batch.docs[doc];
-            let d = self.rows.doc(&self.batch, p);
-            let marked = Marked::build(p.block(), self.rows.items(p, &d), |i| self.rows.has(p, &d, i));
+            let at = self.at(doc);
+            let d = self.rows.doc(&at);
+            let marked = Marked::build(&self.rows.block(&at), self.rows.items(&at, &d), |each| self.rows.members(&at, &d, each));
             Per { doc: d, marked }
         })
     }
@@ -187,14 +230,7 @@ impl<R: TapeRows> RowsView<R> {
     fn read(&self, doc: usize, k: u32, out: &mut [i64; COLUMNS]) {
         let per = self.per(doc);
         let item = per.marked.select(k).expect("a row of the view");
-        self.rows.row(&self.batch.docs[doc], &per.doc, &per.marked, item, k, out);
-    }
-
-    /// The document and item of id `id`: a node's, or a token's, of the batch.
-    fn item_of(&self, id: i64) -> Option<(usize, u32)> {
-        let doc = self.batch.doc(id >> 32)?;
-        let local = self.batch.docs[doc].local_of((id & 0xffff_ffff) as u32)?;
-        Some((doc, local))
+        self.rows.row(&self.at(doc), &per.doc, &per.marked, item, k, out);
     }
 }
 
@@ -208,20 +244,23 @@ impl<R: TapeRows> Source for RowsView<R> {
     fn columns(&self) -> Vec<String> {
         self.rows.columns().iter().map(|c| (*c).to_owned()).collect()
     }
-    /// The rows as the run's kept statistics count them, until a read makes them (decision 0494: a batch given its
-    /// counts makes no document for a `len`); then checked by them.
+    /// The rows as the run's kept statistics count them, or its own statistics do, until a read makes them (decision
+    /// 0494: a batch given its counts makes no document for a `len`); then checked by the kept ones.
     fn len(&self) -> usize {
         let given = self.batch.given_rows(self.rows.name());
-        match (given, self.offsets.get()) {
-            (Some(n), None) => n,
-            _ => {
-                let len = *self.offsets().last().unwrap();
-                if let Some(n) = given.filter(|&n| n != len) {
-                    self.batch.docs.fail(format!("{}: {len} rows read, its kept statistics counted {n} (decision 0494)", self.rows.name()));
-                }
-                len
-            }
+        if self.offsets.get().is_none()
+            && let Some(n) = given.or_else(|| self.rows.statistics(&self.batch).map(|s| s[0].1 as usize))
+        {
+            return n;
         }
+        let len = *self.offsets().last().unwrap();
+        if let Some(n) = given.filter(|&n| n != len) {
+            self.batch.docs.fail(format!("{}: {len} rows read, its kept statistics counted {n} (decision 0494)", self.rows.name()));
+        }
+        len
+    }
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.rows.statistics(&self.batch)
     }
     fn failure(&self) -> Option<String> {
         self.batch.docs.failure()
@@ -245,9 +284,9 @@ impl<R: TapeRows> Source for RowsView<R> {
         let (mut all, mut row) = ([0; COLUMNS], vec![0; columns.len()]);
         let offsets = self.offsets();
         for doc in 0..self.per.len() {
-            let (per, p) = (self.per(doc), &self.batch.docs[doc]);
+            let (per, at) = (self.per(doc), self.at(doc));
             for (k, item) in per.marked.iter().enumerate() {
-                self.rows.row(p, &per.doc, &per.marked, item, k as u32, &mut all);
+                self.rows.row(&at, &per.doc, &per.marked, item, k as u32, &mut all);
                 for (o, &c) in row.iter_mut().zip(columns) {
                     *o = all[c];
                 }
@@ -262,7 +301,7 @@ impl<R: TapeRows> Source for RowsView<R> {
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         let per = if column == self.rows.own() {
             1
-        } else if Some(column) == self.rows.parent() {
+        } else if self.rows.keyed(column) {
             4
         } else {
             (self.len() / 64).max(1)
@@ -270,30 +309,22 @@ impl<R: TapeRows> Source for RowsView<R> {
         if batch { per * 8 } else { per }
     }
     fn indexed(&self, column: usize) -> bool {
-        column == self.rows.own() || Some(column) == self.rows.parent()
+        self.rows.keyed(column)
     }
-    /// By the row's own id, its item's mark; by a parent's, the items the tape lists under it.
+    /// The items `find` gives that have rows, each its row.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
-        let own = column == self.rows.own();
-        if !own && Some(column) != self.rows.parent() {
+        if !self.rows.keyed(column) {
             return None;
         }
         let offsets = self.offsets();
         let mut rows = Vec::new();
         for &v in values {
-            let Some((doc, local)) = self.item_of(v) else { continue };
-            let (per, p) = (self.per(doc), &self.batch.docs[doc]);
-            if own {
-                if per.marked.is(local) {
-                    rows.push(offsets[doc] + per.marked.rank(local) as usize);
+            self.rows.find(&self.batch, column, v, &mut |doc, item| {
+                let marked = &self.per(doc).marked;
+                if marked.is(item) {
+                    rows.push(offsets[doc] + marked.rank(item) as usize);
                 }
-            } else if local < p.len() {
-                self.rows.under(p, &per.doc, local, &mut |item| {
-                    if per.marked.is(item) {
-                        rows.push(offsets[doc] + per.marked.rank(item) as usize);
-                    }
-                });
-            }
+            });
         }
         rows.sort_unstable();
         rows.dedup();
@@ -308,14 +339,17 @@ pub const TOKENS: [&str; 4] = ["first_token", "last_token", "token_before", "tok
 /// `rr_token_named(p, i, c, start, end)` (`NamedChild`).
 pub const NAMED: &str = "rr_token_named";
 
+/// `doc(d, path, module)` (`DocRow`).
+pub const DOC: &str = "doc";
+
 /// The relations `RowsView` serves, a batch of `shape`'s: none of them made as rows.
 pub(super) fn served(shape: Shape) -> impl Iterator<Item = &'static str> {
-    std::iter::once(NAMED).chain(TOKENS.into_iter().filter(move |_| shape == Shape::Core))
+    [DOC, NAMED].into_iter().chain(TOKENS.into_iter().filter(move |_| shape == Shape::Core))
 }
 
 /// The views `served` names over `batch`.
 pub(super) fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
-    let mut out: Vec<(&'static str, Arc<dyn Source>)> = vec![(NAMED, Arc::new(RowsView::new(batch, NamedChild)))];
+    let mut out: Vec<(&'static str, Arc<dyn Source>)> = vec![(DOC, Arc::new(RowsView::new(batch, DocRow::new(batch)))), (NAMED, Arc::new(RowsView::new(batch, NamedChild)))];
     if batch.shape == Shape::Core {
         for which in [Neighbour::First, Neighbour::Last, Neighbour::Before, Neighbour::After] {
             out.push((TOKENS[which as usize], Arc::new(RowsView::new(batch, TokenNeighbour(which)))));
@@ -381,20 +415,33 @@ impl TapeRows for TokenNeighbour {
     fn own(&self) -> usize {
         0
     }
-    fn doc(&self, batch: &Batch, p: &Projected) -> Option<Marked> {
+    fn doc(&self, at: &At) -> Option<Marked> {
+        let (batch, p) = (at.batch, at.p());
         let dialect = batch.dialects.get(p.tag)?;
         let (f, ranks) = (&*p.facts, p.ranks());
-        Some(Marked::build(p.block(), f.len() as u32, |x| {
-            ranks.is(Item::Token, x) || ranks.is(Item::Node, x) && f.subtree_end(x) == x + 1 && f.end(x) > f.start(x) && !super::core_rr::is_comment(dialect.name(f, x))
+        Some(Marked::build(p.block(), f.len() as u32, |each| {
+            for x in 0..f.len() as u32 {
+                if ranks.is(Item::Token, x) || ranks.is(Item::Node, x) && f.subtree_end(x) == x + 1 && f.end(x) > f.start(x) && !super::core_rr::is_comment(dialect.name(f, x)) {
+                    each(x);
+                }
+            }
         }))
     }
-    fn items(&self, p: &Projected, d: &Option<Marked>) -> u32 {
+    fn items(&self, at: &At, d: &Option<Marked>) -> u32 {
+        let p = at.p();
         if d.is_some() { p.len() + p.ranks().count(Item::Token) } else { 0 }
     }
-    fn has(&self, p: &Projected, d: &Option<Marked>, item: u32) -> bool {
-        d.as_ref().is_some_and(|tokens| self.token(p, tokens, item).is_some())
+    fn members(&self, at: &At, d: &Option<Marked>, each: &mut dyn FnMut(u32)) {
+        let Some(tokens) = d else { return };
+        let p = at.p();
+        for item in 0..self.items(at, d) {
+            if self.token(p, tokens, item).is_some() {
+                each(item);
+            }
+        }
     }
-    fn row(&self, p: &Projected, d: &Option<Marked>, _: &Marked, item: u32, _: u32, out: &mut [i64]) {
+    fn row(&self, at: &At, d: &Option<Marked>, _: &Marked, item: u32, _: u32, out: &mut [i64]) {
+        let p = at.p();
         let tokens = d.as_ref().expect("a row's document has tokens");
         let t = self.token(p, tokens, item).expect("a row's token");
         let ranks = p.ranks();
@@ -413,9 +460,9 @@ impl TapeRows for TokenNeighbour {
 pub(super) struct NamedChild;
 
 impl TapeRows for NamedChild {
-    /// Each row's `i`, made on the first read of one: the tape holds no child's place among its siblings, and a search
-    /// along them a row made a wide node's rows quadratic.
-    type Doc = OnceLock<Cells<u32>>;
+    /// Each row's parent (its local id) and `i`, made on the first read of a row, in one walk of the nodes' children:
+    /// the tape holds no child's place among its siblings, and a node's parent is a search back on format 15.
+    type Doc = OnceLock<(Cells<u32>, Cells<u32>)>;
     fn name(&self) -> &'static str {
         NAMED
     }
@@ -428,49 +475,133 @@ impl TapeRows for NamedChild {
     fn parent(&self) -> Option<usize> {
         Some(0)
     }
-    fn doc(&self, _: &Batch, _: &Projected) -> Self::Doc {
+    fn doc(&self, _: &At) -> Self::Doc {
         OnceLock::new()
     }
-    fn items(&self, p: &Projected, _: &Self::Doc) -> u32 {
-        p.len()
+    fn items(&self, at: &At, _: &Self::Doc) -> u32 {
+        at.p().len()
     }
-    fn has(&self, p: &Projected, _: &Self::Doc, item: u32) -> bool {
-        let x = p.node(item);
-        p.facts.named(x) && p.facts.parent(x).is_some_and(|q| p.local_of_node(q) != NONE)
+    /// The named children of each node of the projection that are nodes of it.
+    fn members(&self, at: &At, _: &Self::Doc, each: &mut dyn FnMut(u32)) {
+        let p = at.p();
+        for (_, q) in p.nodes() {
+            p.facts.each_child(q, |c| {
+                let l = p.local_of_node(c);
+                if l != NONE && p.facts.named(c) {
+                    each(l);
+                }
+            });
+        }
     }
-    fn row(&self, p: &Projected, d: &Self::Doc, marked: &Marked, item: u32, row: u32, out: &mut [i64]) {
-        let x = p.node(item);
-        let q = p.facts.parent(x).expect("a row's node has a parent");
-        let idx = d.get_or_init(|| {
-            let f = &*p.facts;
-            // copy: derived (each row's place among its parent's children on the tape, computed once here)
-            Cells::build(p.block(), marked.count().max(1) as usize, |out| {
-                for (_, xq) in p.nodes() {
+    fn row(&self, at: &At, d: &Self::Doc, marked: &Marked, item: u32, row: u32, out: &mut [i64]) {
+        let p = at.p();
+        let (parents, places) = d.get_or_init(|| {
+            let n = marked.count().max(1) as usize;
+            let walk = |out: &mut [u32], of: &dyn Fn(u32, u32) -> u32| {
+                for (lq, q) in p.nodes() {
                     let mut i = 0;
-                    f.each_child(xq, |c| {
+                    p.facts.each_child(q, |c| {
                         let l = p.local_of_node(c);
                         if l != NONE && marked.is(l) {
-                            out[marked.rank(l) as usize] = i;
+                            out[marked.rank(l) as usize] = of(lq, i);
                         }
                         i += 1;
                     });
                 }
-                marked.count().max(1) as usize
-            })
-            .expect("a projection's block holds a view's places")
+                n
+            };
+            // copy: derived (each row's parent and place among its children on the tape, computed once here)
+            let parents = Cells::build(p.block(), n, |out| walk(out, &|lq, _| lq)).expect("a projection's block holds a view's parents");
+            // copy: derived (as above)
+            let places = Cells::build(p.block(), n, |out| walk(out, &|_, i| i)).expect("a projection's block holds a view's places");
+            (parents, places)
         });
-        out[0] = p.global(p.local_of_node(q));
-        out[1] = i64::from(idx[row as usize]);
+        let x = p.node(item);
+        out[0] = p.global(parents[row as usize]);
+        out[1] = i64::from(places[row as usize]);
         out[2] = p.global(item);
         out[3] = i64::from(p.facts.start(x));
         out[4] = i64::from(p.facts.end(x));
     }
-    fn under(&self, p: &Projected, _: &Self::Doc, local: u32, each: &mut dyn FnMut(u32)) {
+    fn under(&self, at: &At, local: u32, each: &mut dyn FnMut(u32)) {
+        let p = at.p();
         p.facts.each_child(p.node(local), |c| {
             let l = p.local_of_node(c);
             if l != NONE {
                 each(l);
             }
         });
+    }
+}
+
+/// core.rerail's and T's `doc(d, path, module)`: a row a file of the batch (a tape value, decision 0431, is no file's),
+/// its key, its path and its module (`syntax::doc_module`), what its documents are given: none made for it. Made as
+/// rows, a scan of it made every document's every relation (ab203: `exists_25`'s `doc($d, $p, _)` led its text
+/// test's probe, and made the chunk's 260 documents whole, 61 MB of the block of sources at the M3's peak).
+pub(super) struct DocRow {
+    /// Its documents' marks: its own, as it makes no projection.
+    block: Arc<Block>,
+}
+
+impl DocRow {
+    fn new(batch: &Batch) -> Self {
+        // A word of marks and two of their ranks a document, with room to spare.
+        DocRow { block: super::cells::block(64 * batch.docs.len() + 4096) }
+    }
+}
+
+impl TapeRows for DocRow {
+    /// Its path's and its module's atoms.
+    type Doc = [i64; 2];
+    fn name(&self) -> &'static str {
+        DOC
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["d", "path", "module"]
+    }
+    fn own(&self) -> usize {
+        0
+    }
+    fn block(&self, _: &At) -> Arc<Block> {
+        Arc::clone(&self.block)
+    }
+    fn doc(&self, at: &At) -> [i64; 2] {
+        let docs = &at.batch.docs;
+        let module = super::doc_module(docs.path(at.doc), docs.module(at.doc), at.batch.shape == Shape::Core);
+        // copy: derived (a document's path and module, interned: the atoms `make_rows` gave them)
+        let atoms = at.batch.atoms.intern_all(&[docs.path(at.doc), module.as_str()]).expect("a document's path and module interned");
+        [i64::from(atoms[0]), i64::from(atoms[1])]
+    }
+    fn items(&self, _: &At, _: &[i64; 2]) -> u32 {
+        1
+    }
+    fn members(&self, at: &At, _: &[i64; 2], each: &mut dyn FnMut(u32)) {
+        if !at.batch.docs.guest(at.doc).is_some_and(|g| matches!(g.made, super::Made::Tape { .. })) {
+            each(0);
+        }
+    }
+    fn row(&self, at: &At, d: &[i64; 2], _: &Marked, _: u32, _: u32, out: &mut [i64]) {
+        out[0] = i64::from(at.batch.docs.key(at.doc));
+        out[1] = d[0];
+        out[2] = d[1];
+    }
+    fn keyed(&self, column: usize) -> bool {
+        column < 3
+    }
+    /// By its key, its document; by its path or module, the documents the batch's interned paths and modules name.
+    fn find(&self, batch: &Batch, column: usize, value: i64, each: &mut dyn FnMut(usize, u32)) {
+        let keys = match column {
+            0 => u32::try_from(value).ok().into_iter().collect(),
+            1 => batch.keys_of_paths(&[value]).unwrap_or_default(),
+            _ => batch.keys_of_modules(&[value]).unwrap_or_default(),
+        };
+        for k in keys {
+            if let Some(doc) = batch.docs.position(k) {
+                each(doc, 0);
+            }
+        }
+    }
+    fn statistics(&self, batch: &Batch) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        batch.doc_statistics()
     }
 }

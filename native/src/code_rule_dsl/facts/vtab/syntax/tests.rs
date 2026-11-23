@@ -2458,7 +2458,7 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
     let docs = || -> Vec<Document> {
         (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    # c{k}\n    return g(x, {k}) + \"s{k}\"\n"))).collect()
     };
-    let reads = ["node", "text", "comment", "op", "str", "name", "src_line", "line_count", "child", "line", "col", "visit_index", "ast_depth", "doc", "path_part", "file_name"];
+    let reads = ["node", "text", "comment", "op", "str", "name", "src_line", "line_count", "child", "line", "col", "visit_index", "ast_depth", "pkg", "path_part", "file_name"];
     let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let rows = |s: &dyn Source| -> Vec<Vec<i64>> {
         let mut rows: Vec<Vec<i64>> = (0..s.len()).map(|r| (0..s.columns().len()).map(|c| s.value(r, c)).collect()).collect();
@@ -2476,10 +2476,10 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
     // A probe of each document's key, then a scan: three groups.
     let probed = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     let sources = made_sources(&probed);
-    let doc = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "doc").unwrap().2);
+    let pkg = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "pkg").unwrap().2);
     for k in [3, 1] {
-        let found = doc.lookup(0, &[k]).unwrap();
-        assert_eq!(found.iter().map(|&r| doc.value(r, 0)).collect::<Vec<_>>(), vec![k], "document {k}'s row");
+        let found = pkg.lookup(0, &[k]).unwrap();
+        assert_eq!(found.iter().map(|&r| pkg.value(r, 0)).collect::<Vec<_>>(), vec![k], "document {k}'s row");
     }
     assert_eq!(probed.groups(), 2, "each probe made its document's group");
     for (name, _, s) in &sources {
@@ -2602,7 +2602,8 @@ fn long_text_nodes_are_measured_on_the_tape_with_no_row_made() {
 }
 
 /// Decision 0353: `doc`'s statistics are its documents' (their paths and modules), with no row made, and are what its
-/// rows measure: a module two files share counted once.
+/// rows measure: a module two files share counted once. It is a view of what the documents are given
+/// (`tape_rows::DocRow`): neither its statistics nor a read of its rows makes a document.
 #[test]
 fn doc_is_measured_by_its_documents_with_no_row_made() {
     let store = ContentStore::open(&temp("doc-stats")).unwrap();
@@ -2611,14 +2612,14 @@ fn doc_is_measured_by_its_documents_with_no_row_made() {
     docs.push(document(5, "data.json", "json", "{\"a\": 1}\n"));
     let projection = Projection { shape: Shape::Core, reads: Some(["node", "doc"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
-    let sources = made_sources(&batch);
-    let doc = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "doc").unwrap().2);
+    let doc = Arc::clone(&views(&batch).into_iter().find(|(n, _)| *n == "doc").unwrap().1);
     let got = doc.statistics().expect("its documents'");
     assert_eq!(doc.estimated_len(), 5, "a row a file");
     assert_eq!(batch.groups(), 0, "the statistics and the estimate made no group");
     let want = measured(&*doc);
     assert_eq!(want[0].1, 5, "a row a file: {want:?}");
     assert_eq!(got, want, "its documents' counts, as the rows measure");
+    assert_eq!((batch.groups(), batch.docs.made_count()), (0, 0), "its rows read made no group and no document");
 }
 
 /// Decision 0494: a batch's relation no count gives is measured on a sample of its documents (one in 16, its first),
@@ -2696,23 +2697,23 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert!(text.failure().is_none());
 }
 
-/// Decision 0494, R2 for `doc`'s other keys: a probe of it by a module (a file's import of another) makes that
-/// module's document alone, as one by its path does: the batch knows each file's module from its path and the
-/// corpus's name for it, none made.
+/// Decision 0494, R2 for `doc`'s other keys: a probe of it by a module (a file's import of another) finds that
+/// module's row, as one by its path does, and makes no document: the batch knows each file's module from its path and
+/// the corpus's name for it (`tape_rows::DocRow`).
 #[test]
 fn a_probe_of_doc_by_a_module_makes_that_document_alone() {
     let store = ContentStore::open(&temp("probe-module")).unwrap();
     let docs: Vec<Document> = (1..=5).map(|k| document(k, &format!("pkg/m{k}.py"), "python", &format!("x{k} = y({k})\n"))).collect();
     let projection = Projection { shape: Shape::Core, reads: Some(["doc".to_owned()].into()), ..Projection::core() };
     let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
-    let sources = made_sources(&batch);
-    let doc = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "doc").unwrap().2);
+    let doc = Arc::clone(&views(&batch).into_iter().find(|(n, _)| *n == "doc").unwrap().1);
     let module = i64::from(store.atoms_handle().intern("pkg.m4").unwrap());
     let found = doc.lookup(2, &[module]).unwrap();
     assert_eq!(found.iter().map(|&r| doc.value(r, 0)).collect::<Vec<_>>(), vec![4], "pkg/m4.py's row");
-    assert_eq!(batch.docs.made_count(), 1, "only the module's document is made");
+    let path = i64::from(store.atoms_handle().intern("pkg/m2.py").unwrap());
+    assert_eq!(doc.lookup(1, &[path]).unwrap().iter().map(|&r| doc.value(r, 0)).collect::<Vec<_>>(), vec![2], "pkg/m2.py's row");
     assert_eq!(doc.lookup(2, &[i64::from(store.atoms_handle().intern("pkg.none").unwrap())]).unwrap(), Vec::<usize>::new(), "no file is that module");
-    assert_eq!(batch.docs.made_count(), 1, "a module no file is makes none");
+    assert_eq!(batch.docs.made_count(), 0, "no document made for `doc`'s rows");
 }
 
 /// Decision 0494, R5: a batch given its documents' views' counts and its relations' rows knows every view's and

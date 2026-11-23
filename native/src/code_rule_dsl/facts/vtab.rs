@@ -212,6 +212,12 @@ pub trait Source: Send + Sync {
     fn lookup_cost(&self, _column: usize) -> f64 {
         1.0
     }
+    /// A scan's work a row it gives, as a multiple of a derived relation's: one, but where the rows a scan gives are
+    /// a few of what it reads (a text test of a batch not yet made: every string of every document, made and
+    /// tested). The planner prices a scan of it so (`Stats::scan_cost`), and leads with what probes it.
+    fn scan_cost(&self) -> f64 {
+        1.0
+    }
     /// The rows estimated to match one value on each of `columns` at once. By default the columns are taken
     /// as independent (each keeps its share of the rows), bounded by the most selective one.
     fn estimated_matches_all(&self, columns: &[usize]) -> usize {

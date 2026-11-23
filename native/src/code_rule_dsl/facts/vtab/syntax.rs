@@ -3355,7 +3355,7 @@ impl Batch {
         let none = BTreeSet::new();
         let reads = projection.reads.as_ref().unwrap_or(&none);
         // Rows with string indexes; the indexes become atoms once the batch's strings are interned.
-        let (mut doc, mut pkg, mut unpackaged) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut pkg, mut unpackaged) = (Vec::new(), Vec::new());
         // `path_part(d, s)`: each directory of a document's path and its file name; `file_name(d, s)`: the last.
         let (mut path_part, mut file_name): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
         // `text`, `intval`, T's `op` and the text relations (`NodeRows`).
@@ -3494,14 +3494,11 @@ impl Batch {
             let key = i64::from(d.key);
             // core.rerail: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
             // for every file.
-            // A tape value (decision 0431) is no file's: no `doc` row, no module or package.
+            // A tape value (decision 0431) is no file's: no `doc` row (a view of the documents, `tape_rows::DocRow`),
+            // no module or package.
             let tape_value = d.guest.as_deref().is_some_and(|g| matches!(g.made, Made::Tape { .. }));
             let py_file = !tape_value && (d.path.ends_with(".py") || d.path.ends_with(".pyi"));
             let named = d.module.as_deref();
-            let module = doc_module(&d.path, named, core);
-            if !tape_value {
-                doc.push([key, string(&d.path) as i64, string(&module) as i64]);
-            }
             if !core || py_file {
                 let package = match named {
                     Some(m) => package_of(&d.path, m),
@@ -3640,7 +3637,6 @@ impl Batch {
         };
         let mut relations = vec![
             (LONG_TEXT_NODES, relation(&["n"], &mut long_text_nodes.iter().map(|&n| vec![n]))),
-            ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)]))),
             ("pkg", pairs(&["d", "p"], &pkg, [false, true])),
             ("unpackaged", relation(&["d"], &mut unpackaged.iter().map(|&d| vec![d]))),
             // The tape's own verdict: tree-sitter's ERROR and MISSING nodes (`Facts::syntax_errors`).

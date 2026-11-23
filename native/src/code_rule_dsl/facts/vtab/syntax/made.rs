@@ -773,7 +773,7 @@ impl Batch {
     /// The groups holding the documents `keys` name, made if they are not.
     /// The keys of the documents whose paths' atoms are `values` (a read of `doc` by its path): its documents' paths
     /// interned once, none made. `None` where they could not be.
-    fn keys_of_paths(&self, values: &[i64]) -> Option<Vec<u32>> {
+    pub(super) fn keys_of_paths(&self, values: &[i64]) -> Option<Vec<u32>> {
         let by = self
             .by_path
             .get_or_init(|| {
@@ -792,7 +792,7 @@ impl Batch {
     /// The keys of the documents whose `doc` rows' modules' atoms are `values` (a read of `doc` by its module): each
     /// file's module (`syntax::doc_module`, from its path and the corpus's name for it) interned once, none made. A
     /// tape value has no `doc` row. `None` where they could not be.
-    fn keys_of_modules(&self, values: &[i64]) -> Option<Vec<u32>> {
+    pub(super) fn keys_of_modules(&self, values: &[i64]) -> Option<Vec<u32>> {
         let by = self
             .by_module
             .get_or_init(|| {
@@ -815,7 +815,7 @@ impl Batch {
     /// rows' first column is a document key, so every row is one group's. Measured as rows, the planner's measure of
     /// `doc` made every document's rows of every relation of its group (33.9 MB of node rows at the M3's 300-file
     /// peak, ab161). `None` with no file.
-    fn doc_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+    pub(super) fn doc_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.keys_of_modules(&[])?;
         let by = self.by_module.get()?.as_ref()?;
         let rows: i64 = by.values().map(|k| k.len() as i64).sum();
@@ -973,10 +973,6 @@ impl MadeRows {
             })
             .clone()
     }
-    /// Whether it is core.rerail's `doc(d, path, module)`, a row a file: what the documents give with none made.
-    fn is_doc(&self) -> bool {
-        self.batch.rows.names[self.rel] == "doc" && self.template().columns() == ["d", "path", "module"]
-    }
     /// How the relation's first column names its row's document.
     fn by(&self) -> ByDocument {
         self.batch.rows.by[self.rel]
@@ -1106,8 +1102,6 @@ impl Source for MadeRows {
     fn len(&self) -> usize {
         match (self.done(), self.batch.rows.counted(self.rel)) {
             (None, Some(n)) => n,
-            // `doc`'s rows are its file documents, counted with none made (`doc_statistics`).
-            (None, None) if self.is_doc() && let Some(s) = self.batch.doc_statistics() => s[0].1 as usize,
             _ => self.target().len(),
         }
     }
@@ -1149,7 +1143,6 @@ impl Source for MadeRows {
     fn estimated_len(&self) -> usize {
         match (self.done(), self.batch.rows.counted(self.rel)) {
             (None, Some(n)) => n,
-            (None, None) if self.is_doc() => self.batch.doc_statistics().map_or(0, |s| s[0].1 as usize),
             (None, None) => match self.sampled() {
                 Some(s) => s.first().map_or(0, |c| c.1 as usize),
                 None => self.target().estimated_len(),
@@ -1268,11 +1261,10 @@ impl Source for MadeRows {
             t.expect_lookups(_column, _keys)
         }
     }
-    /// The made relation's, or before its rows are made, those its documents give (`doc`'s: `doc_statistics`).
+    /// The made relation's, or before its rows are made, its sample's (`sampled`).
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         match self.done() {
             Some(t) => t.statistics(),
-            None if self.is_doc() => self.batch.doc_statistics(),
             None => self.sampled(),
         }
     }
@@ -1419,8 +1411,9 @@ pub(super) struct TextTest {
     scanned: Arc<std::sync::atomic::AtomicBool>,
     /// Every string of the batch that passes, the probed first (their rows kept): made by the first scan.
     whole: OnceLock<Relation>,
-    /// Its rows before the scan, measured on a sample of the batch's documents (`sampled`).
-    sampled: OnceLock<Option<usize>>,
+    /// Its rows before the scan, and the strings a scan would test, measured on a sample of the batch's documents
+    /// (`sampled`).
+    sampled: OnceLock<Option<(usize, usize)>>,
 }
 
 /// The text tests' answers over a run's strings (decision 0037): shared by every test of a batch and of the batches
@@ -1495,13 +1488,18 @@ impl TextTest {
     /// the documents. The planner's measure of a text test scanned the batch's whole vocabulary, which made every
     /// document (ab183: `strtest_0`'s measure made six batches whole, 33 MB of node rows staged at the M3's peak).
     fn sampled(&self) -> Option<usize> {
+        self.sample().map(|(rows, _)| rows)
+    }
+    /// The sample's rows and strings, both scaled to the batch's documents (`sampled`).
+    fn sample(&self) -> Option<(usize, usize)> {
         *self.sampled.get_or_init(|| {
             let (_, covered) = self.batch.sample_groups()?;
             let symbols: Vec<i64> = self.batch.shared.lock().atoms.iter().map(|&a| i64::from(a)).collect();
             let passed = self.probe(&symbols).len();
             profile::decision("a text test measured on a sample of its batch's documents (decision 0494)", || format!("{}: {covered} of {} documents, {passed} of {} strings", self.tested.tests.tests[self.k].0, self.batch.docs.len(), symbols.len()));
             // At least one, as a lazy batch's estimate is: a sample that passes none says it passes few, not none.
-            Some(((passed as u128 * self.batch.docs.len() as u128 / covered as u128) as usize).max(1))
+            let scaled = |n: usize| ((n as u128 * self.batch.docs.len() as u128 / covered as u128) as usize).max(1);
+            Some((scaled(passed), scaled(symbols.len())))
         })
     }
     /// The answers it shares.
@@ -1591,6 +1589,17 @@ impl Source for TextTest {
     }
     fn estimated_matches(&self, _column: usize, batch: bool) -> usize {
         if batch { 8 } else { 1 }
+    }
+    /// Before its scan, in a batch not yet made whole, a scan tests every string of the batch, every document made
+    /// for them (ab202: `exists_25`'s `strtest_29($p), doc($d, $p, _)` led with the test, 81 rows priced, which made
+    /// the chunk's 260 documents' every relation, 61 MB of the block of sources at the M3's peak, for 71 paths):
+    /// the strings a row it gives, as sampled. A probe tests only what it is given.
+    /// A batch made by its reads (`Batch::lazy`) is not sampled for it, as its statistics are not.
+    fn scan_cost(&self) -> f64 {
+        if self.whole.get().is_some() || self.batch.rows.complete.get().is_some() || self.batch.lazy() {
+            return 1.0;
+        }
+        self.sample().map_or(1.0, |(rows, strings)| (strings as f64 / rows as f64).max(1.0))
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         if column != 0 {
