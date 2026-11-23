@@ -10625,4 +10625,5 @@ copied lines) but left it `#[cfg(any(test, feature = "test-hooks"))]`, which onl
 (two E0599s in `relax check rerail-engine`): the gate goes. No architectural clash.
 
 Relax: the engine checks clean; the text guards, the two rr tests and rerail-lang's tape tests pass. rerail-tests-tape
-fails as it did before this merge (checked at f5bf47bb18): its own entry (Q504).
+failed as it did before this merge (checked at f5bf47bb18), from two Relax gaps, fixed in d8ffdccc9d: std's
+`ExactSizeIterator::len` and a fatal fault's program handler (scripts/dev/relax/README.md, changes 13 and 14).
