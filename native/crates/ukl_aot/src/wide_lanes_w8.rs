@@ -41,6 +41,7 @@ unsafe fn bits(k: &[uint32x4_t; 2]) -> u32 {
     b
 }
 
+/// `wide_lanes_inner`.
 #[inline(always)]
 unsafe fn b0_r0r1r2r3sg_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8, arg1: *const u8, arg2: *const u8, arg3: *const u8, x4: *const u8) {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -871,6 +872,7 @@ unsafe fn b0_r0r1r2r3sg_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *cons
     }
 }
 
+/// `wide_lanes_inner`.
 #[inline(always)]
 unsafe fn b0_r0r1r2r3sg_f(l: &Launch, lid0: u32, arg0: *const u8, arg1: *const u8, arg2: *const u8, arg3: *const u8, x4: *const u8) {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2076,6 +2078,7 @@ unsafe fn b0_r0r1r2r3sg_f(l: &Launch, lid0: u32, arg0: *const u8, arg1: *const u
     }
 }
 
+/// `ukl_popcount64`.
 #[inline(always)]
 unsafe fn b1_l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: [uint32x4_t; 4]) -> [uint32x4_t; 2] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2086,6 +2089,7 @@ unsafe fn b1_l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: [uint32x4_t; 4])
     return res;
 }
 
+/// `ukl_popcount64`.
 #[inline(always)]
 unsafe fn b1_l_f(l: &Launch, lid0: u32, x0: [uint32x4_t; 4]) -> [uint32x4_t; 2] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2096,6 +2100,7 @@ unsafe fn b1_l_f(l: &Launch, lid0: u32, x0: [uint32x4_t; 4]) -> [uint32x4_t; 2] 
     return res;
 }
 
+/// `ukl_clz64`.
 #[inline(always)]
 unsafe fn b2_l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: [uint32x4_t; 4]) -> [uint32x4_t; 2] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2106,6 +2111,7 @@ unsafe fn b2_l_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: [uint32x4_t; 4])
     return res;
 }
 
+/// `ukl_clz64`.
 #[inline(always)]
 unsafe fn b2_l_f(l: &Launch, lid0: u32, x0: [uint32x4_t; 4]) -> [uint32x4_t; 2] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2116,6 +2122,7 @@ unsafe fn b2_l_f(l: &Launch, lid0: u32, x0: [uint32x4_t; 4]) -> [uint32x4_t; 2] 
     return res;
 }
 
+/// `wide_step`.
 #[inline(always)]
 unsafe fn b3_ll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: [uint32x4_t; 4], x1: [uint32x4_t; 2]) -> [uint32x4_t; 4] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2178,6 +2185,7 @@ unsafe fn b3_ll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: [uint32x4_t; 4]
     res
 }
 
+/// `wide_step`.
 #[inline(always)]
 unsafe fn b3_ll_f(l: &Launch, lid0: u32, x0: [uint32x4_t; 4], x1: [uint32x4_t; 2]) -> [uint32x4_t; 4] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2239,6 +2247,7 @@ unsafe fn b3_ll_f(l: &Launch, lid0: u32, x0: [uint32x4_t; 4], x1: [uint32x4_t; 2
     res
 }
 
+/// `ukl_umulhi64`.
 #[inline(always)]
 unsafe fn b4_ll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: [uint32x4_t; 4], x1: [uint32x4_t; 4]) -> [uint32x4_t; 4] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2258,6 +2267,7 @@ unsafe fn b4_ll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: [uint32x4_t; 4]
     return res;
 }
 
+/// `ukl_umulhi64`.
 #[inline(always)]
 unsafe fn b4_ll_f(l: &Launch, lid0: u32, x0: [uint32x4_t; 4], x1: [uint32x4_t; 4]) -> [uint32x4_t; 4] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2277,6 +2287,7 @@ unsafe fn b4_ll_f(l: &Launch, lid0: u32, x0: [uint32x4_t; 4], x1: [uint32x4_t; 4
     return res;
 }
 
+/// `ukl_ld_window`.
 #[inline(always)]
 unsafe fn b5_r0ns_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8, x1f: u32, x1s: u32, x2: u32) -> [uint32x4_t; 4] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2545,6 +2556,7 @@ unsafe fn b5_r0ns_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8, 
     return res;
 }
 
+/// `ukl_ld_window`.
 #[inline(always)]
 unsafe fn b5_r0ns_f_v0(l: &Launch, lid0: u32, arg0: *const u8, x1f: u32, x1s: u32, x2: u32) -> [uint32x4_t; 4] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2802,6 +2814,7 @@ unsafe fn b5_r0ns_f_v0(l: &Launch, lid0: u32, arg0: *const u8, x1f: u32, x1s: u3
     return res;
 }
 
+/// `wide_part`.
 #[inline(always)]
 unsafe fn b6_i_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: u32) -> [uint32x4_t; 4] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2820,6 +2833,7 @@ unsafe fn b6_i_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: u32) -> [uint32x
     return res;
 }
 
+/// `wide_part`.
 #[inline(always)]
 unsafe fn b6_i_f(l: &Launch, lid0: u32, x0: u32) -> [uint32x4_t; 4] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2838,6 +2852,7 @@ unsafe fn b6_i_f(l: &Launch, lid0: u32, x0: u32) -> [uint32x4_t; 4] {
     return res;
 }
 
+/// `wide_part`.
 #[inline(always)]
 unsafe fn b6_u8_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: u32) -> [uint32x4_t; 4] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2856,6 +2871,7 @@ unsafe fn b6_u8_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: u32) -> [uint32
     return res;
 }
 
+/// `wide_part`.
 #[inline(always)]
 unsafe fn b6_u8_f(l: &Launch, lid0: u32, x0: u32) -> [uint32x4_t; 4] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2874,6 +2890,7 @@ unsafe fn b6_u8_f(l: &Launch, lid0: u32, x0: u32) -> [uint32x4_t; 4] {
     return res;
 }
 
+/// `wide_rare`.
 #[inline(always)]
 unsafe fn b7_ss_f(l: &Launch, lid0: u32, x0: u64, x1: u32) -> u64 {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2893,6 +2910,7 @@ unsafe fn b7_ss_f(l: &Launch, lid0: u32, x0: u64, x1: u32) -> u64 {
     return res;
 }
 
+/// `wide_rare`.
 #[inline(always)]
 unsafe fn b7_ll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: [uint32x4_t; 4], x1: [uint32x4_t; 2]) -> [uint32x4_t; 4] {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2952,6 +2970,7 @@ unsafe fn b7_ll_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: [uint32x4_t; 4]
     return res;
 }
 
+/// `ukl_mask64`.
 #[inline(always)]
 unsafe fn b8_s_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: u32) -> u64 {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -2967,6 +2986,7 @@ unsafe fn b8_s_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], x0: u32) -> u64 {
     return res;
 }
 
+/// `ukl_mask64`.
 #[inline(always)]
 unsafe fn b8_s_f(l: &Launch, lid0: u32, x0: u32) -> u64 {
     let gid0 = l.group[0] * l.block[0] + lid0;

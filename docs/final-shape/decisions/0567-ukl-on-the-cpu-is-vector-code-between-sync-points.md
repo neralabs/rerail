@@ -791,6 +791,43 @@ slower. Each walks the tape (`tape_next`, a node's children, its siblings) in lo
 lane, and a round is a gather of each lane's. On records and random the whole is more cycles than the c++, so the
 device does not run it yet (`rerail_ukl_rust::kernels` names `label_parents` alone). Next: the walks' loops.
 
+## Step 3, the join program: `join_run` (the user's, 2026-11-23)
+
+The user: "replace the hand-coded CPU join path by an uglykl path, so that both CPU and GPU are running the same
+kernel (but one via AOT Rust and the other via Metal/whatever)". The kernel is `join_stages.uglykl`'s `join_run`, the
+work-queue program Metal runs (`metal_join::program_pipe`, `JOIN_PROGRAM`), with the view reads of `view.h` (all
+three formats: the format is the view's, chosen at run time). rs.rs now writes all of it: 1,039 instances of 370
+functions, at 32 lanes, one SIMD group a group (`rs::kernel_group`: its barriers lower to nothing, its SIMD-group
+operations act across the chunk's registers). What it took, in the lowering (`lower.rs`) and in rs.rs:
+
+1. **C the program uses**: an enumeration at file scope (its enumerators `int` constants), `offsetof`, and a call
+   whose callee is a parenthesized typedef (a cast).
+2. **A thread variable's address passed** (`&mut`, `Sh::Ref`), **a thread array passed** (`Sh::Arr`), and **a
+   structure of fields** (each field a variable, `fields`): copied into whole, passed whole, returned. A structure
+   read whole has every byte a field's: the bytes no access names are fields too (`gaps`). Without them, the stage
+   record `join_run` copies and passes to its stage dispatch had its op as `0`, and LLVM, rightly, removed every
+   stage (the kernel compiled to 52 KB). A structure copied in from memory and only read is read where it is
+   (`aliasable`), not copied. A structure of other uses is bytes of each lane's.
+3. **`switch`** (an entry index; a case runs where `e <= j`; a `break` all lanes take, the label, else a mask),
+   **`do`**, atomics of every operation (one at each lane's address, a loop over the lanes), a fence, the SIMD-group
+   operations (ballot, reductions, shuffles), lanes of 1 and 2 bytes, aggregate results, updates of memory, a
+   store at each lane's address.
+4. **A loop whose breaks are its label's** no longer sees an outer loop's mask of lanes that broke: with it, a
+   `break` of the inner loop wrote that mask and the loop went on (`label_leaves` lost a test's bit to it; its test
+   against the c++ build caught it).
+5. **At 32 lanes the code is written once over registers and lanes** (`rolled`): a register list that is one
+   expression of its index is `core::array::from_fn` (`roll`), a 64-bit value's two halves too, and a gather is a
+   loop over the lanes into a `[u32; 4P]` (`load_lanes`). `join_run`'s Rust went from 29 MB to 10.7 MB.
+6. **A function the source declares a call** (`UKL_SHARED`, `UKL_LARGE`, `UKL_COLD`) is the Rust compiler's to inline
+   or not when its instance is over 200 lines (`CALLED_LINES`), inlined otherwise. The label passes' reads are
+   54 lines at most; left to LLVM they stayed calls, and in instructions (`label_bench`, 700 K nodes, 20 runs)
+   `label_parents` took 1,511 M against 1,403 M inlined, `label_leaves` 24,837 M against 22,947 M.
+
+`join_run`'s 10.7 MB of Rust compiles (rustc, opt-level 1) in 587 s at 6 GB, to 9.5 MB of code. That is not a
+kernel to check in: the instances of the view reads are the bulk (`clif_verdict_entry` and `clif_cache_open` 3,800
+lines each, twice; each format's `view_loc_*` read 1,900). Next: the code's size, then the kernel against Metal's
+and the c++ build's results, then the CPU joins on it.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one

@@ -62,6 +62,13 @@ enum V {
     /// Lanes `first + j` (`u32`s) compared with one value `y` (unsigned): a mask, which a chunk of consecutive
     /// lanes may decide at once (all on one side of `y`).
     Cmp { op: Op, first: String, y: String },
+    /// A thread's variable's address, each lane's its own variable (`C`'s `&x`): the Rust place of its registers
+    /// (each lane's, `[uint32x4_t; P]` or `2P`), and the variable's type. A function it is passed to takes the
+    /// registers by `&mut` (`Sh::Ref`); a load, store or update through it is one of the variable, in place.
+    Ref(String, M),
+    /// A thread's array's address (`array`): the Rust place of its registers, its elements and their bytes. A
+    /// function it is passed to takes them by `&mut` (`Sh::Arr`); its accesses through it are its elements'.
+    Arr(String, u32, u32),
     /// No value (a call of a function without one).
     None,
 }
@@ -112,6 +119,10 @@ enum Sh {
     /// Each lane's address: a base (the kernel's buffer `k`, if it is one), and an index of each lane (its own, of
     /// consecutive lanes from a `u32`, or `gid0`), times the scale.
     At(u32, Ix, Option<u32>),
+    /// A caller's thread variable's address (`V::Ref`), its type's word: its registers, by `&mut`.
+    Ref(u32),
+    /// A caller's thread array (`V::Arr`): its elements and their bytes, its registers by `&mut`.
+    Arr(u32, u32),
 }
 
 /// An index of each lane, as a parameter passes it.
@@ -159,6 +170,8 @@ impl Sh {
             Sh::L => "l".into(),
             Sh::Arg(k) => format!("r{k}"),
             Sh::In(k) => format!("o{k}"),
+            Sh::Ref(m) => format!("p{m}"),
+            Sh::Arr(e, b) => format!("q{e}x{b}"),
             Sh::At(k, ix, r) => format!("a{}{k}{}", match ix { Ix::L => "l", Ix::Iota => "i", Ix::Lin => "n", Ix::Gid => "g" }, r.map(|r| format!("r{r}")).unwrap_or_default()),
         }
     }
@@ -182,6 +195,8 @@ impl Sh {
                 root(base),
             ),
             V::L(..) | V::Z(..) | V::K(..) | V::Cmp { .. } => Sh::L,
+            V::Ref(_, m) => Sh::Ref(m.0),
+            V::Arr(_, e, b) => Sh::Arr(*e, *b),
         }
     }
 
@@ -246,6 +261,14 @@ type Inst = (u32, Vec<Sh>, bool, Vec<u32>);
 struct Em<'a> {
     /// The program's constant memory (`Program::data`): what a `Global` addresses.
     data: &'a [u8],
+    /// Each of the program's functions: whether it is declared `noinline` (`UKL_SHARED`, `UKL_LARGE`, `UKL_COLD`:
+    /// `lower::Func::called`). An instance of one longer than `CALLED_LINES` is the compiler's to inline or call
+    /// (`#[inline]`): inlined everywhere, `join_run`'s `clif_verdict_entry` and the like made its Rust 9.5 MB of
+    /// code. Every other instance is inlined: the label passes' reads (54 lines at most at 8 lanes), left to LLVM,
+    /// stayed calls, and `label_parents` and `label_leaves` each took 8% more instructions (decision 0567).
+    called: Vec<bool>,
+    /// Each function's name in the source.
+    names: Vec<String>,
     v: View<'a>,
     w: u32,
     p: u32,
@@ -256,6 +279,13 @@ struct Em<'a> {
     lanes: HashMap<(u32, u32), bool>,
     /// The variables found consecutive lanes (`Var::iota`), for the next pass.
     iotas: std::collections::HashSet<(u32, u32)>,
+    /// Pointer variables that only ever hold one thread variable's address (`p = &x`): `x`, through them (`V::Ref`).
+    refs: HashMap<(u32, u32), V>,
+    /// A thread's structures held as their fields (`fields`), by instance and variable: each field's byte and type.
+    structs: HashMap<(u32, u32), Vec<(u32, M)>>,
+    /// A thread's structures held in memory of the chunk's (`mem`), by instance and variable: the Rust name of their
+    /// bytes, a row a lane (`[[u8; size]; W]`), and the size.
+    mems: HashMap<(u32, u32), (String, u32)>,
     /// The function being written's parameters of consecutive lanes: of a chunk known to cross no `2^K`
     /// (`Sh::Run`), each one's `K`; of any (`Sh::Iota`), each one's function and parameter number.
     runs: HashMap<String, u32>,
@@ -294,9 +324,9 @@ struct Em<'a> {
     /// structure from another is read where it lies (`aliases`, the variables so read).
     written: Option<std::collections::BTreeSet<u32>>,
     aliases: std::collections::HashSet<(u32, u32)>,
-    /// A thread's array (a variable reached at a byte offset of one value for all lanes, its every access 4 bytes):
-    /// its Rust name and its 4-byte elements, each a register of the chunk's lanes (`elem`).
-    arrays: HashMap<(u32, u32), (String, u32)>,
+    /// A thread's array (a variable reached at a byte offset of one value for all lanes, its every access of 4 bytes,
+    /// or of 8): its Rust name, its elements, and their bytes, each element the chunk's lanes' registers (`elem`).
+    arrays: HashMap<(u32, u32), (String, u32, u32)>,
     /// Whether the code written since it was cleared may read where no lane of it runs (a gather whose lanes that
     /// do not run take a running one's address: with none running, an address none named); the instances that may,
     /// as the last pass found them.
@@ -316,12 +346,26 @@ struct Em<'a> {
     /// What this pass could not write, which a later pass may (a call's result it finds of each lane): an error if the
     /// passes settle with it.
     pending: Option<String>,
+    /// The group is one chunk, one SIMD group (`kernel_group`): its threads run in step, so a barrier is met where
+    /// it is written, and a SIMD group's operation is one across the chunk's lanes.
+    one: bool,
 }
 
 /// Kernel `name`'s vector tape `k` (of program `prog`, whose constant memory it reads) as Rust at `w` lanes (4, 8, 16
 /// or 32): a module's text, its entry
 /// `pub unsafe fn {name}_w{w}(argv: *const *const u8, l: &Launch)`.
 pub fn kernel(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32) -> R<String> {
+    emit(prog, k, w, false)
+}
+
+/// The Rust of kernel `k` for groups of one SIMD group (`UKL_SIMD_WIDTH`, 32 threads), each group one chunk of 32
+/// lanes: its barriers, anywhere (in a loop, a branch every thread takes, a called function), are met in step, and
+/// its SIMD groups' operations are the chunk's. A launch of other groups is refused where it runs.
+pub fn kernel_group(prog: &crate::lower::Program, k: &crate::vector::Kernel) -> R<String> {
+    emit(prog, k, 32, true)
+}
+
+fn emit(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32, one: bool) -> R<String> {
     if !matches!(w, 4 | 8 | 16 | 32) {
         return err(format!("{w} lanes: 4, 8, 16 or 32"));
     }
@@ -332,8 +376,8 @@ pub fn kernel(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32) -
             bodies.insert(v.w(i, 0), i);
         }
     }
-    let mut e = Em { data: prog.data(), v, w, p: w / 4, bodies, lanes: HashMap::new(), iotas: Default::default(), runs: HashMap::new(), lane_conds: Default::default(), shadows: Default::default(), shadow_fail: false, iota_params: HashMap::new(), wants: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), written: Some(Default::default()), aliases: Default::default(), arrays: HashMap::new(), risky: false, risky_insts: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new(), shared: None, sub: None, pending: None };
-    if e.v.len() > 0 && e.v.kind(0) == Kind::Func && e.v.w(0, 2) > 0 {
+    let mut e = Em { data: prog.data(), called: prog.funcs.iter().map(|f| f.called).collect(), names: prog.funcs.iter().map(|f| f.name.clone()).collect(), v, w, p: w / 4, bodies, lanes: HashMap::new(), iotas: Default::default(), refs: HashMap::new(), structs: HashMap::new(), mems: HashMap::new(), runs: HashMap::new(), lane_conds: Default::default(), shadows: Default::default(), shadow_fail: false, iota_params: HashMap::new(), wants: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), written: Some(Default::default()), aliases: Default::default(), arrays: HashMap::new(), risky: false, risky_insts: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new(), shared: None, sub: None, pending: None, one };
+    if !e.v.is_empty() && e.v.kind(0) == Kind::Func && e.v.w(0, 2) > 0 {
         e.shared = Some(e.v.w(0, 4));
     }
     // Each pass finds lanes the one before did not (a variable written a lane's value, or apart); until none. A
@@ -381,6 +425,14 @@ pub fn kernel(prog: &crate::lower::Program, k: &crate::vector::Kernel, w: u32) -
 
 impl Em<'_> {
     fn line(&mut self, s: impl AsRef<str>) {
+        if self.rolled() {
+            let r = roll(s.as_ref(), self.p as usize);
+            return self.line_at(&r);
+        }
+        self.line_at(s.as_ref())
+    }
+
+    fn line_at(&mut self, s: impl AsRef<str>) {
         // A block's end: the lanes it made are out of scope.
         if s.as_ref().starts_with('}') {
             let d = self.ind;
@@ -403,8 +455,43 @@ impl Em<'_> {
     fn map(&mut self, f: impl Fn(u32) -> String) -> String {
         let t = self.tmp();
         let parts: Vec<String> = (0..self.p).map(&f).collect();
+        // Of more than two registers, the same expression of each: written once, over the registers (`from_fn`,
+        // which the compiler unrolls), so a chunk of 32 lanes is not eight copies of each operation's text.
+        if self.p > 2
+            && let Some(e) = per_register(&parts, 0)
+        {
+            self.line(format!("let {t}: [uint32x4_t; {}] = core::array::from_fn(|r| {e});", self.p));
+            return t;
+        }
         self.line(format!("let {t}: [uint32x4_t; {}] = [{}];", self.p, parts.join(", ")));
         t
+    }
+
+    /// Each lane's `m` (1, 2, 4 or 8 bytes) loaded from the address `at` of lane `j` (an expression of `j`, a pointer)
+    /// into `t` (`[uint32x4_t; P]`, or `2P` its halves, declared): a loop over the lanes (`rolled`).
+    fn load_lanes(&mut self, t: &str, m: M, at: &str) -> R<()> {
+        let (w, p) = (self.w, self.p);
+        let n = if wide(m) { 2 * p } else { p };
+        let g = self.tmp();
+        self.line(format!("let mut {g} = [0u32; {}];", 4 * n));
+        let (ty, ext) = match (m.bytes(), m.signed()) {
+            (8, _) => ("u64", ""),
+            (1, true) => ("i8", " as i32"),
+            (2, true) => ("i16", " as i32"),
+            (1, false) => ("u8", ""),
+            (2, false) => ("u16", ""),
+            _ => ("u32", ""),
+        };
+        let put = if wide(m) { format!("{g}[j] = v as u32; {g}[{w} + j] = (v >> 32) as u32;") } else { format!("{g}[j] = v{ext} as u32;") };
+        self.line(format!("for j in 0..{w} {{ let v = ({at} as *const {ty}).read_unaligned(); {put} }}"));
+        self.line(format!("{t} = core::mem::transmute::<[u32; {}], [uint32x4_t; {n}]>({g});", 4 * n));
+        Ok(())
+    }
+
+    /// Whether a lane's or a register's operations are written as loops over them (more than two registers, 8
+    /// lanes), not each one's text.
+    fn rolled(&self) -> bool {
+        self.p > 2
     }
 
     fn any(&self, k: &str) -> String {
@@ -573,6 +660,9 @@ impl Em<'_> {
         self.line(format!("pub unsafe fn {name}_w{w}(argv: *const *const u8, l: &Launch) {{"));
         self.ind += 1;
         self.line("let n = l.block[0] * l.block[1] * l.block[2];");
+        if self.one {
+            self.line(format!("assert!(n == {w}, \"{name}: a group of one SIMD group ({w} threads)\");"));
+        }
         self.top = self.out.len();
         self.hoisted.clear();
         self.runs.clear();
@@ -588,6 +678,22 @@ impl Em<'_> {
     /// lanes run, then the group's last threads (under `n`), if any, as some lanes of a chunk.
     fn chunks(&mut self, n: usize, cx: &Cx) -> R<()> {
         let w = self.w;
+        // A group of one chunk, all of whose lanes run.
+        if self.one {
+            self.line("{");
+            self.ind += 1;
+            self.line("let lid0 = 0u32;");
+            self.line(format!("let mut live = {};", self.ones()));
+            self.line(format!("let {GID} = l.group[0] * l.block[0];"));
+            self.line("'chunk: {");
+            self.ind += 1;
+            self.stmt(n, &Cx { full: true, chunk: true, ..cx.clone() })?;
+            self.ind -= 1;
+            self.line("}");
+            self.ind -= 1;
+            self.line("}");
+            return Ok(());
+        }
         self.line("let mut lid0 = 0u32;");
         self.line(format!("while lid0 + {w} <= n {{"));
         self.ind += 1;
@@ -667,6 +773,10 @@ impl Em<'_> {
     /// Function `id`'s statements in phases, if barriers part them: its top-level statements between them
     /// (`phase_parts`).
     fn phases(&self, id: u32) -> Option<Vec<Vec<Part>>> {
+        // A group of one chunk: its barriers met where they are, no phases.
+        if self.one {
+            return None;
+        }
         let &b = self.bodies.get(&id)?;
         let block = self.v.child(b, 0);
         if self.v.kind(block) != Kind::Block {
@@ -838,6 +948,8 @@ impl Em<'_> {
         self.iota_params.clear();
         for (k, &(off, m)) in params.iter().enumerate() {
             let name = format!("x{off}");
+            // A parameter the function writes: a mutable binding.
+            let mt = if self.writes_var(n, off) { "mut " } else { "" };
             let var = if m.is_agg() && !matches!(shapes.get(k), Some(Sh::At(..))) {
                 ps.push(format!("{name}: *const u8"));
                 Var { name, m: M::PTR, lanes: false, iota: false, fixed: None }
@@ -849,17 +961,26 @@ impl Em<'_> {
                         Var { name, m, lanes: false, iota: false, fixed: None }
                     }
                     Sh::Gid => Var { name, m, lanes: false, iota: false, fixed: Some(V::Iota(GID.into(), m)) },
+                    Sh::Ref(r) => {
+                        ps.push(format!("{name}: &mut {}", self.ty(M(r), true)?));
+                        Var { name: name.clone(), m: M::PTR, lanes: false, iota: false, fixed: Some(V::Ref(format!("(*{name})"), M(r))) }
+                    }
+                    Sh::Arr(e, b) => {
+                        let regs = if b == 8 { 2 * self.p } else { self.p };
+                        ps.push(format!("{name}: &mut [[uint32x4_t; {regs}]; {e}]"));
+                        Var { name: name.clone(), m: M::PTR, lanes: false, iota: false, fixed: Some(V::Arr(format!("(*{name})"), e, b)) }
+                    }
                     Sh::In(r) => {
                         let name = format!("arg{r}_{name}");
                         ps.push(format!("{name}: {}", self.ty(m, false)?));
                         Var { name, m, lanes: false, iota: false, fixed: None }
                     }
                     Sh::S => {
-                        ps.push(format!("{name}: {}", self.ty(m, false)?));
+                        ps.push(format!("{mt}{name}: {}", self.ty(m, false)?));
                         Var { name, m, lanes: false, iota: false, fixed: None }
                     }
                     Sh::L => {
-                        ps.push(format!("{name}: {}", self.ty(m, true)?));
+                        ps.push(format!("{mt}{name}: {}", self.ty(m, true)?));
                         self.lanes.insert((ctx, off), true);
                         Var { name, m, lanes: true, iota: false, fixed: None }
                     }
@@ -911,8 +1032,14 @@ impl Em<'_> {
             ps.push("st: *mut u8".into());
         }
         let rl = self.rets.get(&ctx).copied().unwrap_or(false);
-        let rt = if ret == M::VOID { String::new() } else { format!(" -> {}", self.ty(ret, rl)?) };
+        let rt = if ret == M::VOID { String::new() } else { format!(" -> {}", self.result_ty(ret, rl)?) };
+        let called = self.called.get(self.v.w(n, 1) as usize).copied().unwrap_or(false);
+        if let Some(name) = self.names.get(self.v.w(n, 1) as usize) {
+            self.line(format!("/// `{name}`."));
+        }
+        let attr = self.out.len();
         self.line("#[inline(always)]");
+        let body = self.out.len();
         self.line(format!("unsafe fn {}({}){rt} {{", fname(id, shapes, full, valid), ps.join(", ")));
         self.ind += 1;
         self.line(format!("let {GID} = l.group[0] * l.block[0] + lid0;"));
@@ -921,6 +1048,24 @@ impl Em<'_> {
         self.valid = valid.iter().map(|&k| (k, 1)).collect();
         // Its variables, each declared once at its start (a scope's are its function's in C's sense here).
         let locals = self.locals(n, ctx, &params)?;
+        // A parameter of a shape its calls give (consecutive lanes, each lane's address) that the function writes, or
+        // one of one value it writes each lane's value to (as a pass found): a variable of each lane's, from it.
+        for &(off, _) in &params {
+            let Some(var) = self.vars.get(&(ctx, off)).cloned() else { continue };
+            let f = match var.fixed.clone() {
+                Some(V::Ref(..) | V::Arr(..)) => continue,
+                Some(f) => f,
+                None if !var.lanes && !var.m.is_agg() && self.lanes.get(&(ctx, off)).copied().unwrap_or(false) => V::S(var.name.clone(), var.m),
+                None => continue,
+            };
+            if !self.writes_var(n, off) {
+                continue;
+            }
+            let name = format!("{}_w", var.name);
+            let l = if var.m == M::B { self.mask(&f)? } else { self.lanes(&f, var.m)? };
+            self.line(format!("let mut {name}: {} = {l};", self.ty(var.m, true)?));
+            self.vars.insert((ctx, off), Var { name, m: var.m, lanes: true, iota: false, fixed: None });
+        }
         if phases.is_some() && self.arrays.keys().any(|k| k.0 == ctx) {
             return err("a thread's array in a function with barriers");
         }
@@ -936,8 +1081,18 @@ impl Em<'_> {
         let res = if ret == M::VOID {
             None
         } else {
-            let init = if rl { self.zeros_of(ret) } else if ret == M::B { "false".into() } else if ret == M::PTR { "core::ptr::null()".into() } else { "0".into() };
-            self.line(format!("let mut res: {} = {init};", self.ty(ret, rl)?));
+            let init = if ret.is_agg() {
+                if rl { format!("[[0u8; {}]; {}]", ret.bytes(), self.w) } else { format!("[0u8; {}]", ret.bytes()) }
+            } else if rl {
+                self.zeros_of(ret)
+            } else if ret == M::B {
+                "false".into()
+            } else if ret == M::PTR {
+                "core::ptr::null()".into()
+            } else {
+                "0".into()
+            };
+            self.line(format!("let mut res: {} = {init};", self.result_ty(ret, rl)?));
             Some(("res".to_string(), ret, rl))
         };
         let cx = Cx { cur: "live".into(), divergent: false, live: "live".into(), res: res.clone(), brk: None, exit: None, cont: None, kernel: false, ctx, body: id, full, looped: None, region: None, chunk: false, phased: false, left: false };
@@ -1018,6 +1173,9 @@ impl Em<'_> {
         }
         self.ind -= 1;
         self.line("}");
+        if called && self.out[body..].matches('\n').count() > CALLED_LINES {
+            self.out.replace_range(attr..body, &format!("{}#[inline]\n", "    ".repeat(self.ind)));
+        }
         Ok(())
     }
 
@@ -1085,19 +1243,47 @@ impl Em<'_> {
             if params.iter().any(|&(o, _)| o == off) || out.contains_key(&off) || arrays.contains(&off) {
                 continue;
             }
-            // A thread's array: each 4-byte element a register of the chunk's lanes.
-            if let Some(elems) = self.array(n, off) {
-                let name = format!("x{off}");
-                self.line(format!("let mut {name}: [[uint32x4_t; {}]; {elems}] = [{}; {elems}];", self.p, self.zeros_of(M::U32)));
-                self.arrays.insert((ctx, off), (name, elems));
+            // A thread's structure: each field its own variable, as a scalar is.
+            if let Some(fields) = self.fields(n, off) {
+                for &(byte, m) in &fields {
+                    let key = field_key(off, byte);
+                    let lanes = self.lanes.get(&(ctx, key)).copied().unwrap_or(false);
+                    let iota = !lanes && m.bytes() == 4 && self.iotas.contains(&(ctx, key));
+                    out.insert(key, Var { name: format!("x{off}_{byte}"), m, lanes, iota, fixed: self.refs.get(&(ctx, key)).cloned() });
+                }
+                self.structs.insert((ctx, off), fields);
                 arrays.insert(off);
                 continue;
             }
-            // Its type: the access's (a load's, a store's, an update's).
-            let m = self.access_type(i).unwrap_or(M::U32);
+            // A thread's array: each element the chunk's lanes' registers (of 8 bytes, its halves').
+            if let Some((elems, bytes)) = self.array(n, off) {
+                let name = format!("x{off}");
+                let (regs, zero) = if bytes == 8 { (2 * self.p, self.zeros_of(M::U64)) } else { (self.p, self.zeros_of(M::U32)) };
+                self.line(format!("let mut {name}: [[uint32x4_t; {regs}]; {elems}] = [{zero}; {elems}];"));
+                self.arrays.insert((ctx, off), (name, elems, bytes));
+                arrays.insert(off);
+                continue;
+            }
+            // A thread's structure of other uses (copied into more than once, its address passed): its bytes, a row
+            // a lane, read and written as memory is.
+            if self.v.w(i, 1) > 8 && !self.aliasable(n, off) {
+                let (name, size) = (format!("x{off}"), self.v.w(i, 1));
+                self.line(format!("let mut {name} = [[0u8; {size}]; {}];", self.w));
+                self.mems.insert((ctx, off), (name, size));
+                arrays.insert(off);
+                continue;
+            }
+            // Its type: an access's (a load's, a store's, an update's) of its size, else its first access's.
+            let size = self.v.w(i, 1);
+            let m = (i..end)
+                .filter(|&j| self.v.kind(j) == Kind::Local && self.vid(j) == off && self.v.w(j, 2) == 0)
+                .filter_map(|j| self.access_type(j))
+                .find(|m| m.bytes() == size && !m.is_agg())
+                .or_else(|| self.access_type(i))
+                .unwrap_or(M::U32);
             let lanes = self.lanes.get(&(ctx, off)).copied().unwrap_or(false);
             let iota = !lanes && m.bytes() == 4 && self.iotas.contains(&(ctx, off));
-            out.insert(off, Var { name: format!("x{off}"), m, lanes, iota, fixed: None });
+            out.insert(off, Var { name: format!("x{off}"), m, lanes, iota, fixed: self.refs.get(&(ctx, off)).cloned() });
         }
         for (off, var) in &out {
             self.vars.insert((ctx, *off), var.clone());
@@ -1105,11 +1291,177 @@ impl Em<'_> {
         Ok(out.into_values().collect())
     }
 
-    /// If variable `off` of function `f` is a thread's array: its 4-byte elements. It is more than 8 bytes, and
-    /// each access of it is a 4-byte integer's load, store or update at it or at it plus an offset (`elem`), which
-    /// nothing else reads (its address is not passed or kept).
-    fn array(&self, f: usize, off: u32) -> Option<u32> {
+    /// If variable `off` of function `f` is a thread's structure of fields (more than one): each field's byte and
+    /// type, in order. Each access of it is a scalar's load, store or update at it plus a constant (a field), or a
+    /// copy of it whole (from bytes or into them), or a read of it whole (an aggregate argument): its address is
+    /// not otherwise passed or kept. Its fields do not overlap. Where it is read whole (copied from, passed, returned,
+    /// loaded) every byte is a field's: the bytes no access names are fields too (`gaps`), which a copy into it
+    /// fills and a read of it whole writes.
+    fn fields(&self, f: usize, off: u32) -> Option<Vec<(u32, M)>> {
         let mut size = 0;
+        let mut whole = false;
+        let mut fields: Vec<(u32, M)> = Vec::new();
+        for i in f + 1..f + self.v.size(f) {
+            if self.v.kind(i) != Kind::Local || self.vid(i) != off {
+                continue;
+            }
+            size = self.v.w(i, 1);
+            // Its address: it, plus constants (a field of a field).
+            let (mut at, mut byte) = (i, self.v.w(i, 2));
+            let mut r = self.parent(i)?;
+            while let Some((l, b)) = self.local_field(r)
+                && l == i
+            {
+                (at, byte) = (r, b);
+                r = self.parent(r)?;
+            }
+            let m = match self.v.kind(r) {
+                Kind::Load | Kind::Store => M(self.v.w(r, 0)),
+                Kind::Update => M(self.v.w(r, 1)),
+                // Whole: copied into, or from (read whole).
+                Kind::Copy if at == i && byte == 0 => {
+                    whole |= self.v.child(r, 1) == i;
+                    continue;
+                }
+                // Whole: an aggregate argument (passed as its bytes' address), or the function's result.
+                Kind::Call | Kind::Return if at == i && byte == 0 && (self.v.kind(r) == Kind::Return || self.agg_arg(r, i)) => {
+                    whole = true;
+                    continue;
+                }
+                _ => return None,
+            };
+            if self.v.child(r, 0) != at {
+                return None;
+            }
+            if m.is_agg() {
+                // Read whole (an aggregate argument).
+                if at == i && byte == 0 && self.v.kind(r) == Kind::Load {
+                    whole = true;
+                    continue;
+                }
+                return None;
+            }
+            if !fields.contains(&(byte, m)) {
+                fields.push((byte, m));
+            }
+        }
+        if fields.is_empty() || (fields.len() == 1 && fields[0].1.bytes() == size) {
+            return None;
+        }
+        fields.sort_by_key(|f| f.0);
+        let fits = fields.windows(2).all(|w| w[0].0 + w[0].1.bytes() <= w[1].0) && fields.last().is_some_and(|l| l.0 + l.1.bytes() <= size);
+        if !fits {
+            return None;
+        }
+        if whole {
+            // Copied into from memory and only read: read where it is (`aliasable`), not each byte loaded.
+            if self.aliasable(f, off) {
+                return None;
+            }
+            let named = fields.clone();
+            let mut at = 0;
+            for (b, m) in named.iter().copied().chain([(size, M::VOID)]) {
+                fields.extend(gaps(at, b));
+                at = b + m.bytes();
+            }
+            fields.sort_by_key(|f| f.0);
+        }
+        Some(fields)
+    }
+
+    /// Whether node `a` is call `call`'s argument for an aggregate parameter.
+    fn agg_arg(&self, call: usize, a: usize) -> bool {
+        let Some(&b) = self.bodies.get(&self.v.w(call, 3)) else { return false };
+        let Some(k) = self.v.children(call).position(|c| c == a) else { return false };
+        M(self.v.w(b, 8 + 2 * k)).is_agg()
+    }
+
+    /// Whether variable `off` of function `f` is copied into whole, from memory or a call's result (not another
+    /// variable), and only read after (`Kind::Copy`'s alias).
+    fn aliasable(&self, f: usize, off: u32) -> bool {
+        (f + 1..f + self.v.size(f)).any(|i| {
+            self.v.kind(i) == Kind::Copy && {
+                let (d, s) = (self.v.child(i, 0), self.v.child(i, 1));
+                self.v.kind(d) == Kind::Local && self.vid(d) == off && self.v.w(d, 2) == 0 && self.v.kind(s) != Kind::Local && self.only_read(d, i)
+            }
+        })
+    }
+
+    /// Whether function `n` writes its variable `off` (a store or an update of it).
+    fn writes_var(&self, n: usize, off: u32) -> bool {
+        (n + 1..n + self.v.size(n)).any(|i| {
+            matches!(self.v.kind(i), Kind::Store | Kind::Update) && {
+                let a = self.v.child(i, 0);
+                self.v.kind(a) == Kind::Local && self.v.w(a, 2) == 0 && self.vid(a) == off
+            }
+        })
+    }
+
+    /// If node `a` is a thread's structure whole (`fields`): its fields.
+    fn struct_of(&self, a: usize, cx: &Cx) -> Option<Vec<(u32, M)>> {
+        (self.v.kind(a) == Kind::Local && self.v.w(a, 2) == 0).then(|| self.structs.get(&(cx.ctx, self.vid(a))).cloned()).flatten()
+    }
+
+    /// Field `byte` of the thread's structure at node `a`: its value.
+    fn field_value(&mut self, a: usize, byte: u32, cx: &Cx) -> R<V> {
+        let Some(var) = self.vars.get(&(cx.ctx, field_key(self.vid(a), byte))).cloned() else { return err("a structure's field undeclared") };
+        Ok(if var.lanes {
+            if var.m == M::B { V::K(var.name) } else { V::L(var.name, var.m) }
+        } else if var.iota {
+            V::Iota(var.name, var.m)
+        } else {
+            V::S(var.name, var.m)
+        })
+    }
+
+    /// A thread's structure at node `a`, read whole (an aggregate argument, passed as its bytes' address): its
+    /// fields written to bytes of the thread's own, one value's or each lane's (then `V::At`, a lane's at its row).
+    fn struct_bytes(&mut self, a: usize, cx: &Cx) -> R<V> {
+        let fields = self.struct_of(a, cx).expect("a structure");
+        let size = self.v.w(a, 1);
+        let vals: Vec<(u32, M, V)> = fields.iter().map(|&(b, m)| Ok((b, m, self.field_value(a, b, cx)?))).collect::<R<_>>()?;
+        let t = self.tmp();
+        if vals.iter().all(|v| matches!(v.2, V::S(..))) {
+            self.line(format!("let mut {t} = [0u8; {size}];"));
+            for (b, m, v) in vals {
+                let V::S(x, xm) = v else { unreachable!() };
+                self.line(format!("({t}.as_mut_ptr().add({b}) as *mut {}).write_unaligned({});", self.ty(m, false)?, conv(&x, xm, m)));
+            }
+            return Ok(V::S(format!("{t}.as_ptr()"), M::PTR));
+        }
+        let w = self.w;
+        self.line(format!("let mut {t} = [[0u8; {size}]; {w}];"));
+        let mut each = Vec::new();
+        for (b, m, v) in &vals {
+            let V::S(x, xm) = self.lane_of(v)? else { return err("a field's value at a lane") };
+            each.push(format!("({t}[j].as_mut_ptr().add({b}) as *mut {}).write_unaligned({});", self.ty(*m, false)?, conv(&x, xm, *m)));
+        }
+        self.line(format!("for j in 0..{w} {{ {} }}", each.join(" ")));
+        Ok(V::At { base: format!("({t}.as_ptr() as *const u8)"), idx: Box::new(V::Iota("0u32".into(), M::U32)), scale: size })
+    }
+
+    /// Address `a` as a variable plus constants (`Local` plus `Const`s): the variable's node and the byte.
+    fn local_field(&self, a: usize) -> Option<(usize, u32)> {
+        if self.v.kind(a) != Kind::Bin || Op::of(self.v.w(a, 0)) != Op::Add {
+            return None;
+        }
+        let (l, c) = (self.v.child(a, 0), self.v.child(a, 1));
+        if self.v.kind(c) != Kind::Const || self.v.w(c, 2) != 0 {
+            return None;
+        }
+        let (l, at) = match self.v.kind(l) {
+            Kind::Local => (l, self.v.w(l, 2)),
+            _ => self.local_field(l)?,
+        };
+        Some((l, at + self.v.w(c, 1)))
+    }
+
+    /// If variable `off` of function `f` is a thread's array: its elements and their bytes (4 or 8). It is more than
+    /// 8 bytes, and each access of it is an integer's of that size, a load, store or update at it or at it plus an
+    /// offset (`elem`), which nothing else reads (its address is not passed or kept).
+    fn array(&self, f: usize, off: u32) -> Option<(u32, u32)> {
+        let mut size = 0;
+        let mut bytes = 0;
         for i in f + 1..f + self.v.size(f) {
             if self.v.kind(i) != Kind::Local || self.vid(i) != off {
                 continue;
@@ -1121,23 +1473,40 @@ impl Em<'_> {
             let m = match self.v.kind(r) {
                 Kind::Load | Kind::Store => M(self.v.w(r, 0)),
                 Kind::Update => M(self.v.w(r, 1)),
+                // Passed whole to a function, as a pointer it reads its elements through (`V::Arr`).
+                Kind::Call if at == i && self.v.w(i, 2) == 0 && !self.agg_arg(r, i) => continue,
                 _ => return None,
             };
-            if self.v.child(r, 0) != at || m.bytes() != 4 || m.float() || m.is_agg() || m == M::PTR {
+            if self.v.child(r, 0) != at || !matches!(m.bytes(), 4 | 8) || m.float() || m.is_agg() || m == M::PTR || (bytes != 0 && bytes != m.bytes()) {
                 return None;
             }
+            bytes = m.bytes();
         }
-        (size > 8 && size % 4 == 0).then_some(size / 4)
+        (size > 8 && bytes != 0 && size % bytes == 0).then(|| (size / bytes, bytes))
     }
 
     /// If address `a` is an element of a thread's array (`array`): the element, as a Rust place.
     fn elem(&mut self, a: usize, cx: &Cx) -> R<Option<String>> {
-        let (local, ix) = match self.v.kind(a) {
-            Kind::Local => (a, None),
-            Kind::Bin if Op::of(self.v.w(a, 0)) == Op::Add && self.v.kind(self.v.child(a, 0)) == Kind::Local => (self.v.child(a, 0), Some(self.v.child(a, 1))),
+        // The array (its variable, or a parameter it was passed as), and the index.
+        let (base, ix) = match self.v.kind(a) {
+            Kind::Local | Kind::Load => (a, None),
+            Kind::Bin if Op::of(self.v.w(a, 0)) == Op::Add && matches!(self.v.kind(self.v.child(a, 0)), Kind::Local | Kind::Load) => (self.v.child(a, 0), Some(self.v.child(a, 1))),
             _ => return Ok(None),
         };
-        let Some((name, elems)) = self.arrays.get(&(cx.ctx, self.vid(local))).cloned() else { return Ok(None) };
+        let found = match self.v.kind(base) {
+            Kind::Local => self.arrays.get(&(cx.ctx, self.vid(base))).cloned(),
+            _ => {
+                let l = self.v.child(base, 0);
+                match (self.v.kind(l), M(self.v.w(base, 0))) {
+                    (Kind::Local, M::PTR) if self.v.w(l, 2) == 0 => match self.vars.get(&(cx.ctx, self.vid(l))) {
+                        Some(Var { fixed: Some(V::Arr(place, e, b)), .. }) => Some((place.clone(), *e, *b)),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+        };
+        let Some((name, elems, bytes)) = found else { return Ok(None) };
         let Some(ix) = ix else { return Ok(Some(format!("{name}[0]"))) };
         // Its byte offset: one value for all lanes.
         let s = match self.expr(ix, cx)? {
@@ -1150,7 +1519,7 @@ impl Em<'_> {
                 && self.v.kind(self.v.child(ix, 0)) == Kind::Cast
                 && M(self.v.w(self.v.child(ix, 0), 0)).bytes() == 4
                 && self.v.kind(self.v.child(ix, 1)) == Kind::Const
-                && self.v.w(self.v.child(ix, 1), 1) == 4
+                && self.v.w(self.v.child(ix, 1), 1) == bytes
                 && self.v.w(self.v.child(ix, 1), 2) == 0 =>
             {
                 let x = self.expr(self.v.child(self.v.child(ix, 0), 0), cx)?;
@@ -1166,13 +1535,14 @@ impl Em<'_> {
             _ => return err("an element of a thread's array at an offset of each lane"),
         };
         if let Some(k) = konst64(&s) {
-            if k % 4 != 0 || k / 4 >= u64::from(elems) {
+            let b = u64::from(bytes);
+            if k % b != 0 || k / b >= u64::from(elems) {
                 return err(format!("an element of a thread's array at byte {k}"));
             }
-            return Ok(Some(format!("{name}[{}]", k / 4)));
+            return Ok(Some(format!("{name}[{}]", k / b)));
         }
         let t = self.tmp();
-        self.line(format!("let {t} = ({s}) as usize / 4;"));
+        self.line(format!("let {t} = ({s}) as usize / {bytes};"));
         Ok(Some(format!("{name}[{t}]")))
     }
 
@@ -1205,13 +1575,22 @@ impl Em<'_> {
         None
     }
 
+    /// A function's result's Rust type: a value's (`ty`), or an aggregate's bytes, one value's or each lane's.
+    fn result_ty(&self, m: M, lanes: bool) -> R<String> {
+        if m.is_agg() {
+            return Ok(if lanes { format!("[[u8; {}]; {}]", m.bytes(), self.w) } else { format!("[u8; {}]", m.bytes()) });
+        }
+        self.ty(m, lanes)
+    }
+
     fn ty(&self, m: M, lanes: bool) -> R<String> {
         Ok(match (lanes, m) {
             (_, m) if m.is_agg() => "*const u8".into(),
             (false, M::B) => "bool".into(),
             (false, M::PTR) => "*const u8".into(),
             (false, m) => scalar(m)?.into(),
-            (true, m) if m == M::B || m.bytes() == 4 => format!("[uint32x4_t; {}]", self.p),
+            // A narrower integer's lanes: 32-bit ones, holding it extended (`narrowed`).
+            (true, m) if m == M::B || matches!(m.bytes(), 1 | 2 | 4) => format!("[uint32x4_t; {}]", self.p),
             (true, m) if wide(m) => format!("[uint32x4_t; {}]", 2 * self.p),
             (true, m) => return err(format!("lanes of {m:?}")),
         })
@@ -1291,6 +1670,8 @@ impl Em<'_> {
                 // of its body (`cont`), and the step is the statement's lanes'.
                 let end = n + v.size(n);
                 let inner = |i: usize| (n + 1..i).any(|q| matches!(v.kind(q), Kind::While | Kind::For | Kind::Do) && i < q + v.size(q));
+                // A `break` of a switch in the loop stays in its round.
+                let switched = |i: usize| v.kind(i) == Kind::Break && (n + 1..i).any(|q| v.kind(q) == Kind::Switch && i < q + v.size(q) && !(q + 1..i).any(|r| matches!(v.kind(r), Kind::While | Kind::For | Kind::Do) && i < r + v.size(r)));
                 let skips = uniform
                     && (n..end).any(|i| v.kind(i) == Kind::Continue)
                     && (n..end).all(|i| match v.kind(i) {
@@ -1311,21 +1692,33 @@ impl Em<'_> {
                 };
                 let breaks = uniform
                     && !skips
-                    && (n..end).any(|i| v.kind(i) == Kind::Break && !inner(i))
+                    && (n..end).any(|i| v.kind(i) == Kind::Break && !inner(i) && !switched(i))
                     && (n..end).all(|i| match v.kind(i) {
-                        Kind::Break => inner(i) || together(i),
+                        Kind::Break => inner(i) || switched(i) || together(i),
                         Kind::Continue => inner(i),
                         Kind::Return => false,
                         _ => true,
                     });
-                let leaves = !skips && !breaks && (n..end).any(|i| matches!(v.kind(i), Kind::Break | Kind::Continue | Kind::Return));
+                let leaves = !skips && !breaks && (n..end).any(|i| matches!(v.kind(i), Kind::Break | Kind::Continue | Kind::Return) && !switched(i));
                 if !leaves && !self.effects(cond) {
                     let (at, top) = (self.out.len(), self.top);
                     let label = if breaks { Some(format!("'{}", self.tmp())) } else { None };
                     self.line(match &label { Some(l) => format!("{l}: loop {{"), None => "loop {".into() });
                     self.ind += 1;
                     self.line("// Rounds of one condition: every lane goes on.");
-                    match self.expr(cond, cx)? {
+                    let c = self.expr(cond, cx)?;
+                    // One value in the lanes that run, held as each lane's (a variable set where lanes were apart):
+                    // theirs, any one's.
+                    let c = match c {
+                        c @ V::S(..) => c,
+                        c if uniform => {
+                            let k = self.mask(&c)?;
+                            let on = if cx.full { k } else { let cur = cx.cur.clone(); self.map(|r| format!("vandq_u32({k}[{r}], {cur}[{r}])")) };
+                            V::S(self.any(&on), M::B)
+                        }
+                        c => c,
+                    };
+                    match c {
                         V::S(c, _) => {
                             self.line(format!("if !({}) {{ break; }}", truth(&c, M::B)));
                             if skips {
@@ -1333,7 +1726,8 @@ impl Em<'_> {
                                 self.line(format!("let mut {cont} = {};", self.zeros()));
                                 self.stmt(body, &Cx { cont: Some(cont), ..cx.clone() })?;
                             } else if let Some(l) = &label {
-                                self.stmt(body, &Cx { exit: Some(l.clone()), ..cx.clone() })?;
+                                // Its breaks are its label's: an outer loop's lanes that break (`brk`) are not its.
+                                self.stmt(body, &Cx { exit: Some(l.clone()), brk: None, ..cx.clone() })?;
                             } else {
                                 self.stmt(body, cx)?;
                             }
@@ -1408,7 +1802,31 @@ impl Em<'_> {
                 // A value no call reads (an atomic's whose old value none does) is none.
                 let x = x.filter(|x| !matches!(x, V::None));
                 if let (Some(x), Some((res, m, lanes))) = (x, cx.res.clone()) {
-                    if lanes {
+                    if m.is_agg() {
+                        // An aggregate's bytes, from its address: one value's, or each running lane's from its own.
+                        let size = m.bytes();
+                        match (&x, lanes) {
+                            (V::S(a, _), false) => self.line(format!("{res} = ({a} as *const [u8; {size}]).read_unaligned();")),
+                            (_, false) => {
+                                self.again = true;
+                                self.rets.insert(cx.ctx, true);
+                            }
+                            (x, true) => {
+                                let w = self.w;
+                                let V::S(a, am) = self.lane_of(x)? else { return err("an aggregate result's address at a lane") };
+                                let a = if am == M::PTR { a } else { format!("({a} as usize as *const u8)") };
+                                let guard = if cx.divergent {
+                                    let k = self.mask(&V::K(cx.cur.clone()))?;
+                                    let km = self.tmp();
+                                    self.line(format!("let {km} = core::mem::transmute::<[uint32x4_t; {}], [u32; {w}]>({k});", self.p));
+                                    format!("if {km}[j] != 0 ")
+                                } else {
+                                    String::new()
+                                };
+                                self.line(format!("for j in 0..{w} {{ {guard}{{ {res}[j] = ({a} as *const [u8; {size}]).read_unaligned(); }} }}"));
+                            }
+                        }
+                    } else if lanes {
                         let l = if m == M::B { self.mask(&x)? } else { self.lanes(&x, m)? };
                         let cur = cx.cur.clone();
                         if cx.divergent {
@@ -1447,6 +1865,7 @@ impl Em<'_> {
                 // A loop's label (a `break` all its lanes take together): Rust's.
                 if v.kind(n) == Kind::Break
                     && let Some(l) = &cx.exit
+                    && (cx.brk.is_none() || v.level(n) == crate::k::Level::Uniform)
                 {
                     self.line(format!("break {l};"));
                     return Ok(());
@@ -1456,8 +1875,90 @@ impl Em<'_> {
                 let cur = cx.cur.clone();
                 self.line(format!("{to} = [{}];", (0..self.p).map(|r| format!("vorrq_u32({to}[{r}], {cur}[{r}])")).collect::<Vec<_>>().join(", ")));
             }
+            Kind::Switch => self.switch(n, cx)?,
+            Kind::Do => self.stmt_do(n, cx)?,
             k => return err(format!("a {k:?} statement")),
         }
+        Ok(())
+    }
+
+    /// Switch `n`: each case entered at the case of its value (else the default, else none) and run by the lanes
+    /// entered at it or before it (falling through), until they break. Its breaks that all its lanes take (of one
+    /// level) are Rust's `break` of its block; others, its mask of the lanes that broke.
+    fn switch(&mut self, n: usize, cx: &Cx) -> R<()> {
+        let v = &self.v;
+        let kids: Vec<usize> = v.children(n).collect();
+        let (value, cases) = (kids[0], &kids[1..]);
+        let m = M(v.w(n, 1));
+        if m.bytes() > 4 {
+            return err("a switch of a 64-bit value");
+        }
+        let end = n + v.size(n);
+        // Its own breaks: none of a loop or a switch inside it.
+        let own: Vec<usize> = (n + 1..end).filter(|&i| v.kind(i) == Kind::Break && !(n + 1..i).any(|q| matches!(v.kind(q), Kind::While | Kind::For | Kind::Do | Kind::Switch) && i < q + v.size(q))).collect();
+        let apart = own.iter().any(|&i| v.level(i) != crate::k::Level::Uniform);
+        let labels: Vec<Option<u32>> = cases.iter().map(|&c| (v.w(c, 0) == 0).then(|| v.w(c, 1))).collect();
+        let default = labels.iter().position(Option::is_none).unwrap_or(cases.len());
+        let x = self.expr(value, cx)?;
+        let label = format!("'{}", self.tmp());
+        let brk = apart.then(|| self.tmp());
+        if let Some(b) = &brk {
+            self.line(format!("let mut {b} = {};", self.zeros()));
+        }
+        let e = self.tmp();
+        match &x {
+            V::S(s, xm) => {
+                let arms: Vec<String> = labels.iter().enumerate().filter_map(|(j, l)| l.map(|l| format!("{l}u32 => {j}u32"))).collect();
+                self.line(format!("let {e}: u32 = match {} {{ {}{}_ => {default}u32 }};", conv(s, *xm, M::U32), arms.join(", "), if arms.is_empty() { "" } else { ", " }));
+            }
+            x => {
+                let l = self.lanes(x, M::U32)?;
+                // The first case of each lane's value: the cases' tests from the last to the first.
+                let mut at = self.map(|_| format!("vdupq_n_u32({default})"));
+                for (j, l2) in labels.iter().enumerate().rev() {
+                    let Some(lv) = l2 else { continue };
+                    at = self.map(|r| format!("vbslq_u32(vceqq_u32({l}[{r}], vdupq_n_u32({lv}u32)), vdupq_n_u32({j}), {at}[{r}])"));
+                }
+                self.line(format!("let {e} = {at};"));
+            }
+        }
+        self.line(format!("{label}: {{"));
+        self.ind += 1;
+        let uniform = matches!(x, V::S(..));
+        for (j, &c) in cases.iter().enumerate() {
+            let body = self.v.child(c, 0);
+            if uniform {
+                self.line(format!("if {e} <= {j}u32 {{"));
+                self.ind += 1;
+                let cur = match &brk {
+                    Some(b) => {
+                        let cur = cx.cur.clone();
+                        self.map(|r| format!("vbicq_u32({cur}[{r}], {b}[{r}])"))
+                    }
+                    None => cx.cur.clone(),
+                };
+                let divergent = cx.divergent || brk.is_some();
+                let inner = Cx { cur, divergent, full: cx.full && brk.is_none(), brk: brk.clone(), exit: Some(label.clone()), ..cx.clone() };
+                self.stmt(body, &inner)?;
+            } else {
+                let cur = cx.cur.clone();
+                let on = self.map(|r| {
+                    let k = format!("vandq_u32({cur}[{r}], vcleq_u32({e}[{r}], vdupq_n_u32({j})))");
+                    match &brk {
+                        Some(b) => format!("vbicq_u32({k}, {b}[{r}])"),
+                        None => k,
+                    }
+                });
+                self.line(format!("if {} {{", self.any(&on)));
+                self.ind += 1;
+                let inner = Cx { cur: on, divergent: true, full: false, left: false, brk: brk.clone(), exit: Some(label.clone()), region: Some(n), ..cx.clone() };
+                self.stmt(body, &inner)?;
+            }
+            self.ind -= 1;
+            self.line("}");
+        }
+        self.ind -= 1;
+        self.line("}");
         Ok(())
     }
 
@@ -1654,6 +2155,71 @@ impl Em<'_> {
             let live = cx.live.clone();
             self.line(format!("{lm} = [{}];", (0..self.p).map(|r| format!("vandq_u32({lm}[{r}], {live}[{r}])")).collect::<Vec<_>>().join(", ")));
         }
+        self.ind -= 1;
+        self.line("}");
+        Ok(())
+    }
+
+    /// Loop `do body while (cond)`, node `n`: its body, then its condition, in the lanes still in it. A condition of
+    /// one value and nothing that leaves it but its end: Rust's loop, its lanes the statement's.
+    fn stmt_do(&mut self, n: usize, cx: &Cx) -> R<()> {
+        let v = &self.v;
+        let kids: Vec<usize> = v.children(n).collect();
+        let (body, cond) = (kids[0], kids[1]);
+        let end = n + v.size(n);
+        let leaves = (n + 1..end).any(|i| matches!(v.kind(i), Kind::Break | Kind::Continue | Kind::Return));
+        // A variable the loop sets: its lanes' addresses made before it are not its next rounds' (`addrs`).
+        for i in n..end {
+            if matches!(v.kind(i), Kind::Store | Kind::Update) && v.kind(v.child(i, 0)) == Kind::Local {
+                let key = format!("addr x{}", self.vid(v.child(i, 0)));
+                self.memo.retain(|m| m.0 != key);
+            }
+        }
+        if v.level(cond) == crate::k::Level::Uniform && !leaves && !self.effects(cond) {
+            self.line("loop {");
+            self.ind += 1;
+            self.stmt(body, cx)?;
+            if let V::S(c, cm) = self.expr(cond, cx)? {
+                self.line(format!("if !({}) {{ break; }}", truth(&c, cm)));
+                self.ind -= 1;
+                self.line("}");
+                return Ok(());
+            }
+            return err("a do loop's condition of one value, of lanes here");
+        }
+        let has = |k: Kind| (n..end).any(|i| self.v.kind(i) == k);
+        let (hb, hc) = (has(Kind::Break), has(Kind::Continue));
+        let lm = self.tmp();
+        self.line(format!("let mut {lm} = {};", cx.cur));
+        let brk = self.tmp();
+        if hb {
+            self.line(format!("let mut {brk} = {};", self.zeros()));
+        }
+        self.line("loop {");
+        self.ind += 1;
+        let cont = self.tmp();
+        if hc {
+            self.line(format!("let mut {cont} = {};", self.zeros()));
+        }
+        let inner = Cx { cur: lm.clone(), divergent: true, left: false, brk: hb.then(|| brk.clone()), exit: None, cont: hc.then(|| cont.clone()), full: false, looped: Some(n), region: Some(n), ..cx.clone() };
+        self.stmt(body, &inner)?;
+        // The lanes that broke or returned leave; those that continued come to the condition.
+        if hb {
+            self.line(format!("{lm} = [{}];", (0..self.p).map(|r| format!("vbicq_u32({lm}[{r}], {brk}[{r}])")).collect::<Vec<_>>().join(", ")));
+        }
+        if cx.live != lm && self.returns(body) {
+            let live = cx.live.clone();
+            self.line(format!("{lm} = [{}];", (0..self.p).map(|r| format!("vandq_u32({lm}[{r}], {live}[{r}])")).collect::<Vec<_>>().join(", ")));
+        }
+        let head = Cx { cur: lm.clone(), divergent: true, left: false, brk: None, exit: None, cont: None, full: false, looped: Some(n), region: Some(n), ..cx.clone() };
+        self.line(format!("if {} {{", self.any(&lm)));
+        self.ind += 1;
+        let c = self.expr(cond, &head)?;
+        let k = self.mask(&c)?;
+        self.line(format!("{lm} = [{}];", (0..self.p).map(|r| format!("vandq_u32({lm}[{r}], {k}[{r}])")).collect::<Vec<_>>().join(", ")));
+        self.ind -= 1;
+        self.line("}");
+        self.line(format!("if !({}) {{ break; }}", self.any(&lm)));
         self.ind -= 1;
         self.line("}");
         Ok(())
@@ -2084,6 +2650,17 @@ impl Em<'_> {
                 let x = u64::from(p[1]) | u64::from(p[2]) << 32;
                 V::S(literal(m, x)?, m)
             }
+            Kind::Local if self.struct_of(n, cx).is_some() => return self.struct_bytes(n, cx),
+            // A structure in memory, not an alias: each lane's row, plus the byte.
+            Kind::Local if self.mems.contains_key(&(cx.ctx, self.vid(n))) && !self.aliases.contains(&(cx.ctx, self.vid(n))) => {
+                let (name, size) = self.mems[&(cx.ctx, self.vid(n))].clone();
+                let a = V::At { base: format!("({name}.as_mut_ptr() as *const u8)"), idx: Box::new(V::Iota("0u32".into(), M::U32)), scale: size };
+                return offset_addr(a, p[2]);
+            }
+            Kind::Local if self.v.w(n, 2) == 0 && self.arrays.contains_key(&(cx.ctx, self.vid(n))) => {
+                let (name, e, b) = self.arrays[&(cx.ctx, self.vid(n))].clone();
+                V::Arr(name, e, b)
+            }
             Kind::Local => {
                 let off = self.vid(n);
                 // A structure read where it lies (`Kind::Copy`), or a parameter of one at each lane's address: its
@@ -2091,11 +2668,19 @@ impl Em<'_> {
                 if (self.aliases.contains(&(cx.ctx, off)) || self.agg_param(cx, off))
                     && let Some(Var { fixed: Some(a), .. }) = self.vars.get(&(cx.ctx, off)).cloned()
                 {
-                    return Ok(offset_addr(a, p[2])?);
+                    return offset_addr(a, p[2]);
                 }
-                match self.vars.get(&(cx.ctx, off)) {
+                match self.vars.get(&(cx.ctx, off)).cloned() {
                     // An aggregate's (a structure's bytes where they are): its address.
-                    Some(var) if var.m == M::PTR && !var.lanes => V::S(var.name.clone(), M::PTR),
+                    Some(var) if var.m == M::PTR && !var.lanes && self.v.w(n, 1) > 8 => V::S(var.name.clone(), M::PTR),
+                    // A variable's own (not one of a parameter's shape): each lane's, passed by `&mut` (`V::Ref`).
+                    Some(var) if var.fixed.is_none() && p[2] == 0 => {
+                        if !var.lanes {
+                            self.lanes.insert((cx.ctx, off), true);
+                            self.again = true;
+                        }
+                        V::Ref(var.name.clone(), var.m)
+                    }
                     _ => return err(format!("the address of a thread's variable (at {off})")),
                 }
             }
@@ -2105,6 +2690,9 @@ impl Em<'_> {
                     return Ok(V::L(e, m));
                 }
                 if m.is_agg() {
+                    if self.struct_of(kids[0], cx).is_some() {
+                        return self.struct_bytes(kids[0], cx);
+                    }
                     return self.expr(kids[0], cx);
                 }
                 // A scalar of constant memory (a `__constant` variable's), which nothing writes: its value.
@@ -2129,6 +2717,13 @@ impl Em<'_> {
                     });
                 }
                 let a = self.expr(kids[0], cx)?;
+                // Through a variable's address: the variable.
+                if let V::Ref(place, rm) = &a {
+                    if rm.bytes() != m.bytes() {
+                        return err(format!("a load of {m:?} from a variable of {rm:?}"));
+                    }
+                    return Ok(if m == M::B { V::K(place.clone()) } else { V::L(place.clone(), m) });
+                }
                 // A field of a struct passed by value (its bytes the caller's, which nothing here writes): read once,
                 // at the function's start.
                 if let V::S(at, _) = &a
@@ -2161,6 +2756,12 @@ impl Em<'_> {
                     return Ok(x);
                 }
                 let a = self.expr(kids[0], cx)?;
+                // Through a variable's address: the variable, as its own store in the lanes that run.
+                if let V::Ref(place, rm) = a {
+                    let var = Var { name: place, m: rm, lanes: true, iota: false, fixed: None };
+                    self.assign(&var, x.clone(), cx)?;
+                    return Ok(x);
+                }
                 self.store(m, &a, &x, cx)?;
                 x
             }
@@ -2175,7 +2776,23 @@ impl Em<'_> {
                     self.set_elem(&e, lm, &new, cx)?;
                     return Ok(saved.unwrap_or(new));
                 }
-                let Some(var) = self.var_of(kids[0], cx) else { return err("an update of memory") };
+                let var = match self.var_of(kids[0], cx) {
+                    Some(var) => var,
+                    // Through a variable's address: the variable.
+                    None => match self.expr(kids[0], cx)? {
+                        V::Ref(place, rm) => Var { name: place, m: rm, lanes: true, iota: false, fixed: None },
+                        // Memory's: its value loaded, the operation, the value stored (in the lanes that run).
+                        a => {
+                            let old = self.load(lm, &a, cx)?;
+                            let x = self.expr(kids[1], cx)?;
+                            let op = if op == Op::None { Op::Add } else { op };
+                            let saved = if post { Some(self.hold(&old)?) } else { None };
+                            let new = self.bin(op, om, &old, &x)?;
+                            self.store(lm, &a, &new, cx)?;
+                            return Ok(saved.unwrap_or(new));
+                        }
+                    },
+                };
                 let old = if var.lanes { V::L(var.name.clone(), var.m) } else if var.iota { V::Iota(var.name.clone(), var.m) } else { V::S(var.name.clone(), var.m) };
                 let x = self.expr(kids[1], cx)?;
                 let op = if op == Op::None { Op::Add } else { op };
@@ -2311,8 +2928,28 @@ impl Em<'_> {
                 }
                 // Each lane's: a right side with no effect evaluated whole and combined; one with, under its lanes
                 // (the next step).
+                // One with: evaluated in the lanes that run whose left side does not decide (none, none evaluate it).
                 if self.effects(kids[1]) {
-                    return err("a short circuit of lanes whose right side has an effect");
+                    let ka = self.mask(&a)?;
+                    let cur = cx.cur.clone();
+                    let on = match (and, cx.full) {
+                        (true, true) => ka.clone(),
+                        (true, false) => self.map(|r| format!("vandq_u32({cur}[{r}], {ka}[{r}])")),
+                        (false, true) => self.map(|r| format!("vmvnq_u32({ka}[{r}])")),
+                        (false, false) => self.map(|r| format!("vbicq_u32({cur}[{r}], {ka}[{r}])")),
+                    };
+                    let t = self.tmp();
+                    self.line(format!("let mut {t}: [uint32x4_t; {}] = {ka};", self.p));
+                    self.line(format!("if {} {{", self.any(&on)));
+                    self.ind += 1;
+                    let inner = Cx { cur: on.clone(), divergent: true, left: false, full: false, looped: None, region: None, ..cx.clone() };
+                    let b = self.expr(kids[1], &inner)?;
+                    let kb = self.mask(&b)?;
+                    // The lanes evaluated take the right side's truth; the others keep the left's.
+                    self.line(format!("{t} = [{}];", (0..self.p).map(|r| format!("vbslq_u32({on}[{r}], {kb}[{r}], {t}[{r}])")).collect::<Vec<_>>().join(", ")));
+                    self.ind -= 1;
+                    self.line("}");
+                    return Ok(V::K(t));
                 }
                 let b = self.expr(kids[1], cx)?;
                 let (ka, kb) = (self.mask(&a)?, self.mask(&b)?);
@@ -2343,9 +2980,70 @@ impl Em<'_> {
             }
             Kind::Copy => {
                 // A structure copied whole into a variable that is only read after, from bytes no write of the
-                // kernel reaches: the variable is those bytes, read where they lie (its address each lane's where
-                // the source's is), nothing copied (decision 0353).
+                // kernel reaches (a buffer's, or a call's result): the variable is those bytes, read where they lie
+                // (its address each lane's where the source's is), nothing copied (decision 0353).
                 let (dst, src) = (kids[0], kids[1]);
+                // A thread's array: its elements, each from the other array's or from bytes (or to bytes).
+                let arr = |e: &Self, a: usize| (e.v.kind(a) == Kind::Local && e.v.w(a, 2) == 0).then(|| e.arrays.get(&(cx.ctx, e.vid(a))).cloned()).flatten();
+                let (ad, asrc) = (arr(self, dst), arr(self, src));
+                if ad.is_some() || asrc.is_some() {
+                    let (_, elems, bytes) = ad.clone().or(asrc.clone()).expect("an array");
+                    if ad.as_ref().is_some_and(|a| (a.1, a.2) != (elems, bytes)) || asrc.as_ref().is_some_and(|a| (a.1, a.2) != (elems, bytes)) || elems * bytes != p[0] {
+                        return err("a copy between arrays of other shapes");
+                    }
+                    let m = if bytes == 8 { M::U64 } else { M::U32 };
+                    let (da, sa) = (if ad.is_some() { None } else { Some(self.expr(dst, cx)?) }, if asrc.is_some() { None } else { Some(self.expr(src, cx)?) });
+                    for e in 0..elems {
+                        let x = match (&asrc, &sa) {
+                            (Some((name, ..)), _) => V::L(format!("{name}[{e}]"), m),
+                            (None, Some(a)) => {
+                                let at = offset_addr(a.clone(), e * bytes)?;
+                                self.load(m, &at, cx)?
+                            }
+                            _ => unreachable!(),
+                        };
+                        match (&ad, &da) {
+                            (Some((name, ..)), _) => self.set_elem(&format!("{name}[{e}]"), m, &x, cx)?,
+                            (None, Some(a)) => {
+                                let at = offset_addr(a.clone(), e * bytes)?;
+                                self.store(m, &at, &x, cx)?;
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    return Ok(V::None);
+                }
+                // A thread's structure's fields: copied each.
+                let sd = self.struct_of(dst, cx);
+                let ss = self.struct_of(src, cx);
+                if sd.is_some() || ss.is_some() {
+                    let fields = sd.clone().or(ss.clone()).expect("a structure");
+                    let (da, sa) = (if sd.is_some() { None } else { Some(self.expr(dst, cx)?) }, if ss.is_some() { None } else { Some(self.expr(src, cx)?) });
+                    for (byte, m) in fields {
+                        let x = match (&ss, &sa) {
+                            (Some(f), _) => match f.iter().find(|f| f.0 == byte && f.1 == m) {
+                                Some(_) => self.field_value(src, byte, cx)?,
+                                None => return err("a copy between structures of other fields"),
+                            },
+                            (None, Some(a)) => {
+                                let at = offset_addr(a.clone(), byte)?;
+                                self.load(m, &at, cx)?
+                            }
+                            _ => unreachable!(),
+                        };
+                        match &da {
+                            None => {
+                                let var = self.vars.get(&(cx.ctx, field_key(self.vid(dst), byte))).cloned().expect("a field");
+                                self.assign(&var, x, cx)?;
+                            }
+                            Some(a) => {
+                                let at = offset_addr(a.clone(), byte)?;
+                                self.store(m, &at, &x, cx)?;
+                            }
+                        }
+                    }
+                    return Ok(V::None);
+                }
                 if self.v.kind(dst) == Kind::Local && self.v.w(dst, 2) == 0 && self.only_read(dst, n) {
                     let a = self.expr(src, cx)?;
                     let k = match &a {
@@ -2353,14 +3051,50 @@ impl Em<'_> {
                         V::At { base, .. } => root_of(base),
                         _ => None,
                     };
-                    if k.is_some_and(|k| self.unwritten(k)) {
+                    // A call's result: its bytes the call's own, which nothing writes after.
+                    if k.is_some_and(|k| self.unwritten(k)) || self.v.kind(src) == Kind::Call {
                         let id = self.vid(dst);
                         self.aliases.insert((cx.ctx, id));
                         self.vars.insert((cx.ctx, id), Var { name: format!("x{id}"), m: M::PTR, lanes: false, iota: false, fixed: Some(a.clone()) });
                         return Ok(a);
                     }
                 }
-                return err("a copy of a structure into a variable written after, or from bytes the kernel writes");
+                // Bytes to bytes: each running lane's (one copy where both addresses are one value's).
+                let (d, s) = (self.expr(dst, cx)?, self.expr(src, cx)?);
+                let k = match &d {
+                    V::S(s, _) => root_of(s),
+                    V::At { base, .. } => root_of(base),
+                    _ => None,
+                };
+                if self.v.kind(dst) != Kind::Local {
+                    self.writes.push((k, false));
+                }
+                let bytes = p[0];
+                let ptr = |x: V| match x {
+                    V::S(a, M::PTR) => Ok(V::S(a, M::PTR)),
+                    V::S(a, _) => Ok(V::S(format!("({a} as usize as *const u8)"), M::PTR)),
+                    x => Ok(x),
+                };
+                let (d, s) = (ptr(d)?, ptr(s)?);
+                if let (V::S(da, _), V::S(sa, _)) = (&d, &s) {
+                    let guard = if cx.full { "true".to_string() } else { self.any(&cx.cur.clone()) };
+                    self.line(format!("if {guard} {{ core::ptr::copy({sa}, {da} as *mut u8, {bytes}); }}"));
+                    return Ok(d);
+                }
+                let w = self.w;
+                let (V::S(dj, djm), V::S(sj, sjm)) = (self.lane_of(&d)?, self.lane_of(&s)?) else { return err("a copy's addresses at a lane") };
+                let addr = |a: String, m: M| if m == M::PTR { a } else { format!("({a} as usize as *const u8)") };
+                let (dj, sj) = (addr(dj, djm), addr(sj, sjm));
+                let guard = if cx.full {
+                    String::new()
+                } else {
+                    let k = self.mask(&V::K(cx.cur.clone()))?;
+                    let km = self.tmp();
+                    self.line(format!("let {km} = core::mem::transmute::<[uint32x4_t; {}], [u32; {w}]>({k});", self.p));
+                    format!("if {km}[j] != 0 ")
+                };
+                self.line(format!("for j in 0..{w} {{ {guard}{{ core::ptr::copy({sj}, {dj} as *mut u8, {bytes}); }} }}"));
+                return Ok(d);
             }
             k => return err(format!("a {k:?} value")),
         })
@@ -2511,6 +3245,7 @@ impl Em<'_> {
         let w = self.w;
         Ok(match x {
             V::S(..) | V::None => x.clone(),
+            V::Ref(..) | V::Arr(..) => return err("a thread variable's address at one lane"),
             V::Iota(f, _) => V::S(format!("({f}).wrapping_add(j as u32)"), M::U32),
             V::Lin(f, s) => V::S(format!("({f}).wrapping_add(({s}).wrapping_mul(j as u32))"), M::U32),
             V::At { base, idx, scale } => {
@@ -2530,7 +3265,7 @@ impl Em<'_> {
                 self.line(format!("let {a} = core::mem::transmute::<[uint32x4_t; {}], [u32; {}]>({l});", 2 * self.p, 2 * w));
                 let x = format!("(({a}[{w} + j] as u64) << 32 | {a}[j] as u64)");
                 // A pointer's halves: its address.
-                V::S(if *m == M::PTR { format!("({x} as usize as *const u8)") } else { x }, *m)
+                V::S(if *m == M::PTR { format!("({x} as usize as *const u8)") } else if *m == M::U64 { x } else { format!("({x} as {})", scalar(*m)?) }, *m)
             }
             V::Z(l) => {
                 let a = self.tmp();
@@ -2626,6 +3361,7 @@ impl Em<'_> {
                 (Sh::Arg(_), V::S(s, _)) => args.push(s),
                 (Sh::In(_), V::S(s, am)) => args.push(conv(&s, am, pm)),
                 (Sh::Gid, _) => {}
+                (Sh::Ref(_), V::Ref(place, _)) | (Sh::Arr(..), V::Arr(place, ..)) => args.push(format!("&mut {place}")),
                 (Sh::Iota | Sh::Run(_), V::Iota(f, _)) => args.push(f),
                 (Sh::L, a) => {
                     let l = if pm == M::B { self.mask(&a)? } else { self.lanes(&a, pm)? };
@@ -2649,6 +3385,16 @@ impl Em<'_> {
                     }
                 }
                 (sh, a) => return err(format!("{a:?} passed as {sh:?}")),
+            }
+        }
+        // A variable passed by `&mut`: the other arguments first, as values (one may read that variable).
+        if args.iter().any(|a| a.starts_with("&mut ")) {
+            for a in args.iter_mut().skip(2) {
+                if !a.starts_with("&mut ") && a.chars().any(|c| !c.is_alphanumeric() && c != '_') {
+                    let t = self.tmp();
+                    self.line(format!("let {t} = {a};"));
+                    *a = t;
+                }
             }
         }
         if phased {
@@ -2675,7 +3421,15 @@ impl Em<'_> {
         } else {
             let t = self.tmp();
             self.line(format!("let {t} = {call};"));
-            if self.rets.get(&ctx).copied().unwrap_or(false) { if ret == M::B { V::K(t) } else { V::L(t, ret) } } else { V::S(t, ret) }
+            let rl = self.rets.get(&ctx).copied().unwrap_or(false);
+            if ret.is_agg() {
+                // Its bytes, here: their address, one value's or each lane's at its row.
+                if rl { V::At { base: format!("({t}.as_ptr() as *const u8)"), idx: Box::new(V::Iota("0u32".into(), M::U32)), scale: ret.bytes() } } else { V::S(format!("{t}.as_ptr()"), M::PTR) }
+            } else if rl {
+                if ret == M::B { V::K(t) } else { V::L(t, ret) }
+            } else {
+                V::S(t, ret)
+            }
         };
         if cx.full {
             for k in first {
@@ -2717,7 +3471,8 @@ impl Em<'_> {
                             self.learn_lane_cond(cx.ctx, n);
                             "0".into()
                         }
-                        x => return err(format!("a uniform ?:'s arm of lanes: {x:?}")),
+                        // One value in the lanes that run, held as each lane's: the first running lane's.
+                        x => self.one_of(&x, m, cx)?,
                     }
                 } else if m == M::B {
                     self.mask(&x)?
@@ -2761,10 +3516,15 @@ impl Em<'_> {
 
     /// The thread's variable node `a` is the address of, whole.
     fn var_of(&mut self, a: usize, cx: &Cx) -> Option<Var> {
+        // A structure's field.
+        let (l, byte) = if self.v.kind(a) == Kind::Local { (a, self.v.w(a, 2)) } else { self.local_field(a)? };
+        if self.structs.contains_key(&(cx.ctx, self.vid(l))) {
+            return self.vars.get(&(cx.ctx, field_key(self.vid(l), byte))).cloned();
+        }
         if self.v.kind(a) != Kind::Local || self.v.w(a, 2) != 0 {
             return None;
         }
-        if self.aliases.contains(&(cx.ctx, self.vid(a))) {
+        if self.aliases.contains(&(cx.ctx, self.vid(a))) || self.mems.contains_key(&(cx.ctx, self.vid(a))) {
             return None;
         }
         let var = self.vars.get(&(cx.ctx, self.vid(a)))?.clone();
@@ -2802,6 +3562,19 @@ impl Em<'_> {
     }
 
     fn assign(&mut self, var: &Var, x: V, cx: &Cx) -> R<()> {
+        // A thread variable's address: the pointer an alias of that variable, if it is only ever that one's.
+        if let V::Ref(place, _) = &x {
+            let key = (cx.ctx, var.name[1..].parse::<u32>().unwrap_or(u32::MAX));
+            return match (self.refs.get(&key), &var.fixed) {
+                (Some(V::Ref(p, _)), _) if p == place => Ok(()),
+                (Some(_), _) | (None, Some(_)) => err(format!("{} holds another variable's address", var.name)),
+                (None, None) => {
+                    self.refs.insert(key, x.clone());
+                    self.again = true;
+                    Ok(())
+                }
+            };
+        }
         if var.fixed.is_some() {
             return err(format!("a write of parameter {}, passed as its calls' shape", var.name));
         }
@@ -3306,6 +4079,9 @@ impl Em<'_> {
             V::K(k) if to == M::B || from == M::B || to.bytes() == 4 => V::K(k),
             c @ V::Cmp { .. } if to == M::B || from == M::B || to.bytes() == 4 => c,
             V::K(k) if wide(to) => V::Z(self.lanes(&V::K(k), M::U32)?),
+            // As a narrower integer: its 0 or 1, in 32-bit lanes (as a narrower one's are held).
+            V::K(k) if matches!(to.bytes(), 1 | 2) && !to.float() => V::L(self.lanes(&V::K(k), M::U32)?, to),
+            c @ V::Cmp { .. } if matches!(to.bytes(), 1 | 2) && !to.float() => V::L(self.lanes(&c, M::U32)?, to),
             V::K(_) => return err(format!("a mask as {to:?}")),
             // 64-bit lanes: as other 64 bits, the same; as 32 or fewer, each lane's low half; as a truth, whether
             // any bit of either half is set.
@@ -3331,6 +4107,11 @@ impl Em<'_> {
                 let h = self.halves(&a, from)?;
                 self.of_halves(h, to)
             }
+            // A narrower signed one's: held sign-extended in 32 bits, widened as an `i32` is.
+            V::L(l, _) if wide(to) && matches!(from.bytes(), 1 | 2) && from.signed() => {
+                let h = self.halves(&V::L(l, M::I32), M::I32)?;
+                self.of_halves(h, to)
+            }
             V::L(l, _) if to == M::B => V::K(self.map(|r| format!("vtstq_u32({l}[{r}], {l}[{r}])"))),
             V::L(l, _) if to.bytes() <= 4 && from.bytes() == 4 => self.narrowed(l, to),
             V::L(l, _) if to.bytes() == 4 && from.bytes() < 4 => V::L(l, to),
@@ -3347,6 +4128,104 @@ impl Em<'_> {
             }
             a => return err(format!("{a:?} from {from:?} to {to:?}")),
         })
+    }
+
+    /// Value `x` of `m`, one value in the lanes of `cx` that run (the tape's level) but held as each lane's: the
+    /// first running lane's, as a scalar expression.
+    fn one_of(&mut self, x: &V, m: M, cx: &Cx) -> R<String> {
+        if let V::S(s, xm) = x {
+            return Ok(conv(s, *xm, m));
+        }
+        let first = if cx.full {
+            "0usize".to_string()
+        } else {
+            let t = self.tmp();
+            self.line(format!("let {t} = (bits(&{}).trailing_zeros() as usize).min({});", cx.cur, self.w - 1));
+            t
+        };
+        let first = first.as_str();
+        let V::S(e, em) = self.lane_of(x)? else { return err("a value at its first lane") };
+        let t = self.tmp();
+        self.line(format!("let {t} = {{ let j = {first}; {} }};", conv(&e, em, m)));
+        Ok(t)
+    }
+
+    /// SIMD group operation `b` (of `m`) on `args`, the group the chunk's 32 lanes (`one`), in the lanes that run:
+    /// a ballot their bits where the argument holds; a reduction theirs folded (one value); a shuffle each lane's
+    /// read of its source lane's value, 0 where that lane does not run (its own, past the group's ends, for `up`
+    /// and `down`), as the vector tape's interpreter has it.
+    fn sg_op(&mut self, b: Builtin, m: M, args: &[V], cx: &Cx) -> R<V> {
+        let w = self.w;
+        let p = self.p;
+        // The running lanes' bits.
+        let on = if cx.full {
+            format!("{}u32", if w == 32 { u32::MAX } else { (1u32 << w) - 1 })
+        } else {
+            let t = self.tmp();
+            self.line(format!("let {t} = bits(&{});", cx.cur));
+            t
+        };
+        if b == Builtin::SubGroupBallot {
+            let k = self.mask(&args[0])?;
+            let t = self.tmp();
+            self.line(format!("let {t} = bits(&{k}) & {on};"));
+            return Ok(V::S(t, M::U32));
+        }
+        let wide = wide(m);
+        let (regs, n) = if wide { (2 * p, 2 * w) } else { (p, w) };
+        // A value of one lane's: the same in every lane.
+        if let V::S(x, xm) = &args[0]
+            && matches!(b, Builtin::SubGroupReduceMin | Builtin::SubGroupReduceMax)
+        {
+            return Ok(V::S(conv(x, *xm, m), m));
+        }
+        let l = self.lanes(&args[0], m)?;
+        let xa = self.tmp();
+        self.line(format!("let {xa} = core::mem::transmute::<[uint32x4_t; {regs}], [u32; {n}]>({l});"));
+        let lane = |j: &str| if wide { format!("(({xa}[{w} + {j}] as u64) << 32 | {xa}[{j}] as u64)") } else { format!("{xa}[{j}]") };
+        let ty = if wide { "u64" } else { "u32" };
+        match b {
+            Builtin::SubGroupReduceAdd | Builtin::SubGroupReduceMin | Builtin::SubGroupReduceMax => {
+                let st = if m.float() {
+                    return err(format!("{b:?} of {m:?}"));
+                } else if m.signed() {
+                    if wide { "i64" } else { "i32" }
+                } else {
+                    ty
+                };
+                let (init, f) = match b {
+                    Builtin::SubGroupReduceAdd => ("0".to_string(), "r.wrapping_add(x)"),
+                    Builtin::SubGroupReduceMin => (format!("{st}::MAX"), "r.min(x)"),
+                    _ => (format!("{st}::MIN"), "r.max(x)"),
+                };
+                let t = self.tmp();
+                self.line(format!("let mut {t}: {st} = {init};"));
+                self.line(format!("for j in 0..{w} {{ if ({on} >> j) & 1 != 0 {{ let (r, x) = ({t}, {} as {st}); {t} = {f}; }} }}", lane("j")));
+                Ok(V::S(format!("({t} as {})", scalar(m)?), m))
+            }
+            _ => {
+                let i = self.lanes(&args[1], M::U32)?;
+                let ia = self.tmp();
+                self.line(format!("let {ia} = core::mem::transmute::<[uint32x4_t; {p}], [u32; {w}]>({i});"));
+                let (src, keep) = match b {
+                    Builtin::SubGroupShuffle => (format!("Some({ia}[j] as usize & 31)"), false),
+                    Builtin::SubGroupShuffleXor => (format!("Some((j ^ {ia}[j] as usize) & 31)"), false),
+                    Builtin::SubGroupShuffleUp => (format!("(j as usize).checked_sub({ia}[j] as usize)"), true),
+                    _ => (format!("Some(j + {ia}[j] as usize).filter(|&s| s < 32)"), true),
+                };
+                let out = self.tmp();
+                self.line(format!("let mut {out} = [0u32; {n}];"));
+                let other = if keep { lane("j") } else { "0".into() };
+                let put = if wide { format!("{out}[j] = v as u32; {out}[{w} + j] = (v >> 32) as u32;") } else { format!("{out}[j] = v;") };
+                self.line(format!(
+                    "for j in 0..{w} {{ let v: {ty} = match {src} {{ Some(s) if ({on} >> s) & 1 != 0 => {}, Some(_) if !{keep} => 0, _ => {other} }}; {put} }}",
+                    lane("s")
+                ));
+                let r = self.tmp();
+                self.line(format!("let {r} = core::mem::transmute::<[u32; {n}], [uint32x4_t; {regs}]>({out});"));
+                Ok(V::L(r, m))
+            }
+        }
     }
 
     /// `x` as each lane's `m` (a uniform value in every lane, a thread id's lanes made).
@@ -3526,6 +4405,10 @@ impl Em<'_> {
                 let addr = self.addrs(a, cx)?;
                 let t = self.tmp();
                 self.line(format!("let mut {t}: [uint32x4_t; {}] = {};", if wide(m) { 2 * p } else { p }, self.zeros_of(m)));
+                if self.rolled() {
+                    self.load_lanes(&t, m, &format!("({addr}[j] as *const u8)"))?;
+                    return Ok(V::L(t, m));
+                }
                 for j in 0..w {
                     let (r, q) = (j / 4, j % 4);
                     if wide(m) {
@@ -3564,7 +4447,18 @@ impl Em<'_> {
             None => self.line(format!("let {hi} = [0u32; {w}];")),
         }
         let addr = self.tmp();
-        if cx.full {
+        // Of more than 8 lanes: a loop over them (`from_fn`), not each lane's text.
+        if self.rolled() {
+            let j = if cx.full {
+                "j".to_string()
+            } else {
+                let (b, f) = (self.tmp(), self.tmp());
+                self.line(format!("let {b} = bits(&{});", cx.cur));
+                self.line(format!("let {f} = {b}.trailing_zeros() as usize % {w};"));
+                format!("(if {b} >> j & 1 != 0 {{ j }} else {{ {f} }})")
+            };
+            self.line(format!("let {addr}: [usize; {w}] = core::array::from_fn(|j| {{ let j = {j}; (({hi}[j] as u64) << 32 | {lo}[j] as u64) as usize }});"));
+        } else if cx.full {
             let at = (0..w).map(|j| format!("(({hi}[{j}] as u64) << 32 | {lo}[{j}] as u64) as usize")).collect::<Vec<_>>().join(", ");
             self.line(format!("let {addr}: [usize; {w}] = [{at}];"));
         } else {
@@ -3597,7 +4491,11 @@ impl Em<'_> {
         self.line(format!("let {q} = ({base} as *const u8).add((({first}) as usize) * {scale});"));
         self.line(format!("let {st} = (({stride}) as usize) * {scale};"));
         let ut = ["u8", "u16", "", "u32", "", "", "", "u64"][e as usize - 1];
-        for j in 0..w {
+        let rolled = self.rolled();
+        if rolled {
+            self.load_lanes(&t, m, &format!("{q}.add(j * {st})"))?;
+        }
+        for j in (0..w).filter(|_| !rolled) {
             let (r, l) = (j / 4, j % 4);
             let a = format!("{q}.add({j} * {st})");
             match (e, m.signed()) {
@@ -3717,6 +4615,20 @@ impl Em<'_> {
                         }
                         return Ok(());
                     }
+                    // Another size's: the last running lane's, as above.
+                    x if matches!(m.bytes(), 1 | 2 | 8) && !m.is_agg() => {
+                        let w = self.w;
+                        let V::S(xj, xm) = self.lane_of(x)? else { return err("a stored value at a lane") };
+                        let (t, xv) = if m == M::B { ("u8".to_string(), format!("({}) as u8", truth(&xj, xm))) } else { (scalar(m)?.to_string(), conv(&xj, xm, m)) };
+                        if cx.full {
+                            self.line(format!("{{ let j = {}; ({s} as *mut {t}).write_unaligned({xv}); }}", w - 1));
+                        } else {
+                            let b = self.tmp();
+                            self.line(format!("let {b} = bits(&{});", cx.cur));
+                            self.line(format!("if {b} != 0 {{ let j = 31 - {b}.leading_zeros() as usize; ({s} as *mut {t}).write_unaligned({xv}); }}"));
+                        }
+                        return Ok(());
+                    }
                     _ => {
                         // An address this pass takes for one value, a call's result a later pass may find each lane's.
                         self.pending.get_or_insert_with(|| "a store of lanes' values at one address".into());
@@ -3795,6 +4707,25 @@ impl Em<'_> {
                 Ok(())
             }
             V::At { base, idx, scale } if matches!(m.bytes(), 1 | 2 | 4 | 8) => self.store_elems(m, &base.clone(), &idx.clone(), *scale, x, cx),
+            // Each lane's address (a pointer held as each lane's): each running lane's value at its own, in turn.
+            a @ (V::L(..) | V::Z(..)) if matches!(m.bytes(), 1 | 2 | 4 | 8) && !m.is_agg() => {
+                let w = self.w;
+                let V::S(aj, am) = self.lane_of(a)? else { return err("a store's address at a lane") };
+                let V::S(xj, xm) = self.lane_of(x)? else { return err("a store's value at a lane") };
+                let aj = if am == M::PTR { aj } else { format!("({aj} as usize as *const u8)") };
+                let guard = if cx.full {
+                    String::new()
+                } else {
+                    let k = self.mask(&V::K(cx.cur.clone()))?;
+                    let km = self.tmp();
+                    self.line(format!("let {km} = core::mem::transmute::<[uint32x4_t; {}], [u32; {w}]>({k});", self.p));
+                    format!("if {km}[j] != 0 ")
+                };
+                let t = if m == M::B { "u8".to_string() } else { scalar(m)?.to_string() };
+                let xv = if m == M::B { format!("({}) as u8", truth(&xj, xm)) } else { conv(&xj, xm, m) };
+                self.line(format!("for j in 0..{w} {{ {guard}{{ ({aj} as *mut {t}).write_unaligned({xv}); }} }}"));
+                Ok(())
+            }
             a => err(format!("a store of {m:?} at {a:?}")),
         }
     }
@@ -3956,7 +4887,13 @@ impl Em<'_> {
         self.ind -= 1;
         self.line("} else {");
         self.ind += 1;
-        for j in 0..self.w {
+        let rolled = self.rolled();
+        if rolled {
+            let ia = self.tmp();
+            self.line(format!("let {ia} = core::mem::transmute::<[uint32x4_t; {p}], [u32; {}]>({ix});", self.w));
+            self.load_lanes(&t, m, &format!("({at} as *const u8).add({ia}[j] as usize * {scale})"))?;
+        }
+        for j in (0..self.w).filter(|_| !rolled) {
             let (r, q) = (j / 4, j % 4);
             let a = format!("(({at} as *const u8).add(vgetq_lane_u32::<{q}>({ix}[{r}]) as usize * {scale}) as *const {ut}).read_unaligned()");
             if e == 8 {
@@ -4106,13 +5043,37 @@ impl Em<'_> {
                 let d = dim(&args[0])?;
                 V::S(format!("(l.groups[{d}] * l.block[{d}])"), M::U32)
             }
-            Builtin::MemFence | Builtin::Yield => V::None,
+            Builtin::Yield => V::None,
+            // A group of one chunk: its threads in step.
+            Builtin::Barrier | Builtin::SubGroupBarrier if self.one => V::None,
+            // The thread's lane in its SIMD group of 32: its chunk's lanes from `lid0`'s (a chunk lies in one group).
+            Builtin::SubGroupLocalId => V::Iota(if self.one { "lid0".into() } else { "(lid0 % 32)".into() }, M::U32),
+            // The SIMD group's operations, its lanes the chunk's (a group of one chunk): across the registers.
+            Builtin::SubGroupBallot | Builtin::SubGroupReduceAdd | Builtin::SubGroupReduceMin | Builtin::SubGroupReduceMax | Builtin::SubGroupShuffle | Builtin::SubGroupShuffleUp | Builtin::SubGroupShuffleDown | Builtin::SubGroupShuffleXor => {
+                if !self.one {
+                    return err(format!("{b:?} where a SIMD group is not the chunk"));
+                }
+                self.sg_op(b, m, &args, cx)?
+            }
+            // The device's fence (`ukl_fence_device`): the kernel's groups run on the machine's threads.
+            Builtin::MemFence => {
+                self.line("core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);");
+                V::None
+            }
             Builtin::AtomicLoad => self.load(m, &args[0], cx)?,
             Builtin::AtomicStore => {
                 self.store(m, &args[0], &args[1], cx)?;
                 V::None
             }
-            Builtin::AtomicAdd | Builtin::AtomicMax | Builtin::AtomicMin | Builtin::AtomicOr | Builtin::AtomicAnd if m.bytes() == 4 && !m.signed() => {
+            Builtin::AtomicAdd | Builtin::AtomicMax | Builtin::AtomicMin | Builtin::AtomicOr | Builtin::AtomicAnd
+                if m.bytes() == 4
+                    && !m.signed()
+                    && match (&args[0], &args[1]) {
+                        (V::S(..), V::S(..)) | (V::At { .. }, _) => true,
+                        (V::S(..), _) => matches!(b, Builtin::AtomicAdd | Builtin::AtomicMax | Builtin::AtomicMin) && self.unread(n),
+                        _ => false,
+                    } =>
+            {
                 let unread = self.unread(n);
                 let k = match &args[0] {
                     V::S(s, _) => root_of(s),
@@ -4206,6 +5167,72 @@ impl Em<'_> {
                         V::L(self.map(|r| format!("vld1q_u32({ov}.as_ptr().add({}))", 4 * r)), m)
                     }
                     _ => return err(format!("{b:?} of each lane's address")),
+                }
+            }
+            // Another atomic of a 32-bit word (or one of the above signed): each running lane's in turn, at its
+            // address, its old value its own.
+            Builtin::AtomicAdd
+            | Builtin::AtomicSub
+            | Builtin::AtomicAnd
+            | Builtin::AtomicOr
+            | Builtin::AtomicXor
+            | Builtin::AtomicXchg
+            | Builtin::AtomicMin
+            | Builtin::AtomicMax
+            | Builtin::AtomicCmpxchg
+            | Builtin::AtomicInc
+            | Builtin::AtomicDec
+                if m.bytes() == 4 && !m.float() =>
+            {
+                let k = match &args[0] {
+                    V::S(s, _) => root_of(s),
+                    V::At { base, .. } => root_of(base),
+                    _ => None,
+                };
+                self.writes.push((k, false));
+                let (at, t) = if m.signed() { ("core::sync::atomic::AtomicI32", "i32") } else { ("AtomicU32", "u32") };
+                let w = self.w;
+                // Each lane's address and operands, read at lane `j`.
+                let addr = match self.lane_of(&args[0])? {
+                    V::S(a, M::U64) => format!("({a} as usize as *mut {t})"),
+                    V::S(a, _) => format!("({a} as *mut {t})"),
+                    _ => return err("an atomic's address at a lane"),
+                };
+                let mut ops = Vec::new();
+                for a in &args[1..] {
+                    let V::S(x, xm) = self.lane_of(a)? else { return err("an atomic's operand at a lane") };
+                    ops.push(format!("({} as {t})", conv(&x, xm, m)));
+                }
+                let op = |i: usize| ops.get(i).cloned().unwrap_or_default();
+                let call = match b {
+                    Builtin::AtomicAdd => format!("fetch_add({}, Relaxed)", op(0)),
+                    Builtin::AtomicSub => format!("fetch_sub({}, Relaxed)", op(0)),
+                    Builtin::AtomicAnd => format!("fetch_and({}, Relaxed)", op(0)),
+                    Builtin::AtomicOr => format!("fetch_or({}, Relaxed)", op(0)),
+                    Builtin::AtomicXor => format!("fetch_xor({}, Relaxed)", op(0)),
+                    Builtin::AtomicXchg => format!("swap({}, Relaxed)", op(0)),
+                    Builtin::AtomicMin => format!("fetch_min({}, Relaxed)", op(0)),
+                    Builtin::AtomicMax => format!("fetch_max({}, Relaxed)", op(0)),
+                    Builtin::AtomicInc => "fetch_add(1, Relaxed)".into(),
+                    Builtin::AtomicDec => "fetch_sub(1, Relaxed)".into(),
+                    _ => format!("compare_exchange({}, {}, Relaxed, Relaxed).unwrap_or_else(|x| x)", op(0), op(1)),
+                };
+                let on = if cx.full { None } else { Some(self.mask(&V::K(cx.cur.clone()))?) };
+                let ov = self.tmp();
+                self.line(format!("let mut {ov} = [0u32; {w}];"));
+                let guard = match &on {
+                    Some(k) => {
+                        let km = self.tmp();
+                        self.line(format!("let {km} = core::mem::transmute::<[uint32x4_t; {}], [u32; {w}]>({k});", self.p));
+                        format!("if {km}[j] != 0 ")
+                    }
+                    None => String::new(),
+                };
+                self.line(format!("for j in 0..{w} {{ {guard}{{ {ov}[j] = {at}::from_ptr({addr}).{call} as u32; }} }}"));
+                if self.unread(n) {
+                    V::None
+                } else {
+                    V::L(self.map(|r| format!("vld1q_u32({ov}.as_ptr().add({}))", 4 * r)), m)
                 }
             }
             // The ones of each lane's `m`: each byte's (`vcnt`), summed pairwise up to the lane's width.
@@ -4313,6 +5340,137 @@ fn fname(id: u32, shapes: &[Sh], full: bool, valid: &[u32]) -> String {
         s.push_str(&format!("_v{k}"));
     }
     s
+}
+
+/// The lines past which an instance of a function the source declares a call (`Em::called`) is the Rust compiler's
+/// to inline or not: a steer for code size, not a rule.
+const CALLED_LINES: usize = 200;
+
+/// Bytes `from..to` of a structure that no access names, as fields: each the widest of 4, 2 or 1 bytes that its
+/// byte's alignment and the end allow.
+fn gaps(from: u32, to: u32) -> Vec<(u32, M)> {
+    let mut out = Vec::new();
+    let mut b = from;
+    while b < to {
+        let n = [4u32, 2, 1].into_iter().find(|&n| b.is_multiple_of(n) && b + n <= to).unwrap_or(1);
+        out.push((b, [M::U8, M::U16, M::VOID, M::U32][n as usize - 1]));
+        b += n;
+    }
+    out
+}
+
+/// Line `s` with each list of `p` registers' expressions (`[e0, e1, ...]`) that are one expression of the
+/// register's index (`per_register`) written once, over the registers (`from_fn`), where the list's type is known:
+/// a typed `let`'s value, an assignment's, a transmute's argument.
+fn roll(s: &str, p: usize) -> String {
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut at = 0;
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'[' {
+            let before = s[..i].trim_end();
+            let typed = before.ends_with("] =") || before.ends_with(">(") || (before.ends_with(" =") && !before.contains("let "));
+            // The list's end and its elements at its own depth.
+            let mut depth = 0i32;
+            let mut parts = Vec::new();
+            let mut from = i + 1;
+            let mut end = None;
+            for k in i..b.len() {
+                match b[k] {
+                    b'[' | b'(' | b'{' => depth += 1,
+                    b']' | b')' | b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            parts.push(s[from..k].trim().to_string());
+                            end = Some(k);
+                            break;
+                        }
+                    }
+                    b',' if depth == 1 => {
+                        parts.push(s[from..k].trim().to_string());
+                        from = k + 1;
+                    }
+                    b';' if depth == 1 => break,
+                    _ => {}
+                }
+            }
+            // Of `p` registers, or of `2p` (a 64-bit value's halves): one expression, or one of each half.
+            let rolled = match parts.len() {
+                n if n == p => per_register(&parts, 0),
+                n if n == 2 * p => per_register(&parts, 0).or_else(|| {
+                    let (a, b) = (per_register(&parts[..p], 0)?, per_register(&parts[p..], p)?);
+                    Some(format!("if r < {p} {{ {a} }} else {{ {b} }}"))
+                }),
+                _ => None,
+            };
+            if let Some(e) = end
+                && typed
+                && let Some(t) = rolled
+            {
+                out.push_str(&s[at..i]);
+                out.push_str(&format!("core::array::from_fn(|r| {t})"));
+                at = e + 1;
+                i = e + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out.push_str(&s[at..]);
+    out
+}
+
+/// The registers' expressions `parts` (`map`) as one of a variable `r`, if they are one text but for numbers that
+/// are each its register's index (an element's, `x[r]`). Not where that number is a constant's (`::<r>`).
+fn per_register(parts: &[String], shift: usize) -> Option<String> {
+    // Each text's runs of digits and of other characters.
+    fn runs(x: &str) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut at = 0;
+        let b = x.as_bytes();
+        while at < b.len() {
+            let d = b[at].is_ascii_digit();
+            let end = (at..b.len()).find(|&k| b[k].is_ascii_digit() != d).unwrap_or(b.len());
+            out.push(&x[at..end]);
+            at = end;
+        }
+        out
+    }
+    let all: Vec<Vec<&str>> = parts.iter().map(|x| runs(x)).collect();
+    let first = &all[0];
+    if all.iter().any(|r| r.len() != first.len()) {
+        return None;
+    }
+    let mut out = String::new();
+    let mut varies = false;
+    for (t, run) in first.iter().enumerate() {
+        if all.iter().all(|r| r[t] == *run) {
+            out.push_str(run);
+            continue;
+        }
+        let digits = run.as_bytes()[0].is_ascii_digit();
+        // A number that is each register's index (`r`, part `k` register `k + shift`), or its index in its half
+        // (`r - shift`); not part of a name (`t12`) nor a constant parameter's.
+        let named = t > 0 && first[t - 1].ends_with(|c: char| c.is_ascii_alphabetic() || c == '_');
+        if !digits || named || out.ends_with("::<") {
+            return None;
+        }
+        if all.iter().enumerate().all(|(k, r)| r[t] == (k + shift).to_string()) {
+            out.push('r');
+        } else if shift > 0 && all.iter().enumerate().all(|(k, r)| r[t] == k.to_string()) {
+            out.push_str(&format!("(r - {shift})"));
+        } else {
+            return None;
+        }
+        varies = true;
+    }
+    varies.then_some(out)
+}
+
+/// A structure's field's key among its function's variables (`Em::structs`): above every variable's number.
+fn field_key(var: u32, byte: u32) -> u32 {
+    1 << 31 | byte << 20 | var
 }
 
 /// `!(a op b)` as `a op' b`.

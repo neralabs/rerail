@@ -41,6 +41,7 @@ unsafe fn bits(k: &[uint32x4_t; 2]) -> u32 {
     b
 }
 
+/// `parent_link_inner`.
 #[inline(always)]
 unsafe fn b0_r0r1sg_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8, arg1: *const u8, x2: *const u8) {
     let gid0 = l.group[0] * l.block[0] + lid0;
@@ -183,6 +184,7 @@ unsafe fn b0_r0r1sg_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8
     }
 }
 
+/// `parent_link_inner`.
 #[inline(always)]
 unsafe fn b0_r0r1sg_f(l: &Launch, lid0: u32, arg0: *const u8, arg1: *const u8, x2: *const u8) {
     let gid0 = l.group[0] * l.block[0] + lid0;
