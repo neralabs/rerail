@@ -467,7 +467,10 @@ background versus next-event delivery.
 
 ## Updates
 
-Rerail updates only when you ask; nothing polls the registry or installs a version in the background.
+Rerail updates only when you ask; nothing installs a version in the background. Once a day the daemon asks npm
+whether a newer version is out, so the dashboard can say so. Unless you add a remote or turn Merge Assist on (internal
+testing), that is the only request Rerail makes on its own, apart from an npm rebuild of the SQLite binding when it
+fails to load. `RERAIL_UPDATE_CHECK=0` set for the daemon turns it off ([reference](reference.md#update)).
 
 The only paths are `rerail update` and re-running `npx @neralabs/rerail setup`. `rerail update --channel <tag>` picks
 the npm dist-tag (`latest`, `beta`, or `next`).

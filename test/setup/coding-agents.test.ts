@@ -299,6 +299,25 @@ describe("whether a coding agent can read Rerail's data", () => {
     expect(await stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: managed })).toEqual({ connected: true, access: "file-tools" });
   });
 
+  it("offers turning Claude Code's sandbox on as the fix only where it is off and Claude Code has one", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
+    const { root, home, managed } = await connected(["claude-code"]);
+    const settings = join(home, ".claude", "settings.json");
+    const fixOn = async (platform: NodeJS.Platform) =>
+      (await codingAgentStates(root, home, { platform, claudeManagedSettings: managed })).find(agent => agent.id === "claude-code")!.rerailData.fix;
+
+    expect(await fixOn("linux")).toBe("Turn it on to keep them out too: run /sandbox in Claude Code.");
+    await writeFile(settings, JSON.stringify({ ...JSON.parse(await readFile(settings, "utf8")), sandbox: { enabled: true } }));
+    expect(await fixOn("linux")).toBeNull();
+  });
+
+  it("offers no fix for Claude Code on native Windows, where it has no sandbox", async () => {
+    const { root, home, managed } = await connected(["claude-code"], async () => {}, "win32");
+    const state = (await codingAgentStates(root, home, { platform: "win32", claudeManagedSettings: managed })).find(agent => agent.id === "claude-code")!;
+    expect(state.rerailData).toMatchObject({ access: "file-tools", fix: null });
+    expect(state.rerailData.why).toContain("no sandbox on Windows");
+  });
+
   it("counts the Cursor CLI's file tools as kept out only where its cli-config.json held Rerail's denies", async ({ skip }) => {
     skip(WINDOWS, POSIX_SETUP);
     const withConfig = await connected(["cursor"], cursorCliConfig);
