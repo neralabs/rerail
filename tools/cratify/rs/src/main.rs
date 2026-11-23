@@ -186,6 +186,73 @@ fn load(file: &std::path::Path, path: &str, mod_rs: bool, out: &mut Vec<Module>)
 
 /// `test` atoms of cfg predicates: the attributes `#[cfg(..)]` and `#[cfg_attr(<pred>, ..)]` (its predicate only), and
 /// `cfg!(..)`. Each: (start, end) of the ident, the attribute's (or macro's) span, and the mod it gates, if any.
+/// Whether a cfg predicate holds only where `test` does.
+fn needs_test(meta: &syn::Meta) -> bool {
+    let nested = |l: &syn::MetaList| l.parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated).map(|p| p.into_iter().collect::<Vec<_>>()).unwrap_or_default();
+    match meta {
+        syn::Meta::Path(p) => p.is_ident("test"),
+        syn::Meta::List(l) if l.path.is_ident("all") => nested(l).iter().any(needs_test),
+        syn::Meta::List(l) if l.path.is_ident("any") => {
+            let n = nested(l);
+            !n.is_empty() && n.iter().all(needs_test)
+        }
+        _ => false,
+    }
+}
+
+fn test_only(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| a.path().is_ident("cfg") && a.parse_args::<syn::Meta>().is_ok_and(|m| needs_test(&m)))
+}
+
+/// `sites`' ranges.
+struct Sites {
+    out: Vec<(&'static str, usize, usize)>,
+}
+
+impl Sites {
+    fn push(&mut self, kind: &'static str, s: proc_macro2::Span) {
+        self.out.push((kind, s.start().line, s.end().line));
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for Sites {
+    fn visit_item(&mut self, i: &'ast syn::Item) {
+        if test_only(attrs(i)) {
+            return self.push("test", i.span());
+        }
+        if let syn::Item::Use(_) = i {
+            return self.push("use", i.span());
+        }
+        syn::visit::visit_item(self, i);
+    }
+    fn visit_impl_item(&mut self, i: &'ast syn::ImplItem) {
+        let a: &[syn::Attribute] = match i {
+            syn::ImplItem::Const(x) => &x.attrs,
+            syn::ImplItem::Fn(x) => &x.attrs,
+            syn::ImplItem::Type(x) => &x.attrs,
+            syn::ImplItem::Macro(x) => &x.attrs,
+            _ => &[],
+        };
+        if test_only(a) {
+            return self.push("test", i.span());
+        }
+        syn::visit::visit_impl_item(self, i);
+    }
+    fn visit_trait_item(&mut self, i: &'ast syn::TraitItem) {
+        let a: &[syn::Attribute] = match i {
+            syn::TraitItem::Const(x) => &x.attrs,
+            syn::TraitItem::Fn(x) => &x.attrs,
+            syn::TraitItem::Type(x) => &x.attrs,
+            syn::TraitItem::Macro(x) => &x.attrs,
+            _ => &[],
+        };
+        if test_only(a) {
+            return self.push("test", i.span());
+        }
+        syn::visit::visit_trait_item(self, i);
+    }
+}
+
 struct CfgTests<'a> {
     src: &'a str,
     lines: Vec<usize>,
@@ -401,6 +468,26 @@ fn main() {
                 }
             }
         }
+        Some("sites") => {
+            // `cratify sites <file>...`: per file, the lines (1-based, inclusive) of each `use` item at any depth (an
+            // import or a facade, which names an item without using it) and of each item compiled only under `test`
+            // (`#[cfg(test)]`, `all(test, ..)`; not `any(test, feature = "test-hooks")`): file, use|test, first, last.
+            for file in &args[2..] {
+                let src = std::fs::read_to_string(file).expect(file);
+                let f = match syn::parse_file(&src) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("{file}: {e}");
+                        continue;
+                    }
+                };
+                let mut v = Sites { out: Vec::new() };
+                syn::visit::Visit::visit_file(&mut v, &f);
+                for (kind, s, e) in v.out {
+                    println!("{file}\t{kind}\t{s}\t{e}");
+                }
+            }
+        }
         Some("cfgtest") => {
             // `cratify cfgtest <file>...`: per `test` atom of a cfg predicate: file, start, end, the attribute's start
             // and end, and `mod <name>` when the attribute gates a module (else `-`).
@@ -416,7 +503,7 @@ fn main() {
             }
         }
         _ => {
-            eprintln!("usage: cratify items <file>... | cratify tree <lib.rs> | cratify cfgtest <file>...");
+            eprintln!("usage: cratify items <file>... | cratify tree <lib.rs> | cratify cfgtest <file>... | cratify sites <file>...");
             std::process::exit(2);
         }
     }
