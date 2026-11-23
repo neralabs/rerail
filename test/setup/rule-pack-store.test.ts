@@ -20,6 +20,7 @@ import {
   type PackStore,
   type PackVersion,
 } from "../../src/setup/index.js";
+import { PACKS_LOCK_WAIT_MS } from "../../src/setup/packs-lock.js";
 import { directoryPackStore } from "../support/directory-pack-store.js";
 import { installPackDirectory, linkingPackStore, thirdPartyPack, uninstallPack } from "../support/installed-packs.js";
 import { fixturesPath, repositoryPath } from "../support/oracles.js";
@@ -174,7 +175,8 @@ describe("npmPackStore", () => {
     const [args] = calls;
     expect(prefixOf(args!)).toBe(join(home, "packs"));
     expect(args).toEqual(expect.arrayContaining(["--save-exact", "--ignore-scripts"]));
-    // The versions discovery fetched are in npm's cache, so the install does not ask the registry for them again.
+    // The versions discovery fetched, or `rerail packs update`'s npm view read, are in npm's cache, so the install
+    // does not ask the registry for them again.
     expect(args).toContain("--prefer-offline");
     expect(specsOf(args!)).toEqual(["@neralabs/rerail-pack-typescript@0.1.1", "@neralabs/rerail-pack-complexity@0.1.2-next.0"]);
   });
@@ -185,6 +187,21 @@ describe("npmPackStore", () => {
     await npmPackStore(temporaryHome(), npm).install(["@neralabs/rerail-pack-typescript@latest"]);
 
     expect(calls[0]).not.toContain("--prefer-offline");
+  });
+
+  it("stops an install or removal npm has not finished well within the packs lock's wait", async () => {
+    const timeouts: (number | undefined)[] = [];
+    const npm: NpmRunner = async (_args, options) => {
+      timeouts.push(options?.timeoutMs);
+      return { stdout: "", stderr: "" };
+    };
+    const store = npmPackStore(temporaryHome(), npm);
+
+    await store.install(["@neralabs/rerail-pack-typescript@0.1.1"]);
+    await store.remove(["@neralabs/rerail-pack-typescript"]);
+
+    expect(timeouts).toHaveLength(2);
+    for (const timeout of timeouts) expect(timeout).toBeLessThan(PACKS_LOCK_WAIT_MS);
   });
 });
 
@@ -668,6 +685,46 @@ describe("updatePacks", { timeout: COMPILING_TIMEOUT_MS }, () => {
     // One install each, so the one that failed put back only itself, as npm recorded it.
     expect(store.installs).toEqual([["@acme/rerail-pack-lint@1.1.0"], ["@acme/rerail-pack-lint@1.0.0"], ["@acme/rerail-pack-sql@1.1.0"]]);
     expect(steps).toEqual(["Checking your rule packs for newer versions", "Installing @acme/rerail-pack-lint@1.1.0", "Installing @acme/rerail-pack-sql@1.1.0"]);
+  });
+
+  it("keeps the packs already moved when a later pack's step throws, and tries none after it", async () => {
+    const home = temporaryHome();
+    installThirdParty(home, "@acme/rerail-pack-lint", "lint", "1.0.0");
+    installThirdParty(home, "@acme/rerail-pack-sql", "sql", "1.0.0");
+    installThirdParty(home, "@acme/rerail-pack-tidy", "tidy", "1.0.0");
+    const store = versionedStore(home, {
+      "@acme/rerail-pack-lint@1.1.0": thirdPartyPack(join(home, "copies"), "@acme/rerail-pack-lint", "lint", "1.1.0"),
+    });
+    const { npm } = registryNpm(Object.fromEntries(["lint", "sql", "tidy"].map(id =>
+      [`@acme/rerail-pack-${id}`, { tags: { latest: "1.1.0" }, versions: { "1.0.0": null, "1.1.0": null } }])));
+    const stalls: (string | undefined)[] = [];
+    // What installChecked throws, rather than returns, when another process holds the packs past the lock's wait.
+    const progress: Progress = {
+      step: async (label, run, stall) => {
+        if (label === "Installing @acme/rerail-pack-sql@1.1.0") {
+          throw new Error("Another Rerail process (pid 4242) is changing the rule packs in /home/packs; try again once it is done.");
+        }
+        if (label.startsWith("Installing")) stalls.push(stall?.hint);
+        return await run();
+      },
+    };
+
+    const run = await updatePacks(store, progress, npm);
+
+    expect(run.updated).toEqual([{ packageName: "@acme/rerail-pack-lint", installed: "1.0.0", available: "1.1.0", tag: "latest" }]);
+    expect(run.failed).toEqual([
+      {
+        update: { packageName: "@acme/rerail-pack-sql", installed: "1.0.0", available: "1.1.0", tag: "latest" },
+        problem: "Another Rerail process (pid 4242) is changing the rule packs in /home/packs; try again once it is done. `rerail packs list` shows what is installed now.",
+      },
+      {
+        update: { packageName: "@acme/rerail-pack-tidy", installed: "1.0.0", available: "1.1.0", tag: "latest" },
+        problem: "not tried, since updating @acme/rerail-pack-sql stopped",
+      },
+    ]);
+    expect(store.installs).toEqual([["@acme/rerail-pack-lint@1.1.0"]]);
+    // A step that waits on npm or the lock says so, as the check step does.
+    expect(stalls).toEqual([expect.stringMatching(/npm is stopped at 2 min/u)]);
   });
 
   it("installs nothing and names the problem when npm cannot be asked about a pack", async () => {

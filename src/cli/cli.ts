@@ -163,7 +163,7 @@ function leftOutPackLines(coreVersion: string, leftOut: readonly string[]): stri
   return [
     `Rerail ${coreVersion} leaves out ${one ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${one ? "it run none of its" : "them run none of their"} rules:`,
     ...leftOut.map(line => `  ${line}`),
-    "Your rule packs are updated next, each to the newest version that fits; one with no such version stays left out.",
+    "Once your coding agents are refreshed, `rerail packs update` moves each rule pack to the newest version that fits; one with no such version stays left out.",
   ];
 }
 

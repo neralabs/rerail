@@ -45,6 +45,12 @@ import { withPacksLock } from "./packs-lock.js";
 export const PACK_FALLBACK_TAG = "next";
 /** A staging folder older than this is left from a run that never finished, and is removed by the next fetch. */
 const STALE_STAGING_MS = 60 * 60 * 1000;
+/**
+ * An npm install or uninstall in the packs prefix is stopped at this; a checked install then puts the prefix back. A
+ * pack is a few MB (the largest of Rerail's, python, is about 6 MB unpacked): seconds on most lines. One stopped is
+ * still well within the `PACKS_LOCK_WAIT_MS` another process waits for the packs lock.
+ */
+const PACK_INSTALL_TIMEOUT_MS = 2 * 60_000;
 
 /** One pack at an exact version: what set-up shows a person and installs once they confirm. */
 export interface PackVersion {
@@ -202,14 +208,16 @@ export function npmPackStore(home: string = defaultRerailHome(), runner: NpmRunn
     async install(specs) {
       if (specs.length === 0) return;
       // Exact versions only: the tarballs discovery just fetched are in npm's cache under their integrity, so an
-      // answer installs the version the person saw without asking the registry again. A tag or range must ask it.
+      // answer installs the version the person saw without asking the registry again. `rerail packs update` installs
+      // a version its `npm view` just read, which writes the listing this install reads from the cache. A tag or
+      // range must ask the registry. A version named by hand may be missing from an old cached listing (#992).
       const exact = specs.every(spec => semver.valid(spec.slice(spec.lastIndexOf("@") + 1)) !== null);
-      await npm(["install", "--prefix", prefix, ...quiet, ...(exact ? ["--prefer-offline"] : []), "--save-exact", "--", ...specs]);
+      await npm(["install", "--prefix", prefix, ...quiet, ...(exact ? ["--prefer-offline"] : []), "--save-exact", "--", ...specs], { timeoutMs: PACK_INSTALL_TIMEOUT_MS });
     },
     async remove(packageNames) {
       if (packageNames.length === 0) return;
       // npm reinstalls a listed package missing from node_modules while it uninstalls another: its scripts must not run.
-      await npm(["uninstall", "--prefix", prefix, "--ignore-scripts", "--no-audit", "--no-fund", "--", ...packageNames]);
+      await npm(["uninstall", "--prefix", prefix, "--ignore-scripts", "--no-audit", "--no-fund", "--", ...packageNames], { timeoutMs: PACK_INSTALL_TIMEOUT_MS });
     },
   };
 }
@@ -706,7 +714,7 @@ export async function addPackSpecs(specs: readonly string[], store: PackStore): 
   );
 }
 
-/** A pack `updatePacks` could not move, and why; the prefix is put back as it was for it. */
+/** A pack `updatePacks` could not move, and why, which says what is installed now: mostly put back as it was. */
 export interface FailedPackUpdate {
   readonly update: PackUpdate;
   readonly problem: string;
@@ -724,6 +732,7 @@ export interface PackUpdateRun {
  * the active core loads (`newerPackVersions`, under the update channel). Each pack is installed and checked on its own
  * (`installChecked`), so one npm cannot install, or that does not load, is put back alone and the others still move. A
  * pack whose installed version changed since the check (another `rerail packs add` in between) is left as it is now.
+ * An error that is no one pack's own (the packs lock held past its wait) ends the run there, reporting what moved first.
  */
 export async function updatePacks(store: PackStore, progress: Progress = NO_PROGRESS, npm: NpmRunner = runNpm): Promise<PackUpdateRun> {
   const { home } = store;
@@ -734,13 +743,27 @@ export async function updatePacks(store: PackStore, progress: Progress = NO_PROG
   );
   const updated: PackUpdate[] = [];
   const failed: FailedPackUpdate[] = [];
-  for (const update of check.updates) {
+  for (const [index, update] of check.updates.entries()) {
     const pack: PackVersion = { packageName: update.packageName, id: packIdOfPackage(update.packageName)!, version: update.available };
-    const result = await progress.step(`Installing ${packSpec(pack)}`, async () => await installChecked(
-      store,
-      before => before.get(update.packageName)?.version === update.installed ? [packSpec(pack)] : [],
-      changed => changed.includes(update.packageName) ? [pack] : [],
-    ));
+    let result: PackInstall;
+    try {
+      result = await progress.step(`Installing ${packSpec(pack)}`, async () => await installChecked(
+        store,
+        before => before.get(update.packageName)?.version === update.installed ? [packSpec(pack)] : [],
+        changed => changed.includes(update.packageName) ? [pack] : [],
+      ), {
+        afterMs: 30_000,
+        hint: `npm may be slow or stuck, or another Rerail process is changing the rule packs; npm is stopped at ${formatDuration(PACK_INSTALL_TIMEOUT_MS)}.`,
+      });
+    } catch (error) {
+      // Not a failure of this pack's own, which installChecked returns: the packs lock stayed held past its wait, or the
+      // catalog could not be read, possibly after npm installed it. Every pack after it would meet the same, so none is
+      // tried, and the packs already moved are still reported.
+      const why = (error instanceof Error ? error.message : String(error)).replace(/\.+$/u, "");
+      failed.push({ update, problem: `${why}. \`rerail packs list\` shows what is installed now.` });
+      failed.push(...check.updates.slice(index + 1).map(next => ({ update: next, problem: `not tried, since updating ${update.packageName} stopped` })));
+      break;
+    }
     if ("problem" in result) failed.push({ update, problem: result.problem });
     else if (result.installed.length > 0) updated.push(update);
   }
