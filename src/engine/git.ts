@@ -7,7 +7,7 @@ import { MessageChannel, type MessagePort, receiveMessageOnPort, Worker } from "
 import { endProcessTree, execFile, spawnSync } from "./child-process.js";
 import { runGitSync, startGit, type GitProcess } from "./git-start.js";
 import { fileStamp } from "./file-stamp.js";
-import { CallGuard, stdoutOrFailure, unanswered, UNGUARDED, type AskLater, type GitVariables } from "./git-guard/call-guard.js";
+import { CallGuard, OLDER_GIT, READS_NO_WORKTREE, stdoutOrFailure, unanswered, type AskLater, type GitVariables } from "./git-guard/call-guard.js";
 import { guardedCall, inTurn, type StartLater } from "./git-guard/guarded-diff.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
@@ -1032,7 +1032,9 @@ function timeLeftFromFirstStart(limitMs: number): () => number {
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
   const git = withinCallLimit(options.timeout ?? DEFAULT_TIMEOUT_MS);
   const guard = callGuard.now({ cwd, args, env: options.env ?? {} }, (question, asked) => stdoutOrFailure(git(cwd, question, asked)));
-  if (guard === UNGUARDED) return git(cwd, args, options);
+  // A call the guard asks nothing for starts as one Git with the call's own time limit, as before the guard.
+  if (guard === READS_NO_WORKTREE) return startGitSync(cwd, args, options);
+  if (guard === OLDER_GIT) return git(cwd, args, options);
   return "env" in guard ? git(cwd, args, { ...options, env: guard.env }) : unanswered(guard);
 }
 
@@ -1047,7 +1049,7 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
 export async function runGitWithoutBlocking(cwd: string, args: readonly string[], options: RunGitOptions = {}): Promise<GitResult> {
   const git = laterWithinCallLimit(options.timeout ?? DEFAULT_TIMEOUT_MS);
   const guard = await callGuard.later({ cwd, args, env: options.env ?? {} }, async (question, asked) => stdoutOrFailure(await git(cwd, question, asked)));
-  if (guard === UNGUARDED) return await git(cwd, args, options);
+  if (guard === READS_NO_WORKTREE || guard === OLDER_GIT) return await git(cwd, args, options);
   return "env" in guard ? await guardedCall(git, { cwd, args, options }, guard) : unanswered(guard);
 }
 
@@ -1399,7 +1401,7 @@ interface ReadLimit {
  */
 async function readerGuard(cwd: string, args: readonly string[], limit: ReadLimit): Promise<{ readonly env: GitVariables } | GitReadEnd> {
   const guard = await callGuard.later({ cwd, args, env: {} }, readerAsker(cwd, limit));
-  if (guard === UNGUARDED) return { env: {} };
+  if (guard === READS_NO_WORKTREE || guard === OLDER_GIT) return { env: {} };
   return "env" in guard ? { env: guard.env } : guard;
 }
 

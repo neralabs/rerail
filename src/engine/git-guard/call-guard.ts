@@ -67,10 +67,16 @@ export interface Guard {
 }
 
 /**
- * What the guard decides for a call it does not cover, which runs as it is: one that reads no worktree file, or one
- * made with a Git older than 2.31.
+ * What the guard decides for a call that reads no worktree file, having asked nothing: the call runs as it ran before
+ * the guard, `runGit`'s as one Git with the call's own time limit.
  */
-export const UNGUARDED = "unguarded";
+export const READS_NO_WORKTREE = "reads-no-worktree";
+
+/** What the guard decides for a call made with a Git older than 2.31: it runs as it is, within the call's limit. */
+export const OLDER_GIT = "older-git";
+
+/** What the guard decides for a call it does not cover, which runs as it is. */
+export type Unguarded = typeof READS_NO_WORKTREE | typeof OLDER_GIT;
 
 /** Stdout of a Git that answered, exiting 0 with no error; else the run itself, as how it failed. */
 export function stdoutOrFailure<R extends GitFailure>(run: R): string | R {
@@ -122,13 +128,13 @@ export class CallGuard {
   }
 
   /** What the guard decides for `call`, each question asked with `ask`, which blocks. */
-  now<F extends object>(call: GuardedCall, ask: AskNow<F>): Guard | F | typeof UNGUARDED {
+  now<F extends object>(call: GuardedCall, ask: AskNow<F>): Guard | F | Unguarded {
     const { runs } = this.#state;
     return answeredNow(guardSteps<F>(call, this.#state, () => runs()), ask);
   }
 
   /** What the guard decides for `call`, each question asked with `ask`, which does not block. */
-  async later<F extends object>(call: GuardedCall, ask: AskLater<F>): Promise<Guard | F | typeof UNGUARDED> {
+  async later<F extends object>(call: GuardedCall, ask: AskLater<F>): Promise<Guard | F | Unguarded> {
     const { runs } = this.#state;
     return await answeredLater(guardSteps<F>(call, this.#state, before => (runs() === before ? before : undefined)), ask);
   }
@@ -158,16 +164,17 @@ async function answeredLater<T, F extends object>(steps: Steps<T, F>, ask: AskLa
 }
 
 /**
- * The guard's sequence for `call`: none for a call that reads no worktree file or runs a Git the guard does not cover
- * ({@link coveringGit}); the call's own variables, with no config listed, where the repository's config read in
- * process defines no driver ({@link definesNoDriverAt}); else the config listed ({@link listingQuestion}) and each
- * driver it defines set, or how listing it failed, with none of the call made. The listing and the call are two Git
+ * The guard's sequence for `call`: no question for a call that reads no worktree file ({@link READS_NO_WORKTREE}); none
+ * more for one that runs a Git the guard does not cover ({@link coveringGit}, {@link OLDER_GIT}); the call's own
+ * variables, with no config listed, where the repository's config read in process defines no driver
+ * ({@link definesNoDriverAt}); else the config listed ({@link listingQuestion}) and each driver it defines set, or how
+ * listing it failed, with none of the call made. The listing and the call are two Git
  * processes: a writer that changes the config between them can have its driver started (docs/threat-model.md, T11).
  */
-function* guardSteps<F extends object>(call: GuardedCall, state: GuardState, answeredBy: AnsweredBy): Steps<Guard | F | typeof UNGUARDED, F> {
-  if (worktreeRead(call.args) === "none") return UNGUARDED;
+function* guardSteps<F extends object>(call: GuardedCall, state: GuardState, answeredBy: AnsweredBy): Steps<Guard | F | Unguarded, F> {
+  if (worktreeRead(call.args) === "none") return READS_NO_WORKTREE;
   const git = yield* coveringGit<F>(state, answeredBy);
-  if (git === undefined) return UNGUARDED;
+  if (git === undefined) return OLDER_GIT;
   if (definesNoDriverAt(call.cwd, call.env)) return { env: call.env, looksOutside: git.looksOutside, entries: undefined };
   const listing = yield listingQuestion(call.env);
   return typeof listing === "string" ? { ...listedBy(listing, call.env), looksOutside: git.looksOutside } : listing;
