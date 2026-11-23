@@ -745,6 +745,8 @@ pub mod code_rule_dsl {
         pub use rerail_lang_php::code_rule_dsl::embed::compiled_view;
         #[allow(unused_imports)] // boot's mount: only boot's files read it
         pub use rerail_lang_ecma::code_rule_dsl::embed::script_block;
+        #[allow(unused_imports)] // boot's mount: only boot's files read it
+        pub use rerail_lang_ecma::code_rule_dsl::embed::vue_code;
         #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_python::code_rule_dsl::embed::call_argument;
         #[allow(unused_imports)]

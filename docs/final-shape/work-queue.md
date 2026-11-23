@@ -10672,3 +10672,13 @@ library without the languages, embedders and parsers boot installs (`install_lan
 build there fails, caught (144 per fresh build id). Roll-up 77 moved where it fails (the Rr base 0612's line table
 asks for), not whether. How a crate below boot gets the engine's installs for its tests is the crate split's to
 decide; nothing here changes it.
+
+### Q506. Roll-up 79 (cost-classifier-metal-rf aa879a01f5 onto Pulling-it-all-together): what the merge chose
+
+cost-classifier-metal-rf (aa879a01f5): decision 0597's steps 4-6 and rule 8 (contexts: a region root's holes are
+its host's, f-string templates and format specs, SQL in a template, a Vue component's script and template as
+contexts, guest copies above the answers; hiding's narrow copies removed; the quick tier's gate). The feeder had
+merged the hub through roll-up 72 (the crate split), so the merge is clean: no conflict, nothing at an old path.
+
+Relax: the engine checks clean; the feeder's new tests pass: rerail-tests-corpus's 12, rerail-rr-root's contexts
+test, rerail-tests-rr's f-string guest, rerail-tests-lang's `visit_index` order, rerail-logic's guest-kind hide test.

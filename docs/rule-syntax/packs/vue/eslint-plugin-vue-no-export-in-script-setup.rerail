@@ -11,11 +11,12 @@
 // `export` keyword, any other at the statement. No options.
 //   <script setup> export const a = 1; export * from "x"; export default {} </script>      all reported
 //   <script setup lang="ts"> export type T = 1; export interface I {}; export { type U } </script>  allowed
-.violation export_in_setup(at: loc) code "vue/no-export-in-script-setup"
+.violation export_in_setup(at: node) code "vue/no-export-in-script-setup"
     "Move this export into a separate regular `<script>` block; `<script setup>` cannot export values."
     suppress eslint "vue/no-export-in-script-setup"
-export_in_setup(kw) :- setup_export(e), field(e, "declaration", _), first_token(e, kw).
-export_in_setup(e) :- setup_export(e), !field(e, "declaration", _).
+// At the statement, which starts at its `export` keyword, where ESLint reports both forms (a declaration's at the
+// keyword's token, which is no node of the script's context to the host).
+export_in_setup_in(e) :- setup_export(e).
 .decl setup_export(e: node)
 setup_export(e) :- vscript(p, "true"), child(p, e, _), kind(e, "export_statement"), !type_export(e).
 // type_export(e): `export type …`, `export interface …`, `export declare type …`, or specifiers that are all types.
@@ -29,3 +30,10 @@ type_export(e) :- kind(e, "export_statement"), child(e, c, _), kind(c, "export_c
 type_decl(d) :- kind(d, "type_alias_declaration") ; kind(d, "interface_declaration").
 type_decl(d) :- kind(d, "ambient_declaration"), child(d, c, _), (kind(c, "type_alias_declaration") ;
     kind(c, "interface_declaration")).
+
+// The rules above are the context `script`'s (decision 0597): they read the scripts' nodes. The host reports what
+// they find, at each node's own bytes.
+.decl export_in_setup_in(at: node)
+.context script of vue roots vscript_root exports export_in_setup_in
+.from script export_in_setup_in
+export_in_setup(at) :- export_in_setup_in(at).

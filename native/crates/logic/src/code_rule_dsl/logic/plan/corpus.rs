@@ -106,9 +106,6 @@ pub mod connections;
 /// lowering or preparation is listed here or as changing none, which a test checks
 /// (`every_switch_lowering_reads_is_classified`).
 pub const PREPARING: &[&str] = &[
-    // Narrow copies made as their originals less the annotations' change (decision 0575), `=off` to make each one's rules
-    // again (`combining::Diffed`).
-    "RERAIL_NARROW_DIFF",
     // Lowering and its passes.
     "RERAIL_TEXT_NODES",
     "RERAIL_SPAN_PREFILTER",
@@ -131,10 +128,6 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_AST_PARTS",
     "RERAIL_AST_PART_CAPTURES",
     "RERAIL_RULE_ORDER",
-    // Guests' copies kept unfolded (`combining::FoldOwn`).
-    "RERAIL_SHOWN_COPIES",
-    // A narrow copy as its original less the annotations' change (decision 0575), `=off` to derive every copy again.
-    "RERAIL_NARROW_DIFF",
 ];
 
 pub mod owner {
@@ -995,6 +988,18 @@ impl Collecting {
     }
 }
 
+/// A tape value made of a string asked as `grammar` (`Got::New`), counted for rule 8's measure (`tape_texts`): a
+/// program (a Vue piece, a file's own) is no tape value and is not counted.
+fn tape_text_made(texts: &parking_lot::Mutex<BTreeMap<String, (usize, usize, std::collections::HashSet<[u8; 32]>)>>, grammar: &str, d: &syntax::Document) {
+    if !d.guest.as_deref().is_some_and(|g| matches!(g.made, syntax::Made::Tape { .. })) {
+        return;
+    }
+    let mut t = texts.lock();
+    let e = t.entry(grammar.to_owned()).or_default();
+    e.0 += 1;
+    e.2.insert(d.digest);
+}
+
 /// `local` with only the rules `wanted` are derived from (decision 0225 §2): what a chunk of partial memo hits runs.
 /// A part of `local`'s version by the cone's relations (decision 0244), found from the version's rules: no tree is
 /// decoded or copied. `local` is a split's file-local part, never maintained, so it always has one.
@@ -1016,10 +1021,6 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
         // `parsed` holds the request that asks for it, and its context (decision 0431 §8).
         let about = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::About>(&v).expect("a version's about rows are read");
         let requests: Vec<(String, String)> = about.answers.iter().map(|(req, by)| (v.rel_name(*by).to_owned(), v.rel_name(*req).to_owned())).collect();
-        // A rule whose bound `FoldOwn` widened reads the annotations' documents, which their requests make (`DEMAND`,
-        // answered in the fixpoint): it reads the request too. Without it, `ids(m, x) :- idents(m, x)` over the
-        // widened `idents` had no annotation in a cone of its own, where a full run's `names` asked for them.
-        let demand = v.rel(guests::DEMAND).map(|_| guests::DEMAND.to_owned());
         let cone = closure(&|cone| {
             v.rules()
                 .filter(|r| cone.contains(v.rel_name(r.head().rel())))
@@ -1027,7 +1028,6 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
                     r.body()
                         .filter_map(|l| match l.view() {
                             Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(v.rel_name(a.rel()).to_owned()),
-                            Lit::Cmp { l, r, .. } if guests::widened(l) || guests::widened(r) => demand.clone(),
                             _ => None,
                         })
                         .collect::<Vec<_>>()
@@ -2206,9 +2206,6 @@ fn run_observed_within(
     // The program as this run prepares it, kept for the process (`Prepared`): a session or a test running one program
     // over many roots prepares it once. The key is what preparing reads besides the store's atoms, which are asked
     // again below.
-    // The copies hiding made for guests in the run's own language are folded where the program is prepared (decision
-    // 0058, `FoldOwn`): a function of the combined program and the run's language, which the prepared key names, so a
-    // program read prepared is not folded first.
     let loading_run = world::wanted(&*v, &shape);
     // A program that reads the import closure's relations (`rr_cx_reach`: a closure-local lookup) has its rules
     // (`import_closure`, `components.rerail`).
@@ -2453,16 +2450,6 @@ fn run_observed_within(
             // What preparing decides is the prepared program's, kept with it (decision 0269).
             let deciding = crate::code_rule_dsl::logic::profile::Deciding::open();
             let mut interned: Vec<(Vec<String>, Vec<u32>)> = Vec::new();
-            // The copies hiding made for guests in the run's own language, now that it is known (decision 0058).
-            if v.declared_names().iter().any(|r| r.starts_with("rr_in_")) {
-                let _fold = crate::code_rule_dsl::logic::profile::span(|| "fold the copies of guests in the run's language".into());
-                v = preparation::combining::fold_own_guests(v, label).map_err(Error::Plan)?;
-                #[cfg(debug_assertions)]
-                {
-                    // What the run read of the program before the fold, the same after it.
-                    assert_eq!(world::wanted(&*v, &shape::Shape::of(&v)), loading_run, "folding changed whether the run loads");
-                }
-            }
             // The prepared program's one image (decision 0281's path, step 6): made here, from the program as the rule
             // texts give it; every pass after it runs on the manager over the version (the functors only CPython gives,
             // the base inputs, the prunes and `simplify`, the reach form, the demand, the text passes, steps 6c–6e; the
@@ -2673,6 +2660,13 @@ fn run_observed_within(
     let (local_version, mut cross_version) = (split.versions.local.clone(), split.versions.cross.clone());
     // The parts as the split made them, which the memo's and the components' keys are digests of (decision 0173 §7).
     let local_v = Arc::clone(&local_version);
+    crate::code_rule_dsl::logic::profile::decision("the file-local part's made passes, by what their relations read (decision 0597 rule 8)", || {
+        let by = crate::code_rule_dsl::logic::contexts::tape_local(&local_v);
+        if by.is_empty() {
+            return format!("none ({} passes made)", crate::code_rule_dsl::logic::passes_made::made(&local_v).len());
+        }
+        by.iter().map(|(pass, (own, hosted))| format!("{pass}: {} read their tape alone [{}], {} a host's [{}]", own.len(), own.iter().cloned().collect::<Vec<_>>().join(" "), hosted.len(), hosted.iter().cloned().collect::<Vec<_>>().join(" "))).collect::<Vec<_>>().join("; ")
+    });
     // The file-local part's fields, as the split made it: the run reads the part's rules and fields from its version.
     let local_placed = super::body::Placed::whole(Arc::clone(&local_v));
     let local_f = local_placed.fields()?;
@@ -4364,6 +4358,10 @@ fn run_observed_within(
     let guests_unseen = std::sync::atomic::AtomicUsize::new(0);
     let programs_counted = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
     let values_admitted = std::sync::atomic::AtomicUsize::new(0);
+    // The strings asked as tape values, by grammar (decision 0597 rule 8's measure): values made (one per text in a
+    // chunk), places added to a value made before in the chunk, and the texts' digests over the run. A text made in
+    // several chunks is made, and its context's strata run, once in each.
+    let tape_texts: parking_lot::Mutex<BTreeMap<String, (usize, usize, std::collections::HashSet<[u8; 32]>)>> = Default::default();
     // The file-local program pruned to each set of relations partial hits miss (`cone_of`), made once a run.
     let cones: parking_lot::Mutex<HashMap<BTreeSet<String>, Arc<lower::Lowered>>> = parking_lot::Mutex::new(HashMap::new());
     // A file's facts and tape, built once for the run's paths of one text and grammar (a host file's own grammar is
@@ -5243,9 +5241,8 @@ fn run_observed_within(
         // Each request answered with a value, in order: the chunk's entries keep them (`memo::VALUES`).
         let mut answered: Vec<memo::Answered> = Vec::new();
         // The values a chunk of partial hits' files answered before (`memo::VALUES`), admitted before its run where its
-        // cone can see them (`made.admit` asks `seen`): a cone that reads a relation hiding widened to annotations
-        // (`FoldOwn`) and asks none itself reads their rows, as the full run's did. No entry keeps their rows (decision
-        // 0458 step 4): they are made again, each found by its text's sha or parsed once a run.
+        // cone can see them (`made.admit` asks `seen`). No entry keeps their rows (decision 0458 step 4): they are made
+        // again, each found by its text's sha or parsed once a run.
         if let (false, Some((made, docs)), Some(values), Some(grower)) = (asked_before.is_empty(), kept_guests.as_mut(), values.as_ref(), grower.as_mut()) {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "tape values asked before, admitted".into());
             for asked in &asked_before {
@@ -5254,9 +5251,13 @@ fn run_observed_within(
                     memo::Answered::Embed { at, grammar } => match made.admit(docs, *at, grammar, &guest_parses).map_err(Error::Plan)? {
                         guests::Got::New(d) => {
                             values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            tape_text_made(&tape_texts, grammar, &d);
                             (d.key, Some((at >> 32) as u32))
                         }
-                        guests::Got::Placed(key, _) => (key, Some((at >> 32) as u32)),
+                        guests::Got::Placed(key, _) => {
+                            tape_texts.lock().entry(grammar.clone()).or_default().1 += 1;
+                            (key, Some((at >> 32) as u32))
+                        }
                         guests::Got::Not => continue,
                     },
                     memo::Answered::Value(request) => {
@@ -5294,9 +5295,13 @@ fn run_observed_within(
                         let key = match made.admit(docs, at, &grammar, &guest_parses).map_err(Error::Plan)? {
                             guests::Got::New(d) => {
                                 values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                tape_text_made(&tape_texts, &grammar, &d);
                                 d.key
                             }
-                            guests::Got::Placed(key, _) => key,
+                            guests::Got::Placed(key, _) => {
+                                tape_texts.lock().entry(grammar.clone()).or_default().1 += 1;
+                                key
+                            }
                             guests::Got::Not => continue,
                         };
                         answered.push(memo::Answered::Embed { at, grammar });
@@ -5381,6 +5386,13 @@ fn run_observed_within(
         }
         crate::code_rule_dsl::logic::native::forget_inputs(db);
         let held = crate::code_rule_dsl::facts::rows::chunk_held_most().unwrap_or(0);
+        crate::code_rule_dsl::logic::profile::decision("tape values by grammar so far, at each chunk's end (decision 0597 rule 8)", || {
+            let t = tape_texts.lock();
+            if t.is_empty() {
+                return "none".to_owned();
+            }
+            t.iter().map(|(g, (made, placed, texts))| format!("{g}: {made} made in chunks, {placed} places more, {} texts in the run", texts.len())).collect::<Vec<_>>().join("; ")
+        });
         Ok(Evaluated { got, host_of, askers, answered, totals_add, export_rows, documents, held, written: Default::default() })
     };
     // A chunk's relations go in blocks of its own, given back with it (Q58): not in blocks every chunk at once
