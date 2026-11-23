@@ -551,6 +551,28 @@ not in the tree) and by counters of its hops, on the M3 and in the Rust at 8 lan
   384, 104 (`parent_group` 114, 380, 134). Without the fill the look-back is the CPU's best on records and random;
   on numbers every form is the step's own cost (slot width 1: each escaped step a search of the side list).
 
+### The two launches, taken apart (the user's: "can they be stacked sequentially?", 2026-11-22)
+
+`parent_step` then `parent_link` (as removed above), each part on the M3 by the GPU's clock (the measuring example
+and the old kernels kept as `tmp/parent-two/`, not in the tree):
+
+| M3 | records | numbers | random |
+|---|---|---|---|
+| step alone | 0.306 ms | 0.078 ms | 0.032 ms |
+| links alone | 0.281 ms | 0.042 ms | 0.030 ms |
+| both, one command buffer | 0.586 ms | 0.116 ms | 0.059 ms |
+| both, two buffers, no host wait / a host wait between | 0.583 / 0.550 ms | 0.121 / 0.121 ms | 0.063 / 0.062 ms |
+| links without the walk past 7 | 0.151 ms | 0.025 ms | 0.018 ms |
+| `out[i] = steps[i]` alone | 0.124 ms | 0.022 ms | 0.015 ms |
+| `parent_group` | 0.399 ms | 0.127 ms | 0.065 ms |
+
+- **Stacked, they cost their sum and nothing more.** The two launches share the command buffer's serial compute
+  encoder; a host wait between adds only the host's wall (about 0.2 ms), not GPU time. Nothing needs the host.
+- **The second launch's cost is the walk it never takes.** A chain is at most 7 links
+  (`every_chain_of_links_is_at_most_seven`), so `clif_f16_parent` after the chase does not run on any tape; but its
+  code in the kernel halves the launch's speed (0.281 against 0.151 ms on records), within 22% of a plain copy's.
+  Without it the two launches would be 0.457, 0.103 and 0.050 ms: behind `parent_group` on records only.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one
