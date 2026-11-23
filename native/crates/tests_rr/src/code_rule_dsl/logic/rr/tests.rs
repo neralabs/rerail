@@ -5682,3 +5682,309 @@ fn a_run_opens_the_image_store_once() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Spike for decision 0639 (a program linked from its library's modules and its own module). Measures, per program of
+/// the packs named (`RERAIL_SPIKE_PACKS`, comma-separated pack directories, `phases` for the engine's phase programs;
+/// `RERAIL_SPIKE_N` programs a pack at most):
+/// - E1: whether `contexts::passes(link_library_versions(library modules ++ [the text's own module]))` prints as
+///   `parse_version` does, and each side's time on this thread;
+/// - E2: whether a library's lowering depends on its files' order (the include order against a canonical order: by
+///   the count of files each reaches, then by digest), whole and linked from modules;
+/// - E3: whether a module lowered against its scope in two orders is one image;
+/// - E4: the module images' bytes, the decode's time, and helpers that read themselves.
+#[test]
+#[ignore = "spike for decision 0639: RERAIL_SPIKE_PACKS=python[,phases] RERAIL_SPIKE_N=<programs a pack>"]
+fn spike_0639_programs_linked_from_modules() {
+    use std::collections::{BTreeMap, HashMap};
+    use std::time::Instant;
+    let only: BTreeSet<String> = std::env::var("RERAIL_SPIKE_PACKS").unwrap_or_else(|_| "python".into()).split(',').map(str::to_owned).collect();
+    let per: usize = std::env::var("RERAIL_SPIKE_N").ok().and_then(|v| v.parse().ok()).unwrap_or(usize::MAX);
+    let lib = crate::code_rule_dsl::logic::rr::library();
+    let mut programs: Vec<(String, PathBuf)> = Vec::new();
+    for name in &only {
+        let dir = if name == "phases" { lib.join("../../../native/src/code_rule_dsl/typing/programs") } else { lib.join("../packs").join(name) };
+        let mut files = walk_rr(&dir);
+        files.sort();
+        programs.extend(files.into_iter().take(per).map(|p| (name.clone(), p)));
+    }
+    let srcs: Vec<String> = programs.iter().map(|(_, p)| std::fs::read_to_string(p).unwrap()).collect();
+    let found = super::modules_of(&srcs.iter().map(String::as_str).collect::<Vec<_>>());
+    let no_includes = |s: Vec<from_tape::Stmt>| -> Vec<from_tape::Stmt> { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
+    let printed = |v: &Arc<Version>| print_version(v).unwrap();
+    // Lines one side has and the other not, helper numbers aside.
+    let plain = |l: &str| l.split(|c: char| !(c.is_alphanumeric() || c == '_')).map(|w| if w.starts_with("rr_") { w.trim_end_matches(|c: char| c.is_ascii_digit()) } else { w }).collect::<Vec<_>>().join(" ");
+    let differs = |a: &str, b: &str| -> String {
+        let (sa, sb): (BTreeSet<String>, BTreeSet<String>) = (a.lines().map(plain).collect(), b.lines().map(plain).collect());
+        let only = |x: &BTreeSet<String>, y: &BTreeSet<String>| x.difference(y).take(6).cloned().collect::<Vec<_>>().join("\n      ");
+        let first = a.lines().zip(b.lines()).position(|(x, y)| x != y).unwrap_or(0);
+        format!("{} lines and {}, first differing line {first}; numbers aside {}:\n    only the first:\n      {}\n    only the second:\n      {}", a.lines().count(), b.lines().count(), if sa == sb { "the same lines" } else { "other lines" }, only(&sa, &sb), only(&sb, &sa))
+    };
+    // E1.
+    let mut libraries: HashMap<Vec<PathBuf>, Vec<lower::Module>> = HashMap::new();
+    let mut pack_of: HashMap<Vec<PathBuf>, String> = HashMap::new();
+    let (mut equal, mut differ, mut same_lines, mut inline_err, mut module_err) = (0, 0, 0, 0, 0);
+    let (mut t_inline, mut t_own, mut t_link, mut t_lib) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    let mut shown = 0;
+    for (((pack, path), src), m) in programs.iter().zip(&srcs).zip(found) {
+        let Ok(Some(m)) = m else { continue };
+        let at = Instant::now();
+        let inline = parse_version(src);
+        let inline_s = at.elapsed().as_secs_f64();
+        let inline = match inline {
+            Ok(v) => v,
+            Err(e) => {
+                inline_err += 1;
+                println!("E1 {pack} {}: fails inline: {}", path.display(), e.to_string().chars().take(200).collect::<String>());
+                continue;
+            }
+        };
+        let paths: Vec<PathBuf> = m.files.iter().map(|(p, _, _)| p.clone()).collect();
+        if !libraries.contains_key(&paths) {
+            let at = Instant::now();
+            let files: Files = paths.iter().map(|p| (p.clone(), no_includes(read(p).unwrap().0))).collect();
+            let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: the library's modules: {e}", path.display()));
+            t_lib += at.elapsed().as_secs_f64();
+            libraries.insert(paths.clone(), modules);
+            pack_of.insert(paths.clone(), pack.clone());
+        }
+        let modules = &libraries[&paths];
+        let own = no_includes(read(path).unwrap().0);
+        let at = Instant::now();
+        let scope: Vec<&lower::Module> = modules.iter().collect();
+        let own = lower::lower_module_in_written(own, &scope);
+        let own_s = at.elapsed().as_secs_f64();
+        let at = Instant::now();
+        let linked = own.and_then(|own| super::link_library_versions(modules.iter().cloned().chain([own]).collect())).and_then(|v| crate::code_rule_dsl::logic::contexts::passes(&v));
+        let link_s = at.elapsed().as_secs_f64();
+        let linked = match linked {
+            Ok(v) => v,
+            Err(e) => {
+                module_err += 1;
+                if shown < 8 {
+                    shown += 1;
+                    println!("E1 {pack} {}: the module path fails: {e}", path.display());
+                }
+                continue;
+            }
+        };
+        t_inline += inline_s;
+        t_own += own_s;
+        t_link += link_s;
+        let (a, b) = (printed(&inline), printed(&linked));
+        if a == b {
+            equal += 1;
+        } else {
+            differ += 1;
+            let d = differs(&a, &b);
+            same_lines += usize::from(d.contains("the same lines"));
+            if shown < 8 {
+                shown += 1;
+                println!("E1 {pack} {}: {d}", path.display());
+            }
+        }
+    }
+    println!("E1: {equal} print the same, {differ} differ ({same_lines} of them by order or numbers alone), {module_err} fail on the module path, {inline_err} fail inline");
+    println!("E1 time on this thread, over the programs compared: inline {t_inline:.3} s; own module {t_own:.3} s, link + tail + passes {t_link:.3} s; the libraries' modules lowered once {t_lib:.3} s ({} libraries)", libraries.len());
+    // E2, E3, E4 over each pack's whole library, as a run of the pack lists it.
+    let mut by_pack: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    for paths in libraries.keys() {
+        let pack = by_pack.entry(pack_of[paths].clone()).or_default();
+        for p in paths {
+            if !pack.contains(p) {
+                pack.push(p.clone());
+            }
+        }
+    }
+    let mut packs: Vec<(String, Vec<PathBuf>)> = by_pack.into_iter().collect();
+    packs.sort();
+    for (pack, dfs) in packs {
+        let core = lib.join("core.rerail").canonical().ok();
+        let read_all: Vec<(Vec<from_tape::Stmt>, [u8; 32])> = dfs.iter().map(|p| {
+            let (s, f) = read(p).unwrap();
+            (s, f.sha256.unwrap_or_default())
+        }).collect();
+        let at = |p: &Path| dfs.iter().position(|q| q.canonical().ok().as_deref() == Some(p));
+        let n = dfs.len();
+        let mut reach: Vec<BTreeSet<usize>> = (0..n).map(|i| {
+            let mut mine: BTreeSet<usize> = core.as_deref().and_then(at).filter(|&c| c != i).into_iter().collect();
+            for s in &read_all[i].0 {
+                if let Some(from_tape::S::Include(name)) = s.what() {
+                    let found = [lib.join(name.as_str()), dfs[i].parent().unwrap().join(name.as_str())].into_iter().find_map(|p| p.canonical().ok());
+                    mine.extend(found.as_deref().and_then(at));
+                }
+            }
+            mine.remove(&i);
+            mine
+        }).collect();
+        loop {
+            let mut grew = false;
+            for i in 0..n {
+                let more: BTreeSet<usize> = reach[i].iter().flat_map(|&j| reach[j].iter().copied()).collect();
+                let before = reach[i].len();
+                reach[i].extend(more);
+                grew |= reach[i].len() != before;
+            }
+            if !grew {
+                break;
+            }
+        }
+        let cycles = (0..n).filter(|&i| reach[i].contains(&i)).count();
+        let hex = |d: &[u8; 32]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let mut order: Vec<usize> = (0..n).collect();
+        order.sort_by_key(|&i| (reach[i].len() + usize::from(!reach[i].contains(&i)), hex(&read_all[i].1)));
+        let topological = order.iter().enumerate().all(|(k, &i)| reach[i].iter().all(|&j| order.iter().position(|&o| o == j).unwrap() < k || reach[j].contains(&i)));
+        let files = |ix: &[usize]| -> Files { ix.iter().map(|&i| (dfs[i].clone(), no_includes(read_all[i].0.clone()))).collect() };
+        let whole = |f: &Files| printed(&super::lower_statements_version(f.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap());
+        let (in_dfs, canonical) = (files(&(0..n).collect::<Vec<_>>()), files(&order));
+        let (w_dfs, w_canon) = (whole(&in_dfs), whole(&canonical));
+        println!("E2 {pack}: {n} files, {cycles} in include cycles, the canonical order topological: {topological}; whole in include order against canonical: {}", if w_dfs == w_canon { "identical".to_owned() } else { differs(&w_dfs, &w_canon) });
+        let ordered: Vec<PathBuf> = order.iter().map(|&i| dfs[i].clone()).collect();
+        match library_modules(&ordered, canonical.clone()).and_then(super::link_library_versions) {
+            Ok(v) => {
+                let l = printed(&v);
+                println!("E2 {pack}: linked from modules in canonical order against whole in canonical order: {}", if l == w_canon { "identical".to_owned() } else { differs(&w_canon, &l) });
+            }
+            Err(e) => println!("E2 {pack}: linked in canonical order fails: {e}"),
+        }
+        // E5: the module plan as rules (decision 0639 §1) over the library's include edges and digests, against the plan
+        // above: the same modules, scopes and ranks, and keys that do not depend on the order the facts are stated in.
+        let direct: Vec<BTreeSet<usize>> = (0..n).map(|i| {
+            let mut mine: BTreeSet<usize> = core.as_deref().and_then(at).filter(|&c| c != i).into_iter().collect();
+            for s in &read_all[i].0 {
+                if let Some(from_tape::S::Include(name)) = s.what() {
+                    let found = [lib.join(name.as_str()), dfs[i].parent().unwrap().join(name.as_str())].into_iter().find_map(|p| p.canonical().ok());
+                    mine.extend(found.as_deref().and_then(at));
+                }
+            }
+            mine.remove(&i);
+            mine
+        }).collect();
+        let plan_rules = r#"#include "core.rerail"
+.decl p0_include(from: symbol, at: number, name: symbol, path: symbol)
+.decl p0_digest(path: symbol, d: symbol)
+.decl p0_build(b: symbol)
+.decl p0_edge(a: symbol, b: symbol)
+p0_edge(a, b) :- p0_include(a, _, _, b), p0_digest(a, _), p0_digest(b, _).
+.decl p0_reaches(a: symbol, b: symbol)
+p0_reaches(a, b) :- p0_edge(a, b).
+p0_reaches(a, c) :- p0_reaches(a, b), p0_edge(b, c).
+.decl p0_member(p: symbol, q: symbol)
+p0_member(p, p) :- p0_digest(p, _).
+p0_member(p, q) :- p0_reaches(p, q), p0_reaches(q, p).
+.decl p0_module_of(p: symbol, m: symbol)
+p0_module_of(p, m) :- p0_digest(p, _), m = join d by d sep "+" : { p0_member(p, q), p0_digest(q, d) }.
+.decl p0_closure(m: symbol, q: symbol)
+p0_closure(m, q) :- p0_module_of(p, m), p0_member(p, q).
+p0_closure(m, q) :- p0_module_of(p, m), p0_reaches(p, q).
+.decl p0_scope(m: symbol, s: symbol)
+p0_scope(m, s) :- p0_closure(m, q), p0_module_of(q, s), s != m.
+.decl p0_module_rank(m: symbol, reached: number)
+p0_module_rank(m, k) :- p0_module_of(_, m), k = count : { p0_closure(m, _) }.
+.decl p0_closure_digests(m: symbol, ds: symbol)
+p0_closure_digests(m, ds) :- p0_module_rank(m, _), ds = join d by d sep "," : { p0_closure(m, q), p0_digest(q, d) }.
+.decl p0_edge_text(m: symbol, e: symbol)
+p0_edge_text(m, e) :- p0_closure(m, a), p0_edge(a, b), p0_digest(a, da), p0_digest(b, db), e = cat(da, ">", db).
+.decl p0_closure_edges(m: symbol, es: symbol)
+p0_closure_edges(m, es) :- p0_module_rank(m, _), es = join e by e sep "," : { p0_edge_text(m, e) }.
+.decl p0_module_key(m: symbol, key: symbol)
+p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_closure_digests(m, ds), p0_closure_edges(m, es).
+.output p0_module_of, p0_scope, p0_module_rank, p0_module_key
+"#;
+        let name_of = |i: usize| dfs[i].display().to_string();
+        let facts = |reverse: bool| -> String {
+            let mut lines: Vec<String> = vec!["p0_build(\"spike\").".to_owned()];
+            for i in 0..n {
+                lines.push(format!("p0_digest({:?}, {:?}).", name_of(i), hex(&read_all[i].1)));
+                for (k, &j) in direct[i].iter().enumerate() {
+                    lines.push(format!("p0_include({:?}, {k}, \"x\", {:?}).", name_of(i), name_of(j)));
+                }
+            }
+            if reverse {
+                lines.reverse();
+            }
+            lines.join("\n")
+        };
+        type Plan = (BTreeMap<String, String>, BTreeSet<(String, String)>, BTreeMap<String, i64>, BTreeMap<String, String>);
+        let plan_of = |reverse: bool| -> Plan {
+            let t = Instant::now();
+            let plan = guests_run_with("p0plan", &[("a.py", "x = 1\n")], &format!("{plan_rules}\n{}\n", facts(reverse)), |o| {
+                let rows = |rel: &str| o.get(rel).map(|r| r.shown()).unwrap_or_default().into_iter().map(|r| r.into_iter().map(|c| c.trim_matches('"').to_owned()).collect::<Vec<String>>()).collect::<Vec<_>>();
+                (
+                    rows("p0_module_of").into_iter().map(|r| (r[0].clone(), r[1].clone())).collect(),
+                    rows("p0_scope").into_iter().map(|r| (r[0].clone(), r[1].clone())).collect(),
+                    rows("p0_module_rank").into_iter().map(|r| (r[0].clone(), r[1].parse().unwrap())).collect(),
+                    rows("p0_module_key").into_iter().map(|r| (r[0].clone(), r[1].clone())).collect(),
+                )
+            });
+            println!("E5 {pack}: the plan's run {:.3} s", t.elapsed().as_secs_f64());
+            plan
+        };
+        let (of, scope, rank, key) = plan_of(false);
+        let (_, _, _, key_rev) = plan_of(true);
+        // The plan in Rust, by the same names: a module by its members' digests, joined in order.
+        let module_name = |i: usize| {
+            let mut ds: Vec<String> = (0..n).filter(|&j| j == i || (reach[i].contains(&j) && reach[j].contains(&i))).map(|j| hex(&read_all[j].1)).collect();
+            ds.sort();
+            ds.join("+")
+        };
+        let rust_of: BTreeMap<String, String> = (0..n).map(|i| (name_of(i), module_name(i))).collect();
+        let rust_scope: BTreeSet<(String, String)> = (0..n).flat_map(|i| reach[i].iter().map(move |&j| (i, j))).map(|(i, j)| (module_name(i), module_name(j))).filter(|(a, b)| a != b).collect();
+        let rust_rank: BTreeMap<String, i64> = (0..n).map(|i| (module_name(i), (reach[i].len() + usize::from(!reach[i].contains(&i))) as i64)).collect();
+        println!(
+            "E5 {pack}: rules against Rust: modules {}, scopes {}, ranks {}; {} keys, {} distinct, stated in reverse {}",
+            if of == rust_of { "equal" } else { "differ" },
+            if scope == rust_scope { "equal".to_owned() } else { format!("differ ({} and {})", scope.len(), rust_scope.len()) },
+            if rank == rust_rank { "equal" } else { "differ" },
+            key.len(),
+            key.values().collect::<BTreeSet<_>>().len(),
+            if key == key_rev { "the same keys" } else { "other keys" }
+        );
+        // E3 and E4: files that reach each other are one module, its files in canonical order; each module against its
+        // scope forward and reversed.
+        let mut unit_of: Vec<usize> = vec![usize::MAX; n];
+        let mut units: Vec<Vec<usize>> = Vec::new();
+        for &i in &order {
+            if unit_of[i] != usize::MAX {
+                continue;
+            }
+            let members: Vec<usize> = order.iter().copied().filter(|&j| j == i || (reach[i].contains(&j) && reach[j].contains(&i))).collect();
+            for &j in &members {
+                unit_of[j] = units.len();
+            }
+            units.push(members);
+        }
+        let mut built: Vec<lower::Module> = Vec::new();
+        let (mut same, mut other, mut bytes, mut decode_s, mut helpers_self) = (0, 0, 0usize, 0.0f64, 0usize);
+        for (u, members) in units.iter().enumerate() {
+            let scope_ix: Vec<usize> = (0..u).filter(|&v| members.iter().any(|&i| reach[i].contains(&units[v][0]))).collect();
+            let fwd: Vec<&lower::Module> = scope_ix.iter().map(|&v| &built[v]).collect();
+            let rev: Vec<&lower::Module> = scope_ix.iter().rev().map(|&v| &built[v]).collect();
+            let st: Vec<from_tape::Stmt> = members.iter().flat_map(|&i| no_includes(read_all[i].0.clone())).collect();
+            let name = dfs[members[0]].display().to_string();
+            let a = lower::lower_module_in_written(st.clone(), &fwd).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let b = lower::lower_module_in_written(st, &rev).unwrap_or_else(|e| panic!("{name}: reversed: {e}"));
+            let (ia, ib) = (module_image::encode(&a).unwrap(), module_image::encode(&b).unwrap());
+            if ia.bytes() == ib.bytes() {
+                same += 1;
+            } else {
+                other += 1;
+                println!("E3 {pack} {name}: the scope's order changes the image ({} bytes and {}): {}", ia.bytes().len(), ib.bytes().len(), differs(&printed(a.version()), &printed(b.version())));
+            }
+            bytes += ia.bytes().len();
+            let t = Instant::now();
+            let _ = module_image::decode(Arc::new(ia)).unwrap();
+            decode_s += t.elapsed().as_secs_f64();
+            let text = printed(a.version());
+            for line in text.lines() {
+                let Some((head, body)) = line.split_once(":-") else { continue };
+                let name: String = head.trim().chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                if name.starts_with("rr_") && body.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == name) {
+                    helpers_self += 1;
+                }
+            }
+            built.push(a);
+        }
+        println!("E3 {pack}: {same} modules one image under both scope orders, {other} not");
+        println!("E4 {pack}: {} module images, {bytes} bytes; decoded in {decode_s:.4} s; {helpers_self} helper rules read their own head", built.len());
+    }
+}
