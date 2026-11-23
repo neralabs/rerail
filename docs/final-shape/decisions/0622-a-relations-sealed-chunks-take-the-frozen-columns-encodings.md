@@ -112,7 +112,8 @@ they lie.**
 - **What holds the peak** (2.97 GB at freeze): the cross part's `text` rows made again by the corpus batch (`copy
   (0353 step 3)`, 323 MB of heap); a kept block of `ask_p0`'s cone (472 MB); the cone's views and tables (273 MB);
   `rf_in_loop`'s heap (111 MB). The first is 0353 step 3's: `text` read on the tape for each node bound, not every
-  document's node rows made (t50, "The cross part's `text`").
+  document's node rows made (t50, "The cross part's `text`"). Built 2026-11-23 (t50, "Then the tape view"): the peak
+  2,837 → 2,474 MB.
 
 ## Test
 

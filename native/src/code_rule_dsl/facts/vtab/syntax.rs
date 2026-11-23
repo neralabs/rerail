@@ -491,6 +491,28 @@ pub fn made_sources(batch: &Arc<Batch>) -> Vec<(&str, Option<&'static str>, Arc<
         .collect()
 }
 
+/// `core.rerail`'s per-node rows as `projection` asks for them: what each node's walk skips, and whose text it keeps.
+/// A group's rows are made with it (`make_rows`), and a node's `text` read off its tape (`Batch::tape_text`).
+fn core_rows_for(projection: &Projection) -> core_rr::CoreRows {
+    let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
+    let mut c = core_rr::CoreRows::default();
+    c.skip = core_rr::Skip {
+        ops: !wants_any(&["op", "op_at"]),
+        comment: !projection.wants("comment"),
+        spread: !projection.wants("spread"),
+        name: !projection.wants("name"),
+        literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "rr_value_lit", "text"]),
+        str: !projection.wants("str"),
+        literal_value: !wants_any(&["value", "static_value", "value_type", "rr_value_lit"]),
+        literal_rows: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "rr_value_lit"]),
+        structural: !wants_any(&["structural_before", "structural_after"]),
+    };
+    c.long_text = projection.long_text.clone();
+    c.long_text_any = projection.long_text_any;
+    c.text_nodes = projection.text_nodes.clone();
+    c
+}
+
 /// The relation of the nodes whose text `@rr_node_text` reads, bound with the batch every node read goes through
 /// (`LongTexts`).
 pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
@@ -1945,6 +1967,11 @@ pub struct Batch {
     given_passed: parking_lot::Mutex<HashMap<usize, Vec<i64>>>,
     /// Its documents' keys by their paths' atoms (`keys_of_paths`), once a read by a path asked.
     by_path: OnceLock<Option<HashMap<i64, Vec<u32>>>>,
+    /// The `text` rows read off the tape by a probe of a node whose document is not made (`tape_text`), row ids from
+    /// `made::TAPE_ROWS` on, and each node's row (none: it has no `text` row); and what they are read with
+    /// (`core_rows_for`).
+    tape_text: parking_lot::Mutex<(Vec<[i64; 2]>, rustc_hash::FxHashMap<i64, Option<u32>>)>,
+    text_rows: OnceLock<core_rr::CoreRows>,
     /// Its documents' keys by their `doc` rows' modules' atoms (`keys_of_modules`), once a read by a module asked.
     by_module: OnceLock<Option<HashMap<i64, Vec<u32>>>>,
     /// Each host's guests' keys (`Batch::guests_of`), once a read by a host's node asked.
@@ -3228,6 +3255,8 @@ impl Batch {
             given_rows: OnceLock::new(),
             given_passed: Default::default(),
             by_path: OnceLock::new(),
+            tape_text: Default::default(),
+            text_rows: OnceLock::new(),
             guests_of: OnceLock::new(),
             by_module: OnceLock::new(),
             shared: Arc::clone(&grown.shared),
@@ -3329,22 +3358,11 @@ impl Batch {
         let mut tree = tree::Tree::new(reads);
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         // `core.rerail`'s (decision 0046).
-        let mut c = core_rr::CoreRows::default();
+        let mut c = core_rows_for(projection);
         // Node identity/ancestry and line views do not require scalar rows or text interning.
         let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","comment","spread","op","op_at","op_t","intval","str_part","str_part_start","str_part_word"]
             .into_iter().any(|r|projection.wants(r));
         let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
-        c.skip = core_rr::Skip {
-            ops: !wants_any(&["op", "op_at"]),
-            comment: !projection.wants("comment"),
-            spread: !projection.wants("spread"),
-            name: !projection.wants("name"),
-            literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "rr_value_lit", "text"]),
-            str: !projection.wants("str"),
-            literal_value: !wants_any(&["value", "static_value", "value_type", "rr_value_lit"]),
-            literal_rows: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "rr_value_lit"]),
-            structural: !wants_any(&["structural_before", "structural_after"]),
-        };
         let core_nodes = core && (scalar_nodes || !c.skip.structural);
         // `rr_value_lit` holds the literals of the documents W reads no values of (`unvalued`, `values_of`): where no
         // other relation reads a literal's value or rows, a document W values makes none, and its walk visits only the
@@ -3353,9 +3371,6 @@ impl Batch {
         let value_lit_only = wants_any(&["rr_value_lit"]) && !wants_any(&["str", "strprefix", "value", "static_value", "value_type"]);
         let wants_long_text_nodes = projection.wants("rr_long_text_node");
         let mut long_text_nodes = Vec::new();
-        c.long_text = projection.long_text.clone();
-        c.long_text_any = projection.long_text_any;
-        c.text_nodes = projection.text_nodes.clone();
         let wants_text = core && projection.wants("text");
         let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Source);
         let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Line);

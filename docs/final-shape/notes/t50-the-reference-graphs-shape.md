@@ -778,6 +778,14 @@ its first probe), where it filtered the group's every row per probe (without it,
 serial make; CPU 170.4 → 169.2 s, rows the same. Most documents are still made, because the probes reach them: the
 next step is the tape view, `text` read off a probed node's tape and no document's node rows made.
 
+**Then the tape view** (decision 0353 step 3). A probe of the batch's `text` by a node whose document is not made reads
+the node's row off its document's tape (`Batch::tape_text`): the condition `node` makes the row by
+(`CoreRows::keeps_text`, `token_like`, `text_row`), written once, read with the batch's own `CoreRows`
+(`core_rows_for`), its text interned, each node read once (row ids from `made::TAPE_ROWS`). No document's node rows
+or string annotations are made in the cross part. On `all` (m1max, load 7): rows the same; peak 2,837 → 2,474 MB;
+cross 19.6 → 15.5 s wall; `rf_unq_bare` 5.16 → 1.45 s; CPU 169.2 → 164.8 s; instructions 1,950 → 1,899 G.
+`text_probed_by_node_is_read_off_the_tape_as_its_rows_hold_it` compares every node's tape read with its made rows.
+
 ### Step 6 in part: parent edges, label formulas and field captures in the matcher wave (2026-11-22)
 
 Three changes, each with its rows checked (s1000's digest, `all`'s 17 relations) and its own switch:
