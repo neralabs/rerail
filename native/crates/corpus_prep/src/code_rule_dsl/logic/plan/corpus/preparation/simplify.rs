@@ -1209,20 +1209,58 @@ impl ProgramPass for InlineFilters {
                 }
             }
         };
+        // A computed view: one rule whose positive atoms of other relations (its domain) bind what its comparisons
+        // test, and whose head is computed from them: a call in the head (`cc_trim(raw, @replace_all(raw, …))`), or a
+        // head variable a comparison defines (`ca_split(r, h, t) :- ca_dotted(_, r), @rx(r, p) = 1, h = @rx_group(r,
+        // p, 1), …`; decision 0649).
         let computed = |rules: &[RuleRef<'_>]| -> bool {
             let [r] = rules else { return false };
             let mut bound = BTreeSet::new();
+            let mut atoms = 0;
             for l in r.body() {
-                if let Lit::Atom(a) = l.view() {
-                    bound.extend(atom_slots(a));
+                match l.view() {
+                    Lit::Atom(a) if !a.neg() && a.rel() != r.head().rel() => {
+                        bound.extend(atom_slots(a));
+                        atoms += 1;
+                    }
+                    Lit::Cmp { .. } => {}
+                    _ => return false,
                 }
             }
-            r.head().args().any(|t| matches!(t, TermRef::Call(..))) && r.body().count() > 0 && r.body().all(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && a.rel() != r.head().rel())) && head_slots(*r).is_subset(&bound)
+            if atoms == 0 {
+                return false;
+            }
+            let from_domain = bound.clone();
+            // Each `$x = term` of bound slots binds `$x`, in any order.
+            loop {
+                let before = bound.len();
+                for l in r.body() {
+                    if let Lit::Cmp { l: lt, op: CmpOp::Eq, r: rt } = l.view() {
+                        for (x, e) in [(lt, rt), (rt, lt)] {
+                            let mut of = BTreeSet::new();
+                            term_slots(e, &mut of);
+                            if let TermRef::Var(s) = x
+                                && of.is_subset(&bound)
+                            {
+                                bound.insert(s);
+                            }
+                        }
+                    }
+                }
+                if bound.len() == before {
+                    break;
+                }
+            }
+            let cmps_bound = r.body().all(|l| !matches!(l.view(), Lit::Cmp { .. }) || lit_slots(l).is_subset(&bound));
+            let head = head_slots(*r);
+            let computes = r.head().args().any(|t| matches!(t, TermRef::Call(..))) || !head.is_subset(&from_domain);
+            computes && cmps_bound && head.is_subset(&bound)
         };
         let mut rules_of: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
         for r in v.rules() {
             rules_of.entry(v.rel_name(r.head().rel())).or_default().push(r);
         }
+        let computed_rels: BTreeSet<&str> = rules_of.iter().filter(|(_, rules)| computed(rules)).map(|(rel, _)| *rel).collect();
         let core = crate::code_rule_dsl::logic::plan::keeps::core_names();
         let mut candidates: BTreeSet<&str> = rules_of
             .iter()
@@ -1242,6 +1280,8 @@ impl ProgramPass for InlineFilters {
             for l in r.body() {
                 match l.view() {
                     Lit::Atom(a) if !a.neg() && a.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_))) && a.rel() != r.head().rel() => {}
+                    // A computed view's column read as `_` is computed and dropped (its domain is the reader's).
+                    Lit::Atom(a) if !a.neg() && computed_rels.contains(rel_of(a)) && a.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_) | TermRef::Wild)) && a.rel() != r.head().rel() => {}
                     Lit::Atom(a) | Lit::Agg { atom: a, .. } => {
                         candidates.remove(rel_of(a));
                     }
@@ -1264,6 +1304,10 @@ impl ProgramPass for InlineFilters {
                 }
             }
             def.body().all(|l| {
+                // A comparison is the view's function, copied as it is; its atoms are its domain.
+                if matches!(l.view(), Lit::Cmp { .. }) {
+                    return true;
+                }
                 let Lit::Atom(a) = l.view() else { return false };
                 let want: Vec<Tm> = a
                     .args()
@@ -1334,6 +1378,8 @@ impl ProgramPass for InlineFilters {
                         (TermRef::Var(s), TermRef::Var(x)) if to.get(v.text(def.var(s))) == Some(&format!("{}_f{fresh}", v.text(def.var(s)))) => {
                             to.insert(v.text(def.var(s)).to_owned(), placed_name(v, &read_p, x));
                         }
+                        // A column read as `_`: the definition's variable stays its own.
+                        (TermRef::Var(_), TermRef::Wild) => {}
                         (TermRef::Var(s), rt) => inlined.push(FLit::Eq { reader: read_p.owner, l: rt, r: Tm::Var(to[v.text(def.var(s))].clone()) }),
                         _ => {}
                     }
@@ -1341,7 +1387,7 @@ impl ProgramPass for InlineFilters {
                 let to = Arc::new(to);
                 inlined.extend(def.body().map(|lit| FLit::Placed(Placed { owner: def, lit, to: Some(to.clone()) })));
                 for (h, rt) in def.head().args().zip(read.args()) {
-                    if !matches!(h, TermRef::Var(_)) {
+                    if !matches!(h, TermRef::Var(_)) && !matches!(rt, TermRef::Wild) {
                         let m = to.clone();
                         let h = Tm::of(v, def, h).renamed(&|x| m.get(x).cloned());
                         inlined.push(FLit::Eq { reader: read_p.owner, l: rt, r: h });
