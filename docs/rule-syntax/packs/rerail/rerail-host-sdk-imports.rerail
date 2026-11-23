@@ -1,0 +1,98 @@
+.policy "rerail-host-sdk-imports" revision 2
+.description "Import coding-agent SDKs and Pi's tool schema library only under src/hosts; shared layers describe the host surface they need with their own types."
+.language typescript
+.mode log
+.scope include "src/**/*.ts", "src/**/*.mts", "src/**/*.cts", "src/**/*.js", "src/**/*.mjs", "src/**/*.cjs"
+.scope exclude "src/hosts/**", "**/*.test.ts"
+// Coding-agent SDKs (OMP and Pi's, Claude Code's, Codex's, Cursor's) and Pi's tool schema library (typebox) are
+// imported only under src/hosts. A module loaded by name from anywhere else is reported, at the statement, call
+// or comment that loads it:
+//   import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";     AGENT_SDK_OUTSIDE_HOST
+//   export { query } from "@anthropic-ai/claude-agent-sdk";            AGENT_SDK_OUTSIDE_HOST
+//   import sdk = require("@openai/codex-sdk");                          AGENT_SDK_OUTSIDE_HOST
+//   declare module "@cursor/sdk" { … }                                  AGENT_SDK_OUTSIDE_HOST
+//   await import("@mariozechner/pi-ai"), require(`@openai/codex`)      AGENT_SDK_OUTSIDE_HOST
+//   /// <reference types="@anthropic-ai/claude-code" />                 AGENT_SDK_OUTSIDE_HOST
+//   import { Type } from "typebox";                                     PI_TOOL_SCHEMA_OUTSIDE_HOST
+//   import { z } from "zod";                                            not reported
+// The name is the literal exactly as the JSON tests it: the quotes are part of its text.
+
+.violation AGENT_SDK_OUTSIDE_HOST(at: node) "Keep this agent's SDK in src/hosts/<host>/: move host-only code there, or type what shared code needs as a local interface, as src/harness/host-commands.ts does."
+AGENT_SDK_OUTSIDE_HOST(n) :- loads(n, s), match("[\"'`](?:(?:@oh-my-pi|@earendil-works)/[^\"'`\\s]+|@mariozechner/pi-[^\"'`\\s]+|@anthropic-ai/claude-(?:agent-sdk|code)(?:/[^\"'`\\s]*)?|@openai/codex(?:-sdk)?(?:/[^\"'`\\s]*)?|@cursor/sdk(?:/[^\"'`\\s]*)?)[\"'`]", s).
+AGENT_SDK_OUTSIDE_HOST(n) :- kind(n, "comment"),
+    match("///\\s*<reference\\s+(?:types|path)\\s*=\\s*[\"'](?:(?:@oh-my-pi|@earendil-works)/[^\"'`\\s]+|@mariozechner/pi-[^\"'`\\s]+|@anthropic-ai/claude-(?:agent-sdk|code)(?:/[^\"'`\\s]*)?|@openai/codex(?:-sdk)?(?:/[^\"'`\\s]*)?|@cursor/sdk(?:/[^\"'`\\s]*)?)[\"'](?s:.*)", n).
+
+.violation PI_TOOL_SCHEMA_OUTSIDE_HOST(at: node) "Typebox schemas are Pi's tool parameters: register this tool from src/hosts/pi/. Shared code outside the hosts describes data with zod."
+PI_TOOL_SCHEMA_OUTSIDE_HOST(n) :- loads(n, s), match("[\"'`](?:typebox|@sinclair/typebox)(?:/[^\"'`\\s]*)?[\"'`]", s).
+
+// loads(n, s): n loads the module whose name is literal s: an import, an `export … from`, `import x = require(…)`,
+// an ambient `declare module "…"`, or a call of require, import or createRequire(…) with s among its arguments.
+.decl loads(n: node, s: node)
+loads(n, s) :- kind(n, "import_statement"), field(n, "source", s), kind(s, "string").
+loads(n, s) :- kind(n, "export_statement"), field(n, "source", s), kind(s, "string").
+loads(n, s) :- kind(n, "import_require_clause"), field(n, "source", s), kind(s, "string").
+loads(n, s) :- kind(n, "module"), field(n, "name", s), kind(s, "string").
+loads(n, s) :- kind(n, "call_expression"), match("(?:require|import|createRequire\\s*\\([^)]*\\))\\s*\\((?s:.*)", n),
+    child(n, args, _), kind(args, "arguments"), child(args, s, _), (kind(s, "string") ; kind(s, "template_string")).
+
+// The pack's example (packs/rerail/pack.json).
+.test sdk_and_schema_imports_are_reported exactly
+    .fixture "src/harness/native-semantic-tools.ts" ```
+        import type { ExtensionAPI as OmpExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+        import type { ExtensionAPI as PiExtensionAPI } from "@earendil-works/pi-coding-agent";
+        import { Type } from "typebox";
+        ```
+    .expect AGENT_SDK_OUTSIDE_HOST at "src/harness/native-semantic-tools.ts":1
+    .expect AGENT_SDK_OUTSIDE_HOST at "src/harness/native-semantic-tools.ts":2
+    .expect PI_TOOL_SCHEMA_OUTSIDE_HOST at "src/harness/native-semantic-tools.ts":3
+.end
+
+.test every_way_of_loading_is_reported exactly
+    .fixture "src/runtime/loaders.ts" ```
+        export { query } from "@anthropic-ai/claude-agent-sdk";
+        import sdk = require("@openai/codex-sdk");
+        declare module "@cursor/sdk" { export const x: number; }
+        const ai = await import("@mariozechner/pi-ai");
+        const codex = require(`@openai/codex`);
+        const load = createRequire(import.meta.url)("@sinclair/typebox/compiler");
+        /// <reference types="@anthropic-ai/claude-code" />
+        export * from "typebox/value";
+        import { z } from "zod";
+        const other = require("@openai/codexes");
+        const named = loadModule("typebox");
+        ```
+    .expect AGENT_SDK_OUTSIDE_HOST at "src/runtime/loaders.ts":1
+    .expect AGENT_SDK_OUTSIDE_HOST at "src/runtime/loaders.ts":2
+    .expect AGENT_SDK_OUTSIDE_HOST at "src/runtime/loaders.ts":3
+    .expect AGENT_SDK_OUTSIDE_HOST at "src/runtime/loaders.ts":4
+    .expect AGENT_SDK_OUTSIDE_HOST at "src/runtime/loaders.ts":5
+    .expect PI_TOOL_SCHEMA_OUTSIDE_HOST at "src/runtime/loaders.ts":6
+    .expect AGENT_SDK_OUTSIDE_HOST at "src/runtime/loaders.ts":7
+    .expect PI_TOOL_SCHEMA_OUTSIDE_HOST at "src/runtime/loaders.ts":8
+.end
+
+.test javascript_files_are_read exactly
+    .fixture "src/cli/launch.mjs" ```
+        import { query } from "@anthropic-ai/claude-agent-sdk";
+        ```
+    .expect AGENT_SDK_OUTSIDE_HOST at "src/cli/launch.mjs":1
+.end
+
+// The pack's passing example, and the files the scope leaves out.
+.test the_hosts_own_the_sdks exactly
+    .fixture "src/presentation/omp-presentation.ts" ```
+        /** What the footer needs from an OMP or Pi extension context. */
+        export interface PresentationContext {
+          cwd: string;
+          hasUI?: boolean;
+          sessionManager: { getSessionId(): string };
+        }
+        ```
+    .fixture "src/hosts/pi/extension.ts" ```
+        import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+        import { Type } from "typebox";
+        ```
+    .fixture "src/harness/native-semantic-tools.test.ts" ```
+        import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+        ```
+.end

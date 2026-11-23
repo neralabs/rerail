@@ -31,7 +31,7 @@ The package ships no rules. Each rule is one of:
 - **By its publisher** (`By @acme`): from a third party's pack (`rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`), not reviewed by Rerail.
 - **Created by you**: stored once per machine in the library.
 
-`rerail rules export` writes the library and all repository configuration to `$RERAIL_HOME/rules.json` (or `--output <file>`); `rerail rules import <file> [--approve]` loads it back.
+`rerail rules export` writes the library and all repository configuration to `$RERAIL_HOME/rules.json` (or `--output <file>`); `rerail rules import <file> [--approve]` loads it back; it is a person's command, refused in a coding agent's session.
 
 <details>
 <summary>Pack rules, edited copies and backups</summary>
@@ -471,7 +471,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `library_rules_upsert` | `PUT /api/library-rules/{id}` | Create or replace your rule (`attach: true` adds it to the target); a By Rerail id stores an edited copy. |
 | `library_rules_remove` | `DELETE /api/library-rules/{id}` | Delete your rule, its attachments and settings. |
 | `sessions_list` | `GET /api/sessions?since=&limit=&cursor=` | Sessions newest first with counts, `steeredViolations`, `declinedViolations`, `lastEventAt`; `total`, `nextCursor`. |
-| `sessions_get` | `GET /api/sessions/{sessionId}` | Summary with `gaps` over the whole transcript: undelivered events, boundaries answered before checks ran, tool edits left unchecked because Git ignores the file (`ignoredEdits`), changes seen that make Git's ignore rules ignore more (`ignoreRuleChanges`); and `declined`, the steers the coding agent declined with `rerail feedback`: each note's reason and the audit it answers, and how many steered violations that covers. |
+| `sessions_get` | `GET /api/sessions/{sessionId}` | Summary with `gaps` over the whole transcript: undelivered events, boundaries answered before checks ran, tool edits left unchecked because Git ignores the file (`ignoredEdits`), changes seen that make Git's ignore rules ignore more (`ignoreRuleChanges`), the places the shell-write check could not fully check, each once in the session (`discoveryGaps`, the places recorded, at most 1,000; `discoveryGapsMore` when it met more), and for a person the first 20 with path and reason (`discoveryGapPlaces`); and `declined`, the steers the coding agent declined with `rerail feedback`: each note's reason and the audit it answers, and how many steered violations that covers. |
 | `session_events` | `GET /api/sessions/{sessionId}/events?after=&before=&limit=` | Ordered events, at most 500 per page, forward from `after` or the page before `before`; `nextAfter` continues. Agents get some payloads withheld ([details](#what-a-coding-agent-may-read)). |
 | `work_links_list` | `GET /api/sessions/{sessionId}/work-links` | A session's external references. |
 | `work_links_add` | `PUT /api/sessions/{sessionId}/work-links` | `{ kind, reference, url? }`; re-linking updates the url. |
@@ -775,6 +775,41 @@ Delivery is not an audit: it has no acceptance callback, acknowledgement persist
 
 </details>
 
+#### Rules written in .rerail
+
+A pack's rules written in `.rerail` ([pack format](pack-format.md#rules-written-in-rerail)) run through a separate
+engine path: a short-lived process reads the checkout's files from disk and runs the rules over all of them. They
+run at different times from JSON rules.
+
+| When | What runs | Recorded as |
+| --- | --- | --- |
+| A session writes a file in the scope of a `.rerail` rule | Once the checkout has had no write for 10 seconds, or the agent's turn ends, the rules that take the written files run over the whole checkout. | An audit of its own (`ongoing`), separate from the edit's JSON audit. |
+| `rerail scan`, an audit request, the first repository audit | Every active `.rerail` rule, beside the JSON rules. | The same audit as the JSON rules; it finishes when both have. |
+
+- **Steering.** An edit's check never waits for its `.rerail` run. The run's findings are selected as the session's
+  scope says (`ai-output`: lines written since the file's last run; `touched-files`: the whole written files) and
+  steer at the session's next boundary, as a late steer does. Findings of a rule in `log` mode are recorded only.
+- **One run at a time per checkout.** Writes made while a run goes on wait for the next run, which carries every
+  session's writes since. A run is never started with writes newer ones made stale. A change to the checkout's
+  `.rerail` rules (a rule turned off, a pack updated or removed) stops a session's running run, records it
+  `superseded`, and runs its files again with the new rules; a session that ends stops its run and records it
+  `interrupted`.
+- **Budgets.** A run after edits may take 5 minutes: a steer later than that reaches an agent that has moved on. On
+  a large repository that is not enough on a laptop (the Django pack needs about 2 minutes after a one-file edit of
+  a 1,300-file application on 16 threads), and such edits record each rule's budget gap instead of findings. A scan's
+  run takes the `.rerail` runner's default deadline, since no agent waits for it. `RERAIL_RR_DEADLINE_MS` replaces
+  both. A run is also bounded by memory (`RERAIL_RR_MEMORY_MB`) and threads (`RERAIL_RR_THREADS`).
+  `RERAIL_RR_QUIET_MS` replaces the 10-second quiet period. A run stopped at a budget gives each of its rules a
+  `budget-exceeded` failure that names the setting to raise; the other rules' results stand.
+- **Reading the rules.** Rerail reads what a pack's `.rerail` rules say when it loads the pack, and waits at most 30
+  seconds for that; the runs' deadline does not change it, `RERAIL_RR_DESCRIBE_DEADLINE_MS` does. A pack whose rules
+  take longer is left out, with a message that names the limit; Rerail reads them again the next time it loads its
+  packs.
+- **Which files.** A `.rerail` run reads the files Git lists in the checkout (tracked, and untracked ones Git does
+  not ignore), leaving out the folders Rerail's own walks never enter (`node_modules`, `dist`, `.git`, `.venv` and the
+  like). It reads no file Git ignores, even where the repository's audits are set not to follow `.gitignore`.
+  Findings in a checkout nested in this one are left to that checkout's own rules.
+
 #### Command reference
 
 OMP and Pi expose these natively, with slash-completion descriptions; Claude Code and Cursor as user-level prompt commands; Codex as `$rerail-*` skills.
@@ -797,7 +832,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 
 - **`/rerail`**: rendered by `rerail session`; Cursor gets the repository-level form.
 - **`/rerail-manage`**: the same link the footer's rule count carries.
-- **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts each rule and tests it (`rerail rules test <draft.json>`). A suggested rule that passes is added with `rerail rules add <draft.json>` and left unapproved, so it runs in Log; the agent then asks once whether to approve them so they steer (`rerail rules approve <id>`), and the dashboard's Overview sends you to the rest, each approved on its page after it is read. A rule you asked for is read back, and on your yes `rerail rules add` and `rerail rules approve` add it to your library and this repository. Either way the repository is set up with that rule if needed. It also tunes misfiring rules, changes where a rule applies (its scope only, a shipped rule's as your copy, without the full review), and audits a pending rule or pack before asking you to approve it.
+- **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts each rule and tests it (`rerail rules test <draft.json>`). A suggested rule that passes is added with `rerail rules add <draft.json>`, and a rule you asked for is read back and added on your yes. Either way it runs in Log until you approve it on its page in the dashboard, which the dashboard's Overview sends you to: `rerail rules approve <id>` is refused in the agent's session. Either way the repository is set up with that rule if needed. It also tunes misfiring rules, changes where a rule applies (its scope only, a shipped rule's as your copy, without the full review), and audits a pending rule or pack before asking you to approve it.
 - **`/rerail-start`**: OMP and Pi ask set-up's questions via their picker; Claude Code and Cursor as text.
 - **`/rerail-stop`**: the shared daemon keeps running; the reply names `rerail daemon stop`, run in a terminal.
 - **`/rerail-uninstall`**: offers both removals, keeping a backup or deleting everything, the second with its `--dry-run` output. OMP and Pi ask via a native selector, then confirm a full deletion after showing that output; Claude Code doesn't pre-approve either removal.
@@ -811,9 +846,9 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `rerail rules test --help` prints the format; [Writing rules](writing-rules.md#testing-a-draft) explains each field.
 
 - `rerail rules show <rule id> [--repo <dir>]` prints a rule as a draft: one of yours, or a By Rerail rule as this repository runs it (the option values and mode the repository's settings give it, not a checkout's). A note on stderr, so stdout saves as a draft file, says where saving changes it: your rule here and in which other repositories, or that it is not added here; for a By Rerail rule, your copy, the copy this repository already has, or that the rule is not added or is off here (a copy would run on).
-- `rerail rules test` validates a draft, runs its cases and a repository pass over the folders `rules add` would add the rule at, and writes nothing. It says where `rules add` would refuse the draft, a draft without a `title` included; a worktree's rule file on its own is checked as it loads, with no title needed.
+- `rerail rules test` validates a draft, runs its cases and a repository pass over the folders `rules add` would add the rule at, and writes nothing. It says where `rules add` would refuse the draft, a draft without a `title` included; a worktree's rule file on its own is checked as it loads, with no title needed. Given a `.rerail` rule file, it runs the tests the file carries (`.test ... .end`) against the `.rerail` rule library the package ships.
 - `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`). It refuses a rule without a `title`, the rule in your own words that the dashboard lists it by. A draft that keeps a By Rerail rule's id is stored as your copy (`<id>-copy`), added where the original is in this repository; approving the copy turns the original off there ([copy on edit](rule-scoping.md#coding-agents)).
-- The rule runs in Log until `rerail rules approve [<rule id | package> …] [--repo <dir>]` approves it as it is now ([approval](rule-scoping.md#approval)).
+- The rule runs in Log until `rerail rules approve [<rule id | package> …] [--repo <dir>]` approves it as it is now ([approval](rule-scoping.md#approval)), or a person approves it on its page in the dashboard. In a coding agent's session, `rules approve` only lists what waits, and `rules add` of a draft that changes one of your approved rules saves it as a copy that waits ([coding agents](rule-scoping.md#coding-agents)).
 
 <details>
 <summary>Test output and add details</summary>

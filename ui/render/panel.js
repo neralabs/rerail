@@ -7,7 +7,7 @@
  */
 import { h, setAttr, setText, setContent, icon, pendingIcon } from "../dom.js";
 import { fmt, plural, whenLabel, clock, shortSessionId } from "../format.js";
-import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, awaitingYourApproval, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
+import { ruleMode, modeLabel, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, awaitingYourApproval, notRunningReason, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeCaption, fires, allFires, isMeasured, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
 import { MODE_READ_ONLY, enforcementTag, updateEnforcementTag } from "./enforcement.js";
@@ -66,7 +66,8 @@ function buildRule() {
   el.recent = h("div");
   el.foot = h("div.pfoot");
   el.approval = h("div");
-  el.body = h("div.pbody", null, el.pask, el.approval,
+  el.notRunning = h("div");
+  el.body = h("div.pbody", null, el.pask, el.notRunning, el.approval,
     h("div.enf", null, h("div.enfhead", null, h("div.lbl", null, "On a violation"), el.enforcement), el.modeText, h("p.enfhint", null, MODE_READ_ONLY)),
     el.stats, el.statsNone,
     h("section.psec", null, h("h3", null, "Description"), el.description),
@@ -101,7 +102,10 @@ function renderAsk(stored) {
 /** What the rule does on a violation: the tag on the "On a violation" line, and the sentence that says what that means. */
 function renderModes(stored) {
   updateEnforcementTag(p.enforcement, stored);
-  setText(p.modeText, MODE_PLAIN[ruleMode(stored)] ?? "");
+  // A rule that runs nowhere does nothing on a violation: the line says what it is set to, for when it runs again.
+  setText(p.modeText, notRunningReason(stored) === null
+    ? MODE_PLAIN[ruleMode(stored)] ?? ""
+    : `Set to ${modeLabel(stored)}. Nothing is logged or steered while it does not run.`);
 }
 
 /** The three cards' count and caption: logged and declined in the range, logged since install; dashes if uncounted. */
@@ -144,11 +148,14 @@ const yourRuleNotice = (stored, subject, caught) => h("div.welcome.warn", { role
     `Review what it checks and what it tells the coding agent, ${onceApproved(stored)}`),
   approveButton(subject)));
 
-/** For an edited copy of a rule Rerail ships: which rule, and that approving the copy turns it off here. */
+/**
+ * For an edited copy (of a rule Rerail ships, or of your approved rule a coding agent edited): which rule, and that
+ * approving the copy turns it off here.
+ */
 function copyLine(stored) {
   const id = stored.copiedFromRuleId, original = data.rules.get(id);
-  return h("p", null, h("b", null, "This is an edited copy"),
-    ` of “${original ? titleOf(original) : id}”, a rule Rerail ships. Approving it turns the original off in ${repoName() || "this repo"}.`);
+  const what = original === undefined ? `“${id}”` : isFromPack(original) ? `“${titleOf(original)}”, a rule Rerail ships` : `your rule “${titleOf(original)}”`;
+  return h("p", null, h("b", null, "This is an edited copy"), ` of ${what}. Approving it turns the original off in ${repoName() || "this repo"}.`);
 }
 
 /** A rule or pack someone else wrote (a worktree's own rule, a pack Rerail did not publish, an edited copy) that waits. */
@@ -158,8 +165,20 @@ const otherNotice = (stored, subject, pack) => h("div.welcome.warn", { role: "st
     ? "Rerail did not publish it, so every rule in it runs in Log, steering no one, until a person approves what this version ships."
     : "Rerail did not write it, so it runs in Log, steering no one, until a person approves what it says. An edit waits again."),
   stored.copiedFromRuleId ? copyLine(stored) : null,
-  h("p", null, "Read what it tells the coding agent first, or ask your coding agent to audit it: ", h("span.mono", null, "/rerail-create approve the rules"), "."),
+  h("p", null, "Read what it tells the coding agent first, then approve it here. Your coding agent can audit it first: ", h("span.mono", null, "/rerail-create approve the rules"), "."),
   approveButton(subject)));
+
+/**
+ * For a rule switched on that runs nowhere (its options don't apply, or Rerail does not run its document), that it
+ * does not run and why: its switch and mode below say what it would do; nothing for a rule that runs or is off.
+ */
+function renderNotRunning(stored) {
+  const reason = notRunningReason(stored);
+  setContent(p.notRunning, JSON.stringify([reason]), () => (reason === null ? null
+    : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+      h("b", null, "On, but not running."),
+      h("p", null, reason)))));
+}
 
 /**
  * While the rule's content (or its pack's) waits for a person's approval, what that means and an Approve button that
@@ -275,6 +294,7 @@ function renderRule(root, stored) {
   setText(p.swText, stored.enabled ? "On" : "Off");
   renderAsk(stored);
   renderModes(stored);
+  renderNotRunning(stored);
   renderApproval(stored);
   renderStats(stored, id);
   setText(p.description, twoSentences(conditionText(stored) || `${titleOf(stored)}.`));

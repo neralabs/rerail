@@ -28,7 +28,7 @@ function stored(overrides: Parameters<typeof sampleConflict>[0] = {}): StoredCon
   return { conflict: sampleConflict(overrides), files: ["native/src/model.rs"], anchor: "0123456789abcdef01234567" };
 }
 
-const DISMISSED = { id: "conflict:overlap:fedcba9876543210fedcba98:01234567", status: "dismissed", dismissal: { name: "Tim Belanger", at: "2026-11-03T14:10:00Z" } } as const;
+const DISMISSED = { id: "conflict:overlap:fedcba9876543210fedcba98:01234567", status: "dismissed", dismissal: { name: "Alex Kim", at: "2026-11-03T14:10:00Z" } } as const;
 
 describe("Merge Assist's conflict store", () => {
   it("reads every conflict it can when one entry is not one this build reads", async () => {

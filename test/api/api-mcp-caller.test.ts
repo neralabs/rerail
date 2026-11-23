@@ -3,6 +3,8 @@ import { type EncodingOption, mkdirSync, type PathLike, realpathSync, writeFileS
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createRerailApi } from "../../src/api/http.js";
@@ -460,6 +462,14 @@ describe("MCP callers and the agent guard", () => {
     // Ongoing audit settings outlast the session, so an agent cannot set its checkout to log-only for everyone after it.
     expect((await call("audit_settings_update", { sessionId: "in-app", mode: "log" }, caller)).result).toMatch(/^agent-not-permitted: .*rerail settings/u);
     expect((await call("audit_settings_get", { sessionId: "in-app" }, caller)).result).toMatchObject({ settings: { mode: "steer" } });
+    // A place a turn end's walk could not check: the agent gets the count, never the place, as it gets no payload of it.
+    const place = { path: ".secrets", reason: "EACCES: permission denied, opendir '/repo/.secrets'" };
+    sessions.recordDiscoveryGap({ host: "codex", sessionId: "in-app", cwd: parent }, { boundary: "turn", ...place, key: JSON.stringify([".secrets", "EACCES"]) });
+    const agentGaps = ((await call("sessions_get", { sessionId: "in-app" }, caller)).result as { gaps: Record<string, unknown> }).gaps;
+    expect(agentGaps).toMatchObject({ discoveryGaps: 1 });
+    expect(agentGaps).not.toHaveProperty("discoveryGapPlaces");
+    expect(((await (await person.request("/api/sessions/in-app")).json()) as { gaps: unknown }).gaps)
+      .toMatchObject({ discoveryGaps: 1, discoveryGapPlaces: [{ ...place, boundary: "turn", observedAt: expect.any(Number) }] });
 
     // Naming another repository is refused; its sessions and audits answer exactly as ones that do not exist.
     for (const name of ["sessions_list", "violations_list", "audits_list", "repository_audits_list", "rules_activity"]) {
@@ -486,6 +496,36 @@ describe("MCP callers and the agent guard", () => {
       events: [{ payload: { text: `cat ${nested}/.env` } }, { payload: { input: { command: `cat ${nested}/.env` } } }, { payload: { output: "API_KEY=hunter2" } }, {}],
     });
     expect((await app.request(`/api/repository-audits/${repositoryAuditIds.get("in-lib")}/entries`)).status).toBe(200);
+  });
+
+  it("answers a coding agent's MCP client sessions_get within the output its tool declares, whether the walks met more among it", async () => {
+    const sessions = stores.sessionStore();
+    const session = { host: "codex" as const, sessionId: "in-app", cwd: parent };
+    sessions.openSession(session, 1_000, parentKey);
+    const place = { path: ".secrets", reason: "EACCES: permission denied, opendir '/repo/.secrets'" };
+    sessions.recordDiscoveryGap(session, { boundary: "turn", ...place, key: JSON.stringify([".secrets", "EACCES"]) });
+    const more = { boundary: "turn" as const, reason: "The walks could not check more than 1000 places; the rest are not recorded", more: true as const };
+    sessions.recordDiscoveryGap(session, { ...more, key: JSON.stringify(["", more.reason]) });
+    // The SDK's client checks each answer against the output schema its tool declared in `tools/list`, which allows no
+    // field it does not name, as an MCP client that checks answers does.
+    const client = new Client({ name: "rerail-test", version: "0.0.0" });
+    const transport = new StreamableHTTPClientTransport(new URL("http://localhost:4737/mcp"), {
+      fetch: async (url, init) => {
+        const headers = new Headers(init?.headers);
+        headers.set("host", "localhost:4737");
+        headers.set(CALLER_CWD_HEADER, from(parent));
+        return await mcp(new Request(url, { ...init, headers }));
+      },
+    });
+    await client.connect(transport as Parameters<Client["connect"]>[0]);
+    try {
+      await client.listTools();
+      const answer = await client.callTool({ name: "sessions_get", arguments: { sessionId: "in-app" } });
+      expect(answer.structuredContent).toMatchObject({ gaps: { discoveryGaps: 1, discoveryGapsMore: true } });
+      expect(answer.structuredContent).not.toHaveProperty(["gaps", "discoveryGapPlaces"]);
+    } finally {
+      await client.close();
+    }
   });
 
   it("shows an agent a stored call that names a web URL without looking its host and path up on another machine", async () => {
@@ -680,22 +720,28 @@ describe("MCP callers and the agent guard", () => {
 
   // One answer resolves at most 256 distinct paths on disk (CHECKOUT_PATH_RESOLUTIONS in src/engine/path-boundary.ts)
   // across every folder its findings were recorded in, and judges the rest by name. Sessions in `web` and `api` recorded
-  // 256 findings each, the first in `conf/config.py` with `conf` a link to `.aws`; `audits_list`, which judges every
-  // finding of both audits in one answer, withholds that finding in the audit it judges first and serves it whole in the
-  // other, the 257th path.
+  // 256 findings each, the first in `conf/config.py` and the last in `conf2/config.py`, with `conf` and `conf2` links to
+  // `.aws`. `audits_list` judges every finding of both audits in one answer: it withholds both in the audit it judges
+  // first, where `conf2/config.py` is the 256th path, and serves both whole in the other, from the 257th path on. A
+  // lower limit fails the first audit, a higher one the second. `resolutions` repeats the limit on purpose: the boundary
+  // check keeps this file from importing path-boundary.ts, and a new limit fails this case until the case changes too.
   it("resolves at most 256 paths per answer across the folders of its findings, past which it judges by name", async () => {
     const resolutions = 256;
-    const paths = ["conf/config.py", ...Array.from({ length: resolutions - 1 }, (_, n) => `src/f${n}.py`)];
+    const paths = ["conf/config.py", ...Array.from({ length: resolutions - 2 }, (_, n) => `src/f${n}.py`), "conf2/config.py"];
     for (const name of ["web", "api"]) {
       const folder = join(parent, name);
       mkdirSync(folder, { recursive: true });
       secretsBehind(folder, "conf");
+      linkFolder(".aws", join(folder, "conf2"));
       auditFinding(paths, { sessionId: name, folder, checkout: folder });
     }
     const { audits } = (await call("audits_list", {}, from(parent))).result as { audits: Array<{ violations: Array<Record<string, unknown>> }> };
     expect(audits.map(audit => audit.violations.length)).toEqual([resolutions, resolutions]);
-    const first = audits.map(audit => [audit.violations[0]!.path, findingView(audit.violations[0]!)]);
-    expect(first).toEqual([["conf/config.py", "withheld"], ["conf/config.py", "whole"]]);
+    const ends = audits.map(audit => [audit.violations[0]!, audit.violations.at(-1)!].map(violation => [violation.path, findingView(violation)]));
+    expect(ends).toEqual([
+      [["conf/config.py", "withheld"], ["conf2/config.py", "withheld"]],
+      [["conf/config.py", "whole"], ["conf2/config.py", "whole"]],
+    ]);
   });
 
   // Windows opens a folder or a file by its 8.3 short name too (`AWS~1` for `.aws`, `WP-CON~1.PHP` for `wp-config.php`),

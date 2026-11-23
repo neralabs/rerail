@@ -1,1 +1,0 @@
-The first code rule of a language compiles faster in each process: the engine reads its token tables where they are stored instead of copying every name, so a scan of a few rules spends less time before it reads files.

@@ -123,7 +123,7 @@ typing_imp(i, m, x) :- local_imp(i, m, x), names_typing(i).
 .decl test_helper(i: node)
 test_helper(i) :- scope_of(i, fn, _), match("test_.*", fn).
 // Internal to the repository: a top-level package, a relative import with dots only (""), a dotted module under
-// one of the internal packages, or a layered package such as l1000_schema or l9600_graphs.graph (l + 3 or 4
+// one of the internal packages, or a layered package such as l1000_core or l2000_api.client (l + 3 or 4
 // digits + _name, as the whole first segment).
 .decl internal(m: symbol)
 internal("").

@@ -1,0 +1,50 @@
+.policy "rerail-generator-placement" revision 2
+.description "Keep scripts in packs or the engine sources that write committed files under scripts/generate, not beside their output; fixtures, upstream oracles and tests are exempt."
+.language python
+.mode steer
+.scope include "packs/**/*.py", "native/src/**/*.py"
+.scope exclude "packs/*/upstream/**", "**/fixtures/**", "**/*.test.*", "**/*.spec.*", "**/test_*.py", "**/*_test.py"
+// rerail-generator-placement for Python scripts (the JavaScript policy, rerail-generator-placement.rerail, says
+// why). A write is reported at the call:
+//   Path(out).write_text(text); shutil.copy(a, b)        GENERATOR_BESIDE_OUTPUT
+//   open(out, "w"); io.open(out, mode="ab")              GENERATOR_BESIDE_OUTPUT (a mode that writes: w, a or x)
+//   open(path); path.open("rb")                          not reported
+
+.violation GENERATOR_BESIDE_OUTPUT(at: node) "If what it writes is committed, move this script to scripts/generate/<area>/, re-root its paths and imports, and add its row to scripts/generate/README.md. Leave temporary output."
+GENERATOR_BESIDE_OUTPUT(c) :- kind(c, "call"), field(c, "function", f),
+    glob("{**.write_text,**.write_bytes,shutil.{copy,copy2,copyfile,copytree,move}}", f).
+GENERATOR_BESIDE_OUTPUT(c) :- kind(c, "call"), field(c, "function", f), glob("{open,io.open,codecs.open,**.open}", f),
+    field(c, "arguments", args), child(args, a, _), write_mode(a).
+
+// write_mode(a): an argument that opens for writing: a string mode with w, a or x (one prefix letter at most),
+// or `mode=` such a string.
+.decl write_mode(a: node)
+write_mode(a) :- kind(a, "string"), match("[rRbB]?['\"][rbt+]*[wax][rbt+]*['\"]", a).
+write_mode(a) :- kind(a, "keyword_argument"), match("mode\\s*=\\s*[rRbB]?['\"][rbt+]*[wax](?s:.*)", a).
+
+.test writes_are_reported exactly
+    .fixture "packs/python/candidates/build.py" ```
+        import io, shutil
+        from pathlib import Path
+        Path(out).write_text(text)
+        shutil.copy(src, dst)
+        with open(out, "w") as f:
+            f.write(text)
+        log = io.open(out, mode="ab")
+        ```
+    .expect GENERATOR_BESIDE_OUTPUT at "packs/python/candidates/build.py":3
+    .expect GENERATOR_BESIDE_OUTPUT at "packs/python/candidates/build.py":4
+    .expect GENERATOR_BESIDE_OUTPUT at "packs/python/candidates/build.py":5
+    .expect GENERATOR_BESIDE_OUTPUT at "packs/python/candidates/build.py":7
+.end
+
+.test reads_and_tests_pass exactly
+    .fixture "packs/python/candidates/read.py" ```
+        with open(path) as f:
+            data = f.read()
+        raw = path.open("rb")
+        ```
+    .fixture "packs/python/candidates/test_build.py" ```
+        Path(out).write_text(text)
+        ```
+.end

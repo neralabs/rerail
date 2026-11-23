@@ -1,0 +1,80 @@
+.policy "rerail-home-file-names" revision 2
+.description "Build each list of the Rerail home's files from the file-name constants their writers export, not by spelling the names again; a hand-kept list misses the next file a writer adds."
+.language typescript
+.mode log
+.scope include "src/**/*.ts"
+.scope exclude "**/*.test.ts", "src/**/*.generated.ts"
+// Lists of the Rerail home's files (coding-agents.json, daemon.log, rerail.sqlite, start.lock, …) are built from the
+// file-name constants their writers export; a list that spells two or more of the names again misses the next file
+// a writer adds. Reported, at the literal or the list:
+//   /^(?:(?:coding-agents|consent)\.json|daemon\.log.*)$/u      HOME_FILE_LIST (a regex literal naming two)
+//   "rerail.sqlite|harness.sqlite"                             HOME_FILE_LIST (one word naming two)
+//   ["daemon.json", "daemon.log"], { "rules.json": 1, "consent.json": 2 }   HOME_FILE_LIST (an array, an object)
+//   switch (name) { case "start.lock": … case "update.lock": … }           HOME_FILE_LIST (the switch's body)
+//   new Set([DAEMON_STATE_FILE, DAEMON_LOG_FILE])              not reported
+//   "rerail.sqlite"                                            not reported (one name)
+// The JSON's `regex` searches the node's whole text, as ast-grep's does: `^`/`$` are its ends. Its regexes are
+// copied exactly; each is wrapped in `(?s:.*)(?:…)(?s:.*)` to search.
+
+.violation HOME_FILE_LIST(at: node) "Build this list from the writers' file-name constants (DAEMON_STATE_FILE, RERAIL_DATABASE_FILE, …), exporting one from a writer that has none, and keep the suffix patterns it needs."
+// A regex literal or a string with two home file names (a name with its suffix, or a bare name like daemon-port).
+HOME_FILE_LIST(n) :- kind(n, "regex"), match("(?s:.*)(?:(?s)(?:(?:^|[^\\w./<-])(?:coding-agents|daemon-port|launcher-path|update-state|scrub-hint|device-secrets|active-profile|access-token)\\b|(?:^|[^\\w./<-])rules\\\\?\\.json\\b|\\b(?:consent|daemon)\\\\?\\.json\\b|\\bdaemon\\\\?\\.log\\b|\\b(?:rerail|harness)\\\\?\\.sqlite\\b|\\b(?:start|update)\\\\?\\.lock\\b).*(?:(?:^|[^\\w./<-])(?:coding-agents|daemon-port|launcher-path|update-state|scrub-hint|device-secrets|active-profile|access-token)\\b|(?:^|[^\\w./<-])rules\\\\?\\.json\\b|\\b(?:consent|daemon)\\\\?\\.json\\b|\\bdaemon\\\\?\\.log\\b|\\b(?:rerail|harness)\\\\?\\.sqlite\\b|\\b(?:start|update)\\\\?\\.lock\\b))(?s:.*)", n).
+HOME_FILE_LIST(n) :- string_literal(n), match("(?s:.*)(?:(?s)^[^\\s]*(?:(?:^|[^\\w./<-])(?:coding-agents|daemon-port|launcher-path|update-state|scrub-hint|device-secrets|active-profile|access-token)\\b|(?:^|[^\\w./<-])rules\\\\?\\.json\\b|\\b(?:consent|daemon)\\\\?\\.json\\b|\\bdaemon\\\\?\\.log\\b|\\b(?:rerail|harness)\\\\?\\.sqlite\\b|\\b(?:start|update)\\\\?\\.lock\\b)[^\\s]*(?:(?:^|[^\\w./<-])(?:coding-agents|daemon-port|launcher-path|update-state|scrub-hint|device-secrets|active-profile|access-token)\\b|(?:^|[^\\w./<-])rules\\\\?\\.json\\b|\\b(?:consent|daemon)\\\\?\\.json\\b|\\bdaemon\\\\?\\.log\\b|\\b(?:rerail|harness)\\\\?\\.sqlite\\b|\\b(?:start|update)\\\\?\\.lock\\b))(?s:.*)", n).
+// A regex literal, or a string with no whitespace, with two home names and an escaped suffix (`daemon|rules)\.json`).
+HOME_FILE_LIST(n) :- kind(n, "regex"), two_names(n), match("(?s:.*)(?:\\\\\\.(?:json|log|sqlite|lock))(?s:.*)", n).
+HOME_FILE_LIST(n) :- string_literal(n), match("[^\\s]*", n), two_names(n), match("(?s:.*)(?:\\\\\\\\?\\.(?:json|log|sqlite|lock))(?s:.*)", n).
+// An array, an object's keys, or a switch's cases naming two of the files.
+HOME_FILE_LIST(n) :- kind(n, "array"), match("(?s:.*)(?:(?s)^\\[[^{}]*[\\\"'`](?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|scrub-hint|rules)\\.json|daemon\\.log|(?:rerail|harness)\\.sqlite|(?:start|update)\\.lock|coding-agents|daemon-port|launcher-path|update-state|scrub-hint|device-secrets|active-profile|access-token)[^{}]*[\\\"'`](?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|scrub-hint|rules)\\.json|daemon\\.log|(?:rerail|harness)\\.sqlite|(?:start|update)\\.lock|coding-agents|daemon-port|launcher-path|update-state|scrub-hint|device-secrets|active-profile|access-token))(?s:.*)", n).
+HOME_FILE_LIST(n) :- kind(n, "object"), match("(?s:.*)(?:(?s)^\\{[^{}]*[\\\"'`](?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|scrub-hint|rules)\\.json|daemon\\.log|(?:rerail|harness)\\.sqlite|(?:start|update)\\.lock|coding-agents|daemon-port|launcher-path|update-state|scrub-hint|device-secrets|active-profile|access-token)[\\\"'`]\\s*:[^{}]*[\\\"'`](?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|scrub-hint|rules)\\.json|daemon\\.log|(?:rerail|harness)\\.sqlite|(?:start|update)\\.lock|coding-agents|daemon-port|launcher-path|update-state|scrub-hint|device-secrets|active-profile|access-token)[\\\"'`]\\s*:)(?s:.*)", n).
+HOME_FILE_LIST(n) :- kind(n, "switch_body"), match("(?s:.*)(?:(?s)case\\s*[\\\"'`](?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|scrub-hint|rules)\\.json|daemon\\.log|(?:rerail|harness)\\.sqlite|(?:start|update)\\.lock|coding-agents|daemon-port|launcher-path|update-state|scrub-hint|device-secrets|active-profile|access-token)[\\\"'`]\\s*:.*case\\s*[\\\"'`](?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|scrub-hint|rules)\\.json|daemon\\.log|(?:rerail|harness)\\.sqlite|(?:start|update)\\.lock|coding-agents|daemon-port|launcher-path|update-state|scrub-hint|device-secrets|active-profile|access-token)[\\\"'`]\\s*:)(?s:.*)", n).
+
+// two_names(n): regex literal or string n names two home files, bare (daemon, rules, …) or with their suffix.
+.decl two_names(n: node)
+two_names(n) :- (kind(n, "regex") ; string_literal(n)),
+    match("(?s:.*)(?:(?s)(?:^|[^\\w./-])(?:coding-agents|daemon-port|launcher-path|update-state|scrub-hint|device-secrets|active-profile|access-token|consent|daemon|rules|harness)\\b.*(?:^|[^\\w./-])(?:coding-agents|daemon-port|launcher-path|update-state|scrub-hint|device-secrets|active-profile|access-token|consent|daemon|rules|harness)\\b)(?s:.*)", n).
+.decl string_literal(n: node)
+string_literal(n) :- kind(n, "string") ; kind(n, "template_string").
+
+// The pack's example (packs/rerail/pack.json).
+.test a_home_entry_pattern_is_reported exactly
+    .fixture "src/cli/setup-cli.ts" ```
+        const RERAIL_HOME_ENTRY =
+          /^(?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state)\.json|daemon\.log.*|(?:harness|rerail)\.sqlite.*|(?:start|update)\.lock|bin|current|versions|packs)$/u;
+        ```
+    .expect HOME_FILE_LIST at "src/cli/setup-cli.ts":2
+.end
+
+.test strings_and_lists_are_reported exactly
+    .fixture "src/runtime/home.ts" ```
+        const pair = "rerail.sqlite|harness.sqlite";
+        const escaped = "(?:consent|daemon)\\.json";
+        const files = ["daemon.json", "daemon.log"];
+        const owners = { "rules.json": "rules", "consent.json": "consent" };
+        switch (name) {
+          case "start.lock": return true;
+          case "update.lock": return true;
+        }
+        const one = "rerail.sqlite";
+        const sentence = "remove rerail.sqlite and harness.sqlite";
+        const mixed = [RERAIL_DATABASE_FILE, "daemon.log"];
+        const paths = "./daemon.json ./daemon.log";
+        ```
+    .expect HOME_FILE_LIST at "src/runtime/home.ts":1
+    .expect HOME_FILE_LIST at "src/runtime/home.ts":2
+    .expect HOME_FILE_LIST at "src/runtime/home.ts":3
+    .expect HOME_FILE_LIST at "src/runtime/home.ts":4
+    .expect HOME_FILE_LIST at "src/runtime/home.ts":5
+.end
+
+// The pack's passing example, and the files the scope leaves out.
+.test the_writers_constants_pass exactly
+    .fixture "src/cli/setup-cli.ts" ```
+        import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
+        import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE } from "../runtime/daemon-control.js";
+
+        const RERAIL_HOME_FILES: ReadonlySet<string> = new Set([DAEMON_STATE_FILE, DAEMON_LOG_FILE, DAEMON_ACCESS_TOKEN_FILE, RERAIL_DATABASE_FILE]);
+        ```
+    .fixture "src/cli/setup-cli.test.ts" ```
+        const files = ["daemon.json", "daemon.log"];
+        ```
+.end

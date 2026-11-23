@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // Points each named package's `next` dist-tag at the version named, one `latest` points at, unless `next` is already
 // at a newer version (a preview past it), so the preview channel never trails the stable one (raiseNext in
-// dist-tags.mjs). release.yml runs it for core after publishing under `latest` and after putting `latest` back;
-// packs-publish.mjs and packs-promote.mjs do the same for each pack they publish or promote under `latest`. Running it
-// again is safe.
+// dist-tags.mjs). release.yml runs it for core after promoting it to `latest` or putting `latest` back;
+// packs-promote.mjs does the same for each pack it moves. Running it again is safe.
 //
 // In the workflow npm moves the dist-tag through trusted publishing, which needs npm 11.21.0 or newer; by hand, npm
 // uses your login.

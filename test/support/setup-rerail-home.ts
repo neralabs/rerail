@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { removeFolder } from "./platform/remove-folder.js";
 import { watchRealAgentSettings } from "./user-home.js";
+import { CLEARED_AGENT_SESSION_VARIABLES } from "./environment/agent-session-variables.js";
 
 const priorRerailHome = process.env.RERAIL_HOME;
 const priorContentStorePath = process.env.RERAIL_CONTENT_STORE_PATH;
@@ -19,6 +20,10 @@ const contentStoreDirectory = mkdtempSync(join(tmpdir(), "rerail-vitest-store-")
 const userHome = mkdtempSync(join(tmpdir(), "rerail-vitest-user-"));
 
 process.env.RERAIL_HOME = rerailHome;
+// A test reads as a person's terminal whoever runs it: a coding agent running the suite sets the variables that mark
+// its session, which would refuse `rules approve` and turn `rules add` over an approved rule into a copy. A test of that
+// passes the session itself.
+for (const variable of CLEARED_AGENT_SESSION_VARIABLES) delete process.env[variable];
 // Every test file gets a user home of its own, so code that falls back to os.homedir() (harness registration, the
 // Claude status store, git's global config) never reaches the person's profile. os.homedir() reads HOME on POSIX and
 // USERPROFILE on Windows, so both are set; a test that moves the home uses stubUserHome, which moves both.

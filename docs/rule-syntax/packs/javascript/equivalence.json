@@ -1,0 +1,209 @@
+{
+  "format": "rerail.translation-equivalence/v1",
+  "pack": "javascript",
+  "equivalent": false,
+  "untranslated": {
+    "eslint-curly": "failed: check-rr reader-failed eslint-curly.rerail: .violation MISSING_BRACES message: no column  after {after",
+    "eslint-no-object-constructor": "failed: check-rr reader-failed eslint-no-object-constructor.rerail: .violation no_object_constructor message: no column ",
+    "eslint-no-template-curly-in-string": "failed: check-rr reader-failed eslint-no-template-curly-in-string.rerail: .violation no_template_curly_in_string message: no column ",
+    "eslint-one-var": "failed: check-rr reader-failed eslint-one-var.rerail: line 82: not lowered yet: `ordered` on .decl crowded"
+  },
+  "different": {
+    "eslint-accessor-pairs": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 2
+        }
+      }
+    },
+    "eslint-default-case": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-id-length": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 15,
+          "translationOnly": 23
+        },
+        "rerail-typescript": {
+          "originalOnly": 0,
+          "translationOnly": 8
+        }
+      }
+    },
+    "eslint-max-classes-per-file": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "eslint-max-statements": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "rerail-typescript": {
+          "originalOnly": 1,
+          "translationOnly": 1
+        }
+      }
+    },
+    "eslint-no-duplicate-imports": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 19,
+          "translationOnly": 0
+        },
+        "rerail-typescript": {
+          "originalOnly": 28,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-no-empty-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 56,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-no-extra-bind": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 8
+        }
+      }
+    },
+    "eslint-no-irregular-whitespace": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 2
+        }
+      }
+    },
+    "eslint-no-lonely-if": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 2
+        }
+      }
+    },
+    "eslint-no-magic-numbers": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 894
+        },
+        "rerail-typescript": {
+          "originalOnly": 0,
+          "translationOnly": 112
+        }
+      }
+    },
+    "eslint-no-redeclare": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-no-useless-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-prefer-exponentiation-operator": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-prefer-object-has-own": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        }
+      }
+    },
+    "eslint-prefer-spread": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-sort-imports": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 51,
+          "translationOnly": 0
+        },
+        "rerail-typescript": {
+          "originalOnly": 1606,
+          "translationOnly": 0
+        }
+      }
+    },
+    "eslint-sort-keys": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "rerail-typescript": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    }
+  }
+}
