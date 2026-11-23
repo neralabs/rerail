@@ -1277,6 +1277,43 @@ fn the_wide_corpus_lines_are_the_lean_parsers() {
     refused(&both);
 }
 
+/// A `\$` before a line string's quote ends the string there, and the content of its piece makes
+/// no leaf; the byte after a `\$` is plain; a run of `$`s that starts no template is one content
+/// token (the lean parser's string reader, decision 0636).
+#[test]
+fn escaped_dollars_and_dollar_runs_are_the_lean_parsers() {
+    same(&[
+        "val x = \"a\\$\"\n",
+        "val x = \"\\$\"\n",
+        "val x = \"${a}b\\$\"\n",
+        "val x = \"$a\\$\"\n",
+        "val x = \"a$ b\\$\"\n",
+        "val x = \"a$\\$\"\n",
+        "val x = \"${a}\\$\"\n",
+        "val x = \"ab\\\\\\$\"\n",
+        "val x = \"${\"a\\$\"}\"\n",
+        "val x = \"${\"${b}\\$\"}c\"\n",
+        "val x = \"a\\$\\$b\"\n",
+        "val x = \"a\\$\\n\"\n",
+        "val x = \"a$$ b\"\n",
+        "val x = \"$$\"\n",
+        "val x = \"$$$\"\n",
+        "val x = \"a$$$b\"\n",
+        "val x = \"$$${a}\"\n",
+        "val x = \"$$ $\"\n",
+        "val x = \"$$\\$\"\n",
+        "val x = \"\"\"$$ a\"\"\"\n",
+        "val x = \"\"\"a$$$\"\"\"\n",
+        "val x = \"${a}$$\"\n",
+        "val x = \"$_a\"\n",
+    ]);
+    let both = ["val x = \"a\\$\\\\\"\n", "val x = \"a\\$\\\"b\"\n"];
+    for text in both {
+        assert!(lean_text(text).is_none(), "the lean parser reads {text:?}");
+    }
+    refused(&both);
+}
+
 /// A string in a template's code whose own template ends in the next 64-byte block: a wait reads
 /// the block's tokens again from the loop's head, with the stack of open records as the head had
 /// it, so a `}` that resumes a string ends that string again, not the one around it (the JIT's

@@ -119,16 +119,19 @@ mask line_open  = slash & next(slash)
 mask block_open = slash & next(star)
 # Its `*/`, not over the opener's `*` (`/*/` is open): the lean lexer reads from two bytes past the `/*`.
 mask block_end  = slash & prev(star) & ~prev(block_open, 2)
+# A `$` the escape `\$` before it passes, and the backslashes that escape: the lean parser's
+# reader passes the byte after a `\$`, so a backslash there escapes nothing (decision 0636).
+mask esc0       = dollar & escaped(backslash)
+mask bs         = backslash & ~prev(esc0)
+mask esc_dollar = dollar & escaped(bs)
 # A string's closer: a `"` no backslash escapes.
-mask dq_close   = dq & ~escaped(backslash)
+mask dq_close   = dq & ~escaped(bs)
 mask sq_close   = sq & ~escaped(backslash)
 # A template: `${`, where its `$` closes a string's region (a `${` in a comment or a character
 # is no template), then code to the first `}` outside the code's own strings and characters:
 # the regions say which `}` (a tail opens at a `}` only while a template is open, and a tail
 # closed at its quote ends the string), as the lean lexer reads a template's code.
-# A `$` the escape `\$` before it passes (the lean parser's reader passes the byte after it).
-mask esc_dollar = dollar & escaped(backslash)
-mask t_dollar   = dollar & next(lbrace) & ~escaped(backslash) & ~prev(esc_dollar)
+mask t_dollar   = dollar & next(lbrace) & ~escaped(bs) & ~prev(esc_dollar)
 mask t_lex      = prev(t_dollar)
 mask t_close    = rbrace
 # A raw string: `"""`, then to the last three quotes of the next run of three or more past it
@@ -183,11 +186,11 @@ mask rbody      = f_rstr & ~o_rstr & ~prev(o_rstr) & ~prev(o_rstr, 2) | f_rtail 
 # are not read.
 escape "a `\$` before a quote or a `$` in a raw string" when rbody & dollar & escaped(backslash) & next(dq | dollar)
 mask body       = f_str & ~o_str | f_tail & ~o_tail | rbody
-# In a line string, a `\$` before its quote: the lean parser's reader ends the string there and
-# writes no content before it; before a `\`, which then escapes nothing. Not read (decision 0635).
-escape "a `\$` before a quote or a backslash in a string" when body & ~rbody & dollar & escaped(backslash) & next(dq | backslash)
+# A `$` where `esc0` and `esc_dollar` differ, before a backslash (`\$\\$\`): `bs` does not say
+# whether that backslash escapes. Not read.
+escape "a `\$` after a `\$` and backslashes" when body & ~rbody & (esc0 & ~esc_dollar | esc_dollar & ~esc0) & next(backslash)
 mask s_word     = body & (word | high)
-mask s_dollar   = body & dollar & ~escaped(backslash) & ~prev(esc_dollar)
+mask s_dollar   = body & dollar & ~escaped(bs) & ~prev(esc_dollar)
 # `$name`: the `$`, then the name to its last word byte. The lean parser starts a name at any
 # letter past ASCII, and its lexer refuses one it is not sure of: past ASCII, only `uni` is read,
 # so in a file read a name's byte past ASCII is a letter's (`high`, as in code).
@@ -196,6 +199,21 @@ mask id_last    = s_word & ~next(s_word)
 escape "a template's name with a byte past ASCII, not a name's letter" when fill(id_dollar, ~s_word) & high & ~uni
 # A `$` before no name: a content token of its own, the content after it another.
 mask lone       = s_dollar & ~next(alpha | high)
+# A run of `$`s, as the lean parser's reader reads it: where a template starts after it, each `$`
+# before the template's a content token of its own; where none does, the run one token
+# (decision 0636). Runs of up to four are told apart; longer ones are not read.
+mask d_start    = alpha | high | lbrace
+mask t_run      = s_dollar & (next(d_start) | next(dollar) & next(d_start, 2) | next(dollar) & next(dollar, 2) & next(d_start, 3) | next(dollar) & next(dollar, 2) & next(dollar, 3) & next(d_start, 4))
+escape "a run of five `$`s or more in a string" when s_dollar & next(dollar) & next(dollar, 2) & next(dollar, 3) & next(dollar, 4)
+mask d_run      = lone & ~next(lbrace) & ~t_run
+mask lone1      = lone & ~d_run
+mask d_first    = d_run & ~prev(d_run)
+mask d_last     = d_run & ~next(d_run)
+# A line string's `\$` before its quote: the lean parser's reader ends the string at that quote
+# and writes no content of the piece before it (decision 0636). Its backslash, a part's start:
+# `esc_qd` where a byte of content is before it (the piece's, a content token), else `esc_q`.
+mask esc_q_at   = body & ~rbody & next(esc_dollar & next(dq))
+mask gap_byte   = body & ~fill(prev(id_dollar), prev(id_last)) & ~id_dollar & ~lone
 
 # --- Characters --------------------------------------------------------------------------------
 
@@ -365,7 +383,10 @@ token '"'       = start o_str | o_rstr read str | rstr parts {
                     '""' = r_lead bytes 1
                     interpolation_identifier_start = id_dollar bytes 1
                     interpolated_identifier = prev(id_dollar) last id_last
-                    string_content = lone bytes 1
+                    string_content = lone1 bytes 1
+                    string_content = d_first last d_last
+                    esc_q = esc_q_at & ~prev(gap_byte) bytes 2
+                    esc_qd = esc_q_at & prev(gap_byte) bytes 2
                   } else string_content closes {
                     interpolation_expression_start = t_dollar bytes 2
                   }
@@ -374,7 +395,10 @@ token interpolation_expression_end = start o_tail | o_rtail read tail | rtail pa
                     '""' = r_lead bytes 1
                     interpolation_identifier_start = id_dollar bytes 1
                     interpolated_identifier = prev(id_dollar) last id_last
-                    string_content = lone bytes 1
+                    string_content = lone1 bytes 1
+                    string_content = d_first last d_last
+                    esc_q = esc_q_at & ~prev(gap_byte) bytes 2
+                    esc_qd = esc_q_at & prev(gap_byte) bytes 2
                   } else string_content closes {
                     '"' = dq_close & prev(f_tail) bytes 1
                     '"' = rclose & prev(f_rtail) bytes 3
@@ -634,10 +658,9 @@ mark cp_mod     = tokens "public" | "private" | "internal" | "protected" | "abst
 # A name before `::`, but `this` (a hard keyword, as every one): a callable reference's receiver.
 mark cref       = tokens simple_identifier "::"
 # A name and `=` (or an assignment's operator): an assignment to it, or a named argument; and a
-# name and `:`, a function type's named parameter (`(url: String) -> Unit`).
-mark named      = tokens simple_identifier | backtick_name "=" | "+=" | "-=" | "*=" | "/=" | "%=" | ":"
-# A `!` after a line break before `in` or `is`: a `when` entry's negated test.
-mark named      = tokens "!" with semi "in" | "is"
+# name and `:`, a function type's named parameter (`(url: String) -> Unit`). A `!` after a line break
+# before `in` or `is`: a `when` entry's negated test.
+mark named      = tokens simple_identifier | backtick_name "=" | "+=" | "-=" | "*=" | "/=" | "%=" | ":", before "!" with semi "in" | "is"
 # An enum class's `enum`, a soft word elsewhere.
 mark enum_class = tokens "enum" "class"
 # `fun interface`: a class's, as the lean parser's `declaration_ahead` reads `fun` before
@@ -936,7 +959,9 @@ tree kotlin {
   # A raw string's `""` after its first quote, and its closing run's quotes before its last
   # three: implied, no leaves.
   node string_literal   = '"' (string_content | '""' | interpolation_identifier_start interp_id
-                          | interpolation_expression_start interpolated_expression interpolation_expression_end)* '"'
+                          | interpolation_expression_start interpolated_expression interpolation_expression_end)* [esc_q | drop esc_qd] '"'
+  # A `\$` before the quote (`esc_q`, `esc_qd`), and the content of its piece before it (the node
+  # `drop` takes): no leaf, as the lean parser's reader writes none (decision 0636).
   node interpolated_expression = expression
   node this_expression  = this_label | 'this'
   choice this_label     = this_at 'this' '@' type_name
@@ -1042,7 +1067,7 @@ tree kotlin {
   implied value_arguments '(' ')' ','
   implied this_expression 'this'
   implied this_label 'this' '@'
-  implied string_literal '"' '""'
+  implied string_literal '"' '""' esc_q esc_qd
   implied character_literal "'" char_content
   implied uni_escape uni_digits
   implied number_literal 'L' 'u' 'U' 'uL' 'UL'

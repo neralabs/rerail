@@ -282,11 +282,13 @@ pub mod t {
     pub const BACKSLASH_U: u32 = 14;
     pub const INTERPOLATED_IDENTIFIER: u32 = 15;
     pub const INTERPOLATION_EXPRESSION_START: u32 = 16;
-    pub const QUOTE__CLOSE: u32 = 17;
-    pub const STRING_CONTENT: u32 = 18;
-    pub const INTERPOLATION_IDENTIFIER_START: u32 = 19;
-    pub const QUOTE_QUOTE: u32 = 20;
-    pub const TICK__CLOSE: u32 = 21;
+    pub const STRING_CONTENT: u32 = 17;
+    pub const INTERPOLATION_IDENTIFIER_START: u32 = 18;
+    pub const ESC_QD: u32 = 19;
+    pub const ESC_Q: u32 = 20;
+    pub const QUOTE_QUOTE: u32 = 21;
+    pub const QUOTE__CLOSE: u32 = 22;
+    pub const TICK__CLOSE: u32 = 23;
 }
 
 /// The words, as a record's code names them.
@@ -602,7 +604,7 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
 }
 
 /// Each byte's record kind, as a token's first byte (`Records::kinds`).
-const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 21, 11, 12, 13, 14, 16, 17, 18, 19, 15, 20, 1, 3, 4, 2, 0, 0, 6, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 9, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9];
+const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 23, 11, 12, 13, 14, 16, 22, 17, 18, 15, 19, 20, 21, 1, 3, 4, 2, 0, 0, 6, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 9, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9];
 
 
 /// A record of an extra (a comment): the extra's mark in its code.
@@ -1054,6 +1056,20 @@ impl<'a> P<'a> {
         if k >> 10 & 0x3f == 0 {
             self.w.set_key(at as usize, k | u32::from(field) << 10);
         }
+    }
+
+    /// `drop`: the node made last at this level goes, the last on the tape (else the file is
+    /// refused), and none is made last here until the next, as the interpreter's `DEAD` node.
+    fn drop_made(&mut self) -> R {
+        let at = *self.made.last().unwrap_or(&NONE);
+        if at == NONE || at as usize + self.w.size(at as usize) as usize != self.w.len() {
+            return self.refuse();
+        }
+        self.w.truncate(at as usize);
+        if let Some(m) = self.made.last_mut() {
+            *m = NONE;
+        }
+        Ok(())
     }
 
     /// The node open, a `kind` now.
@@ -7712,6 +7728,13 @@ impl P<'_> {
                 break;
             }
         }
+        if self.at_esc_q() {
+            self.skip(self.at_esc_q())?;
+        } else if self.at_esc_qd() {
+            self.drop_made()?;
+            self.skip(self.at_esc_qd())?;
+        } else {
+        }
         self.skip(self.at_quote())?;
         self.close()?;
         self.marked = false;
@@ -9804,7 +9827,7 @@ impl P<'_> {
     }
 
     fn h_named(&self) -> bool {
-        (((self.pat_named_0_0(self.i, self.prev_tok(self.i))))) || (((self.pat_named_1_0(self.i, self.prev_tok(self.i)))))
+        (((self.pat_named_0_0(self.i, self.prev_tok(self.i))) || self.next_named_0_0_0(self.i, self.prev_tok(self.i))))
     }
 
     /// Mark `named` taken: it and the marks before it passed at this token.
@@ -9824,7 +9847,7 @@ impl P<'_> {
 
     /// Mark `enum_class` holds at the token, not taken there; once a token (`held`).
     fn m_enum_class(&mut self) -> bool {
-        self.taken >> 56 & 1 == 0 && self.held(56, Self::h_enum_class)
+        self.taken >> 55 & 1 == 0 && self.held(55, Self::h_enum_class)
     }
 
     fn h_enum_class(&self) -> bool {
@@ -9833,7 +9856,7 @@ impl P<'_> {
 
     /// Mark `enum_class` taken: it and the marks before it passed at this token.
     fn take_enum_class(&mut self) -> R {
-        self.taken |= 0x1ffffffffffffff;
+        self.taken |= 0xffffffffffffff;
         Ok(())
     }
 
@@ -9848,7 +9871,7 @@ impl P<'_> {
 
     /// Mark `fun_iface` holds at the token, not taken there; once a token (`held`).
     fn m_fun_iface(&mut self) -> bool {
-        self.taken >> 57 & 1 == 0 && self.held(57, Self::h_fun_iface)
+        self.taken >> 56 & 1 == 0 && self.held(56, Self::h_fun_iface)
     }
 
     fn h_fun_iface(&self) -> bool {
@@ -9857,7 +9880,7 @@ impl P<'_> {
 
     /// Mark `fun_iface` taken: it and the marks before it passed at this token.
     fn take_fun_iface(&mut self) -> R {
-        self.taken |= 0x3ffffffffffffff;
+        self.taken |= 0x1ffffffffffffff;
         Ok(())
     }
 
@@ -9872,7 +9895,7 @@ impl P<'_> {
 
     /// Mark `fn_recv` holds at the token, not taken there; once a token (`held`).
     fn m_fn_recv(&mut self) -> bool {
-        self.taken >> 58 & 1 == 0 && self.held(58, Self::h_fn_recv)
+        self.taken >> 57 & 1 == 0 && self.held(57, Self::h_fn_recv)
     }
 
     fn h_fn_recv(&self) -> bool {
@@ -9881,7 +9904,7 @@ impl P<'_> {
 
     /// Mark `fn_recv` taken: it and the marks before it passed at this token.
     fn take_fn_recv(&mut self) -> R {
-        self.taken |= 0x7ffffffffffffff;
+        self.taken |= 0x3ffffffffffffff;
         Ok(())
     }
 
@@ -9896,7 +9919,7 @@ impl P<'_> {
 
     /// Mark `acc` holds at the token, not taken there; once a token (`held`).
     fn m_acc(&mut self) -> bool {
-        self.taken >> 59 & 1 == 0 && self.held(59, Self::h_acc)
+        self.taken >> 58 & 1 == 0 && self.held(58, Self::h_acc)
     }
 
     fn h_acc(&self) -> bool {
@@ -9905,7 +9928,7 @@ impl P<'_> {
 
     /// Mark `acc` taken: it and the marks before it passed at this token.
     fn take_acc(&mut self) -> R {
-        self.taken |= 0xfffffffffffffff;
+        self.taken |= 0x7ffffffffffffff;
         Ok(())
     }
 
@@ -9920,7 +9943,7 @@ impl P<'_> {
 
     /// Mark `recv` holds at the token, not taken there; once a token (`held`).
     fn m_recv(&mut self) -> bool {
-        self.taken >> 62 & 1 == 0 && self.held(62, Self::h_recv)
+        self.taken >> 61 & 1 == 0 && self.held(61, Self::h_recv)
     }
 
     fn h_recv(&self) -> bool {
@@ -9929,7 +9952,7 @@ impl P<'_> {
 
     /// Mark `recv` taken: it and the marks before it passed at this token.
     fn take_recv(&mut self) -> R {
-        self.taken |= 0x7fffffffffffffff;
+        self.taken |= 0x3fffffffffffffff;
         Ok(())
     }
 
@@ -9944,7 +9967,7 @@ impl P<'_> {
 
     /// Mark `dotted` holds at the token, not taken there; once a token (`held`).
     fn m_dotted(&mut self) -> bool {
-        self.taken >> 63 & 1 == 0 && self.held(63, Self::h_dotted)
+        self.taken >> 62 & 1 == 0 && self.held(62, Self::h_dotted)
     }
 
     fn h_dotted(&self) -> bool {
@@ -9953,7 +9976,7 @@ impl P<'_> {
 
     /// Mark `dotted` taken: it and the marks before it passed at this token.
     fn take_dotted(&mut self) -> R {
-        self.taken |= 0xffffffffffffffff;
+        self.taken |= 0x7fffffffffffffff;
         Ok(())
     }
 
@@ -34026,13 +34049,13 @@ impl P<'_> {
     }
 
     #[allow(unused_variables)]
-    fn pat_named_1_0(&self, j: usize, prev: usize) -> bool {
+    fn next_named_0_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::BANG_50) && self.bit_at(j, 3) && self.pat_named_1_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::BANG_50) && self.bit_at(j, 3) && self.next_named_0_0_1(self.next_tok(j + 1), j)
     }
 
     #[allow(unused_variables)]
-    fn pat_named_1_1(&self, j: usize, prev: usize) -> bool {
+    fn next_named_0_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
         (self.word_at(j) == w::IN_44 || self.word_at(j) == w::IS_76) && true
     }
@@ -34753,7 +34776,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 6 | 17)
+        matches!(c & 0xff, 6 | 22)
     }
 
     fn at_quote(&self) -> bool {
@@ -34763,7 +34786,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_quote_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 6 | 17)
+        matches!(c & 0xff, 6 | 22)
     }
 
     fn at_quote_quote_at(&self, j: usize) -> bool {
@@ -34771,7 +34794,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 20)
+        matches!(c & 0xff, 21)
     }
 
     fn at_quote_quote(&self) -> bool {
@@ -34781,7 +34804,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_quote_quote_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 20)
+        matches!(c & 0xff, 21)
     }
 
     fn at_tick_at(&self, j: usize) -> bool {
@@ -34789,7 +34812,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 7 | 21)
+        matches!(c & 0xff, 7 | 23)
     }
 
     fn at_tick(&self) -> bool {
@@ -34799,7 +34822,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_tick_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 7 | 21)
+        matches!(c & 0xff, 7 | 23)
     }
 
     fn at_backslash_u_at(&self, j: usize) -> bool {
@@ -34890,6 +34913,42 @@ impl P<'_> {
     fn at_character_escape_seq_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
         matches!(c & 0xff, 12)
+    }
+
+    fn at_esc_q_at(&self, j: usize) -> bool {
+        if j >= self.n {
+            return false;
+        }
+        let c = self.code_at(j);
+        matches!(c & 0xff, 20)
+    }
+
+    fn at_esc_q(&self) -> bool {
+        self.at_esc_q_at(self.i)
+    }
+
+    /// Record `j` (not the piece at the token) one of the kind's.
+    fn at_esc_q_rec(&self, j: usize) -> bool {
+        let c = self.codes[j];
+        matches!(c & 0xff, 20)
+    }
+
+    fn at_esc_qd_at(&self, j: usize) -> bool {
+        if j >= self.n {
+            return false;
+        }
+        let c = self.code_at(j);
+        matches!(c & 0xff, 19)
+    }
+
+    fn at_esc_qd(&self) -> bool {
+        self.at_esc_qd_at(self.i)
+    }
+
+    /// Record `j` (not the piece at the token) one of the kind's.
+    fn at_esc_qd_rec(&self, j: usize) -> bool {
+        let c = self.codes[j];
+        matches!(c & 0xff, 19)
     }
 
     fn at_hex_literal_at(&self, j: usize) -> bool {
@@ -34987,7 +35046,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 19)
+        matches!(c & 0xff, 18)
     }
 
     fn at_interpolation_identifier_start(&self) -> bool {
@@ -34997,7 +35056,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolation_identifier_start_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 19)
+        matches!(c & 0xff, 18)
     }
 
     fn at_real_literal_at(&self, j: usize) -> bool {
@@ -35041,7 +35100,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 18)
+        matches!(c & 0xff, 17)
     }
 
     fn at_string_content(&self) -> bool {
@@ -35051,7 +35110,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_string_content_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 18)
+        matches!(c & 0xff, 17)
     }
 
     fn at_uni_digits_at(&self, j: usize) -> bool {
@@ -35150,30 +35209,54 @@ impl P<'_> {
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.lone, at).filter(|&e| e < c) {
+            if let Some(e) = first_bit(&m.lone1, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 1, 5) < q) {
                     part = Some((e, 1, 5));
                 }
             }
+            // `string_content`
+            if let Some(e) = first_bit(&m.d_first, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 0, 6) < q) {
+                    part = Some((e, 0, 6));
+                }
+            }
+            // `esc_q`
+            if let Some(e) = first_bit(&m.rd0_part7, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 2, 7) < q) {
+                    part = Some((e, 2, 7));
+                }
+            }
+            // `esc_qd`
+            if let Some(e) = first_bit(&m.rd0_part8, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 2, 8) < q) {
+                    part = Some((e, 2, 8));
+                }
+            }
             let to = part.map_or(c, |q| q.0);
             if to > at {
-                self.piece(at, to - 1, 18);
+                self.piece(at, to - 1, 17);
             }
             match part {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
-                        0 => (e + 1, 20),
+                        0 => (e + 1, 21),
                         1 => (match first_bit(&m.rd0_part1_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 18),
-                        2 => (e + 0, 20),
-                        3 => (e + 0, 19),
+                        }, 17),
+                        2 => (e + 0, 21),
+                        3 => (e + 0, 18),
                         4 => (match first_bit(&m.id_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 15),
-                        5 => (e + 0, 18),
+                        5 => (e + 0, 17),
+                        6 => (match first_bit(&m.d_last, e) {
+                            Some(l) => l,
+                            None => return self.refuse(),
+                        }, 17),
+                        7 => (e + 1, 20),
+                        8 => (e + 1, 19),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);
@@ -35184,10 +35267,10 @@ impl P<'_> {
                         (c + 1, 16)
                     } else if bit(&m.o_str, s) {
                         // `str`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 17)
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 22)
                     } else {
                         // `rstr`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 17)
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 22)
                     };
                     self.piece(c, l, kind);
                     if bit(&m.t_dollar, c) {
@@ -35237,14 +35320,32 @@ impl P<'_> {
                 }
             }
             // `string_content`
-            if let Some(e) = first_bit(&m.lone, at).filter(|&e| e < c) {
+            if let Some(e) = first_bit(&m.lone1, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 1, 4) < q) {
                     part = Some((e, 1, 4));
                 }
             }
+            // `string_content`
+            if let Some(e) = first_bit(&m.d_first, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 0, 5) < q) {
+                    part = Some((e, 0, 5));
+                }
+            }
+            // `esc_q`
+            if let Some(e) = first_bit(&m.rd0_part7, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 2, 6) < q) {
+                    part = Some((e, 2, 6));
+                }
+            }
+            // `esc_qd`
+            if let Some(e) = first_bit(&m.rd0_part8, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 2, 7) < q) {
+                    part = Some((e, 2, 7));
+                }
+            }
             let to = part.map_or(c, |q| q.0);
             if to > at {
-                self.piece(at, to - 1, 18);
+                self.piece(at, to - 1, 17);
             }
             match part {
                 Some((e, _, i)) => {
@@ -35252,14 +35353,20 @@ impl P<'_> {
                         0 => (match first_bit(&m.rd0_part1_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 18),
-                        1 => (e + 0, 20),
-                        2 => (e + 0, 19),
+                        }, 17),
+                        1 => (e + 0, 21),
+                        2 => (e + 0, 18),
                         3 => (match first_bit(&m.id_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 15),
-                        4 => (e + 0, 18),
+                        4 => (e + 0, 17),
+                        5 => (match first_bit(&m.d_last, e) {
+                            Some(l) => l,
+                            None => return self.refuse(),
+                        }, 17),
+                        6 => (e + 1, 20),
+                        7 => (e + 1, 19),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);
@@ -35267,17 +35374,17 @@ impl P<'_> {
                 }
                 None => {
                     let (l, kind) = if bit(&m.rd1_closes0, c) {
-                        (c + 0, 17)
+                        (c + 0, 22)
                     } else if bit(&m.rd1_closes1, c) {
-                        (c + 2, 17)
+                        (c + 2, 22)
                     } else if bit(&m.t_dollar, c) {
                         (c + 1, 16)
                     } else if bit(&m.o_tail, s) {
                         // `tail`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 10)
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
                     } else {
                         // `rtail`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 10)
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
                     };
                     self.piece(c, l, kind);
                     if !(bit(&m.t_dollar, c)) {
@@ -35338,7 +35445,7 @@ impl P<'_> {
                 }
                 None => {
                     let (l, kind) = {
-                        (c + 0, 21)
+                        (c + 0, 23)
                     };
                     self.piece(c, l, kind);
                     return Ok(());

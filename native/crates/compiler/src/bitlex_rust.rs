@@ -288,6 +288,7 @@ impl<'a> G<'a> {
             Gram::Opt(a) | Gram::Star(a) => (self.first(a)?.0, true),
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.first(a)?,
             Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } => self.first(body)?,
+            Gram::Relabel { field: None, moved: Some(m), inner: None, body } if m == ::bitlex::syntax::GONE => self.first(body)?,
             Gram::Unless { flag, body } => {
                 let (f, e) = self.first(body)?;
                 (f.into_iter().map(|(t, _)| (t, Some(flag.clone()))).collect(), e)
@@ -647,6 +648,7 @@ impl<'a> G<'a> {
             }
             Gram::Opt(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.sites(a, rest, caller, out)?,
             Gram::Wrap { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => self.sites(body, rest, caller, out)?,
+            Gram::Relabel { field: None, moved: Some(m), inner: None, body } if m == ::bitlex::syntax::GONE => self.sites(body, rest, caller, out)?,
             _ => {}
         }
         Ok(())
@@ -778,6 +780,8 @@ impl<'a> G<'a> {
                 }
                 format!("{pad}self.reread_{}()?;\n{}", ident(reading), self.code(body, rest, rule, pad)?)
             }
+            // `drop`: the node made last at this level goes, then the rest.
+            Gram::Relabel { field: None, moved: Some(m), inner: None, body } if m == ::bitlex::syntax::GONE => format!("{pad}self.drop_made()?;\n{}", self.code(body, rest, rule, pad)?),
             other => return Err(format!("rule {rule}: not written yet: {other:?}")),
         })
     }
@@ -1793,6 +1797,20 @@ impl<'a> P<'a> {
         if k >> 10 & 0x3f == 0 {
             self.w.set_key(at as usize, k | u32::from(field) << 10);
         }
+    }
+
+    /// `drop`: the node made last at this level goes, the last on the tape (else the file is
+    /// refused), and none is made last here until the next, as the interpreter's `DEAD` node.
+    fn drop_made(&mut self) -> R {
+        let at = *self.made.last().unwrap_or(&NONE);
+        if at == NONE || at as usize + self.w.size(at as usize) as usize != self.w.len() {
+            return self.refuse();
+        }
+        self.w.truncate(at as usize);
+        if let Some(m) = self.made.last_mut() {
+            *m = NONE;
+        }
+        Ok(())
     }
 
     /// The node open, a `kind` now.
