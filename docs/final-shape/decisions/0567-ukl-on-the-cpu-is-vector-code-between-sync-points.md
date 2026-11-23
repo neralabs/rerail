@@ -726,7 +726,28 @@ The guard: `the_label_passes_parents_take_no_more_instructions` (ukl-aot) counts
 (`thread_selfcounts`) and fails above a tenth over 98.1, 117.3 and 103.3 a node, or at the host's scalar read
 (105.3, 491.9, 132.1). The checked-in test asserts the shapes of 4 to 7.
 
-Not yet wired in: the CPU device still runs the c++ of `label_parents`.
+### The CPU device runs it (2026-11-23)
+
+The checked-in Rust the engine runs lives in `rerail-ukl-rust` (no dependency): each kernel with the digest of the
+source and defines it was written from (`sources.rs`, FNV-1a over the defines as `#define` lines, then the text).
+rerail-ukl-vec's test writes both; ukl-aot re-exports the crate's `Launch`, so it is one definition.
+
+`rerail_gpu::kernels::program_with` compiles the library as before, then `with_rust(text, defines)`. On the CPU,
+a kernel whose program has a digest here runs as its Rust (`Run::Host`), its arguments the compiled library's
+rows bound as before, each group in turn on the queue's thread. A launch that gives it a threadgroup row is refused:
+its threadgroup memory is its own. Any other kernel, source, format or processor is the compiler's build, as
+before. `RERAIL_CPU_RUST=0` keeps the compiler's build, for measuring.
+
+The engine's test `the_label_source_is_the_one_its_rust_was_written_from` (device_metal) checks that the label
+source a run's batch compiles has that digest, so a change to the passes or their pieces fails it until the Rust
+is written again.
+
+The device's run (`label_bench`, `cpu`), instructions (cycles) a node:
+
+| | records | numbers | random |
+|---|---|---|---|
+| the device, its Rust | 99.1 (20.9) | 119.4 (25.9) | 105.0 (23.6) |
+| the device, `RERAIL_CPU_RUST=0` (c++) | 111.6 (33.0) | 156.1 (38.9) | 117.6 (53.5) |
 
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 

@@ -3953,6 +3953,21 @@ mod lanes_tests {
     }
 }
 
+#[cfg(test)]
+mod rust_tests {
+    /// The label source a run's batch compiles (its format's, `run_format`) is the one `label_parents`' Rust was
+    /// written from (`rerail_ukl_rust::LABEL_PASSES_16`, its digest with the format's define): the CPU device runs
+    /// that Rust in place of its compiler's build (decision 0567 step 3). A change to the passes or their pieces
+    /// writes it again: `UKL_RS_WRITE=1 cargo test -p rerail-ukl-vec the_label_parents`.
+    #[test]
+    fn the_label_source_is_the_one_its_rust_was_written_from() {
+        let format = super::run_format();
+        let source = &super::SOURCES[usize::from(super::super::metal_program_backend::reads_z(format))];
+        let d = rerail_ukl_rust::digest(source, &[("UKL_CONSTANT_0", &format.to_string())]);
+        assert_eq!(d, rerail_ukl_rust::LABEL_PASSES_16, "the label source is not label_parents' Rust's: write it again (UKL_RS_WRITE=1 cargo test -p rerail-ukl-vec the_label_parents)");
+    }
+}
+
 /// A level's programs: (program, roots per file, marking mode, scratch label or count slot).
 /// A level's programs: (program, roots, mode, slot), the slot a program's scratch row
 /// (`scratch_rows`) where `rows`, else its label (a sweep's, `label_sweep`), or a count's slot.

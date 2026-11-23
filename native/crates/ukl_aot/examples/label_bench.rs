@@ -1,7 +1,9 @@
 //! The label passes' `label_parents` (the engine's batch parents, decision 0475) over one format 16 document: its Rust
-//! from rerail-ukl-vec at 8 lanes (`rust`), against the engine's CPU device's build of the same UKL (`cpu`: c++, a
-//! thread a group's thread, with `RERAIL_GPU=cpu`). Each runs `LABEL_RUNS` times (20), checked against the host's
-//! parents; `LABEL_ONLY=none` runs neither (the setup, to subtract from `/usr/bin/time -l`'s instructions).
+//! from rerail-ukl-vec at 8 lanes called directly (`rust`), and the engine's CPU device's run of the same UKL (`cpu`,
+//! with `RERAIL_GPU=cpu`): that Rust, which the device runs for this source (`rerail_ukl_rust::kernels`), or with
+//! `RERAIL_CPU_RUST=0` its compiler's c++ build (a thread a group's thread). Each runs `LABEL_RUNS` times (20),
+//! checked against the host's parents; `LABEL_ONLY=none` runs neither (the setup, to subtract from `/usr/bin/time
+//! -l`'s instructions).
 //!
 //! `RERAIL_GPU=cpu LABEL_ONLY=rust cargo run -p rerail-ukl-aot --profile profiling --example label_bench [records|numbers|random] [SIZE]`
 

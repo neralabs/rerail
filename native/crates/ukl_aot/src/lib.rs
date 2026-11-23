@@ -12,8 +12,10 @@
 
 #[cfg(target_arch = "aarch64")]
 pub mod hand;
+/// The engine's kernels as Rust (`rerail-ukl-rust`): what the CPU device runs, and the launch they all take.
 #[cfg(target_arch = "aarch64")]
-pub mod label_parents_w8;
+pub use rerail_ukl_rust::label_parents_w8;
+pub use rerail_ukl_rust::{Kernel, Launch, launch};
 #[cfg(target_arch = "aarch64")]
 pub mod mix_lanes_w8;
 #[cfg(target_arch = "aarch64")]
@@ -34,30 +36,6 @@ pub mod parent;
 pub mod scalar;
 #[cfg(test)]
 mod tests;
-
-/// A group's launch, as a kernel's Rust reads it: its group's position, its threads' (each dimension's), and the
-/// groups'.
-#[derive(Clone, Copy, Debug)]
-pub struct Launch {
-    pub group: [u32; 3],
-    pub block: [u32; 3],
-    pub groups: [u32; 3],
-}
-
-/// A kernel's Rust: one group's threads.
-pub type Kernel = unsafe fn(*const *const u8, &Launch);
-
-/// Kernel `k` over `groups` groups of `block` threads (1-D), `argv` its arguments (each the address of its bytes).
-///
-/// # Safety
-///
-/// `argv` holds `k`'s arguments, its buffers as large as the launch reads and writes.
-pub unsafe fn launch(k: Kernel, argv: &[*const u8], groups: u32, block: u32) {
-    for g in 0..groups {
-        let l = Launch { group: [g, 0, 0], block: [block, 1, 1], groups: [groups, 1, 1] };
-        unsafe { k(argv.as_ptr(), &l) };
-    }
-}
 
 /// A state's bit that says its target is the cell's answer (`nearest.uglykl`'s `FINAL`).
 pub const FINAL: u32 = 0x8000_0000;

@@ -1612,14 +1612,19 @@ fn a_uniform_atomic_add_is_each_lanes() {
 /// The label passes' source (`label_passes.uglykl`) as the engine assembles it for a batch of format 16
 /// (`metal_program_backend::VIEW_PIECES`, `metal_label_passes::pipelines`): the view's struct, the format as its
 /// specialization constant, the tape's reads, the device's tape helpers, and the passes.
-fn label_passes_source() -> super::Source {
-    let text = format!(
+fn label_passes_text() -> String {
+    format!(
         "#define UKL_CONSTANT_0 16\n{}UKL_CONSTANT_U32(tape_format)\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n#include <ukl/reads/tape.h>\n{}{}",
         rerail_clif::view::ukl(),
         std::mem::offset_of!(rerail_clif::view::TapeView, format),
         include_str!("../../../src/code_rule_dsl/transducer/packed/device_tape.h"),
         include_str!("../../device_metal/src/code_rule_dsl/transducer/packed/label_passes.uglykl"),
-    );
+    )
+}
+
+/// [`label_passes_text`], preprocessed.
+fn label_passes_source() -> super::Source {
+    let text = label_passes_text();
     super::source("/<kernels>/label_passes.uglykl", &text, &[]).unwrap()
 }
 
@@ -1646,10 +1651,30 @@ fn the_label_parents_kernels_rust_is_the_checked_in_one() {
     assert!(rust.contains(".add(1 * t") && rust.contains("vst1q_lane_u32::<1>(core::hint::select_unpredictable("), "no lanes a stride apart");
     assert!(rust.contains("== vmaxvq_u32("), "no load of one index for all lanes");
     assert!(!rust.contains("x[j] as u32).checked_div("), "a division of each lane's");
-    let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_aot/src/label_parents_w8.rs");
+    let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_rust/src/label_parents_w8.rs");
     if std::env::var_os("UKL_RS_WRITE").is_some() {
         std::fs::write(at, &rust).unwrap();
     }
     let kept = std::fs::read_to_string(at).unwrap_or_default();
     assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it)");
+    // The digest of the source it was written from: the CPU device runs it for a program of that text and those
+    // defines alone (`rerail_ukl_rust::kernels`), and the engine's test checks its label source has it.
+    let sources = format!(
+        "//! The digests (`digest`) of the sources the kernels here were written from: rerail-ukl-vec's tests write them\n//! with the kernels (`UKL_RS_WRITE=1`), and fail if they differ.\n\n/// `label_passes.uglykl` as the engine assembles it for a batch of format 16 (`label_parents_w8`).\npub const LABEL_PASSES_16: u64 = {:#018x};\n",
+        rerail_ukl_rust::digest(&label_passes_text(), &[])
+    );
+    let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_rust/src/sources.rs");
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(at, &sources).unwrap();
+    }
+    assert!(std::fs::read_to_string(at).unwrap_or_default() == sources, "{at} is not the digest of the kernels' source (UKL_RS_WRITE=1 writes it)");
+}
+
+#[test]
+fn probe_leaves_tape_tmp() {
+    let src = label_passes_source();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("label_leaves").unwrap()).unwrap();
+    std::fs::write("/private/tmp/claude-501/-Users-jeremy-orca-workspaces-rerail-uglykl-CPU-SIMD-parallelization/d3436575-20de-4e6e-bfe4-4edeaf4b6d5f/scratchpad/leaves.tape", super::k::View::new(&k.tape).listing()).unwrap();
 }

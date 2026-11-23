@@ -64,7 +64,11 @@ pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<
         } else {
             let source = preprocess_with(name, text, defines)?;
             let preprocessed = started.elapsed();
-            (ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?, preprocessed, source.len())
+            let library = ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?;
+            // On the CPU, a kernel that is Rust of this very text and these defines runs as that Rust (decision 0567
+            // step 3). `RERAIL_CPU_RUST=0`, a measurement aid: every kernel the compiler's build.
+            let library = if std::env::var("RERAIL_CPU_RUST").is_ok_and(|v| v == "0") { library } else { library.with_rust(text, defines) };
+            (library, preprocessed, source.len())
         };
         // `RERAIL_GPU_TIMES`, a measurement aid: each program's preprocessing and compile (or load), on stderr.
         if std::env::var_os("RERAIL_GPU_TIMES").is_some() {

@@ -1,0 +1,7 @@
+[package]
+name = "rerail-ukl-rust"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "UKL kernels the engine runs as Rust (decision 0567 step 3): rerail-ukl-vec's Rust of a kernel's vector tape, checked in with the digest of the source it was written from, which the CPU device runs in place of its compiler's build of that source."
+

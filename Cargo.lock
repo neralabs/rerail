@@ -3825,6 +3825,7 @@ dependencies = [
  "metal",
  "objc",
  "rerail-ukl",
+ "rerail-ukl-rust",
 ]
 
 [[package]]
@@ -3885,6 +3886,7 @@ dependencies = [
  "rerail-store",
  "rerail-tape-format",
  "rerail-transducer",
+ "rerail-ukl-rust",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -8548,7 +8550,12 @@ dependencies = [
  "rerail-json-aot",
  "rerail-tape-format",
  "rerail-ukl-aot",
+ "rerail-ukl-rust",
 ]
+
+[[package]]
+name = "rerail-ukl-rust"
+version = "0.1.0"
 
 [[package]]
 name = "rerail-ukl-vec"
@@ -8563,6 +8570,7 @@ dependencies = [
  "rerail-clif",
  "rerail-tape-format",
  "rerail-ukl",
+ "rerail-ukl-rust",
  "rerail-ukl-vec",
 ]
 

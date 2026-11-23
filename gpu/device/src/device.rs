@@ -550,6 +550,16 @@ impl ComputeFunctionLibrary {
         })
     }
 
+    /// This library of the UKL `text` specialized by `defines`, its kernels that are Rust of that very text and those
+    /// defines (`rerail_ukl_rust::kernels`, decision 0567 step 3) run as their Rust on the CPU; on another device,
+    /// or of another text, the same library.
+    pub fn with_rust(self, text: &str, defines: &[(&str, &str)]) -> Self {
+        match self {
+            ComputeFunctionLibrary::Cpu(l) => ComputeFunctionLibrary::Cpu(l.with_host(rerail_ukl_rust::kernels(text, defines))),
+            other => other,
+        }
+    }
+
     pub fn get_function(&self, device: &Device, function_name: &str) -> Result<ComputeFunction, String> {
         Ok(match (self, device) {
             (ComputeFunctionLibrary::Native(l), Device::Native(d)) => ComputeFunction::Native(l.get_function(d, function_name)?),
