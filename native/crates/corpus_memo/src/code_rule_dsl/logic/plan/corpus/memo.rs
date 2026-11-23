@@ -156,8 +156,9 @@ pub(in crate::code_rule_dsl) fn identities(
 /// prepared program keeps it (decision 0246 §4): a run adds the options, the earlier phases' rows and the projection.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Strata {
-    /// Each relation's strata identity, and the relations it reaches that may hold values (`identities`' leaves).
-    pub by_rel: BTreeMap<String, ([u8; 32], Vec<String>)>,
+    /// Each relation's strata identity, and the relations it reaches that may hold values (`identities`' leaves):
+    /// relations that reach the same leaves share them.
+    pub by_rel: BTreeMap<String, ([u8; 32], std::sync::Arc<[String]>)>,
 }
 
 /// `rels`' `Strata` in the file-local program `local`.
@@ -195,7 +196,7 @@ pub fn strata(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BT
         .iter()
         .filter_map(|rel| {
             let id = *ids.get(rel)?;
-            Some((rel.clone(), (id, reach.get(rel.as_str()).map(|l| l.iter().map(|r| (*r).to_owned()).collect()).unwrap_or_default())))
+            Some((rel.clone(), (id, reach.get(rel.as_str()).map(|l| l.iter().map(|r| (*r).to_owned()).collect()).unwrap_or_else(|| std::sync::Arc::from(Vec::new())))))
         })
         .collect();
     Ok(Strata { by_rel })

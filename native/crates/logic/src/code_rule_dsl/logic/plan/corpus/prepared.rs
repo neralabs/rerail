@@ -34,8 +34,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The pointer's schema: bumped when its meaning changes (105: the programs as their text, decision 0155; 106: the
-/// decisions preparing made, decision 0269). It names the shipped pointer (`shipped_key`).
-const POINTER: u32 = 106;
+/// decisions preparing made, decision 0269; 107: the memo's strata's leaves, each set of them once). It names the
+/// shipped pointer (`shipped_key`).
+const POINTER: u32 = 107;
 
 /// The pointer's plan: the engine build, the grammar version and `key` (the program's texts, the dialect and the
 /// run's additions).
@@ -78,10 +79,11 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         // The split (`file_local::programs_of`): what it found, the file-local relations and those of constants. Its two
         // parts are the lowered program's rules, a part each, made from it again on reading (`file_local::assemble`).
         // The per-file memo's strata of the file-local part (`memo::Strata`, decision 0246 §4): the part's digest,
-        // each relation's strata identity and the leaves it reaches.
+        // each relation's strata identity and the set of leaves it reaches (`set`), each set once (relations of one
+        // stratum and their readers reach the same leaves: kept a relation each, they were most of the pointer's rows).
         ("prepared_memo_part", &["digest:sym"]),
-        ("prepared_memo_stratum", &["k:int", "rel:sym", "id:sym"]),
-        ("prepared_memo_reach", &["k:int", "i:int", "rel:sym"]),
+        ("prepared_memo_stratum", &["k:int", "rel:sym", "id:sym", "set:int"]),
+        ("prepared_memo_reach", &["set:int", "i:int", "rel:sym"]),
         ("prepared_split", &["ok:int"]),
         ("prepared_file_local", &["k:int", "rel:sym"]),
         ("prepared_constant", &["k:int", "rel:sym"]),
@@ -173,10 +175,15 @@ fn rest_of(prepared: &Prepared) -> Facts {
     // The per-file memo's strata (decision 0246 §4), with the digest of the file-local part they are of.
     if let Some((digest, strata)) = prepared.memo_strata.get() {
         row("prepared_memo_part", vec![s(&hex(digest))]);
+        let mut sets: std::collections::HashMap<&[String], usize> = std::collections::HashMap::new();
         for (k, (rel, (id, reached))) in strata.by_rel.iter().enumerate() {
-            row("prepared_memo_stratum", vec![n(k), s(rel), s(&hex(id))]);
-            for (i, r) in reached.iter().enumerate() {
-                row("prepared_memo_reach", vec![n(k), n(i), s(r)]);
+            let fresh = sets.len();
+            let set = *sets.entry(&reached[..]).or_insert(fresh);
+            row("prepared_memo_stratum", vec![n(k), s(rel), s(&hex(id)), n(set)]);
+            if set == fresh {
+                for (i, r) in reached.iter().enumerate() {
+                    row("prepared_memo_reach", vec![n(set), n(i), s(r)]);
+                }
             }
         }
     }
@@ -363,13 +370,19 @@ pub fn prepared_of(
         for r in facts.get("prepared_memo_reach").into_iter().flatten() {
             reach.entry(int(&r[0])?).or_default().push((int(&r[1])?, text(&r[2])?));
         }
+        // Each set once, shared by the relations that reach it.
+        let sets: BTreeMap<i64, Arc<[String]>> = reach
+            .into_iter()
+            .map(|(set, mut rels)| {
+                rels.sort();
+                (set, rels.into_iter().map(|(_, r)| r).collect())
+            })
+            .collect();
         let mut by_rel = BTreeMap::new();
         for r in facts.get("prepared_memo_stratum").into_iter().flatten() {
-            let k = int(&r[0])?;
             let id = unhex(&text(&r[2])?).ok_or_else(|| bad("a memo stratum's identity".to_owned()))?;
-            let mut reached = reach.remove(&k).unwrap_or_default();
-            reached.sort();
-            by_rel.insert(text(&r[1])?, (id, reached.into_iter().map(|(_, r)| r).collect()));
+            let reached = sets.get(&int(&r[3])?).cloned().unwrap_or_else(|| Arc::from(Vec::new()));
+            by_rel.insert(text(&r[1])?, (id, reached));
         }
         let _ = memo_strata.set((digest, super::memo::Strata { by_rel }));
     }
