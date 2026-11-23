@@ -1,9 +1,143 @@
 # Tape format 16's choices for tape tag 13 (rr), decisions 0293 §3 and 0626. Written by the lab from the grammar:
-#   tape16 table <tags…> (native/lab/tape16/src/table.rs)
-# 14896 codes; no node types declared: the grammar's list is the bound.
-revision	2
+#   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
+# 14896 codes; no node types declared: the grammar's list is the bound; numbered by how often each is a node's over 1782 files, 1506377 nodes (`rerail-engine code-counts`).
+revision	3
 widths	1	1	1
+code	42	12	0	-	-
+code	37	30	0	-	-
+code	41	7	0	-	-
+code	25	31	0	-	-
+code	46	12	0	-	-
+code	41	2	0	-	-
+code	22	26	0	-	-
+code	21	0	0	-	-
+code	23	27	0	-	-
+code	43	12	0	-	-
+code	50	0	1	-	-
+code	39	19	0	-	-
+code	40	43	0	-	-
+code	61	0	0	-	-
+code	38	3	0	-	-
+code	3	0	0	-	-
+code	23	32	0	-	-
+code	27	31	0	-	-
+code	42	34	0	-	-
+code	64	35	0	-	-
+code	41	12	0	-	-
+code	26	31	0	-	-
+code	25	33	0	-	-
+code	18	0	0	-	-
+code	24	27	0	-	-
+code	29	31	0	-	-
+code	44	12	0	-	-
+code	63	0	0	-	-
+code	42	36	0	-	-
+code	44	36	0	-	-
+code	41	39	0	-	-
+code	46	36	0	-	-
+code	35	34	0	-	-
+code	46	23	0	-	-
+code	12	0	0	-	-
+code	46	15	0	-	-
+code	16	17	0	-	-
+code	41	22	0	-	-
+code	60	0	0	-	-
 code	1	0	0	-	-
+code	2	0	0	-	-
+code	46	1	0	-	-
+code	46	13	0	-	-
+code	18	27	0	-	-
+code	30	12	0	-	-
+code	35	36	0	-	-
+code	53	35	0	-	-
+code	30	36	0	-	-
+code	31	36	0	-	-
+code	32	36	0	-	-
+code	65	35	0	-	-
+code	75	35	0	-	-
+code	31	12	0	-	-
+code	54	35	0	-	-
+code	47	12	0	-	-
+code	55	35	0	-	-
+code	76	35	0	-	-
+code	66	35	0	-	-
+code	41	4	0	-	-
+code	31	34	0	-	-
+code	42	11	0	-	-
+code	42	37	0	-	-
+code	47	38	0	-	-
+code	28	31	0	-	-
+code	19	0	0	-	-
+code	30	28	0	-	-
+code	32	12	0	-	-
+code	30	34	0	-	-
+code	8	7	0	-	-
+code	15	16	0	-	-
+code	46	21	0	-	-
+code	98	0	0	-	-
+code	106	35	0	-	-
+code	58	0	0	-	-
+code	59	0	0	-	-
+code	107	35	0	-	-
+code	32	34	0	-	-
+code	7	0	0	-	-
+code	87	0	0	-	-
+code	42	41	0	-	-
+code	103	0	0	-	-
+code	110	35	0	-	-
+code	46	42	0	-	-
+code	99	0	0	-	-
+code	104	0	0	-	-
+code	5	0	0	-	-
+code	40	5	0	-	-
+code	29	33	0	-	-
+code	49	8	0	-	-
+code	32	40	0	-	-
+code	78	35	0	-	-
+code	21	27	0	-	-
+code	34	34	0	-	-
+code	48	12	0	-	-
+code	57	0	0	-	-
+code	72	35	0	-	-
+code	77	35	0	-	-
+code	3	27	0	-	-
+code	4	0	0	-	-
+code	41	19	0	-	-
+code	44	34	0	-	-
+code	108	35	0	-	-
+code	13	13	0	-	-
+code	45	36	0	-	-
+code	88	0	0	-	-
+code	11	0	0	-	-
+code	93	29	0	-	-
+code	45	12	0	-	-
+code	72	0	0	-	-
+code	6	0	0	-	-
+code	20	0	0	-	-
+code	49	6	0	-	-
+code	77	0	0	-	-
+code	79	0	0	-	-
+code	94	29	0	-	-
+code	30	11	0	-	-
+code	33	12	0	-	-
+code	34	36	0	-	-
+code	45	34	0	-	-
+code	46	34	0	-	-
+code	46	44	0	-	-
+code	64	0	0	-	-
+code	9	0	0	-	-
+code	10	10	0	-	-
+code	14	14	0	-	-
+code	28	33	0	-	-
+code	30	33	0	-	-
+code	31	11	0	-	-
+code	32	11	0	-	-
+code	41	9	0	-	-
+code	41	35	0	-	-
+code	42	33	0	-	-
+code	44	4	0	-	-
+code	65	0	0	-	-
+code	66	0	0	-	-
 code	1	1	0	-	-
 code	1	2	0	-	-
 code	1	3	0	-	-
@@ -48,7 +182,6 @@ code	1	41	0	-	-
 code	1	42	0	-	-
 code	1	43	0	-	-
 code	1	44	0	-	-
-code	2	0	0	-	-
 code	2	1	0	-	-
 code	2	2	0	-	-
 code	2	3	0	-	-
@@ -93,7 +226,6 @@ code	2	41	0	-	-
 code	2	42	0	-	-
 code	2	43	0	-	-
 code	2	44	0	-	-
-code	3	0	0	-	-
 code	3	1	0	-	-
 code	3	2	0	-	-
 code	3	3	0	-	-
@@ -120,7 +252,6 @@ code	3	23	0	-	-
 code	3	24	0	-	-
 code	3	25	0	-	-
 code	3	26	0	-	-
-code	3	27	0	-	-
 code	3	28	0	-	-
 code	3	29	0	-	-
 code	3	30	0	-	-
@@ -138,7 +269,6 @@ code	3	41	0	-	-
 code	3	42	0	-	-
 code	3	43	0	-	-
 code	3	44	0	-	-
-code	4	0	0	-	-
 code	4	1	0	-	-
 code	4	2	0	-	-
 code	4	3	0	-	-
@@ -183,7 +313,6 @@ code	4	41	0	-	-
 code	4	42	0	-	-
 code	4	43	0	-	-
 code	4	44	0	-	-
-code	5	0	0	-	-
 code	5	1	0	-	-
 code	5	2	0	-	-
 code	5	3	0	-	-
@@ -228,7 +357,6 @@ code	5	41	0	-	-
 code	5	42	0	-	-
 code	5	43	0	-	-
 code	5	44	0	-	-
-code	6	0	0	-	-
 code	6	1	0	-	-
 code	6	2	0	-	-
 code	6	3	0	-	-
@@ -273,7 +401,6 @@ code	6	41	0	-	-
 code	6	42	0	-	-
 code	6	43	0	-	-
 code	6	44	0	-	-
-code	7	0	0	-	-
 code	7	1	0	-	-
 code	7	2	0	-	-
 code	7	3	0	-	-
@@ -325,7 +452,6 @@ code	8	3	0	-	-
 code	8	4	0	-	-
 code	8	5	0	-	-
 code	8	6	0	-	-
-code	8	7	0	-	-
 code	8	8	0	-	-
 code	8	9	0	-	-
 code	8	10	0	-	-
@@ -363,7 +489,6 @@ code	8	41	0	-	-
 code	8	42	0	-	-
 code	8	43	0	-	-
 code	8	44	0	-	-
-code	9	0	0	-	-
 code	9	1	0	-	-
 code	9	2	0	-	-
 code	9	3	0	-	-
@@ -418,7 +543,6 @@ code	10	6	0	-	-
 code	10	7	0	-	-
 code	10	8	0	-	-
 code	10	9	0	-	-
-code	10	10	0	-	-
 code	10	11	0	-	-
 code	10	12	0	-	-
 code	10	13	0	-	-
@@ -453,7 +577,6 @@ code	10	41	0	-	-
 code	10	42	0	-	-
 code	10	43	0	-	-
 code	10	44	0	-	-
-code	11	0	0	-	-
 code	11	1	0	-	-
 code	11	2	0	-	-
 code	11	3	0	-	-
@@ -498,7 +621,6 @@ code	11	41	0	-	-
 code	11	42	0	-	-
 code	11	43	0	-	-
 code	11	44	0	-	-
-code	12	0	0	-	-
 code	12	1	0	-	-
 code	12	2	0	-	-
 code	12	3	0	-	-
@@ -556,7 +678,6 @@ code	13	9	0	-	-
 code	13	10	0	-	-
 code	13	11	0	-	-
 code	13	12	0	-	-
-code	13	13	0	-	-
 code	13	14	0	-	-
 code	13	15	0	-	-
 code	13	16	0	-	-
@@ -602,7 +723,6 @@ code	14	10	0	-	-
 code	14	11	0	-	-
 code	14	12	0	-	-
 code	14	13	0	-	-
-code	14	14	0	-	-
 code	14	15	0	-	-
 code	14	16	0	-	-
 code	14	17	0	-	-
@@ -649,7 +769,6 @@ code	15	12	0	-	-
 code	15	13	0	-	-
 code	15	14	0	-	-
 code	15	15	0	-	-
-code	15	16	0	-	-
 code	15	17	0	-	-
 code	15	18	0	-	-
 code	15	19	0	-	-
@@ -695,7 +814,6 @@ code	16	13	0	-	-
 code	16	14	0	-	-
 code	16	15	0	-	-
 code	16	16	0	-	-
-code	16	17	0	-	-
 code	16	18	0	-	-
 code	16	19	0	-	-
 code	16	20	0	-	-
@@ -768,7 +886,6 @@ code	17	41	0	-	-
 code	17	42	0	-	-
 code	17	43	0	-	-
 code	17	44	0	-	-
-code	18	0	0	-	-
 code	18	1	0	-	-
 code	18	2	0	-	-
 code	18	3	0	-	-
@@ -795,7 +912,6 @@ code	18	23	0	-	-
 code	18	24	0	-	-
 code	18	25	0	-	-
 code	18	26	0	-	-
-code	18	27	0	-	-
 code	18	28	0	-	-
 code	18	29	0	-	-
 code	18	30	0	-	-
@@ -813,7 +929,6 @@ code	18	41	0	-	-
 code	18	42	0	-	-
 code	18	43	0	-	-
 code	18	44	0	-	-
-code	19	0	0	-	-
 code	19	1	0	-	-
 code	19	2	0	-	-
 code	19	3	0	-	-
@@ -858,7 +973,6 @@ code	19	41	0	-	-
 code	19	42	0	-	-
 code	19	43	0	-	-
 code	19	44	0	-	-
-code	20	0	0	-	-
 code	20	1	0	-	-
 code	20	2	0	-	-
 code	20	3	0	-	-
@@ -903,7 +1017,6 @@ code	20	41	0	-	-
 code	20	42	0	-	-
 code	20	43	0	-	-
 code	20	44	0	-	-
-code	21	0	0	-	-
 code	21	1	0	-	-
 code	21	2	0	-	-
 code	21	3	0	-	-
@@ -930,7 +1043,6 @@ code	21	23	0	-	-
 code	21	24	0	-	-
 code	21	25	0	-	-
 code	21	26	0	-	-
-code	21	27	0	-	-
 code	21	28	0	-	-
 code	21	29	0	-	-
 code	21	30	0	-	-
@@ -974,7 +1086,6 @@ code	22	22	0	-	-
 code	22	23	0	-	-
 code	22	24	0	-	-
 code	22	25	0	-	-
-code	22	26	0	-	-
 code	22	27	0	-	-
 code	22	28	0	-	-
 code	22	29	0	-	-
@@ -1020,12 +1131,10 @@ code	23	23	0	-	-
 code	23	24	0	-	-
 code	23	25	0	-	-
 code	23	26	0	-	-
-code	23	27	0	-	-
 code	23	28	0	-	-
 code	23	29	0	-	-
 code	23	30	0	-	-
 code	23	31	0	-	-
-code	23	32	0	-	-
 code	23	33	0	-	-
 code	23	34	0	-	-
 code	23	35	0	-	-
@@ -1065,7 +1174,6 @@ code	24	23	0	-	-
 code	24	24	0	-	-
 code	24	25	0	-	-
 code	24	26	0	-	-
-code	24	27	0	-	-
 code	24	28	0	-	-
 code	24	29	0	-	-
 code	24	30	0	-	-
@@ -1114,9 +1222,7 @@ code	25	27	0	-	-
 code	25	28	0	-	-
 code	25	29	0	-	-
 code	25	30	0	-	-
-code	25	31	0	-	-
 code	25	32	0	-	-
-code	25	33	0	-	-
 code	25	34	0	-	-
 code	25	35	0	-	-
 code	25	36	0	-	-
@@ -1159,7 +1265,6 @@ code	26	27	0	-	-
 code	26	28	0	-	-
 code	26	29	0	-	-
 code	26	30	0	-	-
-code	26	31	0	-	-
 code	26	32	0	-	-
 code	26	33	0	-	-
 code	26	34	0	-	-
@@ -1204,7 +1309,6 @@ code	27	27	0	-	-
 code	27	28	0	-	-
 code	27	29	0	-	-
 code	27	30	0	-	-
-code	27	31	0	-	-
 code	27	32	0	-	-
 code	27	33	0	-	-
 code	27	34	0	-	-
@@ -1249,9 +1353,7 @@ code	28	27	0	-	-
 code	28	28	0	-	-
 code	28	29	0	-	-
 code	28	30	0	-	-
-code	28	31	0	-	-
 code	28	32	0	-	-
-code	28	33	0	-	-
 code	28	34	0	-	-
 code	28	35	0	-	-
 code	28	36	0	-	-
@@ -1294,9 +1396,7 @@ code	29	27	0	-	-
 code	29	28	0	-	-
 code	29	29	0	-	-
 code	29	30	0	-	-
-code	29	31	0	-	-
 code	29	32	0	-	-
-code	29	33	0	-	-
 code	29	34	0	-	-
 code	29	35	0	-	-
 code	29	36	0	-	-
@@ -1319,8 +1419,6 @@ code	30	7	0	-	-
 code	30	8	0	-	-
 code	30	9	0	-	-
 code	30	10	0	-	-
-code	30	11	0	-	-
-code	30	12	0	-	-
 code	30	13	0	-	-
 code	30	14	0	-	-
 code	30	15	0	-	-
@@ -1336,15 +1434,11 @@ code	30	24	0	-	-
 code	30	25	0	-	-
 code	30	26	0	-	-
 code	30	27	0	-	-
-code	30	28	0	-	-
 code	30	29	0	-	-
 code	30	30	0	-	-
 code	30	31	0	-	-
 code	30	32	0	-	-
-code	30	33	0	-	-
-code	30	34	0	-	-
 code	30	35	0	-	-
-code	30	36	0	-	-
 code	30	37	0	-	-
 code	30	38	0	-	-
 code	30	39	0	-	-
@@ -1364,8 +1458,6 @@ code	31	7	0	-	-
 code	31	8	0	-	-
 code	31	9	0	-	-
 code	31	10	0	-	-
-code	31	11	0	-	-
-code	31	12	0	-	-
 code	31	13	0	-	-
 code	31	14	0	-	-
 code	31	15	0	-	-
@@ -1387,9 +1479,7 @@ code	31	30	0	-	-
 code	31	31	0	-	-
 code	31	32	0	-	-
 code	31	33	0	-	-
-code	31	34	0	-	-
 code	31	35	0	-	-
-code	31	36	0	-	-
 code	31	37	0	-	-
 code	31	38	0	-	-
 code	31	39	0	-	-
@@ -1409,8 +1499,6 @@ code	32	7	0	-	-
 code	32	8	0	-	-
 code	32	9	0	-	-
 code	32	10	0	-	-
-code	32	11	0	-	-
-code	32	12	0	-	-
 code	32	13	0	-	-
 code	32	14	0	-	-
 code	32	15	0	-	-
@@ -1432,13 +1520,10 @@ code	32	30	0	-	-
 code	32	31	0	-	-
 code	32	32	0	-	-
 code	32	33	0	-	-
-code	32	34	0	-	-
 code	32	35	0	-	-
-code	32	36	0	-	-
 code	32	37	0	-	-
 code	32	38	0	-	-
 code	32	39	0	-	-
-code	32	40	0	-	-
 code	32	41	0	-	-
 code	32	42	0	-	-
 code	32	43	0	-	-
@@ -1455,7 +1540,6 @@ code	33	8	0	-	-
 code	33	9	0	-	-
 code	33	10	0	-	-
 code	33	11	0	-	-
-code	33	12	0	-	-
 code	33	13	0	-	-
 code	33	14	0	-	-
 code	33	15	0	-	-
@@ -1522,9 +1606,7 @@ code	34	30	0	-	-
 code	34	31	0	-	-
 code	34	32	0	-	-
 code	34	33	0	-	-
-code	34	34	0	-	-
 code	34	35	0	-	-
-code	34	36	0	-	-
 code	34	37	0	-	-
 code	34	38	0	-	-
 code	34	39	0	-	-
@@ -1567,9 +1649,7 @@ code	35	30	0	-	-
 code	35	31	0	-	-
 code	35	32	0	-	-
 code	35	33	0	-	-
-code	35	34	0	-	-
 code	35	35	0	-	-
-code	35	36	0	-	-
 code	35	37	0	-	-
 code	35	38	0	-	-
 code	35	39	0	-	-
@@ -1653,7 +1733,6 @@ code	37	26	0	-	-
 code	37	27	0	-	-
 code	37	28	0	-	-
 code	37	29	0	-	-
-code	37	30	0	-	-
 code	37	31	0	-	-
 code	37	32	0	-	-
 code	37	33	0	-	-
@@ -1671,7 +1750,6 @@ code	37	44	0	-	-
 code	38	0	0	-	-
 code	38	1	0	-	-
 code	38	2	0	-	-
-code	38	3	0	-	-
 code	38	4	0	-	-
 code	38	5	0	-	-
 code	38	6	0	-	-
@@ -1732,7 +1810,6 @@ code	39	15	0	-	-
 code	39	16	0	-	-
 code	39	17	0	-	-
 code	39	18	0	-	-
-code	39	19	0	-	-
 code	39	20	0	-	-
 code	39	21	0	-	-
 code	39	22	0	-	-
@@ -1763,7 +1840,6 @@ code	40	1	0	-	-
 code	40	2	0	-	-
 code	40	3	0	-	-
 code	40	4	0	-	-
-code	40	5	0	-	-
 code	40	6	0	-	-
 code	40	7	0	-	-
 code	40	8	0	-	-
@@ -1801,31 +1877,23 @@ code	40	39	0	-	-
 code	40	40	0	-	-
 code	40	41	0	-	-
 code	40	42	0	-	-
-code	40	43	0	-	-
 code	40	44	0	-	-
 code	41	0	0	-	-
 code	41	1	0	-	-
-code	41	2	0	-	-
 code	41	3	0	-	-
-code	41	4	0	-	-
 code	41	5	0	-	-
 code	41	6	0	-	-
-code	41	7	0	-	-
 code	41	8	0	-	-
-code	41	9	0	-	-
 code	41	10	0	-	-
 code	41	11	0	-	-
-code	41	12	0	-	-
 code	41	13	0	-	-
 code	41	14	0	-	-
 code	41	15	0	-	-
 code	41	16	0	-	-
 code	41	17	0	-	-
 code	41	18	0	-	-
-code	41	19	0	-	-
 code	41	20	0	-	-
 code	41	21	0	-	-
-code	41	22	0	-	-
 code	41	23	0	-	-
 code	41	24	0	-	-
 code	41	25	0	-	-
@@ -1838,11 +1906,9 @@ code	41	31	0	-	-
 code	41	32	0	-	-
 code	41	33	0	-	-
 code	41	34	0	-	-
-code	41	35	0	-	-
 code	41	36	0	-	-
 code	41	37	0	-	-
 code	41	38	0	-	-
-code	41	39	0	-	-
 code	41	40	0	-	-
 code	41	41	0	-	-
 code	41	42	0	-	-
@@ -1859,8 +1925,6 @@ code	42	7	0	-	-
 code	42	8	0	-	-
 code	42	9	0	-	-
 code	42	10	0	-	-
-code	42	11	0	-	-
-code	42	12	0	-	-
 code	42	13	0	-	-
 code	42	14	0	-	-
 code	42	15	0	-	-
@@ -1881,15 +1945,10 @@ code	42	29	0	-	-
 code	42	30	0	-	-
 code	42	31	0	-	-
 code	42	32	0	-	-
-code	42	33	0	-	-
-code	42	34	0	-	-
 code	42	35	0	-	-
-code	42	36	0	-	-
-code	42	37	0	-	-
 code	42	38	0	-	-
 code	42	39	0	-	-
 code	42	40	0	-	-
-code	42	41	0	-	-
 code	42	42	0	-	-
 code	42	43	0	-	-
 code	42	44	0	-	-
@@ -1905,7 +1964,6 @@ code	43	8	0	-	-
 code	43	9	0	-	-
 code	43	10	0	-	-
 code	43	11	0	-	-
-code	43	12	0	-	-
 code	43	13	0	-	-
 code	43	14	0	-	-
 code	43	15	0	-	-
@@ -1942,7 +2000,6 @@ code	44	0	0	-	-
 code	44	1	0	-	-
 code	44	2	0	-	-
 code	44	3	0	-	-
-code	44	4	0	-	-
 code	44	5	0	-	-
 code	44	6	0	-	-
 code	44	7	0	-	-
@@ -1950,7 +2007,6 @@ code	44	8	0	-	-
 code	44	9	0	-	-
 code	44	10	0	-	-
 code	44	11	0	-	-
-code	44	12	0	-	-
 code	44	13	0	-	-
 code	44	14	0	-	-
 code	44	15	0	-	-
@@ -1972,9 +2028,7 @@ code	44	30	0	-	-
 code	44	31	0	-	-
 code	44	32	0	-	-
 code	44	33	0	-	-
-code	44	34	0	-	-
 code	44	35	0	-	-
-code	44	36	0	-	-
 code	44	37	0	-	-
 code	44	38	0	-	-
 code	44	39	0	-	-
@@ -1995,7 +2049,6 @@ code	45	8	0	-	-
 code	45	9	0	-	-
 code	45	10	0	-	-
 code	45	11	0	-	-
-code	45	12	0	-	-
 code	45	13	0	-	-
 code	45	14	0	-	-
 code	45	15	0	-	-
@@ -2017,9 +2070,7 @@ code	45	30	0	-	-
 code	45	31	0	-	-
 code	45	32	0	-	-
 code	45	33	0	-	-
-code	45	34	0	-	-
 code	45	35	0	-	-
-code	45	36	0	-	-
 code	45	37	0	-	-
 code	45	38	0	-	-
 code	45	39	0	-	-
@@ -2029,7 +2080,6 @@ code	45	42	0	-	-
 code	45	43	0	-	-
 code	45	44	0	-	-
 code	46	0	0	-	-
-code	46	1	0	-	-
 code	46	2	0	-	-
 code	46	3	0	-	-
 code	46	4	0	-	-
@@ -2040,18 +2090,13 @@ code	46	8	0	-	-
 code	46	9	0	-	-
 code	46	10	0	-	-
 code	46	11	0	-	-
-code	46	12	0	-	-
-code	46	13	0	-	-
 code	46	14	0	-	-
-code	46	15	0	-	-
 code	46	16	0	-	-
 code	46	17	0	-	-
 code	46	18	0	-	-
 code	46	19	0	-	-
 code	46	20	0	-	-
-code	46	21	0	-	-
 code	46	22	0	-	-
-code	46	23	0	-	-
 code	46	24	0	-	-
 code	46	25	0	-	-
 code	46	26	0	-	-
@@ -2062,17 +2107,13 @@ code	46	30	0	-	-
 code	46	31	0	-	-
 code	46	32	0	-	-
 code	46	33	0	-	-
-code	46	34	0	-	-
 code	46	35	0	-	-
-code	46	36	0	-	-
 code	46	37	0	-	-
 code	46	38	0	-	-
 code	46	39	0	-	-
 code	46	40	0	-	-
 code	46	41	0	-	-
-code	46	42	0	-	-
 code	46	43	0	-	-
-code	46	44	0	-	-
 code	47	0	0	-	-
 code	47	1	0	-	-
 code	47	2	0	-	-
@@ -2085,7 +2126,6 @@ code	47	8	0	-	-
 code	47	9	0	-	-
 code	47	10	0	-	-
 code	47	11	0	-	-
-code	47	12	0	-	-
 code	47	13	0	-	-
 code	47	14	0	-	-
 code	47	15	0	-	-
@@ -2111,7 +2151,6 @@ code	47	34	0	-	-
 code	47	35	0	-	-
 code	47	36	0	-	-
 code	47	37	0	-	-
-code	47	38	0	-	-
 code	47	39	0	-	-
 code	47	40	0	-	-
 code	47	41	0	-	-
@@ -2130,7 +2169,6 @@ code	48	8	0	-	-
 code	48	9	0	-	-
 code	48	10	0	-	-
 code	48	11	0	-	-
-code	48	12	0	-	-
 code	48	13	0	-	-
 code	48	14	0	-	-
 code	48	15	0	-	-
@@ -2169,9 +2207,7 @@ code	49	2	0	-	-
 code	49	3	0	-	-
 code	49	4	0	-	-
 code	49	5	0	-	-
-code	49	6	0	-	-
 code	49	7	0	-	-
-code	49	8	0	-	-
 code	49	9	0	-	-
 code	49	10	0	-	-
 code	49	11	0	-	-
@@ -2378,7 +2414,6 @@ code	53	31	0	-	-
 code	53	32	0	-	-
 code	53	33	0	-	-
 code	53	34	0	-	-
-code	53	35	0	-	-
 code	53	36	0	-	-
 code	53	37	0	-	-
 code	53	38	0	-	-
@@ -2423,7 +2458,6 @@ code	54	31	0	-	-
 code	54	32	0	-	-
 code	54	33	0	-	-
 code	54	34	0	-	-
-code	54	35	0	-	-
 code	54	36	0	-	-
 code	54	37	0	-	-
 code	54	38	0	-	-
@@ -2468,7 +2502,6 @@ code	55	31	0	-	-
 code	55	32	0	-	-
 code	55	33	0	-	-
 code	55	34	0	-	-
-code	55	35	0	-	-
 code	55	36	0	-	-
 code	55	37	0	-	-
 code	55	38	0	-	-
@@ -2523,7 +2556,6 @@ code	56	41	0	-	-
 code	56	42	0	-	-
 code	56	43	0	-	-
 code	56	44	0	-	-
-code	57	0	0	-	-
 code	57	1	0	-	-
 code	57	2	0	-	-
 code	57	3	0	-	-
@@ -2568,7 +2600,6 @@ code	57	41	0	-	-
 code	57	42	0	-	-
 code	57	43	0	-	-
 code	57	44	0	-	-
-code	58	0	0	-	-
 code	58	1	0	-	-
 code	58	2	0	-	-
 code	58	3	0	-	-
@@ -2613,7 +2644,6 @@ code	58	41	0	-	-
 code	58	42	0	-	-
 code	58	43	0	-	-
 code	58	44	0	-	-
-code	59	0	0	-	-
 code	59	1	0	-	-
 code	59	2	0	-	-
 code	59	3	0	-	-
@@ -2658,7 +2688,6 @@ code	59	41	0	-	-
 code	59	42	0	-	-
 code	59	43	0	-	-
 code	59	44	0	-	-
-code	60	0	0	-	-
 code	60	1	0	-	-
 code	60	2	0	-	-
 code	60	3	0	-	-
@@ -2703,7 +2732,6 @@ code	60	41	0	-	-
 code	60	42	0	-	-
 code	60	43	0	-	-
 code	60	44	0	-	-
-code	61	0	0	-	-
 code	61	1	0	-	-
 code	61	2	0	-	-
 code	61	3	0	-	-
@@ -2793,7 +2821,6 @@ code	62	41	0	-	-
 code	62	42	0	-	-
 code	62	43	0	-	-
 code	62	44	0	-	-
-code	63	0	0	-	-
 code	63	1	0	-	-
 code	63	2	0	-	-
 code	63	3	0	-	-
@@ -2838,7 +2865,6 @@ code	63	41	0	-	-
 code	63	42	0	-	-
 code	63	43	0	-	-
 code	63	44	0	-	-
-code	64	0	0	-	-
 code	64	1	0	-	-
 code	64	2	0	-	-
 code	64	3	0	-	-
@@ -2873,7 +2899,6 @@ code	64	31	0	-	-
 code	64	32	0	-	-
 code	64	33	0	-	-
 code	64	34	0	-	-
-code	64	35	0	-	-
 code	64	36	0	-	-
 code	64	37	0	-	-
 code	64	38	0	-	-
@@ -2883,7 +2908,6 @@ code	64	41	0	-	-
 code	64	42	0	-	-
 code	64	43	0	-	-
 code	64	44	0	-	-
-code	65	0	0	-	-
 code	65	1	0	-	-
 code	65	2	0	-	-
 code	65	3	0	-	-
@@ -2918,7 +2942,6 @@ code	65	31	0	-	-
 code	65	32	0	-	-
 code	65	33	0	-	-
 code	65	34	0	-	-
-code	65	35	0	-	-
 code	65	36	0	-	-
 code	65	37	0	-	-
 code	65	38	0	-	-
@@ -2928,7 +2951,6 @@ code	65	41	0	-	-
 code	65	42	0	-	-
 code	65	43	0	-	-
 code	65	44	0	-	-
-code	66	0	0	-	-
 code	66	1	0	-	-
 code	66	2	0	-	-
 code	66	3	0	-	-
@@ -2963,7 +2985,6 @@ code	66	31	0	-	-
 code	66	32	0	-	-
 code	66	33	0	-	-
 code	66	34	0	-	-
-code	66	35	0	-	-
 code	66	36	0	-	-
 code	66	37	0	-	-
 code	66	38	0	-	-
@@ -3198,7 +3219,6 @@ code	71	41	0	-	-
 code	71	42	0	-	-
 code	71	43	0	-	-
 code	71	44	0	-	-
-code	72	0	0	-	-
 code	72	1	0	-	-
 code	72	2	0	-	-
 code	72	3	0	-	-
@@ -3233,7 +3253,6 @@ code	72	31	0	-	-
 code	72	32	0	-	-
 code	72	33	0	-	-
 code	72	34	0	-	-
-code	72	35	0	-	-
 code	72	36	0	-	-
 code	72	37	0	-	-
 code	72	38	0	-	-
@@ -3368,7 +3387,6 @@ code	75	31	0	-	-
 code	75	32	0	-	-
 code	75	33	0	-	-
 code	75	34	0	-	-
-code	75	35	0	-	-
 code	75	36	0	-	-
 code	75	37	0	-	-
 code	75	38	0	-	-
@@ -3413,7 +3431,6 @@ code	76	31	0	-	-
 code	76	32	0	-	-
 code	76	33	0	-	-
 code	76	34	0	-	-
-code	76	35	0	-	-
 code	76	36	0	-	-
 code	76	37	0	-	-
 code	76	38	0	-	-
@@ -3423,7 +3440,6 @@ code	76	41	0	-	-
 code	76	42	0	-	-
 code	76	43	0	-	-
 code	76	44	0	-	-
-code	77	0	0	-	-
 code	77	1	0	-	-
 code	77	2	0	-	-
 code	77	3	0	-	-
@@ -3458,7 +3474,6 @@ code	77	31	0	-	-
 code	77	32	0	-	-
 code	77	33	0	-	-
 code	77	34	0	-	-
-code	77	35	0	-	-
 code	77	36	0	-	-
 code	77	37	0	-	-
 code	77	38	0	-	-
@@ -3503,7 +3518,6 @@ code	78	31	0	-	-
 code	78	32	0	-	-
 code	78	33	0	-	-
 code	78	34	0	-	-
-code	78	35	0	-	-
 code	78	36	0	-	-
 code	78	37	0	-	-
 code	78	38	0	-	-
@@ -3513,7 +3527,6 @@ code	78	41	0	-	-
 code	78	42	0	-	-
 code	78	43	0	-	-
 code	78	44	0	-	-
-code	79	0	0	-	-
 code	79	1	0	-	-
 code	79	2	0	-	-
 code	79	3	0	-	-
@@ -3873,7 +3886,6 @@ code	86	41	0	-	-
 code	86	42	0	-	-
 code	86	43	0	-	-
 code	86	44	0	-	-
-code	87	0	0	-	-
 code	87	1	0	-	-
 code	87	2	0	-	-
 code	87	3	0	-	-
@@ -3918,7 +3930,6 @@ code	87	41	0	-	-
 code	87	42	0	-	-
 code	87	43	0	-	-
 code	87	44	0	-	-
-code	88	0	0	-	-
 code	88	1	0	-	-
 code	88	2	0	-	-
 code	88	3	0	-	-
@@ -4172,7 +4183,6 @@ code	93	25	0	-	-
 code	93	26	0	-	-
 code	93	27	0	-	-
 code	93	28	0	-	-
-code	93	29	0	-	-
 code	93	30	0	-	-
 code	93	31	0	-	-
 code	93	32	0	-	-
@@ -4217,7 +4227,6 @@ code	94	25	0	-	-
 code	94	26	0	-	-
 code	94	27	0	-	-
 code	94	28	0	-	-
-code	94	29	0	-	-
 code	94	30	0	-	-
 code	94	31	0	-	-
 code	94	32	0	-	-
@@ -4368,7 +4377,6 @@ code	97	41	0	-	-
 code	97	42	0	-	-
 code	97	43	0	-	-
 code	97	44	0	-	-
-code	98	0	0	-	-
 code	98	1	0	-	-
 code	98	2	0	-	-
 code	98	3	0	-	-
@@ -4413,7 +4421,6 @@ code	98	41	0	-	-
 code	98	42	0	-	-
 code	98	43	0	-	-
 code	98	44	0	-	-
-code	99	0	0	-	-
 code	99	1	0	-	-
 code	99	2	0	-	-
 code	99	3	0	-	-
@@ -4593,7 +4600,6 @@ code	102	41	0	-	-
 code	102	42	0	-	-
 code	102	43	0	-	-
 code	102	44	0	-	-
-code	103	0	0	-	-
 code	103	1	0	-	-
 code	103	2	0	-	-
 code	103	3	0	-	-
@@ -4638,7 +4644,6 @@ code	103	41	0	-	-
 code	103	42	0	-	-
 code	103	43	0	-	-
 code	103	44	0	-	-
-code	104	0	0	-	-
 code	104	1	0	-	-
 code	104	2	0	-	-
 code	104	3	0	-	-
@@ -4763,7 +4768,6 @@ code	106	31	0	-	-
 code	106	32	0	-	-
 code	106	33	0	-	-
 code	106	34	0	-	-
-code	106	35	0	-	-
 code	106	36	0	-	-
 code	106	37	0	-	-
 code	106	38	0	-	-
@@ -4808,7 +4812,6 @@ code	107	31	0	-	-
 code	107	32	0	-	-
 code	107	33	0	-	-
 code	107	34	0	-	-
-code	107	35	0	-	-
 code	107	36	0	-	-
 code	107	37	0	-	-
 code	107	38	0	-	-
@@ -4853,7 +4856,6 @@ code	108	31	0	-	-
 code	108	32	0	-	-
 code	108	33	0	-	-
 code	108	34	0	-	-
-code	108	35	0	-	-
 code	108	36	0	-	-
 code	108	37	0	-	-
 code	108	38	0	-	-
@@ -4943,7 +4945,6 @@ code	110	31	0	-	-
 code	110	32	0	-	-
 code	110	33	0	-	-
 code	110	34	0	-	-
-code	110	35	0	-	-
 code	110	36	0	-	-
 code	110	37	0	-	-
 code	110	38	0	-	-
@@ -7158,7 +7159,6 @@ code	49	41	1	-	-
 code	49	42	1	-	-
 code	49	43	1	-	-
 code	49	44	1	-	-
-code	50	0	1	-	-
 code	50	1	1	-	-
 code	50	2	1	-	-
 code	50	3	1	-	-
