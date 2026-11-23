@@ -43,10 +43,10 @@ The daemon sends every 10 seconds; `add` and `remove` need no restart.
   what the database already holds, then everything new.
 - **`--no-content`** sends events without payloads (prompts, tool input and output), marked `"content":"omitted"`.
   Everything else is sent.
-- **`remove`** deletes the remote's token and what the outbox knew of it. A remote added later under the same name
-  starts from nothing and receives everything again. Each `add` gives the remote a new id, which the outbox keeps its
-  progress under. A send under way at removal stops and records nothing more but the last event number of the batch
-  it sends, which stays taken.
+- **`remove`** deletes the remote's token and what the outbox knew of it, but for the highest event number a batch
+  carried to it, which stays taken. A remote added later under the same name starts from nothing and receives
+  everything again. Each `add` gives the remote a new id, which the outbox keeps its progress under. A send under way
+  at removal stops and records nothing more but the last event number of the batch it sends, which stays taken too.
 - **`status`** shows when the remote last took a batch, what is waiting, and the last error. `rerail status` shows a
   line per remote. It exits 1 while a remote is failing.
 - **`push`** sends everything waiting now, in this process, without the daemon and without waiting for a retry. It is

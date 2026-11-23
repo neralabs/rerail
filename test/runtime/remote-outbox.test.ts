@@ -470,6 +470,16 @@ describe("event numbers a remote has taken", () => {
   const moveAside = (): void => {
     for (const suffix of ["", "-wal", "-shm"]) if (real.existsSync(`${databasePath()}${suffix}`)) real.renameSync(`${databasePath()}${suffix}`, `${databasePath()}.aside${suffix}`);
   };
+  /** The store as a power cut that took the commits of every event leaves it: their rows gone, the counter back. */
+  const cutEvents = (): void => {
+    const database = new Database(databasePath());
+    try {
+      database.prepare("DELETE FROM events").run();
+      database.prepare("UPDATE sqlite_sequence SET seq = 0 WHERE name = 'events'").run();
+    } finally {
+      database.close();
+    }
+  };
 
   // Its first events took the numbers the remote's cursor had passed, and were never sent.
   it("numbers the first event of a database started fresh past the remote's cursor, so the outbox sends it", async () => {
@@ -483,6 +493,28 @@ describe("event numbers a remote has taken", () => {
     store.close();
     await outbox().sync({ force: true });
     expect(sent()).toContain("first");
+  });
+
+  // The remote took the batch while `rerail remote remove` ran, and the removal deleted the batch's record with the rest:
+  // the event after the cut took number 1 and went to the remote added again under the id of the event it held as 1.
+  it("keeps a batch's event numbers taken when its remote is removed while the batch is out", async () => {
+    seed();
+    const quiet = { stdout: { write: () => true } };
+    addRemote({ url: sink.url, token: "test-token", content: true, name: "team" }, home);
+    sink.duringNextRequest(() => void runRemoteCommand(["remove", "team"], { home, ...quiet }));
+    await outbox().sync({ force: true });
+    const held = storedRecords(sink).filter(record => record.type === "event").map(record => record.id);
+    cutEvents();
+    addRemote({ url: sink.url, token: "test-token", content: true, name: "team" }, home);
+    const store = new SqliteSessionStore(databasePath());
+    store.openSession(session);
+    store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "again" } }, session);
+    store.close();
+    await outbox().sync({ force: true });
+    const first = storedRecords(sink).find(record => record.type === "event" && record.eventId === "first");
+    expect(held).toHaveLength(4);
+    expect(first?.id).toEqual(expect.any(String));
+    expect(held).not.toContain(first?.id);
   });
 
   // A hook's steer receipt opens a writer of its own and no session (`hook-host.ts`), and its session opened in the

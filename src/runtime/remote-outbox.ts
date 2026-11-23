@@ -389,14 +389,15 @@ export class RemoteOutbox {
   /**
    * Drops the outbox's state for a removed remote (by {@link remoteStateKey}). A sync still running for it records
    * nothing more of the remote's answers: each such write checks the remote is still configured under that key first.
-   * The record of a batch about to go out (`#markPosted`) is kept on purpose, with no such check: the batch still goes
-   * out to that URL, so its event numbers stay taken (`keepEventNumbersPastRemotes`).
+   * The records of the batches sent to it (`#markPosted`) stay, the one written for a batch still out included, with no
+   * such check: the remote may hold their events, so their numbers stay taken (`keepEventNumbersPastRemotes`).
    */
   forget(key: string): void {
     const state = openState(this.#home);
     try {
       state.transaction(() => {
-        for (const table of ["cursors", "sent", "pending_gaps", "status", "locks"]) state.prepare(`DELETE FROM ${table} WHERE remote = ?`).run(key);
+        for (const table of ["sent", "pending_gaps", "status", "locks"]) state.prepare(`DELETE FROM ${table} WHERE remote = ?`).run(key);
+        state.prepare("DELETE FROM cursors WHERE remote = ? AND stream <> ?").run(key, POSTED_EVENTS_STREAM);
       })();
     } finally {
       state.close();
