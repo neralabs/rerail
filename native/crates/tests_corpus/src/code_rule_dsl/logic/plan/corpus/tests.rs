@@ -3058,42 +3058,77 @@ names(x) :- names_in(x).
     assert_eq!(sorted(alone_and_together("vue-names", file, program, VUE_PLAIN, "names")), [row(&["count"]), row(&["inc"])]);
 }
 
-/// `first`'s relation `rel` over the one file `file`, run alone, and its findings (its rows of `violation`: path, line,
-/// column, sorted) alone and in a pack with `other`. A pack shows a policy's findings, not its own relations.
-fn findings_alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, rel: &str) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<Vec<String>>) {
-    let id = first.lines().find_map(|l| l.strip_prefix(".policy \"")).and_then(|l| l.split('"').next()).unwrap_or_default().to_owned();
+/// A policy's id (its `.policy "<id>"` line).
+fn policy_id(program: &str) -> String {
+    program.lines().find_map(|l| l.strip_prefix(".policy \"")).and_then(|l| l.split('"').next()).unwrap_or_default().to_owned()
+}
+
+/// The rows of `violation` (policy, …, path, line, column, …) of `programs` run as one pack over `files` (path,
+/// text) under a directory of their own (`name`).
+fn pack_findings(name: &str, files: &[(String, &str)], programs: &[&str]) -> Vec<Vec<String>> {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    for (path, text) in files {
+        let at = dir.join(path);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, text).unwrap();
+    }
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("out");
+    let ran = super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    ran.unwrap_or_else(|e| panic!("{e}"));
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    rows
+}
+
+/// `program`'s relation `rel` over the one file `file`, run alone, and its findings (its rows of `violation`: path,
+/// line, column, sorted).
+fn findings_alone(name: &str, file: (&str, &str), program: &str, rel: &str) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
+    let id = policy_id(program);
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(file.0), file.1).unwrap();
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-    let run = |programs: &[&str], out: &str| {
-        let out = dir.join(out);
-        super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
-        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
-        let rows = read(&format!("p0_{rel}"));
-        let mut found: Vec<Vec<String>> = read("violation").into_iter().filter(|r| r.first() == Some(&id)).map(|r| r[3..].to_vec()).collect();
-        found.sort();
-        (if rows.is_empty() { read(rel) } else { rows }, found)
-    };
-    let (rows, alone) = run(&[first], "alone");
-    let (_, together) = run(&[first, other], "together");
+    let out = dir.join("alone");
+    let ran = super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    ran.unwrap_or_else(|e| panic!("{e}"));
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+    let rows = read(&format!("p0_{rel}"));
+    let mut found: Vec<Vec<String>> = read("violation").into_iter().filter(|r| r.first() == Some(&id)).map(|r| r[3..].to_vec()).collect();
+    found.sort();
+    let rows = if rows.is_empty() { read(rel) } else { rows };
     let _ = std::fs::remove_dir_all(&dir);
-    (rows, alone, together)
+    (rows, found)
 }
 
 /// Each case of the Vue pack's tables: the policy, a component, its violation, and the last column of each finding
-/// (`*`: a finding, whatever it says). Each finds that alone and beside a policy of the other kind, as a pack runs
-/// them (rule 5: a relation has one meaning in every program): beside no-template-shadow, whose code is the contexts'
-/// alone, and no-template-shadow beside no-mutating-props, which reads both contexts.
+/// (`*`: a finding, whatever it says). Each finds that alone, and the same in the pack (rule 5: a relation has one
+/// meaning in every program): every case's policy run together, beside no-template-shadow, whose code is the
+/// contexts' alone, and no-mutating-props, which reads both contexts, over every case's component, each in a
+/// directory of its own (`case<k>/a.vue`). A case's findings in the pack are its policy's in its file.
 fn vue_pack_cases(cases: &[(&str, String, &str, Vec<&str>)]) {
     let read = |policy: &str| std::fs::read_to_string(crate::source_tree::native().join(format!("../docs/rule-syntax/packs/vue/eslint-plugin-vue-{policy}.rerail"))).unwrap();
+    let mut policies: Vec<&str> = cases.iter().map(|c| c.0).chain(["no-template-shadow", "no-mutating-props"]).collect();
+    policies.sort_unstable();
+    policies.dedup();
+    let texts: Vec<String> = policies.iter().map(|p| read(p)).collect();
+    let files: Vec<(String, &str)> = cases.iter().enumerate().map(|(k, c)| (format!("case{k}/a.vue"), c.1.as_str())).collect();
+    let pack = pack_findings("vue-pack-together", &files, &texts.iter().map(String::as_str).collect::<Vec<_>>());
     let mut wrong = Vec::new();
-    for (policy, text, rel, want) in cases {
+    for (k, (policy, text, rel, want)) in cases.iter().enumerate() {
         let program = read(policy);
-        let other = read(if *policy == "no-template-shadow" { "no-mutating-props" } else { "no-template-shadow" });
-        let run = std::panic::catch_unwind(|| findings_alone_and_together(&format!("vue-pack-{policy}"), ("a.vue", text.as_str()), &program, &other, rel));
-        let Ok((found, alone, together)) = run else {
+        let id = policy_id(&program);
+        let path = format!("case{k}/a.vue");
+        let mut together: Vec<Vec<String>> = pack
+            .iter()
+            .filter(|r| r.first() == Some(&id) && r.get(3) == Some(&path))
+            .map(|r| std::iter::once("a.vue".to_owned()).chain(r[4..].iter().cloned()).collect())
+            .collect();
+        together.sort();
+        let run = std::panic::catch_unwind(|| findings_alone(&format!("vue-pack-{policy}"), ("a.vue", text.as_str()), &program, rel));
+        let Ok((found, alone)) = run else {
             let e = run.err().unwrap();
             let e = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_owned())).unwrap_or_default();
             wrong.push(format!("{policy} on {text:?}: {e}"));
@@ -3102,7 +3137,7 @@ fn vue_pack_cases(cases: &[(&str, String, &str, Vec<&str>)]) {
         let mut got: Vec<String> = found.iter().map(|r| if want.first() == Some(&"*") { "*".to_owned() } else { r.last().cloned().unwrap_or_default() }).collect();
         got.sort();
         if got != *want || alone.len() != found.len() || together != alone {
-            wrong.push(format!("{policy} on {text:?}: {found:?} (findings {alone:?}, together {together:?}), wanted {want:?}"));
+            wrong.push(format!("{policy} on {text:?}: {found:?} (findings {alone:?}, in the pack {together:?}), wanted {want:?}"));
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
