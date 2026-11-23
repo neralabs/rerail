@@ -1136,8 +1136,14 @@ pub fn lower_statements_version(statements: Vec<Stmt>) -> Result<std::sync::Arc<
 /// A library's modules linked on versions (decision 0377): `lower::link_versions`, then the lowering's tail
 /// (`lowering_tail_on`), folded to a base. The program `lower::link` makes of them as a tree, as a version.
 pub fn link_library_versions(modules: Vec<lower::Module>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    let linked = lower::link_versions(modules)?;
-    let version = lowering_tail_on(linked.first, linked.appended, false, linked.lowered, None)?;
+    let linked = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the link: modules renumbered, merged and appended (lower::link_versions)".into());
+        lower::link_versions(modules)?
+    };
+    let version = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail, all of it".into());
+        lowering_tail_on(linked.first, linked.appended, false, linked.lowered, None)?
+    };
     let _s = crate::code_rule_dsl::logic::profile::span(|| "a library's version folded".into());
     if version.base_bytes().is_some() { Ok(version) } else { version.fold().map_err(Error::Syntax) }
 }
@@ -1171,6 +1177,7 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
         }
         p.program(&mut lowering_tail::OrderNodes).program(&mut lowering_tail::DeclareAxes);
         // `finish`'s checks, on the version.
+        let _checks = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: finish_checks_given".to_owned());
         super::front::finish_checks_given(p.current().map_err(Error::Syntax)?, library.map(|l| &*l.version))?;
     }
     {
@@ -1178,6 +1185,7 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
         let _demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
         p.program(&mut lowering_tail::AggregateDemand).program(&mut lowering_tail::Unit).program(&mut lowering_tail::LiteralsOnce).program(&mut lowering_tail::DropSelfRules).program(&mut DropRepeated::default()).program(&mut lowering_tail::FactsOnce);
     }
+    let widening = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: the widening rounds".to_owned());
     for _ in 0..16 {
         let mut widen = super::plan::corpus::preparation::lowering_tail::WidenCyclicContexts::default();
         p.program(&mut widen);
@@ -1186,6 +1194,7 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
             break;
         }
     }
+    drop(widening);
     let _finishing = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: its version made".to_owned());
     let (v, _) = p.finish().map_err(Error::Syntax)?;
     Ok(v)

@@ -5760,7 +5760,16 @@ fn spike_0639_programs_linked_from_modules() {
         let own = lower::lower_module_in_written(own, &scope);
         let own_s = at.elapsed().as_secs_f64();
         let at = Instant::now();
-        let linked = own.and_then(|own| super::link_library_versions(modules.iter().cloned().chain([own]).collect())).and_then(|v| crate::code_rule_dsl::logic::contexts::passes(&v));
+        let linked = own.and_then(|own| {
+            let all: Vec<lower::Module> = {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "spike: the library's modules cloned for a link".into());
+                modules.iter().cloned().chain([own]).collect()
+            };
+            super::link_library_versions(all)
+        }).and_then(|v| {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "spike: contexts::passes after the link".into());
+            crate::code_rule_dsl::logic::contexts::passes(&v)
+        });
         let link_s = at.elapsed().as_secs_f64();
         let linked = match linked {
             Ok(v) => v,
@@ -6131,5 +6140,172 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
             if union == whole_rules { "the same rules".to_owned() } else { format!("other rules (only the united: {}; only the whole: {})", only(&union, &whole_rules), only(&whole_rules, &union)) },
             today_rules, today_helpers.len(), whole_today_helpers.len(), w_cycles.len()
         );
+        // E8: what each module could finish alone. A relation is final in its module when nothing it reads, itself
+        // included and to any depth over the united rules, has a rule from a module outside the module's scope and
+        // itself: neither a later module adding rules to it (an `extensible` relation) nor one it reads.
+        {
+            use crate::code_rule_dsl::logic::program_image::handles::Lit as HL;
+            let scope_of: Vec<BTreeSet<usize>> = (0..units.len()).map(|u| (0..u).filter(|&v| units[u].iter().any(|&i| reach[i].contains(&units[v][0]))).chain([u]).collect()).collect();
+            // A relation's rules, by module, as digests: a helper two modules make alike (a `once` merge) is one
+            // relation each module holds whole, not one a later module adds to.
+            let mut by_module: BTreeMap<String, BTreeMap<usize, BTreeSet<[u8; 32]>>> = BTreeMap::new();
+            let mut heads: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+            let mut reads: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+            let mut rules_of: Vec<Vec<String>> = vec![Vec::new(); units.len()];
+            for (u, m) in built.iter().enumerate() {
+                let (v, _) = named(m, &format!("module {u}"));
+                for (h, d) in lower::rule_digests(&v) {
+                    by_module.entry(h).or_default().entry(u).or_default().insert(d);
+                }
+                for r in v.rules() {
+                    let h = v.rel_name(r.head().rel()).to_owned();
+                    heads.entry(h.clone()).or_default().insert(u);
+                    rules_of[u].push(h.clone());
+                    let into = reads.entry(h).or_default();
+                    for l in r.body() {
+                        if let HL::Atom(a) | HL::Agg { atom: a, .. } = l.view() {
+                            into.insert(v.rel_name(a.rel()).to_owned());
+                        }
+                    }
+                }
+            }
+            // Alike in every module: any module holding it holds all of it.
+            let mut alike_in: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+            for (h, per) in &by_module {
+                let mut sets = per.values();
+                let first = sets.next();
+                if per.len() > 1 && sets.all(|s| Some(s) == first) {
+                    heads.remove(h);
+                    alike_in.insert(h.clone(), per.keys().copied().collect());
+                }
+            }
+            let open: Vec<&String> = heads.iter().filter(|(_, us)| us.len() > 1).map(|(r, _)| r).collect();
+            let alike = alike_in.len();
+            let (mut final_rules, mut all_rules, mut final_rels, mut all_rels) = (0usize, 0usize, 0usize, 0usize);
+            let mut why: BTreeMap<String, usize> = BTreeMap::new();
+            for (u, hs) in rules_of.iter().enumerate() {
+                let distinct: BTreeSet<&String> = hs.iter().collect();
+                for h in distinct {
+                    let (mut seen, mut todo, mut outside) = (BTreeSet::new(), vec![h.as_str()], None);
+                    while let Some(x) = todo.pop() {
+                        if !seen.insert(x) {
+                            continue;
+                        }
+                        if let Some(us) = alike_in.get(x) && !us.iter().any(|v| scope_of[u].contains(v)) {
+                            outside = Some(x.to_owned());
+                            break;
+                        }
+                        if let Some(us) = heads.get(x) && !us.is_subset(&scope_of[u]) {
+                            outside = Some(x.to_owned());
+                            break;
+                        }
+                        todo.extend(reads.get(x).into_iter().flatten().map(String::as_str));
+                    }
+                    let n = hs.iter().filter(|x| *x == h).count();
+                    all_rels += 1;
+                    all_rules += n;
+                    match outside {
+                        None => {
+                            final_rels += 1;
+                            final_rules += n;
+                        }
+                        Some(x) => *why.entry(x).or_default() += 1,
+                    }
+                }
+            }
+            let mut why: Vec<_> = why.into_iter().collect();
+            why.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+            println!("E8 {pack}: {alike} relations made alike by several modules; {} with different rules from more than one module ({:?}); final in their module: {final_rels} of {all_rels} relations, {final_rules} of {all_rules} rules; the first relation outside, most often: {:?}", open.len(), open.iter().take(8).collect::<Vec<_>>(), why.iter().take(6).collect::<Vec<_>>());
+        }
+        // E9: a module against its scope's header alone. Each scope module lowered again from its statements less its
+        // rules (facts and declarations kept), and the module lowered against those, compared with its image.
+        {
+            let mut header_only: Vec<lower::Module> = Vec::new();
+            let (mut same, mut other, mut failed) = (0, 0, 0);
+            for (u, members) in units.iter().enumerate() {
+                let scope_ix: Vec<usize> = (0..u).filter(|&v| members.iter().any(|&i| reach[i].contains(&units[v][0]))).collect();
+                let headers: Vec<&lower::Module> = scope_ix.iter().map(|&v| &header_only[v]).collect();
+                let st: Vec<from_tape::Stmt> = members.iter().flat_map(|&i| no_includes(read_all[i].0.clone())).collect();
+                let bare: Vec<from_tape::Stmt> = st.iter().filter(|s| !s.has_body()).cloned().collect();
+                let name = dfs[members[0]].display().to_string();
+                let h = lower::lower_module_in_written(bare, &headers).unwrap_or_else(|e| panic!("{name}: its header alone: {e}"));
+                if !scope_ix.is_empty() {
+                    match lower::lower_module_in_written(st, &headers) {
+                        Ok(m) => {
+                            let (a, b) = (module_image::encode(&built[u]).unwrap(), module_image::encode(&m).unwrap());
+                            if a.bytes() == b.bytes() {
+                                same += 1;
+                            } else {
+                                other += 1;
+                                println!("E9 {pack} {name}: against its scope's headers: {}", differs(&printed(built[u].version()), &printed(m.version())).chars().take(600).collect::<String>());
+                            }
+                        }
+                        Err(e) => {
+                            failed += 1;
+                            println!("E9 {pack} {name}: against its scope's headers fails: {}", e.to_string().chars().take(300).collect::<String>());
+                        }
+                    }
+                }
+                header_only.push(h);
+            }
+            println!("E9 {pack}: modules with a scope: {same} the same image against the scope's headers alone, {other} not, {failed} failed");
+        }
+        // E10: a downward analysis as rules. The tail's passes before `KindSets` replayed on the library's link, then
+        // the pass; its sets dropped as unread against `ks_gone` of rules over the same input's reads.
+        {
+            use crate::code_rule_dsl::logic::contexts::{CrossingCycles, Passes};
+            use crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail as lt;
+            use crate::code_rule_dsl::logic::program_image::handles::Lit as HL;
+            use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
+            let linked = lower::link_versions(built.clone()).unwrap();
+            let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = linked.lowered;
+            let mut p = Pipeline::new("spike: the tail to kind sets", linked.first);
+            for (own, stated, own_stated) in linked.appended {
+                p.program(&mut lt::AppendModule { own, stated, own_stated });
+            }
+            p.program(&mut Passes).program(&mut CrossingCycles);
+            p.program(&mut lt::ThreeValued { three, modal });
+            p.program(&mut lt::Findings { pending: findings, library: None });
+            p.program(&mut lt::CoreDecls { docof_of_locs }).program(&mut lt::SpanPatterns { library: None }).program(&mut lt::GrammarNames).program(&mut lt::BuiltinsOut { rewritten });
+            let input = Arc::clone(p.current().unwrap());
+            p.program(&mut lt::KindSets { sets: sets.clone(), library: None });
+            let output = Arc::clone(p.current().unwrap());
+            let (in_keys, out_keys): (BTreeSet<String>, BTreeSet<String>) = (input.kindset_map().unwrap().into_keys().collect(), output.kindset_map().unwrap().into_keys().collect());
+            let there = |v: &Version, s: &str| v.declares(s) || v.fact_names().iter().any(|f| f == s);
+            let cand: BTreeSet<String> = in_keys.iter().cloned().chain(sets.iter().filter(|s| out_keys.contains(*s) || (there(&input, s) && !there(&output, s))).cloned()).collect();
+            // The pass takes an unread set out as a relation (undeclared, its facts dropped); it stays a kind set.
+            let rust_gone: BTreeSet<String> = cand.iter().filter(|s| there(&input, s) && !there(&output, s)).cloned().collect();
+            let mut facts: Vec<String> = cand.iter().map(|s| format!("ks_cand({s:?}).")).collect();
+            let mut reads: BTreeSet<(String, String)> = BTreeSet::new();
+            for r in input.rules() {
+                for l in r.body() {
+                    if let HL::Atom(a) | HL::Agg { atom: a, .. } = l.view() {
+                        reads.insert((input.rel_name(r.head().rel()).to_owned(), input.rel_name(a.rel()).to_owned()));
+                    }
+                }
+            }
+            facts.extend(reads.iter().map(|(h, r)| format!("ks_reads({h:?}, {r:?}).")));
+            // A set the program holds as a relation (declared, facts, or rules): only such a set is taken out.
+            facts.extend(cand.iter().filter(|s| there(&input, s) || input.rel(s).is_some_and(|r| input.heads(r).next().is_some())).map(|s| format!("ks_rel({s:?}).")));
+            let rules = ".decl ks_cand(s: symbol)\n.decl ks_reads(h: symbol, r: symbol)\n.decl ks_live(s: symbol)\n.decl ks_gone(s: symbol)\n.decl ks_rel(s: symbol)\n\
+                ks_live(s) :- ks_cand(s), !ks_rel(s).\n\
+                ks_live(s) :- ks_cand(s), ks_reads(h, s), h != s, !ks_cand(h).\n\
+                ks_live(s) :- ks_cand(s), ks_reads(h, s), h != s, ks_live(h).\n\
+                ks_gone(s) :- ks_cand(s), !ks_live(s).\n.output ks_gone\n";
+            let rules_gone: BTreeSet<String> = guests_run_with("ksgone", &[("a.py", "x = 1\n")], &format!("{rules}{}\n", facts.join("\n")), |o| {
+                o.get("ks_gone").map(|r| r.shown()).unwrap_or_default().into_iter().map(|r| r[0].trim_matches('"').to_owned()).collect()
+            });
+            for g in rules_gone.difference(&rust_gone).take(3) {
+                use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+                let readers: Vec<String> = input.rules().map(|r| input.show_rule(r)).filter(|t| t.contains(g.as_str())).take(2).map(|t| t.chars().take(160).collect()).collect();
+                println!("E10 {pack} {g}: declares {}, states facts {}, fact_names {}, rules {}, in the input's kind sets {}, the output's {}; rules naming it: {readers:?}",
+                    input.declares(g), ProgramFields::states_facts(&*input, g), input.fact_names().iter().any(|f| f == g), input.rel(g).is_some_and(|r| input.heads(r).next().is_some()), in_keys.contains(g), out_keys.contains(g));
+            }
+            println!(
+                "E10 {pack}: kind sets: {} candidates over {} reads; the pass drops {}, the rules {}: {}",
+                cand.len(), reads.len(), rust_gone.len(), rules_gone.len(),
+                if rust_gone == rules_gone { "the same sets".to_owned() } else { format!("only the pass: {:?}; only the rules: {:?}", rust_gone.difference(&rules_gone).take(6).collect::<Vec<_>>(), rules_gone.difference(&rust_gone).take(6).collect::<Vec<_>>()) }
+            );
+        }
     }
 }
