@@ -287,6 +287,58 @@ const isEmptyBatch = (batch: BatchBuilder): boolean => batch.records.length === 
 const lastSequence = (batch: { readonly records: readonly OutboxRecord[]; readonly oversized: readonly OutboxRecord[] }): number =>
   [...batch.records, ...batch.oversized].reduce((max, item) => Math.max(max, item.sequence ?? 0), 0);
 
+/** A batch the remote answered, and where its answer is written: the outbox's state, in one transaction (`#acknowledge`). */
+interface AnsweredBatch {
+  readonly state: Database.Database;
+  readonly remote: string;
+  readonly machine: string;
+  readonly records: readonly OutboxRecord[];
+  readonly oversized: readonly OutboxRecord[];
+}
+
+const ADD_GAP_SQL = "INSERT OR REPLACE INTO pending_gaps (remote, id, record_json) VALUES (?, ?, ?)";
+
+/** The event cursor moves past the batch's last event, and each record it carried is held under its hash. */
+function holdAnswered({ state, remote, records, oversized }: AnsweredBatch): void {
+  const sequence = lastSequence({ records, oversized });
+  if (sequence > 0) state.prepare("INSERT INTO cursors (remote, stream, value) VALUES (?, 'event', ?) ON CONFLICT (remote, stream) DO UPDATE SET value = max(value, excluded.value)").run(remote, sequence);
+  const upsert = state.prepare("INSERT INTO sent (remote, stream, id, hash) VALUES (?, ?, ?, ?) ON CONFLICT (remote, stream, id) DO UPDATE SET hash = excluded.hash");
+  for (const item of [...records, ...oversized]) if (item.hash !== undefined) upsert.run(remote, item.stream, item.id, item.hash);
+}
+
+/** The queued gaps the batch carried leave the queue; a rejected one is reported again inside the new gap's records. */
+function clearSentGaps({ state, remote, records }: AnsweredBatch): void {
+  const sentGap = state.prepare("DELETE FROM pending_gaps WHERE remote = ? AND id = ?");
+  for (const item of records) if (item.stream === "gap" && item.sequence === undefined) sentGap.run(remote, item.id);
+}
+
+/** A gap queued for each record of the batch too large to send, which the next batch tells the remote of. */
+function queueTooLargeGaps({ state, remote, machine, oversized }: AnsweredBatch): void {
+  const addGap = state.prepare(ADD_GAP_SQL);
+  for (const item of oversized) {
+    const id = `${machine}:too-large:${item.stream}:${item.id}`;
+    const gap = item.stream === "event"
+      ? { stream: "event", fromSequence: item.sequence ?? null, toSequence: item.sequence ?? null, reason: "too-large" }
+      : { stream: item.stream, fromSequence: null, toSequence: null, records: [{ stream: item.stream, id: item.id }], reason: "too-large" };
+    addGap.run(remote, id, JSON.stringify({ type: "gap", id, ...gap }));
+  }
+}
+
+/** The remote will never take the batch's records (`rejected`): it is told what is missing instead, in the next batch. */
+function queueRejectedGap({ state, remote, machine, records }: AnsweredBatch, rejected: string): void {
+  const events = records.filter(item => item.stream === "event").map(item => item.sequence ?? 0);
+  const others = records.filter(item => item.stream !== "event" && item.stream !== "gap" && item.stream !== "skip").map(item => ({ stream: item.stream, id: item.id }));
+  const gap = {
+    stream: "batch",
+    fromSequence: events.length === 0 ? null : Math.min(...events),
+    toSequence: events.length === 0 ? null : Math.max(...events),
+    records: others,
+    reason: rejected,
+  };
+  const id = `${machine}:rejected:${batchIdOf(records)}`;
+  state.prepare(ADD_GAP_SQL).run(remote, id, JSON.stringify({ type: "gap", id, ...gap }));
+}
+
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** What the remote's answer to a batch means: `detail` is its status, and the start of its body when it sent one. */
@@ -720,36 +772,11 @@ export class RemoteOutbox {
     state.transaction(() => {
       // Removed, or removed and added again, while this batch was out: its answer belongs to no remote now.
       if (!this.#configured(remote)) return;
-      const machine = machineId(this.#home);
-      const sequence = lastSequence({ records, oversized });
-      if (sequence > 0) state.prepare("INSERT INTO cursors (remote, stream, value) VALUES (?, 'event', ?) ON CONFLICT (remote, stream) DO UPDATE SET value = max(value, excluded.value)").run(remote, sequence);
-      const upsert = state.prepare("INSERT INTO sent (remote, stream, id, hash) VALUES (?, ?, ?, ?) ON CONFLICT (remote, stream, id) DO UPDATE SET hash = excluded.hash");
-      for (const item of [...records, ...oversized]) if (item.hash !== undefined) upsert.run(remote, item.stream, item.id, item.hash);
-      const sentGap = state.prepare("DELETE FROM pending_gaps WHERE remote = ? AND id = ?");
-      // Only the gaps this batch carried: a rejected one is reported again inside the new gap's records.
-      for (const item of records) if (item.stream === "gap" && item.sequence === undefined) sentGap.run(remote, item.id);
-      const addGap = state.prepare("INSERT OR REPLACE INTO pending_gaps (remote, id, record_json) VALUES (?, ?, ?)");
-      for (const item of oversized) {
-        const id = `${machine}:too-large:${item.stream}:${item.id}`;
-        const gap = item.stream === "event"
-          ? { stream: "event", fromSequence: item.sequence ?? null, toSequence: item.sequence ?? null, reason: "too-large" }
-          : { stream: item.stream, fromSequence: null, toSequence: null, records: [{ stream: item.stream, id: item.id }], reason: "too-large" };
-        addGap.run(remote, id, JSON.stringify({ type: "gap", id, ...gap }));
-      }
-      if (rejected !== undefined) {
-        // The remote will never take these: it is told what is missing instead, in the next batch.
-        const events = records.filter(item => item.stream === "event").map(item => item.sequence ?? 0);
-        const others = records.filter(item => item.stream !== "event" && item.stream !== "gap" && item.stream !== "skip").map(item => ({ stream: item.stream, id: item.id }));
-        const gap = {
-          stream: "batch",
-          fromSequence: events.length === 0 ? null : Math.min(...events),
-          toSequence: events.length === 0 ? null : Math.max(...events),
-          records: others,
-          reason: rejected,
-        };
-        const id = `${machine}:rejected:${batchIdOf(records)}`;
-        addGap.run(remote, id, JSON.stringify({ type: "gap", id, ...gap }));
-      }
+      const answered: AnsweredBatch = { state, remote, machine: machineId(this.#home), records, oversized };
+      holdAnswered(answered);
+      clearSentGaps(answered);
+      queueTooLargeGaps(answered);
+      if (rejected !== undefined) queueRejectedGap(answered, rejected);
     })();
   }
 
