@@ -197,6 +197,7 @@ pub mod k {
     pub const RPAREN: u16 = 166;
     pub const SEALED: u16 = 232;
     pub const SECONDARY_CONSTRUCTOR: u16 = 43;
+    pub const SEMI: u16 = 178;
     pub const SET: u16 = 180;
     pub const SETPARAM: u16 = 262;
     pub const SETTER: u16 = 38;
@@ -274,17 +275,18 @@ pub mod t {
     pub const TICK: u32 = 7;
     pub const BACKTICK_NAME: u32 = 8;
     pub const SIMPLE_IDENTIFIER: u32 = 9;
-    pub const UNI_DIGITS: u32 = 10;
-    pub const CHARACTER_ESCAPE_SEQ: u32 = 11;
-    pub const CHAR_CONTENT: u32 = 12;
-    pub const BACKSLASH_U: u32 = 13;
-    pub const INTERPOLATED_IDENTIFIER: u32 = 14;
-    pub const INTERPOLATION_EXPRESSION_START: u32 = 15;
-    pub const QUOTE__CLOSE: u32 = 16;
-    pub const STRING_CONTENT: u32 = 17;
-    pub const INTERPOLATION_IDENTIFIER_START: u32 = 18;
-    pub const QUOTE_QUOTE: u32 = 19;
-    pub const TICK__CLOSE: u32 = 20;
+    pub const INTERPOLATION_EXPRESSION_END_CLOSE: u32 = 10;
+    pub const UNI_DIGITS: u32 = 11;
+    pub const CHARACTER_ESCAPE_SEQ: u32 = 12;
+    pub const CHAR_CONTENT: u32 = 13;
+    pub const BACKSLASH_U: u32 = 14;
+    pub const INTERPOLATED_IDENTIFIER: u32 = 15;
+    pub const INTERPOLATION_EXPRESSION_START: u32 = 16;
+    pub const QUOTE__CLOSE: u32 = 17;
+    pub const STRING_CONTENT: u32 = 18;
+    pub const INTERPOLATION_IDENTIFIER_START: u32 = 19;
+    pub const QUOTE_QUOTE: u32 = 20;
+    pub const TICK__CLOSE: u32 = 21;
 }
 
 /// The words, as a record's code names them.
@@ -548,7 +550,7 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
             b"out" => w::OUT_94,
             _ => 0,
         },
-        14 => match b {
+        15 => match b {
             b"expect" => w::EXPECT_108,
             b"data" => w::DATA_53,
             b"inner" => w::INNER_86,
@@ -600,7 +602,7 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
 }
 
 /// Each byte's record kind, as a token's first byte (`Records::kinds`).
-const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 10, 11, 12, 13, 15, 16, 17, 18, 14, 19, 1, 3, 4, 2, 0, 0, 6, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 9, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9];
+const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 21, 11, 12, 13, 14, 16, 17, 18, 19, 15, 20, 1, 3, 4, 2, 0, 0, 6, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 9, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9];
 
 
 /// A record of an extra (a comment): the extra's mark in its code.
@@ -2292,7 +2294,7 @@ impl P<'_> {
             self.word_leaf(w::CLASS_13, k::CLASS)?;
             self.type_name()?;
             self.ask_semi(false)?;
-            if self.m_head_ctor() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_decl_mod() {
+            if self.m_head_ctor() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_decl_mod() || self.m_enum_k() {
             } else if self.m_generic() || self.m_gen_nav() {
                 self.type_parameters()?;
             } else {
@@ -2307,13 +2309,14 @@ impl P<'_> {
             self.ask_semi(false)?;
             if self.m_head_ctor() {
                 self.mark_head_ctor()?;
-            } else if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_decl_mod() {
+            } else if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_decl_mod() || self.m_enum_k() {
             } else {
             }
             self.ask_semi(false)?;
             if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
             } else if self.m_decl_mod() {
                 self.primary_constructor()?;
+            } else if self.m_enum_k() {
             } else {
                 match self.word() {
                     w::AT_2 | w::CONSTRUCTOR_36 | w::LPAREN_19 => {
@@ -2324,7 +2327,7 @@ impl P<'_> {
                 }
             }
             self.ask_semi(false)?;
-            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_enum_k() {
             } else {
                 match self.word() {
                     w::COLON_4 => {
@@ -2332,7 +2335,7 @@ impl P<'_> {
                         self.delegation_specifier()?;
                         loop {
                             self.ask_semi(false)?;
-                            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_enum_k() {
                                 break;
                             } else {
                                 match self.word() {
@@ -2353,6 +2356,8 @@ impl P<'_> {
             }
             self.ask_semi(false)?;
             if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+            } else if self.m_enum_k() {
+                self.enum_class_body()?;
             } else {
                 match self.word() {
                     w::LBRACE_17 => {
@@ -2548,168 +2553,263 @@ impl P<'_> {
     /// `enum_class_body`.
     fn enum_class_body(&mut self) -> R {
         self.open(k::ENUM_CLASS_BODY);
-        self.word_skip(w::LBRACE_17)?;
-        let arm: usize;
-        if self.m_semi_close() || self.m_trail() {
-            arm = 1;
+        if self.m_enum_k() {
+            self.mark_enum_k()?;
+            self.enum_empty()?;
         } else {
             match self.word() {
-                w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 => {
-                    arm = 0;
-                }
-                _ if self.at_simple_identifier() || self.at_backtick_name() => {
-                    arm = 0;
-                }
-                _ => {
-                    arm = usize::MAX;
-                }
-            }
-        }
-        match arm {
-            0 => {
-                self.enum_entry()?;
-                loop {
-                    if self.m_semi_close() || self.m_trail() {
-                        break;
+                w::LBRACE_17 => {
+                    self.word_skip(w::LBRACE_17)?;
+                    let arm: usize;
+                    if self.m_semi_close() || self.m_trail() || self.m_enum_k() {
+                        arm = 1;
                     } else {
                         match self.word() {
-                            w::COMMA_20 => {
-                                self.word_skip(w::COMMA_20)?;
-                                self.ask_semi(false)?;
-                                if self.m_semi() {
-                                    self.mark_semi()?;
-                                } else {
-                                }
-                                self.enum_entry()?;
+                            w::CONSTRUCTOR_36 | w::EXPECT_108 | w::DATA_53 | w::INNER_86 | w::VALUE_87 | w::ACTUAL_109 | w::SET_35 | w::GET_34 | w::OVERRIDE_88 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_85 | w::LATEINIT_89 | w::TAILREC_95 | w::OPERATOR_96 | w::INFIX_97 | w::INLINE_98 | w::EXTERNAL_99 | w::PUBLIC_90 | w::PRIVATE_91 | w::INTERNAL_92 | w::PROTECTED_93 | w::ABSTRACT_101 | w::FINAL_102 | w::OPEN_103 | w::CONST_100 | w::VARARG_104 | w::NOINLINE_105 | w::CROSSINLINE_106 | w::REIFIED_107 | w::FIELD_110 | w::PROPERTY_111 | w::RECEIVER_112 | w::PARAM_113 | w::SETPARAM_114 | w::DELEGATE_115 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_58 | w::FINALLY_59 | w::ENUM_16 | w::FILE_3 | w::OUT_94 | w::BY_25 => {
+                                arm = 0;
+                            }
+                            _ if self.at_simple_identifier() || self.at_backtick_name() => {
+                                arm = 0;
                             }
                             _ => {
-                                break;
+                                arm = usize::MAX;
                             }
                         }
                     }
-                }
-            }
-            1 => {
-            }
-            _ => {
-            }
-        }
-        let arm: usize;
-        if self.m_semi_close() {
-            arm = 1;
-        } else if self.m_trail() {
-            arm = 0;
-        } else {
-            match self.word() {
-                w::SEMI_33 | w::RBRACE_18 => {
-                    arm = 1;
-                }
-                _ => {
-                    arm = usize::MAX;
-                }
-            }
-        }
-        match arm {
-            0 => {
-                self.trail_brace()?;
-            }
-            1 => {
-                if self.m_semi_close() {
-                    self.mark_semi_close()?;
-                } else {
-                }
-                match self.word() {
-                    w::SEMI_33 => {
-                        self.word_skip(w::SEMI_33)?;
-                        self.ask_semi(false)?;
-                        if self.m_semi() {
-                            self.mark_semi()?;
-                        } else if self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
-                        } else {
-                        }
-                        let arm: usize;
-                        if self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
-                            arm = 0;
-                        } else {
-                            match self.word() {
-                                w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::COMPANION_30 | w::INIT_29 | w::CONSTRUCTOR_36 => {
-                                    arm = 0;
-                                }
-                                _ => {
-                                    arm = usize::MAX;
-                                }
-                            }
-                        }
-                        match arm {
-                            0 => {
-                                let asks = self.asks;
-                                self.asks = asks & 0x0 | 0x8;
-                                self.class_member()?;
-                                self.asks = asks;
-                                loop {
-                                    self.ask_semi(false)?;
-                                    let arm: usize;
-                                    if self.m_semi() {
-                                        arm = 0;
-                                    } else if self.m_semi_close() {
-                                        arm = 1;
-                                    } else {
-                                        match self.word() {
-                                            w::SEMI_33 => {
-                                                arm = 0;
-                                            }
-                                            _ => {
-                                                arm = usize::MAX;
-                                            }
-                                        }
-                                    }
-                                    match arm {
-                                        0 => {
+                    match arm {
+                        0 => {
+                            self.enum_entry()?;
+                            loop {
+                                if self.m_semi_close() || self.m_trail() || self.m_enum_k() {
+                                    break;
+                                } else {
+                                    match self.word() {
+                                        w::COMMA_20 => {
+                                            self.word_skip(w::COMMA_20)?;
                                             self.ask_semi(false)?;
                                             if self.m_semi() {
                                                 self.mark_semi()?;
                                             } else {
-                                                match self.word() {
-                                                    w::SEMI_33 => {
-                                                        self.word_skip(w::SEMI_33)?;
-                                                    }
-                                                    _ => {
-                                                        return self.refuse();
-                                                    }
-                                                }
                                             }
-                                            let asks = self.asks;
-                                            self.asks = asks & 0x0 | 0x8;
-                                            self.class_member()?;
-                                            self.asks = asks;
-                                        }
-                                        1 => {
-                                            break;
+                                            self.enum_entry()?;
                                         }
                                         _ => {
                                             break;
                                         }
                                     }
                                 }
-                                if self.m_semi_close() {
-                                    self.mark_semi_close()?;
-                                } else {
-                                }
+                            }
+                        }
+                        1 => {
+                        }
+                        _ => {
+                        }
+                    }
+                    let arm: usize;
+                    if self.m_semi_close() {
+                        arm = 2;
+                    } else if self.m_trail() {
+                        arm = 0;
+                    } else if self.m_enum_k() {
+                        arm = 1;
+                    } else {
+                        match self.word() {
+                            w::SEMI_33 | w::RBRACE_18 => {
+                                arm = 2;
                             }
                             _ => {
+                                arm = usize::MAX;
                             }
                         }
                     }
-                    _ => {
+                    match arm {
+                        0 => {
+                            self.trail_brace()?;
+                        }
+                        1 => {
+                            self.mark_enum_k()?;
+                            match self.word() {
+                                w::COMMA_20 => {
+                                    self.enum_comma()?;
+                                }
+                                w::SEMI_33 => {
+                                    self.enum_tail()?;
+                                }
+                                _ => {
+                                    return self.refuse();
+                                }
+                            }
+                        }
+                        2 => {
+                            if self.m_semi_close() {
+                                self.mark_semi_close()?;
+                            } else {
+                            }
+                            match self.word() {
+                                w::SEMI_33 => {
+                                    self.word_skip(w::SEMI_33)?;
+                                    self.ask_semi(false)?;
+                                    if self.m_semi() {
+                                        self.mark_semi()?;
+                                    } else if self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+                                    } else {
+                                    }
+                                    loop {
+                                        let arm: usize;
+                                        if self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+                                            arm = 0;
+                                        } else {
+                                            match self.word() {
+                                                w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::COMPANION_30 | w::INIT_29 | w::CONSTRUCTOR_36 => {
+                                                    arm = 0;
+                                                }
+                                                _ => {
+                                                    arm = usize::MAX;
+                                                }
+                                            }
+                                        }
+                                        match arm {
+                                            0 => {
+                                                let asks = self.asks;
+                                                self.asks = asks & 0x0 | 0x8;
+                                                self.class_member()?;
+                                                self.asks = asks;
+                                                self.member_end()?;
+                                            }
+                                            _ => {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {
+                                }
+                            }
+                            self.word_skip(w::RBRACE_18)?;
+                        }
+                        _ => {
+                            return self.refuse();
+                        }
                     }
                 }
-                self.word_skip(w::RBRACE_18)?;
-            }
-            _ => {
-                return self.refuse();
+                _ => {
+                    return self.refuse();
+                }
             }
         }
         self.close()?;
+        self.marked = false;
+        Ok(())
+    }
+
+    /// `enum_comma`.
+    fn enum_comma(&mut self) -> R {
+        self.word_leaf(w::COMMA_20, k::COMMA)?;
+        self.ask_semi(false)?;
+        if self.m_semi() {
+            self.mark_semi()?;
+        } else {
+        }
+        self.enum_tail()?;
+        self.marked = false;
+        Ok(())
+    }
+
+    /// `enum_tail`.
+    fn enum_tail(&mut self) -> R {
+        self.word_leaf(w::SEMI_33, k::SEMI)?;
+        self.ask_semi(false)?;
+        if self.m_semi() {
+            self.mark_semi()?;
+        } else if self.m_semi_close() || self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+        } else {
+        }
+        if self.m_semi_close() {
+            self.enum_end()?;
+        } else if self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+            self.enum_members()?;
+        } else {
+            match self.word() {
+                w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::COMPANION_30 | w::INIT_29 | w::CONSTRUCTOR_36 => {
+                    self.enum_members()?;
+                }
+                w::RBRACE_18 => {
+                    self.enum_end()?;
+                }
+                _ => {
+                    return self.refuse();
+                }
+            }
+        }
+        self.marked = false;
+        Ok(())
+    }
+
+    /// `enum_members`.
+    fn enum_members(&mut self) -> R {
+        let asks = self.asks;
+        self.asks = asks & 0x0 | 0x8;
+        self.class_member()?;
+        self.asks = asks;
+        self.member_end()?;
+        loop {
+            let arm: usize;
+            if self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+                arm = 0;
+            } else {
+                match self.word() {
+                    w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::COMPANION_30 | w::INIT_29 | w::CONSTRUCTOR_36 => {
+                        arm = 0;
+                    }
+                    _ => {
+                        arm = usize::MAX;
+                    }
+                }
+            }
+            match arm {
+                0 => {
+                    let asks = self.asks;
+                    self.asks = asks & 0x0 | 0x8;
+                    self.class_member()?;
+                    self.asks = asks;
+                    self.member_end()?;
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+        self.word_skip(w::RBRACE_18)?;
+        self.marked = false;
+        Ok(())
+    }
+
+    /// `enum_end`.
+    fn enum_end(&mut self) -> R {
+        if self.m_semi_close() {
+            self.mark_semi_close()?;
+        } else {
+        }
+        self.word_leaf(w::RBRACE_18, k::RBRACE)?;
+        self.marked = false;
+        Ok(())
+    }
+
+    /// `enum_empty`.
+    fn enum_empty(&mut self) -> R {
+        self.word_leaf(w::LBRACE_17, k::LBRACE)?;
+        self.word_leaf(w::SEMI_33, k::SEMI)?;
+        self.ask_semi(false)?;
+        if self.m_semi() {
+            self.mark_semi()?;
+        } else if self.m_semi_close() {
+        } else {
+        }
+        if self.m_semi_close() {
+            self.mark_semi_close()?;
+        } else {
+        }
+        self.word_leaf(w::RBRACE_18, k::RBRACE)?;
         self.marked = false;
         Ok(())
     }
@@ -2718,7 +2818,7 @@ impl P<'_> {
     fn enum_entry(&mut self) -> R {
         self.open(k::ENUM_ENTRY);
         self.name()?;
-        if !self.marked && self.m_semi_close() || self.m_trail() {
+        if !self.marked && self.m_semi_close() || self.m_trail() || self.m_enum_k() {
         } else {
             match self.word() {
                 w::LPAREN_19 => {
@@ -2728,7 +2828,7 @@ impl P<'_> {
                 }
             }
         }
-        if !self.marked && self.m_semi_close() || self.m_trail() {
+        if !self.marked && self.m_semi_close() || self.m_trail() || self.m_enum_k() {
         } else {
             match self.word() {
                 w::LBRACE_17 => {
@@ -3177,7 +3277,7 @@ impl P<'_> {
         let arm: usize;
         if self.m_by_lf() {
             arm = 0;
-        } else if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+        } else if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_enum_k() {
             arm = 1;
         } else {
             match self.word() {
@@ -3258,31 +3358,26 @@ impl P<'_> {
                 self.parenthesized_type()?;
                 self.ask_semi(false)?;
                 if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                } else {
-                    match self.word() {
-                        w::QUEST_41 => {
-                            self.wrap(k::NULLABLE_TYPE, 0)?;
+                } else if self.m_nq() {
+                    self.wrap(k::NULLABLE_TYPE, 0)?;
+                    self.mark_nq()?;
+                    self.word_leaf(w::QUEST_41, k::QUEST)?;
+                    loop {
+                        self.ask_semi(false)?;
+                        if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                            break;
+                        } else if self.m_nq() {
+                            self.mark_nq()?;
                             self.word_leaf(w::QUEST_41, k::QUEST)?;
-                            loop {
-                                self.ask_semi(false)?;
-                                if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                                    break;
-                                } else {
-                                    match self.word() {
-                                        w::QUEST_41 => {
-                                            self.word_leaf(w::QUEST_41, k::QUEST)?;
-                                        }
-                                        _ => {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            self.close()?;
-                        }
-                        _ => {
+                        } else if self.m_enum_k() {
+                            break;
+                        } else {
+                            break;
                         }
                     }
+                    self.close()?;
+                } else if self.m_enum_k() {
+                } else {
                 }
             }
             3 => {
@@ -3292,7 +3387,7 @@ impl P<'_> {
             4 => {
                 self.user_type()?;
                 self.ask_semi(false)?;
-                if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_enum_k() {
                 } else {
                     match self.word() {
                         w::LPAREN_19 => {
@@ -3317,81 +3412,56 @@ impl P<'_> {
     fn class_body(&mut self) -> R {
         self.open(k::CLASS_BODY);
         self.word_skip(w::LBRACE_17)?;
-        let arm: usize;
-        if self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
-            arm = 0;
-        } else {
-            match self.word() {
-                w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::COMPANION_30 | w::INIT_29 | w::CONSTRUCTOR_36 => {
-                    arm = 0;
-                }
-                _ => {
-                    arm = usize::MAX;
-                }
-            }
-        }
-        match arm {
-            0 => {
-                let asks = self.asks;
-                self.asks = asks & 0x0 | 0x8;
-                self.class_member()?;
-                self.asks = asks;
-                loop {
-                    self.ask_semi(false)?;
-                    if self.m_semi() {
-                        self.mark_semi()?;
-                        let asks = self.asks;
-                        self.asks = asks & 0x0 | 0x8;
-                        self.class_member()?;
-                        self.asks = asks;
-                    } else if self.m_semi_close() {
-                        break;
-                    } else {
-                        match self.word() {
-                            w::SEMI_33 => {
-                                self.word_skip(w::SEMI_33)?;
-                                self.ask_semi(false)?;
-                                let arm: usize;
-                                if self.m_semi() || self.m_semi_close() {
-                                    arm = 1;
-                                } else if self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
-                                    arm = 0;
-                                } else {
-                                    match self.word() {
-                                        w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::COMPANION_30 | w::INIT_29 | w::CONSTRUCTOR_36 => {
-                                            arm = 0;
-                                        }
-                                        _ => {
-                                            arm = usize::MAX;
-                                        }
-                                    }
-                                }
-                                match arm {
-                                    0 => {
-                                        let asks = self.asks;
-                                        self.asks = asks & 0x0 | 0x8;
-                                        self.class_member()?;
-                                        self.asks = asks;
-                                    }
-                                    1 => {
-                                    }
-                                    _ => {
-                                    }
-                                }
-                            }
-                            _ => {
-                                break;
-                            }
-                        }
+        loop {
+            let arm: usize;
+            if self.m_decl_mod() || self.m_enum_class() || self.m_fun_iface() || self.m_acc() {
+                arm = 0;
+            } else {
+                match self.word() {
+                    w::AT_2 | w::CLASS_13 | w::INTERFACE_15 | w::FUN_14 | w::VAL_22 | w::VAR_23 | w::OBJECT_31 | w::TYPEALIAS_11 | w::COMPANION_30 | w::INIT_29 | w::CONSTRUCTOR_36 => {
+                        arm = 0;
+                    }
+                    _ => {
+                        arm = usize::MAX;
                     }
                 }
-                self.mark_semi_close()?;
             }
-            _ => {
+            match arm {
+                0 => {
+                    let asks = self.asks;
+                    self.asks = asks & 0x0 | 0x8;
+                    self.class_member()?;
+                    self.asks = asks;
+                    self.member_end()?;
+                }
+                _ => {
+                    break;
+                }
             }
         }
         self.word_skip(w::RBRACE_18)?;
         self.close()?;
+        self.marked = false;
+        Ok(())
+    }
+
+    /// `member_end`.
+    fn member_end(&mut self) -> R {
+        self.ask_semi(false)?;
+        if self.m_semi() {
+            self.mark_semi()?;
+        } else if self.m_semi_close() {
+            self.mark_semi_close()?;
+        } else {
+            match self.word() {
+                w::SEMI_33 => {
+                    self.word_skip(w::SEMI_33)?;
+                }
+                _ => {
+                    return self.refuse();
+                }
+            }
+        }
         self.marked = false;
         Ok(())
     }
@@ -3553,6 +3623,17 @@ impl P<'_> {
     /// `parameter_with_optional_type`.
     fn parameter_with_optional_type(&mut self) -> R {
         self.open(k::PARAMETER_WITH_OPTIONAL_TYPE);
+        if self.m_pm() {
+            self.parameter_modifiers()?;
+        } else {
+            match self.word() {
+                w::AT_2 => {
+                    self.parameter_modifiers()?;
+                }
+                _ => {
+                }
+            }
+        }
         self.name()?;
         match self.word() {
             w::COLON_4 => {
@@ -4369,31 +4450,23 @@ impl P<'_> {
                 self.parenthesized_type()?;
                 self.ask_semi(false)?;
                 if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                } else {
-                    match self.word() {
-                        w::QUEST_41 => {
-                            self.wrap(k::NULLABLE_TYPE, 0)?;
+                } else if self.m_nq() {
+                    self.wrap(k::NULLABLE_TYPE, 0)?;
+                    self.mark_nq()?;
+                    self.word_leaf(w::QUEST_41, k::QUEST)?;
+                    loop {
+                        self.ask_semi(false)?;
+                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                            break;
+                        } else if self.m_nq() {
+                            self.mark_nq()?;
                             self.word_leaf(w::QUEST_41, k::QUEST)?;
-                            loop {
-                                self.ask_semi(false)?;
-                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                                    break;
-                                } else {
-                                    match self.word() {
-                                        w::QUEST_41 => {
-                                            self.word_leaf(w::QUEST_41, k::QUEST)?;
-                                        }
-                                        _ => {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            self.close()?;
-                        }
-                        _ => {
+                        } else {
+                            break;
                         }
                     }
+                    self.close()?;
+                } else {
                 }
             }
             3 => {
@@ -4404,28 +4477,24 @@ impl P<'_> {
                 self.user_type()?;
                 self.ask_semi(false)?;
                 if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                } else if self.m_nq() {
+                    self.wrap(k::NULLABLE_TYPE, 0)?;
+                    self.mark_nq()?;
+                    self.word_leaf(w::QUEST_41, k::QUEST)?;
+                    loop {
+                        self.ask_semi(false)?;
+                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                            break;
+                        } else if self.m_nq() {
+                            self.mark_nq()?;
+                            self.word_leaf(w::QUEST_41, k::QUEST)?;
+                        } else {
+                            break;
+                        }
+                    }
+                    self.close()?;
                 } else {
                     match self.word() {
-                        w::QUEST_41 => {
-                            self.wrap(k::NULLABLE_TYPE, 0)?;
-                            self.word_leaf(w::QUEST_41, k::QUEST)?;
-                            loop {
-                                self.ask_semi(false)?;
-                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                                    break;
-                                } else {
-                                    match self.word() {
-                                        w::QUEST_41 => {
-                                            self.word_leaf(w::QUEST_41, k::QUEST)?;
-                                        }
-                                        _ => {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            self.close()?;
-                        }
                         w::AMP_40 => {
                             self.not_null()?;
                         }
@@ -4665,24 +4734,20 @@ impl P<'_> {
     fn receiver_type(&mut self) -> R {
         self.open(k::RECEIVER_TYPE);
         self.recv_type()?;
-        match self.word() {
-            w::QUEST_41 => {
-                self.wrap(k::NULLABLE_TYPE, 0)?;
-                self.word_leaf(w::QUEST_41, k::QUEST)?;
-                loop {
-                    match self.word() {
-                        w::QUEST_41 => {
-                            self.word_leaf(w::QUEST_41, k::QUEST)?;
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
+        if self.m_nq() {
+            self.wrap(k::NULLABLE_TYPE, 0)?;
+            self.mark_nq()?;
+            self.word_leaf(w::QUEST_41, k::QUEST)?;
+            loop {
+                if self.m_nq() {
+                    self.mark_nq()?;
+                    self.word_leaf(w::QUEST_41, k::QUEST)?;
+                } else {
+                    break;
                 }
-                self.close()?;
             }
-            _ => {
-            }
+            self.close()?;
+        } else {
         }
         self.close()?;
         self.marked = false;
@@ -4694,7 +4759,8 @@ impl P<'_> {
         self.open(UNSET);
         self.retag(k::USER_TYPE);
         self.type_name()?;
-        if self.m_generic() || self.m_gen_nav() {
+        if self.m_nq() {
+        } else if self.m_generic() || self.m_gen_nav() {
             self.type_arguments()?;
         } else if self.m_dotted() {
         } else {
@@ -4707,11 +4773,14 @@ impl P<'_> {
             }
         }
         loop {
-            if self.m_dotted() {
+            if self.m_nq() {
+                break;
+            } else if self.m_dotted() {
                 self.mark_dotted()?;
                 self.word_skip(w::DOT_32)?;
                 self.type_name()?;
-                if self.m_generic() || self.m_gen_nav() {
+                if self.m_nq() {
+                } else if self.m_generic() || self.m_gen_nav() {
                     self.type_arguments()?;
                 } else if self.m_dotted() {
                 } else {
@@ -4737,7 +4806,7 @@ impl P<'_> {
         self.open(k::USER_TYPE);
         self.type_name()?;
         self.ask_semi(false)?;
-        if self.m_by_lf() || self.m_ann_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() {
+        if self.m_by_lf() || self.m_ann_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_nq() || self.m_ge() || self.m_enum_k() {
         } else if self.m_generic() || self.m_gen_nav() {
             self.type_arguments()?;
         } else {
@@ -4751,7 +4820,7 @@ impl P<'_> {
         }
         loop {
             self.ask_semi(false)?;
-            if self.m_by_lf() || self.m_ann_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() || self.m_generic() || self.m_gen_nav() {
+            if self.m_by_lf() || self.m_ann_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_nq() || self.m_ge() || self.m_enum_k() || self.m_generic() || self.m_gen_nav() {
                 break;
             } else {
                 match self.word() {
@@ -4759,7 +4828,7 @@ impl P<'_> {
                         self.word_skip(w::DOT_32)?;
                         self.type_name()?;
                         self.ask_semi(false)?;
-                        if self.m_by_lf() || self.m_ann_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() {
+                        if self.m_by_lf() || self.m_ann_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_nq() || self.m_ge() || self.m_enum_k() {
                         } else if self.m_generic() || self.m_gen_nav() {
                             self.type_arguments()?;
                         } else {
@@ -5391,32 +5460,27 @@ impl P<'_> {
             2 => {
                 self.parenthesized_type()?;
                 self.ask_semi(false)?;
-                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() || self.m_generic() || self.m_gen_nav() {
-                } else {
-                    match self.word() {
-                        w::QUEST_41 => {
-                            self.wrap(k::NULLABLE_TYPE, 0)?;
+                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() {
+                } else if self.m_nq() {
+                    self.wrap(k::NULLABLE_TYPE, 0)?;
+                    self.mark_nq()?;
+                    self.word_leaf(w::QUEST_41, k::QUEST)?;
+                    loop {
+                        self.ask_semi(false)?;
+                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() {
+                            break;
+                        } else if self.m_nq() {
+                            self.mark_nq()?;
                             self.word_leaf(w::QUEST_41, k::QUEST)?;
-                            loop {
-                                self.ask_semi(false)?;
-                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() || self.m_generic() || self.m_gen_nav() {
-                                    break;
-                                } else {
-                                    match self.word() {
-                                        w::QUEST_41 => {
-                                            self.word_leaf(w::QUEST_41, k::QUEST)?;
-                                        }
-                                        _ => {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            self.close()?;
-                        }
-                        _ => {
+                        } else if self.m_ge() || self.m_generic() || self.m_gen_nav() {
+                            break;
+                        } else {
+                            break;
                         }
                     }
+                    self.close()?;
+                } else if self.m_ge() || self.m_generic() || self.m_gen_nav() {
+                } else {
                 }
             }
             3 => {
@@ -5426,29 +5490,28 @@ impl P<'_> {
             4 => {
                 self.as_user_type()?;
                 self.ask_semi(false)?;
-                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() || self.m_generic() || self.m_gen_nav() {
+                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() {
+                } else if self.m_nq() {
+                    self.wrap(k::NULLABLE_TYPE, 0)?;
+                    self.mark_nq()?;
+                    self.word_leaf(w::QUEST_41, k::QUEST)?;
+                    loop {
+                        self.ask_semi(false)?;
+                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() {
+                            break;
+                        } else if self.m_nq() {
+                            self.mark_nq()?;
+                            self.word_leaf(w::QUEST_41, k::QUEST)?;
+                        } else if self.m_ge() || self.m_generic() || self.m_gen_nav() {
+                            break;
+                        } else {
+                            break;
+                        }
+                    }
+                    self.close()?;
+                } else if self.m_ge() || self.m_generic() || self.m_gen_nav() {
                 } else {
                     match self.word() {
-                        w::QUEST_41 => {
-                            self.wrap(k::NULLABLE_TYPE, 0)?;
-                            self.word_leaf(w::QUEST_41, k::QUEST)?;
-                            loop {
-                                self.ask_semi(false)?;
-                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() || self.m_generic() || self.m_gen_nav() {
-                                    break;
-                                } else {
-                                    match self.word() {
-                                        w::QUEST_41 => {
-                                            self.word_leaf(w::QUEST_41, k::QUEST)?;
-                                        }
-                                        _ => {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            self.close()?;
-                        }
                         w::AMP_40 => {
                             self.not_null()?;
                         }
@@ -5471,7 +5534,7 @@ impl P<'_> {
         self.retag(k::USER_TYPE);
         self.type_name()?;
         self.ask_semi(false)?;
-        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() {
+        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_nq() || self.m_ge() {
         } else if self.m_generic() || self.m_gen_nav() {
             self.type_arguments()?;
         } else {
@@ -5485,7 +5548,7 @@ impl P<'_> {
         }
         loop {
             self.ask_semi(false)?;
-            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() || self.m_generic() || self.m_gen_nav() {
+            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_nq() || self.m_ge() || self.m_generic() || self.m_gen_nav() {
                 break;
             } else {
                 match self.word() {
@@ -5493,7 +5556,7 @@ impl P<'_> {
                         self.word_skip(w::DOT_32)?;
                         self.type_name()?;
                         self.ask_semi(false)?;
-                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_ge() {
+                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_split() || self.m_is_split() || self.m_as_q() || self.m_as_kwi() || self.m_nq() || self.m_ge() {
                         } else if self.m_generic() || self.m_gen_nav() {
                             self.type_arguments()?;
                         } else {
@@ -8612,7 +8675,7 @@ impl P<'_> {
     }
 
     fn h_semi_close(&self) -> bool {
-        (self.bit_at(self.i, 4) && (self.next_semi_close_0_0_0(self.i, self.prev_tok(self.i))))
+        (self.bit_at(self.i, 4) && { let p = self.prev_tok(self.i); p >= self.n || self.word_at(p) != w::SEMI_33 } && (self.next_semi_close_0_0_0(self.i, self.prev_tok(self.i))))
     }
 
     /// Mark `semi_close` taken: it and the marks before it passed at this token.
@@ -9039,9 +9102,33 @@ impl P<'_> {
         self.take_qdot()
     }
 
+    /// Mark `nq` holds at the token, not taken there; once a token (`held`).
+    fn m_nq(&mut self) -> bool {
+        self.taken >> 24 & 1 == 0 && self.held(24, Self::h_nq)
+    }
+
+    fn h_nq(&self) -> bool {
+        (((self.pat_nq_0_0(self.i, self.prev_tok(self.i)))))
+    }
+
+    /// Mark `nq` taken: it and the marks before it passed at this token.
+    fn take_nq(&mut self) -> R {
+        self.taken |= 0x1ffffff;
+        Ok(())
+    }
+
+    /// Mark `nq` where the rule takes it: it must hold.
+    fn mark_nq(&mut self) -> R {
+        if !self.m_nq() {
+            return self.refuse();
+        }
+        self.marked = true;
+        self.take_nq()
+    }
+
     /// Mark `ge` holds at the token, not taken there; once a token (`held`).
     fn m_ge(&mut self) -> bool {
-        self.taken >> 24 & 1 == 0 && self.held(24, Self::h_ge)
+        self.taken >> 25 & 1 == 0 && self.held(25, Self::h_ge)
     }
 
     fn h_ge(&self) -> bool {
@@ -9050,7 +9137,7 @@ impl P<'_> {
 
     /// Mark `ge` taken: it and the marks before it passed at this token.
     fn take_ge(&mut self) -> R {
-        self.taken |= 0x1ffffff;
+        self.taken |= 0x3ffffff;
         Ok(())
     }
 
@@ -9065,7 +9152,7 @@ impl P<'_> {
 
     /// Mark `sfx` holds at the token, not taken there; once a token (`held`).
     fn m_sfx(&mut self) -> bool {
-        self.taken >> 25 & 1 == 0 && self.held(25, Self::h_sfx)
+        self.taken >> 26 & 1 == 0 && self.held(26, Self::h_sfx)
     }
 
     fn h_sfx(&self) -> bool {
@@ -9074,7 +9161,7 @@ impl P<'_> {
 
     /// Mark `sfx` taken: it and the marks before it passed at this token.
     fn take_sfx(&mut self) -> R {
-        self.taken |= 0x3ffffff;
+        self.taken |= 0x7ffffff;
         Ok(())
     }
 
@@ -9089,7 +9176,7 @@ impl P<'_> {
 
     /// Mark `blk` holds at the token, not taken there; once a token (`held`).
     fn m_blk(&mut self) -> bool {
-        self.taken >> 26 & 1 == 0 && self.held(26, Self::h_blk)
+        self.taken >> 27 & 1 == 0 && self.held(27, Self::h_blk)
     }
 
     fn h_blk(&self) -> bool {
@@ -9098,7 +9185,7 @@ impl P<'_> {
 
     /// Mark `blk` taken: it and the marks before it passed at this token.
     fn take_blk(&mut self) -> R {
-        self.taken |= 0x7ffffff;
+        self.taken |= 0xfffffff;
         Ok(())
     }
 
@@ -9113,7 +9200,7 @@ impl P<'_> {
 
     /// Mark `lam_bare` holds at the token, not taken there; once a token (`held`).
     fn m_lam_bare(&mut self) -> bool {
-        self.taken >> 27 & 1 == 0 && self.held(27, Self::h_lam_bare)
+        self.taken >> 28 & 1 == 0 && self.held(28, Self::h_lam_bare)
     }
 
     fn h_lam_bare(&self) -> bool {
@@ -9122,7 +9209,7 @@ impl P<'_> {
 
     /// Mark `lam_bare` taken: it and the marks before it passed at this token.
     fn take_lam_bare(&mut self) -> R {
-        self.taken |= 0xfffffff;
+        self.taken |= 0x1fffffff;
         Ok(())
     }
 
@@ -9137,7 +9224,7 @@ impl P<'_> {
 
     /// Mark `lam_params` holds at the token, not taken there; once a token (`held`).
     fn m_lam_params(&mut self) -> bool {
-        self.taken >> 28 & 1 == 0 && self.held(28, Self::h_lam_params)
+        self.taken >> 29 & 1 == 0 && self.held(29, Self::h_lam_params)
     }
 
     fn h_lam_params(&self) -> bool {
@@ -9146,7 +9233,7 @@ impl P<'_> {
 
     /// Mark `lam_params` taken: it and the marks before it passed at this token.
     fn take_lam_params(&mut self) -> R {
-        self.taken |= 0x1fffffff;
+        self.taken |= 0x3fffffff;
         Ok(())
     }
 
@@ -9161,16 +9248,16 @@ impl P<'_> {
 
     /// Mark `ann_expr` holds at the token, not taken there; once a token (`held`).
     fn m_ann_expr(&mut self) -> bool {
-        self.taken >> 29 & 1 == 0 && self.held(29, Self::h_ann_expr)
+        self.taken >> 30 & 1 == 0 && self.held(30, Self::h_ann_expr)
     }
 
     fn h_ann_expr(&self) -> bool {
-        (((self.pat_ann_expr_0_0(self.i, self.prev_tok(self.i)))))
+        (!self.next_ann_expr_0_0_0(self.i, self.prev_tok(self.i)) && !self.next_ann_expr_0_1_0(self.i, self.prev_tok(self.i)) && !self.next_ann_expr_0_2_0(self.i, self.prev_tok(self.i)) && !self.next_ann_expr_0_3_0(self.i, self.prev_tok(self.i)) && !self.next_ann_expr_0_4_0(self.i, self.prev_tok(self.i)) && ((self.pat_ann_expr_0_0(self.i, self.prev_tok(self.i)))))
     }
 
     /// Mark `ann_expr` taken: it and the marks before it passed at this token.
     fn take_ann_expr(&mut self) -> R {
-        self.taken |= 0x3fffffff;
+        self.taken |= 0x7fffffff;
         Ok(())
     }
 
@@ -9185,7 +9272,7 @@ impl P<'_> {
 
     /// Mark `decl_mod` holds at the token, not taken there; once a token (`held`).
     fn m_decl_mod(&mut self) -> bool {
-        self.taken >> 30 & 1 == 0 && self.held(30, Self::h_decl_mod)
+        self.taken >> 31 & 1 == 0 && self.held(31, Self::h_decl_mod)
     }
 
     fn h_decl_mod(&self) -> bool {
@@ -9194,7 +9281,7 @@ impl P<'_> {
 
     /// Mark `decl_mod` taken: it and the marks before it passed at this token.
     fn take_decl_mod(&mut self) -> R {
-        self.taken |= 0x7fffffff;
+        self.taken |= 0xffffffff;
         Ok(())
     }
 
@@ -9209,7 +9296,7 @@ impl P<'_> {
 
     /// Mark `use_site` holds at the token, not taken there; once a token (`held`).
     fn m_use_site(&mut self) -> bool {
-        self.taken >> 31 & 1 == 0 && self.held(31, Self::h_use_site)
+        self.taken >> 32 & 1 == 0 && self.held(32, Self::h_use_site)
     }
 
     fn h_use_site(&self) -> bool {
@@ -9218,7 +9305,7 @@ impl P<'_> {
 
     /// Mark `use_site` taken: it and the marks before it passed at this token.
     fn take_use_site(&mut self) -> R {
-        self.taken |= 0xffffffff;
+        self.taken |= 0x1ffffffff;
         Ok(())
     }
 
@@ -9233,7 +9320,7 @@ impl P<'_> {
 
     /// Mark `file_at` holds at the token, not taken there; once a token (`held`).
     fn m_file_at(&mut self) -> bool {
-        self.taken >> 32 & 1 == 0 && self.held(32, Self::h_file_at)
+        self.taken >> 33 & 1 == 0 && self.held(33, Self::h_file_at)
     }
 
     fn h_file_at(&self) -> bool {
@@ -9242,7 +9329,7 @@ impl P<'_> {
 
     /// Mark `file_at` taken: it and the marks before it passed at this token.
     fn take_file_at(&mut self) -> R {
-        self.taken |= 0x1ffffffff;
+        self.taken |= 0x3ffffffff;
         Ok(())
     }
 
@@ -9257,7 +9344,7 @@ impl P<'_> {
 
     /// Mark `trail` holds at the token, not taken there; once a token (`held`).
     fn m_trail(&mut self) -> bool {
-        self.taken >> 33 & 1 == 0 && self.held(33, Self::h_trail)
+        self.taken >> 34 & 1 == 0 && self.held(34, Self::h_trail)
     }
 
     fn h_trail(&self) -> bool {
@@ -9266,7 +9353,7 @@ impl P<'_> {
 
     /// Mark `trail` taken: it and the marks before it passed at this token.
     fn take_trail(&mut self) -> R {
-        self.taken |= 0x3ffffffff;
+        self.taken |= 0x7ffffffff;
         Ok(())
     }
 
@@ -9281,7 +9368,7 @@ impl P<'_> {
 
     /// Mark `wild` holds at the token, not taken there; once a token (`held`).
     fn m_wild(&mut self) -> bool {
-        self.taken >> 34 & 1 == 0 && self.held(34, Self::h_wild)
+        self.taken >> 35 & 1 == 0 && self.held(35, Self::h_wild)
     }
 
     fn h_wild(&self) -> bool {
@@ -9290,7 +9377,7 @@ impl P<'_> {
 
     /// Mark `wild` taken: it and the marks before it passed at this token.
     fn take_wild(&mut self) -> R {
-        self.taken |= 0x7ffffffff;
+        self.taken |= 0xfffffffff;
         Ok(())
     }
 
@@ -9305,7 +9392,7 @@ impl P<'_> {
 
     /// Mark `obj_lit` holds at the token, not taken there; once a token (`held`).
     fn m_obj_lit(&mut self) -> bool {
-        self.taken >> 35 & 1 == 0 && self.held(35, Self::h_obj_lit)
+        self.taken >> 36 & 1 == 0 && self.held(36, Self::h_obj_lit)
     }
 
     fn h_obj_lit(&self) -> bool {
@@ -9314,7 +9401,7 @@ impl P<'_> {
 
     /// Mark `obj_lit` taken: it and the marks before it passed at this token.
     fn take_obj_lit(&mut self) -> R {
-        self.taken |= 0xfffffffff;
+        self.taken |= 0x1fffffffff;
         Ok(())
     }
 
@@ -9327,9 +9414,33 @@ impl P<'_> {
         self.take_obj_lit()
     }
 
+    /// Mark `enum_k` holds at the token, not taken there; once a token (`held`).
+    fn m_enum_k(&mut self) -> bool {
+        self.taken >> 37 & 1 == 0 && self.held(37, Self::h_enum_k)
+    }
+
+    fn h_enum_k(&self) -> bool {
+        (((self.pat_enum_k_0_0(self.i, self.prev_tok(self.i))) || self.next_enum_k_0_0_0(self.i, self.prev_tok(self.i)) || self.next_enum_k_0_1_0(self.i, self.prev_tok(self.i))))
+    }
+
+    /// Mark `enum_k` taken: it and the marks before it passed at this token.
+    fn take_enum_k(&mut self) -> R {
+        self.taken |= 0x3fffffffff;
+        Ok(())
+    }
+
+    /// Mark `enum_k` where the rule takes it: it must hold.
+    fn mark_enum_k(&mut self) -> R {
+        if !self.m_enum_k() {
+            return self.refuse();
+        }
+        self.marked = true;
+        self.take_enum_k()
+    }
+
     /// Mark `w_guard` holds at the token, not taken there; once a token (`held`).
     fn m_w_guard(&mut self) -> bool {
-        self.taken >> 36 & 1 == 0 && self.held(36, Self::h_w_guard)
+        self.taken >> 38 & 1 == 0 && self.held(38, Self::h_w_guard)
     }
 
     fn h_w_guard(&self) -> bool {
@@ -9338,7 +9449,7 @@ impl P<'_> {
 
     /// Mark `w_guard` taken: it and the marks before it passed at this token.
     fn take_w_guard(&mut self) -> R {
-        self.taken |= 0x1fffffffff;
+        self.taken |= 0x7fffffffff;
         Ok(())
     }
 
@@ -9353,7 +9464,7 @@ impl P<'_> {
 
     /// Mark `anon_fn` holds at the token, not taken there; once a token (`held`).
     fn m_anon_fn(&mut self) -> bool {
-        self.taken >> 37 & 1 == 0 && self.held(37, Self::h_anon_fn)
+        self.taken >> 39 & 1 == 0 && self.held(39, Self::h_anon_fn)
     }
 
     fn h_anon_fn(&self) -> bool {
@@ -9362,7 +9473,7 @@ impl P<'_> {
 
     /// Mark `anon_fn` taken: it and the marks before it passed at this token.
     fn take_anon_fn(&mut self) -> R {
-        self.taken |= 0x3fffffffff;
+        self.taken |= 0xffffffffff;
         Ok(())
     }
 
@@ -9377,7 +9488,7 @@ impl P<'_> {
 
     /// Mark `anon_sfn` holds at the token, not taken there; once a token (`held`).
     fn m_anon_sfn(&mut self) -> bool {
-        self.taken >> 39 & 1 == 0 && self.held(39, Self::h_anon_sfn)
+        self.taken >> 41 & 1 == 0 && self.held(41, Self::h_anon_sfn)
     }
 
     fn h_anon_sfn(&self) -> bool {
@@ -9386,7 +9497,7 @@ impl P<'_> {
 
     /// Mark `anon_sfn` taken: it and the marks before it passed at this token.
     fn take_anon_sfn(&mut self) -> R {
-        self.taken |= 0xffffffffff;
+        self.taken |= 0x3ffffffffff;
         Ok(())
     }
 
@@ -9401,7 +9512,7 @@ impl P<'_> {
 
     /// Mark `ft_dot_at` holds at the token, not taken there; once a token (`held`).
     fn m_ft_dot_at(&mut self) -> bool {
-        self.taken >> 40 & 1 == 0 && self.held(40, Self::h_ft_dot_at)
+        self.taken >> 42 & 1 == 0 && self.held(42, Self::h_ft_dot_at)
     }
 
     fn h_ft_dot_at(&self) -> bool {
@@ -9410,7 +9521,7 @@ impl P<'_> {
 
     /// Mark `ft_dot_at` taken: it and the marks before it passed at this token.
     fn take_ft_dot_at(&mut self) -> R {
-        self.taken |= 0x1ffffffffff;
+        self.taken |= 0x7ffffffffff;
         Ok(())
     }
 
@@ -9425,7 +9536,7 @@ impl P<'_> {
 
     /// Mark `generic` holds at the token, not taken there; once a token (`held`).
     fn m_generic(&mut self) -> bool {
-        self.taken >> 41 & 1 == 0 && self.held(41, Self::h_generic)
+        self.taken >> 43 & 1 == 0 && self.held(43, Self::h_generic)
     }
 
     fn h_generic(&self) -> bool {
@@ -9434,7 +9545,7 @@ impl P<'_> {
 
     /// Mark `generic` taken: it and the marks before it passed at this token.
     fn take_generic(&mut self) -> R {
-        self.taken |= 0x3ffffffffff;
+        self.taken |= 0xfffffffffff;
         Ok(())
     }
 
@@ -9449,7 +9560,7 @@ impl P<'_> {
 
     /// Mark `gen_nav` holds at the token, not taken there; once a token (`held`).
     fn m_gen_nav(&mut self) -> bool {
-        self.taken >> 42 & 1 == 0 && self.held(42, Self::h_gen_nav)
+        self.taken >> 44 & 1 == 0 && self.held(44, Self::h_gen_nav)
     }
 
     fn h_gen_nav(&self) -> bool {
@@ -9458,7 +9569,7 @@ impl P<'_> {
 
     /// Mark `gen_nav` taken: it and the marks before it passed at this token.
     fn take_gen_nav(&mut self) -> R {
-        self.taken |= 0x7ffffffffff;
+        self.taken |= 0x1fffffffffff;
         Ok(())
     }
 
@@ -9473,7 +9584,7 @@ impl P<'_> {
 
     /// Mark `fn_paren` holds at the token, not taken there; once a token (`held`).
     fn m_fn_paren(&mut self) -> bool {
-        self.taken >> 43 & 1 == 0 && self.held(43, Self::h_fn_paren)
+        self.taken >> 45 & 1 == 0 && self.held(45, Self::h_fn_paren)
     }
 
     fn h_fn_paren(&self) -> bool {
@@ -9482,7 +9593,7 @@ impl P<'_> {
 
     /// Mark `fn_paren` taken: it and the marks before it passed at this token.
     fn take_fn_paren(&mut self) -> R {
-        self.taken |= 0xfffffffffff;
+        self.taken |= 0x3fffffffffff;
         Ok(())
     }
 
@@ -9497,7 +9608,7 @@ impl P<'_> {
 
     /// Mark `paren_amp` holds at the token, not taken there; once a token (`held`).
     fn m_paren_amp(&mut self) -> bool {
-        self.taken >> 44 & 1 == 0 && self.held(44, Self::h_paren_amp)
+        self.taken >> 46 & 1 == 0 && self.held(46, Self::h_paren_amp)
     }
 
     fn h_paren_amp(&self) -> bool {
@@ -9506,7 +9617,7 @@ impl P<'_> {
 
     /// Mark `paren_amp` taken: it and the marks before it passed at this token.
     fn take_paren_amp(&mut self) -> R {
-        self.taken |= 0x1fffffffffff;
+        self.taken |= 0x7fffffffffff;
         Ok(())
     }
 
@@ -9521,7 +9632,7 @@ impl P<'_> {
 
     /// Mark `ty_susp` holds at the token, not taken there; once a token (`held`).
     fn m_ty_susp(&mut self) -> bool {
-        self.taken >> 45 & 1 == 0 && self.held(45, Self::h_ty_susp)
+        self.taken >> 47 & 1 == 0 && self.held(47, Self::h_ty_susp)
     }
 
     fn h_ty_susp(&self) -> bool {
@@ -9530,7 +9641,7 @@ impl P<'_> {
 
     /// Mark `ty_susp` taken: it and the marks before it passed at this token.
     fn take_ty_susp(&mut self) -> R {
-        self.taken |= 0x3fffffffffff;
+        self.taken |= 0xffffffffffff;
         Ok(())
     }
 
@@ -9545,7 +9656,7 @@ impl P<'_> {
 
     /// Mark `ds_susp` holds at the token, not taken there; once a token (`held`).
     fn m_ds_susp(&mut self) -> bool {
-        self.taken >> 46 & 1 == 0 && self.held(46, Self::h_ds_susp)
+        self.taken >> 48 & 1 == 0 && self.held(48, Self::h_ds_susp)
     }
 
     fn h_ds_susp(&self) -> bool {
@@ -9554,7 +9665,7 @@ impl P<'_> {
 
     /// Mark `ds_susp` taken: it and the marks before it passed at this token.
     fn take_ds_susp(&mut self) -> R {
-        self.taken |= 0x7fffffffffff;
+        self.taken |= 0x1ffffffffffff;
         Ok(())
     }
 
@@ -9569,7 +9680,7 @@ impl P<'_> {
 
     /// Mark `imp_same` holds at the token, not taken there; once a token (`held`).
     fn m_imp_same(&mut self) -> bool {
-        self.taken >> 47 & 1 == 0 && self.held(47, Self::h_imp_same)
+        self.taken >> 49 & 1 == 0 && self.held(49, Self::h_imp_same)
     }
 
     fn h_imp_same(&self) -> bool {
@@ -9578,7 +9689,7 @@ impl P<'_> {
 
     /// Mark `imp_same` taken: it and the marks before it passed at this token.
     fn take_imp_same(&mut self) -> R {
-        self.taken |= 0xffffffffffff;
+        self.taken |= 0x3ffffffffffff;
         Ok(())
     }
 
@@ -9593,7 +9704,7 @@ impl P<'_> {
 
     /// Mark `pm` holds at the token, not taken there; once a token (`held`).
     fn m_pm(&mut self) -> bool {
-        self.taken >> 48 & 1 == 0 && self.held(48, Self::h_pm)
+        self.taken >> 50 & 1 == 0 && self.held(50, Self::h_pm)
     }
 
     fn h_pm(&self) -> bool {
@@ -9602,7 +9713,7 @@ impl P<'_> {
 
     /// Mark `pm` taken: it and the marks before it passed at this token.
     fn take_pm(&mut self) -> R {
-        self.taken |= 0x1ffffffffffff;
+        self.taken |= 0x7ffffffffffff;
         Ok(())
     }
 
@@ -9617,7 +9728,7 @@ impl P<'_> {
 
     /// Mark `tpm` holds at the token, not taken there; once a token (`held`).
     fn m_tpm(&mut self) -> bool {
-        self.taken >> 49 & 1 == 0 && self.held(49, Self::h_tpm)
+        self.taken >> 51 & 1 == 0 && self.held(51, Self::h_tpm)
     }
 
     fn h_tpm(&self) -> bool {
@@ -9626,7 +9737,7 @@ impl P<'_> {
 
     /// Mark `tpm` taken: it and the marks before it passed at this token.
     fn take_tpm(&mut self) -> R {
-        self.taken |= 0x3ffffffffffff;
+        self.taken |= 0xfffffffffffff;
         Ok(())
     }
 
@@ -9641,7 +9752,7 @@ impl P<'_> {
 
     /// Mark `cp_mod` holds at the token, not taken there; once a token (`held`).
     fn m_cp_mod(&mut self) -> bool {
-        self.taken >> 50 & 1 == 0 && self.held(50, Self::h_cp_mod)
+        self.taken >> 52 & 1 == 0 && self.held(52, Self::h_cp_mod)
     }
 
     fn h_cp_mod(&self) -> bool {
@@ -9650,7 +9761,7 @@ impl P<'_> {
 
     /// Mark `cp_mod` taken: it and the marks before it passed at this token.
     fn take_cp_mod(&mut self) -> R {
-        self.taken |= 0x7ffffffffffff;
+        self.taken |= 0x1fffffffffffff;
         Ok(())
     }
 
@@ -9665,7 +9776,7 @@ impl P<'_> {
 
     /// Mark `cref` holds at the token, not taken there; once a token (`held`).
     fn m_cref(&mut self) -> bool {
-        self.taken >> 51 & 1 == 0 && self.held(51, Self::h_cref)
+        self.taken >> 53 & 1 == 0 && self.held(53, Self::h_cref)
     }
 
     fn h_cref(&self) -> bool {
@@ -9674,7 +9785,7 @@ impl P<'_> {
 
     /// Mark `cref` taken: it and the marks before it passed at this token.
     fn take_cref(&mut self) -> R {
-        self.taken |= 0xfffffffffffff;
+        self.taken |= 0x3fffffffffffff;
         Ok(())
     }
 
@@ -9689,7 +9800,7 @@ impl P<'_> {
 
     /// Mark `named` holds at the token, not taken there; once a token (`held`).
     fn m_named(&mut self) -> bool {
-        self.taken >> 52 & 1 == 0 && self.held(52, Self::h_named)
+        self.taken >> 54 & 1 == 0 && self.held(54, Self::h_named)
     }
 
     fn h_named(&self) -> bool {
@@ -9698,7 +9809,7 @@ impl P<'_> {
 
     /// Mark `named` taken: it and the marks before it passed at this token.
     fn take_named(&mut self) -> R {
-        self.taken |= 0x1fffffffffffff;
+        self.taken |= 0x7fffffffffffff;
         Ok(())
     }
 
@@ -9713,7 +9824,7 @@ impl P<'_> {
 
     /// Mark `enum_class` holds at the token, not taken there; once a token (`held`).
     fn m_enum_class(&mut self) -> bool {
-        self.taken >> 54 & 1 == 0 && self.held(54, Self::h_enum_class)
+        self.taken >> 56 & 1 == 0 && self.held(56, Self::h_enum_class)
     }
 
     fn h_enum_class(&self) -> bool {
@@ -9722,7 +9833,7 @@ impl P<'_> {
 
     /// Mark `enum_class` taken: it and the marks before it passed at this token.
     fn take_enum_class(&mut self) -> R {
-        self.taken |= 0x7fffffffffffff;
+        self.taken |= 0x1ffffffffffffff;
         Ok(())
     }
 
@@ -9737,7 +9848,7 @@ impl P<'_> {
 
     /// Mark `fun_iface` holds at the token, not taken there; once a token (`held`).
     fn m_fun_iface(&mut self) -> bool {
-        self.taken >> 55 & 1 == 0 && self.held(55, Self::h_fun_iface)
+        self.taken >> 57 & 1 == 0 && self.held(57, Self::h_fun_iface)
     }
 
     fn h_fun_iface(&self) -> bool {
@@ -9746,7 +9857,7 @@ impl P<'_> {
 
     /// Mark `fun_iface` taken: it and the marks before it passed at this token.
     fn take_fun_iface(&mut self) -> R {
-        self.taken |= 0xffffffffffffff;
+        self.taken |= 0x3ffffffffffffff;
         Ok(())
     }
 
@@ -9761,7 +9872,7 @@ impl P<'_> {
 
     /// Mark `fn_recv` holds at the token, not taken there; once a token (`held`).
     fn m_fn_recv(&mut self) -> bool {
-        self.taken >> 56 & 1 == 0 && self.held(56, Self::h_fn_recv)
+        self.taken >> 58 & 1 == 0 && self.held(58, Self::h_fn_recv)
     }
 
     fn h_fn_recv(&self) -> bool {
@@ -9770,7 +9881,7 @@ impl P<'_> {
 
     /// Mark `fn_recv` taken: it and the marks before it passed at this token.
     fn take_fn_recv(&mut self) -> R {
-        self.taken |= 0x1ffffffffffffff;
+        self.taken |= 0x7ffffffffffffff;
         Ok(())
     }
 
@@ -9785,16 +9896,16 @@ impl P<'_> {
 
     /// Mark `acc` holds at the token, not taken there; once a token (`held`).
     fn m_acc(&mut self) -> bool {
-        self.taken >> 57 & 1 == 0 && self.held(57, Self::h_acc)
+        self.taken >> 59 & 1 == 0 && self.held(59, Self::h_acc)
     }
 
     fn h_acc(&self) -> bool {
-        (!self.next_acc_0_0_0(self.i, self.prev_tok(self.i)) && !self.next_acc_0_1_0(self.i, self.prev_tok(self.i)) && !self.next_acc_0_2_0(self.i, self.prev_tok(self.i)) && ((self.pat_acc_0_0(self.i, self.prev_tok(self.i))))) || (!self.next_acc_1_0_0(self.i, self.prev_tok(self.i)) && !self.next_acc_1_1_0(self.i, self.prev_tok(self.i)) && !self.next_acc_1_2_0(self.i, self.prev_tok(self.i)) && ((self.pat_acc_1_0(self.i, self.prev_tok(self.i)) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::PRIVATE_91 || self.word_at(p) == w::PROTECTED_93 || self.word_at(p) == w::INTERNAL_92 || self.word_at(p) == w::PUBLIC_90) && self.bit_at(p, 3) })))
+        (((self.pat_acc_0_0(self.i, self.prev_tok(self.i))) || self.next_acc_0_0_0(self.i, self.prev_tok(self.i)) || self.next_acc_0_1_0(self.i, self.prev_tok(self.i)) || self.next_acc_0_2_0(self.i, self.prev_tok(self.i)) || self.next_acc_0_3_0(self.i, self.prev_tok(self.i)))) || (((self.pat_acc_1_0(self.i, self.prev_tok(self.i)) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::PRIVATE_91 || self.word_at(p) == w::PROTECTED_93 || self.word_at(p) == w::INTERNAL_92 || self.word_at(p) == w::PUBLIC_90) && self.bit_at(p, 3) }) || self.next_acc_1_0_0(self.i, self.prev_tok(self.i)) || self.next_acc_1_1_0(self.i, self.prev_tok(self.i)) || self.next_acc_1_2_0(self.i, self.prev_tok(self.i)) || self.next_acc_1_3_0(self.i, self.prev_tok(self.i)))) || (((self.pat_acc_2_0(self.i, self.prev_tok(self.i)) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::RPAREN_21 || self.word_at(p) == w::GT_27 || self.at_simple_identifier_at(p) || self.at_backtick_name_at(p)) }) || self.next_acc_2_0_0(self.i, self.prev_tok(self.i)) || self.next_acc_2_1_0(self.i, self.prev_tok(self.i)) || self.next_acc_2_2_0(self.i, self.prev_tok(self.i)) || self.next_acc_2_3_0(self.i, self.prev_tok(self.i))))
     }
 
     /// Mark `acc` taken: it and the marks before it passed at this token.
     fn take_acc(&mut self) -> R {
-        self.taken |= 0x3ffffffffffffff;
+        self.taken |= 0xfffffffffffffff;
         Ok(())
     }
 
@@ -9809,16 +9920,16 @@ impl P<'_> {
 
     /// Mark `recv` holds at the token, not taken there; once a token (`held`).
     fn m_recv(&mut self) -> bool {
-        self.taken >> 59 & 1 == 0 && self.held(59, Self::h_recv)
+        self.taken >> 62 & 1 == 0 && self.held(62, Self::h_recv)
     }
 
     fn h_recv(&self) -> bool {
-        (!self.next_recv_0_0_0(self.i, self.prev_tok(self.i)) && ((self.pat_recv_0_0(self.i, self.prev_tok(self.i)))))
+        (!self.next_recv_0_0_0(self.i, self.prev_tok(self.i)) && !self.next_recv_0_1_0(self.i, self.prev_tok(self.i)) && ((self.pat_recv_0_0(self.i, self.prev_tok(self.i)))))
     }
 
     /// Mark `recv` taken: it and the marks before it passed at this token.
     fn take_recv(&mut self) -> R {
-        self.taken |= 0xfffffffffffffff;
+        self.taken |= 0x7fffffffffffffff;
         Ok(())
     }
 
@@ -9833,7 +9944,7 @@ impl P<'_> {
 
     /// Mark `dotted` holds at the token, not taken there; once a token (`held`).
     fn m_dotted(&mut self) -> bool {
-        self.taken >> 60 & 1 == 0 && self.held(60, Self::h_dotted)
+        self.taken >> 63 & 1 == 0 && self.held(63, Self::h_dotted)
     }
 
     fn h_dotted(&self) -> bool {
@@ -9842,7 +9953,7 @@ impl P<'_> {
 
     /// Mark `dotted` taken: it and the marks before it passed at this token.
     fn take_dotted(&mut self) -> R {
-        self.taken |= 0x1fffffffffffffff;
+        self.taken |= 0xffffffffffffffff;
         Ok(())
     }
 
@@ -9887,7 +9998,7 @@ impl P<'_> {
             if depth.iter().all(|&d| d == 0) && true && self.next_head_ctor_0_2_2(j, prev) {
                 return true;
             }
-            if j >= self.n || !(((j < self.n && !((self.word_at(j) == w::FUN_14 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::COLON_4 || self.word_at(j) == w::EQ_12 || self.word_at(j) == w::CONSTRUCTOR_36 || self.word_at(j) == w::PUBLIC_90 || self.word_at(j) == w::PRIVATE_91 || self.word_at(j) == w::INTERNAL_92 || self.word_at(j) == w::PROTECTED_93))))) {
+            if j >= self.n || !(depth[0] > 0 || ((j < self.n && !((self.word_at(j) == w::FUN_14 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::COLON_4 || self.word_at(j) == w::EQ_12 || self.word_at(j) == w::CONSTRUCTOR_36 || self.word_at(j) == w::PUBLIC_90 || self.word_at(j) == w::PRIVATE_91 || self.word_at(j) == w::INTERNAL_92 || self.word_at(j) == w::PROTECTED_93))))) {
                 return false;
             }
             if (self.word_at(j) == w::LPAREN_19) {
@@ -9923,7 +10034,7 @@ impl P<'_> {
             if depth.iter().all(|&d| d == 0) && prev < self.n && (self.word_at(prev) == w::PUBLIC_90 || self.word_at(prev) == w::PRIVATE_91 || self.word_at(prev) == w::INTERNAL_92 || self.word_at(prev) == w::PROTECTED_93) && self.next_head_ctor_0_3_2(j, prev) {
                 return true;
             }
-            if j >= self.n || !(((j < self.n && !((self.word_at(j) == w::FUN_14 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::COLON_4 || self.word_at(j) == w::EQ_12 || self.word_at(j) == w::CONSTRUCTOR_36))))) {
+            if j >= self.n || !(depth[0] > 0 || ((j < self.n && !((self.word_at(j) == w::FUN_14 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::COLON_4 || self.word_at(j) == w::EQ_12 || self.word_at(j) == w::CONSTRUCTOR_36))))) {
                 return false;
             }
             if (self.word_at(j) == w::LPAREN_19) {
@@ -32977,6 +33088,12 @@ impl P<'_> {
     }
 
     #[allow(unused_variables)]
+    fn pat_nq_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::QUEST_41) && !self.bit_at(j, 8) && true
+    }
+
+    #[allow(unused_variables)]
     fn pat_ge_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
         (self.word_at(j) == w::GT_27) && self.pat_ge_0_1(self.next_tok(j + 1), j)
@@ -33068,7 +33185,7 @@ impl P<'_> {
             if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev) || self.word_at(prev) == w::RPAREN_21 || self.word_at(prev) == w::GT_27) && self.pat_ann_expr_0_2(j, prev) {
                 return true;
             }
-            if j >= self.n || !(((j < self.n && !((self.word_at(j) == w::FUN_14 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::COLON_4))))) {
+            if j >= self.n || !(depth[0] > 0 || ((j < self.n && !((self.word_at(j) == w::FUN_14 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::COLON_4))))) {
                 return false;
             }
             if (self.word_at(j) == w::LPAREN_19) {
@@ -33088,6 +33205,330 @@ impl P<'_> {
     fn pat_ann_expr_0_2(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
         ((j < self.n && !((self.word_at(j) == w::AT_2 || self.word_at(j) == w::DOT_32 || self.word_at(j) == w::COLON_4 || self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LT_26 || self.word_at(j) == w::COLON_COLON_64 || self.word_at(j) == w::PUBLIC_90 || self.word_at(j) == w::PRIVATE_91 || self.word_at(j) == w::INTERNAL_92 || self.word_at(j) == w::PROTECTED_93 || self.word_at(j) == w::ABSTRACT_101 || self.word_at(j) == w::FINAL_102 || self.word_at(j) == w::OPEN_103 || self.word_at(j) == w::OVERRIDE_88 || self.word_at(j) == w::LATEINIT_89 || self.word_at(j) == w::CONST_100 || self.word_at(j) == w::SEALED_85 || self.word_at(j) == w::ANNOTATION_1 || self.word_at(j) == w::DATA_53 || self.word_at(j) == w::INNER_86 || self.word_at(j) == w::VALUE_87 || self.word_at(j) == w::TAILREC_95 || self.word_at(j) == w::OPERATOR_96 || self.word_at(j) == w::INFIX_97 || self.word_at(j) == w::INLINE_98 || self.word_at(j) == w::EXTERNAL_99 || self.word_at(j) == w::SUSPEND_24 || self.word_at(j) == w::VARARG_104 || self.word_at(j) == w::NOINLINE_105 || self.word_at(j) == w::CROSSINLINE_106 || self.word_at(j) == w::EXPECT_108 || self.word_at(j) == w::ACTUAL_109 || self.word_at(j) == w::FUN_14 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::COMPANION_30 || self.word_at(j) == w::CONSTRUCTOR_36 || self.word_at(j) == w::INIT_29 || self.word_at(j) == w::ENUM_16)))) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::AT_2) && self.next_ann_expr_0_0_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_0_1(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev) || self.word_at(prev) == w::RPAREN_21 || self.word_at(prev) == w::GT_27) && self.next_ann_expr_0_0_2(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || ((j < self.n && !((self.word_at(j) == w::FUN_14 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::COLON_4))))) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_0_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_ann_expr_0_0_3(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_0_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || j >= self.n) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_1_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::AT_2) && self.next_ann_expr_0_1_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_1_1(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev) || self.word_at(prev) == w::RPAREN_21 || self.word_at(prev) == w::GT_27) && self.next_ann_expr_0_1_2(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || ((j < self.n && !((self.word_at(j) == w::FUN_14 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::COLON_4))))) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_1_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_ann_expr_0_1_3(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_1_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.at_quote_at(j) || self.at_tick_at(j) || self.word_at(j) == w::AT_2 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::FUN_14 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::IF_54 || self.word_at(j) == w::WHEN_56 || self.word_at(j) == w::TRY_57 || self.word_at(j) == w::RETURN_61 || self.word_at(j) == w::THROW_60 || self.word_at(j) == w::BREAK_63 || self.word_at(j) == w::CONTINUE_62 || self.word_at(j) == w::FOR_43 || self.word_at(j) == w::WHILE_45 || self.word_at(j) == w::DO_46 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_119 || self.word_at(j) == w::TRUE_117 || self.word_at(j) == w::FALSE_118 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7 || self.word_at(j) == w::IMPORT_8 || self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACK_5 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::BANG_50 || self.word_at(j) == w::MINUS_78 || self.word_at(j) == w::PLUS_77 || self.word_at(j) == w::PLUS_PLUS_81 || self.word_at(j) == w::MINUS_MINUS_82 || self.word_at(j) == w::COLON_COLON_64) && self.bit_at(j, 3) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_2_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::AT_2) && self.next_ann_expr_0_2_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_2_1(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev) || self.word_at(prev) == w::RPAREN_21 || self.word_at(prev) == w::GT_27) && self.next_ann_expr_0_2_2(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || ((j < self.n && !((self.word_at(j) == w::FUN_14 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::COLON_4))))) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_2_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::GET_34) && self.next_ann_expr_0_2_3(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_2_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::LPAREN_19) && self.next_ann_expr_0_2_4(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_2_4(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RPAREN_21) && self.next_ann_expr_0_2_5(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_2_5(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::COLON_4) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_3_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::AT_2) && self.next_ann_expr_0_3_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_3_1(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev) || self.word_at(prev) == w::RPAREN_21 || self.word_at(prev) == w::GT_27) && self.next_ann_expr_0_3_2(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || ((j < self.n && !((self.word_at(j) == w::FUN_14 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::COLON_4))))) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_3_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::SET_35) && self.next_ann_expr_0_3_3(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_3_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::LPAREN_19) && self.next_ann_expr_0_3_4(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_3_4(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev)) && self.next_ann_expr_0_3_5(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.word_at(j) == w::AT_2 || self.word_at(j) == w::DOT_32)) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_3_5(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RPAREN_21) && self.next_ann_expr_0_3_6(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_3_6(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::COLON_4) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_4_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::AT_2) && self.next_ann_expr_0_4_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_4_1(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev) || self.word_at(prev) == w::RPAREN_21 || self.word_at(prev) == w::GT_27) && self.next_ann_expr_0_4_2(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || ((j < self.n && !((self.word_at(j) == w::FUN_14 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || self.word_at(j) == w::COLON_4))))) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_4_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::SET_35) && self.next_ann_expr_0_4_3(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_4_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::LPAREN_19) && self.next_ann_expr_0_4_4(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_4_4(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev)) && self.next_ann_expr_0_4_5(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.word_at(j) == w::AT_2 || self.word_at(j) == w::DOT_32)) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_4_5(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::COLON_4) && self.next_ann_expr_0_4_6(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_4_6(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && true && self.next_ann_expr_0_4_7(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || ((j < self.n && !((self.word_at(j) == w::RPAREN_21))))) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACK_5) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21 || self.word_at(j) == w::RBRACK_6) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_4_7(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RPAREN_21) && self.next_ann_expr_0_4_8(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_ann_expr_0_4_8(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::COLON_4) && true
     }
 
     #[allow(unused_variables)]
@@ -33166,6 +33607,48 @@ impl P<'_> {
     fn pat_obj_lit_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
         (self.word_at(j) == w::COLON_4 || self.word_at(j) == w::LBRACE_17) && true
+    }
+
+    #[allow(unused_variables)]
+    fn pat_enum_k_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::COMMA_20) && self.pat_enum_k_0_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn pat_enum_k_0_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::SEMI_33) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_enum_k_0_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::SEMI_33) && self.next_enum_k_0_0_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_enum_k_0_0_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RBRACE_18) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_enum_k_0_1_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::LBRACE_17) && self.next_enum_k_0_1_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_enum_k_0_1_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::SEMI_33) && self.next_enum_k_0_1_2(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_enum_k_0_1_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RBRACE_18) && true
     }
 
     #[allow(unused_variables)]
@@ -33533,7 +34016,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_named_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j)) && self.pat_named_0_1(self.next_tok(j + 1), j)
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j)) && self.pat_named_0_1(self.next_tok(j + 1), j)
     }
 
     #[allow(unused_variables)]
@@ -33621,37 +34104,55 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn pat_acc_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.bit_at(j, 3) && true
+        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.bit_at(j, 3) && self.pat_acc_0_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn pat_acc_0_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || j >= self.n) && true
     }
 
     #[allow(unused_variables)]
     fn next_acc_0_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_acc_0_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.bit_at(j, 3) && self.next_acc_0_0_1(self.next_tok(j + 1), j)
     }
 
     #[allow(unused_variables)]
     fn next_acc_0_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::DOT_32 || self.word_at(j) == w::COLON_4) && true
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.at_quote_at(j) || self.at_tick_at(j) || self.word_at(j) == w::AT_2 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::FUN_14 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::IF_54 || self.word_at(j) == w::WHEN_56 || self.word_at(j) == w::TRY_57 || self.word_at(j) == w::RETURN_61 || self.word_at(j) == w::THROW_60 || self.word_at(j) == w::BREAK_63 || self.word_at(j) == w::CONTINUE_62 || self.word_at(j) == w::FOR_43 || self.word_at(j) == w::WHILE_45 || self.word_at(j) == w::DO_46 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_119 || self.word_at(j) == w::TRUE_117 || self.word_at(j) == w::FALSE_118 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7 || self.word_at(j) == w::IMPORT_8 || self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACK_5 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::BANG_50 || self.word_at(j) == w::MINUS_78 || self.word_at(j) == w::PLUS_77 || self.word_at(j) == w::PLUS_PLUS_81 || self.word_at(j) == w::MINUS_MINUS_82 || self.word_at(j) == w::COLON_COLON_64) && self.bit_at(j, 3) && true
     }
 
     #[allow(unused_variables)]
     fn next_acc_0_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_acc_0_1_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::GET_34) && self.bit_at(j, 3) && self.next_acc_0_1_1(self.next_tok(j + 1), j)
     }
 
     #[allow(unused_variables)]
     fn next_acc_0_1_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::DOT_32 || self.word_at(j) == w::STAR_9 || self.word_at(j) == w::SLASH_79 || self.word_at(j) == w::COMMA_20 || self.word_at(j) == w::COLON_4 || self.word_at(j) == w::RPAREN_21 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::LBRACK_5 || self.word_at(j) == w::RBRACK_6 || self.word_at(j) == w::LT_26 || self.word_at(j) == w::GT_27 || self.word_at(j) == w::EQ_12 || self.word_at(j) == w::PLUS_77 || self.word_at(j) == w::MINUS_78 || self.word_at(j) == w::BANG_50 || self.word_at(j) == w::QUEST_41 || self.word_at(j) == w::PERCENT_80 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::MINUS_GT_42 || self.word_at(j) == w::EQ_EQ_72 || self.word_at(j) == w::BANG_EQ_70 || self.word_at(j) == w::LT_EQ_74 || self.word_at(j) == w::AMP_AMP_51 || self.word_at(j) == w::BAR_BAR_52 || self.word_at(j) == w::PLUS_PLUS_81 || self.word_at(j) == w::MINUS_MINUS_82 || self.word_at(j) == w::PLUS_EQ_65 || self.word_at(j) == w::MINUS_EQ_66 || self.word_at(j) == w::STAR_EQ_67 || self.word_at(j) == w::SLASH_EQ_68 || self.word_at(j) == w::PERCENT_EQ_69 || self.word_at(j) == w::QUEST_COLON_49 || self.word_at(j) == w::DOT_DOT_47 || self.word_at(j) == w::BANG_BANG_83 || self.word_at(j) == w::COLON_COLON_64 || self.word_at(j) == w::EQ_EQ_EQ_73 || self.word_at(j) == w::BANG_EQ_EQ_71 || self.word_at(j) == w::DOT_DOT_LT_48) && !self.bit_at(j, 3) && true
+        (self.word_at(j) == w::LPAREN_19) && self.next_acc_0_1_2(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_0_1_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RPAREN_21) && self.next_acc_0_1_3(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_0_1_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::COLON_4) && true
     }
 
     #[allow(unused_variables)]
     fn next_acc_0_2_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34) && self.next_acc_0_2_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::SET_35) && self.bit_at(j, 3) && self.next_acc_0_2_1(self.next_tok(j + 1), j)
     }
 
     #[allow(unused_variables)]
@@ -33662,44 +34163,170 @@ impl P<'_> {
 
     #[allow(unused_variables)]
     fn next_acc_0_2_2(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev)) && self.next_acc_0_2_3(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.word_at(j) == w::AT_2 || self.word_at(j) == w::DOT_32)) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_0_2_3(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        ((j < self.n && !((self.word_at(j) == w::RPAREN_21)))) && true
+        (self.word_at(j) == w::RPAREN_21) && self.next_acc_0_2_4(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_0_2_4(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::COLON_4) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_0_3_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::SET_35) && self.bit_at(j, 3) && self.next_acc_0_3_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_0_3_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::LPAREN_19) && self.next_acc_0_3_2(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_0_3_2(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev)) && self.next_acc_0_3_3(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.word_at(j) == w::AT_2 || self.word_at(j) == w::DOT_32)) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_0_3_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::COLON_4) && self.next_acc_0_3_4(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_0_3_4(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && true && self.next_acc_0_3_5(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || ((j < self.n && !((self.word_at(j) == w::RPAREN_21))))) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACK_5) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21 || self.word_at(j) == w::RBRACK_6) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_0_3_5(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RPAREN_21) && self.next_acc_0_3_6(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_0_3_6(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::COLON_4) && true
     }
 
     #[allow(unused_variables)]
     fn pat_acc_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && !self.bit_at(j, 3) && true
+        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && !self.bit_at(j, 3) && self.pat_acc_1_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn pat_acc_1_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || j >= self.n) && true
     }
 
     #[allow(unused_variables)]
     fn next_acc_1_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_acc_1_0_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && !self.bit_at(j, 3) && self.next_acc_1_0_1(self.next_tok(j + 1), j)
     }
 
     #[allow(unused_variables)]
     fn next_acc_1_0_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::DOT_32 || self.word_at(j) == w::COLON_4) && true
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.at_quote_at(j) || self.at_tick_at(j) || self.word_at(j) == w::AT_2 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::FUN_14 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::IF_54 || self.word_at(j) == w::WHEN_56 || self.word_at(j) == w::TRY_57 || self.word_at(j) == w::RETURN_61 || self.word_at(j) == w::THROW_60 || self.word_at(j) == w::BREAK_63 || self.word_at(j) == w::CONTINUE_62 || self.word_at(j) == w::FOR_43 || self.word_at(j) == w::WHILE_45 || self.word_at(j) == w::DO_46 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_119 || self.word_at(j) == w::TRUE_117 || self.word_at(j) == w::FALSE_118 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7 || self.word_at(j) == w::IMPORT_8 || self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACK_5 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::BANG_50 || self.word_at(j) == w::MINUS_78 || self.word_at(j) == w::PLUS_77 || self.word_at(j) == w::PLUS_PLUS_81 || self.word_at(j) == w::MINUS_MINUS_82 || self.word_at(j) == w::COLON_COLON_64) && self.bit_at(j, 3) && true
     }
 
     #[allow(unused_variables)]
     fn next_acc_1_1_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_acc_1_1_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::GET_34) && !self.bit_at(j, 3) && self.next_acc_1_1_1(self.next_tok(j + 1), j)
     }
 
     #[allow(unused_variables)]
     fn next_acc_1_1_1(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.word_at(j) == w::DOT_32 || self.word_at(j) == w::STAR_9 || self.word_at(j) == w::SLASH_79 || self.word_at(j) == w::COMMA_20 || self.word_at(j) == w::COLON_4 || self.word_at(j) == w::RPAREN_21 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::LBRACK_5 || self.word_at(j) == w::RBRACK_6 || self.word_at(j) == w::LT_26 || self.word_at(j) == w::GT_27 || self.word_at(j) == w::EQ_12 || self.word_at(j) == w::PLUS_77 || self.word_at(j) == w::MINUS_78 || self.word_at(j) == w::BANG_50 || self.word_at(j) == w::QUEST_41 || self.word_at(j) == w::PERCENT_80 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::MINUS_GT_42 || self.word_at(j) == w::EQ_EQ_72 || self.word_at(j) == w::BANG_EQ_70 || self.word_at(j) == w::LT_EQ_74 || self.word_at(j) == w::AMP_AMP_51 || self.word_at(j) == w::BAR_BAR_52 || self.word_at(j) == w::PLUS_PLUS_81 || self.word_at(j) == w::MINUS_MINUS_82 || self.word_at(j) == w::PLUS_EQ_65 || self.word_at(j) == w::MINUS_EQ_66 || self.word_at(j) == w::STAR_EQ_67 || self.word_at(j) == w::SLASH_EQ_68 || self.word_at(j) == w::PERCENT_EQ_69 || self.word_at(j) == w::QUEST_COLON_49 || self.word_at(j) == w::DOT_DOT_47 || self.word_at(j) == w::BANG_BANG_83 || self.word_at(j) == w::COLON_COLON_64 || self.word_at(j) == w::EQ_EQ_EQ_73 || self.word_at(j) == w::BANG_EQ_EQ_71 || self.word_at(j) == w::DOT_DOT_LT_48) && !self.bit_at(j, 3) && true
+        (self.word_at(j) == w::LPAREN_19) && self.next_acc_1_1_2(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_1_1_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RPAREN_21) && self.next_acc_1_1_3(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_1_1_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::COLON_4) && true
     }
 
     #[allow(unused_variables)]
     fn next_acc_1_2_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        (self.word_at(j) == w::GET_34) && self.next_acc_1_2_1(self.next_tok(j + 1), j)
+        (self.word_at(j) == w::SET_35) && !self.bit_at(j, 3) && self.next_acc_1_2_1(self.next_tok(j + 1), j)
     }
 
     #[allow(unused_variables)]
@@ -33710,8 +34337,290 @@ impl P<'_> {
 
     #[allow(unused_variables)]
     fn next_acc_1_2_2(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev)) && self.next_acc_1_2_3(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.word_at(j) == w::AT_2 || self.word_at(j) == w::DOT_32)) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_1_2_3(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
-        ((j < self.n && !((self.word_at(j) == w::RPAREN_21)))) && true
+        (self.word_at(j) == w::RPAREN_21) && self.next_acc_1_2_4(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_1_2_4(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::COLON_4) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_1_3_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::SET_35) && !self.bit_at(j, 3) && self.next_acc_1_3_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_1_3_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::LPAREN_19) && self.next_acc_1_3_2(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_1_3_2(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev)) && self.next_acc_1_3_3(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.word_at(j) == w::AT_2 || self.word_at(j) == w::DOT_32)) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_1_3_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::COLON_4) && self.next_acc_1_3_4(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_1_3_4(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && true && self.next_acc_1_3_5(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || ((j < self.n && !((self.word_at(j) == w::RPAREN_21))))) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACK_5) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21 || self.word_at(j) == w::RBRACK_6) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_1_3_5(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RPAREN_21) && self.next_acc_1_3_6(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_1_3_6(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::COLON_4) && true
+    }
+
+    #[allow(unused_variables)]
+    fn pat_acc_2_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.pat_acc_2_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn pat_acc_2_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RBRACE_18 || self.word_at(j) == w::SEMI_33 || j >= self.n) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::GET_34 || self.word_at(j) == w::SET_35) && self.next_acc_2_0_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_0_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.at_integer_literal_at(j) || self.at_hex_literal_at(j) || self.at_bin_literal_at(j) || self.at_real_literal_at(j) || self.at_quote_at(j) || self.at_tick_at(j) || self.word_at(j) == w::AT_2 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::FUN_14 || self.word_at(j) == w::CLASS_13 || self.word_at(j) == w::INTERFACE_15 || self.word_at(j) == w::OBJECT_31 || self.word_at(j) == w::IF_54 || self.word_at(j) == w::WHEN_56 || self.word_at(j) == w::TRY_57 || self.word_at(j) == w::RETURN_61 || self.word_at(j) == w::THROW_60 || self.word_at(j) == w::BREAK_63 || self.word_at(j) == w::CONTINUE_62 || self.word_at(j) == w::FOR_43 || self.word_at(j) == w::WHILE_45 || self.word_at(j) == w::DO_46 || self.word_at(j) == w::THIS_37 || self.word_at(j) == w::SUPER_38 || self.word_at(j) == w::NULL_119 || self.word_at(j) == w::TRUE_117 || self.word_at(j) == w::FALSE_118 || self.word_at(j) == w::TYPEALIAS_11 || self.word_at(j) == w::PACKAGE_7 || self.word_at(j) == w::IMPORT_8 || self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACK_5 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::BANG_50 || self.word_at(j) == w::MINUS_78 || self.word_at(j) == w::PLUS_77 || self.word_at(j) == w::PLUS_PLUS_81 || self.word_at(j) == w::MINUS_MINUS_82 || self.word_at(j) == w::COLON_COLON_64) && self.bit_at(j, 3) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_1_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::GET_34) && self.next_acc_2_1_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_1_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::LPAREN_19) && self.next_acc_2_1_2(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_1_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RPAREN_21) && self.next_acc_2_1_3(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_1_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::COLON_4) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_2_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::SET_35) && self.next_acc_2_2_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_2_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::LPAREN_19) && self.next_acc_2_2_2(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_2_2(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev)) && self.next_acc_2_2_3(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.word_at(j) == w::AT_2 || self.word_at(j) == w::DOT_32)) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_2_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RPAREN_21) && self.next_acc_2_2_4(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_2_4(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::COLON_4) && true
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_3_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::SET_35) && self.next_acc_2_3_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_3_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::LPAREN_19) && self.next_acc_2_3_2(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_3_2(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && prev < self.n && (self.at_simple_identifier_at(prev) || self.at_backtick_name_at(prev)) && self.next_acc_2_3_3(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.word_at(j) == w::AT_2 || self.word_at(j) == w::DOT_32)) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_3_3(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::COLON_4) && self.next_acc_2_3_4(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_3_4(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && true && self.next_acc_2_3_5(j, prev) {
+                return true;
+            }
+            if j >= self.n || !(depth[0] > 0 || ((j < self.n && !((self.word_at(j) == w::RPAREN_21))))) {
+                return false;
+            }
+            if (self.word_at(j) == w::LPAREN_19 || self.word_at(j) == w::LBRACK_5) {
+                depth[0] += 1;
+            } else if (self.word_at(j) == w::RPAREN_21 || self.word_at(j) == w::RBRACK_6) {
+                if depth[0] == 0 {
+                    return false;
+                }
+                depth[0] -= 1;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_3_5(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::RPAREN_21) && self.next_acc_2_3_6(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_acc_2_3_6(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::EQ_12 || self.word_at(j) == w::LBRACE_17 || self.word_at(j) == w::COLON_4) && true
     }
 
     #[allow(unused_variables)]
@@ -33767,6 +34676,56 @@ impl P<'_> {
     }
 
     #[allow(unused_variables)]
+    fn next_recv_0_1_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j)) && self.next_recv_0_1_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_recv_0_1_1(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && true && self.next_recv_0_1_2(j, prev) {
+                return true;
+            }
+            if j >= self.n || !((self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.word_at(j) == w::DOT_32 || self.word_at(j) == w::COMMA_20)) {
+                return false;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_recv_0_1_2(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::LT_26) && self.next_recv_0_1_3(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn next_recv_0_1_3(&self, j: usize, prev: usize) -> bool {
+        let (mut j, mut prev) = (j, prev);
+        let mut depth = [0u32; 1];
+        loop {
+            if depth.iter().all(|&d| d == 0) && true && self.next_recv_0_1_4(j, prev) {
+                return true;
+            }
+            if j >= self.n || !((self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.word_at(j) == w::IN_44 || self.word_at(j) == w::COMMA_20 || self.word_at(j) == w::QUEST_41 || self.word_at(j) == w::STAR_9 || self.word_at(j) == w::MINUS_GT_42 || self.word_at(j) == w::COLON_4 || self.word_at(j) == w::AT_2 || self.word_at(j) == w::LT_26)) {
+                return false;
+            }
+            prev = j;
+            j = self.next_tok(j + 1);
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn next_recv_0_1_4(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::DOT_32) && true
+    }
+
+    #[allow(unused_variables)]
     fn pat_dotted_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
         (self.word_at(j) == w::DOT_32) && self.pat_dotted_0_1(self.next_tok(j + 1), j)
@@ -33794,7 +34753,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 6 | 16)
+        matches!(c & 0xff, 6 | 17)
     }
 
     fn at_quote(&self) -> bool {
@@ -33804,7 +34763,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_quote_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 6 | 16)
+        matches!(c & 0xff, 6 | 17)
     }
 
     fn at_quote_quote_at(&self, j: usize) -> bool {
@@ -33812,7 +34771,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 19)
+        matches!(c & 0xff, 20)
     }
 
     fn at_quote_quote(&self) -> bool {
@@ -33822,7 +34781,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_quote_quote_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 19)
+        matches!(c & 0xff, 20)
     }
 
     fn at_tick_at(&self, j: usize) -> bool {
@@ -33830,7 +34789,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 7 | 20)
+        matches!(c & 0xff, 7 | 21)
     }
 
     fn at_tick(&self) -> bool {
@@ -33840,7 +34799,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_tick_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 7 | 20)
+        matches!(c & 0xff, 7 | 21)
     }
 
     fn at_backslash_u_at(&self, j: usize) -> bool {
@@ -33848,7 +34807,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 13)
+        matches!(c & 0xff, 14)
     }
 
     fn at_backslash_u(&self) -> bool {
@@ -33858,7 +34817,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_backslash_u_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 13)
+        matches!(c & 0xff, 14)
     }
 
     fn at_backtick_name_at(&self, j: usize) -> bool {
@@ -33902,7 +34861,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 12)
+        matches!(c & 0xff, 13)
     }
 
     fn at_char_content(&self) -> bool {
@@ -33912,7 +34871,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_char_content_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 12)
+        matches!(c & 0xff, 13)
     }
 
     fn at_character_escape_seq_at(&self, j: usize) -> bool {
@@ -33920,7 +34879,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 11)
+        matches!(c & 0xff, 12)
     }
 
     fn at_character_escape_seq(&self) -> bool {
@@ -33930,7 +34889,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_character_escape_seq_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 11)
+        matches!(c & 0xff, 12)
     }
 
     fn at_hex_literal_at(&self, j: usize) -> bool {
@@ -33974,7 +34933,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 14)
+        matches!(c & 0xff, 15)
     }
 
     fn at_interpolated_identifier(&self) -> bool {
@@ -33984,7 +34943,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolated_identifier_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 14)
+        matches!(c & 0xff, 15)
     }
 
     fn at_interpolation_expression_end_at(&self, j: usize) -> bool {
@@ -33992,7 +34951,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 1)
+        matches!(c & 0xff, 1 | 10)
     }
 
     fn at_interpolation_expression_end(&self) -> bool {
@@ -34002,7 +34961,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolation_expression_end_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 1)
+        matches!(c & 0xff, 1 | 10)
     }
 
     fn at_interpolation_expression_start_at(&self, j: usize) -> bool {
@@ -34010,7 +34969,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 15)
+        matches!(c & 0xff, 16)
     }
 
     fn at_interpolation_expression_start(&self) -> bool {
@@ -34020,7 +34979,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolation_expression_start_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 15)
+        matches!(c & 0xff, 16)
     }
 
     fn at_interpolation_identifier_start_at(&self, j: usize) -> bool {
@@ -34028,7 +34987,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 18)
+        matches!(c & 0xff, 19)
     }
 
     fn at_interpolation_identifier_start(&self) -> bool {
@@ -34038,7 +34997,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolation_identifier_start_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 18)
+        matches!(c & 0xff, 19)
     }
 
     fn at_real_literal_at(&self, j: usize) -> bool {
@@ -34082,7 +35041,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 17)
+        matches!(c & 0xff, 18)
     }
 
     fn at_string_content(&self) -> bool {
@@ -34092,7 +35051,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_string_content_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 17)
+        matches!(c & 0xff, 18)
     }
 
     fn at_uni_digits_at(&self, j: usize) -> bool {
@@ -34100,7 +35059,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 10)
+        matches!(c & 0xff, 11)
     }
 
     fn at_uni_digits(&self) -> bool {
@@ -34110,7 +35069,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_uni_digits_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 10)
+        matches!(c & 0xff, 11)
     }
 
     /// Reading `assignable`: each kind's way (`Some(Some(K))` read as `K`, `Some(None)` gone, `None` kept with what is inside it).
@@ -34120,7 +35079,7 @@ impl P<'_> {
             66 => Some(None),
             65 => Some(None),
             132 => None,
-            16440 => None,
+            16442 => None,
             82 => None,
             81 => None,
             20 => None,
@@ -34198,23 +35157,23 @@ impl P<'_> {
             }
             let to = part.map_or(c, |q| q.0);
             if to > at {
-                self.piece(at, to - 1, 17);
+                self.piece(at, to - 1, 18);
             }
             match part {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
-                        0 => (e + 1, 19),
+                        0 => (e + 1, 20),
                         1 => (match first_bit(&m.rd0_part1_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 17),
-                        2 => (e + 0, 19),
-                        3 => (e + 0, 18),
+                        }, 18),
+                        2 => (e + 0, 20),
+                        3 => (e + 0, 19),
                         4 => (match first_bit(&m.id_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 14),
-                        5 => (e + 0, 17),
+                        }, 15),
+                        5 => (e + 0, 18),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);
@@ -34222,13 +35181,13 @@ impl P<'_> {
                 }
                 None => {
                     let (l, kind) = if bit(&m.t_dollar, c) {
-                        (c + 1, 15)
+                        (c + 1, 16)
                     } else if bit(&m.o_str, s) {
                         // `str`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 16)
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 17)
                     } else {
                         // `rstr`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 16)
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 17)
                     };
                     self.piece(c, l, kind);
                     if bit(&m.t_dollar, c) {
@@ -34285,7 +35244,7 @@ impl P<'_> {
             }
             let to = part.map_or(c, |q| q.0);
             if to > at {
-                self.piece(at, to - 1, 17);
+                self.piece(at, to - 1, 18);
             }
             match part {
                 Some((e, _, i)) => {
@@ -34293,14 +35252,14 @@ impl P<'_> {
                         0 => (match first_bit(&m.rd0_part1_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 17),
-                        1 => (e + 0, 19),
-                        2 => (e + 0, 18),
+                        }, 18),
+                        1 => (e + 0, 20),
+                        2 => (e + 0, 19),
                         3 => (match first_bit(&m.id_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 14),
-                        4 => (e + 0, 17),
+                        }, 15),
+                        4 => (e + 0, 18),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);
@@ -34308,17 +35267,17 @@ impl P<'_> {
                 }
                 None => {
                     let (l, kind) = if bit(&m.rd1_closes0, c) {
-                        (c + 0, 16)
+                        (c + 0, 17)
                     } else if bit(&m.rd1_closes1, c) {
-                        (c + 2, 16)
+                        (c + 2, 17)
                     } else if bit(&m.t_dollar, c) {
-                        (c + 1, 15)
+                        (c + 1, 16)
                     } else if bit(&m.o_tail, s) {
                         // `tail`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 10)
                     } else {
                         // `rtail`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 10)
                     };
                     self.piece(c, l, kind);
                     if !(bit(&m.t_dollar, c)) {
@@ -34364,14 +35323,14 @@ impl P<'_> {
             }
             let to = part.map_or(c, |q| q.0);
             if to > at {
-                self.piece(at, to - 1, 12);
+                self.piece(at, to - 1, 13);
             }
             match part {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
-                        0 => (e + 1, 13),
-                        1 => (e + 3, 10),
-                        2 => (e + 1, 11),
+                        0 => (e + 1, 14),
+                        1 => (e + 3, 11),
+                        2 => (e + 1, 12),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);
@@ -34379,7 +35338,7 @@ impl P<'_> {
                 }
                 None => {
                     let (l, kind) = {
-                        (c + 0, 20)
+                        (c + 0, 21)
                     };
                     self.piece(c, l, kind);
                     return Ok(());

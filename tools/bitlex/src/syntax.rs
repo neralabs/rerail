@@ -2478,7 +2478,9 @@ impl P {
                         let unless = self.eat_kw("unless");
                         self.want_kw("before")?;
                         let seq = self.token_seq()?;
-                        if seq[0].iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_))) {
+                        // Its first token as the mark's own: kinds, words, `with` and `without`
+                        // (decision 0635).
+                        if special(&seq[0]) {
                             return self.err("a `before`'s first token of kinds and words");
                         }
                         next.push((unless, seq));

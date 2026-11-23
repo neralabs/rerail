@@ -126,7 +126,9 @@ mask sq_close   = sq & ~escaped(backslash)
 # is no template), then code to the first `}` outside the code's own strings and characters:
 # the regions say which `}` (a tail opens at a `}` only while a template is open, and a tail
 # closed at its quote ends the string), as the lean lexer reads a template's code.
-mask t_dollar   = dollar & next(lbrace) & ~escaped(backslash)
+# A `$` the escape `\$` before it passes (the lean parser's reader passes the byte after it).
+mask esc_dollar = dollar & escaped(backslash)
+mask t_dollar   = dollar & next(lbrace) & ~escaped(backslash) & ~prev(esc_dollar)
 mask t_lex      = prev(t_dollar)
 mask t_close    = rbrace
 # A raw string: `"""`, then to the last three quotes of the next run of three or more past it
@@ -181,8 +183,11 @@ mask rbody      = f_rstr & ~o_rstr & ~prev(o_rstr) & ~prev(o_rstr, 2) | f_rtail 
 # are not read.
 escape "a `\$` before a quote or a `$` in a raw string" when rbody & dollar & escaped(backslash) & next(dq | dollar)
 mask body       = f_str & ~o_str | f_tail & ~o_tail | rbody
+# In a line string, a `\$` before its quote: the lean parser's reader ends the string there and
+# writes no content before it; before a `\`, which then escapes nothing. Not read (decision 0635).
+escape "a `\$` before a quote or a backslash in a string" when body & ~rbody & dollar & escaped(backslash) & next(dq | backslash)
 mask s_word     = body & (word | high)
-mask s_dollar   = body & dollar & ~escaped(backslash)
+mask s_dollar   = body & dollar & ~escaped(backslash) & ~prev(esc_dollar)
 # `$name`: the `$`, then the name to its last word byte. The lean parser starts a name at any
 # letter past ASCII, and its lexer refuses one it is not sure of: past ASCII, only `uni` is read,
 # so in a file read a name's byte past ASCII is a letter's (`high`, as in code).
@@ -417,7 +422,7 @@ skip ws
 # `constructor` on its line (`without semi`), as the lean lexer reads them; annotations may end
 # theirs. A block comment that starts the line before them the scanner reads through, where the
 # grammar does not say yet: refused where the class's rule takes the mark (`refuses taken`).
-mark head_ctor  = lf & code, before "constructor", before "public" | "private" | "internal" | "protected" "constructor" without semi, before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor" | "public" | "private" | "internal" | "protected"))* nest ("(" to ")") "constructor", before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor"))* nest ("(" to ")") ending ("public" | "private" | "internal" | "protected") "constructor" without semi,
+mark head_ctor  = lf & code, before "constructor", before "public" | "private" | "internal" | "protected" "constructor" without semi, before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor" | "public" | "private" | "internal" | "protected"))* nest ("(" to ")" whole) "constructor", before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor"))* nest ("(" to ")" whole) ending ("public" | "private" | "internal" | "protected") "constructor" without semi,
   refuses taken after ~";" multiline_comment with semi
 # A line break before `by` where a property's delegate or a supertype's may come: the lean
 # lexer's `asi` reads `by` on the next line there (`cx.by`), and ends the statement elsewhere.
@@ -467,7 +472,9 @@ mark semi       = lf & code unless after ";", unless before ";" | "}" | "," | ".
   loses since ~";" multiline_comment with semi line_comment,
   loses since ~";" multiline_comment with semi multiline_comment before with own_line,
   refuses since ~";" multiline_comment with semi multiline_comment before without own_line
-mark semi_close = close_at, before "}", settles, ends
+# None after a `;`, where the scanner inserts no semicolon: the statements end at the `;`, and the
+# comments after it are the block's (decision 0635).
+mark semi_close = close_at unless after ";", before "}", settles, ends
 # The next line's first token after a type the lean parser may split (`as_lt`), but one no
 # operand starts: only the split's rules take it (`as_split`), so wherever the grammar reads
 # that type whole, or splits no type, the file is refused. After `semi`: a statement's end does
@@ -533,6 +540,8 @@ mark as_kwi     = tokens "for" | "while" | "do" | "class" | "interface" | "typea
 # A safe call's `?.`: lexed as its `?` and its `.`, as the lean parser reads a `?.` after a type
 # (`String?.f`, `x as T?.f`, `as?.`: `split_at`), and one leaf again where it is a safe call.
 mark qdot       = tokens "?" "." without apart
+# A `?` that touches the token before it: a nullable type's (decision 0635).
+mark nq         = tokens "?" without apart
 # A comparison's `>=`: lexed as its `>` and its `=`, as the lean parser reads a `>=` that closes
 # type arguments (`List<Int>= x`: `expect_gt`), and one leaf again where it is a comparison.
 mark ge         = tokens ">" "=" without apart
@@ -561,7 +570,7 @@ mark lam_params = tokens "{" (simple_identifier | backtick_name | "in" | "," | "
 # `)` or a `>`), a token that goes on no annotation and is no modifier and no declaration's word.
 # Where it does not hold, the `@` starts a declaration's modifiers. (`get` and `set` are an
 # accessor's only after a property, where this mark is not asked.)
-mark ann_expr   = tokens "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":"))* nest ("(" to ")") ending (simple_identifier | backtick_name | ")" | ">") ~("@" | "." | ":" | "(" | "<" | "::" | "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" | "fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "companion" | "constructor" | "init" | "enum")
+mark ann_expr   = tokens "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":"))* nest ("(" to ")" whole) ending (simple_identifier | backtick_name | ")" | ">") ~("@" | "." | ":" | "(" | "<" | "::" | "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" | "fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "companion" | "constructor" | "init" | "enum"), unless before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":"))* nest ("(" to ")" whole) ending (simple_identifier | backtick_name | ")" | ">") "get" | "set" "}" | ";" | end, unless before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":"))* nest ("(" to ")" whole) ending (simple_identifier | backtick_name | ")" | ">") "get" | "set" simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | kind '"' | kind "'" | "@" | "val" | "var" | "fun" | "class" | "interface" | "object" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "for" | "while" | "do" | "this" | "super" | "null" | "true" | "false" | "typealias" | "package" | "import" | "(" | "[" | "{" | "!" | "-" | "+" | "++" | "--" | "::" with semi, unless before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":"))* nest ("(" to ")" whole) ending (simple_identifier | backtick_name | ")" | ">") "get" "(" ")" "=" | "{" | ":", unless before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":"))* nest ("(" to ")" whole) ending (simple_identifier | backtick_name | ")" | ">") "set" "(" (simple_identifier | backtick_name | "@" | ".")* nest ("(" to ")" whole) ending (simple_identifier | backtick_name) ")" "=" | "{" | ":", unless before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":"))* nest ("(" to ")" whole) ending (simple_identifier | backtick_name | ")" | ">") "set" "(" (simple_identifier | backtick_name | "@" | ".")* nest ("(" to ")" whole) ending (simple_identifier | backtick_name) ":" (~(")"))* nest ("(" | "[" to ")" | "]" whole) ")" "=" | "{" | ":"
 mark decl_mod   = tokens after ~("." | "::") "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" | "fun" | "val" | "var" | "class" | "interface" | "object" | "get" | "set" | "companion" | "constructor" | "enum" | "typealias" | "@"
 # An annotation's use-site target (`@get:`), and a file annotation's `@` (`@file:`).
 mark use_site   = tokens after "@" "field" | "property" | "get" | "set" | "receiver" | "param" | "setparam" | "delegate" ":"
@@ -573,6 +582,9 @@ mark wild       = tokens "." "*"
 # An object literal's `object`, before its `:` or `{`, not a companion's: an expression, where a
 # statement's `object` declares one.
 mark obj_lit    = tokens after ~"companion" "object" ":" | "{"
+# An enum's `, ;` and `; }` (decision 0635): one mark, at a `,` and at a `;`, as the program holds 64
+# marks at most.
+mark enum_k     = tokens "," ";", before ";" "}", before "{" ";" "}"
 # A `when` entry with a guard: an `if` before its `->`, brackets whole (decision 0634).
 mark w_guard    = tokens simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | kind '"' | kind "'" | "is" | "in" | "!" | "-" | "+" | "this" | "super" | "null" | "true" | "false" | "@" | "::" (~("->" | "if" | ";"))* nest ("(" | "[" | "{" to ")" | "]" | "}" whole) "if"
 # `fun (` where a statement starts: an anonymous function, no declaration, as the lean parser's
@@ -623,7 +635,7 @@ mark cp_mod     = tokens "public" | "private" | "internal" | "protected" | "abst
 mark cref       = tokens simple_identifier "::"
 # A name and `=` (or an assignment's operator): an assignment to it, or a named argument; and a
 # name and `:`, a function type's named parameter (`(url: String) -> Unit`).
-mark named      = tokens simple_identifier "=" | "+=" | "-=" | "*=" | "/=" | "%=" | ":"
+mark named      = tokens simple_identifier | backtick_name "=" | "+=" | "-=" | "*=" | "/=" | "%=" | ":"
 # A `!` after a line break before `in` or `is`: a `when` entry's negated test.
 mark named      = tokens "!" with semi "in" | "is"
 # An enum class's `enum`, a soft word elsewhere.
@@ -635,17 +647,22 @@ mark fun_iface  = tokens "fun" "interface"
 # before a `(`; not `suspend`, and not after a `.`, `<` or `>`.
 mark fn_recv    = tokens after ~("." | "<" | ">") simple_identifier (simple_identifier | "." | "<" | ">")* "." "(", unless before "suspend"
 # A property's accessor: its `get` or `set` after a line break, or on the line of a visibility
-# word after one, as the lean parser's `declaration_ahead` asks `accessor_ahead` at the token: where
-# no `.` or `:` follows it, for `get` no `(` with arguments, and no token on its line but `(`,
-# `;` or `}` (`get + 1` is an expression).
-mark acc        = tokens "get" | "set" with semi, unless before "get" | "set" "." | ":", unless before "get" | "set" simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "." | "*" | "/" | "," | ":" | ")" | "{" | "[" | "]" | "<" | ">" | "=" | "+" | "-" | "!" | "?" | "%" | "@" | "->" | "==" | "!=" | "<=" | "&&" | "||" | "++" | "--" | "+=" | "-=" | "*=" | "/=" | "%=" | "?:" | ".." | "!!" | "::" | "===" | "!==" | "..<" without semi, unless before "get" "(" ~")"
-mark acc        = tokens after "private" | "protected" | "internal" | "public" with semi "get" | "set" without semi, unless before "get" | "set" "." | ":", unless before "get" | "set" simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "." | "*" | "/" | "," | ":" | ")" | "{" | "[" | "]" | "<" | ">" | "=" | "+" | "-" | "!" | "?" | "%" | "@" | "->" | "==" | "!=" | "<=" | "&&" | "||" | "++" | "--" | "+=" | "-=" | "*=" | "/=" | "%=" | "?:" | ".." | "!!" | "::" | "===" | "!==" | "..<" without semi, unless before "get" "(" ~")"
+# word after one, as the lean parser's `declaration_ahead` asks `accessor_ahead` at the token
+# (decision 0635): alone where its line ends (a `;`, a `}`, the file's end, or a token after a line
+# break that ends the statement); a getter's `()`, or a setter's one parameter (its annotations and
+# modifiers, a name, maybe a type), before a `=`, a `{` or a `:`. `get(a)`, `set(a, b)` and
+# `get + 1` are expressions.
+mark acc        = tokens "get" | "set" with semi "}" | ";" | end, before "get" | "set" with semi simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | kind '"' | kind "'" | "@" | "val" | "var" | "fun" | "class" | "interface" | "object" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "for" | "while" | "do" | "this" | "super" | "null" | "true" | "false" | "typealias" | "package" | "import" | "(" | "[" | "{" | "!" | "-" | "+" | "++" | "--" | "::" with semi, before "get" with semi "(" ")" "=" | "{" | ":", before "set" with semi "(" (simple_identifier | backtick_name | "@" | ".")* nest ("(" to ")" whole) ending (simple_identifier | backtick_name) ")" "=" | "{" | ":", before "set" with semi "(" (simple_identifier | backtick_name | "@" | ".")* nest ("(" to ")" whole) ending (simple_identifier | backtick_name) ":" (~(")"))* nest ("(" | "[" to ")" | "]" whole) ")" "=" | "{" | ":"
+mark acc        = tokens after "private" | "protected" | "internal" | "public" with semi "get" | "set" without semi "}" | ";" | end, before "get" | "set" without semi simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | kind '"' | kind "'" | "@" | "val" | "var" | "fun" | "class" | "interface" | "object" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "for" | "while" | "do" | "this" | "super" | "null" | "true" | "false" | "typealias" | "package" | "import" | "(" | "[" | "{" | "!" | "-" | "+" | "++" | "--" | "::" with semi, before "get" without semi "(" ")" "=" | "{" | ":", before "set" without semi "(" (simple_identifier | backtick_name | "@" | ".")* nest ("(" to ")" whole) ending (simple_identifier | backtick_name) ")" "=" | "{" | ":", before "set" without semi "(" (simple_identifier | backtick_name | "@" | ".")* nest ("(" to ")" whole) ending (simple_identifier | backtick_name) ":" (~(")"))* nest ("(" | "[" to ")" | "]" whole) ")" "=" | "{" | ":"
+# After an annotation on its line (the lean parser's `declaration_ahead` skips annotations).
+mark acc        = tokens after ")" | ">" | simple_identifier | backtick_name "get" | "set" "}" | ";" | end, before "get" | "set" simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | kind '"' | kind "'" | "@" | "val" | "var" | "fun" | "class" | "interface" | "object" | "if" | "when" | "try" | "return" | "throw" | "break" | "continue" | "for" | "while" | "do" | "this" | "super" | "null" | "true" | "false" | "typealias" | "package" | "import" | "(" | "[" | "{" | "!" | "-" | "+" | "++" | "--" | "::" with semi, before "get" "(" ")" "=" | "{" | ":", before "set" "(" (simple_identifier | backtick_name | "@" | ".")* nest ("(" to ")" whole) ending (simple_identifier | backtick_name) ")" "=" | "{" | ":", before "set" "(" (simple_identifier | backtick_name | "@" | ".")* nest ("(" to ")" whole) ending (simple_identifier | backtick_name) ":" (~(")"))* nest ("(" | "[" to ")" | "]" whole) ")" "=" | "{" | ":"
 # A declaration's receiver, as the lean parser's `receiver_end` reads it from the token after
 # `fun`, `val` or `var` and the type parameters: a run of the type's tokens to a `.` and a name
-# that no `.`, type argument or `,` follows; but a delegated property's name (`val x by a.b`).
+# that no `.`, type argument or `,` follows; but a delegated property's name (`val x by a.b`), and
+# a receiver with a `.` among its type arguments, which the lean parser's `receiver_end` refuses.
 # The rule asks it where the receiver may come. A nullable receiver (`String?.f`) is its `?`
 # and its `.` (`qdot`).
-mark recv       = tokens simple_identifier | backtick_name (simple_identifier | backtick_name | "in" | "." | "<" | ">" | "," | "?" | "*")* "." simple_identifier | backtick_name ~("." | "<" | ">" | ","), unless before simple_identifier | backtick_name "by"
+mark recv       = tokens simple_identifier | backtick_name (simple_identifier | backtick_name | "in" | "." | "<" | ">" | "," | "?" | "*")* "." simple_identifier | backtick_name ~("." | "<" | ">" | ","), unless before simple_identifier | backtick_name "by", unless before simple_identifier | backtick_name (simple_identifier | backtick_name | "." | ",")* "<" (simple_identifier | backtick_name | "in" | "," | "?" | "*" | "->" | ":" | "@" | "<")* "."
 # A receiver's `.` that is not its last: another `.`, a type argument or a `,` follows its name.
 # The receiver's loop of names goes on there.
 mark dotted     = tokens "." simple_identifier | backtick_name "." | "<" | ">" | ","
@@ -705,7 +722,16 @@ tree kotlin {
                         | enum_class 'enum' 'class' type_name [type_parameters] [head_ctor] [primary_constructor] [':' delegation_specifier (',' delegation_specifier)*] [enum_class_body]
   # An enum's entries, `,` between them, a line break where one may come; then after a `;`, the
   # members.
-  node enum_class_body  = '{' [enum_entry (',' [semi] enum_entry)*] (trail_brace | [semi_close] [';' [semi] [class_member ((semi | ';') class_member)* [semi_close]]] '}')
+  # The `;` after the entries and the `}` are leaves of the lean tape where tree-sitter's automaton
+  # keeps them (decision 0635): a `;` before the `}` (`enum_k`), or after a trailing comma
+  # (`enum_k`), which is kept too; the `}` where no member follows the `;`.
+  node enum_class_body  = enum_k enum_empty | '{' [enum_entry (',' [semi] enum_entry)*] (trail_brace | enum_k (enum_comma | enum_tail) | [semi_close] [';' [semi] (class_member member_end)*] '}')
+  choice enum_comma     = ',' [semi] enum_tail
+  choice enum_tail      = ';' [semi] (enum_members | enum_end)
+  choice enum_members   = class_member member_end (class_member member_end)* '}'
+  choice enum_end       = [semi_close] '}'
+  # `{ ; }`: each a leaf.
+  choice enum_empty     = '{' ';' [semi] [semi_close] '}'
   node enum_entry       = name [value_arguments] [class_body]
   choice object_rest    = 'object' type_name [':' delegation_specifier (',' delegation_specifier)*] [class_body]
   node binding_pattern_kind = 'val' | 'var'
@@ -727,9 +753,12 @@ tree kotlin {
   # parenthesized one, a function type with a receiver, or a user type and its constructor's
   # arguments; then a delegate.
   node delegation_specifier = ds_head [wrap explicit_delegation _ [by_lf] 'by' with no_lambda expression]
-  choice ds_head        = ds_susp 'suspend' type | fn_paren function_type | parenthesized_type [wrap nullable_type _ ('?' as quest)+]
+  choice ds_head        = ds_susp 'suspend' type | fn_paren function_type | parenthesized_type [wrap nullable_type _ (nq '?' as quest)+]
                         | fn_recv recv_function_type | user_type [wrap constructor_invocation _ value_arguments]
-  node class_body       = '{' [class_member (semi class_member | ';' [class_member])* semi_close] '}'
+  # Each member ends with a semicolon (the lean parser's `members`): a line break's, a `;`, or the
+  # line break before the `}` (decision 0635).
+  node class_body       = '{' (class_member member_end)* '}'
+  choice member_end     = semi | ';' | semi_close
   node class_member nested = [modifiers] member_rest
   choice member_rest    = declaration_rest | retag companion_object companion_rest | retag anonymous_initializer init_rest
                         | retag secondary_constructor ctor_rest
@@ -738,7 +767,7 @@ tree kotlin {
   choice getter_retag   = retag getter getter_rest
   choice getter_rest    = 'get' ['(' ')' [':' type] function_body]
   choice setter_rest    = 'set' ['(' parameter_with_optional_type ')' [':' type] function_body]
-  node parameter_with_optional_type = name [':' type]
+  node parameter_with_optional_type = [parameter_modifiers] name [':' type]
   choice companion_rest = 'companion' 'object' [type_name] [':' delegation_specifier (',' delegation_specifier)*] [class_body]
   choice init_rest      = 'init' block
   choice ctor_rest      = 'constructor' function_value_parameters [':' constructor_delegation_call] [blk '{' [statements] '}']
@@ -778,8 +807,8 @@ tree kotlin {
   choice type nested    = [type_modifiers] type_core
   # After the type, `?`s or `&` and a user type, as the lean parser's `ty_core`.
   choice type_core      = fn_paren function_type | paren_amp parenthesized_user_type not_null
-                        | parenthesized_type [wrap nullable_type _ ('?' as quest)+]
-                        | fn_recv recv_function_type | user_type [wrap nullable_type _ ('?' as quest)+ | not_null]
+                        | parenthesized_type [wrap nullable_type _ (nq '?' as quest)+]
+                        | fn_recv recv_function_type | user_type [wrap nullable_type _ (nq '?' as quest)+ | not_null]
   choice not_null       = wrap not_nullable_type _ '&' [type_modifiers] (parenthesized_user_type | user_type)
   node parenthesized_user_type = '(' (parenthesized_user_type | user_type) ')'
   node recv_function_type = retag function_type receiver: fn_receiver ft_dot_at '.' function_type_parameters '->' type
@@ -790,7 +819,7 @@ tree kotlin {
   node type_modifiers   = (annotation | ty_susp 'suspend')+
   node parenthesized_type = '(' type ')'
   choice receiver       = recv receiver: receiver_type '.'
-  node receiver_type    = recv_type [wrap nullable_type _ ('?' as quest)+]
+  node receiver_type    = recv_type [wrap nullable_type _ (nq '?' as quest)+]
   node recv_type        = retag user_type type_name [type_arguments] (dotted '.' type_name [type_arguments])*
   node user_type        = type_name [type_arguments] ('.' type_name [type_arguments])*
   node type_arguments   = [generic] [gen_nav] '<' type_projection (',' type_projection)* (trail_angle | '>')
@@ -823,8 +852,8 @@ tree kotlin {
   node as_name          = retag user_type type_name
   choice as_type        = [type_modifiers] as_core
   choice as_core        = fn_paren function_type | paren_amp parenthesized_user_type not_null
-                        | parenthesized_type [wrap nullable_type _ ('?' as quest)+]
-                        | fn_recv recv_function_type | as_user_type [wrap nullable_type _ ('?' as quest)+ | not_null]
+                        | parenthesized_type [wrap nullable_type _ (nq '?' as quest)+]
+                        | fn_recv recv_function_type | as_user_type [wrap nullable_type _ (nq '?' as quest)+ | not_null]
   node as_user_type     = retag user_type type_name [type_arguments] ('.' type_name [type_arguments])*
   choice as_operand nested = unary_tight (as_op)*
   choice add_op         = wrap additive_expression _ ('+' | '-') add_operand
@@ -972,6 +1001,7 @@ tree kotlin {
   implied property_rest '='
   implied class_rest ':' ','
   implied enum_class_body '{' '}' ',' ';'
+  implied enum_members '}'
   implied spread_expression '*'
   implied object_rest 'object' ':' ','
   implied object_literal ','
@@ -985,7 +1015,8 @@ tree kotlin {
   implied type_constraint ':'
   implied primary_constructor 'constructor' '(' ')' ','
   implied class_parameter ':' '='
-  implied class_body '{' '}' ';'
+  implied class_body '{' '}'
+  implied member_end ';'
   implied source_file ';'
   implied statements ';'
   implied getter_rest '(' ')'
@@ -1033,6 +1064,6 @@ tree kotlin {
   # Every mark a rule takes is asked only where a rule takes it, as the lean parser asks each
   # question where it branches (decision 0492). Not hidden: `generic`, where a `<` that opens type
   # arguments no rule reads refuses the file.
-  hidden w_guard anon_fn anon_sfn nl_end as_kwn as_kwi apart own_line this_at jump_at as_q as_split is_split qdot ge sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp ds_susp cp_mod pm tpm imp_same
+  hidden enum_k nq w_guard anon_fn anon_sfn nl_end as_kwn as_kwi apart own_line this_at jump_at as_q as_split is_split qdot ge sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp ds_susp cp_mod pm tpm imp_same
   extra line_comment multiline_comment
 }

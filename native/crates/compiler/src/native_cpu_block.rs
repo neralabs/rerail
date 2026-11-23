@@ -3532,14 +3532,17 @@ fn gap_last(
 
 /// The records templates left open (`RecPart::open`, decisions 0600 and 0621): a stack of its
 /// own, its depth in its first word (zero) and its records' cursors after, innermost last,
-/// where a reader resumes a string's record; none else.
+/// where a reader resumes a string's record; none else. After it (`OPEN_COPY`), the stack as the
+/// loop's head had it, once a flagged token changes it (`OPEN_COPIED`): a wait reads its tokens
+/// again from the head, and starts from that stack (decision 0635).
 fn open_slot(f: &mut FunctionBuilder<'_>, r: &crate::records::Records) -> Option<cranelift_codegen::ir::StackSlot> {
     if !r.readers.iter().any(|x| x.resumes) {
         return None;
     }
-    let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * (1 + OPEN_DEPTH as u32), 3));
+    let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, (OPEN_COPIED + 8) as u32, 3));
     let zero = f.ins().iconst(types::I64, 0);
     f.ins().stack_store(zero, slot, 0);
+    f.ins().stack_store(zero, slot, OPEN_COPIED);
     Some(slot)
 }
 
@@ -6974,6 +6977,20 @@ const STRING_ENDED: i64 = 1 << 62;
 /// template (decision 0621). A grammar's nest bounds them; past this many the file is refused.
 const OPEN_DEPTH: i64 = 16;
 
+/// In the open records' slot (`open_slot`): the stack's copy, its depth first.
+const OPEN_COPY: i32 = 8 * (1 + OPEN_DEPTH as i32);
+
+/// In the open records' slot: whether the copy holds the stack as the loop's head had it.
+const OPEN_COPIED: i32 = 2 * OPEN_COPY;
+
+/// The open records' stack, its depth and entries, from the slot's offset `from` to `to`.
+fn open_copy(f: &mut FunctionBuilder<'_>, slot: cranelift_codegen::ir::StackSlot, from: i32, to: i32) {
+    for k in 0..=OPEN_DEPTH as i32 {
+        let v = f.ins().stack_load(types::I64, slot, from + 8 * k);
+        f.ins().stack_store(v, slot, to + 8 * k);
+    }
+}
+
 /// In the marks so far (`pending`): the cursor's block has a gap mark's bit (`loop_marks`'
 /// lift), set by the refill. A token whose `pending` and hits are zero then takes no merge of
 /// the marks, and its gap test reads no word (`record_tokens`). Past every mark's bit.
@@ -7414,6 +7431,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
 
     f.switch_to_block(head);
     let mut h = f.block_params(head).to_vec();
+    // A part's stack of open records as the head has it: no copy yet (`open_slot`).
+    if let (Some(slot), Some(_)) = (open_slot, wait) {
+        f.ins().stack_store(zero, slot, OPEN_COPIED);
+    }
     // The head's state, which a wait stores for the next part (below), and the bits the refill
     // took from the words the head carries (`carried`), which the next part's head has not.
     let head_h = h.clone();
@@ -7901,6 +7922,18 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     if let Some(wait) = wait {
         f.switch_to_block(wait);
         f.set_cold_block(wait);
+        // The next part reads this part's tokens from the head again: the stack of open records
+        // as the head had it, where a token changed it since (`open_slot`). A resume read again
+        // so ends the string it ended, not the one around it (decision 0635).
+        if let Some(slot) = open_slot {
+            let (back, on) = (f.create_block(), f.create_block());
+            let copied = f.ins().stack_load(types::I64, slot, OPEN_COPIED);
+            f.ins().brif(copied, back, &[], on, &[]);
+            f.switch_to_block(back);
+            open_copy(f, slot, OPEN_COPY, 0);
+            f.ins().jump(on, &[]);
+            f.switch_to_block(on);
+        }
         let k = c.index(f, head_h[0]);
         let mut st: Vec<Value> = head_h[1..STATE_WORDS].to_vec();
         if let Some(a) = carried_bits {
@@ -8435,6 +8468,18 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         f.switch_to_block(cold);
         f.set_cold_block(cold);
         // The stack (`open_slot`): its depth, and its entry `k` at `base + 8 k`.
+        // The stack as the head had it, before the first change since (`open_slot`).
+        if limit.is_some() {
+            let (copy, on) = (f.create_block(), f.create_block());
+            let copied = f.ins().stack_load(types::I64, slot, OPEN_COPIED);
+            f.ins().brif(copied, on, &[], copy, &[]);
+            f.switch_to_block(copy);
+            open_copy(f, slot, 0, OPEN_COPY);
+            let one = f.ins().iconst(types::I64, 1);
+            f.ins().stack_store(one, slot, OPEN_COPIED);
+            f.ins().jump(on, &[]);
+            f.switch_to_block(on);
+        }
         let base = f.ins().stack_addr(types::I64, slot, 0);
         let entry = |f: &mut FunctionBuilder<'_>, n: Value| {
             let at = f.ins().ishl_imm(n, 3);

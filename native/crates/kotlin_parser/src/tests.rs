@@ -1231,6 +1231,69 @@ fn when_guards_are_the_lean_parsers() {
     ]);
 }
 
+/// What the 1,266-file corpus (`kt200`) found after 0634 (decision 0635): accessor calls and
+/// annotated accessors, annotations before an expression with `::class` in their arguments, a
+/// backtick name as a named argument, a setter's annotated parameter, enum bodies' `;` and `,`
+/// leaves, a `\$` before a `$`, and a block's statements after its last `;`.
+#[test]
+fn the_wide_corpus_lines_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    get()\n    set(1)\n    get(1).x\n}\n",
+        "class A {\n    val b: Int\n        @JvmName(\"c\") get() = 1\n    var d: Int = 0\n        private set(@A v) { field = v }\n}\n",
+        "fun f() {\n    @OptIn(A::class)\n    return g()\n}\n",
+        "class A\n@Inject\n@OptIn(B::class)\nconstructor(\n    @C d: D,\n) : E(d)\n",
+        "val x = f(`a b` = 1)\n",
+        "enum class E {\n  ;\n}\n",
+        "enum class E { ; }\n",
+        "enum class E {\n  A, B,\n  ;\n}\n",
+        "enum class E {\n  A;\n}\n",
+        "enum class E {\n  A, B;\n  fun f() = 1; fun g() = 2;\n}\n",
+        "enum class E { A; fun f() = 1;\n  // c\n}\n",
+        "val x = \"a\\$$b\"\n",
+        "val x = \"a\\$${b.c}\"\n",
+        "fun f() {\n    a(b);\n    // c\n}\n",
+        "fun f() {\n    a(b); /* c */\n}\n",
+        "fun f() {\n    a(b)\n    c(d);\n    // e\n}\n",
+        "class A {\n    val x = 1;\n    // c\n}\n",
+        "class A { val x = 1; val y = 2; }\n",
+        "fun A.B<C<*>>.e() = 1\n",
+        "fun <T> A<T>.e() = 1\n",
+    ]);
+    // The lean parser refuses these, and so does the grammar: a nullable type's `?` apart from it,
+    // a receiver with a `.` in its type arguments (`receiver_end`), a class member with no
+    // semicolon after it (`members`).
+    let both = [
+        "val x: String ? = null\n",
+        "fun A<C.D>.e() = 1\n",
+        "fun A.B<out C.D<*>>.e() = 1\n",
+        "class A { val x = 1 }\n",
+        "enum class E { A; fun f() = 1 }\n",
+        "interface I { fun f() }\n",
+        "class A { ; }\n",
+    ];
+    for text in both {
+        assert!(lean_text(text).is_none(), "the lean parser reads {text:?}");
+    }
+    refused(&both);
+}
+
+/// A string in a template's code whose own template ends in the next 64-byte block: a wait reads
+/// the block's tokens again from the loop's head, with the stack of open records as the head had
+/// it, so a `}` that resumes a string ends that string again, not the one around it (the JIT's
+/// tier 1, decision 0635).
+#[test]
+fn templates_over_a_block_edge_are_the_lean_parsers() {
+    let tail = format!("val y = {}\n", "a".repeat(60));
+    let mut texts = Vec::new();
+    for t in ["val x = \"${\"ab${d}\"}\"\n", "val x = \"${\"${d}\"}\"\n", "val x = \"${c { \"\\\"${d}\\\"\" }}\"\n"] {
+        for k in 0..64 {
+            texts.push(format!("{}{t}{tail}", "\n".repeat(k)));
+        }
+    }
+    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+    same(&texts);
+}
+
 /// An accessor alone at a statement's level, a property's on the line after: the lean parser's
 /// `declaration_ahead` reads it there too.
 #[test]
