@@ -45,8 +45,8 @@ typedef uint32_t ukl_mask_t;
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
-// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
-// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// A function compiled once and called, however many sites call it: a stage (`stages.h`) or a program's step (the
+// preprocessor's `pp_step`), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
 // ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
@@ -148,8 +148,8 @@ UKL_INLINE float ukl_f16_to_f32_native(uint32_t h) { return float(as_type<half>(
 #ifndef UKL_COLD
 #define UKL_COLD static __device__ __noinline__
 #endif
-// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
-// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// A function compiled once and called, however many sites call it: a stage (`stages.h`) or a program's step (the
+// preprocessor's `pp_step`), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
 // ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
 #ifndef UKL_ONCE
 #define UKL_ONCE static __device__ __noinline__
@@ -288,8 +288,8 @@ UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __reduce
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
-// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
-// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// A function compiled once and called, however many sites call it: a stage (`stages.h`) or a program's step (the
+// preprocessor's `pp_step`), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
 // ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
@@ -360,16 +360,9 @@ UKL_INLINE uint32_t ukl_sg_seg_inclusive_ex_native(bool add, uint32_t f, uint32_
 UKL_INLINE void ukl_sg_barrier() { __ukl_cpu_wait(__UKL_AT_SG); }
 UKL_INLINE void ukl_tg_barrier() { __ukl_cpu_wait(__UKL_AT_TG); }
 UKL_INLINE void ukl_tg_barrier_device() { __ukl_cpu_wait(__UKL_AT_TG); }
-// A poll of another group's progress (a grid barrier's): the thread suspends, and once its whole group polls, the
-// group yields to the others that run with it (ukl_cpu_shim.h). So a poll there is a round of every other group, and
-// a grid barrier's bound is a thousand rounds, not a GPU's million spins.
+// A poll of another group's progress (a bounded wait's): the thread suspends, and once its whole group polls, the
+// group yields to the others that run with it (ukl_cpu_shim.h). So a poll there is a round of every other group.
 #define ukl_poll_yield() __ukl_cpu_wait(__UKL_YIELD)
-// The groups that run together, known exactly (the launch's `resident`): a grid's join closes when they all have
-// joined, with no window (decision 0540 §3).
-#define UKL_GRID_RESIDENT() __ukl_cpu_resident()
-#ifndef UKL_GRID_SPINS
-#define UKL_GRID_SPINS 1000u
-#endif
 
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
 // A poll of a word another group writes (Metal's comment): the host's loads are coherent.
@@ -414,8 +407,8 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __at
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
-// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
-// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// A function compiled once and called, however many sites call it: a stage (`stages.h`) or a program's step (the
+// preprocessor's `pp_step`), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
 // ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
@@ -568,11 +561,8 @@ UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v __UKL_PARAMS) { return sub_grou
 UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_min(v); }
 UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_max(v); }
 // A poll of another group's progress: the group yields to the groups that run with it, as the CPU's coroutines
-// do (a persistent grid's barrier is met there by its resident groups taking turns).
+// do.
 #define ukl_poll_yield() __ukl_vec_yield()
-#ifndef UKL_GRID_SPINS
-#define UKL_GRID_SPINS 1000u
-#endif
 #endif
 #elif UKL_SIMD_WIDTH == 1
 // A group of one lane: every lane reads its own value.

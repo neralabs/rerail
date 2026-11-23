@@ -7,6 +7,9 @@ then "please do 2 and 3 first": 2, the 16z cache's waits; 3, the persistent grid
 Amends `view::cache` (decision 0353 step 4b): "a miss waits for no thread" becomes a bounded wait for a writer.
 Follows 0524 point 5 (a wait is a turn of its function's one loop).
 
+> **0653 (2026-11-23):** §3's grid join and the preprocessor's last grid barrier are gone with `ukl/grid.h`; step 6's
+> scheme (continuations on a work queue) runs the preprocessor's setup.
+
 ## Intro
 
 A GPU makes no promise that a thread which waits for another will see it go on. Two cases are not a matter of

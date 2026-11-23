@@ -3,6 +3,9 @@
 Status: accepted (2026-11-21, the user: "do A (but cached per machine, and ideally calling APIs) and C"). Changes how
 0468 §4 finds G; the grid, its barrier and its join are unchanged.
 
+> **Superseded by 0653 (2026-11-23):** there is no persistent grid, so no residency to ask or measure; the device
+> crate's residency module and its kept measures are removed.
+
 ## Intro
 
 The preprocessor's setup is one persistent grid (0468 §4): G groups, with a bounded device-wide barrier

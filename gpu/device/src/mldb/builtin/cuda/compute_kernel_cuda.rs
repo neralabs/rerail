@@ -91,7 +91,6 @@ struct Api {
     cu_func_set_attribute: Option<unsafe extern "C" fn(Ptr, i32, i32) -> CUresult>,
     cu_func_get_attribute: unsafe extern "C" fn(*mut i32, i32, Ptr) -> CUresult,
     /// The blocks of a kernel a multiprocessor holds at once, at a block size and dynamic shared memory.
-    cu_occupancy_max_active_blocks: unsafe extern "C" fn(*mut i32, Ptr, i32, usize) -> CUresult,
     cu_get_error_string: unsafe extern "C" fn(CUresult, *mut *const c_char) -> CUresult,
     nvrtc_create_program: unsafe extern "C" fn(*mut Ptr, *const c_char, *const c_char, i32, *const *const c_char, *const *const c_char) -> i32,
     nvrtc_compile_program: unsafe extern "C" fn(Ptr, i32, *const *const c_char) -> i32,
@@ -302,7 +301,6 @@ fn cuda_api() -> Result<Api, String> {
         cu_event_destroy: sym!(cuda, "cuEventDestroy_v2"),
         cu_func_set_attribute: Some(sym!(cuda, "cuFuncSetAttribute")),
         cu_func_get_attribute: sym!(cuda, "cuFuncGetAttribute"),
-        cu_occupancy_max_active_blocks: sym!(cuda, "cuOccupancyMaxActiveBlocksPerMultiprocessor"),
         cu_get_error_string: sym!(cuda, "cuGetErrorString"),
         nvrtc_create_program: sym!(nvrtc, "nvrtcCreateProgram"),
         nvrtc_compile_program: sym!(nvrtc, "nvrtcCompileProgram"),
@@ -357,7 +355,6 @@ fn hip_api() -> Result<Api, String> {
         cu_event_destroy: sym!(hip, "hipEventDestroy"),
         cu_func_set_attribute: None,
         cu_func_get_attribute: sym!(hip, "hipFuncGetAttribute"),
-        cu_occupancy_max_active_blocks: sym!(hip, "hipModuleOccupancyMaxActiveBlocksPerMultiprocessor"),
         cu_get_error_string: sym!(hip, "hipDrvGetErrorString"),
         nvrtc_create_program: sym!(rtc, "hiprtcCreateProgram"),
         nvrtc_compile_program: sym!(rtc, "hiprtcCompileProgram"),
@@ -410,8 +407,7 @@ pub struct CudaDevice {
     /// Whether the device reads the host's pageable memory through the host's page tables (a GB10's ATS): then
     /// memory wrapped in place (`wrap_host_memory`) is read at the host's address, nothing registered.
     pub pageable: bool,
-    /// Its multiprocessors (NVIDIA's SMs, AMD's work-group processors): with a kernel's occupancy, the groups the
-    /// device holds at once (`CudaComputeFunction::resident_groups`).
+    /// Its multiprocessors (NVIDIA's SMs, AMD's work-group processors).
     pub multiprocessors: u32,
     /// Whether registered host memory is the device's at the host's address (`CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM`,
     /// and a page registered at open to confirm it: HIP on Windows says so, and maps it elsewhere): then a wrap may
@@ -1059,16 +1055,6 @@ unsafe impl Sync for CudaComputeFunction {}
 impl CudaComputeFunction {
     pub fn get_argument_info(&self) -> &[GridComputeFunctionArgument] {
         &self.arguments
-    }
-
-    /// The groups of `threads` threads, each taking `dynamic` bytes of shared memory beyond the kernel's own, that
-    /// the device holds at once: the driver's occupancy of this kernel (its registers, its shared memory) on each
-    /// multiprocessor, times them. A persistent grid's bound (decision 0468 §4).
-    pub fn resident_groups(&self, threads: u32, dynamic: u64) -> Option<u64> {
-        let a = self.device.current();
-        let mut n = 0;
-        ck(unsafe { (a.cu_occupancy_max_active_blocks)(&mut n, self.func, threads as i32, dynamic as usize) }, "cuOccupancyMaxActiveBlocksPerMultiprocessor").ok()?;
-        Some(n.max(0) as u64 * self.device.multiprocessors as u64)
     }
 }
 

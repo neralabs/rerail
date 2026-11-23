@@ -27,8 +27,7 @@
 // A call read past its piece's end goes on, and the pieces it reads are its (`lp_swallow`). What
 // the serial pass refuses for the device (a stringized `__VA_OPT__`, a pragma popping a name in
 // use, a call past an argument's or its scope's end, the stacks' depth, the work bound) is
-// refused (`px_refuse`), and the unit is the serial pass's. A long piece beats (`ukl_grid_beat`),
-// so the groups waiting at the phase's barrier wait on.
+// refused (`px_refuse`), and the unit is the serial pass's.
 
 // The frames' and the calls' stacks (powers of two): an index into them is masked with its size less one, so the M3's
 // back end (G15) cannot fold a top's `sp - 1` into an address 2^16 bytes off (`p - zext16(x)`).
@@ -147,10 +146,8 @@ UKL_INLINE PP_GLOBAL uint32_t* lp_pchunk(Ar a) { return lp_preq(a) + 2u * a.lpq_
 // A piece's run's log (`lp_log`, decision 0613 §6): its place and its rows.
 UKL_INLINE PP_GLOBAL uint32_t* lp_plog(Ar a) { return lp_preq(a) + 3u * a.lpq_top; }
 UKL_INLINE PP_GLOBAL uint32_t* lp_plogn(Ar a) { return lp_preq(a) + 4u * a.lpq_top; }
-// The most polls of a bounded wait: a request's claim (`lp_post`), a helper's looks for a unit's items.
+// The most polls of a bounded wait: a request's claim (`lp_post`).
 #define LP_IDLE_POLLS (1u << 22)
-// A helper's (`lp_help`): it leaves a queue with nothing waiting for another unit's.
-#define LP_HELP_POLLS (256u)
 // A requests' table entry being written: polls before the reader goes on (its writer's few stores take far fewer).
 #define LP_CLAIM_POLLS (1u << 16)
 
@@ -3039,7 +3036,7 @@ UKL_INLINE void lp_list_take(UKL_LOCAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u, Ar 
 // `ln`, the thread lane `lead`) look ahead for it: at a span, each looks up a token of the next 32,
 // and the tokens before the first that may act are the thread's next steps without a lookup.
 UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint32_t* state, PP_GLOBAL const uint32_t* lookups, PP_GLOBAL const uint32_t* start, PP_GLOBAL uint32_t* v, PP_GLOBAL uint32_t* opv, PP_GLOBAL uint32_t* lob, PP_GLOBAL uint32_t* plast,
-                         PP_GLOBAL uint32_t* pend, PP_GLOBAL uint32_t* pjoin, PP_GLOBAL uint32_t* joined, PP_GLOBAL uint32_t* trn, PP_GLOBAL uint32_t* ovr, PP_GLOBAL uint32_t* grid, uint32_t s0,
+                         PP_GLOBAL uint32_t* pend, PP_GLOBAL uint32_t* pjoin, PP_GLOBAL uint32_t* joined, PP_GLOBAL uint32_t* trn, PP_GLOBAL uint32_t* ovr, uint32_t s0,
                          uint32_t rq, bool again, UKL_LOCAL LpRun* rp, bool me, uint32_t ln, uint32_t lead __UKL_PARAMS) {
     // A request's run (`rq` its record, decision 0613 §4), or a piece's (read again inline: `again`).
     // The piece reads to the next piece's start `e`; a call it reads past `e` (a body's call left open,
@@ -3077,9 +3074,6 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
         if (live) {
             for (; rp->stop == 0u; step++) {
                 if (step == LP_WORK) { px_refuse(a.ctl, X_WORK); rp->stop = LP_REFUSED; break; }
-                // A long piece: the groups waiting at the phase's barrier see it progress (`ukl_grid_beat`),
-                // each 256 steps (a step may be a run of 32 tokens, each looked up: `lp_plain_run`).
-                if ((step & 255u) == 255u) ukl_grid_beat(grid);
                 // A call's arguments: a token a step, or a run of the group's window none `(`, `)` and `,`; a
                 // span or the top text next, past the window: the group looks.
                 if (rp->cl_on) {
@@ -3494,15 +3488,15 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
 }
 // The pieces a SIMD group's lanes start (`lp_piece`), one at a time, every lane with each.
 UKL_INLINE void lp_run(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint32_t* state, PP_GLOBAL const uint32_t* lookups, PP_GLOBAL const uint32_t* start, PP_GLOBAL uint32_t* v, PP_GLOBAL uint32_t* opv, PP_GLOBAL uint32_t* lob, PP_GLOBAL uint32_t* plast,
-                       PP_GLOBAL uint32_t* pend, PP_GLOBAL uint32_t* pjoin, PP_GLOBAL uint32_t* joined, PP_GLOBAL uint32_t* trn, PP_GLOBAL uint32_t* ovr, PP_GLOBAL uint32_t* grid, PP_GLOBAL const uint32_t* list, uint32_t ln,
-                       UKL_LOCAL LpRun* rp, uint32_t idle_polls __UKL_PARAMS) {
+                       PP_GLOBAL uint32_t* pend, PP_GLOBAL uint32_t* pjoin, PP_GLOBAL uint32_t* joined, PP_GLOBAL uint32_t* trn, PP_GLOBAL uint32_t* ovr, PP_GLOBAL const uint32_t* list, uint32_t ln,
+                       UKL_LOCAL LpRun* rp __UKL_PARAMS) {
     // The items taken from the unit's queue (`lp_wq`, decision 0613 §4): its pieces, then the requests they
     // post and the pieces read again, a SIMD group's lane 0 taking the next while one is left: a group that
     // ends a short item takes another, so the team's groups end together whatever the items' lengths (a
     // group a window of 32 tokens ran 1.5 times the even share on `tif_getimage.c`, 2026-11-22). A group that
     // finds nothing to take ends at once (decision 0540 step 7): it never polls for others' posts, since a group
     // that posts is still reading and takes on. `ln` is the lane.
-    (void)list; (void)idle_polls; (void)grid;
+    (void)list;
     UklWorkQueue q = lp_wq(a);
     if (ln == 0u) { rp->sc_cap = 0u; rp->sp_cap = 0u; }
     for (;;) {
@@ -3525,7 +3519,7 @@ UKL_INLINE void lp_run(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint
         } else if (kind == LQ_FIN) {
             if (ln == 0u) lp_rq_finish(a, trn, x);
         } else {
-            lp_piece(u, a, ops, state, lookups, start, v, opv, lob, plast, pend, pjoin, joined, trn, ovr, grid, s0, kind == LQ_REQ ? x : LP_NONE, kind == LQ_AGAIN, rp, ln == 0u, ln, 0u __UKL_ARGS);
+            lp_piece(u, a, ops, state, lookups, start, v, opv, lob, plast, pend, pjoin, joined, trn, ovr, s0, kind == LQ_REQ ? x : LP_NONE, kind == LQ_AGAIN, rp, ln == 0u, ln, 0u __UKL_ARGS);
         }
         if (ln == 0u) ukl_wq_done(q);
     }

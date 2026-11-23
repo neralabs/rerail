@@ -1,6 +1,6 @@
 // Macro expansion on the device (decision 0448): the setup (the definitions, from the tapes in
 // place) and, later, the execution. After `pp_eval.uglykl` (the tape reader, the names, the
-// directives) and `pp_search.uglykl` (the searches); the scans and sorts are `ukl/grid.h`'s.
+// directives) and `pp_search.uglykl` (the searches); the scans and sorts are `ukl/stages.h`'s (decision 0653).
 
 // --- Setup: the definitions --------------------------------------------------------------------
 //
@@ -734,7 +734,6 @@ UKL_INLINE void pe_lookups(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint
 #define X_VA_OPT (512u)
 #define X_RELEX (1024u)
 #define X_SPLICE (2048u)
-#define X_BARRIER (4096u)
 // `#` or `##` of `__COUNTER__`'s value (a macro's argument that expanded to it): its digits are
 // written once the pass's uses are placed, after the pastes read them (decision 0485 §3).
 #define X_COUNTER_SPELLED (8192u)

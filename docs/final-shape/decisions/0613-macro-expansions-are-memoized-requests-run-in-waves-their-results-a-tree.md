@@ -7,6 +7,9 @@ after each is done. And so on, while there is still expansion work to be done. [
 the expansions and identify how we can create a tree-like structure for intermediate expansions"). Builds on 0588's
 loop, which stays as the executor of one request. It does not bring back 0527's rounds (§5).
 
+> **Superseded in part by 0653 (2026-11-23):** §4's helpers (`lp_help`, `PG_HELP`) are gone; the loop's own queue
+> (`LPQ`) is as before.
+
 ## Intro
 
 0588 gives each top stretch ("piece") to one lane group, which runs clang's reader over it to the end. The piece's

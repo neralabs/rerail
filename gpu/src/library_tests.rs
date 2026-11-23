@@ -702,153 +702,58 @@ fn hash_tables_build_and_probe() {
     assert_eq!(keys.len(), 64, "{}: each slot holds a distinct key", crate::device::backend());
 }
 
-/// The grids a grid test runs at: 1, 8 and 32 groups, and the device's resident count for `f` at `lsz` threads a
-/// group (`ComputeFunction::resident_groups`, R5 of decision 0468), when the device says it; none past it.
-fn grid_sizes(f: &crate::device::ComputeFunction, lsz: u32) -> Vec<u32> {
-    let mut g = vec![1u32, 8, 32];
-    if let Some(r) = crate::shared::get().and_then(|s| f.resident_groups(&s.device, lsz, 0)) {
-        eprintln!("{}: the device holds {r} groups of {lsz} of the kernel", crate::device::backend());
-        // A grid past what the device holds fails its barrier by design (`a_grid_past_residency_fails_its_barrier`):
-        // a small GPU's (a Radeon 680M's six work-group processors) is below 32 groups of some kernels.
-        g.retain(|&n| n as u64 <= r);
-        if !g.contains(&(r as u32)) {
-            g.push(r as u32);
-        }
+/// The tiles a stage test runs its tiled stages at (`ukl/stages.h`: a launch a stage, a group a tile).
+const STAGE_TILES: [u32; 3] = [1, 8, 32];
+
+/// `ukl/stages.h`'s `UKL_STAGE_SMALL`: at most this many values, one tile's stage alone.
+const STAGE_SMALL: u32 = 4096;
+
+/// One stage of `f` (`t_stage_*`), `groups` groups of `lsz` threads, its buffers `rows`.
+fn stage(q: &ComputeQueue, f: &crate::device::ComputeFunction, args: TestArgs, rows: &[(&str, &crate::device::Buffer)], groups: u32, lsz: u32) {
+    let mut l = launch(q, f).value("args", &args);
+    for &(name, b) in rows {
+        l = l.buffer(name, b);
     }
-    g
+    l.run(&[groups as u64], &[lsz as u64]).unwrap();
 }
 
-/// A grid's control words, zero (`ukl/grid.h`).
-fn grid_ctl() -> crate::device::Buffer {
-    buffer_of(&[0u32; 4]).unwrap()
-}
-
-/// The groups that took part in a grid (`ukl_grid_join`: its tickets, the count closed).
-fn grid_joined(c: &[u32]) -> u32 {
-    assert_ne!(c[3] & 0x8000_0000, 0, "{}: the grid's count was closed", crate::device::backend());
-    c[3] & 0x7fff_ffff
-}
-
-/// R6 of decision 0468: 10,000 grid barriers in a row, at 1, 8 and 32 groups and the device's resident count, each round's reads seeing every
-/// group's writes before it, and no barrier failed.
+/// R5 of decision 0468, decision 0653: the stages' exclusive scan equals the host's from 0 to 10^6 values, across
+/// tile and share boundaries, at 32 and 256 threads a group, its count read on the device: one tile's stage alone where
+/// it holds the values, and the three stages (the tiles' sums, their scan by one tile, the shares) at 1, 8 and 32
+/// tiles.
 #[test]
-fn grid_barriers_see_every_groups_writes() {
+fn the_stages_scan_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
-    let lsz = 256u32.min(crate::device::max_threadgroup());
-    for groups in grid_sizes(p.function("t_grid_barrier").unwrap(), lsz) {
-        // The CPU backend's groups take turns in a fixed order (coroutines), so a few rounds test all its orders do;
-        // a GPU's many rounds are for the races its groups run.
-        let rounds = if crate::device::backend() == "CPU" { 100 } else { 5_000u32 };
-        let (ctl, slots, out) = (grid_ctl(), alloc::<u32>((groups * lsz) as usize).unwrap(), buffer_of(&vec![0u32; groups as usize]).unwrap());
-        launch(&q, p.function("t_grid_barrier").unwrap())
-            .value("args", &TestArgs { n: rounds, w: groups })
-            .buffer("ctl", &ctl)
-            .buffer("slots", &slots)
-            .buffer("out", &out)
-            .run(&[groups as u64], &[lsz as u64])
-            .unwrap();
-        q.flush().await_().unwrap();
-        let c: Vec<u32> = read(&ctl, 4);
-        let wrong: Vec<u32> = read(&out, groups as usize);
-        eprintln!("{}: {groups} groups dispatched, {} took part; arrived {}, generation {} (barrier {}), failed {}", crate::device::backend(), c[3] & 0x7fff_ffff, c[0], c[1], c[1] / 2, c[2]);
-        assert_eq!(c[2], 0, "{}: {groups} groups: a barrier failed, at generation {} of {}", crate::device::backend(), c[1], 4 * rounds);
-        // A grid of one group waits at its threadgroup's barrier, and writes no control word (`ukl/grid.h`).
-        let want = if grid_joined(&c) == 1 { 0 } else { 4 * rounds };
-        assert_eq!(c[1], want, "{}: {groups} groups: the barriers' generation (two a barrier)", crate::device::backend());
-        assert!(wrong.iter().all(|&w| w == 0), "{}: {groups} groups: reads before the barrier's writes: {wrong:?}", crate::device::backend());
-    }
-}
-
-/// R6, decision 0540 §3: a dispatch past what the device holds at once is a grid of the groups that run: they join,
-/// the rest end at once, and its barriers pass, each round's reads seeing every grid group's writes.
-#[test]
-fn a_grid_past_residency_is_the_groups_that_run() {
-    let Some((p, mut q)) = setup() else { return };
-    let lsz = 1024u32.min(crate::device::max_threadgroup());
-    let groups = 4096u32;
-    let (ctl, slots, out) = (grid_ctl(), alloc::<u32>((groups * lsz) as usize).unwrap(), buffer_of(&vec![0u32; groups as usize]).unwrap());
-    let start = std::time::Instant::now();
-    launch(&q, p.function("t_grid_barrier").unwrap())
-        .value("args", &TestArgs { n: 4, w: groups })
-        .buffer("ctl", &ctl)
-        .buffer("slots", &slots)
-        .buffer("out", &out)
-        .run(&[groups as u64], &[lsz as u64])
-        .unwrap();
-    q.flush().await_().unwrap();
-    let c: Vec<u32> = read(&ctl, 4);
-    let joined = grid_joined(&c);
-    let wrong: Vec<u32> = read(&out, groups as usize);
-    eprintln!("{}: {groups} groups of {lsz}: {joined} took part, failed {}, after {:?}", crate::device::backend(), c[2], start.elapsed());
-    assert_eq!(c[2], 0, "{}: a grid of {joined} of {groups} groups of {lsz} failed a barrier", crate::device::backend());
-    assert!((1..=groups).contains(&joined), "{}: {joined} groups of {groups}", crate::device::backend());
-    // A grid of one group writes no control word at a barrier (its threadgroup's: `ukl/grid.h`).
-    assert_eq!(c[1], if joined == 1 { 0 } else { 4 * 4 }, "{}: the barriers' generation (two a barrier)", crate::device::backend());
-    assert!(wrong.iter().all(|&w| w == 0), "{}: reads before the barrier's writes: {wrong:?}", crate::device::backend());
-}
-
-/// Decision 0540 §3 on the CPU backend (t51 item 4): its groups take turns at a yield, and it knows how many run at
-/// once (the launch's `resident`). A dispatch of four times that many has exactly that many in its grid (not the
-/// first group alone, as a window that yields nowhere gave), and its barriers pass.
-#[test]
-fn the_cpus_grid_is_its_resident_groups() {
-    let Some((p, mut q)) = setup() else { return };
-    if crate::device::backend() != "CPU" {
-        return;
-    }
-    let lsz = 256u32;
-    let f = p.function("t_grid_barrier").unwrap();
-    let resident = crate::shared::get().and_then(|s| s.device.resident_groups(lsz, f.threadgroup_bytes())).expect("the CPU's resident count") as u32;
-    let groups = 4 * resident;
-    let (ctl, slots, out) = (grid_ctl(), alloc::<u32>((groups * lsz) as usize).unwrap(), buffer_of(&vec![0u32; groups as usize]).unwrap());
-    launch(&q, f)
-        .value("args", &TestArgs { n: 4, w: groups })
-        .buffer("ctl", &ctl)
-        .buffer("slots", &slots)
-        .buffer("out", &out)
-        .run(&[groups as u64], &[lsz as u64])
-        .unwrap();
-    q.flush().await_().unwrap();
-    let c: Vec<u32> = read(&ctl, 4);
-    assert_eq!(c[2], 0, "a barrier failed");
-    assert_eq!(grid_joined(&c), resident, "the grid is the {resident} groups that run at once, of {groups}");
-    assert_eq!(c[1], 4 * 4, "the barriers' generation (two a barrier)");
-    let wrong: Vec<u32> = read(&out, groups as usize);
-    assert!(wrong.iter().all(|&w| w == 0), "reads before the barrier's writes: {wrong:?}");
-}
-
-/// R5 of decision 0468: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share
-/// boundaries, at 1, 8 and 32 groups and the device's resident count of 32 and of 256 threads, its count read on the
-/// device.
-#[test]
-fn the_grid_scan_equals_the_host() {
-    let Some((p, mut q)) = setup() else { return };
+    let f = p.function("t_stage_scan").unwrap();
     let mut rng = Rng(41);
     // A group of one SIMD group (the CPU's: its scans one operation a tile), and a GPU's.
     for lsz in [32u32, 256u32.min(crate::device::max_threadgroup())] {
-        for groups in grid_sizes(p.function("t_grid_scan").unwrap(), lsz) {
+        // 0: one tile's stage alone.
+        for tiles in [0u32, 1, 8, 32] {
             for n in [0u32, 1, 255, 256, 257, 8 * 256 + 3, 65_537, 1_000_000] {
+                if tiles == 0 && n > STAGE_SMALL {
+                    continue;
+                }
                 let vals: Vec<u32> = (0..n).map(|_| if n % 2 == 1 { rng.next() as u32 } else { rng.below(5) as u32 }).collect();
                 // The buffers have room past the count: the scan reads `count`, not their length.
                 let cap = n + 100;
                 let mut padded = vals.clone();
                 padded.resize(cap as usize, 7);
-                let (ctl, count, inb, out, sums) = (grid_ctl(), buffer_of(&[n]).unwrap(), buffer_of(&padded).unwrap(), alloc::<u32>(cap as usize + 1).unwrap(), alloc::<u32>(groups as usize + 1).unwrap());
-                launch(&q, p.function("t_grid_scan").unwrap())
-                    .value("args", &TestArgs { n: cap, w: groups })
-                    .buffer("ctl", &ctl)
-                    .buffer("count", &count)
-                    .buffer("in", &inb)
-                    .buffer("out", &out)
-                    .buffer("sums", &sums)
-                    .run(&[groups as u64], &[lsz as u64])
-                    .unwrap();
+                let (count, inb, out, sums) = (buffer_of(&[n]).unwrap(), buffer_of(&padded).unwrap(), alloc::<u32>(cap as usize + 1).unwrap(), alloc::<u32>(4 * 256 + 4).unwrap());
+                let rows = [("count", &count), ("in", &inb), ("out", &out), ("sums", &sums)];
+                let a = |w: u32| TestArgs { n: cap, w };
+                if tiles == 0 {
+                    stage(&q, f, a(0), &rows, 1, lsz);
+                } else {
+                    stage(&q, f, a(1), &rows, tiles, lsz);
+                    stage(&q, f, a(2 | tiles << 8), &rows, 1, lsz);
+                    stage(&q, f, a(3), &rows, tiles, lsz);
+                }
                 q.flush().await_().unwrap();
-                assert_eq!(read::<u32>(&ctl, 3)[2], 0, "{}: {groups} groups of {lsz}, {n}: a barrier failed", crate::device::backend());
                 let got: Vec<u32> = read(&out, n as usize + 1);
                 let mut run = 0u32;
                 for i in 0..=n as usize {
-                    assert_eq!(got[i], run, "{}: {groups} groups of {lsz}, scan of {n}, at {i}", crate::device::backend());
+                    assert_eq!(got[i], run, "{}: {tiles} tiles of {lsz}, scan of {n}, at {i}", crate::device::backend());
                     if i < n as usize {
                         run = run.wrapping_add(vals[i]);
                     }
@@ -858,38 +763,40 @@ fn the_grid_scan_equals_the_host() {
     }
 }
 
-/// R5: the grid's segmented scans (add and max) equal the host's from 0 to 10^6 values, heads dense and sparse, at
-/// 1, 8 and 32 groups of 32 and of 256 threads.
+/// R5, decision 0653: the stages' segmented scans (add and max) equal the host's from 0 to 10^6 values, heads dense
+/// and sparse, at 32 and 256 threads a group: one tile's stage alone where it holds them, and the three stages (the
+/// tiles' aggregates, their carries by one thread, the shares) at 1, 8 and 32 tiles.
 #[test]
-fn the_grid_segmented_scans_equal_the_host() {
+fn the_stages_segmented_scans_equal_the_host() {
     let Some((p, mut q)) = setup() else { return };
+    let f = p.function("t_stage_seg").unwrap();
     let mut rng = Rng(43);
-    // A group of one SIMD group (the CPU's: its scans one operation a tile), and a GPU's.
     for lsz in [32u32, 256u32.min(crate::device::max_threadgroup())] {
-        for groups in grid_sizes(p.function("t_grid_seg").unwrap(), lsz) {
+        for tiles in [0u32, 1, 8, 32] {
             for n in [0u32, 1, 255, 257, 8 * 256 + 3, 65_537, 1_000_000] {
+                if tiles == 0 && n > STAGE_SMALL {
+                    continue;
+                }
                 for op in [0u32, 1] {
                     let vals: Vec<u32> = (0..n).map(|_| rng.below(1000) as u32).collect();
                     let every = [2u64, 50, 100_000][rng.below(3) as usize];
                     let heads: Vec<u32> = (0..n).map(|_| u32::from(rng.below(every) == 0)).collect();
-                    let (ctl, count, inb, hb, out, sums) = (grid_ctl(), buffer_of(&[n]).unwrap(), buffer_of(&vals).unwrap(), buffer_of(&heads).unwrap(), alloc::<u32>(n as usize).unwrap(), alloc::<u32>(2 * groups as usize).unwrap());
-                    launch(&q, p.function("t_grid_seg").unwrap())
-                        .value("args", &TestArgs { n: n.max(1), w: groups | op << 16 })
-                        .buffer("ctl", &ctl)
-                        .buffer("count", &count)
-                        .buffer("in", &inb)
-                        .buffer("heads", &hb)
-                        .buffer("out", &out)
-                        .buffer("sums", &sums)
-                        .run(&[groups as u64], &[lsz as u64])
-                        .unwrap();
+                    let (count, inb, hb, out, sums) = (buffer_of(&[n]).unwrap(), buffer_of(&vals).unwrap(), buffer_of(&heads).unwrap(), alloc::<u32>(n as usize).unwrap(), alloc::<u32>(2 * 256).unwrap());
+                    let rows = [("count", &count), ("in", &inb), ("heads", &hb), ("out", &out), ("sums", &sums)];
+                    let a = |w: u32| TestArgs { n: n.max(1), w: w | op << 16 };
+                    if tiles == 0 {
+                        stage(&q, f, a(0), &rows, 1, lsz);
+                    } else {
+                        stage(&q, f, a(1), &rows, tiles, lsz);
+                        stage(&q, f, a(2 | tiles << 8), &rows, 1, lsz);
+                        stage(&q, f, a(3), &rows, tiles, lsz);
+                    }
                     q.flush().await_().unwrap();
-                    assert_eq!(read::<u32>(&ctl, 3)[2], 0, "{}: {groups} groups of {lsz}, {n}: a barrier failed", crate::device::backend());
                     let got: Vec<u32> = read(&out, n as usize);
                     let mut run = 0u32;
                     for i in 0..n as usize {
                         run = if heads[i] != 0 || i == 0 { vals[i] } else if op == 0 { run.wrapping_add(vals[i]) } else { run.max(vals[i]) };
-                        assert_eq!(got[i], run, "{}: {groups} groups of {lsz}, op {op}, segmented scan of {n}, at {i}", crate::device::backend());
+                        assert_eq!(got[i], run, "{}: {tiles} tiles of {lsz}, op {op}, segmented scan of {n}, at {i}", crate::device::backend());
                     }
                 }
             }
@@ -897,56 +804,65 @@ fn the_grid_segmented_scans_equal_the_host() {
     }
 }
 
-/// R5: the grid's sort is stable and equals the host's from 0 to 10^6 keys, at 8 to 64 bits, at 1, 8 and 32 groups and the device's resident count;
-/// the few rows' path (ranks over the grid) at 1 to 32 groups; and a sort told its rows' low bits are in order.
+/// R5, decision 0653: the stages' sort is stable and equals the host's from 0 to 10^6 keys, at 8 to 64 bits, at 1, 8
+/// and 32 tiles: the few rows' path (each row's rank, then a move where they end), and the radix passes (the varying
+/// bits, then each varying digit's histograms, their scan and the scatter, then a move where they end), a digit that
+/// does not vary not passed.
 #[test]
-fn the_grid_sort_is_stable_and_equals_the_host() {
+fn the_stages_sort_is_stable_and_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     if crate::device::max_threadgroup() < 256 {
         return;
     }
+    let (f, scan) = (p.function("t_stage_sort").unwrap(), p.function("t_stage_scan").unwrap());
     let mut rng = Rng(47);
-    for groups in grid_sizes(p.function("t_grid_sort").unwrap(), 256) {
+    for tiles in STAGE_TILES {
         // 4,099 keys of 64 bits that differ only in their low byte and in bit 40: two of the eight digits vary, so
         // the sort runs two passes and moves nothing; 4,101 differ in the low byte alone: one pass, then a move to
         // where an even count of digits leaves the rows.
-        // `low`: keys whose low bits are their index (in order already), a random part above.
-        for (n, low, bits) in [(0u32, 0u32, 8u32), (1, 0, 8), (200, 0, 64), (1023, 0, 16), (1025, 0, 24), (4099, 0, 64), (4101, 0, 64), (70_001, 0, 40), (1_000_000, 0, 64), (900, 32, 64), (70_001, 24, 40)] {
-            // The CPU backend runs each thread as a coroutine: a million keys at every grid take minutes there, and
-            // 70,001 already crosses every tile and group boundary the million does.
+        for (n, bits) in [(0u32, 8u32), (1, 8), (200, 64), (1023, 16), (1025, 24), (4099, 64), (4101, 64), (70_001, 40), (1_000_000, 64)] {
+            // The CPU backend runs each thread as a coroutine: a million keys take minutes there, and 70,001 already
+            // crosses every tile boundary the million does.
             if n > 100_000 && crate::device::backend() == "CPU" {
                 continue;
             }
             let narrow = |k: u64| match n {
                 4099 => 0x5a5a_0000_0000_0000 | (k & 0xff) | (k & 1 << 40),
                 4101 => 0x5a5a_0000_0000_0000 | (k & 0xff),
-                _ if low > 0 => (k << low) & if bits == 64 { !0 } else { (1u64 << bits) - 1 },
                 _ => k,
             };
-            let keys: Vec<u64> = (0..n as u64).map(|i| if low > 0 { narrow(rng.next() & 0xffff) | i } else { narrow(rng.next() & if bits == 64 { !0 } else { (1u64 << bits) - 1 } & if rng.below(2) == 0 { 0xff } else { !0 }) }).collect();
-            let tiles = n.div_ceil(1024).max(1);
-            let (ctl, count, kb, vb, k2, v2) = (grid_ctl(), buffer_of(&[n]).unwrap(), buffer_of(&keys).unwrap(), alloc::<u32>(n as usize).unwrap(), alloc::<u64>(n as usize).unwrap(), alloc::<u32>(n as usize).unwrap());
-            let (hist, sums) = (alloc::<u32>(256 * tiles as usize + 1).unwrap(), alloc::<u32>(4 * groups as usize + 4).unwrap());
-            launch(&q, p.function("t_grid_sort").unwrap())
-                .value("args", &TestArgs { n: n.max(1), w: groups | bits << 16 | low << 24 })
-                .buffer("ctl", &ctl)
-                .buffer("count", &count)
-                .buffer("keys", &kb)
-                .buffer("values", &vb)
-                .buffer("keys2", &k2)
-                .buffer("values2", &v2)
-                .buffer("hist", &hist)
-                .buffer("sums", &sums)
-                .run(&[groups as u64], &[256])
-                .unwrap();
+            let keys: Vec<u64> = (0..n as u64).map(|_| narrow(rng.next() & if bits == 64 { !0 } else { (1u64 << bits) - 1 } & if rng.below(2) == 0 { 0xff } else { !0 })).collect();
+            let rtiles = n.div_ceil(1024).max(1);
+            let (count, ctl, kb, vb, k2, v2) = (buffer_of(&[n]).unwrap(), buffer_of(&[0u32, 0, 0, tiles]).unwrap(), buffer_of(&keys).unwrap(), alloc::<u32>(n as usize).unwrap(), alloc::<u64>(n as usize).unwrap(), alloc::<u32>(n as usize).unwrap());
+            let (hist, sums, hcount) = (alloc::<u32>(256 * rtiles as usize + 1).unwrap(), alloc::<u32>(4 * 256 + 4).unwrap(), buffer_of(&[256 * rtiles]).unwrap());
+            let rows = [("count", &count), ("ctl", &ctl), ("keys", &kb), ("values", &vb), ("keys2", &k2), ("values2", &v2), ("hist", &hist), ("sums", &sums)];
+            let a = |w: u32| TestArgs { n: n.max(1), w: w | bits << 8 };
+            if n <= 1024 {
+                stage(&q, f, a(0), &rows, tiles, 256);
+                stage(&q, f, a(6 | 1 << 16), &rows, tiles, 256);
+            } else {
+                stage(&q, f, a(1), &rows, tiles, 256);
+                stage(&q, f, a(2), &rows, 1, 256);
+                // The histograms' scan, in place, its total past them.
+                let hrows = [("count", &hcount), ("in", &hist), ("out", &hist), ("sums", &sums)];
+                let h = TestArgs { n: 256 * rtiles, w: 0 };
+                for d in 0..bits.div_ceil(8) {
+                    stage(&q, f, a(3 | d << 4), &rows, tiles, 256);
+                    stage(&q, scan, TestArgs { w: 1, ..h }, &hrows, tiles, 256);
+                    stage(&q, scan, TestArgs { w: 2 | tiles << 8, ..h }, &hrows, 1, 256);
+                    stage(&q, scan, TestArgs { w: 3, ..h }, &hrows, tiles, 256);
+                    stage(&q, f, a(4 | d << 4), &rows, tiles, 256);
+                    stage(&q, f, a(5 | d << 4), &rows, 1, 256);
+                }
+                stage(&q, f, a(6), &rows, tiles, 256);
+            }
             q.flush().await_().unwrap();
-            assert_eq!(read::<u32>(&ctl, 3)[2], 0, "{}: {groups} groups, {n}: a barrier failed", crate::device::backend());
             let even = bits.div_ceil(8) % 2 == 0;
             let (gk, gv): (Vec<u64>, Vec<u32>) = if even { (read(&kb, n as usize), read(&vb, n as usize)) } else { (read(&k2, n as usize), read(&v2, n as usize)) };
             let mut want: Vec<u32> = (0..n).collect();
             want.sort_by_key(|&i| keys[i as usize]);
-            assert_eq!(gv, want, "{}: {groups} groups, sort of {n} by {bits} bits: the order", crate::device::backend());
-            assert!(gk.iter().zip(&want).all(|(k, &i)| *k == keys[i as usize]), "{}: {groups} groups, {n}: the keys", crate::device::backend());
+            assert_eq!(gv, want, "{}: {tiles} tiles, sort of {n} by {bits} bits: the order", crate::device::backend());
+            assert!(gk.iter().zip(&want).all(|(k, &i)| *k == keys[i as usize]), "{}: {tiles} tiles, {n}: the keys", crate::device::backend());
         }
     }
 }

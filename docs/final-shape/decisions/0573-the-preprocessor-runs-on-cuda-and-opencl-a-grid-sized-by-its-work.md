@@ -4,6 +4,9 @@ Status: accepted (2026-11-21, the user: "first merge in the hub and the cuda sup
 cuda and opencl"). The preprocessor's device passes (0468) and its tests (0448) now run on NVIDIA's CUDA and OpenCL as
 on Metal and UKL's CPU backend. The kernels' source is unchanged. This record covers what running it there found.
 
+> **0653 (2026-11-23):** the grid sized by its work is now a phase's tiles sized by its work, at most the unit's
+> `TMAX`, on a queue its workers share.
+
 ## Intro
 
 pp's kernels are one UKL source (0468 §5), so CUDA and OpenCL were meant to need no change. The eval tests had been

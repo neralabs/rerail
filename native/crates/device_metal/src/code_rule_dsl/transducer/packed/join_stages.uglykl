@@ -1041,7 +1041,7 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
             if (lane == 0) r = clif_text_find(VC, 0ul, P[5], ksym);
             r = (uint64_t)ukl_sg_shuffle((uint32_t)r, 0u __UKL_ARGS) | ((uint64_t)ukl_sg_shuffle((uint32_t)(r >> 32), 0u __UKL_ARGS) << 32);
             if ((r & 3ul) == 0ul) {
-                // Another group's writes: read coherently (`ukl/grid.h`'s rule; Q367: a plain load of them can be
+                // Another group's writes: read coherently (Q367: a plain load of them can be
                 // stale, and the text read short, zeros past what was seen).
                 UKL_COHERENT const uint8_t* e = (UKL_COHERENT const uint8_t*)(VC + (r & ~3ul));
                 uint32_t len = *(UKL_COHERENT const uint32_t*)(e + 12) - 16u;

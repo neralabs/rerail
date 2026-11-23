@@ -26,7 +26,7 @@ fn the_library_tests_lower_and_vectorize() {
     let src = super::source("/<kernels>/library_tests.uglykl", LIBRARY_TESTS, &[]).unwrap();
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
-    for name in ["t_simd", "t_group", "t_lz4", "t_grid_sort", "t_workqueue_sg", "ukl_radix_u64_scatter"] {
+    for name in ["t_simd", "t_group", "t_lz4", "t_stage_sort", "t_workqueue_sg", "ukl_radix_u64_scatter"] {
         let k = p.kernel(name).unwrap_or_else(|| panic!("no kernel {name}"));
         assert!(p.stacks[k as usize] > 0, "{name}'s stack");
     }
