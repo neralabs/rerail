@@ -10682,3 +10682,25 @@ merged the hub through roll-up 72 (the crate split), so the merge is clean: no c
 
 Relax: the engine checks clean; the feeder's new tests pass: rerail-tests-corpus's 12, rerail-rr-root's contexts
 test, rerail-tests-rr's f-string guest, rerail-tests-lang's `visit_index` order, rerail-logic's guest-kind hide test.
+
+### Q507. Roll-up 80 (CUDA-support 7203302d47 onto Pulling-it-all-together): what the merge chose
+
+CUDA-support (7203302d47): HIP on AMD's driver (0440), UKL's matrix fragments and dot products (0617), and a join
+program's worker that compiles under NVRTC. django-bugs (3e487a00f4, 0603, already in the hub) had made `join_run`
+compile for CUDA too, another way, so the two clashed in the kernel source and in `ukl/backend.h`, where the
+automatic merge kept both sets of coherent atomic overloads, which redefine each other on CUDA. **The user chose
+CUDA-support's mechanism** (asked 2026-11-22):
+- **`ukl/backend.h`**: one set of coherent atomic overloads for both C++ backends whose coherence is a qualifier
+  (Metal's `coherent(device)`, CUDA's and HIP's `volatile`); the CUDA-only set goes.
+- **`join_stages.uglykl`**: `LatP`, a structure of integers alone, is read whole by `clif_struct` (one coherent load
+  per 8-byte word; a copy on Metal); `lat_load` goes. `GateCheck` and `RoundOp` hold pointers, so they keep
+  django-bugs' reads field by field through `p`. A coherent load of a structure holding pointers crashed the M1's
+  Metal compiler (f327c559dc, `UKL_WORD_RECORD`), and on Metal `clif_struct` is that load. The gate keeps 0603's
+  mapped rooms (`has` bit 1, the park flag 128).
+
+Red tests found on the way, fixed: the device setfix tests of 0603 (roll-up 73) set `RERAIL_PROGRAM_BUDGET`,
+`RERAIL_PROGRAM_ARENA` and `RERAIL_ROOMS_MAPPED` through `switches::set` (roll-up 74's lists), but `metal_join` read
+them with `std::env::var`. They are now read through `profile::var` and listed in SCOPED.
+
+Relax: the engine checks clean; the device setfix tests pass on the CPU backend (27, `RERAIL_GPU=cpu`: UKL's CPU
+build of `join_stages`). CUDA, HIP and Metal are farm-only.

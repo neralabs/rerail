@@ -1448,17 +1448,6 @@ typedef struct LatP { int64_t top; uint32_t n; uint32_t had; uint32_t nkeys; uin
                       uint32_t omask; uint32_t counted; uint64_t r_at, r_rows_at, h_at, h0_at; } LatP;
 UKL_REFLECT_STRUCT(LatP, top, n, had, nkeys, code, after, pmask, hmask, level, omask, counted, r_at, r_rows_at, h_at, h0_at)
 UKL_STATIC_ASSERT(sizeof(LatP) == 80, "LatP: size");
-// A fold's parameters read where its job holds them (`JSPACE`, coherent: a size script writes some of their words),
-// a field at a time: C++ (CUDA) copies no `volatile` struct whole.
-UKL_INLINE LatP lat_load(JSPACE const LatP* pp)
-{
-    LatP p;
-    p.top = pp->top; p.n = pp->n; p.had = pp->had; p.nkeys = pp->nkeys; p.code = pp->code; p.after = pp->after;
-    p.pmask = pp->pmask; p.hmask = pp->hmask; p.level = pp->level; p.omask = pp->omask; p.counted = pp->counted;
-    p.r_at = pp->r_at; p.r_rows_at = pp->r_rows_at; p.h_at = pp->h_at; p.h0_at = pp->h0_at;
-    return p;
-}
-
 // The relation `R`'s row `row` in column `c`, and the place to write it: `R` is a relation in its block
 // (decision 0325 step 5), its descriptor at `r_at`, its rows' at `r_rows_at`; written through the writer written
 // once, bounded by its chunks (decision 0463).
@@ -1480,7 +1469,8 @@ UKL_INLINE bool lat_same(Longs T, uint32_t stride, uint32_t a, uint32_t b, uint3
 
 UKL_INLINE void lat_clear_one(JSPACE uint32_t* P, JSPACE uint32_t* best, JSPACE uint32_t* flags, JSPACE const LatP* pp, uint32_t i)
 {
-    LatP p = lat_load(pp);
+    LatP p;
+    clif_struct(LatP, p, pp);
     if (i > p.pmask) return;
     P[i] = 0xffffffffu;
     best[i] = 0xffffffffu;
@@ -1490,7 +1480,8 @@ UKL_INLINE void lat_clear_one(JSPACE uint32_t* P, JSPACE uint32_t* best, JSPACE 
 // The key map's slot `i` emptied (a map new, or grown).
 UKL_INLINE void lat_hclear_one(JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t i)
 {
-    LatP p = lat_load(pp);
+    LatP p;
+    clif_struct(LatP, p, pp);
     if (i > p.hmask) return;
     JSPACE uint32_t* H = (JSPACE uint32_t*)(HB + p.h_at);
     H[3 * i] = 0xffffffffu;
@@ -1502,7 +1493,8 @@ UKL_INLINE void lat_hclear_one(JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32
 // changes and round with it); its key read in `R`'s row.
 UKL_INLINE void lat_rehash_one(JSPACE const uint8_t* R, JSPACE const uint8_t* OB, JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t s)
 {
-    LatP p = lat_load(pp);
+    LatP p;
+    clif_struct(LatP, p, pp);
     if (s > p.omask) return;
     JSPACE const uint32_t* O = (JSPACE const uint32_t*)(OB + p.h0_at);
     uint32_t t = O[3 * s];
@@ -1524,7 +1516,8 @@ UKL_INLINE void lat_rehash_one(JSPACE const uint8_t* R, JSPACE const uint8_t* OB
 
 UKL_INLINE void lat_claim_one(Longs U, JSPACE uint32_t* P, JSPACE const uint32_t* cnt, JSPACE const LatP* pp, uint32_t x)
 {
-    LatP p = lat_load(pp);
+    LatP p;
+    clif_struct(LatP, p, pp);
     // Its rows: `n` (the stride of `U`'s columns), or as many as the word an earlier phase wrote (`counted`).
     if (x >= ((p.counted & 1u) != 0u ? ukl_min(*cnt, p.n) : p.n)) return;
     int64_t key[8];
@@ -1584,7 +1577,8 @@ UKL_INLINE bool lat_better(UKL_PRIVATE const LatP* p, JSPACE uint32_t* A, int64_
 UKL_INLINE void lat_best_one(Longs U, JSPACE const uint32_t* P, JSPACE uint32_t* best, JSPACE uint32_t* flags, JSPACE uint32_t* A, JSPACE const uint32_t* cnt,
                          JSPACE const LatP* pp, uint32_t x)
 {
-    LatP p = lat_load(pp);
+    LatP p;
+    clif_struct(LatP, p, pp);
     // Its rows: `n` (the stride of `U`'s columns), or as many as the word an earlier phase wrote (`counted`).
     if (x >= ((p.counted & 1u) != 0u ? ukl_min(*cnt, p.n) : p.n)) return;
     uint32_t s = lat_place(U, P, &p, x);
@@ -1625,7 +1619,8 @@ UKL_INLINE void lat_merge_one(Longs U, JSPACE const uint32_t* P, JSPACE const ui
                           JSPACE int64_t* D, JSPACE uint32_t* counters, JSPACE uint32_t* A, JSPACE const uint32_t* round, JSPACE const LatP* pp, uint32_t s)
 {
     // Its parameter block, a private copy (helpers take its address).
-    LatP p = lat_load(pp);
+    LatP p;
+    clif_struct(LatP, p, pp);
     // A relation grown on the device (`counted & 2`): its rows held are its length as the device claimed it; its
     // round (`counted & 4`) the program's round word (decision 0603 step 3).
     if ((p.counted & 2u) != 0u) p.had = clif_rows_len((JSPACE const uint8_t*)R, p.r_rows_at);
@@ -1707,7 +1702,8 @@ typedef struct GateP { uint32_t m, pad0, pad1, pad2; GateCheck check[1]; } GateP
 UKL_INLINE void gate_one(JSPACE const GateP* p, UKL_GLOBAL uint32_t* ctl, uint32_t t)
 {
     if (t >= p->m) return;
-    // Its fields read through `p` (coherent, `JSPACE`): C++ (CUDA) copies no `volatile` struct whole.
+    // Its fields read through `p` (coherent, `JSPACE`), not whole (`clif_struct`): it holds pointers, and a coherent
+    // load of a structure holding pointers crashed the M1's Metal compiler (`UKL_WORD_RECORD`, ukl/backend.h).
     JSPACE const GateCheck* c = &p->check[t];
     uint64_t n = (uint64_t)*c->count + ((c->has & 1u) != 0u ? (uint64_t)*c->plus : 0u);
     // A room mapped as its rows reach it (`has`' bit 1, `Batch::gate_rooms`): past it the program parks (flag 128),
@@ -1732,7 +1728,7 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
     for (uint32_t i = 0u; i < p->nops; i++) if (p->ops[i].op == 4u && *p->ops[i].from != 0u) any = true;
     uint32_t cur = *p->round;
     for (uint32_t i = 0u; i < p->nops; i++) {
-        // Its fields read through `p` (coherent): C++ (CUDA) copies no `volatile` struct whole.
+        // Its fields read through `p` (coherent), not whole (`clif_struct`): it holds pointers (as `gate_one`'s).
         JSPACE uint32_t* to = p->ops[i].to;
         JSPACE const uint32_t* from = p->ops[i].from;
         uint32_t op = p->ops[i].op, n = p->ops[i].n;

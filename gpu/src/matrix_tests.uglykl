@@ -1,0 +1,114 @@
+// ukl/matrix.h's test kernels (decision 0617, requirements R1-R6 and R9): each owner of a threadgroup takes the
+// fragments of one 64×64 block of C, and `matrix_tests.rs` checks the block against the host's product.
+
+#include <ukl/matrix.h>
+
+typedef struct MmaArgs {
+    // A is 64×K, B is K×64, C is 64×64; K a multiple of 16.
+    uint32_t K;
+    // The layouts of A, B and C (`UKL_ROW_MAJOR`, `UKL_COL_MAJOR`).
+    uint32_t la;
+    uint32_t lb;
+    uint32_t lc;
+    // 1: the block by level 2 (`ukl_gemm_tile`), owner 0 alone; 0: by level 1, the fragments shared by the owners.
+    uint32_t tile;
+    // 1: A and B read from threadgroup memory (`_local` loads; K at most 32).
+    uint32_t shared_mem;
+} MmaArgs;
+UKL_REFLECT_STRUCT(MmaArgs, K, la, lb, lc, tile, shared_mem)
+
+// The shapes the backend gives each type, its SIMD width and an emulated owner's lanes (R1).
+DEFINE_KERNEL2(tests, t_mma_consts,
+               RWBUFFER, uint32_t, out, "[18]",
+               GID0,     uint32_t, i,   )
+{
+    if (i != 0u)
+        return;
+    uint32_t k = 0u;
+    out[k++] = UKL_MMA_M(f16); out[k++] = UKL_MMA_N(f16); out[k++] = UKL_MMA_K(f16);
+    out[k++] = UKL_MMA_GROUPS(f16); out[k++] = UKL_MMA_NATIVE(f16);
+    out[k++] = UKL_MMA_M(bf16); out[k++] = UKL_MMA_N(bf16); out[k++] = UKL_MMA_K(bf16);
+    out[k++] = UKL_MMA_GROUPS(bf16); out[k++] = UKL_MMA_NATIVE(bf16);
+    out[k++] = UKL_MMA_M(i8); out[k++] = UKL_MMA_N(i8); out[k++] = UKL_MMA_K(i8);
+    out[k++] = UKL_MMA_GROUPS(i8); out[k++] = UKL_MMA_NATIVE(i8);
+    out[k++] = UKL_SIMD_WIDTH; out[k++] = UKL_MMA_LANES; out[k++] = UKL_MMA_BLOCK;
+}
+
+// C (as it holds) += A · B over one 64×64 block, for type `T` into `C` (`CT` in memory), `ET` A's and B's elements.
+#define T_MMA_KERNEL(T, C, CT, ET)                                                                                      \
+    DEFINE_KERNEL2(tests, t_mma_##T,                                                                                    \
+                   ARGS,     MmaArgs, args, ,                                                                           \
+                   ROBUFFER, ET,      A,    "[64 * K]",                                                                 \
+                   ROBUFFER, ET,      B,    "[64 * K]",                                                                 \
+                   RWBUFFER, CT,      Cm,   "[64 * 64]",                                                                \
+                   SHARED,   ET,      As,   64 * 32,                                                                    \
+                   SHARED,   ET,      Bs,   64 * 32,                                                                    \
+                   LID0,     uint32_t, lid, ,                                                                           \
+                   LSZ0,     uint32_t, lsz, )                                                                           \
+    {                                                                                                                   \
+        UklMmaAt at = ukl_mma_at(lid);                                                                                  \
+        uint32_t owner = ukl_mma_owner(lid), owners = lsz / UKL_MMA_LANES;                                              \
+        uint32_t lda = args.la == UKL_ROW_MAJOR ? args.K : 64u, ldb = args.lb == UKL_ROW_MAJOR ? 64u : args.K;          \
+        if (args.tile != 0u) {                                                                                          \
+            if (owner == 0u)                                                                                            \
+                ukl_gemm_tile_##T(Cm, 64u, args.lc, A, lda, args.la, B, ldb, args.lb, args.K, at __UKL_ARGS);           \
+            return;                                                                                                     \
+        }                                                                                                               \
+        if (args.shared_mem != 0u) {                                                                                         \
+            for (uint32_t i = lid; i < 64u * args.K; i += lsz) {                                                        \
+                As[i] = A[i];                                                                                           \
+                Bs[i] = B[i];                                                                                           \
+            }                                                                                                           \
+            ukl_tg_barrier();                                                                                           \
+        }                                                                                                               \
+        const uint32_t fm = UKL_MMA_BLOCK / UKL_MMA_M(T), fn = UKL_MMA_BLOCK / UKL_MMA_N(T);                            \
+        for (uint32_t f = owner; f < fm * fn; f += owners) {                                                            \
+            uint32_t ci = (f / fn) * UKL_MMA_M(T), cj = (f % fn) * UKL_MMA_N(T);                                        \
+            uint32_t co = args.lc == UKL_ROW_MAJOR ? ci * 64u + cj : cj * 64u + ci;                                     \
+            ukl_mma_c_##C c;                                                                                            \
+            ukl_mma_load_c_##C(&c, Cm + co, 64u, args.lc, at);                                                          \
+            for (uint32_t k = 0u; k < args.K; k += UKL_MMA_K(T)) {                                                      \
+                uint32_t ao = args.la == UKL_ROW_MAJOR ? ci * lda + k : k * lda + ci;                                   \
+                uint32_t bo = args.lb == UKL_ROW_MAJOR ? k * ldb + cj : cj * ldb + k;                                   \
+                ukl_mma_a_##T a;                                                                                        \
+                ukl_mma_b_##T b;                                                                                        \
+                if (args.shared_mem != 0u) {                                                                                 \
+                    ukl_mma_load_a_##T##_local(&a, As + ao, lda, args.la, at);                                          \
+                    ukl_mma_load_b_##T##_local(&b, Bs + bo, ldb, args.lb, at);                                          \
+                } else {                                                                                                \
+                    ukl_mma_load_a_##T(&a, A + ao, lda, args.la, at);                                                   \
+                    ukl_mma_load_b_##T(&b, B + bo, ldb, args.lb, at);                                                   \
+                }                                                                                                       \
+                ukl_mma_##T(&c, &a, &b, at __UKL_ARGS);                                                                 \
+            }                                                                                                           \
+            ukl_mma_store_c_##C(&c, Cm + co, 64u, args.lc, at);                                                         \
+        }                                                                                                               \
+    }
+
+T_MMA_KERNEL(f16, f32, float, uint16_t)
+T_MMA_KERNEL(bf16, f32, float, uint16_t)
+T_MMA_KERNEL(i8, i32, int32_t, int8_t)
+
+// Each element's coordinates through `UKL_MMA_EACH` (R4): the f32 block's elements set to `row × 256 + col` of the
+// block, the i32 block's to 7 plus `row × 16 + col` of the fragment, both stored row-major.
+DEFINE_KERNEL2(tests, t_mma_each,
+               RWBUFFER, float,    Cf,  "[64 * 64]",
+               RWBUFFER, int32_t,  Ci,  "[64 * 64]",
+               LID0,     uint32_t, lid, ,
+               LSZ0,     uint32_t, lsz, )
+{
+    UklMmaAt at = ukl_mma_at(lid);
+    uint32_t owner = ukl_mma_owner(lid), owners = lsz / UKL_MMA_LANES;
+    const uint32_t fm = UKL_MMA_BLOCK / UKL_MMA_M(f16), fn = UKL_MMA_BLOCK / UKL_MMA_N(f16);
+    for (uint32_t f = owner; f < fm * fn; f += owners) {
+        uint32_t ci = (f / fn) * UKL_MMA_M(f16), cj = (f % fn) * UKL_MMA_N(f16);
+        ukl_mma_c_f32 c;
+        ukl_mma_fill_c_f32(&c, 0.0f, at);
+        UKL_MMA_EACH(c, at, row, col, v) { v = (float)((ci + row) * 256u + cj + col); }
+        ukl_mma_store_c_f32(&c, Cf + ci * 64u + cj, 64u, UKL_ROW_MAJOR, at);
+        ukl_mma_c_i32 d;
+        ukl_mma_fill_c_i32(&d, 7, at);
+        UKL_MMA_EACH(d, at, row, col, v) { v += (int32_t)(row * 16u + col); }
+        ukl_mma_store_c_i32(&d, Ci + ci * 64u + cj, 64u, UKL_ROW_MAJOR, at);
+    }
+}

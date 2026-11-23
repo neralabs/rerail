@@ -4190,7 +4190,7 @@ pub(in crate::code_rule_dsl) const PROGRAM_BUDGET: u32 = 16;
 /// rows past its rows first, so the CPU backend's tests run the mechanism.
 pub(in crate::code_rule_dsl) fn rooms_mapped() -> Option<usize> {
     #[cfg(any(test, feature = "test-hooks"))]
-    if let Some(n) = std::env::var("RERAIL_ROOMS_MAPPED").ok().and_then(|v| v.parse::<usize>().ok()) {
+    if let Some(n) = crate::code_rule_dsl::logic::profile::var("RERAIL_ROOMS_MAPPED").ok().and_then(|v| v.parse::<usize>().ok()) {
         return Some(n);
     }
     rerail_accel::gpu::join::device().is_ok_and(rerail_device::device::map_commits).then_some(0)
@@ -4218,7 +4218,7 @@ impl ProgramSizes {
         #[cfg(any(test, feature = "test-hooks"))]
         {
             fn var<T: std::str::FromStr>(name: &str) -> Option<T> {
-                std::env::var(name).ok().and_then(|v| v.parse().ok())
+                crate::code_rule_dsl::logic::profile::var(name).ok().and_then(|v| v.parse().ok())
             }
             ProgramSizes { budget: var("RERAIL_PROGRAM_BUDGET"), arena: var("RERAIL_PROGRAM_ARENA") }
         }
