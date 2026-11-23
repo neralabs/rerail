@@ -590,3 +590,14 @@ out), and the list is empty again once its statement is passed.
 
 Side by side on spark1 (load 6), three rounds in turns: tier 2 29.7–30.0 ms before, 28.0–28.7 ms after (lean's parse
 25.4 ms on the same clock). All tests pass.
+
+### Where tier 1's time is, against lean's (measured, 2026-11-23)
+
+Over the corpus tier 1 writes 3,009,452 records, lean's lexer 2,979,207 tokens (its comments apart): the gap is a
+token's cost, not their number. Variants of the generated loop, each with a part taken out (for the measure only, run
+in turns on spark1): without the word's hash, about 1 ms less; without the token marks, about 1 ms; without the
+strings' tests, about 1 ms; without all three, 20.6–21.4 ms, against lean's 14.6 ms in the same hour. So most of the
+gap is the loop's own core (the rows' dispatch, the regions' and the runs' reads through windows, the block's classes),
+not the work the grammar asks beyond lean's. Tried and not kept, each slower: the starts as a hint of the block's masks
+(lean's `starts`, put back after each token to stay exact), its interior passed at once after a region, a word's hash
+only at a word's first byte.
