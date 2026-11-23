@@ -72,7 +72,7 @@ impl Session {
     fn run(&mut self) -> Ran {
         let out = self.dir.join("out");
         let _ = std::fs::remove_dir_all(&out);
-        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join("kept.sqlite")));
+        // Its store is the session's (`session/session.sqlite`, which its binding selects), not a test's.
         // The run's own scope, held here: its shape is the run's count (decision 0442), read before it ends.
         let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let (before, levels) = (shape::now(), maintain::strata_by_levels());
@@ -188,7 +188,8 @@ const SMALL_EDITS: &[(&str, &str, &str)] = &[
 /// R1 and R2: an edit's run holds no relation under a maintenance name (`__old`, `__minus`, `__plus`, `__del`, …),
 /// and copies no rows to state a change. A relation's change is its version, read in place: the kept relation and
 /// the mark of its rows and kills (0328 §5, 0364 stage 2), for inputs, for strata the mode maintains and for strata
-/// derived again alike.
+/// derived again alike. A session's runs are its store's (t33 step 3): its inputs' deltas are found by their changed
+/// documents, as a new process's are (`r2_a_new_process_…`), never by every row.
 #[test]
 fn r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows() {
     let mut s = kinds("r1r2");
@@ -198,9 +199,10 @@ fn r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows() {
         let ran = s.edit(what);
         assert_eq!(ran.shape.maintenance_held, 0, "R1: after {what}, no relation is held under a maintenance name");
         assert_eq!(ran.shape.rows_copied, 0, "R2: after {what}, no row is copied to state a change");
-        // The changed documents' memo entries are found (under the memo plan's id and the store path), so the inputs'
-        // deltas are read from them, not every document hashed. (A few still are: 0364's open item.)
-        assert!(ran.shape.inputs_from_entries > 0, "R2: after {what}, inputs' deltas are read from the changed documents' entries ({} hashed)", ran.shape.inputs_hashed);
+        // The inputs' deltas are found by their changed documents: a base relation's from its changed documents' old
+        // and new rows, a kept input's by its changed documents' rows hashed, never every row.
+        assert!(ran.shape.inputs_from_owners + ran.shape.inputs_hashed > 0, "R2: after {what}, the inputs' deltas are found by their documents ({:?})", ran.shape);
+        assert_eq!(ran.shape.inputs_hashed_whole, 0, "R2: after {what}, no input's every row is hashed ({} inputs)", ran.shape.inputs_hashed);
     }
 }
 
@@ -455,9 +457,21 @@ fn r5_a_ring_that_loses_its_entry_loses_every_row_it_held() {
     assert!(into_ring.is_empty(), "R5: neither x nor e reaches the ring: {into_ring:?}");
     s.write("e.py", "import r1\n");
     s.edit("the entry restored");
-    // R2 past θ: with θ 0 the ring's stratum is derived again; its kept rows have levels and the derive's rows none
-    // (O125's `cls_q`). It is still made a version of its kept rows in place, its levels dropped as a derive resets
-    // them: no row is copied to state its change.
+}
+
+/// R2 past θ: with θ 0 the ring's stratum is derived again; its kept rows have levels and the derive's rows none
+/// (O125's `cls_q`). It is still made a version of its kept rows in place, its levels dropped as a derive resets them:
+/// no row is copied to state its change. A session's runs are its store's (t33 step 3), and a kept entry that keeps
+/// its rows' levels is read in with them (`kept_read::Entry::rel_as`, 0353's `copy: load`) until its levels are read
+/// where they lie.
+#[test]
+#[ignore = "R2: a kept entry's levels are read in with its rows (kept_read::Entry::rel_as, 0353 copy) until they are read in place (0401 step 7)"]
+fn r2_a_levelled_stratum_derived_again_is_a_version_of_its_kept_rows() {
+    let ring: Vec<(String, String)> = (1..=6).map(|i| (format!("r{i}.py"), format!("import r{}\n", i % 6 + 1))).collect();
+    let mut files: Vec<(&str, &str)> = ring.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
+    files.extend([("x.py", "import e\n"), ("e.py", "import r1\n")]);
+    let mut s = Session::new("r2-levels", KINDS, &["reach"], &files);
+    s.run();
     let switched = super::switches::set(&[("RERAIL_AGAIN_THETA", "0"), ("RERAIL_AGAIN_MIN", "0")]);
     s.write("e.py", "def e():\n    pass\n");
     let ran = s.edit("the entry removed, derived again past θ");
@@ -517,15 +531,19 @@ fn r7_the_recheck_order_is_priced() {
     }
 }
 
-/// R8: a session's kept rows stay in place between its runs (0328 §5): an edit's run reads no kept frame back.
+/// R8: a session's kept rows stay in place between its runs (0328 §5). A session's runs are its store's (t33 step 3):
+/// its kept rows stay where its store keeps them, mapped once a process while the chain's rows hold
+/// (`kept_read::Bound`), and an edit's run binds what it reads of them there: it copies none to state a change and
+/// reads no changed input whole. (`frames_read` counts those binds: a kept entry bound is a view, not a read back.)
 #[test]
-fn r8_a_session_edit_reads_no_kept_frame() {
+fn r8_a_session_edit_reads_its_kept_rows_in_place() {
     let mut s = kinds("r8");
     s.run();
     for (file, body, what) in SMALL_EDITS {
         s.write(file, body);
         let ran = s.edit(what);
-        assert_eq!(ran.shape.frames_read, 0, "R8: after {what}, the session read no kept frame");
+        assert_eq!(ran.shape.rows_copied, 0, "R8: after {what}, the session copied no kept row");
+        assert_eq!(ran.shape.inputs_read_whole, 0, "R8: after {what}, no changed input's old rows were read whole");
     }
 }
 
@@ -581,8 +599,8 @@ named(x, d) :- kind(n, "call"), field(n, "function", f), text(f, x), def(m, x), 
     s.run_kept();
     views(&s, "kept-frames.sqlite", "after an edit");
     s.run();
-    views(&s, "kept.sqlite", "a session's first run");
+    views(&s, "session/session.sqlite", "a session's first run");
     s.write("b.py", "f()\n");
     s.run();
-    views(&s, "kept.sqlite", "a session's edit");
+    views(&s, "session/session.sqlite", "a session's edit");
 }

@@ -2123,7 +2123,11 @@ fn run_observed_within(
     // file's file-local rows from run to run: an edit evaluates the files it changed and the cross-file part. A run
     // whose outputs are captured (a phase's) is the session's too, as it was when a phase ran into a directory: its
     // kept parts stay in the session, not bound from the store at each edit (R8). A thread's ephemeral store has none.
-    let session = held.as_mut().filter(|_| !ThreadStore::ephemeral() && t.is_none() && !v.declares("declared_ret"));
+    // A session is its store kept open (`Handle::bind` selects it, `ThreadStore`) and its connections (t33 step 3): its
+    // runs are the store's, as a new process's are, its kept part bound where it lies. Not a T run's.
+    let in_session = held.as_ref().is_some_and(|_| !ThreadStore::ephemeral() && t.is_none());
+    let kept_connections = held.as_ref().filter(|_| in_session).map(|s| Arc::clone(&s.connections));
+    let session: Option<&mut session::Session> = None;
     // The run's databases are in memory where it has no session's store and no directory of its own.
     let in_memory = in_memory && session.is_none();
     // The run's connections, set up by their owner and passed through (`connections`): a session's are kept from run
@@ -2131,7 +2135,7 @@ fn run_observed_within(
     // fails leaves its session new ones to open.)
     let handed = {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "prepare connections".into());
-        connections::Handed::take(session.as_ref().map(|s| Arc::clone(&s.connections)))?
+        connections::Handed::take(kept_connections)?
     };
     let (path, cross_path) = match &session {
         None if in_memory => (":memory:".into(), ":memory:".into()),
@@ -9099,7 +9103,7 @@ fn run_observed_within(
                     }
                     // A session's run reports its strata here; a new process's, as `cross_kept` (above, or here when kept
                     // in the frames).
-                    if kept_cells.is_some() {
+                    if kept_cells.is_some() && !in_session {
                         cross_kept = Some(cut.strata);
                     } else if kept_part.is_none() {
                         cross_strata = Some(cut.strata);
@@ -9238,8 +9242,8 @@ fn run_observed_within(
     // it changed, nothing where none did. Otherwise, or at the stack's depth, a base of them all.
     {
         let flags = if own { output::flags::OWN } else { 0 } | if syntax::definition_ids() { output::flags::DEFINITION_IDS } else { 0 };
-        // The session's stack here as its last run left it, if it stands (a stat, not a read).
-        let held: Option<session::Stack> = session.as_ref().filter(|_| !capturing).and_then(|s| s.stacks.lock().expect("the session's stacks").get(out).filter(|k| k.stands(out)).cloned());
+        // A session's stack here, as its file holds it.
+        let held: Option<session::Stack> = (in_session && !capturing).then(|| session::Stack::read(out)).flatten();
         let mut image = output::Builder::new(flags, false);
         let mut made: Vec<&str> = Vec::new();
         for (rel, parts) in &outputs {
@@ -9309,7 +9313,7 @@ fn run_observed_within(
             rows.insert((*rel).to_owned(), made_image.rel(rel).expect("made").rows);
         }
         // Each made output's rows' hashes, per row and as a set (a session's runs that write a directory only).
-        let hashed: BTreeMap<&str, (Vec<u128>, Vec<u128>)> = if session.is_some() && !capturing {
+        let hashed: BTreeMap<&str, (Vec<u128>, Vec<u128>)> = if held.is_some() {
             made.iter()
                 .map(|&rel| {
                     let r = made_image.rel(rel).expect("made");

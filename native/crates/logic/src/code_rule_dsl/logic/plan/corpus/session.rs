@@ -83,19 +83,24 @@ impl Handle {
 
     /// Makes the corpus runs this thread starts, until the guard is dropped, this session's runs.
     pub fn bind(&self) -> Bound {
-        Bound { _session: crate::code_rule_dsl::logic::profile::bind(InSession(Some(self.clone()))) }
+        let path = self.session.lock().path.clone();
+        let _session = crate::code_rule_dsl::logic::profile::bind(InSession(Some(self.clone()), super::ThreadStore::current()));
+        Bound { _store: super::ThreadStore::select(&path, None), _session }
     }
 }
 
 /// A session bound to this thread's runs (`Handle::bind`); dropped, the thread's runs are as they were before.
 pub struct Bound {
+    // Dropped first: bound last (guards drop in the reverse of their order, decision 0442).
+    _store: super::ThreadStore,
     _session: crate::code_rule_dsl::logic::profile::Bound,
 }
 
 /// The session this caller's runs are runs of, in the run's context: a job's nested runs are runs of its caller's
 /// session (decision 0192), as they were when the session was the process's.
+/// With the store selected outside it, which a full run uses (`full`).
 #[derive(Clone, Default)]
-struct InSession(Option<Handle>);
+struct InSession(Option<Handle>, super::SelectedStore);
 
 /// A full run (`full`), in the run's context: a job's runs are full where its caller's are.
 #[derive(Clone, Copy, Default)]
@@ -134,8 +139,13 @@ pub(super) fn generation() -> Option<u64> {
 /// Runs `run` as a full run: as a process without a session would, compiling the program and evaluating every file,
 /// so its profile shows every step (`logic --full`). The session is left as it was.
 pub fn full<T>(run: impl FnOnce() -> T) -> T {
+    // On the store selected outside the session: the session's store is its runs' alone.
+    let outside = crate::code_rule_dsl::logic::profile::bound::<InSession>().0.is_some().then(|| super::ThreadStore::again(crate::code_rule_dsl::logic::profile::bound::<InSession>().1));
     let _full = crate::code_rule_dsl::logic::profile::bind(Full(true));
-    run()
+    let value = run();
+    drop(_full);
+    drop(outside);
+    value
 }
 
 /// The session, held for a run (`None`: none bound to this thread, or a full run). Only this session's runs wait
@@ -198,6 +208,21 @@ impl Stack {
     pub fn stat(out: &std::path::Path) -> Option<Stack> {
         let m = std::fs::metadata(out.join(crate::code_rule_dsl::logic::plan::output::FILE)).ok()?;
         Some(Stack { len: m.len(), modified: m.modified().ok()?, depth: 0, deltas: 0, rels: Default::default() })
+    }
+    /// The stack in `out` as its file holds it (t33 step 3: read, where a session kept it in memory): its depth, the
+    /// rows its overlays added, took away or wrote whole since its base, and each relation's rows' hashes as it reads
+    /// them. `None` where `out` holds no stack.
+    pub fn read(out: &std::path::Path) -> Option<Stack> {
+        use crate::code_rule_dsl::logic::plan::output;
+        let stat = Stack::stat(out)?;
+        let outputs = output::Outputs::open(out).ok()?;
+        let images = outputs.images();
+        let names = outputs.names();
+        let deltas = images.iter().skip(1).map(|image| {
+            names.iter().map(|n| [output::kind::WHOLE, output::kind::ADDED, output::kind::GONE].iter().filter_map(|k| image.entry(n, *k)).map(|r| r.rows).sum::<usize>()).sum::<usize>()
+        }).sum();
+        let rels = names.iter().filter_map(|n| Some(((*n).to_owned(), Arc::new(output::find(images, n)?.hashes())))).collect();
+        Some(Stack { depth: images.len(), deltas, rels, ..stat })
     }
     /// Whether the stack in `out` is as `self` (its file not written since).
     pub fn stands(&self, out: &std::path::Path) -> bool {

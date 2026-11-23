@@ -5408,6 +5408,19 @@ fn quiet_card(model: &mut Model, tally: &QuietTally, f: Fields<'_>, rel: &str, o
             model.stats.lazily(rel, o.rows(), LazyStats::new(move || (cols, Vec::new(), ())));
         }
     }
+    // A kept relation read from the store (t33 K4: a kept entry with no statistics part, whose rows no run measured
+    // yet): its columns' statistics where the planner first asks, read as its source answers them (`Derived`: kept as
+    // its rows came, else measured over its rows where they lie).
+    if !model.stats.lazy.0.contains_key(rel)
+        && let Some(width) = f.arity(rel)
+    {
+        let names: Vec<String> = (0..width).map(|c| sql_col(rel, c)).collect();
+        let src = o.source(names);
+        model.stats.lazily(rel, o.rows(), LazyStats::new(move || {
+            let cols = crate::code_rule_dsl::facts::vtab::syntax::statistics(src.as_ref()).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])).collect();
+            (cols, Vec::new(), ())
+        }));
+    }
     if !model.stats.lazy.0.contains_key(rel) {
         tally.unmeasured.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }

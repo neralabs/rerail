@@ -1733,6 +1733,17 @@ impl ThreadStore {
         crate::code_rule_dsl::logic::profile::with_bound(|s: &SelectedStore| f(s.0.as_ref()))
     }
 
+    /// The selection bound now, to bind again later (`again`): a session's full run is its caller's, on the store
+    /// selected outside the session.
+    pub fn current() -> SelectedStore {
+        crate::code_rule_dsl::logic::profile::bound::<SelectedStore>()
+    }
+
+    /// Binds `selected` (`current`'s) until the guard is dropped.
+    pub fn again(selected: SelectedStore) -> Self {
+        Self { _bound: crate::code_rule_dsl::logic::profile::bind(selected) }
+    }
+
     pub fn owner(root: &Path) -> Option<crate::content_store::analysis_scope::AnalysisOwner> {
         Self::with(|store| {
             let (expected, owner) = store?.ownership.as_ref()?;
