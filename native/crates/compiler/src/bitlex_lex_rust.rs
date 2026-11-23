@@ -6090,7 +6090,10 @@ impl Gen<'_> {
                 if !out.contains(&format!("k_{f} >>")) {
                     continue;
                 }
-                let test: Vec<String> = two.iter().map(|(a, b)| format!("(S::eq_mask(v, {a:#04x}) & S::eq_mask(w, {b:#04x}))")).collect();
+                // Each pair's two tests and the pairs joined in the vectors, then one mask (lean's `pair`, of its one classify).
+                let pairs: Vec<String> = two.iter().map(|(a, b)| format!("S::and(S::eq(v, S::splat({a:#04x})), S::eq(w, S::splat({b:#04x})))")).collect();
+                let joined = pairs.iter().skip(1).fold(pairs.first().cloned().unwrap_or_default(), |acc, p| format!("S::or({acc},\n            {p})"));
+                let test = [format!("S::to_bitmask({joined})")];
                 let _ = write!(out, "\n/// `{f}`'s pairs' first bytes in the block at `base`, as the lean lexer's `pair`: where a pair's two bytes are. A token\n/// never starts at a pair's second byte, so at a token's start this is the grammar's mask of pairs (read left to right).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn w_{f}<S: rerail_simd8::Simd8x64>(src: &[u8], base: usize) -> u64 {{\n    // The block and the one a byte on: in the padded source.\n    let at: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let on: &[u8; 64] = src[base + 1..base + 65].try_into().expect(\"the padded source\");\n    // SAFETY: the caller's.\n    unsafe {{\n        let (v, w) = (S::load(at), S::load(on));\n        {}\n    }}\n}}\n", test.join("\n            | "));
                 // The function the mask replaces, where nothing calls it.
                 if !out.contains(&format!("{f}(src, s)")) {

@@ -1694,13 +1694,13 @@ unsafe fn w_pair_6<S: rerail_simd8::Simd8x64>(src: &[u8], base: usize) -> u64 {
     // SAFETY: the caller's.
     unsafe {
         let (v, w) = (S::load(at), S::load(on));
-        (S::eq_mask(v, 0x3a) & S::eq_mask(w, 0x2d))
-            | (S::eq_mask(v, 0x3d) & S::eq_mask(w, 0x3e))
-            | (S::eq_mask(v, 0x21) & S::eq_mask(w, 0x3d))
-            | (S::eq_mask(v, 0x3c) & S::eq_mask(w, 0x3d))
-            | (S::eq_mask(v, 0x3c) & S::eq_mask(w, 0x3a))
-            | (S::eq_mask(v, 0x3e) & S::eq_mask(w, 0x3d))
-            | (S::eq_mask(v, 0x2d) & S::eq_mask(w, 0x3e))
+        S::to_bitmask(S::or(S::or(S::or(S::or(S::or(S::or(S::and(S::eq(v, S::splat(0x3a)), S::eq(w, S::splat(0x2d))),
+            S::and(S::eq(v, S::splat(0x3d)), S::eq(w, S::splat(0x3e)))),
+            S::and(S::eq(v, S::splat(0x21)), S::eq(w, S::splat(0x3d)))),
+            S::and(S::eq(v, S::splat(0x3c)), S::eq(w, S::splat(0x3d)))),
+            S::and(S::eq(v, S::splat(0x3c)), S::eq(w, S::splat(0x3a)))),
+            S::and(S::eq(v, S::splat(0x3e)), S::eq(w, S::splat(0x3d)))),
+            S::and(S::eq(v, S::splat(0x2d)), S::eq(w, S::splat(0x3e)))))
     }
 }
 

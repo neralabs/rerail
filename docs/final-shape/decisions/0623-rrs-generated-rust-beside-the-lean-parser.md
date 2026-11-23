@@ -361,3 +361,7 @@ away, keeps its window function. The windows past the block, which a token's rea
 16.6 ms). Kotlin's file is unchanged.
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
+
+The pairs mask (`w_pair_6`) is now made in the vectors too: each pair's two equality tests joined (`S::and`), the
+pairs joined (`S::or`), then one mask, as lean's `pair`. It made two 64-bit masks a pair before. Built side by side on
+spark1, A/B in turns, tier 1 is the same (16.9 ms): the optimizer had already joined them. It stays for the shape.
