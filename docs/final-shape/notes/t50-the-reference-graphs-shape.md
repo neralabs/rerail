@@ -1003,6 +1003,14 @@ Then, step by step (each device run's step counts against a CPU run of the same 
   chunks sharing the device under the budget: what one chunk's run can take or change of another's while both are
   in flight (the pool's admission and leases, the device lane's submissions), not a chunk's own reads. Two of the
   runs (one of each kind) took 310–340 s at a peak of 18 GB, a mode of their own, not yet looked at.
+- **Not command buffers overlapping on the GPU (2026-11-23).** A block's device wrap is remade as it grows, and
+  Metal tracks hazards per buffer object, so a builder and a probe in two command buffers can name two wraps of the
+  same memory with nothing ordering them. A temporary switch made every commit wait for the last command buffer's
+  work first (no two ever overlapped), at 512 MB with eight chunks at once: one run right but for 3 extra findings
+  (20,049), the next short as before (`mn_class` 256,643, `dbg_rd` 461,349, `finding` 20,697). So the loss is made
+  on the host side of the hand-off between chunks (what one chunk's batch encodes reading what another's left, or
+  refused), not by the GPU running two submissions at once. The device-side dump of the failed probes' keys is still
+  the next instrument.
 
 ## Open
 
