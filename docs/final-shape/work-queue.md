@@ -10719,3 +10719,11 @@ Relax: the engine checks clean.
 
 build-and-test-loop-time (8bc7d69011): farm 59, a hot compile passes the remaps the patched sccache gives a miss,
 so a crate's incremental state serves both ways (`scripts/build/farm/`). Merged without conflicts; no engine source.
+
+### Q510. Roll-up 83 (cost-classifier-metal-rf c0b4e37876 onto Pulling-it-all-together): what the merge chose
+
+cost-classifier-metal-rf (c0b4e37876): 0597 step 7, rungs 7.1 and 7.2. A pass's tape-local rows are kept per tape
+value (`corpus_prep`'s new `preparation/kept.rs`), rule 7 on the memo path, rule 8 across chunks, and a pack's
+passes kept too. Merged without conflicts.
+
+Relax: the engine checks clean (with roll-up 84).

@@ -2942,7 +2942,8 @@ fn a_run_with_no_root_runs_no_stratum_of_the_context() {
     let none = ran("x = 1\ndef f(y: int): ...\n");
     assert!(none.is_empty(), "no root, no rule of the context runs: {none:?}");
     let some = ran("x: \"List[int]\" = []\n");
-    assert!(some.iter().any(|h| h.split('\t').nth(1) == Some("rr_pass_quoted_ann_ident")), "with a root they run: {some:?}");
+    // The pass's relation, kept by its tape (rule 8), is derived as `rr_pass_quoted_ann_ident_rr_kd`.
+    assert!(some.iter().any(|h| h.split('\t').nth(1).is_some_and(|h| h.starts_with("rr_pass_quoted_ann_ident"))), "with a root they run: {some:?}");
 }
 
 #[test]
@@ -2950,6 +2951,112 @@ fn a_run_with_no_root_runs_no_stratum_of_the_context() {
 fn context_root_child() {
     let source = std::env::var("CONTEXT_ROOT_SOURCE").unwrap();
     printed_run("pass-root", ("a.py", &source), ANNOTATION_PASS, "quoted_names");
+}
+
+/// 0597 rung 7.1 (rule 7 on the memo path): an edit that changes no root and nothing the context reads runs none of
+/// its strata. A comment added to a file whose annotation is unchanged leaves the context's roots (its values, keyed
+/// by their text) and its reads as they were: no stratum of the context runs. An edit of the annotation's text makes
+/// a new root, and they run. Each run is a child process (`context_edit_child`) into one store, its heads read from
+/// its profile's `heads.tsv`, as rung 2.10's are.
+#[test]
+fn a_memo_edit_that_changes_no_root_runs_no_stratum_of_the_context() {
+    let directory = tempfile::tempdir().unwrap();
+    let step = |k: &str, source: &str| -> (Vec<String>, Vec<Vec<String>>) {
+        let profile = directory.path().join(format!("profile-{k}"));
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::context_edit_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("CONTEXT_EDIT_DIR", directory.path())
+            .env("CONTEXT_EDIT_SOURCE", source);
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success(), "{k}");
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap_or_default();
+        let ran = heads.lines().skip(1).filter_map(|l| l.split('\t').nth(1)).filter(|h| h.contains("rr_pass_quoted_")).map(str::to_owned).collect();
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&directory.path().join("out"), "quoted_names").unwrap_or_default();
+        (ran, rows)
+    };
+    let (cold, rows) = step("cold", "x: \"List[int]\" = []\n");
+    assert!(!cold.is_empty() && rows.contains(&vec!["List".to_owned()]), "a cold run runs the context: {cold:?} {rows:?}");
+    let (comment, rows) = step("comment", "# a comment\nx: \"List[int]\" = []\n");
+    assert!(comment.is_empty(), "a comment changes no root: no stratum of the context runs: {comment:?}");
+    assert!(rows.contains(&vec!["List".to_owned()]) && rows.contains(&vec!["int".to_owned()]), "the context's rows stand: {rows:?}");
+    let (text, rows) = step("text", "# a comment\nx: \"List[str]\" = []\n");
+    assert!(!text.is_empty(), "a new annotation text is a new root: the context runs");
+    assert!(rows.contains(&vec!["str".to_owned()]) && !rows.contains(&vec!["int".to_owned()]), "the new text's rows: {rows:?}");
+}
+
+#[test]
+#[ignore = "child process of a_memo_edit_that_changes_no_root_runs_no_stratum_of_the_context"]
+fn context_edit_child() {
+    let dir = std::path::PathBuf::from(std::env::var("CONTEXT_EDIT_DIR").unwrap());
+    std::fs::write(dir.join("a.py"), std::env::var("CONTEXT_EDIT_SOURCE").unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let path = dir.join("g.rerail");
+    std::fs::write(&path, ANNOTATION_PASS).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::copy(dir.join("a.py"), src.join("a.py")).unwrap();
+    super::run(&printed, &src, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// 0597 rung 7.2 (rule 8 across chunks): a text a later chunk places is given the pass's rows the first chunk kept
+/// under its value, and runs none of the pass's strata. Two files holding one annotation text, each a chunk of its
+/// own (`RERAIL_PROBE_NODES`, `RERAIL_CHUNK_NODES`), do the pass's work of one file; both files' rows stand. Each run
+/// is a child process (`context_chunks_child`), its heads read from its profile's `heads.tsv` (part, head, cpu_s,
+/// work, plans), as rung 2.10's are.
+#[test]
+fn a_text_a_later_chunk_places_runs_no_stratum_of_the_context() {
+    let run = |files: usize| -> (std::collections::BTreeMap<String, u64>, String, Vec<Vec<String>>) {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = directory.path().join("profile");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::context_chunks_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("RERAIL_PROBE_NODES", "1")
+            .env("RERAIL_CHUNK_NODES", "1")
+            .env("RERAIL_CHUNKS_AT_ONCE", "1")
+            .env("CONTEXT_CHUNKS_DIR", directory.path())
+            .env("CONTEXT_CHUNKS_FILES", files.to_string());
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success(), "{files} files");
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap_or_default();
+        let mut work: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+        for l in heads.lines().skip(1) {
+            let cols: Vec<&str> = l.split('\t').collect();
+            if let (Some(h), Some(w)) = (cols.get(1).filter(|h| h.contains("rr_pass_quoted_")), cols.get(3).and_then(|w| w.parse::<u64>().ok())) {
+                *work.entry((*h).to_owned()).or_default() += w;
+            }
+        }
+        let report = std::fs::read_to_string(profile.join("profile.txt")).unwrap_or_default();
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&directory.path().join("out"), "quoted_names").unwrap_or_default();
+        (work, report, rows)
+    };
+    let (one, _, rows) = run(1);
+    assert!(!one.is_empty() && rows.contains(&vec!["List".to_owned()]), "one file runs the context: {one:?} {rows:?}");
+    let (two, report, rows) = run(2);
+    assert!(report.contains("2 made in chunks"), "each file a chunk of its own: the text is a value of each");
+    assert_eq!(two, one, "the second chunk is given the first's rows: the pass's work is one file's");
+    assert!(rows.contains(&vec!["List".to_owned()]) && rows.contains(&vec!["int".to_owned()]), "the rows stand: {rows:?}");
+}
+
+#[test]
+#[ignore = "child process of a_text_a_later_chunk_places_runs_no_stratum_of_the_context"]
+fn context_chunks_child() {
+    let dir = std::path::PathBuf::from(std::env::var("CONTEXT_CHUNKS_DIR").unwrap());
+    let files: usize = std::env::var("CONTEXT_CHUNKS_FILES").unwrap().parse().unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let path = dir.join("g.rerail");
+    std::fs::write(&path, ANNOTATION_PASS).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    for i in 0..files {
+        std::fs::write(src.join(format!("f{i}.py")), format!("v{i}: \"List[int]\" = []\n")).unwrap();
+    }
+    super::run(&printed, &src, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// 0597 rung 2.12: one mechanism on the CPU and the device: 2.3's context views and 2.5's `.from` read give Metal's

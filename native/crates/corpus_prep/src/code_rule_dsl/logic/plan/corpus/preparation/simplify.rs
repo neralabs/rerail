@@ -417,7 +417,7 @@ impl Rewrite for Dyn<'_> {
 /// Outputs, inputs, lattices, natives and what they read, relations with facts, demand, gates, and
 /// an attribute's request.
 fn kept(f: &Fields<'_>, rel: &str) -> bool {
-    f.is_output(rel) || f.is_input(rel) || f.lattice(rel) || f.native(rel).is_some() || f.natives_read().contains(rel) || f.has_facts(rel) || f.demanded(rel) || f.gate(rel) || request(rel)
+    f.is_output(rel) || f.is_input(rel) || f.lattice(rel) || f.native(rel).is_some() || f.natives_read().contains(rel) || f.has_facts(rel) || f.demanded(rel) || f.gate(rel) || request(rel) || f.qualified(rel, crate::code_rule_dsl::logic::plan::fields::BY_NAME)
 }
 
 /// An attribute's request (decision 0174) is read by name (`syntax::VALUE_REQ`), so neither
