@@ -6057,9 +6057,11 @@ pub fn undo_round(prog: &mut (impl crate::code_rule_dsl::logic::program_image::f
 /// The file system's answers and their requests (t21 E1).
 pub const FILE_SYSTEM: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
 
-/// The engine's other answers and their requests: a Git view's revisions, objects, payloads and inventory, and the
-/// analysis history's scans. Each request is of several columns, made by rules (`git.rerail`, `analysis.rerail`).
-pub const ENGINE_ANSWERS: [(&str, &str); 6] = [
+/// The engine's other answers and their requests: a module's lowering, a Git view's revisions, objects, payloads and
+/// inventory, and the analysis history's scans. Each request is of several columns, made by rules (`git.rerail`, `analysis.rerail`).
+pub const ENGINE_ANSWERS: [(&str, &str); 7] = [
+    // A module's lowering (decision 0639 §3), asked by phase 0.
+    ("p0_module_lowered", "p0_lower_req"),
     ("git_view_revision_of", "git_view_revision_request"),
     ("git_revision_of", "git_revision_request"),
     ("git_object_of", "git_object_request"),

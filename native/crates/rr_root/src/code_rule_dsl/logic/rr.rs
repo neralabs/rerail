@@ -888,6 +888,97 @@ fn image_lease() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64) + IMAGE_LEASE_SECS
 }
 
+/// Phase 0's request of a module's lowering (`bootstrap.rerail`'s `p0_lower_req`, decision 0639 §3), and its answer.
+pub const LOWER_REQUEST: &str = "p0_lower_req";
+pub const LOWERED: &str = "p0_module_lowered";
+
+/// The modules this process lowered or read for phase 0's plan, by the store they are kept in and their key, each with
+/// its image's digest: the store's writer keeps an image behind the run, so the module a request made is read here
+/// until the store holds it, and a module read once is decoded once.
+#[derive(Default)]
+struct PlannedModules(std::sync::Mutex<std::collections::HashMap<(Option<PathBuf>, crate::content_store::HashKey), (lower::Module, String, bool)>>);
+
+/// How many modules phase 0 lowered in this process for the store the run reads (`lower_planned_module`), not read.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn planned_modules_lowered() -> usize {
+    let at = image_store_path();
+    crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter(|((p, _), (_, _, made))| *made && *p == at).count()
+}
+
+/// A plan's key (`p0_module_key`, 64 hex digits) as the store's alias.
+pub fn planned_key(key: &str) -> Option<crate::content_store::HashKey> {
+    let mut d = [0u8; 32];
+    for (i, b) in d.iter_mut().enumerate() {
+        *b = u8::from_str_radix(key.get(2 * i..2 * i + 2)?, 16).ok()?;
+    }
+    (key.len() == 64).then(|| crate::content_store::HashKey::from_sha256_digest(d))
+}
+
+fn image_digest(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The module of plan key `key`, with its image's digest: made or read in this process, else read from the image
+/// store (`image_store`) and decoded. `None` where no store holds it.
+fn planned_module(key: &str) -> Option<(lower::Module, String)> {
+    let k = planned_key(key)?;
+    let held = crate::code_rule_dsl::logic::profile::shared::<PlannedModules>();
+    let at = (image_store_path(), k);
+    if let Some((m, d, _)) = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&at) {
+        return Some((m.clone(), d.clone()));
+    }
+    let store = image_store();
+    let (bytes, id) = images::read_image(store.as_deref(), k)?;
+    if let (Some(store), Some(id)) = (store.as_deref(), id) {
+        renew_image(store, id);
+    }
+    let digest = image_digest((*bytes).as_ref());
+    let m = module_image::decode(bytes).ok()?;
+    crate::code_rule_dsl::prof::count("rr.module_image_read", 1);
+    held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(at, (m.clone(), digest.clone(), false));
+    Some((m, digest))
+}
+
+/// Whether the image plan key `key` names is held: made in this process for the store the run reads, or in that
+/// store (or the shipped bundle), mapped where it is and not decoded. What a reused run of phase 0 checks its answer
+/// by (`World::observation`), and a graph by (`Graph::holds`): a key names its image's content.
+pub fn planned_module_held(key: &str) -> bool {
+    let Some(k) = planned_key(key) else { return false };
+    if crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains_key(&(image_store_path(), k)) {
+        return true;
+    }
+    images::read_image(image_store().as_deref(), k).is_some()
+}
+
+/// Phase 0's answer to a module's lowering (`p0_lower_req`): the module of plan key `key`, whose files are `files`
+/// (paths, one a line) and whose scope's keys are `scope` (comma-separated), lowered against its scope's images and
+/// kept under its key; or found held. Its image's digest.
+pub fn lower_planned_module(key: &str, files: &str, scope: &str) -> Result<String, Error> {
+    if let Some((_, digest)) = planned_module(key) {
+        return Ok(digest);
+    }
+    let k = planned_key(key).ok_or_else(|| Error::Syntax(format!("{key}: no module key")))?;
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "a module lowered for phase 0's plan".to_owned());
+    let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| planned_module(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
+    let mut own: Vec<Stmt> = Vec::new();
+    for f in files.lines() {
+        own.extend(read(Path::new(f))?.0.into_iter().filter(|s| !is_include(s)));
+    }
+    let refs: Vec<&lower::Module> = scope.iter().collect();
+    let m = lower::lower_module_in_written(own, &refs).map_err(|e| match e {
+        Error::Syntax(m) => Error::Syntax(format!("{}: {m}", files.lines().next().unwrap_or_default())),
+        e => e,
+    })?;
+    let bytes: crate::content_store::record::Bytes = std::sync::Arc::new(module_image::encode(&m).map_err(Error::Syntax)?);
+    let digest = image_digest((*bytes).as_ref());
+    let store = image_store();
+    keep_image(store.as_deref(), "a module image", k, bytes);
+    crate::code_rule_dsl::prof::count("rr.module_lowered_for_the_plan", 1);
+    crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert((image_store_path(), k), (m, digest.clone(), true));
+    Ok(digest)
+}
+
 /// Keeps `bytes`, an image, in `store` under alias `key`, pinned for its lease: written by the store's writer, behind
 /// the run (decisions 0104, 0240 §1), and dropped where its queue is full, as a tape is (the next run lowers it
 /// again). Whether it was queued.

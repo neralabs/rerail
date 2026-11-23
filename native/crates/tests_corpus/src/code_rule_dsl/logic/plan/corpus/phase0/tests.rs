@@ -284,3 +284,46 @@
             println!("  a run of bootstrap.rerail over {what} ({}): {}", seeds.len(), times.join(", "));
         }
     }
+
+    /// T4 (decision 0639 §3): a program's graph, derived in a store copied from the template, asks for no module's
+    /// lowering: the template's run of every library file lowered every module and kept its image. A program with a
+    /// module the store does not hold asks for that module alone, once.
+    #[test]
+    fn phase_0_lowers_each_module_its_store_does_not_hold() {
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
+        let text = crate::code_rule_dsl::logic::settings::program_text(&lib.join("python/conditions.rerail")).unwrap();
+        let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
+        let before = crate::code_rule_dsl::logic::rr::planned_modules_lowered();
+        let graph = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0);
+        assert!(!graph.plan.is_empty(), "{}", graph.describe());
+        assert_eq!(graph.lowered.len(), graph.plan.len(), "every planned module lowered: {:?}", graph.lowered);
+        assert_eq!(crate::code_rule_dsl::logic::rr::planned_modules_lowered(), before, "the template's modules, lowered again");
+        // A module of the program's own directory, beside it: lowered once.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("extra.rerail"), ".decl extra(x: number)\nextra(1).\n").unwrap();
+        std::fs::write(dir.path().join("p.rerail"), "#include \"python/env.rerail\"\n#include \"extra.rerail\"\n.decl y(x: number)\ny(x) :- extra(x).\n.output y\n").unwrap();
+        let p = super::Seed::File(dunce::canonicalize(dir.path().join("p.rerail")).unwrap());
+        let graph = super::derive(std::slice::from_ref(&p)).unwrap().of(&p, 0);
+        assert_eq!(crate::code_rule_dsl::logic::rr::planned_modules_lowered(), before + 1, "the new module alone: {}", graph.describe());
+        assert_eq!(graph.lowered.len(), graph.plan.len());
+        let _ = super::derive(std::slice::from_ref(&p)).unwrap();
+        assert_eq!(crate::code_rule_dsl::logic::rr::planned_modules_lowered(), before + 1, "lowered once");
+    }
+
+    /// T5 (decision 0639 §3): a graph whose module's image the store does not hold does not hold (`Graph::holds`), so
+    /// `graphs` derives it again in that store, which asks for the lowering; a reused run of phase 0 checks its answer
+    /// by the same look (`rr::planned_module_held`, the record's `p0_lower_req` entry).
+    #[test]
+    fn a_graph_holds_only_while_its_modules_images_are_held() {
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
+        let text = crate::code_rule_dsl::logic::settings::program_text(&lib.join("python/conditions.rerail")).unwrap();
+        let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
+        let graph = super::graph(&seed).unwrap();
+        assert!(graph.holds_now(), "{}", graph.describe());
+        assert!(graph.lowered.keys().all(|k| crate::code_rule_dsl::logic::rr::planned_module_held(k)));
+        let gone = "ab".repeat(32);
+        assert!(!crate::code_rule_dsl::logic::rr::planned_module_held(&gone));
+        let mut without = (*graph).clone();
+        without.lowered.insert(gone, "cd".repeat(32));
+        assert!(!without.holds_now(), "a graph naming an image no store holds");
+    }

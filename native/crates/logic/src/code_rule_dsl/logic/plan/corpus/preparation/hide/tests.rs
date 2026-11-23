@@ -163,7 +163,7 @@
         use crate::code_rule_dsl::logic::plan::corpus::hiding::BOUND;
         // The control: the same reach written into the annotation's trees from the host's rules is copied for the
         // annotation.
-        let today = (hidden(
+        let today = hidden(
             concat!(
                 ".language python\n",
                 ".decl parsed(s: node, g: symbol, r: node)\n.decl string_annotation(s: node)\n.decl kind(n: node, k: symbol)\n.decl text(n: node, s: symbol)\n",
@@ -174,7 +174,7 @@
                 ".output host_names, quoted\n",
             ),
             BOUND,
-        ));
+        );
         let shown: Vec<String> = today.rules().map(|r| today.show_rule(r)).collect();
         assert!(shown.iter().any(|r| r.contains("rr_in_annotation")), "the control copies: {shown:#?}");
         let v = hidden(

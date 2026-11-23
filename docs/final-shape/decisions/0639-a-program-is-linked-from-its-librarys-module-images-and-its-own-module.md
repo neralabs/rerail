@@ -153,6 +153,17 @@ engine answers a key once, as a load is answered once. Its native step:
 3. Walks the clauses (`lower_module_in_written`).
 4. Keeps the image (`keep_image`) and answers with its digest.
 
+**As built (step 2): one wave, answered in rank order.** The rules ask for every module at once,
+`p0_lower_req(key, rank, files, scope)`, with its files by path and its scope's keys. The engine answers the wave's
+requests in rank order, so a module's scope (which ranks below it) is lowered first, and one pause of the fixpoint
+answers them all rather than one pause a rank. A module that does not lower is not answered: the program that reads
+it lowers it in its own place and reports the error there, not phase 0 for every program. The record's entry and
+`Graph::holds` check that the store holds the image under its key (mapped, not read: the key names the content).
+The store's writer keeps an image behind the run, so the process keeps each module it lowered or decoded, by store
+and key (`rr::planned_module`). A library file or a phase program as a seed is a module of the programs that include it,
+so its graph holds its own module and the template plans and lowers every one; a program file of the run's own is
+no module.
+
 **Precedent for rounds over answers.** `bootstrap.rerail` already derives requests through negation over an answer:
 `load` ← `p0_resolved` ← `!p0_before` ← `p0_exists` ← `dir_entry`, the answer to `rr_dir_req`. The count over
 `p0_module_lowered` is the same pattern.
@@ -426,7 +437,8 @@ silently. Each place a digest stands for content, what can collide, and what is 
 
 1. §1 in `bootstrap.rerail` and the plan rows in `Graph` and its image (§2). T3. **Done**: T3 is
    `phase_0_plans_the_modules_as_the_library_lowering_does`; Rust's plan is `rr::library_plan`, which step 4 removes.
-2. §3: the engine answer, its reuse check, and `Graph::holds` over images. T4, T5.
+2. §3: the engine answer, its reuse check, and `Graph::holds` over images. T4, T5. **Done**: T4
+   `phase_0_lowers_each_module_its_store_does_not_hold`, T5 `a_graph_holds_only_while_its_modules_images_are_held`.
 3. §4's names: `content_names` in the walk's end, `once_key` on SHA-256, the findings' and rule positions' counters
    per module. T6, T7.
 4. §4's link: the union rules, the engine's view over module images, the conflicts. Single programs and

@@ -24,6 +24,7 @@
 //   p0_scope(m, s), p0_module_rank(m, k), p0_module_key(m, key)
 //                                       the module plan (decision 0639 §1, below): module `m` is lowered against the
 //                                       modules `s`, ranks `k`, and is kept under `key`
+//   p0_module_lowered(key, image)       the module of `key` lowered, its image's digest (the engine's answer)
 //
 // One more builtin fact: env("rerail.build", b), the engine's build, which a module's key names.
 //
@@ -141,10 +142,12 @@ p0_seed_variant(f, "bare") :- p0_file(f), p0_file_t_shape(f), !p0_core(f).
 // `core.rerail` declares `doc`, but read with itself first is itself: a seed of its own, it is the module the
 // programs that read it have in their scope.
 p0_seed_variant(f, "core") :- p0_file(f), p0_core(f).
-// The files a seed reaches by its includes, and a file seed itself: a program file is a module of a program that
-// includes it.
+// The files a seed reaches by its includes, and a file seed of the library or the phase programs itself: it is a
+// module of the programs that include it (a store's template plans them all). A program file of the run's own is a
+// program's text, no module (decision 0639 §2).
 .decl p0_seed_reaches(s: symbol, f: symbol)
-p0_seed_reaches(f, f) :- p0_file(f), loaded(_, f, "rr").
+p0_seed_reaches(f, f) :- p0_file(f), loaded(_, f, "rr"), p0_lib(l), d = cat(l, "/"), prefix(d, f).
+p0_seed_reaches(f, f) :- p0_file(f), loaded(_, f, "rr"), p0_phase_lib(l), d = cat(l, "/"), prefix(d, f).
 p0_seed_reaches(s, f) :- p0_seed_variant(s, _), p0_resolved(s, _, _, c), p0_canon(c, f).
 p0_seed_reaches(s, b) :- p0_seed_reaches(s, a), p0_includes(a, b).
 .decl p0_variant(w: symbol, f: symbol)
@@ -186,4 +189,17 @@ p0_closure_edges(m, es) :- p0_module_rank(m, _), es = join e by e sep "," : { p0
 .decl p0_module_key(m: symbol, key: symbol)
 p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- env("rerail.build", b), p0_closure_digests(m, ds), p0_closure_edges(m, es).
 
-.output p0_include, p0_missing, p0_absent, p0_phase, p0_scope, p0_module_rank, p0_module_key
+// Each module's lowering, asked of the engine (decision 0639 §3): its key, its rank, its files by path in its name's
+// order, and its scope's keys. The engine answers a wave's requests in rank order, each against the images of its
+// scope, which rank below it: so every module is asked at once, and one pause of the fixpoint answers them all. The
+// answer is the digest of the module's image, kept in the image store under the module's key.
+.decl p0_module_files(m: symbol, fs: symbol)
+p0_module_files(m, fs) :- p0_module_rank(m, _), fs = join f by d sep "\n" : { p0_module_of(_, f, m), p0_digest(f, d) }.
+.decl p0_scope_keys(m: symbol, ks: symbol)
+p0_scope_keys(m, ks) :- p0_module_rank(m, _), ks = join k by k sep "," : { p0_scope(m, s), p0_module_key(s, k) }.
+.decl p0_lower_req(key: symbol, rank: number, files: symbol, scope: symbol)
+p0_lower_req(k, r, fs, ks) :- p0_module_key(m, k), p0_module_rank(m, r), p0_module_files(m, fs), p0_scope_keys(m, ks).
+.decl p0_module_lowered(key: symbol, image: symbol)
+.answer p0_lower_req -> p0_module_lowered
+
+.output p0_include, p0_missing, p0_absent, p0_phase, p0_scope, p0_module_rank, p0_module_key, p0_module_lowered

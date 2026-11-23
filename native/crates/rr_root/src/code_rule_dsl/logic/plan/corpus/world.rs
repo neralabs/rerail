@@ -472,6 +472,10 @@ impl World {
             "git_file_storage" => crate::git_workspace::snapshot::file_stamp(&self.allowed(path)?)?,
             "load" => bytes_digest(&self.root.join(path)),
             "refused" => self.probe(path),
+            crate::code_rule_dsl::logic::rr::LOWER_REQUEST => {
+                let (key, _) = serde_json::from_str::<(String, String)>(path).ok()?;
+                (if crate::code_rule_dsl::logic::rr::planned_module_held(&key) { "held" } else { "gone" }).to_owned()
+            }
             super::analysis_history::REQUEST => {
                 let (kind, key) = serde_json::from_str::<(String, String)>(path).ok()?;
                 super::analysis_history::requested(&kind, &key).ok()?.1
