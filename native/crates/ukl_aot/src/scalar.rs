@@ -52,10 +52,10 @@ fn wide_step(a: u64, c: u32) -> u64 {
     1u64 << 32 | u64::from(c.wrapping_sub(s))
 }
 
-/// The 8 bytes of `a` from byte `at` up, as `ukl_ld_window` reads them.
+/// The 8 bytes of `a` from byte `at` up, as `ukl_ld_window` reads them (bytes past `a`'s end 0: none is wanted).
 fn window(a: &[u64], at: usize) -> u64 {
     let (w, s) = (at / 8, (at % 8) * 8);
-    if s == 0 { a[w] } else { a[w] >> s | a[w + 1] << (64 - s) }
+    if s == 0 { a[w] } else { a[w] >> s | a.get(w + 1).copied().unwrap_or(0) << (64 - s) }
 }
 
 /// `wide_lanes` (`wide.uglykl`): thread `i`'s rows of answers, `a`, `b` and `c` every thread's, `k` the uniform value.
@@ -96,5 +96,6 @@ pub fn wide(a: &[u64], b: &[u64], c: &[u32], k: u64, i: usize) -> [u64; crate::W
         window(a, i as usize * if k & 1 != 0 { 8 } else { 4 }),
         { let j = i as u32 + 3; u64::from(j >> 8) * 1000 + u64::from(j & 255) },
         if x & 3 == 0 { (0..z & 15).step_by(2).fold(y, |h, q| h.wrapping_mul(31).wrapping_add(u64::from(q))) } else { x },
+        { let v = (k & 7) as usize + 1; window(a, i * v) & if v == 8 { u64::MAX } else { (1u64 << (8 * v)) - 1 } },
     ]
 }

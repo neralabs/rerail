@@ -2855,6 +2855,8 @@ impl Em<'_> {
             V::Lin(f, s) if to.bytes() == 4 && to != M::B && !to.float() => V::Lin(f, s),
             // A lane's 32-bit index widened: an offset, scaled 1 so far.
             V::L(..) | V::Iota(..) | V::Lin(..) if to.bytes() == 8 && from.bytes() == 4 && !from.signed() => V::At { base: String::new(), idx: Box::new(a), scale: 1 },
+            // A narrower unsigned one's: its lanes hold it zero-extended, a 32-bit lane's the same.
+            V::L(l, _) if to.bytes() == 8 && from.bytes() < 4 && !from.signed() && from != M::B => V::At { base: String::new(), idx: Box::new(V::L(l, M::U32)), scale: 1 },
             // Otherwise, lanes `first + j * stride` as each lane's.
             V::Lin(..) => {
                 let l = self.lanes(&a, M::U32)?;

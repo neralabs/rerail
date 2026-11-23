@@ -174,7 +174,7 @@ pub struct WideArgs {
 }
 
 /// The rows of `wide_lanes`'s answers (`WIDE_ROWS`): row `r`'s answer of thread `i` at `r * n + i`.
-pub const WIDE_ROWS: usize = 27;
+pub const WIDE_ROWS: usize = 28;
 
 /// `wide_lanes` (its Rust `k`) over `a`, `b` and `c` (each a thread's), `k` its uniform value, in groups of `block`
 /// threads: each row's answers.

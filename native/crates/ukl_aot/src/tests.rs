@@ -251,7 +251,7 @@ fn the_kernels_rust_wide_is_the_scalar_one() {
     sets.push(((0..77).map(|i| next() & !(i & 3)).collect(), (0..77).map(|_| next() >> 20).collect(), (0..77).map(|i| i as u32).collect()));
     sets.push(((0..64).map(|_| 0x1234_5678_9ABC_DEF1).collect(), (0..64).map(|_| 7).collect(), (0..64).map(|_| 33).collect()));
     for (a, b, c) in &sets {
-        for k in [0u64, 5, 0xFFFF_FFFF_0000_0001] {
+        for k in [0u64, 1, 2, 3, 4, 5, 6, 7, 0xFFFF_FFFF_0000_0001] {
             let len = a.len();
             let mut want = vec![0u64; len * crate::WIDE_ROWS];
             for i in 0..len {

@@ -40,13 +40,20 @@
 #define __UKL_DIRECT_ukl_ldc 1
 #endif
 
-// The CPU's vector code (`UKL_VEC`) reads a whole window of 8 bytes as one unaligned load: the words it touches are
-// the aligned form's (the word at `a` alone if `a` is aligned, else it and the next), and a lane's consecutive
-// windows are then one vector load (rs.rs), not each lane's word, shift and second word.
+// The CPU's vector code (`UKL_VEC`) reads a window of a whole value's bytes (1, 2, 4 or 8) as one unaligned load of
+// those bytes alone: the words it touches are the aligned form's (the word that holds its first byte, and the next
+// only if they run into it), never past its last byte's, and a lane's consecutive windows are then one vector load
+// of their elements (rs.rs), not each lane's word, shift and second word. The bytes above `n` are 0.
 #if defined(UKL_VEC)
 #define __UKL_WINDOW_WHOLE(Ld, Space, t, a, n)                                                                          \
     if ((n) == 8u)                                                                                                      \
-        return __UKL_WORD_##Ld((Space const uint64_t*)((t) + (a)));
+        return __UKL_WORD_##Ld((Space const uint64_t*)((t) + (a)));                                                     \
+    if ((n) == 4u)                                                                                                      \
+        return *(Space const uint32_t*)((t) + (a));                                                                     \
+    if ((n) == 2u)                                                                                                      \
+        return *(Space const uint16_t*)((t) + (a));                                                                     \
+    if ((n) == 1u)                                                                                                      \
+        return (t)[a];
 #else
 #define __UKL_WINDOW_WHOLE(Ld, Space, t, a, n)
 #endif
