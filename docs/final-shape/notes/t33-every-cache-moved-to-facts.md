@@ -375,3 +375,10 @@ a transaction's small sources in one segment.
 Phase 1 is the next structural piece: its nested run's strata kept as frames by identity with their reads'
 digests (the files handed down, the directories its imports list), so a clean phase is not run. The same frames
 replace `unchanged_phase` and the phase records of step 1.
+
+Since (2026-11-22, load 4): 0.25 s CPU without the cutoff, 0.06 s with it, the outputs (as CSV) the cold run's.
+The cross part's three views of inputs (`kind`, `rr_ctx3`, `scope_node`, which read all 30 tapes) are no longer made
+when no stratum that runs reads them (`Cut::idle`). Phase 1's nested run is 13 ms of it, not 30 (the 30 were the cross
+part's views). The profile's spans now: prepare 55 (the prepared program's entry 30: what preparing found 15, the
+pointer 5, the kept plans 4; the memo's program 13), the cross part 24, the parse's own 19 (the kept statistics 8),
+the statistics 19 (the base rows measured 14), phase 1 17, the outputs written 3.
