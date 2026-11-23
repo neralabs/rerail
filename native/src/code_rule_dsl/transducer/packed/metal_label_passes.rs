@@ -1774,20 +1774,28 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
                 + 2
         })
         .collect::<Vec<_>>();
-    // Each group's rounds: as expected, all capped alike where the budget cannot afford that.
-    let per_group = plan
-        .steps
-        .iter()
-        .map(|(recursive, levels)| match (*recursive, sweeps(levels)) {
-            (false, _) => 0,
-            (true, true) => 1,
-            (true, false) if fused(levels) => 0,
-            (true, false) => levels.iter().map(|level| launches(level, &mut seen)).sum::<usize>(),
-        })
-        .collect::<Vec<_>>();
+    // Each group's launches a round: a fused group's none past its dispatch, where its walks run as micro walks; on
+    // the interpreter (`micro` false: a run whose walks outgrew their frames, or `INTERPRET_ONLY`) no group fuses, and
+    // each round launches its levels. Before, a plan counted every group of micro walks as fused, so an interpreted
+    // run's rounds cost nothing in its plan: a clause planned at 6 launches took 56, one at 20 took 138, and one ran
+    // past its evaluation's launches with its plan within them.
+    let per_group_of = |micro: bool| {
+        let mut seen = seen.clone();
+        plan.steps
+            .iter()
+            .map(|(recursive, levels)| match (*recursive, sweeps(levels)) {
+                (false, _) => 0,
+                (true, true) => 1,
+                (true, false) if micro && fused(levels) => 0,
+                (true, false) => levels.iter().map(|level| launches(level, &mut seen)).sum::<usize>(),
+            })
+            .collect::<Vec<_>>()
+    };
+    let per_groups = [per_group_of(false), per_group_of(true)];
     // A run's rounds within `limit` launches: the evaluation's own for its first run, what the run's reruns' budget has
     // left for a rerun (decision 0540).
-    let plan_rounds = |limit: usize, wanted: &[usize]| {
+    let plan_rounds = |limit: usize, wanted: &[usize], micro: bool| {
+        let per_group = &per_groups[usize::from(micro)];
         let budget = limit.saturating_sub(fixed + groups);
         let rounds = |cap: usize| {
             plan.steps
@@ -1796,7 +1804,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
                 .map(|((recursive, _), wanted)| if *recursive { (*wanted).clamp(2, cap.max(2)) } else { 0 })
                 .collect::<Vec<_>>()
         };
-        let cost = |rounds: &[usize]| rounds.iter().zip(&per_group).map(|(rounds, launches)| rounds * launches).sum::<usize>();
+        let cost = |rounds: &[usize]| rounds.iter().zip(per_group).map(|(rounds, launches)| rounds * launches).sum::<usize>();
         let mut cap = MOST_ROUNDS;
         while cap > 2 && cost(&rounds(cap)) > budget {
             cap -= 1;
@@ -1814,12 +1822,12 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let mut wanted = expected.clone();
     if std::env::var_os("RERAIL_LAUNCHES").is_some() {
         let levels = plan.steps.iter().map(|(_, levels)| levels.len()).sum::<usize>();
-        eprintln!("PLAN steps {} levels {levels} fixed {fixed} groups {groups} per group {per_group:?} expected {expected:?} files {}", plan.steps.len(), files.len());
+        eprintln!("PLAN steps {} levels {levels} fixed {fixed} groups {groups} per group {per_groups:?} expected {expected:?} files {}", plan.steps.len(), files.len());
     }
-    let mut rounds = plan_rounds(LAUNCHES, &wanted);
+    let (mut lanes, mut micro, mut deep, mut released) = (NARROW, !interpret_only(), false, false);
+    let mut rounds = plan_rounds(LAUNCHES, &wanted, micro);
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
-    let (mut lanes, mut micro, mut deep, mut released) = (NARROW, !interpret_only(), false, false);
     let (mut budget, mut replanned) = (super::WorkBudget::current(), 0);
     let mut attempt = 0_usize;
     loop {
@@ -1827,7 +1835,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         // decision 2026-11-21), planned within what it has left.
         let _rerun = (attempt > 0).then(super::super::metal_backend::launch::rerun);
         if attempt > 0 {
-            rounds = plan_rounds(super::super::metal_backend::launch::rerun_available(), &wanted);
+            rounds = plan_rounds(super::super::metal_backend::launch::rerun_available(), &wanted, micro);
         }
         attempt += 1;
         let mut outcome = match encode(plan, files, &rounds, lanes, micro, deep, budget) {
@@ -1882,7 +1890,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         outcome.widened = lanes == WIDE;
         crate::code_rule_dsl::prof::count("run.launches", outcome.dispatches);
         if std::env::var_os("RERAIL_LAUNCHES").is_some() {
-            eprintln!("launches: {} (planned {}) files {}", outcome.dispatches, fixed + groups + rounds.iter().zip(&per_group).map(|(r, l)| r * l).sum::<usize>(), files.len());
+            eprintln!("launches: {} (planned {}) files {}", outcome.dispatches, fixed + groups + rounds.iter().zip(&per_groups[usize::from(micro)]).map(|(r, l)| r * l).sum::<usize>(), files.len());
         }
         used += outcome.dispatches;
         buffers += outcome.command_buffers;
@@ -1933,6 +1941,11 @@ fn mark(at: &str) {
 /// (`OverBudget`: twice the budget) or fails it (`BackendFailure`). An overrun goes to W where W is predicted cheaper than
 /// the evaluation again with twice the budget (its steps per node times the file's nodes, doubled); a stop at the
 /// ceiling goes to W. Without a W (`Plan::w_cost`), or an unfinished task no evaluation names, as before.
+///
+/// Every overrun is a misprediction, observed whether a W takes it or not: its program is repriced at once from what
+/// it spent, so a run again predicts from that, not from the rate it ran over. Before, a run without a W observed
+/// none, and each run again only doubled the budget it ran over (the resident interpreter's gate: a clause's walks
+/// over files of 2,158 nodes ran six times, past the reruns' launches).
 fn replanned(
     plan: &Plan<'_>,
     files: &[TapeDoc],
@@ -1941,6 +1954,15 @@ fn replanned(
     flags: u32,
 ) -> Result<Vec<(u32, usize)>, Error> {
     let (over, ceiling) = (unfinished.values().any(|u| u.0), unfinished.values().any(|u| u.1));
+    // A task's steps spent where it ran over (its budget a node of its file) and as its program's rate predicted.
+    let spent = |file: usize, per_node: u64| {
+        let nodes = files.get(file).map_or(0, |tape| tape.transducer_len() as u64);
+        (u64::from(budget.task_limit(per_node)).saturating_mul(nodes), nodes)
+    };
+    super::evaluation_costs::observe(unfinished.iter().filter(|(_, u)| u.0 && !u.1).map(|(&(_, file), (_, _, per_node, digest))| {
+        let (steps, nodes) = spent(file, *per_node);
+        super::evaluation_costs::Observation { program: digest.clone(), steps, size: nodes, predicted: per_node.saturating_mul(nodes), over_budget: true }
+    }).collect::<Vec<_>>());
     if flags & 4 != 0 && !over {
         return Err(Error::OverBudget);
     }
@@ -1951,24 +1973,18 @@ fn replanned(
         return Err(if over { Error::OverBudget } else { Error::BackendFailure });
     };
     let mut given = Vec::new();
-    let mut observations = Vec::new();
-    for (&(label, file), (overran, stopped, per_node, digest)) in unfinished {
-        let nodes = files.get(file).map_or(0, |tape| tape.transducer_len() as u64);
+    for (&(label, file), (overran, stopped, per_node, _)) in unfinished {
         if *overran && !stopped {
-            let spent = u64::from(budget.task_limit(*per_node)).saturating_mul(nodes);
-            observations.push(super::evaluation_costs::Observation { program: digest.clone(), steps: spent, size: nodes, predicted: per_node.saturating_mul(nodes), over_budget: true });
-            let (w, again) = (w_cost(label, file), spent.saturating_mul(2));
+            let (w, again) = (w_cost(label, file), spent(file, *per_node).0.saturating_mul(2));
             crate::code_rule_dsl::logic::profile::decision("over its budget, replanned by cost (0334)", || {
                 format!("ast label pass on Metal: W {w} steps against the run again {again}: {}", if w < again { "W" } else { "again" })
             });
             if w >= again {
-                super::evaluation_costs::observe(observations);
                 return Err(Error::OverBudget);
             }
         }
         given.push((label, file));
     }
-    super::evaluation_costs::observe(observations);
     Ok(given)
 }
 
