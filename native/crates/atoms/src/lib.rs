@@ -1,3 +1,10 @@
+//! The atoms (decision 0009): the interner that numbers every text the engine holds as a symbol, its blocks in the
+//! store's files and their chain (`stored`), the map between this process's ids and the store's after a fork (`map`),
+//! the `atoms` virtual table (`vtab`), and the guests' keys' registry each arena keeps (`guest_keys`). Below the
+//! store (crate split step 10b-3): the crates that intern and read atoms need no store. The store's calls over them
+//! (`ContentStore::intern_atoms`, its writer's flush) and the kept facts installed beside them on its connections
+//! (`content_store::attach_atoms`) are the store's.
+
 //! One string interner for the graph: every name, key, path and content hash is a `Sym` (u32).
 //! Strings live back to back in one byte arena; the table holds ids and hash tags. Append-only: a string
 //! interned by any worktree keeps its id for every other (ids are shared across base and deltas).
@@ -19,8 +26,8 @@
 //! dies. A process that waits for it holds a shared lock on `<db>-atoms.want`; the holder sees that
 //! at its next interning and flushes, which gives the lease back.
 #[allow(unused_imports)]
-use crate::content_store::Cached as _;
-use super::{StoreError, StoreResult};
+use rerail_store_base::content_store::Cached as _;
+use rerail_store_base::content_store::{StoreError, StoreResult};
 use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension, ffi};
 use std::collections::HashMap;
@@ -31,11 +38,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
-mod map;
-pub(crate) mod stored;
+pub mod map;
+pub mod stored;
+pub mod guest_keys;
 pub use stored::{atoms_dir, copy_blocks, freeze_blocks};
-pub(crate) use stored::clone_file;
-mod vtab;
+pub use stored::clone_file;
+pub mod vtab;
 pub use map::{ProcessIds, StoreIds, map_columns, mapped};
 
 pub use rerail_store_base::content_store::Sym;
@@ -64,11 +72,35 @@ pub struct Interner {
 }
 
 /// The first pending block's room: atoms, and string bytes. Each next has twice the last's (or a long string's).
-#[cfg(not(test))]
-pub(crate) const PENDING_FIRST_CAP: u32 = 1 << 12;
-#[cfg(test)]
-pub(crate) const PENDING_FIRST_CAP: u32 = 64;
-const PENDING_FIRST_BYTES: u64 = 64 * PENDING_FIRST_CAP as u64;
+pub fn pending_first_cap() -> u32 {
+    if small_blocks() { 64 } else { 1 << 12 }
+}
+fn pending_first_bytes() -> u64 {
+    64 * u64::from(pending_first_cap())
+}
+
+/// Whether blocks start small (the store's tests, `set_small_blocks`), so that a test's store grows chains and rolls
+/// them up.
+pub fn small_blocks() -> bool {
+    #[cfg(feature = "test-hooks")]
+    {
+        SMALL_BLOCKS.load(Ordering::Relaxed)
+    }
+    #[cfg(not(feature = "test-hooks"))]
+    {
+        false
+    }
+}
+
+#[cfg(feature = "test-hooks")]
+static SMALL_BLOCKS: AtomicBool = AtomicBool::new(false);
+
+/// The test hook: blocks start small in this process, as the store's own tests have them (they did under the
+/// store's `cfg(test)` before the atoms were a crate). Set as the test binary loads, before any atom.
+#[cfg(feature = "test-hooks")]
+pub fn set_small_blocks() {
+    SMALL_BLOCKS.store(true, Ordering::Relaxed);
+}
 
 impl Default for Interner {
     fn default() -> Self {
@@ -89,8 +121,8 @@ impl Interner {
     }
 
     /// The pending blocks' memory, each its first byte and its reservation's end.
-    #[cfg(test)]
-    pub(crate) fn pending_regions(&self) -> Vec<(usize, usize)> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn pending_regions(&self) -> Vec<(usize, usize)> {
         self.pending.iter().map(rerail_blocks::atoms::AtomsW::region).collect()
     }
 
@@ -168,7 +200,7 @@ impl Interner {
             return got;
         }
         // The next block, twice the last (and room for this string).
-        let (cap, bytes) = self.pending.last().map_or((PENDING_FIRST_CAP, PENDING_FIRST_BYTES), |b| (b.cap().saturating_mul(2), b.bytes_cap() * 2));
+        let (cap, bytes) = self.pending.last().map_or((pending_first_cap(), pending_first_bytes()), |b| (b.cap().saturating_mul(2), b.bytes_cap() * 2));
         let mut b = rerail_blocks::atoms::AtomsW::anon(id, cap, bytes.max(2 * s.len() as u64));
         let got = b.append(s, h).expect("room for its first atom");
         self.pending.push(b);
@@ -278,7 +310,7 @@ const LEASE_WAIT: Duration = Duration::from_secs(60);
 /// How often a holder looks for a process waiting for its lease.
 const WANT_CHECK: Duration = Duration::from_millis(50);
 
-pub(super) struct State {
+pub struct State {
     /// The atoms: the store's, mapped, and this process's pending ones (`Interner::base` on).
     atoms: Interner,
     /// When the first pending atom was given out.
@@ -296,7 +328,7 @@ pub struct Atoms {
     identity: Option<i64>,
     state: rerail_accel::sharded::Sharded<State>,
     /// The store's guest keys as this process holds them (decision 0391), shared as the atoms are.
-    guest_keys: Arc<super::guest_keys::GuestKeys>,
+    guest_keys: Arc<crate::guest_keys::GuestKeys>,
     /// Its atoms reserved by components not yet retired (`reserving`).
     reserved: ReservedSet,
     /// What these atoms keep of their texts (decision 0478 steps 2d, 2e): verdicts and texts, shared as the atoms are.
@@ -330,7 +362,7 @@ pub struct Atoms {
     /// not found is not interned, and nothing is read to know it (decision 0104).
     complete: AtomicBool,
     /// A flush is queued to the store's writer and has not run yet (`queue_atoms_flush`).
-    pub(super) flush_queued: AtomicBool,
+    pub flush_queued: AtomicBool,
 }
 
 /// The identity read of each database file, by its path and (device, inode, creation time): `Atoms::identity`. A file
@@ -342,7 +374,7 @@ struct Identities(Mutex<HashMap<String, (FileIdentity, Option<i64>)>>);
 type FileIdentity = (u64, u64, u128);
 
 /// The database at `path` was made a store (`schema::initialize`): the identity read of it before (none) is gone.
-pub(crate) fn forget_identity(path: &str) {
+pub fn forget_identity(path: &str) {
     rerail_prof::code_rule_dsl::logic::profile::shared::<Identities>().0.lock().remove(path);
 }
 
@@ -593,7 +625,7 @@ impl Drop for MemoryArena {
 
 /// A path's registry key: its canonical form, resolved once per path (a `realpath` per stratum was 2.5% of a corpus
 /// run's main thread). A path that does not resolve yet is not remembered.
-pub(super) fn key(path: &Path) -> PathBuf {
+pub fn key(path: &Path) -> PathBuf {
     #[derive(Default)]
     struct CanonicalPaths(Mutex<HashMap<PathBuf, PathBuf>>);
     let held_ = rerail_prof::code_rule_dsl::logic::profile::shared::<CanonicalPaths>();
@@ -624,7 +656,7 @@ fn try_lock(file: &File) -> Result<(), TryLockError> {
 }
 
 /// `path` with `suffix` appended to its file name (the arena's lock and journal files).
-fn suffixed(path: &Path, suffix: &str) -> PathBuf {
+pub fn suffixed(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
     PathBuf::from(name)
@@ -633,7 +665,7 @@ fn suffixed(path: &Path, suffix: &str) -> PathBuf {
 use stored::database_end;
 
 impl Atoms {
-    pub(super) fn ephemeral() -> Arc<Self> {
+    pub fn ephemeral() -> Arc<Self> {
         Arc::new(Self::new(None, None))
     }
 
@@ -691,11 +723,11 @@ impl Atoms {
         self.kept.get_or_init(Kept::new)
     }
 
-    pub(crate) fn guest_keys(&self) -> Arc<super::guest_keys::GuestKeys> {
+    pub fn guest_keys(&self) -> Arc<crate::guest_keys::GuestKeys> {
         Arc::clone(&self.guest_keys)
     }
 
-    pub(crate) fn for_database(path: &Path, identity: Option<i64>) -> Arc<Atoms> {
+    pub fn for_database(path: &Path, identity: Option<i64>) -> Arc<Atoms> {
         let key = key(path);
         let held_ = rerail_prof::code_rule_dsl::logic::profile::shared::<AtomsByFile>();
         let mut registry = held_.0.lock();
@@ -815,7 +847,7 @@ impl Atoms {
             connection.commit_hook(Some(move || {
                 // This hook replaces the one every connection is given for the warm check (`RERAIL_WARM`).
                 // SAFETY: called by SQLite on this connection's thread, inside its commit hook.
-                unsafe { super::hazards::warm_commit(handle as *mut ffi::sqlite3) };
+                unsafe { rerail_store_base::content_store::hazards::warm_commit(handle as *mut ffi::sqlite3) };
                 let flushed = hook.swap(false, Ordering::AcqRel);
                 if flushed || !held.pending() {
                     return false;
@@ -847,10 +879,6 @@ impl Atoms {
             None => Atoms::for_connection(connection),
         };
         vtab::install(connection, &atoms)?;
-        // The kept facts beside them (decisions 0456 K8, 0439), on a store's connection.
-        if let Some(path) = connection.path().filter(|path| !path.is_empty()) {
-            super::kept_facts::vtab::install(connection, Path::new(path))?;
-        }
         Ok(atoms)
     }
 
@@ -1041,7 +1069,7 @@ impl Atoms {
 
     /// Closes this process's connection for reading where the store's atoms end (reopened when next needed): the
     /// store's last handle closed, and the arena, which the planner's symbols keep, must not hold its file open.
-    pub(crate) fn release_reader(&self) {
+    pub fn release_reader(&self) {
         self.reader.lock().take();
         self.state.write().atoms.stored.release_writer();
     }
@@ -1157,7 +1185,7 @@ impl Atoms {
                 // Waited for, so the ids just given are still pending when the store moves; on a thread of its own, as
                 // another process's write (and never the writer's batch thread, whose transaction it waits for).
                 let _ = rerail_accel::exec::service("rerail-test-fork", None, move || {
-                    super::hazards::behind_the_run();
+                    rerail_store_base::content_store::hazards::behind_the_run();
                     append()
                 })
                 .map(|h| h.join());
@@ -1293,7 +1321,7 @@ impl Atoms {
 
     /// Maps every stored atom: for a scan or a range of the `atoms` table. The store's end is read (without the
     /// lease), and its blocks read to it.
-    pub(super) fn read_all(&self) -> StoreResult<()> {
+    pub fn read_all(&self) -> StoreResult<()> {
         if self.path.is_none() {
             return Ok(());
         }
@@ -1419,7 +1447,7 @@ impl Atoms {
             let mut lease = self.lease.lock();
             self.acquire(&mut lease)?;
             self.runs.fetch_add(1, Ordering::AcqRel);
-        } else if self.runs.fetch_add(1, Ordering::AcqRel) == 0 && !self.leased.load(Ordering::Acquire) && !super::hazards::inside_waves() {
+        } else if self.runs.fetch_add(1, Ordering::AcqRel) == 0 && !self.leased.load(Ordering::Acquire) && !rerail_store_base::content_store::hazards::inside_waves() {
             let _lease = self.lease.lock();
             if let Some(rows) = self.read_rows()? {
                 let end = stored::end_of(&rows) as usize;
@@ -1432,7 +1460,7 @@ impl Atoms {
             }
         }
         // Inside another run's waves (decision 0160's trial) nothing is read: what is mapped stays as it was.
-        if lease_free() && super::hazards::inside_waves() {
+        if lease_free() && rerail_store_base::content_store::hazards::inside_waves() {
             return Ok(self.complete.load(Ordering::Acquire));
         }
         self.complete.store(true, Ordering::Release);
@@ -1508,7 +1536,7 @@ impl Atoms {
         self.runs.load(Ordering::Acquire) == 0 && self.due_now()
     }
 
-    pub(super) fn due_now(&self) -> bool {
+    pub fn due_now(&self) -> bool {
         if self.path.is_none() {
             return false;
         }
@@ -1638,104 +1666,45 @@ impl Drop for Atoms {
     }
 }
 
-impl super::ContentStore {
-    /// The atom of each of `values`, giving out new ones. They are written with the next write
-    /// transaction on the store, or in one of their own when a flush is due (decision 0049 §4).
-    /// This process's atoms of the store, for a reader that interns away from the store handle (a lazily
-    /// decoded source). Pending atoms are appended by the store's next flush.
-    pub fn atoms_handle(&self) -> std::sync::Arc<Atoms> {
-        std::sync::Arc::clone(&self.atoms)
+/// The atoms as a batch interns and reads them (`content_store::AtomTable`, the store's `atoms_handle`).
+impl rerail_store_base::content_store::AtomTable for Atoms {
+    fn intern(&self, value: &str) -> StoreResult<Sym> {
+        Atoms::intern(self, value)
     }
-
-    pub fn intern_atoms(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
-        let ids = self.atoms.intern_all(values)?;
-        // A store with a writer has it append them (decision 0104: only its writers write); one without, now.
-        if self.write_back.is_some() {
-            // Due, and with atoms a flush would write (not only those a component reserves, `Atoms::pending`).
-            if self.atoms.due_now() && self.atoms.flush_wanted() && !self.atoms.flush_queued.swap(true, Ordering::AcqRel) {
-                self.queue_atoms_flush();
-            }
-        } else if self.atoms.due() && self.atoms.flush_wanted() {
-            self.flush_atoms()?;
-        }
-        Ok(ids)
+    fn intern_all(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
+        Atoms::intern_all(self, values)
     }
-
-    /// The pending atoms, appended by the store's writer behind the run (decision 0104).
-    pub fn queue_atoms_flush(&self) {
-        self.write_back_syms(crate::content_store::write_back::Syms::None, "the pending atoms", 0, Vec::new(), crate::content_store::write_back::Work::atoms(true));
+    fn value(&self, atom: Sym) -> StoreResult<Option<String>> {
+        Atoms::value(self, atom)
     }
+}
 
-    /// The pending atoms, appended by the store's writer behind the run's other writes, as `what`.
-    pub fn queue_atoms(&self, what: &'static str) {
-        self.write_back_syms(crate::content_store::write_back::Syms::None, what, 0, Vec::new(), crate::content_store::write_back::Work::atoms(false));
+/// What the store's tests read inside the atoms (the test hooks; they were the store's own module's tests).
+#[cfg(feature = "test-hooks")]
+impl Atoms {
+    /// `f` of the interner as it is now.
+    pub fn with_interner<T>(&self, f: impl FnOnce(&Interner) -> T) -> T {
+        f(&self.state.read().atoms)
     }
-
-    /// Appends the pending atoms now, unless another writer holds the store (a later write will).
-    /// The database at `path` reads and writes this store's atoms in this process (`Atoms::share`): a
-    /// connection there resolves symbols as the store does. Call before opening it.
-    pub fn share_atoms_with(&self, path: &Path) {
-        self.atoms.share(path);
+    /// Whether this process holds the store's lease.
+    pub fn leased_now(&self) -> bool {
+        self.leased.load(Ordering::Acquire)
     }
-
-    pub fn flush_atoms(&self) -> StoreResult<()> {
-        if !self.atoms.pending() {
-            return Ok(());
-        }
-        let atoms = std::sync::Arc::clone(&self.atoms);
-        match mapped(|| self.immediate_transaction_no_wait(|t| atoms.begin_write(t))) {
-            Ok(()) | Err(StoreError::Busy) => Ok(()),
-            Err(StoreError::Database(error))
-                if matches!(error.sqlite_error_code(), Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)) =>
-            {
-                Ok(())
-            }
-            Err(error) => Err(error),
-        }
+    /// Whether the arena holds every atom its store has.
+    pub fn complete_now(&self) -> bool {
+        self.complete.load(Ordering::Acquire)
     }
-
-    /// `values` (this process's symbols) as the store numbers them, in this handle's open write transaction (the
-    /// writer's batch): unchanged unless forked (decision 0170).
-    pub fn symbols_to_store<'v>(&self, ids: ProcessIds<'v>) -> StoreResult<StoreIds<'v>> {
-        if !self.atoms.forked() {
-            return Ok(StoreIds(ids.0));
-        }
-        let connection = self.connection.lock().map_err(StoreError::Invalid)?;
-        self.atoms.to_store(&connection, ids)
+    /// The atoms of the store at `path` (`for_path`).
+    pub fn of_path(path: &Path) -> Arc<Atoms> {
+        Self::for_path(path)
     }
+}
 
-    /// The atom of `value`, if the store holds it.
-    pub fn atom(&self, value: &str) -> StoreResult<Option<Sym>> {
-        self.atoms.lookup(value)
-    }
-
-    /// The atoms' writes so far: (appends, atoms, bytes), and the atoms pending now.
-    pub fn atom_writes(&self) -> ((u64, u64, u64), usize) {
-        self.atoms.writes()
-    }
-
-    /// Heap bytes the arena holds (counted against the fact pool, K1).
-    pub fn atom_bytes(&self) -> usize {
-        self.atoms.bytes()
-    }
-
-    /// The string of `atom`, if the store holds it.
-    pub fn atom_value(&self, atom: Sym) -> StoreResult<Option<String>> {
-        self.atoms.value(atom)
-    }
-
-    /// Commits `transaction`, appending the pending atoms first if it writes the store.
-    /// Inside the writer's batch (`super::connection::begin`) it releases its savepoint only: the batch's commit
-    /// appends the atoms.
-    pub(super) fn commit(&self, transaction: super::connection::Tx<'_>) -> StoreResult<()> {
-        let super::connection::Tx::Top(transaction) = transaction else {
-            transaction.commit()?;
-            return Ok(());
-        };
-        let upto = self.atoms.write_pending(&transaction)?;
-        transaction.commit()?;
-        self.atoms.committed(upto);
-        Ok(())
+#[cfg(feature = "test-hooks")]
+impl Interner {
+    /// The pending blocks it holds.
+    pub fn pending_blocks(&self) -> usize {
+        self.pending.len()
     }
 }
 

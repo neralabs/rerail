@@ -18,7 +18,7 @@
 //! An append made here is the map's only while it is in the store: a rolled-back savepoint or transaction takes it
 //! away, and the next write sees that (`validate`) and forgets what it mapped.
 use super::{Atoms, Interner, State, Sym, database_end, hash_str, stored};
-use crate::content_store::{StoreError, StoreResult};
+use rerail_store_base::content_store::{StoreError, StoreResult};
 use rusqlite::Connection;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -28,11 +28,11 @@ const NONE: Sym = Sym::MAX;
 /// Symbol values as this process numbers them: what its rows, entries and arenas hold. Mapped to the store's by
 /// `Atoms::to_store` alone (decision 0170). The brand is the caller's claim, made where the values are: a value read
 /// from the store is a `StoreIds`, and passing it here instead is written as such, and reads as wrong.
-pub struct ProcessIds<'a>(pub(super) &'a mut [i64]);
+pub struct ProcessIds<'a>(pub &'a mut [i64]);
 
 /// Symbol values as the store numbers them: what a frame, a row read or a write holds. Mapped to this process's by
 /// `Atoms::to_local` alone (decision 0170).
-pub struct StoreIds<'a>(pub(super) &'a mut [i64]);
+pub struct StoreIds<'a>(pub &'a mut [i64]);
 
 impl<'a> ProcessIds<'a> {
     /// `values`, this process's ids: made by its own table, not read from the store.
@@ -58,9 +58,9 @@ impl<'a> StoreIds<'a> {
     }
 }
 
-pub(super) struct Map {
+pub struct Map {
     /// Ids below are the same here and in the store.
-    pub(super) fork: Sym,
+    pub fork: Sym,
     /// The store's id of local atom `fork + i`, or `NONE` (pending).
     to_store: Vec<Sym>,
     /// The local id of each store id past `fork` met so far.
@@ -83,7 +83,7 @@ impl Map {
         self.to_store.get((local - self.fork) as usize).copied().filter(|&s| s != NONE)
     }
 
-    pub(super) fn local_of(&self, store: Sym) -> Option<Sym> {
+    pub fn local_of(&self, store: Sym) -> Option<Sym> {
         if store < self.fork {
             return Some(store);
         }
@@ -118,7 +118,7 @@ impl Map {
 
     /// Local atoms past the fork with no store id yet, or one in an append not yet seen committed (its transaction may
     /// still roll back).
-    pub(super) fn pending(&self, len: usize) -> usize {
+    pub fn pending(&self, len: usize) -> usize {
         len - self.fork as usize - self.mapped + self.open.iter().map(|(_, l)| l.len()).sum::<usize>()
     }
 }
@@ -237,7 +237,7 @@ pub fn mapped<R>(f: impl FnOnce() -> R) -> R {
     out
 }
 
-pub(super) fn mapped_now() -> bool {
+pub fn mapped_now() -> bool {
     MAPPED.with(std::cell::Cell::get)
 }
 
@@ -258,7 +258,7 @@ impl Atoms {
     }
 
     /// Forks at this process's end (`base`): another process stored atoms past it while some here were pending.
-    pub(super) fn fork_now(&self, connection: &Connection, state: &mut State) -> StoreResult<()> {
+    pub fn fork_now(&self, connection: &Connection, state: &mut State) -> StoreResult<()> {
         if state.map.is_some() {
             return Ok(());
         }
@@ -315,7 +315,7 @@ impl Atoms {
 
     /// Forked: `write_pending` in the transaction about to commit. A write that does not declare its symbols mapped
     /// is refused: its rows may name this process's ids.
-    pub(super) fn write_forked(&self, connection: &Connection) -> StoreResult<usize> {
+    pub fn write_forked(&self, connection: &Connection) -> StoreResult<usize> {
         if !mapped_now() {
             return Err(StoreError::Invalid(super::DIVERGED_TEXT.to_owned()));
         }
@@ -330,7 +330,7 @@ impl Atoms {
     }
 
     /// Forked: after a commit, every append made in it is the store's.
-    pub(super) fn committed_forked(&self, state: &mut State) {
+    pub fn committed_forked(&self, state: &mut State) {
         let len = state.atoms.len();
         if let Some(map) = state.map.as_mut() {
             map.open.clear();
@@ -425,7 +425,7 @@ impl Atoms {
     }
 
     /// Forked: the store's atoms of `values`, held here, in one read.
-    pub(super) fn find_forked(&self, values: &[&str]) -> StoreResult<()> {
+    pub fn find_forked(&self, values: &[&str]) -> StoreResult<()> {
         self.with_reader(|connection| {
             let mut state = self.state.write();
             let State { atoms, map, .. } = &mut *state;
@@ -435,7 +435,7 @@ impl Atoms {
     }
 
     /// Forked: holds store atoms `ids` past the fork (their strings, read where they lie).
-    pub(super) fn hold_forked(&self, ids: &[Sym]) -> StoreResult<()> {
+    pub fn hold_forked(&self, ids: &[Sym]) -> StoreResult<()> {
         self.with_reader(|connection| {
             let mut state = self.state.write();
             let State { atoms, map, .. } = &mut *state;
@@ -445,7 +445,7 @@ impl Atoms {
     }
 
     /// Forked: pending atoms (past the fork, with no store id).
-    pub(super) fn pending_forked(&self, state: &State) -> Option<usize> {
+    pub fn pending_forked(&self, state: &State) -> Option<usize> {
         state.map.as_ref().map(|m| m.pending(state.atoms.len()))
     }
 }
@@ -471,7 +471,7 @@ pub fn map_columns(types: &[u8], rows: &mut [i64], f: impl FnOnce(&mut [i64]) ->
 impl Atoms {
     /// Mapped: each of store atoms `ids` the store holds, with this process's atom of its string (held here first, in
     /// one read).
-    pub(super) fn stored_pairs(&self, ids: &[Sym]) -> StoreResult<Vec<(Sym, Sym)>> {
+    pub fn stored_pairs(&self, ids: &[Sym]) -> StoreResult<Vec<(Sym, Sym)>> {
         self.hold_forked(ids)?;
         let state = self.state.read();
         let map = state.map.as_ref().expect("mapped");
@@ -479,7 +479,7 @@ impl Atoms {
     }
 
     /// Mapped: every store atom, with this process's atom of its string (those past the fork held here).
-    pub(super) fn stored_pairs_all(&self) -> StoreResult<Vec<(Sym, Sym)>> {
+    pub fn stored_pairs_all(&self) -> StoreResult<Vec<(Sym, Sym)>> {
         let end = self.with_reader(|connection| Ok(database_end(connection)?))?.unwrap_or(0);
         self.stored_pairs(&(0..end as Sym).collect::<Vec<_>>())
     }
@@ -489,8 +489,8 @@ impl Atoms {
 /// from the store's (decision 0170). With `NOT_ATOMS`, it classifies every integer, untyped and blob column of the
 /// store's schema: a test (`every_stored_column_is_classified`) fails on a column in neither, so a new column of atoms
 /// is mapped, or said to be none, before it is kept. Only that test reads the two tables.
-#[cfg(test)]
-pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
+#[cfg(any(test, feature = "test-hooks"))]
+pub const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
     ("atom_blocks", "first", "the store's atoms themselves: their numbering is the store's"),
     ("atom_blocks", "upto", "the store's atoms themselves"),
     ("name_bindings", "name_atom", "derivation.rs: mapped in the write transaction (`syms_to_store`), and back as read"),
@@ -510,8 +510,8 @@ pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
 
 /// The integer, untyped and blob columns of the store's schema that hold no atom (ids of the store's own rows,
 /// counts, digests, encoded bytes of integers or text).
-#[cfg(test)]
-pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
+#[cfg(any(test, feature = "test-hooks"))]
+pub const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("atom_blocks", &["seq", "tag"]),
     ("corpus_decided", &["singleton", "run", "time", "swept"]),
     ("corpus_live", &["source_id", "grammar_version", "tape_format"]),

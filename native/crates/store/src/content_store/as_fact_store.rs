@@ -5,7 +5,6 @@ use super::{
     SourceId, StoreResult, StoredDerivation, Sym, TapeBytes, TapeFrame, TapeId, TapePrefilter, TapeSearchIndex,
     TreeDiff, working_set::WorkingSet, write_back::Key,
 };
-use super::atoms::Atoms;
 use super::positional_search;
 use super::{AtomTable, CachedBytes};
 use std::collections::HashMap;
@@ -60,6 +59,12 @@ impl FactStore for ContentStore {
         ContentStore::push_clean(self)
     }
 
+    fn database_path(&self) -> &std::path::Path {
+        ContentStore::database_path(self)
+    }
+    fn open_connection(&self) -> StoreResult<rusqlite::Connection> {
+        ContentStore::open_connection(self)
+    }
     fn put_source(&self, source: &[u8], aliases: &[HashKey]) -> StoreResult<SourceId> {
         ContentStore::put_source(self, source, aliases)
     }
@@ -150,17 +155,5 @@ impl FactStore for ContentStore {
     }
     fn atom_value(&self, atom: Sym) -> StoreResult<Option<String>> {
         ContentStore::atom_value(self, atom)
-    }
-}
-
-impl AtomTable for Atoms {
-    fn intern(&self, value: &str) -> StoreResult<Sym> {
-        Atoms::intern(self, value)
-    }
-    fn intern_all(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
-        Atoms::intern_all(self, values)
-    }
-    fn value(&self, atom: Sym) -> StoreResult<Option<String>> {
-        Atoms::value(self, atom)
     }
 }

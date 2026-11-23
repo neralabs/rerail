@@ -1353,4 +1353,28 @@ dropped the `--timings` runs (2026-11-22).
       - Checks: the workspace with `--tests` is clean on Linux and macOS. Tests (Linux): the moved records' and
         upkeep's, the overlay's, the observer's and propagation's, 41; facts' syntax and family tests, 70 (one needs
         pack data the host lacks).
-    - **10b-3, the atoms**: the interner as a crate of its own below the store, for run and setfix.
+    - **10b-3, the atoms.** The interner, its blocks and chain (`stored`), its id map after a fork (`map`), the
+      `atoms` vtab and the guests' keys' registry are `rerail-atoms` (3.2k lines), below the store, which re-exports
+      it as `content_store::atoms`. The store keeps what is its own:
+      - its calls over its arena (`intern_atoms`, the writer's flush, the commit that writes pending atoms), in
+        `atoms_store.rs`;
+      - the guests' keys' rows: `GuestKeys::read_once` and `replace_lost` replace the state the store reached into;
+      - the kept facts installed beside the atoms on a store's connection (`install_atoms`, `attach_atoms`).
+        `Atoms::attach` no longer installs them. Every connection that had them still does: the store's opener and
+        logic's corpus openers call `install_atoms`, and device-metal's parity fixture calls `attach_atoms` on the
+        store file it opens. setfix's and run's `attach` are only handed connections that carry them already, or
+        in-memory ones.
+      - Tests:
+        - the store's tests of the atoms open stores, so they stay in it. They read the atoms' state through test
+          hooks (`with_interner`, `leased_now`, `complete_now`, `of_path`).
+        - Blocks start small for them as before: `rerail_atoms::set_small_blocks`, which the store's test binary
+          sets as it loads. It was `cfg(test)` in one crate.
+        - The interner's own test is the atoms crate's.
+      - `AtomTable` is implemented in rerail-atoms. `FactStore` gains `database_path` and `open_connection`.
+      - Then run (atoms alone) and setfix (`&dyn FactStore` in the waves' owner and its database) leave the store.
+        setfix's tests keep it.
+      - Then: crates above an edit to the store, 48 to 47 (setfix's test target still opens stores). The store's
+        library has 42 direct users, its chain up 16 to 14, and it is 23.9k lines (from 27.3k). The longest chain
+        is 34.
+      - Checks: the workspace with `--tests` is clean on Linux and macOS. clippy has nothing in the moved files.
+        Tests (Linux): atoms, store, store-base and run, 287; setfix's owner and stores' tests, 43.

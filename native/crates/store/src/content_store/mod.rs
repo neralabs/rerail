@@ -8,7 +8,10 @@
 // the hazards, the scope leases and the private files, and the observer (`observe`), re-exported here.
 pub use rerail_observe::content_store::*;
 pub mod analysis_scope;
-pub mod atoms;
+/// The atoms (rerail-atoms), at their old path.
+pub use rerail_atoms as atoms;
+mod atoms_store;
+pub use atoms_store::{attach_atoms, install_atoms};
 pub use atoms::{ProcessIds, StoreIds, Sym};
 #[cfg(target_os = "macos")]
 mod accel_models;

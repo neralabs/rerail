@@ -48,6 +48,7 @@ rerail-prof	core
 rerail-metal	core
 rerail-metal-programs	core
 rerail-store-base	core
+rerail-atoms	core
 rerail-observe	core
 rerail-store	core
 rerail-program-image	core

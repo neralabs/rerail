@@ -12,10 +12,12 @@ description = "The engine's content store (SQLite): sources, tapes, memos, run r
 # The store's test hooks (busy-wait overrides, write counters, test-only writers), for the engine's tests. The
 # engine turns it on always, not only for its tests: a feature that differed between its test and bin builds
 # would rebuild the engine at each switch. The hooks do nothing unless a test sets them.
-test-hooks = ["rerail-store-base/test-hooks", "rerail-observe/test-hooks", "rerail-blocks/test-hooks", "rerail-prof/test-hooks", "rerail-clif/test-hooks"]
+test-hooks = ["rerail-store-base/test-hooks", "rerail-atoms/test-hooks", "rerail-observe/test-hooks", "rerail-blocks/test-hooks", "rerail-prof/test-hooks", "rerail-clif/test-hooks"]
 
 [dependencies]
 rerail-store-base = { path = "../store_base" }
+# The atoms (`content_store::atoms`).
+rerail-atoms = { path = "../atoms" }
 rerail-observe = { path = "../observe" }
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"

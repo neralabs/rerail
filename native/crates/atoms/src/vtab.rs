@@ -13,7 +13,7 @@ use std::borrow::Cow;
 use std::ffi::{CStr, c_int};
 use std::sync::Arc;
 
-pub(super) fn install(connection: &Connection, atoms: &Arc<Atoms>) -> Result<()> {
+pub fn install(connection: &Connection, atoms: &Arc<Atoms>) -> Result<()> {
     const MODULE: Module<Table> = Module::eponymous_only_module();
     connection.create_module(c"atoms", &MODULE, Some(Arc::clone(atoms)))
 }

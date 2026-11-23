@@ -8,21 +8,19 @@
 //! its size, is started; the roll-up writes them into one base.
 
 use super::Sym;
-use crate::content_store::{StoreError, StoreResult};
+use rerail_store_base::content_store::{StoreError, StoreResult};
 use rerail_blocks::atoms::{AtomRead, AtomsV, AtomsW};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
 /// The first block's room: atoms, string bytes. Each next block has twice the last's. (The store's own tests start
 /// small, so that their stores grow chains and roll them up.)
-#[cfg(not(test))]
-const FIRST_CAP: u32 = 1 << 16;
-#[cfg(not(test))]
-const FIRST_BYTES: u64 = 4 << 20;
-#[cfg(test)]
-pub(super) const FIRST_CAP: u32 = 16;
-#[cfg(test)]
-const FIRST_BYTES: u64 = 256;
+pub fn first_cap() -> u32 {
+    if super::small_blocks() { 16 } else { 1 << 16 }
+}
+fn first_bytes() -> u64 {
+    if super::small_blocks() { 256 } else { 4 << 20 }
+}
 
 /// More deltas than this make a roll-up due (A5), as do deltas holding more atoms than the base.
 const MOST_DELTAS: usize = 4;
@@ -35,7 +33,7 @@ fn is_base(r: &Row) -> bool {
 /// A block as `atom_blocks` names it: its number, its file's name in the directory, its first id, the end the
 /// store's last commit reached in it, and its maker's tag (the block's own, checked when it is mapped).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Row {
+pub struct Row {
     pub seq: i64,
     pub name: String,
     pub first: Sym,
@@ -44,7 +42,7 @@ pub(crate) struct Row {
 }
 
 /// The store's blocks as `connection` sees them (in its transaction, if it has one), by first id.
-pub(crate) fn rows(connection: &Connection) -> rusqlite::Result<Vec<Row>> {
+pub fn rows(connection: &Connection) -> rusqlite::Result<Vec<Row>> {
     connection
         .prepare_cached("SELECT seq, name, first, upto, tag FROM main.atom_blocks ORDER BY first")?
         .query_map([], |r| Ok(Row { seq: r.get(0)?, name: r.get(1)?, first: r.get::<_, i64>(2)? as Sym, upto: r.get::<_, i64>(3)? as Sym, tag: r.get::<_, i64>(4)? as u64 }))?
@@ -52,12 +50,12 @@ pub(crate) fn rows(connection: &Connection) -> rusqlite::Result<Vec<Row>> {
 }
 
 /// Where the store's ids end: atom 0 (the empty string) is no block's.
-pub(crate) fn end_of(rows: &[Row]) -> Sym {
+pub fn end_of(rows: &[Row]) -> Sym {
     rows.iter().map(|r| r.upto).max().unwrap_or(1).max(1)
 }
 
 /// Where `connection`'s store's ids end.
-pub(crate) fn database_end(connection: &Connection) -> rusqlite::Result<usize> {
+pub fn database_end(connection: &Connection) -> rusqlite::Result<usize> {
     let end: Option<i64> = connection.prepare_cached("SELECT max(upto) FROM main.atom_blocks")?.query_row([], |r| r.get(0))?;
     Ok(end.unwrap_or(1).max(1) as usize)
 }
@@ -82,7 +80,7 @@ struct Known {
 }
 
 /// A new block's tag: no other block's, in practice.
-pub(crate) fn new_tag() -> u64 {
+pub fn new_tag() -> u64 {
     use std::hash::BuildHasher as _;
     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     std::collections::hash_map::RandomState::new().hash_one((at, std::process::id()))
@@ -98,7 +96,7 @@ fn checked<T>(v: T, tag_of: impl Fn(&T) -> u64, tag: u64, path: &Path) -> StoreR
 
 /// The store's chain, as this process maps it.
 #[derive(Default)]
-pub(crate) struct Stored {
+pub struct Stored {
     /// `None` for an in-memory database, whose atoms are never written.
     dir: Option<PathBuf>,
     /// The blocks known, by first id: from `atom_blocks` as last read, and those this process started since.
@@ -112,14 +110,14 @@ pub(crate) struct Stored {
 }
 
 impl Stored {
-    pub(crate) fn new(database: Option<&Path>) -> Stored {
+    pub fn new(database: Option<&Path>) -> Stored {
         Stored { dir: database.map(atoms_dir), known: Vec::new(), views: Vec::new(), end: 1, writer: None }
     }
 
     /// The blocks are those of `rows` (read on a connection). Their ids are mapped by `view_to` or `view_rows`, and a
     /// block no longer named (rolled up) is unmapped then, once those that hold its ids are mapped: if mapping fails,
     /// what was read before still reads.
-    pub(crate) fn learn(&mut self, rows: &[Row]) {
+    pub fn learn(&mut self, rows: &[Row]) {
         self.known = rows.iter().map(|r| Known { seq: r.seq, name: r.name.clone(), first: r.first, tag: r.tag }).collect();
     }
 
@@ -132,7 +130,7 @@ impl Stored {
     /// Reads every id below `upto` (at least what it read before): the blocks that hold them mapped, each up to where
     /// the next begins. `upto` is an end a commit reached. A block known and not mapped yet (a roll-up's base, once its
     /// deltas' views went with `learn`) is mapped now.
-    pub(crate) fn view_to(&mut self, upto: Sym) -> StoreResult<()> {
+    pub fn view_to(&mut self, upto: Sym) -> StoreResult<()> {
         let upto = upto.max(self.end);
         let Some(dir) = self.dir.clone() else { return Ok(()) };
         for (i, k) in self.known.iter().enumerate() {
@@ -161,7 +159,7 @@ impl Stored {
     /// Reads every block exactly to its row's end, nearer than before too: a fork's view of the store inside a write
     /// transaction (its own appends included), and after one that rolled back (decision 0170). Only ids past the fork
     /// are read so; the store's below it are committed, and no row goes back below them.
-    pub(crate) fn view_rows(&mut self, rows: &[Row]) -> StoreResult<()> {
+    pub fn view_rows(&mut self, rows: &[Row]) -> StoreResult<()> {
         self.learn(rows);
         let Some(dir) = self.dir.clone() else { return Ok(()) };
         for (i, r) in rows.iter().enumerate() {
@@ -186,13 +184,13 @@ impl Stored {
         Some(&self.views[i].1)
     }
 
-    pub(crate) fn str(&self, id: Sym) -> Option<&str> {
+    pub fn str(&self, id: Sym) -> Option<&str> {
         self.at(id)?.str(id)
     }
 
     /// The ids read, as a directory's runs (decision 0478 step 2b): each view's from its first id to the next's, at
     /// most to the end below which ids are read here.
-    pub(crate) fn runs(&self, below: Sym) -> Vec<(rerail_blocks::atoms::Run, std::sync::Arc<rerail_blocks::block::Block>)> {
+    pub fn runs(&self, below: Sym) -> Vec<(rerail_blocks::atoms::Run, std::sync::Arc<rerail_blocks::block::Block>)> {
         let end = self.end.min(below);
         (0..self.views.len())
             .map(|k| {
@@ -203,23 +201,23 @@ impl Stored {
             .collect()
     }
 
-    pub(crate) fn hash(&self, id: Sym) -> Option<u64> {
+    pub fn hash(&self, id: Sym) -> Option<u64> {
         self.at(id)?.hash(id)
     }
 
     /// The id of `s` (its hash `h`) among the ids read: each block's table probed, the newest first.
-    pub(crate) fn find(&self, s: &str, h: u64) -> Option<Sym> {
+    pub fn find(&self, s: &str, h: u64) -> Option<Sym> {
         self.views.iter().rev().find_map(|(_, v)| v.find(s, h))
     }
 
     /// Lets the open block's writer go (its file's descriptor with it): the store's last handle closed. The next write
     /// opens it again.
-    pub(crate) fn release_writer(&mut self) {
+    pub fn release_writer(&mut self) {
         self.writer = None;
     }
 
     /// Mapped bytes (none of them heap).
-    pub(crate) fn mapped(&self) -> usize {
+    pub fn mapped(&self) -> usize {
         self.views.iter().map(|(_, v)| v.mapped()).sum()
     }
 
@@ -227,7 +225,7 @@ impl Stored {
     /// the store's end, which is `from`, and records how far each block they went into reaches, in the transaction.
     /// Each block written is on the disk before this returns (A3: before the commit that names it). The ids are
     /// `from..`; returns the end. The rows are read first, so the blocks are the store's as of this transaction.
-    pub(crate) fn append<'s>(&mut self, connection: &Connection, from: Sym, atoms: impl ExactSizeIterator<Item = (&'s str, u64)>) -> StoreResult<Sym> {
+    pub fn append<'s>(&mut self, connection: &Connection, from: Sym, atoms: impl ExactSizeIterator<Item = (&'s str, u64)>) -> StoreResult<Sym> {
         let Some(dir) = self.dir.clone() else { return Err(StoreError::Invalid("an in-memory database's atoms are not stored".into())) };
         let rows = rows(connection)?;
         let end = end_of(&rows);
@@ -244,7 +242,7 @@ impl Stored {
             (Some(r), Some((seq, w))) if *seq == r.seq && w.first() == r.first && w.tag() == r.tag && !w.frozen() => w.resume(r.upto).map_err(io)?,
             (Some(r), _) => {
                 let path = dir.join(&r.name);
-                self.writer = match AtomsW::reopen(&path, r.upto, crate::content_store::flush_of(connection)) {
+                self.writer = match AtomsW::reopen(&path, r.upto, rerail_store_base::content_store::flush_of(connection)) {
                     Ok(w) => Some((r.seq, checked(w, AtomsW::tag, r.tag, &path)?)),
                     // Frozen (rolled up into): the next block is started.
                     Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => None,
@@ -270,7 +268,7 @@ impl Stored {
                         Self::seal(connection, seq, &w)?;
                         (w.cap().saturating_mul(2), w.bytes_cap().saturating_mul(2))
                     }
-                    None => (FIRST_CAP, FIRST_BYTES),
+                    None => (first_cap(), first_bytes()),
                 };
                 let bytes = bytes.max(s.len() as u64 * 2);
                 private_dir(&dir).map_err(io)?;
@@ -280,9 +278,9 @@ impl Stored {
                 // transaction's, a deleted store's) may be mapped by a process still reading it, and is never
                 // truncated under it.
                 let made = dir.join(format!("{name}.{tag:016x}.new"));
-                let w = AtomsW::create(&made, id, tag, cap, bytes, crate::content_store::flush_of(connection)).map_err(io)?;
+                let w = AtomsW::create(&made, id, tag, cap, bytes, rerail_store_base::content_store::flush_of(connection)).map_err(io)?;
                 std::fs::rename(&made, dir.join(&name)).map_err(io)?;
-                sync_dir(&dir, crate::content_store::flush_of(connection)).map_err(io)?;
+                sync_dir(&dir, rerail_store_base::content_store::flush_of(connection)).map_err(io)?;
                 connection
                     .prepare_cached("INSERT INTO main.atom_blocks(seq, name, first, upto, tag) VALUES (?1, ?2, ?3, ?3, ?4)")?
                     .execute(rusqlite::params![next_seq, name, i64::from(id), tag as i64])?;
@@ -321,7 +319,7 @@ impl Stored {
         let seq = rows.iter().map(|r| r.seq).max().unwrap_or(0) + 1;
         let (name, tag) = (format!("b{seq}.blk"), new_tag());
         let made = dir.join(format!("{name}.{tag:016x}.new"));
-        let mut w = AtomsW::create(&made, 1, tag, (end - 1).max(1), bytes.max(1), crate::content_store::flush_of(connection)).map_err(io)?;
+        let mut w = AtomsW::create(&made, 1, tag, (end - 1).max(1), bytes.max(1), rerail_store_base::content_store::flush_of(connection)).map_err(io)?;
         for id in 1..end {
             let (s, h) = (all.str(id).expect("read above"), all.hash(id).expect("read above"));
             if w.append(s, h) != Some(id) {
@@ -330,7 +328,7 @@ impl Stored {
         }
         w.freeze().map_err(io)?;
         std::fs::rename(&made, dir.join(&name)).map_err(io)?;
-        sync_dir(&dir, crate::content_store::flush_of(connection)).map_err(io)?;
+        sync_dir(&dir, rerail_store_base::content_store::flush_of(connection)).map_err(io)?;
         connection.prepare_cached("DELETE FROM main.atom_blocks")?.execute([])?;
         connection
             .prepare_cached("INSERT INTO main.atom_blocks(seq, name, first, upto, tag) VALUES (?1, ?2, 1, ?3, ?4)")?
@@ -376,7 +374,7 @@ fn sweep(dir: &Path, rows: &[Row]) {
 }
 
 /// The directory made private to its user, as the store's other directories are.
-pub(crate) fn private_dir(dir: &Path) -> std::io::Result<()> {
+pub fn private_dir(dir: &Path) -> std::io::Result<()> {
     if dir.is_dir() {
         return Ok(());
     }
@@ -389,7 +387,7 @@ pub(crate) fn private_dir(dir: &Path) -> std::io::Result<()> {
 
 /// A new file's name on the disk before the commit that names it, with `Flush::Synced`; otherwise the OS's to write
 /// (decision 0481).
-pub(crate) fn sync_dir(dir: &Path, flush: rerail_blocks::block::Flush) -> std::io::Result<()> {
+pub fn sync_dir(dir: &Path, flush: rerail_blocks::block::Flush) -> std::io::Result<()> {
     if !flush.waits() {
         return Ok(());
     }
@@ -425,7 +423,7 @@ pub fn copy_blocks(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 /// `to`, a clone of `from` where the file system makes one (APFS), else a copy.
-pub(crate) fn clone_file(from: &Path, to: &Path) -> std::io::Result<()> {
+pub fn clone_file(from: &Path, to: &Path) -> std::io::Result<()> {
     #[cfg(target_vendor = "apple")]
     {
         use std::os::unix::ffi::OsStrExt as _;
@@ -446,7 +444,7 @@ pub fn freeze_blocks(database: &Path) -> StoreResult<()> {
     let dir = atoms_dir(database);
     for r in rows(&connection)? {
         let path = dir.join(&r.name);
-        match AtomsW::reopen(&path, r.upto, crate::content_store::flush_of(&connection)) {
+        match AtomsW::reopen(&path, r.upto, rerail_store_base::content_store::flush_of(&connection)) {
             Ok(w) => checked(w, AtomsW::tag, r.tag, &path)?.freeze().map_err(io)?,
             Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => {}
             Err(e) => return Err(io(e)),
@@ -458,7 +456,7 @@ pub fn freeze_blocks(database: &Path) -> StoreResult<()> {
 /// Appends `strings` the store does not hold yet at its end, in a write transaction of `connection`'s own, as
 /// another process would (tests of forks, decision 0170, and `RERAIL_TEST_FORK_AFTER`). Returns how many were new and
 /// the store's end after.
-pub(crate) fn append_as_another(connection: &Connection, strings: &[String]) -> StoreResult<(usize, Sym)> {
+pub fn append_as_another(connection: &Connection, strings: &[String]) -> StoreResult<(usize, Sym)> {
     let path = connection.path().filter(|p| !p.is_empty()).map(PathBuf::from).ok_or_else(|| StoreError::Invalid("not a store on disk".into()))?;
     let own = connection.is_autocommit();
     if own {
@@ -485,7 +483,7 @@ pub(crate) fn append_as_another(connection: &Connection, strings: &[String]) -> 
 }
 
 /// Every stored atom of `connection`'s store, by id (atom 0 the empty string): what its blocks hold, read on its rows.
-pub(crate) fn every_stored(connection: &Connection) -> StoreResult<Vec<String>> {
+pub fn every_stored(connection: &Connection) -> StoreResult<Vec<String>> {
     let path = connection.path().filter(|p| !p.is_empty()).map(PathBuf::from);
     let mut stored = Stored::new(path.as_deref());
     let rows = rows(connection)?;

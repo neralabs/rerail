@@ -3218,6 +3218,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-atoms"
+version = "0.1.0"
+dependencies = [
+ "dunce",
+ "foldhash",
+ "libc",
+ "parking_lot",
+ "rerail-accel",
+ "rerail-blocks",
+ "rerail-clif",
+ "rerail-prof",
+ "rerail-store-base",
+ "rusqlite",
+ "serde",
+]
+
+[[package]]
 name = "rerail-bitlex"
 version = "0.1.0"
 dependencies = [
@@ -5922,17 +5939,18 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-atoms",
  "rerail-blocks",
  "rerail-facts",
  "rerail-lang",
  "rerail-logic-core",
+ "rerail-observe",
  "rerail-prof",
  "rerail-program-image",
  "rerail-registry",
  "rerail-rr",
  "rerail-rr-syntax",
  "rerail-run",
- "rerail-store",
  "roaring",
  "ruff_python_ast",
  "ruff_python_parser",
@@ -6160,11 +6178,13 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-atoms",
  "rerail-blocks",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
  "rerail-logic-core",
+ "rerail-observe",
  "rerail-prof",
  "rerail-program-image",
  "rerail-registry",
@@ -6243,6 +6263,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-atoms",
  "rerail-blocks",
  "rerail-clif",
  "rerail-observe",

@@ -630,7 +630,7 @@ pub(super) fn configure_connection(connection: &mut Connection, flush: Flush) ->
     }
     // `atoms` over this process's arena, and the commit hook that keeps pending atoms out of
     // committed rows (decision 0049).
-    super::atoms::Atoms::install(connection)?;
+    super::install_atoms(connection)?;
     Ok(())
 }
 

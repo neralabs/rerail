@@ -4,7 +4,7 @@
 use super::super::storage::Storage;
 use crate::code_rule_dsl::facts::vtab::{Modules, Source, plan_signature};
 use crate::code_rule_dsl::logic::native::register_symbols;
-use crate::content_store::{ContentStore, StoreError, StoreResult};
+use crate::content_store::{FactStore, StoreError, StoreResult};
 use rusqlite::Connection;
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -169,13 +169,13 @@ impl Database {
         Ok(total)
     }
     /// A connection on `store`'s file with the symbol functions and the `demand` modules.
-    pub fn open(store: &ContentStore) -> StoreResult<Self> {
+    pub fn open(store: &dyn FactStore) -> StoreResult<Self> {
         Self::open_with_admission(store, false)
     }
-    pub fn open_admitted(store: &ContentStore) -> StoreResult<Self> {
+    pub fn open_admitted(store: &dyn FactStore) -> StoreResult<Self> {
         Self::open_with_admission(store, true)
     }
-    fn open_with_admission(store: &ContentStore, admit: bool) -> StoreResult<Self> {
+    fn open_with_admission(store: &dyn FactStore, admit: bool) -> StoreResult<Self> {
         let connection = store.open_connection()?;
         let admission = admit.then(|| {
             use crate::code_rule_dsl::sql_admission::{Ledger, observer::Observer};

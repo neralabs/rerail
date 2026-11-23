@@ -1,7 +1,8 @@
-//! The content store as the facts reach it (crate split step 10b-2): the calls the crates below the store make of an
-//! open store (rerail-facts-base, rerail-facts, rerail-transducer-base) (`FactStore`), which `ContentStore` implements (rerail-store, `content_store/fact_store.rs`).
-//! A crate that holds a store through it needs no store: the store is built above it, and an edit to the store
-//! rebuilds only the crates that open one (`tools/cratify/fanout.py`).
+//! The content store as the crates below it reach it (crate split steps 10b-2 and 10b-3): the calls they make of an
+//! open store (`FactStore`: rerail-facts-base, rerail-facts, rerail-transducer-base, rerail-setfix), which
+//! `ContentStore` implements (rerail-store, `content_store/as_fact_store.rs`), and its atoms as a batch reads them
+//! (`AtomTable`, which rerail-atoms implements). A crate that holds a store through them needs no store: the store is
+//! built above it, and an edit to the store rebuilds only the crates that open one (`tools/cratify/fanout.py`).
 //!
 //! Each call is `ContentStore`'s method of the same name; its documentation is there.
 use super::positional_search;
@@ -39,6 +40,10 @@ pub trait FactStore: Send + Sync + std::any::Any {
     fn begin_push(&self) -> StoreResult<()>;
     fn end_push(&self) -> StoreResult<()>;
     fn push_clean(&self) -> StoreResult<bool>;
+
+    // The store's file and a connection of its own to it (`connection.rs`).
+    fn database_path(&self) -> &std::path::Path;
+    fn open_connection(&self) -> StoreResult<rusqlite::Connection>;
 
     // Sources and tapes (`objects.rs`, `object_segments.rs`).
     fn put_source(&self, source: &[u8], aliases: &[HashKey]) -> StoreResult<SourceId>;

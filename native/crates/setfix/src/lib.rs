@@ -15,7 +15,15 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
-pub use rerail_run::content_store;
+// The store's records and interface; the tests open the store itself (crate split 10b-2).
+/// The store's records and interface (rerail-store-base, through observe), and its atoms (rerail-atoms).
+#[cfg(not(test))]
+pub mod content_store {
+    pub use rerail_atoms as atoms;
+    pub use rerail_observe::content_store::*;
+}
+#[cfg(test)]
+pub use rerail_store::content_store;
 pub use rerail_run::git_access;
 pub use rerail_run::git_workspace;
 pub use rerail_run::threads;

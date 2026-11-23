@@ -48,6 +48,8 @@ fn fixture() -> Fixture {
     let store = crate::code_rule_dsl::fixtures::temp();
     drop(crate::content_store::ContentStore::open(&store).unwrap());
     let db = Connection::open(&store).unwrap();
+    // The store's atoms and the kept facts beside them, as the store's opener registers them.
+    crate::content_store::attach_atoms(&db).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
     let mut r = Rng(0x5eed);
