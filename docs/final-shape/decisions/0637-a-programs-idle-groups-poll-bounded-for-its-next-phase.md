@@ -109,3 +109,32 @@ Measured (the M3, medians of seven runs, GPU time; the rows the same):
 | leveled dist (min) | 5.8 ms | 20.0 ms | 20.6 ms | 19.4 ms |
 
 The program is still 1.6 to 4.3 times the launch a level's GPU time. Its launches are 1 to 11 against 46 to 1,209.
+
+## A handover's round trips fewer (2026-11-23)
+
+The user, 2026-11-23: "go ahead and reduce the atomic chain length". Only an atomic whose result is used stalls its
+thread: a poll, a ticket, a claim's swap, the done count. A count added or a word stored does not. So the handover
+from one phase to the next loses those:
+
+- **The finisher keeps the next phase's group 0.** Where the launch's budget has a ticket for it, the word is
+  handed out with one group fewer, and the finisher goes on to that group with no poll and no take (`carry`).
+- **The word counts down** the groups left, not those taken. A take that finds any left takes a ticket and swaps
+  the word to one fewer. Its group is its phase's groups less those left, read once, after the swap: the phase stays
+  handed out until that group is done, so the swap was of the word as it is now.
+- **A take keeps its phase's groups** (`took[5]`), and its done count compares with them, not with the phase's
+  target polled again.
+- **The finisher reads its flags and its round's jump together**, each once. Before, it read the flags twice, and the
+  jump after them.
+- **Seeds are polled while any are left**, then not again.
+- **An idle group polls the word alone**, and the program's flags and the queue every eighth poll
+  (`PROG_IDLE_CHECK`). An idle poll does not fence the device.
+
+Measured (the M3, medians of seven runs, GPU time; the rows the same):
+
+| Stratum | A launch a level | Groups as counts need | Fewer round trips |
+|---|---|---|---|
+| seeds | 11.3 ms | 18.2 ms | 15.2 ms |
+| seeds ×10 | 47.0 ms | 125.0 ms | 103.0 ms |
+| closure | 11.3 ms | 41.4 ms | 28.1 ms |
+| leveled reach | 9.0 ms | 38.5 ms | 33.5 ms |
+| leveled dist (min) | 5.8 ms | 19.4 ms | 17.4 ms |

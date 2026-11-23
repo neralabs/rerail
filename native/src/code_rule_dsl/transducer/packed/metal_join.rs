@@ -3175,10 +3175,10 @@ impl Batch {
                 // a phase's groups are its counts' when it runs, which its encoding did not know (its first launch's
                 // groups are its largest phase's items as encoded). A launch's budget is its groups' shares, so its
                 // GPU time stays its budget's items, and its launches its items over them.
+                // The word's low 20 bits: its phase's groups left.
                 let w = r.ctl.get(10 + 2 * r.phases);
-                if let Some(p) = (w >> 20).checked_sub(1) {
-                    let left = r.ctl.get(10 + r.phases + p as usize).saturating_sub(w & ((1 << 20) - 1)) as usize;
-                    r.kit.workers = r.kit.workers.max(left).clamp(1, PROGRAM_WORKERS);
+                if w >> 20 != 0 {
+                    r.kit.workers = r.kit.workers.max((w & ((1 << 20) - 1)) as usize).clamp(1, PROGRAM_WORKERS);
                 }
                 r.compact();
                 again.push((r, false));
