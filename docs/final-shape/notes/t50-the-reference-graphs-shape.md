@@ -1022,6 +1022,9 @@ Then, step by step (each device run's step counts against a CPU run of the same 
   hold (decision 0488) before reading the index, a step none of the index checks covered. With every read of the kept
   filters off (`RERAIL_KEPT_KEYS=off`) the 512 MB run is still short (`mn_class` 259,514, `dbg_rd` 469,019); and a
   view's rows, where most of the loss is, take no screen.
+- **Not a freed chunk reused (2026-11-23).** With the ledger never freeing a chunk (each one leaked live, the peak
+  5.2 GB), the 512 MB run is still short (`mn_class` 257,388, `dbg_rd` 455,996): no host write into a chunk freed
+  and handed out again, under work that still reads it, makes the loss.
 
 ## Open
 
