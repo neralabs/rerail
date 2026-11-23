@@ -150,6 +150,26 @@ impl Graph {
         format!("includes {:#?}\nmissing {:?}\nabsent {:?}\ndigests {digests:#?}", self.includes, self.missing, self.absent)
     }
 
+    /// Where it differs from `other`, for a check's message (`RERAIL_PHASE0_COMPOSE=check`, the tests of `Graph::of`):
+    /// each part's entries only one of the two holds.
+    pub fn differences(&self, other: &Graph) -> String {
+        fn diff<T: Ord + Clone + std::fmt::Debug>(what: &str, a: impl IntoIterator<Item = T>, b: impl IntoIterator<Item = T>) -> String {
+            let (a, b): (std::collections::BTreeSet<T>, std::collections::BTreeSet<T>) = (a.into_iter().collect(), b.into_iter().collect());
+            let (only_a, only_b): (Vec<&T>, Vec<&T>) = (a.difference(&b).collect(), b.difference(&a).collect());
+            if only_a.is_empty() && only_b.is_empty() { String::new() } else { format!("\n{what}: this one's only {only_a:?}; the other's only {only_b:?}") }
+        }
+        let edges = |g: &Graph| g.includes.iter().flat_map(|(f, t)| t.iter().map(move |e| (f.clone(), e.clone()))).collect::<Vec<_>>();
+        [
+            diff("includes", edges(self), edges(other)),
+            diff("missing", self.missing.clone(), other.missing.clone()),
+            diff("absent", self.absent.clone(), other.absent.clone()),
+            diff("digests", self.digests.iter().map(|(p, d)| (p.clone(), *d)), other.digests.iter().map(|(p, d)| (p.clone(), *d))),
+            diff("rules", self.rules.iter().map(|(p, d)| (p.clone(), *d)), other.rules.iter().map(|(p, d)| (p.clone(), *d))),
+            diff("phases", self.phases.iter().map(|(k, v)| (k.clone(), v.clone())), other.phases.iter().map(|(k, v)| (k.clone(), v.clone()))),
+        ]
+        .concat()
+    }
+
     /// Every module, and every candidate found absent, as `rr::LibraryFile`s check them.
     pub(in crate::code_rule_dsl) fn files(&self) -> Vec<(PathBuf, Option<[u8; 32]>)> {
         self.digests.iter().map(|(p, d)| (p.clone(), Some(*d))).chain(self.absent.iter().map(|p| (p.clone(), None))).collect()
@@ -274,6 +294,33 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         }
         kept.lock().expect("phase 0's graphs").extend(accepted.into_iter().map(|(seed, graph)| ((dirs.clone(), seed), graph)));
     }
+    // A text whose names are each a library module, and whose phases each a phase program or no file, has the graph
+    // of its modules' and phase programs' own (`composed`): no run of `bootstrap.rerail`. A test's program is such a
+    // text, a new one in each test's process, and each derived its graph in a run of its own (on m3, 9.6 k of the
+    // corpus suite's 125 k busy samples under `derive`).
+    let compose = std::env::var("RERAIL_PHASE0_COMPOSE").unwrap_or_default();
+    // Only where every seed wanted is a text: files wanted with them (a store's template, filled) are one run, which
+    // their texts share.
+    if !wanted.is_empty() && compose != "off" && wanted.iter().all(|s| matches!(s, Seed::Text { .. })) && let Some(dirs) = Dirs::here() {
+        let mut made = HashMap::new();
+        for seed in wanted.iter().filter(|s| matches!(s, Seed::Text { .. })) {
+            let Some(g) = composed(seed, &dirs)? else { continue };
+            // `RERAIL_PHASE0_COMPOSE=check`: the composed graph against the one its own run derives.
+            if compose == "check" {
+                let derived = derive(std::slice::from_ref(seed)).map_err(|e| Error::Syntax(format!("phase 0: {e}")))?.of(seed, 0);
+                assert!(same_graph(&g, &derived), "{seed:?}: the composed graph is the derived one: {}", g.differences(&derived));
+            }
+            crate::code_rule_dsl::prof::count("phase0.graph_composed", 1);
+            made.insert(seed.clone(), Arc::new(g));
+        }
+        wanted.retain(|s| !made.contains_key(s));
+        for (g, seed) in found.iter_mut().zip(seeds) {
+            if g.is_none() {
+                *g = made.get(seed).cloned();
+            }
+        }
+        kept.lock().expect("phase 0's graphs").extend(made.into_iter().map(|(seed, graph)| ((Some(dirs.clone()), seed), graph)));
+    }
     if !wanted.is_empty() {
         if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
             eprintln!("rerail: phase 0 derives {} seeds (images {})", wanted.len(), if images.is_some() { "on" } else { "off" });
@@ -363,6 +410,107 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
     let graph = whole.of(seed, 0);
     crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>().0.lock().expect("phase 0's graphs").insert((Some(dirs.clone()), seed.clone()), Arc::new(graph));
     true
+}
+
+/// Text `seed`'s graph made of its modules' own (`Seed::File`, each found as `graphs` finds it: kept, or an image), as
+/// a run of `bootstrap.rerail` over the text alone gives it (`keep_text`, from one file's graph): each name it includes
+/// (and `core.rerail`, outside T's shape) is a file of the library, and each phase it names is a phase program, whose
+/// graph is taken too, or no file (an absent candidate). `None` where a name is no file of the library: its run
+/// derives it, and reports a missing one. The modules' graphs each hold what their modules reach through their
+/// phases (`rules`) and the candidates their includes found absent, which the text's graph holds as well.
+fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Error> {
+    use crate::content_store::observe::Kind;
+    let Seed::Text { t_shape, includes, phases } = seed else { return Ok(None) };
+    let lib = dirs.lib.to_string_lossy();
+    let mut asks: Vec<(i64, String, PathBuf)> = Vec::with_capacity(includes.len() + 1);
+    let mut files: Vec<Seed> = Vec::new();
+    for (at, name) in includes.iter().cloned().chain((!t_shape).then(|| (-1, "core.rerail".to_owned()))) {
+        let path = candidate_path(&lib, &name);
+        if super::observe(|o| o.kind(&path)) != Kind::File {
+            return Ok(None);
+        }
+        files.push(Seed::File(path.clone()));
+        asks.push((at, name, path));
+    }
+    asks.sort();
+    let phase_lib = dirs.phases.to_string_lossy();
+    let mut named: Vec<(String, PathBuf)> = Vec::with_capacity(phases.len());
+    let mut absent: Vec<PathBuf> = Vec::new();
+    for p in phases {
+        let path = candidate_path(&phase_lib, &format!("{p}.rerail"));
+        match super::observe(|o| o.kind(&path)) {
+            Kind::File => files.push(Seed::File(path.clone())),
+            Kind::Missing => absent.push(path.clone()),
+            _ => return Ok(None),
+        }
+        named.push((p.clone(), path));
+    }
+    named.sort();
+    named.dedup();
+    files.sort();
+    files.dedup();
+    let parts = graphs(&files)?;
+    let mut whole = Graph::default();
+    for g in &parts {
+        for (from, to) in &g.includes {
+            whole.includes.entry(from.clone()).or_insert_with(|| to.clone());
+        }
+        whole.missing.extend(g.missing.iter().cloned());
+        whole.absent.extend(g.absent.iter().cloned());
+        whole.digests.extend(g.digests.iter().map(|(p, d)| (p.clone(), *d)));
+        whole.rules.extend(g.rules.iter().map(|(p, d)| (p.clone(), *d)));
+        whole.plans.extend(g.plans.iter().copied());
+    }
+    whole.absent.extend(absent);
+    whole.includes.insert(text_key(0), asks);
+    if !named.is_empty() {
+        whole.phases.insert(text_key(0), named);
+    }
+    let mut g = whole.of(seed, 0);
+    // What the modules reach through their phases, and the candidates they found absent: their graphs' (`of` reads a
+    // module's phases only from a run's graph, which theirs hold as `rules`, with the candidates beside what those
+    // reach). But one: a module taken as a file seed names `core.rerail` itself (`<its dir>/core.rerail`, absent), which
+    // a module a text includes does not, unless a module beside it names `core.rerail` too.
+    for (part, seed) in parts.iter().zip(&files) {
+        g.rules.extend(part.rules.iter().filter(|(p, _)| !g.digests.contains_key(*p)).map(|(p, d)| (p.clone(), *d)));
+        let Seed::File(start) = seed else { continue };
+        let start_key = start.to_string_lossy().into_owned();
+        let dir = |from: &str| bootstrap_spelling(from).rsplit_once('/').map(|(d, _)| d.to_owned());
+        let own_dir = dir(&start_key);
+        let named = part.includes.iter().any(|(from, to)| {
+            to.iter().any(|(at, n, _)| n == "core.rerail" && !(*from == start_key && *at == -1) && dir(from) == own_dir)
+        });
+        let implicit = own_dir.as_deref().map(|d| candidate_path(d, "core.rerail"));
+        g.absent.extend(part.absent.iter().filter(|p| named || Some(*p) != implicit.as_ref()).cloned());
+    }
+    // The phase programs the text names, which `of` reached as `rules`: a phase program that is one of the text's
+    // modules too is a module.
+    g.rules.retain(|p, _| !g.digests.contains_key(p));
+    g.absent.sort();
+    g.absent.dedup();
+    g.missing.sort();
+    g.missing.dedup();
+    g.plans.sort();
+    g.plans.dedup();
+    Ok(Some(g))
+}
+
+/// `composed`, with this checkout's directories, for the engine's tests of phase 0 (`phase0::tests`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn composed_here(seed: &Seed) -> std::result::Result<Option<Graph>, Error> {
+    composed(seed, &Dirs::here().expect("the library and the phase programs' directory"))
+}
+
+/// Whether two graphs of a seed are one: their digest (modules and edges), what they reach through phases, and the
+/// candidates found absent (`RERAIL_PHASE0_COMPOSE=check`). The plans are the runs' that made them, not the graph.
+pub fn same_graph(a: &Graph, b: &Graph) -> bool {
+    let sorted = |v: &[PathBuf]| {
+        let mut v = v.to_vec();
+        v.sort();
+        v.dedup();
+        v
+    };
+    a.digest() == b.digest() && a.rules == b.rules && sorted(&a.absent) == sorted(&b.absent) && a.phases == b.phases
 }
 
 /// The rule library and the engine's phase programs' directory, canonical, as `bootstrap.rerail` is handed them: found
@@ -568,9 +716,12 @@ impl Graph {
                     }
                 }
             }
-            // A phase program's includes, past the seed's own (which `includes` holds).
+            // A phase program's includes, past the seed's own (which `includes` holds): those its text names, not the
+            // `core.rerail` another seed of the run named as a file seed (`own`), which a run over this seed alone
+            // has not (a phase program's module, `<its dir>/core.rerail`, was an absent candidate of every seed whose
+            // phases reached it, in the template's run of the whole library).
             if seen_rules.contains(&from) {
-                for (_, n, path) in self.includes.get(&from).into_iter().flatten() {
+                for (_, n, path) in self.includes.get(&from).into_iter().flatten().filter(|(at, n, _)| own(&from, *at, n)) {
                     candidate(&from, n);
                     if let Some(d) = self.digests.get(path)
                         && !g.digests.contains_key(path) {
