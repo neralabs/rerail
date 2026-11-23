@@ -114,6 +114,8 @@ impl Entries {
                 && kinds.iter().all(|&k| k == b'i')
             {
                 entry.each_row(|words| each(&words[1..]));
+                // The partition read, though its rows went to `each`: an entry of these rows alone is one.
+                placed.entry(part).or_default();
                 continue;
             }
             let rows = placed.entry(part).or_default().entry(rel.to_owned()).or_default();

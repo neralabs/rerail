@@ -216,13 +216,6 @@ fn fold(columns: &[Vec<Kinds>], fixes: &[Fix]) -> Kinds {
     kinds
 }
 
-/// The node kinds whose text a rule reads, and whether some rule reads the text of a node of any kind. A node's kinds
-/// are followed through the relations' columns to a fixpoint: a column of a derived relation holds the kinds its
-/// rules' head variables can have, each the intersection of what its body fixes (`kind(v, "K")`, a matcher atom's
-/// root, a column whose kinds are known), the union over its rules. An input's column is any kind. A `text(v, …)`,
-/// positive or negated, then demands `v`'s kinds (`core_rr::TEXT_INLINE` holds below them only). Fixed by the same body only,
-/// `text(w, t)` over `classes(c, _), child(w, c, _), kind(w, "decorated_definition")` was demanded, but a rule reading
-/// `text(n, t)` of `nodes(n)` was not, and saw no text past the bound.
 /// `text_kind_demand`'s answer as rows, to keep with a run's kept plans (t33 K4): tagged `long`, `any`, `negated`,
 /// `read` (its sets', each tagged by its set; no `read` row: every node) and `wide`.
 pub fn demand_rows(d: &TextDemand) -> Vec<crate::code_rule_dsl::logic::program_image::manager::Row> {
@@ -280,6 +273,14 @@ pub fn demand_of_rows(rows: &[crate::code_rule_dsl::logic::program_image::manage
     Some(d)
 }
 
+
+/// The node kinds whose text a rule reads, and whether some rule reads the text of a node of any kind. A node's kinds
+/// are followed through the relations' columns to a fixpoint: a column of a derived relation holds the kinds its
+/// rules' head variables can have, each the intersection of what its body fixes (`kind(v, "K")`, a matcher atom's
+/// root, a column whose kinds are known), the union over its rules. An input's column is any kind. A `text(v, …)`,
+/// positive or negated, then demands `v`'s kinds (`core_rr::TEXT_INLINE` holds below them only). Fixed by the same body only,
+/// `text(w, t)` over `classes(c, _), child(w, c, _), kind(w, "decorated_definition")` was demanded, but a rule reading
+/// `text(n, t)` of `nodes(n)` was not, and saw no text past the bound.
 pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
     // A node's kinds to a fixpoint, on numbers: each kind name interned, a set of kinds a sorted vector of them, each
     // derived relation's columns a vector by its number, and each rule head variable's constraints found once
