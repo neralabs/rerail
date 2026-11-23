@@ -133,3 +133,10 @@ node's id costs to turn into its place on the tape (document, granule, slot) and
 through the general join's probe of a view. That read, written once (0310), is the lever before any shape: at tens
 of ns a row, these steps would cost about a tenth of what they do. Next: where a `kind` read's 243 ns goes
 (dispatch, the id's decoding, the probe's candidate loop), by a sample of one stratum's steps.
+
+A stack sample of s1000 (m1max, the same head), its busy frames by the function on top: the join's probe machinery
+first (`cands::candidates` 514, `run_join_in_each::enter` 370, `RowRef::at` 291, `Cands::any` about 150); then
+`IntCol::get` (423), the sealed chunks' reads (0622), which the joins read at random; then the views' reads spread
+over the id's decoding and the tape (`Ranks::select`, `Projected::local_of`, `Projected::node`, the tape's `parent`
+and `code`, `Numbering::granule`: about 600 together). So the per-row cost is three things, in this order: the
+probe's candidate loop, the sealed columns' reads, and an id's way to its place on the tape.
