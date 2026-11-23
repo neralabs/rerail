@@ -101,6 +101,48 @@ fn every_library_header_is_opencl_c_1_2() {
     std::fs::remove_dir_all(&tmp).ok();
 }
 
+/// The library's functions, preprocessed for each C++ GPU backend, are each defined once: a name and its parameters'
+/// tokens at file scope before a body. Two merged branches each gave CUDA the coherent word's atomics, in its section
+/// and after the sections; NVRTC refused every kernel, and preprocessing alone passed.
+#[test]
+fn each_library_function_is_defined_once_on_every_backend() {
+    let k = "#include <ukl/backend.h>\n#include <ukl/memory.h>\n#include <ukl/simd.h>\n#include <ukl/group.h>\n";
+    for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Hip { wave: 32 }, Backend::Hip { wave: 64 }] {
+        let t = tokens(&Preprocess::new(backend).file("/mem/k", k).run("/mem/k").unwrap_or_else(|e| panic!("{backend:?}: {e}")));
+        let mut seen = std::collections::HashSet::new();
+        let (mut depth, mut i) = (0usize, 0);
+        while i < t.len() {
+            match t[i].as_str() {
+                "{" => depth += 1,
+                "}" => depth = depth.saturating_sub(1),
+                "(" if depth == 0 && i > 0 && t[i - 1].starts_with("ukl_") => {
+                    let (from, mut paren, mut j) = (i - 1, 0usize, i);
+                    while j < t.len() {
+                        paren = match t[j].as_str() {
+                            "(" => paren + 1,
+                            ")" => paren - 1,
+                            _ => paren,
+                        };
+                        j += 1;
+                        if paren == 0 {
+                            break;
+                        }
+                    }
+                    if t.get(j).is_some_and(|b| b == "{") {
+                        let sig = t[from..j].join(" ");
+                        assert!(seen.insert(sig.clone()), "{backend:?}: {sig} is defined twice");
+                    }
+                    i = j;
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        assert!(seen.iter().any(|s| s.starts_with("ukl_atomic_add (")), "{backend:?}: the atomics were found");
+    }
+}
+
 /// A kernel reaches the library by `<ukl/...>`, from memory as from disk: the carried copy.
 #[test]
 fn a_kernel_includes_the_library() {
