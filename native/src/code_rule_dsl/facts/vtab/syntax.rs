@@ -3758,6 +3758,7 @@ impl Batch {
         let made: BTreeSet<&'static str> = read.iter().map(|(name, _)| *name).collect();
         if core {
             // `core_rr`'s `text` and the text of `Extra`'s spans.
+            c.count_row7();
             c.extend_text(&rows.text);
             relations.extend(c.relations(&atom).into_iter().filter(|(name, _)| !made.contains(name)));
         } else {

@@ -1059,19 +1059,9 @@ impl CoreRows {
     }
 
     /// The relations, the strings' indexes made atoms by `atom`.
-    pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
-        fn make<const N: usize>(columns: &[&str], rows: &[[i64; N]], sym: [bool; N], atom: &dyn Fn(i64) -> i64) -> Relation {
-            let mut r = Relation::new(columns);
-            let mut row = [0i64; N];
-            for v in rows {
-                for i in 0..N {
-                    row[i] = if sym[i] { atom(v[i]) } else { v[i] };
-                }
-                r.push(&row);
-            }
-            r
-        }
-        // Decision 0353's row 7, by relation: the per-node rows the walk made (`node`), in the profile's stages.
+    /// Decision 0353's row 7, by relation: the per-node rows the walk made (`node`), into the profile's stages. Called
+    /// before `Extra`'s span texts join `text` (`extend_text`): a span's text is derived with its span, no node's row.
+    pub(super) fn count_row7(&self) {
         for (name, bytes) in [
             ("op", std::mem::size_of_val(self.op.as_slice())),
             ("op_at", std::mem::size_of_val(self.op_at.as_slice())),
@@ -1091,6 +1081,20 @@ impl CoreRows {
             if bytes > 0 {
                 crate::code_rule_dsl::prof::count_named(format!("row 7 (decision 0353) bytes: {name}"), bytes);
             }
+        }
+    }
+
+    pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
+        fn make<const N: usize>(columns: &[&str], rows: &[[i64; N]], sym: [bool; N], atom: &dyn Fn(i64) -> i64) -> Relation {
+            let mut r = Relation::new(columns);
+            let mut row = [0i64; N];
+            for v in rows {
+                for i in 0..N {
+                    row[i] = if sym[i] { atom(v[i]) } else { v[i] };
+                }
+                r.push(&row);
+            }
+            r
         }
         let node_sym = |rows: &[[i64; 2]]| make(&["n", "s"], rows, [false, true], atom);
         let pair = |columns: &[&str; 2], rows: &[[i64; 2]]| make(columns, rows, [false, false], atom);

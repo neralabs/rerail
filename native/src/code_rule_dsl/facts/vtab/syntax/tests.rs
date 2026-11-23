@@ -1522,6 +1522,34 @@ fn per_node_values_of_a_bound_node_are_read_in_place() {
     }
 }
 
+/// A relation that only tests a per-node relation of its node (`c(e) :- text(e, _), e < 100`, an aggregate's cover)
+/// is read in its readers' place, its guards with it: where they bind the node, a read of its tape, not every node's
+/// `text` rows. A node bound through `n = a` is bound. A negated test stays a relation; a reader that binds no node
+/// reads the per-node atom as rows.
+#[test]
+fn a_node_test_and_an_alias_are_read_in_place() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    let test = ".decl c(e: node)\nc(e) :- text(e, _), e < 100.\n";
+    for (rules, read, has, lacks) in [
+        (format!("{test}out(\"x\") :- kind(n, \"call\"), c(n)."), 1, vec!["@rr_node_text_any(", "< 100"], vec!["c(n)", "text(n"]),
+        ("out(t) :- kind(a, \"call\"), n = a, text(n, t).".to_owned(), 1, vec!["@rr_node_text_any("], vec!["text(n", "text(a"]),
+        (format!("{test}out(\"x\") :- kind(n, \"call\"), !c(n)."), 0, vec!["c(e) :- text(e, _)", "!c(n)"], vec!["@rr_node_"]),
+        (format!("{test}out(\"x\") :- name(n, \"y\"), c(n)."), 0, vec!["text(n, _)", "n < 100"], vec!["c(n)", "@rr_node_"]),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
+        let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(program, Default::default()).unwrap();
+        assert_eq!(made, read, "{rules}");
+        let printed = crate::code_rule_dsl::logic::rr::print_version(&program).unwrap();
+        let out: String = printed.lines().filter(|l| l.starts_with("out(") || l.starts_with("c(")).collect::<Vec<_>>().join("\n");
+        for h in has {
+            assert!(out.contains(h), "{rules}: {h} in {out}");
+        }
+        for l in lacks {
+            assert!(!out.contains(l), "{rules}: no {l} in {out}");
+        }
+    }
+}
+
 /// The nodes given `text` are the ones the rules read (decision 0110): a fixed kind, a node's field, or a matcher
 /// capture's kind or field; a node nothing narrows widens it to every node. An `inside`'s `field` is the inner
 /// node's place, not the capture's.

@@ -1292,8 +1292,18 @@ Tests: `a_node_read_answers_the_row_the_walk_makes` (every node of two Python fi
 Max: the bench 463 violations, CPU and Metal, row 7 49.9 MB to 15.4 MB (`text` 19.6 MB before rounding, `op` and
 `op_at` the rest); hogql 1,629 findings (d82234cb), row 7 0.0 MB.
 
-Left in row 7: `text` read as rows (22 rule heads on the bench: a span's text, a lookup by text, a node only a
-cross-file relation binds), `op` and `op_at` (several rows a node), and T's shape's `NodeRows`.
+Then two more of `text`'s readers read it in place. A node bound through `n = a` (a lowering's alias) is bound
+(`node_bound`): `alias_name`, F407, PYI047, UP028's `read_elsewhere`. And a relation that only tests a per-node
+relation of its node, `h(v) :- r(v, _)` with guards of `v` against constants, read by positive atoms alone
+(`node_tests`), is read in its readers' place, its guards with it, and its rule goes: an aggregate's cover
+(`rr_cover360(e) :- text(e, _), e < …`, `rr::lower`'s cover of a group that only reads `e`'s text) made every node's
+`text` rows for a test every node passes. Test: `a_node_test_and_an_alias_are_read_in_place`. Row 7 on the bench
+15.0 MB, 463 violations; hogql 1,629 (d82234cb).
+
+Left in row 7: `text` read as rows by 26 rules on the bench, each binding its node only through a relation the split
+puts in the cross part (`node_columns`: there an edit's old document is not the batch's, so a retraction's read
+would read the edited file), or not at all (a source line's `text`, p297); `op` and `op_at` (several rows a node);
+and T's shape's `NodeRows`.
 
 ## What it replaces
 
