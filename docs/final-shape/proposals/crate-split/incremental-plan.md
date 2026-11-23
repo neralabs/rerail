@@ -1487,3 +1487,16 @@ dropped the `--timings` runs (2026-11-22).
       - the filter also caught one preprocessor test on Metal, `pp_arena`'s `the_grid_is_the_devices_resident_count`.
         It failed in Metal's compiler ("internal error" making a unit's dynamic library, 0571), not in anything
         here.
+  - **10e-1, two facade edges off the longest chain.** The chain's steps were each crate's mounts of the crate
+    below (a glob of its whole tree), and two of them carried no code:
+    - typing mounted the planner's tree, yet names nothing the planner owns (`plan.rs` and its `compose`, `emit`,
+      `issue`, `join_spec`, `source_rows`, `sql_kernel`). It mounts plan-search's instead; the planner is a
+      dev-dependency, for the carrier its tests register. corpus-memo, which reads the planner's `plan` through
+      typing's mounts, mounts the planner's tree and typing's `typing` itself.
+    - prof mounted rr-syntax's `logic::front` (`ast`, `name`) and its code reads neither: the mount and the
+      dependency go.
+    - Not cut: planner -> plan-search. `plan.rs` reads plan-search's items through its `plan` glob (`Model`,
+      `same_order`, `keeps`, `choices`, `prepared`, ...): 231 errors with plan-base's alone. That edge is code.
+    - Then: the longest chain is 25 (28 before). An edit to rr-syntax rebuilds 66 crates (80).
+    - Checks: the workspace with `--tests` is clean (Linux). typing's and prof's tests pass (44). The repository's
+      checks pass.

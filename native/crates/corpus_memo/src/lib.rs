@@ -17,12 +17,13 @@ pub use rerail_typing::{content_store, git_access, git_workspace, threads};
 extern crate self as rerail_corpus_memo;
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
-    pub use rerail_typing::code_rule_dsl::*;
+    pub use rerail_planner::code_rule_dsl::*;
+    pub use rerail_typing::code_rule_dsl::typing;
     #[path = "logic"]
     pub mod logic {
-        pub use rerail_typing::code_rule_dsl::logic::*;
+        pub use rerail_planner::code_rule_dsl::logic::*;
         pub mod plan {
-            pub use rerail_typing::code_rule_dsl::logic::plan::*;
+            pub use rerail_planner::code_rule_dsl::logic::plan::*;
             // `plan.rs`'s imports, for the corpus root' `use super::*`.
             #[allow(unused_imports)]
             use super::front::Value;

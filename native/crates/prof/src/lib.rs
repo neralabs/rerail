@@ -927,18 +927,6 @@ extern crate self as rerail_prof;
 pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {
-        pub mod front {
-            pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-            pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
-            #[allow(unused_imports)]
-            use std::collections::{BTreeMap, BTreeSet};
-            #[allow(unused_imports)]
-            use std::fmt;
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, SpanIn, Value, axis, globals, is_axis, is_transduced};
-        }
         pub mod profile;
     }
     pub mod phase_clock;

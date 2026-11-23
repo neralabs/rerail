@@ -7,7 +7,7 @@ publish = false
 description = "The logic language's typing: approximate inference by phases, the file-local passes, the dependencies and the rounds."
 
 [features]
-default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-logic-core/default", "rerail-setfix/default", "rerail-planner/default", "rerail-facts/default", "rerail-lang/default", "rerail-rr/default"]
+default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-logic-core/default", "rerail-setfix/default", "rerail-plan-search/default", "rerail-facts/default", "rerail-lang/default", "rerail-rr/default"]
 all-languages = ["lang-blade", "lang-c", "lang-cpp", "lang-csharp", "lang-css", "lang-go", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-kotlin", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-scala", "lang-sql", "lang-swift", "lang-typescript", "lang-vue", "rerail-facts/all-languages", "rerail-lang/all-languages", "rerail-rr/all-languages"]
 lang-blade = ["rerail-facts/lang-blade", "rerail-lang/lang-blade", "rerail-rr/lang-blade"]
 lang-csharp = ["ast-grep-language/tree-sitter-c-sharp", "rerail-facts/lang-csharp", "rerail-lang/lang-csharp", "rerail-rr/lang-csharp"]
@@ -38,7 +38,7 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-rr/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-rr/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-rr/metal-tests"]
-test-hooks = ["rerail-logic-core/test-hooks", "rerail-setfix/test-hooks", "rerail-planner/test-hooks", "rerail-blocks/test-hooks", "rerail-program-image/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rr/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks"]
+test-hooks = ["rerail-logic-core/test-hooks", "rerail-setfix/test-hooks", "rerail-plan-search/test-hooks", "rerail-blocks/test-hooks", "rerail-program-image/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rr/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks"]
 
 [dependencies]
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
@@ -95,7 +95,8 @@ zstd = "=0.14.3"
 tempfile = { version = "=3.27.0", optional = true }
 rerail-logic-core = { path = "../logic_core", default-features = false }
 rerail-setfix = { path = "../setfix", default-features = false }
-rerail-planner = { path = "../planner", default-features = false }
+# The planner's search and base, whose programs and passes it reads (crate split: not the planner's run).
+rerail-plan-search = { path = "../plan_search", default-features = false }
 # The core's relation names, registered by the program's composition (`plan::keeps::CORE_NAMES`).
 rerail-registry = { path = "../registry" }
 rerail-facts = { path = "../facts", default-features = false }
@@ -134,5 +135,7 @@ metal = "0.33.0"
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-typing = { path = ".", features = ["test-hooks"] }
+# The planner's run, whose carrier the tests register (`test_load`).
+rerail-planner = { path = "../planner", features = ["test-hooks"] }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }
