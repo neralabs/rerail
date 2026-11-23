@@ -46,7 +46,7 @@ Editing a By Rerail rule stores a copy in the library, added where the original 
 
 ### Packs
 
-A **rule pack** (`packs/<id>/`, [pack format](pack-format.md)) holds rule documents in `rules/` and a `pack.json`, but no code. Set-up recommends the packs that fit; `rerail packs list`, `add`, `remove` and `recommend` manage them afterwards. `rerail packs calibrate [--repo <dir>] [--dry-run] [--json]` reads the repository's own lint config again, as set-up does, and updates the settings it gave the repository's packs: a setting you made yourself stays ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)). See [Rule packs](rule-packs.md).
+A **rule pack** (`packs/<id>/`, [pack format](pack-format.md)) holds rule documents in `rules/` and a `pack.json`, but no code. Set-up recommends the packs that fit; `rerail packs list`, `add`, `remove`, `update` and `recommend` manage them afterwards. `rerail packs calibrate [--repo <dir>] [--dry-run] [--json]` reads the repository's own lint config again, as set-up does, and updates the settings it gave the repository's packs: a setting you made yourself stays ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)). See [Rule packs](rule-packs.md).
 
 <details>
 <summary>How matching works, and your own packs</summary>
@@ -397,7 +397,7 @@ rerail update             # install and activate a newer version
 
 Steps 2 to 4 and 6 each print a line on stderr as they start. On a terminal the line counts the step's time up; elsewhere (a coding agent, CI) a step that runs past 30 s prints `… still running after 30 s`, then again every 30 s. An npm request warns that npm may be stuck after 30 s and is stopped at 3 min; the download warns at 3 min and is stopped at 20. Step 6 asks npm about each pack with requests stopped at 1 min each, then installs each pack as a step of its own. A stopped npm that has not exited 5 s later is killed. A stopped step fails the update, and the version that was active stays active. A version change prints `Updated Rerail <old> → <new> in <time>` on stdout.
 
-An agent that can't be re-registered is named with the reason, the rest are refreshed, and the update exits 1 with the new version active. One whose configuration can't be read is named and skipped. Coming from a version without step 5, run `rerail install --refresh` once.
+An agent that can't be re-registered is named with the reason, the rest are refreshed, and the update exits 1 with the new version active. One whose configuration can't be read is named and skipped. Coming from a version without step 5, run `rerail install --refresh` once. Coming from a version without step 6 (0.1.5 and earlier), whose updater only lists the newer packs, run `rerail packs update` once.
 
 </details>
 
@@ -487,8 +487,8 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `audit_settings_update` | `PATCH /api/sessions/{sessionId}/audit-settings` | People only (`rerail settings`). Set defaults, which outlast the session: `mode` `steer`/`log`; `steerStrategy` `message`/`rewind`/`subagent`. |
 | `audit_requests_create` | `POST /api/sessions/{sessionId}/audit-requests` | Internal testing; experimental: the four audit-request and repository-audit operations answer `404 experimental-off`, and are no MCP tools, unless the daemon runs with `RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1`. Queue an audit for a session. |
 | `audit_requests_list` | `GET /api/sessions/{sessionId}/audit-requests` | Internal testing; experimental. `{ auditRequests }` with their `auditIds`. |
-| `audits_list` | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=&origin=` | `{ audits, total }` with `violations` and failures; `mode` is run mode, `origin` is `ongoing` or `scan`. |
-| `violations_list` | `GET /api/violations?since=&ruleId=&sessionId=&limit=&cursor=` | Violations newest first with `ruleId`, `clauseId`, session, `host`, `auditId`, and `logged` (the agent wasn't told: the audit or the rule was in Log mode); `total`, `nextCursor`. |
+| `audits_list` | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=&origin=` | `{ audits, total }` with `violations` and failures; `mode` is run mode, `origin` is `ongoing` or `scan`. `sessionId` is null for an audit the repository owns (a change in another worktree that no session made), which names the repository in `repositoryId`. |
+| `violations_list` | `GET /api/violations?since=&ruleId=&sessionId=&limit=&cursor=` | Violations newest first with `ruleId`, `clauseId`, session (null for one the repository's own audit recorded), `host`, `auditId`, and `logged` (the agent wasn't told: the audit or the rule was in Log mode); `total`, `nextCursor`. |
 | `rule_approvals_set` | `POST /api/rule-approvals` | Approve a rule's or pack's content so it steers; people only ([Approval](rule-scoping.md#approval)). |
 | `presentation_get` | `GET /api/presentation?repository=&host=&sessionId=&onDemand=&spelling=` | The presentation preference that applies, optionally with that session's status ([Hiding the footer](in-session-surfaces.md#hiding-the-footer)). On Windows, `spelling` is the folder as its host spelt it, read only for a start or stop Rerail 0.1.4 saved under it. |
 | `presentation_preferences_list` | `GET /api/presentation-preferences` | The stored presentation preferences. |
@@ -810,7 +810,8 @@ run at different times from JSON rules.
   run takes the `.rerail` runner's default deadline, since no agent waits for it. `RERAIL_RR_DEADLINE_MS` replaces
   both. A run is also bounded by memory (`RERAIL_RR_MEMORY_MB`) and threads (`RERAIL_RR_THREADS`).
   `RERAIL_RR_QUIET_MS` replaces the 10-second quiet period. A run stopped at a budget gives each of its rules a
-  `budget-exceeded` failure that names the setting to raise; the other rules' results stand.
+  `budget-exceeded` failure that names the setting to raise; the other rules' results stand. `RERAIL_RR_STORE=checkout`
+  keeps the engine's store of the checkout between runs: faster on a small project, slower and heavier on a large one.
 - **Reading the rules.** Rerail reads what a pack's `.rerail` rules say when it loads the pack, and waits at most 30
   seconds for that; the runs' deadline does not change it, `RERAIL_RR_DESCRIBE_DEADLINE_MS` does. A pack whose rules
   take longer is left out, with a message that names the limit; Rerail reads them again the next time it loads its
@@ -867,7 +868,7 @@ A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `
 - The pass lists files the rule couldn't check and counts in-scope binary files, which no rule reads.
 - Text output shows the first five matches and files; `--json` shows all. Path and `file`-query matches have no line.
 - A bare rule document, such as `.rerail/rules/<name>.json`, gets validation and the repository pass only.
-- A `.rerail` rule file, in the new rule language: `rules test` runs the tests it carries (`.test ... .end`) and reports each as passed or failed (`--json`: every test with its failures and findings). Those tests read programs the package does not ship, so it runs only from a Rerail checkout, or with `RERAIL_SOURCE_ROOT` naming one; elsewhere it refuses.
+- A `.rerail` rule file, in the new rule language: `rules test` runs the tests it carries (`.test ... .end`) against the `.rerail` rule library the package ships, and reports each as passed or failed (`--json`: every test with its failures and findings).
 
 `rerail rules add` sets the repository up with only that rule if needed. A rule already added here stays where it is when the draft names no `folder`; `"folder": ""` widens it to the whole repository. It never replaces a rule shipped by Rerail. Your copy of one takes no `folder`. It is refused where the repository does not add the original, and where your copy of it is already added; `rules show` names that copy, the one to change. Your copy made for another repository is refused where its original runs and the copy is not added, since both would steer. `rerail rules approve` with no names lists everything awaiting approval and its source.
 

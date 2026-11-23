@@ -155,6 +155,9 @@ Rerunning `npx @neralabs/rerail setup` also updates.
 - `rerail update --channel <tag>` selects the npm dist-tag: `latest`, `beta` or `next`.
 - An update first copies the database to `~/.rerail/rerail.sqlite.pre-update`.
 - The new version applies to coding agent sessions started afterwards; connected coding agents get its commands.
+- Once core is updated, `rerail update` updates each installed rule pack to the newest version that fits it
+  (`rerail packs update` does the same on its own). The update from 0.1.5 runs 0.1.5's updater, which only lists the
+  newer packs: run `rerail packs update` once after it.
 
 </details>
 
