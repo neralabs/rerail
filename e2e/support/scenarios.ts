@@ -6,7 +6,7 @@
  * that stamp rows with `Date.now()` (audits, steer receipts) are given the seed clock there.
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -120,19 +120,51 @@ function createCheckout(reposRoot: string, spec: CheckoutSpec, gitEnvironment: N
 /**
  * Installs this repository's `packs/<id>` into the scenario home as `rerail packs add <id>` does from the registry: the
  * package in the prefix's `node_modules` (here a link to the folder) and its version in the prefix's `package.json`, so
- * each loads as Rerail's own pack rather than one installed from a folder, which would wait for approval.
+ * each loads as Rerail's own pack rather than one installed from a folder, which would wait for approval. The pack of an
+ * `olderTokenRule` is a copy instead, as it was published for an earlier Rerail ({@link writeOlderTokenPack}).
  */
-function installPacks(home: string, packIds: readonly string[]): void {
+function installPacks(home: string, packIds: readonly string[], olderTokenRule?: OlderTokenRule): void {
   const prefix = installedPacksPrefix(home);
   const scope = join(prefix, "node_modules", "@neralabs");
   mkdirSync(scope, { recursive: true });
   const dependencies: Record<string, string> = {};
   for (const id of packIds) {
     const folder = join(REPOSITORY_ROOT, "packs", id);
-    symlinkSync(folder, join(scope, `rerail-pack-${id}`), process.platform === "win32" ? "junction" : "dir");
+    const installed = join(scope, `rerail-pack-${id}`);
+    if (olderTokenRule?.packId === id) writeOlderTokenPack(folder, installed, olderTokenRule.ruleId);
+    else symlinkSync(folder, installed, process.platform === "win32" ? "junction" : "dir");
     dependencies[rulePackPackageName(id)] = (JSON.parse(readFileSync(join(folder, "package.json"), "utf8")) as { version: string }).version;
   }
   writeFileSync(join(prefix, "package.json"), `${JSON.stringify({ dependencies }, null, 2)}\n`);
+}
+
+/** A pack rule a scenario installs as a version published for an earlier Rerail wrote it. */
+interface OlderTokenRule {
+  readonly packId: string;
+  readonly ruleId: string;
+}
+
+const OLDER_TOKEN_RULES: Partial<Record<ScenarioName, OlderTokenRule>> = {
+  "pack-rule-not-running": { packId: "complexity", ruleId: "complexity-cyclomatic-python" },
+};
+
+/**
+ * Writes to `copy` the pack in `source` with rule `ruleId` asking for the `print` token of Python 2's `print >>f, x`,
+ * which a print statement implies and parsed files now leave out: Rerail loads the pack and keeps that rule, switched
+ * on, without running it (as `withOlderTokenRule` in test/support/installed-packs.ts).
+ */
+function writeOlderTokenPack(source: string, copy: string, ruleId: string): void {
+  for (const entry of ["pack.json", "package.json", "rules"]) cpSync(join(source, entry), join(copy, entry), { recursive: true });
+  const path = join(copy, "rules", `${ruleId}.json`);
+  const document = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  writeFileSync(path, JSON.stringify({
+    ...document,
+    clauses: [{
+      id: "print-token",
+      violation: { anchor: "witness.start", code: "PRINT", message: "never" },
+      forbid: { ast: { language: "python", rule: { regex: "^print$", inside: { kind: "print_statement" } } } },
+    }],
+  }));
 }
 
 /**
@@ -645,6 +677,9 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
       return [{ checkout: { ...STOREFRONT, files: { "README.md": "# Storefront\n" } }, recordedAt: now - 30 * MINUTE, changes: [{ at: now - 30 * MINUTE, apply: setUpAndStart([]) }], ...noSessions }];
     case "packs-no-session":
       return [{ checkout: STOREFRONT, recordedAt: now - HOUR, changes: [{ at: now - HOUR, apply: setUpAndStart(["typescript", "javascript"]) }], ...noSessions }];
+    case "pack-rule-not-running":
+      // The installed complexity pack is one published for an earlier Rerail (OLDER_TOKEN_RULES).
+      return [{ checkout: STOREFRONT, recordedAt: now - HOUR, changes: [{ at: now - HOUR, apply: setUpAndStart(["complexity"]) }], ...noSessions }];
     case "not-set-up":
       // `rerail start` before set-up: started, but nothing runs until the repository is set up.
       return [{
@@ -779,7 +814,7 @@ export async function seedScenario(scenario: ScenarioName, folder: string, now: 
   const reposRoot = join(root, "repos");
   for (const directory of [rerailHome, userHome, reposRoot]) mkdirSync(directory, { recursive: true });
   if (resolve(process.env.RERAIL_HOME ?? "") !== rerailHome) throw new Error(`seedScenario needs RERAIL_HOME=${rerailHome} in its environment`);
-  installPacks(rerailHome, INSTALLED_PACKS);
+  installPacks(rerailHome, INSTALLED_PACKS, OLDER_TOKEN_RULES[scenario]);
   const catalog = (): RuleCatalog => loadRuleCatalog(rerailHome);
   const databasePath = join(rerailHome, "rerail.sqlite");
   const gitEnvironment = { ...process.env, HOME: userHome, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: join(userHome, ".gitconfig") };

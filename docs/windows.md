@@ -420,6 +420,14 @@ its exact text, so `src/setup/harness-registration.ts` writes and reads those it
 
 OMP and Pi load Rerail as an extension and run no hook command; a steer writes their commands for Git Bash.
 
+Claude Code's hook launcher turns on Node's compile cache before it loads the hook (`module.enableCompileCache`, in
+the folder `NODE_COMPILE_CACHE` names, else Node's own `node-compile-cache` in the user's temporary folder). Where the
+node that starts it is not the recorded node, it starts itself under the recorded node, which does the same, so the
+cache is on whatever node PATH has and the hook gets no environment variable it did not have. Every hook event starts
+a Node that loads the hook's script of over 2 MB; with the cache, V8 reads the code it compiled at an earlier event
+instead of parsing and compiling the script again. `NODE_DISABLE_COMPILE_CACHE=1` keeps it off. Codex's and Cursor's
+entries start the hook without the launcher, so they compile it at each event.
+
 Claude Code on Windows needs Git Bash. Claude Code itself runs without it, running commands in PowerShell instead.
 But `windowsCommandShell` is fixed per agent, not per machine, so Rerail's status line, command files and set-up's
 answers for Claude Code stay POSIX words that PowerShell cannot run. Its exec-form hooks run without any shell.
