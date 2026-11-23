@@ -494,6 +494,11 @@ impl ContentStore {
     /// (`ObjectBytes::in_place`): not decompressed, hashed or copied, its segment's check (when mapped) the check.
     /// `None` where no source has the alias, or its segment is gone.
     pub fn sources_by_alias_in_place(&self, aliases: &[HashKey]) -> StoreResult<Vec<Option<ObjectBytes>>> {
+        Ok(self.sources_by_alias_with_ids(aliases)?.into_iter().map(|s| s.map(|(bytes, _)| bytes)).collect())
+    }
+
+    /// `sources_by_alias_in_place`, each with its source's id (for its lease).
+    pub fn sources_by_alias_with_ids(&self, aliases: &[HashKey]) -> StoreResult<Vec<Option<(ObjectBytes, SourceId)>>> {
         let rows: Vec<Option<(i64, [i64; 3], i64)>> = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             let mut st = connection.prepare_cached(
@@ -514,12 +519,12 @@ impl ContentStore {
         };
         // Archived ones (decision 0450 step 4) are placed back first, then read in place.
         if self.placed_again(rows.iter().flatten().map(|&(_, [seg, ..], source)| (super::reclamation::OBJECT_SOURCE, source, seg)))? {
-            return self.sources_by_alias_in_place(aliases);
+            return self.sources_by_alias_with_ids(aliases);
         }
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
-            let Some((raw_length, [seg, seg_at, seg_len], _)) = row else {
+            let Some((raw_length, [seg, seg_at, seg_len], source)) = row else {
                 out.push(None);
                 continue;
             };
@@ -528,7 +533,7 @@ impl ContentStore {
                 out.push(None);
                 continue;
             };
-            out.push(Some(frame.bytes(length).map_err(|e| StoreError::Corrupt(format!("a source's bytes: {e}")))?));
+            out.push(Some((frame.bytes(length).map_err(|e| StoreError::Corrupt(format!("a source's bytes: {e}")))?, SourceId(source))));
         }
         Ok(out)
     }

@@ -416,7 +416,7 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
             }
             b.finish().map_err(Error::Plan)?.0
         };
-        let (upstream, upstream_runs) = self::facts(&*program, &super::shape::Shape::of(&program), root, modes, binding, chunk_nodes, typing, options)?;
+        let (upstream, upstream_runs) = self::facts(&*program, &crate::code_rule_dsl::logic::program_image::manager::analysis::<super::shape::Shape>(&program).unwrap_or_else(|_| std::sync::Arc::new(super::shape::Shape::of(&program))), root, modes, binding, chunk_nodes, typing, options)?;
         for r in upstream_runs {
             if !runs.iter().any(|x: &PhaseRun| x.name == r.name) {
                 runs.push(r);

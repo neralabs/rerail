@@ -4,7 +4,7 @@ use super::connection::configure_connection;
 use super::{ContentStore, StoreError, StoreResult};
 #[allow(unused_imports)]
 use crate::content_store::connection::Cached as _;
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -599,7 +599,13 @@ impl ContentStore {
     /// exclusive lock and applies SCHEMA. Returns the store's identity (`store_identity`).
     pub(super) fn initialize(connection: &mut Connection, flush: rerail_blocks::block::Flush) -> StoreResult<i64> {
         configure_connection(connection, flush)?;
-        if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_objects(connection)? || holds_retired(connection)? {
+        // The store's objects read once for both checks, and its added columns in one query: each open of a warm run's
+        // seven read the schema twice and asked each added column apart (11 ms of a warm unchanged run).
+        let current = compatible_version(connection)? == SCHEMA_VERSION && {
+            let present: HashSet<(String, String)> = schema_object_names(connection)?.into_iter().collect();
+            holds_schema_objects_in(connection, &present)? && !holds_retired_in(&present)
+        };
+        if !current {
             // A store made here is made by a writer's thread (decision 0104: a run's own threads only read): once,
             // before anything reads it.
             rerail_accel::exec::scoped(|scope| {
@@ -715,10 +721,13 @@ fn compatible_version(connection: &Connection) -> StoreResult<i64> {
 }
 
 /// Whether the store holds every table, index, trigger and virtual table SCHEMA creates.
+#[cfg(test)]
 fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
-    let present = schema_object_names(connection)?
-        .into_iter()
-        .collect::<HashSet<_>>();
+    holds_schema_objects_in(connection, &schema_object_names(connection)?.into_iter().collect())
+}
+
+/// `holds_schema_objects`, of the objects `present` (`schema_object_names`).
+fn holds_schema_objects_in(connection: &Connection, present: &HashSet<(String, String)>) -> StoreResult<bool> {
     let expected = SCHEMA_OBJECTS
         .as_ref()
         .map_err(|error| StoreError::Corrupt(format!("the schema does not apply: {error}")))?;
@@ -765,9 +774,14 @@ const RETIRED_TABLES: &[&str] = &[
 ];
 
 /// Whether the store holds a table of `RETIRED_TABLES`.
+#[cfg(test)]
 fn holds_retired(connection: &Connection) -> StoreResult<bool> {
-    let present: HashSet<(String, String)> = schema_object_names(connection)?.into_iter().collect();
-    Ok(RETIRED_TABLES.iter().any(|t| present.contains(&("table".to_owned(), (*t).to_owned()))))
+    Ok(holds_retired_in(&schema_object_names(connection)?.into_iter().collect()))
+}
+
+/// `holds_retired`, of the objects `present` (`schema_object_names`).
+fn holds_retired_in(present: &HashSet<(String, String)>) -> bool {
+    RETIRED_TABLES.iter().any(|t| present.contains(&("table".to_owned(), (*t).to_owned())))
 }
 
 /// Columns SCHEMA's tables gained after stores were made with them, as `(table, column, declaration)`: `CREATE
@@ -808,19 +822,19 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
 fn missing_columns(
     connection: &Connection,
 ) -> StoreResult<Vec<&'static (&'static str, &'static str, &'static str)>> {
-    let mut missing = Vec::new();
-    for added in ADDED_COLUMNS {
-        let (table, column, _) = added;
-        let (tables, columns): (i64, i64) = connection.query_row(
-            "SELECT (SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1), (SELECT count(*) FROM pragma_table_info(?1) WHERE name=?2)",
-            params![table, column],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        if tables > 0 && columns == 0 {
-            missing.push(added);
-        }
-    }
-    Ok(missing)
+    // The tables' columns in one query (the names are this build's constants), each table's present or not: a query
+    // per added column was twenty at every open.
+    static QUERY: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let mut tables: Vec<&str> = ADDED_COLUMNS.iter().map(|(t, _, _)| *t).collect();
+        tables.sort_unstable();
+        tables.dedup();
+        let names: Vec<String> = tables.iter().map(|t| format!("'{t}'")).collect();
+        format!("SELECT t.name, p.name FROM sqlite_master t, pragma_table_info(t.name) p WHERE t.type='table' AND t.name IN ({})", names.join(","))
+    });
+    let mut statement = connection.prepare(&QUERY)?;
+    let found: HashSet<(String, String)> = statement.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+    let tables: HashSet<&str> = found.iter().map(|(t, _)| t.as_str()).collect();
+    Ok(ADDED_COLUMNS.iter().filter(|(table, column, _)| tables.contains(table) && !found.contains(&((*table).to_owned(), (*column).to_owned()))).collect())
 }
 
 /// Every object SCHEMA creates, as `(type, name)`, read from its `CREATE … IF NOT EXISTS` statements. Its text is

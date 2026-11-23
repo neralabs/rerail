@@ -3437,17 +3437,27 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
         queue(kept);
         Some((digest, written))
     };
-    let framed_inputs: Vec<Option<(u64, usize)>> = {
+    // An input whose rows are those its entry holds (its digest known, the same as the entry's) puts its statistics
+    // at most, a few words: its job is run here, not on the pool. A warm run's every input is such, and as 1,146
+    // jobs of a microsecond or two each they woke the pool's 17 threads, which spun 0.1 s of CPU between them.
+    let unchanged = |rel: &String| was.names.get(rel).is_some() && digests.get(rel).is_some_and(|d| was.inputs.get(rel).is_some_and(|(k, _)| k == d));
+    let mut framed_inputs: Vec<Option<(u64, usize)>> = inputs.iter().map(|(rel, source)| if unchanged(rel) { one_input(rel, source) } else { None }).collect();
+    let rest: Vec<usize> = (0..inputs.len()).filter(|&k| !unchanged(&inputs[k].0)).collect();
+    if !rest.is_empty() {
         use rayon::prelude::*;
         // In the run, on whichever thread runs it: its frames' placement reads the machine's device memory.
         let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-        crate::code_rule_dsl::logic::profile::on_cores(|| {
-            inputs.par_iter().map(|(rel, source)| {
+        let done: Vec<Option<(u64, usize)>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            rest.par_iter().map(|&k| {
                 let _in = carry.enter();
+                let (rel, source) = &inputs[k];
                 one_input(rel, source)
             }).collect()
-        })
-    };
+        });
+        for (k, d) in rest.into_iter().zip(done) {
+            framed_inputs[k] = d;
+        }
+    }
     for ((rel, _), done) in inputs.iter().zip(framed_inputs) {
         let Some((digest, n)) = done else { continue };
         now.insert(rel.clone(), digest);

@@ -91,7 +91,7 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>) -> Result<BTreeSet<String
     // options and phases' exports, no request) are derived in both parts already.
     let constant = fixpoint(&|rel| option_input(rel) || (super::phases::is_phased(rel) && inputs.contains(rel)) || fact(rel), false);
     fold.retain(|r| !constant.contains(r));
-    let shape = super::shape::Shape::of(v);
+    let shape = crate::code_rule_dsl::logic::program_image::manager::analysis::<super::shape::Shape>(v).unwrap_or_else(|_| std::sync::Arc::new(super::shape::Shape::of(v)));
     let read_outside: BTreeSet<&str> =
         shape.reads_of.iter().filter(|(h, _)| !fold.contains(h.as_str())).flat_map(|(_, reads)| reads.iter().map(String::as_str)).chain(outputs.iter().map(String::as_str)).collect();
     Ok(fold.into_iter().filter(|r| read_outside.contains(r.as_str())).collect())

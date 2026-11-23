@@ -51,5 +51,16 @@ impl Shape {
         }
         s
     }
+}
 
+/// An analysis of the version (`manager::analysis`): made once a version, held by it, and shared by the readers that
+/// ask it of the same version (the constants' fold, the phases, the combine's): each made it anew, each a decode of
+/// every rule (28 ms of a warm run's 0.36 s). Not kept for the store: it is asked before the run reads its kept plans
+/// (whose entry is the prepared program's, made after it), so a warm run would make it and write it again.
+impl crate::code_rule_dsl::logic::program_image::manager::Analysis for Shape {
+    const NAME: &'static str = "corpus shape";
+    const READS: crate::code_rule_dsl::logic::program_image::manager::Reads = crate::code_rule_dsl::logic::program_image::manager::Reads::RULES;
+    fn compute(cx: &crate::code_rule_dsl::logic::program_image::manager::Cx<'_>) -> Result<Shape, String> {
+        Ok(Shape::of(cx.v()))
+    }
 }

@@ -920,15 +920,29 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for ImageDfas {
     }
 }
 
-/// Phase 0's graph of a seed as an image (decision 0246): read from the shipped bundle, else `store` (the engine
-/// build's, `image_store`, opened once by the caller for all its seeds), its lease renewed; `phase0::graphs` checks it
-/// holds before it takes it.
-pub(in crate::code_rule_dsl) fn graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey) -> Option<Vec<u8>> {
-    let (bytes, id) = images::read(store, key)?;
-    if let (Some(store), Some(id)) = (store, id) {
-        renew_image(store, id);
+/// Phase 0's graphs of seeds `keys` as images (decision 0246), read together, each checked by `phase0::graphs` before
+/// it takes it: the shipped bundle's, else `store`'s,
+/// each read in place in its segment, the segments mapped once for all, their leases renewed together. One by one,
+/// each was a query, a segment opened and mapped, its bytes copied and hashed: 15 ms of a warm run's 317 seeds.
+pub(in crate::code_rule_dsl) fn graph_images<T>(store: Option<&crate::content_store::ContentStore>, keys: &[crate::content_store::HashKey], decode: impl Fn(&[u8]) -> Option<T>) -> Vec<Option<T>> {
+    let shipped: Vec<Option<&'static [u8]>> = keys.iter().map(|k| images::shipped().and_then(|b| b.get(*k))).collect();
+    let mut out: Vec<Option<T>> = shipped.iter().map(|b| b.and_then(&decode)).collect();
+    let Some(store) = store else { return out };
+    let rest: Vec<usize> = (0..keys.len()).filter(|&k| shipped[k].is_none()).collect();
+    if rest.is_empty() {
+        return out;
     }
-    Some(bytes.into_owned())
+    let aliases: Vec<crate::content_store::HashKey> = rest.iter().map(|&k| keys[k]).collect();
+    let Ok(found) = store.sources_by_alias_with_ids(&aliases) else { return out };
+    let mut ids = Vec::new();
+    for (k, f) in rest.into_iter().zip(found) {
+        if let Some((bytes, id)) = f {
+            ids.push(id);
+            out[k] = decode(&bytes);
+        }
+    }
+    renew_images(store, &ids);
+    out
 }
 
 /// A process can first read this graph for a different store. Keep it where this reader can find it on restart.
@@ -942,7 +956,7 @@ pub(in crate::code_rule_dsl) fn retain_graph_image(store: Option<&crate::content
     }
 }
 
-/// Keeps a graph's image (`graph_image`) where none is kept under its key yet. A seed's key names the seed, not the
+/// Keeps a graph's image (`graph_images`) where none is kept under its key yet. A seed's key names the seed, not the
 /// files its graph reached, so an edited library gives the same key another graph: the store's alias holds one
 /// image, and the first stays. A run then finds it does not hold (`Graph::holds`) and derives the graph, as without
 /// images. The shipped bundle's graphs are its library's; exported, the last derived is the one written.

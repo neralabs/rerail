@@ -1820,7 +1820,7 @@ fn run_observed_within(
     // The combined program as a version (decision 0281's path, step 7a): the readers before preparation read its
     // fields where they are (`fields`), and its rules' shape (`shape::Shape`); an edit of them is a version's edit.
     let (mut v, mut texts) = combine_version(programs, masked, &given.graphs, &added, read)?;
-    let mut shape = shape::Shape::of(&v);
+    let mut shape = crate::code_rule_dsl::logic::program_image::manager::analysis::<shape::Shape>(&v).unwrap_or_else(|_| Arc::new(shape::Shape::of(&v)));
     let git_metadata_only = crate::git_workspace::snapshot::contains(root) && git::metadata_only(&v);
     drop(combining);
     // Earlier phases' exports it reads (`phases`, decision 0083 §1): each phase runs first, in its own fact space.
@@ -1933,7 +1933,7 @@ fn run_observed_within(
     };
     phase("combine", 0);
     let (mut folded, mut constants_plans) = fold_constants(&mut v, &added)?;
-    shape = shape::Shape::of(&v);
+    shape = crate::code_rule_dsl::logic::program_image::manager::analysis::<shape::Shape>(&v).unwrap_or_else(|_| Arc::new(shape::Shape::of(&v)));
     phase("constants", 0);
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     // The program's `.language` (above) picks the corpus's files: `.rerail` files only when it names `rr` (decision 0061).
@@ -2065,7 +2065,7 @@ fn run_observed_within(
                 Ok(())
             })?;
             (folded, constants_plans) = fold_constants(&mut v, &added)?;
-            shape = shape::Shape::of(&v);
+            shape = crate::code_rule_dsl::logic::program_image::manager::analysis::<shape::Shape>(&v).unwrap_or_else(|_| Arc::new(shape::Shape::of(&v)));
         }
         declared = d;
     }
@@ -2083,7 +2083,7 @@ fn run_observed_within(
     // Typing may rebuild the combined program. Publish external facts after that rebuild.
     edit_fields(&mut v, |p| external_inputs(p, &shape, root))?;
     // Withholding rules (`inputs::withhold`) changes what they make.
-    shape = shape::Shape::of(&v);
+    shape = crate::code_rule_dsl::logic::program_image::manager::analysis::<shape::Shape>(&v).unwrap_or_else(|_| Arc::new(shape::Shape::of(&v)));
     // The repository files, artifacts and base revision the readers read are consulted too (`inputs::still`).
     let read = inputs::take_consulted();
     if t.is_none() {

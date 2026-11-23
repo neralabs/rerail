@@ -187,7 +187,14 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     // A kept graph that no longer holds leaves the process's map too: the images' step below fills a seed from the
     // map, and found the stale graph there again, so a file edited after its graph was kept was read as it was (its
     // include's old digest), though phase 0 derived its graph anew.
-    let stale: Vec<&Seed> = seeds.iter().zip(found.iter_mut()).filter(|(_, g)| g.as_ref().is_some_and(|g| !g.holds())).map(|(s, g)| {
+    // A pack's graphs share their modules: each file is looked at once for all of them, not once a graph (317 texts'
+    // graphs, each looking at the library's modules again, were 12 ms of a warm run).
+    let mut looked: HashMap<PathBuf, Option<[u8; 32]>> = HashMap::new();
+    let mut held = |g: &Graph| {
+        g.digests.iter().chain(&g.rules).all(|(p, d)| looked.entry(p.clone()).or_insert_with(|| super::observe(|o| o.digest(p))).as_ref() == Some(d))
+            && g.absent.iter().all(|p| super::observe(|o| o.kind(p)) == crate::content_store::observe::Kind::Missing)
+    };
+    let stale: Vec<&Seed> = seeds.iter().zip(found.iter_mut()).filter(|(_, g)| g.as_ref().is_some_and(|g| !held(g))).map(|(s, g)| {
         *g = None;
         s
     }).collect();
@@ -229,7 +236,8 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
             g.digests.iter().chain(&g.rules).all(|(p, d)| looked.entry(p.clone()).or_insert_with(|| super::observe(|o| o.digest(p))).as_ref() == Some(d))
                 && g.absent.iter().all(|p| *missing.entry(p.clone()).or_insert_with(|| super::observe(|o| o.kind(p)) == crate::content_store::observe::Kind::Missing))
         };
-        let graphs: Vec<Option<Graph>> = wanted.iter().map(|seed| crate::code_rule_dsl::logic::rr::graph_image(images.store(), images.key(seed)).and_then(|b| images.decode(&b))).collect();
+        let keys: Vec<crate::content_store::HashKey> = wanted.iter().map(|seed| images.key(seed)).collect();
+        let graphs: Vec<Option<Graph>> = crate::code_rule_dsl::logic::rr::graph_images(images.store(), &keys, |b| images.decode(b));
         let mut graphs = graphs.into_iter();
         let trace = std::env::var_os("RERAIL_PHASE0_TRACE").is_some();
         wanted.retain(|seed| {
@@ -371,7 +379,7 @@ pub(in crate::code_rule_dsl) fn phase_lib() -> Option<PathBuf> {
     dunce::canonicalize(super::phases::builtin_dir()).ok()
 }
 
-/// Graphs as images (`rr::graph_image`): keyed by the engine's build and the seed, their paths written relative to the
+/// Graphs as images (`rr::graph_images`): keyed by the engine's build and the seed, their paths written relative to the
 /// library and the phase programs' directory, so a bundle made where those stand elsewhere is read here too (each file
 /// is then checked by its digest, `Graph::holds`). The bootstrap run's plans are kept with it: a run that reads the
 /// graph names them in its manifest, as the run that derived it did, so a warm run's manifest is the cold run's and
