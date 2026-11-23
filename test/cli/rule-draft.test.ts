@@ -796,16 +796,16 @@ describe("rerail rules test on a .rerail file", () => {
     await expect(run("test", [file, "--json"])).rejects.toThrow("no-tests.rerail holds no tests (.test ... .end)");
   });
 
-  it("says it needs a Rerail checkout, as from an installed package, instead of running the tests without one", async () => {
+  it("names the engine's file that is missing, as under a broken install, instead of running the tests without it", async () => {
     const repo = await repository();
     const file = join(repo, "no-print.rerail");
     writeFileSync(file, RR_WITH_TESTS);
-    // A source root that is no Rerail checkout: what an installed package finds.
+    // A root that holds neither the engine's .rerail programs nor its rule library.
     const root = process.env.RERAIL_SOURCE_ROOT;
     process.env.RERAIL_SOURCE_ROOT = repo;
     try {
       await expect(run("test", [file])).rejects.toThrow(
-        "a .rerail file's tests read the engine's .rerail programs and rule library from a Rerail checkout",
+        "sources.rerail is missing: a .rerail file's tests read the engine's .rerail programs and rule library, which Rerail's package ships beside the engine: reinstall Rerail",
       );
     } finally {
       if (root === undefined) delete process.env.RERAIL_SOURCE_ROOT;

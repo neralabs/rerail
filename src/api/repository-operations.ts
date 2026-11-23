@@ -56,6 +56,7 @@ import { cachedRecommendRulePacks } from "../engine/catalog/rule-packs.js";
 import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { approve, currentSubject, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { checkouts, libraryRules, repositories, ruleAttachments, ruleSettings, RULE_KINDS } from "../engine/storage/schema.js";
+import { ruleKindOf, type RuleDocument } from "../engine/catalog/rule-store.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
 import {
   approvalSubjectSchema,
@@ -75,6 +76,7 @@ import {
   resetBodySchema,
   resetResultSchema,
   rerailRuleSchema,
+  ruleDocumentRecord,
   ruleSettingRecordSchema,
   settingsSetBodySchema,
   startBodySchema,
@@ -340,9 +342,7 @@ function effectiveRuleRecord(rule: EffectiveRule, dates: RuleDates): z.infer<typ
     payloadHash: rule.payloadHash,
     ...(rule.approval === undefined ? {} : { approval: { subject: { ...rule.approval.subject }, approved: rule.approval.approved } }),
   };
-  return rule.document.kind === "code"
-    ? { kind: "code", rule: rule.document.rule, ...shared, ...inactiveOf("code", rule.document.rule, rule.notRun) }
-    : { kind: "conversation", rule: rule.document.rule, ...shared };
+  return { ...ruleDocumentRecord(rule.document, rule.notRun), ...shared };
 }
 
 function libraryRecord(rule: LibraryRule): z.infer<typeof libraryRuleRecordSchema> {
@@ -403,6 +403,19 @@ function checkConfig(stores: RerailApiStores, catalog: RuleCatalog, change: Sett
   if (library !== undefined) throw new ApiError(400, "invalid-setting", `config applies to rules by Rerail; ${id} is your library rule`);
   const configured = configureBundledCodeRule(catalog, id, change.config);
   if (!configured.ok) throw new ApiError(400, "invalid-setting", configured.reason);
+}
+
+/** The `.rerail` rules a setting's target holds: the rule it names, or each such rule of the pack it names. */
+function rerailRulesOf(catalog: RuleCatalog, change: SettingChange): string[] {
+  const ids = change.targetKind === "rule" ? [change.targetId] : (catalog.packs.get(change.targetId)?.rules ?? []).map(rule => rule.id);
+  return ids.filter(id => catalog.documents.get(id)?.kind === "rerail");
+}
+
+/** Rejects a setting that cannot apply (`checkConfig`), or that puts a rule written in `.rerail` on block, which is not supported yet. */
+function checkSetting(stores: RerailApiStores, catalog: RuleCatalog, change: SettingChange): void {
+  const rerail = change.mode === "block" ? rerailRulesOf(catalog, change) : [];
+  if (rerail.length > 0) throw new ApiError(400, "invalid-setting", `block mode is not supported yet for a rule written in .rerail (${rerail.join(", ")}); use steer`);
+  checkConfig(stores, catalog, change);
 }
 
 /** Whether the repository is not set up yet, read inside the caller's transaction. */
@@ -602,7 +615,7 @@ export const repositoryOperations: readonly Operation[] = [
       }));
       refuseExperimentsOff(changes.map(change => settingModeWrite(db, owner, change)));
       const catalog = checkoutRuleCatalog(stores, target.checkout);
-      for (const change of changes) checkConfig(stores, catalog, change);
+      for (const change of changes) checkSetting(stores, catalog, change);
       const settings = changes.map(change => mergedSetting(db, owner, change));
       for (const setting of settings) setRuleSetting(db, setting);
       return { settings: settings.map(settingRecord), ...blockNote([input.mode]) };
@@ -628,7 +641,7 @@ export const repositoryOperations: readonly Operation[] = [
       const changes = foldedChanges((input.settings ?? []).map(change => ({ ...change, folder: folderOf(change.folder ?? "") })));
       refuseExperimentsOff(changes.map(change => settingModeWrite(db, owner, change)));
       const catalog = checkoutRuleCatalog(stores, target.checkout);
-      for (const change of changes) checkConfig(stores, catalog, change);
+      for (const change of changes) checkSetting(stores, catalog, change);
       // The attachments and the settings that go with them are one change: nobody sees a pack before its settings.
       db.transaction(tx => {
         const settings = changes.map(change => mergedSetting(tx, owner, change));
@@ -752,10 +765,8 @@ export const repositoryOperations: readonly Operation[] = [
       const ruleCatalog = stores.ruleCatalog();
       return {
         rules: [...ruleCatalog.documents.values()]
-          .filter(document => input.kind === undefined || document.kind === input.kind)
-          .map(document => document.kind === "code"
-            ? { kind: "code" as const, rule: document.rule, packId: ruleCatalog.packOf.get(document.rule.id) ?? null, ...inactiveOf("code", document.rule, ruleCatalog.notRun.get(document.rule.id)) }
-            : { kind: "conversation" as const, rule: document.rule, packId: ruleCatalog.packOf.get(document.rule.id) ?? null }),
+          .filter(document => input.kind === undefined || ruleKindOf(document) === input.kind)
+          .map(document => ({ ...ruleDocumentRecord(document, ruleCatalog.notRun.get(document.rule.id)), packId: ruleCatalog.packOf.get(document.rule.id) ?? null })),
       };
     },
   }),
@@ -899,7 +910,7 @@ function guardRepositoriesUsing(stores: RerailApiStores, caller: ApiCaller, rule
 export function activityRules(
   stores: RerailApiStores,
   key: string | undefined,
-): { id: string; kind: "code" | "conversation"; rule: unknown; notRun: string | null }[] {
+): { id: string; kind: RuleDocument["kind"]; rule: unknown; notRun: string | null }[] {
   const db = stores.database();
   const ruleCatalog = stores.ruleCatalog();
   if (key === undefined) {

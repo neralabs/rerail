@@ -13,6 +13,8 @@ import { conversationRuleSchema } from "../engine/catalog/rule-schema.js";
 import { engineRegexIssues, type RegexIssue } from "../engine/catalog/rule-regexes.js";
 import { EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
 import { RULE_APPROVAL_SUBJECTS, RULE_KINDS } from "../engine/storage/schema.js";
+import type { RerailRule } from "../engine/catalog/rerail-rules/rerail-rule.js";
+import type { RuleDocument } from "../engine/catalog/rule-store.js";
 
 const START_STATES = ["started", "stopped", "not-set-up"] as const;
 
@@ -99,6 +101,39 @@ export function inactiveOf(kind: string, rule: unknown, notRun?: string | null):
   return unsupported === undefined ? {} : { inactive: unsupported };
 }
 
+/** A pack's rule written in `.rerail`, as the API returns it: what the engine reads from the file, and its text. */
+export const rerailRuleBodySchema = z.object({
+  id: z.string(),
+  revision: z.number().int(),
+  mode: z.enum(RULE_MODES).describe("The mode the file's .mode names; the effective mode is the record's own mode."),
+  description: z.string().nullable(),
+  language: z.string().nullable(),
+  scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()) }).strict(),
+  codes: z.array(z.string()).describe("The violation codes the rule reports."),
+  source: z.string().describe("The text of the rule's .rerail file."),
+}).strict().describe("A rule written in .rerail, which a rule pack ships. It takes no options, and only its pack holds it.");
+
+/** `rule` as the API returns it: everything but where the file and its includes are on this computer. */
+function rerailRuleBody(rule: RerailRule): z.infer<typeof rerailRuleBodySchema> {
+  const { id, revision, mode, description, language, scope, codes, source } = rule;
+  return { id, revision, mode, description, language, scope: { include: [...scope.include], exclude: [...scope.exclude] }, codes: [...codes], source };
+}
+
+/**
+ * A rule document as the API returns it: its kind and body, and for a JSON code rule whether it is inactive (`notRun`:
+ * why this Rerail no longer runs its pack's document, as `RuleCatalog.notRun` says).
+ */
+export function ruleDocumentRecord(document: RuleDocument, notRun?: string | null):
+  | { kind: "code"; rule: z.infer<typeof codeRuleSchema>; inactive?: InactiveCodeRule }
+  | { kind: "conversation"; rule: z.infer<typeof conversationRuleSchema> }
+  | { kind: "rerail"; rule: z.infer<typeof rerailRuleBodySchema> } {
+  switch (document.kind) {
+    case "code": return { kind: "code", rule: document.rule, ...inactiveOf("code", document.rule, notRun) };
+    case "conversation": return { kind: "conversation", rule: document.rule };
+    case "rerail": return { kind: "rerail", rule: rerailRuleBody(document.rule) };
+  }
+}
+
 const ruleSourceSchema = z.object({
   kind: z.enum(RULE_SOURCE_KINDS),
   id: z.string(),
@@ -133,6 +168,7 @@ const effectiveRuleBase = {
 export const effectiveRuleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("code"), rule: codeRuleSchema, ...effectiveRuleBase, ...inactiveField }).strict(),
   z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, ...effectiveRuleBase }).strict(),
+  z.object({ kind: z.literal("rerail"), rule: rerailRuleBodySchema, ...effectiveRuleBase }).strict(),
 ]);
 
 export const unavailableReferenceSchema = z.object({
@@ -267,6 +303,7 @@ export const libraryUpsertResultSchema = z.object({
 export const rerailRuleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("code"), rule: codeRuleSchema, packId: z.string().nullable(), ...inactiveField }).strict(),
   z.object({ kind: z.literal("conversation"), rule: conversationRuleSchema, packId: z.string().nullable() }).strict(),
+  z.object({ kind: z.literal("rerail"), rule: rerailRuleBodySchema, packId: z.string().nullable() }).strict(),
 ]);
 
 export const startBodySchema = z.object({

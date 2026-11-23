@@ -4,7 +4,12 @@ import { RULE_PACK_CATEGORIES } from "../engine/catalog/rule-packs.js";
 import { RULE_KINDS } from "../engine/storage/schema.js";
 import { approvalSubjectSchema, inactiveRuleSchema } from "./repository-contracts.js";
 
-const ruleExampleSchema = z.object({ path: z.string().optional(), text: z.string() }).strict();
+const ruleExampleSchema = z.object({
+  path: z.string().optional(),
+  text: z.string(),
+  with: z.array(z.object({ path: z.string(), text: z.string() }).strict()).optional()
+    .describe("For a rule written in .rerail that reads across files: the other files of the example's repository."),
+}).strict();
 
 export const rulePackSchema = z.object({
   id: z.string(),
