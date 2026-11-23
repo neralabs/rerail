@@ -84,7 +84,8 @@ pub const AXIS_KEYS: usize = 4;
 pub struct InFlight {
     pub at: usize,
     pub room: rerail_blocks::relation::IndexRoom,
-    pub done: rerail_accel::gpu::join::Submitted,
+    /// Its builder's committed work (the lane's `Submitted::flushed`): a taker waits on it.
+    pub done: std::sync::Arc<rerail_accel::gpu::shared::Flushed>,
     /// Taken by another batch's probe, whose work reads it after its builder's: its room is never given back.
     pub lent: bool,
 }

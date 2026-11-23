@@ -46,6 +46,9 @@ pub fn sme_backend() -> Option<std::sync::Arc<dyn exec::Backend>> {
     None
 }
 pub mod upkeep;
+/// The kernels' test inputs, shared with the lanes registered above (rerail-accel-gpu's tests).
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod workloads;
 
 #[cfg(gpu_lane)]
 pub mod gpu;

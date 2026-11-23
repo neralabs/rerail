@@ -679,7 +679,7 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
     fn made(name: &str, make: impl Fn() -> Result<(), Error> + Send + Sync + 'static) -> super::device::KernelAhead {
         let make = move || {
             let mut made = Ok(());
-            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = make().map_err(|e| format!("{e:?}"))))?;
+            rerail_accel::gpu::released(|| rerail_accel_gpu::gpu::caught(|| made = make().map_err(|e| format!("{e:?}"))))?;
             made
         };
         (name.to_owned(), Box::new(make))

@@ -23,7 +23,7 @@
 
 use super::join::{Arena, Column, Fused, Keyed, Pass, ProbeJob, ProbeOne};
 use super::tile::{Resident, TileJob};
-use crate::kernel::{JoinBy, Keys, Kernel, Output};
+use rerail_accel::kernel::{JoinBy, Keys, Kernel, Output};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -45,7 +45,7 @@ struct Kept {
     used: u64,
 }
 
-pub use crate::exec::SpaceCounts as Counts;
+pub use rerail_accel::exec::SpaceCounts as Counts;
 
 /// The kept right sides, by id and form.
 #[derive(Default)]
@@ -136,8 +136,8 @@ enum Job {
 }
 
 /// The distinct gates of a batch's staged columns.
-fn gates(ks: &[&Kernel]) -> Vec<Arc<crate::col::Gate>> {
-    let mut out: Vec<Arc<crate::col::Gate>> = Vec::new();
+fn gates(ks: &[&Kernel]) -> Vec<Arc<rerail_accel::col::Gate>> {
+    let mut out: Vec<Arc<rerail_accel::col::Gate>> = Vec::new();
     for k in ks {
         if let Kernel::Join { left, right, .. } = k {
             for c in left.iter().chain(right.iter()) {
@@ -160,7 +160,7 @@ fn small(right: &Keys) -> bool {
 /// Runs a batch's joins (`ks`, each a `Kernel::Join`) in one submission, two only when a tile join's scatter or
 /// a probe whose pairs did not fit needs one: their pairs, in `ks`' order.
 ///
-/// When the batch has staged columns whose gate is not open (`crate::col`), the submission waits at its head
+/// When the batch has staged columns whose gate is not open (`rerail_accel::col`), the submission waits at its head
 /// on the gates' events, and it is committed as soon as it is encoded: the host fills the columns while the commit
 /// and the system's scheduling go on. A right side that takes the radix sort is narrowed from its values, so for
 /// one that is staged the lane waits for its gate before encoding (the profile's `wait for fill`).
@@ -172,7 +172,7 @@ pub fn run(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Vec<Output
 /// the device runs this one, and `finish` reads it.
 pub struct Started {
     command: super::join::Submitted,
-    held: Vec<Arc<crate::col::Gate>>,
+    held: Vec<Arc<rerail_accel::col::Gate>>,
     committed: std::time::Instant,
     reads: Vec<Column>,
     tables: Vec<super::join::Held>,
@@ -186,15 +186,17 @@ pub struct Started {
 /// still running is waited for by whoever reads its runs). The space is not held after: the lane's next batch may
 /// read what this one keeps.
 pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started, String> {
+    // The batch is an evaluation of the launch budget (decision 0601), or the caller's when it is in one.
+    let _evaluation = super::launch::LaunchScope::enter();
     let mut space = space.lock().map_err(|_| "the gpu lane's space was poisoned")?;
     // Each submission on the other scratch set from the one before: at most two are in flight.
     let set = super::join::scratch_set(0) ^ 1;
     super::join::scratch_set(set);
     space.batch += 1;
-    let pass = crate::score::phase("encode", Pass::new)?;
+    let pass = rerail_accel::score::phase("encode", Pass::new)?;
     let device = super::join::device()?;
     let gates = gates(ks);
-    let held: Vec<Arc<crate::col::Gate>> = crate::score::phase("encode", || gates.into_iter().filter(|g| g.hold(&pass, device)).collect());
+    let held: Vec<Arc<rerail_accel::col::Gate>> = rerail_accel::score::phase("encode", || gates.into_iter().filter(|g| g.hold(device, |e| pass.wait_for_event(e, 1))).collect());
     // The fused sorts and probes read their jobs through device addresses: a device without them takes the radix
     // sort and each probe's own count, scan and scatter.
     let fusing = Fused::can();
@@ -207,7 +209,7 @@ pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started,
             blocks += super::join::probe_blocks(nl);
         }
     }
-    let mut arena = crate::score::phase("encode", || Arena::new(cap, blocks))?;
+    let mut arena = rerail_accel::score::phase("encode", || Arena::new(cap, blocks))?;
     // The small sorts and every probe, described as they come and dispatched together after the radix sorts.
     let mut fused = Fused::default();
     let mut tables: Vec<super::join::Held> = Vec::new();
@@ -239,17 +241,17 @@ pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started,
                     _ => {
                         let (keyed, read) = if fusing && small(right) {
                             small_sorts += 1;
-                            let cols = crate::score::phase("upload", || right.iter().map(Column::raw).collect::<Result<Vec<_>, _>>())?;
-                            crate::score::phase("encode", || fused.sort(cols))?
+                            let cols = rerail_accel::score::phase("upload", || right.iter().map(Column::raw).collect::<Result<Vec<_>, _>>())?;
+                            rerail_accel::score::phase("encode", || fused.sort(cols))?
                         } else {
                             radix_sorts += 1;
                             for c in right.iter() {
                                 if let Some(g) = c.gate() {
-                                    crate::score::phase("wait for fill", || g.wait());
+                                    rerail_accel::score::phase("wait for fill", || g.wait());
                                 }
                             }
-                            let cols = crate::score::phase("upload", || upload(right))?;
-                            crate::score::phase("encode", || Keyed::encode(&pass, cols))?
+                            let cols = rerail_accel::score::phase("upload", || upload(right))?;
+                            rerail_accel::score::phase("encode", || Keyed::encode(&pass, cols))?
                         };
                         reads.extend(read);
                         let keyed = Arc::new(keyed);
@@ -259,12 +261,12 @@ pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started,
                         keyed
                     }
                 };
-                let left = crate::score::phase("upload", || left.iter().map(Column::raw).collect::<Result<Vec<_>, _>>())?;
+                let left = rerail_accel::score::phase("upload", || left.iter().map(Column::raw).collect::<Result<Vec<_>, _>>())?;
                 if fusing {
-                    let job = crate::score::phase("encode", || fused.probe(&left, &right_keyed, &mut arena))?;
+                    let job = rerail_accel::score::phase("encode", || fused.probe(&left, &right_keyed, &mut arena))?;
                     Job::Probe { left, right: right_keyed, job }
                 } else {
-                    let job = crate::score::phase("encode", || ProbeJob::encode(&pass, &left, &right_keyed, 0))?;
+                    let job = rerail_accel::score::phase("encode", || ProbeJob::encode(&pass, &left, &right_keyed, 0))?;
                     Job::Each { left, right: right_keyed, job }
                 }
             }
@@ -272,27 +274,27 @@ pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started,
                 let right = match kept {
                     Some(Entry::Grouped(r)) => r,
                     _ => {
-                        let r = Arc::new(crate::score::phase("group (host)", || group(right))?);
+                        let r = Arc::new(rerail_accel::score::phase("group (host)", || group(right))?);
                         if let Some(id) = right_id {
                             built.push((*id, *by, nr, r.bytes, Entry::Grouped(Arc::clone(&r))));
                         }
                         r
                     }
                 };
-                let left = crate::score::phase("group (host)", || group(left))?;
+                let left = rerail_accel::score::phase("group (host)", || group(left))?;
                 let keys: Vec<usize> = (0..k_len(k)).collect();
-                let job = crate::score::phase("encode", || TileJob::count(&pass, &left, &keys, &right, &keys))?;
+                let job = rerail_accel::score::phase("encode", || TileJob::count(&pass, &left, &keys, &right, &keys))?;
                 Job::Tile { left, right, job: Box::new(job) }
             }
         };
         jobs.push(job);
     }
-    crate::score::phase("encode", || fused.dispatch(&pass, &arena, &mut tables))?;
-    crate::score::count("small sorts (fused)", small_sorts);
-    crate::score::count("radix sorts", radix_sorts);
+    rerail_accel::score::phase("encode", || fused.dispatch(&pass, &arena, &mut tables))?;
+    rerail_accel::score::count("small sorts (fused)", small_sorts);
+    rerail_accel::score::count("radix sorts", radix_sorts);
     let committed = std::time::Instant::now();
     let command = pass.commit()?;
-    crate::score::phase("keep", || {
+    rerail_accel::score::phase("keep", || {
         for (id, by, rows, bytes, entry) in built {
             if let Entry::Sorted(k) = &entry {
                 k.pending_on(&command);
@@ -313,6 +315,8 @@ impl Started {
     }
 
     fn finish_on_set(self) -> Result<Vec<Output>, String> {
+        // Its second pass, where there is one, charges the batch's evaluation again: on the thread that finishes it.
+        let _evaluation = super::launch::LaunchScope::enter();
         let Started { command, held, committed, reads, tables, arena, jobs, .. } = self;
         // A submission the device failed wrote its pairs in part: none is read (the stratum runs on the CPU), and the
         // sorts it made are forgotten where they are kept (`Space::get`).
@@ -322,7 +326,7 @@ impl Started {
         // How long the host filled the staged columns after the commit: the delay the early commit hid.
         for g in &held {
             if let Some(at) = g.opened_at() {
-                crate::score::add("fill after commit", 0.0, at.saturating_duration_since(committed).as_secs_f64());
+                rerail_accel::score::add("fill after commit", 0.0, at.saturating_duration_since(committed).as_secs_f64());
             }
         }
         drop(reads);
@@ -348,25 +352,25 @@ impl Started {
         if !need {
             done = jobs;
         } else {
-            let pass = crate::score::phase("encode", Pass::new)?;
+            let pass = rerail_accel::score::phase("encode", Pass::new)?;
             for (i, j) in jobs.into_iter().enumerate() {
                 done.push(match j {
                     Job::Probe { left, right, .. } if spilled[i] => {
                         second = true;
                         let own = spill.as_mut().expect("the spills' arena");
-                        let job = crate::score::phase("encode", || respill.probe(&left, &right, own))?;
+                        let job = rerail_accel::score::phase("encode", || respill.probe(&left, &right, own))?;
                         Job::Probe { left, right, job }
                     }
                     Job::Each { left, right, job } if job.overflowed() => {
                         second = true;
-                        let job = crate::score::phase("encode", || job.rescatter(&pass, &left, &right))?;
+                        let job = rerail_accel::score::phase("encode", || job.rescatter(&pass, &left, &right))?;
                         Job::Each { left, right, job }
                     }
                     Job::Tile { left, right, job } => {
                         let keys: Vec<usize> = (0..left.columns.len()).collect();
-                        let job = crate::score::phase("encode", || job.scatter(&pass, &left, &keys, &right, &keys))?;
+                        let job = rerail_accel::score::phase("encode", || job.scatter(&pass, &left, &keys, &right, &keys))?;
                         // Into the kernel's order on the device, after the scatter.
-                        let job = crate::score::phase("encode", || job.sort(&pass, left.rows, right.rows))?;
+                        let job = rerail_accel::score::phase("encode", || job.sort(&pass, left.rows, right.rows))?;
                         second |= job.total > 0;
                         Job::Tile { left, right, job: Box::new(job) }
                     }
@@ -374,15 +378,15 @@ impl Started {
                 });
             }
             if let Some(own) = &spill {
-                crate::score::phase("encode", || std::mem::take(&mut respill).dispatch(&pass, own, &mut tables2))?;
+                rerail_accel::score::phase("encode", || std::mem::take(&mut respill).dispatch(&pass, own, &mut tables2))?;
             }
             if second {
-                crate::score::count("second submissions", 1);
+                rerail_accel::score::count("second submissions", 1);
                 pass.commit_wait()?;
             }
         }
         // Each probe's pairs as a view of its arena: no copy (decision 0100 §9).
-        crate::score::phase("read pairs", || {
+        rerail_accel::score::phase("read pairs", || {
             done.into_iter()
                 .enumerate()
                 .map(|(i, j)| match j {

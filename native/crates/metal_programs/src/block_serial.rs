@@ -2038,7 +2038,7 @@ pub fn compiled(programs: &[&BlockNative]) -> bool {
     let refs: Vec<&BlockNative> = forms.iter().collect();
     let (_, source, _, _) = serial_source(&refs, None);
     // Every kernel asked, so that each one not compiled starts compiling now (`all` would stop at the first).
-    serial_kernels().iter().filter(|name| rerail_accel::gpu::kernels::ready_behind_function(&source, name, None).is_none()).count() == 0
+    serial_kernels().iter().filter(|name| rerail_accel_gpu::gpu::kernels::ready_behind_function(&source, name, None).is_none()).count() == 0
 }
 
 /// `run_serial`, split while the device refuses it for capacity, as `run_split` does: halves in

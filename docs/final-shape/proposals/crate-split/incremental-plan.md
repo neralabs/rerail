@@ -1431,3 +1431,42 @@ dropped the `--timings` runs (2026-11-22).
     - Checks: the workspace with `--tests` is clean on macOS and Linux. clippy has nothing in the changed files.
       The repository's checks pass. Tests (macOS): accel's, the forests' (three join-model tests and the model in
       placement) and logic-core's cost and join-step tests, 22.
+  - **10d-3, the GPU lane.** Its kernels, device joins and tiles (`gpu::{join, kernels, space, tile}`, and the
+    lane's backend in `gpu`) leave accel for rerail-accel-gpu's `gpu`, with their tests, the lanes' integration
+    test and the GPU's price bench. accel keeps what the crates below reach:
+    - the pool (`gpu::shared`, which now has `device`, join's before) and the launch ledger (`gpu::launch`);
+    - the lane's batches' counts (`gpu::programs`, `programs_begun`);
+    - two slots the lane registers into in `install` (boot's, a test binary's load): `gpu::BACKEND`, the backend
+      the executor takes, and `gpu::MAINTENANCE`, the kernels' upkeep job logic-core registers.
+
+    rerail-accel-gpu's `gpu` re-exports the low parts, so the crates above (boot, device-metal, metal,
+    metal-programs) name the lane there alone. Below it:
+    - facts-base's `InFlight` keeps its builder's flushed work (`Arc<shared::Flushed>`), and device-metal waits on
+      it as a watcher (`Submitted::watching`);
+    - col's gate takes the wait a pass encodes, not the pass.
+
+    accel no longer depends on rerail-gpu or UKL. The kernels' test generators were in three copies (the CPU's
+    tests, the GPU's, the lanes'), and are now one, in `workloads` (`test-hooks`). The bench's workloads are there
+    too.
+    - Then: an edit to UKL rebuilds 77 crates, from 87; to forest, 71 (rerail-metal is above the lane, and lang
+      above metal: 10d-4). The longest chain is 32.
+    - Fixed on the way:
+      - The executors' guard walks `accel/gpu/src`.
+      - 0571's units compile (`kernels`) ran on a bare `std::thread::scope`, which the guard refused (red at HEAD).
+        It now runs on `exec::scoped`.
+      - The joins' batch (`space::start`, `finish`) entered no evaluation of the launch budget, so each of its
+        sorts and probes outside a stratum was a hard failure (0601: "the GPU lane's batch" is a unit). Two lanes
+        tests failed on it.
+    - Red, not this step's:
+      - `gpu::tests::closure_is_the_reference` puts a 300-node chain in one batch. That is 300 level dispatches
+        against 0601's 200 a batch, so the closure's per-level dispatch and the budget disagree.
+      - device-metal's `an_index_built_twice_that_a_batch_took_is_kept`: `join_run` outside any evaluation.
+      - 18 of device-metal's setfix device tests fail the bound-buffer check (0491 step 2: "a test build fails on
+        one that is not"). Nothing turned accel's `test-hooks` on before 10d-2, so the check was compiled out
+        everywhere but accel's own tests. With the lane's test-hooks in device-metal's it is live there, and it
+        finds the label kit's arena (`metal_join.rs`, `Kit::counts`) when it is a `rerail_device::device::reserve`
+        mapping (`reserve_arena`). That mapping is no block and no lease: no ledger holds it.
+    - Checks: the workspace with `--tests` is clean on macOS and Linux. clippy (accel, the lane, device-metal,
+      facts-base, metal) has nothing in the changed files. The repository's checks pass. Tests (macOS): accel's
+      and the lane's crate, 124 of 125 (the closure test above). logic-core's costs, tests-cpu's regex blocks and
+      tests-logic's costs pass. The executors' guard passes (Linux).

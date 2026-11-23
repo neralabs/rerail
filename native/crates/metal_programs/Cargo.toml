@@ -6,11 +6,13 @@ publish = false
 description = "The compiler's programs on the device (block programs, the preprocessor's passes), over rerail-metal's runtime."
 
 [features]
-test-hooks = ["rerail-context/test-hooks", "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-metal/test-hooks"]
+test-hooks = ["rerail-accel-gpu/test-hooks", "rerail-context/test-hooks", "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-metal/test-hooks"]
 
 [dependencies]
 rerail-context = { path = "../context" }
 rerail-accel = { path = "../../../accel" }
+# The GPU lane: its kernels and device joins (crate split 10d-3).
+rerail-accel-gpu = { path = "../../../accel/gpu" }
 rerail-compiler = { path = "../compiler" }
 rerail-rir = { path = "../rir" }
 rerail-metal = { path = "../metal" }

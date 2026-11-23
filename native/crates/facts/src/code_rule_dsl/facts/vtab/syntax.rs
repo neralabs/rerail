@@ -3909,7 +3909,7 @@ impl Source for Viewed {
         let loc = matches!(self.view, View::Loc(_));
         // The directory is of the process's device's addresses, which the stages read it by (decision 0440 step C):
         // none where its buffers have none (`views_in_place`).
-        let on_device = rerail_accel::gpu::join::device().is_ok();
+        let on_device = rerail_accel::gpu::shared::device().is_ok();
         let read_only = matches!(view, device_chunk::VIEW_TAPE | device_chunk::VIEW_DEPTH | device_chunk::VIEW_ORDER);
         let in_place = (on_device && (loc || read_only || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE)))
             .then(|| device_chunk::views_in_place(&self.batch, chunk))

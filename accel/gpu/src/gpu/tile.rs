@@ -50,8 +50,8 @@ impl Resident {
         super::join::device()?;
         let lead = columns.first().ok_or("a relation of no columns")?;
         let chunks: Vec<i64> = lead[..rows].iter().map(|&v| v >> 16).collect();
-        let sorted = crate::rows::sort(&chunks);
-        let group_list = crate::rows::runs(&sorted.keys);
+        let sorted = rerail_accel::rows::sort(&chunks);
+        let group_list = rerail_accel::rows::runs(&sorted.keys);
         // Tiles: a group's rows 256 at a time.
         let (mut highs, mut tiles) = (Vec::with_capacity(group_list.len()), Vec::<[u32; 4]>::new());
         for (g, &(high, start, count)) in group_list.iter().enumerate() {
@@ -69,7 +69,7 @@ impl Resident {
             v.clear();
             v.extend(perm.iter().map(|&r| c[r as usize]));
             let low16 = v.iter().zip(&sorted.keys).all(|(&x, &h)| x >> 16 == h);
-            let (min, max) = crate::rows::span(&v).unwrap_or((0, 0));
+            let (min, max) = rerail_accel::rows::span(&v).unwrap_or((0, 0));
             let (form, buffer) = if low16 {
                 bytes += 2 * rows;
                 (Form::Low16, packed(v.iter().map(|&x| x as u16))?)

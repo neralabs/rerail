@@ -28,7 +28,7 @@
 
 use super::launch;
 use super::shared;
-use crate::rows::{bits, span};
+use rerail_accel::rows::{bits, span};
 use rerail_device::compute_kernel::GridComputeFunctionArgumentDisposition;
 use rerail_device::device::{Buffer, BufferRef, ComputeFunction, ComputeQueue, SharedEvent};
 use rerail_gpu::library::{radix_sort_pairs_in, scan_exclusive_u32_in, RadixSpace, ScanSpace};
@@ -100,10 +100,8 @@ pub struct Column {
     pub rows: usize,
 }
 
-/// The process's device in the device layer, whatever its backend.
-pub fn device() -> Result<&'static rerail_device::device::Device, String> {
-    shared::layer().map(|l| l.device).ok_or_else(|| "no device".to_owned())
-}
+/// The process's device (the pool's: `shared::device`).
+pub use super::shared::device;
 
 /// Why a command the device failed failed: once a run for each reason (a wave's strata are refused to the CPU with
 /// no more than `BackendFailure` otherwise).
@@ -173,7 +171,7 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
         return Ok(Arc::clone(p));
     }
     device()?;
-    let function = crate::score::phase("compile", || super::kernels::function_fixed(&source(), name, None));
+    let function = rerail_accel::score::phase("compile", || super::kernels::function_fixed(&source(), name, None));
     let mut args: Vec<_> = function.get_argument_info().to_vec();
     args.sort_by_key(|a| a.compute_function_arg_index);
     let bound: Vec<_> = args.iter().filter(|a| a.disposition == GridComputeFunctionArgumentDisposition::Buffer && a.name != "a").collect();
@@ -285,7 +283,7 @@ pub fn host_clock() -> f64 {
     rerail_device::os::monotonic()
 }
 
-/// A completed Metal command buffer's timeline, as wall-only phases of the job (`crate::score`): commit to the
+/// A completed Metal command buffer's timeline, as wall-only phases of the job (`rerail_accel::score`): commit to the
 /// system's scheduling (`kernelStartTime`), to the device's start, the device's run, and its end to the host's wait
 /// returning.
 #[cfg(target_os = "macos")]
@@ -296,16 +294,26 @@ pub fn add_timeline(command: &metal::CommandBufferRef, committed: f64, returned:
     if k <= 0.0 || s <= 0.0 || e <= 0.0 {
         return;
     }
-    crate::score::add("gpu submit", 0.0, (k - committed).max(0.0));
-    crate::score::add("gpu schedule", 0.0, (s - k).max(0.0));
-    crate::score::add("gpu run", 0.0, (e - s).max(0.0));
-    crate::score::add("gpu wake", 0.0, (returned - e).max(0.0));
+    rerail_accel::score::add("gpu submit", 0.0, (k - committed).max(0.0));
+    rerail_accel::score::add("gpu schedule", 0.0, (s - k).max(0.0));
+    rerail_accel::score::add("gpu run", 0.0, (e - s).max(0.0));
+    rerail_accel::score::add("gpu wake", 0.0, (returned - e).max(0.0));
 }
 
 impl Submitted {
     /// Another wait for a committed submission: what a sort encoded into it waits for (`Keyed::settle`).
     pub fn watch(&self) -> Submitted {
-        Submitted { event: Arc::clone(&self.event), reads: Vec::new(), committed: f64::NAN, watcher: true, key: None }
+        Submitted::watching(&self.event)
+    }
+
+    /// Its committed work, for a holder below the lane to keep (`facts::rows::InFlight`).
+    pub fn flushed(&self) -> Arc<shared::Flushed> {
+        Arc::clone(&self.event)
+    }
+
+    /// A wait for committed work another submission flushed (`flushed`): a watcher, which adds no timeline.
+    pub fn watching(event: &Arc<shared::Flushed>) -> Submitted {
+        Submitted { event: Arc::clone(event), reads: Vec::new(), committed: f64::NAN, watcher: true, key: None }
     }
 
     /// Keeps `columns` (what the submission reads) until it completes.
@@ -326,7 +334,7 @@ impl Submitted {
             // Its owner awaited it: whether the device ran it to the end is the event's, read again.
             return (self.event.gpu_seconds(), self.event.event().await_().is_ok());
         }
-        let done = crate::score::phase("gpu wait", || self.event.await_());
+        let done = rerail_accel::score::phase("gpu wait", || self.event.await_());
         if let Err(why) = &done {
             say_failure(why);
         }
@@ -340,8 +348,8 @@ impl Submitted {
             // Another backend's event gives only the device's seconds: the run, and the rest of the span as the wake.
             if !parts && done.is_ok() {
                 let run = self.event.gpu_seconds();
-                crate::score::add("gpu run", 0.0, run);
-                crate::score::add("gpu wake", 0.0, (returned - self.committed - run).max(0.0));
+                rerail_accel::score::add("gpu run", 0.0, run);
+                rerail_accel::score::add("gpu wake", 0.0, (returned - self.committed - run).max(0.0));
             }
         }
         (self.event.gpu_seconds(), done.is_ok())
@@ -414,10 +422,10 @@ pub struct Held {
 }
 
 /// What keeps a held buffer's memory: a lease of the pool, a staged column whose shared buffer the device reads
-/// in place (`crate::col`), or what holds a block the device reads in place (its owner's handle: decision 0325).
+/// in place (`rerail_accel::col`), or what holds a block the device reads in place (its owner's handle: decision 0325).
 enum Lease {
     Pooled(#[allow(dead_code)] shared::Pooled),
-    Col(#[allow(dead_code)] crate::col::Col),
+    Col(#[allow(dead_code)] rerail_accel::col::Col),
     Kept(#[allow(dead_code)] Box<dyn std::any::Any + Send + Sync>),
 }
 
@@ -639,7 +647,7 @@ impl Pass {
         self.resident.borrow_mut().push((buffer.clone(), true));
     }
 
-    /// Holds the launches after it until the host signals `event` with `value` or more (a gate's, `crate::col`).
+    /// Holds the launches after it until the host signals `event` with `value` or more (a gate's, `rerail_accel::col`).
     pub fn wait_for_event(&self, event: &SharedEvent, value: u64) {
         self.queue.wait_for_event(event, value);
     }
@@ -664,7 +672,7 @@ impl Pass {
         }
         launch::check_submission();
         let pointer = self.pointer();
-        let event = crate::score::phase("gpu commit", || self.queue.flush());
+        let event = rerail_accel::score::phase("gpu commit", || self.queue.flush());
         launch::mark(pointer, false);
         Ok(Submitted { event: Arc::new(event), reads: Vec::new(), committed: host_clock(), watcher: false, key: Some(self.key) })
     }
@@ -1498,7 +1506,7 @@ pub const SMALL: usize = 2048;
 impl Column {
     /// `col` on the device as raw 64-bit values (base 0): no span is taken and nothing narrowed. A staged column is
     /// its own shared buffer, read in place; a host column is copied once.
-    pub fn raw(col: &crate::col::Col) -> Result<Column, String> {
+    pub fn raw(col: &rerail_accel::col::Col) -> Result<Column, String> {
         let rows = col.len();
         if let Some(p) = col.shared() {
             let buffer = p.device_buffer().clone();
@@ -1518,14 +1526,14 @@ impl Column {
 /// compiling it again. A kernel that fails is left to its use, which fails saying why (each entry catches its panic:
 /// a job's panic would end the process).
 pub fn prewarm() {
-    crate::exec::configure();
+    rerail_accel::exec::configure();
     // In its caller's run (decision 0442): the pipelines are the caller's machine's, and the job's wall its run's
     // (`as_job` reads it), so the run is entered first. Each entry carries the run too (`super::ahead`).
     let run = rerail_context::job_run();
     let list = super::kernels_ahead();
     rerail_context::cores_spawn(move || {
         let _run = rerail_context::enter(run);
-        crate::exec::as_job("the GPU's prewarm", || _ = rerail_gpu::kernels::compile_ahead(list, 1, Default::default()));
+        rerail_accel::exec::as_job("the GPU's prewarm", || _ = rerail_gpu::kernels::compile_ahead(list, 1, Default::default()));
     });
 }
 
@@ -1585,7 +1593,7 @@ impl ProbeOne {
 
     /// The pairs read in place, in left row order (block by block), after the submission completed: a view of
     /// the arena, which it keeps. `None` when they did not fit.
-    pub fn view(&self, arena: &Arena) -> Option<crate::kernel::PairView> {
+    pub fn view(&self, arena: &Arena) -> Option<rerail_accel::kernel::PairView> {
         let mut segs: Vec<(u32, u32)> = Vec::new();
         for (at, n) in self.read_blocks(arena) {
             if n == 0 {
@@ -1603,7 +1611,7 @@ impl ProbeOne {
         let keep: std::sync::Arc<dyn std::any::Any + Send + Sync> = arena.pairs.clone();
         // SAFETY: each segment is a block's pairs, inside the arena (the device checked the capacity), written by the
         // completed submission and never written again: the arena is this batch's alone.
-        Some(unsafe { crate::kernel::PairView::new(keep, arena.pairs.buffer.contents().cast::<[u32; 2]>(), segs) })
+        Some(unsafe { rerail_accel::kernel::PairView::new(keep, arena.pairs.buffer.contents().cast::<[u32; 2]>(), segs) })
     }
 
     /// The pairs, in left row order (block by block), after the submission completed. `None` when they did not
@@ -1853,7 +1861,7 @@ mod tests {
         }
         let over = |f: &dyn Fn()| match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
             Ok(()) => false,
-            Err(p) => p.downcast::<crate::exec::OverBudget>().is_ok(),
+            Err(p) => p.downcast::<rerail_accel::exec::OverBudget>().is_ok(),
         };
         let keys = fixed("pair_keys").unwrap();
         let (words, out) = (Held::zeroed(8 * 256).unwrap(), Held::zeroed(8 * 256).unwrap());
@@ -1913,9 +1921,9 @@ mod tests {
             let keys = rows(n, 11, modulus, high);
             let sorted = Keyed::sort(vec![Column::upload(&keys).unwrap()]).unwrap();
             sorted.settle();
-            let want = crate::rows::sort(&keys);
+            let want = rerail_accel::rows::sort(&keys);
             assert_eq!(read(&sorted.perm, n), want.perm, "n {n} modulus {modulus}");
-            assert_eq!(sorted.runs(), crate::rows::runs(&want.keys).len());
+            assert_eq!(sorted.runs(), rerail_accel::rows::runs(&want.keys).len());
         }
         // Two keys, the second of another span on each side; a left key no right row has.
         let (a0, a1) = (rows(9000, 1, 2000, 1 << 32), rows(9000, 2, 3, 0));
@@ -1930,14 +1938,14 @@ mod tests {
         let told = probe(&[Column::upload(&a0).unwrap()], &alone, 1 << 16).unwrap();
         assert_eq!((over.submissions, told.submissions), (2, 1));
         assert_eq!(over.pairs, told.pairs);
-        let mut want0 = crate::rows::join(&[&a0], &[&b0]);
+        let mut want0 = rerail_accel::rows::join(&[&a0], &[&b0]);
         want0.sort_unstable();
         let mut over = over.pairs;
         over.sort_unstable();
         assert_eq!(over, want0);
         let mut got = got.pairs;
         got.sort_unstable();
-        let mut want = crate::rows::join(&[&a0, &a1], &[&b0, &b1]);
+        let mut want = rerail_accel::rows::join(&[&a0, &a1], &[&b0, &b1]);
         want.sort_unstable();
         assert!(!want.is_empty());
         assert_eq!(got, want);
@@ -1971,10 +1979,10 @@ mod tests {
         // copy: not block data (a test's literal keys)
         let mut kept = Keyed::sort(vec![Column::upload(&right).unwrap()]).unwrap();
         kept.screen_by(block.device_buffer(dev).unwrap(), at, Box::new(block.clone()));
-        let mut want = crate::rows::join(&[&left], &[&right]);
+        let mut want = rerail_accel::rows::join(&[&left], &[&right]);
         want.sort_unstable();
         assert!(!want.is_empty());
-        let raw = crate::col::Col::from(left.clone());
+        let raw = rerail_accel::col::Col::from(left.clone());
         for right in [&own, &kept] {
             // copy: not block data (a test's literal keys)
             let mut got = probe(&[Column::upload(&left).unwrap()], right, 0).unwrap().pairs;
@@ -2040,7 +2048,7 @@ mod tests {
             assert!(screened.screen.is_some());
             let column = || vec![Column::upload(&left).unwrap()];
             let (with, without) = (probe(&column(), &screened, 0).unwrap(), probe(&column(), &plain, 0).unwrap());
-            let mut want = crate::rows::join(&[&left], &[&right]);
+            let mut want = rerail_accel::rows::join(&[&left], &[&right]);
             want.sort_unstable();
             let (mut a, mut b) = (with.pairs, without.pairs);
             a.sort_unstable();
@@ -2072,14 +2080,14 @@ mod tests {
         let told = probe(&[Column::upload(&a0).unwrap()], &alone, 1 << 16).unwrap();
         assert_eq!((over.submissions, told.submissions), (2, 1));
         assert_eq!(over.pairs, told.pairs);
-        let mut want0 = crate::rows::join(&[&a0], &[&b0]);
+        let mut want0 = rerail_accel::rows::join(&[&a0], &[&b0]);
         want0.sort_unstable();
         let mut over = over.pairs;
         over.sort_unstable();
         assert_eq!(over, want0);
         let mut got = got.pairs;
         got.sort_unstable();
-        let mut want = crate::rows::join(&[&a0, &a1], &[&b0, &b1]);
+        let mut want = rerail_accel::rows::join(&[&a0, &a1], &[&b0, &b1]);
         want.sort_unstable();
         assert!(!want.is_empty());
         assert_eq!(got, want);
@@ -2149,8 +2157,8 @@ mod host_costs {
                 probe_gpu += p.gpu_seconds;
                 pairs = p.pairs.len();
             }) - upload;
-            let host = per(runs, || drop(crate::rows::Keyed::new(&keys)));
-            let host_join = per(runs, || drop(crate::rows::join_keyed(&[&probe_keys], &crate::rows::Keyed::new(&keys), &[&keys]))) - host;
+            let host = per(runs, || drop(rerail_accel::rows::Keyed::new(&keys)));
+            let host_join = per(runs, || drop(rerail_accel::rows::join_keyed(&[&probe_keys], &rerail_accel::rows::Keyed::new(&keys), &[&keys]))) - host;
             println!(
                 "{rows} rows ({pairs} pairs): upload {upload:.0} us; device sort host {sort:.0} us, device {:.0} us; probe host {probe_cpu:.0} us, device {:.0} us; host radix sort {host:.0} us, host sort join (left sorted, runs merged) {host_join:.0} us",
                 sort_gpu / runs as f64 * 1e6,

@@ -221,6 +221,11 @@ pub fn layer() -> Option<Layer> {
     Some(Layer { device: &one.device, queue: &one.queue, max_buffer: one.device.max_buffer_length() })
 }
 
+/// The process's device in the device layer, whatever its backend.
+pub fn device() -> Result<&'static rerail_device::device::Device, String> {
+    layer().map(|l| l.device).ok_or_else(|| "no device".to_owned())
+}
+
 /// Holds what a queue's work reaches: the block or pooled lease each buffer lies in (by its contents' address), on
 /// the submission's fence, read or written as the work declares (decision 0491 step 2). A buffer of the device's own
 /// (`contents` 0, or memory no block or lease holds) is the device's to keep: its command buffer retains it.

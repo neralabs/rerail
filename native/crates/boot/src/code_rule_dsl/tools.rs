@@ -1159,7 +1159,7 @@ pub fn cli(args: &[String], machine: &std::sync::Arc<crate::threads::Machine>) -
     let shared = crate::code_rule_dsl::logic::profile::Shared::on(machine);
     #[cfg(target_os = "macos")]
     if args.first().is_none_or(|c| c != "kernels") {
-        rerail_accel::gpu::kernels::set_mode(shared.machine(), rerail_accel::gpu::kernels::Mode::Defer);
+        rerail_accel_gpu::gpu::kernels::set_mode(shared.machine(), rerail_accel_gpu::gpu::kernels::Mode::Defer);
     }
     let (out, incomplete) = cli_in(args, &mut Default::default(), &shared);
     // The kernels this run went without (its machine's), compiled after it by the engine in a process of its own, at
@@ -1167,7 +1167,7 @@ pub fn cli(args: &[String], machine: &std::sync::Arc<crate::threads::Machine>) -
     #[cfg(target_os = "macos")]
     if let Ok(engine) = std::env::current_exe() {
         let _on = crate::code_rule_dsl::logic::profile::within(std::sync::Arc::clone(&shared));
-        rerail_accel::gpu::kernels::spawn_maintenance(&engine);
+        rerail_accel_gpu::gpu::kernels::spawn_maintenance(&engine);
     }
     let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
     // On stderr: a command's output is its own (`run-rr`'s, `sql`'s: JSON), and a line after it made that unreadable.
@@ -1774,16 +1774,16 @@ fn gc_command(args: &[String]) -> Result<String, String> {
 }
 
 /// Every fixed kernel of the engine (a kernel whose source is the same for every rule set), to compile ahead of its
-/// first use (decision 0395's tiers, on every backend): the GPU lane's (`rerail_accel::gpu::kernels_ahead`), the GPU
+/// first use (decision 0395's tiers, on every backend): the GPU lane's (`rerail_accel_gpu::gpu::kernels_ahead`), the GPU
 /// runtime's (`rerail_metal::kernels_ahead`), the device's (`MatcherDevice::kernels_ahead`) and, in a build with the
 /// tests' hooks, the tape format's tests' (`rerail_tape_format::f16::kernels`). Each entry asks for its kernel
 /// as its use does, so its use finds it: in this process, in the store, or shipped.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
-    let mut v = rerail_accel::gpu::kernels_ahead();
+    let mut v = rerail_accel_gpu::gpu::kernels_ahead();
     v.extend(rerail_metal::kernels_ahead());
     if let Some(device) = crate::code_rule_dsl::transducer::packed::device::matcher() {
-        v.extend(device.kernels_ahead().into_iter().map(|(name, make)| rerail_accel::gpu::ahead(name, make)));
+        v.extend(device.kernels_ahead().into_iter().map(|(name, make)| rerail_accel_gpu::gpu::ahead(name, make)));
     }
     #[cfg(feature = "test-hooks")]
     v.extend(rerail_tape_format::f16::kernels().into_iter().map(|(name, text)| {
@@ -1794,7 +1794,7 @@ pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
 
 /// `rerail-engine kernels` (decision 0395): the compiled kernels, on every backend. The device layer's store
 /// (`rerail_device::store`: CUDA's cubins, OpenCL's binaries, the CPU's shared objects) and, on macOS, Metal's
-/// archive store (`rerail_accel::gpu::kernels`).
+/// archive store (`rerail_accel_gpu::gpu::kernels`).
 ///
 /// ```text
 /// kernels [list]                   the stores, the shipped kernels, the device, and (Metal) the kernels runs went
@@ -1881,7 +1881,7 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             }
             #[cfg(target_os = "macos")]
             {
-                use rerail_accel::gpu::kernels as k;
+                use rerail_accel_gpu::gpu::kernels as k;
                 let s = k::size();
                 out += &format!("metal store    {}\n", k::store_dir().map_or("off".to_owned(), |d| d.display().to_string()));
                 out += &format!("metal shipped  {}\n", k::shipped_dir().map_or("none".to_owned(), |d| d.display().to_string()));
@@ -1918,7 +1918,7 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             let made = compile(&mut out);
             #[cfg(target_os = "macos")]
             {
-                use rerail_accel::gpu::kernels as k;
+                use rerail_accel_gpu::gpu::kernels as k;
                 let which = if rest.iter().any(|a| a == "--all") { k::Which::All } else { k::Which::Last };
                 let started = std::time::Instant::now();
                 // Past `--within`, none (the next run's step compiles them).
@@ -1969,7 +1969,7 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             out += &format!("{shipped} device-layer kernels shipped into {}\n", dir.display());
             #[cfg(target_os = "macos")]
             {
-                use rerail_accel::gpu::kernels as k;
+                use rerail_accel_gpu::gpu::kernels as k;
                 let from = match args.iter().position(|a| a == "--from") {
                     Some(i) => std::path::PathBuf::from(args.get(i + 1).ok_or("--from requires a directory")?),
                     None => k::store_dir().ok_or("no store (RERAIL_METAL_KERNELS=off): name one with --from")?,
@@ -1990,7 +1990,7 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             out += &format!("{} device-layer kernels removed\n", store::prune(mb.unwrap_or_else(store::max_bytes)));
             #[cfg(target_os = "macos")]
             {
-                use rerail_accel::gpu::kernels as k;
+                use rerail_accel_gpu::gpu::kernels as k;
                 out += &format!("{} archives removed\n", k::prune(mb.unwrap_or_else(k::max_bytes)));
             }
             Ok(out)

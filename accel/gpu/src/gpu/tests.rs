@@ -1,75 +1,11 @@
-//! The gpu lane against the reference ([`crate::cpu::run`]), exactly, on random inputs of many shapes.
+//! The gpu lane against the reference ([`rerail_accel::cpu::run`]), exactly, on random inputs of many shapes.
 
 use super::*;
-use crate::exec::{Batch, Executor, Launch, process_cpu};
-use crate::kernel::Kernel;
+use rerail_accel::exec::{Batch, Executor, Launch, process_cpu};
+use rerail_accel::kernel::Kernel;
 
-// The reference's generators (crate::cpu::tests is private to the cpu module), the same xorshift and shapes.
-struct Rng(u64);
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-    fn below(&mut self, n: u64) -> u64 {
-        self.next() % n.max(1)
-    }
-}
+use rerail_accel::workloads::{Rng, bits, graph, layered, parts};
 
-fn bits(rng: &mut Rng, rows: usize, width: usize, density: u64) -> Bits {
-    let words = width.div_ceil(64);
-    let mut data = vec![0u64; rows * words];
-    for r in 0..rows {
-        for c in 0..width {
-            if rng.below(16) < density {
-                data[r * words + c / 64] |= 1 << (c % 64);
-            }
-        }
-    }
-    Bits::new(rows, words, data)
-}
-
-fn parts(rng: &mut Rng, nparts: usize, max: u64, codes: u64) -> (Arc<[u32]>, Arc<[u16]>) {
-    let mut off = vec![0u32];
-    let mut col = Vec::new();
-    for _ in 0..nparts {
-        for _ in 0..rng.below(max + 1) {
-            col.push(rng.below(codes) as u16);
-        }
-        off.push(col.len() as u32);
-    }
-    (off.into(), col.into())
-}
-
-fn graph(rng: &mut Rng, n: usize, deg: u64) -> (Arc<[u32]>, Arc<[u32]>) {
-    let mut off = vec![0u32];
-    let mut dst = Vec::new();
-    for _ in 0..n {
-        for _ in 0..rng.below(2 * deg + 1) {
-            dst.push(rng.below(n as u64) as u32);
-        }
-        off.push(dst.len() as u32);
-    }
-    (off.into(), dst.into())
-}
-
-/// A graph whose condensation has about `layers` levels: edges mostly to lower layers, some within a layer.
-fn layered(rng: &mut Rng, n: usize, deg: u64, layers: usize) -> (Arc<[u32]>, Arc<[u32]>) {
-    let layer = |v: usize| v * layers / n;
-    let mut off = vec![0u32];
-    let mut dst = Vec::new();
-    for v in 0..n {
-        let lo = (0..v).find(|&w| layer(w) == layer(v)).unwrap_or(v);
-        for _ in 0..rng.below(2 * deg + 1) {
-            let w = if rng.below(50) == 0 { lo + rng.below((v - lo + 1) as u64) as usize } else { rng.below(lo.max(1) as u64) as usize };
-            dst.push(w as u32);
-        }
-        off.push(dst.len() as u32);
-    }
-    (off.into(), dst.into())
-}
 
 /// The process's device: on a Mac, one it must have; elsewhere (a Linux host, whose CUDA device may be absent or
 /// held), none skips the test, as `shared::layer()` does.
@@ -97,7 +33,7 @@ fn check(ks: &[Kernel]) -> Stats {
     let refs: Vec<&Kernel> = ks.iter().collect();
     let (outs, stats) = g.run(&refs).unwrap();
     for (i, (o, k)) in outs.iter().zip(ks).enumerate() {
-        let want = crate::cpu::run(k);
+        let want = rerail_accel::cpu::run(k);
         if *o != want {
             let brief = |o: &Output| match o {
                 Output::Counts { rows, cols, data } => format!("counts {rows}x{cols}, sum {}", data.iter().map(|&x| x as u64).sum::<u64>()),
@@ -214,7 +150,7 @@ fn a_mixed_batch_is_one_command_buffer_through_the_executor() {
     assert_eq!(report.launches[Lane::Gpu.index()], ks.len());
     for (d, k) in done.iter().zip(&ks) {
         assert_eq!(d.lane, Lane::Gpu);
-        assert_eq!(d.out, crate::cpu::run(k));
+        assert_eq!(d.out, rerail_accel::cpu::run(k));
     }
 }
 
@@ -311,7 +247,7 @@ fn timing_on_spike_sized_inputs() {
     println!("| all six, one submission | {units:.3e} | {:.3} | {:.3} | {:.3} | | {} | {} | {} |", dev * 1e3, cpu * 1e3, wall * 1e3, s.dispatches, s.barriers, s.command_buffers);
     let (dev, cpu, wall, s) = time(&[&tiny]);
     println!("| fixed: one tiny histogram | 1 | {:.4} | {:.3} | {:.3} | | {} | {} | {} |", dev * 1e3, cpu * 1e3, wall * 1e3, s.dispatches, s.barriers, s.command_buffers);
-    if let Output::Pairs(p) = crate::cpu::run(&w2e) {
+    if let Output::Pairs(p) = rerail_accel::cpu::run(&w2e) {
         println!("W2 pairs: {}", p.len());
     }
 }
@@ -332,7 +268,7 @@ fn concurrent_submissions_are_exact() {
     let (off, codes) = parts(&mut rng, 40, 60, 20);
     ks.push(Kernel::Histogram { off: off.clone(), codes: codes.clone(), width: 20 });
     ks.push(Kernel::CountTable { loff: off.clone(), left: codes.clone(), roff: off, right: codes, emit: true });
-    let want: Vec<Output> = ks.iter().map(crate::cpu::run).collect();
+    let want: Vec<Output> = ks.iter().map(rerail_accel::cpu::run).collect();
     let refs: Vec<&Kernel> = ks.iter().collect();
     std::thread::scope(|sc| {
         for _ in 0..4 {

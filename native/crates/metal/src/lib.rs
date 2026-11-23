@@ -82,7 +82,7 @@ pub fn every_kernel_ahead() -> bool {
 /// preprocessor's passes (`pp_arena`), asked for as their use asks for them, so their use then finds them compiled. A
 /// block program's kernels are its own (the forward carry's, `block_program::serial`), compiled behind its first batch.
 pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
-    use rerail_accel::gpu::{ahead, caught, released};
+    use rerail_accel_gpu::gpu::{ahead, caught, released};
     let mut v = Vec::new();
     // The preprocessor's passes only on the CPU, where they run (every preprocessor run is the CPU's for now). A GPU's
     // compiler does not compile their source in bounded time: NVRTC grew past 90 GB resident on a DGX Spark, Intel's

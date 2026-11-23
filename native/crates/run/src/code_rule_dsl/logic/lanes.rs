@@ -54,7 +54,7 @@ fn all() -> Arc<Executor> {
         // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
         super::costs::start();
         // Every launch the executor's GPU lane makes is charged to the launch budget where it is made
-        // (`rerail_accel::gpu::GpuBackend::run`, decision 0100 §2).
+        // (`rerail_accel_gpu::gpu::GpuBackend::run`, decision 0100 §2).
         Arc::new(Executor::new())
     }))
 }

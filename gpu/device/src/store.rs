@@ -12,7 +12,7 @@
 //! keyed by the source, the architecture, the options and the NVRTC and driver versions; OpenCL the program's
 //! binary (`opencl/<key>.bin`), keyed by the source, the options and the device's name, version and driver; the
 //! CPU the shared object the compiler made (`cpu/<key>.so`), keyed by the source, the options and the compiler's
-//! version. Metal's pipelines are in the engine's archive store (`rerail_accel::gpu::kernels`) until the engine's
+//! version. Metal's pipelines are in the engine's archive store (`rerail_accel_gpu::gpu::kernels`) until the engine's
 //! kernels are on the device layer (0440 step C).
 //!
 //! A form that does not load (damaged, or of another build the key missed) is compiled again and replaced. A store
@@ -65,7 +65,7 @@ pub fn key(parts: &[&[u8]]) -> String {
 /// The kernels shipped with the engine (`rerail-engine kernels ship`, decision 0395's middle tier): read-only, each
 /// backend's forms under `<dir>/<backend>/` by the store's own keys, so a shipped form is used only where every
 /// part of its key is this machine's (its device, compiler and driver). `RERAIL_SHIPPED_KERNELS=<dir>|off`, else
-/// `rerail-kernels/` beside the program, as Metal's (`rerail_accel::gpu::kernels`).
+/// `rerail-kernels/` beside the program, as Metal's (`rerail_accel_gpu::gpu::kernels`).
 pub fn shipped_dir() -> Option<&'static Path> {
     static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
     DIR.get_or_init(|| match std::env::var_os("RERAIL_SHIPPED_KERNELS") {

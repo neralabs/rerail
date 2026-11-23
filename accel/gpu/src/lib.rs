@@ -1,7 +1,13 @@
-//! The accelerator's device side (crate split 10d): the learned models rerail-forest trains and walks on the device
-//! (`cost_model`, `join_model`; decisions 0100 §14 and 0354), registered as the engine boots (`install`). rerail-accel
-//! holds their interface (`models`): the executor and every crate that prices with a model build without the
-//! device's stack (rerail-forest, rerail-gpu, UKL), and an edit to it rebuilds only the crates above this one.
+//! The accelerator's device side (crate split 10d): the GPU lane (`gpu`: its kernels, the device joins and tiles,
+//! decision 0098 §5), and the learned models rerail-forest trains and walks on the device (`cost_model`,
+//! `join_model`; decisions 0100 §14 and 0354), registered as the engine boots (`install`). rerail-accel holds what
+//! the crates below reach: the pool and the launch ledger, the slots the lane registers into (`gpu::BACKEND`,
+//! `gpu::MAINTENANCE`), and the models' interface (`models`). The executor and every crate that leases, counts or
+//! prices build without the device's stack (rerail-forest, rerail-gpu, UKL), and an edit to it rebuilds only the
+//! crates above this one.
+
+#[cfg(gpu_lane)]
+pub mod gpu;
 
 #[cfg(target_os = "macos")]
 pub mod cost_model;
@@ -44,9 +50,17 @@ mod forest {
     }
 }
 
-/// Registers the learned models (on macOS, rerail-forest's; elsewhere none) as the engine boots: once a process,
-/// from boot's `install`, or a test binary's load.
+/// Registers the GPU lane and the learned models (on macOS, rerail-forest's; elsewhere none) as the engine boots:
+/// from boot's `install`, or a test binary's load. Once a process; a second call does nothing.
 pub fn install() {
-    #[cfg(target_os = "macos")]
-    rerail_accel::models::MODELS.register("rerail-accel-gpu", &forest::Forest);
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        #[cfg(gpu_lane)]
+        rerail_accel::gpu::BACKEND.register("rerail-accel-gpu", gpu::backend);
+        #[cfg(target_os = "macos")]
+        {
+            rerail_accel::gpu::MAINTENANCE.register("rerail-accel-gpu", || Box::new(gpu::kernels::Maintenance::new()));
+            rerail_accel::models::MODELS.register("rerail-accel-gpu", &forest::Forest);
+        }
+    });
 }

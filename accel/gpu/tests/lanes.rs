@@ -1,45 +1,10 @@
 //! One wave across every lane: the executor places a batch's launches, submits each lane's share once, runs the
 //! lanes together, and every output is the reference's.
 
-use rerail_accel::{Batch, Bits, Executor, Kernel, Lane, Launch, cpu};
+use rerail_accel::{Batch, Executor, Kernel, Lane, Launch, cpu};
 use std::sync::Arc;
 
-struct Rng(u64);
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-    fn below(&mut self, n: u64) -> u64 {
-        self.next() % n.max(1)
-    }
-}
-
-fn bits(rng: &mut Rng, rows: usize, width: usize, density: u64) -> Bits {
-    let words = width.div_ceil(64);
-    let mut data = vec![0u64; rows * words];
-    for r in 0..rows {
-        for c in 0..width {
-            if rng.below(16) < density {
-                data[r * words + c / 64] |= 1 << (c % 64);
-            }
-        }
-    }
-    Bits::new(rows, words, data)
-}
-
-fn parts(rng: &mut Rng, n: usize, max: u64, codes: u64) -> (Arc<[u32]>, Arc<[u16]>) {
-    let (mut off, mut col) = (vec![0u32], Vec::new());
-    for _ in 0..n {
-        for _ in 0..rng.below(max + 1) {
-            col.push(rng.below(codes) as u16);
-        }
-        off.push(col.len() as u32);
-    }
-    (off.into(), col.into())
-}
+use rerail_accel::workloads::{Rng, bits, parts};
 
 fn wave(rng: &mut Rng) -> Vec<(Kernel, Lane)> {
     let (loff, left) = parts(rng, 50, 40, 300);
@@ -894,3 +859,15 @@ fn a_spread_line_prices_within_its_reach() {
     let want = (1e-3 + 3e-8 * 1.5e5 - 1e-8 * 1.5e5) + 1e-8 * 3e7;
     assert!((far - want).abs() < 1e-6, "past reach, the prior's slope: {far} against {want}");
 }
+
+/// The GPU lane registered as the binary loads, as boot registers it (`rerail_accel_gpu::install`).
+#[used]
+#[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+#[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+#[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+static LOAD: extern "C" fn() = {
+    extern "C" fn load() {
+        rerail_accel_gpu::install();
+    }
+    load
+};

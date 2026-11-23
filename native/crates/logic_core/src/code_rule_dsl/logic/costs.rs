@@ -677,7 +677,9 @@ pub fn upkeep_jobs() -> Vec<rerail_accel::upkeep::Registered> {
     let mut jobs = vec![rerail_accel::upkeep::register(Box::new(crate::content_store::upkeep::SqliteFile::new(&path, crate::content_store::upkeep::Tables::All)))];
     // The Metal kernels runs went without, compiled when the machine is idle (decision 0395).
     #[cfg(target_os = "macos")]
-    jobs.push(rerail_accel::upkeep::register(Box::new(rerail_accel::gpu::kernels::Maintenance::new())));
+    if let Some(make) = rerail_accel::gpu::MAINTENANCE.try_get() {
+        jobs.push(rerail_accel::upkeep::register(make()));
+    }
     #[cfg(target_os = "macos")]
     {
         use std::sync::atomic::Ordering;

@@ -1162,8 +1162,8 @@ fn screen_of(rel: &InRel, d: &mj::Stage) -> Result<Option<mj::Screen>, String> {
     for k in 0..(d.nkeys as usize).min(mj::MAX_KEYS) {
         let Some(kept) = rel.kept_keys(d.key_rcol[k] as usize) else { continue };
         let b = kept.in_block();
-        let device = rerail_accel::gpu::join::device()?;
-        let held = rerail_accel::gpu::join::Held::kept(b.facts().block.device_buffer(device)?, Box::new(kept.clone()));
+        let device = rerail_accel_gpu::gpu::join::device()?;
+        let held = rerail_accel_gpu::gpu::join::Held::kept(b.facts().block.device_buffer(device)?, Box::new(kept.clone()));
         return Ok(Some(mj::Screen { held: Rc::new(held), at: u32::try_from(b.at()).map_err(|_| "a filter past 4 GB of its block")?, key: k as u32 }));
     }
     Ok(None)
@@ -1229,7 +1229,7 @@ fn waves_kept() -> usize {
 /// their first bytes: `rerail_device::device::reserve_grows`) runs a stratum again past them, and is not checked.
 fn one_launch(rep: &Report) {
     #[cfg(any(test, feature = "test-hooks"))]
-    if rep.dispatches != 0 && rerail_accel::gpu::join::device().is_ok_and(rerail_device::device::reserve_grows) {
+    if rep.dispatches != 0 && rerail_accel_gpu::gpu::join::device().is_ok_and(rerail_device::device::reserve_grows) {
         // A stratum is one program; a wave's first stratum's report holds the wave's, one a stratum.
         let one = rep.waved != 0 || rep.programs == 1;
         let launches = rep.programs + rep.relaunches + rep.remaps;
@@ -1374,7 +1374,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], probed: bool, batc
             }
             let dev = if let Some(d) = made {
 // copy (0353 step 4): a view made on the device for a stratum (decision 0353).
-                let device = rerail_accel::gpu::join::device()?;
+                let device = rerail_accel_gpu::gpu::join::device()?;
                 let block = d.block.device_buffer(device)?;
                 let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
                 batch.expand_view(&block, d.root, d.view, &want, &dev).map_err(|e| format!("{e:?}: a view made on the device"))?;
@@ -1478,10 +1478,10 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], probed: bool, batc
 }
 
 /// Decision 0209 §6 on the device, with decision 0261: columns' statistics in one batch
-/// (`rerail_accel::gpu::join::column_stats_of`). A relation in its block is read in place, its column where it
+/// (`rerail_accel_gpu::gpu::join::column_stats_of`). A relation in its block is read in place, its column where it
 /// lies; any other's values are gathered on the host. Also how many columns were read in place.
 pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), String> {
-    use rerail_accel::gpu::join::{StatCol, column_stats_of};
+    use rerail_accel_gpu::gpu::join::{StatCol, column_stats_of};
     let devs: Vec<Option<(Rc<mj::DevRel>, usize)>> = cols
         .iter()
         .map(|c| {
@@ -1956,7 +1956,7 @@ impl Drop for InDevice {
             d.get() == 0
         });
         if outer && SUSPENDED.with_borrow(HashMap::is_empty) {
-            let n = rerail_accel::gpu::join::scratch_return();
+            let n = rerail_accel_gpu::gpu::join::scratch_return();
             if n > 0 {
                 crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "join scratch given back (MB)", (n >> 20) as u64);
             }

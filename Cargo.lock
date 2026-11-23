@@ -3180,9 +3180,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-context",
  "rerail-device",
- "rerail-gpu",
  "rerail-registry",
- "rerail-ukl",
  "rustc-hash",
  "serde",
  "sha2 0.10.9",
@@ -3192,11 +3190,21 @@ dependencies = [
 name = "rerail-accel-gpu"
 version = "0.1.0"
 dependencies = [
+ "block",
+ "core-foundation-sys",
+ "libc",
+ "metal",
+ "objc",
  "rerail-accel",
  "rerail-accel-gpu",
+ "rerail-blocks",
+ "rerail-context",
  "rerail-device",
  "rerail-forest",
+ "rerail-gpu",
+ "rerail-ukl",
  "rustc-hash",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3893,6 +3901,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-accel-gpu",
  "rerail-blocks",
  "rerail-clif",
  "rerail-compiler",
@@ -5067,6 +5076,7 @@ dependencies = [
  "libc",
  "metal",
  "rerail-accel",
+ "rerail-accel-gpu",
  "rerail-blocks",
  "rerail-clif",
  "rerail-context",
@@ -5086,6 +5096,7 @@ name = "rerail-metal-programs"
 version = "0.1.0"
 dependencies = [
  "rerail-accel",
+ "rerail-accel-gpu",
  "rerail-compiler",
  "rerail-context",
  "rerail-device",

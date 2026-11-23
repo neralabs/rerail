@@ -23,7 +23,7 @@
 //! binding's slots or constants.
 //!
 //! **Keys.** A relation read by keys is sorted on the device by a hash of its key columns (`rel_hash`, then
-//! the GPU lane's radix sort (`rerail_accel::gpu::join`) of 16, 24 or 32 bits, as its rows need), and a binding finds its run of equal hashes by a
+//! the GPU lane's radix sort (`rerail_accel_gpu::gpu::join`) of 16, 24 or 32 bits, as its rows need), and a binding finds its run of equal hashes by a
 //! bounded binary search; every candidate's keys are compared whole, so a collision costs a comparison, never a row.
 //! A relation's upload (`DevRel`) and each of its sorts (`DevIndex`) stay on the device while the engine holds them.
 //!
@@ -43,7 +43,7 @@
 //! address) lies in a buffer of its own (`Batch::block`), which the batch keeps until its work completes.
 
 use super::Error;
-use rerail_accel::gpu::join::{FREE, Held, Pass, Scan, Submitted, Width, groups, pipeline, scratch, simd_group};
+use rerail_accel_gpu::gpu::join::{FREE, Held, Pass, Scan, Submitted, Width, groups, pipeline, scratch, simd_group};
 use rerail_device::device::Buffer;
 use std::sync::Arc;
 
@@ -304,7 +304,7 @@ impl Stage {
 fn chunk_views_source() -> String {
     format!(
         "{}{}{}{}{}",
-        rerail_accel::gpu::join::COMMON,
+        rerail_accel_gpu::gpu::join::COMMON,
         rerail_blocks::RELATION_READS,
         crate::code_rule_dsl::facts::vtab::syntax::device_chunk::ukl(),
         // The lines' reads (decision 0612), which place a span on the facts' line index.
@@ -320,7 +320,7 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
     let made = |variant: &'static str, name: &'static str, source: fn() -> String| -> super::device::KernelAhead {
         let make = move || {
             let mut made = Ok(());
-            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = pipeline(variant, name, source).map(drop)))?;
+            rerail_accel::gpu::released(|| rerail_accel_gpu::gpu::caught(|| made = pipeline(variant, name, source).map(drop)))?;
             made
         };
         (format!("{variant} {name}"), Box::new(make))
@@ -329,7 +329,7 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
     let mut v: Vec<super::device::KernelAhead> = vec![{
         let make = move || {
             let mut made = Ok(());
-            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = program_pipe(run_view_format()).map(drop)))?;
+            rerail_accel::gpu::released(|| rerail_accel_gpu::gpu::caught(|| made = program_pipe(run_view_format()).map(drop)))?;
             made
         };
         ("join join_run".to_owned(), Box::new(make))
@@ -345,7 +345,7 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
 static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     format!(
         "#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}{}{}{}{}{}",
-        rerail_accel::gpu::join::COMMON,
+        rerail_accel_gpu::gpu::join::COMMON,
         rerail_blocks::RELATION_READS,
         // The reads that read a 16z tape too, through its batch's cache (decision 0353 step 4b).
         "#include <ukl/reads/tape_z.h>\n",
@@ -376,7 +376,7 @@ pub(in crate::code_rule_dsl) fn run_view_format() -> u32 {
 /// the program's part, which reads its tables and blocks coherent across the device (other groups of its launch
 /// write them). Its stages read views, each compiled for the tape format of the views it reads (decision 0576): on an
 /// Arc 140V `stage_count` compiled in 36 s over every format, 16 s over format 16's and 7 s over format 15's.
-fn program_pipe(format: u32) -> Result<Arc<rerail_accel::gpu::join::Pipe>, String> {
+fn program_pipe(format: u32) -> Result<Arc<rerail_accel_gpu::gpu::join::Pipe>, String> {
     pipeline(&format!("joinprog{format}"), "join_run", || format!("#define JOIN_PROGRAM 1\n#define CLIF_BLOCKS_COHERENT 1\n{}", view_source(format)))
 }
 
@@ -401,7 +401,7 @@ fn probed<'r>(rel: &'r DevRel, index: Option<&'r DevIndex>) -> &'r DevRel {
 
 /// Whether the process has the device the stages run on.
 pub fn available() -> bool {
-    rerail_accel::gpu::join::device().is_ok()
+    rerail_accel_gpu::gpu::join::device().is_ok()
 }
 
 /// A kind-set axis's batch solve on the device (decision 0289 §2, `facts::nearest::ChunkAxis`), from `chunks`: each
@@ -418,7 +418,7 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
     const PAGE: usize = 16384;
     let full = || "the chunk block cannot hold the axis".to_string();
     let at = |o: usize| u32::try_from(o).map_err(|_| "the axis lies past 4 GB of its chunk".to_string());
-    let device = rerail_accel::gpu::join::device()?;
+    let device = rerail_accel_gpu::gpu::join::device()?;
     // An evaluation of the launch budget, or the caller's when it is in one: every chunk's count and write.
     let _evaluation = super::metal_backend::launch::LaunchScope::enter();
     let count = pipeline("chunk_views", "axis_count", chunk_views_source)?;
@@ -587,7 +587,7 @@ impl DevRel {
 
     /// A handle to `part`, a relation of the device's own of `cols` columns and `rows` rows (`Part::for_device`'s).
     fn of_part(part: crate::code_rule_dsl::facts::rows::Part, cols: usize, rows: usize) -> Result<DevRel, Error> {
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
@@ -695,7 +695,7 @@ impl DevRel {
     /// device buffer (which it keeps). Nothing is copied.
     pub(in crate::code_rule_dsl) fn in_block(b: &crate::code_rule_dsl::facts::rows::InBlock, cols: usize) -> Result<DevRel, Error> {
         assert!(b.at > 0, "a descriptor past the block's header");
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
         Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), from: 0, kept: b.part.clone(), has: None, live: false, mapped: None }.noted())
@@ -799,7 +799,7 @@ pub(in crate::code_rule_dsl) struct DevAtoms {
 impl DevAtoms {
     /// The directory of `runs` (`Atoms::runs`), for the device's addresses.
     pub(in crate::code_rule_dsl) fn new(runs: Vec<(rerail_blocks::atoms::Run, std::sync::Arc<rerail_blocks::block::Block>)>) -> Result<DevAtoms, Error> {
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let mut blocks: Vec<std::sync::Arc<rerail_blocks::block::Block>> = Vec::new();
         for (_, b) in &runs {
             if !blocks.iter().any(|k| std::sync::Arc::ptr_eq(k, b)) {
@@ -852,7 +852,7 @@ pub(in crate::code_rule_dsl) struct DevKept {
 impl DevKept {
     /// `kept` (a store's atoms' `Kept`) for the device.
     pub(in crate::code_rule_dsl) fn new(kept: &crate::content_store::atoms::Kept) -> Result<DevKept, Error> {
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         Ok(DevKept { cache: (kept.block().device_buffer(device).map_err(|_| Error::BackendCapacity)?, kept.at() as u64) })
     }
 }
@@ -985,7 +985,7 @@ impl DevIndex {
 
 /// The buffer of `home`'s block as it is now (reaching what it holds now), the block kept with it.
 fn bound(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<Held, Error> {
-    let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+    let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
     held_block(device, home, Box::new(home.clone()))
 }
 
@@ -1294,7 +1294,7 @@ pub(in crate::code_rule_dsl) struct DevBytes {
 
 impl DevBytes {
     pub(in crate::code_rule_dsl) fn of(a: &crate::code_rule_dsl::text::automata::Automaton) -> Result<DevBytes, Error> {
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let of = crate::code_rule_dsl::text::automata::automata();
         let buffer = of.block().device_buffer(device).map_err(|_| Error::BackendCapacity)?;
         Ok(DevBytes { buffer, at: a.at as u64, _of: of })
@@ -1325,7 +1325,7 @@ fn text_arena_max() -> usize {
 impl Arena {
     pub(in crate::code_rule_dsl) fn new(cap: usize) -> Result<Arena, Error> {
         let cap = cap.clamp(16, u32::MAX as usize / 2);
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let reserved = rerail_device::device::reserve(device, 16 + cap.max(text_arena_max()), 16 + cap, true).map_err(|_| Error::BackendCapacity)?;
         let arena = Arena { reserved: Arc::new(reserved), cap: std::cell::Cell::new(cap) };
         arena.header(0, 0);
@@ -1526,13 +1526,13 @@ impl Batch {
     }
 
     pub(in crate::code_rule_dsl) fn new() -> Result<Batch, Error> {
-        rerail_accel::gpu::join::device()?;
+        rerail_accel_gpu::gpu::join::device()?;
         Batch::with_arena(ARENA_START)
     }
 
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
-        rerail_accel::gpu::join::device()?;
+        rerail_accel_gpu::gpu::join::device()?;
         Ok(Batch {
             pass: None,
             queued: Vec::new(),
@@ -1679,7 +1679,7 @@ impl Batch {
         // be built (`finish`): none is told.
         for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live) {
             let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
-            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.watch(), lent: false });
+            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.flushed(), lent: false });
             b.queued = true;
         }
         self.committed.push(s);
@@ -1908,7 +1908,7 @@ impl Batch {
                 }
                 if queued {
                     let f = held.iter().find(|f| f.at == at && f.room.index == room.index).expect("a committed build is told to its block");
-                    taken = Some((room.index as u32, f.done.watch()));
+                    taken = Some((room.index as u32, rerail_accel_gpu::gpu::join::Submitted::watching(&f.done)));
                     break 'room None;
                 }
                 // Bound by the builder's buffer: its launches, before this batch's probes in the open submission,
@@ -1930,7 +1930,7 @@ impl Batch {
             let at = home.block.offset_of(std::ptr::from_ref(r));
             if let Some(f) = held.iter_mut().find(|f| f.at == at && f.room.key[..f.room.ncols] == *key && f.room.from == rel.from && f.room.rows_n as usize == rel.rows).filter(|_| !rel.live) {
                 f.lent = true;
-                taken = Some((f.room.index as u32, f.done.watch()));
+                taken = Some((f.room.index as u32, rerail_accel_gpu::gpu::join::Submitted::watching(&f.done)));
                 crate::code_rule_dsl::prof::count_named("device.index taken from another batch's build".into(), 4 * rel.rows);
                 break 'room None;
             }
@@ -2720,7 +2720,7 @@ impl Batch {
         let rows_now = fixed + level_live.iter().map(|l| prog.rooms.live_ix[l.0].rows.get() as usize).sum::<usize>();
         let mut sort_room = (!level_live.is_empty()).then(|| SortRoom { reserved: Vec::new(), hist: None, fixed, live: level_live.iter().map(|l| l.0).collect() });
         let sort = if ix_rows > 0 {
-            let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+            let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
             let tiles = ix_rows.div_ceil(SORT_TILE).max(1);
             let mut one = |bytes: usize, now: usize, hist: bool| -> Result<Held, Error> {
                 let Some(room) = &mut sort_room else { return Held::new(bytes).map_err(|_| Error::BackendCapacity) };
@@ -2770,9 +2770,9 @@ impl Batch {
             return Err(Error::BackendCapacity);
         }
         prog.levels += 1;
-        let groups = |threads: usize| threads.div_ceil(rerail_accel::gpu::join::GROUP as usize).max(1);
+        let groups = |threads: usize| threads.div_ceil(rerail_accel_gpu::gpu::join::GROUP as usize).max(1);
         // A row stage's SIMD groups, a worker's group of them an item.
-        let rows_a_group = rerail_accel::gpu::join::GROUP as usize / simd_group();
+        let rows_a_group = rerail_accel_gpu::gpu::join::GROUP as usize / simd_group();
         // A dedup's places placed with its input: its clear's count its places' word (its size script's).
         // A fold's, its clear's and its merge's count its mask's word and one.
         let clears: Vec<Option<(u64, u32)>> = jobs.iter().zip(&placed).map(|(j, at)| j.h_place.map(|h| match h.places {
@@ -2791,7 +2791,7 @@ impl Batch {
                         // else all of them (`per` 0).
                         let word = j.rows_word().filter(|_| ROWS_ITEMS.contains(&what)).or_else(|| clears[i].filter(|_| matches!(what, PK_DEDUP_CLEAR | PK_LAT_CLEAR | PK_LAT_MERGE)));
                         let (count, per, plus) = match word {
-                            Some((count, plus)) => (count, rerail_accel::gpu::join::GROUP as u32, plus),
+                            Some((count, plus)) => (count, rerail_accel_gpu::gpu::join::GROUP as u32, plus),
                             None => (0, 0, 0),
                         };
                         segs.push(SegAt { first: items.len() as u32, items: n as u32, count, per, plus });
@@ -2921,7 +2921,7 @@ impl Batch {
         let counts = match &self.pool {
             Some(a) => a.clone(),
             None => {
-                let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+                let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
                 // Its first pages: its claims' guess, and the floor (a round's reach, `arena_floor`) where mapping
                 // commits no memory (the CPU backend's pages are committed as touched) or the arena cannot grow. On
                 // Metal a mapped page is real memory, so a reserved arena maps its guess and its claims map the rest
@@ -3658,7 +3658,7 @@ impl Kit {
             moved.push((ix.home.clone(), old, new));
         }
         // Each block grown wrapped again where it outgrew its wrap: what the program reaches of it re-pointed.
-        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let mut blocks: Vec<std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>> = Vec::new();
         for (f, _, _) in &grew {
             if !blocks.iter().any(|b| std::sync::Arc::ptr_eq(b, f)) {
@@ -4193,14 +4193,14 @@ pub(in crate::code_rule_dsl) fn rooms_mapped() -> Option<usize> {
     if let Some(n) = crate::code_rule_dsl::logic::profile::var("RERAIL_ROOMS_MAPPED").ok().and_then(|v| v.parse::<usize>().ok()) {
         return Some(n);
     }
-    rerail_accel::gpu::join::device().is_ok_and(rerail_device::device::map_commits).then_some(0)
+    rerail_accel_gpu::gpu::join::device().is_ok_and(rerail_device::device::map_commits).then_some(0)
 }
 
 /// Whether mapping a reserved arena's pages commits real memory on this run's device (Metal's do;
 /// `rerail_device::device::map_commits`).
 #[cfg(test)]
 pub(in crate::code_rule_dsl) fn map_commits() -> bool {
-    rerail_accel::gpu::join::device().is_ok_and(rerail_device::device::map_commits)
+    rerail_accel_gpu::gpu::join::device().is_ok_and(rerail_device::device::map_commits)
 }
 
 /// A program's sizes where a test sets them: its workers' budget (`PROGRAM_BUDGET` else), and its first arena's
@@ -4594,7 +4594,7 @@ pub mod tests {
     /// relation's kept index instead (`Batch::again`), and builds none.
     #[test]
     fn an_index_built_twice_is_found_again_where_it_is_kept() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         // Its batches' launches are an evaluation's (decision 0601).
@@ -4630,7 +4630,7 @@ pub mod tests {
     /// `b` reads it.
     #[test]
     fn an_index_built_twice_that_a_batch_took_is_kept() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let n = 300;
@@ -4662,7 +4662,7 @@ pub mod tests {
     /// and the block it reads from, bound read-only, keeps its version.
     #[test]
     fn a_kernels_write_moves_its_blocks_version_and_a_read_does_not() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let n = 300;
@@ -4688,7 +4688,7 @@ pub mod tests {
     /// its passes' fences hold (decision 0491 step 2).
     #[test]
     fn a_relation_moved_for_an_index_lives_until_its_batch_is_done() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let n = 1000;
@@ -4718,7 +4718,7 @@ pub mod tests {
     /// column and the binding's slot); then an anti-join with `c` on slot 2, and a semi-join with `b` on slot 0.
     #[test]
     fn stages_on_the_device_are_the_nested_loops_rows() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let (na, nb, nc) = (3000, 5000, 700);
@@ -4813,7 +4813,7 @@ pub mod tests {
     /// join and the semi-join make no rows, the anti-join keeps them all (the kernels test it).
     #[test]
     fn a_screened_stage_makes_the_unscreened_rows() {
-        let Ok(device) = rerail_accel::gpu::join::device() else { return };
+        let Ok(device) = rerail_accel_gpu::gpu::join::device() else { return };
         let (na, nb, nc) = (3000, 5000, 700);
         let (a0, a1) = (rows(na, 1, 4000), rows(na, 2, 3000));
         let (b0, b1) = (rows(nb, 3, 300), rows(nb, 4, 4000));
@@ -4897,7 +4897,7 @@ pub mod tests {
     /// keys. Built once: the next request, in the same batch or a later one, finds it the relation's own.
     #[test]
     fn the_devices_index_of_a_relation_is_the_hosts() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         // Its index (some 1.8 MB) past the megabyte a host block's wrap rounds its used extent up to.
@@ -4963,7 +4963,7 @@ pub mod tests {
     /// first rows' of its count.
     #[test]
     fn a_batch_takes_an_index_another_batch_has_committed() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
@@ -5018,7 +5018,7 @@ pub mod tests {
     #[test]
     fn the_device_reads_a_fork_through_its_base() {
         use crate::code_rule_dsl::facts::rows::Rows as FactRows;
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let n = 5_000;
@@ -5081,7 +5081,7 @@ pub mod tests {
     #[test]
     fn stages_skip_the_dead_rows_of_relations_in_their_blocks() {
         use crate::code_rule_dsl::facts::rows::Rows;
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let (na, nb, nc) = (2000, 3000, 500);
@@ -5159,7 +5159,7 @@ pub mod tests {
     /// A table's rows over two of its three slots made distinct on the device: the first of equal rows, in order.
     #[test]
     fn head_rows_made_distinct_keep_the_first_of_each_in_order() {
-        if rerail_accel::gpu::join::device().is_err() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
             return;
         }
         let (cap, n) = (5000, 4321);

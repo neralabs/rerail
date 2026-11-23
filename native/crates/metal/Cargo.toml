@@ -7,13 +7,15 @@ description = "The engine's Metal runtime: device, buffer budget, mapped buffers
 
 [features]
 # Per-thread buffer ledgers and buffer observations, for tests (the engine's and this crate's).
-test-hooks = ["rerail-context/test-hooks", "rerail-clif/test-hooks", "rerail-blocks/test-hooks", "rerail-prof/test-hooks", "rerail-tape-format/test-hooks", "rerail-ukl/test-hooks"]
+test-hooks = ["rerail-accel-gpu/test-hooks", "rerail-context/test-hooks", "rerail-clif/test-hooks", "rerail-blocks/test-hooks", "rerail-prof/test-hooks", "rerail-tape-format/test-hooks", "rerail-ukl/test-hooks"]
 
 [dependencies]
 rerail-context = { path = "../context" }
 # The view a document is read by (decision 0310), without the reads' IR.
 rerail-clif = { path = "../clif", default-features = false }
 rerail-accel = { path = "../../../accel" }
+# The GPU lane: its kernels and device joins (crate split 10d-3).
+rerail-accel-gpu = { path = "../../../accel/gpu" }
 rerail-blocks = { path = "../blocks" }
 rerail-error = { path = "../error" }
 rerail-prof = { path = "../prof" }

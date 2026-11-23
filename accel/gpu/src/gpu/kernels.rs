@@ -328,7 +328,7 @@ fn on_metal(source: &str, name: &str, constant: Option<u32>) -> Arc<Function> {
     let slot = Arc::clone(made().0.lock().unwrap_or_else(|p| p.into_inner()).pipelines.entry(key.pipeline).or_default());
     let mut s = match slot.try_lock() {
         Ok(s) => s,
-        Err(std::sync::TryLockError::WouldBlock) => crate::score::phase("pipeline wait", || slot.lock().unwrap_or_else(|p| p.into_inner())),
+        Err(std::sync::TryLockError::WouldBlock) => rerail_accel::score::phase("pipeline wait", || slot.lock().unwrap_or_else(|p| p.into_inner())),
         Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
     };
     if let Some(p) = &*s {
@@ -478,16 +478,16 @@ fn ready_in(mode: Mode, source: &str, name: &str, constant: Option<u32>) -> Opti
     }
     drop(s);
     want(key, source, name, constant);
-    crate::forms::interpreted("msl-pipeline", &hex(&key.pipeline), name, 1);
+    rerail_accel::forms::interpreted("msl-pipeline", &hex(&key.pipeline), name, 1);
     if mode == Mode::Background {
         let first = made().0.lock().unwrap_or_else(|p| p.into_inner()).compiling.insert(key.pipeline);
         if first {
             let (source, name) = (source.to_owned(), name.to_owned());
-            let spawned = crate::exec::service("rerail-msl-compile", None, move || {
-                crate::upkeep::lower_this_thread();
+            let spawned = rerail_accel::exec::service("rerail-msl-compile", None, move || {
+                rerail_accel::upkeep::lower_this_thread();
                 let started = std::time::Instant::now();
                 let _ = function(&source, &name, constant);
-                crate::forms::compiled("msl-pipeline", &hex(&key.pipeline), &name, started.elapsed().as_secs_f64(), true);
+                rerail_accel::forms::compiled("msl-pipeline", &hex(&key.pipeline), &name, started.elapsed().as_secs_f64(), true);
                 made().0.lock().unwrap_or_else(|p| p.into_inner()).compiling.remove(&key.pipeline);
             });
             if spawned.is_err() {
@@ -540,7 +540,7 @@ fn make_uncounted(key: Key, source: &str, name: &str, constant: Option<u32>, com
         Arc::new(Function::Native(f))
     };
     if let Some(path) = archive {
-        let loaded = crate::score::phase("pipeline from archive", || from_archive(device, &descriptor, &path));
+        let loaded = rerail_accel::score::phase("pipeline from archive", || from_archive(device, &descriptor, &path));
         match loaded {
             Some(p) => {
                 count(|c| c.from_archive += 1);
@@ -555,7 +555,7 @@ fn make_uncounted(key: Key, source: &str, name: &str, constant: Option<u32>, com
         }
     }
     let started = std::time::Instant::now();
-    let p = crate::score::phase("pipeline back end", || objc::rc::autoreleasepool(|| compile_archived(device, &descriptor, &key)))
+    let p = rerail_accel::score::phase("pipeline back end", || objc::rc::autoreleasepool(|| compile_archived(device, &descriptor, &key)))
         .unwrap_or_else(|e| panic!("the Metal kernel {name} (library {}) does not compile: {e}", hex(&key.library[..8])));
     let seconds = started.elapsed().as_secs_f64();
     count(|c| {
@@ -681,7 +681,7 @@ fn library(library: [u8; 32], source: &str, name: &str, constant: Option<u32>) -
         u.source = baked(&u.source, value);
     }
     let device = &super::shared::get().expect("a Metal device").device;
-    let (l, units) = crate::score::phase("msl units", || linked(device, &split)).unwrap_or_else(|e| panic!("the Metal library of kernel {name} ({}, constant {value}): {e}", hex(&library[..8])));
+    let (l, units) = rerail_accel::score::phase("msl units", || linked(device, &split)).unwrap_or_else(|e| panic!("the Metal library of kernel {name} ({}, constant {value}): {e}", hex(&library[..8])));
     let seconds = started.elapsed().as_secs_f64();
     count(|c| c.front_end_s += seconds);
     let l = Linked { library: l, depth: Some(split.depth), _units: units, baked: true };
@@ -706,14 +706,14 @@ fn compiled(library: [u8; 32], source: &str, name: &str) -> Libraries {
         if source_msl.contains(FUNCTION_CONSTANT) {
             return Libraries::PerValue(Arc::new(split));
         }
-        let (l, units) = crate::score::phase("msl units", || linked(device, &split)).unwrap_or_else(|e| panic!("the Metal library of kernel {name} ({}): {e}", hex(&library[..8])));
+        let (l, units) = rerail_accel::score::phase("msl units", || linked(device, &split)).unwrap_or_else(|e| panic!("the Metal library of kernel {name} ({}): {e}", hex(&library[..8])));
         let seconds = started.elapsed().as_secs_f64();
         count(|c| c.front_end_s += seconds);
         return Libraries::Linked(Linked { library: l, depth: Some(split.depth), _units: units, baked: false });
     }
     let shipped = places().shipped.as_ref().map(|d| d.join(format!("{}.metallib", hex(&library)))).filter(|f| f.is_file());
     let l = match shipped {
-        Some(file) => crate::score::phase("msl from shipped", || objc::rc::autoreleasepool(|| device.new_library_with_file(&file)))
+        Some(file) => rerail_accel::score::phase("msl from shipped", || objc::rc::autoreleasepool(|| device.new_library_with_file(&file)))
             .unwrap_or_else(|e| panic!("the shipped Metal library {} (kernel {name}) does not load: {e}", file.display())),
         None => {
             let source = &*source_msl;
@@ -738,7 +738,7 @@ fn compiled(library: [u8; 32], source: &str, name: &str) -> Libraries {
                     let _ = writeln!(f, "{name}");
                 }
             }
-            let l = crate::score::phase("msl front end", || objc::rc::autoreleasepool(|| device.new_library_with_source(text, &metal::CompileOptions::new())))
+            let l = rerail_accel::score::phase("msl front end", || objc::rc::autoreleasepool(|| device.new_library_with_source(text, &metal::CompileOptions::new())))
                 .unwrap_or_else(|e| panic!("the Metal library of kernel {name} ({}) does not compile: {e}", hex(&library[..8])));
             let seconds = started.elapsed().as_secs_f64();
             count(|c| c.front_end_s += seconds);
@@ -771,7 +771,7 @@ fn linked(device: &Device, split: &rerail_ukl::split::Split) -> Result<(Library,
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut made: HashMap<&str, metal::DynamicLibrary> = HashMap::new();
     for level in split.levels() {
-        let built: Vec<(&str, Result<metal::DynamicLibrary, String>)> = std::thread::scope(|scope| {
+        let built: Vec<(&str, Result<metal::DynamicLibrary, String>)> = rerail_accel::exec::scoped(|scope| {
             let running: Vec<_> = level
                 .iter()
                 .map(|u| {
@@ -800,12 +800,12 @@ fn linked(device: &Device, split: &rerail_ukl::split::Split) -> Result<(Library,
 #[cfg(target_os = "macos")]
 fn unit(device: &Device, u: &rerail_ukl::split::Unit, links: &[metal::DynamicLibrary], path: &Path) -> Result<metal::DynamicLibrary, String> {
     objc::rc::autoreleasepool(|| {
-        if path.is_file() {
-            if let Ok(d) = device.new_dynamic_library_with_url(&url_of(path)) {
-                // Its use, for the store's pruning (the oldest unused first).
-                let _ = std::fs::File::options().append(true).open(path).and_then(|f| f.set_modified(std::time::SystemTime::now()));
-                return Ok(d);
-            }
+        if path.is_file()
+            && let Ok(d) = device.new_dynamic_library_with_url(&url_of(path))
+        {
+            // Its use, for the store's pruning (the oldest unused first).
+            let _ = std::fs::File::options().append(true).open(path).and_then(|f| f.set_modified(std::time::SystemTime::now()));
+            return Ok(d);
         }
         let o = metal::CompileOptions::new();
         o.set_library_type(metal::MTLLibraryType::Dynamic);
@@ -942,7 +942,7 @@ pub fn compile_wanted(which: Which, limit: usize) -> Vec<Compiled> {
         let started = std::time::Instant::now();
         let _ = make(key, &source, &w.name, w.constant, true);
         let seconds = started.elapsed().as_secs_f64();
-        crate::forms::compiled("msl-pipeline", &w.pipeline, &w.name, seconds, true);
+        rerail_accel::forms::compiled("msl-pipeline", &w.pipeline, &w.name, seconds, true);
         out.push(Compiled { name: w.name, pipeline: w.pipeline, seconds, skipped: None });
     }
     for list in wanted_lists(Which::All) {
@@ -1064,28 +1064,28 @@ impl Default for Maintenance {
 }
 
 #[cfg(target_os = "macos")]
-impl crate::upkeep::Job for Maintenance {
+impl rerail_accel::upkeep::Job for Maintenance {
     fn name(&self) -> String {
         "metal-kernels compile and prune".to_owned()
     }
 
-    fn due(&mut self) -> crate::upkeep::Due {
+    fn due(&mut self) -> rerail_accel::upkeep::Due {
         if !pending(Which::All).is_empty() || !self.pruned {
-            crate::upkeep::Due::Idle { starve: std::time::Duration::from_secs(24 * 3600) }
+            rerail_accel::upkeep::Due::Idle { starve: std::time::Duration::from_secs(24 * 3600) }
         } else {
-            crate::upkeep::Due::No
+            rerail_accel::upkeep::Due::No
         }
     }
 
-    fn step(&mut self, _slice: &crate::upkeep::Slice) -> Result<crate::upkeep::Step, String> {
+    fn step(&mut self, _slice: &rerail_accel::upkeep::Slice) -> Result<rerail_accel::upkeep::Step, String> {
         if compile_wanted(Which::All, 1).is_empty() {
             prune(max_bytes());
             // The device layer's store (CUDA's cubins, OpenCL's binaries, the CPU's libraries; decision 0440 step B).
             rerail_device::store::prune(rerail_device::store::max_bytes());
             self.pruned = true;
-            return Ok(crate::upkeep::Step::Done);
+            return Ok(rerail_accel::upkeep::Step::Done);
         }
-        Ok(crate::upkeep::Step::More)
+        Ok(rerail_accel::upkeep::Step::More)
     }
 }
 
