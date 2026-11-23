@@ -29,7 +29,7 @@ function rule(id: string, placement: CodeRulePlacement): RerailRuleEntry {
     id,
     path: `/packs/rr-sample/rules/${id}.rerail`,
     placement,
-    scope: { include: ["**/*.py"], exclude: [] },
+    scope: { include: ["**/*.py"], exclude: [], text: [] },
     language: "python",
     files: [],
     provenance: {

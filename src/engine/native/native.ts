@@ -368,7 +368,12 @@ export type RrDescription =
       description: string | null;
       mode: "block" | "steer" | "log";
       language: string | null;
-      scope: { include: string[]; exclude: string[]; toolCalls: boolean };
+      /**
+       * The files it reads, as its run selects them: some `include` glob matches (every file when none) and no
+       * `exclude` glob does. Every `.scope` form that narrows them is here (`dirs "a"` as `a/**`, `tests false` as the
+       * test folders' globs). `text`: the `.scope text` globs, files of no grammar it reads as text. Each list sorted.
+       */
+      scope: { include: string[]; exclude: string[]; text: string[]; toolCalls: boolean };
       /** The codes its findings can have, sorted. */
       codes: string[];
       /** How many `.test` blocks it holds. */

@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "../child-process.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../package-root.js";
-import type { RrBudgets } from "./rr-budgets.js";
+import { type RrBudgets, RUNNER_VARIABLES } from "./rr-budgets.js";
 import type { RrChildRequest, RrChildResult, RrMemoryReport } from "./rr-messages.js";
 
 export type RrKillReason = "deadline" | "memory" | "aborted";
@@ -75,17 +75,18 @@ function childArguments(): string[] {
 }
 
 /**
- * This process's environment, for the child: its thread cap, its store, and none of the runner's own settings.
+ * This process's environment, for the child: its thread cap, its store, and none of the runner's own settings
+ * (`RUNNER_VARIABLES`); every other variable reaches it as it is, the engine's own (`RERAIL_RR_LIB`, …) among them.
  *
  * With no store (`budgets.store` false, the default; `rr-budgets.ts` says why) the child runs with
  * `RERAIL_TAPE_CACHE=off`. With one, it keeps the engine's store of the checkout it runs in: the engine picks one per
  * working directory (`$TMPDIR/rerail-stores/<build>-<directory>.sqlite`, one owner process at a time), never the
  * daemon's content store, so runs of one checkout reuse each other's work and runs of two checkouts never share a
- * store. Either way a `RERAIL_TAPE_CACHE` this process has is not passed on (every `RERAIL_*` variable is also part
- * of a run's reuse key).
+ * store. Either way a `RERAIL_TAPE_CACHE` this process has is not passed on: the runner chooses the child's store.
  */
 function childEnvironment(budgets: RrBudgets): NodeJS.ProcessEnv {
-  const kept = Object.entries(process.env).filter(([name]) => !name.startsWith("RERAIL_RR_") && name !== "RERAIL_TAPE_CACHE");
+  const dropped = new Set([...RUNNER_VARIABLES, "RERAIL_TAPE_CACHE"]);
+  const kept = Object.entries(process.env).filter(([name]) => !dropped.has(name));
   return { ...Object.fromEntries(kept), RERAIL_THREADS: String(budgets.threads), ...(budgets.store ? {} : { RERAIL_TAPE_CACHE: "off" }) };
 }
 

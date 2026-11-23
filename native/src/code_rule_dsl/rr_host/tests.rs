@@ -31,6 +31,20 @@ Shout(c) :- shout_call(c).
 /// A valid program that declares no finding: its run fails (`tools::run_rr`).
 const QUIET: &str = ".policy \"rr-host-quiet\" revision 1\n.language python\n.mode log\n.decl q(n: node)\nq(n) :- kind(n, \"call\").\n";
 
+/// A rule narrowed by every `.scope` form that selects documents.
+const NARROWED: &str = ".policy \"rr-host-narrowed\" revision 1
+.language python
+.mode log
+.scope include \"**/*.py\"
+.scope dirs \"shop\"
+.scope exclude \"vendor/**\"
+.scope tests false
+.scope text \"**/*.md\"
+
+.violation Narrowed(at: node) \"narrowed\"
+Narrowed(c) :- kind(c, \"call\").
+";
+
 const MULTI_BYTE: &str = "greeting = \"héllo wörld 漢字\"; shout(\"ü\")\n";
 const MULTI_LINE: &str = "def f():\n    return shout(\n        1,\n    )\n";
 
@@ -70,14 +84,15 @@ fn describe_reads_what_a_rule_states_and_names_why_a_file_is_refused() {
             ("shout.rerail", SHOUT),
             ("bad.rerail", ".policy \"bad\" revision 1\nBad(c) :- kind(c, \"call\"\n"),
             ("coded.rerail", ".policy \"coded\" revision 1\n.language python\n.mode steer\n.violation Coded(at: node, c: symbol) code {c} \"x\"\nCoded(n, \"A1\") :- kind(n, \"call\").\n"),
+            ("narrowed.rerail", NARROWED),
         ],
     );
-    let rows = describe::describe(&[root.join("shout.rerail"), root.join("bad.rerail"), root.join("coded.rerail")]);
+    let rows = describe::describe(&[root.join("shout.rerail"), root.join("bad.rerail"), root.join("coded.rerail"), root.join("narrowed.rerail")]);
     let _ = std::fs::remove_dir_all(&root);
     let row = &rows[0];
     assert_eq!(row["ok"], true, "{row:#}");
     assert_eq!([&row["id"], &row["revision"], &row["description"], &row["mode"], &row["language"]], [&json!("rr-host-shout"), &json!(2), &json!("Calls of shout()."), &json!("log"), &json!("python")]);
-    assert_eq!(row["scope"], json!({"include": ["**/*.py"], "exclude": ["vendor/**"], "toolCalls": false}));
+    assert_eq!(row["scope"], json!({"include": ["**/*.py"], "exclude": ["vendor/**"], "text": [], "toolCalls": false}));
     assert_eq!([&row["codes"], &row["tests"], &row["suppresses"], &row["fixes"]], [&json!(["Shout"]), &json!(1), &json!(true), &json!(false)]);
     let files: Vec<&str> = row["files"].as_array().unwrap().iter().map(|file| file["path"].as_str().unwrap()).collect();
     assert!(files[0].ends_with("shout.rerail") && files.iter().any(|file| file.ends_with("lib/calls.rerail")), "{files:?}");
@@ -85,6 +100,18 @@ fn describe_reads_what_a_rule_states_and_names_why_a_file_is_refused() {
     assert_eq!((&rows[1]["ok"], bad.matches("bad.rerail").count()), (&json!(false), 1), "{bad}");
     let coded = rows[2]["error"].as_str().unwrap();
     assert!(rows[2]["ok"] == false && coded.contains(".violation Coded: its code is a column"), "{coded}");
+    // Every form that narrows the documents read, as the run applies them: `dirs` as its folder's glob, `tests false`
+    // as the test folders', and `text`'s globs beside them.
+    assert_eq!(rows[3]["ok"], true, "{:#}", rows[3]);
+    assert_eq!(
+        rows[3]["scope"],
+        json!({
+            "include": ["**/*.py", "shop/**"],
+            "exclude": ["**/test/**", "**/tests/**", "test/**", "tests/**", "vendor/**"],
+            "text": ["**/*.md"],
+            "toolCalls": false,
+        })
+    );
 }
 
 #[test]

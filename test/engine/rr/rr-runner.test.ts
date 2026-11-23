@@ -1,7 +1,7 @@
 import * as childProcess from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,6 +65,8 @@ afterEach(async () => {
   delete process.env.RERAIL_RR_DEADLINE_MS;
   delete process.env.RERAIL_RR_STORE;
   delete process.env.RERAIL_RR_THREADS;
+  delete process.env.RERAIL_RR_DESCRIBE_DEADLINE_MS;
+  delete process.env.RERAIL_RR_LIB;
   vi.clearAllMocks();
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
@@ -128,7 +130,7 @@ describe("describeRerailPolicies", () => {
       description: "Calls of shout().",
       mode: "log",
       language: "python",
-      scope: { include: ["**/*.py"], exclude: ["vendor/**"], toolCalls: false },
+      scope: { include: ["**/*.py"], exclude: ["vendor/**"], text: [], toolCalls: false },
       codes: ["Shout"],
       tests: 1,
       suppresses: true,
@@ -146,6 +148,29 @@ describe("describeRerailPolicies", () => {
   it("answers the same without a promise", async () => {
     const { rule } = checkout({});
     expect(describeRerailPoliciesSync([rule])).toEqual(await describeRerailPolicies([rule]));
+  });
+
+  it("reads core's library where RERAIL_RR_LIB names it: the engine's own variable reaches the child", async () => {
+    const library = realpathSync(mkdtempSync(join(temporary, "library-")));
+    roots.push(library);
+    cpSync(join(PACKAGE_ROOT, "docs", "rule-syntax", "lib"), library, { recursive: true });
+    process.env.RERAIL_RR_LIB = library;
+    const { rule } = checkout({});
+    const [row] = await describeRerailPolicies([rule]);
+    expect(row?.ok === true && row.files.map(file => file.path)).toContain(join(library, "core.rerail"));
+  });
+
+  it("stops a describe past its own deadline and says so for each file, whatever a run's deadline is", () => {
+    process.env.RERAIL_RR_DEADLINE_MS = "1";
+    const { rule } = checkout({});
+    expect(describeRerailPoliciesSync([rule])[0]).toMatchObject({ path: rule, ok: true });
+    process.env.RERAIL_RR_DESCRIBE_DEADLINE_MS = "1";
+    expect(describeRerailPoliciesSync([rule])).toEqual([{
+      path: rule,
+      ok: false,
+      error: "the engine did not finish reading it within 1 ms, the limit for reading rule files (RERAIL_RR_DESCRIBE_DEADLINE_MS raises it)",
+    }]);
+    expect(leftDirectories()).toEqual([]);
   });
 });
 

@@ -21,7 +21,7 @@ fn described(path: &Path) -> Result<Value, String> {
     Ok(json!({
         "path": path, "ok": true, "id": header.id, "revision": header.revision, "description": header.description,
         "mode": header.mode, "language": header.language,
-        "scope": {"include": header.include, "exclude": header.exclude, "toolCalls": header.tool_calls},
+        "scope": scope(&program, header.tool_calls),
         "codes": codes(&program, &header.id).map_err(|e| format!("{}: {e}", path.display()))?,
         "tests": tests(path)?,
         "suppresses": program.settings.iter().any(|(key, _)| key == "suppress"),
@@ -49,43 +49,47 @@ struct Header {
     description: Option<String>,
     mode: String,
     language: Option<String>,
-    include: Vec<String>,
-    exclude: Vec<String>,
     tool_calls: bool,
 }
 
 impl Header {
     fn of(settings: &[(String, String)]) -> Result<Header, String> {
         let (id, revision) = policy(setting(settings, "policy").ok_or("no `.policy \"id\" revision N`")?)?;
-        let mut header = Header {
+        let mut tool_calls = false;
+        for (_, text) in settings.iter().filter(|(key, _)| key == "scope") {
+            tool_calls |= words(text)?.first().is_some_and(|word| word == "tool_calls");
+        }
+        Ok(Header {
             id,
             revision,
             description: setting(settings, "description").map(first_text).transpose()?.flatten(),
             mode: mode(settings)?,
             language: setting(settings, "language").map(first_text).transpose()?.flatten(),
-            include: Vec::new(),
-            exclude: Vec::new(),
-            tool_calls: false,
-        };
-        for (_, text) in settings.iter().filter(|(key, _)| key == "scope") {
-            header.scope(text)?;
-        }
-        Ok(header)
+            tool_calls,
+        })
     }
+}
 
-    /// One `.scope` line: its globs, or `tool_calls`. The other forms (`dirs`, `text`, `tests`, …) narrow the run
-    /// natively and are not described.
-    fn scope(&mut self, text: &str) -> Result<(), String> {
-        let words = words(text)?;
-        let globs = words.iter().skip(1).cloned();
-        match words.first().map(String::as_str) {
-            Some("include") => self.include.extend(globs),
-            Some("exclude") => self.exclude.extend(globs),
-            Some("tool_calls") => self.tool_calls = true,
-            _ => {}
-        }
-        Ok(())
+/// The documents the rule reads, as its run selects them (`corpus::scoped`): the globs of `Program::doc_scopes`, which
+/// lowering makes of every `.scope` form that narrows them (`include`; `dirs "a"` as `a/**`; `exclude`; `tests false`
+/// as the test folders' globs; an option's entry, unresolved, which matches no path), and `.scope text`'s globs
+/// (`Program::text_globs`), the files of no grammar read as text. A path is read when no `include` glob is given or one
+/// matches it, and no `exclude` glob does (`front::in_doc_scopes`). `report dirs` and `embedded` say where findings
+/// land and whether guests are read, not which files: they are not here. Each list sorted, each glob once.
+fn scope(program: &Program, tool_calls: bool) -> Value {
+    let (mut include, mut exclude) = (Vec::new(), Vec::new());
+    for (within, out) in program.doc_scopes.iter().flatten() {
+        include.extend(within.iter().cloned());
+        exclude.extend(out.iter().cloned());
     }
+    json!({"include": sorted(include), "exclude": sorted(exclude), "text": sorted(program.text_globs.clone()), "toolCalls": tool_calls})
+}
+
+/// `globs` sorted, each once.
+fn sorted(mut globs: Vec<String>) -> Vec<String> {
+    globs.sort();
+    globs.dedup();
+    globs
 }
 
 /// The first setting named `key`, as written.

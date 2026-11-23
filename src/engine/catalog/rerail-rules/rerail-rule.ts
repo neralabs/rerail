@@ -24,7 +24,7 @@ export interface RerailRule {
   readonly mode: RuleMode;
   readonly description: string | null;
   readonly language: string | null;
-  readonly scope: { readonly include: readonly string[]; readonly exclude: readonly string[] };
+  readonly scope: { readonly include: readonly string[]; readonly exclude: readonly string[]; readonly text: readonly string[] };
   /** The violation codes the file's own `.violation`s report. */
   readonly codes: readonly string[];
   /** The file's text. */
@@ -65,7 +65,7 @@ export function rerailRuleOf(described: RerailDescription, source: string): Rera
     mode: described.mode,
     description: described.description,
     language: described.language,
-    scope: { include: described.scope.include, exclude: described.scope.exclude },
+    scope: { include: described.scope.include, exclude: described.scope.exclude, text: described.scope.text },
     codes: described.codes,
     source,
     path: described.path,

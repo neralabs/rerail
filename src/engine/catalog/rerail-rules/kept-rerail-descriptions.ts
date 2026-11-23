@@ -20,7 +20,7 @@ export const keptDescriptionSchema = z.object({
   description: z.string().nullable(),
   mode: z.enum(RULE_MODES),
   language: z.string().nullable(),
-  scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()), toolCalls: z.boolean() }),
+  scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()), text: z.array(z.string()), toolCalls: z.boolean() }),
   codes: z.array(z.string()),
   tests: z.number(),
   suppresses: z.boolean(),

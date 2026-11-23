@@ -801,6 +801,9 @@ run at different times from JSON rules.
   both. A run is also bounded by memory (`RERAIL_RR_MEMORY_MB`) and threads (`RERAIL_RR_THREADS`).
   `RERAIL_RR_QUIET_MS` replaces the 10-second quiet period. A run stopped at a budget gives each of its rules a
   `budget-exceeded` failure that names the setting to raise; the other rules' results stand.
+- **Reading the rules.** Rerail reads what a pack's `.rerail` rules say when it loads the pack, and waits at most 30
+  seconds for that (`RERAIL_RR_DESCRIBE_DEADLINE_MS` replaces it). A pack whose rules take longer is left out, with
+  a message that says the limit was reached; Rerail tries again the next time it loads its packs.
 - **Which files.** A `.rerail` run reads the files Git lists in the checkout (tracked, and untracked ones Git does
   not ignore), leaving out the folders Rerail's own walks never enter (`node_modules`, `dist`, `.git`, `.venv` and the
   like). It reads no file Git ignores, even where the repository's audits are set not to follow `.gitignore`.

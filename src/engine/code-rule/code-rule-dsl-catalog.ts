@@ -327,8 +327,11 @@ export interface RerailRuleEntry {
   readonly id: string;
   /** The rule's file, installed in its pack. */
   readonly path: string;
-  /** The files the rule reads, as its `.scope` says: some include glob (every file when none), and no exclude glob. */
-  readonly scope: { readonly include: readonly string[]; readonly exclude: readonly string[] };
+  /**
+   * The files the rule reads, as its run selects them (`RrDescription`'s `scope`): some include glob (every file when
+   * none), and no exclude glob; `text`, the globs of files of no grammar it reads as text.
+   */
+  readonly scope: { readonly include: readonly string[]; readonly exclude: readonly string[]; readonly text: readonly string[] };
   /** The language its `.language` names, or null. */
   readonly language: string | null;
   /**

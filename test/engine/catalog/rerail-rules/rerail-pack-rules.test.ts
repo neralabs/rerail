@@ -83,7 +83,7 @@ describe("a pack's rules written in .rerail", { timeout: CHILD_TIMEOUT }, () => 
         mode: "steer",
         description: "Use logging instead of print calls, so output goes where the application's logs go.",
         language: "python",
-        scope: { include: ["**/*.py"], exclude: [] },
+        scope: { include: ["**/*.py"], exclude: [], text: [] },
         codes: ["P001"],
         source: readFileSync(join(directory, "rules", "rr-sample-print-call.rerail"), "utf8"),
       },
@@ -180,7 +180,7 @@ describe("the engine's readings kept between processes", () => {
   /** A reading of `path` as the engine gives one, with the rule file and the library file it includes. */
   const reading = (directory: string, path: string): RerailDescription => ({
     path, ok: true, id: "rr-sample-print-call", revision: 1, description: null, mode: "steer", language: "python",
-    scope: { include: ["**/*.py"], exclude: [], toolCalls: false }, codes: ["P001"], tests: 1, suppresses: false, fixes: false,
+    scope: { include: ["**/*.py"], exclude: [], text: [], toolCalls: false }, codes: ["P001"], tests: 1, suppresses: false, fixes: false,
     files: [path, join(directory, LIBRARY)].map(file => ({ path: file, sha256: sha256(file) })),
   });
 
@@ -228,9 +228,9 @@ describe("the checkout catalog's .rerail rules", { timeout: CHILD_TIMEOUT }, () 
       const catalog = catalogs.catalog(root);
       expect(catalog.snapshot().codeRules).toEqual([]);
       expect(catalog.snapshot().rerailRules.map(({ id, path, scope, language, placement }) => ({ id, path, scope, language, placement }))).toEqual([
-        { id: "rr-sample-assert", path: join(installed, "rules", "rr-sample-assert.rerail"), scope: { include: ["**/*.py"], exclude: [] }, language: "python", placement: [{ folder: "", mode: "steer" }] },
-        { id: "rr-sample-deprecated-call", path: join(installed, "rules", "rr-sample-deprecated-call.rerail"), scope: { include: ["**/*.py"], exclude: [] }, language: "python", placement: [{ folder: "", mode: "steer" }] },
-        { id: "rr-sample-print-call", path: join(installed, "rules", "rr-sample-print-call.rerail"), scope: { include: ["**/*.py"], exclude: [] }, language: "python", placement: [{ folder: "", mode: "steer" }] },
+        { id: "rr-sample-assert", path: join(installed, "rules", "rr-sample-assert.rerail"), scope: { include: ["**/*.py"], exclude: [], text: [] }, language: "python", placement: [{ folder: "", mode: "steer" }] },
+        { id: "rr-sample-deprecated-call", path: join(installed, "rules", "rr-sample-deprecated-call.rerail"), scope: { include: ["**/*.py"], exclude: [], text: [] }, language: "python", placement: [{ folder: "", mode: "steer" }] },
+        { id: "rr-sample-print-call", path: join(installed, "rules", "rr-sample-print-call.rerail"), scope: { include: ["**/*.py"], exclude: [], text: [] }, language: "python", placement: [{ folder: "", mode: "steer" }] },
       ]);
       expect(catalog.status.ruleCount).toBe(3);
       const printCall = catalog.snapshot().rerailRules.find(entry => entry.id === "rr-sample-print-call")!;

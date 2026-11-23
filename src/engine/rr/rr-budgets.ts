@@ -31,6 +31,14 @@ export interface RrBudgets {
 const DEADLINE_MS = 10 * 60_000;
 
 /**
+ * 30 seconds, for reading rule files without running them (`describeRerailPolicies`). The catalog reads a pack's rules
+ * in one synchronous call when it loads, which holds the daemon (every session's hooks) until it returns, so a slow or
+ * stuck engine must not hold it for the runs' ten minutes. Reading the Django pack's 27 rules took 3.5 s with a new
+ * store on 16 threads and 4.8 s on 2; 30 seconds leaves about six times that for a slower machine or a larger pack.
+ */
+const DESCRIBE_DEADLINE_MS = 30_000;
+
+/**
  * Half the cores, at least one. The run shares the machine with the person's editor, build and agent. With half the
  * cores the laptop stays usable and the engine still runs in parallel: the 4,500-file run took 274 s on 4 threads
  * against 251 s on 16.
@@ -58,18 +66,37 @@ function defaultMemoryBytes(): number {
  */
 const RR_STORE = "RERAIL_RR_STORE";
 
+const RR_DEADLINE = "RERAIL_RR_DEADLINE_MS";
+/** Replaces `DESCRIBE_DEADLINE_MS`. */
+export const RR_DESCRIBE_DEADLINE = "RERAIL_RR_DESCRIBE_DEADLINE_MS";
+const RR_MEMORY = "RERAIL_RR_MEMORY_MB";
+const RR_THREADS = "RERAIL_RR_THREADS";
+/** The quiet period before a run after edits (`rr-edit-runs.ts`). */
+export const RR_QUIET_VARIABLE = "RERAIL_RR_QUIET_MS";
+
+/**
+ * The runner's own settings, every one: read in this process, never passed to the child (`rr-child-process.ts`). The
+ * engine's own variables keep reaching it, `RERAIL_RR_LIB` (where its `.rerail` library is) among them.
+ */
+export const RUNNER_VARIABLES: readonly string[] = [RR_DEADLINE, RR_DESCRIBE_DEADLINE, RR_MEMORY, RR_THREADS, RR_STORE, RR_QUIET_VARIABLE];
+
 /**
  * The budgets of a run: each `RERAIL_RR_*` variable that is set, else the caller's deadline (`deadlineMs`), else the
  * default. Throws for a variable that holds no value it takes.
  */
 export function rrBudgets(deadlineMs?: number, environment: NodeJS.ProcessEnv = process.env): RrBudgets {
-  const memoryMb = positive(environment, "RERAIL_RR_MEMORY_MB");
+  const memoryMb = positive(environment, RR_MEMORY);
   return {
-    deadlineMs: positive(environment, "RERAIL_RR_DEADLINE_MS") ?? Math.min(deadlineMs ?? DEADLINE_MS, MAX_OVERRIDE),
-    threads: positive(environment, "RERAIL_RR_THREADS") ?? defaultThreads(),
+    deadlineMs: positive(environment, RR_DEADLINE) ?? Math.min(deadlineMs ?? DEADLINE_MS, MAX_OVERRIDE),
+    threads: positive(environment, RR_THREADS) ?? defaultThreads(),
     memoryBytes: memoryMb === undefined ? defaultMemoryBytes() : memoryMb * 1024 ** 2,
     store: keepsStore(environment),
   };
+}
+
+/** The budgets of reading rule files (`describeRerailPolicies`): a run's, with the describe deadline (`DESCRIBE_DEADLINE_MS`). */
+export function describeBudgets(environment: NodeJS.ProcessEnv = process.env): RrBudgets {
+  return { ...rrBudgets(undefined, environment), deadlineMs: positive(environment, RR_DESCRIBE_DEADLINE) ?? DESCRIBE_DEADLINE_MS };
 }
 
 /** Whether `RR_STORE` asks for the checkout's store: `checkout`; `off` or unset, no store. */
