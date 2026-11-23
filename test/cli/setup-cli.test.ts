@@ -456,6 +456,7 @@ describe("rerail install --root", () => {
 
     expect(await runInstallCommand(["--root", packageRoot, "--remove", "--dry-run"], context)).toBe(0);
     expect(output.mock.calls.join("")).toContain(`Would remove ${updater.versionsRoot} (the installed versions).`);
+    expect(output.mock.calls.join("")).toContain(`Would remove ${updater.statePath} (the record of the installed versions).`);
     expect(existsSync(updater.versionsRoot)).toBe(true);
 
     expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);

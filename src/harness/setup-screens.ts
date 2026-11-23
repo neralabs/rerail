@@ -541,7 +541,11 @@ function implicitRows(settings: readonly LintConfigInputSetting[], style: Style)
     const [{ on, because }] = group as [LintConfigInputSetting];
     const state = on ? "on" : "off";
     const count = group.length === 1 ? `1 rule starts ${state}` : `${group.length} rules start ${state}`;
-    return `    ${count}  ${style.dim(clean(because))}`;
+    const explanation = group.length === 1 ? because : because
+      .replaceAll("does not select it", "does not select them")
+      .replaceAll("does not turn it on", "does not turn them on")
+      .replaceAll("may select it", "may select them");
+    return `    ${count}  ${style.dim(clean(explanation))}`;
   });
 }
 

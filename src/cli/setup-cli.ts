@@ -444,7 +444,7 @@ function installedFiles(context: SetupContext): Array<{ path: string; what: stri
       what: "the installed versions",
       ours: (name, path) => /^\..+\.staging$/u.test(name) || existsSync(join(path, "node_modules", "@neralabs", "rerail")),
     },
-    { path: updater.statePath, what: "the record of them" },
+    { path: updater.statePath, what: "the record of the installed versions" },
     { path: installedPacksPrefix(context.home), what: "the installed rule packs", ours: name => RULE_PACK_PREFIX_ENTRIES.has(name) },
     { path: join(context.home, STATUS_LINES_FOLDER), what: "the Claude Code status lines", ours: isStatusFileEntry },
     { path: mainContentStoreDirectory(), what: "the cache" },
