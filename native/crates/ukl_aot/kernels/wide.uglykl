@@ -10,6 +10,7 @@
 // - a window of 8 bytes at consecutive lanes times a uniform width (8: one load of the lanes; 4: each lane's), as a
 //   slot's array read is; a function of consecutive lanes that shifts and masks them at bit 8 (where a chunk crosses
 //   no multiple of 256, one value and consecutive lanes; else each lane's).
+// - a call that few lanes of a chunk take.
 
 #include <ukl/backend.h>
 #include <ukl/memory.h>
@@ -18,7 +19,16 @@ typedef struct WideArgs { uint32_t n, pad; uint64_t k; } WideArgs;
 UKL_REFLECT_STRUCT(WideArgs, n, pad, k)
 
 // The rows each thread writes.
-#define WIDE_ROWS 26u
+#define WIDE_ROWS 27u
+
+// A rare case's read, a loop over its argument: a call few of a chunk's lanes take (each lane's own call of it, by
+// one value, where at most two do).
+UKL_INLINE uint64_t wide_rare(uint64_t a, uint32_t c)
+{
+  uint64_t h = a;
+  for (uint32_t q = 0u; q < (c & 15u); q += 2u) h = h * 31u + q;
+  return h;
+}
 
 UKL_INLINE uint64_t wide_part(uint32_t j)
 {
@@ -80,4 +90,5 @@ DEFINE_KERNEL2(wide, wide_lanes,
   out[23u*n+i]=ukl_umulhi64(x,y);
   out[24u*n+i]=ukl_ld_window((UKL_GLOBAL const uint8_t*)a,i*w,8u);
   out[25u*n+i]=wide_part(i+3u);
+  out[26u*n+i]=(x&3u)==0u?wide_rare(y,z):x;
 }

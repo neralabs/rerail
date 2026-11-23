@@ -95,5 +95,6 @@ pub fn wide(a: &[u64], b: &[u64], c: &[u32], k: u64, i: usize) -> [u64; crate::W
         ((u128::from(x) * u128::from(y)) >> 64) as u64,
         window(a, i as usize * if k & 1 != 0 { 8 } else { 4 }),
         { let j = i as u32 + 3; u64::from(j >> 8) * 1000 + u64::from(j & 255) },
+        if x & 3 == 0 { (0..z & 15).step_by(2).fold(y, |h, q| h.wrapping_mul(31).wrapping_add(u64::from(q))) } else { x },
     ]
 }

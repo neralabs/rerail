@@ -503,6 +503,12 @@ impl Em<'_> {
         self.line(format!("    let mut x = k[0];\n    for r in 1..{p} {{\n        x = vandq_u32(x, k[r]);\n    }}\n    core::mem::transmute::<uint32x4_t, u128>(x) == u128::MAX"));
         self.line("}");
         self.line("");
+        self.line("/// Mask `k`'s lanes as bits, lane `j` bit `j`.");
+        self.line("#[inline(always)]");
+        self.line(format!("unsafe fn bits(k: &[uint32x4_t; {p}]) -> u32 {{"));
+        self.line(format!("    let w = vld1q_u32([1u32, 2, 4, 8].as_ptr());\n    let mut b = 0u32;\n    for r in 0..{p} {{\n        b |= vaddvq_u32(vandq_u32(k[r], w)) << (4 * r);\n    }}\n    b"));
+        self.line("}");
+        self.line("");
         // The functions' instances, in their numbers' and shapes' order, then the kernel's.
         let insts: Vec<Inst> = self.params.iter().cloned().collect();
         for (id, sh, full, valid) in insts {
@@ -987,24 +993,36 @@ impl Em<'_> {
                 // the loop's own where the condition is one value, or consecutive lanes against one; it is worth
                 // another where the hint says the lanes go on together (`UKL_LIKELY`), and not otherwise (lanes
                 // that part early make it a second branch of each chunk's that the processor guesses wrong).
-                // A condition of one value, and nothing in the loop that ends some lanes' rounds: all its lanes go on
-                // or none, so its rounds are Rust's, their lanes the statement's.
+                // A condition of one value (the tape's, or this instance's: of uniform arguments), and nothing in the
+                // loop that ends some lanes' rounds: all its lanes go on or none, so its rounds are Rust's, their
+                // lanes the statement's. A condition of lanes here: what was written of it goes, as below.
                 let leaves = (n..n + self.v.size(n)).any(|i| matches!(self.v.kind(i), Kind::Break | Kind::Continue | Kind::Return));
-                if v.level(cond) == crate::k::Level::Uniform && !leaves && !self.effects(cond) {
+                let uniform = v.level(cond) == crate::k::Level::Uniform;
+                if !leaves && !self.effects(cond) {
+                    let (at, top) = (self.out.len(), self.top);
                     self.line("loop {");
                     self.ind += 1;
                     self.line("// Rounds of one condition: every lane goes on.");
                     match self.expr(cond, cx)? {
-                        V::S(c, _) => self.line(format!("if !({}) {{ break; }}", truth(&c, M::B))),
-                        c => return err(format!("a uniform loop's condition of lanes: {c:?}")),
+                        V::S(c, _) => {
+                            self.line(format!("if !({}) {{ break; }}", truth(&c, M::B)));
+                            self.stmt(body, cx)?;
+                            if let Some(s) = step {
+                                self.stmt(s, cx)?;
+                            }
+                            self.ind -= 1;
+                            self.line("}");
+                            return Ok(());
+                        }
+                        c if uniform => return err(format!("a uniform loop's condition of lanes: {c:?}")),
+                        _ => {
+                            self.out.truncate(at + (self.top - top));
+                            self.ind -= 1;
+                            let d = self.ind;
+                            self.memo.retain(|m| m.2 <= d);
+                            self.valid.retain(|m| m.1 <= d);
+                        }
                     }
-                    self.stmt(body, cx)?;
-                    if let Some(s) = step {
-                        self.stmt(s, cx)?;
-                    }
-                    self.ind -= 1;
-                    self.line("}");
-                    return Ok(());
                 }
                 let (at, top) = (self.out.len(), self.top);
                 if cx.full && !self.effects(cond) && !self.exits(body) && step.is_none_or(|s| !self.exits(s)) {
@@ -1730,141 +1748,11 @@ impl Em<'_> {
                 let id = p[3];
                 let Some(&b) = self.bodies.get(&id) else { return err(format!("a call of function {id}, which has no body")) };
                 let np = self.v.w(b, 6) as usize;
-                let ret = M(self.v.w(b, 4));
-                // Where all lanes run, the instance of all lanes (no mask); else the mask's.
-                let mut args = vec!["l".to_string(), "lid0".to_string()];
-                if !cx.full {
-                    args.push(cx.cur.clone());
-                }
-                // A function with barriers: the kernel's phase of it, and the chunk's state.
-                let phased = self.phases(id).is_some();
-                if phased && !cx.kernel {
-                    return err(format!("a barrier in function {id}, which the kernel's function calls (barriers part only the kernel's)"));
-                }
                 let mut vals = Vec::new();
                 for &c in kids.iter().take(np) {
                     vals.push(self.expr(c, cx)?);
                 }
-                // The instance of its arguments' shapes (an aggregate's, its address, one).
-                let mut shapes: Vec<Sh> = vals.iter().enumerate().map(|(k, a)| if M(self.v.w(b, 8 + 2 * k)).is_agg() { Sh::S } else { Sh::of(a) }).collect();
-                // One parameter of each buffer by its name; another of it as any pointer.
-                for k in 1..shapes.len() {
-                    if shapes[k].root().is_some() && shapes[..k].iter().any(|s| s.root() == shapes[k].root()) {
-                        shapes[k] = shapes[k].rootless();
-                    }
-                }
-                let valid: Vec<u32> = {
-                    let mut v: Vec<u32> = shapes.iter().filter_map(|s| s.root()).filter(|&k| self.is_valid(k)).collect();
-                    v.sort();
-                    v
-                };
-                // A parameter of consecutive lanes that would take a chunk crossing no `2^K` (`Em::wants`): lanes
-                // known so are passed so (`Sh::Run`); a parameter's that are not, its own callers are asked to test;
-                // others this call tests, and calls the instance that knows where they pass (one test of a chunk).
-                let mut test = None;
-                for k in 0..shapes.len() {
-                    let (Sh::Iota, Some(&want), V::Iota(f, _)) = (shapes[k], self.wants.get(&(id, k)), &vals[k]) else { continue };
-                    if let Some(&b) = self.runs.get(f) {
-                        if b <= want {
-                            shapes[k] = Sh::Run(b);
-                        }
-                    } else if let Some(&p) = self.iota_params.get(f) {
-                        self.want(p, want);
-                    } else if test.is_none() {
-                        test = Some((k, f.clone(), want));
-                    }
-                }
-                let run = test.as_ref().map(|(k, f, want)| {
-                    let mut s = shapes.clone();
-                    s[*k] = Sh::Run(*want);
-                    let ctx = self.inst(id, &s, cx.full, &valid);
-                    self.seen.insert((id, s.clone(), cx.full, valid.clone()));
-                    (s, ctx, f.clone(), *want)
-                });
-                self.seen.insert((id, shapes.clone(), cx.full, valid.clone()));
-                let ctx = self.inst(id, &shapes, cx.full, &valid);
-                // Both instances' results of one shape: each lane's, if either's is.
-                if let Some((_, rc, ..)) = &run
-                    && self.rets.get(rc).copied().unwrap_or(false) != self.rets.get(&ctx).copied().unwrap_or(false)
-                {
-                    self.rets.insert(*rc, true);
-                    self.rets.insert(ctx, true);
-                    self.again = true;
-                }
-                if let Some((_, rc, ..)) = &run
-                    && self.risky_insts.contains(rc)
-                {
-                    self.risky = true;
-                }
-                if self.risky_insts.contains(&ctx) {
-                    self.risky = true;
-                }
-                // Its first statement's access, through a parameter of every lane's own element, where all lanes run.
-                let first: Vec<u32> = (0..shapes.len()).filter(|&k| matches!(shapes[k], Sh::At(_, Ix::Gid, Some(_))) && self.first_access(b, k)).filter_map(|k| shapes[k].root()).collect();
-                for (k, a) in vals.into_iter().enumerate() {
-                    let pm = M(self.v.w(b, 8 + 2 * k));
-                    match (shapes[k], a) {
-                        (_, V::S(s, _)) if pm.is_agg() => args.push(s),
-                        (_, _) if pm.is_agg() => return err("an aggregate argument of each lane"),
-                        (Sh::S, V::S(s, am)) => args.push(conv(&s, am, pm)),
-                        (Sh::Arg(_), V::S(s, _)) => args.push(s),
-                        (Sh::In(_), V::S(s, am)) => args.push(conv(&s, am, pm)),
-                        (Sh::Gid, _) => {}
-                        (Sh::Iota | Sh::Run(_), V::Iota(f, _)) => args.push(f),
-                        (Sh::L, a) => {
-                            let l = if pm == M::B { self.mask(&a)? } else { self.lanes(&a, pm)? };
-                            args.push(l);
-                        }
-                        (Sh::Lin, V::Lin(f, s)) => {
-                            args.push(f);
-                            args.push(s);
-                        }
-                        (Sh::At(_, ix, _), V::At { base, idx, .. }) => {
-                            // An offset of no base: one of a null pointer, the same bits.
-                            args.push(if base.is_empty() { "core::ptr::null::<u8>()".into() } else { base });
-                            match (ix, *idx) {
-                                (Ix::Gid, _) => {}
-                                (_, V::Iota(f, _)) => args.push(f),
-                                (_, V::Lin(f, s)) => {
-                                    args.push(f);
-                                    args.push(s);
-                                }
-                                (_, i) => args.push(self.lanes(&i, M::U32)?),
-                            }
-                        }
-                        (sh, a) => return err(format!("{a:?} passed as {sh:?}")),
-                    }
-                }
-                if phased {
-                    args.push("phase".into());
-                    args.push(format!("st.add((lid0 / {}) as usize * {})", self.w, self.state_bytes(id)));
-                }
-                let call = match &run {
-                    // The chunk's first lane's bits below `K` leave room for its others: it crosses no `2^K`.
-                    Some((s, _, f, k)) => {
-                        let m = if *k >= 32 { u32::MAX } else { (1u32 << k) - 1 };
-                        let a = args.join(", ");
-                        format!("if ({f} & {m}u32) <= {}u32 {{ {}({a}) }} else {{ {}({a}) }}", m - (self.w - 1), fname(id, s, cx.full, &valid), fname(id, &shapes, cx.full, &valid))
-                    }
-                    None => format!("{}({})", fname(id, &shapes, cx.full, &valid), args.join(", ")),
-                };
-                let r = if ret == M::VOID {
-                    self.line(format!("{call};"));
-                    V::None
-                } else {
-                    let t = self.tmp();
-                    self.line(format!("let {t} = {call};"));
-                    if self.rets.get(&ctx).copied().unwrap_or(false) { if ret == M::B { V::K(t) } else { V::L(t, ret) } } else { V::S(t, ret) }
-                };
-                if cx.full {
-                    for k in first {
-                        if !self.is_valid(k) {
-                            let d = self.ind;
-                            self.valid.push((k, d));
-                        }
-                    }
-                }
-                r
+                return self.call(id, vals, cx);
             }
             Kind::Builtin => return self.builtin(n, cx),
             Kind::Cond => return self.cond(n, cx),
@@ -1879,6 +1767,290 @@ impl Em<'_> {
             }
             k => return err(format!("a {k:?} value")),
         })
+    }
+
+    /// The lanes at which the vector side of a rare call costs more than its one-value instance once a lane.
+    const FEW: u32 = 2;
+
+    /// An arm of a `?:` of each lane's condition (`cx` its lanes), node `arm`. A call of a function that reads no
+    /// lane's id or SIMD group (`lane_free`): where few of the chunk's lanes take it (`FEW`, as the program finds
+    /// them), its instance of one value, once a lane at its arguments (a rare case: a side list's search the
+    /// chunk's other lanes do not take), else the lanes' instance.
+    fn arm(&mut self, arm: usize, cx: &Cx) -> R<V> {
+        let id = self.v.w(arm, 3);
+        let eligible = self.v.kind(arm) == Kind::Call
+            && self.bodies.get(&id).is_some_and(|&b| {
+                let r = M(self.v.w(b, 4));
+                r != M::VOID && !r.is_agg() && !r.float() && (r.bytes() == 4 || wide(r) || r == M::B)
+            })
+            && self.lane_free(id, &mut Vec::new());
+        if !eligible {
+            return self.expr(arm, cx);
+        }
+        let b = self.bodies[&id];
+        let (np, m) = (self.v.w(b, 6) as usize, M(self.v.w(b, 4)));
+        let kids: Vec<usize> = self.v.children(arm).collect();
+        let mut vals = Vec::new();
+        for &c in kids.iter().take(np) {
+            vals.push(self.expr(c, cx)?);
+        }
+        let (w, p) = (self.w, self.p);
+        let n = if wide(m) { 2 * p } else { p };
+        let (t, bits) = (self.tmp(), self.tmp());
+        self.line(format!("let {t}: [uint32x4_t; {n}];"));
+        self.line(format!("let {bits} = bits(&{});", cx.cur));
+        self.line(format!("if {bits}.count_ones() <= {} {{", Self::FEW));
+        self.ind += 1;
+        let mut one = Vec::new();
+        for x in &vals {
+            one.push(self.lane_of(x)?);
+        }
+        let (ra, left) = (self.tmp(), self.tmp());
+        self.line(format!("let mut {ra} = [0u32; {}];", n * 4));
+        self.line(format!("let mut {left} = {bits};"));
+        self.line(format!("while {left} != 0 {{"));
+        self.ind += 1;
+        self.line(format!("let j = {left}.trailing_zeros() as usize;"));
+        self.line(format!("{left} &= {left} - 1;"));
+        let r = self.call(id, one, &Cx { full: true, ..cx.clone() })?;
+        // Its value: one, or (an instance whose result is each lane's) its first lane's, every lane's the same.
+        let (lo, hi) = match &r {
+            V::S(s, sm) if m == M::B => (format!("if {} {{ u32::MAX }} else {{ 0 }}", truth(s, *sm)), None),
+            V::S(s, sm) if wide(m) => {
+                let v = self.tmp();
+                self.line(format!("let {v}: u64 = {};", conv(s, *sm, M::U64)));
+                (format!("{v} as u32"), Some(format!("({v} >> 32) as u32")))
+            }
+            V::S(s, sm) => (conv(s, *sm, M::U32), None),
+            V::K(k) => (format!("vgetq_lane_u32::<0>({k}[0])"), None),
+            V::L(l, _) if wide(m) => (format!("vgetq_lane_u32::<0>({l}[0])"), Some(format!("vgetq_lane_u32::<0>({l}[{p}])"))),
+            V::L(l, _) => (format!("vgetq_lane_u32::<0>({l}[0])"), None),
+            x => return err(format!("a rare call's value {x:?}")),
+        };
+        self.line(format!("{ra}[j] = {lo};"));
+        if let Some(hi) = hi {
+            self.line(format!("{ra}[{w} + j] = {hi};"));
+        }
+        self.ind -= 1;
+        self.line("}");
+        self.line(format!("{t} = core::mem::transmute::<[u32; {}], [uint32x4_t; {n}]>({ra});", n * 4));
+        self.ind -= 1;
+        self.line("} else {");
+        self.ind += 1;
+        let r = self.call(id, vals, cx)?;
+        let l = if m == M::B { self.mask(&r)? } else { self.lanes(&r, m)? };
+        self.line(format!("{t} = {l};"));
+        self.ind -= 1;
+        self.line("}");
+        Ok(if m == M::B { V::K(t) } else { V::L(t, m) })
+    }
+
+    /// Whether function `id` (and every function it calls) reads no lane's id, no SIMD group's lanes and meets no
+    /// barrier: a lane's call of its instance of one value is that lane's answer.
+    fn lane_free(&self, id: u32, seen: &mut Vec<u32>) -> bool {
+        if seen.contains(&id) {
+            return true;
+        }
+        seen.push(id);
+        let Some(&b) = self.bodies.get(&id) else { return false };
+        if self.phases(id).is_some() {
+            return false;
+        }
+        (b..b + self.v.size(b)).all(|i| match self.v.kind(i) {
+            Kind::Builtin => !matches!(
+                Builtin::of(self.v.w(i, 0)),
+                Builtin::LocalId
+                    | Builtin::GlobalId
+                    | Builtin::SubGroupLocalId
+                    | Builtin::Barrier
+                    | Builtin::Yield
+                    | Builtin::SubGroupBarrier
+                    | Builtin::SubGroupBallot
+                    | Builtin::SubGroupShuffle
+                    | Builtin::SubGroupShuffleUp
+                    | Builtin::SubGroupShuffleDown
+                    | Builtin::SubGroupShuffleXor
+                    | Builtin::SubGroupReduceAdd
+                    | Builtin::SubGroupReduceMin
+                    | Builtin::SubGroupReduceMax
+            ),
+            Kind::Call => self.lane_free(self.v.w(i, 3), seen),
+            _ => true,
+        })
+    }
+
+    /// Value `x` (of each lane) at lane `j` (a `usize` the code names `j`): one value, of lanes read from an array
+    /// bound here (before the loop over the lanes).
+    fn lane_of(&mut self, x: &V) -> R<V> {
+        let w = self.w;
+        Ok(match x {
+            V::S(..) | V::None => x.clone(),
+            V::Iota(f, _) => V::S(format!("({f}).wrapping_add(j as u32)"), M::U32),
+            V::Lin(f, s) => V::S(format!("({f}).wrapping_add(({s}).wrapping_mul(j as u32))"), M::U32),
+            V::At { base, idx, scale } => {
+                let i = self.lane_of(idx)?;
+                let V::S(i, im) = i else { return err("a lane's index") };
+                let off = format!("(({}) as usize).wrapping_mul({scale})", conv(&i, im, M::U32));
+                if base.is_empty() { V::S(format!("({off} as u64)"), M::U64) } else { V::S(format!("({base} as *const u8).wrapping_add({off})"), M::PTR) }
+            }
+            V::K(..) | V::Cmp { .. } => {
+                let k = self.mask(x)?;
+                let a = self.tmp();
+                self.line(format!("let {a} = core::mem::transmute::<[uint32x4_t; {}], [u32; {w}]>({k});", self.p));
+                V::S(format!("({a}[j] != 0)"), M::B)
+            }
+            V::L(l, m) if wide(*m) => {
+                let a = self.tmp();
+                self.line(format!("let {a} = core::mem::transmute::<[uint32x4_t; {}], [u32; {}]>({l});", 2 * self.p, 2 * w));
+                V::S(format!("(({a}[{w} + j] as u64) << 32 | {a}[j] as u64)"), *m)
+            }
+            V::Z(l) => {
+                let a = self.tmp();
+                self.line(format!("let {a} = core::mem::transmute::<[uint32x4_t; {}], [u32; {w}]>({l});", self.p));
+                V::S(format!("({a}[j] as u64)"), M::U64)
+            }
+            V::L(l, m) => {
+                let a = self.tmp();
+                self.line(format!("let {a} = core::mem::transmute::<[uint32x4_t; {}], [u32; {w}]>({l});", self.p));
+                if m.float() { V::S(format!("f32::from_bits({a}[j])"), M::F32) } else if m.signed() { V::S(format!("({a}[j] as i32)"), M::I32) } else { V::S(format!("{a}[j]"), M::U32) }
+            }
+        })
+    }
+
+    /// A call of function `id` with its arguments' values `vals`: the instance of their shapes, its result.
+    fn call(&mut self, id: u32, vals: Vec<V>, cx: &Cx) -> R<V> {
+        let Some(&b) = self.bodies.get(&id) else { return err(format!("a call of function {id}, which has no body")) };
+        let ret = M(self.v.w(b, 4));
+        // Where all lanes run, the instance of all lanes (no mask); else the mask's.
+        let mut args = vec!["l".to_string(), "lid0".to_string()];
+        if !cx.full {
+            args.push(cx.cur.clone());
+        }
+        // A function with barriers: the kernel's phase of it, and the chunk's state.
+        let phased = self.phases(id).is_some();
+        if phased && !cx.kernel {
+            return err(format!("a barrier in function {id}, which the kernel's function calls (barriers part only the kernel's)"));
+        }
+        // The instance of its arguments' shapes (an aggregate's, its address, one).
+        let mut shapes: Vec<Sh> = vals.iter().enumerate().map(|(k, a)| if M(self.v.w(b, 8 + 2 * k)).is_agg() { Sh::S } else { Sh::of(a) }).collect();
+        // One parameter of each buffer by its name; another of it as any pointer.
+        for k in 1..shapes.len() {
+            if shapes[k].root().is_some() && shapes[..k].iter().any(|s| s.root() == shapes[k].root()) {
+                shapes[k] = shapes[k].rootless();
+            }
+        }
+        let valid: Vec<u32> = {
+            let mut v: Vec<u32> = shapes.iter().filter_map(|s| s.root()).filter(|&k| self.is_valid(k)).collect();
+            v.sort();
+            v
+        };
+        // A parameter of consecutive lanes that would take a chunk crossing no `2^K` (`Em::wants`): lanes
+        // known so are passed so (`Sh::Run`); a parameter's that are not, its own callers are asked to test;
+        // others this call tests, and calls the instance that knows where they pass (one test of a chunk).
+        let mut test = None;
+        for k in 0..shapes.len() {
+            let (Sh::Iota, Some(&want), V::Iota(f, _)) = (shapes[k], self.wants.get(&(id, k)), &vals[k]) else { continue };
+            if let Some(&b) = self.runs.get(f) {
+                if b <= want {
+                    shapes[k] = Sh::Run(b);
+                }
+            } else if let Some(&p) = self.iota_params.get(f) {
+                self.want(p, want);
+            } else if test.is_none() {
+                test = Some((k, f.clone(), want));
+            }
+        }
+        let run = test.as_ref().map(|(k, f, want)| {
+            let mut s = shapes.clone();
+            s[*k] = Sh::Run(*want);
+            let ctx = self.inst(id, &s, cx.full, &valid);
+            self.seen.insert((id, s.clone(), cx.full, valid.clone()));
+            (s, ctx, f.clone(), *want)
+        });
+        self.seen.insert((id, shapes.clone(), cx.full, valid.clone()));
+        let ctx = self.inst(id, &shapes, cx.full, &valid);
+        // Both instances' results of one shape: each lane's, if either's is.
+        if let Some((_, rc, ..)) = &run
+            && self.rets.get(rc).copied().unwrap_or(false) != self.rets.get(&ctx).copied().unwrap_or(false)
+        {
+            self.rets.insert(*rc, true);
+            self.rets.insert(ctx, true);
+            self.again = true;
+        }
+        if let Some((_, rc, ..)) = &run
+            && self.risky_insts.contains(rc)
+        {
+            self.risky = true;
+        }
+        if self.risky_insts.contains(&ctx) {
+            self.risky = true;
+        }
+        // Its first statement's access, through a parameter of every lane's own element, where all lanes run.
+        let first: Vec<u32> = (0..shapes.len()).filter(|&k| matches!(shapes[k], Sh::At(_, Ix::Gid, Some(_))) && self.first_access(b, k)).filter_map(|k| shapes[k].root()).collect();
+        for (k, a) in vals.into_iter().enumerate() {
+            let pm = M(self.v.w(b, 8 + 2 * k));
+            match (shapes[k], a) {
+                (_, V::S(s, _)) if pm.is_agg() => args.push(s),
+                (_, _) if pm.is_agg() => return err("an aggregate argument of each lane"),
+                (Sh::S, V::S(s, am)) => args.push(conv(&s, am, pm)),
+                (Sh::Arg(_), V::S(s, _)) => args.push(s),
+                (Sh::In(_), V::S(s, am)) => args.push(conv(&s, am, pm)),
+                (Sh::Gid, _) => {}
+                (Sh::Iota | Sh::Run(_), V::Iota(f, _)) => args.push(f),
+                (Sh::L, a) => {
+                    let l = if pm == M::B { self.mask(&a)? } else { self.lanes(&a, pm)? };
+                    args.push(l);
+                }
+                (Sh::Lin, V::Lin(f, s)) => {
+                    args.push(f);
+                    args.push(s);
+                }
+                (Sh::At(_, ix, _), V::At { base, idx, .. }) => {
+                    // An offset of no base: one of a null pointer, the same bits.
+                    args.push(if base.is_empty() { "core::ptr::null::<u8>()".into() } else { base });
+                    match (ix, *idx) {
+                        (Ix::Gid, _) => {}
+                        (_, V::Iota(f, _)) => args.push(f),
+                        (_, V::Lin(f, s)) => {
+                            args.push(f);
+                            args.push(s);
+                        }
+                        (_, i) => args.push(self.lanes(&i, M::U32)?),
+                    }
+                }
+                (sh, a) => return err(format!("{a:?} passed as {sh:?}")),
+            }
+        }
+        if phased {
+            args.push("phase".into());
+            args.push(format!("st.add((lid0 / {}) as usize * {})", self.w, self.state_bytes(id)));
+        }
+        let call = match &run {
+            // The chunk's first lane's bits below `K` leave room for its others: it crosses no `2^K`.
+            Some((s, _, f, k)) => {
+                let m = if *k >= 32 { u32::MAX } else { (1u32 << k) - 1 };
+                let a = args.join(", ");
+                format!("if ({f} & {m}u32) <= {}u32 {{ {}({a}) }} else {{ {}({a}) }}", m - (self.w - 1), fname(id, s, cx.full, &valid), fname(id, &shapes, cx.full, &valid))
+            }
+            None => format!("{}({})", fname(id, &shapes, cx.full, &valid), args.join(", ")),
+        };
+        let r = if ret == M::VOID {
+            self.line(format!("{call};"));
+            V::None
+        } else {
+            let t = self.tmp();
+            self.line(format!("let {t} = {call};"));
+            if self.rets.get(&ctx).copied().unwrap_or(false) { if ret == M::B { V::K(t) } else { V::L(t, ret) } } else { V::S(t, ret) }
+        };
+        if cx.full {
+            for k in first {
+                if !self.is_valid(k) {
+                    let d = self.ind;
+                    self.valid.push((k, d));
+                }
+            }
+        }
+        Ok(r)
     }
 
     /// `c ? a : b` (node `n`). Of one condition: Rust's `if`, its value each lane's where the arms' may be. Of each
@@ -1938,7 +2110,7 @@ impl Em<'_> {
             let before = std::mem::replace(&mut self.risky, false);
             self.ind += 1;
             let inner = Cx { cur: ka.clone(), divergent: true, left: false, full: false, looped: None, region: None, ..cx.clone() };
-            let x = self.expr(arm, &inner)?;
+            let x = self.arm(arm, &inner)?;
             let l = if m == M::B { self.mask(&x)? } else { self.lanes(&x, m)? };
             let b = self.blend(m, &ka, &l, &t);
             self.line(format!("{t} = {b};"));
