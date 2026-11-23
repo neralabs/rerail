@@ -503,7 +503,8 @@ agree. One thread, a million probes or more each; ns per probe:
   ids are too sparse for offsets. It would need the projection's locals (`Batch::node`).
 - One 3-column tagged order of 79 K rows (`look-3:s1`) built at 1,838 ns a row once, against 34 the next time.
 
-**Decision (user, 2026-11-21): no sorted hash.** Its memory (twice today's, 7–13× for hashbrown) is not wanted, and
+**Decision (user, 2026-11-21): no sorted hash.** (Allowed for a test's whole key on 2026-11-23, measured: "Step 5,
+third part" below.) Its memory (twice today's, 7–13× for hashbrown) is not wanted, and
 faster probes would save at most 5–6% of the run's CPU. The data stays here; the structure is not built. The next
 measure is the join's per-row work (`any(…)`, `flush`, the view probes).
 
@@ -535,6 +536,20 @@ now reads `node` keyed by the node it holds, then `doc`. On `all`, same host: `s
 for 23 K rows, the index over `st_pos` built on its first probe) are gone, the outputs 13.1 → 8.3 s; 3.382 →
 3.264 T instructions, user 293.5 → 284.8 s, peak 12.3 → 10.0 GB. The rows that differ are the ones listed below,
 unchanged.
+
+### Step 5, third part: a test's whole key by a sorted hash (2026-11-23)
+
+The user allowed the sorted hash for these probes, measured (2026-11-23, reversing 2026-11-21's decision for this
+use). A test of a derived input's whole key (`cands::holds`: `bound_in(s, x)`, `cls_late(n, x, s)`,
+`gbefore(n, x, s)` in the climb, and every other test so asked) reads its index's sorted hash
+(`setfix/sorted_hash.rs`, made at the index's first test): the row ids in the order of a 64-bit hash of the key, the
+hashes beside them, a probe placed by the hash's high bits and galloped to; each candidate's key checked against its
+row where it lies. `RERAIL_SORTED_HASH=off` asks the index runs, as before.
+
+On `all` (m1max, profiling, cold; the same binary off and on; the host at load 28–31, so CPU and wall are noisy):
+rows the same both ways; instructions 1,923 → 1,884 G; `look` 4.67 → 3.58 s, `rf_in` 4.45 → 2.63 s, `wstart`
+3.30 → 3.23 s. Its memory: 12.0 MB of sorted hashes over the run (`setfix.sorted_hash.bytes`), peak 2,487 → 2,474
+MB. Kept.
 
 ### Step 5, first part: the walk runs as a keyed closure, in one wave (decision 0570)
 

@@ -102,6 +102,7 @@ mod block_index_tests;
 use spec::{Arg, ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 pub mod closure;
 mod cands;
+mod sorted_hash;
 pub mod table;
 pub mod level;
 // cratify: `device` is rerail-device-metal's (it mounts it)
@@ -4336,8 +4337,26 @@ pub struct Csr { cols: Vec<usize>, source: bool, sorted: bool, chain: Option<usi
                  /// A whole source's rows in one block relation, probed by that relation's own index there (its number;
                  /// decision 0325 step 5), shared with the device: no host table of its rows. Its buckets' rows are
                  /// candidates, checked against the key by the reader.
-                 block: Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> }
+                 block: Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)>,
+                 /// A test's whole key's index (`sorted_hash`, t50 step 5): made at its first test of a derived input.
+                 hashed: OnceLock<sorted_hash::SortedHash> }
 impl Csr {
+    /// The sorted hash of `rel`'s rows by this index's columns, made at its first ask.
+    fn hashed(&self, rel: &InRel) -> &sorted_hash::SortedHash {
+        self.hashed.get_or_init(|| {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "probe: sorted hash of a derived input".into());
+            let h = sorted_hash::SortedHash::new(rel.n, |id| {
+                let row = rel.at(id as usize);
+                sorted_hash::hash_key(self.cols.iter().map(|&c| row.at(c)))
+            });
+            crate::code_rule_dsl::prof::count("setfix.sorted_hash.bytes", h.bytes());
+            h
+        })
+    }
+    /// Whether a probe of it walks an index's runs (`runs`): a derived input's order, or its kept chain.
+    fn runs_kind(&self) -> bool {
+        self.ordered.is_some() || self.chain.is_some()
+    }
     /// Whether `get` gives a key's rows alone (not a bucket's candidates).
     fn exact(&self) -> bool {
         self.block.is_none()
@@ -6306,7 +6325,7 @@ impl InRel {
         let mut idx = self.idx.lock().unwrap();
         idx.entry(mask).or_insert_with(|| {
             run_counts().orders_opened.fetch_add(1, AtomicOrdering::Relaxed);
-            Arc::new(Csr { cols: cols.to_vec(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c) })
+            Arc::new(Csr { cols: cols.to_vec(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c), hashed: OnceLock::new() })
         }).clone()
     }
     /// Its rows' index on `cols` in their block (decision 0478 step 5, R2): the one the device finds and builds, over
@@ -6351,7 +6370,7 @@ impl InRel {
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
             let path = |i: usize| { run_counts().index_paths[i].fetch_add(1, AtomicOrdering::Relaxed); };
-            let empty = |source, sorted| Csr { cols: cols.to_vec(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None };
+            let empty = |source, sorted| Csr { cols: cols.to_vec(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new() };
             let m = if cols.is_empty() {
                 path(0); empty(false, false)
             } else if let Some(b) = self.block_index(cols, false) {
@@ -7213,7 +7232,7 @@ fn join_rule_with(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index
 /// that names one probes by it, and the caller presets them (`run_join_collect`).
 fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index: bool, pre: &[usize]) -> Result<JoinRule> {
     let conn = conn.db();
-    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.to_vec(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None });
+    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.to_vec(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new() });
     let mut bound: Vec<bool> = Vec::new();
     for &s in pre {
         if bound.len() <= s { bound.resize(s + 1, false) }

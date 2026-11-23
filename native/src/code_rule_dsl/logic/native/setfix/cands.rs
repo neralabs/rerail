@@ -185,8 +185,28 @@ pub(super) fn holds(step: &Step, store: &Store, slots: &[i64], asked: &mut Asked
         _ => 0,
     };
     let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
+    // A whole key of a derived input's index: its sorted hash's candidates (t50 step 5), each checked against its row.
+    if let Src::In(rel, ix) = src
+        && rel.view.is_none()
+        && !keys.is_empty()
+        && keys.len() == ix.cols.len()
+        && ix.runs_kind()
+        && sorted_hash_on()
+    {
+        let h = super::sorted_hash::hash_key(ix.cols.iter().map(|&c| keys.iter().find(|&&(kc, _)| kc == c).map_or(i64::MIN, |&(_, k)| val(k))));
+        return ix.hashed(rel).candidates(h).iter().any(|&id| {
+            let row = rel.at(id as usize);
+            !is_dead(&rel.dead, id) && keys.iter().all(|&(c, k)| row.at(c) == val(k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
+        });
+    }
     let (rows, cands) = candidates(src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None);
     rows.each(cands, need, |id, row| {
         !rows.dead(id) && keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
     })
+}
+
+/// Whether a test of a derived input's whole key asks its sorted hash: `RERAIL_SORTED_HASH=off` (a measurement aid,
+/// the run's setting) asks its index runs, as before.
+fn sorted_hash_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SORTED_HASH").map_or(true, |v| v != "off"))
 }
