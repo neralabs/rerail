@@ -427,3 +427,128 @@ fn the_device_names_its_memory_domain() {
     assert!(layer.device.domain() <= 1);
 }
 
+/// A level's seed joins as `setfix::level::prefetch` sends them (decision 0100 §10): many probes in one batch, their
+/// key columns staged and filled after the batch is begun, right sides kept by id across batches, some probes'
+/// pairs past the arena (many keys alike), batch after batch on pooled buffers a batch before used. Every pair is
+/// the host's, each left row inside its left side: the M3's 300-file run once walked a pair whose left row was past
+/// its side (31,379 of 5,735, setfix's paired walk, ab218).
+#[test]
+fn a_levels_staged_probes_are_the_hosts_joins_batch_after_batch() {
+    if !has_device() {
+        return;
+    }
+    // The GPU's lane alone, then every lane as the engine has them (the cores', the caller's own runs of a launch no
+    // lane took, each lane's claims), its launches taken in no order.
+    for (lanes, ex) in [("the gpu's", Executor::with(vec![backend().unwrap()])), ("every", Executor::new())] {
+        level_batches(&ex, 31, lanes);
+    }
+}
+
+/// The same from 4 threads at once through one executor, as a run's strata send their levels' batches while the
+/// lanes' workers and other strata's device waves submit: each its own pairs.
+#[test]
+fn concurrent_levels_staged_probes_are_the_hosts_joins() {
+    if !has_device() {
+        return;
+    }
+    let ex = Executor::new();
+    std::thread::scope(|sc| {
+        for t in 0..4u64 {
+            let ex = &ex;
+            sc.spawn(move || level_batches(ex, 100 + t, "every"));
+        }
+    });
+}
+
+/// `a_levels_staged_probes_...`'s batches through `ex`, from seed `seed`.
+fn level_batches(ex: &Executor, seed: u64, lanes: &str) {
+    let mut rng = Rng(seed);
+    // Kept right sides, reused by later batches under their ids.
+    let mut kept: Vec<(u64, Vec<i64>)> = Vec::new();
+    for batch in 0..60u64 {
+        let (gate, opener) = crate::col::Gate::new();
+        let mut launches = Vec::new();
+        let mut fills: Vec<(crate::col::Writer, Vec<i64>)> = Vec::new();
+        let mut sides: Vec<(Vec<i64>, Vec<i64>)> = Vec::new();
+        for j in 0..(1 + rng.below(12)) {
+            // Left rows from 1 to 40,000, right from 1 to 40,000; keys over a small or a wide range (many alike: pairs
+            // past two a left row, the arena's estimate).
+            let most = if rng.below(4) == 0 { 40_000 } else { 3_000 };
+            let nl = 1 + rng.below(most) as usize;
+            let range = if rng.below(3) == 0 { 1 + rng.below(20) } else { 1 + rng.below(50_000) };
+            let left: Vec<i64> = (0..nl).map(|_| rng.below(range) as i64).collect();
+            let (id, right) = if !kept.is_empty() && rng.below(3) == 0 {
+                let (id, r) = &kept[rng.below(kept.len() as u64) as usize];
+                (*id, r.clone())
+            } else {
+                let most = if rng.below(3) == 0 { 40_000 } else { 2_000 };
+                let nr = 1 + rng.below(most) as usize;
+                let r: Vec<i64> = (0..nr).map(|_| rng.below(range) as i64).collect();
+                // One id names one right side: unique across the threads, as a relation's uid is.
+                let id = seed << 32 | batch << 8 | j;
+                kept.push((id, r.clone()));
+                (id, r)
+            };
+            let (lcol, lw) = gate.column(left.len()).unwrap();
+            let (rcol, rw) = gate.column(right.len()).unwrap();
+            fills.push((lw, left.clone()));
+            fills.push((rw, right.clone()));
+            launches.push(Launch::new(Kernel::Join { left: vec![lcol].into(), right: vec![rcol].into(), right_id: Some(id), by: crate::kernel::JoinBy::Probe }));
+            sides.push((left, right));
+        }
+        let running = ex.begin_as("level joins (test)", Batch(launches)).unwrap();
+        // Filled after the batch is begun, as the level's are.
+        for (w, v) in &mut fills {
+            w.values().copy_from_slice(v);
+        }
+        drop(fills);
+        opener.open();
+        let each = running.each();
+        let mut order: Vec<usize> = (0..sides.len()).collect();
+        for k in (1..order.len()).rev() {
+            order.swap(k, rng.below(k as u64 + 1) as usize);
+        }
+        for i in order {
+            let (left, right) = &sides[i];
+            let got: Vec<(u32, u32)> = each.take(i).unwrap().pairs().expect("a join's pairs");
+            assert!(got.iter().all(|&(l, r)| (l as usize) < left.len() && (r as usize) < right.len()), "{lanes} lanes, batch {batch} join {i}: a pair past its sides ({} x {})", left.len(), right.len());
+            let col = |v: &[i64]| crate::col::Col::from(rerail_blocks::vector::Vector::from(v));
+            let want: Vec<(u32, u32)> = crate::cpu::join(&vec![col(left)].into(), &vec![col(right)].into(), None).iter().map(|&[l, r]| (l, r)).collect();
+            assert_eq!(got.len(), want.len(), "{lanes} lanes, batch {batch} join {i}: pairs");
+            assert!(got == want, "{lanes} lanes, batch {batch} join {i}: the host's pairs, in its order");
+        }
+    }
+}
+
+/// A submission begun on one of the lanes' pool threads is finished on any of them (`exec::Flight::end_on`), while
+/// another begun on that thread may run. Each encodes on its own scratch: the space gives a submission scratch no
+/// other in flight holds, and its slots are the same buffers on whichever thread encodes for it. On each thread's
+/// own two sets, alternated per thread, a submission begun on thread A and one begun on thread B both took set 1,
+/// and the first, finished on B, encoded its second pass (a tile join's sorts) on the second's.
+#[test]
+fn a_submissions_scratch_is_its_own_on_any_thread() {
+    if !has_device() {
+        return;
+    }
+    let mut space = super::space::Space::default();
+    let (x, y) = (space.free_scratch(), space.free_scratch());
+    assert!(!Arc::ptr_eq(&x, &y), "two in flight: each its own");
+    let slot = |s: Option<&Arc<join::Scratch>>| -> usize {
+        let get = || join::scratch(join::FREE, 4096).expect("a scratch buffer").contents() as usize;
+        match s {
+            Some(s) => join::on_scratch(s, get),
+            None => get(),
+        }
+    };
+    let on_a = slot(Some(&x));
+    let (on_b, y_on_b, own_b) = std::thread::scope(|sc| sc.spawn(|| (slot(Some(&x)), slot(Some(&y)), slot(None))).join().unwrap());
+    assert_eq!(on_a, on_b, "a submission's slot is one buffer on every thread");
+    assert_ne!(on_b, y_on_b, "another submission's is not");
+    assert_ne!(on_b, own_b, "nor the thread's own");
+    // Finished (its handle dropped), a submission's scratch is the next one's.
+    drop(y);
+    let z = space.free_scratch();
+    assert!(!Arc::ptr_eq(&x, &z), "x is in flight");
+    assert_eq!(slot(Some(&z)), y_on_b, "the scratch y used, given to z");
+    join::scratch_return();
+}

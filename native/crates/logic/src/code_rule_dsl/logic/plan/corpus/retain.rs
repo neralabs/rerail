@@ -1293,11 +1293,17 @@ impl Source for Renamed {
     fn estimated_len(&self) -> usize {
         self.0.estimated_len()
     }
+    fn may_hold_rows(&self) -> bool {
+        self.0.may_hold_rows()
+    }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.0.estimated_matches(column, batch)
     }
     fn lookup_cost(&self, column: usize) -> f64 {
         self.0.lookup_cost(column)
+    }
+    fn scan_cost(&self) -> f64 {
+        self.0.scan_cost()
     }
     fn estimated_matches_all(&self, columns: &[usize]) -> usize {
         self.0.estimated_matches_all(columns)
@@ -1535,6 +1541,9 @@ impl Source for Layered {
     }
     fn lookup_cost(&self, column: usize) -> f64 {
         self.kept.lookup_cost(column)
+    }
+    fn scan_cost(&self) -> f64 {
+        self.kept.scan_cost()
     }
     fn indexed(&self, column: usize) -> bool {
         self.kept.indexed(column)
@@ -2735,6 +2744,9 @@ impl Source for Traced {
     }
     fn estimated_len(&self) -> usize {
         self.inner.estimated_len()
+    }
+    fn may_hold_rows(&self) -> bool {
+        self.inner.may_hold_rows()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.inner.estimated_matches(column, batch)

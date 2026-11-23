@@ -917,7 +917,10 @@ impl Written {
     pub fn plain_text(&self, lang: &Lang) -> Result<String, String> {
         Ok(match self {
             Written::F16(t) => crate::tape::plain_text(&t.reader(lang)?, lang.names()),
-            Written::F16Z(z) => crate::tape::plain_text(&z.reader(lang, Some(&ZCache::of([z])))?, lang.names()),
+            Written::F16Z(z) => {
+                let cache = ZCache::of([z]);
+                crate::tape::plain_text(&z.reader(lang, Some(&cache))?, lang.names())
+            }
         })
     }
 
@@ -3298,8 +3301,8 @@ mod tests {
             assert!(n.kinds.is_sorted_by_key(|k| k.0) && n.fields.is_sorted_by_key(|f| f.0) && n.classes.is_sorted_by_key(|c| c.0), "tag {tag}: names by id");
             for e in l.table().entries() {
                 let kind = n.kind_name(e.kind).unwrap_or_else(|| panic!("tag {tag}: kind {} has no name", e.kind));
-                let (kind, named) = match &e.alias {
-                    Some((alias, named)) => (*alias, *named),
+                let (kind, named) = match e.alias {
+                    Some((alias, named)) => (alias, named),
                     None => (kind, n.kind_named(e.kind)),
                 };
                 assert_eq!(n.kind_of(kind, named), Some(e.kind), "tag {tag}: {kind:?} looks up another id");

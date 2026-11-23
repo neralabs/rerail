@@ -1,4 +1,4 @@
-# Tape format 16's choices for tape tag 34 (python-pattern), decisions 0293 §3 and 0631. Written by the lab from the grammar:
+# Tape format 16's choices for tape tag 34 (python-pattern), decisions 0293 §3, 0626 and 0631. Written by the lab from the grammar:
 #   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
 # 2045 codes; no file of it counted: in the grammar's order.
 revision	4

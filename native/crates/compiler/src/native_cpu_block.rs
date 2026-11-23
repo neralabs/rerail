@@ -7460,10 +7460,11 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     if !own.is_empty() && fixed.is_none() {
         let native = rd.bytes.map(|(b, _)| b.native);
         for t in own {
-            // Tested where its start can hold (`needs_by_offset`): at the token's first bytes
-            // the start mask may have (a `0`, a `.`), its word read there, as the lean lexer's
-            // number arm reads what follows; another token's code is its first byte's.
-            let at0 = native.and_then(|b| crate::native_cpu_bytes::needs_by_offset(b, t.o)).and_then(|v| v.into_iter().find(|&(d, _)| d == 0).map(|x| x.1));
+            // Tested where its start can hold (`output_byte_at`, every first byte it may have: a `0`, a `.`), its
+            // word read there, as the lean lexer's number arm reads what follows; another token's code is its first
+            // byte's. Not `needs_by_offset`'s set at offset 0: that is one of its tests, any of which may hold (C's
+            // `L"…"`, its start tested by the `"` after it), so a start there may begin with another byte.
+            let at0 = native.and_then(|b| crate::native_cpu_bytes::output_byte_at(b, t.o, 0));
             let firsts: Vec<i64> = (0..=255u8).filter(|&b| at0.is_none_or(|x| x[usize::from(b >> 6)] >> (b & 63) & 1 == 1)).map(i64::from).collect();
             let (test, join) = (f.create_block(), f.create_block());
             f.append_block_param(join, types::I64);

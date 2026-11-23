@@ -10862,3 +10862,61 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
 - `join_stages.uglykl`: the hub's `clif_struct` load with the branch's no-growth exit (`omask` all ones) in both lattice-map kernels.
 - `device.rs`: the hub's rewrap check first (nothing ran: encoded again), then the branch's lattice-map handover to the program's tail. The branch's `BlockVec::unwritten_in` is the hub's free `rows::unwritten_in`.
 - Checked: Relax check of rerail-device-metal and rerail-engine 0 errors; device-metal's tests compile (90 listed). They are Metal tests: not run on this Mac, and no farm runs (the user's order).
+
+### Q520. Roll-up 93 (sync-integration-hub-tape e657fe1cea onto Pulling-it-all-together): what the merge chose
+
+- 0631 (format 15 removed) onto 0638 (codes by corpus counts, revision 4): the tables' codes are the hub's, their Names rows the branch's; the lean parsers number keys by names (`Named`, `KeyNames`, `lean_named`), each `Writer::new(..).to(finish.target(), src).omitting(finish.omissions())`.
+- tape_format: both traits kept, the hub's `Finish` (generic over `Layout`, the Narrow aot tier 2) with an `again` like the branch's `Sink`; f16's `words` and the branch's `Names`/`with_names`/`number_named`; 16z read through `ZCache` (0569), `Vector`/`EntryRef` (0628).
+- compiler: the branch's format-15-free tier 2 (`native_cpu_stream`, `native_cpu_tape`, `stream`) with the hub's later Kotlin fixes ported (the moved extra's `uncode`/`close_cells`); the root-start format 15 block gone (the writer's pass gives it, `Table::pass`). `bitlex_rust` keeps the hub's Narrow `parse`/`parse_at`, its writer to `finish`'s target. The branch's moves (0626, fewest kinds where the free bytes do not reach) in the hub's `bitlex_masks`.
+- c_directives, c_pp, rr_parser, kotlin_parser, rr_aot, kotlin_aot: the branch's format 16 tapes (`Tape16`, `Nodes`, `image16`/`image16_by`); the hub's tests ported to them (kotlin's `tier2_over`, `interpreter_tape`).
+- Found on the way: the hub's tier 1 Rust generator walked C's token regions without end (`in_region_of` asked each part again at every shift: the parts' count to the depth of the shifts); its values are now kept by (mask, region, part, context), dropped where what it reads changes. `clif_ukl::translate`'s call graph read a function's imports, so a hot read the inliner took (the pp words' `lines_line`, 0612) was a callee missing; it reads the call instructions now. `c_lean`: a bare `operator` in an expression slot is refused.
+- Checked (Relax, RERAIL_GPU=cpu): tape-format, rr-syntax, simdjson, json-lean, c-pp, c-lean, clif, the twelve lean crates, compiler, ukl-vec, facts, prefilter, rr, lang, rr-parser pass; tests-tape and tests-lang pass (their last tests at two threads, the whole lib past the memory cap at once).
+- Open, both older than this merge: the pp words' device path (`the_device_rungs_*`, `the_device_words_*`) does not translate to UKL since 0612 (a read's body is translated as a word, its view taken for the context; the reads' own UKL, `lines.h`, is not called); C's tokens give `L"…"`, `U"…"` and `LR"…"` the identifier's kind on the compiled tier (the interpreter's is right). kotlin-parser's `a_constructor_off_its_modifiers_line_is_refused` and both `rust_is_current` stop inside Relax's own std (a string index past its end, an abort in a `Vec`'s drop, in the safe tier 1 generator): Relax's, reported.
+
+### Q521. Roll-up 94 (benchmarks-on-integration ab77a75e43 onto Pulling-it-all-together): what the merge chose
+
+- The token relations as tape views (0929b0fb16, 6f58befc73, 92db2fb43a, 9e0f1605de): per the user's answer, the branch's `TapeRows` trait and `RowsView` source are kept, and nothing is resolved host-only. Each relation's rows are a range of the hub's rank index (`Rows::Ranked { item, skip }` over `ranks::Ranks`/`Numbering`, read on the device by `num_is`/`num_rank`/`num_select`), not a host `Marked` bitset. A new rank item `Child` (10: a numbered node whose tape parent is numbered, and the root) is marked in `Projected::narrowed`'s walk; `Gap` and `NamedChild` read it, the token neighbours read the Token/Leads/Follows/Precedes items. `ViewCounts` gains the Child count (index 10, `Projected::parented`).
+- Derived columns (gaps, a named child's parent and place, visit index, tree digest) are made once per document into `tape_rows::Derived` and handed to the device in `ViewDoc` (`gaps[2]`, `named`, `visits`, `digests`; 216 bytes; `ids.h`/`view.h` regenerated). The hub's `View::Tok` and its arms are gone with the branch's views; the hub's Op/End/Spread views remain `View` variants. `DocRow`'s path and module atoms are per-document host values, not tape data.
+- Text tests probed, not scanned: the branch's `Source::scan_cost` carried into plan-search (`Stats::scan_cost`, `Price::Atom`'s fourth price) and forwarded by every wrapper, the session overlays included. Found on the way: the planner's empty-relation skip asked a text test's `len`, which scans the batch whole; it now asks `Source::known_empty` (default `holds_none`; a text test is known empty only where scanned or given its rows).
+- `dispatch_label` (b6a6efe11e) read another thread's queue slot with a load: the memory sampler segfaulted when a thread ended between listing and reading (a port right keeps the port, not the thread's memory). The slot, the queue's head and the label are now copied by `mach_vm_read_overwrite`, and the label read from the head's copy.
+- check_rr (7c3a09c48a): the hub's library-part check kept (it covers the branch's case). Found red: `check::undeclared` did not count `.from` imports' local names (1582 problems over the python library's packs); it now does, as `contexts` reads them.
+- Checked (Relax, RERAIL_GPU=cpu): clif 15; tests-lang syntax 77; logic joins/retain/input_delta 54; prof label/thread 4; tests-corpus made_batch/coverage/values 13 of 14; tests-rr check_rr and include 5; 0 errors over facts-base, facts, logic, planner, sessions-base, prof, rr and the test crates.
+- Open: `the_run_after_a_cold_one_with_tape_values_writes_nothing` fails under Relax only: the in-process cold run names the library through Relax's share mount (`.relax/vfs/share/...`), the spawned warm run by the disk path, so all 22 library listings read as changed (a Relax path defect, as eccfb213de's). accel's GPU tests are Metal and were not run here.
+
+### Q522. Roll-up 95 (final-rerail-shape ac0e5f8dea onto Pulling-it-all-together): what the merge chose
+
+- The branch (final-rerail-shape, pre-split) was merged into the crates. Its moved files' changes were carried by `git apply --3way` onto their crate paths, and its old-path copies were dropped once placed. New docs: decisions 0611, 0622, 0640 and note t53.
+- One mechanism per job, the hub's kept where both had one:
+  - `InFlight::lent` over the branch's `taken`;
+  - `Fielded::part_size` priced by tree stats (cc55f3ae5f) over 6dda6ef51b. Its plan-level test `within_read_from_a_named_part…` duplicates the hub's `within_read_from_a_fields_part…` and is dropped;
+  - `LastProbe::settings().noted` over a `report` parameter;
+  - made.rs `ColIndex`/`each_match`/`read_one` over `by_value`/`rows_with`;
+  - the `Layered::lookup_read_at` cursor over `lookup_read`;
+  - `RERAIL_WHOLE_READ_TRACE` over `RERAIL_BATCH_TRACE`.
+- `Source::may_hold_rows` (the branch's) replaces roll-up 94's `known_empty`. Both fixed the same empty-relation skip. The overlay, versions, retain and vtab wrappers forward it.
+- Tape values (`Values::add(own, hosts, …)`, the branch's): a part is found by its own keys. Rows naming another document's node are found by that node (`Parts::hosted`), and a part made on lookup also by its hosts' keys. `Keys` became generic over the key (`ShardKey`: u32, i64). The named nodes are read by the source's walk (`for_rows`), not row by row: the hub's tape views answer `len` from statistics before they are walked, and a row-at-a-time read past their rows panicked ("a row of the view").
+- A value part never answers a node read at a host's node (`source_of`), for any relation. This extends the hub's 02f9fa20a6 gate, which was for long-text nodes. The hub's test now checks that, and that a lookup at the host's node finds the rows naming it.
+- The hub's rule-8 kept rows (`kept_of`, `fresh`) are kept with the branch's batched admission (`admit_many`, one round's values together). Each fresh value's kept rows are added after the round's rows.
+- Statistics from the chunks (2bc2d88258, decision 0458):
+  - Base relations and text tests: the branch's `ChunkCounts`, merged by `RelStats::merge`, used where they cover every file.
+  - Export totals: measured on each chunk's worker into the hub's block `Totals` (`measure_rows`, `absorb`). Few values are added through their chain, sketches merged, tested rows re-keyed, and the hub's generations kept. The few/sketch step is shared by `add_value`/`sketch_few`.
+  - Semi-joins, where both sides had a mechanism: the hub's is kept (`SemijoinCounts`, kept rows at the held nodes, `retain::semijoin_rows`, the layered delta). The chunks hand their rows at the held nodes they walked, plus the nodes walked (`chunk_held_rows`). The run counts those rows in place of walking those nodes, and walks only the rest. So the cold walk moves onto the chunks, and the hub's kept rows still come out for the next run. The branch's `held_stats_name` keep is not taken. The run still visits the exports for its held set, which the kept rows record.
+- Ported onto the hub's block types:
+  - `Exports::add_owned`'s unchecked runs are `[u32; 2]` and its documents a `BlockHash`;
+  - attribution's rows by file are `Vector`;
+  - `admit_many`'s sets are `Vector`.
+- The branch's `JoinRule::indexed` (t50 step 9, a refused seed re-indexed on the relations it was parsed with) is an edit of the plan's section (`Plan::decoded`, `Edit::Index`, encode).
+- `plain_filter`/`filter_of` (0611) moved down into plan-search (`plan/filters.rs`), since its keeps read them. The planner's filter step takes the hub's `&str` strongly connected components.
+- The branch's switches `RERAIL_AST_DIRECT_CAPTURES` and `RERAIL_CHUNK_COUNTS` are read through `profile::var` and listed as scoped (a test set one and was refused).
+- `Range::RunValue` went in the hub (12d3738235, 0597 step 4), so the branch's run-value profile line is dropped.
+- The ukl read headers were regenerated from clif (`relation.h`, for `clif_col_sealed`).
+- Checked (Relax, RERAIL_GPU=cpu): 0 errors over logic and its dependencies, accel, device-metal and the four test crates. Tests:
+  - clif reads 4;
+  - setfix 10 (refused seed, statkeep merge, sorted hash);
+  - facts values 7;
+  - tests-admission matcher 17;
+  - tests-lang 4;
+  - logic keeps/totals 18;
+  - tests-logic filter 1;
+  - tests-corpus 20 targeted (tape values, guests, cross views, semi-joins, field captures), then 16 (statistics, chunk, made batch).
+- Not run: Metal tests, and `the_run_after_a_cold_one_with_tape_values_writes_nothing` (the Relax share-path defect from roll-up 94).

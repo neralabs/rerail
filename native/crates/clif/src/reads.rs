@@ -92,6 +92,7 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "rows_col", params: &[I32], ret: I64, hot: true, body: crate::relation::rows_col },
     Read { family: Family::Relation, name: "col_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_at },
     Read { family: Family::Relation, name: "col_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_get },
+    Read { family: Family::Relation, name: "col_sealed", params: &[I32], ret: I64, hot: false, body: crate::relation::col_sealed },
     Read { family: Family::Relation, name: "rows_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rows_at },
     Read { family: Family::Relation, name: "rows_width", params: &[I32], ret: I32, hot: true, body: crate::relation::rows_width },
     Read { family: Family::Relation, name: "rows_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rows_get },
@@ -176,6 +177,20 @@ pub const F16_ONLY: &[&str] = &["tape_f16_side", "tape_slot", "tape_line_select"
 /// The read named `name`.
 pub fn read(name: &str) -> Option<&'static Read> {
     READS.iter().find(|read| read.name == name)
+}
+
+/// How a kernel calls `read` (the UKL backend): the source it includes, made from the same CLIF (`lines_ukl_source`,
+/// `relation_ukl_source`, `ids_ukl_source`), and its function there. The call passes the base its pointer counts from
+/// (`t`, the memory's byte 0) before the read's own parameters, the CLIF's. `None` for the tape's and the views' reads,
+/// whose UKL takes their bases apart (`<ukl/reads/tape.h>`, `<ukl/reads/view.h>`).
+pub fn ukl_call(read: &Read) -> Option<(&'static str, String)> {
+    let source = match read.family {
+        Family::Lines => "ukl/reads/lines.h",
+        Family::Relation if numbering(read) => "ukl/reads/ids.h",
+        Family::Relation => "ukl/reads/relation.h",
+        Family::Tape | Family::View => return None,
+    };
+    Some((source, format!("clif_{}", read.name)))
 }
 
 /// A read's signature: its family's pointers (the tape's base and its view; a relation's descriptor), then its own

@@ -3224,14 +3224,14 @@ impl<'a> Run<'a, '_> {
                 // An input may be bound when its first reader runs, so it is not taken as empty unless it is bound
                 // already, in a program that asks nothing.
                 if !native_rels.contains(rel) {
-                    return asks_nothing && self.inputs.contains(rel) && crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some_and(|s| s.len() == 0);
+                    return asks_nothing && self.inputs.contains(rel) && crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some_and(|s| !s.may_hold_rows());
                 }
                 if let Some(&e) = empty.get(rel) {
                     return e;
                 }
                 let e = match super::native::component::held(self.db, rel) {
                     Some(h) => h.holds_none(),
-                    None => !native_rels.contains(rel) && crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some_and(|s| s.len() == 0),
+                    None => !native_rels.contains(rel) && crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some_and(|s| !s.may_hold_rows()),
                 };
                 empty.insert(rel.to_owned(), e);
                 e
@@ -7721,6 +7721,65 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             }
             continue;
         }
+        // A filter every row passes is its relation (t52 step 3): `h(v…) :- x(v…), $v < b, …` (`filter_of`), where each
+        // live row of `x` holds every compared column under its bound, as hiding's narrow twins in a run with no
+        // annotation document. Its rows are `x`'s, held under both names: read where they lie to check, nothing
+        // derived or copied. Maintained, its change is `x`'s: the same rows pass the same bounds. Not under kept
+        // strata, whose kept rows are a stratum's own, nor on the device, whose strata bind their relations themselves.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let [r] = rules.as_slice()
+            && strata_kept.is_none()
+            && !placement::device_on()
+            && let Some((of, bounds)) = { let (v, rule) = run.versions.rule_at(*r); plain_filter(&f0, rel, v, rule) }
+            && run.native_rels.contains(&of)
+            && let Some(n) = super::native::component::hold_as_where_all(db, rel, &of, |src, row| bounds.iter().all(|&(c, b)| src.value(row, c) < b))
+        {
+            super::profile::stratum(&skey, "a filter every row passes: its relation's rows (t52 step 3)", || format!("{of}: {n} rows"));
+            super::profile::decision("filters every row passes, read as their relation", || format!("{rel} as {of}"));
+            run.native_rels.insert(rel.to_string());
+            if let Some(&card) = run.model.stats.card.get(of.as_str()) {
+                run.model.stats.card.insert(rel.to_string(), card);
+            }
+            for c in 0..f0.types(rel).len() {
+                let k = (of.clone(), c);
+                if let Some(&d) = run.model.ndv.get(&k) {
+                    run.model.ndv.insert((rel.to_string(), c), d);
+                }
+                if let Some(&fan) = run.model.stats.fan.get(&k) {
+                    run.model.stats.fan.insert((rel.to_string(), c), fan);
+                }
+            }
+            if let Some(m) = maintaining.as_deref_mut() {
+                if !moved_rels.contains(&of) {
+                    outcome.unchanged.insert(rel.to_string());
+                } else if let Some(d) = diffs.get(&of).cloned() {
+                    diffs.insert(rel.to_string(), d);
+                    m.delta_made(rel);
+                    moved_rels.insert(rel.to_string());
+                } else {
+                    m.no_delta(rel);
+                    moved_rels.insert(rel.to_string());
+                }
+            }
+            outcome.native.insert(key);
+            continue;
+        }
+        if super::profile::on()
+            && let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let [r] = rules.as_slice()
+            && let Some((of, _)) = { let (v, rule) = run.versions.rule_at(*r); plain_filter(&f0, rel, v, rule) }
+        {
+            let why = if strata_kept.is_some() {
+                "kept strata"
+            } else if placement::device_on() {
+                "on the device"
+            } else if !run.native_rels.contains(&of) {
+                "its relation not held by the engine"
+            } else {
+                "a row of its relation fails a bound"
+            };
+            super::profile::decision("filters derived, not read as their relation", || format!("{rel} of {of}: {why}"));
+        }
         // A reach index not made in place (`reach_rows`) has no delta: its readers derive again.
         if let Some(m) = maintaining.as_deref_mut() {
             for r in scc.iter().filter(|r| reach_olds.remove(*r).is_some()) {
@@ -8920,9 +8979,13 @@ fn walk_repeat() -> usize {
 }
 
 impl WalkSnap {
-    /// `None` where a positive atom's relation is not the engine's (the walk could not probe it).
+    /// `None` where a positive atom's relation is not the engine's (the walk could not probe it), or is a view held in
+    /// place (`hold_view_in_place`): a view's rows are its source's, so holding it holds the source whole, and a
+    /// batch's view a chunk's every relation, in its block of sources, until the search runs. Decision 0243 bounds
+    /// what a request holds by its line's relations; the line is priced instead. A negated view is not held (a walk
+    /// takes a negated relation it does not hold as passing).
     /// Read by the scope alone (`Db`): a stratum off the run's thread asks too, and reads no SQL (decision 0113).
-    fn take(db: crate::code_rule_dsl::facts::vtab::Db<'_>, name: &str, line: usize, b: &Body<'_>, first: Option<usize>, heavy_of: &dyn Fn(&str, usize) -> Option<Vector<i64>>) -> Option<WalkSnap> {
+    pub fn take(db: crate::code_rule_dsl::facts::vtab::Db<'_>, name: &str, line: usize, b: &Body<'_>, first: Option<usize>, heavy_of: &dyn Fn(&str, usize) -> Option<Vector<i64>>) -> Option<WalkSnap> {
         use super::native::component as engine;
         let mut rels = HashMap::new();
         let mut syms = HashMap::new();
@@ -8935,7 +8998,7 @@ impl WalkSnap {
                     if t.var().is_some() && let Some(h) = heavy_of(rel, c) { heavy.insert((rel.to_string(), c), h); }
                 }
             }
-            match engine::held(db, rel) {
+            match engine::held(db, rel).filter(|held| held.view.is_none()) {
                 Some(held) => { rels.insert(rel.to_string(), held); }
                 None if !a.neg() => return None,
                 None => {}

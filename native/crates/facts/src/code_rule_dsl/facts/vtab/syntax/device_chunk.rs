@@ -171,6 +171,9 @@ fn build_views(batch: &Batch) -> Option<ViewsInPlace> {
     let (mut on_device, mut lines, mut locs) = (device.is_some(), true, true);
     let mut slabs: Vec<rerail_device::device::Buffer> = Vec::new();
     for i in 0..docs.len() {
+        // Its tape's rows' derived columns its program reads, made before its entry is written, which points at them
+        // (`ViewDoc::gaps`, …).
+        super::tape_rows::derive(batch, i);
         let r = docs.reads(i).ok()?;
         locs &= r.locs;
         if r.entry.is_none() {

@@ -27,7 +27,10 @@ pub use crate::stream_analysis::*;
 
 use crate::native_cpu_shape::Step;
 use crate::native_ir::{FlagOp, On, Structure, StructuralOperation as Op};
-use crate::stream::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, Refused, WORD_KIND};
+use crate::stream::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, WORD_KIND};
+// A refusal: what the tests' comparisons (`against`) take of the interpreter.
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::stream::Refused;
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -5677,6 +5680,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let (n, p) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending));
                     let first = f.ins().isub(n, p);
                     let second = f.ins().iadd_imm(first, 1);
+                    // Its row edited: where it is before the commit point (the extras pending can cross
+                    // one), the commit point moved back to it, so the writer's pass reads the edit.
+                    table.uncode(&mut f, &env, first);
                     let (a, b) = (NodeCol::row(&mut f, rows, first), NodeCol::row(&mut f, rows, second));
                     let s = NodeCol::of(rows, AT_START).get_row(&mut f, b);
                     NodeCol::of(rows, AT_START).put_row(&mut f, a, s);
@@ -7449,7 +7455,7 @@ impl CompiledStream {
     /// `against`, its keys numbered in `lang`, both in format 16z where `z`.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn against_in(&self, bytes: &[u8], tier1: &crate::block::BlockRun, want: Result<Vec<crate::stream::Node>, Refused>, lang: &rerail_tape_format::f16::Lang, z: bool) -> (Result<Vec<u8>, usize>, Result<Vec<u8>, usize>) {
-        let scan = |out: &mut rerail_tape_format::Vector<u8>| rerail_tape_format::newlines::index_into(out, bytes, rerail_tape_format::newlines::Terminators::Newlines);
+        let scan = |out: &mut Vector<u8>| rerail_tape_format::newlines::index_into(out, bytes, rerail_tape_format::newlines::Terminators::Newlines);
         against_by(self, bytes, want, lang, z, |numbers| {
             let doc = Doc16 { source: bytes, lang, numbers, z, lines: &scan };
             self.write16(&mut rerail_tape_format::f16::Writer::empty(), self.tokens(self.records_of(tier1), bytes.len()), &doc, |tape| self.run_raw(bytes, tier1, tape))
@@ -7462,7 +7468,7 @@ impl CompiledStream {
     /// (the device's buffers, `rerail_cpu_stream::tier2_on`) writes its tapes by.
     pub fn image16_by(&self, source: &[u8], out: Out16<'_>, tokens: usize, call: impl FnMut(&mut Tape) -> u64) -> Result<rerail_tape_format::f16::Written, String> {
         let Out16 { lang, numbers, terminators, z } = out;
-        let scan = |out: &mut rerail_tape_format::Vector<u8>| rerail_tape_format::newlines::index_into(out, source, terminators);
+        let scan = |out: &mut Vector<u8>| rerail_tape_format::newlines::index_into(out, source, terminators);
         let doc = Doc16 { source, lang, numbers, z, lines: &scan };
         self.write16(&mut rerail_tape_format::f16::Writer::empty(), tokens, &doc, call).map_err(Fail16::text)
     }

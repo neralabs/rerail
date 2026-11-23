@@ -6896,8 +6896,8 @@ impl<L: Layout> P<'_, L> {
     }
 }
 
-/// The tape of `src` from tier 1's records (each token's first and last bytes and code), finished by `finish`
-/// (format 16, written as the parse goes: decision 0434), or the byte it was refused at.
+/// The tape of `src` from tier 1's records (each token's first and last bytes and code), written to `finish`'s target and finished
+/// by it (decision 0434: format 16 as the parse goes), or the byte it was refused at.
 pub fn parse<F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, finish: &mut F) -> Result<F::Out, u32> {
     // Where tier 1 sends the file to tree-sitter.
     if lx.refused {
@@ -6910,7 +6910,7 @@ pub fn parse<F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed
         match at {
             Ok(c) => return Ok(c),
             Err(rerail_tape_format::Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(u32::MAX);
                 }
                 widths = w;

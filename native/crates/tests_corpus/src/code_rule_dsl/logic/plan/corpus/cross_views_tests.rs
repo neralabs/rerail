@@ -549,5 +549,7 @@ fn a_sessions_edit_takes_its_unchanged_groups_from_the_last_run() {
 /// structure, which makes no row (`Source::statistics`).
 fn cold_counted(made: &BTreeSet<String>) -> bool {
     let own = ": the source's own, from its structure (no row made)";
-    !made.is_empty() && made.iter().all(|x| x.ends_with(": counted") || x.ends_with(": counted at the held nodes") || x.ends_with(own))
+    // Counted by the chunks where their rows lay (decision 0458's statistics), or off the batch.
+    let how = [": counted", ": counted at the held nodes", ": counted by the chunks, where their rows lay", ": counted by the chunks at their held nodes", own];
+    !made.is_empty() && made.iter().all(|x| how.iter().any(|h| x.ends_with(h)))
 }

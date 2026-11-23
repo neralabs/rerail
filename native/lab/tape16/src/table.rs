@@ -2,8 +2,8 @@
 //! (`native/crates/tape_format/tables/<tag>.tsv`, read by `rerail_tape_format::f16::lang`).
 //!
 //! - **The table**: every code the grammar allows (E25, `gcodes`), as the engine's ids: a kind name expanded to
-//!   every id of that name, a field by its id, supertypes by theirs. What it holds is the grammar's alone (decision
-//!   0631): a file of any shape is written in format 16. Its order is a corpus's (`Counts`): the codes most nodes
+//!   every id of that name, a field by its id, supertypes by theirs. What it holds is the grammar's alone (decisions
+//!   0626, 0631): a file of any shape is written in format 16. Its order is a corpus's (`Counts`, decision 0638): the codes most nodes
 //!   have first, so they are below the cutoff and read without the side list; a code no counted node has, by the
 //!   plain codes first, then kind, field and memberships.
 //! - **The widths**: a byte each; a wider value is escaped to its side list.
@@ -163,7 +163,7 @@ pub fn run(tag: u8, scratch: &Path, out: &Path, counts: &Counts) -> Result<Repor
     let names = names_of(of, &ids, &table);
     let lang = Lang::new(CodeTable::new(table), [1, 1, 1], crate::f16::revision(tag))?.with_names(names);
     let comment = format!(
-        "Tape format 16's choices for tape tag {tag} ({}), decisions 0293 §3 and 0631. Written by the lab from the grammar:\n  tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)\n{} codes{}{}.",
+        "Tape format 16's choices for tape tag {tag} ({}), decisions 0293 §3, 0626 and 0631. Written by the lab from the grammar:\n  tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)\n{} codes{}{}.",
         crate::capture::language(tag),
         lang.table().len(),
         if bound { "; no node types declared: the grammar's list is the bound" } else { "" },

@@ -83,6 +83,8 @@ mod maintain_mode_tests;
 #[cfg(test)]
 mod cut_tests;
 #[cfg(test)]
+mod refusal_tests;
+#[cfg(test)]
 mod key_tests;
 #[cfg(test)]
 mod index_order_tests;
@@ -103,6 +105,7 @@ mod block_index_tests;
 use spec::{ArchivedArg as Arg, ArchivedJoinItem as JoinItem, ArchivedJoinSpec, ArchivedLine as Line, ArchivedSource as Source, ArchivedStart as Start, ArchivedTok as Tok, ComponentSpec, Join, JoinSpec, Reprobe, Spec};
 pub mod closure;
 mod cands;
+mod sorted_hash;
 pub mod table;
 pub mod level;
 // cratify: `device` is rerail-device-metal's (it mounts it)
@@ -3082,16 +3085,16 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             }
         };
         if tried && !on_device {
-            // The seeds were parsed without the CPU's indexes: parse them again with them.
+            // The seeds were parsed without the CPU's indexes: each input step gets its index now, on the relation
+            // the seed was parsed with. Parsed again from its spec, it looked each relation up by name on the
+            // connection, which a stratum that waited for its wave reaches later, on the run's thread, after other
+            // chunks' jobs had bound or dropped their own under those names: it could read another chunk's relation, or
+            // find it gone ("no native relation": t50 step 9, Metal at 32 MB on s1000, every run).
             drop(guard);
-            let specs = std::mem::take(&mut comp.seed_specs);
-            {
-                let mut syms = Interner::for_loading(&symbols);
-                for (pi, js) in &specs {
-                    let j = join_rule(conn, js, &mut syms)?;
-                    comp.probes[*pi].body = Body::Join(Box::new(j));
+            for (pi, _) in std::mem::take(&mut comp.seed_specs) {
+                if let Body::Join(j) = &mut comp.probes[pi].body {
+                    j.indexed();
                 }
-                syms.check()?;
             }
             comp.device = None;
             guard = comp.store.write().unwrap();
@@ -4941,8 +4944,26 @@ pub struct Csr { cols: Vector<usize>, source: bool, sorted: bool, chain: Option<
                  /// A whole source's rows in one block relation, probed by that relation's own index there (its number;
                  /// decision 0325 step 5), shared with the device: no host table of its rows. Its buckets' rows are
                  /// candidates, checked against the key by the reader.
-                 block: Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> }
+                 block: Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)>,
+                 /// A test's whole key's index (`sorted_hash`, t50 step 5): made at its first test of a derived input.
+                 hashed: OnceLock<sorted_hash::SortedHash> }
 impl Csr {
+    /// The sorted hash of `rel`'s rows by this index's columns, made at its first ask.
+    fn hashed(&self, rel: &InRel) -> &sorted_hash::SortedHash {
+        self.hashed.get_or_init(|| {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "probe: sorted hash of a derived input".into());
+            let h = sorted_hash::SortedHash::new(rel.n, |id| {
+                let row = rel.at(id as usize);
+                sorted_hash::hash_key(self.cols.iter().map(|&c| row.at(c)))
+            });
+            crate::code_rule_dsl::prof::count("setfix.sorted_hash.bytes", h.bytes());
+            h
+        })
+    }
+    /// Whether a probe of it walks an index's runs (`runs`): a derived input's order, or its kept chain.
+    fn runs_kind(&self) -> bool {
+        self.ordered.is_some() || self.chain.is_some()
+    }
     /// Whether `get` gives a key's rows alone (not a bucket's candidates).
     fn exact(&self) -> bool {
         self.block.is_none()
@@ -5383,6 +5404,23 @@ pub fn hold_bound(conn: &Connection, table: &str, rel: Arc<InRel>) {
 /// rows lie (decision 0353 step 8).
 pub fn kept_rel(conn: &Connection, table: &str) -> Option<Arc<InRel>> {
     on(conn).derived.lock().get(table).filter(|rel| rel.view.is_none()).cloned()
+}
+
+/// Holds `table` in `conn`'s run as relation `of` (`hold_as`) where every live row of `of` passes `keep` (t52 step 3:
+/// a filter every row passes is its relation), read where they lie to check. The rows held; `None` where `of` is not
+/// held as rows, or a row fails `keep`.
+pub fn hold_as_where_all(conn: &Connection, table: &str, of: &str, keep: impl Fn(&dyn crate::code_rule_dsl::facts::vtab::Source, usize) -> bool) -> Option<usize> {
+    let rel = on(conn).derived.lock().get(of).cloned()?;
+    if rel.view.is_some() {
+        return None;
+    }
+    let src = Derived::source(Arc::clone(&rel), None);
+    let n = src.len();
+    if !(0..n).all(|r| keep(&*src, r)) {
+        return None;
+    }
+    hold_as(conn, table, rel);
+    Some(n)
 }
 
 /// A native relation of `conn`'s run as it can be kept and held again (`hold_rows`): its columns' types and its live
@@ -6972,7 +7010,7 @@ impl InRel {
         let mut idx = self.idx.lock().unwrap();
         idx.entry(mask).or_insert_with(|| {
             run_counts().orders_opened.fetch_add(1, AtomicOrdering::Relaxed);
-            Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c) })
+            Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c), hashed: OnceLock::new() })
         }).clone()
     }
     /// Its rows' index on `cols` in their block (decision 0478 step 5, R2): the one the device finds and builds, over
@@ -7017,7 +7055,7 @@ impl InRel {
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
             let path = |i: usize| { run_counts().index_paths[i].fetch_add(1, AtomicOrdering::Relaxed); };
-            let empty = |source, sorted| Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None };
+            let empty = |source, sorted| Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new() };
             let m = if cols.is_empty() {
                 path(0); empty(false, false)
             } else if let Some(b) = self.block_index(cols, false) {
@@ -7153,6 +7191,16 @@ fn input_of(conn: impl Scoped, spec: &spec::InputKey, syms: &mut Interner) -> Re
             if view.ids.is_none() && view.eqs.is_empty() && view.cols.iter().enumerate().all(|(i, &c)| i == c)
                 && let Some(held) = held_rel(view.src.as_ref(), types.len())
             {
+                // Another name of the same held rows (decision 0611: an export read as the export of its source) is
+                // that one's relation, not a second one over the same parts.
+                let parts = |r: &InRel| r.rows.parts().map(|p| std::ptr::from_ref(p.rel()) as usize).collect::<Vec<_>>();
+                let mine = parts(held);
+                let same = on.inputs.lock().values().find(|r| r.view.is_none() && r.base == base && r.types == types && r.n == held.n && r.dead == held.dead && parts(r) == mine).cloned();
+                if let Some(rel) = same {
+                    loaded(0, thread_cpu() - c0, 0);
+                    keep(&rel);
+                    return Ok(rel);
+                }
                 let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: held.k, n: held.n, rows: held.rows.clone(), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: held.dead.clone(), ndead: held.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None });
                 loaded(0, thread_cpu() - c0, 0);
                 let _ = rel.name.set(table.clone());
@@ -7573,6 +7621,33 @@ impl JoinRule {
             _ => None,
         })
     }
+
+    /// The CPU's indexes of its inputs, on the relations its steps hold: what `join_rule` gives a rule parsed with
+    /// them, for one parsed without (a seed placed on the device, which then refused it).
+    fn indexed(&mut self) {
+        let edits: Vec<Edit> = self
+            .plan
+            .steps
+            .iter()
+            .zip(self.plan.ranges.iter())
+            .enumerate()
+            .filter_map(|(i, (st, r))| match st {
+                Step::Atom { src: Src::In(rel, ix), .. } => {
+                    let (rel, ix) = self.src_in(rel, ix);
+                    let ix = rel.index(&ix.cols);
+                    // A ranged probe reads the order on its key then the range's column, as `join_rule` gives it.
+                    Some(Edit::Index(i, match r.as_ref() {
+                        Some(r) if ix.ordered.is_some() && ix.then.is_none() => rel.index_then(&ix.cols, r.col),
+                        _ => ix,
+                    }))
+                }
+                _ => None,
+            })
+            .collect();
+        let mut plan = steps::Plan::decoded(&self.plan);
+        plan.edit(edits);
+        self.plan = plan.encode();
+    }
 }
 impl JoinRule {
     /// Its steps' (in, out) counts by plan step (`plan_counts`).
@@ -7858,7 +7933,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &ArchivedJoinSpec, syms: &mut Intern
     use steps::{Src, Step};
     use rerail_section::Bound;
     let conn = conn.db();
-    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None });
+    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new() });
     let mut bound: Vec<bool> = Vec::new();
     for &s in pre {
         if bound.len() <= s { bound.resize(s + 1, false) }

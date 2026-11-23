@@ -99,6 +99,7 @@ native/crates/facts_base/src/code_rule_dsl/facts/nearest.rs::AXIS_SOLVE	stays	co
 native/crates/facts_base/src/code_rule_dsl/facts/nearest.rs::NEAREST	stays	compiled once from the engine's own code
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::BLOCK_DEVICE	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::HEAP_NET	stays	code a crate above registers at load (the allocator's net count)
+native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::ON	stays	whether a relation's chunks are sealed (RERAIL_SEAL_CHUNKS, decision 0622): the process's environment, read once
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::HEAP_PEAK	stays	the allocator's per-thread peak a crate above registers once (decision 0469)
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::SOURCES_HELD	stays	code registered at load (a hook: the batches' relations held, from the crate above)
 native/crates/facts_base/src/code_rule_dsl/facts/span_prefilter.rs::SPAN_PREFILTER	stays	compiled once from the engine's own code
@@ -232,6 +233,7 @@ native/crates/prefilter/src/code_rule_dsl/prefilter/lower/render.rs::IDENTIFIER	
 native/crates/prefilter/src/code_rule_dsl/prefilter/lower/waves.rs::IDENTIFIER	stays	a regex of a literal
 native/crates/prof/src/code_rule_dsl/logic/profile.rs::EXITED	stays	the profiler's registry of the process's threads (threads are the process's, as the OS keeps them): every thread that opened a span, and the accounts of those that ended
 native/crates/prof/src/code_rule_dsl/logic/profile.rs::EXITED_GAPS	stays	the profiler's registry of the process's threads (threads are the process's, as the OS keeps them): every thread that opened a span, and the accounts of those that ended
+native/crates/prof/src/code_rule_dsl/logic/profile.rs::QUEUE_LABELS	stays	the profiler's registry of the process's threads (threads are the process's, as the OS keeps them): the dispatch queue each nameless system thread was seen serving
 native/crates/prof/src/code_rule_dsl/logic/profile.rs::THREADS	stays	the profiler's registry of the process's threads (threads are the process's, as the OS keeps them): every thread that opened a span, and the accounts of those that ended
 native/crates/prof/src/code_rule_dsl/logic/profile.rs::TICK	stays	the OS's timebase ratio: a constant of the machine read once
 native/crates/prof/src/code_rule_dsl/logic/profile.rs::WARM_FAULTS	stays	the process's exit status (RERAIL_WARM=list): an atexit handler reads it

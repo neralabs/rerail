@@ -87,6 +87,9 @@ impl crate::code_rule_dsl::facts::vtab::Source for Before {
     fn lookup_cost(&self, column: usize) -> f64 {
         self.now.lookup_cost(column)
     }
+    fn scan_cost(&self) -> f64 {
+        self.now.scan_cost()
+    }
     fn indexed(&self, column: usize) -> bool {
         self.now.indexed(column)
     }

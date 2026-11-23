@@ -42,11 +42,14 @@ struct Held {
     unset_docs: rerail_blocks::maps::BlockHash<i64, ()>,
     /// Let go after its last reader (`release`).
     released: bool,
+    /// Once read (`source`): its parts' relations, its rows and its dead rows, which another export holding the same
+    /// is read as (decision 0611: a chunk's filter read as its relation gives two exports one chunk's parts).
+    shape: Option<(Vector<usize>, usize, Vector<u64>)>,
 }
 
 impl Held {
     fn new(width: usize) -> Self {
-        Held { rows: Rows::living(width, Life::Kept), dead: rerail_blocks::vector::Vector::new(), set: HashTable::new(), types: None, source: None, unset: Vector::new(), at: None, unset_docs: Default::default(), released: false }
+        Held { rows: Rows::living(width, Life::Kept), dead: rerail_blocks::vector::Vector::new(), set: HashTable::new(), types: None, source: None, unset: Vector::new(), at: None, unset_docs: Default::default(), released: false, shape: None }
     }
 
     fn width(&self) -> usize {
@@ -148,6 +151,13 @@ impl Exports {
     /// derived (`held_rows`) is read where it lies, its live rows not given before written once into the export's
     /// relation, as one batch's: nothing of the chunk's relation is kept. Other sources' rows are copied in.
     pub fn add(&mut self, rel: &str, width: usize, rows: &dyn Source) -> usize {
+        self.add_owned(rel, width, rows, None)
+    }
+
+    /// `add`, where `own` is the export's location column and whether a document is one of the giving chunk's own:
+    /// a row of such a document no other chunk gives, and the chunk's relation holds it once, so it is appended
+    /// unchecked (as a memo hit's own rows are, `append_own`). Only the others are looked up in the export's set.
+    pub fn add_owned(&mut self, rel: &str, width: usize, rows: &dyn Source, own: Option<(usize, &dyn Fn(i64) -> bool)>) -> usize {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
         debug_assert!(held.source.is_none(), "export {rel} added to after the cross-file part read it");
         let start = held.len() as u32;
@@ -163,12 +173,37 @@ impl Exports {
                 r.each_run(0, n as u32, |p, lo, hi, _| whole &= lo == 0 && hi == p.len());
                 if whole {
                     r.each_run(0, n as u32, |p, _, _, _| held.rows.append_segment(p));
+                    let own = own.filter(|(at, _)| *at < width);
+                    if let Some((at, _)) = own
+                        && held.at.is_some_and(|a| a != at)
+                    {
+                        held.set_all();
+                    }
+                    // The own documents' rows, unchecked: runs of ids, and the documents they are of.
+                    let mut unchecked: Option<[u32; 2]> = None;
                     let mut added = 0;
                     for i in 0..n {
                         let id = start + i as u32;
                         if dead.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1) {
                             held.kill(id);
                             continue;
+                        }
+                        if let Some((at, mine)) = own {
+                            let d = super::memo::document_of(held.get(id, at));
+                            if mine(d) {
+                                held.at = Some(at);
+                                held.unset_docs.put(d);
+                                match &mut unchecked {
+                                    Some(run) if run[1] == id => run[1] = id + 1,
+                                    _ => {
+                                        if let Some(run) = unchecked.replace([id, id + 1]) {
+                                            held.unset.push(run);
+                                        }
+                                    }
+                                }
+                                added += 1;
+                                continue;
+                            }
                         }
                         // A row of a document whose own rows were appended unchecked may be one of them: they are set
                         // first.
@@ -178,6 +213,9 @@ impl Exports {
                         if held.keep_once(id) {
                             added += 1;
                         }
+                    }
+                    if let Some(run) = unchecked {
+                        held.unset.push(run);
                     }
                     return added;
                 }
@@ -337,6 +375,28 @@ impl Exports {
         if let Some(s) = &held.source {
             return Arc::clone(s);
         }
+        // Another export of the same rows (decision 0611): every chunk's part of this one that one's too, in order, its
+        // rows and dead rows the same. The two are one relation: this one is read as that one's, nothing made again.
+        let parts: Vector<usize> = held.rows.parts().map(|p| std::ptr::from_ref(p.rel()) as usize).collect();
+        let shape = (parts, held.rows.rows(), held.dead.clone());
+        let types = held.types.clone();
+        if shape.1 > 0
+            && let Some(same) = self.rels.iter().find(|(o, h)| *o != rel && h.types == types && h.source.is_some() && h.shape.as_ref() == Some(&shape)).map(|(o, _)| o.clone())
+        {
+            crate::code_rule_dsl::logic::profile::decision("exports of the same rows, read as one (decision 0611)", || format!("{rel} as {same}"));
+            let source = self.rels[&same].source.clone().expect("read");
+            let held = self.rels.get_mut(rel).expect("held");
+            held.rows = Rows::living(width, Life::Kept);
+            held.dead.clear();
+            held.set = HashTable::new();
+            held.unset.clear();
+            held.unset_docs.clear();
+            held.source = Some(Arc::clone(&source));
+            held.shape = Some(shape);
+            return source;
+        }
+        let held = self.rels.get_mut(rel).expect("held");
+        held.shape = Some(shape);
         let rows = std::mem::replace(&mut held.rows, Rows::living(width, Life::Kept)).sealed();
         let n = rows.rows();
         let dead = std::mem::take(&mut held.dead);

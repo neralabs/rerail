@@ -17,9 +17,9 @@ mod tier2;
 
 pub use tier1::{Lexed, PADDING, lex};
 
-/// The tape of `buf[..n]`, or the byte the parser refused it at (0: tier 1 sends it to the engine). The writer writes
-/// to `finish`'s target and is finished by it (decision 0434). `buf` is the file padded, as simdjson's: `PADDING`
-/// spaces after it (`padded`), so that tier 1 loads each block where it is.
+/// The tape of `buf[..n]`, written to `finish`'s target and finished by it (decision 0434: format 16 as the parse
+/// goes), or the byte the parser refused it at (0: tier 1 sends it to the engine). `buf` is the file padded, as
+/// simdjson's: `PADDING` spaces after it (`padded`), so that tier 1 loads each block where it is.
 pub fn parse<F: rerail_tape_format::Finish>(buf: &[u8], n: usize, finish: &mut F) -> Result<F::Out, u32> {
     tier2::parse(&buf[..n], &tier1::lex(buf, n), finish)
 }

@@ -28,7 +28,7 @@ pub const FIELD_LIMIT: usize = 64;
 /// No value: a cell of an index past its width (the engine's `tape::index`).
 pub const SENTINEL: u16 = u16::MAX;
 /// ERROR's `kf`.
-pub const ERROR_CODE: u16 = 0;
+pub const ERROR_CODE: u16 = writer16::ERROR_CODE;
 /// The `.rerail` dialect's language tag (`languages/rr.json`'s `tapeTag`).
 pub const RR_TAG: u8 = 13;
 
@@ -411,6 +411,11 @@ pub trait Finish {
     /// What the writer writes to (`Writer::to`).
     fn target(&self) -> Target;
     fn finish<L: Layout>(&mut self, w: Writer<L>) -> Result<Self::Out, Redo>;
+    /// Whether the parse is to run again at the widths it had, where `finish` asked for those widths again (as
+    /// `Sink::again`).
+    fn again(&mut self) -> bool {
+        false
+    }
 }
 
 /// The widths a tape needs, where the writer's did not hold its values: parse again at these.
@@ -449,6 +454,13 @@ impl<L: Layout> Writer<L> {
         }
     }
 
+    /// Node `node`'s cell in the columns (`base`).
+    #[inline(always)]
+    fn cell(&self, node: usize) -> usize {
+        debug_assert!(node >= self.base, "node {node} before the window's {}", self.base);
+        node - self.base
+    }
+
     /// The writer leaving out the subtrees in the source ranges `omit` (sorted, apart; `Sink::omissions`): an
     /// embedded program's placeholders, left out as the parse writes them (format 16's ops are never given them,
     /// `pass`), never by a walk of the tape after.
@@ -473,13 +485,6 @@ impl<L: Layout> Writer<L> {
     fn may_be_omitted(&self, start: u32, reached: u32) -> bool {
         let k = self.omit.partition_point(|r| r[1] <= start);
         self.omit.get(k).is_some_and(|r| r[0] <= start && reached <= r[1])
-    }
-
-    /// Node `node`'s cell in the columns (`base`).
-    #[inline(always)]
-    fn cell(&self, node: usize) -> usize {
-        debug_assert!(node >= self.base, "node {node} before the window's {}", self.base);
-        node - self.base
     }
 
     /// The writer writing to `target` for the source `src`: format 16's nodes passed to its ops as they are
@@ -958,8 +963,8 @@ impl<L: Layout> Writer<L> {
         self.insert_node(at, key | (k & mask), start);
     }
 
-    /// Whether the tape holds no chain and has passed no node on: a parse that opens no chain and commits nothing
-    /// before its finish (tier 2's), whose calls are then the `plain_` ones.
+    /// Whether the tape holds no chain and has passed no node on: a parse that opens no chain and commits only at its
+    /// finish (tier 2's), whose calls are then the `plain_` ones.
     fn plain(&self) -> bool {
         self.chain_at == usize::MAX && self.chains.is_empty() && self.base == 0
     }
@@ -1434,7 +1439,8 @@ mod tests {
             f16::Written::F16(t) => of(&t.reader(lang()).unwrap()),
             f16::Written::F16Z(t) => {
                 assert!(z);
-                of(&t.reader(lang(), Some(&f16::ZCache::of([&t]))).unwrap())
+                let cache = f16::ZCache::of([&t]);
+                of(&t.reader(lang(), Some(&cache)).unwrap())
             }
         })
     }
@@ -1517,13 +1523,21 @@ mod tests {
     /// where none is, a wrap closed past its leaf and at its start.
     #[test]
     fn a_leaf_at_once_and_a_field_are_the_calls_they_join() {
+        // A table of kinds 0 to 15 under fields 0 to 7, a key numbered `kind + 16 * field`.
+        static LANG: std::sync::OnceLock<f16::Lang> = std::sync::OnceLock::new();
+        let lang = LANG.get_or_init(|| {
+            let entries = (0..8).flat_map(|field| (0..16).map(move |kind| Entry { kind, field, flags: 0, alias: None, classes: Vec::new() })).collect();
+            f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).unwrap()
+        });
+        let number = |k: u32| (k >> 16 == 0 && k & 0x3ff < 16 && k >> 10 < 8).then(|| (k & 0x3ff) + 16 * (k >> 10));
+        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number) });
         let src = vec![b' '; 200_000];
         // 0: the calls joined; 1: the joined calls; 2: the plain ones (no chain, no node passed on).
         let build = |way: u8| {
             let joined = way > 0;
             let mut w = Widths::guess(src.len());
             loop {
-                let mut o = Writer::new(w, 8).to(target(false), &src);
+                let mut o = Writer::new(w, 8).to(target(), &src);
                 let r = o.push(key(1, 0, 0), 0);
                 for i in 0..40u32 {
                     let (s, e) = (10 * i, if i % 7 == 3 { 10 * i + 70_000 } else { 10 * i + 3 });
@@ -1567,14 +1581,21 @@ mod tests {
                     }
                 }
                 o.close(r, 199_999);
-                match rows(&mut o, false) {
-                    Ok(t) => break t,
+                match o.finish_16() {
+                    Ok(t) => {
+                        let t = t.unwrap();
+                        let f16::Written::F16(t) = t.tape else { panic!("format 16") };
+                        let r = t.reader(lang).unwrap();
+                        break (0..r.len()).map(|i| (r.code(i), r.subtree_end(i), r.parent(i), r.start(i), r.end(i))).collect::<Vec<Row>>();
+                    }
                     Err(Redo(wider)) => w = wider,
                 }
             }
         };
-        assert_eq!(build(0), build(1));
-        assert_eq!(build(0), build(2));
+        let joined = build(0);
+        assert!(joined.len() > 40, "every leaf and wrap on the tape");
+        assert_eq!(joined, build(1));
+        assert_eq!(joined, build(2));
     }
 
     /// A leaf put in later, between closed nodes (`insert_leaf`), gives the tape written in order.

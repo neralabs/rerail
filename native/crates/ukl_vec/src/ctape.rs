@@ -3,7 +3,7 @@
 
 use rerail_c_lean::Tape;
 use rerail_tape_format::f16::{F16, Lang, Written, lang};
-use rerail_tape_format::tape::Tape as _;
+use rerail_tape_format::tape::{EntryRef, Tape as _};
 
 /// The C tape and the text it was parsed from.
 pub struct C<'t> {
@@ -28,7 +28,7 @@ impl<'t> C<'t> {
         self.tape.is_empty()
     }
 
-    fn entry(&self, i: usize) -> rerail_tape_format::tape::EntryRef<'static> {
+    fn entry(&self, i: usize) -> EntryRef<'static> {
         self.lang.table().entry(self.tape.code(i))
     }
 

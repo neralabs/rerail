@@ -85,7 +85,7 @@ pub fn unescape(body: &str) -> Result<String, String> {
                 // A JSON surrogate pair: a high surrogate, then a low one (another escape is its own character).
                 if (0xD800..0xDC00).contains(&code) && chars.peek() == Some(&'\\') {
                     let rest: String = chars.clone().take(6).collect();
-                    if let Some(low) = rest.strip_prefix("\\u").and_then(|h| u32::from_str_radix(h, 16).ok()).filter(|l| (0xDC00..0xE000).contains(l)) {
+                    if let Some(low) = rest.strip_prefix("\\u").and_then(|h| u32::from_str_radix(h, 16).ok()).filter(|low| (0xDC00..0xE000).contains(low)) {
                         chars.by_ref().take(6).for_each(drop);
                         let joined = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
                         out.push(char::from_u32(joined).ok_or("bad surrogate pair")?);

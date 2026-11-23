@@ -600,8 +600,8 @@ impl<'t> View<'t> {
                 ends.pop();
             }
             // A node's words run to the next node's (preorder: its first child's, or the one after it).
-            let end = if i + 1 < self.len() { self.nodes[i + 1][1] as usize } else { self.words.len() };
-            let words = end.saturating_sub(self.nodes[i][1] as usize).min(10);
+            let end = if i + 1 < self.len() { self.start(i + 1) } else { self.words.len() };
+            let words = end.saturating_sub(self.start(i)).min(10);
             out += &format!("{:indent$}{i} {:?} {:?} {:?}\n", "", self.kind(i), self.level(i), self.ws(i, 0, words), indent = 2 * ends.len());
             ends.push(i + self.size(i));
         }

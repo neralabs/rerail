@@ -18,7 +18,6 @@ use super::*;
 use crate::cpu::tests::{bits, graph, parts, Rng};
 use crate::exec::process_cpu;
 use crate::kernel::Bits;
-use rerail_blocks::vector::Vector;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -305,7 +304,7 @@ fn ane_overlap() {
                 splits.push(lane.last_split());
             }
             let med = |f: &dyn Fn(&Split) -> f64| {
-                let mut v: Vector<f64> = splits.iter().map(f).collect();
+                let mut v: rerail_blocks::vector::Vector<f64> = splits.iter().map(f).collect();
                 v.sort_by(f64::total_cmp);
                 v[v.len() / 2] * 1e3
             };

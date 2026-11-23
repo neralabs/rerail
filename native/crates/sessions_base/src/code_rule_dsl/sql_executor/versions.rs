@@ -497,6 +497,12 @@ impl Source for Mutable {
     fn lookup_cost(&self, c: usize) -> f64 {
         self.state.read().lookup_cost(c)
     }
+    fn scan_cost(&self) -> f64 {
+        self.state.read().scan_cost()
+    }
+    fn may_hold_rows(&self) -> bool {
+        self.state.read().may_hold_rows()
+    }
     fn indexed(&self, c: usize) -> bool {
         self.state.read().indexed(c)
     }

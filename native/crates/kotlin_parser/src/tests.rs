@@ -911,7 +911,7 @@ fn a_block_comment_before_a_comment_is_the_lean_parsers() {
         "import a.b\n\n/** d */\n// c\n// e\n\nprivate val u = 1\n",
         "package a\n/* x */\n// c\nimport b\n",
     ]);
-    // The comments at each place in a block of 16 nodes: a name a node.
+    // The moved comment behind each count of statements before it (up to 16): the commit point it may be before.
     let texts: Vec<String> = (0..16).map(|k| format!("fun f() {{\n{}  /* x */\n  // c\n  d()\n}}\n", "  a\n".repeat(k))).collect();
     same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
 }

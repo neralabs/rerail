@@ -3447,3 +3447,33 @@ fn a_kept_texts_modules_stand_while_it_and_its_files_are_as_kept() {
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A matcher whose captures are its root's field children (as `Absorb` writes them, decision 0106 §4) has its rows
+/// read from the tape at the transducer's roots (`ast_wave::field_captures`, t50 step 6): the same rows as W's matcher
+/// at each root (`RERAIL_AST_DIRECT_CAPTURES=off`), a capture in a field holding two kinds and a root with none.
+#[test]
+fn field_captures_read_from_the_tape_are_ws() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("field-captures");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "a.b.c\nx.y\nf(1).z\ng(h)\nk.m(n)\n").unwrap();
+    let program = ".language python\n.decl attr(t: symbol)\n.decl callee(t: symbol)\n.output attr, callee\n\
+                   attr(t) :- ast(d, r, {\"language\":\"python\",\"rule\":{\"all\":[{\"kind\":\"attribute\"},{\"has\":{\"field\":\"attribute\",\"kind\":\"identifier\",\"pattern\":\"$C1\",\"stopBy\":\"neighbor\"}}]}}, C1: x), text(x, t).\n\
+                   callee(t) :- ast(d, r, {\"language\":\"python\",\"rule\":{\"all\":[{\"kind\":\"call\"},{\"has\":{\"field\":\"function\",\"kind\":\"identifier\",\"pattern\":\"$C1\",\"stopBy\":\"neighbor\"}}]}}, C1: x), text(x, t).\n";
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = |out: &str| {
+        let out = dir.join(out);
+        super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+        (read("attr"), read("callee"))
+    };
+    let direct = run("direct");
+    let by_w = {
+        let _off = super::switches::set(&[("RERAIL_AST_DIRECT_CAPTURES", "off")]);
+        run("by-w")
+    };
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(direct.0, [["b"], ["c"], ["m"], ["y"], ["z"]]);
+    assert_eq!(direct.1, [["f"], ["g"]]);
+    assert_eq!(direct, by_w, "the tape's field children are W's captures");
+}

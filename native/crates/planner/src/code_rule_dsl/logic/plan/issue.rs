@@ -500,6 +500,17 @@ impl<'a> Board<'a> {
             }
             return Ok(None);
         }
+        // A filter of one relation is the loop's: read as its relation where every row passes (t52 step 3, the loop's
+        // `filter_of`), derived there where one fails. Issued, its job would derive the rows the loop then reads in place.
+        if let [r] = rules_of(j).as_slice()
+            && let [rel] = sccs[j].iter().collect::<Vec<_>>().as_slice()
+            && { let (v, rule) = run.versions.rule_at(*r); super::plain_filter(&run.fields(), rel, v, rule).is_some() }
+        {
+            if let Some(t) = &self.trace {
+                t.why.borrow_mut()[j] = "a filter, read as its relation by the loop";
+            }
+            return Ok(None);
+        }
         load(j)?;
         match run.strand_reads_with(&sccs[j], &rules_of(j), held) {
             Ok(reads) => Ok(Some(reads)),
