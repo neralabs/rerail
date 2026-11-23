@@ -1,0 +1,1 @@
+Set-up and `rerail packs calibrate` no longer say "it" when one reason from your lint config covers many rules, and `rerail install --remove` now says what `update-state.json` is: the record of the installed versions.

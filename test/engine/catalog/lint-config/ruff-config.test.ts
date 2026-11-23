@@ -256,7 +256,7 @@ describe("ruffReader: selectors", () => {
 
   it("selects a removed rule by no prefix, and lets a config ignore it", async () => {
     expect(await decision({ "ruff.toml": "[lint]\nextend-select = [\"ANN1\"]\n" }, "ANN101"))
-      .toEqual({ on: false, explicit: false, because: "ruff.toml does not select it, nor does Ruff 0.16.9's default rule selection" });
+      .toEqual({ on: false, explicit: false, because: "not selected by ruff.toml or Ruff 0.16.9's default rule selection" });
     expect(await decision({ "ruff.toml": "[lint]\nignore = [\"ANN101\"]\n" }, "ANN101"))
       .toEqual({ on: false, explicit: true, because: "ruff.toml: \"ANN101\" in lint.ignore" });
   });
@@ -264,7 +264,7 @@ describe("ruffReader: selectors", () => {
   it("does not take a flag that is not true or false, saying so, and runs Ruff's default without preview", async () => {
     const root = await repository({ "ruff.toml": "preview = 1\n" });
     expect(ruff(root, "AIR003")).toEqual({
-      verdict: { decision: { on: false, explicit: false, because: "ruff.toml does not select it, nor does Ruff 0.16.9's default rule selection" }, folders: [], notes: [] },
+      verdict: { decision: { on: false, explicit: false, because: "not selected by ruff.toml or Ruff 0.16.9's default rule selection" }, folders: [], notes: [] },
       notes: ["ruff.toml: preview = 1 is not true or false; not read."],
       read: true,
     });
@@ -298,8 +298,8 @@ describe("ruffReader: selectors", () => {
 
 describe("ruffReader: layering", () => {
   it.each([
-    ["[lint]\nselect = [\"F\"]\n", "ruff.toml: lint.select does not select it"],
-    ["select = [\"F\"]\n", "ruff.toml: select does not select it"],
+    ["[lint]\nselect = [\"F\"]\n", "not selected by ruff.toml: lint.select"],
+    ["select = [\"F\"]\n", "not selected by ruff.toml: select"],
   ])("turns off what a select (%j) leaves out of Ruff's default", async (text, because) => {
     expect(await decision({ "ruff.toml": text }, "E722")).toEqual({ on: false, explicit: false, because });
   });
@@ -313,7 +313,7 @@ describe("ruffReader: layering", () => {
 });
 
 describe("ruffReader: preview", () => {
-  const notSelected = (preview: string) => ({ on: false, explicit: false, because: `ruff.toml does not select it, nor does Ruff 0.16.9's default rule selection${preview}` });
+  const notSelected = (preview: string) => ({ on: false, explicit: false, because: `not selected by ruff.toml or Ruff 0.16.9's default rule selection${preview}` });
   const previewDefault = { on: true, explicit: false, because: "ruff.toml: Ruff 0.16.9's default rule selection with preview" };
 
   // AIR003 is a preview rule in preview's default selection, AIR321 a preview rule outside it, AIR001 a stable rule
@@ -335,7 +335,7 @@ describe("ruffReader: preview", () => {
   it("notes a preview rule selected by its code without preview, which Ruff does not run", async () => {
     const root = await repository({ "ruff.toml": "[lint]\nselect = [\"E722\"]\nextend-select = [\"AIR321\"]\n" });
     expect(ruff(root, "AIR321").verdict).toEqual({
-      decision: { on: false, explicit: false, because: "ruff.toml: lint.select does not select it" },
+      decision: { on: false, explicit: false, because: "not selected by ruff.toml: lint.select" },
       folders: [],
       notes: [`${PORT}: ruff.toml: "AIR321" in lint.extend-select selects a preview rule, which Ruff runs only with preview = true; it is not on.`],
     });

@@ -397,7 +397,7 @@ describe("T4 / C4 recommended rule packs", () => {
       ...PACKS,
       lintConfig: {
         settings: [
-          ...Array.from({ length: 87 }, (_, index) => implicit(index, false, "eslint.config.js does not turn it on")),
+          ...Array.from({ length: 87 }, (_, index) => implicit(index, false, "not turned on in eslint.config.js")),
           implicit(100, true, "eslint.config.js: js.configs.recommended"),
           { ruleId: "eslint-no-console", folder: "", on: true, config: { allow: ["warn"] }, explicit: false, because: "eslint.config.js: js.configs.recommended" },
           ...Array.from({ length: 6 }, (_, index) => ({ ruleId: `eslint-off-${index}`, folder: "", on: false, config: null, explicit: true, because: `eslint.config.js: "off-${index}": "off"` })),
@@ -407,7 +407,7 @@ describe("T4 / C4 recommended rule packs", () => {
     }, "agent");
     expect(text).toContain([
       "  From your lint config (read as data, never run):",
-      "    87 rules start off  eslint.config.js does not turn them on",
+      "    87 rules start off  not turned on in eslint.config.js",
       "    1 rule starts on  eslint.config.js: js.configs.recommended",
       "    eslint-no-console starts on with allow = [\"warn\"]  eslint.config.js: js.configs.recommended",
       "    eslint-off-0 starts off  eslint.config.js: \"off-0\": \"off\"",
@@ -416,25 +416,6 @@ describe("T4 / C4 recommended rule packs", () => {
     expect(text).toContain("    eslint-off-3 starts off");
     expect(text).not.toContain("eslint-off-4");
     expect(text).toContain("    …and 2 more.");
-  });
-
-  it("uses a plural explanation for many rules excluded by one Ruff selector", () => {
-    const because = "pyproject.toml: tool.ruff.lint.select does not select it";
-    const text = renderRecommendedPacks({
-      ...PACKS,
-      lintConfig: {
-        settings: Array.from({ length: 214 }, (_, index) => ({
-          ruleId: `ruff-rule-${index}`,
-          folder: "",
-          on: false as const,
-          config: null,
-          explicit: false,
-          because,
-        })),
-        notes: [],
-      },
-    }, "agent");
-    expect(text).toContain("    214 rules start off  pyproject.toml: tool.ruff.lint.select does not select them");
   });
 
   it("marks the scan with a bullet in the terminal only", () => {

@@ -63,7 +63,7 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     await runSetup(asked, request(setup, environment, { answer: "yes", repo: setup.repo }));
     expect(asked.text()).toContain("From your lint config (read as data, never run):");
     // The config extends nothing, so the rules it does not name start off, counted.
-    expect(asked.text()).toMatch(/^ {4}\d+ rules start off {2}\.eslintrc\.json does not turn it on$/mu);
+    expect(asked.text()).toMatch(/^ {4}\d+ rules start off {2}not turned on in \.eslintrc\.json$/mu);
     expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts on with option = "type"  .eslintrc.json: "@typescript-eslint/consistent-type-definitions": ["error","type"]`);
     // The pack starts ban-tslint-comment off already: the config's off changes nothing, so it is not named.
     expect(asked.text()).not.toContain(TSLINT_COMMENT);

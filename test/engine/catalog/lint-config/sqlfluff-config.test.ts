@@ -51,7 +51,7 @@ function read(root: string, ...ruleIds: string[]): { decisions: (PortDecision | 
 const decisions = (root: string, ...ruleIds: string[]) => read(root, ...ruleIds)!.decisions;
 
 const EVERY_RULE_RUNS = { on: true, explicit: false, because: ".sqlfluff: no rules set, so SQLFluff runs every rule" };
-const NOT_SELECTED = { on: false, explicit: false, because: ".sqlfluff: rules does not select it" };
+const NOT_SELECTED = { on: false, explicit: false, because: "not selected by .sqlfluff: rules" };
 
 describe("sqlfluffReader", () => {
   it("reads no config where the repository has none for SQLFluff", async () => {
@@ -152,7 +152,7 @@ describe("sqlfluffReader", () => {
     expect(decisions(root, UNIQUE_TABLE, COALESCE, IS_NULL)).toEqual([
       { on: true, explicit: true, because: "pyproject.toml [tool.sqlfluff.core]: \"AL04\" in rules" },
       { on: true, explicit: true, because: "pyproject.toml [tool.sqlfluff.core]: \"CV02\" in rules" },
-      { on: false, explicit: false, because: "pyproject.toml [tool.sqlfluff.core]: rules does not select it" },
+      { on: false, explicit: false, because: "not selected by pyproject.toml [tool.sqlfluff.core]: rules" },
     ]);
     expect(decisions(root, DISTINCT)).toEqual([{ on: false, explicit: true, because: "tox.ini: \"AM01\" in exclude_rules" }]);
     // `None` sets the default again over an earlier file's rules.
@@ -284,7 +284,7 @@ describe("sqlfluffReader", () => {
     const nestedOnly = await repository({ "models/.sqlfluff": "[sqlfluff]\nrules = CV05\n" });
     expect(sqlfluffReader.read(nestedOnly, [])!.verdict(ports.get(COALESCE)!, ruleCatalog)).toEqual({
       decision: { on: true, explicit: false, because: "SQLFluff's defaults: no rules set, so SQLFluff runs every rule" },
-      folders: [{ folder: "models", on: false, explicit: false, because: "models/.sqlfluff: rules does not select it" }],
+      folders: [{ folder: "models", on: false, explicit: false, because: "not selected by models/.sqlfluff: rules" }],
     });
   });
 

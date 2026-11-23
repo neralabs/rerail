@@ -66,7 +66,7 @@ const FONT_DISPLAY = port(["@next/next/google-font-display"], ["google-font-disp
 const PROCESS_ENV = port(["n/no-process-env"], ["no-process-env"]);
 const AWAIT_THENABLE = port(["@typescript-eslint/await-thenable"], ["await-thenable"]);
 const BY_DEFAULT = { on: true, explicit: false, because: ".oxlintrc.json: oxlint 1.88.0's default (the correctness category)" };
-const NOT_ON = { on: false, explicit: false, because: ".oxlintrc.json does not turn it on" };
+const NOT_ON = { on: false, explicit: false, because: "not turned on in .oxlintrc.json" };
 const refused = (why: string, file = ".oxlintrc.json"): string => `${file} is not read: oxlint 1.88.0 refuses it (${why}), so it runs no rule.`;
 
 describe("oxlintReader: plugins", () => {

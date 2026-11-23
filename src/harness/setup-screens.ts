@@ -533,7 +533,7 @@ function explicitRow(setting: LintConfigInputSetting, style: Style): string {
 
 /**
  * The settings a linter's defaults or a preset decide, one row per state and reason with how many rules it covers:
- * there can be hundreds, and one reason (`eslint.config.js does not turn it on`) covers them all.
+ * there can be hundreds, and one reason (`not turned on in eslint.config.js`) covers them all.
  */
 function implicitRows(settings: readonly LintConfigInputSetting[], style: Style): string[] {
   const groups = Map.groupBy(settings, setting => `${String(setting.on)}\0${setting.because}`);
@@ -541,11 +541,8 @@ function implicitRows(settings: readonly LintConfigInputSetting[], style: Style)
     const [{ on, because }] = group as [LintConfigInputSetting];
     const state = on ? "on" : "off";
     const count = group.length === 1 ? `1 rule starts ${state}` : `${group.length} rules start ${state}`;
-    const explanation = group.length === 1 ? because : because
-      .replaceAll("does not select it", "does not select them")
-      .replaceAll("does not turn it on", "does not turn them on")
-      .replaceAll("may select it", "may select them");
-    return `    ${count}  ${style.dim(clean(explanation))}`;
+
+    return `    ${count}  ${style.dim(clean(because))}`;
   });
 }
 

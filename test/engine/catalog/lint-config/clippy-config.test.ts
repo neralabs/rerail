@@ -87,7 +87,7 @@ describe("clippyReader", () => {
     const { decision } = await read({ "Cargo.toml": "[package]\nname = \"demo\"\n\n[lints.clippy]\nunwrap_used = \"deny\"\n" });
     expect(decision(DOUBLE_PARENS)).toEqual({ on: true, explicit: false, because: "Clippy's default (clippy::complexity)" });
     expect(decision(CORRECTNESS)).toEqual({ on: true, explicit: false, because: "Clippy's default (clippy::correctness)" });
-    expect(decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "Cargo.toml [lints.clippy] does not turn it on" });
+    expect(decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "not turned on in Cargo.toml [lints.clippy]" });
   });
 
   it("applies flags in Cargo's order: by priority, then by name in reverse, a later flag winning", async () => {
@@ -183,7 +183,7 @@ describe("clippyReader", () => {
     const allowed = await read({ "Cargo.toml": PACKAGE + "[lints.rust]\nwarnings = \"allow\"\n" });
     expect(allowed.decision(NEEDLESS_ELSE)).toEqual({ on: false, explicit: true, because: "Cargo.toml [lints.rust] warnings = \"allow\"" });
     expect(allowed.decision(CORRECTNESS)).toEqual({ on: true, explicit: false, because: "Clippy's default (clippy::correctness)" });
-    expect(allowed.decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "Cargo.toml [lints.rust] does not turn it on" });
+    expect(allowed.decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "not turned on in Cargo.toml [lints.rust]" });
     const denied = await read({ "Cargo.toml": PACKAGE + "[lints.rust]\nwarnings = \"deny\"\n" });
     expect(denied.decision(NEEDLESS_ELSE)).toEqual({ on: true, explicit: false, because: "Clippy's default (clippy::style)" });
   });
@@ -193,7 +193,7 @@ describe("clippyReader", () => {
       "Cargo.toml": "[package]\nname = \"demo\"\n\n[lints]\nworkspace = true\n\n[workspace.lints.clippy]\npedantic = { level = \"warn\", priority = -1 }\n",
     });
     expect(taken.decision(UNNESTED_OR)).toEqual({ on: true, explicit: true, because: "Cargo.toml [workspace.lints.clippy] pedantic = { level = \"warn\", priority = -1 }" });
-    expect(taken.decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "Cargo.toml [workspace.lints.clippy] does not turn it on" });
+    expect(taken.decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "not turned on in Cargo.toml [workspace.lints.clippy]" });
     // The root package does not take [workspace.lints] unless it says so; nor does a virtual root's folder.
     const untaken = await read({ "Cargo.toml": `${PACKAGE}[workspace]\n\n[workspace.lints.clippy]\nneedless_else = "allow"\n` });
     expect(untaken.config).toBeUndefined();
@@ -216,7 +216,7 @@ describe("clippyReader", () => {
       ],
     });
     expect(config?.verdict(port(UNNESTED_OR), ruleCatalog)?.folders?.slice(0, 3)).toEqual([
-      { folder: "crates/a", on: false, explicit: false, because: "Cargo.toml [workspace.lints.clippy] does not turn it on" },
+      { folder: "crates/a", on: false, explicit: false, because: "not turned on in Cargo.toml [workspace.lints.clippy]" },
       { folder: "crates/b", on: true, explicit: true, because: "crates/b/Cargo.toml [lints.clippy] pedantic = \"warn\"" },
       { folder: "crates/c", on: false, explicit: false, because: "Clippy's default (clippy::pedantic)" },
     ]);
@@ -254,7 +254,7 @@ describe("clippyReader", () => {
     expect(config).toBeDefined();
     expect(decision(UNNESTED_OR)).toEqual({ on: true, explicit: true, because: "src/lib.rs: #![warn(clippy::pedantic)]" });
     expect(decision(NEEDLESS_ELSE)).toEqual({ on: "unknown", because: "src/lib.rs: #![cfg_attr(test, allow(clippy::needless_else))] may set it" });
-    expect(decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "src/lib.rs and src/main.rs do not turn it on" });
+    expect(decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "not turned on in src/lib.rs and src/main.rs" });
     const differing = await read({ "Cargo.toml": "[package]\nname = \"demo\"\n", "src/lib.rs": "#![warn(clippy::pedantic)]\n", "src/main.rs": "fn main() {}\n" });
     expect(differing.decision(UNNESTED_OR)).toEqual({ on: "unknown", because: "src/lib.rs and src/main.rs set it differently" });
   });
@@ -393,7 +393,7 @@ describe("clippyReader", () => {
       const silenced = await read({ "Cargo.toml": PACKAGE + "[lints.clippy]\nneedless_else = \"warn\"\n", ".cargo/config.toml": "build.rustflags = \"-C opt-level=0 --cfg=x -L native=lib -lfoo -Awarnings\"\n" });
       expect(silenced.decision(NEEDLESS_ELSE)).toEqual({ on: false, explicit: true, because: ".cargo/config.toml [build] rustflags -A warnings" });
       const linking = await read({ "Cargo.toml": ALLOWED, ".cargo/config.toml": "[build]\nrustflags = [\"-C\", \"target-cpu=native\"]\n" });
-      expect(linking.decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "Cargo.toml [lints.clippy] does not turn it on" });
+      expect(linking.decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "not turned on in Cargo.toml [lints.clippy]" });
     });
 
     it("reads each form of a lint flag, a lint's - as _", async () => {
@@ -411,7 +411,7 @@ describe("clippyReader", () => {
     it("reads rustflags alone as a config", async () => {
       const { decision } = await read({ "Cargo.toml": PACKAGE, ".cargo/config.toml": "[build]\nrustflags = [\"-W\", \"clippy::pedantic\"]\n" });
       expect(decision(UNNESTED_OR)).toEqual({ on: true, explicit: true, because: ".cargo/config.toml [build] rustflags -W clippy::pedantic" });
-      expect(decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: ".cargo/config.toml rustflags does not turn it on" });
+      expect(decision(ELSE_IF)).toEqual({ on: false, explicit: false, because: "not turned on in .cargo/config.toml rustflags" });
     });
 
     it("leaves to the pack what a [target]'s rustflags, which replace [build]'s on its platforms, may set", async () => {
