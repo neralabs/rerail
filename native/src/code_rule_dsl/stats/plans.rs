@@ -167,7 +167,7 @@ impl Default for Plans {
 
 impl Plans {
     /// The store's kept plans, opened for reads (`valid`) that may run where the store's connection is held.
-    pub fn open(store: &ContentStore) -> StoreResult<Option<KeptSpace>> {
+    pub fn open(store: &ContentStore) -> StoreResult<Option<std::sync::Arc<KeptSpace>>> {
         store.kept_space(&space())
     }
 

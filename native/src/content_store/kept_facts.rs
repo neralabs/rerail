@@ -18,6 +18,7 @@ use rerail_blocks::relation::{Relation, View};
 use rusqlite::Connection;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Maps a forked process's atom ids to the store's, in place.
 type MapIds<'a> = &'a dyn Fn(&mut [i64]) -> StoreResult<()>;
@@ -1228,11 +1229,30 @@ impl super::ContentStore {
 
     /// The kept facts of `space` as this process holds its chain's rows (else the store's last commit), mapped
     /// (`open_kept`); `None` when it keeps none.
-    pub fn kept_space(&self, space: &[u8; 32]) -> StoreResult<Option<KeptSpace>> {
+    /// The process maps a chain once while its rows stay the same: every reader of the space shares the mapping
+    /// (`MappedSpaces`), as the kept inputs' bound chains are shared.
+    pub fn kept_space(&self, space: &[u8; 32]) -> StoreResult<Option<Arc<KeptSpace>>> {
         let Some(rows) = self.kept_row(space)? else { return Ok(None) };
-        Ok(self.open_kept(space, rows)?.map(|(_, kept)| kept))
+        let key = (self.database_path.clone(), *space);
+        let mapped = rerail_prof::code_rule_dsl::logic::profile::shared::<MappedSpaces>();
+        if let Some((was, kept)) = mapped.0.lock().unwrap_or_else(|e| e.into_inner()).get(&key)
+            && *was == rows
+        {
+            return Ok(Some(Arc::clone(kept)));
+        }
+        let Some((rows, kept)) = self.open_kept(space, rows)? else { return Ok(None) };
+        let kept = Arc::new(kept);
+        mapped.0.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (rows, Arc::clone(&kept)));
+        Ok(Some(kept))
     }
 }
+
+/// Each space's chain as this process mapped it, by the store's file and the space, with the rows that named its
+/// files (`kept_space`): mapped again only when a commit changed them. A file a row names is never rewritten (a
+/// write makes a new file, and its row), so a mapping of the same rows reads what a new one would. The shared
+/// object's (decision 0442), shared by design by the runs on a store.
+#[derive(Default)]
+struct MappedSpaces(std::sync::Mutex<HashMap<(PathBuf, [u8; 32]), (ChainRows, Arc<KeptSpace>)>>);
 
 impl super::ContentStore {
     /// Notes `space`'s chain as a write in a transaction of this process's left it (`written`, from `write_space`),

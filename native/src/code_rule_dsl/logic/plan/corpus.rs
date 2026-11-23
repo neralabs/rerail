@@ -3432,7 +3432,7 @@ fn run_observed_within(
             // Its constants are the store's atoms: this process's, mapped as read (decision 0170), in one call.
             let atoms = store.atoms_handle();
             let to_local = |v: &mut [i64]| if atoms.holds_by_reading() { atoms.to_local(crate::content_store::StoreIds::as_stored(v)).map(drop) } else { Ok(()) };
-            let mut k = last.and_then(|w| keptstats::Keeper::of_kept(&store.kept_space(&keptstats::space()).ok()??, &w, &to_local)).unwrap_or_default();
+            let mut k = last.and_then(|w| keptstats::Keeper::of_kept(&*store.kept_space(&keptstats::space()).ok()??, &w, &to_local)).unwrap_or_default();
             // The contents its last run had not stored yet, by their sources now.
             k.resolve(|digests| store.sources_by_hashes(&digests.iter().map(|d| crate::content_store::HashKey::from_sha256_digest(*d)).collect::<Vec<_>>()).unwrap_or_else(|_| vec![None; digests.len()]));
             Some(k)

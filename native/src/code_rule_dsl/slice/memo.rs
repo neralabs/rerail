@@ -64,7 +64,7 @@ fn content(store: &ContentStore, scope: &str, document: &Document) -> StoreResul
 }
 
 /// The memo's kept entries, opened once for a run's lookups (`lookup`).
-pub(super) fn open(store: &ContentStore) -> StoreResult<Option<KeptSpace>> {
+pub(super) fn open(store: &ContentStore) -> StoreResult<Option<std::sync::Arc<KeptSpace>>> {
     store.kept_space(&space())
 }
 

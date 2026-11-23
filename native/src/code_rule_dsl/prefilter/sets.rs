@@ -382,7 +382,7 @@ pub(super) fn select(
     // The tapes' prefilter rows, kept facts read where they lie (t33 step 6), and each regex's terms, brought up to
     // date before the candidates' transaction (t33 step 7).
     let kept = store.kept_space(&kept::space())?;
-    let view = kept.as_ref().map(KeptSpace::view);
+    let view = kept.as_deref().map(KeptSpace::view);
     let tape_of = |file: i64| view.as_ref().and_then(|view| kept::tape(view, file));
     let regex_terms: HashMap<&str, Vec<i64>> = if regexes.is_empty() {
         HashMap::new()
@@ -394,7 +394,7 @@ pub(super) fn select(
     let (space, leaves, gated) = store.candidate_transaction(false, |db| {
         let gated = {
             let _stage = crate::code_rule_dsl::prof::Stage::start("sets.gates");
-            super::gates::select(db, &store_path, kept_gates.as_ref(), &tape_of, lang as u32, plans, files)?
+            super::gates::select(db, &store_path, kept_gates.as_deref(), &tape_of, lang as u32, plans, files)?
         };
         let _stage = crate::code_rule_dsl::prof::Stage::start("sets.read");
         let tapes: Vec<Option<kept::Tape<'_>>> = files.iter().map(|&file| tape_of(file).filter(|t| t.lang == lang)).collect();

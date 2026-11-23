@@ -47,7 +47,7 @@ pub(in crate::code_rule_dsl) fn rows(
     let (found, missing) = {
         let _stage = crate::code_rule_dsl::prof::Stage::start("terms.postings");
         let kept = store.kept_space(&kept::space())?;
-        let view = kept.as_ref().map(KeptSpace::view);
+        let view = kept.as_deref().map(KeptSpace::view);
         let rows: Vec<Option<kept::Tape<'_>>> =
             tapes.iter().map(|(id, _)| view.as_ref().and_then(|v| kept::tape(v, *id)).filter(|t| t.lang == lang)).collect();
         let corrupt = |e: rusqlite::Error| crate::content_store::StoreError::Corrupt(format!("a tape's postings: {e}"));

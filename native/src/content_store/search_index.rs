@@ -223,7 +223,7 @@ impl ContentStore {
     ) -> StoreResult<Vec<UnindexedTape>> {
         type Frame = (i64, HashKey, [i64; 3]);
         let kept = self.kept_space(&space())?;
-        let view = kept.as_ref().map(KeptSpace::view);
+        let view = kept.as_deref().map(KeptSpace::view);
         let rows = {
             let connection = self
                 .connection

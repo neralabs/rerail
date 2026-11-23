@@ -135,7 +135,7 @@ impl ContentStore {
         }
         {
             let (counts, kept) = (self.kept_space(&kept::space())?, self.kept_space(&space())?);
-            let (out, rest, found) = self.place(kind, lang, keys, literals, counts.as_ref(), kept.as_ref())?;
+            let (out, rest, found) = self.place(kind, lang, keys, literals, counts.as_deref(), kept.as_deref())?;
             if rest.is_empty() && found.is_empty() {
                 return Ok(out.into_iter().map(Option::unwrap_or_default).collect());
             }
