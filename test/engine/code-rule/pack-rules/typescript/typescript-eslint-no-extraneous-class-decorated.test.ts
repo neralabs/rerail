@@ -1,11 +1,9 @@
 /**
- * typescript-eslint-no-extraneous-class must not steer a class that carries a decorator (#247).
+ * typescript-eslint-no-extraneous-class with `allowWithDecorator: true` must not steer a class that carries a decorator
+ * (#247).
  *
  * typescript-eslint 8.70.1 reports a decorated class like any other unless `allowWithDecorator` is set, and its default
- * is `false`. A decorated class is registered with a framework (Angular's `@Component`, `@NgModule`, `@Injectable`,
- * NestJS, TypeORM), which needs the class to exist even when its body is empty or holds only a constructor, so none of
- * the rule's three steers can be followed there. The port's `allowWithDecorator` defaults to `true`; set to `false`
- * it reports what upstream reports at its default.
+ * is `false`; the port with the option unset reports the same.
  *
  * The decorators of an exported class stand before `export` (`@NgModule({}) export class AppModule {}`). In ESTree they
  * belong to the class; in tree-sitter they are children of the `export_statement`, so the port looks there too, as
@@ -111,21 +109,19 @@ const NEVER = lines(
 const EVERY_CONFIG = [{}, { allowWithDecorator: true }, { allowWithDecorator: false }];
 
 describe(RULE_ID, () => {
-  it("does not report an empty class carrying a framework decorator (issue repro)", () => {
-    expect(reported(compile(), REPRO)).toEqual([]);
-  });
-
-  it("does not report decorated classes, exported or not, at its default", () => {
-    expect(reported(compile(), DECORATED)).toEqual([]);
+  it("does not report an empty class carrying a framework decorator with allowWithDecorator true (issue repro)", () => {
+    expect(reported(compile({ allowWithDecorator: true }), REPRO)).toEqual([]);
   });
 
   it("does not report decorated classes with allowWithDecorator true, a decorator before export included", () => {
     expect(reported(compile({ allowWithDecorator: true }), DECORATED)).toEqual([]);
   });
 
-  it("reports decorated classes as upstream's default does with allowWithDecorator false", () => {
-    expect(reported(compile({ allowWithDecorator: false }), REPRO)).toEqual(["2:7"]);
-    expect(reported(compile({ allowWithDecorator: false }), DECORATED)).toEqual(DECORATED_AT_UPSTREAM_DEFAULT);
+  it("reports decorated classes as upstream's default does, at its default and with allowWithDecorator false", () => {
+    for (const config of [{}, { allowWithDecorator: false }]) {
+      expect(reported(compile(config), REPRO)).toEqual(["2:7"]);
+      expect(reported(compile(config), DECORATED)).toEqual(DECORATED_AT_UPSTREAM_DEFAULT);
+    }
   });
 
   it("still reports undecorated empty, constructor-only and static-only classes, a decorated member not counting", () => {
