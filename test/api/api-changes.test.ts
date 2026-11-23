@@ -423,13 +423,20 @@ describe("the daemon's change stream (GET /api/changes)", () => {
       // A wait of its own, under the case's: a commit the stream never hears fails here, not at the case's timeout.
       const within = async <T>(waiting: Promise<T>): Promise<T | string> =>
         await Promise.race([waiting, new Promise<string>(resolve => setTimeout(resolve, 2_000, "nothing within 2 s"))]);
+      // The next token other than `token`: the conflict's note wait (1 s) may end before the command does and send the
+      // same token again, in a `conflicts` message.
+      const nextToken = async (token: string): Promise<string> => {
+        let message = await stream.next();
+        while (message.data === token) message = await stream.next();
+        return message.data;
+      };
       try {
         const first = await stream.next();
 
         writeFileSync(release, "");
         await mergeAssist.settled();
 
-        expect(await within(stream.next().then(message => message.data !== first.data))).toBe(true);
+        expect(await within(nextToken(first.data).then(() => true, () => false))).toBe(true);
       } finally {
         await stream.stop();
         // The hook command has ended (`settled`) before its folder goes with the workspace.
