@@ -178,8 +178,9 @@ export function endProcessStartedBy(
 /**
  * {@link endProcessStartedBy} through Windows PowerShell, which loads no Rerail engine, for the uninstall: the process
  * object `Get-Process` returns keeps the handle it opened for `.Handle` and reads its start, ends it and waits on that
- * one handle for the end, with cmdlets and properties alone, which Constrained Language Mode allows. The wait has no
- * limit of its own: the end is a fact the handle gives. `waitMs` bounds the whole call, PowerShell's own start
+ * one handle for the end, with cmdlets and properties alone, which Constrained Language Mode allows. Each cmdlet is named
+ * with its module, as {@link windowsStartedAt}'s is, so PowerShell reads no other installed module first. The wait has
+ * no limit of its own: the end is a fact the handle gives. `waitMs` bounds the whole call, PowerShell's own start
  * included, only so that a PowerShell or an end that hangs cannot hold the uninstall for good. It prints
  * {@link END_ASKED} once it has ended the process, so a PowerShell ended at the bound after that reads `running`; one
  * ended before it, or one that cannot run, ends nothing it reports: `unread`.
@@ -188,15 +189,18 @@ export function endProcessStartedByPowerShell(pid: number, startedAt: number, wa
   // A start that names no time a process started ends nothing, as the engine's end answers.
   if (!startNamesProcess(startedAt)) return "unread";
   const latest = (BigInt(Math.floor(startedAt)) + BigInt(FILETIME_EPOCH_MS)) * 10_000n + 9_999n;
-  const script = `$p = Get-Process -Id ${pid} -ErrorAction Stop; $null = $p.Handle; `
-    + `if ($p.StartTime.ToFileTimeUtc() -gt ${latest}) { 'later' } else { Stop-Process -InputObject $p -Force -ErrorAction Stop; `
-    + `'${END_ASKED}'; Wait-Process -InputObject $p; 'ended' }`;
+  const script = `$p = ${PROCESS_CMDLETS}\\Get-Process -Id ${pid} -ErrorAction Stop; $null = $p.Handle; `
+    + `if ($p.StartTime.ToFileTimeUtc() -gt ${latest}) { 'later' } else { ${PROCESS_CMDLETS}\\Stop-Process -InputObject $p -Force -ErrorAction Stop; `
+    + `'${END_ASKED}'; ${PROCESS_CMDLETS}\\Wait-Process -InputObject $p; 'ended' }`;
   const run = spawnSync(windowsPowerShell(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: waitMs });
   return powerShellEnd(run.status, String(run.stdout ?? ""));
 }
 
 /** What {@link endProcessStartedByPowerShell} prints once it has ended the process, before it waits for the exit. */
 const END_ASKED = "asked";
+
+/** The module of the process cmdlets Rerail runs through Windows PowerShell, which names each one with it. */
+const PROCESS_CMDLETS = "Microsoft.PowerShell.Management";
 
 /**
  * The {@link ProcessEnd} a run of {@link endProcessStartedByPowerShell} that exited with `status` came to by what it
@@ -248,7 +252,7 @@ const FILETIME_EPOCH_MS = 11_644_473_600_000;
 function windowsStartedAt(pid: number, timeoutMs: number): number | undefined {
   if (!(timeoutMs > 0)) return undefined;
   const read = spawnSync(windowsPowerShell(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-    `(Microsoft.PowerShell.Management\\Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`],
+    `(${PROCESS_CMDLETS}\\Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`],
   { encoding: "utf8", timeout: timeoutMs });
   const text = String(read.stdout ?? "").trim();
   return read.status === 0 && /^\d+$/u.test(text) ? Number(BigInt(text) / 10_000n) - FILETIME_EPOCH_MS : undefined;

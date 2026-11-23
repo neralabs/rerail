@@ -208,6 +208,38 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
     }
   });
 
+  // A cmdlet named alone makes Windows PowerShell read every installed module it has not read yet before it runs: 46 s
+  // with 40 large ones, past the uninstall's 15 s bound on the end, which would then end nothing.
+  it("names the module of each cmdlet the end runs, so PowerShell reads no other installed module first", async () => {
+    const scripts: Array<string | undefined> = [];
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((_program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      scripts.push(commandScript(args));
+      return runSync(process.execPath, ["-e", "process.stdout.write('asked\\r\\nended\\r\\n')"], options);
+    }) as unknown as typeof childProcess.spawnSync);
+    expect(endProcessStartedByPowerShell(DEAD_PID, Date.now(), 5_000)).toBe("ended");
+    expect(scripts).toHaveLength(1);
+    for (const cmdlet of ["Get-Process", "Stop-Process", "Wait-Process"]) expect(scripts[0]).toContain(`Microsoft.PowerShell.Management\\${cmdlet} `);
+    expect(cmdletsWithoutModule(scripts[0] ?? "")).toEqual([]);
+  });
+
+  // PowerShell's own setting that loads only the modules a command names stands in for a computer with many modules: a
+  // cmdlet named alone is not found under it. The bound is the uninstall's, the stop's wait and its kill wait.
+  it.runIf(process.platform === "win32")("ends a process through PowerShell within the uninstall's bound while PowerShell loads only the modules a command names", async () => {
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) =>
+      runSync(program, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), options)) as unknown as typeof childProcess.spawnSync);
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
+    const closed = once(child, "close");
+    try {
+      const started = processStartedAtThroughEngine(child.pid!)!;
+      expect(endProcessStartedByPowerShell(child.pid!, started, 15_000)).toBe("ended");
+    } finally {
+      child.kill();
+      await closed;
+    }
+  }, 30_000);
+
   // The end waits on the process's handle with no limit of its own; only a PowerShell or an end that hangs meets the
   // call's one bound, the stop's wait and its kill wait, and is ended there.
   it("ends a PowerShell whose end of a process does not answer at the stop's wait and its kill wait, and reports nothing ended", async () => {
@@ -234,7 +266,7 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
       // Its start as Windows records it: this process's clock can read a moment before it.
       const started = processStartedAtThroughEngine(child.pid!)!;
       vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => runSync(
-        program, args.map(arg => arg.replace("Wait-Process -InputObject $p", "Start-Sleep -Seconds 60")), options,
+        program, args.map(arg => arg.replace(String.raw`Microsoft.PowerShell.Management\Wait-Process -InputObject $p`, String.raw`Microsoft.PowerShell.Utility\Start-Sleep -Seconds 60`)), options,
       )) as unknown as typeof childProcess.spawnSync);
       expect(endProcessStartedByPowerShell(child.pid!, started, 8_000)).toBe("running");
       await closed;
