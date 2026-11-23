@@ -31,6 +31,7 @@ DIRS = (
     "native/src/code_rule_dsl/text/",
     "native/src/content_store/",
     "native/crates/metal/src/",
+    "native/crates/slabs/src/",
     "native/crates/blocks/src/",
     "native/crates/device_metal/src/",
     "accel/src/gpu/",

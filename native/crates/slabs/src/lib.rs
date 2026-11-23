@@ -1,7 +1,9 @@
 //! The slab residency (architecture §5; PIAT §20; decision 0032): stored tapes and their sources
 //! resident in slabs the device reads in place. This crate holds the arena (slabs, their budget,
 //! retirement and the drop) and the sources; the engine places tapes in it (its
-//! `residency::slabs`: reading frames, the reader's derived parts, the checks).
+//! `residency::slabs`: reading frames, the reader's derived parts, the checks). It was rerail-metal's
+//! (`rerail_metal::slabs` re-exports it); a loaded tape's home is a room in it (lang's `tape::placed`),
+//! so it sits below lang, on the pool alone, and not on the GPU's compiler (crate split 10d-4).
 //!
 //! - **Slabs** are chunk blocks (`rerail_blocks`, decision 0289 §4): each a block over a lease of
 //!   `SLAB_BYTES` (an object larger gets its own class) from the one GPU buffer pool
@@ -35,17 +37,28 @@
 //!   residency may hold `RESIDENT_SHARE` of it, the rest being the runs' workspaces. Past either,
 //!   the least recently used slabs not read by the admission are retired; a batch that still does
 //!   not fit is refused (`Error::BackendCapacity`), and the wave splits it.
-//! - **Eviction.** The residency is the pool's evictor (`set_evictor`, called by `lib.rs`): when
+//! - **Eviction.** The residency is the pool's evictor (`set_evictor`, from `device`): when
 //!   another user's buffer needs room that idle buffers cannot give, the least recently used slab
 //!   is retired, and its buffer comes back to the pool once the last batch reading it lets go.
 //! - **The drop:** two minutes after each full execution (`executed`), every resident document,
 //!   slab and compiled pipeline is released (architecture §5, F4).
+// Where the device layer is (decision 0440 step E), as rerail-metal.
+#![cfg(any(target_os = "macos", target_os = "linux", windows))]
 
-use crate::Error;
+pub use rerail_error::Error;
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
+
+/// The process's device in the device layer (the pool's, `rerail_accel::gpu::shared`), or `UnsupportedBackend`
+/// without one. The residency's slabs give way when the budget is short (`evict`, after the pool's idle buffers:
+/// 0266 §16), from the first slab on.
+pub fn device() -> Result<&'static rerail_device::device::Device, Error> {
+    static EVICTOR: std::sync::Once = std::sync::Once::new();
+    EVICTOR.call_once(|| rerail_accel::gpu::shared::set_evictor(evict));
+    rerail_accel::gpu::shared::layer().map(|l| l.device).ok_or(Error::UnsupportedBackend)
+}
 
 /// A slab's bytes (PIAT §20.2.1's default).
 pub const SLAB_BYTES: usize = 64 << 20;
@@ -105,10 +118,7 @@ impl Slab {
                 eprintln!("slab of {bytes} bytes: {what}: {e:?}");
             }
         };
-        let device = crate::lane::device().map_err(|e| {
-            said("no device", &e);
-            e
-        })?;
+        let device = crate::device().inspect_err(|e| said("no device", e))?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
         let block = rerail_blocks::alloc::block(&need).map_err(|e| {
@@ -293,7 +303,7 @@ pub fn zcache_for(views: &mut [DocView], base: impl Fn(&DocView) -> Option<u64>)
     let blocks = z.iter().map(|&i| (views[i].nodes as usize).div_ceil(F16Z_BLOCK as usize)).sum();
     let entry = z.iter().map(|&i| views[i].columns[3] as usize).max().unwrap_or(0);
     let spec = rerail_clif::view::cache::Spec::configured(blocks, entry);
-    let device = crate::lane::device().ok()?;
+    let device = crate::device().ok()?;
     let cache = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, spec.bytes());
     let address = cache.device_address()?;
     // SAFETY: the buffer's bytes, shared with the host, read by no kernel yet.
@@ -440,7 +450,7 @@ pub fn held() -> Held {
 
 /// The residency's limit: its share of the Metal buffer budget.
 fn limit() -> usize {
-    crate::runtime::buffer_limit() / RESIDENT_SHARE.1 * RESIDENT_SHARE.0
+    rerail_accel::budget::metal() / RESIDENT_SHARE.1 * RESIDENT_SHARE.0
 }
 
 
@@ -781,7 +791,7 @@ mod tests {
     /// that buffer, its rooms zeroed though it holds the last lease's bytes.
     #[test]
     fn an_evicted_slab_is_recycled_and_its_rooms_read_zero() {
-        if crate::lane::device().is_err() {
+        if crate::device().is_err() {
             return;
         }
         // The residency is the process's; other tests of this crate admit sources into it too.

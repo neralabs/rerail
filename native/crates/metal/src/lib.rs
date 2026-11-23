@@ -26,8 +26,8 @@ pub mod pp_expand;
 /// Pre-pinned blocks (decision 0039): the device's scratch buffers, made once and reused.
 pub mod pool;
 pub mod runtime;
-/// The slab residency's arena and sources (decision 0032).
-pub mod slabs;
+/// The slab residency's arena and sources (decision 0032): rerail-slabs's, below lang (crate split 10d-4).
+pub use rerail_slabs as slabs;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod test_pool;
 
@@ -53,8 +53,6 @@ pub(crate) fn pool_hooks() {
     rerail_context::machine::<PoolHooks>().0.get_or_init(|| {
         // Relational work's bounded leases count the pool's reservations against the device's budget (decision 0126).
         rerail_accel::gpu::shared::set_other_reserved(runtime::ledger);
-        // The pool's one eviction order: idle buffers, then the residency's least recently used slabs (0266 §16).
-        rerail_accel::gpu::shared::set_evictor(slabs::evict);
     });
 }
 

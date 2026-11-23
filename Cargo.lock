@@ -4402,6 +4402,7 @@ dependencies = [
  "rerail-clif",
  "rerail-csharp-lean",
  "rerail-css-lean",
+ "rerail-device",
  "rerail-ecma-lean",
  "rerail-go-lean",
  "rerail-html-lean",
@@ -4410,7 +4411,6 @@ dependencies = [
  "rerail-lang",
  "rerail-markdown-inline-lean",
  "rerail-markdown-lean",
- "rerail-metal",
  "rerail-observe",
  "rerail-php-lean",
  "rerail-prof",
@@ -4418,6 +4418,7 @@ dependencies = [
  "rerail-rr-syntax",
  "rerail-rust-lean",
  "rerail-scala-lean",
+ "rerail-slabs",
  "rerail-sql-lean",
  "rerail-swift-lean",
  "rerail-tape-format",
@@ -5085,6 +5086,7 @@ dependencies = [
  "rerail-gpu",
  "rerail-metal",
  "rerail-prof",
+ "rerail-slabs",
  "rerail-tape-format",
  "rerail-ukl",
  "serde",
@@ -6276,6 +6278,21 @@ name = "rerail-simdjson-native"
 version = "0.1.0"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "rerail-slabs"
+version = "0.1.0"
+dependencies = [
+ "rerail-accel",
+ "rerail-blocks",
+ "rerail-clif",
+ "rerail-context",
+ "rerail-device",
+ "rerail-error",
+ "rerail-prof",
+ "rerail-slabs",
+ "sha2 0.10.9",
 ]
 
 [[package]]

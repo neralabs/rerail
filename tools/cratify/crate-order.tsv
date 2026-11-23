@@ -46,6 +46,7 @@ rerail-forest	core
 rerail-accel	core
 rerail-accel-gpu	core
 rerail-prof	core
+rerail-slabs	core
 rerail-metal	core
 rerail-metal-programs	core
 rerail-store-base	core

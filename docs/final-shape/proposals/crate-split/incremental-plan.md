@@ -1470,3 +1470,20 @@ dropped the `--timings` runs (2026-11-22).
       facts-base, metal) has nothing in the changed files. The repository's checks pass. Tests (macOS): accel's
       and the lane's crate, 124 of 125 (the closure test above). logic-core's costs, tests-cpu's regex blocks and
       tests-logic's costs pass. The executors' guard passes (Linux).
+  - **10d-4, a tape's home off metal.** lang placed a loaded tape in a residency slab (`tape::placed`, 0353 step
+    4a) through `rerail_metal::slabs`, so lang and every crate above it stood on metal, and metal stands on the
+    lane. The residency (`slabs`) moves to rerail-slabs (`native/crates/slabs`), below lang. It is on the pool
+    alone (accel's `gpu::shared`), the blocks, clif's views and prof; metal re-exports it as `slabs`. lang takes the
+    device the slabs are on from rerail-slabs's `device`, which adds the residency's evictor to the pool's order
+    once a process (it was metal's `pool_hooks`; both setters are the process's and idempotent). Metal keeps
+    `set_other_reserved` on its own first use: its ledger holds nothing before its code has run.
+    - Then: lang no longer depends on metal. The longest chain is 28, from 34 before 10d. An edit to UKL rebuilds
+      44 crates (87 before 10d) and to ukl-vec 42 (85); to metal, 35 (69).
+    - Checks: the workspace with `--tests` is clean on macOS and Linux. clippy has nothing in rerail-slabs; its
+      `map_err` that returned what it read is an `inspect_err`. The copy checks scan `native/crates/slabs/src/`.
+      The repository's checks pass. Tests (macOS):
+      - the residency's own (an evicted slab recycled), metal's pool and test-pool tests, and lang's tape tests
+        pass;
+      - the filter also caught one preprocessor test on Metal, `pp_arena`'s `the_grid_is_the_devices_resident_count`.
+        It failed in Metal's compiler ("internal error" making a unit's dynamic library, 0571), not in anything
+        here.

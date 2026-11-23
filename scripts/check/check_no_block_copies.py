@@ -31,6 +31,7 @@ DIRS = (
     "native/src/code_rule_dsl/residency/",
     "native/crates/lang/src/code_rule_dsl/tape.rs",
     "native/crates/metal/src/",
+    "native/crates/slabs/src/",
     "native/crates/blocks/src/",
     "native/crates/facts/src/",
     "native/crates/device_metal/src/",

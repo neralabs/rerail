@@ -7,7 +7,7 @@ description = "The engine's Metal runtime: device, buffer budget, mapped buffers
 
 [features]
 # Per-thread buffer ledgers and buffer observations, for tests (the engine's and this crate's).
-test-hooks = ["rerail-accel-gpu/test-hooks", "rerail-context/test-hooks", "rerail-clif/test-hooks", "rerail-blocks/test-hooks", "rerail-prof/test-hooks", "rerail-tape-format/test-hooks", "rerail-ukl/test-hooks"]
+test-hooks = ["rerail-slabs/test-hooks", "rerail-accel-gpu/test-hooks", "rerail-context/test-hooks", "rerail-clif/test-hooks", "rerail-blocks/test-hooks", "rerail-prof/test-hooks", "rerail-tape-format/test-hooks", "rerail-ukl/test-hooks"]
 
 [dependencies]
 rerail-context = { path = "../context" }
@@ -28,6 +28,8 @@ sha2 = "0.10"
 
 # The device layer's targets (macOS, Linux and Windows), where this crate is (`lib.rs`).
 [target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
+# The slab residency (`slabs`).
+rerail-slabs = { path = "../slabs" }
 # A slab's buffer: the device layer's (decision 0440 step C).
 rerail-device = { path = "../../../gpu/device" }
 # Kernels compiled ahead of their first use (`kernels_ahead`).

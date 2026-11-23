@@ -8,7 +8,7 @@ use rerail_tape_format::home::{Home, Room};
 /// A slab's room, held: the slab lives as long as a tape placed in it.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 struct SlabRoom {
-    slab: std::sync::Arc<rerail_metal::slabs::Slab>,
+    slab: std::sync::Arc<rerail_slabs::Slab>,
     at: usize,
     len: usize,
 }
@@ -35,8 +35,8 @@ impl Room for SlabRoom {
 
 /// The device the slabs are on, if there is one: the process's, whatever its backend (decision 0440 step C).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub fn device() -> Option<&'static rerail_metal::lane::Device> {
-    rerail_metal::lane::device().ok()
+pub fn device() -> Option<&'static rerail_device::device::Device> {
+    rerail_slabs::device().ok()
 }
 
 /// The home `bytes` lie in, as a views' directory names it (`view_reads::ViewHome`, decision 0353 step 3 on the CPU):
@@ -49,7 +49,7 @@ pub struct HomeOf {
     pub host: u64,
     pub at: u64,
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    pub device: Option<(u64, rerail_metal::lane::Buffer)>,
+    pub device: Option<(u64, rerail_device::device::Buffer)>,
 }
 
 pub fn home_of(room: Option<&std::sync::Arc<dyn Room>>, bytes: &[u8]) -> HomeOf {
@@ -78,7 +78,7 @@ pub fn place(len: usize, fill: impl FnOnce(&mut [u8]) -> std::io::Result<()>) ->
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if device().is_some()
         // A word of room past the tape: the device's reads load a whole word where a value ends (`clif_word`).
-        && let Ok((slab, at)) = rerail_metal::slabs::tape_room(len + 16)
+        && let Ok((slab, at)) = rerail_slabs::tape_room(len + 16)
     {
         // SAFETY: `at..at + len` is this room's alone, inside the slab's mapping; nothing reads it before `fill`
         // returns.
