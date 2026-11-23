@@ -4818,6 +4818,17 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
   }
+  /**
+   * Adds a line to `src/a.py` in `worktree` from a shell call that runs there, and returns the edits of it `batches`
+   * gained, each with its preimage: the session's own change, measured from what its walks last read of the file.
+   */
+  async function writtenThere(bridge: CodeRuleBridge, worktree: string, batches: () => readonly CodeRuleEditBatch[]) {
+    const file = join(worktree, "src", "a.py");
+    const before = batches().length;
+    const text = await readFile(file, "utf8");
+    await shellInWorktree(bridge, () => writeFile(file, `${text}later\n`), worktree);
+    return batches().slice(before).flatMap(batch => batch.edits).map(edit => [basename(edit.path), edit.previousText ?? edit.previousReadError]);
+  }
 
   it("audits a shell write in a worktree outside the session's folder", async () => {
     const root = await twoBranches();
@@ -5782,9 +5793,12 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     git(root, "worktree", "remove", "--force", worktree);
     git(root, "worktree", "add", "--quiet", worktree, "third");
     roots.push(worktree);
-    await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "again.py"), "violation\n"));
+    // The first read of the worktree added again is its baseline, as of any worktree new to the session (#534): a write
+    // there after it is the session's own when its call runs there.
+    await bothWalks();
+    await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "again.py"), "violation\n"), worktree);
     const recorded = auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => [edit.path, batch.mode]));
-    expect(recorded).toContainEqual([repositoryPath(root, join(worktree, "src", "again.py")), "log"]);
+    expect(recorded).toContainEqual([repositoryPath(root, join(worktree, "src", "again.py")), undefined]);
   });
 
   // A session folder walk re-syncs the worktrees outside the queue the session's take of a walk of the other worktrees
@@ -5825,8 +5839,8 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
 
   // Git can stop listing a worktree as the session's take of a walk re-syncs, and list another one at that path while the
   // take waits on the evaluator (`git worktree add` there, which a session folder walk's re-sync sees): what the walk read
-  // of the removed worktree is none of the new one's, which the walk after takes as a first sight, and what it read of a
-  // worktree Git kept listing stays.
+  // of the removed worktree is none of the new one's, which the walk after reads as new, and what it read of a worktree
+  // Git kept listing stays.
   it("keeps no `HEAD` a walk read of a worktree Git listed again at its path while the session took the walk", async () => {
     const root = await twoBranches();
     git(root, "branch", "third", "main");
@@ -5867,13 +5881,16 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     // does, with no preimage from the removed worktree.
     const third = execFileSync("git", ["rev-parse", "third"], { cwd: root, encoding: "utf8" }).trim();
     expect((await bridge.walkResume())?.gitSeen.heads.get(worktree)).toBe(third);
-    expect(recordedIn(root, worktree, batches)).toEqual([["a.py", FIRST_SIGHT]]);
+    // Its first read is its baseline, as of any worktree new to the session (#534): nothing of the removed worktree is
+    // a preimage, and a write there after is measured from the new worktree's text.
+    expect(recordedIn(root, worktree, batches)).toEqual([]);
+    expect(await writtenThere(bridge, worktree, () => batches)).toEqual([["a.py", "old\nmine\n"]]);
   });
 
   // A session folder walk re-syncs the worktrees while a walk of the other worktrees reads them, so Git can stop listing
   // a worktree the walk has read, and list another one at its path, before the session takes the walk: what the walk
-  // found of the removed worktree is none of the new one's, which the walk after takes as a first sight.
-  it("takes as a first sight a worktree Git listed again at its path while a walk of the other worktrees ran", async () => {
+  // found of the removed worktree is none of the new one's, which the walk after reads as new.
+  it("reads as new a worktree Git listed again at its path while a walk of the other worktrees ran", async () => {
     const root = await twoBranches();
     git(root, "branch", "third", "main");
     const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
@@ -5894,7 +5911,11 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await shell(bridge, () => writeFile(file, "old\nmine\n"));
     await bridge.settleWorktreeWalk();
     expect(discovery.lstats.get(file)).toEqual([]);
-    expect(recordedIn(root, worktree, auditGeneratedEdits.mock.calls.map(([, batch]) => batch))).toEqual([["a.py", FIRST_SIGHT]]);
+    // Its first read is its baseline, as of any worktree new to the session (#534): nothing of the removed worktree is
+    // a preimage, and a write there after is measured from the new worktree's text.
+    const batches = () => auditGeneratedEdits.mock.calls.map(([, batch]) => batch);
+    expect(recordedIn(root, worktree, batches())).toEqual([]);
+    expect(await writtenThere(bridge, worktree, batches)).toEqual([["a.py", "old\nmine\n"]]);
   });
 
   // Each start of the walk the sessions of a repository share lists the worktrees again for every session watching, so
