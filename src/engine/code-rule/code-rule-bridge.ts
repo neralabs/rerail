@@ -856,16 +856,20 @@ function takeFirstSightListings(findings: WorktreeFindings, listed: Map<string, 
 /**
  * Whether a file of the worktree at `root` (physical), named relative to it, holds Git's own text by the listings of
  * the walk that first shows it to a session (`WorktreeFindings.notAtHead`): a file of the worktree's own checkout that
- * no listing names and that the walk read. `#firstSightVerdicts` gives such a file that verdict without Git, and it
- * changes nothing the session holds, so its first sight leaves it to the snapshot rather than take it as a change. None
- * is where the listings did not print, or in a checkout inside the worktree, whose files Git's reading judges.
+ * no listing names, that the walk read, and whose text the evaluator does not hold as the session's (`held`).
+ * `#firstSightVerdicts` gives such a file that verdict without Git, and `#sortUnownedWrite` then drops it, so it changes
+ * nothing the session holds, and its first sight leaves it to the snapshot rather than take it as a change. A file in
+ * `held` is taken: Git can remove a worktree the session edited in and add one at its path again, and the first
+ * sight's `log` audit of the file replaces the text the evaluator holds. None is where the listings did not print, or
+ * in a checkout inside the worktree, whose files Git's reading judges.
  */
-function heldByGitAtFirstSight(root: string, findings: WorktreeFindings): (path: string, source: ObservedSource) => boolean {
+function heldByGitAtFirstSight(root: string, findings: WorktreeFindings, held: ReadonlySet<string>): (path: string, source: ObservedSource) => boolean {
   const listed = findings.notAtHead.get(root);
   if (listed === undefined) return () => false;
   const named = new Set(listed);
   const inner = [...findings.checkouts].filter(checkout => checkout !== root).map(checkout => relative(root, checkout).split(sep).join("/"));
-  return (path, source) => source.readError === undefined && !named.has(path) && !inner.some(folder => path === folder || path.startsWith(`${folder}/`));
+  return (path, source) => source.readError === undefined && !named.has(path) && !held.has(path)
+    && !inner.some(folder => path === folder || path.startsWith(`${folder}/`));
 }
 
 /**
@@ -2166,6 +2170,15 @@ export class CodeRuleBridge {
     return [...this.#resumedHeld, ...[...this.#texts].filter(([, entry]) => HELD_BY_EVALUATOR[entry.origin]).map(([path]) => path)];
   }
 
+  /**
+   * The files of `worktree` (session-relative) whose text the evaluator holds as the session's (`#heldPaths`), named
+   * relative to it: one set a worktree, so a first sight of 100,000 files looks up each in it rather than in `#texts`.
+   */
+  #heldIn(worktree: string): Set<string> {
+    const prefix = `${worktree}/`;
+    return new Set(this.#heldPaths().filter(path => path.startsWith(prefix)).map(path => path.slice(prefix.length)));
+  }
+
   /** Whether the evaluator holds `path`'s text as the session's: one it audited, or one it held before a suspension. */
   #heldByEvaluator(path: string): boolean {
     const held = this.#texts.get(path);
@@ -3167,7 +3180,7 @@ export class CodeRuleBridge {
     const next = findings.snapshot;
     const takes = takenFrom(root, discovery.root);
     const paths = discovery.worktrees.fresh.has(worktree)
-      ? this.#firstSightPaths(discovery, next, heldByGitAtFirstSight(root, findings))
+      ? this.#firstSightPaths(discovery, next, heldByGitAtFirstSight(root, findings, this.#heldIn(worktree)))
       : changedPaths(this.#worktreeView.snapshot(worktree), next);
     for (const path of new Set([...paths.filter(takes).map(path => inWorktree(worktree, path)), ...kept])) {
       const before = this.#observedSource(path);
@@ -3180,8 +3193,9 @@ export class CodeRuleBridge {
 
   /**
    * The sources of a worktree new to the session that its first walk may say something of: those stamped since the
-   * session opened, which may be its writes, but those the walk's listings say hold Git's own text (`heldByGit`), and
-   * the `.gitignore` files, whose rules it remembers. Every other is a baseline the snapshot holds as it is; a source
+   * session opened, which may be its writes, but those the walk's listings say hold Git's own text and of which the
+   * session holds nothing (`heldByGit`), and the `.gitignore` files, whose rules it remembers. Every other is a
+   * baseline the snapshot holds as it is; a source
    * Git lists as changed is read for its text (`#readTakenTexts`). Every file of a worktree Git added while the session
    * ran is stamped since it opened, and each one taken is judged on the daemon's thread as the take is applied.
    */
@@ -3736,10 +3750,11 @@ export class CodeRuleBridge {
    * `#gitVerdicts` of the changes in `checkout` that a walk first showing the session its worktree found there. A file
    * its Git did not list then (`listed`, `WalkStart.listedAtFirstSight`) holds what the index holds, and the index what
    * `HEAD` held, whose newest move was no commit: Git's own text, as a reading of `HEAD`'s blob would find with no move
-   * of `HEAD` known before (`#heldByGit`). It is judged so without asking Git again.
-   * Every file of a worktree Git added while the session ran is stamped since the session opened, so the reading asked
-   * Git for the blobs of all of them, and of `HEAD`'s moves, in the queue a shell command's result waits on, for every
-   * such worktree and every session watching it. The rest are read as before (`listedUnchanged`).
+   * of `HEAD` known before (`#heldByGit`). It is judged so without asking Git, in the queue a shell command's result
+   * waits on. The changes that reach it are the files the listings name, those with a read error, the `.gitignore`
+   * files, and those the session observed, hid or holds the text of there (`#keptWorktreePaths`, `#heldIn`), a deletion
+   * among them: a first sight leaves every other file of the checkout to the snapshot (`heldByGitAtFirstSight`). Those
+   * not judged so are read as before (`listedUnchanged`).
    */
   async #firstSightVerdicts(
     discovery: SourceDiscovery,

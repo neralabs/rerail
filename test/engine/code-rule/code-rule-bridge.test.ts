@@ -5208,6 +5208,28 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
+  // A session lets go of a worktree Git stopped listing, and one Git lists again at its path is new to it, but the
+  // evaluator still holds the text the session's edit left of a file there: the first sight takes the file, though
+  // Git's listing leaves it out, and audits it in `log` mode, which replaces that text with Git's.
+  it("records a file it edited in a worktree Git removed and added again at its path, which Git's listing leaves out", async () => {
+    const root = await twoBranches();
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    const file = join(worktree, "src", "a.py");
+    await bridge.begin("edit-1", "write", { path: file });
+    await writeFile(file, "old\nviolation\nmine\n");
+    await bridge.finish("edit-1");
+    git(root, "worktree", "remove", "--force", worktree);
+    roots.length = 0;
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    git(root, "worktree", "add", "--quiet", worktree, "other");
+    roots.push(worktree);
+    auditGeneratedEdits.mockClear();
+    await shellInWorktree(bridge, () => undefined);
+    expect(editModes(auditGeneratedEdits)).toEqual([[repositoryPath(root, file), "log"]]);
+  });
+
   it("records a file a command added to a worktree before its first walk, which Git lists as untracked", async () => {
     const root = await twoBranches();
     const roots: string[] = [];
@@ -5257,8 +5279,8 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
 
   /**
    * A bridge on `twoBranches`, first `prepare`d, whose session opened before Git added a worktree of `other`; it walks
-   * the worktree once `roots` holds it, and the worktree owns its files once `roots` or `owned` holds it. `named` gives a
-   * file of the worktree as the session names it.
+   * the worktree once `roots` holds it, and the worktree owns its files once `roots` or `owned` holds it. A checkout in
+   * `owned` owns its files before one in `roots`. `named` gives a file of the worktree as the session names it.
    */
   async function worktreeAddedLater(prepare: (root: string) => Promise<void> = async () => undefined) {
     const root = await twoBranches();
@@ -5268,7 +5290,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
     const bridge = createBridge(root, {
       ...auditor(auditGeneratedEdits),
-      sourceRoot: path => [...roots, ...owned].find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      sourceRoot: path => [...owned, ...roots].find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
       worktreeRoots: () => roots,
     }, { worktreeWalkGapMs: 0 });
     await bridge.openWorkspace("session-1");
@@ -5344,6 +5366,22 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     roots.push(worktree);
     await shellInWorktree(bridge, () => undefined);
     expect(editModes(auditGeneratedEdits)).toContainEqual([named("src/a.py"), "log"]);
+  });
+
+  // A checkout inside the worktree is listed alone, against its own index, which `git add` made hold the change, and the
+  // worktree's own listings name no file of it: only Git's reading of that checkout, against its `HEAD`, finds it.
+  it("records a file a command changed and staged in a checkout inside a worktree before its first walk", async () => {
+    const { roots, owned, bridge, auditGeneratedEdits, worktree, named } = await worktreeAddedLater();
+    const nested = join(worktree, "lib");
+    await mkdir(join(nested, "src"), { recursive: true });
+    await writeFile(join(nested, "src", "x.py"), "x = 1\n");
+    commitAll(nested);
+    await writeFile(join(nested, "src", "x.py"), "x = 1\nviolation\n");
+    git(nested, "add", "src/x.py");
+    owned.push(nested);
+    roots.push(worktree);
+    await shellInWorktree(bridge, () => undefined);
+    expect(editModes(auditGeneratedEdits)).toContainEqual([named("lib/src/x.py"), "log"]);
   });
 
   it("records a file marked assume-unchanged that a command changed in a worktree before its first walk whose listing of marked files failed", async () => {
