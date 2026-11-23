@@ -33,6 +33,7 @@ pub mod facts_only;
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
+        crate::code_rule_dsl::facts::rows::install_run_room();
         crate::code_rule_dsl::logic::profile::strict_on_every_connection();
         crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-logic's tests", crate::code_rule_dsl::logic::CARRIERS);
         crate::code_rule_dsl::logic::plan::corpus::RUNNER.register("rerail-logic's tests", &crate::code_rule_dsl::logic::plan::corpus::Corpus);
