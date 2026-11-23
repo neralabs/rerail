@@ -68,26 +68,29 @@ pub struct Slice<'a> {
     file: Option<std::path::PathBuf>,
     /// Whether a run stops the step: not once the job's work is past its deadline ([`Settings::deadline`]).
     yields: bool,
+    /// A job that is not a run's own upkeep (its QoS not [`Qos::Utility`]): a run finishing ([`finish_soon`]) stops
+    /// its step, which the process's exit waits for.
+    background: bool,
 }
 
 impl<'a> Slice<'a> {
     /// Whether the step should return now: its time is up, the process is stopping, or a run began (in this
     /// process, or over the job's file in another: [`runs_active`]). A step stopped by a run leaves its work due.
     pub fn over(&self) -> bool {
-        Instant::now() >= self.until || self.stop.load(Ordering::Acquire) || (self.yields && runs_active(self.file.as_deref()))
+        Instant::now() >= self.until || self.stop.load(Ordering::Acquire) || (self.yields && runs_active(self.file.as_deref())) || (self.background && finishing())
     }
 
     /// Whether a run began, or the process is stopping, as an owned check for what outlives a borrow of the slice
     /// and does not split at the step's time bound: a SQLite progress handler interrupting a transaction that is one
     /// piece (`SQLITE_INTERRUPT`, rolled back), a training given up between its phases.
     pub fn stopper(&self) -> impl Fn() -> bool + Send + Sync + 'static {
-        let (file, yields, up) = (self.file.clone(), self.yields, upkeep());
-        move || up.stop.load(Ordering::Acquire) || (yields && up.runs.load(Ordering::Acquire) > 0) || (yields && file.as_deref().is_some_and(others_run_over))
+        let (file, yields, background, up) = (self.file.clone(), self.yields, self.background, upkeep());
+        move || up.stop.load(Ordering::Acquire) || (yields && up.runs.load(Ordering::Acquire) > 0) || (yields && file.as_deref().is_some_and(others_run_over)) || (background && up.finishing.load(Ordering::Acquire) > 0)
     }
 
     /// A slice of `d` from now (tests, and jobs run by hand).
     pub fn for_test(d: Duration, memory: usize, stop: &AtomicBool) -> Slice<'_> {
-        Slice { until: Instant::now() + d, memory, stop, file: None, yields: true }
+        Slice { until: Instant::now() + d, memory, stop, file: None, yields: true, background: false }
     }
 
     /// The slice of a job over `file`: it yields to the runs over that file too ([`run_begins`]).
@@ -110,6 +113,8 @@ struct Upkeep {
     settings: OnceLock<Mutex<Settings>>,
     jobs: Mutex<Vec<Entry>>,
     stop: AtomicBool,
+    /// Runs finishing ([`finish_soon`]): a background job's step stops, and none starts, while one is.
+    finishing: std::sync::atomic::AtomicUsize,
     /// Held while a step runs: [`finish_soon`] waits for a step the scheduler's thread has taken out.
     stepping: Mutex<()>,
     scheduler: OnceLock<Option<std::thread::Thread>>,
@@ -117,6 +122,11 @@ struct Upkeep {
 
 fn upkeep() -> std::sync::Arc<Upkeep> {
     rerail_context::machine::<Upkeep>()
+}
+
+/// Whether a run is finishing ([`finish_soon`]).
+fn finishing() -> bool {
+    upkeep().finishing.load(Ordering::Acquire) > 0
 }
 
 /// A run under way, from [`run_begins`] to its drop. While one is, upkeep yields to it: a step in progress stops at
@@ -762,7 +772,7 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
                 continue;
             }
             let utility = e.job.qos() == Qos::Utility;
-            if pass == Pass::Utility && !utility {
+            if (pass == Pass::Utility || finishing()) && !utility {
                 continue;
             }
             let due = e.job.due();
@@ -854,7 +864,7 @@ fn step_job_held(id: u64, s: &Settings, pause: bool, yields: bool, stepping: Opt
     let (c0, t0) = (crate::score::thread_cpu(), Instant::now());
     let file = e.job.file();
     let st_ = upkeep();
-    let slice = Slice { until: t0 + s.step, memory: s.memory, stop: &st_.stop, file: file.clone(), yields };
+    let slice = Slice { until: t0 + s.step, memory: s.memory, stop: &st_.stop, file: file.clone(), yields, background: qos != Qos::Utility };
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.job.step(&slice))).unwrap_or_else(|p| {
         crate::exec::abort_over_budget(p);
         Err("panicked".into())
@@ -926,6 +936,17 @@ pub fn finish_soon() {
     // through the pass, so a step it takes out next is not one this pass misses either. Not waited for, the process
     // exited under the step, and its work was rolled back (ep2's frames sweep, 31 runs in a row).
     let st_ = upkeep();
+    // A background job's step the scheduler's thread is in (idle work: a cost model's fit, a kernel's compile) stops
+    // at its next check, its work left due, and none starts: an idle machine at a run's end made the exit wait for a
+    // whole fit (t50: 260 s and 15 GB past a 42 s run).
+    struct Finishing(std::sync::Arc<Upkeep>);
+    impl Drop for Finishing {
+        fn drop(&mut self) {
+            self.0.finishing.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+    st_.finishing.fetch_add(1, Ordering::AcqRel);
+    let _finishing = Finishing(std::sync::Arc::clone(&st_));
     let _stepping = st_.stepping.lock().unwrap_or_else(|p| p.into_inner());
     let mut ticks = cpu_ticks();
     for _ in 0..100 {
@@ -944,6 +965,22 @@ mod tests {
         left: u32,
         due: Due,
         qos: Qos,
+    }
+
+    /// A run finishing stops a background job's step (idle work the exit would wait for), not a utility job's, which
+    /// `finish_soon` runs itself; and no background step starts while it is.
+    #[test]
+    fn a_run_finishing_stops_a_background_step_not_a_utility_one() {
+        let stop = AtomicBool::new(false);
+        let mk = |background| Slice { until: Instant::now() + Duration::from_secs(10), memory: 0, stop: &stop, file: None, yields: false, background };
+        let (bg, ut) = (mk(true), mk(false));
+        assert!(!bg.over() && !bg.stopper()() && !ut.over(), "nothing finishing");
+        upkeep().finishing.fetch_add(1, Ordering::AcqRel);
+        let (over, stopped, utility) = (bg.over(), bg.stopper()(), ut.over() || ut.stopper()());
+        upkeep().finishing.fetch_sub(1, Ordering::AcqRel);
+        assert!(over && stopped, "a background step stops while a run finishes");
+        assert!(!utility, "a utility step goes on");
+        assert!(!bg.over(), "and goes on again once it has finished");
     }
 
     /// A job over a file: a run over the file stops it until its deadline.
@@ -1081,7 +1118,7 @@ mod tests {
         other.lock_shared().unwrap();
         std::thread::sleep(Duration::from_millis(30));
         assert!(others_run_over(&store), "the other run's shared lock is seen");
-        let slice = Slice { until: Instant::now() + Duration::from_secs(10), memory: 0, stop: &upkeep().stop, file: Some(store.clone()), yields: true };
+        let slice = Slice { until: Instant::now() + Duration::from_secs(10), memory: 0, stop: &upkeep().stop, file: Some(store.clone()), yields: true, background: false };
         assert!(slice.over() && slice.stopper()(), "a step over the file stops");
         drop(other);
         std::thread::sleep(Duration::from_millis(30));

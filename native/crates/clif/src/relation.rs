@@ -21,6 +21,7 @@ use cranelift_codegen::ir::{
 use rerail_blocks::refs::Span;
 use rerail_blocks::bloom::Bloom;
 use rerail_blocks::relation::{Index, Relation};
+use rerail_blocks::col::IntCol;
 use rerail_blocks::rows::{ColDir, Rows};
 use std::mem::{offset_of, size_of};
 
@@ -47,6 +48,16 @@ const INDEX_OFFS: i32 = offset_of!(Index, offs) as i32;
 const INDEX_ROWS: i32 = offset_of!(Index, rows) as i32;
 const INDEX_SIZE: i64 = size_of::<Index>() as i64;
 const BLOOM_WORDS: i32 = offset_of!(Bloom, words) as i32;
+// A sealed chunk's frozen column (`col::IntCol`, decision 0622).
+const IC_TAG: i32 = offset_of!(IntCol, tag) as i32;
+const IC_BITS: i32 = offset_of!(IntCol, bits) as i32;
+const IC_RBITS: i32 = offset_of!(IntCol, rbits) as i32;
+const IC_NRUNS: i32 = offset_of!(IntCol, nruns) as i32;
+const IC_BASE: i32 = offset_of!(IntCol, base) as i32;
+const IC_SLOPE: i32 = offset_of!(IntCol, slope) as i32;
+const IC_RMIN: i32 = offset_of!(IntCol, rmin) as i32;
+const IC_DATA: i32 = offset_of!(IntCol, data) as i32;
+const IC_RUNS: i32 = offset_of!(IntCol, runs) as i32;
 
 impl B<'_, '_> {
     /// The block's word of type `ty` at `p + offset` (aligned).
@@ -133,8 +144,30 @@ pub fn col_at(b: &mut B<'_, '_>) -> Value {
 pub fn col_get(b: &mut B<'_, '_>) -> Value {
     let (min_log, i) = (b.arg(0), b.arg(1));
     let dir = b.tape;
+    // A sealed chunk (decision 0622): its offset's low bit set, the rest its frozen column's.
+    let (chunk, place) = b.chunk_of(i, min_log);
+    let slot = b.f.ins().ishl_imm(chunk, 3);
+    let slot = b.f.ins().iadd(dir, slot);
+    let off = b.word_at(I64, slot, COL_CHUNK);
+    let tag = b.f.ins().band_imm(off, rerail_blocks::rows::SEALED);
+    let sealed = b.f.ins().icmp_imm(IntCC::NotEqual, tag, 0);
+    b.either(
+        I64,
+        sealed,
+        |b| {
+            let off = b.f.ins().band_imm(off, !rerail_blocks::rows::SEALED);
+            let ic = b.f.ins().iadd(dir, off);
+            let place = b.f.ins().ireduce(I32, place);
+            b.call_at("col_sealed", ic, &[place])
+        },
+        |b| col_raw(b, dir, min_log, i),
+    )
+}
+
+/// Row `i`'s value in a raw chunk of the column at `dir` (`col_get` past its sealed test).
+fn col_raw(b: &mut B<'_, '_>, dir: Value, min_log: Value, i: Value) -> Value {
     let width = b.word_at(I32, dir, COL_WIDTH);
-    let p = b.call("col_at", &[min_log, i]);
+    let p = b.call_at("col_at", dir, &[min_log, i]);
     let four = b.f.ins().icmp_imm(IntCC::Equal, width, 4);
     b.either(
         I64,
@@ -158,6 +191,161 @@ pub fn col_get(b: &mut B<'_, '_>) -> Value {
         },
         |b| b.word_at(I64, p, 0),
     )
+}
+
+/// `rd(words, k, bits, mask)` of `col::IntCol`: value `k` of `bits` bits from packed words (two loads, two shifts; a
+/// column's words end with a spare one).
+fn rd_bit(b: &mut B<'_, '_>, words: Value, bit: Value, mask: Value) -> Value {
+    let w = b.f.ins().ushr_imm(bit, 6);
+    let sh = b.f.ins().band_imm(bit, 63);
+    let at = b.f.ins().ishl_imm(w, 3);
+    let p = b.f.ins().iadd(words, at);
+    let lo = b.word_at(I64, p, 0);
+    let hi = b.word_at(I64, p, 8);
+    let a = b.f.ins().ushr(lo, sh);
+    let hi1 = b.f.ins().ishl_imm(hi, 1);
+    let back = b.f.ins().irsub_imm(sh, 63);
+    let c = b.f.ins().ishl(hi1, back);
+    let v = b.f.ins().bor(a, c);
+    b.f.ins().band(v, mask)
+}
+
+/// The mask of `w` bits (an I64, 0..=64), no branch: `w == 64` all ones.
+fn mask_of(b: &mut B<'_, '_>, w: Value) -> Value {
+    let one = b.c64(1);
+    let shifted = b.f.ins().ishl(one, w);
+    let m = b.f.ins().iadd_imm(shifted, -1);
+    let full = b.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, w, 64);
+    let all = b.c64(-1);
+    b.f.ins().select(full, all, m)
+}
+
+/// `col_sealed(col, i)`: value `i` of a sealed chunk's frozen column (`col::IntCol::get`, decision 0622): `CONST`'s
+/// base; `PACK`'s base and packed value; `RUNS`' run found by a search of its starts; `LINE`'s line, residuals'
+/// minimum and residual; `GROUPS`' group minimum and residual at the group's width.
+pub fn col_sealed(b: &mut B<'_, '_>) -> Value {
+    let ic = b.tape;
+    let i = b.arg(0);
+    let i = b.f.ins().uextend(I64, i);
+    let tag = b.word_at(I32, ic, IC_TAG);
+    let bits = b.word_at(I32, ic, IC_BITS);
+    let bits = b.f.ins().uextend(I64, bits);
+    let base = b.word_at(I64, ic, IC_BASE);
+    let mask = mask_of(b, bits);
+    let is = |b: &mut B<'_, '_>, t: u32| b.f.ins().icmp_imm(IntCC::Equal, tag, i64::from(t));
+    let constant = is(b, rerail_blocks::col::CONST);
+    b.either(
+        I64,
+        constant,
+        |_| base,
+        |b| {
+            let data = b.follow(ic, IC_DATA);
+            let pack = is(b, rerail_blocks::col::PACK);
+            b.either(
+                I64,
+                pack,
+                |b| {
+                    let bit = b.f.ins().imul(i, bits);
+                    let v = rd_bit(b, data, bit, mask);
+                    b.f.ins().iadd(base, v)
+                },
+                |b| {
+                    let line = is(b, rerail_blocks::col::LINE);
+                    b.either(I64, line, |b| sealed_line(b, ic, data, i, bits, mask, base), |b| {
+                        let runs = is(b, rerail_blocks::col::RUNS);
+                        b.either(I64, runs, |b| sealed_runs(b, ic, data, i, bits, mask, base), |b| sealed_groups(b, ic, data, i, bits, mask, base))
+                    })
+                },
+            )
+        },
+    )
+}
+
+/// `LINE`: `base + ((i * slope) >> 16) + rmin + residual`, the product as `col::Dec::on_line` takes it in 128 bits.
+fn sealed_line(b: &mut B<'_, '_>, ic: Value, data: Value, i: Value, bits: Value, mask: Value, base: Value) -> Value {
+    let slope = b.word_at(I64, ic, IC_SLOPE);
+    let rmin = b.word_at(I64, ic, IC_RMIN);
+    // `(i * slope) >> 16` in 128 bits, without a high multiply (the kernels' backend has none): with `slope = sh *
+    // 2^16 + sl`, `sl` its low 16 bits, it is `i * sh + ((i * sl) >> 16)` exactly, `i` a place in a chunk (below 2^31).
+    let sh = b.f.ins().sshr_imm(slope, 16);
+    let sl = b.f.ins().band_imm(slope, 0xffff);
+    let whole = b.f.ins().imul(i, sh);
+    let part = b.f.ins().imul(i, sl);
+    let part = b.f.ins().ushr_imm(part, 16);
+    let t = b.f.ins().iadd(whole, part);
+    let none = b.f.ins().icmp_imm(IntCC::Equal, bits, 0);
+    let bit = b.f.ins().imul(i, bits);
+    let r = b.either(I64, none, |b| b.c64(0), |b| rd_bit(b, data, bit, mask));
+    let v = b.f.ins().iadd(base, t);
+    let v = b.f.ins().iadd(v, rmin);
+    b.f.ins().iadd(v, r)
+}
+
+/// `RUNS`: the run holding `i`, the last whose start (packed in `rbits` bits) is not past `i`, then its value.
+fn sealed_runs(b: &mut B<'_, '_>, ic: Value, data: Value, i: Value, bits: Value, mask: Value, base: Value) -> Value {
+    let rbits = b.word_at(I32, ic, IC_RBITS);
+    let rbits = b.f.ins().uextend(I64, rbits);
+    let rmask = mask_of(b, rbits);
+    let nruns = b.word_at(I32, ic, IC_NRUNS);
+    let nruns = b.f.ins().uextend(I64, nruns);
+    let starts = b.follow(ic, IC_RUNS);
+    let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I64);
+    b.f.append_block_param(head, I64);
+    b.f.append_block_param(done, I64);
+    let zero = b.c64(0);
+    b.f.ins().jump(head, &[zero.into(), nruns.into()]);
+    b.f.switch_to_block(head);
+    let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let span = b.f.ins().isub(hi, lo);
+    let more = b.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, span, 1);
+    b.f.ins().brif(more, body, &[], done, &[lo.into()]);
+    b.f.switch_to_block(body);
+    let half = b.f.ins().ushr_imm(span, 1);
+    let mid = b.f.ins().iadd(lo, half);
+    let bit = b.f.ins().imul(mid, rbits);
+    let start = rd_bit(b, starts, bit, rmask);
+    let le = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, start, i);
+    let lo2 = b.f.ins().select(le, mid, lo);
+    let hi2 = b.f.ins().select(le, hi, mid);
+    b.f.ins().jump(head, &[lo2.into(), hi2.into()]);
+    b.f.switch_to_block(done);
+    let k = b.f.block_params(done)[0];
+    let bit = b.f.ins().imul(k, bits);
+    let v = rd_bit(b, data, bit, mask);
+    b.f.ins().iadd(base, v)
+}
+
+/// `GROUPS`: group `i >> 7`'s minimum (`bits` bits) and its entry (`rbits` bits past the minima: width in the low 7
+/// bits, the residuals' bit offset above), then `i`'s residual at the group's width.
+fn sealed_groups(b: &mut B<'_, '_>, ic: Value, data: Value, i: Value, bits: Value, mask: Value, base: Value) -> Value {
+    let rbits = b.word_at(I32, ic, IC_RBITS);
+    let rbits = b.f.ins().uextend(I64, rbits);
+    let rmask = mask_of(b, rbits);
+    let nruns = b.word_at(I32, ic, IC_NRUNS);
+    let nruns = b.f.ins().uextend(I64, nruns);
+    let runs = b.follow(ic, IC_RUNS);
+    // The entries start past the minima's words: `(nruns * bits).div_ceil(64) + 1` words.
+    let total = b.f.ins().imul(nruns, bits);
+    let total = b.f.ins().iadd_imm(total, 63);
+    let words = b.f.ins().ushr_imm(total, 6);
+    let words = b.f.ins().iadd_imm(words, 1);
+    let entries = b.f.ins().ishl_imm(words, 6);
+    let k = b.f.ins().ushr_imm(i, 7);
+    let mbit = b.f.ins().imul(k, bits);
+    let min = rd_bit(b, runs, mbit, mask);
+    let ebit = b.f.ins().imul(k, rbits);
+    let ebit = b.f.ins().iadd(entries, ebit);
+    let e = rd_bit(b, runs, ebit, rmask);
+    let w = b.f.ins().band_imm(e, 127);
+    let at = b.f.ins().ushr_imm(e, 7);
+    let within = b.f.ins().band_imm(i, 127);
+    let off = b.f.ins().imul(within, w);
+    let rbit = b.f.ins().iadd(at, off);
+    let wmask = mask_of(b, w);
+    let r = rd_bit(b, data, rbit, wmask);
+    let v = b.f.ins().iadd(base, min);
+    b.f.ins().iadd(v, r)
 }
 
 /// Row `i`'s high 32 bits in a column with key runs (`rows::ColDir::high`): the table `runs` words from `dir` holds
@@ -548,6 +736,55 @@ mod tests {
     /// A column under key runs (an axis's node ids: each document's key over its nodes' low bits, `rows::ColDir`'s
     /// `runs`) reads in the JIT as on the host: each row's value through its rows, a column resolved once and the
     /// relation, beside an uncoded 4-byte column and an 8-byte one, with the run table before the relation and after.
+    /// Decision 0622: a sealed chunk's values through the JIT's `rows_get` are the host's, for each of the frozen
+    /// encodings (`CONST`, `PACK`, `RUNS`, `LINE`, `GROUPS`), and a raw chunk beside them reads as before.
+    #[test]
+    fn the_jits_sealed_chunk_reads_are_the_hosts() {
+        let reads = crate::jit::Reads::new();
+        type Two = extern "C" fn(*const u8, u32, u32) -> u64;
+        // SAFETY: the read's signature: its descriptor's address, then its parameters.
+        let rows_get: Two = unsafe { std::mem::transmute::<*const u8, Two>(reads.function("rows_get")) };
+        let block = Block::anon(kind::FACTS, 64 << 20).with_free_list();
+        let lock = Mutex::new(());
+        let rows: &rerail_blocks::rows::Rows = unsafe { &*block.alloc_t::<rerail_blocks::rows::Rows>(1) };
+        let cols = 6;
+        unsafe { rerail_blocks::rows::Rows::init(rows as *const rerail_blocks::rows::Rows as *mut rerail_blocks::rows::Rows, &block, &[8; 6], 4) };
+        let n = 30_000u32;
+        let col = |c: usize, i: i64| match c {
+            0 => -3,                                    // CONST
+            1 => (i * 2_654_435_761) % 1000 - 500,      // PACK
+            2 => i / 700 * 11,                          // RUNS
+            3 => i * 3 + (i * 7) % 5 - 1_000_000,       // LINE
+            4 => (i << 20) + (i * 2_654_435_761) % 64,  // GROUPS or LINE
+            _ => (i * 2_654_435_761) ^ (i << 45),       // wide
+        };
+        let s = rows.claim(&block, &lock, n);
+        for i in 0..n {
+            for c in 0..cols {
+                unsafe { rows.put(s + i, c, col(c, i64::from(i))) };
+            }
+        }
+        let (raw, sealed) = unsafe { rows.seal(&block) };
+        assert!(sealed < raw);
+        let mut tags = std::collections::BTreeSet::new();
+        for c in 0..cols {
+            let d = rows.col(c);
+            for k in 0..rerail_blocks::rows::DIRS {
+                if let Some(ic) = d.sealed(k) {
+                    tags.insert(ic.tag_name());
+                }
+            }
+            for i in 0..n {
+                let host = rows.get(i, c);
+                assert_eq!(host, col(c, i64::from(i)), "the host's row {i} of column {c}");
+                assert_eq!(rows_get(std::ptr::from_ref(rows).cast(), i, c as u32) as i64, host, "the JIT's row {i} of column {c}");
+            }
+        }
+        for t in ["const", "pack", "runs", "line"] {
+            assert!(tags.contains(t), "an encoding {t} among the sealed chunks: {tags:?}");
+        }
+    }
+
     #[test]
     fn the_jits_key_run_reads_are_the_hosts() {
         let reads = crate::jit::Reads::new();

@@ -710,9 +710,32 @@ impl CoreRows {
                 }
             }
         }
-        if wants_text && self.reads_text(p, dialect, id) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
+        if wants_text && self.keeps_text(p, dialect, id, kind, text, token_like) {
             self.text.push([n, string(text) as i64]);
         }
+    }
+
+    /// Whether node `id`'s `text` row is made, given whether it is token-like (`token_like`): a node whose text a rule
+    /// reads, within the inline bound, or token-like, or of a kind read at any length.
+    fn keeps_text(&self, p: &Projected, dialect: &Dialect, id: u32, kind: &str, text: &str, token_like: bool) -> bool {
+        self.reads_text(p, dialect, id) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind))
+    }
+
+    /// Whether node `id` is token-like as `node` finds it: no children, a comment, or a literal with a prefix.
+    fn token_like(&self, f: FactsIn<'_>, dialect: &Dialect, id: u32, kind: &str, text: &str) -> bool {
+        let children = f.children(id);
+        if children.is_empty() || is_comment(kind) {
+            return true;
+        }
+        !self.skip.literal && literal(dialect.family, kind, text, interpolated(f, dialect, kind, &children)).prefix.is_some()
+    }
+
+    /// Node `id`'s `text` row's text, read off its document's tape as `node` makes it (decision 0353 step 3): a
+    /// probe of `text` by node reads it, its document's node rows not made. `None`: the node has no `text` row.
+    pub(super) fn text_row<'p>(&self, p: &'p Projected, dialect: &Dialect, id: u32) -> Option<&'p str> {
+        let f = p.f();
+        let (kind, text) = (dialect.name(f, id), f.text(id));
+        self.keeps_text(p, dialect, id, kind, text, self.token_like(f, dialect, id, kind, text)).then_some(text)
     }
 
     /// A withheld document's one row: its first error (`verdict`).

@@ -500,8 +500,8 @@ impl Source for Mutable {
     fn scan_cost(&self) -> f64 {
         self.state.read().scan_cost()
     }
-    fn known_empty(&self) -> bool {
-        self.state.read().known_empty()
+    fn may_hold_rows(&self) -> bool {
+        self.state.read().may_hold_rows()
     }
     fn indexed(&self, c: usize) -> bool {
         self.state.read().indexed(c)

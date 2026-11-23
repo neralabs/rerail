@@ -337,6 +337,22 @@ impl Keeper {
         }
         drop(holders);
         let _rels = crate::code_rule_dsl::logic::profile::span(|| "statistics: relations".into());
+        // Each relation's statistics are its rows' alone: counted in parallel, a few relations a task (a file's are
+        // about 150 µs in all, on the run's thread: t50 step 8). Traced, in order.
+        if self.trace.listed.is_empty() {
+            use rayon::prelude::*;
+            let doc_at = &self.doc_at;
+            let mut rels: Vec<(&String, &mut RelStats)> = self.rels.iter_mut().filter(|(key, _)| pick(key) && entry.rows.contains_key(*key)).collect();
+            rels.par_iter_mut().with_min_len(16).for_each(|(key, stats)| {
+                let (width, values) = &entry.rows[*key];
+                match doc_at.get(*key) {
+                    Some(at) => stats.rows_by(values, *width, sign, *at),
+                    None => stats.documents(values, *width, sign),
+                }
+            });
+            if sign > 0 { self.counted.0 += 1 } else { self.counted.1 += 1 }
+            return;
+        }
         for (key, stats) in &mut self.rels {
             if !pick(key) {
                 continue;

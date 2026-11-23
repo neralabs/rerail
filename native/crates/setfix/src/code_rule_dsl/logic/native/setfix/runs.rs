@@ -938,7 +938,7 @@ impl<'a> Found<'a> {
 /// The first position of `v` (partitioned: `less` holds before it, not from it) not `less`: a galloping search from
 /// `start`, forward or back, so its cost grows with the distance from `start`, not with `v`'s length.
 #[inline]
-fn gallop<T>(v: &[T], start: usize, less: impl Fn(&T) -> bool) -> usize {
+pub(super) fn gallop<T>(v: &[T], start: usize, less: impl Fn(&T) -> bool) -> usize {
     let n = v.len();
     let start = start.min(n);
     if start < n && less(&v[start]) {

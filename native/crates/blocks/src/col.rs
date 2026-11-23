@@ -328,6 +328,20 @@ fn range_of(g: &[i64]) -> (i64, i64) {
 /// The smallest encoding of `v`: one pass for the range and the runs, one for the line's residuals (when a sample
 /// says the line may win), each in pieces in parallel.
 pub fn choose(v: &[i64]) -> Choice {
+    choose_with(v, usize::MAX)
+}
+
+/// The runs past which `choose_for_reads` takes no `RUNS`: a read's search of their starts is then 5 steps at most.
+pub const RUNS_FOR_READS: usize = 32;
+
+/// `choose` for a column read at random, by position (a relation's sealed chunk, decision 0622): every read a few
+/// words. `RUNS` only with few runs, its read a search of their starts; `GROUPS` holds long runs about as small, its
+/// read three words.
+pub fn choose_for_reads(v: &[i64]) -> Choice {
+    choose_with(v, RUNS_FOR_READS)
+}
+
+fn choose_with(v: &[i64], max_runs: usize) -> Choice {
     let n = v.len();
     let none = Choice { tag: CONST, bits: 0, rbits: 0, nruns: 0, base: 0, slope: 0, rmin: 0, n, data_words: 1, runs_words: 0 };
     if n == 0 {
@@ -368,6 +382,7 @@ pub fn choose(v: &[i64]) -> Choice {
     let ngroups = n.div_ceil(GROUP);
     let (gb, eb) = (bits_for((ghi as i128 - lo as i128) as u64), WIDTH_BITS + bits_for(gbits as u64));
     let groups = (gbits / 64 + 2, words(ngroups, gb) + words(ngroups, eb));
+    let runs = if nruns > max_runs { (usize::MAX / 4, usize::MAX / 4) } else { runs };
     let best = pack_words.min(runs.0 + runs.1).min(line_words).min(groups.0 + groups.1);
     if best == groups.0 + groups.1 && best < pack_words.min(runs.0 + runs.1).min(line_words) {
         return Choice { tag: GROUPS, bits: gb, rbits: eb, nruns: ngroups as u32, base: lo, slope: 0, rmin: 0, n, data_words: groups.0, runs_words: groups.1 };
@@ -535,6 +550,37 @@ impl IntCol {
         }
     }
 
+    /// Writes `c`'s descriptor at `this` with its words at `words` (`c.data_words`, then `c.runs_words`, zeroed),
+    /// the slices `write` packs the column into: a descriptor and its words in one piece of a block, given back as
+    /// one (a relation's sealed chunk, decision 0622).
+    ///
+    /// # Safety
+    /// `this` and `words` are zeroed memory in one block, `words` holding `c.data_words + c.runs_words` words.
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn lay_out_at<'b>(this: *mut IntCol, words: *mut u64, c: &Choice) -> (&'b mut [u64], &'b mut [u64]) {
+        unsafe {
+            (*this).tag = c.tag;
+            (*this).bits = c.bits;
+            (*this).n = c.n as u32;
+            (*this).rbits = c.rbits;
+            (*this).nruns = c.nruns;
+            (*this).base = c.base;
+            (*this).slope = c.slope;
+            (*this).rmin = c.rmin;
+            if c.tag == CONST {
+                return (&mut [], &mut []);
+            }
+            Span::set(&raw mut (*this).data, words, c.data_words);
+            let data = std::slice::from_raw_parts_mut(words, c.data_words);
+            if c.runs_words == 0 {
+                return (data, &mut []);
+            }
+            let r = words.add(c.data_words);
+            Span::set(&raw mut (*this).runs, r, c.runs_words);
+            (data, std::slice::from_raw_parts_mut(r, c.runs_words))
+        }
+    }
+
     #[inline]
     pub fn len(&self) -> usize {
         self.n as usize
@@ -570,12 +616,28 @@ impl IntCol {
         read(self.runs.as_slice(), k, self.rbits) as usize
     }
 
+    /// Value `i`, read from the descriptor's fields: no `Dec` made (a sealed chunk's read, decision 0622, is one of
+    /// these per row read at random).
     #[inline]
     pub fn get(&self, i: usize) -> i64 {
         match self.tag {
             CONST => self.base,
             // PACK takes at least one bit.
             PACK => self.base.wrapping_add(rd(self.data.as_slice(), i, self.bits, u64::MAX >> (64 - self.bits)) as i64),
+            LINE => {
+                let r = if self.bits == 0 { 0 } else { rd(self.data.as_slice(), i, self.bits, mask_of(self.bits)) };
+                let t = ((i as i128 * self.slope as i128) >> 16) as i64;
+                self.base.wrapping_add(t).wrapping_add(self.rmin).wrapping_add(r as i64)
+            }
+            GROUPS => {
+                let (runs, k) = (self.runs.as_slice(), i >> GROUP_LOG);
+                let entries = words(self.nruns as usize, self.bits) * 64;
+                let min = rd_bit(runs, k * self.bits as usize, mask_of(self.bits));
+                let e = rd_bit(runs, entries + k * self.rbits as usize, mask_of(self.rbits));
+                let w = (e & ((1 << WIDTH_BITS) - 1)) as u32;
+                let r = rd_bit(self.data.as_slice(), (e >> WIDTH_BITS) as usize + (i & (GROUP - 1)) * w as usize, mask_of(w));
+                self.base.wrapping_add(min as i64).wrapping_add(r as i64)
+            }
             _ => self.dec().get(i),
         }
     }

@@ -371,6 +371,74 @@ impl RelStats {
         self.documents_scanned_in(source, from, sign, WINDOW);
     }
 
+    /// `documents_scanned` of rows `lo..hi` of `source`, which hold whole documents: one chunk's own files' rows of a
+    /// relation its batch holds (decision 0458's statistics, counted where the chunk's rows lie).
+    pub fn documents_scanned_range(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, lo: usize, hi: usize, from: &[usize], sign: i64) {
+        debug_assert_eq!(from.len(), self.cols().len());
+        let width = source.columns().len();
+        let mut at = lo;
+        while at < hi {
+            let end = window_end(source, at, hi, WINDOW).min(hi);
+            self.count(
+                end - at,
+                width,
+                &mut |c, each| {
+                    source.for_rows_in(at..end, &[c], &mut |r, row| {
+                        each(r - at, row[0]);
+                        true
+                    });
+                },
+                sign,
+                None,
+                Some(from),
+            );
+            at = end;
+        }
+    }
+
+    /// Another set of documents' statistics in (none of them counted here already): each sum adds, each value's count
+    /// adds, and the sketches add. The same as counting both sets' rows here, whole documents at a time. `false`, and
+    /// nothing changed, when their columns differ.
+    pub fn merge(&mut self, other: &RelStats) -> bool {
+        if self.columns != other.columns {
+            return false;
+        }
+        self.rows += other.rows;
+        self.partial |= other.partial;
+        for (a, b) in self.cols_mut().iter_mut().zip(other.cols()) {
+            a.sqd += b.sqd;
+            match &b.zero {
+                Some(z) => {
+                    let pairs: Vec<(i64, i64)> = z.iter().collect();
+                    Self::zeros(a, &pairs, 1);
+                }
+                None => {
+                    a.zero = None;
+                    a.zero_sq += b.zero_sq;
+                }
+            }
+            a.local_ndv += b.local_ndv;
+            a.crossing += b.crossing;
+            match (&mut a.exact, &b.exact) {
+                (Some(x), Some(y)) => {
+                    for (v, n) in y.iter() {
+                        x.add(v, n);
+                    }
+                    if x.len() > EXACT {
+                        a.exact = None;
+                    }
+                }
+                _ => a.exact = None,
+            }
+            a.sketch.merge(&b.sketch, 1);
+            match (&mut a.pairs, &b.pairs) {
+                (Some(x), Some(y)) => x.merge(y, 1),
+                _ => a.pairs = None,
+            }
+        }
+        true
+    }
+
     /// `documents_scanned`, `window` rows at a time and on to the end of a window's last document.
     pub fn documents_scanned_in(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, from: &[usize], sign: i64, window: usize) {
         debug_assert_eq!(from.len(), self.columns.len());

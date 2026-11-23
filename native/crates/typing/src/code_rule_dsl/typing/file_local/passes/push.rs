@@ -39,7 +39,10 @@ pub struct PushLocalJoins {
     pub rounds: usize,
 }
 
-const ATTRIBUTES: [&str; 8] = ["docof", "line", "end_line", "col", "visit_index", "node_order", "node", "doc"];
+/// A node's attributes (and a document's, `doc`): a row a node, read by its key. `text(n, s)` is one: a component of
+/// `text`, `docof` and a document's module (`rf_ref`'s) was a row for every node with text, 4.3 M on t50's product
+/// run, made and handed on by every chunk for a cross-file rule that reads a few of them.
+const ATTRIBUTES: [&str; 9] = ["docof", "line", "end_line", "col", "visit_index", "node_order", "node", "doc", "text"];
 
 /// All of `a`'s terms are variables or wildcards, each variable once.
 fn plain(v: &Version, rule: RuleRef<'_>, a: AtomRef<'_>) -> bool {

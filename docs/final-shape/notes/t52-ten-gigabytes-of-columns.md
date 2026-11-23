@@ -170,11 +170,13 @@ unchanged and CPU noted.
    A finer test was built and measured (each relation's node columns grouped by document, a reader holding every
    column; `tmp/t52/combining-column-groups.rs`) and left nothing fewer on `s100`.
 
-   What is left is a check at run time: with no run-value document, each filter is its original. That needs a fact
-   the run does not have. `GuestKeys` holds every key the store has given, and a memo hit's rows carry an
-   annotation's nodes without admitting it again, so "this run has no run-value document" is a new record: kept in
-   the memo, read by the executor, which binds the twin to its original's rows (`hold_bound`), with filter twins kept
-   out of column projection and demand.
+   What is left is a check at run time, built as decision 0611. With no run-value document, each filter is its
+   original, and the rows themselves show whether one reached them. The executor reads a filter's source against
+   its bounds, and where every row passes holds the filter as its source (`hold_as`): no new record, and memo hits
+   need nothing apart. On `all` the cross part's twins (`rf_attr`'s 811 K rows, `rf_plain_attr`'s 596 K,
+   `rf_import_target`'s) and plain copies (`reference_edge` as `rf_edge`, 438 K rows) are read as their sources.
+   What keeps `rr_narrow_` in its name is no copy: a chunk's `rr_narrow_rf_import_target`, which derives no
+   `rf_import_target` beside it, and the demand set `dm_rr_narrow_rf_attr_2`.
 
 4. **An export is read where its chunks' rows lie.** `Exports::add` appends a chunk's part to the export's rows
    (`Rows::append_part`) under the export's life, in place of writing its rows again. A row given twice is marked
@@ -189,7 +191,7 @@ unchanged and CPU noted.
    top spans; rows and findings as before (the 7 `ref` and 1 `open_name` rows against W are 2026-11-20's). The
    profiled peak is 12.8 GB against 13.6 GB for the same tree with the step switched off: the chunks' kept blocks
    now live until the cross part ends, in place of the export's copy of their rows.
-5. **Decision 0605: one compact layout of a relation's columns.** Written before it is built, citing MLDB's frozen
+5. **Decision 0622 (named 0605 when planned): one compact layout of a relation's columns.** Written before it is built, citing MLDB's frozen
    columns (`plugins/tabular/frozen_column.cc`: per chunk, the smallest of direct, table, sparse table and integer
    table, by exact size; `FrozenIntegerTable`'s slope, offset and bit-packed residual), `rerail_blocks::col` and
    0494 step 7a. The shape: a block's column is sealed per range of rows as the smallest of constant, runs, line,
@@ -197,7 +199,7 @@ unchanged and CPU noted.
    the slot a few bits, the index a line or bit-packed. A column may be stored relative to another (column 0's
    document). It is the blocks' one layout, read where it lies by `ColDir::get`, CLIF's `col_get`/`rows_get` and the
    kernels' `relation.h`, written once; no second, packed layout (0371's mistake).
-6. **Build 0605 in its steps:** key runs for every column whose rows lie in one document a run (every chunk
+6. **Build 0622 in its steps:** key runs for every column whose rows lie in one document a run (every chunk
    relation), then per-range bit-packing, then dictionaries for atoms and kinds. Each step's reads are tested through
    every reader (host, JIT, kernels' generated header), and measured by the census.
 

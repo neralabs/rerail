@@ -621,6 +621,17 @@ pub fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&st
             why.insert(rel.to_owned(), r);
         }
     }
+    // A relation a filter reads (decision 0611): where every row passes, the filter is read as it. Inlined, the
+    // filter would be a copy of its rules, derived beside it (a chunk's `rr_narrow_rf_import_target`, three rules of
+    // `rf_import_target` under the bound).
+    for (rel, ks) in rules_of {
+        if let [k] = ks.as_slice()
+            && let Some((of, _)) = super::plain_filter(f, rel, v, base.rule(*k))
+            && rules_of.contains_key(of.as_str())
+        {
+            why.entry(of).or_insert("a filter reads it (decision 0611)");
+        }
+    }
     for rel in rules_of.keys() {
         if rel.starts_with(super::super::strings::RELATION) || rel.starts_with("magic_") || rel.starts_with("done_") {
             why.insert((*rel).to_owned(), "the engine's (a text test or demand's own)");

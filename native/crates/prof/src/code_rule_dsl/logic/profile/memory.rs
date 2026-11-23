@@ -604,6 +604,11 @@ pub mod width_census {
         let total: u64 = by.iter().map(|e| e.2).sum();
         let mut out = vec![format!("relations let go: {} names, {} M values in all; the most:", by.len(), total / 1_000_000)];
         out.extend(by.iter().take(n).map(|(name, rows, values, times)| format!("{:>8.1} M values {:>8.1} M rows {times:>6}x  {name}", *values as f64 / 1e6, *rows as f64 / 1e6)));
+        // Hiding's narrow twins (decisions 0165, 0611), every one whatever its size: a run with no annotation document
+        // should hold none.
+        let narrow: Vec<_> = by.iter().filter(|e| e.0.contains("rr_narrow_")).collect();
+        out.push(format!("narrow twins let go: {} names", narrow.len()));
+        out.extend(narrow.iter().map(|(name, rows, values, times)| format!("{:>8.3} M values {:>8.3} M rows {times:>6}x  {name}", *values as f64 / 1e6, *rows as f64 / 1e6)));
         out
     }
 

@@ -81,7 +81,8 @@ pub const AXIS_KEYS: usize = 4;
 
 /// An index the device builds into a relation of a block (`Facts::ix`), its builder's work committed: the relation's
 /// descriptor's offset in the block, the index's room, and its builder's submission, for a taker to wait on (a builder
-/// the device failed fails its takers' batches too).
+/// the device failed fails its takers' batches too). `taken`: a taker took it (set under the block's index lock), so
+/// its builder never gives its room back.
 pub struct InFlight {
     pub at: usize,
     pub room: rerail_blocks::relation::IndexRoom,
@@ -615,6 +616,12 @@ pub fn install_sources_held(held: fn() -> Vec<(usize, String, usize, usize, u32,
 
 /// A new block for relations of `life` with room for `need` bytes and its others' margin: the chunk's, if a chunk's
 /// evaluation runs, counted while it lives.
+/// Whether a relation's chunks are sealed (decision 0622); `RERAIL_SEAL_CHUNKS=off` leaves them raw.
+fn seal_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("RERAIL_SEAL_CHUNKS").is_ok_and(|v| v == "off"))
+}
+
 fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<Facts>, String> {
     let f = Arc::new(Facts::shared(lease(2 * need + MARGIN, life)?, life));
     if let Some(c) = chunk {
@@ -1781,6 +1788,23 @@ impl Part {
         moved
     }
 
+    /// Its full chunks below its rows sealed in the frozen columns' encodings (decision 0622), where this part alone
+    /// holds its relation (a reader elsewhere may hold an address in its chunks), it continues no base, it has no room
+    /// lent, and it is the run's, not the device's: the raw chunks go back to its block's free list. Counted under
+    /// `what` in the profile.
+    fn seal_full(&self, what: &str) {
+        if self.life == Life::Device || Arc::strong_count(&self.held) != 1 || self.base.is_some() || self.lent.load(std::sync::atomic::Ordering::Acquire) != 0 {
+            return;
+        }
+        // SAFETY: rows below its length are written, and a writer goes on past them, in a chunk not yet full; this
+        // part alone holds the relation.
+        let (raw, sealed) = unsafe { self.rel().rows.seal(&self.facts.block) };
+        if raw > 0 && crate::code_rule_dsl::prof::on() {
+            crate::code_rule_dsl::prof::count_named(format!("{what}_raw_bytes"), raw);
+            crate::code_rule_dsl::prof::count_named(format!("{what}_bytes"), sealed);
+        }
+    }
+
     /// Appends rows `lo..hi` of `from` (as many columns).
     fn copy_from(&mut self, from: &Part, lo: u32, hi: u32) {
         let n = hi - lo;
@@ -2159,12 +2183,25 @@ impl Rows {
                 self.segs.push((first, both.prefix()));
             }
         }
+        self.seal_segments();
         // The last segment's writer, free for a relation started from these rows, at its rows: a prefix of its relation,
         // which a writer goes on past.
         if let Some((first, p)) = self.segs.last() && p.capped() && !p.is_range() && first + p.len() == self.from && p.rel().rows.len() == p.len() {
             p.free_at.store(p.len(), std::sync::atomic::Ordering::Release);
         }
         self
+    }
+
+    /// Each frozen segment's full chunks sealed in the frozen columns' encodings (decision 0622), where no one else
+    /// holds its part (a reader elsewhere may hold an address in its chunks) and it is the run's, not the device's:
+    /// its raw chunks go back to its block's free list. `RERAIL_SEAL_CHUNKS=off` leaves them raw.
+    fn seal_segments(&self) {
+        if !seal_on() {
+            return;
+        }
+        for (_, p) in &self.segs {
+            p.seal_full("rows.sealed");
+        }
     }
 
     /// The `n` rows of a frozen relation, shared: its segments taken (and its tail, if it has one, as the rows it holds
@@ -2532,6 +2569,21 @@ impl Rows {
         let (p, i) = self.part_of(from);
         let (q, _) = self.part_of(to - 1);
         std::ptr::eq(p, q).then(|| RangeRead { col: p.cols[c], add: (p.skip + i).wrapping_sub(from), _rows: std::marker::PhantomData })
+    }
+
+    /// The first row whose value in column `c` is not below `key`, the column sorted over every row (`rows()` where
+    /// none is): the parts by their last values, then the one part's own search (`rerail_blocks::rows::Rows::
+    /// lower_bound`: its chunks' first values, then the chunk's encoding or slice). A bisection by `get` searched the
+    /// parts and the chunks again for every row it read.
+    pub fn lower_bound(&self, c: usize, key: i64) -> u32 {
+        let parts = self.segs.iter().map(|(first, p)| (*first, p)).chain(self.tail.as_ref().map(|t| (self.from, t)));
+        for (first, p) in parts {
+            let n = p.len();
+            if n > 0 && p.cols[c].get(n - 1) >= key {
+                return first + p.rel().rows.lower_bound(c, 0, n, key);
+            }
+        }
+        self.rows() as u32
     }
 
     /// The relation holding row `id`, and the row's place in it.

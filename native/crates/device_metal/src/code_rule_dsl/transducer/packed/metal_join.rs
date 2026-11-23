@@ -5280,6 +5280,21 @@ pub mod tests {
         assert_eq!(r.find_index(&[1], n as u32), Some(ia.index as usize));
         let ix = r.index_at(ib.index as usize);
         assert_eq!((ix.ncols, ix.state), (0, rerail_blocks::relation::DEAD), "the second given back");
+        // A second build another batch took, whose builder finds the first built when it finishes: its room is kept,
+        // as the taker's stages may still be queued to read it (`InFlight::lent`).
+        let (mut x, mut a) = (Batch::new().unwrap(), Batch::new().unwrap());
+        let ix_x = x.index(&placed, &[0, 1]).unwrap();
+        let ix_a = a.index(&placed, &[0, 1]).unwrap();
+        assert!(ix_x.built && ix_a.built && ix_x.index != ix_a.index);
+        a.commit_open().unwrap();
+        let mut t = Batch::new().unwrap();
+        let ix_t = t.index(&placed, &[0, 1]).unwrap();
+        assert!(!ix_t.built && ix_t.index == ix_a.index, "the committed build taken");
+        x.finish().unwrap();
+        a.finish().unwrap();
+        t.finish().unwrap();
+        assert_eq!(r.find_index(&[0, 1], n as u32), Some(ix_x.index as usize));
+        assert_ne!(r.index_at(ix_a.index as usize).state, rerail_blocks::relation::DEAD, "a taken build's room kept");
         // A delta read in place (its rows `from..`): its own index, though its count is that of the first rows'.
         let half = n / 2;
         let first = DevRel::in_block_from(&held, 2, 0, half).unwrap();
