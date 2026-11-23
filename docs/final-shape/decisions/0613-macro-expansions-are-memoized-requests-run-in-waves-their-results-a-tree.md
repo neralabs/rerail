@@ -373,6 +373,30 @@ So:
      parameters bound to equal spellings from different places, which need the arguments as holes (§"Arguments
      as references"): a result kept with its arguments' places open, filled at each hit.
 
+   **Built: arguments as holes, and the disabled macros a result looks up** (2026-11-22, `lp_tpl_*`,
+   `lp_memo_look` in `pp_loop.uglykl`).
+   - Every call's arguments are keyed by their spelling: each entry's kind and count, each token's spelling,
+     space, paint and paste mark, a node by its spelling's hash (kept in its header beside the identity's,
+     `lp_node_seal`).
+   - A capture keeps its raw arguments on its own stack (region 4: region 0's are written over by the
+     substitution) while it lives. At its end each entry of its result (and each nested node made since it began,
+     8 nodes and 32 holes at most), or each output piece, that lies in one of them is a hole: the raw entry and
+     the place in it. One that overlaps one and is not in it keeps nothing. The holes are written once in the
+     store, beside the result (`lp_tpl_write`). A hit writes the nodes that hold a hole anew, the hit's own
+     entries in the holes, and reads the rest where the first wrote it (`lp_tpl_fill`, `lp_memo_emit`). An entry
+     read from inside a raw argument's node keeps the first call's place, its spelling the same.
+   - This alone moved nothing on Boost `control` (31 hits, 59,567 steps): its repeats are read in different
+     macros' bodies, and the key held every macro disabled there. A result depends on a disabled macro only
+     where its expansion looks it up. So a capture records the definitions it looks up (2,048 bits, one a
+     definition, on its stack; a hit's are added to the captures around it), and the macros disabled where it is
+     read. Its entry keeps the set, and the hash of the disabled macros the set has. A call finds the entry whose
+     hash equals that of its own disabled macros the set has; a false bit only refuses a hit. Measured: with 128
+     bits the sets were 92% full and nothing moved; a bound of 8 disabled macros refused 190 of 265 lookups.
+   - Boost `control` (GB10, CUDA): the slowest piece 59,567 to 36,376 steps and 241 to 178 ms of GPU time, 147
+     hits. Without the disabled macros in the key at all it took 17,427 steps and gave the wrong tokens, so the
+     dependence is real. The corpus: C 5.8 to 5.9 ms, C++ 2.5 ms, within noise (it has 2 hits). Every eval test
+     gives the serial pass's tokens on the CPU backend and Metal (m3).
+
    **Built: a round keeps the last round's documents** (2026-11-22, `place_kept` in `eval/rounds.rs`).
    - A unit's rounds keep its files' digests. A round lexes only the files the last round's answers loaded; an
      earlier file's tape is built again only where the residency let its document go. Before, every round
@@ -404,6 +428,8 @@ So:
 - `a_definition_changed_between_uses_is_expanded_again`: `#define G 1` / `F()` / `#undef G` / `#define G 2` /
   `F()`, where `F`'s body names `G`.
 - `a_disabled_macro_paints_alike_in_a_memoized_expansion`: `A` → `B` → `A`, entered at the top and inside `B`.
+- `an_argument_spelled_alike_is_a_hole`: `P(x, 1)` with `x` from four places in the text, printed, in an argument and
+  as a node, and read in four bodies: one result, each hit with its own tokens.
 - `a_childs_open_tail_takes_its_parents_parenthesis`: `#define f g` / `#define g(x) x` / `f(1)`.
 - `a_childs_first_parenthesis_makes_its_parent_a_call`: `#define LP (` / `h LP 1)`.
 - `place_builtins_are_not_memoized`: `__LINE__` and `__COUNTER__` in a macro invoked on several lines.

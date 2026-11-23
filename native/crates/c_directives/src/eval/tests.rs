@@ -1259,6 +1259,36 @@ fn a_repeated_invocation_is_expanded_once() {
     assert!(hits >= 2, "P(r, g) is one result: {hits} hits, {kept} kept");
 }
 
+/// Decision 0613 §1, arguments as holes: a call is keyed by its arguments' spelling, and its result kept
+/// with their places open. `P(x, 1)` in `Y`'s body, its `x` from four places in the text, is one result;
+/// each hit fills it with its own call's tokens (a piece of the text the first's would print the wrong
+/// token: `q`, `r`, `s` lie beside them). Read in four bodies it is one result too: a result's disabled
+/// macros are those its expansion looks up.
+#[test]
+fn an_argument_spelled_alike_is_a_hole() {
+    let d = "#define A(x) x\n#define D A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a) A(a)\n#define P(a, b) <a b> D\n";
+    // Its result printed (`P` at the output), and read in an argument (`A(P(..))`: entries, or a node).
+    for y in ["#define Y(x, y) P(x, 1) y\n", "#define Y(x, y) [A(P(x, 1))] y\n", "#define Y(x, y) A(P(x, 1) P(x, 1)) y\n"] {
+        let src = format!("{d}{y}Y(2, a) q Y(2, b) r Y(2, c) s Y(2, d)\n");
+        let (got, want, (hits, kept)) = expanded_memo(&[("main.c", &src)], false);
+        same(show(&got.expect("refused")), show(&want), y);
+        eprintln!("holes: {hits} hits, {kept} kept");
+        assert!(hits >= 2, "P(x, 1) is one result for four places: {hits} hits, {kept} kept");
+    }
+    // In four bodies: the macros disabled there (`Yk`) are not ones its expansion looks up.
+    let ys: String = (1..=4).map(|k| format!("#define Y{k}(x) P(x, 1) x\n")).collect();
+    let src = format!("{d}{ys}Y1(2) q Y2(2) r Y3(2) s Y4(2)\n");
+    let (got, want, (hits, kept)) = expanded_memo(&[("main.c", &src)], false);
+    same(show(&got.expect("refused")), show(&want), "four bodies");
+    eprintln!("four bodies: {hits} hits, {kept} kept");
+    assert!(hits >= 2, "P(x, 1) is one result in four bodies: {hits} hits, {kept} kept");
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define P(a, b) [a|b|a]\n#define Y(x) P(x, x) P(x x, x)\n#define Z(x) P(x, x)\nY(1) Z(1) Y(1 ) Z( 1) Y(2) Z(2)\n")],
+        &[("main.c", "#define S(a) #a\n#define P(a, b) S(a) a ## b b\n#define Y(x) P(x, 1)\n#define Z(x) P(x, 1)\nY(u) Z(u) Y(u) Z(u)\n")],
+    ];
+    shapes_agree(shapes);
+}
+
 /// Decision 0613 §1: the macros disabled where a call is read are its key's: `B(1)` entered at the top
 /// and inside `A` (where `A` is painted) are two results.
 #[test]
