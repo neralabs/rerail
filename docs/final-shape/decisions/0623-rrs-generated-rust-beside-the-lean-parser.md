@@ -705,3 +705,12 @@ same node, each `wrap` walking it. A node already held is not pushed again, as e
 
 The same on spark1 and in tier 2's instruction count on m3, in turns: the profile's samples there were not tier 2's
 cost. Kept as the shape of the work: no allocation and no list for a separator. All tests pass.
+
+### Tried, not kept: a token's one-byte tests as block words (2026-11-23)
+
+A token's tests of its own bytes (an operator's `-` not before a digit, a number's leading `0` before a digit, a `/`
+opening a comment) read the bytes at the token. Tried: each such mask made once a block of the block's classes
+(`k_M`), the token reading its bit. Slower in turns on spark1 (21.8–22.3 ms against 20.2–21.2 ms): the block made
+four more masks every block (each its compare and its bits), for tests only some tokens of some rows read; and a mask
+reading two bytes on brought back the next block's classify each block. The marks' cost in tier 1 alone (m3, counted
+with them taken out): about 18 instructions a token.
