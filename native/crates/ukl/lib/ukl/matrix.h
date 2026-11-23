@@ -78,6 +78,18 @@
 #define UKL_MMA_CUDA 0
 #endif
 
+// Volta's unit (sm_70, the V100: `mma.sync.m8n8k4`, f16 into f32; it has no bf16 or i8 form): one warp an owner, each
+// of its four quad pairs an 8×8 quadrant of the 16×16 fragment. bf16, i8 and b1 are emulated, in its layout of C.
+// Only with `UKL_MMA_VOLTA_UNIT` (decision 0617, "The V100"): measured on a V100, its layout of C made the emulated
+// types 1.3-2.4 times slower (b1, the bit product's, 2.4), for f16's tile call 1.36 times faster; the emulation is
+// the V100's form.
+#if defined(UKL_CUDA) && !defined(UKL_HIP) && !defined(UKL_MMA_FORCE_EMULATED) && UKL_SIMD_WIDTH == 32 &&           \
+    UKL_MMA_EMULATED_GROUPS == 1 && __CUDA_ARCH__ >= 700 && __CUDA_ARCH__ < 750 && defined(UKL_MMA_VOLTA_UNIT)
+#define UKL_MMA_VOLTA 1
+#else
+#define UKL_MMA_VOLTA 0
+#endif
+
 // Apple's units (M1-M4: `simdgroup_matrix`, 8×8×8; f16, and bf16 from Metal 3.1, where `bfloat` came): one SIMD group
 // an owner, a 16×16 fragment four of its matrices. (`__HAVE_BFLOAT__` is not defined at 3.1: the version is the test.)
 #if defined(UKL_METAL) && !defined(UKL_MMA_FORCE_EMULATED) && UKL_SIMD_WIDTH == 32 && UKL_MMA_EMULATED_GROUPS == 1
@@ -112,7 +124,7 @@
 #define UKL_MMA_N_f16 16u
 #define UKL_MMA_K_f16 16u
 #define UKL_MMA_GROUPS_f16 UKL_MMA_EMULATED_GROUPS
-#define UKL_MMA_NATIVE_f16 (UKL_MMA_CUDA || UKL_MMA_APPLE || UKL_MMA_INTEL)
+#define UKL_MMA_NATIVE_f16 (UKL_MMA_CUDA || UKL_MMA_VOLTA || UKL_MMA_APPLE || UKL_MMA_INTEL)
 #define UKL_MMA_PACK_f16 1u
 #define UKL_MMA_M_bf16 16u
 #define UKL_MMA_N_bf16 16u
@@ -152,7 +164,7 @@
 #define UKL_MMA_KW_b1 (UKL_MMA_K_b1 / 64u)
 
 // C's rows (`RB`) and columns (`CB`) a lane.
-#if UKL_MMA_CUDA || UKL_MMA_APPLE
+#if UKL_MMA_CUDA || UKL_MMA_VOLTA || UKL_MMA_APPLE
 #define UKL_MMA_RB 2u
 #define UKL_MMA_CB 4u
 #elif UKL_MMA_INTEL
@@ -202,6 +214,10 @@ UKL_INLINE uint32_t ukl_mma_row(uint32_t i, UklMmaAt at)
 {
 #if UKL_MMA_CUDA
     return (at.lane >> 2) + 8u * i;
+#elif UKL_MMA_VOLTA
+    // `m8n8k4`'s f32 accumulators: the quad pair's quadrant (rows from `(lane >> 3) & 1`), row `(lane & 1) + 2i`, and
+    // 4 on in the pair's upper half (lanes 16 on).
+    return 8u * ((at.lane >> 3) & 1u) + (at.lane & 1u) + 2u * i + 4u * (at.lane >> 4);
 #elif UKL_MMA_INTEL
     return i;
 #elif UKL_MMA_APPLE
@@ -217,6 +233,8 @@ UKL_INLINE uint32_t ukl_mma_col(uint32_t j, UklMmaAt at)
 {
 #if UKL_MMA_CUDA
     return 8u * (j >> 1) + 2u * (at.lane & 3u) + (j & 1u);
+#elif UKL_MMA_VOLTA
+    return 8u * ((at.lane >> 2) & 1u) + 4u * (j >> 1) + (at.lane & 2u) + (j & 1u);
 #elif UKL_MMA_INTEL
     (void)j;
     return at.lane;
@@ -255,6 +273,10 @@ typedef struct ukl_mma_b_i8 { uint32_t w[8]; } ukl_mma_b_i8;
 #if UKL_MMA_APPLE
 typedef struct ukl_mma_a_f16 { simdgroup_half8x8 m[4]; } ukl_mma_a_f16;
 typedef struct ukl_mma_b_f16 { simdgroup_half8x8 m[4]; } ukl_mma_b_f16;
+#elif UKL_MMA_VOLTA
+// `m8n8k4`'s: A this lane's row of its quadrant, B its column, each 16 k's, two a word (the lowest k lowest).
+typedef struct ukl_mma_a_f16 { uint32_t w[8]; } ukl_mma_a_f16;
+typedef struct ukl_mma_b_f16 { uint32_t w[8]; } ukl_mma_b_f16;
 #else
 typedef struct ukl_mma_a_f16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_a_f16;
 typedef struct ukl_mma_b_f16 { uint32_t w[UKL_MMA_WORDS_16]; } ukl_mma_b_f16;
@@ -534,6 +556,10 @@ UKL_INLINE void ukl_mma_b1(UKL_PRIVATE ukl_mma_c_i32* c, UKL_PRIVATE const ukl_m
 #define UKL_MMA_TILE_OWN_f16 1u
 #define UKL_MMA_TILE_OWN_bf16 1u
 #define UKL_MMA_TILE_OWN_i8 1u
+#elif UKL_MMA_VOLTA
+#define UKL_MMA_TILE_OWN_f16 1u
+#define UKL_MMA_TILE_OWN_bf16 0u
+#define UKL_MMA_TILE_OWN_i8 0u
 #else
 #define UKL_MMA_TILE_OWN_f16 0u
 #define UKL_MMA_TILE_OWN_bf16 0u
@@ -541,6 +567,39 @@ UKL_INLINE void ukl_mma_b1(UKL_PRIVATE ukl_mma_c_i32* c, UKL_PRIVATE const ukl_m
 #endif
 #define UKL_MMA_TILE_OWN_b1 0u
 #define UKL_MMA_TILE_OWN(T) UKL_MMA_TILE_OWN_##T
+
+#if UKL_MMA_CUDA || UKL_MMA_VOLTA
+// CUDA's tile call: the owner's whole 64×64 block of C in registers (16 fragments, 128 a lane), so that each K step
+// reads each of A's four row fragments and B's four column fragments once, where the reference reads each four times
+// (one a fragment of C). Each element's products are summed in the reference's order.
+#define UKL_MMA_CUDA_TILE(T, C, CT, ET)                                                                                 \
+    UKL_MMA_TILE_REF(T, C, CT, ET)                                                                                      \
+    UKL_INLINE void ukl_gemm_tile_##T(UKL_MMA_TILE_PARAMS(CT, ET))                                                      \
+    {                                                                                                                   \
+        ukl_mma_c_##C c[16];                                                                                            \
+        _Pragma("unroll") for (uint32_t f = 0u; f < 16u; f++) {                                                         \
+            uint32_t ci = 16u * (f >> 2), cj = 16u * (f & 3u);                                                          \
+            ukl_mma_load_c_##C(&c[f], Cp + (lc == UKL_ROW_MAJOR ? ci * ldc + cj : cj * ldc + ci), ldc, lc, at);         \
+        }                                                                                                               \
+        for (uint32_t k = 0u; k < K; k += UKL_MMA_K_##T) {                                                              \
+            uint32_t km = k / UKL_MMA_PACK_##T;                                                                         \
+            ukl_mma_b_##T b[4];                                                                                         \
+            _Pragma("unroll") for (uint32_t j = 0u; j < 4u; j++)                                                        \
+                ukl_mma_load_b_##T(&b[j], B + (lb == UKL_ROW_MAJOR ? km * ldb + 16u * j : 16u * j * ldb + km), ldb, lb, at); \
+            _Pragma("unroll") for (uint32_t i = 0u; i < 4u; i++) {                                                      \
+                ukl_mma_a_##T a;                                                                                        \
+                ukl_mma_load_a_##T(&a, A + (la == UKL_ROW_MAJOR ? 16u * i * lda + km : km * lda + 16u * i), lda, la, at); \
+                _Pragma("unroll") for (uint32_t j = 0u; j < 4u; j++)                                                    \
+                    ukl_mma_##T(&c[4u * i + j], &a, &b[j], at __UKL_ARGS);                                              \
+            }                                                                                                           \
+        }                                                                                                               \
+        _Pragma("unroll") for (uint32_t f = 0u; f < 16u; f++) {                                                         \
+            uint32_t ci = 16u * (f >> 2), cj = 16u * (f & 3u);                                                          \
+            ukl_mma_store_c_##C(&c[f], Cp + (lc == UKL_ROW_MAJOR ? ci * ldc + cj : cj * ldc + ci), ldc, lc, at);        \
+        }                                                                                                               \
+    }
+
+#endif
 
 #if UKL_MMA_CUDA
 // ---- NVIDIA's f16, bf16 and i8: `mma.sync` registers, each a word of `P` elements read where they lie (`KH` half of
@@ -580,41 +639,58 @@ UKL_INLINE void ukl_mma_b1(UKL_PRIVATE ukl_mma_c_i32* c, UKL_PRIVATE const ukl_m
                          : "r"(a->w[0]), "r"(a->w[1]), "r"(a->w[2]), "r"(a->w[3]), "r"(b->w[2u * h]), "r"(b->w[2u * h + 1u])); \
     }
 
-// CUDA's tile call: the owner's whole 64×64 block of C in registers (16 fragments, 128 a lane), so that each K step
-// reads each of A's four row fragments and B's four column fragments once, where the reference reads each four times
-// (one a fragment of C). Each element's products are summed in the reference's order.
-#define UKL_MMA_CUDA_TILE(T, C, CT, ET)                                                                                 \
-    UKL_MMA_TILE_REF(T, C, CT, ET)                                                                                      \
-    UKL_INLINE void ukl_gemm_tile_##T(UKL_MMA_TILE_PARAMS(CT, ET))                                                      \
-    {                                                                                                                   \
-        ukl_mma_c_##C c[16];                                                                                            \
-        _Pragma("unroll") for (uint32_t f = 0u; f < 16u; f++) {                                                         \
-            uint32_t ci = 16u * (f >> 2), cj = 16u * (f & 3u);                                                          \
-            ukl_mma_load_c_##C(&c[f], Cp + (lc == UKL_ROW_MAJOR ? ci * ldc + cj : cj * ldc + ci), ldc, lc, at);         \
-        }                                                                                                               \
-        for (uint32_t k = 0u; k < K; k += UKL_MMA_K_##T) {                                                              \
-            uint32_t km = k / UKL_MMA_PACK_##T;                                                                         \
-            ukl_mma_b_##T b[4];                                                                                         \
-            _Pragma("unroll") for (uint32_t j = 0u; j < 4u; j++)                                                        \
-                ukl_mma_load_b_##T(&b[j], B + (lb == UKL_ROW_MAJOR ? km * ldb + 16u * j : 16u * j * ldb + km), ldb, lb, at); \
-            _Pragma("unroll") for (uint32_t i = 0u; i < 4u; i++) {                                                      \
-                ukl_mma_a_##T a;                                                                                        \
-                ukl_mma_load_a_##T(&a, A + (la == UKL_ROW_MAJOR ? 16u * i * lda + km : km * lda + 16u * i), lda, la, at); \
-                _Pragma("unroll") for (uint32_t j = 0u; j < 4u; j++)                                                    \
-                    ukl_mma_##T(&c[4u * i + j], &a, &b[j], at __UKL_ARGS);                                              \
-            }                                                                                                           \
-        }                                                                                                               \
-        _Pragma("unroll") for (uint32_t f = 0u; f < 16u; f++) {                                                         \
-            uint32_t ci = 16u * (f >> 2), cj = 16u * (f & 3u);                                                          \
-            ukl_mma_store_c_##C(&c[f], Cp + (lc == UKL_ROW_MAJOR ? ci * ldc + cj : cj * ldc + ci), ldc, lc, at);        \
-        }                                                                                                               \
-    }
-
 #define UKL_MMA_CUDA_TYPE(T, C, CT, ET, UT, P, BITS, SHAPE, TYPES, R)                                                \
     UKL_MMA_CUDA_LOADS(T, ET, UT, P, BITS, UKL_MMA_K_##T / 2u, UKL_GLOBAL, )                                            \
     UKL_MMA_CUDA_LOADS(T, ET, UT, P, BITS, UKL_MMA_K_##T / 2u, UKL_LOCAL, _local)                                       \
     UKL_MMA_CUDA_PRODUCT(T, C, SHAPE, TYPES, R)                                                                         \
     UKL_MMA_CUDA_TILE(T, C, CT, ET)
+#endif
+
+#if UKL_MMA_VOLTA
+// ---- Volta's f16: `mma.sync.m8n8k4` (sm_70). A quad pair's lanes are 4q-4q+3 and 16+4q-16+4q+3 (q the pair); it
+// computes the quadrant at rows 8 · (q >> 1), columns 8 · (q & 1): its lane's row of A there (`lane & 3`, 4 on in the
+// upper half) and column of B, 4 k's an instruction, four a product. ----
+
+#define UKL_MMA_VOLTA_LOADS(SPACE, SUF)                                                                                 \
+    UKL_INLINE void ukl_mma_load_a_f16##SUF(UKL_PRIVATE ukl_mma_a_f16* a, SPACE const uint16_t* p, uint32_t stride,     \
+                                            uint32_t layout, UklMmaAt at)                                               \
+    {                                                                                                                   \
+        uint32_t r = 8u * ((at.lane >> 3) & 1u) + (at.lane & 3u) + 4u * (at.lane >> 4);                                 \
+        for (uint32_t i = 0u; i < 8u; i++) {                                                                            \
+            uint32_t k = 2u * i;                                                                                        \
+            uint32_t lo = layout == UKL_ROW_MAJOR ? p[r * stride + k] : p[k * stride + r];                              \
+            uint32_t hi = layout == UKL_ROW_MAJOR ? p[r * stride + k + 1u] : p[(k + 1u) * stride + r];                  \
+            a->w[i] = lo | (hi << 16);                                                                                  \
+        }                                                                                                               \
+    }                                                                                                                   \
+    UKL_INLINE void ukl_mma_load_b_f16##SUF(UKL_PRIVATE ukl_mma_b_f16* b, SPACE const uint16_t* p, uint32_t stride,     \
+                                            uint32_t layout, UklMmaAt at)                                               \
+    {                                                                                                                   \
+        uint32_t c = 8u * ((at.lane >> 2) & 1u) + (at.lane & 3u) + 4u * (at.lane >> 4);                                 \
+        for (uint32_t i = 0u; i < 8u; i++) {                                                                            \
+            uint32_t k = 2u * i;                                                                                        \
+            uint32_t lo = layout == UKL_ROW_MAJOR ? p[k * stride + c] : p[c * stride + k];                              \
+            uint32_t hi = layout == UKL_ROW_MAJOR ? p[(k + 1u) * stride + c] : p[c * stride + k + 1u];                  \
+            b->w[i] = lo | (hi << 16);                                                                                  \
+        }                                                                                                               \
+    }
+UKL_MMA_VOLTA_LOADS(UKL_GLOBAL, )
+UKL_MMA_VOLTA_LOADS(UKL_LOCAL, _local)
+
+// The accumulators' register i holds row (i & 2) / 2 and column (i & 4) / 2 + (i & 1) of `ukl_mma_row` and
+// `ukl_mma_col`: x[0, 1, 4, 5, 2, 3, 6, 7] in that order.
+UKL_INLINE void ukl_mma_f16(UKL_PRIVATE ukl_mma_c_f32* c, UKL_PRIVATE const ukl_mma_a_f16* a, UKL_PRIVATE const ukl_mma_b_f16* b,
+                            UklMmaAt at __UKL_PARAMS)
+{
+    (void)at;
+    for (uint32_t s = 0u; s < 4u; s++)
+        asm volatile("mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32 {%0,%1,%2,%3,%4,%5,%6,%7}, {%8,%9}, {%10,%11}, "
+                     "{%0,%1,%2,%3,%4,%5,%6,%7};"
+                     : "+f"(c->x[0]), "+f"(c->x[1]), "+f"(c->x[4]), "+f"(c->x[5]), "+f"(c->x[2]), "+f"(c->x[3]),
+                       "+f"(c->x[6]), "+f"(c->x[7])
+                     : "r"(a->w[2u * s]), "r"(a->w[2u * s + 1u]), "r"(b->w[2u * s]), "r"(b->w[2u * s + 1u]));
+}
+UKL_MMA_CUDA_TILE(f16, f32, float, uint16_t)
 #endif
 
 #if UKL_MMA_APPLE
@@ -747,6 +823,8 @@ UKL_MMA_CUDA_TYPE(i8, i32, int32_t, int8_t, uint8_t, 4u, 8u, "m16n8k32", "s32.s8
 #else
 #if UKL_MMA_APPLE
 UKL_MMA_APPLE_TYPE(f16, half)
+#elif UKL_MMA_VOLTA
+// Volta's f16 is its own (above).
 #else
 UKL_MMA_EMULATED_TYPE(f16, f32, float, uint16_t, uint16_t, 2u, 16u, UKL_MMA_WORDS_16, ukl_dot2_f16)
 #endif

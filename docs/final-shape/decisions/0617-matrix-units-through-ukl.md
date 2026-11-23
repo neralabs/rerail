@@ -224,7 +224,7 @@ emulated form, which is the reference.
    This fixes the shape before any device adds its form. Done 2026-11-22, on every backend ("Step 1, built" below).
 2. CUDA's `mma.sync` on the Sparks (R2-R7). Then the V100: its form, or the emulation, chosen by test. Done on
    the Sparks 2026-11-23: b1's form, and C in `mma.sync`'s layout for every type ("The 1-bit type, built"); f16, bf16
-   and i8 ("Step 2 on the Sparks, built").
+   and i8 ("Step 2 on the Sparks, built"). The V100 runs the emulation, its test's choice ("The V100").
 3. Metal's `simdgroup_matrix` on M1-M4 (f16; bf16 where present; i8 emulated). R4 is what checks the coordinates
    behind `thread_elements()`. Done 2026-11-23 ("Step 3, built").
 4. The M5's `matmul2d`: the first owner of several groups on a device (R5).
@@ -360,6 +360,7 @@ The user: "yes, please add the 1-bit path and emulation/lowering to popcount on 
 - **Open:**
   - the M1's remaining gap, which needs its compiled shader read;
   - the tile's reads, which bound both machines: larger tiles, or both sides' rows read once for several tiles.
+    Measured 2026-11-23: they bind neither ("The bit product's reads").
 
 ### Step 2 on the Sparks, built (2026-11-23)
 
@@ -408,6 +409,54 @@ The user: "yes, please add the 1-bit path and emulation/lowering to popcount on 
 - **Measured:** the seven matrix tests pass on the M1 Max and the M3 Max (f16 and bf16 native, i8 and b1 emulated),
   R7 finding `air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64f16.v64f16.v64f32` and its bf16 form; CUDA's and
   the CPU's pass as before; `accel`'s GPU tests (the bit product on the new layout) pass on the M3.
+
+### The V100 (2026-11-23)
+
+- **Volta's unit is `mma.sync.m8n8k4`** (sm_70): f16 into f32 only, no bf16 or i8. Built as a form of its own
+  (`UKL_MMA_VOLTA`): each of the warp's four quad pairs computes an 8×8 quadrant of the 16×16 fragment, four k4
+  instructions a product. C takes `m8n8k4`'s layout of its f32 accumulators, for every type, as on Apple. The nine
+  matrix tests pass on a V100 with it (R4 checks the layout; R7 finds `mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32`),
+  and CUDA's own tile call serves its f16.
+- **The test picks the emulation** (`bench_matrix_products`; device time, median of 5; the tile calls as in step 7):
+
+  | Type | The tile call with Volta's unit | The emulation's |
+  |---|---|---|
+  | f16 | 9.19 ms (the unit's, CUDA's own tile) | 12.46 ms |
+  | bf16 | 16.65 ms | 12.39 ms |
+  | i8 | 13.09 ms | 9.30 ms |
+  | b1 | 5.23 ms | 2.19 ms |
+
+  - Only f16's tile call is faster on the unit, 1.36×; in the products' rate, with a fragment of B loaded for each,
+    it is 2.4× slower (2.90 against 1.22 ms): the unit's B is a lane's column, read element by element.
+  - The layout of C is the backend's, one for every type. Volta's makes the emulated types 1.3-2.4× slower, b1 (the
+    bit product's) the most.
+  - So the V100 runs the emulation. Volta's form is kept behind `UKL_MMA_VOLTA_UNIT`, and the matrix tests take it
+    with `RERAIL_MMA_VOLTA_UNIT=1` (both pass on the V100). A layout of C per type would let f16 take the unit
+    without costing the others; no kernel needs it now.
+- Turing (sm_75) has `m8n8k4` too, and is not tested: it takes the emulation.
+
+### The bit product's reads (2026-11-23)
+
+The 1-bit section left the tile's reads open, as the limit on the GB10 and the M1. Measured, they are neither machine's:
+
+- **Built and measured,** in `bp_tile`: a 128×128 tile (each side's rows read half as often), whose owners hold
+  blocks of 2×4 fragments (a step's 8 products from 6 fragment loads, where the 64 tile's owners take 2 from 3); and
+  the 64 tile staging 16 words of K a step instead of 8 (half the barriers). Device time, `accel`'s price bench,
+  back to back on one host:
+
+  | Kernel | GB10 W1 | GB10 W5 | M1 Max W1 | M1 Max W5 |
+  |---|---|---|---|---|
+  | 64 tile, 8 words a step (kept) | 0.218-0.224 ms | 0.947-0.952 ms | 0.257 ms | 1.816 ms |
+  | 128 tile, 2×4 blocks | 0.216 ms | 1.075 ms | 3.54 ms | 9.11 ms |
+  | 64 tile, 16 words a step | 0.212-0.217 ms | 1.011-1.013 ms | | |
+
+- **On the GB10, W5 is the unit's rate:** its 5.5·10^10 bit products at the b1 unit's own rate in registers
+  (68-76 T a second, `bench_matrix_products`) are 0.72-0.80 ms, within 1.2-1.3× of the kernel. W1's products are
+  0.06 ms of its 0.22; its 23 MB of counts written, and its 1,435 threadgroups of two steps each, are the rest.
+- **On the M1 Max the larger tile is 3.5-14× slower:** its 19.4 KB of threadgroup memory leaves room for one
+  threadgroup a core, where the 64 tile's 9.7 KB leaves three.
+- So `bp_tile` stays as it was. The M1's gap of the 1-bit section (6-13%) is not its reads either; its compiled
+  shader remains the way to it.
 
 ### Step 5, built (2026-11-23)
 

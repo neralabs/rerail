@@ -135,9 +135,18 @@ fn f16_of_small(v: i32) -> u16 {
 }
 
 /// The matrix programs, by an emulated owner's SIMD groups (`UKL_MMA_EMULATED_GROUPS`), and their owners' lanes.
+/// The defines every program takes: `UKL_MMA_VOLTA_UNIT` with `RERAIL_MMA_VOLTA_UNIT=1` (Volta's f16 unit, opt-in:
+/// `ukl/matrix.h`), so that its form is tested where it is wanted.
+fn with_units<'a>(mut d: Vec<(&'a str, &'a str)>) -> Vec<(&'a str, &'a str)> {
+    if std::env::var("RERAIL_MMA_VOLTA_UNIT").is_ok_and(|v| v == "1") {
+        d.push(("UKL_MMA_VOLTA_UNIT", "1"));
+    }
+    d
+}
+
 fn programs(groups: u32) -> (&'static Program, u32) {
     let g = format!("{groups}u");
-    let p = program_with("matrix_tests.uglykl", TESTS, &[("UKL_MMA_EMULATED_GROUPS", g.as_str())]).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    let p = program_with("matrix_tests.uglykl", TESTS, &with_units(vec![("UKL_MMA_EMULATED_GROUPS", g.as_str())])).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
     (p, consts(p)[16])
 }
 
@@ -430,11 +439,19 @@ fn unit_instruction(ty: Ty) -> &'static str {
         Ty::I8 if opencl => "intel_sub_group_i8_i8_matrix_mad_k32",
         Ty::F16 if metal => "air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64f16.v64f16.v64f32",
         Ty::Bf16 if metal => "air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64bf16.v64bf16.v64f32",
+        // Volta's (sm_70) where the device is one, else sm_80's.
+        Ty::F16 if volta() => "mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32",
         Ty::F16 => "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32",
         Ty::Bf16 => "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32",
         Ty::I8 => "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32",
         Ty::B1 => "mma.sync.aligned.m16n8k256.row.col.s32.b1.b1.s32.and.popc",
     }
+}
+
+/// Whether the CUDA device is a Volta (sm_70-74), whose f16 unit is `m8n8k4`: its constants say so, f16 native alone.
+fn volta() -> bool {
+    let (p, _) = programs(1);
+    crate::device::backend() == "CUDA" && native_types(&consts(p)) == [Ty::F16]
 }
 
 /// A unit's instruction, of any type: what the forced emulation's text holds none of.
@@ -467,7 +484,7 @@ fn matrix_native_forms_take_the_units_instruction() {
         return;
     }
     let code = |defines: &[(&str, &str)]| {
-        crate::kernels::native_code("matrix_units.uglykl", UNITS, defines)
+        crate::kernels::native_code("matrix_units.uglykl", UNITS, &with_units(defines.to_vec()))
             .unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()))
             .unwrap_or_else(|| panic!("{}: native {types:?}, and no compiled text to read (R7)", crate::device::backend()))
     };
@@ -507,7 +524,7 @@ fn bench_matrix_products() {
     let (_, lanes) = programs(1);
     let out = alloc::<u32>((256 * owners) as usize).unwrap();
     let forms: [(&str, Vec<(&str, &str)>); 3] = [
-        ("as compiled", vec![("UKL_MMA_EMULATED_GROUPS", "1u")]),
+        ("as compiled", with_units(vec![("UKL_MMA_EMULATED_GROUPS", "1u")])),
         ("emulated, dot products", vec![("UKL_MMA_EMULATED_GROUPS", "1u"), ("UKL_MMA_FORCE_EMULATED", "1")]),
         ("emulated, references", vec![("UKL_MMA_EMULATED_GROUPS", "1u"), ("UKL_MMA_FORCE_EMULATED", "1"), ("UKL_DOT_REFERENCE", "1")]),
     ];
@@ -560,8 +577,21 @@ fn bench_matrix_products() {
             t.sort_by(f64::total_cmp);
             ms[n] = t[t.len() / 2] * 1e3;
         }
+        // And the forced emulation's tile call: where a native form is slower than it, the native form loses.
+        let args = MmaArgs { k: 1024, la: ROW, lb: ROW, lc: ROW, tile: 1, shared_mem: 0 };
+        let mut t = Vec::new();
+        for i in 0..6 {
+            launch(&q, emulated().function(ty.kernel()).unwrap()).value("args", &args).buffer("A", &a).buffer("B", &b).buffer("Cm", &cm).run(&[groups], &[lanes as u64]).unwrap();
+            let e = q.flush();
+            e.await_().unwrap();
+            if i > 0 {
+                t.push(e.gpu_seconds());
+            }
+        }
+        t.sort_by(f64::total_cmp);
+        let forced = t[t.len() / 2] * 1e3;
         let own = c[23 + ty as usize] == 1;
-        eprintln!("matrix tile on {}: {ty:?}: the tile call ({}) {:.3} ms, its reference {:.3} ms", crate::device::backend(), if own { "the backend's own" } else { "the reference" }, ms[0], ms[1]);
+        eprintln!("matrix tile on {}: {ty:?}: the tile call ({}) {:.3} ms, its reference {:.3} ms, the forced emulation's {forced:.3} ms", crate::device::backend(), if own { "the backend's own" } else { "the reference" }, ms[0], ms[1]);
     }
 }
 
@@ -576,7 +606,8 @@ fn matrix_tile_calls_equal_their_reference() {
     let own: Vec<Ty> = [Ty::F16, Ty::Bf16, Ty::I8, Ty::B1].into_iter().enumerate().filter(|&(i, _)| c[23 + i] == 1).map(|(_, t)| t).collect();
     eprintln!("matrix tiles on {}: the backend's own for {own:?}", crate::device::backend());
     if crate::device::backend() == "CUDA" {
-        assert_eq!(own, [Ty::F16, Ty::Bf16, Ty::I8], "CUDA overrides the three types' tile calls");
+        let native: Vec<Ty> = native_types(&c).into_iter().filter(|&t| t != Ty::B1).collect();
+        assert_eq!(own, native, "CUDA overrides the tile call of each type native on its unit but b1");
     }
     let mut rng = Rng(61);
     for ty in [Ty::F16, Ty::Bf16, Ty::I8, Ty::B1] {
