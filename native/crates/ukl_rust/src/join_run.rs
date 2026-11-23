@@ -16,6 +16,7 @@
 #![allow(unsafe_op_in_unsafe_fn, clippy::too_many_arguments, clippy::missing_safety_doc)]
 
 use crate::Launch;
+use core::arch::aarch64::*;
 use core::sync::atomic::{AtomicU32, Ordering::SeqCst};
 
 const NONE: u32 = u32::MAX;
@@ -762,6 +763,12 @@ impl St<'_> {
         for k in 0..s.nslots {
             col_put(o, k, s.cap_out, at, self.slot(k, t));
         }
+        self.write_binds(t, r, o, at);
+    }
+
+    /// Binding `t`'s row `r`'s binds out at `at` of `o`.
+    unsafe fn write_binds(&self, t: u32, r: u32, o: *mut i64, at: u32) {
+        let s = self.s;
         for b in 0..s.nbinds.min(16) as usize {
             let i = s.bind_idx[b];
             let v = match s.bind_kind[b] {
@@ -810,9 +817,99 @@ fn lane_of(v: i64, w: u32) -> i64 {
     }
 }
 
-// ---- Texts. ----
+// ---- Texts: their bytes 16 a step (NEON). ----
 
-/// A text operand: a's bytes, "." when `dot`, b's bytes.
+/// A compare's lanes as bits, four a byte: NEON's movemask (`shrn` narrows each byte's 16 bits to a nibble).
+#[inline(always)]
+unsafe fn nibbles(m: uint8x16_t) -> u64 {
+    vget_lane_u64::<0>(vreinterpret_u64_u8(vshrn_n_u16::<4>(vreinterpretq_u16_u8(m))))
+}
+
+/// The first of `n` bytes at `p` that is `c`.
+unsafe fn find_byte(p: *const u8, n: u32, c: u8) -> Option<u32> {
+    let needle = vdupq_n_u8(c);
+    let mut i = 0;
+    while i + 16 <= n {
+        let m = nibbles(vceqq_u8(vld1q_u8(p.add(i as usize)), needle));
+        if m != 0 {
+            return Some(i + m.trailing_zeros() / 4);
+        }
+        i += 16;
+    }
+    (i..n).find(|&k| *p.add(k as usize) == c)
+}
+
+/// The last of `n` bytes at `p` that is `c`.
+unsafe fn rfind_byte(p: *const u8, n: u32, c: u8) -> Option<u32> {
+    let needle = vdupq_n_u8(c);
+    let mut end = n;
+    while end >= 16 {
+        let m = nibbles(vceqq_u8(vld1q_u8(p.add(end as usize - 16)), needle));
+        if m != 0 {
+            return Some(end - 1 - m.leading_zeros() / 4);
+        }
+        end -= 16;
+    }
+    (0..end).rev().find(|&k| *p.add(k as usize) == c)
+}
+
+/// How many of `n` bytes at `p` begin a character: no UTF-8 continuation byte (0x80-0xbf, below -64 as an i8).
+unsafe fn count_chars(p: *const u8, n: u32) -> u32 {
+    let floor = vdupq_n_s8(-64);
+    let (mut c, mut i) = (0u32, 0u32);
+    while i + 16 <= n {
+        let starts = vcgeq_s8(vld1q_s8(p.add(i as usize) as *const i8), floor);
+        c += vaddvq_u8(vshrq_n_u8::<7>(starts)) as u32;
+        i += 16;
+    }
+    c + (i..n).filter(|&k| *p.add(k as usize) & 0xc0 != 0x80).count() as u32
+}
+
+/// Whether one of `n` bytes at `p` is past ASCII.
+unsafe fn any_high(p: *const u8, n: u32) -> bool {
+    let mut i = 0;
+    while i + 16 <= n {
+        if vmaxvq_u8(vld1q_u8(p.add(i as usize))) >= 0x80 {
+            return true;
+        }
+        i += 16;
+    }
+    (i..n).any(|k| *p.add(k as usize) >= 0x80)
+}
+
+/// The first of `n` places where the bytes at `p` and `q` differ.
+unsafe fn first_diff(p: *const u8, q: *const u8, n: u32) -> Option<u32> {
+    let mut i = 0;
+    while i + 16 <= n {
+        let m = nibbles(vmvnq_u8(vceqq_u8(vld1q_u8(p.add(i as usize)), vld1q_u8(q.add(i as usize)))));
+        if m != 0 {
+            return Some(i + m.trailing_zeros() / 4);
+        }
+        i += 16;
+    }
+    (i..n).find(|&k| *p.add(k as usize) != *q.add(k as usize))
+}
+
+/// `n` bytes from `p` to `o`, their ASCII letters lowered, or raised (`upper`): a letter's case is its bit 0x20.
+unsafe fn case_bytes(p: *const u8, n: u32, o: *mut u8, upper: bool) {
+    let first = vdupq_n_u8(if upper { b'a' } else { b'A' });
+    let (span, bit) = (vdupq_n_u8(26), vdupq_n_u8(0x20));
+    let mut i = 0;
+    while i + 16 <= n {
+        let v = vld1q_u8(p.add(i as usize));
+        let letter = vcltq_u8(vsubq_u8(v, first), span);
+        vst1q_u8(o.add(i as usize), veorq_u8(v, vandq_u8(letter, bit)));
+        i += 16;
+    }
+    for k in i as usize..n as usize {
+        let c = *p.add(k);
+        *o.add(k) = if upper { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() };
+    }
+}
+
+static DOT: u8 = b'.';
+
+/// A text operand: a's bytes, "." when `dot`, b's bytes. Read in place, a part at a time.
 #[derive(Clone, core::marker::Copy)]
 struct Txt {
     a: *const u8,
@@ -829,24 +926,122 @@ impl Txt {
     fn len(&self) -> u32 {
         self.al + self.dot + self.bl
     }
-    unsafe fn byte(&self, i: u32) -> u8 {
+    /// Its parts: each its first byte's place in the text, its address and its bytes.
+    fn parts(&self) -> [(u32, *const u8, u32); 3] {
+        [(0, self.a, self.al), (self.al, &DOT, self.dot), (self.al + self.dot, self.b, self.bl)]
+    }
+    /// Byte `i`'s address, and how many bytes its part has from it.
+    unsafe fn run(&self, i: u32) -> (*const u8, u32) {
         if i < self.al {
-            return *self.a.add(i as usize);
+            return (self.a.add(i as usize), self.al - i);
         }
         let i = i - self.al;
-        if i < self.dot { b'.' } else { *self.b.add((i - self.dot) as usize) }
+        if i < self.dot {
+            return (&DOT, 1);
+        }
+        let i = i - self.dot;
+        (self.b.add(i as usize), self.bl - i)
     }
-    /// Its bytes from `from`, in order.
+    unsafe fn byte(&self, i: u32) -> u8 {
+        *self.run(i).0
+    }
+    /// Its bytes from `from`, in order (an automaton's walk that stops at a dead state).
     unsafe fn bytes(&self, from: u32, to: u32) -> impl Iterator<Item = u8> + '_ {
         (from..to).map(move |i| self.byte(i))
     }
+    /// The first place of its `n` bytes from `xs` that differs from `y`'s from `ys`, a run of both at a time.
+    unsafe fn diff(&self, xs: u32, y: &Txt, ys: u32, n: u32) -> Option<u32> {
+        let mut k = 0;
+        while k < n {
+            let ((p, pn), (q, qn)) = (self.run(xs + k), y.run(ys + k));
+            let m = pn.min(qn).min(n - k);
+            if let Some(d) = first_diff(p, q, m) {
+                return Some(k + d);
+            }
+            k += m;
+        }
+        None
+    }
     /// Whether its `n` bytes from `xs` are `y`'s from `ys`.
     unsafe fn same(&self, xs: u32, y: &Txt, ys: u32, n: u32) -> bool {
-        (0..n).all(|k| self.byte(xs + k) == y.byte(ys + k))
+        self.diff(xs, y, ys, n).is_none()
+    }
+    /// Its order against `y`: by their bytes, then their lengths.
+    unsafe fn cmp(&self, y: &Txt) -> core::cmp::Ordering {
+        let n = self.len().min(y.len());
+        match self.diff(0, y, 0, n) {
+            Some(d) => self.byte(d).cmp(&y.byte(d)),
+            None => self.len().cmp(&y.len()),
+        }
     }
     /// Its characters: its bytes less the UTF-8 continuation bytes.
     unsafe fn chars(&self) -> u32 {
-        self.bytes(0, self.len()).filter(|&c| c & 0xc0 != 0x80).count() as u32
+        self.parts().iter().map(|&(_, p, n)| count_chars(p, n)).sum()
+    }
+    /// The first `c` from `from`.
+    unsafe fn find(&self, from: u32, c: u8) -> Option<u32> {
+        self.parts().iter().find_map(|&(at, p, n)| {
+            let skip = from.saturating_sub(at);
+            if skip >= n { None } else { find_byte(p.add(skip as usize), n - skip, c).map(|i| at + skip + i) }
+        })
+    }
+    /// The last `c`.
+    unsafe fn rfind(&self, c: u8) -> Option<u32> {
+        self.parts().iter().rev().find_map(|&(at, p, n)| rfind_byte(p, n, c).map(|i| at + i))
+    }
+    unsafe fn any_high(&self) -> bool {
+        self.parts().iter().any(|&(_, p, n)| any_high(p, n))
+    }
+    /// The byte character `c` begins at (its length where it has fewer): 16 bytes' characters counted a step.
+    unsafe fn char_byte(&self, c: i64) -> u32 {
+        let mut seen = 0i64;
+        for (at, p, n) in self.parts() {
+            let mut i = 0;
+            while i + 16 <= n && seen + count_chars(p.add(i as usize), 16) as i64 <= c {
+                seen += count_chars(p.add(i as usize), 16) as i64;
+                i += 16;
+            }
+            for k in i..n {
+                if *p.add(k as usize) & 0xc0 != 0x80 {
+                    if seen == c {
+                        return at + k;
+                    }
+                    seen += 1;
+                }
+            }
+        }
+        self.len()
+    }
+    /// Its bytes [from, to) written at `o`, each part's as one copy, or mapped by case (`case`: 1 lower, 2 upper).
+    unsafe fn write(&self, from: u32, to: u32, o: *mut u8, case: u32) {
+        let mut k = from;
+        while k < to {
+            let (p, pn) = self.run(k);
+            let m = pn.min(to - k);
+            let at = o.add((k - from) as usize);
+            match case {
+                0 => core::ptr::copy_nonoverlapping(p, at, m as usize),
+                c => case_bytes(p, m, at, c == 2),
+            }
+            k += m;
+        }
+    }
+    /// The first place from `from` that `y` (not empty) starts at: its first byte found 16 a step, then the rest.
+    unsafe fn find_txt(&self, from: u32, y: &Txt) -> Option<u32> {
+        let (n, ly) = (self.len(), y.len());
+        let first = y.byte(0);
+        let mut k = from;
+        while k + ly <= n {
+            let m = self.find(k, first)?;
+            if m + ly > n {
+                return None;
+            }
+            if self.same(m, y, 0, ly) {
+                return Some(m);
+            }
+            k = m + 1;
+        }
+        None
     }
 }
 
@@ -874,7 +1069,8 @@ unsafe fn textop_one(op: u32, x: &Txt, xs: u32, lx: u32, y: &Txt, ly: u32) -> bo
     fits && x.same(xs, y, if op >= 2 { ly - lx } else { 0 }, lx)
 }
 
-/// Mode 7: X a pattern, or a set of them (`TEXT_SPLIT`: 0x1f between them), Y passing when one does.
+/// Mode 7: X a pattern, or a set of them (`TEXT_SPLIT`: 0x1f between them, found 16 bytes a step), Y passing when one
+/// does.
 unsafe fn textop_pass(st: &St, t: u32, d: *const u8, a: *const u32, unheld: &mut bool, host: &mut bool) -> bool {
     let s = st.s;
     let x = st.txt_of(t, d, a, 0, s.agg[1] & 15, unheld);
@@ -883,14 +1079,16 @@ unsafe fn textop_pass(st: &St, t: u32, d: *const u8, a: *const u32, unheld: &mut
     let split = s.agg[0] & 32 != 0;
     let mut r = false;
     let mut start = 0;
-    for i in 0..=lx {
-        let sep = split && i < lx && x.byte(i) == 0x1f;
-        if sep && s.agg[0] & 64 != 0 {
+    loop {
+        let sep = if split { x.find(start, 0x1f) } else { None };
+        if sep.is_some() && s.agg[0] & 64 != 0 {
             *host = true;
         }
-        if sep || i == lx {
-            r |= textop_one(op, &x, start, i - start, &y, ly);
-            start = i + 1;
+        let end = sep.unwrap_or(lx);
+        r |= textop_one(op, &x, start, end - start, &y, ly);
+        match sep {
+            Some(i) => start = i + 1,
+            None => break,
         }
     }
     r == (s.agg[0] & 1 != 0)
@@ -904,14 +1102,69 @@ unsafe fn strcmp_value(st: &St, t: u32, d: *const u8, a: *const u32, unheld: &mu
         return x.chars() as i64;
     }
     let y = st.txt_of(t, d, a, 2, s.agg[1] >> 4, unheld);
-    match x.bytes(0, x.len()).cmp(y.bytes(0, y.len())) {
-        core::cmp::Ordering::Less => -1,
-        core::cmp::Ordering::Equal => 0,
-        core::cmp::Ordering::Greater => 1,
+    x.cmp(&y) as i64
+}
+
+/// An automaton's table (`text::table::Table`): its 256 byte classes, then its transitions, `s` states of `c` classes,
+/// then its states after the end and their verdicts. Its classes of 16 bytes are four `tbl` lookups of 64 bytes each.
+struct Automaton {
+    tab: *const u8,
+    classes: [uint8x16x4_t; 4],
+    s: u32,
+    c: u32,
+    start: u32,
+}
+
+impl Automaton {
+    unsafe fn new(tab: *const u8, s: u32, c: u32, start: u32) -> Self {
+        let classes = core::array::from_fn(|k| vld1q_u8_x4(tab.add(64 * k)));
+        Automaton { tab, classes, s, c, start }
+    }
+
+    /// Bytes `v`'s classes: an index past a table's 64 gives 0 there, so the four lookups' or is the class.
+    #[inline(always)]
+    unsafe fn classes_of(&self, v: uint8x16_t) -> uint8x16_t {
+        let sixty_four = vdupq_n_u8(64);
+        let mut r = vqtbl4q_u8(self.classes[0], v);
+        let mut i = v;
+        for k in 1..4 {
+            i = vsubq_u8(i, sixty_four);
+            r = vorrq_u8(r, vqtbl4q_u8(self.classes[k], i));
+        }
+        r
+    }
+
+    #[inline(always)]
+    unsafe fn step(&self, q: u32, class: u8) -> u32 {
+        *self.tab.add(256 + (q * self.c + class as u32) as usize) as u32
+    }
+
+    /// The state after `n` bytes at `p` from `q`: 16 bytes' classes at once, then the walk through them.
+    unsafe fn walk(&self, mut q: u32, p: *const u8, n: u32) -> u32 {
+        let mut classes = [0u8; 16];
+        let mut i = 0;
+        while i + 16 <= n {
+            vst1q_u8(classes.as_mut_ptr(), self.classes_of(vld1q_u8(p.add(i as usize))));
+            for &k in &classes {
+                q = self.step(q, k);
+            }
+            i += 16;
+        }
+        for k in i..n {
+            q = self.step(q, *self.tab.add(*p.add(k as usize) as usize));
+        }
+        q
+    }
+
+    /// Whether it accepts `x`: its state after the end of the text.
+    unsafe fn verdict(&self, x: &Txt) -> bool {
+        let q = x.parts().iter().fold(self.start, |q, &(_, p, n)| self.walk(q, p, n));
+        let eoi = self.tab.add(256 + (self.s * self.c) as usize);
+        *eoi.add(self.s as usize + *eoi.add(q as usize) as usize) != 0
     }
 }
 
-/// An automaton's table (`text::table::Table`): its byte classes, then its transitions, `s` states of `c` classes.
+/// A replacer's automaton, stepped a byte at a time (its walks stop at a dead state).
 struct Dfa {
     tab: *const u8,
     c: u32,
@@ -923,17 +1176,9 @@ impl Dfa {
     }
 }
 
-/// Whether table `tab` (`s` states, `c` classes, from `start`) accepts `x`: its state after the end of the text.
-unsafe fn txt_verdict(tab: *const u8, s: u32, c: u32, start: u32, x: &Txt) -> bool {
-    let a = Dfa { tab, c };
-    let q = x.bytes(0, x.len()).fold(start, |q, b| a.step(q, b));
-    let eoi = tab.add(256 + (s * c) as usize);
-    *eoi.add(s as usize + *eoi.add(q as usize) as usize) != 0
-}
-
 /// `replace_all` of regex `g` in `x` by `z` (`text::table::Replacer`): each match's end by the forward automaton (the
 /// last match before it dies), its start by the reverse one run back from it (the furthest match), matches delayed a
-/// byte. The replaced text's length; written to `o` where given.
+/// byte. The replaced text's length; written to `o` where given, the unmatched bytes and `z` a part's copy at a time.
 unsafe fn rx_replace_txt(g: *const u8, x: &Txt, z: &Txt, o: Option<*mut u8>) -> u32 {
     let h = g as *const u32;
     let hw = |i: usize| *h.add(i);
@@ -947,8 +1192,8 @@ unsafe fn rx_replace_txt(g: *const u8, x: &Txt, z: &Txt, o: Option<*mut u8>) -> 
     while pos < n {
         let mut st = if pos == 0 { hw(2) } else { hw(3) };
         let (mut last, mut dead) = (NONE, false);
-        for k in pos..n {
-            let q = fwd.step(st, x.byte(k));
+        for (k, b) in (pos..n).zip(x.bytes(pos, n)) {
+            let q = fwd.step(st, b);
             if q == fdead {
                 dead = true;
                 break;
@@ -986,41 +1231,34 @@ unsafe fn rx_replace_txt(g: *const u8, x: &Txt, z: &Txt, o: Option<*mut u8>) -> 
             break;
         }
         if let Some(o) = o {
-            put_bytes(o.add(w as usize), x.bytes(pos, first));
-            put_bytes(o.add((w + first - pos) as usize), z.bytes(0, lz));
+            x.write(pos, first, o.add(w as usize), 0);
+            z.write(0, lz, o.add((w + first - pos) as usize), 0);
         }
         w += first - pos + lz;
         pos = e;
     }
     if let Some(o) = o {
-        put_bytes(o.add(w as usize), x.bytes(pos, n));
+        x.write(pos, n, o.add(w as usize), 0);
     }
     w + n - pos
 }
 
-/// `replace_all` of literal `y` (empty: none) in `x` by `z`, matches not overlapping.
+/// `replace_all` of literal `y` (empty: none) in `x` by `z`, matches not overlapping, each found 16 bytes a step.
 unsafe fn lit_replace_txt(x: &Txt, y: &Txt, z: &Txt, o: Option<*mut u8>) -> u32 {
     let (n, ly, lz) = (x.len(), y.len(), z.len());
     let (mut pos, mut w) = (0u32, 0u32);
-    while ly > 0 && pos + ly <= n {
-        let Some(m) = (pos..=n - ly).find(|&k| x.same(k, y, 0, ly)) else { break };
+    while let Some(m) = if ly > 0 { x.find_txt(pos, y) } else { None } {
         if let Some(o) = o {
-            put_bytes(o.add(w as usize), x.bytes(pos, m));
-            put_bytes(o.add((w + m - pos) as usize), z.bytes(0, lz));
+            x.write(pos, m, o.add(w as usize), 0);
+            z.write(0, lz, o.add((w + m - pos) as usize), 0);
         }
         w += m - pos + lz;
         pos = m + ly;
     }
     if let Some(o) = o {
-        put_bytes(o.add(w as usize), x.bytes(pos, n));
+        x.write(pos, n, o.add(w as usize), 0);
     }
     w + n - pos
-}
-
-unsafe fn put_bytes(o: *mut u8, bytes: impl Iterator<Item = u8>) {
-    for (i, b) in bytes.enumerate() {
-        *o.add(i) = b;
-    }
 }
 
 fn pow10_of(k: u32) -> u64 {
@@ -1062,31 +1300,17 @@ fn substr_range(f: u32, n0: i64, n1: i64, nc: i64) -> (i64, i64) {
     (a, p1.wrapping_add(p2).clamp(a, nc))
 }
 
-/// The byte of character `c` of `x` (its first `n` bytes; `n` when it has fewer).
-unsafe fn char_byte(x: &Txt, n: u32, c: i64) -> u32 {
-    let mut seen = 0i64;
-    for i in 0..n {
-        if x.byte(i) & 0xc0 != 0x80 {
-            if seen == c {
-                return i;
-            }
-            seen += 1;
-        }
-    }
-    n
-}
-
 /// A function's kept range of `x` [from, to), and whether `x` has a byte past ASCII (`lower`'s, f 0).
 unsafe fn text_range(f: u32, x: &Txt, n0: i64, n1: i64) -> (u32, u32, bool) {
     let n = x.len();
     match f {
-        1 => (0, (0..n).find(|&i| x.byte(i) == b'.').unwrap_or(n), false),
-        2 => (0, (0..n).rev().find(|&i| x.byte(i) == b'/').unwrap_or(0), false),
+        1 => (0, x.find(0, b'.').unwrap_or(n), false),
+        2 => (0, x.rfind(b'/').unwrap_or(0), false),
         3 | 4 | 7 => {
             let (a, b) = substr_range(f, n0, n1, x.chars() as i64);
-            (char_byte(x, n, a), char_byte(x, n, b), false)
+            (x.char_byte(a), x.char_byte(b), false)
         }
-        0 => (0, n, x.bytes(0, n).any(|c| c >= 0x80)),
+        0 => (0, n, x.any_high()),
         _ => (0, n, false),
     }
 }
@@ -1106,7 +1330,7 @@ struct Bufs {
     eb: u32,
 }
 
-unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32) {
+unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17]) {
     let s = st.s;
     let counts = b.c;
     if t > s.cap_in {
@@ -1166,14 +1390,10 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32) {
         c = (found != (s.mode == 2)) as u32;
     }
     *counts.add(t as usize) = c;
-    if !exists && s.counter != NONE {
-        if p0 > 0 {
-            at(j.counters.add(s.counter as usize)).fetch_add(p0, SeqCst);
-        }
-        for (m, &q) in q_counts.iter().enumerate().take(passed) {
-            if q > 0 {
-                at(j.counters.add(s.counter as usize + 1 + m)).fetch_add(q, SeqCst);
-            }
+    if !exists {
+        acc[0] += p0;
+        for (a, &q) in acc[1..].iter_mut().zip(&q_counts).take(passed) {
+            *a += q;
         }
     }
 }
@@ -1290,32 +1510,8 @@ unsafe fn witness_count_one(st: &St, j: &Job, b: &Bufs, t: u32) {
     *b.c.add(t as usize) = found;
 }
 
-unsafe fn row_scatter_one(st: &St, j: &Job, b: &Bufs, t: u32) {
-    let s = st.s;
-    let (offsets, o) = (b.c, b.o);
-    let o0 = *offsets;
-    let n = (*j.totals.add(s.in_slot as usize)).min(s.cap_in);
-    if t == 0 {
-        *j.totals.add(s.out_slot as usize) = (*offsets.add(n as usize)).wrapping_sub(o0);
-    }
-    if t >= n {
-        return;
-    }
-    let a = (*offsets.add(t as usize)).wrapping_sub(o0);
-    if (*offsets.add(t as usize + 1)).wrapping_sub(o0) <= a || a >= s.cap_out {
-        return;
-    }
-    for k in 0..s.nslots {
-        col_put(o, k, s.cap_out, a, st.slot(k, t));
-    }
-    let op = s.agg[0] & 15;
-    if op != 3 && op != 5 {
-        col_put(o, s.bind_slot[0], s.cap_out, a, *b.v.add(t as usize));
-    }
-}
-
-unsafe fn rows_copy_one(rd: Reads, src: *const u8, dst: *mut u8, totals: *const u32, c: &Copy, t: u32) {
-    let n = if c.count_slot == NONE { c.n } else { (*totals.add(c.count_slot as usize)).min(c.n) };
+/// Row `t` of a copy that reads a view or a relation, or writes a relation: a read and a write each value.
+unsafe fn rows_copy_one(rd: Reads, src: *const u8, dst: *mut u8, c: &Copy, n: u32, t: u32) {
     if t >= n {
         return;
     }
@@ -1339,24 +1535,6 @@ unsafe fn rows_copy_one(rd: Reads, src: *const u8, dst: *mut u8, totals: *const 
         } else {
             rd.rows_put(dst, c.dst_rows_at, a, k as u32, v as u64);
         }
-    }
-}
-
-unsafe fn stage_map_one(s: &Stage, bb: *mut i64, totals: *const u32, t: u32) {
-    let n = (*totals.add(s.in_slot as usize)).min(s.cap_in);
-    if t >= n {
-        return;
-    }
-    let st = St { s, rd: Reads(core::ptr::null()), l: bb, r: core::ptr::null() };
-    for b in 0..s.nbinds.min(16) as usize {
-        let k = s.bind_idx[b] as usize;
-        let v = if s.bind_kind[b] == 1 {
-            st.parval(k as u32, t)
-        } else {
-            let v = col(bb, s.col_idx[k], s.cap_in, t);
-            if s.col_doc[k] != 0 { v >> 32 } else { v }
-        };
-        col_put(bb, s.bind_slot[b], s.cap_in, t, v);
     }
 }
 
@@ -1391,23 +1569,6 @@ unsafe fn scan_count_one(st: &St, j: &Job, b: &Bufs, r: u32) {
     *counts.add(r as usize) = c;
 }
 
-unsafe fn scan_scatter_one(st: &St, j: &Job, b: &Bufs, r: u32) {
-    let s = st.s;
-    let offsets = b.c;
-    let o0 = *offsets;
-    let rows = st.rows();
-    if r == 0 {
-        *j.totals.add(s.out_slot as usize) = (*offsets.add(rows as usize)).wrapping_sub(o0);
-    }
-    if r >= rows {
-        return;
-    }
-    let a = (*offsets.add(r as usize)).wrapping_sub(o0);
-    if (*offsets.add(r as usize + 1)).wrapping_sub(o0) > a && a < s.cap_out {
-        st.write_row(0, s.r_from.wrapping_add(r), b.o, a);
-    }
-}
-
 // ---- A head's distinct rows. ----
 
 unsafe fn same_row(d: &Dedup, t: *const i64, a: u32, b: u32) -> bool {
@@ -1437,14 +1598,8 @@ unsafe fn dedup_claim_one(rd: Reads, t: *const i64, totals: *const u32, p: *mut 
     }
 }
 
-unsafe fn dedup_mark_one(rd: Reads, t: *const i64, totals: *const u32, p: *const u32, counts: *mut u32, d: &Dedup, x: u32) {
-    if x > d.cap {
-        return;
-    }
-    if x >= (*totals.add(d.in_slot as usize)).min(d.cap) {
-        *counts.add(x as usize) = 0;
-        return;
-    }
+/// Row `x` (below the head's rows) kept: the first of its rows in the head's set.
+unsafe fn dedup_mark_one(rd: Reads, t: *const i64, p: *const u32, counts: *mut u32, d: &Dedup, x: u32) {
     let mut a = row_hash(rd, d, t, x);
     let mut keep = 0;
     for _ in 0..=d.mask {
@@ -1464,24 +1619,6 @@ unsafe fn dedup_mark_one(rd: Reads, t: *const i64, totals: *const u32, p: *const
     *counts.add(x as usize) = keep;
 }
 
-unsafe fn dedup_scatter_one(t: *const i64, totals: *mut u32, offsets: *const u32, o: *mut i64, d: &Dedup, x: u32) {
-    let o0 = *offsets;
-    let n = (*totals.add(d.in_slot as usize)).min(d.cap);
-    if x == 0 {
-        *totals.add(d.out_slot as usize) = (*offsets.add(n as usize)).wrapping_sub(o0);
-    }
-    if x >= n {
-        return;
-    }
-    let a = (*offsets.add(x as usize)).wrapping_sub(o0);
-    if (*offsets.add(x as usize + 1)).wrapping_sub(o0) == a || a >= d.ocap {
-        return;
-    }
-    for c in 0..d.ncols.min(16) {
-        col_put(o, c, d.ocap, a, col(t, d.cols[c as usize], d.cap, x));
-    }
-}
-
 // ---- Indexes built on the device. ----
 
 unsafe fn ix_rows(rd: Reads, bb: *const u8, p: &IxP) -> u32 {
@@ -1492,42 +1629,15 @@ unsafe fn ix_rows(rd: Reads, bb: *const u8, p: &IxP) -> u32 {
     if len > p.from { (len - p.from).min(p.n) } else { 0 }
 }
 
-unsafe fn ix_key_one(rd: Reads, bb: *const u8, out: *mut u32, places: *mut u32, p: &IxP, kb: u32, eb: u32, t: u32) {
-    if t >= ix_rows(rd, bb, p) {
-        return;
-    }
-    *places.add((eb + t) as usize) = eb + t;
+/// Row `t`'s key hash, masked to the index's places.
+unsafe fn ix_hash(rd: Reads, bb: *const u8, p: &IxP, t: u32) -> u32 {
     let mut memo = NONE;
     let mut h = KEY_SEED;
     for i in 0..(p.ncols & !IX_LIVE).min(8) as usize {
         let v = if p.kind != 0 { vread(rd, p.kind as u32, p.dir, t, p.cols[i], &mut memo) } else { rd.rel_get(bb, p.at, p.from.wrapping_add(t), p.cols[i]) as i64 };
         h = rd.key_mix(h, v);
     }
-    *out.add((eb + t) as usize) = kb.wrapping_add((h & p.mask) as u32);
-}
-
-unsafe fn ix_place_one(rd: Reads, bb: *const u8, keys: *const u32, places: *const u32, offs: *mut u32, rows: *mut u32, p: &IxP, kb: u32, eb: u32, t: u32) {
-    let n = ix_rows(rd, bb, p);
-    let cap = (p.mask as u32).wrapping_add(1);
-    if n == 0 && t == 0 {
-        for x in 0..=cap {
-            *offs.add(x as usize) = 0;
-        }
-    }
-    if t >= n {
-        return;
-    }
-    *rows.add(t as usize) = p.from.wrapping_add(*places.add((eb + t) as usize)).wrapping_sub(eb);
-    let b = (*keys.add((eb + t) as usize)).wrapping_sub(kb);
-    let from = if t == 0 { 0 } else { (*keys.add((eb + t - 1) as usize)).wrapping_sub(kb).wrapping_add(1) };
-    for x in from..=b {
-        *offs.add(x as usize) = t;
-    }
-    if t == n - 1 {
-        for x in b + 1..=cap {
-            *offs.add(x as usize) = n;
-        }
-    }
+    (h & p.mask) as u32
 }
 
 // ---- A lattice relation's rounds (decision 0124). ----
@@ -1559,23 +1669,6 @@ unsafe fn lat_same(u: *const i64, stride: u32, a: u32, b: u32, nk: u32) -> bool 
 /// Its rows: `n`, or as many as an earlier phase's word says (`counted`).
 unsafe fn lat_rows(p: &LatP, cnt: *const u32) -> u32 {
     if p.counted & 1 != 0 { (*cnt).min(p.n) } else { p.n }
-}
-
-unsafe fn lat_clear_one(pl: *mut u32, best: *mut u32, flags: *mut u32, p: &LatP, i: u32) {
-    if i > p.pmask {
-        return;
-    }
-    *pl.add(i as usize) = NONE;
-    *best.add(i as usize) = NONE;
-    *flags.add(i as usize) = 0;
-}
-
-unsafe fn lat_hclear_one(hb: *mut u8, p: &LatP, i: u32) {
-    if i > p.hmask {
-        return;
-    }
-    let h = hb.add(p.h_at as usize) as *mut [u32; 3];
-    *h.add(i as usize) = [NONE, 0, 0];
 }
 
 unsafe fn lat_rehash_one(rd: Reads, r: *const u8, ob: *const u8, hb: *mut u8, p: &LatP, s: u32) {
@@ -1648,7 +1741,7 @@ unsafe fn lat_text_less(arena: *const u32, a: i64, b: i64) -> bool {
     if cx != cy {
         return cx < cy;
     }
-    x.bytes(0, x.len()).lt(y.bytes(0, y.len()))
+    x.cmp(&y).is_lt()
 }
 
 unsafe fn lat_better(p: &LatP, arena: *const u32, a: i64, ra: u32, b: i64, rb: u32) -> bool {
@@ -1794,6 +1887,376 @@ unsafe fn lat_merge_one(rd: Reads, u: *const i64, pl: *const u32, best: *const u
     col_put(d, p.nkeys, p.n, k, v);
 }
 
+// ---- A group's threads as a range [t0, t1): what each thread does alike, a vector of them at a time (NEON). ----
+
+/// Words [from, to) of `p` set to `v`, 16 a store.
+unsafe fn fill_u32(p: *mut u32, from: u32, to: u32, v: u32) {
+    let (mut i, to) = (from as usize, to as usize);
+    let x = vdupq_n_u32(v);
+    while i + 16 <= to {
+        vst1q_u32_x4(p.add(i), uint32x4x4_t(x, x, x, x));
+        i += 16;
+    }
+    while i < to {
+        *p.add(i) = v;
+        i += 1;
+    }
+}
+
+/// `n` values set to `v`, 2 a store.
+unsafe fn fill_i64(dst: *mut i64, n: u32, v: i64) {
+    let x = vdupq_n_s64(v);
+    let mut i = 0;
+    while i + 2 <= n as usize {
+        vst1q_s64(dst.add(i), x);
+        i += 2;
+    }
+    if i < n as usize {
+        *dst.add(i) = v;
+    }
+}
+
+/// `n` values from `src` to `dst`: one copy, or each shifted to its document (`doc`: its high word), 2 a step.
+unsafe fn copy_col(src: *const i64, dst: *mut i64, n: u32, doc: bool) {
+    if !doc {
+        core::ptr::copy(src, dst, n as usize);
+        return;
+    }
+    let mut i = 0;
+    while i + 2 <= n as usize {
+        vst1q_s64(dst.add(i), vshrq_n_s64::<32>(vld1q_s64(src.add(i))));
+        i += 2;
+    }
+    if i < n as usize {
+        *dst.add(i) = *src.add(i) >> 32;
+    }
+}
+
+/// Row `t`'s place in column `c` of a table of columns `stride` rows apart.
+#[inline(always)]
+fn colp(l: *const i64, c: u32, stride: u32, t: u32) -> *const i64 {
+    l.wrapping_add(c as usize * stride as usize + t as usize)
+}
+
+#[inline(always)]
+fn colp_mut(o: *mut i64, c: u32, stride: u32, t: u32) -> *mut i64 {
+    o.wrapping_add(c as usize * stride as usize + t as usize)
+}
+
+/// The kept rows of [t0, t1) by their scanned counts (`offsets[t + 1] - offsets[t]`, 0 or 1): each run of rows whose
+/// places out follow one another, as its first row, its first place and its rows. Four rows' counts a compare: a
+/// vector of none skipped, a vector of ones a run's four more rows.
+unsafe fn kept_runs(offsets: *const u32, o0: u32, t0: u32, t1: u32, mut f: impl FnMut(u32, u32, u32)) {
+    let (mut start, mut first, mut len) = (0u32, 0u32, 0u32);
+    let mut t = t0;
+    while t < t1 {
+        if t + 4 <= t1 {
+            let lo = vld1q_u32(offsets.add(t as usize));
+            let d = vsubq_u32(vld1q_u32(offsets.add(t as usize + 1)), lo);
+            let (mx, mn) = (vmaxvq_u32(d), vminvq_u32(d));
+            if mx == 0 {
+                if len > 0 {
+                    f(start, first, len);
+                    len = 0;
+                }
+                t += 4;
+                continue;
+            }
+            if mx == 1 && mn == 1 {
+                let a = vgetq_lane_u32::<0>(lo).wrapping_sub(o0);
+                if len == 0 || a != first.wrapping_add(len) {
+                    if len > 0 {
+                        f(start, first, len);
+                    }
+                    (start, first, len) = (t, a, 0);
+                }
+                len += 4;
+                t += 4;
+                continue;
+            }
+        }
+        let a = (*offsets.add(t as usize)).wrapping_sub(o0);
+        let d = (*offsets.add(t as usize + 1)).wrapping_sub(*offsets.add(t as usize));
+        if d == 0 {
+            if len > 0 {
+                f(start, first, len);
+                len = 0;
+            }
+        } else if len > 0 && a == first.wrapping_add(len) {
+            len += 1;
+        } else {
+            if len > 0 {
+                f(start, first, len);
+            }
+            (start, first, len) = (t, a, 1);
+        }
+        t += 1;
+    }
+    if len > 0 {
+        f(start, first, len);
+    }
+}
+
+/// A run's rows below `cap` places out.
+fn below(first: u32, len: u32, cap: u32) -> u32 {
+    if first >= cap { 0 } else { len.min(cap - first) }
+}
+
+unsafe fn stage_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
+    let s = st.s;
+    let t1 = t1.min(s.cap_in.saturating_add(1));
+    if t0 >= t1 {
+        return;
+    }
+    let n = (*j.totals.add(s.in_slot as usize)).min(s.cap_in);
+    fill_u32(b.c, t0.max(n), t1, 0);
+    let live = t1.min(n);
+    if s.mode == 6 {
+        fill_u32(b.c, t0, live, 1);
+        return;
+    }
+    // The stage's counters, the range's added once.
+    let mut acc = [0u32; 17];
+    for t in t0..live {
+        stage_count_one(st, j, b, t, &mut acc);
+    }
+    if s.counter != NONE {
+        for (m, &a) in acc.iter().enumerate().filter(|(_, a)| **a > 0) {
+            at(j.counters.add(s.counter as usize + m)).fetch_add(a, SeqCst);
+        }
+    }
+}
+
+unsafe fn witness_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
+    let s = st.s;
+    let t1 = t1.min(s.cap_in.saturating_add(1));
+    let n = (*j.totals.add(s.in_slot as usize)).min(s.cap_in);
+    fill_u32(b.c, t0.max(n), t1, 0);
+    for t in t0..t1.min(n) {
+        witness_count_one(st, j, b, t);
+    }
+}
+
+unsafe fn scan_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
+    let s = st.s;
+    let t1 = t1.min(s.nr.saturating_add(1));
+    if t0 >= t1 {
+        return;
+    }
+    let rows = if *j.totals.add(s.in_slot as usize) == 0 { 0 } else { st.rows() };
+    fill_u32(b.c, t0.max(rows), t1, 0);
+    for r in t0..t1.min(rows) {
+        scan_count_one(st, j, b, r);
+    }
+}
+
+unsafe fn dedup_mark_range(rd: Reads, t: *const i64, totals: *const u32, p: *const u32, counts: *mut u32, d: &Dedup, x0: u32, x1: u32) {
+    let x1 = x1.min(d.cap.saturating_add(1));
+    let n = (*totals.add(d.in_slot as usize)).min(d.cap);
+    fill_u32(counts, x0.max(n), x1, 0);
+    for x in x0..x1.min(n) {
+        dedup_mark_one(rd, t, p, counts, d, x);
+    }
+}
+
+unsafe fn stage_scatter_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
+    let s = st.s;
+    if !matches!(s.mode, 1 | 2 | 7) {
+        for t in t0..t1 {
+            stage_scatter_one(st, j, b, t);
+        }
+        return;
+    }
+    // A binding kept as it is: its slots a run's copy of each column, its binds a row at a time.
+    let (offsets, o) = (b.c, b.o);
+    let o0 = *offsets;
+    let n = (*j.totals.add(s.in_slot as usize)).min(s.cap_in);
+    if t0 == 0 && t1 > 0 {
+        *j.totals.add(s.out_slot as usize) = (*offsets.add(n as usize)).wrapping_sub(o0);
+    }
+    kept_runs(offsets, o0, t0, t1.min(n), |t, a, len| {
+        let len = below(a, len, s.cap_out);
+        for k in 0..s.nslots {
+            copy_col(colp(st.l, k, s.cap_in, t), colp_mut(o, k, s.cap_out, a), len, false);
+        }
+        for i in 0..len {
+            st.write_binds(t + i, 0, o, a + i);
+        }
+    });
+}
+
+unsafe fn row_scatter_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
+    let s = st.s;
+    let (offsets, o) = (b.c, b.o);
+    let o0 = *offsets;
+    let n = (*j.totals.add(s.in_slot as usize)).min(s.cap_in);
+    if t0 == 0 && t1 > 0 {
+        *j.totals.add(s.out_slot as usize) = (*offsets.add(n as usize)).wrapping_sub(o0);
+    }
+    let op = s.agg[0] & 15;
+    kept_runs(offsets, o0, t0, t1.min(n), |t, a, len| {
+        let len = below(a, len, s.cap_out);
+        for k in 0..s.nslots {
+            copy_col(colp(st.l, k, s.cap_in, t), colp_mut(o, k, s.cap_out, a), len, false);
+        }
+        if op != 3 && op != 5 {
+            copy_col(b.v.add(t as usize), colp_mut(o, s.bind_slot[0], s.cap_out, a), len, false);
+        }
+    });
+}
+
+unsafe fn scan_scatter_range(st: &St, j: &Job, b: &Bufs, r0: u32, r1: u32) {
+    let s = st.s;
+    let offsets = b.c;
+    let o0 = *offsets;
+    let rows = st.rows();
+    if r0 == 0 && r1 > 0 {
+        *j.totals.add(s.out_slot as usize) = (*offsets.add(rows as usize)).wrapping_sub(o0);
+    }
+    kept_runs(offsets, o0, r0, r1.min(rows), |r, a, len| {
+        for i in 0..below(a, len, s.cap_out) {
+            st.write_row(0, s.r_from.wrapping_add(r + i), b.o, a + i);
+        }
+    });
+}
+
+unsafe fn dedup_scatter_range(t: *const i64, totals: *mut u32, offsets: *const u32, o: *mut i64, d: &Dedup, x0: u32, x1: u32) {
+    let o0 = *offsets;
+    let n = (*totals.add(d.in_slot as usize)).min(d.cap);
+    if x0 == 0 && x1 > 0 {
+        *totals.add(d.out_slot as usize) = (*offsets.add(n as usize)).wrapping_sub(o0);
+    }
+    kept_runs(offsets, o0, x0, x1.min(n), |x, a, len| {
+        let len = below(a, len, d.ocap);
+        for c in 0..d.ncols.min(16) {
+            copy_col(colp(t, d.cols[c as usize], d.cap, x), colp_mut(o, c, d.ocap, a), len, false);
+        }
+    });
+}
+
+/// A stage's map of its bindings' columns: each bind's column over the range, a document's high words 2 a step.
+unsafe fn stage_map_range(s: &Stage, bb: *mut i64, totals: *const u32, t0: u32, t1: u32) {
+    let t1 = t1.min((*totals.add(s.in_slot as usize)).min(s.cap_in));
+    if t0 >= t1 {
+        return;
+    }
+    let cnt = t1 - t0;
+    for b in 0..s.nbinds.min(16) as usize {
+        let k = s.bind_idx[b] as usize;
+        let dst = colp_mut(bb, s.bind_slot[b], s.cap_in, t0);
+        if s.bind_kind[b] == 1 {
+            if s.par_kind[k] == 0 {
+                let v = s.par_const[k];
+                fill_i64(dst, cnt, if s.par_doc[k] != 0 { v >> 32 } else { v });
+            } else {
+                copy_col(colp(bb, s.par_slot[k], s.cap_in, t0), dst, cnt, s.par_doc[k] != 0);
+            }
+        } else {
+            copy_col(colp(bb, s.col_idx[k], s.cap_in, t0), dst, cnt, s.col_doc[k] != 0);
+        }
+    }
+}
+
+/// A copy of rows: columns to columns a column's copy at a time; through a view or a relation's reads a row at a
+/// time.
+unsafe fn rows_copy_range(rd: Reads, src: *const u8, dst: *mut u8, totals: *const u32, c: &Copy, t0: u32, t1: u32) {
+    let n = if c.count_slot == NONE { c.n } else { (*totals.add(c.count_slot as usize)).min(c.n) };
+    let t1 = t1.min(n);
+    if t0 >= t1 {
+        return;
+    }
+    if c.r_view != 0 || c.src_at != 0 || c.dst_rows_at != 0 {
+        for t in t0..t1 {
+            rows_copy_one(rd, src, dst, c, n, t);
+        }
+        return;
+    }
+    let base = if c.flags & 1 != 0 { *c.off } else { 0 };
+    let grown = if c.flags & 2 != 0 { rd.rows_len(dst, c.dst_rows_at) } else { 0 };
+    let a = c.dst_off.wrapping_add(base).wrapping_add(grown).wrapping_add(t0);
+    for k in 0..c.ncols.min(16) {
+        let d = colp_mut(dst as *mut i64, k, c.dst_stride, a);
+        match c.src[k as usize] {
+            NONE => fill_i64(d, t1 - t0, c.konst[k as usize]),
+            from => copy_col(colp(src as *const i64, from, c.src_stride, t0), d, t1 - t0, false),
+        }
+    }
+}
+
+unsafe fn ix_key_range(rd: Reads, bb: *const u8, out: *mut u32, places: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32) {
+    let t1 = t1.min(ix_rows(rd, bb, p));
+    if t0 >= t1 {
+        return;
+    }
+    // Each row its own place: eb + t, 4 a store.
+    let mut v = vaddq_u32(vdupq_n_u32(eb.wrapping_add(t0)), vld1q_u32([0u32, 1, 2, 3].as_ptr()));
+    let mut t = t0;
+    while t + 4 <= t1 {
+        vst1q_u32(places.add((eb + t) as usize), v);
+        v = vaddq_u32(v, vdupq_n_u32(4));
+        t += 4;
+    }
+    for t in t..t1 {
+        *places.add((eb + t) as usize) = eb + t;
+    }
+    for t in t0..t1 {
+        *out.add((eb + t) as usize) = kb.wrapping_add(ix_hash(rd, bb, p, t));
+    }
+}
+
+unsafe fn ix_place_range(rd: Reads, bb: *const u8, keys: *const u32, places: *const u32, offs: *mut u32, rows: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32) {
+    let n = ix_rows(rd, bb, p);
+    let cap = (p.mask as u32).wrapping_add(1);
+    if n == 0 && t0 == 0 && t1 > 0 {
+        fill_u32(offs, 0, cap.saturating_add(1), 0);
+    }
+    let t1 = t1.min(n);
+    if t0 >= t1 {
+        return;
+    }
+    // A row's relation row: its place, from `from`, 4 a step.
+    let d = vdupq_n_u32(p.from.wrapping_sub(eb));
+    let mut t = t0;
+    while t + 4 <= t1 {
+        vst1q_u32(rows.add(t as usize), vaddq_u32(vld1q_u32(places.add((eb + t) as usize)), d));
+        t += 4;
+    }
+    for t in t..t1 {
+        *rows.add(t as usize) = p.from.wrapping_add(*places.add((eb + t) as usize)).wrapping_sub(eb);
+    }
+    // Each row the first of its keys' places: their offsets set to it.
+    for t in t0..t1 {
+        let b = (*keys.add((eb + t) as usize)).wrapping_sub(kb);
+        let from = if t == 0 { 0 } else { (*keys.add((eb + t - 1) as usize)).wrapping_sub(kb).wrapping_add(1) };
+        fill_u32(offs, from, b.saturating_add(1), t);
+        if t == n - 1 {
+            fill_u32(offs, b.saturating_add(1), cap.saturating_add(1), n);
+        }
+    }
+}
+
+unsafe fn lat_clear_range(pl: *mut u32, best: *mut u32, flags: *mut u32, p: &LatP, i0: u32, i1: u32) {
+    let i1 = i1.min(p.pmask.saturating_add(1));
+    fill_u32(pl, i0, i1, NONE);
+    fill_u32(best, i0, i1, NONE);
+    fill_u32(flags, i0, i1, 0);
+}
+
+/// A lattice's key table cleared: each entry (row, changes, level) none, 0, 0, four entries a `st3`.
+unsafe fn lat_hclear_range(hb: *mut u8, p: &LatP, i0: u32, i1: u32) {
+    let i1 = i1.min(p.hmask.saturating_add(1));
+    let h = hb.add(p.h_at as usize) as *mut u32;
+    let entry = uint32x4x3_t(vdupq_n_u32(NONE), vdupq_n_u32(0), vdupq_n_u32(0));
+    let mut i = i0;
+    while i + 4 <= i1 {
+        vst3q_u32(h.add(3 * i as usize), entry);
+        i += 4;
+    }
+    for i in i..i1 {
+        *(h.add(3 * i as usize) as *mut [u32; 3]) = [NONE, 0, 0];
+    }
+}
+
 // ---- The program's own steps: sums, gates, rounds, sizes. ----
 
 unsafe fn sum_one(p: *const SumP) {
@@ -1908,26 +2371,56 @@ unsafe fn size_one(ops: *const SizeOp, n: u32) -> bool {
     !full
 }
 
-// ---- Scans and sorts: a tile at a time. ----
+// ---- Scans and sorts: a tile at a time, its values 4 a register (NEON). ----
+
+/// The sum of `n` words at `p`, 16 a step into four registers.
+unsafe fn sum_u32(p: *const u32, n: u32) -> u32 {
+    let mut acc = [vdupq_n_u32(0); 4];
+    let mut i = 0;
+    while i + 16 <= n {
+        let v = vld1q_u32_x4(p.add(i as usize));
+        acc = [vaddq_u32(acc[0], v.0), vaddq_u32(acc[1], v.1), vaddq_u32(acc[2], v.2), vaddq_u32(acc[3], v.3)];
+        i += 16;
+    }
+    let total = vaddvq_u32(vaddq_u32(vaddq_u32(acc[0], acc[1]), vaddq_u32(acc[2], acc[3])));
+    (i..n).fold(total, |s, k| s.wrapping_add(*p.add(k as usize)))
+}
+
+/// `n` words at `p` replaced by their running sum before each, from `base`; the sum after them. A register's four
+/// sums by two shifted adds, its last carried into the next register.
+unsafe fn scan_u32(p: *mut u32, n: u32, base: u32) -> u32 {
+    let zero = vdupq_n_u32(0);
+    let mut carry = vdupq_n_u32(base);
+    let mut i = 0;
+    while i + 4 <= n {
+        let v = vld1q_u32(p.add(i as usize));
+        let one = vaddq_u32(v, vextq_u32::<3>(zero, v));
+        let all = vaddq_u32(one, vextq_u32::<2>(zero, one));
+        vst1q_u32(p.add(i as usize), vaddq_u32(carry, vsubq_u32(all, v)));
+        carry = vdupq_laneq_u32::<3>(vaddq_u32(carry, all));
+        i += 4;
+    }
+    let mut run = vgetq_lane_u32::<0>(carry);
+    for k in i..n {
+        let v = *p.add(k as usize);
+        *p.add(k as usize) = run;
+        run = run.wrapping_add(v);
+    }
+    run
+}
 
 /// Tile `tile`'s sum of `n` values into `sums[tile]`.
 unsafe fn scan_tile_sum(input: *const u32, sums: *mut u32, n: u32, tile: u32) {
     let (first, end) = scan_tile_range(n, tile);
-    *sums.add(tile as usize) = (first..end).fold(0u32, |s, i| s.wrapping_add(*input.add(i as usize)));
+    *sums.add(tile as usize) = sum_u32(input.add(first as usize), end - first);
 }
 
 /// Tile `tile` scanned in place from its offset; the last tile writes the total at `n`.
 unsafe fn scan_tile(io: *mut u32, offsets: Option<*const u32>, n: u32, tile: u32) {
     let (first, end) = scan_tile_range(n, tile);
     let base = offsets.map_or(0, |o| *o.add(tile as usize));
-    let mut run = base;
-    for i in first..end {
-        let v = *io.add(i as usize);
-        *io.add(i as usize) = run;
-        run = run.wrapping_add(v);
-    }
-    let tile_values = TG * SCAN_ITEMS;
-    let last = if n == 0 { 0 } else { (n - 1) / tile_values };
+    let run = scan_u32(io.add(first as usize), end - first, base);
+    let last = if n == 0 { 0 } else { (n - 1) / (TG * SCAN_ITEMS) };
     if tile == last {
         *io.add(n as usize) = run;
     }
@@ -1939,15 +2432,36 @@ fn scan_tile_range(n: u32, tile: u32) -> (u32, u32) {
     (first, (first as u64 + size as u64).min(n as u64) as u32)
 }
 
-/// Tile `tile`'s digit histogram, digit-major (`hist[d * tiles + tile]`).
-unsafe fn radix_hist_tile(keys: *const u32, hist: *mut u32, n: u32, shift: u32, tiles: u32, tile: u32) {
-    let mut h = [0u32; RADIX_DIGITS];
-    let first = tile.saturating_mul(RADIX_TILE);
-    for r in first..first.saturating_add(RADIX_TILE).min(n) {
-        h[((*keys.add(r as usize) >> shift) & 255) as usize] += 1;
+/// A tile's rows [first, end) and each one's digit, four keys a shift and a mask.
+unsafe fn digits(keys: *const u32, first: u32, end: u32, shift: u32, mut f: impl FnMut(u32, usize)) {
+    let (sh, mask) = (vdupq_n_s32(-(shift as i32)), vdupq_n_u32(255));
+    let mut d = [0u32; 4];
+    let mut r = first;
+    while r + 4 <= end {
+        vst1q_u32(d.as_mut_ptr(), vandq_u32(vshlq_u32(vld1q_u32(keys.add(r as usize)), sh), mask));
+        for (k, &x) in d.iter().enumerate() {
+            f(r + k as u32, x as usize);
+        }
+        r += 4;
     }
-    for (d, &c) in h.iter().enumerate() {
-        *hist.add(d * tiles as usize + tile as usize) = c;
+    for r in r..end {
+        f(r, ((*keys.add(r as usize) >> shift) & 255) as usize);
+    }
+}
+
+/// Tile `tile`'s digit histogram, digit-major (`hist[d * tiles + tile]`): four histograms, a row's by its place of
+/// four (no two adds in a row wait on one count), summed 4 digits a step.
+unsafe fn radix_hist_tile(keys: *const u32, hist: *mut u32, n: u32, shift: u32, tiles: u32, tile: u32) {
+    let mut h = [[0u32; RADIX_DIGITS]; 4];
+    let first = tile.saturating_mul(RADIX_TILE);
+    digits(keys, first, first.saturating_add(RADIX_TILE).min(n), shift, |r, d| h[(r & 3) as usize][d] += 1);
+    let mut sum = [0u32; 4];
+    for d in (0..RADIX_DIGITS).step_by(4) {
+        let s = vaddq_u32(vaddq_u32(vld1q_u32(h[0][d..].as_ptr()), vld1q_u32(h[1][d..].as_ptr())), vaddq_u32(vld1q_u32(h[2][d..].as_ptr()), vld1q_u32(h[3][d..].as_ptr())));
+        vst1q_u32(sum.as_mut_ptr(), s);
+        for (k, &c) in sum.iter().enumerate() {
+            *hist.add((d + k) * tiles as usize + tile as usize) = c;
+        }
     }
 }
 
@@ -1958,14 +2472,12 @@ unsafe fn radix_scatter_tile(sp: &SortPass, n: u32, shift: u32, tiles: u32, tile
         *x = *sp.hist.add(d * tiles as usize + tile as usize);
     }
     let first = tile.saturating_mul(RADIX_TILE);
-    for r in first..first.saturating_add(RADIX_TILE).min(n) {
-        let key = *sp.keys.add(r as usize);
-        let d = ((key >> shift) & 255) as usize;
+    digits(sp.keys, first, first.saturating_add(RADIX_TILE).min(n), shift, |r, d| {
         let a = next[d] as usize;
         next[d] += 1;
-        *sp.out_keys.add(a) = key;
+        *sp.out_keys.add(a) = *sp.keys.add(r as usize);
         *sp.out_values.add(a) = *sp.values.add(r as usize);
-    }
+    });
 }
 
 // ---- Text rows: a SIMD group's on a GPU, a thread's here. ----
@@ -1991,6 +2503,8 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
     let (a, d, g, vc) = (j.a, j.d, j.g, j.vc);
     let op = s.agg[0] & 15;
     let want = (s.agg[0] >> 8) & 1 != 0;
+    // A test's automaton, its byte classes in registers for every row of the group's.
+    let dfa = (op == 3 || op == 5).then(|| Automaton::new(g, pw(2), pw(3), pw(4)));
     let counter = |bits: u32| {
         if s.counter != NONE {
             at(j.counters.add(s.counter as usize)).fetch_or(bits, SeqCst);
@@ -2014,7 +2528,7 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
                             3
                         } else {
                             let x = Txt::raw(st.rd.atoms_at(d, 0, id) as *const u8, len);
-                            let verdict = if txt_verdict(g, pw(2), pw(3), pw(4), &x) { 2 } else { 1 };
+                            let verdict = if dfa.as_ref().is_some_and(|a| a.verdict(&x)) { 2 } else { 1 };
                             st.rd.verdict_put(vc, 0, test, id, verdict);
                             verdict
                         };
@@ -2043,7 +2557,7 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
             continue;
         }
         if op == 3 {
-            *counts.add(r as usize) = (txt_verdict(g, pw(2), pw(3), pw(4), &x) == want) as u32;
+            *counts.add(r as usize) = (dfa.as_ref().is_some_and(|a| a.verdict(&x)) == want) as u32;
             continue;
         }
         // A text kept by (functions P[5], symbol key 7) in the rolling cache: copied into the arena.
@@ -2112,7 +2626,13 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
         let o = (a as *mut u8).add(16 + off as usize);
         if !full {
             match make {
-                Make::Cat(dot, y) => put_bytes(o, x.bytes(0, lx).chain((0..dot).map(|_| b'.')).chain(y.bytes(0, y.len()))),
+                Make::Cat(dot, y) => {
+                    x.write(0, lx, o, 0);
+                    if dot != 0 {
+                        *o.add(lx as usize) = b'.';
+                    }
+                    y.write(0, y.len(), o.add((lx + dot) as usize), 0);
+                }
                 Make::Rx(y) => {
                     rx_replace_txt(g, &x, &y, Some(o));
                 }
@@ -2132,13 +2652,15 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
                         *o.add(i as usize) = c;
                     }
                 }
-                Make::Range(from) => put_bytes(
+                Make::Range(from) => x.write(
+                    from,
+                    from + len,
                     o,
-                    x.bytes(from, from + len).map(|c| match f {
-                        0 | 8 => c.to_ascii_lowercase(),
-                        9 => c.to_ascii_uppercase(),
-                        _ => c,
-                    }),
+                    match f {
+                        0 | 8 => 1,
+                        9 => 2,
+                        _ => 0,
+                    },
                 ),
             }
         }
@@ -2382,53 +2904,63 @@ impl Prog {
             }
             return true;
         }
-        for lid in 0..TG {
-            let mut t = g.wrapping_mul(TG).wrapping_add(lid);
-            loop {
-                self.job(kind, j, &bufs, t);
-                let (next, over) = t.overflowing_add(step);
-                if step == 0 || next >= lim || over {
-                    break;
-                }
-                t = next;
+        // The group's threads, a range: all of them, then (a segment's) each stride's below its limit.
+        let mut t0 = g.wrapping_mul(TG);
+        let mut t1 = t0.saturating_add(TG);
+        loop {
+            self.range(kind, j, &bufs, t0, t1);
+            match t0.checked_add(step) {
+                Some(next) if step != 0 && next < lim => (t0, t1) = (next, next.saturating_add(TG).min(lim)),
+                _ => break,
             }
         }
         true
     }
 
-    /// Thread `t`'s part of job `j`, of kind `kind`.
-    unsafe fn job(&self, kind: u32, j: &Job, b: &Bufs, t: u32) {
+    /// Threads [t0, t1) of job `j`, of kind `kind`: a range's vector work, or each thread's own.
+    unsafe fn range(&self, kind: u32, j: &Job, b: &Bufs, t0: u32, t1: u32) {
         let rd = self.rd;
         let stage = |s: *const Stage| St { s: &*s, rd, l: b.l, r: j.r };
         let lat = || &*(j.p as *const LatP);
         match kind {
-            PK_COPY => rows_copy_one(rd, b.l as *const u8, b.o as *mut u8, j.totals, &*(j.p as *const Copy), t),
-            PK_IX_KEY => ix_key_one(rd, b.l as *const u8, b.h, j.s_ as *mut u32, &*(j.p as *const IxP), b.kb, b.eb, t),
-            PK_IX_PLACE => ix_place_one(rd, b.l as *const u8, b.v as *const u32, j.vc as *const u32, j.a, j.counters, &*(j.p as *const IxP), b.kb, b.eb, t),
-            PK_DEDUP_CLEAR => {
-                if t <= (*j.dd).mask {
-                    *b.h.add(t as usize) = NONE;
+            PK_COPY => rows_copy_range(rd, b.l as *const u8, b.o as *mut u8, j.totals, &*(j.p as *const Copy), t0, t1),
+            PK_IX_KEY => ix_key_range(rd, b.l as *const u8, b.h, j.s_ as *mut u32, &*(j.p as *const IxP), b.kb, b.eb, t0, t1),
+            PK_IX_PLACE => ix_place_range(rd, b.l as *const u8, b.v as *const u32, j.vc as *const u32, j.a, j.counters, &*(j.p as *const IxP), b.kb, b.eb, t0, t1),
+            PK_DEDUP_CLEAR => fill_u32(b.h, t0, t1.min((*j.dd).mask.saturating_add(1)), NONE),
+            PK_MAP => stage_map_range(&*j.s, b.o, j.totals, t0, t1),
+            PK_STAGE_COUNT => stage_count_range(&stage(j.s), j, b, t0, t1),
+            PK_SCAN_COUNT => scan_count_range(&stage(j.s), j, b, t0, t1),
+            PK_WITNESS_COUNT => witness_count_range(&stage(j.s), j, b, t0, t1),
+            PK_DEDUP_MARK => dedup_mark_range(rd, b.l, j.totals, b.h, b.c, &*j.dd, t0, t1),
+            PK_STAGE_SCATTER => stage_scatter_range(&stage(j.ws), j, b, t0, t1),
+            PK_SCAN_SCATTER => scan_scatter_range(&stage(j.s), j, b, t0, t1),
+            PK_ROW_SCATTER => row_scatter_range(&stage(j.s), j, b, t0, t1),
+            PK_DEDUP_SCATTER => dedup_scatter_range(b.l, j.totals, b.c, b.o, &*j.dd, t0, t1),
+            PK_LAT_HCLEAR => lat_hclear_range(j.vc, lat(), t0, t1),
+            PK_LAT_CLEAR => lat_clear_range(b.la, b.lt, b.h, lat(), t0, t1),
+            PK_SUM if t0 == 0 && t1 > 0 => sum_one(j.p as *const SumP),
+            PK_ROUND if t0 == 0 && t1 > 0 => round_one(j.p as *const RoundP, self.ctl),
+            PK_SUM | PK_ROUND => {}
+            _ => {
+                for t in t0..t1 {
+                    self.job(kind, j, b, t);
                 }
             }
+        }
+    }
+
+    /// Thread `t`'s part of job `j`, of a kind whose threads each go their own way (a hash table's probe, a claim's
+    /// retries).
+    unsafe fn job(&self, kind: u32, j: &Job, b: &Bufs, t: u32) {
+        let rd = self.rd;
+        let lat = || &*(j.p as *const LatP);
+        match kind {
             PK_DEDUP_CLAIM => dedup_claim_one(rd, b.l, j.totals, b.h, &*j.dd, t),
-            PK_MAP => stage_map_one(&*j.s, b.o, j.totals, t),
-            PK_STAGE_COUNT => stage_count_one(&stage(j.s), j, b, t),
-            PK_SCAN_COUNT => scan_count_one(&stage(j.s), j, b, t),
-            PK_WITNESS_COUNT => witness_count_one(&stage(j.s), j, b, t),
-            PK_DEDUP_MARK => dedup_mark_one(rd, b.l, j.totals, b.h, b.c, &*j.dd, t),
-            PK_STAGE_SCATTER => stage_scatter_one(&stage(j.ws), j, b, t),
-            PK_SCAN_SCATTER => scan_scatter_one(&stage(j.s), j, b, t),
-            PK_ROW_SCATTER => row_scatter_one(&stage(j.s), j, b, t),
-            PK_DEDUP_SCATTER => dedup_scatter_one(b.l, j.totals, b.c, b.o, &*j.dd, t),
-            PK_LAT_HCLEAR => lat_hclear_one(j.vc, lat(), t),
             PK_LAT_REHASH => lat_rehash_one(rd, j.s_, j.g, j.vc, lat(), t),
-            PK_LAT_CLEAR => lat_clear_one(b.la, b.lt, b.h, lat(), t),
             PK_LAT_CLAIM => lat_claim_one(rd, b.l, b.la, j.cnt, lat(), t),
             PK_LAT_BEST => lat_best_one(rd, b.l, b.la, b.lt, b.h, b.v as *const u32, j.cnt, lat(), t),
             PK_LAT_MERGE => lat_merge_one(rd, b.l, b.la, b.lt, b.h, j.s_, j.vc, b.o, j.counters, b.v as *const u32, j.g as *const u32, lat(), t),
-            PK_SUM if t == 0 => sum_one(j.p as *const SumP),
             PK_GATE => gate_one(j.p as *const GateP, self.ctl, t),
-            PK_ROUND if t == 0 => round_one(j.p as *const RoundP, self.ctl),
             _ => {}
         }
     }
