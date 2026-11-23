@@ -910,6 +910,11 @@ Then, step by step (each device run's step counts against a CPU run of the same 
   short); the GPU pool's recycling (every lease released to Metal, still short); the row blocks' wraps (a
   `Device::May` block is host memory read through a wrap at either budget); a CPU-built index in a view's home
   (the `Loc` views' source builds none); lease give-back on a refusal (`mj::give_back` drops only idle buffers).
+- **Not the cause either (2026-11-23, one pair of runs each):** a slab retired under a directory that reads it
+  (`State::retire` refused: no slab retired, no view refused, `mn_class` 259,514 still short); a block's wrap
+  remade at a new device address while a directory holds the old one (`Block::device_buffer`: 959 remakes at 512
+  MB, 1,122 at 4 GB, where every relation is right). So neither the residency nor the wraps make 512 MB differ; the
+  device-side dump of the failed probes' keys (above) is the next instrument.
 
 ## Open
 
