@@ -18,7 +18,8 @@ name: Release packs
 #   publish by hand; the run reports it and fails after publishing the others.
 # A pull request touching packs runs the validation and packing as a dry run and publishes nothing, and fails if it
 # changes what a published pack publishes without a changeset naming that pack, or if a changeset names a private pack
-# (the Release pull request is not checked). Its
+# (the Release pull request is not checked). One of prose alone (scripts/check/ci/prose.mjs: changesets, changelog
+# entries, the root's and docs/'s Markdown) runs that check and no dry run, which reads none of them. Its
 # paths see only the git diff, not the packs' test data: a change to that data is a change to a tool-pack's
 # test-data.lock, under packs/**, and a pull request that checks data in adds it there too (CONTRIBUTING.md).
 # `workflow_dispatch` points `latest` at released pack versions. With `released`, as a release run starts it, it
@@ -104,11 +105,17 @@ jobs:
           BASE: origin/${{ github.event.pull_request.base.ref }}
         run: node scripts/release/packs-changesets.mjs "$BASE"
 
+  # A pull request of prose alone (scripts/check/ci/prose.mjs: changesets, changelog entries, the root's and docs/'s
+  # Markdown) plans nothing, so it runs no dry run: no pack is validated or packed from prose, and the changesets job
+  # checks its changesets. The listing runs the dry run when it fails or cannot list the pull request whole.
   plan:
     name: Packs to publish
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       publish: ${{ steps.plan.outputs.publish }}
       first: ${{ steps.plan.outputs.first }}
@@ -118,6 +125,21 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - id: prose
+        name: Whether the pull request changes prose alone
+        if: github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed.txt"
+          node scripts/check/ci/prose.mjs "$RUNNER_TEMP/changed.txt" >> "$GITHUB_OUTPUT"
+
+      - name: Skip the dry run for prose alone
+        if: steps.prose.outputs.prose == 'true'
+        run: echo "This pull request changes prose alone (scripts/check/ci/prose.mjs), so no pack is validated or packed." >> "$GITHUB_STEP_SUMMARY"
 
       # On a push, the plan reads from npm whether each tagged version is published, with the read-only
       # NPM_PACKS_READ_TOKEN, as the promote-plan job does. A pack it cannot read fails the
@@ -135,6 +157,7 @@ jobs:
 
       - id: plan
         name: List unpublished pack versions
+        if: steps.prose.outputs.prose != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
