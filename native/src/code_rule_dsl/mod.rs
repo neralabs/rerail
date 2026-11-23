@@ -3949,6 +3949,8 @@ pub(crate) fn path_tape_tag(path: &str) -> Option<u8> {
 pub use rerail_facts::code_rule_dsl::text;
 #[cfg(test)]
 mod test_support;
+// The addon's `.rerail` entry points (`CodeRuleDslRuntime.describeRr`, `runRr`) over `tools`.
+mod rr_host;
 pub mod tools;
 #[cfg_attr(test, path = "transducer")]
 mod transducer {
@@ -4674,23 +4676,18 @@ impl CodeRuleDslRuntime {
     /// The tests the `.rerail` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
     /// 0130, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
     /// calls it for a `.rerail` file. The runs read the engine's own `.rerail` programs (`typing/programs`) and the rule
-    /// library (`logic::rr::library`) from a checkout (`source_tree`), which the package does not ship: without them,
-    /// an error that says so.
+    /// library (`logic::rr::library`) under the engine's root (`source_tree`: a checkout, or the installed package,
+    /// which ships them): without them, an error that names the file missing.
     #[napi(catch_unwind)]
     pub fn test_rr(paths_json: String, filter: Option<String>) -> Result<String> {
         let paths: Vec<std::path::PathBuf> =
             serde_json::from_str(&paths_json).map_err(json::json_error)?;
-        let programs =
-            rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs");
-        if !programs.join("sources.rerail").is_file()
-            || !logic::rr::library().join("core.rerail").is_file()
-        {
-            return Err(json::invalid(
-                "a .rerail file's tests read the engine's .rerail programs and rule library from a Rerail checkout \
-                 (native/src/code_rule_dsl/typing/programs, docs/rule-syntax/lib), which Rerail's package does not \
-                 ship: run them from a Rerail checkout, or set RERAIL_SOURCE_ROOT to one"
-                    .to_owned(),
-            ));
+        if let Some(missing) = missing_rr_engine_file() {
+            return Err(json::invalid(format!(
+                "{} is missing: a .rerail file's tests read the engine's .rerail programs and rule library, which \
+                 Rerail's package ships beside the engine: reinstall Rerail",
+                missing.display()
+            )));
         }
         let report =
             logic::rr::testing::report(&paths, filter.as_deref()).map_err(json::invalid)?;
@@ -4703,29 +4700,140 @@ impl CodeRuleDslRuntime {
         format: String,
         capabilities_json: String,
     ) -> Result<CompiledCodeRuleDsl> {
-        let capabilities = parse_capabilities(&capabilities_json)?;
-        let document = parse_document(&source, &format)?;
-        let canonical_value = canonicalize_value(document);
-        let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
-        let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
-        // The regexes only validation took, or a rejected document's, go as this ends (`regexes`).
-        let _compiling = regexes::compiling();
-        let (id, rule_mode, scope, clauses, required, report_count_gt) =
-            compile_document(&canonical_value, &capabilities)?;
-        Ok(CompiledCodeRuleDsl {
-            inner: Arc::new(CompiledCodeRule {
-                id,
-                report_count_gt,
-                rule_mode,
-                canonical,
-                digest,
-                required_capabilities: serde_json::to_string(&required).map_err(json_error)?,
-                clauses,
-                scope,
-                capabilities,
-            }),
+        compile_contained(&source, &format, &capabilities_json).map(|rule| CompiledCodeRuleDsl {
+            inner: Arc::new(rule),
         })
     }
+
+    /// `compile`, run on a thread of the host's worker pool: the promise settles with the
+    /// compiled rule, or fails as `compile` throws. A rule can take seconds to compile (the Node
+    /// pack's builtins rule), and the host's own thread stays free meanwhile.
+    /// Not in a `headless` build, where `#[napi]` derives nothing (napi-derive `noop`), so
+    /// `CompiledCodeRuleDsl` cannot be handed to a host.
+    #[cfg(not(feature = "headless"))]
+    #[napi]
+    pub fn compile_async(
+        source: String,
+        format: String,
+        capabilities_json: String,
+    ) -> napi::bindgen_prelude::AsyncTask<CompileTask> {
+        napi::bindgen_prelude::AsyncTask::new(CompileTask {
+            source,
+            format,
+            capabilities_json,
+        })
+    }
+}
+
+/// `compile_rule`, with a panic in it an error that reads the same whether `compile` ran it on
+/// the host's thread or `compile_async` on a pool thread: both compile through here.
+fn compile_contained(
+    source: &str,
+    format: &str,
+    capabilities_json: &str,
+) -> Result<CompiledCodeRule> {
+    crate::panic_boundary::contain_panic("code rule compile", || {
+        compile_rule(source, format, capabilities_json)
+    })
+}
+
+/// One code rule document compiled against the capability manifest `capabilities_json`.
+fn compile_rule(source: &str, format: &str, capabilities_json: &str) -> Result<CompiledCodeRule> {
+    #[cfg(test)]
+    compile_panic_tests::panic_on(source);
+    let capabilities = parse_capabilities(capabilities_json)?;
+    let document = parse_document(source, format)?;
+    let canonical_value = canonicalize_value(document);
+    let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
+    let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
+    // The regexes only validation took, or a rejected document's, go as this ends (`regexes`).
+    let _compiling = regexes::compiling();
+    let (id, rule_mode, scope, clauses, required, report_count_gt) =
+        compile_document(&canonical_value, &capabilities)?;
+    Ok(CompiledCodeRule {
+        id,
+        report_count_gt,
+        rule_mode,
+        canonical,
+        digest,
+        required_capabilities: serde_json::to_string(&required).map_err(json_error)?,
+        clauses,
+        scope,
+        capabilities,
+    })
+}
+
+/// `CodeRuleDslRuntime::compile_async`'s work: the whole compile runs on the one pool thread
+/// that computes it, so `regexes::compiling` keeps what it lets go of until it ends. Not in a
+/// `headless` build, as `compile_async`.
+#[cfg(not(feature = "headless"))]
+pub struct CompileTask {
+    source: String,
+    format: String,
+    capabilities_json: String,
+}
+
+#[cfg(not(feature = "headless"))]
+impl napi::Task for CompileTask {
+    type Output = CompiledCodeRule;
+    type JsValue = CompiledCodeRuleDsl;
+
+    fn compute(&mut self) -> Result<CompiledCodeRule> {
+        compile_contained(&self.source, &self.format, &self.capabilities_json)
+    }
+
+    fn resolve(
+        &mut self,
+        _env: napi::Env,
+        output: CompiledCodeRule,
+    ) -> Result<CompiledCodeRuleDsl> {
+        Ok(CompiledCodeRuleDsl {
+            inner: Arc::new(output),
+        })
+    }
+}
+
+#[cfg(test)]
+mod compile_panic_tests {
+    /// The source `compile_rule` panics on in this crate's tests: no rule document makes it panic.
+    static PANICKING_SOURCE: &str = "a source whose compile panics";
+
+    /// Panics as a compile with a bug in it would, for `PANICKING_SOURCE` only.
+    pub(super) fn panic_on(source: &str) {
+        if source == PANICKING_SOURCE {
+            panic!("index out of range");
+        }
+    }
+
+    #[test]
+    fn a_compile_that_panics_reads_the_same_from_compile_and_from_compile_async() {
+        let reason = Some("code rule compile panicked: index out of range");
+        let compiled = super::CodeRuleDslRuntime::compile(
+            PANICKING_SOURCE.to_owned(),
+            "json".to_owned(),
+            "{}".to_owned(),
+        );
+        assert_eq!(compiled.err().map(|error| error.reason).as_deref(), reason);
+        #[cfg(not(feature = "headless"))]
+        {
+            let mut task = super::CompileTask {
+                source: PANICKING_SOURCE.to_owned(),
+                format: "json".to_owned(),
+                capabilities_json: "{}".to_owned(),
+            };
+            let computed = napi::Task::compute(&mut task);
+            assert_eq!(computed.err().map(|error| error.reason).as_deref(), reason);
+        }
+    }
+}
+
+/// The first of the files every `.rerail` test run reads that is not there: phase 1's program (`sources.rerail`) and
+/// the library's `core.rerail`. A checkout holds them, and Rerail's package ships them beside the engine.
+fn missing_rr_engine_file() -> Option<std::path::PathBuf> {
+    let sources = rerail_store::source_tree::native()
+        .join("src/code_rule_dsl/typing/programs/sources.rerail");
+    let core = logic::rr::library().join("core.rerail");
+    [sources, core].into_iter().find(|file| !file.is_file())
 }
 
 /// The module a file's `module` carries, from the package markers on disk, for the file at
