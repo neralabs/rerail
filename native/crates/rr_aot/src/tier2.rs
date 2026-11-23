@@ -624,7 +624,7 @@ impl<'a, L: Layout> P<'a, L> {
         // The comments between are its text.
         self.pend = self.i;
         let (_, e) = self.bump()?;
-        self.w.truncate(at as usize);
+        self.w.plain_truncate(at as usize);
         let at = self.w.plain_leaf(key & !0x3ff | u32::from(kind), s, e);
         self.set_made(at as u32);
         Ok(())
@@ -732,16 +732,16 @@ impl<'a, L: Layout> P<'a, L> {
             return self.refuse();
         }
         let at = at as usize;
-        let n = self.w.size(at) as usize;
+        let n = self.w.plain_size(at) as usize;
         if at + n != self.w.len() {
             return self.refuse();
         }
         // The nodes as they are, then written again in preorder.
-        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.plain_key(i), self.w.plain_start(i), self.w.end(i), self.w.size(i) as usize)).collect();
+        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.plain_key(i), self.w.plain_start(i), self.w.plain_end(i), self.w.plain_size(i) as usize)).collect();
         if self.dead.iter().any(|&o| (o as usize).wrapping_sub(at) < n) {
             self.read_dead(&nodes, at, root, way)?;
         }
-        self.w.truncate(at);
+        self.w.plain_truncate(at);
         let mut i = 0;
         while i < nodes.len() {
             i = self.reread_node(&nodes, i, root, way, field)?;
@@ -6969,7 +6969,7 @@ impl<L: Layout> P<'_, L> {
     /// `relabel … inner G`: the node the node made last at this level, a wrap, holds first takes field `G`.
     fn relabel_inner(&mut self, field: u16) -> R {
         let at = self.levels.last().map_or(NONE, |l| l.1);
-        if at == NONE || self.w.size(at as usize) < 2 {
+        if at == NONE || self.w.plain_size(at as usize) < 2 {
             return self.refuse();
         }
         let at = at as usize + 1;

@@ -443,3 +443,6 @@ checks were cheap branches, but each kept the writer's fields read through the l
 the same way.
 
 `rr_parser`'s 52 library tests, `kotlin_parser`'s 70 and `rerail-tape-format`'s 43 pass.
+
+`size`, `end` and `truncate` (the relabels, the readings again, `merge`) have plain calls too (`plain_size`, `plain_end`,
+`plain_truncate`), so every writer call tier 2 makes is plain but `push` and `len`, which check nothing.

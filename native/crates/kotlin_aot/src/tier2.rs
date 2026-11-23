@@ -995,7 +995,7 @@ impl<'a, L: Layout> P<'a, L> {
         // The comments between are its text.
         self.pend = self.i;
         let (_, e) = self.bump()?;
-        self.w.truncate(at as usize);
+        self.w.plain_truncate(at as usize);
         let at = self.w.plain_leaf(key & !0x3ff | u32::from(kind), s, e);
         self.set_made(at as u32);
         Ok(())
@@ -1094,13 +1094,13 @@ impl<'a, L: Layout> P<'a, L> {
             return self.refuse();
         }
         let at = at as usize;
-        let n = self.w.size(at) as usize;
+        let n = self.w.plain_size(at) as usize;
         if at + n != self.w.len() {
             return self.refuse();
         }
         // The nodes as they are, then written again in preorder.
-        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.plain_key(i), self.w.plain_start(i), self.w.end(i), self.w.size(i) as usize)).collect();
-        self.w.truncate(at);
+        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.plain_key(i), self.w.plain_start(i), self.w.plain_end(i), self.w.plain_size(i) as usize)).collect();
+        self.w.plain_truncate(at);
         let mut i = 0;
         while i < nodes.len() {
             i = self.reread_node(&nodes, i, root, way, field)?;

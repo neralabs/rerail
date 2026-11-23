@@ -707,6 +707,11 @@ impl<L: Layout> Writer<L> {
             // runs again for format 15 (`passed_node`).
             return self.passed_node(node).map_or(1, |e| if e.end_at == usize::MAX { 0 } else { (e.end_at - node) as u32 });
         }
+        self.size_here(node)
+    }
+
+    #[inline(always)]
+    fn size_here(&self, node: usize) -> u32 {
         let w = self.layout.widths().size;
         let at = self.cell(node) * usize::from(w);
         if w == 2 { u32::from(u16::from_le_bytes([self.size[at], self.size[at + 1]])) } else { u32::from_le_bytes(self.size[at..at + 4].try_into().expect("4 bytes")) }
@@ -723,11 +728,16 @@ impl<L: Layout> Writer<L> {
         if node < self.base {
             return self.passed_node(node).map_or(0, |e| e.end);
         }
+        self.end_here(node)
+    }
+
+    #[inline(always)]
+    fn end_here(&self, node: usize) -> u32 {
         let w = self.layout.widths();
         let c = self.cell(node);
         let at = c * usize::from(w.tail);
         let tail = if w.tail == 2 { u32::from(u16::from_le_bytes([self.tail[at], self.tail[at + 1]])) } else { u32::from_le_bytes(self.tail[at..at + 4].try_into().expect("4 bytes")) };
-        let from = if w.from_start { self.starts[c] } else { self.starts[c + self.size(node) as usize - 1] };
+        let from = if w.from_start { self.starts[c] } else { self.starts[c + self.size_here(node) as usize - 1] };
         from.wrapping_add(tail)
     }
 
@@ -1005,6 +1015,29 @@ impl<L: Layout> Writer<L> {
     pub fn plain_close_from(&mut self, node: usize, end: u32) -> u32 {
         debug_assert!(self.plain());
         self.close_from_here(node, end)
+    }
+
+    /// `size`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_size(&self, node: usize) -> u32 {
+        debug_assert!(self.plain());
+        self.size_here(node)
+    }
+
+    /// `end`, on a plain tape.
+    #[inline(always)]
+    pub fn plain_end(&self, node: usize) -> u32 {
+        debug_assert!(self.plain());
+        self.end_here(node)
+    }
+
+    /// `truncate`, on a plain tape.
+    #[inline]
+    pub fn plain_truncate(&mut self, len: usize) {
+        debug_assert!(self.plain());
+        if len < self.n {
+            self.truncate_here(len);
+        }
     }
 
     /// `wrap`, on a plain tape.
@@ -1315,6 +1348,11 @@ impl<L: Layout> Writer<L> {
         } else {
             len
         };
+        self.truncate_here(len);
+    }
+
+    #[inline(always)]
+    fn truncate_here(&mut self, len: usize) {
         self.n = len;
         self.uncode_from(len);
         self.marks.retain(|m| (m.0 as usize) < len);

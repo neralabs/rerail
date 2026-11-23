@@ -1703,6 +1703,9 @@ fn plain_writer(code: &str) -> String {
         ("self.w.set_field(", "self.w.plain_field("),
         ("self.w.close_from(", "self.w.plain_close_from("),
         ("self.w.wrap(", "self.w.plain_wrap("),
+        ("self.w.size(", "self.w.plain_size("),
+        ("self.w.end(", "self.w.plain_end("),
+        ("self.w.truncate(", "self.w.plain_truncate("),
     ]
     .iter()
     .fold(code.to_owned(), |c, (a, b)| c.replace(a, b))
