@@ -2100,12 +2100,35 @@ impl Rows {
                 self.segs.push((first, both.prefix()));
             }
         }
+        self.seal_segments();
         // The last segment's writer, free for a relation started from these rows, at its rows: a prefix of its relation,
         // which a writer goes on past.
         if let Some((first, p)) = self.segs.last() && p.capped() && first + p.len() == self.from && p.rel().rows.len() == p.len() {
             p.free_at.store(p.len(), std::sync::atomic::Ordering::Release);
         }
         self
+    }
+
+    /// Each frozen segment's full chunks sealed in the frozen columns' encodings (decision 0622), where no one else
+    /// holds its part (a reader elsewhere may hold an address in its chunks) and it is the run's, not the device's:
+    /// its raw chunks go back to its block's free list. `RERAIL_SEAL_CHUNKS=off` leaves them raw.
+    fn seal_segments(&self) {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*ON.get_or_init(|| !std::env::var("RERAIL_SEAL_CHUNKS").is_ok_and(|v| v == "off")) {
+            return;
+        }
+        for (_, p) in &self.segs {
+            if p.held.life == Life::Device || Arc::strong_count(&p.held) != 1 || p.held.base.is_some() {
+                continue;
+            }
+            // SAFETY: the part is frozen (its rows are written, and a writer that goes on from them writes past them,
+            // in chunks not yet full), and this `Rows` alone holds it.
+            let (raw, sealed) = unsafe { p.rel().rows.seal(&p.held.facts.block) };
+            if raw > 0 {
+                crate::code_rule_dsl::prof::count("rows.sealed_raw_bytes", raw);
+                crate::code_rule_dsl::prof::count("rows.sealed_bytes", sealed);
+            }
+        }
     }
 
     /// The `n` rows of a frozen relation, shared: its segments taken (and its tail, if it has one, as the rows it holds

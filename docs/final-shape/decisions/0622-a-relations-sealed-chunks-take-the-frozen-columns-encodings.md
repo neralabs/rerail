@@ -1,7 +1,7 @@
 # 0622. A relation's sealed chunks take the frozen columns' encodings
 
-Status: decided, not yet built (2026-11-22). t52 step 5: written before it is built, as t52's plan asks. t52 named
-it 0605; it is numbered past the highest record in any worktree (0621).
+Status: steps 1 and 2 built (2026-11-22); steps 3 and 4 open. t52 step 5: written before it was built, as t52's plan
+asks. t52 named it 0605; it is numbered past the highest record in any worktree (0621).
 
 ## Intro
 
@@ -70,6 +70,40 @@ they lie.**
    `col_get` (JIT and interpreter), and the kernels' header (one filtered run on a farm Mac).
 3. Seal a chunk relation's full chunks as its writers pass them, not only at freeze.
 4. Dictionaries for atom and kind columns.
+
+## As built (steps 1 and 2)
+
+- **Where it seals.** `Rows::seal` (`rerail_blocks::rows`) seals a relation's full chunks below its rows in a block with
+  a free list. The engine calls it when it freezes a run's rows (`facts::rows::Rows::freeze`, `seal_segments`), for a
+  segment that it alone holds, that continues no base and is not a device's. `RERAIL_SEAL_CHUNKS=off` leaves every
+  chunk raw.
+- **The tag** is bit 0 of the chunk's offset (`rows::SEALED`). `ColDir::get`, `low`, `lower_bound`, `read_col` and
+  `release` decode or free a sealed chunk. `at`, the writers' address, asserts the chunk is raw, and so does a scan of
+  raw chunks (`col_chunks_u32`).
+- **CLIF.** `col_get` tests the bit and calls `col_sealed`, which decodes the five encodings in CLIF with no
+  high multiply (the kernels' backend has none). `LINE`'s `(i * slope) >> 16` is split at the slope's low 16 bits.
+  The kernels' `relation.h` is generated from it. Tests compare each reader with the host on sealed rows: the JIT
+  (`the_jits_sealed_chunk_reads_are_the_hosts`), and the device (`the_device_reads_a_relation_as_the_host_does`),
+  on a Linux host's device and on Metal (an M3 farm Mac).
+- **Read at random, chosen for it.** A relation's column is read by row id, at random. The first build chose by size
+  alone. It sealed 1.56 GB of chunks into 0.81 GB and lowered `all`'s peak from 3.23 to 2.96 GB, but cost 9% more
+  instructions (1,842 G to 2,004 G, the same binary and host): the joins' reads. One random read, against about 5 ns
+  raw, was 88 ns for `RUNS` (a search of its run starts), 22 to 24 ns for `LINE` and `GROUPS` (a decoder made per
+  read), and 61 ns for a 64-bit column sealed to save a few percent. So:
+  - `IntCol::get` decodes `LINE` and `GROUPS` from its own fields, as `PACK`.
+  - A sealed chunk is chosen by `col::choose_for_reads`: `RUNS` only with at most 32 runs (`RUNS_FOR_READS`, a
+    5-step search). `GROUPS` holds long runs about as small, and is read in three words. The kept facts keep
+    `choose`.
+  - A chunk is sealed only where it saves a quarter of its bytes.
+
+  Then, on an idle host, a random read takes 1.5 ns (`CONST`), 3.5 ns (`PACK`), 4.2 ns (`LINE`) and 4.6 ns
+  (`GROUPS`), against 5 ns raw: a smaller column is read from closer caches (`examples/sealed_reads.rs`).
+- **On `all`, as built** (an M1 Max farm Mac, the same binary with `RERAIL_SEAL_CHUNKS=off` and on): 0.99 GB of chunks
+  sealed into 0.34 GB. Peak 3.18 GB to 2.97 GB. CPU 181.8 s to 178.2 s. Instructions 1,828 G to 1,892 G (+3.5%,
+  down from +9%). s1000's findings unchanged (`373cea39`), and every relation's rows the same.
+- **What is left for the peak.** It falls by 0.2 GB, not by the 0.65 GB sealed. A chunk is sealed when its rows
+  are frozen, and many freeze after the peak. A raw chunk freed goes to its block's free list, not to the system.
+  Step 3 (seal as the writers pass a chunk) is what reaches the peak.
 
 ## Test
 
