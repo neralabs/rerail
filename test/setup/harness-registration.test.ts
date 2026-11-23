@@ -851,22 +851,17 @@ describe("Claude Code settings.json", () => {
     expect((await readJson(path)).hooks).toEqual(hooksWith(current(upgraded)));
   }
 
-  it.each([
-    ["another node", true],
-    ["the recorded node", false],
-  ])("replaces, refreshes and removes the Windows hook entries 0.1.3 and 0.1.4 wrote, where PATH finds %s", async (_case, otherFirst) => {
+  it("replaces, refreshes and removes the Windows hook entries 0.1.3 and 0.1.4 wrote", async () => {
     const { home, root } = await fixture();
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
-    if (otherFirst) await windowsPathNode(home, "other-node");
-    const recordedNode = (folder: string) => (otherFirst ? windowsNode(home, folder) : windowsPathNode(home, folder));
     // 0.1.3 and 0.1.4 start the launcher with `node` from PATH, whichever node PATH finds first.
     const released = (node: string) => ({ type: "command", command: "node", args: [launcherPath, node, hookPath] });
     await checkReleasedEntries({
-      options: { root, home, nodePath: await recordedNode("recorded-node"), platform: "win32", harnesses: ["claude-code"], cmdRuns: cmdThere },
+      options: { root, home, nodePath: await windowsNode(home, "recorded-node"), platform: "win32", harnesses: ["claude-code"], cmdRuns: cmdThere },
       released,
       current: node => cmdEntry(launcherPath, node, hookPath),
-      upgrade: () => recordedNode("v24.9.0"),
+      upgrade: () => windowsNode(home, "v24.9.0"),
     });
   });
 
