@@ -1,5 +1,5 @@
-import { assertCodeRuleCompiles, CodeRuleCompileError } from "../code-rule/code-rule-compile.js";
-import { LANGUAGE_NOT_SUPPORTED, languageNotSupportedOf } from "../code-rule/code-rule-language-support.js";
+import { assertCodeRuleCompiles, CodeRuleCompileError, type InactiveCodeRule } from "../code-rule/code-rule-compile.js";
+import { languageNotSupportedOf } from "../code-rule/code-rule-language-support.js";
 import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
 import { RULE_KINDS, type RuleKind } from "../storage/schema.js";
 import { ruleDocumentDigest } from "../stable-json.js";
@@ -48,8 +48,9 @@ export function unknownRuleKind(kind: string, document: unknown): { kind: RuleKi
 }
 
 /**
- * A stored row left out of every read and evaluation: one that fails validation, or, with `code`
- * `language-not-supported`, a valid code rule the engine cannot read yet (kept inactive, never a failure).
+ * A stored row left out of every read and evaluation: one that fails validation, or, with a `code`, a valid code rule
+ * kept inactive, never a failure: `language-not-supported`, one the engine cannot read yet, or `reads-left-out-token`,
+ * an installed pack's rule this Rerail no longer runs.
  */
 export interface QuarantinedRule {
   ruleId: string;
@@ -57,7 +58,7 @@ export interface QuarantinedRule {
   /** `global`, `project:<id>`, or the per-project store's row scope. */
   owner: string;
   reason: string;
-  code?: typeof LANGUAGE_NOT_SUPPORTED;
+  code?: InactiveCodeRule["code"];
 }
 
 const reported = new Set<string>();
