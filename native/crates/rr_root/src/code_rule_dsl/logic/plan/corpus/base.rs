@@ -63,8 +63,6 @@ pub struct CorpusDocs {
     pub from_tape: usize,
     /// The memo hits' documents whose file was parsed again (the store kept no tape of it).
     pub parsed: usize,
-    /// The documents a session held from its last run, unchanged.
-    pub held: usize,
     /// The batch's documents whose rows were made (`Batch::documents_made`), and all it holds.
     pub made: usize,
     pub documents: usize,

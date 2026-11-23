@@ -244,7 +244,7 @@ fn a_session_keeps_its_corpus_batch_and_its_base_statistics() {
     let (edit, edit_batch, rows) = run(&mut c);
     profile::set(false);
     assert!(cold_counted(&cold), "a session's first run counts them: {cold:?}");
-    assert_eq!(cold_batch, BTreeSet::from(["4 documents made, none held".to_owned()]), "and makes every document");
+    assert_eq!(cold_batch, BTreeSet::from(["4 documents made".to_owned()]), "and makes every document");
     assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
     let made = |batch: &BTreeSet<String>, n: usize| batch.len() == 1 && batch.iter().all(|x| x.starts_with(&format!("{n} documents made")));
     assert!(made(&warm_batch, 0), "and makes none: {warm_batch:?}");

@@ -458,7 +458,7 @@ impl Keeper {
                 (index[rel.as_str()], out)
             })
             .collect();
-        let docs: Vec<(&String, memo::Content, i64)> = self.docs.iter().filter(|(_, (c, _))| !matches!(c, memo::Content::Held(_))).map(|(p, (c, k))| (p, *c, *k)).collect();
+        let docs: Vec<(&String, memo::Content, i64)> = self.docs.iter().map(|(p, (c, k))| (p, *c, *k)).collect();
         let build: [u8; 32] = sha2::Sha256::digest(crate::code_rule_dsl::build_ids::engine().as_bytes()).into();
         let put = |rel: &str, types: &[u8], n: usize, fill: &mut dyn FnMut(&mut dyn FnMut(i64))| {
             crate::content_store::kept_facts::filled_put(rel, ident(rel), part, types, n, |push| {
@@ -479,7 +479,6 @@ impl Keeper {
                     let (kind, w) = match c {
                         memo::Content::Stored(id) => (0, [id.raw(), 0, 0, 0]),
                         memo::Content::Unstored(digest) => (1, std::array::from_fn(|i| i64::from_le_bytes(digest[i * 8..i * 8 + 8].try_into().expect("8 bytes")))),
-                        memo::Content::Held(_) => unreachable!("not kept"),
                     };
                     [d as i64, kind].into_iter().chain(w).chain([*k]).for_each(&mut *push);
                 }
@@ -817,7 +816,7 @@ pub fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
     a.1 == b.1
         && match (a.0, b.0) {
             (memo::Content::Stored(x), memo::Content::Stored(y)) => x == y,
-            (memo::Content::Unstored(x), memo::Content::Unstored(y)) | (memo::Content::Held(x), memo::Content::Held(y)) => x == y,
+            (memo::Content::Unstored(x), memo::Content::Unstored(y)) => x == y,
             _ => false,
         }
 }

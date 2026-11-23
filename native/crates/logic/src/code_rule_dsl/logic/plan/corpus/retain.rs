@@ -694,42 +694,6 @@ pub(in crate::code_rule_dsl) fn after(
     Retained { key, inputs, rels, input_srcs, measured, input_docs, docs, frames: None, past, ..Default::default() }
 }
 
-/// `source` (input `rel`), or the last run's source of the same rows: same name, columns and digest, in any kept
-/// part. Read in place of the copy, so its column indexes and statistics are kept with it, not built again (0094
-/// §4). Its digest goes to `digests`, which the session's cut reads. An unheld column reads as 0 in both, so the
-/// rows read alike whatever the program.
-pub(in crate::code_rule_dsl) fn kept_source(
-    parts: Option<&HashMap<[u8; 32], Retained>>,
-    rel: &str,
-    source: Arc<dyn Source>,
-    cells: &Cells,
-    digests: &mut HashMap<String, u64>,
-) -> Arc<dyn Source> {
-    if parts.is_none() {
-        return source;
-    }
-    let d = digest(source.as_ref(), cells);
-    kept_source_digested(parts, rel, source, d, digests)
-}
-
-/// `kept_source` for a source whose digest `d` is known without reading its rows: a base relation's is its
-/// documents' (decision 0458). Its digest goes to `digests` with or without a session.
-pub(in crate::code_rule_dsl) fn kept_source_digested(
-    parts: Option<&HashMap<[u8; 32], Retained>>,
-    rel: &str,
-    source: Arc<dyn Source>,
-    d: u64,
-    digests: &mut HashMap<String, u64>,
-) -> Arc<dyn Source> {
-    digests.insert(rel.to_owned(), d);
-    let Some(parts) = parts else { return source };
-    let columns = source.columns();
-    if let Some(same) = parts.values().find_map(|p| p.input_srcs.get(rel).filter(|s| p.inputs.get(rel) == Some(&d) && s.columns() == columns).cloned()) {
-        return same;
-    }
-    source
-}
-
 impl Retained {
     /// The part taken under program `key`, another program of the same cross part (`keys`): its rows are the cross
     /// program's, its inputs compared by digest (`cut`), and its documents answered only under the file-local
@@ -2226,7 +2190,7 @@ pub(in crate::code_rule_dsl) fn put_base_counts(
         match k.file.then(|| content_of(&k.path)).flatten() {
             Some(super::memo::Content::Stored(id)) => w.extend([0, id.raw(), 0, 0, 0]),
             // A content the store does not hold yet, by its digest (a later run finds it stored by it).
-            Some(super::memo::Content::Unstored(d) | super::memo::Content::Held(d)) => {
+            Some(super::memo::Content::Unstored(d)) => {
                 w.push(1);
                 w.extend(d.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
             }
@@ -2405,11 +2369,8 @@ pub(in crate::code_rule_dsl) fn put_semijoin_rows(store: &ContentStore, was: &In
 /// wave, under the memo plan `plan` (`memo_plan_tag`), with `digest`, the digest of the documents it names (decision
 /// 0458: the base relations' digests are of it): the writer finds each document's places as it writes it, its tape in
 /// the grammar `tape` (grammar id, grammar version, tape format version) names (decision 0494 step 4 part 2). `false`
-/// (nothing queued) when a file's content is only in memory (`Held`) or its path is no atom.
+/// (nothing queued) when a path is no atom.
 pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &InKept, binds: [u8; 32], plan: u64, docs: &[BaseDocument], digest: u64, tape: Option<[i64; 3]>) -> bool {
-    if docs.iter().any(|(_, _, c)| matches!(c, super::memo::Content::Held(_))) {
-        return false;
-    }
     let paths: Vec<&str> = docs.iter().map(|(p, _, _)| p.as_str()).collect();
     let Ok(atoms) = store.atoms_handle().intern_all(&paths) else { return false };
     let mut rows = BlockFlat::new(docs.len(), crate::content_store::DOCUMENT_WORDS, true);
@@ -2422,7 +2383,6 @@ pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &I
                 w.push(1);
                 w.extend(digest_words(d));
             }
-            super::memo::Content::Held(_) => unreachable!("refused above"),
         }
     }
     let name = KeptRel { name: BASE_DOCUMENTS.to_owned(), ident: base_documents_ident(&binds) };

@@ -107,7 +107,6 @@ impl Corpus {
         let corpus = phases.iter().fold(report.corpus_docs, |a, (_, p)| CorpusDocs {
             from_tape: a.from_tape + p.from_tape,
             parsed: a.parsed + p.parsed,
-            held: a.held + p.held,
             made: a.made + p.made,
             documents: a.documents + p.documents,
         });

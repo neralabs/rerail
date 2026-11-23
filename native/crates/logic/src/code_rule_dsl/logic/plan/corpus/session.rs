@@ -2,51 +2,28 @@
 //! one run to the next, so that a run after an edit costs what the edit changed. The browser's engine is one: the
 //! explorer runs a rule over the files on its page at each keystroke, in one instance of the engine.
 //!
-//! A session keeps:
+//! A session is its store, kept open, and nothing else of its own (t33 step 3): its runs are the store's runs, as a
+//! new process's are. They keep their kept facts there (each file's memo entry, the cross-file part's relations and
+//! their statistics, the corpus batch's documents' table) and read them where the store keeps them, mapped once a
+//! process while the store's chain holds (`kept_read::Bound`); an edit evaluates the files it changed and maintains
+//! the cross-file part from its kept rows (t33 K4). A session keeps:
 //!
-//! - its store, so atoms are never given out again (decision 0049) and keep their meaning from run to run: the
-//!   compiled program's constants and the memoised rows are under them;
-//! - nothing of the program itself: decision 0060's caches keep it for the process (`combine` by its texts, the
-//!   prepared program by its texts and additions, its atoms checked against this store), so an edit to a file
-//!   neither parses nor lowers the rule again;
-//! - each file's file-local rows (decision 0052's memo), in memory, under its content, path and the file-local
-//!   program: an unchanged file is neither parsed nor evaluated.
+//! - its store (`session.sqlite`), which binding it selects for its runs (`ThreadStore`): atoms are never given out
+//!   again (decision 0049), and its kept facts are under them;
+//! - its connections (`connections`), kept from run to run: an edit's run opens none;
+//! - nothing of the program itself: decision 0060's caches keep it for the process.
 //!
-//! The cross-file part reuses unchanged retained strata. Gates reuse only a complete unchanged program.
-//! A run with T's facts or typing is not a session's
-//! (`corpus::run_with_options`).
+//! A run with T's facts or typing is not a session's (`corpus::run_with_options`).
 
-use super::memo;
-use crate::content_store::ContentStore;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub(in crate::code_rule_dsl) struct Session {
-    /// The store's file, which each run's SQL connection opens (its atoms are the store's).
-    pub(super) path: PathBuf,
-    pub(super) store: ContentStore,
-    pub(super) memo: memo::Held,
-    /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed. One
-    /// per cross program (`retain::keys`' second, of the cross program alone, which a file-local rule's edit leaves):
-    /// a run's passes are different programs, and one would take the other's place.
-    pub(super) cross: Mutex<std::collections::HashMap<[u8; 32], super::retain::Retained>>,
-    /// The corpus batch as the last run made it (decision 0458), by the same key as `cross` (the maintained cross
-    /// program's): taken out while a run uses it, and put back with that run's.
-    pub(super) corpus: Mutex<std::collections::HashMap<[u8; 32], HeldCorpus>>,
-    /// Each output a run of the session wrote (`out/<rel>`): the program's cross-file key and its rows. A later run of
-    /// that program whose output stratum is clean leaves it in the stack as it is.
-    pub(super) written: Mutex<std::collections::HashMap<PathBuf, ([u8; 32], usize)>>,
-    /// Each output directory's stack as the session's last run there left it (`out`): what a stat of its file finds,
-    /// and its depth. A stack that is not as it was holds no output of the session's.
-    pub(super) stacks: Mutex<std::collections::HashMap<PathBuf, Stack>>,
-    /// Each memoised program's base relations' statistics, kept by file (decision 0096 §3, `keptstats`).
-    /// The kept statistics, by the memo's space, with the whole file-local program they were kept under: valid only
-    /// while that program is the last whose entries the space holds (decision 0225 §2).
-    pub(super) stats: Mutex<std::collections::HashMap<[u8; 32], ([u8; 32], super::keptstats::Keeper)>>,
+    /// The store's file, which its runs keep their facts in (`Handle::bind` selects it).
+    path: PathBuf,
     /// Its runs' connections and stores, kept from run to run (`connections`): an edit's run opens none.
-    pub(super) connections: Arc<parking_lot::Mutex<super::connections::Connections>>,
+    connections: Arc<parking_lot::Mutex<super::connections::Connections>>,
 }
-
 
 static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -65,19 +42,8 @@ impl Handle {
     pub fn open(dir: &Path) -> std::result::Result<Handle, String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = dir.join("session.sqlite");
-        let store = ContentStore::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let session = Session {
-            path,
-            store,
-            memo: Default::default(),
-            cross: Default::default(),
-            corpus: Default::default(),
-            written: Mutex::new(Default::default()),
-            stacks: Mutex::new(Default::default()),
-            stats: Mutex::new(Default::default()),
-            connections: Arc::new(parking_lot::Mutex::new(super::connections::Connections::kept())),
-        };
+        let session = Session { path, connections: Arc::new(parking_lot::Mutex::new(super::connections::Connections::kept())) };
         Ok(Handle { generation, session: Arc::new(parking_lot::Mutex::new(session)) })
     }
 
@@ -167,25 +133,17 @@ pub(super) fn current() -> Held {
     Held(Some(held))
 }
 
-/// A session's corpus batch as its last run made it (decision 0458): each path's documents (its file's and its guests'),
-/// with the content and key they were made from; the documents' digest, which the base relations' digests are of;
-/// and each base relation's statistics, with the digest of the rows they count. An edit makes the changed files'
-/// documents alone, and the held ones of those paths are the base relations' old versions.
-pub(super) struct HeldCorpus {
-    pub docs: std::collections::HashMap<String, ((memo::Content, i64), Vec<crate::code_rule_dsl::facts::vtab::syntax::Input>)>,
-    pub digest: u64,
-    pub stats: std::collections::HashMap<String, (u64, crate::code_rule_dsl::logic::plan::statkeep::RelStats)>,
-}
-
 /// The session held for a run.
 pub(super) struct Held(Option<parking_lot::ArcMutexGuard<parking_lot::RawMutex, Session>>);
 
 impl Held {
-    pub(super) fn as_ref(&self) -> Option<&Session> {
-        self.0.as_deref()
+    /// Whether the run is a session's.
+    pub(super) fn is_some(&self) -> bool {
+        self.0.is_some()
     }
-    pub(super) fn as_mut(&mut self) -> Option<&mut Session> {
-        self.0.as_deref_mut()
+    /// The session's connections, which its run takes and hands back.
+    pub(super) fn connections(&self) -> Option<Arc<parking_lot::Mutex<super::connections::Connections>>> {
+        self.0.as_deref().map(|s| Arc::clone(&s.connections))
     }
 }
 
@@ -223,9 +181,5 @@ impl Stack {
         }).sum();
         let rels = names.iter().filter_map(|n| Some(((*n).to_owned(), Arc::new(output::find(images, n)?.hashes())))).collect();
         Some(Stack { depth: images.len(), deltas, rels, ..stat })
-    }
-    /// Whether the stack in `out` is as `self` (its file not written since).
-    pub fn stands(&self, out: &std::path::Path) -> bool {
-        Stack::stat(out).is_some_and(|s| s.len == self.len && s.modified == self.modified)
     }
 }
