@@ -373,6 +373,16 @@ So:
      parameters bound to equal spellings from different places, which need the arguments as holes (§"Arguments
      as references"): a result kept with its arguments' places open, filled at each hit.
 
+   **Built: a round keeps the last round's documents** (2026-11-22, `place_kept` in `eval/rounds.rs`).
+   - A unit's rounds keep its files' digests. A round lexes only the files the last round's answers loaded; an
+     earlier file's tape is built again only where the residency let its document go. Before, every round
+     built every file's format 16 tape again on the host to find its digest.
+   - On the device, a unit's round 2 runs its P1 and text pass over its files again. That is not where round
+     1's time goes. Round 1 of C (GB10, CUDA, warm) is 1.23 ms, set by two units that answer in it: unit 42
+     (no includes: its text pass, 9,821 steps) and unit 34 (146 phases). A unit that requests is done in
+     0.25 to 0.69 ms: its 101 phases on one group, whatever its size (254 to 3,745 nodes). Its work in round 2
+     is the same phases, so keeping it would remove no phase. Rounds cost phases, not data.
+
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 

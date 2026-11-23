@@ -17,16 +17,36 @@ use rerail_metal::slabs;
 /// format 16 tape and its source placed in the slab residency, where the device reads them
 /// (decision 0468 §1). A document already resident (by its digest) is not placed again.
 pub fn place(files: &[(&[u8], bool)]) -> Result<Unit, rerail_metal::Error> {
+    place_kept(files, &mut Vec::new()).map(|(u, _)| u)
+}
+
+/// `place`, where `kept` holds the digests of `files`' first ones from an earlier round (and gets
+/// the rest's): a round's unchanged files are not lexed again, their tapes built only where the
+/// residency let them go. Also the tapes it built.
+pub fn place_kept(files: &[(&[u8], bool)], kept: &mut Vec<[u8; 32]>) -> Result<(Unit, usize), rerail_metal::Error> {
     use sha2::{Digest as _, Sha256};
-    let tapes: Vec<_> = files.iter().map(|&(s, cpp)| rerail_c_pp::tape::image_16(s, crate::pp::options(cpp))).collect();
-    let digests: Vec<[u8; 32]> = files.iter().zip(&tapes).map(|(&(s, _), t)| Sha256::new().chain_update(t.as_bytes()).chain_update(s).finalize().into()).collect();
+    let image = |k: usize| rerail_c_pp::tape::image_16(files[k].0, crate::pp::options(files[k].1));
+    let mut tapes: Vec<Option<_>> = (0..files.len()).map(|_| None).collect();
+    kept.truncate(files.len());
+    for k in kept.len()..files.len() {
+        let t = image(k);
+        kept.push(Sha256::new().chain_update(t.as_bytes()).chain_update(files[k].0).finalize().into());
+        tapes[k] = Some(t);
+    }
+    let digests = kept.clone();
     let misses = slabs::misses(&digests)?;
+    for (k, d) in digests.iter().enumerate() {
+        if misses.contains(d) && tapes[k].is_none() {
+            tapes[k] = Some(image(k));
+        }
+    }
+    let built = tapes.iter().filter(|t| t.is_some()).count();
     let mut parts = Vec::new();
     for (k, d) in digests.iter().enumerate() {
         if !misses.contains(d) || parts.iter().any(|p: &slabs::Placement<'_>| p.0 == *d) {
             continue;
         }
-        let (tape, src) = (tapes[k].as_bytes(), files[k].0);
+        let (tape, src) = (tapes[k].as_ref().expect("a missing document's tape is built").as_bytes(), files[k].0);
         parts.push(placement(tape.len(), src.len(), *d, rerail_c_pp::tape::lang(), move |t: &mut [u8], s: &mut [u8]| {
             // The loader's write of a load (0353 step 4a): the room is the document's one place.
             t.copy_from_slice(tape);
@@ -34,7 +54,7 @@ pub fn place(files: &[(&[u8], bool)]) -> Result<Unit, rerail_metal::Error> {
         }));
     }
     slabs::insert(&digests, parts)?;
-    Unit::of(slabs::resident(&digests)?)
+    Ok((Unit::of(slabs::resident(&digests)?)?, built))
 }
 
 /// A string literal of `text`: its `"` and `\` escaped (the serial pass's `string_tok`).
@@ -154,19 +174,22 @@ struct Progress {
     rounds: u32,
     /// The rooms its last run settled at (decision 0486 §8): the next round's start.
     sizes: Option<Sizes>,
+    /// Its files' documents' digests (`place_kept`), by the unit's file index: a round lexes only the
+    /// files the last one's answers loaded.
+    digests: Vec<[u8; 32]>,
 }
 
 impl Progress {
     fn start(cfg: &Config, io: &mut dyn Files, main: &str) -> Result<Progress, Refused> {
         let src = io.read(main).ok_or(Refused::NoMain)?;
         let pre = rerail_c_pp::stream::parallel::predefined(cfg).0;
-        Ok(Progress { loaded: Loaded { files: vec![pre, src], paths: vec!["<built-in>".into(), main.to_string()], found_by: vec![NOT_FOUND, NOT_FOUND] }, table: Vec::new(), rounds: 0, sizes: None })
+        Ok(Progress { loaded: Loaded { files: vec![pre, src], paths: vec!["<built-in>".into(), main.to_string()], found_by: vec![NOT_FOUND, NOT_FOUND] }, table: Vec::new(), rounds: 0, sizes: None, digests: Vec::new() })
     }
 
     /// The unit as the next round reads it: its files placed, and its layout.
-    fn unit(&self, d: &Dialect<'_>, cpp: bool) -> Result<(Unit, Layout), rerail_metal::Error> {
+    fn unit(&mut self, d: &Dialect<'_>, cpp: bool) -> Result<(Unit, Layout), rerail_metal::Error> {
         let (cfg, loaded) = (d.cfg, &self.loaded);
-        let unit = place(&loaded.files.iter().map(|s| (s.as_slice(), cpp)).collect::<Vec<_>>())?;
+        let (unit, _) = place_kept(&loaded.files.iter().map(|s| (s.as_slice(), cpp)).collect::<Vec<_>>(), &mut self.digests)?;
         let lay = Layout {
             nodes: vec![PpNode { file: 0, parent: NO_PARENT, pdir: 0, depth: 0, unit: 0 }, PpNode { file: 1, parent: NO_PARENT, pdir: 1, depth: 0, unit: 0 }],
             table: self.table.clone(),
@@ -302,7 +325,7 @@ enum Step {
 fn batch_round(d: &Dialect<'_>, cpp: bool, units: &mut [(Box<dyn Files + '_>, String)], live: &mut Vec<(usize, Progress)>, out: &mut Answers, eval: &mut Eval<'_>) -> Step {
     use rerail_metal::Error;
     let many = live.len() > 1;
-    let placed: Result<Vec<(Unit, Layout)>, Error> = live.iter().map(|(_, p)| p.unit(d, cpp)).collect();
+    let placed: Result<Vec<(Unit, Layout)>, Error> = live.iter_mut().map(|(_, p)| p.unit(d, cpp)).collect();
     let placed = match placed {
         Ok(placed) => placed,
         Err(_) if many => return Step::Split,

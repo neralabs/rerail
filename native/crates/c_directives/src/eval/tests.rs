@@ -11,7 +11,7 @@ fn same<T: PartialEq + std::fmt::Debug>(a: T, b: T, what: impl std::fmt::Display
     }
 }
 
-use super::rounds::place;
+use super::rounds::{place, place_kept};
 
 /// `corpus`'s files, each with whether it is C++.
 fn corpus_in() -> Vec<(Vec<u8>, Vec<u8>, bool)> {
@@ -2759,4 +2759,20 @@ fn where_an_evaluations_gpu_time_goes() {
             eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
         }
     }
+}
+
+/// Decision 0613 step 2: a unit's next round keeps its files' documents from the last one: it lexes
+/// only the files the last round's answers loaded, and reads the same documents.
+#[test]
+fn a_round_lexes_only_its_new_files() {
+    let (main, h) = (b"#include \"h.h\"\nint x = H;\n".to_vec(), b"#define H 1\n".to_vec());
+    let mut kept = Vec::new();
+    let (first, built) = place_kept(&[(&main[..], false)], &mut kept).unwrap();
+    same(built, 1, "the first round's tapes");
+    let (second, built) = place_kept(&[(&main[..], false), (&h[..], false)], &mut kept).unwrap();
+    same(built, 1, "the second round's tapes: the header's alone");
+    same(kept.len(), 2, "the digests kept");
+    let again = place(&[(&main[..], false), (&h[..], false)]).unwrap();
+    same(second.len(), again.len(), "the documents");
+    same(first.len(), 1, "the first round's documents");
 }
