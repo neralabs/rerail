@@ -3796,7 +3796,8 @@ describe("CodeRuleBridge", () => {
     expect(observations.size).toBe(0);
     baseline.release();
 
-    await vi.waitFor(() => expect([...observations.get(root)?.keys() ?? []]).toEqual(["src/a.py"]));
+    await bridge.settleWalk();
+    expect([...observations.get(root)?.keys() ?? []]).toEqual(["src/a.py"]);
     expect(observations.get(root)?.get("src/a.py")).toMatchObject({ language: "python", digest: expect.any(String), stamp: expect.any(String) });
   });
 
@@ -3809,7 +3810,8 @@ describe("CodeRuleBridge", () => {
     const observations: SourceObservationCache = new Map();
     const first = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { observations });
     await first.openWorkspace("session-1");
-    await vi.waitFor(() => expect(observations.get(root)?.get("src/b.py")?.digest).toBeDefined());
+    await first.settleWalk();
+    expect(observations.get(root)?.get("src/b.py")?.digest).toBeDefined();
     const shared = new Map(observations.get(root));
     await first.close();
 
@@ -3820,7 +3822,8 @@ describe("CodeRuleBridge", () => {
     const unchangedRead = holdDiscovery("reads", join(root, "src", "b.py"));
     await second.openWorkspace("session-2");
     // The second baseline reuses b.py's digest by stamp and re-reads only the changed a.py.
-    await vi.waitFor(() => expect(observations.get(root)?.get("src/a.py")?.digest).not.toBe(shared.get("src/a.py")?.digest));
+    await second.settleWalk();
+    expect(observations.get(root)?.get("src/a.py")?.digest).not.toBe(shared.get("src/a.py")?.digest);
     expect(observations.get(root)?.get("src/b.py")).toEqual(shared.get("src/b.py"));
     expect(unchangedRead.started).toBe(false);
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
@@ -3845,12 +3848,14 @@ describe("CodeRuleBridge", () => {
         acceptsPath: path => path !== "src/skipped.py",
       }, { observations });
       await bridge.openWorkspace(sessionId);
+      // The baseline walk publishes what it observed as it is applied, however long it takes on a busy machine.
+      await bridge.settleWalk();
     };
     await open("session-1");
-    await vi.waitFor(() => expect(observations.get(root)?.get("src/read.py")?.digest).toBeDefined());
+    expect(observations.get(root)?.get("src/read.py")?.digest).toBeDefined();
     const first = observations.get(root)!;
     await open("session-2");
-    await vi.waitFor(() => expect(observations.get(root)).not.toBe(first));
+    expect(observations.get(root)).not.toBe(first);
     // Each live session keeps a baseline of every source of its checkout, so a copy each would cost a whole checkout's
     // observations a session.
     expect(observations.get(root)?.get("src/read.py")).toBe(first.get("src/read.py"));
