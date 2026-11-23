@@ -298,6 +298,18 @@ fn dots(a: &Api, device: Ptr, groups: Groups) -> Option<&'static str> {
     }
 }
 
+/// The define naming the device's matrix units its kernels may take (`ukl/matrix.h`, decision 0617), or none:
+/// Intel's DPAS (`cl_intel_subgroup_matrix_multiply_accumulate`) where the kernels' sub-groups are the device's, 16
+/// lanes (the extension's functions are of a sub-group size; Xe2's is 16).
+fn units(a: &Api, device: Ptr, groups: Groups, width: u32) -> Option<&'static str> {
+    if std::env::var("RERAIL_OPENCL_UNITS").is_ok_and(|v| v == "0") {
+        return None;
+    }
+    let ext = device_info_string(a, device, CL_DEVICE_EXTENSIONS);
+    let has = ext.split_ascii_whitespace().any(|x| x == "cl_intel_subgroup_matrix_multiply_accumulate");
+    (has && groups == Groups::Required && width == 16).then_some("UKL_OPENCL_INTEL_DPAS")
+}
+
 fn lanes(a: &Api, device: Ptr) -> (u32, Groups) {
     let asked = match std::env::var("RERAIL_OPENCL_SIMD_WIDTH") {
         Err(_) => None,
@@ -390,6 +402,8 @@ struct DeviceInner {
     synced: bool,
     /// Its dot products' native form (`dots`): the define that turns it on in ukl/backend.h, or none.
     dot: Option<&'static str>,
+    /// Its matrix units' form (`units`): the define that turns it on in ukl/matrix.h, or none.
+    units: Option<&'static str>,
 }
 
 unsafe impl Send for DeviceInner {}
@@ -439,7 +453,7 @@ impl ClDevice {
         let max_alloc = u64::from_ne_bytes(ma[..8].try_into().unwrap());
         let (mut width, mut groups) = lanes(a, device);
         // Heap buffers first: memory wrapped in place (a block, a mapped tape) is read through one.
-        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, groups, width, base_align, max_alloc, usm: None, synced: false, dot: None }));
+        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, groups, width, base_align, max_alloc, usm: None, synced: false, dot: None, units: None }));
         // A driver whose kernels' writes reach the host's pages only through a map is made current at each
         // submission's edges (`synced`); a device's own memory holding a buffer while it computes is not a copy (0353).
         // `RERAIL_OPENCL_SYNCED=1` takes this path on any device (its tests on a driver that needs no map).
@@ -454,12 +468,13 @@ impl ClDevice {
         }
         drop(probe);
         let dot = dots(a, device, groups);
-        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, groups, width, base_align, max_alloc, usm: None, synced, dot }));
+        let units = units(a, device, groups, width);
+        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, groups, width, base_align, max_alloc, usm: None, synced, dot, units }));
         if synced {
             return Ok(d);
         }
         let Some(usm) = usm(a, platform, device) else { return Ok(d) };
-        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, groups, width, base_align, max_alloc, usm: Some(usm), synced, dot }));
+        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, groups, width, base_align, max_alloc, usm: Some(usm), synced, dot, units }));
         // Without the check's pass its buffers stay the heap's, with no address (one context; nothing releases it).
         if let Err(e) = with.follows_addresses() {
             eprintln!("rerail-device: {e}: OpenCL buffers without addresses");
@@ -620,6 +635,9 @@ impl ClDevice {
         }
         if let Some(dot) = self.0.dot {
             d.push((dot, "1".into()));
+        }
+        if let Some(units) = self.0.units {
+            d.push((units, "1".into()));
         }
         d
     }
@@ -925,6 +943,36 @@ impl ClComputeFunctionLibrary {
             }
         }
         Ok(ClComputeFunctionLibrary { program: Arc::new(program), name: file_name_to_appear_in_error_messages.to_string() })
+    }
+
+    /// The printable strings of the device's binary of `preprocessed_source` (built as `compile_from_source` builds it,
+    /// with `more` options after its own), one a line: for a test to read which instructions a kernel took (decision
+    /// 0617, R7), where the driver's binary names them.
+    pub fn native_code(device: &ClDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str, more: &str) -> Result<Option<String>, String> {
+        let a = api()?;
+        let version = match device.groups() {
+            Groups::Required => "-cl-std=CL3.0",
+            Groups::Amd => "-cl-std=CL2.0",
+            Groups::Emulated => "-cl-std=CL1.2",
+        };
+        let options = CString::new(format!("{version} {more}")).unwrap();
+        let src = CString::new(preprocessed_source).map_err(|_| format!("{file_name_to_appear_in_error_messages}: a NUL in the source"))?;
+        let p = src.as_ptr();
+        let mut e = 0;
+        let program = unsafe { (a.create_program_with_source)(device.0.context, 1, &p, std::ptr::null(), &mut e) };
+        check("clCreateProgramWithSource", e)?;
+        let program = Program(program);
+        let e = unsafe { (a.build_program)(program.0, 1, &device.0.device, options.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) };
+        if e != CL_SUCCESS {
+            return Err(format!("OpenCL building {file_name_to_appear_in_error_messages} for {} ({e})", device.name()));
+        }
+        let mut size = 0usize;
+        check("clGetProgramInfo", unsafe { (a.get_program_info)(program.0, CL_PROGRAM_BINARY_SIZES, std::mem::size_of::<usize>(), (&raw mut size).cast(), std::ptr::null_mut()) })?;
+        let mut bin = vec![0u8; size];
+        let mut ptr = bin.as_mut_ptr();
+        check("clGetProgramInfo", unsafe { (a.get_program_info)(program.0, CL_PROGRAM_BINARIES, std::mem::size_of::<*mut u8>(), (&raw mut ptr).cast(), std::ptr::null_mut()) })?;
+        let words: Vec<&str> = bin.split(|b| !(0x20..0x7f).contains(b)).filter(|w| w.len() >= 4).filter_map(|w| std::str::from_utf8(w).ok()).collect();
+        Ok(Some(words.join("\n")))
     }
 
     fn kernel(&self, name: &str) -> Result<Kernel, String> {

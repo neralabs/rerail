@@ -99,6 +99,9 @@ struct Api {
     nvrtc_get_program_log: unsafe extern "C" fn(Ptr, *mut c_char) -> i32,
     nvrtc_get_cubin_size: unsafe extern "C" fn(Ptr, *mut usize) -> i32,
     nvrtc_get_cubin: unsafe extern "C" fn(Ptr, *mut c_char) -> i32,
+    /// NVRTC's PTX of a program compiled for a virtual architecture (`native_code`); HIP's code object on HIP.
+    nvrtc_get_ptx_size: unsafe extern "C" fn(Ptr, *mut usize) -> i32,
+    nvrtc_get_ptx: unsafe extern "C" fn(Ptr, *mut c_char) -> i32,
     nvrtc_destroy_program: unsafe extern "C" fn(*mut Ptr) -> i32,
     nvrtc_version: unsafe extern "C" fn(*mut i32, *mut i32) -> i32,
     cu_driver_get_version: unsafe extern "C" fn(*mut i32) -> CUresult,
@@ -310,6 +313,8 @@ fn cuda_api() -> Result<Api, String> {
         nvrtc_get_program_log: sym!(nvrtc, "nvrtcGetProgramLog"),
         nvrtc_get_cubin_size: sym!(nvrtc, "nvrtcGetCUBINSize"),
         nvrtc_get_cubin: sym!(nvrtc, "nvrtcGetCUBIN"),
+        nvrtc_get_ptx_size: sym!(nvrtc, "nvrtcGetPTXSize"),
+        nvrtc_get_ptx: sym!(nvrtc, "nvrtcGetPTX"),
         nvrtc_destroy_program: sym!(nvrtc, "nvrtcDestroyProgram"),
         nvrtc_version: sym!(nvrtc, "nvrtcVersion"),
         cu_driver_get_version: sym!(cuda, "cuDriverGetVersion"),
@@ -365,6 +370,8 @@ fn hip_api() -> Result<Api, String> {
         nvrtc_get_program_log: sym!(rtc, "hiprtcGetProgramLog"),
         nvrtc_get_cubin_size: sym!(rtc, "hiprtcGetCodeSize"),
         nvrtc_get_cubin: sym!(rtc, "hiprtcGetCode"),
+        nvrtc_get_ptx_size: sym!(rtc, "hiprtcGetCodeSize"),
+        nvrtc_get_ptx: sym!(rtc, "hiprtcGetCode"),
         nvrtc_destroy_program: sym!(rtc, "hiprtcDestroyProgram"),
         nvrtc_version: sym!(rtc, "hiprtcVersion"),
         cu_driver_get_version: sym!(hip, "hipDriverGetVersion"),
@@ -981,6 +988,45 @@ impl CudaComputeFunctionLibrary {
             ck((a.cu_module_load_data)(&mut module, cubin.as_ptr().cast()), "cuModuleLoadData")?;
             crate::store::save(kind, &key, "cubin", &cubin);
             Ok(CudaComputeFunctionLibrary { module, device: *device })
+        }
+    }
+
+    /// The PTX NVRTC makes of `preprocessed_source` for the device's virtual architecture (`compute_<sm>`), as its
+    /// library's compile would, its options the same: what a test reads to see which instructions a kernel's form
+    /// took (decision 0617, R7). None on HIP, whose compiler makes a code object, no text.
+    pub fn native_code(device: &CudaDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Option<String>, String> {
+        if device.vendor != Vendor::Cuda {
+            return Ok(None);
+        }
+        let a = device.current();
+        let mut options = vec![format!("--gpu-architecture=compute_{}", device.sm), "-std=c++20".to_owned(), "-default-device".to_owned()];
+        options.extend(std::env::var("RERAIL_CUDA_OPTIONS").unwrap_or_default().split_whitespace().map(str::to_owned));
+        let src = CString::new(preprocessed_source).map_err(|e| e.to_string())?;
+        let name = CString::new(file_name_to_appear_in_error_messages).map_err(|e| e.to_string())?;
+        let opts: Vec<CString> = options.into_iter().map(|o| CString::new(o).unwrap()).collect();
+        let opt_ptrs: Vec<*const c_char> = opts.iter().map(|o| o.as_ptr()).collect();
+        let mut prog = std::ptr::null_mut();
+        unsafe {
+            if (a.nvrtc_create_program)(&mut prog, src.as_ptr(), name.as_ptr(), 0, std::ptr::null(), std::ptr::null()) != 0 {
+                return Err("NVRTC's program creation failed".into());
+            }
+            let r = (a.nvrtc_compile_program)(prog, opt_ptrs.len() as i32, opt_ptrs.as_ptr());
+            if r != 0 {
+                let mut n = 0;
+                (a.nvrtc_get_program_log_size)(prog, &mut n);
+                let mut log = vec![0u8; n.max(1)];
+                (a.nvrtc_get_program_log)(prog, log.as_mut_ptr().cast());
+                (a.nvrtc_destroy_program)(&mut prog);
+                let log = String::from_utf8_lossy(&log);
+                let errors: Vec<&str> = log.lines().filter(|l| l.contains("error")).take(20).collect();
+                return Err(format!("NVRTC compiling {file_name_to_appear_in_error_messages} to PTX: {}", errors.join("\n")));
+            }
+            let mut n = 0;
+            (a.nvrtc_get_ptx_size)(prog, &mut n);
+            let mut ptx = vec![0u8; n];
+            (a.nvrtc_get_ptx)(prog, ptx.as_mut_ptr().cast());
+            (a.nvrtc_destroy_program)(&mut prog);
+            Ok(Some(String::from_utf8_lossy(&ptx).trim_end_matches('\0').to_owned()))
         }
     }
 

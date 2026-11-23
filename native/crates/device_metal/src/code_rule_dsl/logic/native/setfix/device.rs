@@ -3424,6 +3424,7 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
         };
         batch.arena_floor(floor);
         batch.arena_reserved(false);
+        batch.again_on_rewrap();
         let mut kept = Kept::default();
         // Encoded, not launched, on an error: dropped with its batch, which nothing ran. The seed round first, until it
         // has run.
@@ -3431,6 +3432,11 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
         let (seeded, templates) = encode_program(seeding, deltas, heads, store, names, named, shared, lp, &live, &mut sizes, &mut sums, &logs, side, &round, &mut batch, &mut kept)?;
         let (t0, w0) = (Instant::now(), thread_cpu());
         let done = batch.finish().map_err(e)?;
+        if done.rewrapped {
+            // Its encoding grew a head's block past the wrap its relations had bound (`Done::rewrapped`): nothing
+            // ran, and it is encoded again, every bind of the grown wrap.
+            continue;
+        }
         lp.rep.wait_wall += t0.elapsed().as_secs_f64();
         lp.rep.wait_cpu += thread_cpu() - w0;
         tally(lp.rep, &done);

@@ -10816,3 +10816,22 @@ group's index its rows in the column's order), the text and op demands narrowed 
 
 Relax: the engine checks clean; rerail-tape-format 44/44, the vtab syntax tests 79/79, rerail-planner, the warm
 corpus tests 8/8 (the kept demand reads back). The Metal compile change is not run here (no Metal on this Mac).
+
+### Q516. Roll-up 89 (CUDA-support 47f47a51ef onto Pulling-it-all-together): what the merge chose
+
+CUDA-support (47f47a51ef): 0617's matrix units through UKL (f16, bf16, i8 and 1-bit fragments on NVIDIA's mma.sync,
+Apple's simdgroup_matrix, Intel's DPAS, the 680M's and the V100's emulation, R7 read from PTX and AIR), accel's
+closure in one dispatch on the work queue, its GPU price bench, and join programs that reach a block through one wrap.
+- **`accel/src/gpu/mod.rs`, `relational.uglykl`**: both branches fixed the closure past the launch budget (0601):
+  bend's `cl_level` (roll-up 88, at most 33 launches, a group barrier a narrow level) and this branch's `cl_dag`
+  (UKL's work queue, 0540: a predecessor pushed by its last successor, 3 launches). The user's choice (2026-11-23):
+  `cl_dag`. `cl_level`, `level_launches` and `closure_levels_take_bounded_launches` are removed.
+- **`device_metal/…/metal_join.rs`**: the branch's side was its merge base's round yield (`resume`, `yielded`), which
+  the hub replaced with 0603's relaunches: the hub's. Its new change (d98a947506, G15 misread a block written through
+  two wraps) is kept whole: `Done::rewrapped` beside the hub's counts, `again_on_rewrap`, and the refusal at the top
+  of the hub's `launch` (a relaunch reaches the blocks the first launch did, so it passes when that did).
+- **`setfix/device.rs`**: the hub's `arena_reserved(false)` and `finish`, with the branch's `again_on_rewrap` and its
+  encoding again of a program not launched; no yield loop.
+
+Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device tests 39/39 on UKL's CPU backend
+(the recursive stratum among them). The matrix units and Metal are not run here.
