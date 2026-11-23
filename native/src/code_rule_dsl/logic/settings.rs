@@ -33,12 +33,17 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
     // reading the file (O111), which a policy's text does not do itself.
     let policy = |text: &str| text.lines().map(str::trim_start).any(|l| l.starts_with(".policy") || l.starts_with(".language"));
     let includes = |text: &str| text.lines().any(|l| l.trim_start().starts_with("#include"));
+    // Each including file's canonical path, found once: its seed's, and the text's below (a walk of the path each).
     let mut seeds = Vec::new();
     for ((path, text), j) in paths.iter().zip(&texts).zip(&json) {
         if includes(text) && !j {
             seeds.push(phase0::Seed::File(dunce::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?));
         }
     }
+    let mut canonicals = seeds.iter().map(|s| match s {
+        phase0::Seed::File(p) => p.clone(),
+        phase0::Seed::Text { .. } => unreachable!("a file's seed"),
+    });
     let graphs = phase0::graphs(&seeds).map_err(|e| e.to_string())?;
     crate::code_rule_dsl::logic::profile::timeline_mark("the program files' graphs");
     let mut graphs = graphs.into_iter();
@@ -54,7 +59,7 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
         let graph = graphs.next().expect("a graph per seed");
         // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a
         // run however many of its programs include them; a file beside it is written in. A policy reads `core.rerail`.
-        let canonical = dunce::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let canonical = canonicals.next().expect("a canonical path per seed");
         let library = dirs.as_ref().map(|d| d.lib.as_path()).ok_or_else(|| "the rule library does not canonicalize".to_owned())?;
         let own = module_text(&canonical, &text, &graph, library, &mut Vec::new(), &read)?;
         let own = if policy(&text) && !includes(&own) { format!("#include \"core.rerail\"\n{own}") } else { own };

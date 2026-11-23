@@ -824,14 +824,12 @@ fn missing_columns(
 ) -> StoreResult<Vec<&'static (&'static str, &'static str, &'static str)>> {
     // The tables' columns in one query (the names are this build's constants), each table's present or not: a query
     // per added column was twenty at every open.
-    static QUERY: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        let mut tables: Vec<&str> = ADDED_COLUMNS.iter().map(|(t, _, _)| *t).collect();
-        tables.sort_unstable();
-        tables.dedup();
-        let names: Vec<String> = tables.iter().map(|t| format!("'{t}'")).collect();
-        format!("SELECT t.name, p.name FROM sqlite_master t, pragma_table_info(t.name) p WHERE t.type='table' AND t.name IN ({})", names.join(","))
-    });
-    let mut statement = connection.prepare(&QUERY)?;
+    let mut tables: Vec<&str> = ADDED_COLUMNS.iter().map(|(t, _, _)| *t).collect();
+    tables.sort_unstable();
+    tables.dedup();
+    let names: Vec<String> = tables.iter().map(|t| format!("'{t}'")).collect();
+    let query = format!("SELECT t.name, p.name FROM sqlite_master t, pragma_table_info(t.name) p WHERE t.type='table' AND t.name IN ({})", names.join(","));
+    let mut statement = connection.prepare(&query)?;
     let found: HashSet<(String, String)> = statement.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
     let tables: HashSet<&str> = found.iter().map(|(t, _)| t.as_str()).collect();
     Ok(ADDED_COLUMNS.iter().filter(|(table, column, _)| tables.contains(table) && !found.contains(&((*table).to_owned(), (*column).to_owned()))).collect())

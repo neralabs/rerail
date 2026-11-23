@@ -279,7 +279,8 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
             }
             result => result,
         }.map_err(|e| Error::Syntax(format!("phase 0: {e}")))?;
-        let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of(seed, k)))).collect();
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok();
+        let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of_in(seed, k, lib.as_deref())))).collect();
         // Kept as images (decision 0246) whichever process derived them: an image is the engine build's, not the
         // process's. The image keeps the bootstrap run's plans (Q150), so this run and the next, which reads it, name
         // the same plans (`the_run_after_a_cold_one_writes_nothing`). Clearing them here as well (f7e047997, from
@@ -355,7 +356,7 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
     if !named.is_empty() {
         whole.phases.insert(text_key(0), named);
     }
-    let graph = whole.of(seed, 0);
+    let graph = whole.of_in(seed, 0, Some(lib));
     crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>().0.lock().expect("phase 0's graphs").insert((Some(dirs.clone()), seed.clone()), Arc::new(graph));
     true
 }
@@ -503,11 +504,17 @@ impl Graph {
     /// modules ask (`p0_cand`). Taken whole, a text's graph held every seed's absent files and the implicit includes
     /// of the modules that were seeds too, and its digest depended on the run it was derived in.
     pub fn of(&self, seed: &Seed, k: usize) -> Graph {
+        self.of_in(seed, k, dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok().as_deref())
+    }
+
+    /// `of`, the rule library `lib` (canonical, `Dirs::lib`) found once by a caller that makes many: found per graph,
+    /// each was a walk of the library's path (317 a warm run).
+    pub(in crate::code_rule_dsl) fn of_in(&self, seed: &Seed, k: usize, lib: Option<&std::path::Path>) -> Graph {
         let start = match seed {
             Seed::Text { .. } => text_key(k),
             Seed::File(p) => p.to_string_lossy().into_owned(),
         };
-        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok().map(|l| l.to_string_lossy().into_owned());
+        let lib = lib.map(|l| l.to_string_lossy().into_owned());
         let mut candidates: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
         let mut candidate = |from: &str, name: &str| {
             if let Some(l) = &lib {

@@ -91,6 +91,9 @@ impl Entries {
             Some(p) => Box::new(chain.of_part(p).into_iter()),
             None => chain.all(),
         };
+        // Each atom's text read once for the entry, shared by the rows that hold it (the relations' and rules' names
+        // repeat across a program's rows): read per cell, they were most of a warm run's kept plans' read.
+        let mut texts: std::collections::HashMap<u32, Option<super::super::front::Name>> = std::collections::HashMap::new();
         for entry in entries.filter(|e| *e.key.ident == self.ident(e.key.rel)) {
             let part = entry.key.part;
             let Some((rel, kinds)) = entry.key.rel.rsplit_once('#') else { continue };
@@ -109,7 +112,10 @@ impl Entries {
                     .map(|(&w, &k)| {
                         Some(match k {
                             b'i' => Value::Int(w),
-                            b's' => Value::Str(store.atom_value(u32::try_from(w).ok()?).ok()??.into()),
+                            b's' => {
+                                let atom = u32::try_from(w).ok()?;
+                                Value::Str(texts.entry(atom).or_insert_with(|| store.atom_value(atom).ok().flatten().map(Into::into)).clone()?)
+                            }
                             b'n' | b'k' | b'f' => {
                                 let class = match k {
                                     b'n' => Class::Name,
