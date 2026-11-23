@@ -853,6 +853,41 @@ Left, by size:
   root's captures need the root programs' own capture output (0106 §3, Open). `rr_ast_6_1` is `nearest` to a
   function definition, an axis.
 
+### Step 6, the rest: `nameref` a matcher, its guests' nodes from `guest_of` (2026-11-23)
+
+`nameref` stayed a join because a matcher runs over a file's tape, and a quoted annotation's nodes have none in the
+wave. They do not need the wave: a guest's nodes are what `guest_of` binds (decision 0431). So `Absorb` now takes a
+root of only a kind and its negated parent edges where the program has `guest_of`, and writes the rule twice: as the
+matcher (the tape's nodes), and as written, led by `guest_of(r, _)` (a guest's). A node both reach is one row.
+`quoted_annotations_are_read_as_their_code` and `leg_083_typed_counts_resolve_by_the_receivers_type`, the two oracle
+tests the matcher alone failed, pass.
+
+Two reads went with it, each made a list of ids at every probe of a chunk with a parsed string:
+
+- `Layered::lookup_read` refused whenever the chunk had parts. It now reads the base in place and then the parts that
+  may hold the value (`Parts::of`, narrowed to the exact host nodes above), numbered past the base's rows
+  (`a_layered_read_in_place_is_its_lookups_rows`).
+- `Relation` had no `lookup_read` (the trait's default refuses). It reads its column's order where it lies.
+
+On `all` (m1max; against the parts' fix): rows unchanged. `pre_152` and `pre_227` (4.05 s) are gone. Their places
+are `pre_306` (the matcher's `nameref`, 1.46 s) and `pre_309` (`rf_read` led by the matcher's relation, 1.60 s).
+Instructions 1,691 → 1,648 G, own CPU 155.1 → 152.5 s. What is left in each is one probe at about 0.5 µs a row
+(`text($n, $x)`, 882 ms; `rr_ast_35($i)`, 754 ms).
+
+### A run's exit waited on idle upkeep (2026-11-23; cause not confirmed)
+
+Three runs on `all` (two Metal, one CPU) took 304–340 s of wall at a 17–18 GB peak, where the same binary takes
+42–70 s at 2.5 GB. In the CPU one (gm2), the profile closed at 07:54:19 after 41.5 s of run. The tape cache's files
+and the log closed at 07:58:41. Its process CPU was 435 s against about 170 s. So the time was at the run's end,
+after its report. `upkeep::finish_soon` holds the exit for any step the scheduler's thread has under way, and that
+thread starts idle work (the cost model's fit, the kernels' compiles) when the machine looks idle, as a run's
+single-threaded tail does. A fit stopped only for a run beginning, never for one finishing. Now a run finishing
+stops a background job's step at its next check, and none starts. The fit checks between its four forests
+(`CostModel::train_unless`, `compare_unless`). Its work stays due (`a_run_finishing_stops_a_background_step_not_a_utility_one`).
+That such a step was what the slow runs waited for is not shown. No run saved a model, and a forest over about
+1,000 samples is unlikely to take 265 s and 15 GB. The product runs now log upkeep's steps
+(`RERAIL_UPKEEP_LOG=1`), so the next one names its job.
+
 ### Steps 5 and 8, where they stand (2026-11-22)
 
 - **Step 5.** The climb runs in one wave (0570) with its readers in it (0561); what is left is its probes, about
