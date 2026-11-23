@@ -442,6 +442,17 @@ The template's findings stand at the file's lines.
 6. **Measure.** corpus0 × B-now against the targets (one pack 0.786 T, normal packs 2.428 T, 463 findings,
    d067ec2ebf6f).
 
+   Measured (2026-11-22, 02f9fa20a6, off, one thread, an M1 Max at load averages of 10 to 28; instructions retired,
+   the profiling build):
+
+   | Run | Instructions | Target | Findings |
+   |---|---|---|---|
+   | one pack (policies grouped by language alone, a temporary switch in `tools.rs`) | 0.726 T | 0.786 T | 463, d067ec2ebf6f |
+   | normal packs | 1.563 T | 2.428 T | 463, digest 75193ca656bd (the tsv's) |
+
+   Both are under their targets with the same findings. Against this decision's measurement before the passes
+   (one pack 0.983 T, normal packs 2.179 T), the narrow copies' cost is gone and more.
+
 ## Open
 
 - The declarations' names (`.context`, `.from`, `.export`, `.root`) and the qualified read (`annotation.ann_type`),
