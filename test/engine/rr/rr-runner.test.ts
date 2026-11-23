@@ -160,6 +160,25 @@ describe("describeRerailPolicies", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it("stops a describe past its own deadline, which a run's deadline does not change, and names the setting that raises it", () => {
+    const { rule } = checkout({});
+    vi.stubEnv("RERAIL_RR_DEADLINE_MS", "abc");
+    try {
+      expect(describeRerailPoliciesSync([rule])).toMatchObject([{ path: rule, ok: true }]);
+      vi.stubEnv("RERAIL_RR_DEADLINE_MS", "1");
+      expect(describeRerailPoliciesSync([rule])).toMatchObject([{ path: rule, ok: true }]);
+      vi.stubEnv("RERAIL_RR_DESCRIBE_DEADLINE_MS", "1");
+      expect(describeRerailPoliciesSync([rule])).toEqual([{
+        path: rule,
+        ok: false,
+        error: "the engine did not finish reading it within 1 ms, the limit for reading rule files (RERAIL_RR_DESCRIBE_DEADLINE_MS raises it)",
+      }]);
+      expect(leftDirectories()).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe("runRerailPolicies", () => {
