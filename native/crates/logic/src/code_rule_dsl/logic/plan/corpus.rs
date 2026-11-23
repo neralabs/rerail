@@ -480,6 +480,29 @@ pub fn held_distinct(rel: &str, st: &[(String, i64, i64, i64, i64)], total: i64)
     st.iter().map(|m| usize::try_from(if node == Some(m.0.as_str()) { total.max(m.2) } else { m.2 }).ok()).collect()
 }
 
+/// A semi-join's statistics as the cross part's plan reads the relation (the batch's model, `held_distinct`): every
+/// node's rows (`total`), of which the held nodes' (`st`: name, rows, distinct, squares, squares by document) are a
+/// sample. Its node's column (`n`) holds one row a node: as many values as rows, each once. Another column (a
+/// document, a line) keeps its distinct values at the held nodes, each with `total / rows` times as many rows, so its
+/// squares by that squared. At the held nodes alone, a probe of `docof` by its document was priced at a row or two,
+/// where it reads every node of the document; a removal join led with it and made every document it named.
+pub fn held_model(rel: &str, st: &[(String, i64, i64, i64, i64)], total: i64) -> Vec<(String, i64, i64, i64, i64)> {
+    let node = super::super::sql::select::input_columns(rel).and_then(|input| input.iter().position(|n| *n == "n").map(|i| input[i]));
+    st.iter()
+        .map(|(c, rows, ndv, sq, sqd)| {
+            if *rows <= 0 || total <= *rows {
+                return (c.clone(), *rows, *ndv, *sq, *sqd);
+            }
+            if node == Some(c.as_str()) {
+                return (c.clone(), total, total.max(*ndv), total, total);
+            }
+            let f = total as f64 / *rows as f64;
+            let scaled = |x: i64| (x as f64 * f * f).round() as i64;
+            (c.clone(), total, *ndv, scaled(*sq), scaled(*sqd))
+        })
+        .collect()
+}
+
 /// Statistics under `columns`' names, in order (a kept count's columns are named as the source it was first made of).
 fn rename(measured: Vec<(String, i64, i64, i64, i64)>, columns: &[String]) -> Vec<(String, i64, i64, i64, i64)> {
     measured.into_iter().zip(columns).map(|((_, a, b, c, d), name)| (name.clone(), a, b, c, d)).collect()
@@ -8095,7 +8118,7 @@ fn run_observed_within(
                         base_stats_out.push((rel.clone(), base_digest(&rel), k));
                     }
                     give_held(&rel, &st, total);
-                    st
+                    held_model(&rel, &st, total)
                 } else {
                     let held: BTreeSet<&str> = held.iter().map(String::as_str).collect();
                     let (st, how, keep) = base_counted(&rel, source.as_ref(), &held, kept_stats.remove(&rel), None);
@@ -8275,7 +8298,9 @@ fn run_observed_within(
                         base_stats_out.push((rel.clone(), base_digest(&rel), k));
                     }
                     give_held(&rel, &st, total);
-                    (rows, st)
+                    // Planned as the batch reads it: every node's rows (`held_model`).
+                    let model = held_model(&rel, &st, total);
+                    (model.first().map_or(rows, |s| usize::try_from(s.1).unwrap_or(rows)), model)
                 }
                 Counted::Measured(st, how, keep) => {
                     crate::code_rule_dsl::logic::profile::decision("a semi-join's rows counted whole", || format!("{rel}: columns {columns:?}, input {:?}: {how}", super::super::sql::select::input_columns(&rel)));

@@ -2748,10 +2748,14 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                 // lines; a 16z tape's blocks through the reader's cache, the one the JIT's reads above share.
                 {
                     use rerail_tape_format::view_reads::{Doc, Tape};
-                    // SAFETY: the reader's view (its cache after it, 128 bytes on), the tape's bytes, the
-                    // entry in its block, which the projection holds.
-                    let (rv, cache) = unsafe { (&*v, v.cast::<u8>().add(128)) };
-                    let doc = Doc { entry: unsafe { &*e.cast::<rerail_clif::view_reads::ViewDoc>() }, tape: Tape::new(tape, rv, cache), lines: &words, source: source.as_bytes() };
+                    // The 16z cache where it lies (`ZCache::at`, the address `view_for` names relative to the tape), as
+                    // the batch's reads pass it (`made::reads`); none for format 16. Not the bytes after the view: the
+                    // view is a copy on this stack, so a 16z read took them as a cache with no generations and
+                    // `lookup`'s `gens - 1` overflowed (Linux).
+                    let zc = cache.as_ref().map_or(std::ptr::null(), |c| c.at().cast_const());
+                    // SAFETY: the reader's view, the tape's bytes, the entry in its block, which the projection holds.
+                    let rv = unsafe { &*v };
+                    let doc = Doc { entry: unsafe { &*e.cast::<rerail_clif::view_reads::ViewDoc>() }, tape: Tape::new(tape, rv, zc), lines: &words, source: source.as_bytes() };
                     let rust: Vec<i64> = (0..n)
                         .flat_map(|l| {
                             let mut row: Vec<i64> = (0..5).map(|c| doc.node(l, c)).collect();
@@ -3080,7 +3084,7 @@ fn reads_side_by_side_make_each_document_once() {
 fn a_probe_makes_the_document_it_names_alone() {
     let store = ContentStore::open(&temp("probe-one")).unwrap();
     let docs: Vec<Document> = (1..=5).map(|k| document(k, &format!("m{k}.py"), "python", &format!("x{k} = y({k})\n"))).collect();
-    let projection = Projection { shape: Shape::Core, reads: Some(["text".to_owned(), "op".to_owned()].into()), ..Projection::core() };
+    let projection = Projection { shape: Shape::Core, reads: Some(["text".to_owned(), "name".to_owned()].into()), ..Projection::core() };
     let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     let sources = made_sources(&batch);
     assert_eq!(batch.docs.made_count(), 0, "nothing is made before a read");
@@ -3092,8 +3096,9 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert_eq!(batch.docs.made_count(), 1, "only the probed document is made");
     // `text` by node is read off the tape (decision 0353 step 3): its document projected, no rows made.
     assert_eq!(batch.groups(), 0);
-    let op = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "op").unwrap().2);
-    let _ = op.lookup(0, &[batch.docs[2].global(0)]).unwrap();
+    // `name` is made rows (`op` is a view of the rank index since c6129a7d93: it makes none).
+    let name = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "name").unwrap().2);
+    let _ = name.lookup(0, &[batch.docs[2].global(0)]).unwrap();
     assert_eq!(batch.docs.made_count(), 1, "only the probed document is made");
     assert_eq!(batch.groups(), 1, "a probe of another relation makes its document's rows");
     assert!(text.failure().is_none());
