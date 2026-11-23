@@ -29,6 +29,8 @@ pub enum Item {
     /// A node after a numbered sibling: its parent's child past the first (the `next_sibling` view's rows, by the
     /// later node).
     Sibling = 3,
+    /// A spread node (`granules::SPREAD`: `*args`, `...xs`; the `spread` view's rows).
+    Spread = 4,
 }
 
 /// The items, as `Item`'s numbers.
@@ -39,12 +41,8 @@ const WORDS: usize = rerail_clif::ids::WORDS as usize;
 /// Item `item`'s count before group `g` (the words after the bits).
 #[inline]
 fn before_of(g: &[u64; WORDS], item: Item) -> u32 {
-    match item {
-        Item::Node => g[ITEMS] as u32,
-        Item::Token => (g[ITEMS] >> 32) as u32,
-        Item::Field => g[ITEMS + 1] as u32,
-        Item::Sibling => (g[ITEMS + 1] >> 32) as u32,
-    }
+    let i = item as usize;
+    (g[ITEMS + i / 2] >> (32 * (i & 1))) as u32
 }
 
 /// Items a select sample stands for.
@@ -90,8 +88,12 @@ impl Ranks {
         let groups = Cells::build(block, n, |groups| {
             walk(&mut Marks { first, groups });
             for g in groups.iter_mut() {
-                g[ITEMS] = u64::from(count[0]) | u64::from(count[1]) << 32;
-                g[ITEMS + 1] = u64::from(count[2]) | u64::from(count[3]) << 32;
+                for (k, c) in count.iter().enumerate() {
+                    if k & 1 == 0 {
+                        g[ITEMS + k / 2] = 0;
+                    }
+                    g[ITEMS + k / 2] |= u64::from(*c) << (32 * (k & 1));
+                }
                 for (c, bits) in count.iter_mut().zip(&g[..ITEMS]) {
                     *c += bits.count_ones();
                 }
@@ -114,7 +116,7 @@ impl Ranks {
             })
             .expect("a batch's block holds its projection")
         };
-        let samples = [sample(Item::Node), sample(Item::Token), sample(Item::Field), sample(Item::Sibling)];
+        let samples = [sample(Item::Node), sample(Item::Token), sample(Item::Field), sample(Item::Sibling), sample(Item::Spread)];
         let desc = Desc::<Numbering>::new(block);
         let d = desc.as_ptr();
         // SAFETY: the descriptor is this build's alone, and the runs point at cells of the same block, which live

@@ -13,11 +13,11 @@
 //! slots, its child granules (`kids`: the granule, and its parent's own nodes and tokens before it) and the run rank
 //! of each stretch between them (`runs`), and the slots and runs by key (`by_slot`, `run_at`).
 
-/// The items a rank index marks: numbered nodes, tokens, nodes under a field, nodes after a numbered sibling
-/// (`Item`'s numbers).
-pub const ITEMS: u32 = 4;
-/// A group's words: one of bits an item, then the counts before it.
-pub const WORDS: u32 = ITEMS + 2;
+/// The items a rank index marks: numbered nodes, tokens, nodes under a field, nodes after a numbered sibling, spread
+/// nodes (`Item`'s numbers).
+pub const ITEMS: u32 = 5;
+/// A group's words: one of bits an item, then the counts before it, two to a word.
+pub const WORDS: u32 = ITEMS + ITEMS.div_ceil(2);
 /// Items a select sample stands for.
 pub const SAMPLE: u32 = 64;
 /// An id's low 32 bits: its granule's slot, then its index in it (`INDEX_BITS`).
@@ -103,7 +103,7 @@ pub struct Numbering {
     /// granule is searched between two of them.
     pub jumps: [Run; 2],
 }
-const _: () = assert!(std::mem::size_of::<Numbering>() == 32 + 16 * 23);
+const _: () = assert!(std::mem::size_of::<Numbering>() == 32 + 16 * 24);
 
 /// No number, no node, no granule: a read's answer for none (the CLIF's `NONE`).
 pub const NONE: u32 = u32::MAX;
@@ -172,7 +172,8 @@ impl Numbering {
         &groups[g as usize]
     }
 
-    /// `item`'s count before group `g`: word 4's low or high half (nodes, tokens), word 5's (fielded, siblings).
+    /// `item`'s count before group `g`: word `ITEMS + item / 2`'s low or high half (nodes, tokens; fielded, siblings;
+    /// spread).
     #[inline(always)]
     unsafe fn before(&self, g: u32, item: u32) -> u32 {
         // SAFETY: the caller's.

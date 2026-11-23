@@ -1653,6 +1653,9 @@ impl Projected {
                 if n != 0 && f.field(id) != 0 {
                     marks.mark(Item::Field, id);
                 }
+                if dialect.is_some_and(|d| d.granule_kind(d.code(f, id)) & granules::SPREAD != 0) {
+                    marks.mark(Item::Spread, id);
+                }
                 // A direct child of a numbered node: its parent is on the path. An anchor that hangs from the root is no
                 // child of it, and leaves the path as it is (what it closes, the next child of an open node pops).
                 if let Some(q) = above.filter(|&q| marks.has(Item::Node, q)) {
@@ -1859,6 +1862,10 @@ impl Projected {
     /// The nodes after a sibling (`next_sibling`'s rows).
     pub fn after_siblings(&self) -> u32 {
         self.ranks.count(Item::Sibling)
+    }
+    /// The spread nodes (`spread`'s rows).
+    pub fn spreads(&self) -> u32 {
+        self.ranks.count(Item::Spread)
     }
     /// Local id `local`'s depth, the root's 0: its numbered tape ancestors, by a climb (decision 0353 step 3). A scan
     /// carries it in its walk.
@@ -2361,6 +2368,8 @@ pub enum View {
     /// local order): a row a node, laid out as `node`'s, where a program reads it. Its id is `n`'s place among the
     /// positions, so nothing is read but the ids.
     End,
+    /// `spread(n)`: the spread nodes (`*args`, `...xs`; `Item::Spread`), in preorder, where a program reads it.
+    Spread,
     /// `core.rerail`'s place of a node or span (`loc`): `line(n, l)`, `end_line(n, l)`, `col(n, c)`, `docof(n, d)`,
     /// read from the document's lines (`LineTable::place`), rows laid out over `Projected::locs`. A batch that makes
     /// one of them as rows (`Extra`, whose spans have places too) binds those rows instead (`Batch::made`).
@@ -3426,13 +3435,12 @@ impl Batch {
         // `core.rerail`'s (decision 0046).
         let mut c = core_rr::CoreRows::default();
         // Node identity/ancestry and line views do not require scalar rows or text interning.
-        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","comment","spread","op","op_at","op_t","intval","str_part","str_part_start","str_part_word"]
+        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","comment","op","op_at","op_t","intval","str_part","str_part_start","str_part_word"]
             .into_iter().any(|r|projection.wants(r));
         let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
         c.skip = core_rr::Skip {
             ops: !wants_any(&["op", "op_at"]),
             comment: !projection.wants("comment"),
-            spread: !projection.wants("spread"),
             name: !projection.wants("name"),
             literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "rr_value_lit", "text"]),
             str: !projection.wants("str"),
@@ -3836,6 +3844,7 @@ impl Batch {
             View::Sibling => o.siblings.get_or_init(|| counted(&|c| if self.projection.wants("next_sibling") { c[siblings] as usize } else { 0 })),
             View::Loc(_) => o.locs.get_or_init(|| counted(&|c| c[locs] as usize)),
             View::Op => o.tokens.get_or_init(|| counted(&|c| c[4] as usize)),
+            View::Spread => o.spreads.get_or_init(|| counted(&|c| if self.projection.wants("spread") { c[5] as usize } else { 0 })),
             View::End => o.ends.get_or_init(|| counted(&|c| if self.projection.wants("end_point") { c[nodes] as usize } else { 0 })),
         }
     }
@@ -3919,7 +3928,7 @@ impl Batch {
     /// The view's row of node `local` of document `doc`, if it has one.
     fn row(&self, view: View, doc: usize, local: u32) -> Option<usize> {
         match view {
-            View::Field | View::Sibling => self.row_of_node(view, doc, local, self.docs[doc].node(local)),
+            View::Field | View::Sibling | View::Spread => self.row_of_node(view, doc, local, self.docs[doc].node(local)),
             // A token's row is found by its tape node (`row_of_node`), not its node's.
             View::Op => None,
             _ => self.row_of_node(view, doc, local, NONE),
@@ -3945,6 +3954,7 @@ impl Batch {
             View::Child => (local > 0).then(|| local as usize - 1),
             View::Field => self.docs[doc].ranks().local(Item::Field, x).map(|r| r as usize),
             View::Sibling => self.docs[doc].ranks().local(Item::Sibling, x).map(|r| r as usize),
+            View::Spread => self.docs[doc].ranks().local(Item::Spread, x).map(|r| r as usize),
             View::Op => self.docs[doc].ranks().local(Item::Token, x).map(|r| r as usize),
         }?;
         Some(self.offsets(view)[doc] + within)
@@ -3998,6 +4008,7 @@ impl Viewed {
             View::Unit => &["n", "u"],
             View::Op => &["n", "s"],
             View::End => &["n", "p"],
+            View::Spread => &["n"],
             View::Loc(Place::Line | Place::EndLine) => &["n", "l"],
             View::Loc(Place::Col) => &["n", "c"],
             View::Loc(Place::Docof) => &["n", "d"],
@@ -4008,7 +4019,7 @@ impl Viewed {
     fn own(&self) -> usize {
         match self.view {
             View::Node | View::Child | View::Sibling => 1,
-            View::Line | View::Depth | View::Order | View::Unit | View::End | View::Loc(_) => 0,
+            View::Line | View::Depth | View::Order | View::Unit | View::End | View::Spread | View::Loc(_) => 0,
             View::Field | View::Core => 2,
             View::Tape => 0,
             // No column is a token's own: a lookup by `n` is by its node (`lookup_docs`).
@@ -4020,7 +4031,7 @@ impl Viewed {
         match self.view {
             View::Child | View::Field => Some(0),
             View::Tape => Some(1),
-            View::Node | View::Line | View::Core | View::Depth | View::Order | View::Sibling | View::Unit | View::Op | View::End | View::Loc(_) => None,
+            View::Node | View::Line | View::Core | View::Depth | View::Order | View::Sibling | View::Unit | View::Op | View::End | View::Spread | View::Loc(_) => None,
         }
     }
 }
@@ -4745,6 +4756,7 @@ impl Viewed {
             View::Field => visit(&mut row, 1, Some(Item::Field)),
             // The nodes after a sibling.
             View::Sibling => visit(&mut row, 1, Some(Item::Sibling)),
+            View::Spread => visit(&mut row, 0, Some(Item::Spread)),
             // The tokens in preorder, each with its node.
             View::Op => {
                 for (i, (x, l)) in p.token_order().into_iter().enumerate().take(n) {
@@ -4865,6 +4877,10 @@ impl Viewed {
             }
             View::Sibling => {
                 let x = p.ranks().select(Item::Sibling, i as u32).expect("a sibling row");
+                (p.ranks().rank(Item::Node, x), x)
+            }
+            View::Spread => {
+                let x = p.ranks().select(Item::Spread, i as u32).expect("a spread row");
                 (p.ranks().rank(Item::Node, x), x)
             }
             View::Op => {
@@ -4993,6 +5009,7 @@ fn named_views(shape: Shape) -> Vec<(&'static str, View)> {
             ("docof", View::Loc(Place::Docof)),
             ("next_sibling", View::Sibling),
             ("end_point", View::End),
+            ("spread", View::Spread),
         ]),
     }
     named

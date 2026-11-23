@@ -6,7 +6,7 @@
 //!   `src_line` and `line_count` all read it, so they agree.
 //! - **Spans** past the nodes: a document's anonymous tokens, its whole text (`source`) and each line
 //!   (`src_line`), numbered after its nodes, so `text`, `line`, `end_line`, `col` and `docof` take either.
-//! - **Literals** (`literal`): `str`, `strprefix`, `value`, `value_type`, `name`, `comment` and `spread` of a node,
+//! - **Literals** (`literal`): `str`, `strprefix`, `value`, `value_type`, `name` and `comment` of a node,
 //!   from its kind and its text alone. Python strings decode as the engine's Python values do
 //!   (`value::python::str_value`); JavaScript strings as ECMAScript's (`value::ecma`); the others by the common
 //!   escapes, as rrlab's extractor does (`docs/rule-syntax/tools/rrlab`).
@@ -486,7 +486,6 @@ pub(super) struct CoreRows {
     /// `value(n, v)` with v's `value_type` t: (n, v, t).
     value: Vec<[i64; 3]>,
     comment: Vec<[i64; 2]>,
-    spread: Vec<i64>,
     syntax_error: Vec<[i64; 3]>,
     source: Vec<[i64; 2]>,
     src_line: Vec<[i64; 3]>,
@@ -509,7 +508,7 @@ pub(super) struct CoreRows {
 impl CoreRows {
     /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
     pub(super) fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.spread.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.first_token.as_slice()) + std::mem::size_of_val(self.last_token.as_slice()) + std::mem::size_of_val(self.token_before.as_slice()) + std::mem::size_of_val(self.token_after.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.first_token.as_slice()) + std::mem::size_of_val(self.last_token.as_slice()) + std::mem::size_of_val(self.token_before.as_slice()) + std::mem::size_of_val(self.token_after.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
     }
 }
 
@@ -530,7 +529,6 @@ pub(super) struct Skip {
     /// `op`, `op_at`.
     pub(super) ops: bool,
     pub(super) comment: bool,
-    pub(super) spread: bool,
     pub(super) name: bool,
     /// `str`, `strprefix`, `value`, `static_value`, `value_type` (and `text` not read: a prefix makes a node token-like).
     pub(super) literal: bool,
@@ -602,7 +600,7 @@ impl CoreRows {
     /// phase's), and one reading the ops of a few kinds' nodes (`op(m, "|")` of a `binary_operator`) visits those.
     pub(super) fn visits(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
         let s = &self.skip;
-        let only_these = s.structural && s.comment && s.spread && s.name && s.literal_rows
+        let only_these = s.structural && s.comment && s.name && s.literal_rows
             && !(wants_parts || wants_part_starts || wants_words);
         let (text, op) = (wants_text, !s.ops);
         if !only_these || text && self.text_nodes.is_none() || op && self.op_nodes.is_none() {
@@ -682,9 +680,6 @@ impl CoreRows {
             }
             token_like = true;
         } else {
-            if !self.skip.spread && is_spread(kind) {
-                self.spread.push(n);
-            }
             if self.skip.name {
             } else if let Some(s) = name(kind, text) {
                 self.name.push([n, string(&s) as i64]);
@@ -1010,7 +1005,6 @@ impl CoreRows {
         let value: Vec<[i64; 2]> = self.value.iter().map(|&[n, v, _]| [n, v]).collect();
         let mut value_type: Vec<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
         value_type.sort_unstable();
-        let spread: Vec<[i64; 1]> = self.spread.iter().map(|&n| [n]).collect();
         vec![
             ("op", node_sym(&self.op)),
             ("op_at", make(&["n", "i", "s"], &self.op_at, [false, false, true], atom)),
@@ -1023,7 +1017,6 @@ impl CoreRows {
             ("static_value", make(&["n", "v"], &value, [false, true], atom)),
             ("value_type", make(&["v", "t"], &value_type, [true, true], atom)),
             ("comment", node_sym(&self.comment)),
-            ("spread", make(&["n"], &spread, [false], atom)),
             ("syntax_error", make(&["d", "l", "msg"], &self.syntax_error, [false, false, true], atom)),
             ("source", pair(&["d", "sp"], &self.source)),
             ("src_line", make(&["d", "l", "sp"], &self.src_line, [false, false, false], atom)),

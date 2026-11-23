@@ -14,9 +14,9 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// A document's views' counts (decision 0494): its nodes, fielded nodes, siblings after it, places and tokens (`op`'s
-/// rows), as its projection has them; the documents' table keeps them.
-pub type ViewCounts = [u32; 5];
+/// A document's views' counts (decision 0494): its nodes, fielded nodes, siblings after it, places, tokens (`op`'s
+/// rows) and spread nodes (`spread`'s), as its projection has them; the documents' table keeps them.
+pub type ViewCounts = [u32; 6];
 
 /// A document's row of the documents' table's counts (`Batch::kept_counts`, `retain::put_base_counts`): its key, path,
 /// digest, views' counts and facts' size, and whether it is a file's own tree (a guest's path is its host's).
@@ -34,7 +34,7 @@ pub struct Kept {
 
 /// A projection's views' counts.
 pub(super) fn view_counts(p: &Projected) -> ViewCounts {
-    [p.len(), p.fielded(), p.after_siblings(), p.locs(), p.tokens()]
+    [p.len(), p.fielded(), p.after_siblings(), p.locs(), p.tokens(), p.spreads()]
 }
 
 /// A batch's documents (decision 0494): each one's projection made on its first read; its key and tag known before.
@@ -377,6 +377,7 @@ pub(super) struct Offsets {
     pub(super) locs: OnceLock<Vec<usize>>,
     pub(super) tokens: OnceLock<Vec<usize>>,
     pub(super) ends: OnceLock<Vec<usize>>,
+    pub(super) spreads: OnceLock<Vec<usize>>,
 }
 
 /// What a group made: the rows `Batch::make_rows` made for some documents, before they are bound, each relation's

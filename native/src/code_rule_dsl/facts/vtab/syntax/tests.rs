@@ -2063,7 +2063,7 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 }
                 // The rank index's point reads (written once, `id_reads`) agree with its walk over the set bits.
                 let r = p.ranks();
-                for item in [Item::Node, Item::Token, Item::Field, Item::Sibling] {
+                for item in [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread] {
                     let walked: Vec<(u32, u32)> = r.iter(item).collect();
                     assert_eq!(walked.len() as u32, r.count(item), "{at}: {item:?}'s count");
                     let set: HashMap<u32, u32> = walked.iter().map(|&(k, x)| (x, k)).collect();
