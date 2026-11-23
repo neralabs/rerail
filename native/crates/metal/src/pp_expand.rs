@@ -511,12 +511,15 @@ pub struct Sizes {
     /// What the last run's P1 used (`NEED_*`, its rooms' high water), and the first rooms of the
     /// unit it ran on: the next round's are sized from them (decision 0486 §8).
     pub used: Option<([u32; NEEDS], Caps)>,
+    /// The loop's work in the unit's last run that reached its text: the pieces' steps summed (`TRN` 25), the
+    /// lines' and the text's. A batch's teams take their groups by it (`expand_teams`).
+    pub work: Option<u64>,
 }
 
 impl Sizes {
     pub fn first(unit: &Unit, lay: &Layout) -> Sizes {
         let p1 = Caps::first(unit, lay);
-        Sizes { p1, x: XCaps::at(p1.top, 0), defs: 0, used: None }
+        Sizes { p1, x: XCaps::at(p1.top, 0), defs: 0, used: None, work: loop_work(unit) }
     }
 
     /// These rooms for `unit` (laid out as `lay`): from what the last run used where it says,
@@ -527,7 +530,7 @@ impl Sizes {
             Some((need, was)) => Caps::from_use(need, was, b, a.rung),
             None => Caps { nodes: a.nodes.max(b.nodes), dirs: a.dirs.max(b.dirs), gaps: a.gaps.max(b.gaps), top: a.top.max(b.top), reqs: a.reqs.max(b.reqs), names: a.names.max(b.names), rung: a.rung },
         };
-        Sizes { p1, x: self.x.fit(p1.top), defs: self.defs, used: None }
+        Sizes { p1, x: self.x.fit(p1.top), defs: self.defs, used: None, work: self.work.or_else(|| loop_work(unit)) }
     }
 }
 
@@ -1306,6 +1309,12 @@ impl Exp {
     }
 
     /// P1's iterations and the text passes the run made (`TRN[11]`, `TRN[10]`).
+    /// The pieces' steps summed over the run (`TRN` 25): the loop's work.
+    pub fn steps_summed(&self) -> u64 {
+        // SAFETY: the device finished; `trn` holds 32 words.
+        u64::from(unsafe { *self.trn.host().cast::<u32>().add(25) })
+    }
+
     pub fn passes(&self) -> (u32, u32) {
         // SAFETY: the device finished; `trn` holds 32 words.
         unsafe { (*self.trn.host().cast::<u32>().add(11), *self.trn.host().cast::<u32>().add(10)) }
@@ -1483,6 +1492,32 @@ fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) ->
     }
 }
 
+/// The loop's work of each unit last evaluated on this machine (`Sizes::work`), by its documents' digests: a
+/// unit's first run in a batch takes its team's groups by it (a round that ends at its requests measures none).
+#[derive(Default)]
+struct LoopWork(std::sync::Mutex<std::collections::HashMap<Vec<[u8; 32]>, u64>>);
+
+fn documents_key(unit: &Unit) -> Vec<[u8; 32]> {
+    unit.documents.iter().map(|d| d.digest).collect()
+}
+
+/// The loop's work `unit` took when last evaluated here, if it was.
+pub fn loop_work(unit: &Unit) -> Option<u64> {
+    let held = rerail_context::machine::<LoopWork>();
+    let held = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    held.get(&documents_key(unit)).copied()
+}
+
+fn keep_loop_work(unit: &Unit, work: u64) {
+    let held = rerail_context::machine::<LoopWork>();
+    let mut held = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Bounded: a long process's units past it start again from none.
+    if held.len() >= 1 << 16 {
+        held.clear();
+    }
+    held.insert(documents_key(unit), work);
+}
+
 /// A batch's units expanded together, a team each (decision 0588 §6): each round of runs is one
 /// command (`pp_eval::on_teams`) over the units still running, each in stores of its own in one
 /// arena, its setup a group's, and a unit that runs again (a room grown) does so in the next. Each
@@ -1511,10 +1546,20 @@ pub fn expand_teams(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
     // A team's groups at most: the grid's, or one after its barrier failed.
     let mut alone = vec![false; n];
     loop {
-        // Each unit's team: its share of the grid by its work (its nodes, or its expansion's
-        // tokens), at least one group.
-        let work: Vec<usize> = (0..n).map(|k| members[k].node_bound.max(runs[k].x.fit(runs[k].p1.top).tok)).collect();
+        // Each unit's team: its share of the grid by its work, at least one group. The loop's measured work
+        // (`Sizes::work`) where every unit has one: the loop's pass is what sets a round's last team (a unit
+        // of 19k nodes with the batch's most expansion ran 1.5 times the next team, 2026-11-22). Else its
+        // nodes, or its expansion's tokens.
         let live: Vec<usize> = (0..n).filter(|&k| out[k].is_none()).collect();
+        let measured = live.iter().all(|&k| sizes[k].work.is_some());
+        // A step holds a SIMD group's 32 lanes, a node's phase a lane: the loop's steps at 32 nodes each, beside
+        // the nodes every phase reads.
+        let work: Vec<usize> = (0..n)
+            .map(|k| {
+                let items = members[k].node_bound.max(runs[k].x.fit(runs[k].p1.top).tok);
+                if measured { items + 32 * sizes[k].work.unwrap_or(0) as usize } else { items }
+            })
+            .collect();
         let all: usize = live.iter().map(|&k| work[k]).sum::<usize>().max(1);
         let arena = Arena::new();
         let mut made: Vec<(usize, Made, u64)> = Vec::new();
@@ -1529,8 +1574,10 @@ pub fn expand_teams(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
         if made.is_empty() {
             break;
         }
-        // The largest first: its team's groups are the first wave's, and the last a group takes is a small one.
-        made.sort_by_key(|(k, _, team)| (std::cmp::Reverse(*team), std::cmp::Reverse(work[*k])));
+        // The longest first, by its work over its groups: past the grid's groups the teams queue, and a team that
+        // starts last should be a short one (a unit of 17k nodes on 1 group started 1.6 ms into a round sorted
+        // by team size, and set its end, 2026-11-22).
+        made.sort_by_key(|(k, _, team)| (std::cmp::Reverse(work[*k] as u64 / (*team).max(1)), std::cmp::Reverse(*team)));
         let seats: u64 = made.iter().map(|(_, _, t)| t).sum();
         let mut words = vec![made.len() as u32, 0, seats as u32];
         let mut first = 0u32;
@@ -1553,10 +1600,10 @@ pub fn expand_teams(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
         match ran {
             Ok((launches, gpu_seconds)) => {
                 gpu += gpu_seconds;
-                // `RERAIL_PP_TRACE`: the largest team's phases (its unit's trace).
+                // `RERAIL_PP_TRACE`: the first team's phases (its unit's trace: the longest expected).
                 if std::env::var_os("RERAIL_PP_TRACE").is_some() {
                     let (k, m, team) = &made[0];
-                    eprintln!("TRACE the largest of {} teams: unit {k}, {team} groups, nodes {}", made.len(), members[*k].node_bound);
+                    eprintln!("TRACE the first of {} teams: unit {k}, {team} groups, nodes {}", made.len(), members[*k].node_bound);
                     crate::pp_eval::report_trace(&m.front.trace(), gpu_seconds, m.front.barriers());
                     // Every team's start and end on the device's clock, from the round's first start: the latest ends.
                     let spans: Vec<(usize, u64, u64, usize, u64)> = made
@@ -1669,7 +1716,16 @@ impl<'u> Runs<'u> {
             let w = |k: usize| unsafe { *exp.trn.host().cast::<u32>().add(k) };
             eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25));
         }
-        *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
+        // The loop's work, where the run reached the text (a round that ends at its requests did not): the
+        // unit's, kept for its next run and its next evaluation.
+        let work = if exp.passes().1 > 0 {
+            let w = exp.steps_summed();
+            keep_loop_work(unit, w);
+            Some(w)
+        } else {
+            sizes.work
+        };
+        *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))), work };
         let expanded = |refused: u32, p1_flags: u32, requests: Vec<Request>, out: Vec<u32>, unit_out: Vec<u32>, scratch: Vec<u8>, stoks: Vec<[u32; 3]>| -> Result<Expanded, Error> {
             Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), def_rung, run })
         };
@@ -1791,7 +1847,7 @@ fn lookups_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Resu
         arena_log(&arena, &l, format_args!("lookups at rung {x_rung}, p1 rung {}, defs rung {rung}", p1.rung));
         arena.lease()?;
         on_grid(&arena, unit, &front, &l, groups)?;
-        *sizes = Sizes { p1, x, defs: rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
+        *sizes = Sizes { p1, x, defs: rung, used: Some((vis.p1_need(), Caps::first(unit, lay))), work: sizes.work };
         // SAFETY: the device finished writing `room`.
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {
             rung += 1;

@@ -335,6 +335,19 @@ So:
      same round). It is not the module's loading (eager or lazy alike) nor the pages' first touch (populated at
      mapping alike).
 
+   **Built: pieces claimed from a queue, teams by the loop's work** (2026-11-22).
+   - A pass's pieces' starts are a list (a scan of the start flags), and each SIMD group's lane 0 claims the next
+     one from a counter until it is empty (`lp_run`), not the pieces whose first token is in its window.
+   - A run that reaches the text keeps the loop's work, the pieces' steps summed, with the unit's rooms
+     (`Sizes::work`) and on the machine by the unit's documents (`loop_work`). Where every unit of a round has one,
+     a team's share of the groups is by its nodes plus 32 for each step, and the teams start longest first by
+     that over their groups; else by nodes, as before.
+   - GB10, CUDA, the corpus's 100 units, warm, an evaluation after the first in the process
+     (`RERAIL_PP_AGAIN`): C's answer round 3.08 to 1.95 ms, C++'s 3.45 to 2.43 ms; the answer rounds' GPU time
+     6.5 to 4.4 ms. The queue alone (a first evaluation): 3.08 to 2.67 and 3.45 to 3.18 ms. Every unit gives the
+     serial pass's tokens on CUDA and Metal. The M3 Max's batch: 31.4 ms before, 33.1 and 29.2 ms after (first and
+     second evaluation).
+
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 

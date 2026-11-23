@@ -1816,13 +1816,22 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
 }
 // The pieces a SIMD group's lanes start (`lp_piece`), one at a time, every lane with each.
 UKL_INLINE void lp_run(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint32_t* state, PP_GLOBAL const uint32_t* lookups, PP_GLOBAL const uint32_t* start, PP_GLOBAL uint32_t* v, PP_GLOBAL uint32_t* opv, PP_GLOBAL uint32_t* lob, PP_GLOBAL uint32_t* plast,
-                       PP_GLOBAL uint32_t* pend, PP_GLOBAL uint32_t* pjoin, PP_GLOBAL uint32_t* joined, PP_GLOBAL uint32_t* trn, PP_GLOBAL uint32_t* ovr, PP_GLOBAL uint32_t* grid, uint32_t s0, uint32_t ln,
+                       PP_GLOBAL uint32_t* pend, PP_GLOBAL uint32_t* pjoin, PP_GLOBAL uint32_t* joined, PP_GLOBAL uint32_t* trn, PP_GLOBAL uint32_t* ovr, PP_GLOBAL uint32_t* grid, PP_GLOBAL const uint32_t* list, uint32_t ln,
                        UKL_LOCAL LpRun* rp __UKL_PARAMS) {
-    bool mine = s0 < u.n_toks && start[s0] != 0u;
-    uint64_t todo = (uint64_t)(ukl_sg_ballot(mine __UKL_ARGS));
-    while (todo != 0u) {
-        uint32_t lead = ukl_ctz64(todo);
-        todo &= todo - 1u;
-        lp_piece(u, a, ops, state, lookups, start, v, opv, lob, plast, pend, pjoin, joined, trn, ovr, grid, s0, rp, ln == lead, ln, lead __UKL_ARGS);
+    // The pieces claimed from the list of starts (`lp_queue`), the next one a SIMD group's lane 0 takes
+    // (`TRN` 26) while one is left: a group that ends a short piece takes another, so the team's groups
+    // end together whatever the pieces' lengths and places (a group a window of 32 tokens ran 1.5 times
+    // the even share on `tif_getimage.c`, 2026-11-22). `ln` is the lane.
+    for (;;) {
+        uint32_t k = 0u;
+        if (ln == 0u) k = ukl_atomic_add(&trn[26], 1u);
+        k = ukl_sg_shuffle(k, 0u __UKL_ARGS);
+        if (k >= trn[27]) break;
+        uint32_t at = ukl_sg_shuffle(ln == 0u ? list[k] : 0u, 0u __UKL_ARGS);
+        lp_piece(u, a, ops, state, lookups, start, v, opv, lob, plast, pend, pjoin, joined, trn, ovr, grid, at, rp, ln == 0u, ln, 0u __UKL_ARGS);
     }
+}
+// The starts in order (`lp_run`'s list): a start `s` at its rank among them (`at`, their scan).
+UKL_INLINE void lp_queue(PP_GLOBAL const uint32_t* start, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL uint32_t* list, uint32_t s) {
+    if (s < n_toks[0] && start[s] != 0u) list[at[s]] = s;
 }

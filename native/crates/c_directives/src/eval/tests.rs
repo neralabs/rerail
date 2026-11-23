@@ -1376,6 +1376,13 @@ fn the_corpus_preprocesses_on_the_device() {
         paths.sort();
         langs.push((paths.into_iter().skip(first).take(count).collect(), cpp));
     }
+    // `RERAIL_PP_AGAIN`: the batches once before, the units' second evaluation the one checked (their teams
+    // sized by the loop's work the first measured: `Sizes::work`).
+    if std::env::var_os("RERAIL_PP_AGAIN").is_some() {
+        eprintln!("the first evaluation:");
+        against_serial(langs.clone(), vec![("<stub>".into(), DirKind::After)], true);
+        eprintln!("the second:");
+    }
     let r = against_serial(langs, vec![("<stub>".into(), DirKind::After)], true);
     same(r.refused, std::collections::BTreeMap::new(), "the units refused");
     assert!(r.same_units == 0 || r.launches == LAUNCHES, "{} launches a round, not {LAUNCHES}", r.launches);
