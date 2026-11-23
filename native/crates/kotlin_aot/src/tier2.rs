@@ -7861,7 +7861,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_head_ctor(&self) -> bool {
-        (self.bit_at(self.i, 0) && (self.next_head_ctor_0_0_0(self.i, self.prev_tok(self.i)) || self.next_head_ctor_0_1_0(self.i, self.prev_tok(self.i)) || self.next_head_ctor_0_2_0(self.i, self.prev_tok(self.i)) || self.next_head_ctor_0_3_0(self.i, self.prev_tok(self.i))))
+        (self.bit_at(self.i, 0) && (self.next_head_ctor_0_0_0(self.i, self.n) || self.next_head_ctor_0_1_0(self.i, self.n) || self.next_head_ctor_0_2_0(self.i, self.n) || self.next_head_ctor_0_3_0(self.i, self.n)))
     }
 
     /// Mark `head_ctor` taken: it and the marks before it passed at this token.
@@ -7888,7 +7888,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_by_lf(&self) -> bool {
-        (self.bit_at(self.i, 1) && (self.next_by_lf_0_0_0(self.i, self.prev_tok(self.i))))
+        (self.bit_at(self.i, 1) && (self.next_by_lf_0_0_0(self.i, self.n)))
     }
 
     /// Mark `by_lf` taken: it and the marks before it passed at this token.
@@ -7912,7 +7912,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_ann_lf(&self) -> bool {
-        (self.bit_at(self.i, 2) && { let p = self.prev_tok(self.i); p >= self.n || self.word_at(p) != w::SEMI_33 } && !self.next_ann_lf_0_0_0(self.i, self.prev_tok(self.i)) && !self.next_ann_lf_0_1_0(self.i, self.prev_tok(self.i)) && !self.next_ann_lf_0_2_0(self.i, self.prev_tok(self.i)))
+        (self.bit_at(self.i, 2) && { let p = self.prev_tok(self.i); p >= self.n || self.word_at(p) != w::SEMI_33 } && !self.next_ann_lf_0_0_0(self.i, self.n) && !self.next_ann_lf_0_1_0(self.i, self.n) && !self.next_ann_lf_0_2_0(self.i, self.n))
     }
 
     /// Mark `ann_lf` taken: it and the marks before it passed at this token.
@@ -7936,7 +7936,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_semi(&self) -> bool {
-        ((if self.i < self.n { self.bit_at(self.i, 3) } else { true }) && { let p = self.prev_tok(self.i); p >= self.n || self.word_at(p) != w::SEMI_33 } && !self.next_semi_0_0_0(self.i, self.prev_tok(self.i)) && !self.next_semi_0_1_0(self.i, self.prev_tok(self.i)) && !self.next_semi_0_2_0(self.i, self.prev_tok(self.i)))
+        ((if self.i < self.n { self.bit_at(self.i, 3) } else { true }) && { let p = self.prev_tok(self.i); p >= self.n || self.word_at(p) != w::SEMI_33 } && !self.next_semi_0_0_0(self.i, self.n) && !self.next_semi_0_1_0(self.i, self.n) && !self.next_semi_0_2_0(self.i, self.n))
     }
 
     /// Mark `semi` taken: it and the marks before it passed at this token.
@@ -7981,7 +7981,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_semi_close(&self) -> bool {
-        (self.bit_at(self.i, 4) && (self.next_semi_close_0_0_0(self.i, self.prev_tok(self.i))))
+        (self.bit_at(self.i, 4) && (self.next_semi_close_0_0_0(self.i, self.n)))
     }
 
     /// Mark `semi_close` taken: it and the marks before it passed at this token.
@@ -8054,7 +8054,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_bt_cref(&self) -> bool {
-        (self.pat_bt_cref_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_bt_cref_0_0(self.i, self.n))
     }
 
     /// Mark `bt_cref` taken: it and the marks before it passed at this token.
@@ -8078,7 +8078,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_label_at(&self) -> bool {
-        (self.pat_label_at_0_0(self.i, self.prev_tok(self.i)) && !self.next_label_at_0_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_label_at_0_0(self.i, self.n) && !self.next_label_at_0_0_0(self.i, self.n))
     }
 
     /// Mark `label_at` taken: it and the marks before it passed at this token.
@@ -8102,7 +8102,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_lab_loop(&self) -> bool {
-        (self.pat_lab_loop_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_lab_loop_0_0(self.i, self.n))
     }
 
     /// Mark `lab_loop` taken: it and the marks before it passed at this token.
@@ -8126,7 +8126,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_lab_lam(&self) -> bool {
-        (self.pat_lab_lam_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_lab_lam_0_0(self.i, self.n))
     }
 
     /// Mark `lab_lam` taken: it and the marks before it passed at this token.
@@ -8150,7 +8150,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_this_at(&self) -> bool {
-        (self.pat_this_at_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_this_at_0_0(self.i, self.n))
     }
 
     /// Mark `this_at` taken: it and the marks before it passed at this token.
@@ -8174,7 +8174,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_jump_at(&self) -> bool {
-        (self.pat_jump_at_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_jump_at_0_0(self.i, self.n))
     }
 
     /// Mark `jump_at` taken: it and the marks before it passed at this token.
@@ -8198,7 +8198,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_as_q(&self) -> bool {
-        (self.pat_as_q_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_as_q_0_0(self.i, self.n))
     }
 
     /// Mark `as_q` taken: it and the marks before it passed at this token.
@@ -8222,7 +8222,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_qdot(&self) -> bool {
-        (self.pat_qdot_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_qdot_0_0(self.i, self.n))
     }
 
     /// Mark `qdot` taken: it and the marks before it passed at this token.
@@ -8246,7 +8246,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_ge(&self) -> bool {
-        (self.pat_ge_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_ge_0_0(self.i, self.n))
     }
 
     /// Mark `ge` taken: it and the marks before it passed at this token.
@@ -8270,7 +8270,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_sfx(&self) -> bool {
-        (self.pat_sfx_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_sfx_0_0(self.i, self.n))
     }
 
     /// Mark `sfx` taken: it and the marks before it passed at this token.
@@ -8294,7 +8294,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_blk(&self) -> bool {
-        (self.pat_blk_0_0(self.i, self.prev_tok(self.i)) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::RPAREN_21 || self.word_at(p) == w::ELSE_54 || self.word_at(p) == w::DO_45 || self.word_at(p) == w::TRY_56 || self.word_at(p) == w::FINALLY_58 || self.word_at(p) == w::MINUS_GT_41) })
+        (self.pat_blk_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::RPAREN_21 || self.word_at(p) == w::ELSE_54 || self.word_at(p) == w::DO_45 || self.word_at(p) == w::TRY_56 || self.word_at(p) == w::FINALLY_58 || self.word_at(p) == w::MINUS_GT_41) })
     }
 
     /// Mark `blk` taken: it and the marks before it passed at this token.
@@ -8318,7 +8318,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_lam_bare(&self) -> bool {
-        (self.pat_lam_bare_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_lam_bare_0_0(self.i, self.n))
     }
 
     /// Mark `lam_bare` taken: it and the marks before it passed at this token.
@@ -8342,7 +8342,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_lam_params(&self) -> bool {
-        (self.pat_lam_params_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_lam_params_0_0(self.i, self.n))
     }
 
     /// Mark `lam_params` taken: it and the marks before it passed at this token.
@@ -8366,7 +8366,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_ann_expr(&self) -> bool {
-        (self.pat_ann_expr_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_ann_expr_0_0(self.i, self.n))
     }
 
     /// Mark `ann_expr` taken: it and the marks before it passed at this token.
@@ -8390,7 +8390,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_decl_mod(&self) -> bool {
-        (self.pat_decl_mod_0_0(self.i, self.prev_tok(self.i)) && { let p = self.prev_tok(self.i); p >= self.n || ((p < self.n && !((self.word_at(p) == w::DOT_32 || self.word_at(p) == w::COLON_COLON_63)))) })
+        (self.pat_decl_mod_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p >= self.n || ((p < self.n && !((self.word_at(p) == w::DOT_32 || self.word_at(p) == w::COLON_COLON_63)))) })
     }
 
     /// Mark `decl_mod` taken: it and the marks before it passed at this token.
@@ -8414,7 +8414,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_use_site(&self) -> bool {
-        (self.pat_use_site_0_0(self.i, self.prev_tok(self.i)) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::AT_2) })
+        (self.pat_use_site_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::AT_2) })
     }
 
     /// Mark `use_site` taken: it and the marks before it passed at this token.
@@ -8438,7 +8438,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_file_at(&self) -> bool {
-        (self.pat_file_at_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_file_at_0_0(self.i, self.n))
     }
 
     /// Mark `file_at` taken: it and the marks before it passed at this token.
@@ -8462,7 +8462,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_trail(&self) -> bool {
-        (self.pat_trail_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_trail_0_0(self.i, self.n))
     }
 
     /// Mark `trail` taken: it and the marks before it passed at this token.
@@ -8486,7 +8486,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_wild(&self) -> bool {
-        (self.pat_wild_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_wild_0_0(self.i, self.n))
     }
 
     /// Mark `wild` taken: it and the marks before it passed at this token.
@@ -8510,7 +8510,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_obj_lit(&self) -> bool {
-        (self.pat_obj_lit_0_0(self.i, self.prev_tok(self.i)) && { let p = self.prev_tok(self.i); p >= self.n || ((p < self.n && !((self.word_at(p) == w::COMPANION_30)))) })
+        (self.pat_obj_lit_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p >= self.n || ((p < self.n && !((self.word_at(p) == w::COMPANION_30)))) })
     }
 
     /// Mark `obj_lit` taken: it and the marks before it passed at this token.
@@ -8534,7 +8534,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_ft_dot_at(&self) -> bool {
-        (self.pat_ft_dot_at_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_ft_dot_at_0_0(self.i, self.n))
     }
 
     /// Mark `ft_dot_at` taken: it and the marks before it passed at this token.
@@ -8558,7 +8558,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_generic(&self) -> bool {
-        (self.pat_generic_0_0(self.i, self.prev_tok(self.i)) && { let p = self.prev_tok(self.i); p < self.n && (self.at_simple_identifier_at(p)) })
+        (self.pat_generic_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.at_simple_identifier_at(p)) })
     }
 
     /// Mark `generic` taken: it and the marks before it passed at this token.
@@ -8582,7 +8582,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_fn_paren(&self) -> bool {
-        (self.pat_fn_paren_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_fn_paren_0_0(self.i, self.n))
     }
 
     /// Mark `fn_paren` taken: it and the marks before it passed at this token.
@@ -8606,7 +8606,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_ty_susp(&self) -> bool {
-        (self.pat_ty_susp_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_ty_susp_0_0(self.i, self.n))
     }
 
     /// Mark `ty_susp` taken: it and the marks before it passed at this token.
@@ -8630,7 +8630,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_ds_susp(&self) -> bool {
-        (self.pat_ds_susp_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_ds_susp_0_0(self.i, self.n))
     }
 
     /// Mark `ds_susp` taken: it and the marks before it passed at this token.
@@ -8654,7 +8654,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_cp_mod(&self) -> bool {
-        (self.pat_cp_mod_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_cp_mod_0_0(self.i, self.n))
     }
 
     /// Mark `cp_mod` taken: it and the marks before it passed at this token.
@@ -8678,7 +8678,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_cref(&self) -> bool {
-        (self.pat_cref_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_cref_0_0(self.i, self.n))
     }
 
     /// Mark `cref` taken: it and the marks before it passed at this token.
@@ -8702,7 +8702,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_named(&self) -> bool {
-        (self.pat_named_0_0(self.i, self.prev_tok(self.i))) || (self.pat_named_1_0(self.i, self.prev_tok(self.i)))
+        (self.pat_named_0_0(self.i, self.n)) || (self.pat_named_1_0(self.i, self.n))
     }
 
     /// Mark `named` taken: it and the marks before it passed at this token.
@@ -8726,7 +8726,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_enum_class(&self) -> bool {
-        (self.pat_enum_class_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_enum_class_0_0(self.i, self.n))
     }
 
     /// Mark `enum_class` taken: it and the marks before it passed at this token.
@@ -8750,7 +8750,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_fun_iface(&self) -> bool {
-        (self.pat_fun_iface_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_fun_iface_0_0(self.i, self.n))
     }
 
     /// Mark `fun_iface` taken: it and the marks before it passed at this token.
@@ -8774,7 +8774,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_fn_recv(&self) -> bool {
-        (self.pat_fn_recv_0_0(self.i, self.prev_tok(self.i)) && { let p = self.prev_tok(self.i); p >= self.n || ((p < self.n && !((self.word_at(p) == w::DOT_32 || self.word_at(p) == w::LT_26 || self.word_at(p) == w::GT_27)))) } && !self.next_fn_recv_0_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_fn_recv_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p >= self.n || ((p < self.n && !((self.word_at(p) == w::DOT_32 || self.word_at(p) == w::LT_26 || self.word_at(p) == w::GT_27)))) } && !self.next_fn_recv_0_0_0(self.i, self.n))
     }
 
     /// Mark `fn_recv` taken: it and the marks before it passed at this token.
@@ -8798,7 +8798,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_acc(&self) -> bool {
-        (self.pat_acc_0_0(self.i, self.prev_tok(self.i)) && !self.next_acc_0_0_0(self.i, self.prev_tok(self.i)) && !self.next_acc_0_1_0(self.i, self.prev_tok(self.i)) && !self.next_acc_0_2_0(self.i, self.prev_tok(self.i))) || (self.pat_acc_1_0(self.i, self.prev_tok(self.i)) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::PRIVATE_90 || self.word_at(p) == w::PROTECTED_92 || self.word_at(p) == w::INTERNAL_91 || self.word_at(p) == w::PUBLIC_89) && self.bit_at(p, 3) } && !self.next_acc_1_0_0(self.i, self.prev_tok(self.i)) && !self.next_acc_1_1_0(self.i, self.prev_tok(self.i)) && !self.next_acc_1_2_0(self.i, self.prev_tok(self.i)))
+        (self.pat_acc_0_0(self.i, self.n) && !self.next_acc_0_0_0(self.i, self.n) && !self.next_acc_0_1_0(self.i, self.n) && !self.next_acc_0_2_0(self.i, self.n)) || (self.pat_acc_1_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::PRIVATE_90 || self.word_at(p) == w::PROTECTED_92 || self.word_at(p) == w::INTERNAL_91 || self.word_at(p) == w::PUBLIC_89) && self.bit_at(p, 3) } && !self.next_acc_1_0_0(self.i, self.n) && !self.next_acc_1_1_0(self.i, self.n) && !self.next_acc_1_2_0(self.i, self.n))
     }
 
     /// Mark `acc` taken: it and the marks before it passed at this token.
@@ -8822,7 +8822,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_recv(&self) -> bool {
-        (self.pat_recv_0_0(self.i, self.prev_tok(self.i)) && !self.next_recv_0_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_recv_0_0(self.i, self.n) && !self.next_recv_0_0_0(self.i, self.n))
     }
 
     /// Mark `recv` taken: it and the marks before it passed at this token.
@@ -8846,7 +8846,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_dotted(&self) -> bool {
-        (self.pat_dotted_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_dotted_0_0(self.i, self.n))
     }
 
     /// Mark `dotted` taken: it and the marks before it passed at this token.

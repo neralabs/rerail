@@ -290,3 +290,13 @@ A string with no `\u` then costs the test its backslash and `u` windows. On spar
 from 33.3 ms to 18.9 ms (the JIT's: 17.0 ms). Kotlin's file is unchanged.
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
+
+## A mark's pattern finds the token before only where it reads it (done)
+
+Each token tier 2 takes asks whether a mark no rule takes holds there (`open_mark`: `.rerail`'s `end_on`,
+`fn_uncalled`, `io_bare` and `no_value`). Each pattern's first function was called with the token before
+(`prev_tok`, a scan back over the extras), which only a first element `(C)*` with an ending reads. Rust's loops are not
+known to end, so the optimizer kept every scan. Now the call passes `self.n` (no token) where the first element does
+not read it. On spark2 tier 2 went from 42.9 ms to 41.0 ms. Kotlin's file changes the same way.
+
+`rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.

@@ -6291,7 +6291,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_fix_on(&self) -> bool {
-        (self.pat_fix_on_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_fix_on_0_0(self.i, self.n))
     }
 
     /// Mark `fix_on` taken: it and the marks before it passed at this token.
@@ -6315,7 +6315,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_suppress_on(&self) -> bool {
-        (self.pat_suppress_on_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_suppress_on_0_0(self.i, self.n))
     }
 
     /// Mark `suppress_on` taken: it and the marks before it passed at this token.
@@ -6339,7 +6339,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_options_on(&self) -> bool {
-        (self.pat_options_on_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_options_on_0_0(self.i, self.n))
     }
 
     /// Mark `options_on` taken: it and the marks before it passed at this token.
@@ -6363,7 +6363,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_over_on(&self) -> bool {
-        (self.pat_over_on_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_over_on_0_0(self.i, self.n))
     }
 
     /// Mark `over_on` taken: it and the marks before it passed at this token.
@@ -6387,7 +6387,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_policy_on(&self) -> bool {
-        (self.pat_policy_on_0_0(self.i, self.prev_tok(self.i)) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::DOT_13) })
+        (self.pat_policy_on_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::DOT_13) })
     }
 
     /// Mark `policy_on` taken: it and the marks before it passed at this token.
@@ -6411,7 +6411,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_one_name(&self) -> bool {
-        (self.pat_one_name_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_one_name_0_0(self.i, self.n))
     }
 
     /// Mark `one_name` taken: it and the marks before it passed at this token.
@@ -6435,7 +6435,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_empty_parens(&self) -> bool {
-        (self.pat_empty_parens_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_empty_parens_0_0(self.i, self.n))
     }
 
     /// Mark `empty_parens` taken: it and the marks before it passed at this token.
@@ -6459,7 +6459,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_no_value(&self) -> bool {
-        (self.pat_no_value_0_0(self.i, self.prev_tok(self.i)) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::MIN_48 || self.word_at(p) == w::MAX_49 || self.word_at(p) == w::SUM_50 || self.word_at(p) == w::MEAN_51 || self.word_at(p) == w::JOIN_52) })
+        (self.pat_no_value_0_0(self.i, self.n) && { let p = self.prev_tok(self.i); p < self.n && (self.word_at(p) == w::MIN_48 || self.word_at(p) == w::MAX_49 || self.word_at(p) == w::SUM_50 || self.word_at(p) == w::MEAN_51 || self.word_at(p) == w::JOIN_52) })
     }
 
     /// Mark `no_value` taken: it and the marks before it passed at this token.
@@ -6507,7 +6507,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_end_on(&self) -> bool {
-        (self.pat_end_on_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_end_on_0_0(self.i, self.n))
     }
 
     /// Mark `end_on` taken: it and the marks before it passed at this token.
@@ -6555,7 +6555,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_fn_uncalled(&self) -> bool {
-        (self.pat_fn_uncalled_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_fn_uncalled_0_0(self.i, self.n))
     }
 
     /// Mark `fn_uncalled` taken: it and the marks before it passed at this token.
@@ -6579,7 +6579,7 @@ impl<L: Layout> P<'_, L> {
     }
 
     fn h_io_bare(&self) -> bool {
-        (self.pat_io_bare_0_0(self.i, self.prev_tok(self.i)))
+        (self.pat_io_bare_0_0(self.i, self.n))
     }
 
     /// Mark `io_bare` taken: it and the marks before it passed at this token.

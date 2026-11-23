@@ -1012,6 +1012,15 @@ impl<'a> G<'a> {
         self.reads.set(self.reads.get() | 1 << b);
     }
 
+    /// The token before the token a run starts at, as its first function's `prev`: found (a scan back over the extras)
+    /// only where the run's first element reads it, a `(C)*` with an ending; else none (`self.n`), as no element reads it.
+    fn run_prev(seq: &[Vec<TokenElem>]) -> &'static str {
+        match seq.first().map(Vec::as_slice) {
+            Some([TokenElem::Many(_, _, ending)]) if !ending.is_empty() => "self.prev_tok(self.i)",
+            _ => "self.n",
+        }
+    }
+
     /// A run of token elements from `j` (the token before: `prev`), as a function's body: whether
     /// they hold.
     fn run(&self, seq: &[Vec<TokenElem>], name: &str, fns: &mut String) -> Result<(), String> {
@@ -1153,7 +1162,7 @@ impl<'a> G<'a> {
                 if let Some((before, seq)) = def.tokens {
                     let pat = format!("pat_{n}_{d}");
                     self.run(seq, &pat, &mut fns)?;
-                    c.push(format!("self.{pat}_0(self.i, self.prev_tok(self.i))"));
+                    c.push(format!("self.{pat}_0(self.i, {})", Self::run_prev(seq)));
                     if !before.is_empty() {
                         let p = self.elem(before, "p")?;
                         let negated = matches!(before, [TokenElem::Not(_)]);
@@ -1179,7 +1188,7 @@ impl<'a> G<'a> {
                 for (e, (unless, seq)) in def.next.iter().enumerate() {
                     let pat = format!("next_{n}_{d}_{e}");
                     self.run(seq, &pat, &mut fns)?;
-                    let call = format!("self.{pat}_0(self.i, self.prev_tok(self.i))");
+                    let call = format!("self.{pat}_0(self.i, {})", Self::run_prev(seq));
                     if *unless { no.push(call) } else { yes.push(call) }
                 }
                 for x in no {
