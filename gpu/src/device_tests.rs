@@ -421,10 +421,73 @@ fn every_shipped_cuda_and_amd_target_compiles_without_a_gpu() {
         if !(cuda && matches!(form, "cubin" | "ptx") || amd && form == "hsaco") {
             continue;
         }
-        let text = crate::kernels::preprocess_for(&t, name, KERNELS, &[]).unwrap();
-        let code = rerail_device::device::compile_offline(n, None, &text, name).unwrap_or_else(|e| panic!("{n}: {e}"));
-        let ok = if form == "ptx" { code.starts_with(b"//") } else { code.starts_with(b"\x7fELF") };
-        assert!(ok, "{n}: {} bytes, not {form}", code.len());
-        eprintln!("{n}: {} bytes", code.len());
+        // The clock's text too: its CUDA form (PTX's `globaltimer`) once reached HIP.
+        for source in [KERNELS, CLOCK] {
+            let text = crate::kernels::preprocess_for(&t, name, source, &[]).unwrap();
+            let code = rerail_device::device::compile_offline(n, None, &text, name).unwrap_or_else(|e| panic!("{n}: {e}"));
+            let ok = if form == "ptx" { code.starts_with(b"//") } else { code.starts_with(b"\x7fELF") };
+            assert!(ok, "{n}: {} bytes, not {form}", code.len());
+            eprintln!("{n}: {} bytes", code.len());
+        }
     }
+}
+
+const CLOCK: &str = r#"
+#include <ukl/backend.h>
+
+typedef struct Slot {
+    uint32_t i;
+    uint32_t pad;
+} Slot;
+UKL_REFLECT_STRUCT(Slot, i, pad)
+
+// The device's clock (`ukl_clock_ns`), into the slot's two words, low first.
+DEFINE_KERNEL2(device_tests, d_clock,
+               ARGS,     Slot,     args, ,
+               RWBUFFER, uint32_t, t,    "[4]",
+               GID0,     uint32_t, g,    )
+{
+    if (g == 0u) {
+        uint64_t now = ukl_clock_ns();
+        t[2u * args.i] = (uint32_t)now;
+        t[2u * args.i + 1u] = (uint32_t)(now >> 32);
+    }
+}
+"#;
+
+/// The device's clock (`ukl_clock_ns`) counts nanoseconds: two launches a measured host sleep apart read times as far
+/// apart as the host's clock says, within the launches' own time. CUDA's and HIP's kernels have a clock; Metal's,
+/// OpenCL's and the CPU's read 0.
+#[test]
+fn the_device_clock_counts_nanoseconds() {
+    let Some(_) = crate::shared::get() else { return };
+    let p = program("device_tests_clock.uglykl", CLOCK).unwrap_or_else(|e| panic!("{e}"));
+    let f = p.function("d_clock").unwrap();
+    let t = crate::kernels::buffer_of(&[0u32; 4]).unwrap();
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Slot {
+        i: u32,
+        pad: u32,
+    }
+    unsafe impl crate::Pod for Slot {}
+    let run = |i: u32| {
+        let mut q = crate::device::ComputeQueue::new(&crate::shared::get().unwrap().queue);
+        launch(&q, f).value("args", &Slot { i, pad: 0 }).buffer("t", &t).run(&[1], &[1]).unwrap();
+        q.flush().await_().unwrap();
+    };
+    run(0);
+    let start = std::time::Instant::now();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    run(1);
+    let host = start.elapsed().as_nanos() as u64;
+    let w = read::<u32>(&t, 4);
+    let (a, b) = (w[0] as u64 | (w[1] as u64) << 32, w[2] as u64 | (w[3] as u64) << 32);
+    if !matches!(crate::device::backend(), "CUDA" | "HIP") {
+        assert_eq!((a, b), (0, 0), "{} has no kernel clock", crate::device::backend());
+        return;
+    }
+    let dt = b.saturating_sub(a);
+    eprintln!("{}: the device's clock advanced {dt} ns over the host's {host} ns", crate::device::backend());
+    assert!(dt >= 190_000_000 && dt <= host + 20_000_000, "{dt} ns on the device against {host} ns on the host");
 }
