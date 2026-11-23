@@ -36,6 +36,14 @@ struct Exact {
     len: usize,
 }
 impl Exact {
+    /// Empty, with room for `n` values: its slots made once, not grown as they are put.
+    fn with_room(n: usize) -> Exact {
+        let mut e = Exact { slots: Default::default(), len: 0 };
+        if n > 0 {
+            e.slots.resize((2 * (n + 1)).next_power_of_two().max(16), [0, 0]);
+        }
+        e
+    }
     fn home(&self, v: i64) -> usize {
         (super::sketch::mix_of(v) as usize) & (self.slots.len() - 1)
     }
@@ -774,7 +782,8 @@ impl RelStats {
             if e < 0 {
                 return Some(None);
             }
-            let mut m = Exact::default();
+            // Room for its count of values, capped: the count is the entry's, not yet checked against its bytes.
+            let mut m = Exact::with_room(usize::try_from(e).ok()?.min(bytes.len() / 16));
             for _ in 0..e {
                 let v = int(at)?;
                 m.insert(v, int(at)?);
