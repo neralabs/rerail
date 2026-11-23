@@ -81,7 +81,7 @@ test-hooks = ["rerail-boot/test-hooks", "rerail-c-pp/test-hooks", "rerail-clif/t
   "ast-grep-language/tree-sitter-kotlin", "ast-grep-language/tree-sitter-lua", "ast-grep-language/tree-sitter-php",
   "ast-grep-language/tree-sitter-ruby", "ast-grep-language/tree-sitter-rust", "ast-grep-language/tree-sitter-scala",
   "ast-grep-language/tree-sitter-swift",
-  "rerail-compiler/test-hooks", "rerail-metal/test-hooks", "rerail-device-metal/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-lang-ecma/test-hooks", "rerail-lang-json/test-hooks", "rerail-lang-php/test-hooks", "rerail-lang-python/test-hooks", "rerail-lang-rust/test-hooks", "rerail-lang-sql/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-sessions/test-hooks", "rerail-transducer/test-hooks", "rerail-workspace/test-hooks", "rerail-store/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks", "rerail-blocks/test-hooks"]
+  "rerail-metal/test-hooks", "rerail-device-metal/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-lang-ecma/test-hooks", "rerail-lang-json/test-hooks", "rerail-lang-php/test-hooks", "rerail-lang-python/test-hooks", "rerail-lang-rust/test-hooks", "rerail-lang-sql/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-sessions/test-hooks", "rerail-transducer/test-hooks", "rerail-workspace/test-hooks", "rerail-store/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-blocks/test-hooks"]
 
 [dependencies]
 rerail-blocks = { path = "../blocks" }
@@ -108,8 +108,6 @@ ast-grep-core = "=0.51.0"
 ast-grep-language = { version = "=0.51.0", default-features = false }
 # The transducer's CPU JIT (code_rule_dsl/transducer/packed).
 cranelift-codegen = "=0.125.4"
-# Tier 1 of the transducer's parsers, a crate of its own so that a change to it rebuilds little.
-rerail-compiler = { path = "../compiler" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-tape-format = { path = "../tape_format" }
 # The C and C++ preprocessor (0327): directives as facts, translation units applied (`language::adapter::c_pp`,
@@ -119,8 +117,6 @@ rerail-c-pp = { path = "../c_pp" }
 rerail-c-directives = { path = "../c_directives" }
 # The tape's reads written once in CLIF, and the JIT's inlining pass over them (decision 0310).
 rerail-clif = { path = "../clif" }
-# The .rerail parser: its grammar compiled, the engine's tape from it (`packed::rr_parser`).
-rerail-rr-parser = { path = "../rr_parser" }
 rerail-prof = { path = "../prof" }
 cranelift-frontend = "=0.125.4"
 cranelift-module = "=0.125.4"
@@ -252,7 +248,6 @@ rerail-rr = { path = "../rr", default-features = false, features = ["test-hooks"
 rerail-sessions = { path = "../sessions", default-features = false, features = ["test-hooks"] }
 rerail-transducer = { path = "../transducer", default-features = false, features = ["test-hooks"] }
 rerail-workspace = { path = "../workspace", default-features = false, features = ["test-hooks"] }
-rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }
 tempfile = "=3.27.0"

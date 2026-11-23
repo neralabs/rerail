@@ -1,11 +1,11 @@
 /// The UKL library's test kernels (`gpu/src/library_tests.uglykl`), the first gate (decision 0567, step 1).
 const LIBRARY_TESTS: &str = include_str!("../../../../gpu/src/library_tests.uglykl");
 
-/// The library's test kernels preprocess as OpenCL C with 32-lane sub-groups, and C's parser reads them whole.
+/// The library's test kernels preprocess for the `Vec` backend, its intrinsics `__ukl_*`, and C's parser reads them whole.
 #[test]
 fn the_library_tests_are_one_c_tape() {
     let src = super::source("/<kernels>/library_tests.uglykl", LIBRARY_TESTS, &[]).unwrap();
-    assert!(src.text().contains("sub_group_ballot"), "the sub-groups' builtins");
+    assert!(src.text().contains("__ukl_sg_ballot") && !src.text().contains("sub_group_"), "the SIMD group's intrinsics, not OpenCL's");
     let tape = super::c_tape(&src).unwrap();
     assert!(tape.code.len() / 2 > 10_000, "a tape of the whole source");
 }
@@ -233,10 +233,10 @@ fn uniform_values_read_for_their_low_bits_are_each_32_bit_value() {
         "    out[40] = g;\n",
         "    uint8_t d = (uint8_t)g;\n",
         "    uint16_t h = (uint16_t)(g + 9u);\n",
-        "    float f = as_float(g | 1u);\n",
+        "    float f = __ukl_as_float(g | 1u);\n",
         "    int32_t s = (int32_t)(out[62] + 3u) * -0x7654321;\n",
         "    int32_t t = s - 1;\n",
-        "    uint32_t r = lid == 0u ? b >> 3 : lid == 1u ? (uint32_t)d : lid == 2u ? as_uint(f) : lid == 3u ? (uint32_t)(t >> 2)\n",
+        "    uint32_t r = lid == 0u ? b >> 3 : lid == 1u ? (uint32_t)d : lid == 2u ? __ukl_as_uint32_t(f) : lid == 3u ? (uint32_t)(t >> 2)\n",
         "        : lid == 4u ? (uint32_t)(t / 3) : lid == 5u ? (c < b ? 1u : 2u) : lid == 6u ? (uint32_t)((int64_t)t >> 40)\n",
         "        : lid == 7u ? (uint32_t)h : lid == 8u ? (uint32_t)((uint64_t)c >> 31) : lid;\n",
         "    if (lid < 40u)\n",
@@ -379,6 +379,15 @@ fn short_circuits_that_vary_are_each_lanes() {
             r | if u { 16 } else { 0 } | if a { 256 } else { 0 }
         })
         .collect();
+    assert_eq!(out, want);
+}
+
+/// A `&&` and a `||` whose second side has no effect, made with no branch: its load is only the lanes' that read
+/// it, so the lanes where the pointer is null (the first side false, or true for `||`) never read through it.
+#[test]
+fn a_short_circuit_with_no_effect_reads_only_in_the_lanes_it_runs() {
+    let out = ran("    UKL_GLOBAL uint32_t* p = lid < 8u ? out : (UKL_GLOBAL uint32_t*)0;\n    uint32_t r = (lid < 8u && p[lid] == 0u) ? 1u : 2u;\n    uint32_t q = (lid >= 8u || p[lid] == 0u) ? 4u : 8u;\n    out[lid] = r | q;");
+    let want: Vec<u32> = (0..64u32).map(|l| if l < 8 { 1 | 4 } else { 2 | 4 }).collect();
     assert_eq!(out, want);
 }
 
@@ -802,7 +811,7 @@ fn a_matrix_product_is_each_rows_columns_in_lanes() {
 /// fraction 3 bytes; its result stored the same way, each row's signs one SIMD group's ballot.
 fn split_floats() -> (super::lower::Program, super::vector::Kernel) {
     let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\n\
-#define UNPACK(sg, ex, mt, x) as_float(((sg[(x) >> 5u] >> ((x) & 31u)) << 31) | ((uint32_t)ex[x] << 23) | (uint32_t)mt[3u * (x)] | ((uint32_t)mt[3u * (x) + 1u] << 8) | ((uint32_t)mt[3u * (x) + 2u] << 16))\n\
+#define UNPACK(sg, ex, mt, x) __ukl_as_float(((sg[(x) >> 5u] >> ((x) & 31u)) << 31) | ((uint32_t)ex[x] << 23) | (uint32_t)mt[3u * (x)] | ((uint32_t)mt[3u * (x) + 1u] << 8) | ((uint32_t)mt[3u * (x) + 2u] << 16))\n\
 DEFINE_KERNEL2(rule, t_mms,\n\
                ROBUFFER, uint32_t, asg, \"[32]\",\n\
                ROBUFFER, uint8_t, aex, \"[1024]\",\n\
@@ -822,13 +831,13 @@ DEFINE_KERNEL2(rule, t_mms,\n\
         uint32_t y = k * 32u + j;\n\
         s += UNPACK(asg, aex, amt, x) * UNPACK(bsg, bex, bmt, y);\n\
     }\n\
-    uint32_t r = as_uint(s);\n\
+    uint32_t r = __ukl_as_uint32_t(s);\n\
     uint32_t z = i * 32u + j;\n\
     cex[z] = (uint8_t)(r >> 23);\n\
     cmt[3u * z] = (uint8_t)r;\n\
     cmt[3u * z + 1u] = (uint8_t)(r >> 8);\n\
     cmt[3u * z + 2u] = (uint8_t)((r >> 16) & 0x7fu);\n\
-    uint32_t sign = sub_group_ballot((r >> 31) != 0u).x;\n\
+    uint32_t sign = ukl_sg_ballot((r >> 31) != 0u __UKL_ARGS);\n\
     if (j == 0u)\n\
         csg[i] = sign;\n\
 }\n";
@@ -1115,7 +1124,7 @@ DEFINE_KERNEL2(rule, t_bytes,\n\
 /// product first (to `b`) would give 0. Also `+=` of a product, and `fma` called by name.
 #[test]
 fn a_floating_multiply_add_is_rounded_once() {
-    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\nDEFINE_KERNEL2(rule, t_fma,\n               ROBUFFER, float, a, \"[32]\",\n               ROBUFFER, float, b, \"[32]\",\n               RWBUFFER, float, c, \"[96]\",\n               LID0,     uint32_t, j, )\n{\n    c[j] = a[j] * a[j] - b[j];\n    float s = -b[j];\n    s += a[j] * a[j];\n    c[32u + j] = s;\n    c[64u + j] = fma(a[j], a[j], -b[j]);\n}\n";
+    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\nDEFINE_KERNEL2(rule, t_fma,\n               ROBUFFER, float, a, \"[32]\",\n               ROBUFFER, float, b, \"[32]\",\n               RWBUFFER, float, c, \"[96]\",\n               LID0,     uint32_t, j, )\n{\n    c[j] = a[j] * a[j] - b[j];\n    float s = -b[j];\n    s += a[j] * a[j];\n    c[32u + j] = s;\n    c[64u + j] = __ukl_fma(a[j], a[j], -b[j]);\n}\n";
     let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
@@ -1139,4 +1148,463 @@ fn a_floating_multiply_add_is_rounded_once() {
         let _ = at.cl.set(Ok(c));
         assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
     }
+}
+
+/// A compiled function's reads and writes back of one address (machine code as text): in a block, an `ldr` from a
+/// register's address and a `str` to it with no write of the register between.
+#[cfg(target_arch = "aarch64")]
+fn read_modify_writes(code: &str) -> usize {
+    let reg = |r: &str| r.trim().trim_start_matches(['x', 'w']).to_string();
+    let mut n = 0;
+    for block in code.split("\nblock") {
+        let mut loaded = std::collections::HashSet::new();
+        for l in block.lines().map(str::trim_start) {
+            let Some((op, rest)) = l.split_once(' ') else { continue };
+            let addr = rest.split_once(", [").and_then(|(_, a)| a.strip_suffix(']')).filter(|a| !a.starts_with("sp") && !a.contains(',')).map(reg);
+            match (op, addr) {
+                ("str", Some(a)) if loaded.contains(&a) => n += 1,
+                ("str", _) => {}
+                (_, a) => {
+                    // A load's address, then its destination written (its own address too, if the same register).
+                    if let (Some(a), true) = (a, op == "ldr") {
+                        loaded.insert(a);
+                    }
+                    if let Some(d) = rest.split(',').next() {
+                        loaded.remove(&reg(d));
+                    }
+                }
+            }
+        }
+    }
+    n
+}
+
+/// The nearest ancestors' kernel (`nearest_jump`, the packed transducer's, decisions 0038 and 0040), the simplest of
+/// the engine's kernels, compiled as written by hand: its `ukl_atomic_load` (OpenCL 1.2's `atomic_or(p, 0)`) is each
+/// lane's load, its `ukl_atomic_store` (an `atomic_xchg` whose old value no one reads) each lane's store, and its
+/// `ukl_atomic_max` of the lanes' steps at one address the lanes' maximum and one atomic: the code reads and writes
+/// back one address once, the maximum's. Each cell's answer, on the interpreter and the compiled SSA at every width,
+/// is its nearest strict ancestor in its set.
+#[test]
+fn the_nearest_kernels_atomics_are_loads_stores_and_one_maximum() {
+    let text = include_str!("../../device_metal/src/code_rule_dsl/transducer/packed/nearest.uglykl");
+    let src = super::source("/<kernels>/nearest.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("nearest_jump").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    // 4 sets of a binary tree of 16 nodes (node i's parent (i - 1) / 2); set s holds the nodes i with i % (s + 2) == 0.
+    const NODES: u32 = 16;
+    const FINAL: u32 = 0x8000_0000;
+    let parent = |i: u32| (i > 0).then(|| (i - 1) / 2);
+    let member = |s: u32, i: u32| i % (s + 2) == 0;
+    let (mut start, mut want) = (Vec::new(), Vec::new());
+    for s in 0..4u32 {
+        for i in 0..NODES {
+            start.push(match parent(i) {
+                None => u32::MAX,
+                Some(q) if member(s, q) => FINAL | q,
+                Some(q) => q,
+            });
+            let mut a = parent(i);
+            while let Some(q) = a.filter(|&q| !member(s, q)) {
+                a = parent(q);
+            }
+            want.push(a.map_or(u32::MAX, |q| FINAL | q));
+        }
+    }
+    let run = |k: &super::vector::Kernel, exec| {
+        let mut state = start.clone();
+        let mut stats = [0u32; 1];
+        let ptr = |p: *mut u32| super::run::Arg::Bytes((p as u64).to_le_bytes().to_vec());
+        let args_of: Vec<u8> = [NODES, 4 * NODES, 0, 0].iter().flat_map(|x| x.to_le_bytes()).collect();
+        let args = [ptr(state.as_mut_ptr()), ptr(stats.as_mut_ptr()), super::run::Arg::Bytes(args_of), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4])];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [2, 1, 1], block: [32, 1, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        assert!((1..=4).contains(&stats[0]), "{exec:?}: the most steps a cell took, {}", stats[0]);
+        state
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    let ssa = ssa_of(&p, &k);
+    // Its arguments' struct (read only, as its inner function's `const` parameter) read where the launch put it.
+    let frame: Vec<_> = ssa.funcs[0].insts.iter().filter(|i| matches!(i.op, super::ssa::O::FrameAddr | super::ssa::O::Copy)).map(|i| i.op).collect();
+    assert!(frame.is_empty(), "the kernel reads its lanes' frames: {frame:?}\n{}", ssa.listing());
+    // Its fields read once, at the entry, as values: the struct is the third argument.
+    let f = &ssa.funcs[0];
+    let mut of_args: Vec<super::ssa::V> = (0..f.insts.len() as super::ssa::V).filter(|&x| f.inst(x).op == super::ssa::O::Arg && f.inst(x).a == 2).collect();
+    for x in 0..f.insts.len() as super::ssa::V {
+        if f.inst(x).op == super::ssa::O::Bin && of_args.contains(&f.inst(x).a) {
+            of_args.push(x);
+        }
+    }
+    let fields: Vec<super::ssa::V> = (0..f.insts.len() as super::ssa::V).filter(|&x| f.inst(x).op == super::ssa::O::Load && of_args.contains(&f.inst(x).a)).collect();
+    assert!(!fields.is_empty() && fields.iter().all(|x| f.blocks[0].insts.contains(x)), "the struct's fields {fields:?} read past the entry:\n{}", ssa.listing());
+    // An inlined function's parameter is its call's argument in every lane: no address is chosen by lanes (the
+    // source chooses none), so `stats`' address is uniform.
+    let chosen: Vec<_> = (0..f.insts.len() as super::ssa::V).filter(|&x| f.inst(x).op == super::ssa::O::Select && f.inst(x).m == super::k::M::PTR).collect();
+    assert!(chosen.is_empty(), "addresses chosen by lanes {chosen:?}:\n{}", ssa.listing());
+    // The loop's `steps < args.nodes`, which every running lane agrees on, an operand of `&&` with a lane's own
+    // `(v & FINAL) == 0`: a compare in lanes, not the first running lane's `steps` taken (a horizontal operation each
+    // round) and the compare's bool made a mask again.
+    let firsts: Vec<_> = (0..f.insts.len() as super::ssa::V).filter(|&x| f.inst(x).op == super::ssa::O::First).collect();
+    assert!(firsts.is_empty(), "values taken from the first running lane {firsts:?}:\n{}", ssa.listing());
+    // `w`'s load set in the running lanes, then `v` to it: one select each, neither reading through the other.
+    let sel = |x: super::ssa::V| f.inst(x).op == super::ssa::O::Select;
+    let chained: Vec<_> = (0..f.insts.len() as super::ssa::V).filter(|&x| sel(x) && [f.inst(x).b, f.inst(x).c].iter().any(|&y| sel(y) && f.inst(y).a == f.inst(x).a)).collect();
+    assert!(chained.is_empty(), "selects of selects under one mask {chained:?}:\n{}", ssa.listing());
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile(&ssa, &k.name, w, &super::exec::places()).unwrap();
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+        #[cfg(target_arch = "aarch64")]
+        {
+            let (c, _) = super::cl::compile_listed(&ssa, &k.name, w, &super::exec::places()).unwrap();
+            let code = c.listing.last().expect("the kernel's code for a chunk whose lanes all run");
+            assert!(read_modify_writes(code) <= 1, "w{w}: {} addresses read and written back:\n{code}", read_modify_writes(code));
+            // A branch on whether a lane is on: a test of the mask's lanes, not of a bool made of them.
+            let lines: Vec<&str> = code.lines().map(str::trim_start).collect();
+            let remade = lines.windows(3).filter(|l| l[0].starts_with("cset ") && l[1].starts_with("uxtb ") && l[2].starts_with("cbnz ")).count();
+            assert!(w < 4 || remade == 0, "w{w}: {remade} branches on a bool made of the mask's lanes:\n{code}");
+            // A compare's lanes as a mask: the compare's own, not one made again of its bool.
+            let again = lines.windows(2).filter(|l| l[0].starts_with("ushr v") && l[0].ends_with("#31") && l[1].starts_with("cmeq v") && l[1].ends_with("#0")).count();
+            assert!(w < 4 || again == 0, "w{w}: {again} masks made again of a compare's bools:\n{code}");
+            // A gather of `state[base + v]` as written by hand: each lane's 32-bit index out of its vector, and the
+            // load scales and extends it (`ldr w, [x, w, uxtw #2]`), and a store's lanes the same: no lane's 64-bit
+            // address made in vectors.
+            let scaled = lines.iter().filter(|l| l.starts_with("ldr w") && l.to_lowercase().ends_with(", uxtw #2]")).count();
+            let widened = lines.iter().filter(|l| l.starts_with("shl v") && l.contains(".2d")).count();
+            assert!(w < 4 || (scaled >= w as usize && widened == 0), "w{w}: {scaled} scaled lane loads, {widened} indexes scaled to addresses in vectors:\n{code}");
+            // The thread's `cell` (its global id, a `uint32_t`) made as 32-bit lanes: no 64-bit lanes narrowed to it.
+            let wide = lines.iter().filter(|l| l.starts_with("add v") && l.contains(".2d")).count();
+            assert!(w < 4 || wide == 0, "w{w}: {wide} sums in 64-bit lanes:\n{code}");
+        }
+    }
+}
+
+/// A kernel's struct of arguments passed by value to inlined functions: one that only reads its copy reads the
+/// launch's bytes where they are, one that writes its copy gets a copy (in each lane's frame), so the struct the
+/// others read is as launched. On the interpreter and the compiled SSA at every width.
+#[test]
+fn a_struct_argument_is_read_in_place_unless_its_copy_is_written() {
+    let text = "#include <ukl/backend.h>\n#include <ukl/memory.h>\n\
+        typedef struct P { uint32_t a, b; } P;\nUKL_REFLECT_STRUCT(P, a, b)\n\
+        UKL_INLINE uint32_t bumped(P p, uint32_t x) { p.a += x; return p.a * p.b; }\n\
+        UKL_INLINE uint32_t total(P p) { return p.a + p.b; }\n\
+        DEFINE_KERNEL2(rule, t_args,\n               RWBUFFER, uint32_t, out, \"[64]\",\n               ARGS,     P,        args, ,\n               GID0,     uint32_t, lid, )\n\
+        {\n    out[lid] = bumped(args, lid) + total(args) + args.a;\n}\n";
+    let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("t_args").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let want: Vec<u32> = (0..64u32).map(|l| (5 + l) * 7 + 12 + 5).collect();
+    let run = |k: &super::vector::Kernel, exec| {
+        let mut out = vec![0u32; 64];
+        let args = [
+            super::run::Arg::Bytes((out.as_mut_ptr() as u64).to_le_bytes().to_vec()),
+            super::run::Arg::Bytes([5u32, 7].iter().flat_map(|x| x.to_le_bytes()).collect()),
+            super::run::Arg::Bytes(vec![0; 8]),
+            super::run::Arg::Bytes(vec![0; 4]),
+        ];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [2, 1, 1], block: [32, 1, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        out
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    let ssa = ssa_of(&p, &k);
+    let copies = ssa.funcs[0].insts.iter().filter(|i| i.op == super::ssa::O::Copy).count();
+    assert_eq!(copies, 1, "one copy, the one `bumped` writes:\n{}", ssa.listing());
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile(&ssa, &k.name, w, &super::exec::places()).unwrap();
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+    }
+}
+
+/// The nearest ancestors' kernel as Rust (`rs.rs`), at 8 lanes: written from its vector tape, it is the checked-in
+/// module of `rerail-ukl-aot` (whose tests run it against a scalar and a hand-vectorized version). `UKL_RS_WRITE=1`
+/// writes it again.
+#[test]
+fn the_nearest_kernels_rust_is_the_checked_in_one() {
+    let text = include_str!("../../device_metal/src/code_rule_dsl/transducer/packed/nearest.uglykl");
+    let src = super::source("/<kernels>/nearest.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("nearest_jump").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()));
+    let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_aot/src/nearest_jump_w8.rs");
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(at, &rust).unwrap();
+    }
+    let kept = std::fs::read_to_string(at).unwrap_or_default();
+    assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+}
+
+/// The nearest kernel's Rust masks only where its lanes part (decision 0567 step 3):
+/// - a group's chunks of 8 threads all run: a chunk past the group's last thread is the one slow path (1);
+/// - `cell >= args.cells`, of consecutive lanes against one value, is decided for the chunk at once, its one chunk
+///   whose lanes are on both sides the slow path (2);
+/// - a test of a mask's lanes is a comparison of its bits, which the compiler folds where the mask is known (3);
+/// - in the loop, whose lanes part (each its own rounds), a variable no lane reads after it leaves is set in every
+///   lane, `steps` counted by its mask, and the maximum of `steps > 0` lanes is the lanes' maximum, unmasked (4).
+///
+/// So where a function's lanes all run (its `_f` instance), no mask is read outside the loop and the slow paths.
+#[test]
+fn the_nearest_kernels_rust_masks_only_where_its_lanes_part() {
+    let text = include_str!("../../device_metal/src/code_rule_dsl/transducer/packed/nearest.uglykl");
+    let src = super::source("/<kernels>/nearest.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("nearest_jump").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}", e.0));
+    let lines: Vec<&str> = rust.lines().collect();
+    // (1) Full chunks, then the group's last threads.
+    assert!(rust.contains("while lid0 + 8 <= n {") && rust.contains("if lid0 < n {"), "no chunks of all lanes:\n{rust}");
+    // The functions where all lanes run: outside the slow paths (marked, to the end of their block), no mask.
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let mut full = 0;
+    let mut i = 0;
+    while i < lines.len() {
+        if !(lines[i].starts_with("unsafe fn ") && lines[i].contains("_f(")) {
+            i += 1;
+            continue;
+        }
+        full += 1;
+        let name = lines[i];
+        i += 1;
+        while i < lines.len() && lines[i] != "}" {
+            let l = lines[i];
+            if l.trim_start().starts_with("// Lanes part") {
+                let d = indent(l);
+                while i < lines.len() && !(indent(lines[i]) < d && !lines[i].trim().is_empty()) {
+                    i += 1;
+                }
+                continue;
+            }
+            // A full round's end, where some lane's condition fails, is the one test of a mask.
+            let round = l.trim_start().starts_with("if !all(&") && l.ends_with("{ break; }");
+            let masked = ["vbslq_u32", "vbicq_u32", "select_unpredictable", "any(&", "all(&", "live[", "vcgtq_u32"].iter().find(|t| l.contains(*t) && !round);
+            assert!(masked.is_none(), "{name}: a mask ({}) where all lanes run: {l}\n{rust}", masked.unwrap());
+            i += 1;
+        }
+    }
+    // `nearest_jump`'s own, its load of `state[cell]` and its maximum: the gather and the store run in the loop only.
+    assert!(full == 3, "{full} functions of all lanes:\n{rust}");
+    // Its loop's lanes part early, and it says nothing of them: no full rounds, whose test would be a second branch.
+    assert!(!rust.contains("// Full rounds"), "full rounds of a loop not said to go on together:\n{rust}");
+    // A chunk whose lanes all return runs nothing after.
+    let after: Vec<&[&str]> = lines.windows(2).filter(|w| w[0].trim() == "return;" && !w[1].trim().starts_with('}')).collect();
+    assert!(after.is_empty(), "statements after a return: {after:?}\n{rust}");
+    // (2) The bounds check decided for a chunk at once.
+    assert!(lines.iter().any(|l| l.contains("as u64 + 7")), "`cell >= args.cells` not decided for the chunk:\n{rust}");
+    // (3) Mask tests of the mask's bits.
+    assert!(rust.contains("fn any(") && !rust.contains("vminvq_u32(") && !rust.contains("vmaxvq_u32(vorrq_u32"), "mask tests by reductions:\n{rust}");
+    // (4) No variable set by a mask's select; `steps` counted by its mask.
+    let selected: Vec<&&str> = lines.iter().filter(|l| { let t = l.trim_start(); t.starts_with('x') && t.contains(" = [vbslq_u32(") }).collect();
+    assert!(selected.is_empty(), "variables set by a select: {selected:?}\n{rust}");
+    assert!(lines.iter().any(|l| { let t = l.trim_start(); t.starts_with('x') && t.contains(" = [vsubq_u32(x") }), "`steps` not counted by its mask:\n{rust}");
+    // (5) In the loop, after every lane read its own cell of `state` (`_v0`, its address valid in each): the gather
+    // of a lane that does not run reads its own cell, not a running lane's (no reduction for one); and the store of
+    // `state[cell]`, whose every write is a thread's own cell (no other thread writes a lane's), writes back what is
+    // there in a lane that does not run: a load, a select and the registers' store, no store of each lane.
+    let funcs: Vec<(&str, String)> = rust.split("\nunsafe fn ").skip(1).map(|f| (f.split('(').next().unwrap(), f.split("\n}\n").next().unwrap().to_string())).collect();
+    let owned: Vec<&(&str, String)> = funcs.iter().filter(|(n, _)| n.contains("_v0")).collect();
+    assert!(owned.len() >= 2, "functions of lanes whose own cells are valid: {:?}\n{rust}", funcs.iter().map(|f| f.0).collect::<Vec<_>>());
+    for (n, f) in &owned {
+        assert!(!f.contains("vdupq_n_u32(vmaxvq_u32(") && !f.contains("select_unpredictable"), "{n}: a running lane's address for one that does not run, or a store of each lane:\n{f}");
+    }
+    assert!(owned.iter().any(|(_, f)| f.contains("vst1q_u32(") && f.contains("vbslq_u32(") && f.contains("vld1q_u32(")), "no store of the registers, its lanes that do not run what is there:\n{rust}");
+}
+
+/// `mix.uglykl` (rerail-ukl-aot's test kernel) as Rust at 8 lanes, checked in as `nearest` is.
+fn mix_rust() -> String {
+    let text = include_str!("../../ukl_aot/kernels/mix.uglykl");
+    let src = super::source("/<kernels>/mix.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("mix_lanes").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()))
+}
+
+/// `wide.uglykl` (rerail-ukl-aot's test kernel of 64-bit lanes) as Rust at 8 lanes, checked in as `mix` is: its
+/// answers are the scalar ones there.
+#[test]
+fn the_wide_kernels_rust_is_the_checked_in_one() {
+    let text = include_str!("../../ukl_aot/kernels/wide.uglykl");
+    let src = super::source("/<kernels>/wide.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("wide_lanes").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()));
+    let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_aot/src/wide_lanes_w8.rs");
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(at, &rust).unwrap();
+    }
+    let kept = std::fs::read_to_string(at).unwrap_or_default();
+    assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+}
+
+#[test]
+fn the_mix_kernels_rust_is_the_checked_in_one() {
+    let rust = mix_rust();
+    let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_aot/src/mix_lanes_w8.rs");
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(at, &rust).unwrap();
+    }
+    let kept = std::fs::read_to_string(at).unwrap_or_default();
+    assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+}
+
+/// Where the lanes of `mix` part (decision 0567 step 3):
+/// - an `if` that rejoins runs both sides, each masked, with no test of whether any lane takes it;
+/// - `UKL_LIKELY(c)` runs its side unmasked in a chunk whose lanes all take it, `UKL_UNLIKELY(c)` the other side
+///   in a chunk none of whose lanes do; any other chunk runs both sides masked;
+/// - a loop of each lane's own bound, said to go on together (`UKL_LIKELY`), runs unmasked rounds while every lane
+///   goes on, then masked rounds; a loop of one bound runs unmasked rounds, its test the loop's own.
+#[test]
+fn the_mix_kernels_rust_runs_both_sides_and_full_rounds() {
+    let rust = mix_rust();
+    let lines: Vec<&str> = rust.lines().map(str::trim).collect();
+    // The tests of whether any lane runs: those that return (`i >= args.n`), and the rest after them.
+    let guarded: Vec<&[&str]> = lines.windows(2).filter(|w| w[0].starts_with("if any(") && w[0] != "if any(&live) {" && !w[1].starts_with("live = [vbicq_u32(live[0]")).collect();
+    assert!(guarded.is_empty(), "a side guarded by whether any lane takes it: {guarded:?}\n{rust}");
+    assert!(lines.iter().any(|l| l.starts_with("if all(&") && l.ends_with('{')), "no unmasked side of the likely `if`:\n{rust}");
+    assert!(lines.iter().any(|l| l.starts_with("if !any(&") && l.ends_with('{')), "no unmasked side of the unlikely `if`:\n{rust}");
+    let f = rust.split("\nunsafe fn ").find(|f| f.starts_with("b0_") && f.contains("_f(")).unwrap_or_else(|| panic!("no kernel function of all lanes:\n{rust}"));
+    let lines: Vec<&str> = f.lines().map(str::trim).collect();
+    let full: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| **l == "// Full rounds: every lane goes on.").map(|(i, _)| i).collect();
+    assert!(full.len() == 1, "{} loops of full rounds, not 1:\n{rust}", full.len());
+    // The hinted loop: its full rounds end where a lane's condition fails, then each lane its own.
+    let part = lines[full[0]..].iter().position(|l| l.starts_with("// Lanes part: each its own rounds.")).unwrap_or_else(|| panic!("no masked rounds after the full ones:\n{rust}"));
+    assert!(lines[full[0]..full[0] + part].iter().any(|l| l.starts_with("if !all(&") && l.ends_with("{ break; }")), "full rounds that do not end where a lane does:\n{rust}");
+    assert!(!lines[full[0]..full[0] + part].iter().any(|l| l.contains("vbslq_u32(")), "a masked write in a full round:\n{rust}");
+    // The loop of one bound, in every instance: its test the condition itself, its counter one value.
+    for f in rust.split("\nunsafe fn ").filter(|f| f.starts_with("b0_")) {
+        let lines: Vec<&str> = f.lines().map(str::trim).collect();
+        let one = lines.iter().position(|l| *l == "// Rounds of one condition: every lane goes on.").unwrap_or_else(|| panic!("no rounds of one condition:\n{f}"));
+        let end = lines[one..].iter().position(|l| *l == "}").unwrap() + one;
+        assert!(lines[one..end].iter().any(|l| l.starts_with("if !(") && l.ends_with("{ break; }") && !l.contains("any(") && !l.contains("all(")), "the loop of one bound tests its lanes:\n{f}");
+        assert!(lines[one..end].iter().any(|l| l.contains("wrapping_add(1") || l.contains("+ 1")), "the loop of one bound counts in lanes:\n{f}");
+    }
+}
+
+/// `f16_parent.uglykl`'s kernel `kernel` (rerail-ukl-aot's test kernels: every node's parent of a format 16 tape) as Rust at 8 lanes.
+fn f16_parent_rust(kernel: &str) -> Result<String, super::Error> {
+    let text = include_str!("../../ukl_aot/kernels/f16_parent.uglykl");
+    let src = super::source("/<kernels>/f16_parent.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel(kernel).unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    super::rs::kernel(&k, 8).map_err(|e| super::Error(format!("{}\n{}", e.0, super::k::View::new(&k.tape).listing())))
+}
+
+/// `f16_parent`'s kernel of one launch as Rust at 8 lanes, as checked in: its barrier parts it in two phases, each
+/// chunk's first phase (its steps, in the group's threadgroup memory) before any chunk's second (the chase of
+/// their links there), each chunk's lanes that go on and its variables saved between them.
+#[test]
+fn the_f16_parent_kernels_rust_is_the_checked_in_one() {
+    let rust = f16_parent_rust("parent_group").unwrap_or_else(|e| panic!("{}", e.0));
+    assert!(rust.contains("let mut tg = [0u64; 128];") && rust.contains("let phase = 1u32;") && !rust.contains("let phase = 2u32;"), "no group's memory, or not two phases:\n{rust}");
+    assert!(rust.contains("if phase == 0 {") && rust.contains("if phase == 1 {") && !rust.contains("Barrier"), "the phases:\n{rust}");
+    let at = format!("{}/../ukl_aot/src/parent_group_w8.rs", env!("CARGO_MANIFEST_DIR"));
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(&at, &rust).unwrap();
+    }
+    let kept = std::fs::read_to_string(&at).unwrap_or_default();
+    assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+}
+
+/// `f16_parent`'s parent kernel of two launches as Rust at 8 lanes, as checked in: each node's step, then the chase of
+/// the links, a chain past 7 reported in `out`'s word past the nodes' (no atomic, no second buffer), never walked.
+#[test]
+fn the_f16_parent_two_launches_rust_is_the_checked_in_one() {
+    for kernel in ["parent_step", "parent_link"] {
+        let rust = f16_parent_rust(kernel).unwrap_or_else(|e| panic!("{}", e.0));
+        let at = format!("{}/../ukl_aot/src/{kernel}_w8.rs", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("UKL_RS_WRITE").is_some() {
+            std::fs::write(&at, &rust).unwrap();
+        }
+        let kept = std::fs::read_to_string(&at).unwrap_or_default();
+        assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+    }
+}
+
+/// A barrier only parts a kernel's function at its top: one in a branch (or in a function it calls) is refused.
+#[test]
+fn a_barrier_not_at_the_top_of_the_kernels_function_is_refused() {
+    let text = "#include <ukl/backend.h>\n\
+        DEFINE_KERNEL2(t, branch, RWBUFFER, uint32_t, out, \"[64]\", SHARED, uint32_t, s, 64, GID0, uint32_t, i, , LID0, uint32_t, lid, )\n\
+        { s[lid] = i; if (i > 3u) { ukl_tg_barrier(); } out[i] = s[63u - lid]; }\n";
+    let src = super::source("/<kernels>/branch.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("branch").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let e = super::rs::kernel(&k, 8).expect_err("a barrier in a branch");
+    assert!(e.0.contains("Barrier"), "{}", e.0);
+}
+
+/// Spike: `f16_parent`'s look-back kernel (no barrier) as Rust at 8 lanes, as checked in.
+#[test]
+fn the_f16_parent_back_kernels_rust_is_the_checked_in_one() {
+    let rust = f16_parent_rust("parent_back").unwrap_or_else(|e| panic!("{}", e.0));
+    let at = format!("{}/../ukl_aot/src/parent_back_w8.rs", env!("CARGO_MANIFEST_DIR"));
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(&at, &rust).unwrap();
+    }
+    let kept = std::fs::read_to_string(&at).unwrap_or_default();
+    assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+}
+
+/// A store of each lane's value at one address is C's race of the threads: the last running lane's value, one of
+/// those C allows, stored once where a lane runs (rerail-ukl-aot's `a_chain_past_seven_links_is_a_corrupt_tape`
+/// runs one).
+#[test]
+fn a_store_of_lanes_values_at_one_address_is_the_last_running_lanes() {
+    let text = "#include <ukl/backend.h>\n\
+        DEFINE_KERNEL2(t, race, RWBUFFER, uint32_t, c, \"[1]\", GID0, uint32_t, i, )\n\
+        { if (i < 64u && (i & 1u) != 0u) c[0] = i; }\n";
+    let src = super::source("/<kernels>/race.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("race").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}", e.0));
+    let stores = rust.lines().filter(|l| l.contains(".write_unaligned(")).count();
+    assert!(stores == 2 && rust.matches(".leading_zeros() as usize;").count() == 2 && !rust.contains("if vgetq_lane_u32::<"), "not one store of the last running lane's:\n{rust}");
+}
+
+/// A loop of lanes' rounds where few lanes go on is each one's rounds in turn, of one value (its loads one a round,
+/// not a gather): its variables the lane's copies, written back to its lane; not so for a loop that stores to memory.
+#[test]
+fn a_lanes_loop_of_few_lanes_ends_as_each_ones_rounds() {
+    let text = "#include <ukl/backend.h>\n\
+        DEFINE_KERNEL2(t, chase, ROBUFFER, uint32_t, next, \"[64]\", RWBUFFER, uint32_t, out, \"[64]\", GID0, uint32_t, i, )\n\
+        { if (i >= 64u) return; uint32_t r = next[i]; for (uint32_t k = 0u; k < 7u && r < 64u; k++) r = next[r]; out[i] = r; }\n\
+        DEFINE_KERNEL2(t, mark, RWBUFFER, uint32_t, next, \"[64]\", GID0, uint32_t, i, )\n\
+        { if (i >= 64u) return; uint32_t r = next[i]; while (r < 64u) { next[r] = 64u; r = next[i]; } }\n";
+    let src = super::source("/<kernels>/chase.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let rust = |name: &str| {
+        let k = super::vector::vectorize(&p, p.kernel(name).unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+        super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}", e.0))
+    };
+    let chase = rust("chase");
+    assert!(chase.contains(".count_ones() <= 2 {") && chase.contains("let mut x") && chase.contains("_j: u32 = ") && chase.contains("[j] = x"), "no lane's own rounds:\n{chase}");
+    let mark = rust("mark");
+    assert!(!mark.contains("_j: u32 = "), "a loop that stores to memory run a lane at a time:\n{mark}");
+}
+
+/// An atomic add of one value at one address is each running thread's, as in C: one atomic of the value times the
+/// running lanes, and each lane's old value its own (the first plus the value times the running lanes below it).
+#[test]
+fn a_uniform_atomic_add_is_each_lanes() {
+    let text = "#include <ukl/backend.h>\n\
+        DEFINE_KERNEL2(t, take, RWBUFFER, uint32_t, c, \"[1]\", RWBUFFER, uint32_t, out, \"[64]\", GID0, uint32_t, i, )\n\
+        { if (i < 64u) out[i] = ukl_atomic_add(&c[0], 3u); }\n";
+    let src = super::source("/<kernels>/take.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("take").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}", e.0));
+    assert!(rust.contains(").wrapping_mul(8u32), Relaxed)"), "no add of every lane where all run:\n{rust}");
+    assert!(rust.contains("vmlaq_u32(vdupq_n_u32("), "the lanes' old values are not their own:\n{rust}");
+    assert!(rust.contains("+= ") && rust.contains("& 1; }"), "no count of the running lanes where some run:\n{rust}");
 }

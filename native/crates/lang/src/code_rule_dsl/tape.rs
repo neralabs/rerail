@@ -1304,12 +1304,11 @@ impl TapeImage {
     }
 
     /// Its ERROR and MISSING nodes, in preorder, as its writer listed them in its home (`f16::presence::faults`):
-    /// format 16's and 16z's, where the home holds a presence. Format 15 lists none.
+    /// format 16's and 16z's, where the home holds a presence.
     pub fn faults(&self) -> Option<&[u32]> {
         match &self.held {
             Held::F16(t) => t.faults(),
             Held::F16Z(t) => t.faults(),
-            _ => None,
         }
     }
 

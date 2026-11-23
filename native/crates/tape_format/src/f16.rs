@@ -42,7 +42,10 @@ pub struct Lang {
 }
 
 impl Lang {
-    /// `table` by number (most frequent first), the widths in bytes, and the revision (1–254).
+    /// `table` by number (the lab's: every code the grammar allows and no other, decision 0626, numbered by how often
+    /// each is a node's over a corpus, so the common codes are below the cutoff and only rare ones are read through
+    /// the side list; a code no counted node has, by `(flags, kind, field, classes)`), the widths in bytes, and the
+    /// revision (1–254).
     pub fn new(table: CodeTable, widths: [usize; 3], revision: u8) -> Result<Self, String> {
         if revision == 0 || revision == 255 {
             return Err(format!("revision {revision} is not a tape revision"));

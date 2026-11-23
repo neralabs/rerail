@@ -151,6 +151,10 @@ fn fill(store: &Path) -> std::result::Result<(), String> {
     let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(program).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let corpus = templates().join("corpus");
     std::fs::create_dir_all(&corpus).map_err(|e| e.to_string())?;
+    // One Python file, so the run has phase 1 (`phases::sources`, over the source files of the run's language): its
+    // program, the same in every test's run of Python files, is prepared and stored here (decision 0073). Over no file
+    // phase 1 did not run, and each test process prepared `sources.rerail` again.
+    std::fs::write(corpus.join("a.py"), "import os\n\ndef f():\n    return os.sep\n").map_err(|e| e.to_string())?;
     let out = store.with_extension("out");
     let binding = crate::code_rule_dsl::typing::file_local::Binding::Cpu;
     super::run_with_options(&[&program], &corpus, None, &out, "program", binding, 1 << 18, &Default::default(), &serde_json::Value::Null).map_err(|e| e.to_string())?;

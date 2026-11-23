@@ -74,6 +74,9 @@ pub const PART_WHOLE: &str = "part:whole";
 pub const PUSH_BASE: &str = "part:push-base";
 /// The run decided the push's mode for every part: `PUSH_BASE` or not.
 pub const PUSH_DECIDED: &str = "part:push-decided";
+/// A relation the run reads by name at a chunk's end (decision 0597 rule 8: a pass's fresh roots and its tape-local
+/// rows, which a tape value's entry keeps): its rules, its name and its columns stay as written.
+pub const BY_NAME: &str = "rr:by-name";
 
 /// A version's fields, read once (at the first `of` of its `Placed`) and borrowed after.
 #[derive(Clone, Copy)]

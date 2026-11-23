@@ -156,16 +156,15 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "verdict_entry", params: &[I32, I32], ret: I64, hot: false, body: crate::verdict_reads::verdict_entry },
     Read { family: Family::Relation, name: "cache_open", params: &[I64, I32], ret: I64, hot: false, body: crate::verdict_reads::cache_open },
     // `has` probed off the tape (decision 0353 step 5): a node's numbered ancestors by a climb, its numbered
-    // descendants as a range of numbers. Last, so no other read's number moves.
+    // descendants as a range of numbers.
     Read { family: Family::View, name: "view_up", params: &[I32], ret: I32, hot: false, body: crate::view_reads::up },
     Read { family: Family::View, name: "view_end", params: &[I32], ret: I32, hot: false, body: crate::view_reads::end },
     // `tape`, `ast_depth` and `node_order` read in place (decision 0353 step 6: they were uploaded from the host).
-    // Last, so no other read's number moves.
     Read { family: Family::View, name: "view_tape", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tape },
     Read { family: Family::View, name: "view_depth", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::depth },
     Read { family: Family::View, name: "view_order", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::order },
     // The views' directory's searches (decision 0353 step 3 on the CPU, step 2): the descriptor is the directory, in
-    // its batch's block; each takes its caller's memo.
+    // its batch's block; each takes its caller's memo. Last, so no other read's number moves.
     Read { family: Family::Relation, name: "dir_doc_of_row", params: &[I32, I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_row },
     Read { family: Family::Relation, name: "dir_doc_of_key", params: &[I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_key },
 ];
@@ -803,27 +802,51 @@ fn f16_side_of(b: &mut B<'_, '_>, k: Value, i: Value) -> Value {
     let offsets = b.f.ins().imul_imm(nsub, 2);
     let offsets = b.f.ins().iadd(start, offsets);
     let low = b.f.ins().band_imm(i, i64::from(F16_BLOCK - 1));
-    // The first offset at or past the node's low byte.
+    // The first offset at or past the node's low byte: in the ascending run, the count of its offsets below it, 8 a
+    // word, each byte compared unsigned within the word (its low 7 bits by a subtraction that borrows from no other
+    // byte, its high bit apart), the bytes past the run's end masked off. No load waits on another, as a halving's do.
     let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(head, I32);
     b.f.append_block_param(head, I32);
     b.f.append_block_param(done, I32);
-    b.f.ins().jump(head, &[lo.into(), hi.into()]);
+    b.f.ins().jump(head, &[lo.into(), lo.into()]);
     b.f.switch_to_block(head);
-    let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
-    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
-    b.f.ins().brif(more, body, &[], done, &[lo.into()]);
+    let (q, found) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, q, hi);
+    b.f.ins().brif(more, body, &[], done, &[found.into()]);
     b.f.switch_to_block(body);
-    let sum = b.f.ins().iadd(lo, hi);
-    let middle = b.f.ins().ushr_imm(sum, 1);
-    let at = b.f.ins().iadd(offsets, middle);
+    let at = b.f.ins().iadd(offsets, q);
     let at = b.f.ins().umin(at, limit);
-    let byte = b.u8(side, at);
-    let below = b.f.ins().icmp(IntCC::UnsignedLessThan, byte, low);
-    let next = b.f.ins().iadd_imm(middle, 1);
-    let lo = b.f.ins().select(below, next, lo);
-    let hi = b.f.ins().select(below, hi, middle);
-    b.f.ins().jump(head, &[lo.into(), hi.into()]);
+    let x = b.word(side, at);
+    let h = b.f.ins().iconst(I64, 0x8080_8080_8080_8080u64 as i64);
+    let low64 = b.f.ins().uextend(I64, low);
+    let l8 = b.f.ins().imul_imm(low64, 0x0101_0101_0101_0101);
+    let xh = b.f.ins().bor(x, h);
+    let l7 = b.f.ins().band_not(l8, h);
+    let d = b.f.ins().isub(xh, l7);
+    let high_below = b.f.ins().band_not(l8, x);
+    let same = b.f.ins().bxor(x, l8);
+    let same_high = b.f.ins().bnot(same);
+    let not_d = b.f.ins().bnot(d);
+    let low_below = b.f.ins().band(same_high, not_d);
+    let below = b.f.ins().bor(high_below, low_below);
+    let below = b.f.ins().band(below, h);
+    // The bytes of the run left: all 8, or the low `left` bytes.
+    let left = b.f.ins().isub(hi, q);
+    let whole = b.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, left, 8);
+    let bits = b.f.ins().imul_imm(left, 8);
+    let bits = b.f.ins().uextend(I64, bits);
+    let one = b.f.ins().iconst(I64, 1);
+    let mask = b.f.ins().ishl(one, bits);
+    let mask = b.f.ins().iadd_imm(mask, -1);
+    let all = b.f.ins().iconst(I64, -1);
+    let mask = b.f.ins().select(whole, all, mask);
+    let below = b.f.ins().band(below, mask);
+    let n = b.f.ins().popcnt(below);
+    let n = b.f.ins().ireduce(I32, n);
+    let found = b.f.ins().iadd(found, n);
+    let next = b.f.ins().iadd_imm(q, 8);
+    b.f.ins().jump(head, &[next.into(), found.into()]);
     b.f.switch_to_block(done);
     let found = b.f.block_params(done)[0];
     // The list's values follow the part's offsets.

@@ -387,6 +387,10 @@ pub struct Reader {
     /// opener through its closer (proved, `bitlex_masks`): its tokens' codes are their kind and
     /// word alone (`native_cpu_block::plain_code`), whatever marks the grammar has.
     pub quiet: bool,
+    /// Its regions `resume` a token's (decision 0600): its read makes no record of its own. It
+    /// ends the record a template left open (`ReadArm::template`), or, closed at a template
+    /// again, leaves it open over the next one's code.
+    pub resumes: bool,
 }
 
 /// Where a region read in parts is split into its tokens (`Reader::split`, decision 0323).
@@ -512,6 +516,10 @@ pub struct ReadArm {
     /// both at `/`): this region's kind and marks, as `Reader::retag` says them for the reader's
     /// own (`None`: the reader's).
     pub retag: Option<(u8, u32)>,
+    /// Where a region kind `resumes` this arm's (decision 0600): the output of its second
+    /// closer (`or`, a template's `$`). A read that closes there leaves its token's record open
+    /// over the template's code, to the end of the reader that `resumes` it.
+    pub template: Option<u16>,
 }
 
 /// A reader's region with no closer after its opener (`ReadArm::none`).
@@ -526,7 +534,7 @@ pub enum ReadNone {
 }
 
 /// The first bit of output `o` at or after byte `from`, a word at a time; `None`, none.
-fn first_bit(outputs: &[Vector<u64>], o: u16, from: usize) -> Option<usize> {
+pub fn first_bit(outputs: &[Vector<u64>], o: u16, from: usize) -> Option<usize> {
     let w = outputs.get(usize::from(o)).map_or(&[][..], |v| v.as_slice());
     let mut q = from / 64;
     let mut x = w.get(q)? & (!0u64 << (from % 64));
@@ -575,6 +583,13 @@ pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vector<u64>]) -> Option<
 /// a time; `Err` where the file is refused. `n`: the file's length.
 #[allow(clippy::result_unit_err, reason = "a refusal says nothing more: the caller leaves the file to the grammar's parser")]
 pub fn read_last(records: &Records, reader: &Reader, s: usize, bytes: &[u8], outputs: &[Vector<u64>]) -> Result<usize, ()> {
+    read_end(records, reader, s, bytes, outputs).map(|e| e.0)
+}
+
+/// A reader's token's last byte from its first, `s` (`read_last`), and whether its closer is a
+/// template's (`ReadArm::template`, decision 0600): its record stays open over the code.
+#[allow(clippy::result_unit_err, reason = "a refusal says nothing more: the caller leaves the file to the grammar's parser")]
+pub fn read_end(records: &Records, reader: &Reader, s: usize, bytes: &[u8], outputs: &[Vector<u64>]) -> Result<(usize, bool), ()> {
     let n = bytes.len();
     let words = |o: u16| outputs.get(usize::from(o)).map_or(&[][..], |v| v.as_slice());
     let bit = |o: u16, i: usize| words(o).get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1);
@@ -588,10 +603,11 @@ pub fn read_last(records: &Records, reader: &Reader, s: usize, bytes: &[u8], out
         loop {
             if x != 0 {
                 let c = 64 * q + x.trailing_zeros() as usize;
+                let template = a.template.is_some_and(|t| bit(t, c));
                 // A closer to its last (`ReadArm::last`, a `${`'s two bytes), as the walk ends it.
                 return match a.last {
-                    Some(o) => first_bit(outputs, o, c).ok_or(()),
-                    None => Ok(c.wrapping_add_signed(isize::from(a.off))),
+                    Some(o) => first_bit(outputs, o, c).ok_or(()).map(|l| (l, template)),
+                    None => Ok((c.wrapping_add_signed(isize::from(a.off)), template)),
                 };
             }
             q += 1;
@@ -602,13 +618,13 @@ pub fn read_last(records: &Records, reader: &Reader, s: usize, bytes: &[u8], out
         }
         return match a.none {
             ReadNone::Refuse => Err(()),
-            ReadNone::End => Ok(n.saturating_sub(1)),
-            ReadNone::Bytes(m) => Ok(s + usize::from(m) - 1),
+            ReadNone::End => Ok((n.saturating_sub(1), false)),
+            ReadNone::Bytes(m) => Ok((s + usize::from(m) - 1, false)),
         };
     }
     match records.rules.get(usize::from(reader.other)) {
         Some(&EndRule::Read(_)) | None => Err(()),
-        Some(&rule) => Ok(last_by_rule(records, rule, s, bytes, outputs).unwrap_or(s)),
+        Some(&rule) => Ok((last_by_rule(records, rule, s, bytes, outputs).unwrap_or(s), false)),
     }
 }
 
@@ -691,6 +707,9 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vector<u64>])
     let mut untaken = false;
     let mut checked = false;
     let mut read = false;
+    // The records a template left open (decision 0600): a string's, over its template's code, as
+    // the lean lexer's string reader keeps its string over the code.
+    let mut open: Vec<usize> = Vec::new();
     'tokens: while at < n {
         let mut q = at / 64;
         let mut x = held(q) & (!0u64 << (at % 64));
@@ -732,14 +751,35 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vector<u64>])
         }
         let l = match records.rules.get(usize::from(k)) {
             Some(&EndRule::Read(i)) => {
-                let l = match read_last(records, &records.readers[usize::from(i)], s, bytes, outputs) {
-                    Ok(l) => l.max(s),
+                let reader = &records.readers[usize::from(i)];
+                let (l, template) = match read_end(records, reader, s, bytes, outputs) {
+                    Ok((l, t)) => (l.max(s), t),
                     Err(()) => {
                         read = true;
-                        s
+                        (s, false)
                     }
                 };
                 checked |= records.checks.iter().any(|c| c.rule == k && c.then == CheckThen::Escape && test_holds(records, c, s, l, outputs));
+                // A region that resumes a token's: no record, the open one's end (decision 0600).
+                let opens = reader.arms.iter().any(|a| bit_at(outputs, a.opener, s));
+                if reader.resumes && opens {
+                    match open.last() {
+                        Some(&r) => {
+                            lasts[r] = l as u32;
+                            if !template {
+                                open.pop();
+                            }
+                        }
+                        None => read = true,
+                    }
+                    at = l + 1;
+                    continue;
+                }
+                if template {
+                    // A template in a template's code: refused, as by the CPU's loop.
+                    read |= !open.is_empty();
+                    open.push(starts.len());
+                }
                 l
             }
             Some(&rule) => {
@@ -757,6 +797,11 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vector<u64>])
         at = l + 1;
     }
     (starts, lasts, untaken, read, checked)
+}
+
+/// Whether output `o` has a bit at byte `i`.
+fn bit_at(outputs: &[Vector<u64>], o: u16, i: usize) -> bool {
+    outputs.get(usize::from(o)).and_then(|w| w.get(i / 64)).is_some_and(|w| w >> (i % 64) & 1 == 1)
 }
 
 /// The most marks a code holds.
@@ -903,10 +948,23 @@ pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], 
     let n = starts.len().min(lasts.len());
     let mut codes = rerail_blocks::vector::Vector::with_capacity(n);
     let mut after = 0u64;
+    // The records open around the token (decision 0600): a string's whose template's code it is
+    // in, each its last; a token starts after the one before, or inside the open one's, and ends
+    // in it.
+    let mut around: Vec<u64> = Vec::new();
     for k in 0..n {
         let (s, l) = (starts[k] as usize, lasts[k] as usize);
-        bad |= l < s || (s as u64) < after;
+        while around.last().is_some_and(|&e| (s as u64) > e) {
+            around.pop();
+        }
+        let inside = around.last().is_some_and(|&e| l as u64 <= e) && k > 0 && starts[k - 1] < starts[k];
+        bad |= l < s || (s as u64) < after && !inside;
         after = l as u64 + 1;
+        let rule = records.ends.get(usize::from(bytes.get(s).copied().unwrap_or(0))).and_then(|&e| records.rules.get(usize::from(e)));
+        if rule.is_some_and(|r| matches!(r, EndRule::Read(i) if records.readers[usize::from(*i)].arms.iter().any(|a| a.template.is_some()))) {
+            around.push(l as u64);
+            after = s as u64 + 1;
+        }
         let len = (l + 1).saturating_sub(s);
         let mut kind = u32::from(records.kinds[usize::from(bytes.get(s).copied().unwrap_or(0))]);
         let mut word = table.word(bytes, s, len);

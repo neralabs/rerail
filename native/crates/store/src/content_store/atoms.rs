@@ -38,7 +38,7 @@ pub(crate) use stored::clone_file;
 mod vtab;
 pub use map::{ProcessIds, StoreIds, map_columns, mapped};
 
-pub type Sym = u32;
+pub use rerail_store_base::content_store::Sym;
 
 /// The values `Atoms::intern_all` looks up under one read lock (decision 0315): a writer waits at most this many
 /// lookups for it.
@@ -592,10 +592,14 @@ impl Drop for MemoryArena {
 }
 
 /// A path's registry key: its canonical form, resolved once per path (a `realpath` per stratum was 2.5% of a corpus
-/// run's main thread). A path that does not resolve yet is not remembered.
+/// run's main thread). A path that does not resolve yet is not remembered. Where the thread holds no object (`Atoms`'
+/// drop on the pool thread whose job let the store's last holder go, its run gone), resolved here and not remembered.
 pub(super) fn key(path: &Path) -> PathBuf {
     #[derive(Default)]
     struct CanonicalPaths(Mutex<HashMap<PathBuf, PathBuf>>);
+    if rerail_prof::code_rule_dsl::logic::profile::starter_object().is_none() {
+        return dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    }
     let held_ = rerail_prof::code_rule_dsl::logic::profile::shared::<CanonicalPaths>();
     if let Some(key) = held_.0.lock().get(path) {
         return key.clone();
@@ -850,6 +854,8 @@ impl Atoms {
         // The kept facts beside them (decisions 0456 K8, 0439), on a store's connection.
         if let Some(path) = connection.path().filter(|path| !path.is_empty()) {
             super::kept_facts::vtab::install(connection, Path::new(path))?;
+            // The prefilter's tables as its kept facts (t33 steps 6 and 7).
+            super::prefilter::vtab::install(connection, Path::new(path))?;
         }
         Ok(atoms)
     }
@@ -1617,6 +1623,15 @@ pub fn materialize_stored(connection: &Connection) -> StoreResult<()> {
     for (atom, value) in atoms.iter().enumerate() {
         insert.execute(rusqlite::params![atom as i64, value])?;
     }
+    Ok(())
+}
+
+/// The store's kept facts as the SQL tables of their names (`prefilter::vtab`: the derivation graph, the search
+/// index, the prefilter's) on `connection`, a plain connection to a store's file: for checks of what a store holds on
+/// disk, beside `materialize_stored`.
+pub fn install_kept_tables(connection: &Connection) -> StoreResult<()> {
+    let path = connection.path().filter(|path| !path.is_empty()).ok_or_else(|| StoreError::Invalid("a connection to no store's file".to_owned()))?;
+    super::prefilter::vtab::install(connection, Path::new(path))?;
     Ok(())
 }
 

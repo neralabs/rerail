@@ -243,7 +243,7 @@ fn base(p: &Prog<'_>) -> Moves {
     let mut add = |rel: &str, from: usize, to: usize| {
         moves.entry(rel.to_owned()).or_default().entry((from, to)).or_default().insert(Move::Later, true);
     };
-    for (rel, from, to) in [("child", 0, 1), ("field", 0, 2), ("tape", 1, 0), ("next_sibling", 0, 1), ("precedes", 0, 1)] {
+    for (rel, from, to) in [("child", 0, 1), ("field", 0, 2), ("tape", 1, 0), ("next_sibling", 0, 1), ("precedes", 0, 1), ("def_unit", 1, 0)] {
         add(rel, from, to);
     }
     // The tree axes, `rr_inside_<set>(n, a)` and `rr_has_<set>(n, a)`: a is an ancestor of n.

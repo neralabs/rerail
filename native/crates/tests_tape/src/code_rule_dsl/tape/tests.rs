@@ -329,10 +329,11 @@ fn persisted_image_round_trips_without_parsing() {
     // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`, Patch 28's
     // `_member_name_here`, Patch 29's `_template_escape_without_digits`, Patch 30's `using`
     // declarations, `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; so does the language's format 16
-    // table (its codes, from the grammar, decision 0626), and a change of format 16's layout (decision 0434).
+    // table (its codes, from the grammar, decision 0626, and their numbering, by two corpora's counts: revision 4), and a
+    // change of format 16's layout (decision 0434).
     assert_eq!(
         digest,
-        "b59b19b661ab9911df54b886b1ec64f133f66485c30abc507292be89cb1ee60d"
+        "bd753d2a17873768297f78a49a2d63a15a1f2f13b84a7755700b5e56e9242aa6"
     );
 }
 

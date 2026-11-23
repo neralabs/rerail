@@ -74,7 +74,8 @@ pub struct Compiled {
     /// Tier 1 as Rust, written by the Bitlex compiler from the grammar in this compile (`bitlex_lex_rust`), so its
     /// codes are the JIT's, or why it is not written (`rerail-rr-aot` holds it).
     pub lexer_rust: Result<String, String>,
-    /// Tier 2 as Rust, from the tree rules in this compile (`bitlex_rust`), or why it is not written.
+    /// Tier 2 as Rust, from the tree rules in this compile as one loop over tier 1's records (`bitlex_rust::tier2_loop`,
+    /// its records form), or why it is not written.
     pub rust: Result<String, String>,
 }
 
@@ -144,7 +145,7 @@ pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> 
         rerail_compiler::native_cpu_clusters::Cut { pick_traffic: traffic.clone(), near: true, unsigned: true, speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(&native) }
     };
     let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program, lexer_rust: compiled.lexer_rust.clone().unwrap_or_else(|| Err("no tree section".into())), rust: compiled.rust.clone().unwrap_or_else(|| Err("no tree section".into())) })
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program, lexer_rust: compiled.lexer_rust.clone().unwrap_or_else(|| Err("no tree section".into())), rust: compiled.rust_loop.clone().unwrap_or_else(|| Err("no tree section".into())) })
 }
 
 /// `src`'s tape, the engine's bytes (decision 0140): from the compiled grammar, or, for a file
@@ -180,13 +181,13 @@ pub fn tapes(files: &[&str]) -> Vec<rerail_tape_format::Vector<u8>> {
 
 /// Tier 1's segments on the device: 29 blocks and a warm-up block each side, a SIMD group.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-const SEGMENTS: rerail_metal::block_program::serial::Segments = rerail_metal::block_program::serial::Segments { blocks: 29, warm: 1 };
+const SEGMENTS: rerail_metal_programs::block_program::serial::Segments = rerail_metal_programs::block_program::serial::Segments { blocks: 29, warm: 1 };
 
 /// `tapes` on Metal: halves while the device refuses the batch for capacity; `false` when it
 /// cannot run it at all.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<rerail_tape_format::Vector<u8>>) -> bool {
-    use rerail_metal::block_program::serial::run_resident;
+    use rerail_metal_programs::block_program::serial::run_resident;
     let mut batch = Vec::with_capacity(files.len());
     for file in files {
         batch.push(rerail_compiler::block::BatchFile { bytes: file.as_bytes(), program: 0 });
@@ -233,7 +234,7 @@ pub mod tests {
     /// `block_program::ready`): a test's device half is left out, as the executors' are.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn no_device() -> bool {
-        rerail_metal::block_program::ready().is_err()
+        rerail_metal_programs::block_program::ready().is_err()
     }
 
     /// The compiled grammar's tape is the engine's, node for node (extras and parents too), on
@@ -499,7 +500,7 @@ pub mod tests {
     #[ignore = "the corpus on Metal: run by hand"]
     fn tier1_on_metal_equals_cranelift() {
         use rerail_compiler::block;
-        use rerail_metal::block_program::serial::{Segments, run_serial_split};
+        use rerail_metal_programs::block_program::serial::{Segments, run_serial_split};
         let c = super::compiled().expect("compiles");
         let files = corpus();
         let refs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
@@ -553,7 +554,7 @@ pub mod tests {
             return;
         }
         use rerail_compiler::block;
-        use rerail_metal::block_program::serial::{Segments, run_serial_split};
+        use rerail_metal_programs::block_program::serial::{Segments, run_serial_split};
         let c = super::compiled().expect("compiles");
         let lazy = lazy_bits(&c.native);
         let body = "r(x) :- a(x), \"s\". // c\n".repeat(400);
@@ -1081,7 +1082,7 @@ pub mod tests {
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[ignore = "a probe: run by hand"]
     fn rr_metal_probe() {
-        use rerail_metal::block_program::serial::run_resident;
+        use rerail_metal_programs::block_program::serial::run_resident;
         let w = std::time::Instant::now();
         let c = super::compiled().expect("compiles");
         eprintln!("compiled in {:.2?} wall", w.elapsed());
@@ -1171,7 +1172,7 @@ pub mod tests {
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[ignore = "a benchmark: run by hand"]
     fn rr_metal_bench() {
-        use rerail_metal::block_program::serial::{compiles, prewarm, run_resident_digested, SerialRun};
+        use rerail_metal_programs::block_program::serial::{compiles, prewarm, run_resident_digested, SerialRun};
         let c = super::compiled().expect("compiles");
         let n: usize = std::env::var("RR_REPEAT").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
         let files: Vec<String> = (0..n).flat_map(|_| corpus()).collect();
@@ -1516,8 +1517,8 @@ pub mod tests {
     fn token_rules_are_their_last_masks() {
         let old = crate::GRAMMAR
             .replace("start hash & directive run word", "start hash & directive last hashword & ~next(hashword & ~directive)")
-            .replace("start alpha & ident & ~prev(ident) run word", "start alpha & ident & ~prev(ident) last ident & ~next(ident)")
-            .replace("start digit & int & ~prev(int) run num_run once dot", "start digit & int & ~prev(int) last numeral & ~next(numeral)")
+            .replace("start id_first run word", "start id_first last ident & ~next(ident)")
+            .replace("start int_first run num_run once dot", "start int_first last numeral & ~next(numeral)")
             .replace("start punct & p_start pair two_start", "start punct & p_start last p_last")
             .replace("read str", "last prev(f_str) & ~f_str")
             .replace("read line | block", "last (f_line & ~next(f_line)) | (prev(f_block) & ~f_block)")
@@ -2450,7 +2451,7 @@ pub mod tests {
             if no_device() {
                 return;
             }
-            use rerail_metal::block_program::serial::{Segments, run_serial_split};
+            use rerail_metal_programs::block_program::serial::{Segments, run_serial_split};
             let batch: Vec<rerail_compiler::block::BatchFile<'_>> = files.iter().map(|&k| rerail_compiler::block::BatchFile { bytes: refs[k], program: 0 }).collect();
             let got = run_serial_split(&[&self.new.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
             for (&k, m) in files.iter().zip(&got.run.files) {
@@ -2518,7 +2519,7 @@ pub mod tests {
             return;
         }
         use rerail_compiler::block;
-        use rerail_metal::block_program::serial::{Segments, run_serial_split};
+        use rerail_metal_programs::block_program::serial::{Segments, run_serial_split};
         let want = c.parser.tier1.run_files(refs);
         let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
         let got = run_serial_split(&[&c.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
@@ -2916,7 +2917,7 @@ pub mod tests {
         eprintln!("  {:<44} {:>10} {:>10} {:>8}", "", "CPU/pass", "wall/pass", "MB/s CPU");
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
-            use rerail_metal::block_program::serial::Resident;
+            use rerail_metal_programs::block_program::serial::Resident;
             // Tier 1 on Metal over `files`, halved while the device refuses it for capacity (as
             // `metal_tapes`), each part's buffers given to `each` as they come (held all at once,
             // they pass the device's budget): its GPU seconds, its first file, its buffers (none:
@@ -2925,7 +2926,7 @@ pub mod tests {
             type Part<'a> = dyn FnMut(f64, usize, usize, Option<&Resident>) + 'a;
             fn parts(c: &super::Compiled, files: &[rerail_compiler::block::BatchFile<'_>], digests: &[[u8; 32]], at: usize, each: &mut Part<'_>) {
                 let (t, w) = (thread_cpu(), std::time::Instant::now());
-                let r = rerail_metal::block_program::serial::run_resident_digested(&[&c.native], files, Some(digests), super::SEGMENTS);
+                let r = rerail_metal_programs::block_program::serial::run_resident_digested(&[&c.native], files, Some(digests), super::SEGMENTS);
                 if std::env::var_os("RR_PARTS").is_some() {
                     eprintln!("      run_resident {} files: {:.2?} CPU {:.2?} wall {}", files.len(), thread_cpu() - t, w.elapsed(), if r.is_ok() { "ok" } else { "refused" });
                 }

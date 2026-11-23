@@ -104,7 +104,7 @@ fn k4_clean_outputs_are_admitted_together_without_rerunning_their_producers() {
     let span=profile::span(||"bulk output admission".into());
     let mut kept=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     assert!(prog.output_names().iter().all(|r|kept.holds(r,&pl(&prog))),"raw output facts are sufficient to keep a derivation");
-    let cut=Cut{clean:prog.output_names().into_iter().collect(),strata:(0,130),changed:vec![],views:Default::default()};
+    let cut=Cut{clean:prog.output_names().into_iter().collect(),strata:(0,130),changed:vec![],views:Default::default(),idle:Default::default()};
     assert_eq!(kept.load(&store,&cut,&pl(&prog),&Locations::new(),false,None).unwrap(),Some((130,390)));
     for i in 0..130 {
         let rel=&kept.rels[&format!("result{i}")];

@@ -1,4 +1,6 @@
-//! Phase 0's cutoff for a whole run (t23 §4): a run whose every read is as it was writes the outputs it wrote.
+//! The run's frame (t33 K4, after t23 §4): a run whose every read is as it was writes the outputs it wrote. A frame
+//! as phase 1's is (`phases::frame`): what the run consulted, each with its digest, and what it made, under its
+//! identity, checked by the reads' own observations (`base::changes_of`), the same check phase 1's frame takes.
 //!
 //! A run consults a known set of things, and nothing else:
 //! - its programs' text, with the root's settings;
@@ -6,25 +8,26 @@
 //! - the workspace's documents;
 //! - what its resolution rules listed, read, loaded, or found missing (`world::World::consulted`).
 //!
-//! After a run, its record keeps all of these, each with its digest, under a key of the text, the options, the
+//! After a run, its frame keeps all of these, each with its digest, under a key of the text, the options, the
 //! root, the modes and the engine, together with the outputs it wrote. The next run under the same key asks phase
 //! 0's observer about each consulted thing. That costs a `stat` each, and a read only for what changed. When all
 //! are as they were, the run writes the kept outputs and evaluates nothing: the empty delta stops before phase 1.
 //!
-//! The cutoff is on with `options.reuse`: the command line's runs, and phase 0's. A run that reads something it cannot name does not record. That covers typing inputs,
+//! The frame is kept and read with `options.reuse`: the command line's runs, and phase 0's. A run that reads something it cannot name does not record. That covers typing inputs,
 //! T facts, a program reading another phase's exports, or a run that consulted no file.
 
 use rerail_blocks::vector::Vector;
-use super::{Report, Result, Typing, observe, unchanged};
+use super::{Report, Result, Typing, observe};
 use super::Error;
 use sha2::{Digest as _, Sha256};
 use std::path::Path;
 
-/// Whether the cutoff applies to a run with these options and typing inputs.
+/// Whether the run's frame applies to a run with these options and typing inputs. `RERAIL_FRAME_OFF` (a measurement
+/// switch) runs without it: what a new process costs with every stratum clean (t33 K4's cuts).
 pub fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Option<&Path>) -> bool {
-    let asked = options.get("reuse").and_then(serde_json::Value::as_bool).unwrap_or(false);
-    // A run asked for a debugging dump runs: kept outputs carry none. A profile does not turn the cutoff off: a
-    // profiled warm run is measured as it runs, and its profile says the cutoff applied.
+    let asked = options.get("reuse").and_then(serde_json::Value::as_bool).unwrap_or(false) && std::env::var_os("RERAIL_FRAME_OFF").is_none();
+    // A run asked for a debugging dump runs: kept outputs carry none. A profile does not turn the frame off: a
+    // profiled warm run is measured as it runs, and its profile says the frame applied.
     let side_output = std::env::vars_os().any(|(k, _)| k.to_str().is_some_and(|k| k.starts_with("RERAIL_DUMP_")));
     let wanted = asked && !side_output && t_facts.is_none() && typing.declarations.is_empty() && typing.site.is_none() && typing.summarize.is_none() && super::tape_cache_path().is_some();
     if !wanted {
@@ -39,7 +42,7 @@ pub fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Option<&Pat
 const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE",
     // A profile's and the heap sampler's (`profile::memory`, `rerail_prof`): a measurement's cold runs sample the heap
     // and its warm runs do not, so with these in the key no warm run found the cold run's record (decision 0376).
-    "RERAIL_PROF", "RERAIL_HEAP_SAMPLE", "RERAIL_HEAP_AT", "RERAIL_HEAP_FRAMES", "RERAIL_PROF_MEMORY_MS", "RERAIL_TIMELINE",
+    "RERAIL_PROF", "RERAIL_PROFILE_EACH", "RERAIL_HEAP_SAMPLE", "RERAIL_HEAP_AT", "RERAIL_HEAP_FRAMES", "RERAIL_PROF_MEMORY_MS", "RERAIL_TIMELINE",
     // The width census of the run's relations (`profile::memory::width_census`): what a layout would hold, measured.
     "RERAIL_WIDTH_CENSUS",
     // The stores a measurement keeps apart (the cost model's, the rule images'): a plan's costs and a program's stored
@@ -110,7 +113,7 @@ fn key(given: &super::Texts<'_>, added: &super::added::Added, root: &Path, optio
     // guards, the matcher and planner switches). Listing only some reused a run made under others: a run with
     // `RERAIL_AST_PARTS=off` answered with the outputs of one with it on. The cache's own path names the store.
     h.update(switches());
-    format!("{CUTOFF}{}", h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>())
+    format!("{FRAME}{}", h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
 /// The key's parts, each as a short digest, and the options (`RERAIL_REUSE_TRACE`): which part made a run miss.
@@ -132,10 +135,10 @@ fn key_parts(programs: &[&str], root: &Path, options: &serde_json::Value, typing
     )
 }
 
-/// The prefix of a whole-run cutoff's record (the observer's `run_record`). Its consulted lines name the plans the
-/// run used (`plan`, digest in hex): the observer's store is collected with the content store's, and a record no
-/// live plan of which it names is dropped (`observe::collect`).
-pub const CUTOFF: &str = "cutoff:";
+/// The prefix of a run's frame (the observer's `run_record`, kept facts of its space). Its consulted lines name the
+/// plans the run used (`plan`, digest in hex): the observer's store is collected with the content store's, and a
+/// frame no live plan of which it names is dropped (`observe::collect`).
+pub const FRAME: &str = "frame:";
 
 /// The record's entry of the texts' include graphs (`Texts::graphs`), each one's digest or none: with every rule file
 /// as recorded, the same graphs list the same rule files, so the check need not list them again (decision 0275).
@@ -296,14 +299,14 @@ pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
     let checking = super::thread_usage();
     let key = key(given, &settings(root, options)?, root, options, modes, typing);
     let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
-        miss(&format!("no record under the run's key {} (programs {}; {})", &key[..CUTOFF.len() + 12], programs.len(), key_parts(programs, root, options, typing)));
+        miss(&format!("no record under the run's key {} (programs {}; {})", &key[..FRAME.len() + 12], programs.len(), key_parts(programs, root, options, typing)));
         return Ok(None);
     };
     let Some(consulted) = decode_consulted(&consulted) else {
         miss("the record's consulted list does not decode");
         return Ok(None);
     };
-    // The plans it names are for collection (`CUTOFF`), not reads to check: the reused run names them, as the run
+    // The plans it names are for collection (`FRAME`), not reads to check: the reused run names them, as the run
     // that made the record did, so its outer run records the manifest it recorded then.
     let (plans, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "plan");
     let (graphs, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == GRAPHS);
@@ -340,7 +343,7 @@ pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
     // The program's parts the check reads, as recorded: a function of the texts (the key) and the rule files (as
     // recorded), so the program is not combined again to read them.
     let summary = summary.first().and_then(|c| super::Summary::decode(c.2.as_bytes()));
-    if !unchanged(programs, &given.graphs, given.read, root, typing, options, &rest, summary)? {
+    if !super::changes_of(programs, &given.graphs, given.read, root, typing, options, &rest, summary)?.is_some_and(|c| c.is_empty()) {
         miss("a consulted file or read changed");
         return Ok(None);
     }
@@ -355,7 +358,7 @@ pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
             return Ok(None);
         }
     }
-    crate::code_rule_dsl::logic::profile::decision("whole-run cutoff (t23 §4)", || "every read as it was: the kept outputs written, nothing evaluated".into());
+    crate::code_rule_dsl::logic::profile::decision("the run's frame (t33 K4)", || "every read as it was: the kept outputs written, nothing evaluated".into());
     if captured.is_none() { std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?; }
     let mut report = Report { plans, ..Report::default() };
     for (name, bytes) in &outputs {
@@ -373,7 +376,7 @@ pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
         }
     }
     let now = super::thread_usage();
-    report.phases.push(("unchanged: phase 0 checked every read, outputs kept", now.0 - checking.0, now.1 - checking.1, super::usage().2, 0));
+    report.phases.push(("the run's frame: every read as it was, outputs kept", now.0 - checking.0, now.1 - checking.1, super::usage().2, 0));
     // The documents the run read: the workspace's and those its requests loaded, each once. Phase 1 loads a
     // workspace document by its absolute path, which the run lists by its path from the root: counted twice, a warm
     // run of one file reported two.
@@ -387,16 +390,16 @@ pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
 
 /// Keeps the record of a run that ended: what it consulted (and the library files its text includes), and its
 /// outputs.
-/// Why the cutoff did not apply: a profile line, and stderr under `RERAIL_REUSE_TRACE`.
+/// Why the frame did not apply: a profile line, and stderr under `RERAIL_REUSE_TRACE`.
 fn miss(why: &str) {
-    crate::code_rule_dsl::logic::profile::decision("whole-run cutoff (t23 §4)", || format!("not applied: {why}"));
+    crate::code_rule_dsl::logic::profile::decision("the run's frame (t33 K4)", || format!("not applied: {why}"));
     if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
-        eprintln!("rerail: whole-run cutoff not applied: {why}");
+        eprintln!("rerail: the run's frame not applied: {why}");
     }
-    // A warm run asked for the cutoff and evaluates again (`RERAIL_WARM`). One that did not ask (a session's, which
+    // A warm run asked for its frame and evaluates again (`RERAIL_WARM`). One that did not ask (a session's, which
     // maintains its strata instead) is checked by its deltas.
     if !why.starts_with("not wanted") {
-        crate::code_rule_dsl::logic::profile::warm_fault("the whole-run cutoff did not apply", || why.to_owned());
+        crate::code_rule_dsl::logic::profile::warm_fault("the run's frame did not apply", || why.to_owned());
     }
 }
 
@@ -430,7 +433,7 @@ pub fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
     };
     let outputs = encode_outputs(&files);
     if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
-        eprintln!("rerail: whole-run cutoff: recorded under {} ({} consulted)", &key[..CUTOFF.len() + 12], consulted.len());
+        eprintln!("rerail: the run's frame: kept under {} ({} consulted)", &key[..FRAME.len() + 12], consulted.len());
     }
     observe(|o| o.put_run_record(&key, &encode_consulted(&consulted), &outputs));
     Ok(())

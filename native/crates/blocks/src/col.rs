@@ -595,7 +595,11 @@ impl IntCol {
                     }
                 }
             }
-            _ => (0..n).for_each(|i| f(self.get(i))),
+            // Resolved once (`dec`), not per value as `get` resolves a grouped or lined column.
+            _ => {
+                let d = self.dec();
+                (0..n).for_each(|i| f(d.get(i)))
+            }
         }
     }
 

@@ -397,7 +397,76 @@ impl Analysis for Proofs {
         let verdicts = comps.iter().enumerate().filter(|&(i, _)| recursive[i]).map(|(i, c)| (i, classify(&rules, &helpers, &types, c))).collect();
         Ok(Proofs { all: comps, comps: verdicts })
     }
+    /// Kept by the version's identity (`plan::kept_analyses`, t33 K4): a component's row is its place, its verdict
+    /// (an order's code, or -1 and why not) and its relations; a `col` row a measured relation's column and rank.
+    fn rows(&self, _v: &Version) -> Option<Vec<crate::code_rule_dsl::logic::program_image::manager::Row>> {
+        use crate::code_rule_dsl::logic::front::Value;
+        let s = |x: &str| Value::Str(x.into());
+        let mut out = Vec::new();
+        for (k, (comp, verdict)) in self.comps.iter().enumerate() {
+            let (code, why) = match verdict {
+                Ok(m) => (ORDERS.iter().position(|o| *o == m.order).expect("an order") as i64, String::new()),
+                Err(e) => (-1, e.clone()),
+            };
+            out.push([s("comp"), Value::Int(k as i64), Value::Int(code), s(&why)].into_iter().chain(self.all[*comp].iter().map(|r| s(r))).collect());
+            if let Ok(m) = verdict {
+                for (rel, col) in &m.col {
+                    out.push(vec![s("col"), Value::Int(k as i64), s(rel), Value::Int(*col as i64), Value::Int(m.rank.get(rel).map_or(-1, |r| i64::from(*r)))]);
+                }
+                for (rel, rank) in m.rank.iter().filter(|(r, _)| !m.col.contains_key(*r)) {
+                    out.push(vec![s("col"), Value::Int(k as i64), s(rel), Value::Int(-1), Value::Int(i64::from(*rank))]);
+                }
+            }
+        }
+        Some(out)
+    }
+    fn of_rows(_v: &Version, rows: &[crate::code_rule_dsl::logic::program_image::manager::Row]) -> Option<Proofs> {
+        use crate::code_rule_dsl::logic::front::Value;
+        let text = |v: &Value| match v {
+            Value::Str(x) => Some(x.to_string()),
+            _ => None,
+        };
+        let int = |v: &Value| match v {
+            Value::Int(i) => Some(*i),
+            _ => None,
+        };
+        let mut comps: Vec<(Vec<String>, Result<Measure, String>)> = Vec::new();
+        for r in rows {
+            match text(r.first()?)?.as_str() {
+                "comp" => {
+                    if usize::try_from(int(r.get(1)?)?).ok()? != comps.len() {
+                        return None;
+                    }
+                    let code = int(r.get(2)?)?;
+                    let verdict = match code {
+                        -1 => Err(text(r.get(3)?)?),
+                        c => Ok(Measure { order: *ORDERS.get(usize::try_from(c).ok()?)?, col: BTreeMap::new(), rank: BTreeMap::new() }),
+                    };
+                    comps.push((r.get(4..)?.iter().map(text).collect::<Option<_>>()?, verdict));
+                }
+                "col" => {
+                    let k = usize::try_from(int(r.get(1)?)?).ok()?;
+                    let Ok(m) = &mut comps.get_mut(k)?.1 else { return None };
+                    let rel = text(r.get(2)?)?;
+                    let (col, rank) = (int(r.get(3)?)?, int(r.get(4)?)?);
+                    if col >= 0 {
+                        m.col.insert(rel.clone(), usize::try_from(col).ok()?);
+                    }
+                    if rank >= 0 {
+                        m.rank.insert(rel, u32::try_from(rank).ok()?);
+                    }
+                }
+                _ => return None,
+            }
+        }
+        // The recursive components alone, each at its place among them: a proof reads only its own (`Proofs::of`).
+        let (members, verdicts): (Vec<Vec<String>>, Vec<_>) = comps.into_iter().unzip();
+        Some(Proofs { all: std::sync::Arc::new(Components::of(members)), comps: verdicts.into_iter().enumerate().collect() })
+    }
 }
+
+/// The orders, by their kept code (`Proofs::rows`).
+const ORDERS: [Order; 6] = [Order::Down, Order::Up, Order::Back, Order::Climbs, Order::Falls, Order::Same];
 
 fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<String>, comp: &crate::code_rule_dsl::logic::front::Comp) -> Result<Measure, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| format!("a recursive component classified ({} relations)", comp.len()));

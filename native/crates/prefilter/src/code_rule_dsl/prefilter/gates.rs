@@ -290,7 +290,16 @@ pub(super) struct Gated {
 /// The gates of `plans` over the batch's `files`, compiled or reused (one statement reads every
 /// statistic; the stored gates are read from `kept`, the store at `store`'s compiled plans opened
 /// before the transaction `db` is in: `Plans::open`). A gate compiled is written once `flush`ed.
-pub(super) fn select(db: &Connection, store: &Path, kept: Option<&KeptSpace>, lang: u32, plans: &[&AnchorPlan], files: &[i64]) -> rusqlite::Result<Gated> {
+/// `prefilter`: a batch tape's prefilter rows (kept facts, t33 step 6).
+pub(super) fn select<'a>(
+    db: &Connection,
+    store: &Path,
+    kept: Option<&KeptSpace>,
+    prefilter: &dyn Fn(i64) -> Option<crate::content_store::prefilter::kept::Tape<'a>>,
+    lang: u32,
+    plans: &[&AnchorPlan],
+    files: &[i64],
+) -> rusqlite::Result<Gated> {
     let statistics = Statistics::read(db, plans.iter().map(|plan| (lang, *plan)))?;
     let current = statistics.reads();
     let ids = plans.iter().map(|plan| identity(plan, lang)).collect::<Vec<_>>();
@@ -323,24 +332,20 @@ pub(super) fn select(db: &Connection, store: &Path, kept: Option<&KeptSpace>, la
     let mut term_files = BTreeMap::new();
     let mut uncovered = BTreeSet::new();
     if !terms.is_empty() {
-        let mut query = db.prepare_cached(
-            "SELECT DISTINCT p.tape_id FROM atoms a CROSS JOIN term_postings p ON p.lang=?1 AND p.term=a.atom WHERE a.value=?2",
-        )?;
+        let tapes: Vec<(i64, crate::content_store::prefilter::kept::Tape<'a>)> =
+            batch.iter().filter_map(|&file| prefilter(file).filter(|t| t.lang == i64::from(lang)).map(|t| (file, t))).collect();
+        // Terms are atoms, as the store numbers them.
+        let mut atom = db.prepare_cached("SELECT atom FROM atoms WHERE value=?1")?;
         for term in &terms {
-            let found = query
-                .query_map(rusqlite::params![lang, term], |row| row.get::<_, i64>(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-                .into_iter()
-                .filter(|file| batch.contains(file))
+            let atoms = atom.query_map([term], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let found = tapes
+                .iter()
+                .filter(|(_, tape)| atoms.iter().any(|&a| tape.term(a).next().is_some()))
+                .map(|&(file, _)| file)
                 .collect::<BTreeSet<_>>();
             term_files.insert(*term, found);
         }
-        let mut missing = db.prepare_cached("SELECT 1 FROM term_coverage WHERE tape_id=?1 AND length(missing)>0 LIMIT 1")?;
-        for &file in &batch {
-            if missing.exists([file])? {
-                uncovered.insert(file);
-            }
-        }
+        uncovered.extend(tapes.iter().filter(|(_, tape)| tape.has_uncovered()).map(|&(file, _)| file));
     }
     let per_plan = bit_files(&gates, &term_files, &uncovered, &batch);
     let any = per_plan.iter().try_fold(BTreeSet::new(), |mut all, files| {

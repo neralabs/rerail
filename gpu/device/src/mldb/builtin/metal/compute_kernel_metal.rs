@@ -255,6 +255,48 @@ pub struct MetalComputeFunctionLibrary {
 }
 
 impl MetalComputeFunctionLibrary {
+    /// The names of the AIR intrinsics `preprocessed_source` compiles to, one a line, for a test to read which
+    /// instructions a kernel took (decision 0617, R7): the source compiled as a dynamic library, serialized to a
+    /// file, and the `air.` names read from its bitcode's string table. (A Mac with no Metal toolchain has no
+    /// `xcrun metal` to print the IR; the device's compiler is the one to ask.)
+    pub fn native_code(device: &DeviceRef, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Option<String>, String> {
+        static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("rerail-native-code-{}-{n}.metallib", std::process::id()));
+        let bytes = objc::rc::autoreleasepool(|| -> Result<Vec<u8>, String> {
+            let options = metal::CompileOptions::new();
+            options.set_library_type(metal::MTLLibraryType::Dynamic);
+            options.set_install_name(&format!("@executable_path/{}", path.file_name().unwrap().to_string_lossy()));
+            let lib = device.new_library_with_source(preprocessed_source, &options).map_err(|e| format!("compiling {file_name_to_appear_in_error_messages} as a dynamic library: {e}"))?;
+            let dylib = device.new_dynamic_library(&lib).map_err(|e| format!("{file_name_to_appear_in_error_messages}'s dynamic library: {e}"))?;
+            // `serializeToURL:error:` sent here: metal-rs's `URL::new_with_string` owns an autoreleased NSURL, and
+            // its release with the pool's crashed. This NSURL is the pool's alone.
+            let file = std::ffi::CString::new(path.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
+            let ok: bool = unsafe {
+                use objc::runtime::Object;
+                let s: *mut Object = objc::msg_send![objc::class!(NSString), stringWithUTF8String: file.as_ptr()];
+                let url: *mut Object = objc::msg_send![objc::class!(NSURL), fileURLWithPath: s];
+                let mut err: *mut Object = std::ptr::null_mut();
+                let done: objc::runtime::BOOL = objc::msg_send![&*dylib, serializeToURL: url error: &mut err];
+                done != objc::runtime::NO
+            };
+            if !ok {
+                return Err(format!("serializing {file_name_to_appear_in_error_messages}'s dynamic library failed"));
+            }
+            std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+        });
+        let _ = std::fs::remove_file(&path);
+        let bytes = bytes?;
+        let mut names: Vec<String> = bytes
+            .split(|b| !(b.is_ascii_alphanumeric() || *b == b'.' || *b == b'_'))
+            .filter_map(|w| std::str::from_utf8(w).ok())
+            .filter_map(|w| w.find("air.").map(|at| w[at..].to_owned()))
+            .collect();
+        names.sort();
+        names.dedup();
+        Ok(Some(names.join("\n")))
+    }
+
     /// Compiles (preprocessed) source on the device.
     pub fn compile_from_source(device: &DeviceRef, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         // A measurement aid: `RERAIL_DEVICE_TRACE` prints where each library is compiled.

@@ -75,6 +75,17 @@ pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<
     .clone()
 }
 
+/// The backend's text of `text`'s compiled instructions (CUDA's PTX), its defines `defines`, for a test to read which
+/// instructions a kernel took (decision 0617, R7): None where the backend has none, or there is no device.
+pub fn native_code(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<Option<String>, String> {
+    let Some(shared) = crate::shared::get() else { return Ok(None) };
+    if crate::vec::on(&shared.device) {
+        return Ok(None);
+    }
+    let source = preprocess_with(name, text, defines)?;
+    ComputeFunctionLibrary::native_code(&shared.device, &source, name)
+}
+
 /// A program compiled ahead of its first use (decision 0395's tiers on the device layer): `make` asks for it as its
 /// use does (the same call, so the same name, defines and text, and the same entry in the store), and its use then
 /// finds it, in this process or in the store.

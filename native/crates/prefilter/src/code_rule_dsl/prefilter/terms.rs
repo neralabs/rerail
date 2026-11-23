@@ -2,7 +2,7 @@
 //! index instead of each node's text. A test is lowered by the text layer (decision 0042); its plan
 //! runs over the language's vocabulary once (`text::vocabulary::fill`, kept by plan key and brought
 //! up to date over new terms), and its nodes on a tape are the union of the matched terms' postings
-//! plus the nodes the terms do not cover (`term_coverage.missing`), decided by one pass over the
+//! plus the nodes the terms do not cover (the tape's coverage rows, `prefilter::kept`), decided by one pass over the
 //! file (`text::scan`). Decision 0026: no term id is stored per node.
 //!
 //! The rows are attached to the wave's tapes (`TapeDoc::with_texts`), where every walk's text
@@ -11,6 +11,8 @@
 
 use crate::code_rule_dsl::tape::TapeDoc;
 use crate::code_rule_dsl::text::{Lowered, scan, vocabulary};
+use crate::content_store::kept_facts::KeptSpace;
+use crate::content_store::prefilter::kept;
 use crate::content_store::{ContentStore, StoreResult};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -40,11 +42,15 @@ pub fn rows(
     // Each plan's matching terms, by plan key.
     let terms = vocabulary::fill(store, lang, &lowered)?;
     let lang = i64::from(lang);
-    let index = tapes.iter().enumerate().map(|(at, (id, _))| (*id, at)).collect::<HashMap<_, _>>();
-    // Per plan key, per tape: the matched terms' nodes; and per tape the uncovered nodes.
-    let (found, missing) = store.candidate_transaction(false, |db| {
+    // Per plan key, per tape: the matched terms' nodes; and per tape the uncovered nodes. The tapes' prefilter rows,
+    // kept facts read where they lie (t33 step 6).
+    let (found, missing) = {
         let _stage = crate::code_rule_dsl::prof::Stage::start("terms.postings");
-        let mut postings = db.prepare_cached("SELECT tape_id, postings FROM term_postings WHERE lang=?1 AND term=?2")?;
+        let kept = store.kept_space(&kept::space())?;
+        let view = kept.as_deref().map(KeptSpace::view);
+        let rows: Vec<Option<kept::Tape<'_>>> =
+            tapes.iter().map(|(id, _)| view.as_ref().and_then(|v| kept::tape(v, *id)).filter(|t| t.lang == lang)).collect();
+        let corrupt = |e: rusqlite::Error| crate::content_store::StoreError::Corrupt(format!("a tape's postings: {e}"));
         let mut found = HashMap::<&crate::code_rule_dsl::text::Key, Vec<Vec<u32>>>::new();
         for slot in slots {
             let key = &slot.lowered.key;
@@ -53,27 +59,26 @@ pub fn rows(
             }
             let mut nodes = vec![Vec::new(); tapes.len()];
             for &term in terms.get(key).map(Vec::as_slice).unwrap_or(&[]) {
-                let mut rows = postings.query(rusqlite::params![lang, term])?;
-                while let Some(row) = rows.next()? {
-                    if let Some(&at) = index.get(&row.get::<_, i64>(0)?) {
-                        decode(row.get_ref(1)?.as_blob()?, &mut nodes[at])?;
+                for (at, tape) in rows.iter().enumerate() {
+                    let Some(tape) = tape else { continue };
+                    for row in tape.term(term) {
+                        decode(&tape.bytes(row.at, row.len), &mut nodes[at]).map_err(corrupt)?;
                     }
                 }
             }
             found.insert(key, nodes);
         }
-        let mut uncovered = db.prepare_cached("SELECT missing FROM term_coverage WHERE tape_id=?1 AND length(missing)>0")?;
         let mut missing = vec![Vec::new(); tapes.len()];
-        for (at, (id, _)) in tapes.iter().enumerate() {
-            let mut rows = uncovered.query([id])?;
-            while let Some(row) = rows.next()? {
-                decode(row.get_ref(0)?.as_blob()?, &mut missing[at])?;
+        for (at, tape) in rows.iter().enumerate() {
+            let Some(tape) = tape else { continue };
+            for row in tape.covers().filter(|c| c.len > 0) {
+                decode(&tape.bytes(row.at, row.len), &mut missing[at]).map_err(corrupt)?;
             }
             missing[at].sort_unstable();
             missing[at].dedup();
         }
-        Ok((found, missing))
-    })?;
+        (found, missing)
+    };
     let _stage = crate::code_rule_dsl::prof::Stage::start("terms.rows");
     // Every slot's scan of a file in one batch: their literal plans share one pass.
     let batch = scan::Batch::of(lowered);

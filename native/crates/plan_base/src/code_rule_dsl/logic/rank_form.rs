@@ -279,8 +279,11 @@ pub fn write(v: &Version, of: &dyn Of, plan: &Plan, b: &mut Builder<'_>) -> Resu
             rb = rb.lit(v, h, body[k]);
         }
         rb.finish()?;
-        // rr_rankg(G…) :- rr_rankq(G…, _…, _).
+        // rr_rankg(G…) :- rr_rankq(G…, _…, _). Stored: its rows are the distinct groups, which `rr_rankb` is seeded
+        // from. Inlined, `rr_rankb` read the asked rows in their place, each group's counted rows once an asked row:
+        // `rr_rankb0` walked a body's every statement for each statement asked of it (63 K asked, 1.5 M rows).
         b.rule().head(g.as_str(), &g_args).atom(q.as_str(), &q_args).finish()?;
+        b.fields().add_qualifiers(&[(g.as_str(), "no_inline")]);
         // rr_rankb(G…, C…, ky) :- rr_rankg(G…), Y.
         let b_args: Vec<T<'_>> = s.group.iter().chain(&s.counted).map(var).chain([var(&s.ky)]).collect();
         let mut rb = b.rule().head(bn.as_str(), &b_args).atom(g.as_str(), &g_args);

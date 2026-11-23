@@ -420,6 +420,97 @@ UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { re
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
 UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __atomic_store_n(p, v, __ATOMIC_RELAXED); }
 
+#elif defined(UKL_VEC)
+
+// The CPU's vector code (rerail-ukl-vec, decision 0567; ukl_vec_shim.h): C whose every operation of the machine is
+// one intrinsic its compiler knows by name, `__ukl_*`. A pointer has no address space; the SIMD group is the
+// vectorizer's, `UKL_SIMD_WIDTH` lanes; memory is the host's, coherent, so an atomic load is a load.
+#define UKL_INLINE static inline
+#define UKL_FUNC static
+#ifndef UKL_COLD
+#define UKL_COLD static __attribute__((noinline))
+#endif
+#ifndef UKL_ONCE
+#define UKL_ONCE static __attribute__((noinline))
+#endif
+// An `if`'s condition that most lanes take (`UKL_LIKELY`) or that few do (`UKL_UNLIKELY`): the vectorizer runs the
+// favoured side without masks where a chunk's lanes all agree on it (rs.rs), and otherwise both sides, masked.
+#define UKL_LIKELY(c) __ukl_likely(c)
+#define UKL_UNLIKELY(c) __ukl_unlikely(c)
+// A shared read and a large body are calls (the vectorizer's calls keep the caller's registers): inlined at each
+// of many sites, a kernel's code would be the bodies' many times over.
+#define UKL_SHARED static __attribute__((noinline))
+#define UKL_LARGE UKL_SHARED
+#define UKL_RARE UKL_INLINE
+#define UKL_GLOBAL
+#define UKL_COHERENT volatile
+#define UKL_LOCAL
+#define UKL_PRIVATE
+#define UKL_TABLE const
+#define UKL_TABLE_SPACE const
+#define UKL_OVERLOAD __attribute__((overloadable))
+#define UKL_STATIC_ASSERT(c, m) _Static_assert(c, m)
+
+UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return __ukl_popcount(x); }
+UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return (uint32_t)__ukl_popcount(x); }
+UKL_INLINE uint32_t ukl_clz32(uint32_t x) { return __ukl_clz(x); }
+UKL_INLINE uint32_t ukl_clz64(uint64_t x) { return (uint32_t)__ukl_clz(x); }
+UKL_INLINE int64_t ukl_mulhi64(int64_t a, int64_t b) { return __ukl_mulhi(a, b); }
+UKL_INLINE uint64_t ukl_umulhi64(uint64_t a, uint64_t b) { return __ukl_mulhi(a, b); }
+// The lowest set bit's position from the count of zeros above it.
+UKL_INLINE uint32_t ukl_ctz32(uint32_t x) { return x == 0u ? 32u : 31u - __ukl_clz(x & (0u - x)); }
+UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0ul ? 64u : 63u - (uint32_t)__ukl_clz(x & (0ul - x)); }
+// A multiply-add rounded once, by OpenCL C's and MSL's name (`<ukl/dot.h>`).
+UKL_INLINE float fma(float a, float b, float c) { return __ukl_fma(a, b, c); }
+
+UKL_INLINE void ukl_tg_barrier() { __ukl_barrier(); }
+UKL_INLINE void ukl_tg_barrier_device() { __ukl_barrier(); }
+
+// The SIMD group's operations, each one intrinsic. A lane outside the group, or the group's own (`shuffle_up` below
+// lane `d`, `shuffle_down` past the last lane), reads its own value, as CUDA's do.
+UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return __ukl_sg_shuffle(v, lane & (UKL_SIMD_WIDTH - 1u)); }
+UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d __UKL_PARAMS)
+{
+    uint32_t r = __ukl_sg_shuffle_up(v, d);
+    return __ukl_lane() >= d ? r : v;
+}
+UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS)
+{
+    uint32_t r = __ukl_sg_shuffle_down(v, d);
+    return __ukl_lane() + d < UKL_SIMD_WIDTH ? r : v;
+}
+UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return __ukl_sg_shuffle_xor(v, m & (UKL_SIMD_WIDTH - 1u)); }
+UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return __ukl_sg_ballot(b); }
+UKL_INLINE void ukl_sg_barrier() { __ukl_sg_barrier(); }
+// The group's reductions in one operation each, whose value is the group's.
+#define UKL_NATIVE_SG_REDUCE 1
+UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v __UKL_PARAMS) { return __ukl_sg_sum(v); }
+UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v __UKL_PARAMS) { return __ukl_sg_min(v); }
+UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __ukl_sg_max(v); }
+// A poll of another group's progress: the group yields to the groups that run with it, as the CPU's coroutines
+// do (a persistent grid's barrier is met there by its resident groups taking turns).
+#define ukl_poll_yield() __ukl_yield()
+#ifndef UKL_GRID_SPINS
+#define UKL_GRID_SPINS 1000u
+#endif
+
+// Relaxed atomics on a word, and a fence.
+UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return __ukl_atomic_load(p); }
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_GLOBAL uint32_t* p) { return __ukl_atomic_load(p); }
+UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { __ukl_atomic_store(p, v); }
+UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return __ukl_atomic_add(p, v); }
+UKL_INLINE uint32_t ukl_atomic_sub(UKL_GLOBAL uint32_t* p, uint32_t v) { return __ukl_atomic_sub(p, v); }
+UKL_INLINE uint32_t ukl_atomic_or(UKL_GLOBAL uint32_t* p, uint32_t v) { return __ukl_atomic_or(p, v); }
+UKL_INLINE uint32_t ukl_atomic_and(UKL_GLOBAL uint32_t* p, uint32_t v) { return __ukl_atomic_and(p, v); }
+UKL_INLINE uint32_t ukl_atomic_exchange(UKL_GLOBAL uint32_t* p, uint32_t v) { return __ukl_atomic_xchg(p, v); }
+UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v) { return __ukl_atomic_min(p, v); }
+UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return __ukl_atomic_max(p, v); }
+UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return __ukl_atomic_cas(p, e, n); }
+UKL_INLINE void ukl_fence_device() { __ukl_fence(); }
+UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return __ukl_atomic_add(p, v); }
+UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return __ukl_atomic_load(p); }
+UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __ukl_atomic_store(p, v); }
+
 #elif defined(UKL_OPENCL)
 
 // OpenCL C 1.2 (ukl_opencl_shim.h): C with address spaces, clang's `overloadable`, and C11's `_Static_assert`.
@@ -573,20 +664,6 @@ UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS)
 UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return sub_group_shuffle_xor(v, m & (UKL_SIMD_WIDTH - 1u)); }
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return sub_group_ballot(b ? 1 : 0).x; }
 UKL_INLINE void ukl_sg_barrier() { sub_group_barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
-#if defined(__UKL_VEC)
-// The CPU's vector code (rerail-ukl-vec, decision 0567): the group's reductions in one operation each, whose value
-// is the group's (the butterfly of shuffles is every lane's too, but that it agrees is not the shuffles' to show).
-#define UKL_NATIVE_SG_REDUCE 1
-UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_add(v); }
-UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_min(v); }
-UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_max(v); }
-// A poll of another group's progress: the group yields to the groups that run with it, as the CPU's coroutines
-// do (a persistent grid's barrier is met there by its resident groups taking turns).
-#define ukl_poll_yield() __ukl_vec_yield()
-#ifndef UKL_GRID_SPINS
-#define UKL_GRID_SPINS 1000u
-#endif
-#endif
 #elif UKL_SIMD_WIDTH == 1
 // A group of one lane: every lane reads its own value.
 UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return v; }
@@ -641,8 +718,7 @@ UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t 
 // work-item's own accesses alone; OpenCL C 3.0 (the device's sub-groups, `UKL_OPENCL_SUBGROUPS`) has a fence of device
 // scope (2.0's too: AMD's waves). Without it, on an Arc 140V a pool's taker read a pushed block's link from before its
 // push, and a block was handed out twice (`ukl/pool.h`).
-// The CPU's vector code (rerail-ukl-vec, decision 0567) reads OpenCL 1.2's fence, its one fence.
-#if defined(UKL_OPENCL_SUBGROUPS) && !defined(__UKL_VEC)
+#if defined(UKL_OPENCL_SUBGROUPS)
 UKL_INLINE void ukl_fence_device() { atomic_work_item_fence(CLK_GLOBAL_MEM_FENCE, memory_order_seq_cst, memory_scope_device); }
 #else
 UKL_INLINE void ukl_fence_device() { mem_fence(CLK_GLOBAL_MEM_FENCE); }
@@ -742,6 +818,15 @@ UKL_INLINE uint32_t ukl_mask_rank(ukl_mask_t m, uint32_t l) { return ukl_mask_co
 // 0; elsewhere the define `UKL_CONSTANT_0` each value's program is compiled with (`rerail_gpu::kernels::program_with`).
 #ifndef UKL_CONSTANT_U32
 #define UKL_CONSTANT_U32(name) static const uint32_t name = (UKL_CONSTANT_0);
+#endif
+
+// An `if`'s condition most of a SIMD group's lanes take, or few do: a hint where the backend's vectorizer reads one
+// (`UKL_VEC`'s, above), and the condition itself elsewhere.
+#ifndef UKL_LIKELY
+#define UKL_LIKELY(c) (c)
+#endif
+#ifndef UKL_UNLIKELY
+#define UKL_UNLIKELY(c) (c)
 #endif
 
 // A poll of another group's progress: nothing on a GPU, where the groups run at once.

@@ -165,7 +165,7 @@ impl Compiled {
     /// refused; the device's error where it cannot run the batch.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn metal_images(&self, files: &[&[u8]]) -> Result<Vec<Option<rerail_tape_format::Vector<u8>>>, rerail_compiler::Error> {
-        use rerail_metal::block_program::serial::{Segments, run_resident};
+        use rerail_metal_programs::block_program::serial::{Segments, run_resident};
         let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f, program: 0 }).collect();
         match run_resident(&[&self.native], &batch, Segments { blocks: 29, warm: 1 }) {
             Ok((_, run)) => Ok((0..files.len()).map(|i| rerail_cpu_stream::tier2_on::image_on(&self.parser, &run, i).ok()).collect()),

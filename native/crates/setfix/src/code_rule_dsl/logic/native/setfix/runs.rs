@@ -218,7 +218,7 @@ impl Iterator for PartIter<'_> {
 
 /// The first position in `lo..hi` where `less` stops holding (it holds before it, not from it).
 #[inline]
-fn split_at_pos(mut lo: usize, mut hi: usize, less: impl Fn(usize) -> bool) -> usize {
+pub(super) fn split_at_pos(mut lo: usize, mut hi: usize, less: impl Fn(usize) -> bool) -> usize {
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
         if less(mid) { lo = mid + 1 } else { hi = mid }

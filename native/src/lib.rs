@@ -69,55 +69,11 @@ use std::path::Path;
 // (`rust_allocations_reach_the_profile_allocator` checks it).
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
-static GLOBAL: Sampled = Sampled;
+static GLOBAL: rerail_prof::heap::Sampled = rerail_prof::heap::Sampled;
 
 #[cfg(all(windows, not(feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-/// jemalloc, with the heap sampler around it (`rerail_prof::heap`, `RERAIL_HEAP_SAMPLE`): off, one load more an
-/// allocation. Tree-sitter's allocations go to jemalloc directly and are not sampled.
-#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
-#[cfg_attr(test, allow(dead_code))]
-struct Sampled;
-
-// Every allocation of every crate calls these through the allocator shim (`__rust_alloc`): inlined into it, as
-// jemalloc's own are, they cost the shim one load more an allocation and not a call of their own.
-#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
-unsafe impl std::alloc::GlobalAlloc for Sampled {
-    #[inline]
-    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
-        let p = unsafe { tikv_jemallocator::Jemalloc.alloc(layout) };
-        if rerail_prof::heap::on() {
-            rerail_prof::heap::alloc(p as usize, layout.size());
-        }
-        p
-    }
-    #[inline]
-    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
-        let p = unsafe { tikv_jemallocator::Jemalloc.alloc_zeroed(layout) };
-        if rerail_prof::heap::on() {
-            rerail_prof::heap::alloc(p as usize, layout.size());
-        }
-        p
-    }
-    #[inline]
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-        if rerail_prof::heap::on() {
-            rerail_prof::heap::free(ptr as usize);
-        }
-        unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
-    }
-    #[inline]
-    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
-        let q = unsafe { tikv_jemallocator::Jemalloc.realloc(ptr, layout, new_size) };
-        if rerail_prof::heap::on() && !q.is_null() {
-            rerail_prof::heap::free(ptr as usize);
-            rerail_prof::heap::alloc(q as usize, new_size);
-        }
-        q
-    }
-}
 
 #[cfg(not(any(test, windows, target_family = "wasm")))]
 union JemallocConf {

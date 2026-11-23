@@ -105,7 +105,30 @@ pub(super) fn answered(v: &Version, req: &str) -> (Vec<String>, Vec<String>) {
             }
         }
     }
+    // A pass's kept rows (rule 8) are given with the value whose entry holds them.
+    if req == DEMAND {
+        for name in v.inputs().map(|a| v.text(a)).filter(|n| kept_input(n)) {
+            if !produced.iter().any(|p| p == name) {
+                produced.push(name.to_owned());
+                given.push(name.to_owned());
+            }
+        }
+    }
     (produced, given)
+}
+
+/// Decision 0597 rule 8: a frontier relation's kept rows (`R_rr_kept(rr_kd, cols…)`), the roots a pass's kept rows
+/// stand for (`{prefix}rr_kept_roots_<pass>(r)`), and the roots it makes rows of (`{prefix}rr_fresh_roots_<pass>(r)`).
+/// The first two are inputs `DEMAND`'s answer gives: a tape value's entry, found as it is admitted.
+pub const KEPT: &str = "_rr_kept";
+/// A pass's tape-local relation `R` as the kept program derives it, each row led by its value's document: `R_rr_kd`.
+pub const TAPE: &str = "_rr_kd";
+pub const KEPT_ROOTS: &str = "rr_kept_roots_";
+pub const FRESH_ROOTS: &str = "rr_fresh_roots_";
+
+/// Whether input `rel` holds kept rows of a pass (rule 8): a frontier relation's, or its kept roots.
+pub fn kept_input(rel: &str) -> bool {
+    rel.ends_with(KEPT) || rel.contains(KEPT_ROOTS)
 }
 
 /// `embed`'s demand: a string made a tape value and parsed (decision 0431 §8), answered in the fixpoint.
@@ -457,6 +480,12 @@ impl Guests {
     fn key_for(&mut self, parts: &[&[u8]], range: Range, path: &str) -> u32 {
         let (base, span, first, identity) = first_key(parts, range);
         self.keys.key(identity, base, span, first, path)
+    }
+
+    /// Tape value `key`'s grammar and text (`tape_value`), where the chunk made it: its entry's path and content
+    /// (decision 0597 rule 8).
+    pub fn tape_text(&self, key: i64) -> Option<(&str, &str)> {
+        self.values.iter().find(|(_, k)| **k == key).and_then(|((g, identity), _)| Some((g.as_str(), identity.strip_prefix("tape:")?)))
     }
 
     /// Each value document's files.

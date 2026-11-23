@@ -21,7 +21,7 @@ fn a_cpu_text_test_reads_and_keeps_its_verdicts_in_the_stores_cache() {
     let sym = |s: &str| u32::try_from(syms.write().unwrap().id(s)).unwrap();
     let (foo1, bar, zzz) = (sym("foo1"), sym("bar"), sym("zzz"));
     let m = crate::code_rule_dsl::logic::strings::Matcher::new("prefix", &["foo".to_owned()]).unwrap();
-    let test = crate::code_rule_dsl::text::table::test_id(&m.plans).unwrap();
+    let test = crate::code_rule_dsl::text::table::test_id(m.plans()).unwrap();
     let atoms = Arc::clone(syms.read().unwrap().atoms());
     let verdicts = atoms.kept();
     assert!(verdicts.put(test, zzz, true));

@@ -174,8 +174,48 @@ pub fn library_root() -> PathBuf {
 /// A program's `.rerail` text. Its `#include`s name library files (decision 0089), read as `parse_file_version` reads
 /// them: `core.rerail` first unless the text is in T's shape, each file once, includes first. A text that includes nothing
 /// is read as it is, without `core.rerail`.
+///
+/// Kept as an image (decision 0246) under its text and its library files' digests (`parsed_key`), read as a base
+/// version where the engine build's image store holds it: a phase's program (`sources.rerail`, read by every run's
+/// phase 1) was lowered with every library file it includes in each process (13 ms of a warm run).
 pub fn parse_version(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    super::contexts::passes(&read_text(src)?.lower_version(true)?)
+    let text = read_text(src)?;
+    let key = parsed_key(src, &text);
+    let store = image_store();
+    if let Some((bytes, id)) = images::read_image(store.as_deref(), key)
+        && let Ok(version) = super::program_image::Version::open_shared(bytes)
+    {
+        if let (Some(store), Some(id)) = (store.as_deref(), id) {
+            renew_image(store, id);
+        }
+        crate::code_rule_dsl::prof::count("rr.parsed_program_read", 1);
+        return Ok(version);
+    }
+    let version = super::contexts::passes(&text.lower_version(true)?)?;
+    // A base, as its image reads back: the same program, its atom and relation ids kept.
+    let version = if version.base_bytes().is_some() { version } else { version.fold().map_err(Error::Syntax)? };
+    if let Some(image) = version.own_image().filter(|_| version.base_bytes().is_some()) {
+        keep_image(store.as_deref(), "a parsed program's image", key, image.clone());
+    }
+    Ok(version)
+}
+
+/// The alias a parsed program's image is kept under (`parse_version`): its text and each library file it includes,
+/// by its path and its bytes' digest.
+fn parsed_key(src: &str, text: &Text) -> crate::content_store::HashKey {
+    let digest = crate::content_store::HashKey::sha256(src.as_bytes()).sha256_bytes().unwrap_or_default();
+    let mut bytes = format!("rerail parsed program image {}\0{}\0", super::program_image::FORMAT, crate::code_rule_dsl::build_ids::engine()).into_bytes();
+    switched(&mut bytes);
+    bytes.extend_from_slice(&digest);
+    bytes.push(0);
+    if let Read::Modular { files, .. } = &text.0 {
+        for (path, file, _) in files.iter() {
+            bytes.extend_from_slice(path.as_os_str().as_encoded_bytes());
+            bytes.push(0);
+            bytes.extend_from_slice(file);
+        }
+    }
+    crate::content_store::HashKey::sha256(&bytes)
 }
 
 /// A program's `.rerail` text as `parse_version` reads it, but with only its libraries' declarations, not their clauses:
@@ -918,49 +958,150 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for ImageDfas {
     }
 }
 
-/// Phase 0's graph of a seed as an image (decision 0246): read from the shipped bundle, else `store` (the engine
-/// build's, `image_store`, opened once by the caller for all its seeds), its lease renewed; `phase0::graphs` checks it
-/// holds before it takes it.
-pub(in crate::code_rule_dsl) fn graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey) -> Option<Vec<u8>> {
-    let (bytes, id) = images::read(store, key)?;
-    if let (Some(store), Some(id)) = (store, id) {
-        renew_image(store, id);
-    }
-    Some(bytes.into_owned())
+/// The groups of automata a run's text tests compile to, their images read before its first wave (decision 0104:
+/// the image store is SQL), so the tests compile where a string is first tested, inside the waves, from them: a run
+/// that tests no string compiles none. A group not read here (a key the run did not know) is not cached, and is
+/// determinized or run lazily as `Searchers::new` decides; a group's image made is kept as `ImageDfas` keeps it,
+/// behind the run.
+pub struct HeldDfas {
+    read: std::collections::HashMap<String, Option<Vec<u8>>>,
+    store: ImageDfas,
 }
 
-/// A process can first read this graph for a different store. Keep it where this reader can find it on restart.
-pub(in crate::code_rule_dsl) fn retain_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, encode: impl FnOnce() -> Vec<u8>) {
-    let Some(store) = store else { return };
-    if images::shipped().is_some_and(|bundle| bundle.get(key).is_some()) { return; }
-    if let Ok(Some(id)) = store.source_by_alias(key) {
-        renew_image(store, id);
-    } else {
-        keep_graph_image(Some(store), key, encode());
+impl HeldDfas {
+    /// The images of groups `keys` in `store`, read now.
+    pub fn read(store: ImageDfas, keys: &[String]) -> Self {
+        use crate::code_rule_dsl::text::vocabulary::DfaCache as _;
+        let read = keys.iter().filter_map(|k| store.get(k).map(|dfa| (k.clone(), dfa))).collect();
+        HeldDfas { read, store }
+    }
+
+    /// Whether a store is behind it (the image store).
+    pub fn stored(&self) -> bool {
+        self.store.0.is_some()
     }
 }
 
-/// Keeps a graph's image (`graph_image`) where none is kept under its key yet. A seed's key names the seed, not the
-/// files its graph reached, so an edited library gives the same key another graph: the store's alias holds one
-/// image, and the first stays. A run then finds it does not hold (`Graph::holds`) and derives the graph, as without
-/// images. The shipped bundle's graphs are its library's; exported, the last derived is the one written.
-pub(in crate::code_rule_dsl) fn keep_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, bytes: Vec<u8>) {
-    use crate::content_store::write_back::{Key, Syms};
-    const WHAT: &str = "phase 0's graph of a seed";
-    images::export(key, &bytes);
-    let Some(store) = store else { return };
-    // A record of its own (decision 0306), dropped where the queue is full, as `keep_image`'s: the graph in its byte
-    // area, the first kept under its key staying.
-    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
-        let key: crate::content_store::HashKey = crate::content_store::record::codec::from_body(WHAT, body)?;
-        if cx.store.source_by_alias(key)?.is_some() {
-            return Ok(());
+impl crate::code_rule_dsl::text::vocabulary::DfaCache for HeldDfas {
+    fn get(&self, group: &str) -> Option<Option<Vec<u8>>> {
+        self.read.get(group).cloned()
+    }
+
+    fn put(&self, group: &str, dfa: Option<&[u8]>) {
+        self.store.put(group, dfa);
+    }
+}
+
+/// Phase 0's graphs the engine ships (decision 0264), of seeds `keys`, as images: each checked by `phase0::graphs`
+/// before it takes it. A store keeps its graphs as kept facts (`graph_facts`), not images.
+pub(in crate::code_rule_dsl) fn shipped_graph_images<T>(keys: &[crate::content_store::HashKey], decode: impl Fn(&[u8]) -> Option<T>) -> Vec<Option<T>> {
+    keys.iter().map(|k| images::shipped().and_then(|b| b.get(*k)).and_then(&decode)).collect()
+}
+
+/// Whether the engine ships the graph image `key`.
+pub(in crate::code_rule_dsl) fn graph_shipped(key: crate::content_store::HashKey) -> bool {
+    images::shipped().is_some_and(|bundle| bundle.get(key).is_some())
+}
+
+/// The graphs a call of phase 0 made, exported as images for the bundle the engine ships (`images::export`).
+pub(in crate::code_rule_dsl) fn export_graph_images(graphs: &[(crate::content_store::HashKey, Vec<u8>)]) {
+    for (key, bytes) in graphs {
+        images::export(*key, bytes);
+    }
+}
+
+/// Phase 0's graphs as kept facts (t33 step 2: `bootstrap.rerail`'s include graph stored in K1): an entry a seed, a
+/// partition of this space, held by a small source under the seed's key (`graph_holder`), which the store keeps by
+/// a lease renewed by its readers, as an image was (decision 0250).
+const GRAPHS: crate::code_rule_dsl::logic::plan::kept_entry::Entries = crate::code_rule_dsl::logic::plan::kept_entry::Entries::new("rerail.phase0-graph");
+
+/// The text of the source that holds seed key `key`'s graph.
+fn graph_holder(key: &crate::content_store::HashKey) -> String {
+    format!("rerail/phase0-graph\0{}", key.sha256_bytes().map(|b| b.iter().map(|x| format!("{x:02x}")).collect::<String>()).unwrap_or_default())
+}
+
+fn graph_part(key: &crate::content_store::HashKey) -> i64 {
+    crate::code_rule_dsl::logic::plan::kept_entry::Entries::part(&key.sha256_bytes().unwrap_or_default())
+}
+
+/// The graphs `store` keeps of seed keys `keys`, as their facts, read together: the holders by their aliases in one
+/// statement, their leases renewed together, and the entries in one read of the space.
+pub(in crate::code_rule_dsl) fn graph_facts(store: Option<&crate::content_store::ContentStore>, keys: &[crate::content_store::HashKey]) -> Vec<Option<crate::code_rule_dsl::logic::program_facts::Facts>> {
+    let mut out: Vec<Option<crate::code_rule_dsl::logic::program_facts::Facts>> = keys.iter().map(|_| None).collect();
+    let Some(store) = store else { return out };
+    if keys.is_empty() {
+        return out;
+    }
+    let Ok(holders) = ({ let _s = crate::code_rule_dsl::logic::profile::span(|| "the graphs' holders".into()); store.sources_by_aliases(keys) }) else { return out };
+    let ids: Vec<crate::content_store::SourceId> = holders.iter().flatten().copied().collect();
+    if ids.is_empty() {
+        return out;
+    }
+    let mut entries = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the graphs' entries, read".into()); GRAPHS.get_many(store, &keys.iter().zip(&holders).filter(|(_, h)| h.is_some()).map(|(k, _)| graph_part(k)).collect::<Vec<_>>()) };
+    for (k, key) in keys.iter().enumerate() {
+        if holders[k].is_some() {
+            out[k] = entries.remove(&graph_part(key));
         }
-        let id = cx.store.put_source(cx.bytes, &[key])?;
-        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
     }
-    let queued = Key::of(&[WHAT.as_bytes(), &key.sha256_bytes().unwrap_or_default()]);
-    store.queue_record(Syms::None, WHAT, vec![queued], &key, Some(bytes), apply, true);
+    { let _s = crate::code_rule_dsl::logic::profile::span(|| "the graphs' leases".into()); renew_images(store, &ids); }
+    out
+}
+
+/// The graphs a process first reads for a store other than the one that keeps them: kept where this reader finds
+/// them on restart, those kept already renewed.
+pub(in crate::code_rule_dsl) fn retain_graph_facts(store: Option<&crate::content_store::ContentStore>, keys: Vec<crate::content_store::HashKey>, facts: impl Fn(usize) -> crate::code_rule_dsl::logic::program_facts::Facts) {
+    let Some(store) = store else { return };
+    let Ok(holders) = store.sources_by_aliases(&keys) else { return };
+    let mut renew = Vec::new();
+    let mut keep = Vec::new();
+    for (i, (key, holder)) in keys.into_iter().zip(holders).enumerate() {
+        match holder {
+            Some(id) => renew.push(id),
+            None => keep.push((key, facts(i))),
+        }
+    }
+    renew_images(store, &renew);
+    keep_graph_facts(Some(store), keep);
+}
+
+/// Keeps the graphs of one call of phase 0: each one's facts as its seed key's entry (in place of what the entry
+/// kept: an edited library gives the same seed another graph), behind the run, and the holders not kept yet as one
+/// record of the store's writer, each pinned by the images' lease.
+pub(in crate::code_rule_dsl) fn keep_graph_facts(store: Option<&crate::content_store::ContentStore>, graphs: Vec<(crate::content_store::HashKey, crate::code_rule_dsl::logic::program_facts::Facts)>) {
+    use crate::content_store::write_back::{Key, Syms};
+    const WHAT: &str = "phase 0's graphs of seeds";
+    let Some(store) = store else { return };
+    if graphs.is_empty() {
+        return;
+    }
+    for (key, facts) in &graphs {
+        let holder = crate::content_store::HashKey::sha256(graph_holder(key).as_bytes()).sha256_bytes().expect("a sha256 key");
+        GRAPHS.put(store, graph_part(key), holder, None, facts);
+    }
+    // The keys the body, the holders' texts the pieces, in the same order.
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let keys: Vec<crate::content_store::HashKey> = crate::content_store::record::codec::from_body(WHAT, body)?;
+        if keys.len() != cx.pieces.len() {
+            return Err(crate::content_store::StoreError::Invalid(format!("{WHAT}: {} keys, {} holders", keys.len(), cx.pieces.len())));
+        }
+        let mut new = Vec::with_capacity(keys.len());
+        for (i, key) in keys.iter().enumerate() {
+            if cx.store.source_by_alias(*key)?.is_none() {
+                new.push(i);
+            }
+        }
+        let aliases: Vec<[crate::content_store::HashKey; 1]> = new.iter().map(|&i| [keys[i]]).collect();
+        let sources: Vec<(&[u8], crate::content_store::HashKey, &[crate::content_store::HashKey])> =
+            new.iter().zip(&aliases).map(|(&i, a)| { let b: &[u8] = (*cx.pieces[i]).as_ref(); (b, crate::content_store::HashKey::sha256(b), &a[..]) }).collect();
+        for id in cx.store.put_sources_placed(&sources)? {
+            cx.store.pin_source(id, IMAGE_OWNER, image_lease())?;
+        }
+        Ok(())
+    }
+    let queued: Vec<Key> = graphs.iter().map(|(key, _)| Key::of(&[WHAT.as_bytes(), &key.sha256_bytes().unwrap_or_default()])).collect();
+    let keys: Vec<crate::content_store::HashKey> = graphs.iter().map(|(k, _)| *k).collect();
+    let pieces: Vec<crate::content_store::record::Bytes> = graphs.iter().map(|(k, _)| std::sync::Arc::new(graph_holder(k).into_bytes()) as crate::content_store::record::Bytes).collect();
+    store.queue_record_held(Syms::None, WHAT, queued, &keys, pieces, apply, true);
 }
 
 /// The lease of image `id`, read by this run, renewed (`keep_image`) once more than half of it has run: a run that reads
@@ -1411,6 +1552,22 @@ fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>
         return Ok(None);
     }
     Ok(Some(phase0::Seed::Text { t_shape: t_shape(&statements), includes: names, phases: phases_named(&statements) }))
+}
+
+/// A program file's names, each with its place as `bootstrap.rerail` gives a loaded file's (`p0_names`: the include's
+/// first byte in the text, its `node`'s start), whether it is in T's shape (it declares `doc`: no `core.rerail` of its own), and
+/// the phase programs its declarations name: for phase 0's graph of the file made of its modules'
+/// (`phase0::composed`).
+pub(in crate::code_rule_dsl) fn includes_and_phases(src: &str) -> Result<(Vec<(i64, String)>, bool, Vec<String>), Error> {
+    let file = RrFile::read(src)?;
+    let statements = file.statements();
+    let mut names = Vec::new();
+    for st in &statements {
+        if let Some(S::Include(name)) = st.what() {
+            names.push((st.start() as i64, name));
+        }
+    }
+    Ok((names, t_shape(&statements), phases_named(&statements)))
 }
 
 /// The program's module graph's digest (`phase0::Graph::digest`): what its text is a function of besides itself.

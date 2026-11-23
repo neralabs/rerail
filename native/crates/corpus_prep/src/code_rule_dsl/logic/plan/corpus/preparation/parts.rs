@@ -928,6 +928,13 @@ fn merge_header(all: &mut Builder<'_>, before: &Selected<'_>, after: &dyn Progra
 /// (`interface`) did not, those parts' rules are spliced into the last linked version in their places, and the
 /// other parts are neither read nor linked again.
 pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, store: &ContentStore, keep: bool) -> Result<(Arc<Version>, Front, Vec<SourceId>)> {
+    // A pass's tape-local facts kept by its tape (decision 0597 rule 8), on the pack's whole program before it is
+    // split: a pass's relations and their readers may lie in different parts, and every part reads the names it made.
+    let version = {
+        let mut pipeline = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("passes kept by their tapes", version);
+        pipeline.program(&mut super::kept::Kept);
+        pipeline.finish()?.0
+    };
     let (version, front, sources) = link_front(version, dialect, store, keep)?;
     // A part's inputs and outputs are its linking interface. The demand proof needs the
     // linked rules, where it can see the product's readers and what supplies their joins.

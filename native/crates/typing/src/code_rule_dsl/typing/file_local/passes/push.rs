@@ -347,8 +347,13 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                         outside.extend(lit_vars(v, rule, body[j]));
                     }
                 }
+                // The literals in one order whatever the rule's (by their text), and the interface by first sight in
+                // it: two rules that push the same join with their literals written in another order (a recheck and
+                // its original, decision 0575) name one helper.
+                let mut in_order: Vec<usize> = lits.iter().copied().collect();
+                in_order.sort_by_cached_key(|&j| v.show_lit(rule, body[j]));
                 let mut iface: Vec<String> = Vec::new();
-                for &j in &lits {
+                for &j in &in_order {
                     for x in lit_vars(v, rule, body[j]) {
                         if outside.contains(&x) && !iface.contains(&x) {
                             iface.push(x);
@@ -412,7 +417,9 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 };
                 lits.retain(|&j| !reader_test(body[j]));
                 // Named by the join alone, not the rule's head: every rule that pushes the same join reads one helper.
-                let content = format!("({}) :- {}", iface.join(", "), lits.iter().map(|&j| v.show_lit(rule, body[j])).collect::<Vec<_>>().join(", "));
+                let mut shown: Vec<String> = lits.iter().map(|&j| v.show_lit(rule, body[j])).collect();
+                shown.sort();
+                let content = format!("({}) :- {}", iface.join(", "), shown.join(", "));
                 let helper = match by_content.get(&content) {
                     Some(h) => h.clone(),
                     None => {

@@ -10,7 +10,7 @@ use rerail_compiler::program::Words as Program;
 use rerail_compiler::{block, native_ir};
 use rerail_cpu_block::native_cpu_block;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-use rerail_metal as metal_program_backend;
+use rerail_metal_programs as metal_program_backend;
 
 /// No device here that runs a block program: none at all (a Linux host without a GPU), or one whose SIMD groups are
 /// not 32 lanes (`block_program::ready`). A test's device runs are left out there; its CPU's are still held.

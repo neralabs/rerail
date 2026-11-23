@@ -100,6 +100,8 @@ fn dump(dir: &Path) -> Dump {
     let connection = rusqlite::Connection::open(dir.join("store.sqlite")).unwrap();
     // The atoms SQLite holds (decision 0049: the segments), not this process's arena.
     crate::content_store::atoms::materialize_stored(&connection).unwrap();
+    // The derivation graph's kept facts, as the tables of their names.
+    crate::content_store::atoms::install_kept_tables(&connection).unwrap();
     let bindings = connection
         .prepare("SELECT a.value,b.digest FROM name_bindings b JOIN atoms a ON a.atom=b.name_atom")
         .unwrap()

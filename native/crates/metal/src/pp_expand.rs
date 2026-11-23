@@ -271,6 +271,19 @@ pub struct Layout {
     pub file_literals: Vec<Vec<u8>>,
     /// Each file's `__FILE_NAME__`: its presumed path's last component's literal.
     pub name_literals: Vec<Vec<u8>>,
+    /// A round started from the last round's tree (decision 0613 §3): `nodes` holds it whole, each
+    /// instance's entered there (`entered`, by node) and its groups' activity (`groups`, each
+    /// instance's in its order). Empty: a round from the roots.
+    pub entered: Vec<u32>,
+    pub groups: Vec<u32>,
+}
+
+/// What a round's P1 settled at, for the next round to start from (`Layout::entered`).
+#[derive(Clone, Debug, Default)]
+pub struct Tree {
+    pub nodes: Vec<PpNode>,
+    pub entered: Vec<u32>,
+    pub groups: Vec<u32>,
 }
 
 impl Layout {
@@ -291,6 +304,8 @@ impl Layout {
             relex_options: first.relex_options,
             file_literals: Vec::new(),
             name_literals: Vec::new(),
+            entered: Vec::new(),
+            groups: Vec::new(),
         };
         let mut files = 0u32;
         for (u, &(l, n_files)) in parts.iter().enumerate() {
@@ -299,6 +314,7 @@ impl Layout {
                 "a batch of one dialect and configuration"
             );
             let (u, i0) = (u as u32, lay.nodes.len() as u32);
+            assert!(l.groups.is_empty(), "a batch joined of rounds from the roots");
             lay.nodes.extend(l.nodes.iter().map(|n| PpNode { file: n.file + files, parent: if n.parent == NO_PARENT { NO_PARENT } else { n.parent + i0 }, pdir: n.pdir, depth: n.depth, unit: u }));
             lay.table.extend(l.table.iter().map(|&(_, k, f)| (u, k, if f == NOT_FOUND { f } else { f + files })));
             // copy: not block data (the files' search entries, configuration input, joined on the host)
@@ -682,6 +698,9 @@ pub struct Vis {
     p1_grpf: Buf,
     p1_ngrp: Buf,
     p1_ga: Buf,
+    p1_seede: Buf,
+    p1_seedg: Buf,
+    n_seed: u32,
     p1_taken: Buf,
     p1_own: Buf,
     p1_par: Buf,
@@ -860,6 +879,13 @@ impl Vis {
             p1_grpf: zeroed(ni)?,
             p1_ngrp: zeroed(1)?,
             p1_ga: zeroed(nq)?,
+            p1_seede: words(&{
+                let mut e = lay.entered.clone();
+                e.resize(ni.max(1), 0);
+                e
+            })?,
+            p1_seedg: words(&if lay.groups.is_empty() { vec![0] } else { lay.groups.clone() })?,
+            n_seed: lay.groups.len() as u32,
             p1_taken: zeroed(nq)?,
             p1_own: zeroed(nq)?,
             p1_par: zeroed(nq)?,
@@ -923,7 +949,7 @@ impl Vis {
         l.at("P1_DFIRST", &self.p1_dfirst).at("P1_GFIRST", &self.p1_gfirst).at("P1_SIZE", &self.p1_size).at("P1_CSIZE", &self.p1_csize);
         l.at("P1_GC", &self.p1_gc).at("P1_GHEADS", &self.p1_gheads).at("P1_GSHIFT", &self.p1_gshift).at("P1_USIZE", &self.p1_usize);
         l.at("P1_UTOTAL", &self.p1_utotal).at("P1_BASE", &self.p1_base);
-        l.word("NQ", self.nq as u32).at("P1_GCOUNT", &self.p1_gcount).at("P1_GRPF", &self.p1_grpf).at("P1_NGRP", &self.p1_ngrp).at("P1_GA", &self.p1_ga);
+        l.word("NQ", self.nq as u32).at("P1_GCOUNT", &self.p1_gcount).at("P1_GRPF", &self.p1_grpf).at("P1_NGRP", &self.p1_ngrp).at("P1_GA", &self.p1_ga).at("P1_SEEDE", &self.p1_seede).at("P1_SEEDG", &self.p1_seedg).word("P1_NSEED", self.n_seed);
         l.at("P1_TAKEN", &self.p1_taken).at("P1_OWN", &self.p1_own).at("P1_PAR", &self.p1_par).at("P1_OWN2", &self.p1_own2).at("P1_PAR2", &self.p1_par2);
         l.at("P1_JCHANGED", &self.p1_jchanged).at("P1_ICHANGED", &self.p1_ichanged);
         l.word("P1_JUMPS", P1_JUMPS as u32).word("P1_ITERS", P1_ITERS as u32);
@@ -956,6 +982,18 @@ impl Vis {
             requests: Vec::new(),
             refused: 0,
         }
+    }
+
+    /// The tree P1 settled at (`Tree`): its instances, each one entered where it is live, the groups'
+    /// activity.
+    pub fn tree(&self) -> Tree {
+        let (ni, nq) = (self.word(&self.n_insts) as usize, self.word(&self.p1_ngrp) as usize);
+        // SAFETY: the device finished; the stores hold `ni` instances and `nq` group words.
+        let words = |b: &Buf, n: usize| unsafe { std::slice::from_raw_parts(b.host().cast::<u32>(), n).to_vec() };
+        // SAFETY: as above.
+        let nodes = unsafe { std::slice::from_raw_parts(self.nodes.host().cast::<PpNode>(), ni).to_vec() };
+        // copy: not block data (P1's settled state, the next round's input: decision 0613 §3)
+        Tree { nodes, entered: words(&self.live, ni), groups: words(&self.p1_ga, nq) }
     }
 
     fn word(&self, b: &Buf) -> u32 {
@@ -1302,6 +1340,12 @@ impl Exp {
         unsafe { *self.trn.host().cast::<u32>().add(16) }
     }
 
+    /// The memo's hits and the results it kept (`TRN[28]`, `TRN[29]`, decision 0613 §2).
+    pub fn memo(&self) -> (u32, u32) {
+        // SAFETY: the device finished; `trn` holds 32 words.
+        unsafe { (*self.trn.host().cast::<u32>().add(28), *self.trn.host().cast::<u32>().add(29)) }
+    }
+
     /// The last text pass's pieces (`TRN[13]`, decision 0588).
     pub fn loop_pieces(&self) -> u32 {
         // SAFETY: the device finished; `trn` holds 32 words.
@@ -1429,6 +1473,10 @@ pub struct Expanded {
     pub gives: u32,
     /// The longest piece's steps (`TRN[16]`, decision 0588): a measurement, and the tests' bound on a chain.
     pub steps: u32,
+    /// The memo's hits and the results it kept (`TRN[28]`, `TRN[29]`, decision 0613 §2), every pass's.
+    pub memo: (u32, u32),
+    /// A round that made requests: the tree its P1 settled at, the next round's start (`Layout::entered`).
+    pub tree: Option<Tree>,
     pub def_rung: u32,
     /// The command it ran in (`next_run`): a batch's units ran in one, and its GPU time is that command's.
     pub run: u64,
@@ -1714,7 +1762,7 @@ impl<'u> Runs<'u> {
         if std::env::var_os("RERAIL_PP_LOOP_LOG").is_some() {
             // SAFETY: the device finished; `trn` holds 32 words, 16 to 19 the longest piece's, 20 to 23 the slowest's.
             let w = |k: usize| unsafe { *exp.trn.host().cast::<u32>().add(k) };
-            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25));
+            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29));
         }
         // The loop's work, where the run reached the text (a round that ends at its requests did not): the
         // unit's, kept for its next run and its next evaluation.
@@ -1727,7 +1775,7 @@ impl<'u> Runs<'u> {
         };
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))), work };
         let expanded = |refused: u32, p1_flags: u32, requests: Vec<Request>, out: Vec<u32>, unit_out: Vec<u32>, scratch: Vec<u8>, stoks: Vec<[u32; 3]>| -> Result<Expanded, Error> {
-            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), def_rung, run })
+            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, run })
         };
         // SAFETY: the device finished writing `room`.
         let why = |room: &str| {
@@ -1763,7 +1811,11 @@ impl<'u> Runs<'u> {
         }
         let requests = vis.requests();
         if p1_flags != 0 || !requests.is_empty() {
-            return Some(expanded(0, p1_flags, requests, Vec::new(), Vec::new(), Vec::new(), Vec::new()));
+            let tree = (p1_flags == 0).then(|| vis.tree());
+            return Some(expanded(0, p1_flags, requests, Vec::new(), Vec::new(), Vec::new(), Vec::new()).map(|mut e| {
+                e.tree = tree;
+                e
+            }));
         }
         if let Err(e) = vis.read() {
             return Some(Err(e));

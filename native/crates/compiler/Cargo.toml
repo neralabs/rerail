@@ -11,6 +11,8 @@ test-hooks = ["rerail-blocks/test-hooks", "rerail-tape-format/test-hooks", "rera
 
 [dependencies]
 rerail-context = { path = "../context" }
+# Its error, which the device's runtime returns too.
+rerail-error = { path = "../error" }
 # The block structures a run's outputs live in (decision 0353): the GPU and CPU read the same data.
 rerail-blocks = { path = "../blocks" }
 # The engine's tape, which tier 2 writes (decision 0140).

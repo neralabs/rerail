@@ -3528,6 +3528,11 @@ fn a_layout_prices_the_columns_its_facts_answer() {
     assert_eq!(s.ndv("o", 0, 60.0, n), Some(60.0));
     assert_eq!(s.ndv("o", 1, 60.0, n), Some(20.0));
     assert!(s.answers("o", n));
+    // Kept by the version's identity (t33 K4): its rows read back as it, the inferred facts' sources included.
+    use crate::code_rule_dsl::logic::program_image::manager::Analysis as _;
+    let rows = s.rows(&v).expect("rows");
+    assert_eq!(shapes::Shapes::of_rows(&v, &rows).as_ref(), Some(&*s));
+    assert!(!s.inferred().is_empty(), "o's facts were inferred from what its rule reads");
 }
 
 /// A column's values (`values(c, …)`, decision 0361 item 5): the documents and kinds by the run's counts, a share of

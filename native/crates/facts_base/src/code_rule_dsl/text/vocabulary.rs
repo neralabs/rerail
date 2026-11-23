@@ -94,6 +94,19 @@ fn group_key(hirs: &[regex_syntax::hir::Hir]) -> String {
     format!("dfa1:{}", crate::code_rule_dsl::prof::lower_hex(&hash.finalize()))
 }
 
+/// The keys of the groups of automata `Searchers::new` makes of `plans` (`group_key`), in its order: the images a
+/// compile of them reads, which a run reads before its first wave (decision 0104) and compiles from at its first test.
+pub(in crate::code_rule_dsl) fn group_keys(plans: &[&Plan]) -> Vec<String> {
+    let automata: Vec<regex_syntax::hir::Hir> = plans
+        .iter()
+        .filter_map(|plan| match plan {
+            Plan::Automaton { anchor, core } => Some(Plan::automaton_hir(*anchor, core)),
+            _ => None,
+        })
+        .collect();
+    automata.chunks(GROUP).map(group_key).collect()
+}
+
 /// `hirs` determinized into one DFA over all of them, if it fits in `DFA_LIMIT`.
 fn determinize(hirs: &[regex_syntax::hir::Hir]) -> Option<Dfa> {
     use regex_automata::dfa::dense;
@@ -421,99 +434,47 @@ pub(in crate::code_rule_dsl) fn evaluate(plans: &[&Plan], terms: &[&[u8]]) -> (V
     Searchers::new(plans, None, true).evaluate(terms)
 }
 
-/// Each of `lowered`'s matching terms of language `lang` (atoms), kept in the store by key: a key
-/// seen for the first time is evaluated over the whole vocabulary, and a known key over the terms
-/// added since it last read the log (`text_pending`). Exact sets are looked up by value, never
-/// evaluated or kept.
+/// Each of `lowered`'s matching terms of language `lang` (atoms), kept in the store by key (kept facts, kind `TEXT`:
+/// `ContentStore::vocabulary_terms`): a key seen for the first time is evaluated over the whole vocabulary, and a
+/// known key over the terms the counts' publications added since it was. Exact sets are looked up by value, never
+/// evaluated.
 pub fn fill(store: &ContentStore, lang: u32, lowered: &[Arc<Lowered>]) -> StoreResult<HashMap<Key, Vec<i64>>> {
-    let lang = i64::from(lang);
-    store.candidate_transaction(true, |db| {
-        let _stage = crate::code_rule_dsl::prof::Stage::start("text.vocabulary");
-        let mut out = HashMap::new();
-        let mut kept: Vec<&Arc<Lowered>> = Vec::new();
-        for lowered in lowered {
-            if out.contains_key(&lowered.key) || kept.iter().any(|known| known.key == lowered.key) {
-                continue;
-            }
-            match &lowered.plan {
-                // A literal is text: found by `atoms_by_value`, whatever terms came since.
-                Plan::Literals { anchor: Anchor::Whole, literals } => {
-                    let mut lookup = db.prepare_cached("SELECT v.term FROM atoms a CROSS JOIN term_freq v ON v.lang=?1 AND v.term=a.atom WHERE a.value=?2")?;
-                    let mut terms = Vec::new();
-                    for literal in literals {
-                        let Ok(text) = std::str::from_utf8(literal) else { continue };
-                        terms.extend(lookup.query_map(rusqlite::params![lang, text], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?);
-                    }
-                    terms.sort_unstable();
-                    out.insert(lowered.key.clone(), terms);
-                }
-                Plan::Never => {
-                    out.insert(lowered.key.clone(), Vec::new());
-                }
-                _ => kept.push(lowered),
-            }
+    use crate::content_store::prefilter::vocabulary::TEXT;
+    let _stage = crate::code_rule_dsl::prof::Stage::start("text.vocabulary");
+    let mut out = HashMap::new();
+    let mut kept: Vec<&Arc<Lowered>> = Vec::new();
+    for lowered in lowered {
+        if out.contains_key(&lowered.key) || kept.iter().any(|known| known.key == lowered.key) {
+            continue;
         }
-        if kept.is_empty() {
-            return Ok(out);
-        }
-        let head: i64 = db.query_row("SELECT coalesce(max(seq), 0) FROM text_pending", [], |row| row.get(0))?;
-        // Each kept key's place in the log: `None` for a key not seen before.
-        let upto = {
-            let mut statement = db.prepare_cached("SELECT upto FROM text_matcher WHERE lang=?1 AND key=?2")?;
-            kept.iter()
-                .map(|lowered| statement.query_row(rusqlite::params![lang, lowered.key.0], |row| row.get::<_, i64>(0)).map(Some).or_else(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                    e => Err(e),
-                }))
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        };
-        let read = |sql: &str, from: i64| -> rusqlite::Result<(Vec<i64>, Vec<String>)> {
-            let mut statement = db.prepare_cached(sql)?;
-            let rows = statement.query_map(rusqlite::params![lang, from], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(rows.into_iter().unzip())
-        };
-        let mut insert = db.prepare_cached("INSERT OR IGNORE INTO text_term(lang,key,term) VALUES (?1,?2,?3)")?;
-        let mut register = db.prepare_cached("INSERT INTO text_matcher(lang,key,plan,upto) VALUES (?1,?2,?3,?4) ON CONFLICT(lang,key) DO UPDATE SET upto=excluded.upto")?;
-        // Keys group by where they start reading: a new key reads every term; a known key the log
-        // past its place (terms still in the vocabulary).
-        let mut starts = upto.to_vec();
-        starts.sort_unstable();
-        starts.dedup();
-        for from in starts {
-            let group = kept.iter().zip(&upto).filter(|(_, at)| **at == from).map(|(lowered, _)| *lowered).collect::<Vec<_>>();
-            let (terms, texts) = match from {
-                None => read("SELECT v.term, a.value FROM term_freq v CROSS JOIN atoms a ON a.atom=v.term WHERE v.lang=?1 AND ?2=?2", 0)?,
-                Some(at) if at >= head => Default::default(),
-                Some(at) => read(
-                    "SELECT DISTINCT p.term, a.value FROM text_pending p CROSS JOIN term_freq v ON v.lang=p.lang AND v.term=p.term CROSS JOIN atoms a ON a.atom=p.term WHERE p.lang=?1 AND p.seq>?2",
-                    at,
-                )?,
-            };
-            if !terms.is_empty() {
-                let plans = group.iter().map(|lowered| &lowered.plan).collect::<Vec<_>>();
-                let bytes = texts.iter().map(|text| text.as_bytes()).collect::<Vec<_>>();
-                let (found, _) = evaluate(&plans, &bytes);
-                crate::code_rule_dsl::prof::count("text.vocabulary.tests", terms.len() * group.len());
-                for (lowered, found) in group.iter().zip(found) {
-                    if from.is_none() {
-                        register.execute(rusqlite::params![lang, lowered.key.0, lowered.plan.canonical(), head])?;
-                    }
-                    for i in found {
-                        insert.execute(rusqlite::params![lang, lowered.key.0, terms[i as usize]])?;
-                    }
-                }
+        match &lowered.plan {
+            Plan::Never => {
+                out.insert(lowered.key.clone(), Vec::new());
             }
-            for lowered in &group {
-                register.execute(rusqlite::params![lang, lowered.key.0, lowered.plan.canonical(), head])?;
-            }
+            _ => kept.push(lowered),
         }
-        // Log entries every key has read.
-        db.execute("DELETE FROM text_pending WHERE seq <= (SELECT coalesce(min(upto), 0) FROM text_matcher)", [])?;
-        let mut terms_of = db.prepare_cached("SELECT term FROM text_term WHERE lang=?1 AND key=?2 ORDER BY term")?;
-        for lowered in kept {
-            let terms = terms_of.query_map(rusqlite::params![lang, lowered.key.0], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-            out.insert(lowered.key.clone(), terms);
+    }
+    if kept.is_empty() {
+        return Ok(out);
+    }
+    let keys: Vec<String> = kept.iter().map(|lowered| lowered.key.0.clone()).collect();
+    // A literal is text: found by value, whatever terms came since.
+    let literals = |key: &str| -> Option<Vec<String>> {
+        let lowered = kept.iter().find(|lowered| lowered.key.0 == key)?;
+        match &lowered.plan {
+            Plan::Literals { anchor: Anchor::Whole, literals } => Some(literals.iter().filter_map(|l| std::str::from_utf8(l).ok().map(str::to_owned)).collect()),
+            _ => None,
         }
-        Ok(out)
-    })
+    };
+    let test = |group: &[usize], texts: &[&str]| -> Vec<Vec<u32>> {
+        let plans = group.iter().map(|&i| &kept[i].plan).collect::<Vec<_>>();
+        let bytes = texts.iter().map(|text| text.as_bytes()).collect::<Vec<_>>();
+        crate::code_rule_dsl::prof::count("text.vocabulary.tests", texts.len() * group.len());
+        evaluate(&plans, &bytes).0
+    };
+    let terms = store.vocabulary_terms(TEXT, i64::from(lang), &keys, &test, &literals)?;
+    for (lowered, terms) in kept.into_iter().zip(terms) {
+        out.insert(lowered.key.clone(), terms);
+    }
+    Ok(out)
 }

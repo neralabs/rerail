@@ -450,12 +450,6 @@ impl World {
         out
     }
 
-    /// Whether each of `consulted` (`consulted`) is as it was: the requests would be answered alike. Phase 0's
-    /// observer answers each by a `stat`, reading only what changed.
-    pub(super) fn still(&mut self, consulted: &[(String, String, String)]) -> bool {
-        self.changed(consulted).is_none()
-    }
-
     /// The first of `consulted` that would be answered otherwise now, with its answer now (`None` for a kind of
     /// request no longer asked).
     pub(super) fn changed<'c>(&mut self, consulted: &'c [(String, String, String)]) -> Option<(&'c (String, String, String), Option<String>)> {

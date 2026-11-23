@@ -1549,6 +1549,10 @@ pub struct RunPlans {
     /// plans, and those this run made, by the version's identity; and whether it made any.
     prepared: arc_swap::ArcSwap<prepared::ByVersion>,
     prepared_new: std::sync::atomic::AtomicBool,
+    /// The analyses of the versions the run asked them of (`kept_analyses`, t33 K4): the store's, read with the kept
+    /// plans, and those this run made, by key; and whether it made any.
+    analyses: arc_swap::ArcSwap<super::kept_analyses::ByVersion>,
+    analyses_new: std::sync::atomic::AtomicBool,
     /// The lines this run found heavy while they ran their prepared plan: searched from then on (`prepared_heavy`).
     prepared_searched: parking_lot::Mutex<HashSet<u128>>,
 }
@@ -1633,6 +1637,8 @@ impl RunPlans {
             orders: arc_swap::ArcSwap::from_pointee(orders),
             prepared: Default::default(),
             prepared_new: Default::default(),
+            analyses: Default::default(),
+            analyses_new: Default::default(),
             prepared_searched: Default::default(),
         }
     }
@@ -1867,6 +1873,46 @@ pub fn take_stored_prepared(stored: prepared::ByVersion) {
 /// This thread's run's prepared plans for the store, the stored with the made: `None` where it made none.
 pub fn prepared_to_store() -> Option<Arc<prepared::ByVersion>> {
     with_plans(|p| p.filter(|p| p.prepared_new.load(std::sync::atomic::Ordering::Relaxed)).map(|p| p.prepared.load_full()))
+}
+
+/// The rows the store kept of the analysis `key` names (`kept_analyses`).
+#[doc(hidden)]
+pub fn analysis_stored(key: &super::kept_analyses::Key) -> Option<Arc<Vec<super::super::program_image::manager::Row>>> {
+    with_plans(|p| p.and_then(|p| p.analyses.load().get(key).cloned()))
+}
+
+/// Keeps `rows`, the analysis `key` names as this run made it, for the store.
+#[doc(hidden)]
+pub fn analysis_made(key: super::kept_analyses::Key, rows: Arc<Vec<super::super::program_image::manager::Row>>) {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref() {
+            p.analyses.rcu(|m| {
+                let mut m = super::kept_analyses::ByVersion::clone(m);
+                m.insert(key.clone(), Arc::clone(&rows));
+                m
+            });
+            p.analyses_new.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+}
+
+/// Gives this thread's run the analyses the store kept (with `take_stored_plans`).
+pub fn take_stored_analyses(stored: super::kept_analyses::ByVersion) {
+    with_plans(|p| {
+        if let Some(p) = p.as_ref() {
+            p.analyses.store(Arc::new(stored));
+        }
+    });
+}
+
+/// This thread's run's kept analyses for the store, the stored with the made: `None` where it made none.
+pub fn analyses_to_store() -> Option<Arc<super::kept_analyses::ByVersion>> {
+    with_plans(|p| p.filter(|p| p.analyses_new.load(std::sync::atomic::Ordering::Relaxed)).map(|p| p.analyses.load_full()))
+}
+
+/// The kept analyses held for this thread's run, as read and made.
+pub fn analyses_held() -> Arc<super::kept_analyses::ByVersion> {
+    with_plans(|p| p.map(|p| p.analyses.load_full()).unwrap_or_default())
 }
 
 /// The prepared plans held for this thread's run, as read and made.
@@ -3850,6 +3896,31 @@ impl Model {
                         if joined_else { all = false; }
                         by_cols.extend(b.args(*d).iter().enumerate().filter(|(_, t)| matches!(t, TermRef::Var(x) if *x == v)).map(|(dc, _)| (dr, dc)));
                     }
+                    // Drawn through one atom's column where both columns' counts are exact (one of few values, the
+                    // other counted by value): the rows they join, exactly, before any estimate. A light value is
+                    // not the light values' average: `rr_ann_doc`'s documents, 40 nodes each, were priced by heavy
+                    // values at 3,000 a document.
+                    if all && let [(dr, dc)] = by_cols[..]
+                        && let (Some(mine), Some(theirs)) = (self.stats.counts.at(rel, c), self.stats.counts.at(dr, dc))
+                        && theirs.rows >= 1.0
+                        && let joined = mine.join(theirs)
+                        && joined.err == 0.0
+                    {
+                        basis.set("join counts");
+                        misses_counted.set(misses_counted.get() | 1 << c.min(63));
+                        return (joined.rows / theirs.rows).max(0.01);
+                    }
+                    // This column counted by value, the binding drawn from kept keys: each key's rows, summed, a key,
+                    // by the fewest keys of the atoms that hold it (its values are in each).
+                    if let Some(mine) = self.stats.counts.at(rel, c)
+                        && let Some(theirs) = by_cols.iter().filter_map(|&(dr, dc)| self.stats.keys.at(dr, dc)).filter(|k| k.distinct() >= 1.0).min_by(|a, b| a.distinct().total_cmp(&b.distinct()))
+                        && let Some(held) = mine.rows_held(theirs)
+                        && let of = theirs.distinct()
+                    {
+                        basis.set("counts at keys");
+                        misses_counted.set(misses_counted.get() | 1 << c.min(63));
+                        return (held / of).max(0.01);
+                    }
                     // Each column priced with its kept keys (decision 0488), read where the engine keeps them.
                     let priced = |r: &str, c: usize| self.heavy_of(r, c).map(|h| table::PricedCol::new(h, self.stats.keys.at(r, c)));
                     if all && !by_cols.is_empty() && let Some(here) = priced(rel, c)
@@ -4031,7 +4102,11 @@ impl Model {
             // A first scan (nothing bound yet) of a member that had rows when the component opened reads those rows
             // once: its card, measured then (`Stats::sized`). A whole plan priced by the floor took `pv` (65 k rows)
             // first, tied with `decfn` (1 k) at the corpus's 180 k, and read it in full (O125 step 07).
-            let sized = bound.is_empty() && stats.sized.contains(rel);
+            // A whole plan (no delta atom) runs in the wave whose delta is each member's whole relation, its rows the
+            // seeds' (`setfix`'s `whole`), and is replanned from their live counts: a first scan reads those rows,
+            // its card. Floored, the candidates of a copy (`rr_cand_pt_walk`, 2,635 rows) were priced as the corpus
+            // (1.76 M), and the whole plan scanned `rr_nearest_pt_fscope` (1.83 M) to probe them, in each call.
+            let sized = bound.is_empty() && (stats.sized.contains(rel) || (first.is_none() && stats.card.contains_key(rel)));
             if !delta && !sized && stats.solving.contains(rel) && !args.iter().any(|t| matches!(t, TermRef::Var(v) if bound.contains(*v))) {
                 let mut floor = stats.nodes;
                 for (c, t) in args.iter().enumerate() {
@@ -4358,11 +4433,11 @@ impl Model {
         // search's, and a greedy order's taken without a search.
         let shown = std::env::var("RERAIL_PLAN_SHOW").is_ok_and(|r| r.split(',').any(|name| name == b.rel(b.head())));
         let show_atoms = |what: &str| {
-            eprintln!("plan show {} {what} first {first:?} fixed {} no_size {no_size:b} no_rows {no_rows:b}", b.show_head(), fixed.is_some());
+            eprintln!("plan show {} {what} first {first:?} fixed {} no_size {no_size:b} no_rows {no_rows:b} at {}", b.show_head(), fixed.is_some(), rerail_prof::code_rule_dsl::logic::profile::bound::<PlanSite>().0);
             for &j in &joins {
                 let Some(a) = b.atom(j) else { continue };
                 let rel = b.rel(a);
-                let cols: Vec<String> = (0..b.args(j).len()).map(|c| format!("ndv {:?} fan {:?}", self.ndv.get(&(rel.to_owned(), c)), self.stats.fan.get(&(rel.to_owned(), c)))).collect();
+                let cols: Vec<String> = (0..b.args(j).len()).map(|c| format!("ndv {:?} fan {:?} counts {} keys {}", self.ndv.get(&(rel.to_owned(), c)), self.stats.fan.get(&(rel.to_owned(), c)), self.stats.counts.at(rel, c).is_some(), self.stats.keys.at(rel, c).is_some())).collect();
                 eprintln!(
                     "plan show   atom {}: derived {} held {} view {} card {:?} lazy {} solving {} col {:?} | {}",
                     b.show_atom(a),
@@ -4733,7 +4808,7 @@ impl Model {
             for (m, c) in cells.iter().enumerate().filter_map(|(m, c)| c.as_ref().map(|c| (m as u64, c))) {
                 if m.count_ones() <= 5 || m == full_mask {
                     let lits: Vec<String> = (0..joins.len()).filter(|&i| m >> i & 1 == 1).map(|i| b.atom(joins[i]).map_or_else(|| format!("#{}", joins[i]), |a| b.show_atom(a))).collect();
-                    eprintln!("plan show   {m:b} last {} work {:.1} rows {:.1} unfounded {}: {}", c.last, c.work, c.rows, c.unfounded, lits.join(" , "));
+                    eprintln!("plan show   {m:b} last {} work {:.1} rows {:.1} unfounded {} by {}: {}", c.last, c.work, c.rows, c.unfounded, c.basis, lits.join(" , "));
                 }
             }
         }
@@ -5220,6 +5295,18 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
     stats.indexes = stats.indexes.with(batch_indexes);
     // An input no rule reads needs no statistics: a `.rerail` program declares every `core.rerail` relation (its prelude).
     let read: BTreeSet<String> = rules().flat_map(|b| (0..b.len()).filter_map(|i| b.atom(i)).map(|a| b.rel(a).to_owned()).collect::<Vec<_>>()).collect();
+    // A column its source counts by value without reading its rows (`docof`'s documents): a probe by it is priced by
+    // the rows it joins (`atom_rows`' join sketch), not the column's average. `rr_ann_doc`'s few documents, an
+    // annotation's each (40 nodes), were priced at the chunk's 2,192 a document, and the candidates of `pt_ownq`
+    // started from `kind`.
+    for rel in f.inputs().filter(|rel| read.contains(*rel)) {
+        let Some(source) = crate::code_rule_dsl::facts::vtab::bound_source(db, rel) else { continue };
+        for col in 0..f.arity(rel).unwrap_or(0) {
+            if let Some(counts) = source.column_counts(col) {
+                stats.counts.insert((rel.to_owned(), col), Arc::new(super::super::join_size::JoinCounts::of_counts(counts)));
+            }
+        }
+    }
     for rel in f.inputs().filter(|rel| !inputs.batch.contains_key(*rel) && read.contains(*rel)) {
         // A relation whose statistics are made when first planned with (`Model::resolve`).
         if stats.lazy.0.contains_key(rel) {
@@ -5320,6 +5407,7 @@ pub fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "token_before" | "token_after" => &[&["x"]],
         "end_point" => &[&["n"], &["p"]],
         "next_sibling" => &[&["a"], &["b"]],
+        "def_unit" => &[&["n"], &["u"]],
         "str_part" | "str_part_start" | "str_part_word" => &[&["lit"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
         // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0050).

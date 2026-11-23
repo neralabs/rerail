@@ -426,3 +426,4 @@ fn the_device_names_its_memory_domain() {
     #[cfg(not(target_os = "macos"))]
     assert!(layer.device.domain() <= 1);
 }
+

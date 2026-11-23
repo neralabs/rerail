@@ -646,6 +646,12 @@ impl Pass {
         self.resident.borrow_mut().push((buffer.clone(), true));
     }
 
+    /// The buffers made resident on it (`use_read`, `use_read_write`), each with whether it is written: what a pass
+    /// that goes on with its work declares again.
+    pub fn residents(&self) -> Vec<(Buffer, bool)> {
+        self.resident.borrow().clone()
+    }
+
     /// Holds the launches after it until the host signals `event` with `value` or more (a gate's, `crate::col`).
     pub fn wait_for_event(&self, event: &SharedEvent, value: u64) {
         self.queue.wait_for_event(event, value);

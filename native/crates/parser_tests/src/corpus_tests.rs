@@ -30,7 +30,7 @@ use rerail_compiler::program::Words as Program;
 use rerail_rir::rir_asm as rir;
 use rerail_bitlex::bitlex_masks as bitlex_compile;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-use rerail_metal as metal_program_backend;
+use rerail_metal_programs as metal_program_backend;
 use ::bitlex::syntax::{Stmt, parse};
 use std::collections::HashMap;
 use std::fmt::Write as _;

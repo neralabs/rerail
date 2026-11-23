@@ -980,6 +980,13 @@ pub(crate) fn kernels_held() -> std::sync::Arc<Kernels> {
     rerail_context::machine::<Kernels>()
 }
 
+/// Releases the kernels held (the residency's drop).
+pub(crate) fn drop_kernels() {
+    if let Ok(mut kernels) = kernels_held().0.lock() {
+        kernels.clear();
+    }
+}
+
 /// The run's count of sources generated and kernels compiled (a benchmark reads it around its timed runs, which must
 /// make none).
 #[derive(Default)]
@@ -2442,7 +2449,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let refusal = crate::pool::zeroed::<u32>(rows.len() * 6)?;
     let group = group_lanes()?;
     assert!(2 * segments.warm < segments.blocks, "a segment is longer than its two warm-ups");
-    // Every pass's kernel, made together (one program on OpenCL).
+    // Every pass's kernel (`serial_kernels`), made together (one program on OpenCL).
     let [cone, cone_prefix, group_pass, lanes_run, lanes_again, run, check, count, prefix, write, lanes_write, records_pass] =
         kernels(source_key, source, serial_kernels())?;
     let lanes = lanes_on();

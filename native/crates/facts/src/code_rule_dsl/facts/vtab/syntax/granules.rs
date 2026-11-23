@@ -174,12 +174,16 @@ fn is_container_owner(kind: &str) -> bool {
 /// What kind `kind` is to the granules (`DEF`, `WRAPPER`, `BODY`, `OWNER`): the names above, made into a table by
 /// kind code once per grammar (`Dialect::granule_kind`), so cutting reads a byte for each node.
 pub fn kind_flags(kind: &str) -> u8 {
-    (u8::from(is_def(kind)) * DEF) | (u8::from(is_wrapper(kind)) * WRAPPER) | (u8::from(is_body(kind)) * BODY) | (u8::from(is_container_owner(kind)) * OWNER)
+    (u8::from(is_def(kind)) * DEF) | (u8::from(is_wrapper(kind)) * WRAPPER) | (u8::from(is_body(kind)) * BODY) | (u8::from(is_container_owner(kind)) * OWNER) | (u8::from(super::core_rr::is_spread(kind)) * SPREAD) | (u8::from(super::core_rr::is_comment(kind)) * COMMENT)
 }
 pub const DEF: u8 = 1;
 pub const WRAPPER: u8 = 2;
 pub const BODY: u8 = 4;
 pub const OWNER: u8 = 8;
+/// A spread element or argument (`core_rr::is_spread`): no granule's, the `spread` view's (`Item::Spread`).
+pub const SPREAD: u8 = 16;
+/// A comment (`core_rr::is_comment`): no lexeme (`ranks::Item::Lexeme`).
+pub const COMMENT: u8 = 32;
 
 /// Declarations named by what they bind.
 fn binds(kind: &str) -> bool {
@@ -249,7 +253,9 @@ pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32], reference: Optio
             r.low = reference_low(&cut, tokens);
             r.order = order(&cut.of);
         }
-        return Table::new(p, &cut, &nodes, tokens);
+        let mut table = Table::new(p, &cut, &nodes, tokens);
+        table.whole = fold == Fold::All;
+        return table;
     }
 }
 
@@ -316,8 +322,9 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
             } else if in_container && fold == Fold::None {
                 start[l] = Some(Start::Stmt);
             }
-            // A wrapper claims its first definition child, which then starts no granule of its own.
-            if start[l].is_some() && is(l, WRAPPER)
+            // A wrapper claims its first definition child, which then starts no granule of its own: wherever it is,
+            // so a definition's decorators are its granule's in a function's body too (`units`).
+            if is(l, WRAPPER)
                 && let Some(c) = p.children(l as u32).find(|&c| is(c as usize, DEF)) {
                     claimed[c as usize] = true;
                     start[l] = Some(Start::Def);
@@ -581,6 +588,9 @@ pub struct Table {
     run_at: Cells<[u32; 2]>,
     /// The order keys are preorder indexes: the runs or a granule's nodes outgrow the key's bits (`order`).
     preorder_keys: bool,
+    /// Every granule folded into the root (`Fold::All`): no definition starts one, so a node's definition unit is
+    /// climbed on the tree (`units`).
+    whole: bool,
     /// Each granule's start and end as ranks, by item (`[nodes, tokens]`): the numbered items before its start and
     /// before its subtree's end. With them a numbered item's id is read from its number alone, no select.
     rank_starts: [Cells<u32>; 2],
@@ -698,6 +708,7 @@ impl Table {
             runs: placed(b, &runs),
             run_at: placed(b, &run_at),
             preorder_keys,
+            whole: false,
             rank_starts: [placed(b, &rs0), placed(b, &rs1)],
             rank_ends: [placed(b, &re0), placed(b, &re1)],
             jumps: [placed(b, &jumps[0]), placed(b, &jumps[1])],
@@ -745,6 +756,14 @@ impl Table {
         (low != rerail_clif::ids::NONE).then_some(low)
     }
 
+    /// `low_of`, the granule searched from `hint` (`Numbering::low_of_near`): probes in key order.
+    #[inline]
+    pub fn low_of_near(&self, r: &Ranks, item: Item, k: u32, hint: &mut u32) -> Option<u32> {
+        // SAFETY: as `low_of`.
+        let low = unsafe { r.numbering().low_of_near(item as u32, k, hint) };
+        (low != rerail_clif::ids::NONE).then_some(low)
+    }
+
     /// The start of the innermost granule whose subtree holds tape node `x` below its start (an ancestor of `x`),
     /// 0 when none does: where a parent search may start (`Facts::parent_within`).
     pub fn holding(&self, x: u32) -> u32 {
@@ -762,6 +781,27 @@ impl Table {
             g = up as usize + 1;
         }
         0
+    }
+
+    /// The innermost granule whose subtree holds tape node `x`, its start included (`None` outside the document's).
+    pub fn granule_of(&self, x: u32) -> Option<usize> {
+        let mut g = self.starts.partition_point(|&s| s <= x).checked_sub(1)?;
+        while self.ends[g] <= x {
+            let up = self.parents[g];
+            if up == u32::MAX {
+                return None;
+            }
+            g = up as usize;
+        }
+        Some(g)
+    }
+    /// Granule `g`'s start (a tape node) and its parent granule (`None` for the root's).
+    pub fn start_up(&self, g: usize) -> (u32, Option<usize>) {
+        (self.starts[g], (self.parents[g] != u32::MAX).then_some(self.parents[g] as usize))
+    }
+    /// Whether every granule is folded into the root (`Fold::All`): no definition starts one.
+    pub fn whole(&self) -> bool {
+        self.whole
     }
 
     /// The item whose id's low 32 bits are `low` (`low_of`'s inverse): what it is and its number (`num_number_of`).

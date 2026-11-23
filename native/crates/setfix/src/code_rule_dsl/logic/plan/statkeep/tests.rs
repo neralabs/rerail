@@ -205,7 +205,7 @@ fn one_pass_counts_as_the_four_passes_did() {
             Some(at) => at.is_some_and(|c| v >> 32 == row[c] >> 32),
         };
         stats.rows += sign * (flat.len() / width) as i64;
-        for (c, col) in stats.cols.iter_mut().enumerate().take(width) {
+        for (c, col) in stats.cols_mut().iter_mut().enumerate().take(width) {
             let (mut counts, mut values, mut crossing, mut per_doc) = (FxHashMap::<(i64, i64), i64>::default(), FxHashMap::<i64, i64>::default(), FxHashMap::<i64, bool>::default(), FxHashMap::<(i64, i64), ()>::default());
             for row in flat.chunks_exact(width) {
                 let (v, (d32, dof)) = (row[c], of(row));
@@ -265,4 +265,58 @@ fn one_pass_counts_as_the_four_passes_did() {
             }
         }
     }
+}
+
+/// Statistics read as kept (`RelStats::kept`, t33 K4) are decoded statistics' in every answer: their summary answers
+/// `statistics` undecoded; the exact maps and watched values given apart (a symbol column's, as the keeper keeps them)
+/// answer `exact` and `watched` undecoded, and are taken out again for writing as they were given; written back
+/// undecoded, they are the bytes they were read from; patched by a document, they are decoded statistics patched alike.
+#[test]
+fn statistics_read_as_kept_answer_and_patch_as_decoded_ones() {
+    let names = vec!["n".to_owned(), "kind".into(), "name".into()];
+    let docs: Vec<rerail_blocks::vector::Vector<i64>> = (1..=30).map(|d| doc(d, 40 + d * 9, d % 3)).collect();
+    let mut s = RelStats::new(names);
+    s.documents(&docs.iter().flat_map(|d| d.iter().copied()).collect::<rerail_blocks::vector::Vector<i64>>(), 3, 1);
+    let count = |rows: &[rerail_blocks::vector::Vector<i64>], v: i64| rows.iter().flat_map(|d| d.as_chunks::<3>().0).filter(|r| r[2] == v).count() as i64;
+    s.watch(2, [3, 8].into_iter().map(|v| (v, count(&docs, v))));
+    let summary = s.summary();
+    // As the keeper writes them: the kind column's exact map and the name column's watched values taken out.
+    let mut written = s.clone();
+    let exact = written.take_exact(1).expect("kind is few-valued");
+    let watched = written.take_watched(2);
+    let mut bytes = Vec::new();
+    written.encode(&mut bytes);
+    let read = || {
+        let mut k = RelStats::kept(bytes.clone().into(), Some(summary.clone())).expect("reads as kept");
+        k.put_exact(1, exact.clone());
+        k.watch(2, watched.clone());
+        k
+    };
+    let k = read();
+    assert_eq!(k.statistics(&|_| true), s.statistics(&|_| true), "the summary answers as the decoded statistics do");
+    assert_eq!(k.statistics(&|c| c != "name"), s.statistics(&|c| c != "name"), "and with a column not held");
+    let mut a: Vec<(i64, i64)> = k.exact(1).expect("given").collect();
+    let mut b: Vec<(i64, i64)> = s.exact(1).expect("counted").collect();
+    a.sort_unstable();
+    b.sort_unstable();
+    assert_eq!(a, b, "the exact map given apart");
+    assert_eq!(k.exact(2).is_some(), s.exact(2).is_some(), "the bytes' own exact map, or none");
+    for v in [3, 8, 5] {
+        assert_eq!(k.watched(2, v), s.watched(2, v), "watched value {v}");
+    }
+    // Written back undecoded, its maps taken out as the keeper takes them: the bytes it was read from.
+    let mut again = read();
+    assert_eq!(again.take_exact(1), Some(exact.clone()));
+    assert_eq!(again.take_watched(2), watched);
+    let mut rewritten = Vec::new();
+    again.encode(&mut rewritten);
+    assert_eq!(rewritten, bytes, "written back as read");
+    // Patched: decoded, its maps applied, and patched as decoded statistics are.
+    let (mut kept, mut decoded) = (read(), s.clone());
+    for x in [&mut kept, &mut decoded] {
+        x.documents(&docs[4], 3, -1);
+        x.documents(&doc(31, 70, 2), 3, 1);
+    }
+    assert_eq!(kept, decoded, "patched alike");
+    assert_eq!(kept.statistics(&|_| true), decoded.statistics(&|_| true));
 }

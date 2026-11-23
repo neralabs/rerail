@@ -229,48 +229,19 @@ impl<'m> Protection<'m> {
 }
 
 impl ContentStore {
-    /// Keeps memo plan `plan`'s statistics (decision 0096 §2): one blob, written by the run that counted them.
-    pub fn put_stat_blob(&self, plan: [u8; 32], blob: &[u8]) -> StoreResult<()> {
-        self.immediate_transaction(|tx| {
-            tx.execute_batch("CREATE TABLE IF NOT EXISTS stat_blob(plan BLOB PRIMARY KEY, blob BLOB NOT NULL) WITHOUT ROWID")?;
-            tx.execute_cached("INSERT OR REPLACE INTO stat_blob(plan, blob) VALUES (?1, ?2)", params![&plan[..], blob])?;
-            Ok(())
-        })
-    }
-
-    /// `put_stat_blob`, behind the run (decision 0102), in its record (decision 0306): the blob in its byte area.
-    pub fn queue_stat_blob(&self, plan: [u8; 32], blob: Vec<u8>) {
-        fn apply(cx: &super::record::Apply<'_>, body: super::record::codec::Body) -> StoreResult<()> {
-            let plan: [u8; 32] = super::record::codec::from_body("the kept statistics", body)?;
-            cx.store.put_stat_blob(plan, cx.bytes)
-        }
-        self.record("the kept statistics", vec![stat_blob_key(&plan)], &plan, Some(blob), apply);
-    }
-
-
-    /// Memo plan `plan`'s kept statistics (`put_stat_blob`), if a run kept them; a queued write of them first.
-    pub fn stat_blob(&self, plan: [u8; 32]) -> StoreResult<Option<Vec<u8>>> {
-        // Its statistics name symbols by the store's ids: the reader maps them (decision 0170, `Keeper::map_symbols`).
-        self.settle(&stat_blob_key(&plan));
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let kept: i64 = connection.query_row_cached("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='stat_blob'", [], |r| r.get(0))?;
-        if kept == 0 {
-            return Ok(None);
-        }
-        Ok(connection.query_row_cached("SELECT blob FROM stat_blob WHERE plan=?1", [&plan[..]], |r| r.get(0)).optional()?)
-    }
-
     /// Records the relations a memo plan's entries hold rows of, each with its declared columns (JSON).
     pub fn record_corpus_relations(&self, plan: [u8; 32], relations: &[(String, String)]) -> StoreResult<()> {
-        self.immediate_transaction(|tx| {
+        let written = self.immediate_transaction(|tx| {
             bounded_insert::insert(
                 tx,
                 "INSERT OR REPLACE INTO corpus_plan_relations(plan_digest, relation, columns)",
                 "",
                 relations.iter().map(|(relation, columns)| [Value::Blob(plan.to_vec()), Value::Text(relation.clone()), Value::Text(columns.clone())]),
             )?;
-            Ok(())
-        })
+            self.mirror_corpus(tx, &Touch::plans([plan]))
+        })?;
+        self.note_kept(&kept::space(), written);
+        Ok(())
     }
 
     /// The newest run of `root` (as recorded, canonical): its memo plan, the sources it read, and the relations
@@ -396,12 +367,13 @@ impl ContentStore {
         }
         hash.update(&blob);
         let digest: [u8; 32] = hash.finalize().into();
-        self.immediate_transaction(|tx| {
+        let plans: Vec<[u8; 32]> = std::iter::once(plan).chain(also.iter().copied()).collect();
+        let (new, written) = self.immediate_transaction(|tx| {
             // A run's first write acquires (decision 0547): the manifest's, applied by the writer behind the run.
             if let Some(owner) = owner {
                 owner.acquire(tx)?;
                 if !owner.current(tx)? {
-                    return Ok(false);
+                    return Ok((false, None));
                 }
             }
             let scope = owner.map(|owner| owner.membership()).or(scope);
@@ -439,7 +411,8 @@ impl ContentStore {
             )?;
             if let Some(manifest) = moved {
                 set_lane(manifest)?;
-                return Ok(false);
+                let touch = Touch { roots: vec![root_id], manifests: vec![manifest], plans: plans.clone(), ..Touch::default() };
+                return Ok((false, self.mirror_corpus(tx, &touch)?));
             }
             // The sources the root's newest manifest of the same tapes already made live need no row again.
             let previous: Option<Vec<u8>> = tx
@@ -473,8 +446,12 @@ impl ContentStore {
                 ids.iter().filter(|id| !before.contains(id)).map(|id| [Value::Integer(*id), Value::Integer(grammar_version), Value::Integer(tape_format)]),
             )?;
             tx.execute_cached("UPDATE corpus_state SET due=1 WHERE singleton=1", [])?;
-            Ok(true)
-        })
+            let sources = ids.iter().filter(|id| !before.contains(id)).copied().collect();
+            let touch = Touch { roots: vec![root_id], manifests: vec![manifest], plans: plans.clone(), sources, ..Touch::default() };
+            Ok((true, self.mirror_corpus(tx, &touch)?))
+        })?;
+        self.note_kept(&kept::space(), written);
+        Ok(new)
     }
 
     /// Holds memo plan `plan` for `owner` until unix second `lease_until`, and makes it live, in one transaction
@@ -493,8 +470,9 @@ impl ContentStore {
                 params![OBJECT_PLAN, plan_object(&plan), owner_id, lease_until],
             )?;
             tx.execute_cached("INSERT INTO corpus_plans(plan_digest, live) VALUES (?1, 1) ON CONFLICT(plan_digest) DO UPDATE SET live=1", [&plan[..]])?;
-            Ok(())
+            self.mirror_corpus(tx, &Touch::plans([plan]))
         })
+        .map(|written| self.note_kept(&kept::space(), written))
     }
 
     /// The manifests a run whose every read is as it was would record again (a whole-run cutoff's, decision 0547),
@@ -504,10 +482,10 @@ impl ContentStore {
     /// publish.
     pub fn own_recorded_manifests(&self, root: &str, plans: &[[u8; 32]], owner: &super::analysis_scope::AnalysisOwner, now: i64) -> StoreResult<usize> {
         let plans_json = serde_json::to_string(&plans.iter().map(|p| hex(p)).collect::<Vec<_>>()).expect("text");
-        self.immediate_transaction(|tx| {
+        let (n, written) = self.immediate_transaction(|tx| {
             owner.acquire(tx)?;
             if !owner.current(tx)? {
-                return Ok(0);
+                return Ok((0, None));
             }
             let manifests: Vec<i64> = tx
                 .prepare_cached(
@@ -529,8 +507,11 @@ impl ContentStore {
             if !manifests.is_empty() {
                 tx.prepare_cached("UPDATE corpus_plans SET live=1 WHERE plan_digest IN (SELECT unhex(value) FROM json_each(?1))")?.execute([&plans_json])?;
             }
-            Ok(manifests.len())
-        })
+            let touch = Touch { manifests: manifests.clone(), plans: plans.to_vec(), ..Touch::default() };
+            Ok((manifests.len(), self.mirror_corpus(tx, &touch)?))
+        })?;
+        self.note_kept(&kept::space(), written);
+        Ok(n)
     }
 
     /// Whether corpus collection has work: a new manifest to decide on, or a decision's rows not yet collected.
@@ -580,7 +561,7 @@ impl ContentStore {
         match due {
             0 => Ok(false),
             1 if !self.corpus_decision_worth(policy, now)? => {
-                self.immediate_transaction(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=1", [])?))?;
+                self.set_corpus_state("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=1")?;
                 Ok(false)
             }
             _ => Ok(true),
@@ -650,7 +631,7 @@ impl ContentStore {
     fn keep_corpus_runs_held(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<CorpusKept> {
         // Read, decided and applied in one transaction (O95): a manifest or plan another run records meanwhile waits
         // for the write lock, so a decision never drops what it did not see.
-        self.immediate_transaction(|tx| {
+        let kept = self.immediate_transaction(|tx| {
             Self::discard_abandoned_analysis(tx)?;
             let manifests = tx
                 .prepare(
@@ -826,8 +807,24 @@ impl ContentStore {
             tx.execute_cached("UPDATE corpus_state SET due=2, history_bytes=?1 WHERE singleton=1 AND due<=1", [decided.history as i64])?;
             // What it left aged may be archived (decision 0450 step 4).
             tx.execute_cached("UPDATE corpus_state SET archive_due=1 WHERE singleton=1", [])?;
-            Ok(CorpusKept { manifests: kept_ids.len(), evicted: evicted.len(), protected_bytes: decided.protected, history_bytes: decided.history, unlived: unlive.len() })
+            let kept = CorpusKept { manifests: kept_ids.len(), evicted: evicted.len(), protected_bytes: decided.protected, history_bytes: decided.history, unlived: unlive.len() };
+            Ok((kept, self.mirror_corpus(tx, &Touch::all())?))
         })
+        .map(|(kept, written)| {
+            self.note_kept(&kept::space(), written);
+            kept
+        })?;
+        self.check_corpus_kept()?;
+        Ok(kept)
+    }
+
+    /// Runs `update`, a statement on `corpus_state` or `corpus_decided` alone, in a transaction of its own, mirrored.
+    pub(in crate::content_store) fn set_corpus_state(&self, update: &str) -> StoreResult<()> {
+        self.immediate_transaction(|tx| {
+            tx.execute_cached(update, [])?;
+            self.mirror_corpus(tx, &Touch::default())
+        })
+        .map(|written| self.note_kept(&kept::space(), written))
     }
 
     /// Whether a keep decision was made since the memo entries it left unreachable were collected (`sweep_memo`).
@@ -847,10 +844,13 @@ impl ContentStore {
             let out = self.immediate_transaction_until(std::sync::Arc::clone(&stop), |tx| {
                 let out = super::held::collect_unreachable_memo(tx)?;
                 tx.execute("UPDATE corpus_decided SET swept=run WHERE singleton=1", [])?;
-                Ok(out)
+                Ok((out, self.mirror_corpus(tx, &Touch::default())?))
             });
             match out {
-                Ok(out) => Ok(Some((out, started.elapsed().as_secs_f64()))),
+                Ok((out, written)) => {
+                    self.note_kept(&kept::space(), written);
+                    Ok(Some((out, started.elapsed().as_secs_f64())))
+                }
                 Err(StoreError::Database(e)) if super::upkeep::interrupted(&e) => Ok(None),
                 Err(e) => Err(e),
             }
@@ -886,7 +886,7 @@ impl ContentStore {
             if !orphaned && !self.corpus_decision_worth(policy, now)? {
                 // Nothing a decision could change: no root went past its protected runs, and the last decision is
                 // recent. The sweep waits for the next decision too; a new manifest makes collection due again.
-                self.immediate_transaction(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=1", [])?))?;
+                self.set_corpus_state("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=1")?;
                 return Ok(pass);
             }
             pass.kept = Some(self.keep_corpus_runs_held(policy, now)?);
@@ -900,18 +900,20 @@ impl ContentStore {
         // entries' space (decision 0146), and its kept entries went with it above (`collect_kept_facts`).
         let mut budget = PLAN_ROWS_PER_PASS as usize;
         while budget > 0 {
-            let n = self.immediate_transaction(|tx| {
+            let (n, written) = self.immediate_transaction(|tx| {
                 let dead: Option<Vec<u8>> = tx.query_row_cached("SELECT plan_digest FROM corpus_plans WHERE live=0 LIMIT 1", [], |r| r.get(0)).optional()?;
-                let Some(plan) = dead else { return Ok(0) };
+                let Some(plan) = dead else { return Ok((0, None)) };
                 let mut memo_gone = 0;
-                if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
-                    memo_gone = super::held::drop_memo_space(tx, &super::held::local_space(&digest))?;
+                let digest = <[u8; 32]>::try_from(plan.as_slice()).ok();
+                if let Some(digest) = &digest {
+                    memo_gone = super::held::drop_memo_space(tx, &super::held::local_space(digest))?;
                 }
                 tx.execute_cached("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
                 tx.execute_cached("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
                 // A dead plan collected is work done, though its memo is entries in segments (decision 0240 §4), not rows.
-                Ok(memo_gone + 1)
+                Ok((memo_gone + 1, self.mirror_corpus(tx, &Touch::plans(digest))?))
             })?;
+            self.note_kept(&kept::space(), written);
             pass.plan_rows += n;
             if n == 0 {
                 break;
@@ -928,8 +930,9 @@ impl ContentStore {
             // pass due until both stores have completed it, including after an interrupted pass.
             let live = self.live_plans()?;
             pass.observer = Some(super::observe::collect(&super::observe::store_beside(self.database_path()), |plan| live.contains(plan))?);
-            self.immediate_transaction(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2", [])?))?;
+            self.set_corpus_state("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2")?;
         }
+        self.check_corpus_kept()?;
         Ok(pass)
     }
 
@@ -1067,17 +1070,15 @@ pub(super) fn decode_ids(bytes: &[u8]) -> StoreResult<Vec<i64>> {
     Ok(out)
 }
 
+pub(super) mod kept;
+use kept::Touch;
+
 #[cfg(test)]
 mod tests;
 
 /// `bytes` as lower-case hex, as SQLite's `unhex` reads it.
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// What a write of memo plan `plan`'s statistics is queued under (`stat_blob` settles it).
-pub fn stat_blob_key(plan: &[u8; 32]) -> super::write_back::Key {
-    super::write_back::Key::of(&[b"stat_blob", plan])
 }
 
 /// Whether `corpus_decided.run` is past its `swept` on connection `c` (a read: the memo sweep's `due`).

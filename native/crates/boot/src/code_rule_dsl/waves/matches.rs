@@ -269,7 +269,7 @@ impl Wave {
         }
         let id = *identity.finish().as_bytes();
         let kept = crate::code_rule_dsl::stats::plans::Plans::open(store)?;
-        let held = crate::code_rule_dsl::logic::profile::shared::<WavePlans>().0.lock().expect("wave plans mutex poisoned").valid(store.database_path(), kept.as_ref(), &[id], &reads);
+        let held = crate::code_rule_dsl::logic::profile::shared::<WavePlans>().0.lock().expect("wave plans mutex poisoned").valid(store.database_path(), kept.as_deref(), &[id], &reads);
         if let Some(held) = held.get(&id) {
             // The SQL holds this store's atom ids: a plan is reused only where the atoms it was
             // planned with have the same ids here (its decisions record them).

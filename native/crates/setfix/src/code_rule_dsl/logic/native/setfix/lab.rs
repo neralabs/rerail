@@ -290,6 +290,4 @@ pub fn capture_outputs(conn: &Connection, cap: Capture) {
     }
 }
 
-// O-split-logic-tests: reads a crate above rerail-logic; compiled only once the split hosts it in the engine.
-#[cfg(all(test, any()))]
-mod tests;
+// Its test (`lab/tests.rs`) runs strata on the device, which only the crates above see: rerail-tests-logic mounts it.

@@ -44,8 +44,9 @@ A **fragment** here means a tile of a matrix held in registers by its owner, one
 ### 1. Types
 
 The first cut has three input types, each with its accumulator: `f16` into `f32`, `bf16` into `f32`, and `i8` into
-`i32`. These are what the units have in common. 1-bit and 4-bit matrices, and tf32, wait for a kernel that needs
-them.
+`i32`. These are what the units have in common. A fourth, `b1` into `i32` (`C += popcount(A & B)`), came with its
+kernel, the bit product (2026-11-22, "The 1-bit type, built" below). 4-bit matrices and tf32 wait for a kernel that
+needs them.
 
 Whether a type is native is a fact of the device, not of the backend. For example, Metal's `simdgroup_matrix` has
 `half` and `bfloat` but no `i8`. So each (device, type) pair is either native or emulated, and a kernel's source is
@@ -213,7 +214,7 @@ emulated form, which is the reference.
 | R4 | `UKL_MMA_EACH` visits each element of C once, at its true coordinates | C filled with `row × 256 + col` through `EACH`, then stored, and compared with the matrix of coordinates |
 | R5 | Owners of several groups run unchanged | the R2 kernel run with threadgroups of 1, 2 and 4 owners; on the CPU the emulation run with `UKL_MMA_GROUPS` forced to 2 and 4, so the multi-group path is tested where no device has it |
 | R6 | Native and emulated forms agree on each device | where `UKL_MMA_NATIVE(T)` is 1, the same kernel run again with the emulation forced, results compared as R2 and R3 |
-| R7 | A native type takes the unit's instruction | the dumped kernel holds it: `mma.sync`, `simdgroup_multiply_accumulate`, `matmul2d`, `v_wmma`, DPAS (a check on the dumped source, as the lowering tests do) |
+| R7 | A native type takes the unit's instruction | the compiled kernel's text holds it: `mma.sync`, `simdgroup_multiply_accumulate`, `matmul2d`, `v_wmma`, DPAS (`matrix_native_forms_take_the_units_instruction`, on the backend's text: CUDA's PTX, Metal's AIR, Intel's binary and its `has_dpas`) |
 | R8 | Loads and stores read and write memory in place | fragments loaded from a relation's column in its block and stored into a relation in a block, with no staging buffer (`check_no_block_copies.py`) |
 | R9 | `ukl_gemm_tile` equals level 1's loop | each type, R2's and R3's inputs |
 
@@ -221,13 +222,17 @@ emulated form, which is the reference.
 
 1. The interface in `ukl/matrix.h`, with the emulated form and the CPU's shim lanes, and R1-R6 and R9 on the CPU.
    This fixes the shape before any device adds its form. Done 2026-11-22, on every backend ("Step 1, built" below).
-2. CUDA's `mma.sync` on the Sparks (R2-R7). Then the V100: its form, or the emulation, chosen by test.
+2. CUDA's `mma.sync` on the Sparks (R2-R7). Then the V100: its form, or the emulation, chosen by test. Done on
+   the Sparks 2026-11-23: b1's form, and C in `mma.sync`'s layout for every type ("The 1-bit type, built"); f16, bf16
+   and i8 ("Step 2 on the Sparks, built"). The V100 runs the emulation, its test's choice ("The V100").
 3. Metal's `simdgroup_matrix` on M1-M4 (f16; bf16 where present; i8 emulated). R4 is what checks the coordinates
-   behind `thread_elements()`.
+   behind `thread_elements()`. Done 2026-11-23 ("Step 3, built").
 4. The M5's `matmul2d`: the first owner of several groups on a device (R5).
-5. Intel's DPAS on the Arc: R2, R4 and R7, the shape only.
-6. The Radeon 680M: the emulation, with its dot-product instructions where they help.
-7. `ukl_gemm_tile`, with one backend override (the M5's or CUDA's) to prove the override path.
+5. Intel's DPAS on the Arc: R2, R4 and R7, the shape only. Done 2026-11-23 ("Step 5, built").
+6. The Radeon 680M: the emulation, with its dot-product instructions where they help. Done 2026-11-23 ("Step 6,
+   built").
+7. `ukl_gemm_tile`, with one backend override (the M5's or CUDA's) to prove the override path. Done 2026-11-23,
+   CUDA's ("Step 7, built").
 
 Steps 2-6 each add one section of `backend.h` and change nothing in a kernel.
 
@@ -248,7 +253,8 @@ The user: "please do step 1. Find two uses for it in the existing ukl kernels".
   - **Level 2 is `ukl_gemm_tile_<T>`,** one owner's 64×64 block of C, read from and written to device memory. Each
     of A, B and C has its own leading dimension and layout.
 - **The emulated form:** every type 16×16×16, from `<ukl/dot.h>`'s dot products and the SIMD group's shuffles.
-  - **C:** its 256 elements lie row-major across the owner's lanes.
+  - **C:** its 256 elements lay row-major across the owner's lanes. Superseded the same day: each backend's layout
+    of rows by columns ("The 1-bit type, built").
   - **A and B:** each SIMD group of the owner holds all of both, packed along K (two 16-bit floats, or four bytes, a
     word).
   - **The product:** each shuffle reads the same register in every lane. At 16 lanes or more, that register is a
@@ -305,10 +311,225 @@ the engine's workloads from the matrix-offload spikes (`tools/matrix-offload/RES
   - the closure is a level-by-level DP over the condensed DAG: squaring was 100 to 600 times slower;
   - the forest's training sums f32 weights into buckets, which an f16 or bf16 product would round.
 
+### The 1-bit type, built (2026-11-22)
+
+The user: "yes, please add the 1-bit path and emulation/lowering to popcount on others".
+
+- **`b1`:** `C[16×16] += popcount(A & B)` into `ukl_mma_c_i32`. In memory a b1 element is a bit of a `uint64_t`
+  holding 64 along K (`UKL_MMA_PACK(b1)` is 64); K counts bits, offsets and strides count words.
+  - **NVIDIA sm_80 and later** (`UKL_MMA_NATIVE(b1)`): K = 256, two `mma.sync.m16n8k256...b1.and.popc` a product,
+    one for each half of C's columns. A's and B's registers are halves of the words in memory, read where they lie.
+  - **Elsewhere:** K = 64, popcount on the threads. Each lane loads its own rows of A and columns of B (no shuffle:
+    the lanes that share a row read the same word, a broadcast of the memory) and adds `popcount(a & b)`.
+- **C's layout is each backend's:** a lane holds `UKL_MMA_RB` rows by `UKL_MMA_CB` columns (`ukl_mma_row`,
+  `ukl_mma_col`).
+  - On NVIDIA it is `mma.sync`'s accumulator layout, so a native product of any type reads and writes C in place.
+    f16, bf16 and i8 stay emulated there, over that layout.
+  - Elsewhere at 16 lanes or more, rows and columns interleave (4 rows by 2 columns at 32 lanes). The shuffled
+    types now read each of a lane's rows of A and columns of B once a k-word (6 shuffles at 32 lanes, not 9).
+  - Narrower groups keep rows and columns whose words lie in the same register of every lane.
+- **`UKL_MMA_FORCE_EMULATED`** (a test's define) runs the emulation where a native form exists: R6's other side.
+- **The tests** (`matrix_tests`) take b1 in every case above, plus `matrix_native_forms_are_the_emulations` (R6):
+  where a type is native, its products equal the forced emulation's in all eight layouts, by level 1 and level 2.
+  - Measured passing: CUDA (a GB10: b1 native, R6 compared), OpenCL (the GB10's, and a Mac's), Metal (an M1), and
+    the CPU at 1, 8, 16, 32 and 64 lanes.
+  - R7 is the native form's agreement with the forced emulation, and `UKL_MMA_NATIVE(b1)` printed as 1 on the GB10;
+    there is no check on the dumped source yet.
+- **The bit product (`bp_tile`) runs on it.**
+  - A threadgroup's eight owners (at 32 lanes) take two fragments each, which share their rows of A.
+  - A and B are staged as before, u64 k-major, at a stride of 72 words, so that NVIDIA's half-word loads fall in
+    distinct banks.
+  - The epilogue writes C, or sets mask bits, through `UKL_MMA_EACH`.
+  - `accel`'s `bit_product_counts_and_pairs` passes on CUDA, OpenCL, the CPU and Metal.
+- **Its speed, measured** (`accel`'s price bench, `RERAIL_PRICE_ONLY="bit product"`; device time, best of 7; old
+  kernel and new one run back to back on the same machine):
+
+  | Workload | GB10, old | GB10, new | M1, old | M1, new |
+  |---|---|---|---|---|
+  | W1: 13,088 × 444 rows, 768 bits | 0.169 ms | 0.170–0.187 ms | 1.563 ms | 1.767 ms |
+  | W5: 2,048 × 2,048 rows, 13,088 bits | 1.008 ms | 0.951–1.001 ms | 7.30–7.37 ms | 7.77 ms |
+
+  - **On the GB10 the unit gains nothing yet.** The product is not what limits the kernel: each tile reads its 64
+    rows of each side from L2 into threadgroup memory, about 215 MB for W5.
+  - **On the M1 the port is 6% (W5) to 13% (W1) slower.** Per word, both kernels issue the same loads and
+    popcounts. What changed the time on the way:
+    - b1's words had been 32 bits: 4 times slower;
+    - then the emulation's K was cut from 256 to 64: 2 times;
+    - then the words became 64 bits: the gap above.
+    - Staging C through threadgroup memory, and storing it directly, did not change it.
+- **Open:**
+  - the M1's remaining gap, which needs its compiled shader read;
+  - the tile's reads, which bound both machines: larger tiles, or both sides' rows read once for several tiles.
+    Measured 2026-11-23: they bind neither ("The bit product's reads").
+
+### Step 2 on the Sparks, built (2026-11-23)
+
+- **NVIDIA sm_80 and later run f16, bf16 and i8 on the unit** (`UKL_MMA_NATIVE` 1 for each, with b1's):
+  - f16 and bf16: two `mma.sync.m16n8k16` a product (`.f32.f16.f16.f32`, `.f32.bf16.bf16.f32`), one for each half of
+    C's columns, K 16;
+  - i8: two `mma.sync.m16n8k32` (`.s32.s8.s8.s32`), K 32, the unit's own;
+  - A's and B's registers are words of two 16-bit floats or four bytes along K, the lowest k lowest, each element
+    read where it lies (any layout, device or threadgroup memory); C is read and written in place, its layout already
+    the unit's.
+- **R6 compares as R2 and R3,** not bit for bit: a unit's float sums run in its own order. On small integers the
+  native and forced-emulated products are each the exact product, to the bit; on random inputs the integer types'
+  equal the emulation's, and the floats' are within R3's bound of the exact product. All eight layouts, by level 1
+  and level 2.
+- **R7 is checked:** `matrix_native_forms_take_the_units_instruction` reads the PTX NVRTC makes of the test program
+  (`kernels::native_code`, the device's `compute_<sm>`, the library's options) and finds each native type's
+  `mma.sync`; the forced emulation's holds none. A backend with a native type and no compiled text to read fails the
+  test, so R7 is never skipped quietly.
+- **Measured:** the seven matrix tests pass on CUDA (a GB10: every type native), and on the same host's CPU and
+  OpenCL backends (every type emulated); UKL's own tests (the header for every backend) and `accel`'s GPU tests on
+  CUDA pass.
+
+### Step 3, built (2026-11-23)
+
+- **Apple's M1-M4 run f16 and bf16 on `simdgroup_matrix`** (`UKL_MMA_APPLE`): a 16×16 fragment of A or B is four
+  8×8 matrices, each loaded where it lies with `simdgroup_load` (a column-major one transposed as it loads), from
+  device or threadgroup memory. A product takes each of C's four 8×8 matrices into a `simdgroup_float8x8` through
+  `thread_elements()`, two `simdgroup_multiply_accumulate` along K, and back: registers only. K stays 16, the
+  fragment 16×16, so every kernel's loop is unchanged.
+- **C's layout on Metal is the unit's:** a lane's two elements of each 8×8 matrix, side by side in one row
+  (`thread_elements()`, row `(q & 4) + (lane / 2) % 4`, columns `(q & 2) · 2 + (lane % 2) · 2` and one on, `q` the
+  lane's quad). Apple does not publish it; R4 checks it, and passes on the M1 and the M3. i8 and b1, emulated, take
+  the same layout.
+- **bf16 is native from Metal 3.1** (`__METAL_VERSION__ >= 310`): `bfloat` and `simdgroup_bfloat8x8` came then.
+  `__HAVE_BFLOAT__`, which the headers might have suggested, is not defined at 3.1 on macOS 15. On the M1 (no bf16 in
+  its hardware) the compiler takes the same intrinsic, and the products agree with the emulation (R6); how its back
+  end runs them is the compiler's.
+- **R7 on Metal reads the AIR the device's compiler makes:** `native_code` compiles the program as a dynamic library,
+  serializes it, and lists the `air.` names in its bitcode. The farm's Macs have no Metal toolchain for `xcrun metal`
+  (one has no Xcode). Two things on the way:
+  - metal-rs's `URL::new_with_string` owns an autoreleased `NSURL`; its release with the pool's crashed the process.
+    The serialization sends `serializeToURL:error:` with an `NSURL` the pool owns.
+  - Metal's compiler failed the whole test program as a dynamic library ("Compiler encountered an internal error"),
+    though each construct in it compiles alone; R7 reads a program of its own, one kernel running each type's
+    product from device memory.
+- **Measured:** the seven matrix tests pass on the M1 Max and the M3 Max (f16 and bf16 native, i8 and b1 emulated),
+  R7 finding `air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64f16.v64f16.v64f32` and its bf16 form; CUDA's and
+  the CPU's pass as before; `accel`'s GPU tests (the bit product on the new layout) pass on the M3.
+
+### The V100 (2026-11-23)
+
+- **Volta's unit is `mma.sync.m8n8k4`** (sm_70): f16 into f32 only, no bf16 or i8. Built as a form of its own
+  (`UKL_MMA_VOLTA`): each of the warp's four quad pairs computes an 8×8 quadrant of the 16×16 fragment, four k4
+  instructions a product. C takes `m8n8k4`'s layout of its f32 accumulators, for every type, as on Apple. The nine
+  matrix tests pass on a V100 with it (R4 checks the layout; R7 finds `mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32`),
+  and CUDA's own tile call serves its f16.
+- **The test picks the emulation** (`bench_matrix_products`; device time, median of 5; the tile calls as in step 7):
+
+  | Type | The tile call with Volta's unit | The emulation's |
+  |---|---|---|
+  | f16 | 9.19 ms (the unit's, CUDA's own tile) | 12.46 ms |
+  | bf16 | 16.65 ms | 12.39 ms |
+  | i8 | 13.09 ms | 9.30 ms |
+  | b1 | 5.23 ms | 2.19 ms |
+
+  - Only f16's tile call is faster on the unit, 1.36×; in the products' rate, with a fragment of B loaded for each,
+    it is 2.4× slower (2.90 against 1.22 ms): the unit's B is a lane's column, read element by element.
+  - The layout of C is the backend's, one for every type. Volta's makes the emulated types 1.3-2.4× slower, b1 (the
+    bit product's) the most.
+  - So the V100 runs the emulation. Volta's form is kept behind `UKL_MMA_VOLTA_UNIT`, and the matrix tests take it
+    with `RERAIL_MMA_VOLTA_UNIT=1` (both pass on the V100). A layout of C per type would let f16 take the unit
+    without costing the others; no kernel needs it now.
+- Turing (sm_75) has `m8n8k4` too, and is not tested: it takes the emulation.
+
+### The bit product's reads (2026-11-23)
+
+The 1-bit section left the tile's reads open, as the limit on the GB10 and the M1. Measured, they are neither machine's:
+
+- **Built and measured,** in `bp_tile`: a 128×128 tile (each side's rows read half as often), whose owners hold
+  blocks of 2×4 fragments (a step's 8 products from 6 fragment loads, where the 64 tile's owners take 2 from 3); and
+  the 64 tile staging 16 words of K a step instead of 8 (half the barriers). Device time, `accel`'s price bench,
+  back to back on one host:
+
+  | Kernel | GB10 W1 | GB10 W5 | M1 Max W1 | M1 Max W5 |
+  |---|---|---|---|---|
+  | 64 tile, 8 words a step (kept) | 0.218-0.224 ms | 0.947-0.952 ms | 0.257 ms | 1.816 ms |
+  | 128 tile, 2×4 blocks | 0.216 ms | 1.075 ms | 3.54 ms | 9.11 ms |
+  | 64 tile, 16 words a step | 0.212-0.217 ms | 1.011-1.013 ms | | |
+
+- **On the GB10, W5 is the unit's rate:** its 5.5·10^10 bit products at the b1 unit's own rate in registers
+  (68-76 T a second, `bench_matrix_products`) are 0.72-0.80 ms, within 1.2-1.3× of the kernel. W1's products are
+  0.06 ms of its 0.22; its 23 MB of counts written, and its 1,435 threadgroups of two steps each, are the rest.
+- **On the M1 Max the larger tile is 3.5-14× slower:** its 19.4 KB of threadgroup memory leaves room for one
+  threadgroup a core, where the 64 tile's 9.7 KB leaves three.
+- So `bp_tile` stays as it was. The M1's gap of the 1-bit section (6-13%) is not its reads either; its compiled
+  shader remains the way to it.
+
+### Step 5, built (2026-11-23)
+
+- **Intel's Xe2 (the Arc 140V) runs f16, bf16 and i8 on DPAS** (`UKL_MMA_INTEL`), through
+  `cl_intel_subgroup_matrix_multiply_accumulate`:
+  - the host turns it on (`UKL_OPENCL_INTEL_DPAS`) where the device has the extension and the kernels run on its
+    sub-groups at 16 lanes, the width Xe2's functions take (`units`, in `compute_kernel_opencl`);
+  - a product is two calls, C's rows 0-7 and 8-15: `intel_sub_group_f16_f16_matrix_mad_k16`, its bf16 form, and
+    `intel_sub_group_i8_i8_matrix_mad_k32` (K 32, as on CUDA);
+  - A: each lane holds its k of every row (a 16-bit float, or two bytes); B: each lane its column, eight words along
+    K; each element read where it lies, any layout, device or threadgroup memory;
+  - C's layout is DPAS's: a lane holds its column, every row (`UKL_MMA_RB` 16, `UKL_MMA_CB` 1). R4 checks it.
+- **R7 reads Intel's binary** (`native_code` on OpenCL: the program built again and its binary's printable strings):
+  each type's builtin is named in it, and the compiler's own metadata says `has_dpas: true` for the native form's
+  kernel and not for the forced emulation's.
+- **The shape only:** no tuning, and no workaround of Intel's compiler.
+- **Measured:** the nine matrix tests pass on the Arc 140V (Windows, OpenCL 3.0 NEO), every float and i8 native, b1
+  emulated.
+- **Found on the way:** `rerail-facts` did not build on Windows (`Within::on_device`'s `cfg` left Windows out, where
+  every caller had it), so no Windows test could run.
+
+### Step 6, built (2026-11-23)
+
+- **The Radeon 680M (gfx1035, OpenCL) runs the emulation,** every type, with RDNA2's dot products where the host
+  turns them on (`UKL_OPENCL_AMD_DOT`): `v_dot4_i32_i8` for i8, `v_dot2_f32_f16` for f16. gfx1035 has no bf16 dot
+  product; bf16 takes the reference.
+- **Where they help, measured** (`bench_matrix_products`: 2,048 owners, 256 products each in registers, a fragment of
+  B loaded for each; device time, median of 5). `UKL_DOT_REFERENCE` takes `<ukl/dot.h>`'s references instead:
+
+  | Type | Dot products | References |
+  |---|---|---|
+  | i8 | 2.08 ms | 3.48 ms |
+  | f16 | 4.15 ms | 4.20 ms |
+  | bf16 | 4.24 ms (references) | 4.27 ms |
+
+  - **i8 gains 1.67×:** one instruction for four byte products, where the reference extracts and multiplies each.
+  - **f16 is the same either way:** the reference's conversions and fused multiply-adds cost no more there, and the
+    product is bound by the emulation's shuffles, not its arithmetic.
+  - So the dot products stay on, as they were.
+- **Passing:** the nine matrix tests on the 680M (Windows, OpenCL 2.0 AMD-APP), every type emulated.
+- **The measure itself:** a first version loaded B once and repeated the same product. The compiler folded the
+  repeated integer products (an emulated b1 at 1.2 P multiply-adds a second on the GB10). Each repetition now loads B
+  at another offset.
+
+### Step 7, built (2026-11-23)
+
+- **`ukl_gemm_tile_<T>` may be a backend's own.**
+  - Every type has its reference, `ukl_gemm_tile_ref_<T>`: level 1's loop, fragment by fragment.
+  - A backend that overrides the tile call says so, `UKL_MMA_TILE_OWN(T)` 1.
+  - An override sums each element's products in the reference's order, so the two agree bit for bit.
+- **CUDA's own** (f16, bf16 and i8) holds the owner's whole 64×64 block of C in registers: 16 fragments, 128 values
+  a lane. Each K step then reads each of A's four row fragments and B's four column fragments once, where the
+  reference reads each four times. This is the open item of the 1-bit section ("both sides' rows read once for
+  several tiles"), for the tile call.
+- **R9 and the override:** `matrix_tile_calls_equal_their_reference` runs the tile call and its reference on R2's and
+  R3's inputs, in four layouts. They must agree bit for bit, and on R2's inputs be exact. On CUDA the three types
+  must be the backend's own.
+- **Measured** (`bench_matrix_products`; a GB10; 256 owners, each a 64×64 block over K 1024, device time, median of
+  5):
+
+  | Type | Reference | CUDA's own |
+  |---|---|---|
+  | f16 | 0.453 ms | 0.116 ms |
+  | bf16 | 0.455 ms | 0.117 ms |
+  | i8 | 0.310 ms | 0.107 ms |
+
+- **Passing:** the nine matrix tests on CUDA, the CPU, the Arc's OpenCL and Metal (the M1 Max), the tile call being
+  the reference everywhere but CUDA.
+
 ## Open
 
-- **The first kernel that uses it.** The interface is shaped to fit a real kernel, and this decision names none.
-  Candidates are the learned cost model's trees on the GPU, and the embeddings. The first kernel's needs (an
-  epilogue, a reduction by row) are what R4 and level 2 must serve.
+- **The first kernel that uses it** is the bit product (above). The learned cost model's trees on the GPU, and the
+  embeddings, remain candidates for the float types. Their needs (an epilogue, a reduction by row) are what R4 and
+  level 2 must serve.
 - **AMD WMMA's native form** waits for an RDNA3 device. A HIP backend for AMD (decision 0440) would reach WMMA through
   the same intrinsics.

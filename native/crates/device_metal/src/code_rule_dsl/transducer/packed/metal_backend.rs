@@ -7,6 +7,13 @@ use super::{EMIT, Error, KIND, Program, TEXT, TextPredicate, split};
 use crate::code_rule_dsl::tape::TapeDoc;
 #[allow(unused_imports)]
 pub use rerail_metal::runtime::*;
+
+/// Releases the compiled pipelines and libraries (the residency's drop): the runtime's, and the serial block
+/// programs' kernels.
+pub fn drop_pipelines() {
+    rerail_metal::runtime::drop_pipelines();
+    rerail_metal_programs::drop_kernels();
+}
 pub use rerail_metal::launch;
 /// The Metal tests' allocation counter, where they name it (it moved into `rerail-metal` with the runtime).
 #[cfg(any(test, feature = "metal-tests"))]

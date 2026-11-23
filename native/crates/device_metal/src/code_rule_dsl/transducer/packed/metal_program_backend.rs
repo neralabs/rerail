@@ -38,7 +38,7 @@ pub mod label_passes;
 #[path = "metal_set_steps.rs"]
 pub mod set_steps;
 // Block programs on Metal: the Metal crate's.
-pub use rerail_metal::block_program;
+pub use rerail_metal_programs::block_program;
 #[path = "metal_work_queue.rs"]
 pub mod work_queue;
 #[path = "metal_lattice.rs"]

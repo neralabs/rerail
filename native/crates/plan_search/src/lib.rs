@@ -40,6 +40,8 @@ pub mod code_rule_dsl {
             pub mod demand;
             pub mod keeps;
             pub mod prepared;
+            /// The analyses of a version kept by its identity, with the kept plans (t33 K4).
+            pub mod kept_analyses;
             pub mod replanning;
             pub mod select;
             // `plan.rs`'s imports, for the children' `use super::*`.

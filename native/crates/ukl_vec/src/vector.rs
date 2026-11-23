@@ -218,7 +218,10 @@ struct Emitter<'a, 'p> {
 }
 
 /// A function's result's variable number in its instance.
-const RESULT: u32 = (1 << 20) - 1;
+const RESULT: u32 = VAR_IN_FUNCTION;
+
+/// A variable number's bits of its number in its function (`var`'s `n`).
+pub(crate) const VAR_IN_FUNCTION: u32 = (1 << 20) - 1;
 
 /// A variable's number: its function's instance (the kernel's 0, a function's its id plus 1), and its number in its
 /// function (`Kind::Local`).
@@ -680,6 +683,8 @@ pub fn is_atomic(b: Builtin) -> bool {
             | Builtin::AtomicCmpxchg
             | Builtin::AtomicInc
             | Builtin::AtomicDec
+            | Builtin::AtomicLoad
+            | Builtin::AtomicStore
     )
 }
 
@@ -1254,7 +1259,7 @@ impl Analysis {
                         _ => Level::Varying,
                     },
                     _ if is_atomic(x) => {
-                        if k.len() == 2 && identity(b, x, k[1]) && a[0] <= Level::SimdGroup {
+                        if (x == Builtin::AtomicLoad || k.len() == 2 && identity(b, x, k[1])) && a[0] <= Level::SimdGroup {
                             a[0].join(Level::Agreed)
                         } else {
                             Level::Varying

@@ -17,7 +17,7 @@
         };
         let options = serde_json::json!({ "reuse": true });
         let run = |text: &str| super::super::run_with_options(&[text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
-        let kept = |r: &super::super::Report| r.phases.iter().any(|p| p.0.starts_with("unchanged"));
+        let kept = |r: &super::super::Report| r.phases.iter().any(|p| p.0.starts_with("the run's frame"));
         let defs = || crate::code_rule_dsl::logic::plan::output::shown(&out, "defs").unwrap();
         let text = program("defs");
         assert!(!kept(&run(&text)), "the first run derives");
@@ -117,7 +117,7 @@
         assert_eq!(first.rows["pairs"],2);
         std::fs::remove_file(out.join(crate::code_rule_dsl::logic::plan::output::FILE)).unwrap();
         let kept=run();
-        assert!(kept.phases.iter().any(|p|p.0.starts_with("unchanged")),"{:?}",kept.phases);
+        assert!(kept.phases.iter().any(|p|p.0.starts_with("the run's frame")),"{:?}",kept.phases);
         assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out,"pairs").unwrap(),original);
         assert_eq!(kept.chunks,0);
         std::fs::write(src.join("c.py"),"z = 3\n").unwrap();
@@ -172,7 +172,7 @@
         };
         let options = serde_json::json!({ "reuse": true });
         let run = || super::super::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
-        let kept = |r: &super::super::Report| r.phases.iter().any(|p| p.0.starts_with("unchanged"));
+        let kept = |r: &super::super::Report| r.phases.iter().any(|p| p.0.starts_with("the run's frame"));
         let costs = dir.join("costs.sqlite");
         let images = dir.join("images");
         {
@@ -224,7 +224,7 @@
             }
         }
         assert!(seen.contains("RERAIL_HEAP_SAMPLE") && seen.contains("RERAIL_HEAP_AT"), "the sampler's switches are found: {seen:?}");
-        // A dump turns the cutoff off (`reuse::wanted`); every other switch read there must be left out of the key.
+        // A dump turns the frame off (`reuse::wanted`); every other switch read there must be left out of the key.
         let keyed: Vec<&String> = seen.iter().filter(|s| !s.starts_with("RERAIL_DUMP") && !super::measures_only(s)).collect();
         assert!(keyed.is_empty(), "read by a profile and in a run's key: {keyed:?}");
     }
@@ -264,7 +264,7 @@
                 super::super::run_with_options(&[&text], snapshot.root(), None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap()
             });
             analysis.finish(true).unwrap();
-            let kept = report.phases.iter().any(|p| p.0.starts_with("unchanged"));
+            let kept = report.phases.iter().any(|p| p.0.starts_with("the run's frame"));
             (kept, crate::code_rule_dsl::logic::plan::output::shown(&out, "defs").unwrap())
         };
         let one = || vec![vec!["f".to_owned()]];

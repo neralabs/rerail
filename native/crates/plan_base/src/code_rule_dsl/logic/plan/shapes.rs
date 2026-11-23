@@ -137,6 +137,54 @@ impl crate::code_rule_dsl::logic::program_image::manager::Analysis for Shapes {
         let l = cx.get::<crate::code_rule_dsl::logic::program_image::layouts::Layouts>()?;
         Ok(Shapes::of_layouts(cx.v(), &l))
     }
+    /// Kept by the version's identity (`plan::kept_analyses`, t33 K4): a relation's row is `rel`, its name, its
+    /// columns' count, its columns and its facts (`LayoutFact::placed`); a `from` row the relations its facts were
+    /// inferred from; a `left` row the relations left out.
+    fn rows(&self, _v: &crate::code_rule_dsl::logic::program_image::Version) -> Option<Vec<crate::code_rule_dsl::logic::program_image::manager::Row>> {
+        use crate::code_rule_dsl::logic::front::Value;
+        let s = |x: &str| Value::Str(x.into());
+        // Its section's lists, each sorted by name already.
+        let of = self.0.decode();
+        let mut out = Vec::new();
+        for rel in &of.rels {
+            let mut r = vec![s("rel"), s(&rel.name), Value::Int(rel.cols.len() as i64)];
+            r.extend(rel.cols.iter().map(|c| s(c)));
+            r.extend(rel.facts.iter().map(|f| s(&f.placed())));
+            out.push(r);
+        }
+        for inferred in &of.from {
+            out.push(std::iter::once(s("from")).chain(std::iter::once(s(&inferred.rel))).chain(inferred.from.iter().map(|r| s(r))).collect());
+        }
+        if !of.left.is_empty() {
+            out.push(std::iter::once(s("left")).chain(of.left.iter().map(|r| s(r))).collect());
+        }
+        Some(out)
+    }
+    fn of_rows(_v: &crate::code_rule_dsl::logic::program_image::Version, rows: &[crate::code_rule_dsl::logic::program_image::manager::Row]) -> Option<Shapes> {
+        use crate::code_rule_dsl::logic::front::Value;
+        let text = |v: &Value| match v {
+            Value::Str(x) => Some(x.to_string()),
+            _ => None,
+        };
+        // The rows in `rows`' order: each list sorted by name, as the section keeps it.
+        let mut of = Of::default();
+        for r in rows {
+            match text(r.first()?)?.as_str() {
+                "rel" => {
+                    let Value::Int(n) = r.get(2)? else { return None };
+                    let n = usize::try_from(*n).ok()?;
+                    let cols = r.get(3..3 + n)?.iter().map(text).collect::<Option<Vec<_>>>()?;
+                    let facts = r.get(3 + n..)?.iter().map(|f| LayoutFact::of_placed(&text(f)?).ok()).collect::<Option<Vec<_>>>()?;
+                    of.rels.push(Rel { name: text(r.get(1)?)?, cols, facts });
+                }
+                "from" => of.from.push(Inferred { rel: text(r.get(1)?)?, from: r.get(2..)?.iter().map(text).collect::<Option<_>>()? }),
+                "left" => of.left = r.get(1..)?.iter().map(text).collect::<Option<_>>()?,
+                _ => return None,
+            }
+        }
+        let out = Shapes(Section::of(&of));
+        Some(out)
+    }
 }
 
 impl Shapes {
@@ -153,6 +201,11 @@ impl Shapes {
     fn of_layouts(v: &crate::code_rule_dsl::logic::program_image::Version, l: &crate::code_rule_dsl::logic::program_image::layouts::Layouts) -> Shapes {
         use crate::code_rule_dsl::logic::program_image::layouts::Origin;
         let reads = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, out: &mut BTreeSet<String>| out.extend(r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()));
+        // Each relation's rules, by its head: found once, not by a scan of every rule for each relation.
+        let mut by_head: std::collections::HashMap<_, Vec<crate::code_rule_dsl::logic::program_image::RuleRef<'_>>> = std::collections::HashMap::new();
+        for r in v.rules() {
+            by_head.entry(r.head().rel()).or_default().push(r);
+        }
         let from = l
             .0
             .iter()
@@ -161,7 +214,7 @@ impl Shapes {
                 for (_, o) in facts {
                     match o {
                         Origin::Rule(id) => v.rule(*id).into_iter().for_each(|r| reads(r, &mut out)),
-                        Origin::Rules => v.rules().filter(|r| r.head().rel() == *rel).for_each(|r| reads(r, &mut out)),
+                        Origin::Rules => by_head.get(rel).into_iter().flatten().for_each(|r| reads(*r, &mut out)),
                         Origin::Declared | Origin::Made => {}
                     }
                 }

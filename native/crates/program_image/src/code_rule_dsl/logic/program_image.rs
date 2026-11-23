@@ -225,10 +225,17 @@ pub fn bad(what: impl std::fmt::Display) -> String {
 /// An image's bytes, held at 16-byte alignment, viewed by region.
 pub struct Image {
     buf: Buf,
+    /// Where `buf`'s bytes start, found once: a region read is an offset from it, not a walk through the holder of
+    /// a shared image's bytes (its segment, its block) at every node of every rule read.
+    base: *const u8,
     len: usize,
     regions: [(usize, usize); REGIONS],
 }
 
+// SAFETY: `base` points into `buf`'s bytes, which are never written once the image is made and are held as long as
+// the image is (an owned buffer's heap, or bytes shared at a stable address); `Buf` is `Send` and `Sync`.
+unsafe impl Send for Image {}
+unsafe impl Sync for Image {}
 /// Sixteen bytes of an image, at 16: what its buffer is a vector of, so each region is at its alignment.
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
@@ -274,7 +281,7 @@ impl Image {
         let mut buf = rerail_blocks::vector![Line([0; 2]); bytes.len().div_ceil(16)];
         // SAFETY: `buf` holds at least `bytes.len()` bytes.
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf.as_mut_ptr().cast::<u8>(), bytes.len()) };
-        Image::checked(Image { buf: Buf::Owned(buf), len: bytes.len(), regions: [(0, 0); REGIONS] }, Depth::Full)
+        Image::checked(Image::over(Buf::Owned(buf), bytes.len()), Depth::Full)
     }
 
     /// The image of `bytes` the engine's store or shipped bundle holds, read where they are, not copied (decisions
@@ -290,7 +297,16 @@ impl Image {
         if !at.is_multiple_of(16) {
             return Err(bad("shared bytes not at 16 bytes"));
         }
-        Image::checked(Image { buf: Buf::Shared(bytes), len, regions: [(0, 0); REGIONS] }, Depth::Held)
+        Image::checked(Image::over(Buf::Shared(bytes), len), Depth::Held)
+    }
+
+    /// An image over `buf`'s first `len` bytes, its regions not yet read.
+    fn over(buf: Buf, len: usize) -> Image {
+        let base = match &buf {
+            Buf::Owned(b) => b.as_ptr().cast::<u8>(),
+            Buf::Shared(b) => (**b).as_ref().as_ptr(),
+        };
+        Image { buf, base, len, regions: [(0, 0); REGIONS] }
     }
 
     /// Whether its bytes are shared, read where they are (`open_shared`), not a copy of its own.
@@ -332,26 +348,28 @@ impl Image {
         Ok(image)
     }
 
+    #[inline]
     pub fn bytes(&self) -> &[u8] {
-        match &self.buf {
-            // SAFETY: `buf` holds `len` initialized bytes.
-            Buf::Owned(buf) => unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), self.len) },
-            Buf::Shared(b) => (**b).as_ref(),
-        }
+        // SAFETY: `base` is where `buf`'s `len` initialized bytes start (`over`), held as long as `self`.
+        unsafe { std::slice::from_raw_parts(self.base, self.len) }
     }
 
+    #[inline]
     fn slice<T>(&self, r: R) -> &[T] {
         let (offset, count) = self.regions[r as usize];
         // SAFETY: `open` checked the region's bounds and width, and offsets are 16-byte aligned in a 16-byte-aligned
         // buffer; every T here is a plain integer (or an array of them) with no invalid bit patterns.
-        unsafe { std::slice::from_raw_parts(self.bytes().as_ptr().add(offset).cast::<T>(), count) }
+        unsafe { std::slice::from_raw_parts(self.base.add(offset).cast::<T>(), count) }
     }
+    #[inline]
     pub fn u8s(&self, r: R) -> &[u8] {
         self.slice(r)
     }
+    #[inline]
     pub fn u32s(&self, r: R) -> &[u32] {
         self.slice(r)
     }
+    #[inline]
     pub fn u64s(&self, r: R) -> &[u64] {
         self.slice(r)
     }
@@ -467,6 +485,7 @@ impl Image {
     pub fn rule_hash(&self, k: u32) -> u64 {
         self.u64s(R::RuleHash)[k as usize]
     }
+    #[inline]
     pub fn node(&self, at: u32) -> (u8, u32, u32) {
         let at = at as usize;
         (self.u8s(R::Kind)[at], self.u32s(R::Size)[at], self.u32s(R::Val)[at])
@@ -932,7 +951,8 @@ impl Placing {
     /// strings interned from `&str`, its references its own), so a release build checks only its meta; a debug build
     /// checks it whole, as `open` does, which is the tests' check of every writer.
     pub fn finish(self) -> Result<Image, String> {
-        let image = Image { buf: Buf::Owned(self.buf), len: self.len, regions: self.regions };
+        let regions = self.regions;
+        let image = Image { regions, ..Image::over(Buf::Owned(self.buf), self.len) };
         if image.u64s(R::Meta).len() != meta::WORDS {
             return Err(bad("no meta"));
         }

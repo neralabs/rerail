@@ -177,8 +177,8 @@ pub struct ViewsInPlace {
     /// view is read in place too.
     pub lines: bool,
     /// Whether every document's `Loc` rows are the views' reads' (`ViewEntry::locs`: a file's own tree, or a guest
-    /// placed in its host, its places' lines in a slab) and the device reads them, so the `Loc` views are read in place
-    /// too.
+    /// placed in its host by its placement or its spans placed, its places' lines in a slab) and the device reads
+    /// them, so the `Loc` views are read in place too.
     pub locs: bool,
     /// The cache a 16z document's reads decode its blocks into (decision 0353 step 4b, `view::cache`): the batch's
     /// (`batch_cache`, a home of the directory), which every reader of the batch's views and its host's reads share,
@@ -328,18 +328,6 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>], zcache: Option<&Arc<rerail_tap
             return refused("views.refused.block");
         }
         let mut row = ViewRow { rows: first_rows, ..Default::default() };
-        if locs && p.locs() > 0 && super::view_docs::ViewEntry::locs(p).is_none() {
-            // Why, by the guest's placement where it has one.
-            let why = match p.extra.as_ref().and_then(|x| x.host.as_ref()).map(|(_, place)| place) {
-                Some(super::Placement::Copied { .. }) => "views.refused.locs.guest_copied",
-                Some(super::Placement::Mapped { .. }) => "views.refused.locs.guest_mapped",
-                Some(super::Placement::At(_)) => "views.refused.locs.guest_at",
-                Some(super::Placement::Segments(_)) => "views.refused.locs.guest_segments",
-                None => "views.refused.locs",
-            };
-            crate::code_rule_dsl::prof::count(why, 1);
-            locs = false;
-        }
         // A document with no nodes has rows only in the `Loc` views (a withheld one's text and lines): where its tape
         // is not read in place, those alone are made.
         let only_locs = p.len() == 0;

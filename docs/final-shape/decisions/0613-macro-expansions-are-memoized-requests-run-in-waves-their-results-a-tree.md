@@ -347,6 +347,99 @@ So:
      6.5 to 4.4 ms. The queue alone (a first evaluation): 3.08 to 2.67 and 3.45 to 3.18 ms. Every unit gives the
      serial pass's tokens on CUDA and Metal. The M3 Max's batch: 31.4 ms before, 33.1 and 29.2 ms after (first and
      second evaluation).
+   - The unit that sets each answer round, by its team's end (`RERAIL_PP_TRACE`, GB10, CUDA, warm, a second
+     evaluation, with the memo and a round's tree built since): `tif_getimage.c` (19,375 nodes, 7 groups) 3.03 to
+     2.09 ms (1.45 times); C++ unit 1 (51,203 nodes, 11 groups) 3.40 to 1.25 ms (2.7 times). C's round ends at
+     its team; the next team ends at 1.79 ms.
+
+   **Built: the memo in the loop** (2026-11-22, `lp_memo_*` in `pp_loop.uglykl`).
+   - A call whose arguments are read in one frame is looked up at its `)`. Its key is its definition, the macros
+     disabled where it is read, its stretch (the text between two directives) and its arguments' entries. A top
+     call's arguments are keyed by their tokens' spelling, its pieces re-emitted from where the first wrote them,
+     their places moved. A call in a list or an argument's expansion is keyed by its entries as they are, a node
+     by the hash of what it holds (kept in its header when it is made), not by where it is.
+   - A miss is expanded and its result kept when its list is read to its end without reading below it, a
+     built-in or the text past it: a top call's as the output's pieces (three chunks at most), another's as its
+     entries, none, one or a node. Calls nest in the capture three deep (the outermost leaves first).
+   - The table is a block's front, 4,096 pairs at least (an eighth of the top tokens, within a quarter of the
+     store), probed 8 deep. Sized by the top text alone (64 pairs for a short unit), it filled: 418 of Boost
+     `control`'s 484 results were not kept.
+   - Only a dear definition is looked up: one with an expansion of 16 steps or more (a bit for each definition,
+     set the first time it is seen). Most calls cost less than their key and lookup, which cost the corpus's
+     answer rounds about 3% with every call keyed and nothing gained.
+   - GB10, CUDA, warm, a second evaluation: the corpus's C round 1.94 (no memo) to 2.11 ms, C++'s 2.50 to
+     2.46 ms, within the runs' noise; 2 hits in C, none in C++. Boost `control` (3 units): the slowest piece
+     66,449 to 59,567 steps, median run 290 to 256 ms, 31 hits and 466 results kept. Every unit gives the serial
+     pass's tokens on the CPU backend, CUDA and Metal.
+   - Measured against §"In the loop's steps" (a unit's memo by spelling reads 11.6% of Boost's serial steps),
+     the loop's memo finds few repeats. A call's arguments in a body are entries keyed as they are, so the same
+     tokens by spelling at another place are another key. The repeats the serial measure counts come from
+     parameters bound to equal spellings from different places, which need the arguments as holes (§"Arguments
+     as references"): a result kept with its arguments' places open, filled at each hit.
+
+   **Built: arguments as holes, and the disabled macros a result looks up** (2026-11-22, `lp_tpl_*`,
+   `lp_memo_look` in `pp_loop.uglykl`).
+   - Every call's arguments are keyed by their spelling: each entry's kind and count, each token's spelling,
+     space, paint and paste mark, a node by its spelling's hash (kept in its header beside the identity's,
+     `lp_node_seal`).
+   - A capture keeps its raw arguments on its own stack (region 4: region 0's are written over by the
+     substitution) while it lives. At its end each entry of its result (and each nested node made since it began,
+     8 nodes and 32 holes at most), or each output piece, that lies in one of them is a hole: the raw entry and
+     the place in it. One that overlaps one and is not in it keeps nothing. The holes are written once in the
+     store, beside the result (`lp_tpl_write`). A hit writes the nodes that hold a hole anew, the hit's own
+     entries in the holes, and reads the rest where the first wrote it (`lp_tpl_fill`, `lp_memo_emit`). An entry
+     read from inside a raw argument's node keeps the first call's place, its spelling the same.
+   - This alone moved nothing on Boost `control` (31 hits, 59,567 steps): its repeats are read in different
+     macros' bodies, and the key held every macro disabled there. A result depends on a disabled macro only
+     where its expansion looks it up. So a capture records the definitions it looks up (2,048 bits, one a
+     definition, on its stack; a hit's are added to the captures around it), and the macros disabled where it is
+     read. Its entry keeps the set, and the hash of the disabled macros the set has. A call finds the entry whose
+     hash equals that of its own disabled macros the set has; a false bit only refuses a hit. Measured: with 128
+     bits the sets were 92% full and nothing moved; a bound of 8 disabled macros refused 190 of 265 lookups.
+   - Boost `control` (GB10, CUDA): the slowest piece 59,567 to 36,376 steps and 241 to 178 ms of GPU time, 147
+     hits. Without the disabled macros in the key at all it took 17,427 steps and gave the wrong tokens, so the
+     dependence is real. The corpus: C 5.8 to 5.9 ms, C++ 2.5 ms, within noise (it has 2 hits). Every eval test
+     gives the serial pass's tokens on the CPU backend and Metal (m3).
+
+   **Built: a round keeps the last round's documents** (2026-11-22, `place_kept` in `eval/rounds.rs`).
+   - A unit's rounds keep its files' digests. A round lexes only the files the last round's answers loaded; an
+     earlier file's tape is built again only where the residency let its document go. Before, every round
+     built every file's format 16 tape again on the host to find its digest.
+   - On the device, a unit's round 2 runs its P1 and text pass over its files again. That is not where round
+     1's time goes. Round 1 of C (GB10, CUDA, warm) is 1.23 ms, set by two units that answer in it: unit 42
+     (no includes: its text pass, 9,821 steps) and unit 34 (146 phases). A unit that requests is done in
+     0.25 to 0.36 ms: its 101 phases on one group, whatever its size (254 to 3,745 nodes). Its work in round 2
+     is the same phases, so keeping it would remove no phase. Rounds cost phases, not data.
+
+   **Built: a round starts from the last round's tree** (2026-11-22, `Tree`, `p1_seed_words`).
+   - A round that ends in requests reads back the tree its P1 settled at: its instances, whether each is
+     entered (live), and each instance's groups' activity. The next round's layout holds that tree whole
+     (`Layout::entered`, `groups`); its first iteration takes the groups as they were, and each
+     instance's directive word its made instance, entered where it was. A unit's files keep their
+     indices across rounds (new ones come after), so the words hold.
+   - It is sound from any start: each test reads only the state before it, so iteration k settles the
+     first k layers whatever they held. The tree is the device's own answer, carried as the next run's
+     input as the file table is; no block is copied.
+   - `a_round_starts_from_the_last_rounds_tree` (includes three deep, each a round's requests): 4 rounds, P1's
+     iterations 9 from the last round's tree against 15 from the roots, the serial pass's tokens both ways.
+   - The corpus (GB10, CUDA, warm, a second evaluation, one run each): C 5.8 to 5.6 ms, C++ 2.5 to 2.1 ms,
+     within the runs' swing. Its units take at most 2 rounds, and a first round's tree is mostly its roots
+     (the table is empty), so it keeps the groups and little else; deeper include chains keep more.
+   - With real headers (the corpus's first 20 C units, glibc's and GCC's headers searched before the stubs:
+     `RERAIL_PP_INCLUDE`; GB10, CUDA, warm, a second evaluation): up to 9 rounds a unit, 6 runs. The rounds' GPU
+     time 125.2 ms from the roots (`RERAIL_PP_FROM_ROOTS`) to 62.9 ms from the last round's tree, the median run
+     25.7 to 10.5 ms; every unit gives the serial pass's tokens both ways.
+
+   **Measured, not kept: a batch's first round held before its text** (2026-11-22).
+   - Every unit of a batch's first round stopped at P1's end, so that the units that request ran their second
+     round beside the others' text. GB10, CUDA, warm, a second evaluation: the answer rounds' GPU time 7.2 to
+     7.6 ms; C's round 1 1.30 to 1.25 ms. Round 1 is set by unit 34's P1 (146 phases, 1.12 ms on 2 groups), not
+     only by unit 42's text, and C++'s by unit 1's P1 (193 phases). The change is out.
+   - What round 2 repeats of round 1 is P1's iterations (unit 34: 146 phases, then 178; C++ unit 1: 193, then
+     228). A round 2 started from round 1's settled conditionals saves only the iterations past the one every
+     round runs: in the corpus's final rounds, 7 units take 1 P1 iteration, 77 take 2 (the text's included), 14
+     take 3 and 2 take 4. The front and the definitions over the files round 1 read are under 0.1 ms of a
+     round-2 unit's 1.3 ms setup.
 
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
@@ -358,6 +451,10 @@ So:
 - `a_definition_changed_between_uses_is_expanded_again`: `#define G 1` / `F()` / `#undef G` / `#define G 2` /
   `F()`, where `F`'s body names `G`.
 - `a_disabled_macro_paints_alike_in_a_memoized_expansion`: `A` → `B` → `A`, entered at the top and inside `B`.
+- `a_round_starts_from_the_last_rounds_tree`: includes three deep; fewer P1 iterations than from the roots,
+  the same tokens.
+- `an_argument_spelled_alike_is_a_hole`: `P(x, 1)` with `x` from four places in the text, printed, in an argument and
+  as a node, and read in four bodies: one result, each hit with its own tokens.
 - `a_childs_open_tail_takes_its_parents_parenthesis`: `#define f g` / `#define g(x) x` / `f(1)`.
 - `a_childs_first_parenthesis_makes_its_parent_a_call`: `#define LP (` / `h LP 1)`.
 - `place_builtins_are_not_memoized`: `__LINE__` and `__COUNTER__` in a macro invoked on several lines.
