@@ -792,8 +792,17 @@ impl ContentStore {
     /// creation, a floor raise or a missing object (an index this build added) takes the
     /// exclusive lock and applies SCHEMA. Returns the store's identity (`store_identity`).
     pub(super) fn initialize(connection: &mut Connection, flush: rerail_blocks::block::Flush) -> StoreResult<i64> {
+        Self::initialize_found(connection, flush).map(|(id, _)| id)
+    }
+
+    /// [`ContentStore::initialize`], and whether the store was found as it is: its schema current and its identity
+    /// set before the open. Only then was the connection configured over the store's own atoms (`Atoms::attach` finds
+    /// the arena by the identity it reads, which a store made, or given its identity, by this open had none of), so
+    /// it may serve as a runtime connection to the store.
+    pub(super) fn initialize_found(connection: &mut Connection, flush: rerail_blocks::block::Flush) -> StoreResult<(i64, bool)> {
         configure_connection(connection, flush)?;
-        if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_current(connection)? {
+        let made = compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_current(connection)?;
+        if made {
             // A store made here is made by a writer's thread (decision 0104: a run's own threads only read): once,
             // before anything reads it.
             rerail_accel::exec::scoped(|scope| {
@@ -842,7 +851,7 @@ impl ContentStore {
             )
             .optional()?;
         if let Some(id) = id {
-            return Ok(id);
+            return Ok((id, !made));
         }
         // A copy of a store published without an identity (the tests' template, `corpus::test_store`): it becomes a
         // store of its own at its first open, as a store made here does, by a writer's thread.
@@ -865,11 +874,11 @@ impl ContentStore {
         if let Some(path) = connection.path() {
             super::atoms::forget_identity(path);
         }
-        Ok(connection.query_row_cached(
+        Ok((connection.query_row_cached(
             "SELECT id FROM store_identity WHERE singleton = 1",
             [],
             |row| row.get(0),
-        )?)
+        )?, false))
     }
 }
 

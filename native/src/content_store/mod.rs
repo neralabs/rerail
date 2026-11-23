@@ -228,8 +228,21 @@ impl ContentStore {
     }
 
     fn open_with(path: &Path, models: bool) -> StoreResult<Self> {
+        // A store this thread holds open already: its identity read and its schema checked as it opened, the file at
+        // the path still the one its connection opened (`connection::held_here`). A run opened its store by its path
+        // six times (its phases, its cone, its choices), each a connection opened, configured and its schema read.
+        if let Some(identity) = connection::held_here(path) {
+            rerail_prof::count("store.opened_held", 1);
+            let flush = connection::store_flush()?;
+            Self::models_of(path, models);
+            return Ok(Self::with_connection(
+                path.to_path_buf(), ThreadConnection::new(path.to_path_buf(), identity, flush),
+                atoms::Atoms::for_database(path, Some(identity)), Some(write_back::register_store(path, identity)),
+            ));
+        }
         // Create the database with mode 0600 before SQLite copies its mode to the WAL.
         private_files::prepare(path)?;
+        let before = connection::file_key(path);
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
@@ -237,22 +250,33 @@ impl ContentStore {
         let mut connection = Connection::open_with_flags(path, flags)?;
         let flush = connection::store_flush()?;
         // Only creating or migrating the schema takes the write lock (`initialize`).
-        let identity = retry_busy(&mut BusyRetries::default(), || {
-            Self::initialize(&mut connection, flush)
+        let (identity, found) = retry_busy(&mut BusyRetries::default(), || {
+            Self::initialize_found(&mut connection, flush)
         })?;
-        drop(connection);
-        // Compiled Neural Engine models are facts of this store (decision 0098 §3).
+        // Configured as a runtime connection (`initialize` runs `configure_connection`) over the store's atoms, when
+        // the store was found as it is (`initialize_found`): this thread's connection to it, not closed for the
+        // thread's first read to open another.
+        let thread = ThreadConnection::new(path.to_path_buf(), identity, flush);
+        if found {
+            let after = connection::file_key(path);
+            thread.seed(connection, before.filter(|b| Some(*b) == after));
+        }
+        Self::models_of(path, models);
+        // A store created again at its path has atoms and a writer of its own too.
+        Ok(Self::with_connection(
+            path.to_path_buf(), thread,
+            atoms::Atoms::for_database(path, Some(identity)), Some(write_back::register_store(path, identity)),
+        ))
+    }
+
+    /// Compiled Neural Engine models are facts of the store at `path` (decision 0098 §3), unless `models` is false.
+    fn models_of(path: &Path, models: bool) {
         #[cfg(target_os = "macos")]
         if models {
             rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
         }
         #[cfg(not(target_os = "macos"))]
-        let _ = models;
-        // A store created again at its path has atoms and a writer of its own too.
-        Ok(Self::with_connection(
-            path.to_path_buf(), ThreadConnection::new(path.to_path_buf(), identity, flush),
-            atoms::Atoms::for_database(path, Some(identity)), Some(write_back::register_store(path, identity)),
-        ))
+        let _ = (path, models);
     }
 
     /// The scratch store for fact-only evaluation with the durable cache disabled: in memory, so nothing is flushed

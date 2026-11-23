@@ -193,6 +193,37 @@ fn a_store_created_again_at_its_path_has_its_own_atoms() {
     drop(old);
 }
 
+/// A store this thread holds open is opened again on the connection it holds (`connection::held_here`): the same
+/// store, its identity not read again. The open of a store found as it is leaves its connection to this thread, one
+/// whose `atoms` table is the store's; an open that made the store leaves none (its connection was configured before
+/// the store had an identity, over atoms of no store).
+#[test]
+fn a_store_held_open_here_is_opened_again_on_its_connection() {
+    use crate::content_store::connection::held_here;
+    let at = path("held-again");
+    let made = ContentStore::open(&at).unwrap();
+    assert_eq!(held_here(&at), None, "an open that made the store leaves no connection");
+    made.intern_atoms(&["kept"]).unwrap();
+    made.flush_atoms().unwrap();
+    made.written().unwrap();
+    drop(made);
+    let first = ContentStore::open(&at).unwrap();
+    let identity = first.connection.identity();
+    assert_eq!(held_here(&at), Some(identity), "the open of a store found as it is left its connection here");
+    let read: i64 = first.connection.lock().unwrap().query_row("SELECT atom FROM atoms WHERE value='kept'", [], |r| r.get(0)).unwrap();
+    assert_eq!(first.atom("kept").unwrap().map(|a| a as i64), Some(read), "its `atoms` table is the store's");
+    let second = ContentStore::open(&at).unwrap();
+    assert_eq!(second.connection.identity(), identity);
+    assert!(std::sync::Arc::ptr_eq(&second.atoms, &first.atoms));
+    assert_eq!(second.intern_atoms(&["shared"]).unwrap(), first.intern_atoms(&["shared"]).unwrap());
+    // On another thread, which holds no connection to it, it is opened in full: the same store still.
+    let elsewhere = std::thread::spawn({
+        let at = at.path.clone();
+        move || (held_here(&at), ContentStore::open(&at).unwrap().connection.identity())
+    }).join().unwrap();
+    assert_eq!(elsewhere, (None, identity));
+}
+
 const CHILD: &str = "RERAIL_ATOMS_CHILD";
 
 /// Runs `test` in a child process of this test binary, with `CHILD` set to `role`.
