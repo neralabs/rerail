@@ -6575,6 +6575,10 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                 Op::Goto { target } => {
                     f.ins().jump(word(target), &[]);
                 }
+                // A statement's start (decision 0650): no mark yet, so a statement that fails refuses the file.
+                Op::Statement => {
+                    f.ins().jump(fall, &[]);
+                }
                 Op::Stop => {
                     let at = f.ins().iconst(types::I64, pc as i64 + 1);
                     f.ins().jump(refuse, &[BlockArg::from(at)]);

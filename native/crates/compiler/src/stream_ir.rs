@@ -49,6 +49,8 @@ pub const REMEMBERED: u16 = u16::MAX - 2;
 /// names (`Words::word_kinds`), as the lean parser's leaf takes its kind from its token. So the
 /// arms of a switch's keywords that differ only in it are one arm.
 pub const WORD_KIND: u16 = u16::MAX - 4;
+/// The kind of a statement that failed (`STATEMENT`, decision 0650): the tape's ERROR leaf, of no kind of the grammar's.
+pub const ERROR_LEAF: u16 = u16::MAX - 5;
 
 /// A reading (`reading R = …`, `reread R`): what `RETAG m=3` does with the node made last at a
 /// level and each node inside it, by kind; a kind not listed refuses. A node read but the first

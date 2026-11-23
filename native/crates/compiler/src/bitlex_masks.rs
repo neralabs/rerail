@@ -4540,13 +4540,15 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let check_kinds: Vec<(Vec<u16>, Option<u16>)> = checks.iter().map(|c| (c.0.clone(), c.1)).collect();
     // A `whole padded` root (the tree's first rule): its start its first token's or comment's.
     let padded = low.tree.iter().find_map(|s| if let Stmt::Node { padded, .. } = s { Some(*padded) } else { None }).unwrap_or(false);
-    let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, (whole, padded), true, by_rules, token_extras, &counts, &check_kinds)?.tested;
+    // `recover`'s patterns (decision 0650): the root's statements recover.
+    let recover: &[::bitlex::syntax::RecoverClause] = low.tree.iter().find_map(|s| if let Stmt::Recover { clauses, .. } = s { Some(clauses.as_slice()) } else { None }).unwrap_or(&[]);
+    let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, (whole, padded), true, by_rules, token_extras, &counts, &check_kinds, recover)?.tested;
     for (j, &r) in tested.iter().enumerate() {
         rows[r].mask = Some(row_masks + j as u16);
         mark_masks.push(token_rows[r].1);
     }
     // The words, once the fallback's totals are known: each must be zero.
-    let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, (whole, padded), false, by_rules, token_extras, &counts, &check_kinds)?;
+    let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, (whole, padded), false, by_rules, token_extras, &counts, &check_kinds, recover)?;
     crate::rir_text::count_rows(&mut lowered.text, &count_most);
     // The extras' kinds: the node table flags their nodes (comments).
     readings.extras = low.extra.iter().map(|k| id(k)).collect::<Result<_, _>>()?;
@@ -4733,6 +4735,28 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // The token marks, their kinds the records' (`Words::token_marks`). The marks their
     // `without`s read (`Records::read`).
     let mut token_read = 0u32;
+    // Kinds' names as the records' kind set, and their hard keywords: a record of the kind
+    // with one of these words is the keyword's token (`TokenElem::except`). Not a row of
+    // keywords only (`required`, kind 0): its kind names the row, every token of it a keyword.
+    let kind_set = |names: &[String]| -> Result<(u64, Vec<u16>, u32), String> {
+        let (mut set, mut except, mut by_rows) = (0u64, Vec::new(), 0u32);
+        for name in names {
+            by_rows |= row_bits.iter().filter(|(n, _)| n == name).fold(0, |a, &(_, b)| a | 1u32 << b);
+            for r in (0..rows.len()).filter(|&r| &token_rows[r].0 == name && rows[r].kind != 0) {
+                for (w, _) in &rows[r].keywords {
+                    let s = lowered.strings.iter().position(|x| x == w).ok_or("a keyword not among the words")?;
+                    except.push(s as u16);
+                }
+            }
+            for k in name_kinds(&kinds, name, true) {
+                if k >= 64 {
+                    return Err(format!("a token mark's kind `{name}` is kind {k} of the records, past 64"));
+                }
+                set |= 1 << k;
+            }
+        }
+        Ok((set, except, by_rows))
+    };
     if !lowered.token_marks.is_empty() {
         // Extras between a mark's tokens are placed in the token step only; a grammar with none
         // has nothing to place.
@@ -4742,28 +4766,6 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let mut tms = Vec::new();
         for (order, refuses, unless, elems) in &lowered.token_marks {
             let mut out = Vec::new();
-            // Kinds' names as the records' kind set, and their hard keywords: a record of the kind
-            // with one of these words is the keyword's token (`TokenElem::except`). Not a row of
-            // keywords only (`required`, kind 0): its kind names the row, every token of it a keyword.
-            let kind_set = |names: &[String]| -> Result<(u64, Vec<u16>, u32), String> {
-                let (mut set, mut except, mut by_rows) = (0u64, Vec::new(), 0u32);
-                for name in names {
-                    by_rows |= row_bits.iter().filter(|(n, _)| n == name).fold(0, |a, &(_, b)| a | 1u32 << b);
-                    for r in (0..rows.len()).filter(|&r| &token_rows[r].0 == name && rows[r].kind != 0) {
-                        for (w, _) in &rows[r].keywords {
-                            let s = lowered.strings.iter().position(|x| x == w).ok_or("a keyword not among the words")?;
-                            except.push(s as u16);
-                        }
-                    }
-                    for k in name_kinds(&kinds, name, true) {
-                        if k >= 64 {
-                            return Err(format!("a token mark's kind `{name}` is kind {k} of the records, past 64"));
-                        }
-                        set |= 1 << k;
-                    }
-                }
-                Ok((set, except, by_rows))
-            };
             for (offset, names, words, not, end, run, nest_rows, ending_row, without_names) in elems {
                 let (set, except, by_rows) = kind_set(names)?;
                 token_read |= by_rows;
@@ -4802,6 +4804,20 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             tms.push(crate::program::TokenMark { order: *order, elems: out, refuses: *refuses, unless: *unless });
         }
         crate::rir_text::token_mark_rows(&mut lowered.text, &tms);
+    }
+    // `recover`'s patterns (`Words::recover`, decision 0650): each element's kinds the records'.
+    if !lowered.recover.is_empty() {
+        let mut rs = Vec::new();
+        for (past, first, elems) in &lowered.recover {
+            let mut out = Vec::new();
+            for (j, (names, words)) in elems.iter().enumerate() {
+                let (kinds, except, rows) = kind_set(names)?;
+                token_read |= rows;
+                out.push(crate::program::TokenElem { offset: j as i8, kinds, words: words.clone(), except, rows, ..Default::default() });
+            }
+            rs.push(crate::program::Recover { past: *past, first: *first, elems: out });
+        }
+        crate::rir_text::recover_rows(&mut lowered.text, &rs);
     }
     // The `drops` and `loses` questions (`Words::gap_patterns`, decision 0451): records as the
     // lexer wrote them. An element of an extra's kind is any record with its kind's bits (the

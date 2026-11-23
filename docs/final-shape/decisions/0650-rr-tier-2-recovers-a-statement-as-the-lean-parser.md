@@ -1,6 +1,6 @@
 # 0650: `.rerail`'s tier 2 recovers a statement, as the lean parser does
 
-Status: steps 1 to 3 done; 4 and 5 under way. The item is the user's (2026-11-23): lean's statement-level error
+Status: steps 1 to 3 and 4a done; 4b and 5 under way. The item is the user's (2026-11-23): lean's statement-level error
 recovery in every executor of `rr.bitlex`'s tier 2, with A20 kept (no trial reads inside an expression; `reread` and
 the lookahead patterns stay).
 
@@ -111,8 +111,8 @@ lean's.
   statement's (`statement`), from its first decision to its end, which returns. A refusal anywhere in them returns
   to `run`, which cuts the loop's stack back (at a statement's start it is empty) and recovers as the calls form
   does. The loop holds no mark of its own, and the recovery is the calls form's code.
-- **The interpreter (`stream.rs`) and the JIT (`native_cpu_stream.rs`).** The same, as words: a `MARK`-like word at
-  the loop head, and a refusal kind that jumps to the recovery instead of returning.
+- **The interpreter (`stream.rs`) and the JIT (`native_cpu_stream.rs`).** The same, as words: `STATEMENT` at the
+  loop's heads, and a refusal by syntax that recovers instead of returning (step 4).
 
 **Tests.** Lean's edit fuzz per executor: wherever an executor takes or recovers an edited text, its tape is
 lean's, byte for byte. The probe stays, as the tally of what still refuses.
@@ -156,5 +156,32 @@ lean's, byte for byte. The probe stays, as the tally of what still refuses.
    text is refused for a limit or for tier 1. `deep_nesting_ends_in_a_refusal` covers the limits.
 3. The device loop. Done, as above: `statement_loop` writes both forms' `run`. The tests above hold the one loop's
    result to the calls form's on each text, taken, recovered or refused.
-4. The interpreter and the JIT.
+4. The interpreter (4a, done) and the JIT (4b).
+
+   **The words.** `recover` lowers to `STATEMENT` and the `recover at|past [first]` rows (`Words::recover`, a token
+   mark's elements each). The root's words are not one loop state: `include` is read at the root's own level, and a
+   statement's node is still open at the state after it, where the next token decides to close it. So the heads are
+   the root's states where it may end, each with `STATEMENT` right after its `TOKEN`, where both returns land. At a
+   head the levels are the root's and the statement's before, whole.
+
+   **The interpreter (4a).** A refusal is syntax (`refuse!`, a break out of the word) or a limit (`limit!`: the
+   depth, a count, a token's or a local check, tier 1's, a region with no closer), which refuses the file.
+   `STATEMENT` first fails the statement before where it holds a provisional field, then marks: the record, the
+   tape's length, the open levels' entries (a few at a head), the pending extras and their `keep`, the last end, the
+   word, flags, counts, strings, the moved node and the dropped flag. A refusal by syntax with a mark cuts back to it:
+   the tape truncated, the wraps' chains back to their heads before it, the levels as they were; the statement before
+   closed at its last token, as its `CLOSE` does; then the scan from the statement's second record, the extras
+   skipped (`recover_holds`, a token mark's test; `first` reads tier 1's line ends between the record before and it,
+   a word at a time), one ERROR leaf (`ERROR_LEAF`, the tape's `CODE_ERROR`) from the first token to the last before
+   the resume point, and on at the root's first head's `TOKEN` from the record after it, which takes the extras
+   between. A token mark that refuses is held to the token's `SPAN` where the grammar recovers: a level that reads the
+   token ahead, to end, may be the statement's before, and the statement that takes the token is the one that fails.
+
+   Tests: `corpus_edited_tapes_are_the_lean_tapes` holds the interpreter's tape to the calls form's on each edited
+   text, taken, recovered or refused. The rr tests that once asked a refusal of a statement's syntax ask lean's tape
+   with an ERROR leaf of each executor (`reads_as_lean`); until 4b the JIT may refuse what the others recover.
+
+   **The JIT (4b).** The same mark and cut-back over its state slots, the open levels and frames, the coded tape
+   (`uncode` from the mark's node), the supertypes and the tape block's base; the scan in CLIF; a refusal by syntax
+   re-entering at the root's first head (in clusters, through the driver, which calls the head's cluster again).
 5. Tier 1's errors as lean's `Bad` tokens, so a byte no token takes and a region open at the end recover too.

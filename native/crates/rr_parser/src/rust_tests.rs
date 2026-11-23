@@ -316,6 +316,7 @@ fn a_statement_that_fails_is_one_error_leaf() {
 #[ignore = "the corpus: run by name"]
 fn corpus_edited_tapes_are_the_lean_tapes() {
     let texts = crate::tests::edited_corpus();
+    let c = compiled().expect("the grammar compiles");
     let (mut whole, mut recovered, mut refused) = (0, 0, 0);
     let mut differ = Vec::new();
     for (k, text) in texts.iter().enumerate() {
@@ -324,6 +325,23 @@ fn corpus_edited_tapes_are_the_lean_tapes() {
         if rerail_rr_aot::parse_loop(&buf, text.len()) != got {
             eprintln!("differs: text {k}: the one loop's tape is not the calls'");
             differ.push(format!("text {k}: the one loop's tape is not the calls'"));
+            continue;
+        }
+        // The interpreter's (`stream::run`, its `STATEMENT`): the calls form's tape, taken, recovered or refused.
+        let run = c.program.block_programs[0].run(text.as_bytes());
+        let interp = rerail_compiler::stream::run(&c.program, text.as_bytes(), &run).map(|n| rerail_compiler::stream::image(&n, &c.program.readings.extras, rerail_tape_format::RR_TAG, text.as_bytes()));
+        let same = match (&interp, &got) {
+            (Ok(a), Ok(b)) => node_differs(text, &image_nodes(b), &image_nodes(a), "the calls form", "the interpreter").map_or(Ok(()), Err),
+            (Err(_), Err(_)) => Ok(()),
+            (Ok(_), Err(_)) => Err("the interpreter takes it, the calls form refuses it".to_owned()),
+            (Err(r), Ok(_)) => Err(format!("the interpreter refuses it ({}), the calls form takes it", r.why)),
+        };
+        if let Err(d) = same {
+            eprintln!("differs: text {k}: {d}");
+            if differ.len() < 3 {
+                eprintln!("  {:?}", &text[..text.len().min(300)]);
+            }
+            differ.push(format!("text {k}: {d}"));
             continue;
         }
         let Ok(ours) = got else {

@@ -233,6 +233,37 @@ mod token_local_tests;
 
 #[cfg(test)]
 pub mod tests {
+    /// The interpreter's tape of `src` (`stream::run`, then `stream::image`), or why it refused it.
+    pub(crate) fn interp_tape(c: &crate::Compiled, src: &str) -> Result<Vec<u8>, String> {
+        let run = c.program.block_programs[0].run(src.as_bytes());
+        rerail_compiler::stream::run(&c.program, src.as_bytes(), &run).map(|n| rerail_compiler::stream::image(&n, &c.program.readings.extras, rerail_tape_format::RR_TAG, src.as_bytes())).map_err(|r| r.why.to_owned())
+    }
+
+    /// How each executor's tape of `src` reads it (decision 0650), the interpreter's first: all take it, or all refuse
+    /// it; where `taken`, whole, the engine's tape; else a statement recovered (the lean parser's tape, an ERROR leaf in
+    /// it) or, for a limit, refused. Until the JIT recovers (0650 step 4b), it refuses what the others recover.
+    pub(crate) fn reads_as_lean(src: &str, taken: bool, tapes: &[(&str, Result<Vec<u8>, String>)]) {
+        let error = |t: &[u8]| {
+            let v = rerail_tape_format::View::new(t).expect("an image");
+            (0..v.len()).any(|i| v.key(i) >> 16 & u32::from(rerail_tape_format::CODE_ERROR) != 0)
+        };
+        let recovered = tapes[0].1.as_ref().is_ok_and(|t| error(t));
+        for (who, t) in tapes {
+            if recovered && t.is_err() && *who != "the interpreter" {
+                continue;
+            }
+            assert_eq!(t.is_ok(), tapes[0].1.is_ok(), "{src:?}: {who} takes it as {} does: {:?}", tapes[0].0, t.as_ref().err());
+            match t {
+                Ok(t) if taken => assert_eq!(*t, crate::engine_tape(src), "{src:?}: {who}: the engine's tape"),
+                Ok(t) => {
+                    assert_eq!(*t, crate::rr::lean::tape(src), "{src:?}: {who}: the lean parser's tape");
+                    assert!(error(t), "{src:?}: {who}: a statement recovered");
+                }
+                Err(why) => assert!(!taken, "{src:?}: {who}: refused ({why})"),
+            }
+        }
+    }
+
     /// No device here that runs a block program (none at all, or SIMD groups not of 32 lanes:
     /// `block_program::ready`): a test's device half is left out, as the executors' are.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -1132,8 +1163,10 @@ pub mod tests {
         v.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
         eprintln!("words: {} lines; machine: {} lines", c.words.lines().count(), c.machine.lines().count());
         eprintln!("{v:?}");
-        let at = c.words.lines().position(|l| l.contains("TOKEN")).unwrap_or(0) + 30000;
-        eprintln!("lines:\n{}", c.words.lines().skip(at).take(250).collect::<Vec<_>>().join("\n"));
+        // `RERAIL_WORDS_AT`: the lines from that one past the first `TOKEN` (30,000 by default), and how many.
+        let (from, take) = std::env::var("RERAIL_WORDS_AT").ok().and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))).unwrap_or((30000, 250));
+        let at = c.words.lines().position(|l| l.contains("TOKEN")).unwrap_or(0) + from;
+        eprintln!("lines:\n{}", c.words.lines().skip(at).take(take).collect::<Vec<_>>().join("\n"));
     }
 
     /// The process's CPU time so far, user and sys: the one thread runs alone.
@@ -1467,8 +1500,8 @@ pub mod tests {
     }
 
     /// A token mark (decision 0129), `no_value`: an aggregate's word, then `(`, `)`, `:`, with
-    /// comments between or none, is refused by every shape and the interpreter; with a value,
-    /// taken, as the engine's tape.
+    /// comments between or none, fails its statement, recovered as the lean parser's tape (decision 0650); with a
+    /// value, taken, as the engine's tape.
     #[test]
     fn token_marks_refuse_and_take() {
         let c = crate::compiled().expect("compiles");
@@ -1483,18 +1516,9 @@ pub mod tests {
         let head = ".decl a(n: number, j: number)\n.decl d(n: number, k: number)\n";
         let rule = |agg: &str| format!("{head}d(n, k) :- a(n, _), k = {agg} : {{ a(n, j) }}.\n");
         for (agg, taken) in [("max j", true), ("max (j)", true), ("max ()", false), ("min /* c */ ( /* d */ )", false), ("join ()", false), ("count", true)] {
-            let src = rule(agg);
-            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
-            assert_eq!(interp.is_ok(), taken, "{agg}: the interpreter");
-            for p in [&c.parser, &machine.parser] {
-                match p.image(src.as_bytes()) {
-                    Ok(t) => {
-                        assert!(taken, "{agg}: taken");
-                        assert_eq!(t, crate::engine_tape(&src), "{agg}: the engine's tape");
-                    }
-                    Err(_) => assert!(!taken, "{agg}: refused"),
-                }
-            }
+            let src = &rule(agg);
+            let tapes = [("the interpreter", interp_tape(c, src)), ("the JIT", c.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}"))), ("the machine", machine.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}")))];
+            reads_as_lean(src, taken, &tapes);
         }
     }
 
@@ -1531,8 +1555,8 @@ pub mod tests {
 
     /// The token marks the grammar takes nowhere (`TokenMark::refuses`): `TOKEN` tests them, once
     /// a token, and no state does. An I/O directive with no relation before an `#include` or at
-    /// the end: refused by every shape and the interpreter, comments between the tokens or none;
-    /// else taken, as the engine's tape. A functor named, not called, in a term: refused by its
+    /// the end: its statement fails, comments between the tokens or none, recovered as the lean parser's tape
+    /// (decision 0650); else taken, as the engine's tape. A functor named, not called, in a term: refused by its
     /// call's arguments (no mark: in a setting's line or a declaration's tail it is a word, as the
     /// engine reads it; decision 0650).
     #[test]
@@ -1560,17 +1584,8 @@ pub mod tests {
             (format!("{head}.input\n#include \"x.rerail\"\n"), false),
         ];
         for (src, taken) in &cases {
-            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
-            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter {:?}", interp.as_ref().err());
-            for p in [&c.parser, &machine.parser] {
-                match p.image(src.as_bytes()) {
-                    Ok(t) => {
-                        assert!(*taken, "{src}: taken");
-                        assert_eq!(t, crate::engine_tape(src), "{src}: the engine's tape");
-                    }
-                    Err(_) => assert!(!*taken, "{src}: refused"),
-                }
-            }
+            let tapes = [("the interpreter", interp_tape(c, src)), ("the JIT", c.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}"))), ("the machine", machine.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}")))];
+            reads_as_lean(src, *taken, &tapes);
         }
     }
 
@@ -1598,17 +1613,8 @@ pub mod tests {
             cases.push((format!("{head}a(x) :- a(y), x = y + {d19}.\n"), false));
         }
         for (src, taken) in &cases {
-            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
-            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter {:?}", interp.as_ref().err());
-            for p in [&c.parser, &machine.parser] {
-                match p.image(src.as_bytes()) {
-                    Ok(t) => {
-                        assert!(*taken, "{src}: taken");
-                        assert_eq!(t, crate::engine_tape(src), "{src}: the engine's tape");
-                    }
-                    Err(_) => assert!(!*taken, "{src}: refused"),
-                }
-            }
+            let tapes = [("the interpreter", interp_tape(c, src)), ("the JIT", c.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}"))), ("the machine", machine.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}")))];
+            reads_as_lean(src, *taken, &tapes);
         }
     }
 
@@ -2541,7 +2547,9 @@ pub mod tests {
             // cases (the corpus: its tape where it takes the file; two files of 500 KB it
             // refuses as before, the work queue's).
             let image = new.parser.image(f);
-            assert!(!cased || image.is_ok() == x.is_ok(), "file {k} {:?}: the CPU's tier 2 takes it as the interpreter: {:?} / {:?}", String::from_utf8_lossy(&f[..f.len().min(80)]), image.as_ref().err(), x.as_ref().err());
+            // Until the JIT recovers (0650 step 4b), it refuses what the interpreter recovers.
+            let recovered = x.as_ref().is_ok_and(|n| n.iter().any(|n| n.kind == rerail_compiler::stream::ERROR_LEAF));
+            assert!(!cased || image.is_ok() == x.is_ok() || recovered && image.is_err(), "file {k} {:?}: the CPU's tier 2 takes it as the interpreter: {:?} / {:?}", String::from_utf8_lossy(&f[..f.len().min(80)]), image.as_ref().err(), x.as_ref().err());
             if let (Ok(i), Ok(x)) = (&image, &x) {
                 assert!(*i == rerail_compiler::stream::image(x, &new.program.readings.extras, rerail_tape_format::RR_TAG, f), "file {k}: the CPU's tape");
             }
@@ -2611,9 +2619,8 @@ pub mod tests {
         #[cfg_attr(not(any(target_os = "macos", target_os = "linux", windows)), allow(unused_variables))]
         let refs: Vec<&[u8]> = cases.iter().map(|(s, _)| s.as_bytes()).collect();
         for (src, taken) in &cases {
-            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
-            assert_eq!(interp.is_ok(), *taken, "{src:?}: the interpreter");
-            assert_eq!(c.parser.image(src.as_bytes()).is_ok(), *taken, "{src:?}: the CPU");
+            let tapes = [("the interpreter", interp_tape(c, src)), ("the CPU", c.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}")))];
+            reads_as_lean(src, *taken, &tapes);
         }
         metal_refuses_as_the_cpu(c, &refs, &cases);
     }
@@ -2669,7 +2676,7 @@ pub mod tests {
 
     /// A float read as the engine reads one: digits, a `.`, digits. A `.` after a fraction is
     /// no float's: `1.2.3` is `1.2`, `.` and `3`, and `1.2.3.4` is `1.2`, `.` and `3.4`. Every
-    /// case is the engine's tape, or refused by both.
+    /// case is the engine's tape, or its statement fails, recovered as the lean parser's (decision 0650).
     #[test]
     fn chained_floats_read_as_the_engine() {
         let c = crate::compiled().expect("compiles");
@@ -2695,17 +2702,8 @@ pub mod tests {
         cases.push((".decl a(x: number)\n.limit 1.5".to_string(), false));
         cases.push((".decl a(x: number)\n.limit 1.5 // a comment".to_string(), false));
         for (src, taken) in &cases {
-            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
-            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter {:?}", interp.as_ref().err());
-            for p in [&c.parser, &machine.parser] {
-                match p.image(src.as_bytes()) {
-                    Ok(t) => {
-                        assert!(*taken, "{src}: taken");
-                        assert_eq!(t, crate::engine_tape(src), "{src}: the engine's tape");
-                    }
-                    Err(_) => assert!(!*taken, "{src}: refused"),
-                }
-            }
+            let tapes = [("the interpreter", interp_tape(c, src)), ("the JIT", c.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}"))), ("the machine", machine.parser.image(src.as_bytes()).map_err(|e| format!("{e:?}")))];
+            reads_as_lean(src, *taken, &tapes);
         }
     }
 

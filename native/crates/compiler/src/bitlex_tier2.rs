@@ -183,6 +183,9 @@ pub struct Lowered {
     /// The `drops` and `loses` questions (`Words::gap_patterns`), in the order `SETTLE` names
     /// them: each entry's pattern, whether it is an `unless`, and its elements (`GapElemRow`).
     pub gap_patterns: Vec<(u8, bool, Vec<GapElemRow>)>,
+    /// `recover`'s patterns (decision 0650; `Words::recover`): each one's `past`, its `first`, and its elements, each
+    /// its kinds' names and its words (strings). Empty: no statement recovers.
+    pub recover: Vec<(bool, bool, Vec<(Vec<String>, Vec<u16>)>)>,
 }
 
 /// One element of a gap pattern, as `Lowered::gap_patterns` holds it: its offset from the token,
@@ -282,6 +285,9 @@ struct Emit<'a> {
     /// where an extra opens the root (`grammar::with_extras`).
     token_extras: bool,
     whole: bool,
+    /// The root's statements recover (`recover`, decision 0650): each of its states between them (where it may end)
+    /// has `STATEMENT` after its `TOKEN`.
+    recover: bool,
     /// A `whole padded` root: `ACCEPT m=1`, its start its first token's or comment's.
     padded: bool,
     /// The counts of tokens (`COUNT`): each one's ups' and downs' kinds.
@@ -1126,6 +1132,11 @@ impl Emit<'_> {
         // at the stream's end) and none elsewhere, so a state's mark tests fail on a register.
         let extras = if self.token_extras && (s != 0 || self.whole) { crate::program::TOKEN_EXTRAS } else { 0 };
         self.push("TOKEN", self.any_mark.map_or(0, |k| k as u8 + 1) | extras, Arg::Num(STARTS));
+        // A statement starts at each of the root's states where it may end (`recover`), where both returns land: at the
+        // token read.
+        if !nested && st.end.is_some() && self.recover {
+            self.push("STATEMENT", 0, Arg::None);
+        }
         // Past the `TOKEN`, where both returns land (`m=0` at it, `m=1` past it).
         self.returned_field(&st);
         if self.direct[s] {
@@ -1444,12 +1455,18 @@ fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usi
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, (whole, padded): (bool, bool), survey: bool, rules: bool, token_extras: bool, counts: &[(Vec<u16>, Vec<u16>)], checks: &[(Vec<u16>, Option<u16>)]) -> Result<Lowered, String> {
+pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, (whole, padded): (bool, bool), survey: bool, rules: bool, token_extras: bool, counts: &[(Vec<u16>, Vec<u16>)], checks: &[(Vec<u16>, Option<u16>)], recover: &[::bitlex::syntax::RecoverClause]) -> Result<Lowered, String> {
+    // The statements' heads (decision 0650): the root's states where it may end, the first its first, where no
+    // statement is open.
+    if !recover.is_empty() && states.first().is_none_or(|s| s.end.is_none()) {
+        return Err("recover: the root's first state may not end, so no statement loop".into());
+    }
     let mut e = Emit {
         counts: counts.to_vec(),
         checks: checks.to_vec(),
         token_extras,
         whole,
+        recover: !recover.is_empty(),
         padded,
         rule_of: Vec::new(),
         rule: 0,
@@ -1585,6 +1602,23 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     }
     for w in marks.iter().flat_map(|m| m.unless.iter()) {
         e.string(w);
+    }
+    // `recover`'s patterns: their elements' kinds and words.
+    let mut recovers = Vec::new();
+    for c in recover {
+        let mut elems = Vec::new();
+        for choices in &c.seq {
+            let (mut kinds, mut words) = (Vec::new(), Vec::new());
+            for x in choices {
+                match x {
+                    ::bitlex::syntax::TokenElem::Kind(name) => kinds.push(name.clone()),
+                    ::bitlex::syntax::TokenElem::Word(w) => words.push(e.string(w)),
+                    _ => return Err("recover: a pattern of kinds and words".into()),
+                }
+            }
+            elems.push((kinds, words));
+        }
+        recovers.push((c.past, c.first, elems));
     }
     // The `drops` and `loses` questions, a pattern each (`bitlex_masks` numbers their entries
     // in this order), their elements at offsets from the token: `after`'s before it, the last
@@ -1761,7 +1795,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         let _ = std::fs::write(at, &text);
     }
     let rule_ids = firsts.iter().map(|&pc| kept_rules[usize::from(pc)]).collect();
-    Ok(Lowered { text, switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, rule_ids, mark_words, token_marks, gap_patterns })
+    Ok(Lowered { text, switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, rule_ids, mark_words, token_marks, gap_patterns, recover: recovers })
 }
 
 /// The words laid out as compiled code is, with no jump a layout can spare (the lean parser's

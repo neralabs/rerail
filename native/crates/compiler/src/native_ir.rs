@@ -183,6 +183,9 @@ pub enum StructuralOperation {
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
+    /// A statement starts (`STATEMENT`, decision 0650): the one before ends, and this one is marked, to be cut back to
+    /// where it fails by its syntax.
+    Statement,
 }
 
 /// What `FLAG` does with its flag.
@@ -257,6 +260,7 @@ impl StructuralOperation {
             Self::MoveFirst { pattern, flag } => (crate::program::SETTLE, flag.map_or(crate::program::SETTLE_MOVE, |f| crate::program::SETTLE_MOVE + 1 + f as u8), pattern),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
+            Self::Statement => (crate::program::STATEMENT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
                 unreachable!("native lowering created an invalid function reference")
             }
@@ -531,6 +535,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             crate::program::COUNT => StructuralOperation::Count { count: operand, up: mode == 0, max: program.counts[usize::from(operand)] },
             RETURN => StructuralOperation::Return { again: mode != 0 },
             ACCEPT => StructuralOperation::Accept,
+            crate::program::STATEMENT => StructuralOperation::Statement,
             _ => {
                 return Err(LoweringError::InvalidOpcode { position, opcode });
             }
