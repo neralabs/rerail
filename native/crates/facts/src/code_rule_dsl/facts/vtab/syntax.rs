@@ -4743,6 +4743,23 @@ impl Viewed {
                     (View::Field, Some((1, f))) => Some(f),
                     _ => None,
                 };
+                // By field, where no op reads a child's place: each child's field read off the tape first, and only
+                // a match's local id found (a rank a child: most of a probe's walk).
+                if let Some(f) = field
+                    && at.is_none()
+                    && !plan.ops[..len].contains(&IDX)
+                {
+                    let known = if counted { Known { idx: None, depth: Some(depth), prev: None } } else { Known::default() };
+                    p.facts.each_child_field(p.node(local), |x, code| {
+                        if i64::from(field_atom(p.tag, code)) == f {
+                            let c = p.local_of_node(x);
+                            if c != NONE {
+                                emit(doc, c, x, None, Some(value), known);
+                            }
+                        }
+                    });
+                    return true;
+                }
                 let mut i = 0;
                 p.each_child_node(local, |c, x| {
                     if at.is_some_and(|a| a != i) || field.is_some_and(|f| i64::from(field_atom(p.tag, p.facts.field(x))) != f) {
