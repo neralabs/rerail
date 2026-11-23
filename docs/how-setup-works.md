@@ -514,9 +514,9 @@ database before the now-active version, to put back by hand (see [Database compa
 
 Policy evaluation caches parsed files and results in a content store; where the package lives, not a flag, picks which one.
 
-The managed installation uses `~/.cache/rerail/content-v9.sqlite`, and on Windows `%USERPROFILE%\AppData\Local\rerail\content-v9.sqlite`, out of
+The managed installation uses `~/.cache/rerail/content-v10.sqlite`, and on Windows `%USERPROFILE%\AppData\Local\rerail\content-v10.sqlite`, out of
 a roaming profile's reach (earlier releases kept it in `~/.cache/rerail` there too; the uninstall removes that copy); a
-build from a Git checkout uses `<checkout>/.rerail/content-v9.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
+build from a Git checkout uses `<checkout>/.rerail/content-v10.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
 
 Rerail 0.2.0 moved the store from `content-v1.sqlite` to `content-v5.sqlite`, so the first run after updating from an
 earlier version rebuilds it. The old file (with its `-wal` and `-shm`) is no longer read and stays beside the new one
@@ -526,9 +526,9 @@ until you delete it; the managed installation's goes when `rerail install --remo
 <summary>Which store a build uses</summary>
 
 - **Managed installation** (a package under `~/.rerail/versions/<version>/` or `$RERAIL_HOME/versions/`, normally
-  loaded through `current`): owns the machine-wide `~/.cache/rerail/content-v9.sqlite`.
+  loaded through `current`): owns the machine-wide `~/.cache/rerail/content-v10.sqlite`.
 - **Any build from a Git checkout** (source, `dist/`, tests, benchmarks, every worktree):
-  `<checkout>/.rerail/content-v9.sqlite` (`.rerail/` is gitignored), so a checkout on a newer store schema never
+  `<checkout>/.rerail/content-v10.sqlite` (`.rerail/` is gitignored), so a checkout on a newer store schema never
   changes the store the installed version reads.
 - **Neither** (say, an `npx` copy): no store, reported on its first scan.
 

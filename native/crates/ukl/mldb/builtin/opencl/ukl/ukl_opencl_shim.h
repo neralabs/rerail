@@ -21,6 +21,8 @@
       the group is the thread: no memory, no barrier. A device with sub-groups (the host defines
       `UKL_OPENCL_SUBGROUPS`, and builds as OpenCL C 3.0) has them natively: each kernel requires its native width,
       `UKL_SIMD_WIDTH` lanes (`intel_reqd_sub_group_size`), and the operations are its `sub_group_*` functions (`ukl/backend.h`).
+      AMD's waves (`UKL_OPENCL_AMD` too, OpenCL C 2.0) are the device's width with no attribute, and their shuffles and
+      ballot the wave's own (`ds_bpermute`, `ballot_w32`).
     - reflection: OpenCL cannot read a program's constants back, so each kernel has a one-thread kernel beside it
       (`Name__ukl_info`) that writes its rows' layout and their text, and each reflected structure one that writes
       its fields' layout and names (`Type__ukl_layout`). The host runs them once per program.
@@ -49,8 +51,8 @@ typedef long int64_t;
 // A word the atomics take: a plain integer, as OpenCL 1.2's atomic functions (`atomic_or`, ...) do. OpenCL C 2.0
 // and later have types of these names (C11's `_Atomic`, which 1.2's functions do not take, and which a private
 // variable cannot be), so there the names are the integers' by macro; 1.2's functions remain in 3.0. The source is
-// preprocessed on the host, before the driver defines `__OPENCL_C_VERSION__`: the host builds as 3.0 exactly where it
-// defines `UKL_OPENCL_SUBGROUPS` (`compute_kernel_opencl`).
+// preprocessed on the host, before the driver defines `__OPENCL_C_VERSION__`: the host builds as 2.0 or later exactly
+// where it defines `UKL_OPENCL_SUBGROUPS` (3.0, or AMD's 2.0: `compute_kernel_opencl`).
 #if defined(UKL_OPENCL_SUBGROUPS)
 #define atomic_uint uint
 #define atomic_int int
@@ -66,8 +68,14 @@ static inline uint __ukl_cl_lid(void)
 }
 #if defined(UKL_OPENCL_SUBGROUPS)
 #define __UKL_CL_LANE ((uint)get_sub_group_local_id())
+#if defined(UKL_OPENCL_AMD)
+// AMD's waves: `UKL_SIMD_WIDTH` lanes by the device (a GPU of 32-lane waves, which the host checks at its opening),
+// with no attribute to require it.
+#define __UKL_SG_ATTR
+#else
 // Every kernel's sub-groups are its SIMD groups: `UKL_SIMD_WIDTH` lanes (the device's native width), required.
 #define __UKL_SG_ATTR __attribute__((intel_reqd_sub_group_size(UKL_SIMD_WIDTH)))
+#endif
 #else
 #define __UKL_CL_LANE (__ukl_cl_lid() & (UKL_SIMD_WIDTH - 1u))
 #define __UKL_SG_ATTR
@@ -366,6 +374,15 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
 // A program of one kernel of a source (`UKL_ONE_KERNEL`, with `__UKL_ONLY_<name>` defined as `__UKL_PROBE`): every
 // other kernel of the source is only its body, a static function nothing calls, which the compiler does not emit. An
 // OpenCL driver builds every kernel of a program, and Intel's spent 436 s on the 21 join stages of one source.
+#define __UKL_KERNEL_INFO(Name, ...) \
+    __kernel void Name ## __ukl_info(__global ulong * __ukl_out) \
+    { \
+        __constant char * __ukl_text = #__VA_ARGS__; \
+        uint __ukl_k = 1u; \
+        __UKL_FOREACH_QUAD_NOSEP(GEN_ROW_LAYOUT2, __VA_ARGS__) \
+        __ukl_out[0] = __ukl_k - 1u; \
+        __ukl_cl_text(__ukl_out, __ukl_k, __ukl_text); \
+    }
 #if defined(UKL_ONE_KERNEL)
 #define __UKL_SECOND(a, b, ...) b
 #define __UKL_IS_PROBE(...) __UKL_SECOND(__VA_ARGS__, 0, 0)
@@ -380,15 +397,6 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
 #else
 #define DEFINE_KERNEL2(Library, Name, ...) __UKL_DEFINE_KERNEL2(Library, Name, __VA_ARGS__)
 #endif
-#define __UKL_KERNEL_INFO(Name, ...) \
-    __kernel void Name ## __ukl_info(__global ulong * __ukl_out) \
-    { \
-        __constant char * __ukl_text = #__VA_ARGS__; \
-        uint __ukl_k = 1u; \
-        __UKL_FOREACH_QUAD_NOSEP(GEN_ROW_LAYOUT2, __VA_ARGS__) \
-        __ukl_out[0] = __ukl_k - 1u; \
-        __ukl_cl_text(__ukl_out, __ukl_k, __ukl_text); \
-    }
 #define __UKL_DEFINE_KERNEL2(Library, Name, ...) \
     __UKL_KERNEL_INFO(Name, __VA_ARGS__) \
     static void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) __UKL_PARAMS ); \

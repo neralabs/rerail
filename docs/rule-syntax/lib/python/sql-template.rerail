@@ -1,0 +1,53 @@
+// python/sql-template: SQL in an f-string's template, the context `sql` (decision 0597): the query a template holds,
+// read by the SQL library's rules as their own.
+//
+// An f-string parsed in a language's grammar is its template (core's `parsed`): its decoded text, each interpolation
+// the marker `rr_hole`, an identifier, so a hole parses where a name or a value goes. Each hole's node stands at its
+// field: its host node (`host_node`) is the interpolation, its place (`guest_place`) the field's. A template is a
+// text root: a tape value, one per text, its places every string that holds it.
+//
+// The extraction is the host's (rule 3):
+//   sqlt_query(s)      s is an f-string whose text reads as a query (Bandit B608's test: SELECT … FROM, DELETE
+//                      FROM, INSERT INTO … VALUES, UPDATE … SET) and holds a field
+//   sqlt_root(r, s)    r is the root of s's template parsed as SQL: the context's roots
+// The context's, exported (its rules are sql/syntax.rerail's, over its trees' nodes alone):
+//   sqlt_table(r, x)   the query of tree r reads table x (a FROM item's name, its quotes undone)
+//   sqlt_hole(h, k)    the hole at field h (an interpolation of the host) stands in the query as k: "table" (a FROM
+//                      item's name), "value" (an operand of a comparison: `id = {uid}`) or "name" (any other place)
+// The host's, what it reads of them (rule 5), for policies:
+//   sql_template_table(s, x)       f-string s's query reads table x
+//   sql_template_hole(s, i, k)     interpolation i of f-string s stands in its query as k
+//
+//   f"SELECT name FROM {table} WHERE id = {uid}"
+//     sql_template_hole(s, <{table}>, "table"), sql_template_hole(s, <{uid}>, "value")
+#include "core.rerail"
+#include "sql/syntax.rerail"
+.decl sqlt_query(s: node)
+sqlt_query(s) :- kind(s, "string"), child(s, i, _), kind(i, "interpolation"), text(s, t),
+    match("(?is)[\\s\\S]*\\b(?:select\\s[\\s\\S]*\\sfrom\\s|delete\\s+from\\s|insert\\s+into\\s[\\s\\S]*\\svalues\\b|update\\s[\\s\\S]*\\sset\\s)[\\s\\S]*", t).
+.decl sqlt_root(r: node, s: node)
+sqlt_root(r, s) :- sqlt_query(s), parsed(s, "sql", r).
+.context sql of python roots sqlt_root exports sqlt_table, sqlt_hole
+.from sql sqlt_table as sqlt_q_table, sqlt_hole as sqlt_q_hole
+.decl sql_template_table(s: node, x: symbol)
+sql_template_table(s, x) :- sqlt_root(r, s), sqlt_q_table(r, x).
+.decl sql_template_hole(s: node, i: node, k: symbol)
+sql_template_hole(s, i, k) :- sqlt_q_hole(i, k), kind(i, "interpolation"), child(s, i, _).
+
+// ---- the context's rules --------------------------------------------------------------------------------------------
+.decl sqlt_table(r: node, x: symbol)
+sqlt_table(r, x) :- sqlt_root(r, _), from_item(f, t), within(f, r), table_name(t, n), ident_name(n, x), !sqlt_mark(n).
+// sqlt_mark(n): n's text is the marker: a hole, or a node holding only it (`id = rr_hole`'s field and identifier).
+.decl sqlt_mark(n: node)
+sqlt_mark(n) :- sqlt_root(r, _), within(n, r), text(n, "rr_hole").
+// sqlt_at(h): h is the field a hole stands at, its host node.
+.decl sqlt_at(h: node)
+sqlt_at(h) :- sqlt_mark(n), host_node(n, h).
+.decl sqlt_table_at(h: node)
+sqlt_table_at(h) :- from_item(_, t), table_name(t, n), sqlt_mark(n), host_node(n, h).
+.decl sqlt_value_at(h: node)
+sqlt_value_at(h) :- comparison(e, _, _), (field(e, "left", x) ; field(e, "right", x)), sqlt_mark(x), host_node(x, h).
+.decl sqlt_hole(h: node, k: symbol)
+sqlt_hole(h, "table") :- sqlt_table_at(h).
+sqlt_hole(h, "value") :- sqlt_value_at(h), !sqlt_table_at(h).
+sqlt_hole(h, "name") :- sqlt_at(h), !sqlt_table_at(h), !sqlt_value_at(h).

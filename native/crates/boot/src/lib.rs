@@ -5,8 +5,8 @@
 //! name: the prefilter, the functors, the `ast` wave compiler and the waves' glue, and the syntax-only adapters.
 //! The engine (napi and the CLI) stands on it, and so can any test binary that needs a booted program.
 //!
-//! Its sources stay where they were (native/src): this crate mounts them in place, under the facades the engine
-//! mounted them through (tools/cratify/boot_mounts.py wrote them from the engine's `code_rule_dsl/mod.rs`; kept by
+//! Its sources are in its own `src/` (the crate split, step 9), under the facades the engine mounted them
+//! through (tools/cratify/boot_mounts.py wrote them from the engine's `code_rule_dsl/mod.rs`; kept by
 //! hand since step 2). A facade's re-exports are `pub`, and its tests' helpers are behind `test-hooks`: the test
 //! crates above (`native/crates/tests_*`) read every module through it.
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
@@ -42,7 +42,7 @@ mod test_watchdog;
 #[path = "../../../src/test_flush.rs"]
 mod test_flush;
 pub use code_rule_dsl::prof::{lower_hex, purge_allocator_pages};
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     // The facades re-export their dependency's module by glob, and the mounted sources import the same items under
     // the same names: the glob's name and the private one are one item.
@@ -745,6 +745,8 @@ pub mod code_rule_dsl {
         pub use rerail_lang_php::code_rule_dsl::embed::compiled_view;
         #[allow(unused_imports)] // boot's mount: only boot's files read it
         pub use rerail_lang_ecma::code_rule_dsl::embed::script_block;
+        #[allow(unused_imports)] // boot's mount: only boot's files read it
+        pub use rerail_lang_ecma::code_rule_dsl::embed::vue_code;
         #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_python::code_rule_dsl::embed::call_argument;
         #[allow(unused_imports)]
@@ -900,7 +902,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::facts::vtab::syntax::{Families as LazyFamilies, families};
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeDoc, TapeImage};
+            use crate::code_rule_dsl::tape::{self, FileImage, TapeDoc, TapeImage};
             #[allow(unused_imports)]
             use crate::code_rule_dsl::build_ids::grammar_version;
             #[allow(unused_imports)]
@@ -2803,10 +2805,47 @@ pub mod code_rule_dsl {
     }
     #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_facts::code_rule_dsl::producers;
-    // Published from the scan in a later slice; until then only tests call it.
-    #[allow(dead_code)]
-    #[cfg_attr(not(test), allow(unused_imports))]
-    pub mod prefilter;
+    // The prefilter (rerail-prefilter's), with the tests of it that read what boot registers (its languages).
+    pub mod prefilter {
+        pub use rerail_prefilter::code_rule_dsl::prefilter::*;
+        // `prefilter.rs`'s own imports, which its tests read (`use super::*`).
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::{language, tape::TapeDoc};
+        #[allow(unused_imports)]
+        use crate::content_store::{ContentStore, StoreError, StoreResult, TapeId, TapePrefilter};
+        #[allow(unused_imports)]
+        use ast_grep_core::Doc;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::search_index::kind_token;
+        #[cfg(test)]
+        mod tests;
+        #[cfg(test)]
+        #[path = "lower/audit_tests.rs"]
+        mod audit_tests;
+        #[cfg(test)]
+        #[path = "lab_tests.rs"]
+        mod lab_tests;
+        pub mod lower {
+            pub use rerail_prefilter::code_rule_dsl::prefilter::lower::*;
+            // `lower.rs`'s own imports, which its tests read (`use super::*`).
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::matcher::{AnchorPlan, Condition, Required, Requirement};
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::stats::inputs::Statistics;
+            #[allow(unused_imports)]
+            use rusqlite::types::Value;
+            #[allow(unused_imports)]
+            use std::collections::{BTreeSet, HashMap};
+            #[cfg(test)]
+            #[path = "../lower_tests.rs"]
+            mod tests;
+        }
+        pub mod tree {
+            pub use rerail_prefilter::code_rule_dsl::prefilter::tree::*;
+            #[cfg(test)]
+            mod tests;
+        }
+    }
     #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_transducer::code_rule_dsl::space;
     // Read by the prefilter's lowering; the compiled-plan cache is wired with the plans row.
@@ -3349,6 +3388,7 @@ pub mod code_rule_dsl {
 
     pub use rerail_facts::code_rule_dsl::text;
     #[cfg(test)]
+    #[path = "../../../../src/code_rule_dsl/test_support.rs"]
     pub mod test_support;
     /// The engine's text tools without Node (the CLI's commands); the engine adds their napi wrappers.
     pub mod tools;
@@ -3411,6 +3451,8 @@ pub mod code_rule_dsl {
             pub mod native_cpu {
                 #[cfg(any(test, feature = "test-hooks"))]
                 pub use rerail_transducer::code_rule_dsl::transducer::packed::native_cpu::*;
+                // The compiled CPU executor's registration, which boot makes in every build (`install_devices`).
+                pub use rerail_transducer::code_rule_dsl::transducer::packed::native_cpu::register;
                 #[allow(unused_imports)]
                 use super::{ BatchOutcome, Error, Output, Program, metal_batch_abi::{ ARENA_KIND_COUNT, FORMAT_VERSION, FinalCaptureRecord, GreedyEntryRecord, LinkRecord, LuaInstructionRecord, LuaSetMemberRecord, MetalNode, MetalSupertype, NONE, NfaRangeRecord, NfaStateRecord, PENDING_FOLLOWING, PENDING_GREEDY, PENDING_PATH, PathRecord, PendingRecord, PropertyRecord, QueryBucketRecord, QueryMemberRecord, QueuedStateRecord, RepeatRecord, ResultRecord, TaskStatus, ValueRecord, }, native_cpu_capture, native_cpu_output, native_cpu_reduction, native_cpu_scheduler, native_cpu_value, native_ir::{ArenaKind, FunctionRef, NativeModule, StructuralOperation}, packed_batch::{PackedBatch, PackedExecution, PackedResultPage}, value_packing::PackedValueTables, };
                 #[allow(unused_imports)]

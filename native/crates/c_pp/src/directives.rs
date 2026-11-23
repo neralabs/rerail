@@ -284,29 +284,8 @@ pub fn scan(src: &[u8], opts: Options) -> Directives<'_> {
         problems: Vec::new(),
         guard: None,
     };
-    Scanner { lx: PpLexer::new(text, opts), text, src, line: Lines::default(), stack: Vec::new(), guard: Guard::Start }.run(&mut d);
+    Scanner { lx: PpLexer::new(text, opts), text, src, line: crate::tape::LineCount::default(), stack: Vec::new(), guard: Guard::Start }.run(&mut d);
     d
-}
-
-/// The file's line count up to a position, kept as the scan goes forward.
-#[derive(Default)]
-struct Lines {
-    at: usize,
-    line: u32,
-}
-
-impl Lines {
-    /// The line (from 1) of the file's position `to` (not before the last asked).
-    fn of(&mut self, src: &[u8], to: usize) -> u32 {
-        while let Some(k) = rerail_simd8::micro::find(src, self.at, b'\n') {
-            if k >= to {
-                break;
-            }
-            self.line += 1;
-            self.at = k + 1;
-        }
-        self.line + 1
-    }
 }
 
 /// How far the include guard's pattern has been seen.
@@ -334,7 +313,7 @@ struct Scanner<'t> {
     lx: PpLexer<'t>,
     text: &'t [u8],
     src: &'t [u8],
-    line: Lines,
+    line: crate::tape::LineCount,
     stack: Vec<Open>,
     guard: Guard,
 }

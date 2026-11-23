@@ -228,20 +228,25 @@ pub const EV_CLOSE: u32 = 2;
 /// The events a walk holds before it passes them on: 4,096 nodes'.
 const EVENT_WORDS: usize = 3 * 4096;
 
-/// The codes a walk has numbered so far, by id (`events_with`): kind, field, and whether in a value's place.
-pub struct Codes<'a>(&'a Sink);
+/// The codes a walk has numbered so far, by id (`events_with`, `events_from_index`): kind, field, and whether in a
+/// value's place.
+pub struct Codes<'a> {
+    kind: &'a [u16],
+    field: &'a [u16],
+    value: &'a [u8],
+}
 
 impl Codes<'_> {
     pub fn len(&self) -> usize {
-        self.0.codes as usize
+        self.kind.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.codes == 0
+        self.kind.is_empty()
     }
 
     pub fn get(&self, id: usize) -> (u16, u16, bool) {
-        (self.0.code_kind[id], self.0.code_field[id], self.0.code_value[id] != 0)
+        (self.kind[id], self.field[id], self.value[id] != 0)
     }
 }
 
@@ -259,7 +264,8 @@ unsafe extern "C" fn flush_events(sink: *mut Sink) {
         }
         let on = &mut *sink.ctx.cast::<OnEvents>();
         let words = std::slice::from_raw_parts(sink.ev, sink.ev_len as usize);
-        on(&Codes(sink), words);
+        let n = sink.codes as usize;
+        on(&Codes { kind: &sink.code_kind[..n], field: &sink.code_field[..n], value: &sink.code_value[..n] }, words);
     }
 }
 
@@ -304,7 +310,25 @@ pub fn tape_from_index(src: &[u8], kinds: &Kinds) -> Result<Tape, Refusal> {
     }
     // simdjson skips a UTF-8 byte order mark, and its offsets start after it.
     let shift = if src.starts_with(b"\xef\xbb\xbf") { 3 } else { 0 };
-    structurals(src, |index| write(src, index, shift, kinds)).map_err(Refusal::Simdjson)?
+    structurals(src, |index| {
+        // A node an index entry, and half again for pairs, contents and escapes (the vectors grow past it).
+        let guess = index.len() + index.len() / 2;
+        let mut w = Writer {
+            kinds,
+            ids: [u16::MAX; SLOTS * 3],
+            tape: Tape { code: Vec::with_capacity(guess * 2), base: Vec::with_capacity(guess / STRIDE * 4 + 4), ..Tape::default() },
+            size: Vec::with_capacity(guess),
+            off: Vec::with_capacity(guess),
+            tail: Vec::with_capacity(guess),
+            base: 0,
+            last_start: 0,
+            max_off: 0,
+            max_tail: 0,
+        };
+        write(src, index, shift, &mut w)?;
+        Ok(w.finish())
+    })
+    .map_err(Refusal::Simdjson)?
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -331,6 +355,104 @@ const NO_FIELD: usize = 0;
 const KEY: usize = 1;
 const VALUE: usize = 2;
 
+/// What the index writer writes a node to (`write`): format 15's columns (`Writer`), or format 16's events
+/// (`Events`).
+trait Out {
+    /// A node's start, of kind `slot` under `field`: its `ord`.
+    fn open(&mut self, slot: usize, field: usize, start: u32) -> u32;
+    /// Node `ord`'s end (the innermost open node's).
+    fn close(&mut self, ord: u32, end: u32);
+    /// A node with no children.
+    fn leaf(&mut self, slot: usize, field: usize, start: u32, end: u32) {
+        let ord = self.open(slot, field, start);
+        self.close(ord, end);
+    }
+}
+
+/// A code's kind and field for a slot and field (`write`'s), and whether it is in a value's place.
+fn code_of(k: &Kinds, slot: usize, field: usize) -> (u16, u16, bool) {
+    let kind = [k.document, k.pair, k.string_content, k.escape_sequence, k.object, k.array, k.string, k.number, k.true_, k.false_, k.null][slot];
+    let field_id = [0, k.key_field, k.value_field][field];
+    // A value's place: the kinds a value can be, unless keyed.
+    (kind, field_id, slot >= OBJECT && field != KEY)
+}
+
+/// The index writer's format 16 events (`events_from_index`), as a kernel's walk gives them (`events_with`): a
+/// window of `EVENT_WORDS` at a time to `on`, with the codes numbered so far.
+struct Events<'k, 'o> {
+    kinds: &'k Kinds,
+    /// A code's id in this file, by `slot * 3 + field`; `u16::MAX` until first used.
+    ids: [u16; SLOTS * 3],
+    kind: Vec<u16>,
+    field: Vec<u16>,
+    value: Vec<u8>,
+    words: Vec<u32>,
+    n: u32,
+    on: &'o mut dyn FnMut(&Codes, &[u32]),
+}
+
+impl Events<'_, '_> {
+    fn event(&mut self, head: u32, a: u32, b: u32) {
+        if self.words.len() + 3 > EVENT_WORDS {
+            self.flush();
+        }
+        self.words.extend_from_slice(&[head, a, b]);
+    }
+
+    fn flush(&mut self) {
+        (self.on)(&Codes { kind: &self.kind, field: &self.field, value: &self.value }, &self.words);
+        self.words.clear();
+    }
+
+    fn id(&mut self, slot: usize, field: usize) -> u32 {
+        let key = slot * 3 + field;
+        if self.ids[key] == u16::MAX {
+            self.ids[key] = self.kind.len() as u16;
+            let (kind, field_id, value) = code_of(self.kinds, slot, field);
+            self.kind.push(kind);
+            self.field.push(field_id);
+            self.value.push(u8::from(value));
+        }
+        u32::from(self.ids[key])
+    }
+}
+
+impl Out for Events<'_, '_> {
+    fn open(&mut self, slot: usize, field: usize, start: u32) -> u32 {
+        let id = self.id(slot, field);
+        self.event(EV_OPEN | id << 8, start, 0);
+        self.n += 1;
+        self.n - 1
+    }
+
+    fn close(&mut self, _ord: u32, end: u32) {
+        self.event(EV_CLOSE, end, 0);
+    }
+
+    fn leaf(&mut self, slot: usize, field: usize, start: u32, end: u32) {
+        let id = self.id(slot, field);
+        self.event(EV_LEAF | id << 8, start, end);
+        self.n += 1;
+    }
+}
+
+/// `src` walked from simdjson's structural index after its DOM parser validated the whole document, for format 16:
+/// each node's event given to `on` in preorder, a window at a time, as `events_with` gives a kernel's (the tape on a
+/// CPU no kernel runs on). The source is not hashed.
+pub fn events_from_index(src: &[u8], kinds: &Kinds, mut on: impl FnMut(&Codes, &[u32])) -> Result<(), Refusal> {
+    if src.len() >= u32::MAX as usize {
+        return Err(Refusal::TooLarge);
+    }
+    let shift = if src.starts_with(b"\xef\xbb\xbf") { 3 } else { 0 };
+    structurals(src, |index| {
+        let mut out = Events { kinds, ids: [u16::MAX; SLOTS * 3], kind: Vec::new(), field: Vec::new(), value: Vec::new(), words: Vec::with_capacity(EVENT_WORDS), n: 0, on: &mut on };
+        write(src, index, shift, &mut out)?;
+        out.flush();
+        Ok(())
+    })
+    .map_err(Refusal::Simdjson)?
+}
+
 /// The columns as they are written: wide cells, narrowed at the end.
 struct Writer<'k> {
     kinds: &'k Kinds,
@@ -347,7 +469,7 @@ struct Writer<'k> {
     max_tail: u32,
 }
 
-impl Writer<'_> {
+impl Out for Writer<'_> {
     /// Writes a node's start columns; its `ord`.
     #[inline(always)]
     fn open(&mut self, slot: usize, field: usize, start: u32) -> u32 {
@@ -357,11 +479,7 @@ impl Writer<'_> {
         if id == u16::MAX {
             id = self.tape.codes.len() as u16;
             self.ids[key] = id;
-            let k = self.kinds;
-            let kind = [k.document, k.pair, k.string_content, k.escape_sequence, k.object, k.array, k.string, k.number, k.true_, k.false_, k.null][slot];
-            let field_id = [0, k.key_field, k.value_field][field];
-            // A value's place: the kinds a value can be, unless keyed.
-            self.tape.codes.push((kind, field_id, slot >= OBJECT && field != KEY));
+            self.tape.codes.push(code_of(self.kinds, slot, field));
         }
         self.tape.code.extend_from_slice(&id.to_le_bytes());
         if (ord as usize).is_multiple_of(STRIDE) {
@@ -385,14 +503,9 @@ impl Writer<'_> {
         self.size[ord as usize] = self.size.len() as u32 - ord;
         self.tail[ord as usize] = tail;
     }
+}
 
-    /// A node with no children.
-    #[inline(always)]
-    fn leaf(&mut self, slot: usize, field: usize, start: u32, end: u32) {
-        let ord = self.open(slot, field, start);
-        self.close(ord, end);
-    }
-
+impl Writer<'_> {
     fn finish(mut self) -> Tape {
         let narrow = |cells: &[u32], max: u32, out: &mut Vec<u8>| -> u8 {
             if max <= 0xffff {
@@ -412,7 +525,8 @@ impl Writer<'_> {
     }
 }
 
-fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, Refusal> {
+/// The nodes of `src`, from its structural `index` (each offset less `shift`), written to `w` in preorder.
+fn write(src: &[u8], index: &[u32], shift: u32, w: &mut impl Out) -> Result<(), Refusal> {
     let len = src.len() as u32;
     let end_before = |start: u32, next: u32| {
         let mut end = next;
@@ -422,29 +536,15 @@ fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, R
         end
     };
     let first = *index.first().ok_or(Refusal::Shape("an empty index"))? + shift;
-    // A node an index entry, and half again for pairs, contents and escapes (the vectors grow past it).
-    let guess = index.len() + index.len() / 2;
-    let mut w = Writer {
-        kinds,
-        ids: [u16::MAX; SLOTS * 3],
-        tape: Tape { code: Vec::with_capacity(guess * 2), base: Vec::with_capacity(guess / STRIDE * 4 + 4), ..Tape::default() },
-        size: Vec::with_capacity(guess),
-        off: Vec::with_capacity(guess),
-        tail: Vec::with_capacity(guess),
-        base: 0,
-        last_start: 0,
-        max_off: 0,
-        max_tail: 0,
-    };
     let document = w.open(DOCUMENT, NO_FIELD, first);
     let mut open: Vec<(Open, u32)> = Vec::with_capacity(64);
     // A value ended at `end`: the pair it is the value of ends there too.
-    let close_pair = |open: &mut Vec<(Open, u32)>, w: &mut Writer, end: u32| {
+    fn close_pair(open: &mut Vec<(Open, u32)>, w: &mut impl Out, end: u32) {
         if let Some(&(Open::Pair, pair)) = open.last() {
             w.close(pair, end);
             open.pop();
         }
-    };
+    }
     for (i, &at) in index.iter().enumerate() {
         let at = at + shift;
         let byte = src[at as usize];
@@ -453,7 +553,7 @@ fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, R
             b'}' | b']' => {
                 let (_, ord) = open.pop().ok_or(Refusal::Shape("a close with nothing open"))?;
                 w.close(ord, at + 1);
-                close_pair(&mut open, &mut w, at + 1);
+                close_pair(&mut open, w, at + 1);
                 continue;
             }
             _ => {}
@@ -495,7 +595,7 @@ fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, R
                 }
                 w.close(string, end);
                 if field != KEY {
-                    close_pair(&mut open, &mut w, end);
+                    close_pair(&mut open, w, end);
                 }
             }
             _ => {
@@ -507,7 +607,7 @@ fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, R
                 };
                 let end = end_before(at, next);
                 w.leaf(slot, field, at, end);
-                close_pair(&mut open, &mut w, end);
+                close_pair(&mut open, w, end);
             }
         }
     }
@@ -515,7 +615,7 @@ fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, R
         return Err(Refusal::Shape("a node left open"));
     }
     w.close(document, len);
-    Ok(w.finish())
+    Ok(())
 }
 
 #[cfg(test)]

@@ -19,13 +19,16 @@ const HEADERS: &[(&str, &str)] = &[
 pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/backend.h", include_str!("../lib/ukl/backend.h")),
     ("ukl/bits.h", include_str!("../lib/ukl/bits.h")),
+    ("ukl/dot.h", include_str!("../lib/ukl/dot.h")),
     ("ukl/memory.h", include_str!("../lib/ukl/memory.h")),
     ("ukl/simd.h", include_str!("../lib/ukl/simd.h")),
     ("ukl/group.h", include_str!("../lib/ukl/group.h")),
+    ("ukl/matrix.h", include_str!("../lib/ukl/matrix.h")),
     // A body over a type (decision 0440 §3.5): its header includes it once per type, with its parameters defined.
     ("ukl/body/lz4_decode.h", include_str!("../lib/ukl/body/lz4_decode.h")),
     ("ukl/body/histogram_part.h", include_str!("../lib/ukl/body/histogram_part.h")),
     ("ukl/body/radix_tile.h", include_str!("../lib/ukl/body/radix_tile.h")),
+    ("ukl/body/scan_tile.h", include_str!("../lib/ukl/body/scan_tile.h")),
     ("ukl/body/tape_f16.h", include_str!("../lib/ukl/body/tape_f16.h")),
     ("ukl/body/tape_api.h", include_str!("../lib/ukl/body/tape_api.h")),
     ("ukl/body/tape_read.h", include_str!("../lib/ukl/body/tape_read.h")),
@@ -51,6 +54,7 @@ pub const LIBRARY: &[(&str, &str)] = &[
     // so that every kernel finds them as it finds the rest of the library (`rerail-clif`'s tests write them again).
     ("ukl/reads/relation.h", include_str!("../lib/ukl/reads/relation.h")),
     ("ukl/reads/ids.h", include_str!("../lib/ukl/reads/ids.h")),
+    ("ukl/reads/lines.h", include_str!("../lib/ukl/reads/lines.h")),
     ("ukl/reads/view.h", include_str!("../lib/ukl/reads/view.h")),
     ("ukl/body/view_reads.h", include_str!("../lib/ukl/body/view_reads.h")),
     // The tape's writer's ops for the kernels, written by hand (decisions 0434 §6, 0524).

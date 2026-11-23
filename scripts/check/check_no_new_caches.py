@@ -19,11 +19,20 @@ import re
 import subprocess
 import sys
 
-FACTS_ONLY = "native/src/code_rule_dsl/logic/facts_only.rs"
+FACTS_ONLY = "native/crates/logic/src/code_rule_dsl/logic/facts_only.rs"
 # The whole engine: PR #508's pattern, probe and literal memos (2026-11-19) sat in `language.rs`, `prefilter/` and
 # `matcher/`, outside the run's directories this once read, and came in unseen.
 MAP_DIRS = ("native/src/code_rule_dsl/", "native/src/content_store/")
 TABLE_DIRS = ("native/src/code_rule_dsl/logic/", "native/src/content_store/", "native/src/code_rule_dsl/stats", "native/src/code_rule_dsl/slice")
+# A directory of the engine's module tree is in every crate that keeps a part of it (native/crates/*/src/...), as well
+# as in the engine's own native/src: each crate's sources are in its own src/.
+CRATE_SRC = re.compile(r"^native/crates/[^/]+/src/")
+
+
+def in_tree(path, dirs):
+    return path.startswith(dirs) or CRATE_SRC.sub("native/src/", path).startswith(dirs)
+
+
 HEAD = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?static\s+([A-Z_][A-Z_0-9]*)\s*:")
 HELD = re.compile(r"(Mutex|RwLock|RefCell|OnceLock|LazyLock|Cell)\s*<")
 PLAIN = re.compile(
@@ -54,7 +63,7 @@ def main():
         parents = ["HEAD"]
     added = None  # path -> {new line numbers}
     for parent in parents:
-        diff = git("diff", *([parent] if every else ["--cached", parent]), "-U0", "--no-color", "--", "native/src")
+        diff = git("diff", *([parent] if every else ["--cached", parent]), "-U0", "--no-color", "--", "native/src", "native/crates/*/src")
         lines_added = {}
         path = None
         for line in diff.splitlines():
@@ -87,13 +96,13 @@ def main():
             if n - 1 >= len(lines):
                 continue
             line = lines[n - 1]
-            if p.startswith(MAP_DIRS):
+            if in_tree(p, MAP_DIRS):
                 c = HEAD.match(line)
                 if c:
                     decl = " ".join(lines[n - 1 : n + 3]).split(" = ")[0]
                     if HELD.search(decl) and not PLAIN.search(decl) and f'"{c.group(1)}"' not in listed:
                         problems.append(f"{p}:{n}: a new static map `{c.group(1)}`. Fix the flow (compute it once and pass it on, or make it a fact); never a memo map.")
-            if p.startswith(TABLE_DIRS):
+            if in_tree(p, TABLE_DIRS):
                 for t in TABLE.finditer(line):
                     if f'"{t.group(1)}"' not in listed:
                         problems.append(f"{p}:{n}: a new table `{t.group(1)}`. A cache is rows of a relation, not a table of its own.")

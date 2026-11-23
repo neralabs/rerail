@@ -1,6 +1,6 @@
 //! Tier 1's record tables (`RecordTables`): the token loop's words, slots, rules and pairs, laid out as the compiled
 //! loop reads them, from a block's records. The CPU's tier 1 (`native_cpu_block`) lowers them; tier 2's own records
-//! (`native_cpu_stream::fetch_of`) read them too. Nothing here emits code.
+//! (`stream_analysis::fetch_of`) read them too. Nothing here emits code.
 
 use crate::Error;
 /// What a token compares past a word's first eight bytes, by the table's longest word: as

@@ -1187,7 +1187,7 @@ fn read_modify_writes(code: &str) -> usize {
 /// is its nearest strict ancestor in its set.
 #[test]
 fn the_nearest_kernels_atomics_are_loads_stores_and_one_maximum() {
-    let text = include_str!("../../../src/code_rule_dsl/transducer/packed/nearest.uglykl");
+    let text = include_str!("../../device_metal/src/code_rule_dsl/transducer/packed/nearest.uglykl");
     let src = super::source("/<kernels>/nearest.uglykl", text, &[]).unwrap();
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
@@ -1324,7 +1324,7 @@ fn a_struct_argument_is_read_in_place_unless_its_copy_is_written() {
 /// writes it again.
 #[test]
 fn the_nearest_kernels_rust_is_the_checked_in_one() {
-    let text = include_str!("../../../src/code_rule_dsl/transducer/packed/nearest.uglykl");
+    let text = include_str!("../../device_metal/src/code_rule_dsl/transducer/packed/nearest.uglykl");
     let src = super::source("/<kernels>/nearest.uglykl", text, &[]).unwrap();
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
@@ -1349,7 +1349,7 @@ fn the_nearest_kernels_rust_is_the_checked_in_one() {
 /// So where a function's lanes all run (its `_f` instance), no mask is read outside the loop and the slow paths.
 #[test]
 fn the_nearest_kernels_rust_masks_only_where_its_lanes_part() {
-    let text = include_str!("../../../src/code_rule_dsl/transducer/packed/nearest.uglykl");
+    let text = include_str!("../../device_metal/src/code_rule_dsl/transducer/packed/nearest.uglykl");
     let src = super::source("/<kernels>/nearest.uglykl", text, &[]).unwrap();
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));

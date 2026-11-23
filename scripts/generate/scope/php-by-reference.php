@@ -1,5 +1,5 @@
 <?php
-// Writes native/src/code_rule_dsl/scope/php/by_reference.generated.rs: every internal function of
+// Writes native/crates/lang_php/src/code_rule_dsl/scope/php/by_reference.generated.rs: every internal function of
 // PHP 8.5.11 (`php -n`, the extensions it loads listed in the output) that takes a parameter by
 // reference, lowercased, with its parameters' names in order (a named argument is matched to its
 // parameter by them) and the 0-based positions of those it takes by reference; a variadic
@@ -60,4 +60,4 @@ foreach ($functions as $name => [$parameters, $positions]) {
         . implode(', ', $positions) . "]),\n";
 }
 $out .= "];\n";
-file_put_contents(__DIR__ . '/../../../native/src/code_rule_dsl/scope/php/by_reference.generated.rs', $out);
+file_put_contents(__DIR__ . '/../../../native/crates/lang_php/src/code_rule_dsl/scope/php/by_reference.generated.rs', $out);

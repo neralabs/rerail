@@ -6,12 +6,13 @@
   "description": "Use the Origin trait to place ranges of parsed literals and embedded programs in their file, not host_range or host_span mappers; those widen or misplace reported spans.",
   "scope": {
     "include": [
-      "native/src/code_rule_dsl/**/*.rs"
+      "native/src/code_rule_dsl/**/*.rs",
+      "native/crates/*/src/code_rule_dsl/**/*.rs"
     ],
     "exclude": [
-      "native/src/code_rule_dsl/origin.rs",
-      "native/src/code_rule_dsl/literal/offsets.rs",
-      "native/src/code_rule_dsl/embed/segments.rs",
+      "native/crates/adapters/src/code_rule_dsl/origin.rs",
+      "native/crates/adapters/src/code_rule_dsl/literal/offsets.rs",
+      "native/crates/lang/src/code_rule_dsl/embed/segments.rs",
       "**/*tests.rs",
       "**/tests/**",
       "**/test_support.rs"

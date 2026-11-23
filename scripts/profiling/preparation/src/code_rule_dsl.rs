@@ -35,16 +35,16 @@ pub(crate) mod facts {
 // The engine's sources keep their own layout.
 #[rustfmt::skip]
 #[allow(dead_code)]
-#[path = "../../../../native/src/code_rule_dsl/residency/admission/relational/authorizer.rs"]
+#[path = "../../../../native/crates/rules/src/code_rule_dsl/residency/admission/relational/authorizer.rs"]
 mod authorizer;
 #[rustfmt::skip]
 #[allow(dead_code)]
-#[path = "../../../../native/src/code_rule_dsl/hooks.rs"]
+#[path = "../../../../native/crates/rules_base/src/code_rule_dsl/hooks.rs"]
 mod hooks;
 #[rustfmt::skip]
 #[cfg(test)]
 #[allow(dead_code)]
-#[path = "../../../../native/src/code_rule_dsl/residency/admission/relational/storage.rs"]
+#[path = "../../../../native/crates/rules_base/src/code_rule_dsl/residency/admission/relational/storage.rs"]
 mod storage;
 
 /// A relational connection with the engine's hook dispatchers, as its authorizer requires.

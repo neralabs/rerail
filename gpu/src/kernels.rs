@@ -60,7 +60,7 @@ pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<
         let shared = crate::shared::get().ok_or("no device")?;
         let started = std::time::Instant::now();
         let (library, preprocessed, bytes) = if crate::vec::on(&shared.device) {
-            (crate::vec::library(name, &format!("/<kernels>/{name}"), text, defines)?, std::time::Duration::ZERO, 0)
+            (crate::vec::library(name, &format!("/<kernels>/{name}"), text, defines)?, started.elapsed(), text.len())
         } else {
             let source = preprocess_with(name, text, defines)?;
             let preprocessed = started.elapsed();

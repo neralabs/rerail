@@ -3,8 +3,8 @@
 // carry's kernels (block_serial.rs) are compiled after it.
 //
 // Compiled for one lane word: `BW` its bits (16, 32 or 64) and `BM` its type, defined in front of the source. A
-// group is one SIMD group of the device's width (`GROUP_LANES`: 16 or 32 lanes), each lane owning `BW / 8` bytes of a
-// file; the host lays a batch out for the same width (`block_program::group_lanes`).
+// group is one SIMD group of the device's width (`GROUP_LANES`: 16 or 32 lanes), each lane owning `BW / 8` bytes of
+// a file; the host lays a batch out for the same width (`block_program::group_lanes`).
 //
 // Carries (`docs/parser-generators/06-block-parallel.md` §2): each carried operation has a lane summary, an
 // associative combine and an apply. A group combines its lanes' summaries with SIMD-group operations; between

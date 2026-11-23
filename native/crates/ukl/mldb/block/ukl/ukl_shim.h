@@ -29,6 +29,12 @@
 #  define UKL_OPENCL 1
 #  define UKL_IMPL opencl
 #  define UKL_PLATFORM_INCLUDE(x) UKL_PASTE_6(<,ukl_opencl_,x,.,h,>)
+#elif defined(__HIP_DEVICE_COMPILE__)
+/* HIP: CUDA's language (UKL_CUDA, the CUDA shim) with AMD's SIMD-group operations (UKL_HIP). */
+#  define UKL_CUDA 1
+#  define UKL_HIP 1
+#  define UKL_IMPL cuda
+#  define UKL_PLATFORM_INCLUDE(x) UKL_PASTE_6(<,ukl_cuda_,x,.,h,>)
 #elif defined(__CUDA_ARCH__)
 #  define UKL_CUDA 1
 #  define UKL_IMPL cuda

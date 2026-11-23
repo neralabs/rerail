@@ -6,8 +6,9 @@
 //!
 //! Its kernels are compiled after `block_common.uglykl`. A group is a SIMD group of the device's
 //! width, 16 or 32 lanes (`group_lanes`): elsewhere a batch is refused (`ready`), and the CPU's
-//! executors run it. Files are read in place through a file table (`FileRow`), as zero outside
-//! them. The instructions are written out straight-line (`emit`), a word of a lane at a time.
+//! executors run it. Files are read in place through a file table
+//! (`FileRow`), as zero outside them. The instructions are written out straight-line (`emit`),
+//! a word of a lane at a time.
 #[allow(unused_imports)]
 use crate::Error;
 use crate::lane;

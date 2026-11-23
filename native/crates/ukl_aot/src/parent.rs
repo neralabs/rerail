@@ -30,7 +30,7 @@ pub fn json_lang() -> Lang {
 
 /// `src`'s format 16 tape, by JSON's parser and the engine's writer.
 pub fn json_doc(lang: &Lang, name: &str, src: &[u8]) -> Doc {
-    let mut w = Writer::new(lang, src, 0, false, false, src.len() / 2 + 16);
+    let mut w = Writer::new(lang, src, rerail_tape_format::newlines::Terminators::Eslint, 0, false, false, src.len() / 2 + 16);
     rerail_json_aot::parse(&rerail_json_aot::padded(src), src.len(), &mut w).unwrap_or_else(|b| panic!("{name}: JSON's parser refused it at byte {b}"));
     let Written::F16(t) = w.finish().unwrap_or_else(|e| panic!("{name}: {e}")).tape else { panic!("{name}: not format 16") };
     let view = t.placement().view(lang, 0).unwrap_or_else(|e| panic!("{name}: {e}"));

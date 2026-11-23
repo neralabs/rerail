@@ -71,6 +71,10 @@ pub enum Backend {
     Metal { version: u32 },
     /// CUDA; `sm` is the compute capability as two or three digits (121: 12.1). The output is CUDA C++ for NVRTC.
     Cuda { sm: u32 },
+    /// HIP (AMD's GPUs); `wave` is the wavefront's lanes (32 on RDNA, 64 on CDNA and GCN). The output is HIP C++ for
+    /// hiprtc, through the CUDA shim (HIP's language is CUDA's) with HIP's SIMD-group operations
+    /// (`ukl_cuda_shim.h`, `ukl/backend.h`'s `UKL_HIP`).
+    Hip { wave: u32 },
     /// The CPU: C++ for the host's compiler, each threadgroup's threads coroutines (`ukl_cpu_shim.h`), for this
     /// process's architecture and system.
     Cpu,
@@ -90,17 +94,17 @@ impl Backend {
 }
 
 impl Backend {
-    /// Whether the backend's compiler has a 32-bit `long`: the host compiler on Windows (LLP64), and NVRTC there,
-    /// whose device types match the host's.
+    /// Whether the backend's compiler has a 32-bit `long`: the host compiler on Windows (LLP64), and NVRTC and hiprtc
+    /// there, whose device types match the host's.
     fn long_is_32(self) -> bool {
-        cfg!(windows) && matches!(self, Backend::Cpu | Backend::Cuda { .. })
+        cfg!(windows) && matches!(self, Backend::Cpu | Backend::Cuda { .. } | Backend::Hip { .. })
     }
 
     /// The shim directory's name under `mldb/builtin/`.
     fn dir(self) -> &'static str {
         match self {
             Backend::Metal { .. } => "metal",
-            Backend::Cuda { .. } => "cuda",
+            Backend::Cuda { .. } | Backend::Hip { .. } => "cuda",
             Backend::Cpu => "cpu",
             Backend::OpenCl => "opencl",
             Backend::Vec => "vec",
@@ -122,6 +126,15 @@ impl Backend {
                 d("__CUDACC__", "1".into()),
                 d("__CUDACC_RTC__", "1".into()),
                 d("__UKL_CUDA_PREPROCESSING", "1".into()),
+            ],
+            // hip-clang's device compile's, which the shims test: no `__CUDA_ARCH__` (HIP has none).
+            Backend::Hip { wave } => vec![
+                d("__HIP__", "1".into()),
+                d("__HIPCC_RTC__", "1".into()),
+                d("__HIP_DEVICE_COMPILE__", "1".into()),
+                d("__AMDGCN__", "1".into()),
+                d("__AMDGCN_WAVEFRONT_SIZE", wave.to_string()),
+                d("__UKL_HIP_PREPROCESSING", "1".into()),
             ],
             // The host compiler's own predefines that the shim tests (its context switch is per architecture and
             // system), and the backend's choice, which UKL's `ukl_shim.h` takes when no GPU compiler's is set.

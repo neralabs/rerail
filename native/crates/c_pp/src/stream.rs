@@ -138,6 +138,8 @@ enum Src {
         def: Option<u32>,
         /// The list is read in isolation: its end is a `STOP` token, and the reader goes no further.
         stop: bool,
+        /// The request (`Sink::requests`) whose reading this list is: 0, the top.
+        req: u32,
     },
 }
 
@@ -208,6 +210,21 @@ pub struct Pp<'a> {
     pub exps: Vec<Expansion>,
     once: Vec<bool>,
     counter: u64,
+    /// The `#define`s and `#undef`s so far (`Sink::entered`'s `epoch_key`).
+    epoch: u32,
+    /// The requests a measurement traces (`Sink::requests`, decision 0613): 0 is the top. Empty
+    /// when the sink wants none.
+    reqs: Vec<crate::sink::Request>,
+    /// The request of the source the last raw token was read from.
+    last_req: u32,
+    /// The invocation whose arguments are being expanded (their requests' parent).
+    building: u32,
+    /// By (expansion, parameter): its argument's request.
+    arg_reqs: HashMap<(u32, usize), u32>,
+    /// The requests' dependencies (`Request::dep_at`): the expansions whose tokens a call's name
+    /// and shape came from; `call_deps`, the call being collected's.
+    deps: Vec<u32>,
+    call_deps: Vec<u32>,
     /// Reading an `#if`'s line: `defined` is an operator.
     in_if: bool,
     /// Collecting a call's arguments: a file's end ends them, not the file.
@@ -272,6 +289,13 @@ impl<'a> Pp<'a> {
             exps: Vec::new(),
             once: Vec::new(),
             counter: 0,
+            epoch: 0,
+            reqs: Vec::new(),
+            last_req: 0,
+            building: 0,
+            arg_reqs: HashMap::new(),
+            deps: Vec::new(),
+            call_deps: Vec::new(),
             in_if: false,
             collecting: 0,
             lines,
@@ -312,6 +336,7 @@ impl<'a> Pp<'a> {
     }
 
     fn set_macro(&mut self, sym: u32, slot: u32) {
+        self.epoch += 1;
         if self.macros.len() <= sym as usize {
             self.macros.resize(sym as usize + 1, 0);
         }
@@ -346,6 +371,9 @@ impl<'a> Pp<'a> {
         self.base = main;
         self.push_file(main, None);
         self.stack.push(self.file_src(builtin));
+        if self.sink.wants_entries() {
+            self.reqs.push(crate::sink::Request::default());
+        }
         loop {
             let t = self.next_token();
             if t.kind == P::Eof {
@@ -355,6 +383,9 @@ impl<'a> Pp<'a> {
             let off = if t.exp == 0 && t.buf != 0 { self.files[t.buf as usize - 1].orig(t.start) } else { 0 };
             let text = spell(&self.files, &self.scratch, &t);
             self.sink.token(&t, text, at, off);
+        }
+        if !self.reqs.is_empty() {
+            self.sink.requests(&self.reqs, &self.deps);
         }
         true
     }
@@ -449,9 +480,14 @@ impl<'a> Pp<'a> {
         loop {
             match self.stack.last_mut() {
                 None => return Tk::eof(NO_SYM),
-                Some(Src::Toks { toks, pos, def, stop }) => {
+                Some(Src::Toks { toks, pos, def, stop, req }) => {
                     if *pos < toks.len() {
                         *pos += 1;
+                        self.last_req = *req;
+                        if let Some(r) = self.reqs.get_mut(*req as usize) {
+                            r.own += 1;
+                            r.run += 1;
+                        }
                         return toks[*pos - 1];
                     }
                     if *stop {
@@ -483,6 +519,11 @@ impl<'a> Pp<'a> {
                     if t.kind == P::Ident && !self.poisoned.is_empty() && self.poisoned.contains(&t.sym) {
                         self.diag(file, t.start, Diag::Poisoned, b"");
                     }
+                    self.last_req = 0;
+                    if let Some(r) = self.reqs.first_mut() {
+                        r.own += 1;
+                        r.run += 1;
+                    }
                     return t;
                 }
             }
@@ -511,6 +552,7 @@ impl<'a> Pp<'a> {
                 return self.defined_op(t);
             }
             let Some(d) = self.def_of(t.sym) else { return t };
+            let (parent, ppos, prun) = (self.last_req, self.reqs.get(self.last_req as usize).map_or(0, |r| r.own), self.reqs.get(self.last_req as usize).map_or(0, |r| r.run));
             let def = &self.defs[d as usize];
             if def.disabled {
                 t.flags |= NOEXP;
@@ -520,6 +562,9 @@ impl<'a> Pp<'a> {
             if fnlike && !self.next_is_lparen() {
                 return t;
             }
+            if fnlike && parent != 0 && !self.reqs.is_empty() {
+                self.note_edge(&t, parent);
+            }
             if let Some(b) = builtin {
                 // `__has_include` and `__has_embed` are operators of `#if` alone (clang reads
                 // them as identifiers elsewhere).
@@ -527,8 +572,13 @@ impl<'a> Pp<'a> {
                     return t;
                 }
                 let toks = self.builtin(b, t);
+                if let Some(r) = self.reqs.get_mut(parent as usize) {
+                    r.place = true;
+                    r.steps += (prun.saturating_sub(1)).div_ceil(32) + 1;
+                    r.run = 0;
+                }
                 if !toks.is_empty() {
-                    self.stack.push(Src::Toks { toks, pos: 0, def: None, stop: false });
+                    self.stack.push(Src::Toks { toks, pos: 0, def: None, stop: false, req: parent });
                 }
                 continue;
             }
@@ -543,7 +593,36 @@ impl<'a> Pp<'a> {
             } else {
                 (Vec::new(), t)
             };
-            self.enter(d, t, end, args);
+            let mut needs = false;
+            if let Some(r) = self.reqs.get_mut(parent as usize) {
+                // The step model (0588's loop): the plain run before the name a look-ahead, the
+                // name a step, its arguments a list ask each 32 tokens.
+                let argtoks = r.own - ppos;
+                r.steps += (prun.saturating_sub(1)).div_ceil(32) + 1 + argtoks.div_ceil(32);
+                r.run = 0;
+                // A call whose name or arguments come from its parent's arguments needs their
+                // expansions.
+                if parent != 0 && !r.arg {
+                    let id = r.exp;
+                    needs = t.exp != id || args.iter().flatten().any(|a| a.exp != id);
+                }
+            }
+            let dv: Vec<u32> = if self.reqs.is_empty() {
+                Vec::new()
+            } else {
+                let mut v = if fnlike { std::mem::take(&mut self.call_deps) } else { Vec::new() };
+                v.push(t.exp);
+                v.sort_unstable();
+                v.dedup();
+                v
+            };
+            let before = self.reqs.len();
+            self.enter(d, t, end, args, parent, ppos, needs);
+            if self.reqs.len() > before {
+                let r = &mut self.reqs[before];
+                (r.dep_at, r.dep_n) = (self.deps.len() as u32, dv.len() as u32);
+                self.deps.extend(dv);
+            }
         }
     }
 
@@ -551,11 +630,20 @@ impl<'a> Pp<'a> {
     /// expansion).
     fn next_is_lparen(&mut self) -> bool {
         let outer = self.par.as_ref().map(|p| p.outer);
+        // A measurement's: the first macro's list passed whose end the name is at (an open tail).
+        let mut crossed: Option<u32> = None;
         for (k, s) in self.stack.iter_mut().enumerate().rev() {
             match s {
-                Src::Toks { toks, pos, stop, .. } => {
+                Src::Toks { toks, pos, stop, def, req } => {
                     if *pos < toks.len() {
-                        return toks[*pos].is(T::LParen);
+                        let lp = toks[*pos].is(T::LParen);
+                        if lp && let Some(c) = crossed && let Some(r) = self.reqs.get_mut(c as usize) {
+                            r.tails += 1;
+                        }
+                        return lp;
+                    }
+                    if def.is_some() && crossed.is_none() {
+                        crossed = Some(*req);
                     }
                     if *stop {
                         if Some(k) == outer {
@@ -569,7 +657,11 @@ impl<'a> Pp<'a> {
                     let (at, bol) = lx.state();
                     let t = lx.next_token();
                     lx.seek(at, bol);
-                    return t.is(T::LParen);
+                    let lp = t.is(T::LParen);
+                    if lp && let Some(c) = crossed && let Some(r) = self.reqs.get_mut(c as usize) {
+                        r.tails += 1;
+                    }
+                    return lp;
                 }
             }
         }
@@ -582,6 +674,14 @@ impl<'a> Pp<'a> {
     fn collect_args(&mut self, d: u32, name: &Tk) -> Result<(Vec<Vec<Tk>>, Tk), bool> {
         self.collecting += 1;
         let _lp = self.lex_raw();
+        // A measurement's (`Sink::requests`): the tokens whose producers the call's shape needs:
+        // its `(` and `)`, the commas that split it, and the parentheses a producer leaves unpaired.
+        let trace = !self.reqs.is_empty();
+        let mut paired: Vec<(u32, i32)> = Vec::new();
+        if trace {
+            self.call_deps.clear();
+            self.call_deps.push(_lp.exp);
+        }
         let (n, variadic) = (self.defs[d as usize].params.len(), self.defs[d as usize].variadic);
         let mut args: Vec<Vec<Tk>> = vec![Vec::new()];
         let mut depth = 0u32;
@@ -591,15 +691,28 @@ impl<'a> Pp<'a> {
             if t.kind == P::Eof {
                 break false;
             }
+            if trace && (t.is(T::LParen) || t.is(T::RParen)) && !(t.is(T::RParen) && depth == 0) {
+                let d = if t.is(T::LParen) { 1 } else { -1 };
+                match paired.iter_mut().find(|p| p.0 == t.exp) {
+                    Some(p) => p.1 += d,
+                    None => paired.push((t.exp, d)),
+                }
+            }
             if t.is(T::LParen) {
                 depth += 1;
             } else if t.is(T::RParen) {
                 if depth == 0 {
                     end = t;
+                    if trace {
+                        self.call_deps.push(t.exp);
+                    }
                     break true;
                 }
                 depth -= 1;
             } else if t.is(T::Comma) && depth == 0 && !(variadic && args.len() == n) {
+                if trace {
+                    self.call_deps.push(t.exp);
+                }
                 args.push(Vec::new());
                 continue;
             }
@@ -609,6 +722,9 @@ impl<'a> Pp<'a> {
             args.last_mut().unwrap().push(t);
         };
         self.collecting -= 1;
+        if trace {
+            self.call_deps.extend(paired.iter().filter(|p| p.1 != 0).map(|p| p.0));
+        }
         let file = self.cur_file();
         if !done {
             self.note_cut();
@@ -636,7 +752,14 @@ impl<'a> Pp<'a> {
     /// The tokens of `toks`, expanded in isolation (an argument before substitution).
     fn expand_list(&mut self, toks: Vec<Tk>) -> Vec<Tk> {
         let depth = self.stack.len();
-        self.stack.push(Src::Toks { toks, pos: 0, def: None, stop: true });
+        let req = if self.reqs.is_empty() {
+            0
+        } else {
+            let (skey, key) = self.list_key(&toks);
+            self.reqs.push(crate::sink::Request { parent: self.building, key, skey, arg: true, ..Default::default() });
+            self.reqs.len() as u32 - 1
+        };
+        self.stack.push(Src::Toks { toks, pos: 0, def: None, stop: true, req });
         let mut out = Vec::new();
         loop {
             let t = self.next_token();
@@ -688,7 +811,7 @@ impl<'a> Pp<'a> {
     }
 
     /// Macro `d`'s expansion of the call `name` with `args`, entered as the next source.
-    fn enter(&mut self, d: u32, name: Tk, end: Tk, args: Vec<Vec<Tk>>) {
+    fn enter(&mut self, d: u32, name: Tk, end: Tk, args: Vec<Vec<Tk>>, parent: u32, ppos: u32, needs_args: bool) {
         self.exps.push(Expansion { def: d, name, end });
         let id = self.exps.len() as u32;
         {
@@ -700,14 +823,113 @@ impl<'a> Pp<'a> {
         }
         let body = self.defs[d as usize].body.clone();
         let mut pre: Vec<Option<Vec<Tk>>> = vec![None; args.len()];
+        let entry = self.sink.wants_entries().then(|| self.entry_key(d, &args));
+        let req = match entry {
+            Some((skey, epoch_key, _)) if !self.reqs.is_empty() => {
+                let pos_steps = self.reqs[parent as usize].steps;
+                self.reqs.push(crate::sink::Request { parent, pos: ppos, pos_steps, key: epoch_key, skey, exp: id, needs_args, ..Default::default() });
+                self.reqs.len() as u32 - 1
+            }
+            _ => 0,
+        };
+        let building = std::mem::replace(&mut self.building, req);
         let mut out = self.substitute(d, &body, &args, &mut pre, id);
+        self.building = building;
+        if let Some((key, epoch_key, depth)) = entry {
+            self.sink.entered(crate::sink::Entered { def: d, key, epoch_key, depth, size: out.len() as u32 });
+        }
         self.paste_all(&mut out, id);
         out.retain(|t| !t.is_placemarker());
         if let Some(f) = out.first_mut() {
             f.flags = (f.flags & !(BOL | SPACE)) | (name.flags & (BOL | SPACE));
         }
         self.defs[d as usize].disabled = true;
-        self.stack.push(Src::Toks { toks: out, pos: 0, def: Some(d), stop: false });
+        self.stack.push(Src::Toks { toks: out, pos: 0, def: Some(d), stop: false, req });
+    }
+
+    /// What macro `d`'s expansion of `args` depends on (`Sink::entered`): its key, with the
+    /// definitions' count, and the expansions it is inside.
+    fn entry_key(&self, d: u32, args: &[Vec<Tk>]) -> (u64, u64, u32) {
+        fn mix(h: &mut u64, b: &[u8]) {
+            for &c in b {
+                *h = (*h ^ u64::from(c)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        // The definition by its spelling (its name, parameters and body), so that two units' are equal.
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let def = &self.defs[d as usize];
+        mix(&mut h, self.syms.text(def.name));
+        mix(&mut h, &[u8::from(def.fnlike), u8::from(def.variadic)]);
+        for p in &def.params {
+            mix(&mut h, &[0xfc]);
+            mix(&mut h, self.syms.text(*p));
+        }
+        for t in &def.body {
+            mix(&mut h, &[0xfb]);
+            mix(&mut h, self.text(t));
+        }
+        for a in args {
+            mix(&mut h, &[0xff]);
+            for t in a {
+                mix(&mut h, &[0xfe, t.flags & (NOEXP | SPACE)]);
+                mix(&mut h, self.text(t));
+            }
+        }
+        let mut off: Vec<u32> = self.stack.iter().filter_map(|s| if let Src::Toks { def: Some(x), .. } = s { Some(*x) } else { None }).collect();
+        let depth = self.stack.iter().filter(|s| matches!(s, Src::Toks { .. })).count() as u32;
+        off.sort_unstable();
+        off.dedup();
+        mix(&mut h, &[0xfd]);
+        for x in off {
+            mix(&mut h, &[0xfa]);
+            mix(&mut h, self.syms.text(self.defs[x as usize].name));
+        }
+        let key = h;
+        mix(&mut h, &self.epoch.to_le_bytes());
+        (key, h, depth)
+    }
+
+    /// An argument's key before its expansion (`Sink::requests`): its tokens' spellings, the
+    /// names of the macros disabled, and the definitions' count.
+    fn list_key(&self, toks: &[Tk]) -> (u64, u64) {
+        fn mix(h: &mut u64, b: &[u8]) {
+            for &c in b {
+                *h = (*h ^ u64::from(c)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        let mut h: u64 = 0x84222325cbf29ce4;
+        for t in toks {
+            mix(&mut h, &[0xfe, t.flags & (NOEXP | SPACE)]);
+            mix(&mut h, self.text(t));
+        }
+        let mut off: Vec<u32> = self.stack.iter().filter_map(|s| if let Src::Toks { def: Some(x), .. } = s { Some(*x) } else { None }).collect();
+        off.sort_unstable();
+        off.dedup();
+        for x in off {
+            mix(&mut h, &[0xfa]);
+            mix(&mut h, self.syms.text(self.defs[x as usize].name));
+        }
+        let skey = h;
+        mix(&mut h, &self.epoch.to_le_bytes());
+        (skey, h)
+    }
+
+    /// A measurement's (`Sink::requests`): a call about to be made in request `req`'s rescan whose
+    /// name and `(` come from different parts of its list (an argument's expansion and the body,
+    /// or two arguments'): an argument's edge taken.
+    fn note_edge(&mut self, name: &Tk, req: u32) {
+        let Some(Src::Toks { toks, pos, req: top, .. }) = self.stack.last() else { return };
+        if *top != req || *pos >= toks.len() || !toks[*pos].is(T::LParen) {
+            return;
+        }
+        let Some(r) = self.reqs.get_mut(req as usize) else { return };
+        if r.arg {
+            return;
+        }
+        let lp = toks[*pos].exp;
+        if (name.exp == r.exp) != (lp == r.exp) || (name.exp != r.exp && name.exp != lp) {
+            r.taken += 1;
+        }
     }
 
     /// The file position a token was called from: through its expansions to the token read from
@@ -792,7 +1014,14 @@ impl<'a> Pp<'a> {
                     args[p].clone()
                 } else {
                     if pre[p].is_none() {
+                        let rid = self.reqs.len() as u32;
                         pre[p] = Some(self.expand_list(args[p].clone()));
+                        if !self.reqs.is_empty() {
+                            self.arg_reqs.insert((id, p), rid);
+                        }
+                    }
+                    if !self.reqs.is_empty() {
+                        self.note_hole(d, &out, &args[p], body.get(i + 1), id, p);
                     }
                     pre[p].clone().unwrap()
                 };
@@ -810,6 +1039,28 @@ impl<'a> Pp<'a> {
             i += 1;
         }
         out
+    }
+
+    /// A measurement's (`Sink::requests`): whether an argument's expansion read as a hole has an
+    /// edge its rescan can't decide before the expansion is done. Before it, a function-like name
+    /// and the argument's first token a macro's name; after it, a `(` in the body and its last
+    /// token a macro's name or a `)`.
+    fn note_hole(&mut self, d: u32, out: &[Tk], arg: &[Tk], next: Option<&Tk>, id: u32, p: usize) {
+        let is_macro = |s: &Self, t: &Tk| t.kind == P::Ident && t.flags & NOEXP == 0 && s.def_of(t.sym).is_some();
+        let fn_before = out.last().is_some_and(|t| {
+            t.kind == P::Ident && t.flags & NOEXP == 0 && self.def_of(t.sym).is_some_and(|e| e != d && self.defs[e as usize].fnlike && !self.defs[e as usize].disabled)
+        });
+        let first = fn_before && arg.first().is_some_and(|t| is_macro(self, t));
+        let last = next.is_some_and(|n| n.is(T::LParen)) && arg.last().is_some_and(|t| is_macro(self, t) || t.is(T::RParen));
+        if !(first || last) {
+            return;
+        }
+        if let Some(&rid) = self.arg_reqs.get(&(id, p)) {
+            self.reqs[rid as usize].blocks = true;
+        }
+        let r = &mut self.reqs[self.building as usize];
+        r.edge_first += u32::from(first);
+        r.edge_last += u32::from(last);
     }
 
     /// Whether the variadic argument has tokens once expanded (`__VA_OPT__`'s test).
@@ -1551,7 +1802,7 @@ impl<'a> Pp<'a> {
             f.flags |= BOL;
         }
         if !out.is_empty() {
-            self.stack.push(Src::Toks { toks: out, pos: 0, def: None, stop: false });
+            self.stack.push(Src::Toks { toks: out, pos: 0, def: None, stop: false, req: self.last_req });
         }
     }
 

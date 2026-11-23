@@ -275,9 +275,10 @@ fn a_units_groups_are_one_a_small_grids_nodes() {
 
 /// The setup's Metal source splits one unit a barriered phase function (decision 0571): the grid's
 /// primitives, the expansion's loop (`lp_loop`, decision 0588) and a unit's setup (`pp_unit`, the
-/// grid's or a team's: 0588 §6), 9 dynamic libraries: a tape read is two calls, `clif_tape_<name>` and 16z's block
-/// (`clif_z_block`; decision 0576 checks 16z in the public read, with no `_z` read between); the small tape reads
-/// stay in their callers.
+/// grid's or a team's: 0588 §6), 9 dynamic libraries, calls 5 deep: a tape read is two calls, `clif_tape_<name>` and
+/// 16z's block (`clif_z_block`; decision 0576 checks 16z in the public read, with no `_z` read between); the small
+/// tape reads stay in their callers. The loop's look for a `(` (`lp_next_is_lparen`) is called, never inlined
+/// (inlined, it crashed the M3's back end); small, it is kept in its callers' units.
 #[test]
 fn the_setup_splits_one_unit_a_barriered_function() {
     let msl = rerail_ukl::metal_source("pp_setup", source()).expect("the setup's source preprocesses");
@@ -289,6 +290,9 @@ fn the_setup_splits_one_unit_a_barriered_function() {
     assert!(split.units.iter().any(|u| u.name == "lp_loop"), "lp_loop is a unit");
     assert!(split.units.iter().any(|u| u.name == "pp_unit"), "pp_unit is a unit");
     assert!(split.local.iter().any(|n| n.starts_with("node_")), "the tape's reads stay local");
+    // The look for a `(` is called, never inlined (inlined with the node frames' reads it crashed the M3's back end):
+    // a `UKL_ONCE` function, a unit of its own or, small and barrier-free, kept noinline in its callers' units.
+    assert!(split.units.iter().any(|u| u.name == "lp_next_is_lparen") || split.local.iter().any(|n| n == "lp_next_is_lparen"), "the look for a `(` is called");
     assert_eq!(split.units.len(), 9);
     assert_eq!(split.depth, 5);
     assert!(split.kernel.contains("kernel void pp_setup") && split.units.iter().all(|u| !u.source.contains("kernel void")));

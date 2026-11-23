@@ -49,6 +49,12 @@ impl ReadIds {
         Ok(Self { ids, call_conv: module.isa().default_call_conv() })
     }
 
+    /// The read `name`'s external name in the module: what a check of a function's calls allows.
+    pub fn name(&self, name: &str) -> ir::UserExternalName {
+        let k = READS.iter().position(|read| read.name == name).expect("a read");
+        ir::UserExternalName { namespace: 0, index: self.ids[k].as_u32() }
+    }
+
     /// `func`'s reference to the read `name`: its import of it, made the first time.
     pub fn func_ref(&self, name: &str, func: &mut Function) -> ir::FuncRef {
         let k = READS.iter().position(|read| read.name == name).expect("a read");
@@ -159,10 +165,25 @@ pub fn reads<M: Module>(module: &mut M, context: &mut Context) -> Result<(), Mod
 /// Every cold read defined in `module`, once, by `define` (the module's way to define a function), each
 /// through the pass: what a call the pass leaves calls.
 pub fn define_cold<M: Module>(module: &mut M, define: &mut dyn FnMut(&mut M, FuncId, &mut Context) -> Result<(), ModuleError>) -> Result<(), ModuleError> {
-    for read in READS.iter().filter(|read| !read.hot) {
+    let all: Vec<&str> = READS.iter().filter(|read| !read.hot).map(|read| read.name).collect();
+    define_cold_of(module, &all, define)
+}
+
+/// `define_cold`, of the cold reads named (those a module's functions still call after the pass,
+/// `reads_called`) and the cold reads their bodies call: a module whose code reaches few reads defines
+/// those alone.
+pub fn define_cold_of<M: Module>(module: &mut M, names: &[&str], define: &mut dyn FnMut(&mut M, FuncId, &mut Context) -> Result<(), ModuleError>) -> Result<(), ModuleError> {
+    let mut work: Vec<&'static Read> = names.iter().filter_map(|name| reads::read(name)).filter(|read| !read.hot).collect();
+    let mut done: Vec<&str> = Vec::new();
+    while let Some(read) = work.pop() {
+        if done.contains(&read.name) {
+            continue;
+        }
+        done.push(read.name);
         let id = declare(module, read)?;
         let mut context = Context::for_function(body(module, id, read)?);
         reads(module, &mut context)?;
+        work.extend(called(module, &context.func).into_iter().map(|(_, read)| read).filter(|read| !read.hot && !done.contains(&read.name)));
         define(module, id, &mut context)?;
     }
     Ok(())

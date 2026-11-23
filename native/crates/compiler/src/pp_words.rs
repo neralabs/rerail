@@ -152,8 +152,9 @@ pub struct File<'a> {
     /// Its path, as `__FILE__` spells it (before a `#line`).
     pub path: &'a [u8],
     pub bytes: &'a [u8],
-    /// Its newlines' offsets (`__LINE__`'s, `#line`'s).
-    pub lines: &'a [u32],
+    /// Its line index, C's lines (`rerail_c_pp::tape::LINE_ENDS`, decision 0612), then a word's room: the tape's
+    /// format (`rerail_tape_format::newlines::Lines::bytes`), read by the tape's reads (`__LINE__`'s, `#line`'s).
+    pub lines: &'a [u8],
     pub toks: &'a [Tok],
     pub chains: &'a [(u32, u32)],
     pub includes: &'a [(u32, u32)],
@@ -1108,8 +1109,8 @@ pub struct FileC {
     /// Its includes named by expanding their line (`File::named`).
     pub named: *const NamedC,
     pub nnamed: u64,
-    /// Its newlines' offsets, and its path (`File::lines`, `File::path`).
-    pub lines: *const u32,
+    /// Its line index and its bytes (`File::lines`, read by the CLIF `lines_line`), and its path (`File::path`).
+    pub lines: *const u8,
     pub nlines: u64,
     pub path: *const u8,
     pub npath: u64,
@@ -1214,7 +1215,7 @@ pub fn prepare<'a>(program: &'a Words, files: &'a [File<'a>], env: &'a Env<'a>, 
             nincludes: f.includes.len() as u64,
             named: ro(place, n) as *const NamedC,
             nnamed: n.len() as u64,
-            lines: ro(place, f.lines) as *const u32,
+            lines: ro(place, f.lines) as *const u8,
             nlines: f.lines.len() as u64,
             path: ro(place, f.path) as *const u8,
             npath: f.path.len() as u64,
@@ -2851,7 +2852,7 @@ impl<'a> Machine<'a> {
             return 0;
         }
         let f = t.buf - 1;
-        let phys = self.files[f as usize].lines.partition_point(|&n| n < t.start) as i64 + 1;
+        let phys = i64::from(rerail_tape_format::newlines::line(self.files[f as usize].lines, t.start)) + 1;
         let delta = self.sources.iter().rev().find(|s| s.file == f).map_or(0, |s| s.delta);
         (phys + i64::from(delta)) as u32
     }
@@ -3005,7 +3006,7 @@ impl<'a> Machine<'a> {
         let Some(n) = first.filter(|t| t.kind == NUMBER).and_then(|t| crate::pp_expr::number(self.text(&t))) else { return Ok(()) };
         // The directive's last line: the line after it is line `n`.
         let s = self.sources[i];
-        let phys = self.files[s.file as usize].lines.partition_point(|&k| k < last.end) as i64 + 2;
+        let phys = i64::from(rerail_tape_format::newlines::line(self.files[s.file as usize].lines, last.end)) + 2;
         self.sources[i].delta = (n.bits as i64 - phys) as i32;
         if let Some(t) = second.filter(|t| t.kind == LITERAL)
             && let Some(Spell::Scratch(p0, p1)) = self.destringize(self.tok_spell(&t))?

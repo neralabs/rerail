@@ -14,7 +14,7 @@
 // It fails too when it finds no dep-info of the repository's crates (a target directory the build did not write to):
 // reading none, it would pass while checking nothing.
 //
-// RERAIL_FIXTURES_DIR is read as a test compiles only by `oracle!` (native/src/code_rule_dsl/fixtures.rs), which
+// RERAIL_FIXTURES_DIR is read as a test compiles only by `oracle!` (native/crates/lang/src/code_rule_dsl/fixtures.rs), which
 // embeds a fixture's text, never its path: the sources are checked to hold no other `env!("RERAIL_FIXTURES_DIR")`.
 // The target directory defaults to $CARGO_TARGET_DIR, else target/.
 import { execFileSync } from "node:child_process";
@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const NAMED = ["CARGO_MANIFEST_DIR", "CARGO_MANIFEST_PATH", "RERAIL_ORACLES_DIR"];
-const FIXTURES_MACROS = "native/src/code_rule_dsl/fixtures.rs";
+const FIXTURES_MACROS = "native/crates/lang/src/code_rule_dsl/fixtures.rs";
 
 // A target directory's own trees; never a crate's OUT_DIR contents or incremental state.
 const SKIPPED_DIRS = new Set(["incremental", ".fingerprint", "out", "doc", "native-tests"]);

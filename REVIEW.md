@@ -39,11 +39,11 @@ Reject the deployment when anything does not follow from the PR: the run then co
 - The Rust jobs, the conformance check with its comment, the dashboard browser tests, the integration tests with the packs from npm, and the real sessions run on a PR only when a path filter of the `changes` job in `.github/workflows/ci.yml` matches. A change that affects one of them through a path its filter misses gets no run of it. `npm run check:ci-paths` keeps every file their entry points import inside the filters; files read at runtime are listed by hand there, so a PR that adds such a read must add it to the filter.
 - Pack test data a PR does not track is not in the review checkout; once published, its diff is the `test-data.lock` change (the archive's sha256, file count and bytes). To see what a lock change does to the data, pull the base's and the head's archives (`npm run fixtures:pull` on each) and compare them. CI runs on the archives the PR's locks name, with any `publish/` laid over them; it never derives data again.
 - PRs from Dependabot get no OIDC token, so the jobs that read pack test data (`test-data`, `unit`, `rust`, `tools` with the conformance check, the **Conformance** comment and **Pack test data is in S3**) skip, and run when the change reaches `main`. Only structure metric #3 gates such a PR's pack data. Say so in the review, and mark claims about conformance and the data `needs-run` with `knownGap` `pack-data`. Before auto-merge, `.github/workflows/dependabot-automerge.yml` runs the whole of CI again on the approved commit as the neralabs-ci app, which gets the OIDC token, so these jobs do run before an approved Dependabot PR merges.
-- Git LFS files (`model/model.safetensors`, `native/src/code_rule_dsl/value/names/names.bin`) are pointer files in the review checkout; their diff is the pointer, not the content.
+- Git LFS files (`model/model.safetensors`, `native/crates/adapters/src/code_rule_dsl/value/names/names.bin`) are pointer files in the review checkout; their diff is the pointer, not the content.
 
 ## High-risk areas
 
-- Migrations: `src/engine/storage/` (the Rerail database in users' repos, its schema and `migrations.ts`) and `native/src/content_store/schema.rs` (the content store's schema and version floor). Check that existing databases still open, nothing is lost, and an older binary still refuses a store it can't read.
+- Migrations: `src/engine/storage/` (the Rerail database in users' repos, its schema and `migrations.ts`) and `native/crates/store/src/content_store/schema.rs` (the content store's schema and version floor). Check that existing databases still open, nothing is lost, and an older binary still refuses a store it can't read.
 - CI and deployment: `.github/` (workflows, actions, Dependabot; always high-risk for the reviewer, except the issue forms and the pull request template, which are text people fill in), `scripts/release/` and `.changeset/config.json`. Check that checks still gate and that a release publishes what it should, where it should.
 - Packaging: the root `package.json` and `Cargo.toml`, `native/Cargo.toml`, `native/build.rs`, `scripts/build/`, `tsconfig.build.json`, `packs/*/package.json`, and the agent plugin manifests (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`). Check what the packages contain, their versions and their entry points. Adding or removing `"private": true` in a pack's `package.json` decides whether it ever reaches npm: making one public needs its changeset, `publishConfig` and the [first-publish runbook](docs/publishing-a-new-pack.md); making a published one private strands its npm versions.
 - `src/setup/`: installs rerail into users' agents.
@@ -69,7 +69,7 @@ Machine-readable. Paths use CODEOWNERS syntax. A PR touching a high-risk path is
   },
   "highRiskPaths": [
     "src/engine/storage/",
-    "native/src/content_store/schema.rs",
+    "native/crates/store/src/content_store/schema.rs",
     "scripts/release/",
     ".changeset/config.json",
     "/package.json",
@@ -88,7 +88,7 @@ Machine-readable. Paths use CODEOWNERS syntax. A PR touching a high-risk path is
   ],
   "generatedPaths": [
     "*.generated.*",
-    "native/src/code_rule_dsl/value/names/names.bin",
+    "native/crates/adapters/src/code_rule_dsl/value/names/names.bin",
     "native/grammars/**/grammar.json",
     "model/",
     "packs/*/upstream/*/fixtures/",

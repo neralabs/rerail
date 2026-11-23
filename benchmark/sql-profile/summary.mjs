@@ -42,7 +42,7 @@ function recommendation(query) {
     key: "sql-phase-preparation", title: "Reduce fused SQL preparation", certainty: "measured cost",
     reason: "The recorded span measures statement preparation and cache lookup separately from SQL execution.",
     change: "Reduce repeated result arms, CTE size, or unstable statement shapes while preserving materialization fences.",
-    source: "native/src/code_rule_dsl/sql_executor/phase.rs; native/src/code_rule_dsl/sql_executor/phase/reads.rs",
+    source: "native/crates/sessions_base/src/code_rule_dsl/sql_executor/phase.rs; native/crates/sessions_base/src/code_rule_dsl/sql_executor/phase/reads.rs",
     verify: "Compare preparation CPU and unprofiled first edits. Preserve complete relation parity, rollback, and execution limits.",
   };
   if (query.contextDetails?.some(context => context.scope === "relational")) {

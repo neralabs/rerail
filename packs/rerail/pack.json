@@ -71,11 +71,11 @@
       "group": "Layering",
       "examples": {
         "caught": {
-          "path": "native/src/code_rule_dsl/tape.rs",
+          "path": "native/crates/lang/src/code_rule_dsl/tape.rs",
           "text": "impl FileImage {\n    pub(super) fn parse(\n        grammar: &Grammar,\n        source: &str,\n        budget: &impl Fn() -> bool,\n    ) -> Option<Result<FileImage, String>> {\n        if grammar.lang == GrammarDialect::Blade {\n            return Some(Self::encode_template(grammar, source, budget));\n        }\n        None\n    }\n}\n"
         },
         "passes": {
-          "path": "native/src/code_rule_dsl/tape.rs",
+          "path": "native/crates/lang/src/code_rule_dsl/tape.rs",
           "text": "impl FileImage {\n    pub(super) fn parse(grammar: &Grammar, source: &str) -> Option<Result<FileImage, String>> {\n        with_adapter!(Family::of(grammar.lang), A => A::parse(grammar, source))\n    }\n}\n"
         }
       }
@@ -279,11 +279,11 @@
       "group": "Repository layout",
       "examples": {
         "caught": {
-          "path": "native/src/code_rule_dsl/scope/rust/tests.rs",
+          "path": "native/crates/tests_scope/src/code_rule_dsl/scope/rust/tests.rs",
           "text": "fn source(path: &str) -> &'static str {\n    match path {\n        \"closures.rs\" => include_str!(\"../../../../../fixtures/rust/scope/crate/src/closures.rs\"),\n        other => panic!(\"unknown fixture {other}\"),\n    }\n}\n"
         },
         "passes": {
-          "path": "native/src/code_rule_dsl/scope/rust/tests.rs",
+          "path": "native/crates/tests_scope/src/code_rule_dsl/scope/rust/tests.rs",
           "text": "use crate::code_rule_dsl::oracle;\n\nfn source(path: &str) -> &'static str {\n    match path {\n        \"closures.rs\" => oracle!(\"rust/scope/crate/src/closures.rs\"),\n        other => panic!(\"unknown fixture {other}\"),\n    }\n}\n"
         }
       }
@@ -485,11 +485,11 @@
       "group": "Native engine",
       "examples": {
         "caught": {
-          "path": "native/src/code_rule_dsl/suppress/rerail.rs",
+          "path": "native/crates/adapters/src/code_rule_dsl/suppress/rerail.rs",
           "text": "fn leading<D: Doc>(node: &Node<'_, D>, source: &str) -> Option<Node<'_, D>> {\n    (node.kind() == \"block\")\n        .then(|| node.children().find(|child| is_code(child, source)))\n        .flatten()\n}\n"
         },
         "passes": {
-          "path": "native/src/code_rule_dsl/suppress/rerail.rs",
+          "path": "native/crates/adapters/src/code_rule_dsl/suppress/rerail.rs",
           "text": "fn leading<D: Doc>(node: &Node<'_, D>, kinds: Kinds) -> bool {\n    kinds.bodies.contains(&node.kind().as_ref())\n}\n"
         }
       }
@@ -501,11 +501,11 @@
       "group": "Native engine",
       "examples": {
         "caught": {
-          "path": "native/src/git_workspace.rs",
+          "path": "native/crates/observe/src/git_workspace.rs",
           "text": "/// The extensions of the files the host evaluates (`SOURCE_LANGUAGES` in\n/// code-rule-languages.ts): dialect sources and the text files regex clauses read.\nconst SOURCE_SUFFIXES: &[&str] = &[\n    \"bash\", \"cjs\", \"css\", \"cts\", \"html\", \"js\", \"json\", \"jsx\", \"md\", \"mdx\", \"mjs\", \"mts\", \"php\",\n    \"py\", \"pyi\", \"rs\", \"rst\", \"scss\", \"sh\", \"sql\", \"toml\", \"ts\", \"tsx\", \"txt\", \"yaml\", \"yml\",\n    \"zsh\",\n];\n"
         },
         "passes": {
-          "path": "native/src/git_workspace.rs",
+          "path": "native/crates/observe/src/git_workspace.rs",
           "text": "/// The names of the files the host evaluates by their whole name (`SOURCE_NAMES` in\n/// code-rule-languages.ts): the package ignore files `file.package.published` reads.\nconst SOURCE_NAMES: &[&str] = &[\".npmignore\", \".gitignore\"];\n"
         }
       }
@@ -517,11 +517,11 @@
       "group": "Native engine",
       "examples": {
         "caught": {
-          "path": "native/src/code_rule_dsl/vue/view.rs",
+          "path": "native/crates/lang_ecma/src/code_rule_dsl/vue/view.rs",
           "text": "impl View {\n    fn file_range(&self, node: &Node<'_, StrDoc<Vue>>) -> Range<usize> {\n        return self.segments.host_span(node.byte_range());\n    }\n}\n"
         },
         "passes": {
-          "path": "native/src/code_rule_dsl/matcher/format_args.rs",
+          "path": "native/crates/matcher/src/code_rule_dsl/matcher/format_args.rs",
           "text": "fn exports(tree: &SubTree, found: &Found, out: &mut Vec<Range<usize>>) {\n    if let Some(range) = tree.of_node(found.node_id(), found.range()) {\n        out.push(range);\n    }\n}\n"
         }
       }
@@ -533,11 +533,11 @@
       "group": "Native engine",
       "examples": {
         "caught": {
-          "path": "native/src/code_rule_dsl/facts/families.rs",
+          "path": "native/crates/facts/src/code_rule_dsl/facts/families.rs",
           "text": "    let bytes = store.get_source(source)?;\n"
         },
         "passes": {
-          "path": "native/src/code_rule_dsl/workspace/evaluate.rs",
+          "path": "native/crates/workspace/src/code_rule_dsl/workspace/evaluate.rs",
           "text": "                let document = documents::load(&storage, &version)?;\n                let unanswered = !file.candidates.regex.is_empty();\n"
         }
       }
@@ -549,11 +549,11 @@
       "group": "Native engine",
       "examples": {
         "caught": {
-          "path": "native/src/code_rule_dsl/module_graph.rs",
+          "path": "native/crates/lang_ecma/src/code_rule_dsl/module_graph.rs",
           "text": "/// the host's audit bound (`AUDIT_MAX_FILES`).\nconst MAX_GRAPH_ENTRIES: usize = 100_000;\n"
         },
         "passes": {
-          "path": "native/src/code_rule_dsl/module_graph.rs",
+          "path": "native/crates/lang_ecma/src/code_rule_dsl/module_graph.rs",
           "text": "fn skipped_folder(name: &str, options: &RepositoryIndexOptions) -> bool {\n    name.starts_with('.') || options.ignored_directories.iter().any(|skip| skip == name)\n}\n"
         }
       }

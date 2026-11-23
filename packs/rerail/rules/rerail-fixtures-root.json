@@ -10,7 +10,7 @@
     ],
     "exclude": [
       "native/build.rs",
-      "native/src/code_rule_dsl/fixtures.rs",
+      "native/crates/lang/src/code_rule_dsl/fixtures.rs",
       "native/target/**"
     ]
   },
