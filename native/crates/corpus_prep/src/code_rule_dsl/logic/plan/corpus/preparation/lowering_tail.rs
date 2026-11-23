@@ -36,7 +36,6 @@ impl ProgramPass for WidenCyclicContexts {
     const NAME: &'static str = "widen the cyclic contexts";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
-        let ctx_prefix = format!("{}ctx", crate::code_rule_dsl::logic::front::RESERVED);
         let about = cx.get::<crate::code_rule_dsl::logic::program_image::About>()?;
         let errors = crate::code_rule_dsl::logic::program_image::analyses::unstratified(v, &about);
         let sccs: Vec<BTreeSet<String>> = errors.iter().filter_map(|e| e.unstratified().map(|(scc, _)| scc.clone())).collect();
@@ -48,7 +47,7 @@ impl ProgramPass for WidenCyclicContexts {
         for scc in &sccs {
             for rule in v.rules() {
                 let head = v.rel_name(rule.head().rel());
-                if !head.starts_with(&ctx_prefix) || !scc.contains(head) {
+                if crate::code_rule_dsl::logic::rr::lower::helper_stem(head) != Some("ctx") || !scc.contains(head) {
                     continue;
                 }
                 let in_cycle = |l: &L<'_>| match l {
@@ -487,7 +486,7 @@ impl ProgramPass for AggregateDemand {
         for r in v.rules() {
             for l in r.body() {
                 if let L::Agg { atom, .. } = l.view()
-                    && v.rel_name(atom.rel()).contains("rr_agg")
+                    && crate::code_rule_dsl::logic::rr::lower::holds_helper(v.rel_name(atom.rel()), &["agg"])
                 {
                     names.insert(v.rel_name(atom.rel()).to_owned());
                 }

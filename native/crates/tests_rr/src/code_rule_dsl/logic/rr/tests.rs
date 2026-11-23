@@ -13,6 +13,17 @@ fn parse(src: &str) -> Result<Arc<Version>, Error> {
     parse_version(src)
 }
 
+/// Whether `name` (or the text it starts) is a helper of stem `stem`, as the walk's end names it (decision 0639 §4):
+/// `rr_h_{stem}_…` by its content, `rr_m_{stem}_…` by its module, 128 bits in hex.
+fn is_helper(name: &str, stem: &str) -> bool {
+    ["rr_h_", "rr_m_"].iter().any(|tier| name.strip_prefix(tier).and_then(|r| r.strip_prefix(stem)).and_then(|r| r.strip_prefix('_')).is_some_and(|r| r.len() >= 32 && r.as_bytes()[..32].iter().all(u8::is_ascii_hexdigit)))
+}
+
+/// Whether `text` names a helper of stem `stem` (`is_helper`).
+fn names_helper(text: &str, stem: &str) -> bool {
+    text.match_indices("rr_").any(|(i, _)| is_helper(&text[i..], stem))
+}
+
 /// `v`'s rules whose head's relation passes `keep`, each written out.
 fn shown(v: &Version, keep: impl Fn(&str) -> bool) -> Vec<String> {
     v.rules().filter(|r| keep(v.rel_name(r.head().rel()))).map(|r| v.show_rule(r)).collect()
@@ -436,8 +447,10 @@ best(n, @dot("a", x)) :- name(n, x).
         let r = rules_of(&p, |h| h == head)[0];
         r.body().filter_map(|l| if let Lit::Agg { atom, .. } = l.view() { Some(p.show_atom(r, atom)) } else { None }).collect()
     };
-    assert_eq!(helper("kinds"), vec!["rr_agg5(_, $n, _, _, _, _)".to_owned()]);
-    assert_eq!(p.columns_of("rr_agg5").unwrap().len(), 6);
+    let [kinds] = &helper("kinds")[..] else { panic!("{:?}", helper("kinds")) };
+    let (name, args) = kinds.split_once('(').unwrap();
+    assert!(is_helper(name, "agg") && args == "_, $n, _, _, _, _)", "{kinds}");
+    assert_eq!(p.columns_of(name).unwrap().len(), 6);
     let first = helper("first");
     assert_eq!(first.len(), 2);
     assert!(first[0].contains("$j") && first[0].contains("$n") && !first[0].contains("$x"), "{first:?}");
@@ -464,7 +477,7 @@ fn a_context_in_a_negations_cycle_is_widened() {
     ))
     .unwrap();
     strata(&p).unwrap_or_else(|e| panic!("{e}"));
-    let ctx: Vec<String> = shown(&p, |h| h.starts_with("rr_ctx"));
+    let ctx: Vec<String> = shown(&p, |h| is_helper(h, "ctx"));
     assert!(!ctx.is_empty() && ctx.iter().all(|r| !r.contains("ask(")), "{ctx:?}");
 }
 
@@ -511,7 +524,7 @@ fn a_context_leaves_out_the_clause_head() {
     ))
     .unwrap();
     strata(&p).unwrap_or_else(|e| panic!("{e}"));
-    let ctx: Vec<String> = shown(&p, |h| h.starts_with("rr_ctx"));
+    let ctx: Vec<String> = shown(&p, |h| is_helper(h, "ctx"));
     assert!(ctx.iter().all(|r| !r.contains("cb(")), "{ctx:?}");
 }
 
@@ -531,7 +544,7 @@ fn a_context_keeps_the_group_tying_its_variables() {
         "    count : { within(r, c), kind(r, \"identifier\"), text(r, x), r != v } = 0.\n",
     ))
     .unwrap();
-    let ctx: Vec<String> = shown(&p, |h| h.starts_with("rr_ctx"));
+    let ctx: Vec<String> = shown(&p, |h| is_helper(h, "ctx"));
     assert!(!ctx.is_empty(), "{:#?}", shown(&p, |_| true));
     // Every rule of the context reaches v from c through the comprehension's target t.
     assert!(ctx.iter().all(|r| r.contains("child($c, $fc") && r.contains("field($fc, \"left\", $t)")), "{ctx:#?}");
@@ -550,7 +563,7 @@ fn a_context_leaves_out_literals_not_tied_to_its_variables() {
     ))
     .unwrap();
     strata(&p).unwrap_or_else(|e| panic!("{e}"));
-    let ctx: Vec<String> = shown(&p, |h| h.starts_with("rr_ctx"));
+    let ctx: Vec<String> = shown(&p, |h| is_helper(h, "ctx"));
     assert!(!ctx.is_empty(), "the parse's demand has a context");
     assert!(ctx.iter().all(|r| !r.contains("root(")), "{ctx:?}");
 }
@@ -571,8 +584,8 @@ fn a_context_leaves_out_a_files_nodes_tied_only_through_the_document() {
     ))
     .unwrap();
     strata(&p).unwrap_or_else(|e| panic!("{e}"));
-    let ctx: Vec<String> = shown(&p, |h| h.starts_with("rr_ctx") || h.starts_with("rr_cover"));
-    assert!(ctx.iter().any(|r| r.starts_with("rr_ctx")), "the max has a context: {ctx:?}");
+    let ctx: Vec<String> = shown(&p, |h| is_helper(h, "ctx") || is_helper(h, "cover"));
+    assert!(ctx.iter().any(|r| is_helper(r, "ctx")), "the max has a context: {ctx:?}");
     assert!(ctx.iter().all(|r| !r.contains("visit_index(") && r.matches("docof(").count() <= 1), "{ctx:?}");
 }
 
@@ -589,12 +602,12 @@ fn a_context_joins_a_later_group_by_what_it_binds() {
     ))
     .unwrap();
     strata(&p).unwrap_or_else(|e| panic!("{e}"));
-    let shown = |stem: &str| -> Vec<String> { shown(&p, |h| h.starts_with(stem)) };
-    let (ctx, cover) = (shown("rr_ctx"), shown("rr_cover"));
+    let shown = |stem: &str| -> Vec<String> { shown(&p, |h| is_helper(h, stem)) };
+    let (ctx, cover) = (shown("ctx"), shown("cover"));
     assert!(!ctx.is_empty(), "the parse's demand has a context");
-    assert!(ctx.iter().all(|r| r.contains("\"call\"") && r.contains("rr_cover") && !r.contains("\"name\"")), "{ctx:?}");
+    assert!(ctx.iter().all(|r| r.contains("\"call\"") && names_helper(r, "cover") && !r.contains("\"name\"")), "{ctx:?}");
     assert!(!cover.is_empty() && cover.iter().all(|r| r.contains("\"name\"") && !r.contains("\"call\"")), "{cover:?}");
-    assert!(p.declared_names().iter().any(|rel| rel.starts_with("rr_cover") && p.columns_of(rel).unwrap().len() == 1), "a relation of s alone");
+    assert!(p.declared_names().iter().any(|rel| is_helper(rel, "cover") && p.columns_of(rel).unwrap().len() == 1), "a relation of s alone");
 }
 
 /// A group that only computes from an asked variable (`jb(p - 1, 92)`) does not bind it: covered alone it would be
@@ -608,7 +621,7 @@ fn a_context_covers_no_group_that_only_computes_from_an_asked_variable() {
     ))
     .unwrap();
     strata(&p).unwrap_or_else(|e| panic!("{e}"));
-    let cover: Vec<String> = shown(&p, |h| h.starts_with("rr_cover"));
+    let cover: Vec<String> = shown(&p, |h| is_helper(h, "cover"));
     assert!(cover.iter().all(|r| r.contains("jb(p,")), "a cover binds what it is a relation of: {cover:?}");
 }
 
@@ -624,7 +637,7 @@ fn a_cover_of_two_variables_is_narrowed_by_what_binds_them() {
     ))
     .unwrap();
     strata(&p).unwrap_or_else(|e| panic!("{e}"));
-    let cover: Vec<String> = shown(&p, |h| h.starts_with("rr_cover"));
+    let cover: Vec<String> = shown(&p, |h| is_helper(h, "cover"));
     assert!(!cover.is_empty() && cover.iter().all(|r| r.contains("double(")), "{cover:?}");
 }
 
@@ -956,7 +969,7 @@ fn without_requests(p: &Version) -> Arc<Version> {
     loop {
         let kept = rules_of(p, |h| !gone.contains(h));
         let read: BTreeSet<&str> = kept.iter().flat_map(|r| r.reads()).map(|a| p.rel_name(a.rel())).collect();
-        let more: Vec<String> = kept.iter().map(|r| p.rel_name(r.head().rel()).to_owned()).filter(|h| (h.starts_with("rr_ctx") || h.starts_with("rr_cover")) && !read.contains(h.as_str()) && !gone.contains(h.as_str())).collect();
+        let more: Vec<String> = kept.iter().map(|r| p.rel_name(r.head().rel()).to_owned()).filter(|h| (is_helper(h, "ctx") || is_helper(h, "cover")) && !read.contains(h.as_str()) && !gone.contains(h.as_str())).collect();
         if more.is_empty() {
             break;
         }
@@ -1281,7 +1294,7 @@ s(q) :- s(x), split_dot(x, q, _), !split_dot(x, q, "y").
     assert_eq!(rules[0], ["rr_has_fn($n, $a)"]);
     assert!(!p.kindsets().contains_key("blk") && p.kindsets().contains_key("fn"));
     // The nearest block: a climb from n that stops at the first member of blk, which is a.
-    assert!(rules[1].iter().any(|l| l.starts_with("rr_up") && l.ends_with("($n, $a)")), "{:?}", rules[1]);
+    assert!(rules[1].iter().any(|l| is_helper(l, "up") && l.ends_with("($n, $a)")), "{:?}", rules[1]);
     assert!(rules[1].iter().any(|l| l == "blk($a)"), "{:?}", rules[1]);
     // `next_sibling` is core.rerail's, written out over `child` in the rule (`rr::lower::core`): no relation of the program.
     assert!(shown(&p, |h| h == "next_sibling").is_empty() && !p.input_names().contains(&"next_sibling".to_owned()));
@@ -1330,14 +1343,14 @@ fn many_within_stops_read_their_sets_relation() {
 
 #[test]
 fn equal_helpers_of_one_walk_are_one() {
-    // Two aggregates that only test `x` each need a context of x: the same rule, so one relation (`merge_helpers`).
+    // Two aggregates that only test `x` each need a context of x: the same rule, so one relation (`name_helpers`).
     let p = parse(concat!(
         ".decl e(x: number)\n.decl f(y: number, w: number)\n.input e, f\n",
         ".decl a(x: number, n: number, m: number)\n",
         "a(x, n, m) :- e(x), n = count : { f(y, _), y > x }, m = count : { f(z, _), z > x }.\n",
     ))
     .unwrap();
-    let ctx: BTreeSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).filter(|h| h.starts_with("rr_ctx")).collect();
+    let ctx: BTreeSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).filter(|h| is_helper(h, "ctx")).collect();
     assert_eq!(ctx.len(), 1, "{:#?}", shown(&p, |_| true));
     let printed = print_version(&p).and_then(|text| parse(&text)).unwrap();
     assert_eq!(difference(&p, &printed), None);
@@ -1355,7 +1368,7 @@ fn a_nest_of_disjunctions_is_outlined() {
     let rules = shown(&p, |h| h == "a");
     assert_eq!(rules.len(), 16, "{rules:#?}");
     let helper = rules[0].rsplit(", ").next().unwrap().trim_end_matches("($x)").to_owned();
-    assert!(helper.starts_with("rr_or"), "{rules:#?}");
+    assert!(is_helper(&helper, "or"), "{rules:#?}");
     assert_eq!(rules[0], format!("a($x) :- e($x), f1($x), f2($x), f3($x), f4($x), {helper}($x)"));
     assert_eq!(rules[15], format!("a($x) :- e($x), g1($x), g2($x), g3($x), g4($x), {helper}($x)"));
     assert!(rules.iter().all(|r| r.ends_with(&format!("{helper}($x)"))), "{rules:#?}");
@@ -1392,7 +1405,7 @@ fn negated_conjunctions_lower_to_helpers() {
     let c = helpers("c");
     assert_eq!(c.len(), 1);
     let [body] = &c[0].1[..] else { panic!("{c:?}") };
-    assert!(body.starts_with("H($x) :- rr_ctx") && body.ends_with("($x), $x > 2, o(\"k\", \"on\")"), "{body}");
+    assert!(body.strip_prefix("H($x) :- ").is_some_and(|b| is_helper(b, "ctx")) && body.ends_with("($x), $x > 2, o(\"k\", \"on\")"), "{body}");
     assert_eq!(helpers("d"), [("!H(0)".to_owned(), vec!["H(0) :- o(\"k\", \"on\"), g(_)".to_owned()])]);
     let printed = print_version(&p).and_then(|text| parse(&text)).unwrap();
     assert_eq!(difference(&p, &printed), None);
@@ -3514,8 +3527,8 @@ fn a_nested_aggregate_keeps_the_rules_variables_it_reads() {
     // The inner count-zero lowers to anti-existence. Its helper still carries both outer keys.
     let helper = p.rules().find(|r| r.body().filter_map(|l| l.atom()).any(|a| a.neg() && p.rel_name(a.rel()) == "ref")).expect("the inner anti-existence rule");
     let vars: BTreeSet<&str> = helper.head().args().filter_map(|t| t.var()).map(|x| p.text(helper.var(x))).collect();
-    assert!(p.rel_name(helper.head().rel()).starts_with("rr_agg") && vars == BTreeSet::from(["f", "x"]), "{shown:#?}");
-    assert!(helper.reads().any(|a| p.rel_name(a.rel()).starts_with("rr_ctx")), "{shown:#?}");
+    assert!(is_helper(p.rel_name(helper.head().rel()), "agg") && vars == BTreeSet::from(["f", "x"]), "{shown:#?}");
+    assert!(helper.reads().any(|a| is_helper(p.rel_name(a.rel()), "ctx")), "{shown:#?}");
     let hit = shown.iter().find(|r| r.starts_with("hit(")).unwrap();
     assert!(hit.contains("($f, _)"), "the outer count groups by f: {hit}");
 }
@@ -4202,6 +4215,8 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
         // A helper variable a reader's ask takes (decision 0291) keeps its number before the ask's suffix
         // (`rr_text20_rr_d`): masked as the helper is.
         let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)((?:_rr_d)?)\b").unwrap();
+        // A helper named by its module (decision 0639 §4) takes the module's digest, which the dropped clauses change.
+        let by_module = regex::Regex::new(r"\brr_m_([a-z_]*[a-z])_[0-9a-f]{32}\b").unwrap();
         let fresh = regex::Regex::new(r"\brr_([a-z]+)([0-9]+)_([ft][0-9]+)\b").unwrap();
         let shape = |read: Arc<crate::code_rule_dsl::logic::program_image::Version>| {
             use crate::code_rule_dsl::logic::plan::corpus::preparation;
@@ -4269,6 +4284,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                     None => format!("rr_d#_{}", &c[1]),
                 });
                 let s = fresh_desugared.replace_all(&s, "rr_${1}#_rr_d#");
+                let s = by_module.replace_all(&s, "rr_m_${1}_#");
                 helper.replace_all(&fresh.replace_all(&s, "rr_${1}#_$3"), "rr_$1#$3").into_owned()
             };
             // A violation's rule for `@place` values (`rr_v0 < -1`) is made when any rule of the program makes one
@@ -4841,7 +4857,7 @@ fn a_context_in_a_cycle_is_widened_on_the_version() {
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
-    let ctx: Vec<String> = v.rules().filter(|r| v.rel_name(r.head().rel()).starts_with("rr_ctx")).map(|r| v.show_rule(r)).collect();
+    let ctx: Vec<String> = v.rules().filter(|r| is_helper(v.rel_name(r.head().rel()), "ctx")).map(|r| v.show_rule(r)).collect();
     assert!(!ctx.is_empty() && ctx.iter().all(|r| !r.contains("ask(")), "{ctx:?}");
 }
 
@@ -5125,7 +5141,7 @@ fn a_texts_rules_are_written_as_a_version_in_its_walk() {
     let v = super::read_text(src).unwrap().own_written(&scoped).unwrap();
     assert!(v.rules().count() >= 2, "{}", v.show());
     // Each aggregate's helper, numbered by the link after the scope's: written in the walk, and read by `sizes`.
-    let helpers: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).filter(|h| h.starts_with("rr_agg")).collect();
+    let helpers: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).filter(|h| is_helper(h, "agg")).collect();
     assert_eq!(helpers.len(), 2, "{}", v.show());
 }
 
@@ -5266,11 +5282,11 @@ fn a_negated_cross_product_is_bound_by_the_rules_context() {
     let shown: Vec<String> = p.rules().map(|r| p.show_rule(r)).collect();
     let helper = |head: &str| -> String {
         let rule = p.rules().find(|r| p.rel_name(r.head().rel()) == head).unwrap_or_else(|| panic!("{shown:#?}"));
-        let not = rule.body().filter_map(|l| l.atom()).find(|a| a.neg() && p.rel_name(a.rel()).starts_with("rr_not")).unwrap_or_else(|| panic!("{shown:#?}"));
+        let not = rule.body().filter_map(|l| l.atom()).find(|a| a.neg() && is_helper(p.rel_name(a.rel()), "not")).unwrap_or_else(|| panic!("{shown:#?}"));
         p.rules().filter(|r| r.head().rel() == not.rel()).map(|r| p.show_rule(r)).collect::<Vec<_>>().join("\n")
     };
     let (apart, tied) = (helper("apart"), helper("tied"));
-    let bound = |helper: &str| helper.contains("rr_ctx") || helper.contains("want(");
+    let bound = |helper: &str| names_helper(helper, "ctx") || helper.contains("want(");
     assert!(bound(&apart) && apart.contains("lit($lo") && apart.contains("lit($hi"), "{apart}\n{shown:#?}");
     assert!(!bound(&tied), "{tied}");
 }
@@ -6131,14 +6147,10 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
                 conflicts.len(), conflicts.iter().take(5).collect::<Vec<_>>(), inputs_from.len(), shared_facts.iter().take(8).collect::<Vec<_>>(), settings_from.len(), demand_from.len()
             );
         }
-        // E6: helpers named by their content (`lower::content_names`), each module alone, then the modules' rules as a
-        // set (a link that only unites), against the whole lowering of the same list content-named, and against today's
-        // link (its renumbering and `once_key` merges).
-        let named = |m: &lower::Module, salt: &str| -> (Arc<Version>, Vec<Vec<String>>) {
-            let (names, cycles) = lower::content_names(m.version(), &m.parts().made, &m.parts().once, salt);
-            let rename: std::collections::HashMap<String, String> = names.into_iter().collect();
-            (lower::relinked(m.version(), &rename, &[]).unwrap(), cycles)
-        };
+        // E6: helpers named by their content at each walk's end (`lower::content_names`), each module alone, then the
+        // modules' rules as a set (a link that only unites), against the whole lowering of the same list, and against
+        // the link (which unites by name).
+        let named = |m: &lower::Module, _: &str| -> (Arc<Version>, Vec<Vec<String>>) { (Arc::clone(m.version()), Vec::new()) };
         let whole_m = lower::lower_module_in_written(canonical.iter().flat_map(|(_, s)| s.iter().cloned()).collect(), &[]).unwrap();
         let (w, w_cycles) = named(&whole_m, "whole");
         let mut union: BTreeSet<(String, [u8; 32])> = BTreeSet::new();
@@ -6151,21 +6163,6 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
             union.extend(lower::rule_digests(&v));
         }
         let whole_rules = lower::rule_digests(&w);
-        // The helpers content names join that the walk kept apart: the whole lowering's, grouped by content name.
-        {
-            let (names, _) = lower::content_names(whole_m.version(), &whole_m.parts().made, &whole_m.parts().once, "whole");
-            let once: BTreeSet<String> = whole_m.parts().once.iter().map(|(n, _, _)| n.clone()).collect();
-            let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
-            for (old, new) in names {
-                groups.entry(new).or_default().push(old);
-            }
-            for (new, olds) in groups.into_iter().filter(|(_, o)| o.len() > 1) {
-                let reads_self = olds.iter().any(|h| whole_m.version().rules().any(|r| whole_m.version().rel_name(r.head().rel()) == h && whole_m.version().show_rule(r).split(":-").nth(1).is_some_and(|b| b.contains(&format!("{h}(")))));
-                let kinds: Vec<&str> = olds.iter().map(|h| if once.contains(h) { "merged by once_key" } else { "not a once helper" }).collect();
-                let rules: Vec<String> = whole_m.version().rules().filter(|r| olds.contains(&whole_m.version().rel_name(r.head().rel()).to_owned())).take(4).map(|r| whole_m.version().show_rule(r)).collect();
-                println!("E6 {pack}: {new} joins {olds:?} ({kinds:?}; reads itself: {reads_self}):\n      {}", rules.join("\n      ").chars().take(900).collect::<String>());
-            }
-        }
         let today = lower::link_versions(built.clone()).unwrap();
         let today_rules: usize = std::iter::once(&today.first).chain(today.appended.iter().map(|(v, _, _)| v)).map(|v| v.rules().count()).sum();
         let helpers = |rules: &BTreeSet<(String, [u8; 32])>| rules.iter().map(|(h, _)| h).filter(|h| h.starts_with("rr_")).collect::<BTreeSet<_>>().len();
@@ -6355,4 +6352,105 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
             );
         }
     }
+}
+
+/// T6 (decision 0639 §4): a library's modules, their helpers named at each walk's end, linked by name, are the whole
+/// list lowered as one module: the same rules, each helper no walk merges aside by its module's digest (`rr_m_`), the
+/// same helpers named by content (`rr_h_`), as many of each. No module's image holds its file's path or name
+/// (Collisions 9).
+#[test]
+fn modules_named_by_content_link_to_the_whole_lowering() {
+    let lib = crate::code_rule_dsl::logic::rr::library();
+    let no_includes = |s: Vec<from_tape::Stmt>| -> Vec<from_tape::Stmt> { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
+    // A rule's line, each module-named helper by its stem and each variable the walk numbered by its stem (a rule's
+    // variables are by slot in its template: their names name nothing).
+    let plain = |l: &str| -> String {
+        l.split_inclusive(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .map(|w| {
+                let (word, end) = w.split_at(w.len() - w.chars().last().filter(|c| !(c.is_alphanumeric() || *c == '_')).map_or(0, char::len_utf8));
+                let word = if word.starts_with("rr_m_") && word.len() > 33 && word.as_bytes()[word.len() - 33] == b'_' {
+                    &word[..word.len() - 33]
+                } else if word.starts_with("rr_") && !word.starts_with("rr_h_") {
+                    word.trim_end_matches(|c: char| c.is_ascii_digit())
+                } else {
+                    word
+                };
+                format!("{word}{end}")
+            })
+            .collect()
+    };
+    for pack in ["python", "rust"] {
+        let mut programs = walk_rr(&lib.join("../packs").join(pack));
+        programs.sort();
+        // The pack's first program that includes the library.
+        let srcs: Vec<String> = programs.iter().map(|p| std::fs::read_to_string(p).unwrap()).collect();
+        let m = super::modules_of(&srcs.iter().map(String::as_str).collect::<Vec<_>>()).into_iter().find_map(|m| m.ok().flatten()).unwrap_or_else(|| panic!("{pack}: no program includes the library"));
+        let paths: Vec<PathBuf> = m.files.iter().map(|(p, _, _)| p.clone()).collect();
+        let files: Files = paths.iter().map(|p| (p.clone(), no_includes(read(p).unwrap().0))).collect();
+        let plan = super::library_plan(&paths).unwrap();
+        let whole: Vec<from_tape::Stmt> = plan.units.iter().flatten().flat_map(|&i| files[i].1.iter().cloned()).collect();
+        let modules = library_modules(&paths, files).unwrap();
+        for (u, members) in plan.units.iter().enumerate() {
+            let image = module_image::encode(&modules[u]).unwrap();
+            for &i in members {
+                let has = |needle: &str| image.bytes().windows(needle.len()).any(|w| w == needle.as_bytes());
+                let file = paths[i].file_name().unwrap().to_string_lossy();
+                assert!(!has(&paths[i].display().to_string()) && !has(&file), "{pack}: the image of {} holds its path or name", paths[i].display());
+            }
+        }
+        let linked = lower::link_versions(modules).unwrap();
+        let versions: Vec<&Arc<Version>> = std::iter::once(&linked.first).chain(linked.appended.iter().map(|(v, _, _)| v)).collect();
+        let whole = lower::lower_module_in_written(whole, &[]).unwrap();
+        let lines = |vs: &[&Arc<Version>]| -> BTreeSet<String> { vs.iter().flat_map(|v| v.rules().map(|r| plain(&v.show_rule(r))).collect::<Vec<_>>()).collect() };
+        let helpers = |vs: &[&Arc<Version>], tier: &str| -> BTreeSet<String> { vs.iter().flat_map(|v| v.declared_names()).filter(|r| r.starts_with(tier)).collect() };
+        let (a, b) = (lines(&versions), lines(&[whole.version()]));
+        assert!(a == b, "{pack}: {} lines and {}; only the link's: {:#?}\nonly the whole's: {:#?}", a.len(), b.len(), a.difference(&b).take(4).collect::<Vec<_>>(), b.difference(&a).take(4).collect::<Vec<_>>());
+        assert_eq!(helpers(&versions, "rr_h_"), helpers(&[whole.version()], "rr_h_"), "{pack}: the helpers named by content");
+        assert_eq!(helpers(&versions, "rr_m_").len(), helpers(&[whole.version()], "rr_m_").len(), "{pack}: the helpers named by module");
+        assert!(!helpers(&versions, "rr_h_").is_empty(), "{pack}: a library makes helpers named by content");
+    }
+}
+
+/// T7 (decision 0639, Collisions 4): a helper's content name holds every header row that names it, its facts, and
+/// whether it is an input or an output: two helpers of the same stem, columns and rules are one name, and two that
+/// differ only in one of these are two.
+#[test]
+fn a_helpers_content_name_holds_every_field_that_names_it() {
+    let names = |src: &str| -> (String, String) {
+        let v = parse(src).unwrap_or_else(|e| panic!("{e}\n{src}"));
+        let (names, _) = lower::content_names(&v, &[("agg".to_owned(), 91), ("agg".to_owned(), 92)], &[("rr_agg91".to_owned(), "agg".to_owned(), 1), ("rr_agg92".to_owned(), "agg".to_owned(), 1)]).unwrap();
+        (names["rr_agg91"].clone(), names["rr_agg92"].clone())
+    };
+    let program = |second: &str, outputs: &str, facts: &str| format!(".decl e(x: number)\ne(1).\n.decl rr_agg91(x: number)\nrr_agg91(x) :- e(x).\n.decl rr_agg92(x: number){second}\nrr_agg92(x) :- e(x).\n{facts}.output {outputs}\n");
+    let (a, b) = names(&program("", "rr_agg91, rr_agg92", ""));
+    assert_eq!(a, b, "the same stem, columns and rules");
+    assert!(a.starts_with("rr_h_agg_") && a.len() == "rr_h_agg_".len() + 32, "{a}");
+    for (what, src) in [
+        ("a qualifier", program(" inline", "rr_agg91, rr_agg92", "")),
+        ("an output", program("", "rr_agg91", "")),
+        ("a fact", program("", "rr_agg91, rr_agg92", "rr_agg92(5).\n")),
+    ] {
+        let (a, b) = names(&src);
+        assert_ne!(a, b, "two helpers differing in {what} are two");
+    }
+}
+
+/// Collisions 3 (decision 0639): a template's bytes are length-prefixed, and read back as its rule's nodes, each kind
+/// and size; two rules of other templates write other bytes.
+#[test]
+fn a_templates_bytes_read_back_as_its_rule() {
+    let v = parse(".decl e(x: number, s: symbol)\ne(1, \"a\").\n.decl f(x: number)\nf(x) :- e(x, \"a\"), x < 100000000000.\n.decl g(s: symbol)\ng(s) :- e(_, s), !f(3).\n.output f, g\n").unwrap();
+    let mut seen = BTreeSet::new();
+    for r in v.rules() {
+        let bytes = lower::template_bytes(&v, r);
+        let nodes = lower::template_nodes(&bytes).expect("a template's bytes");
+        let ns = r.nodes();
+        assert_eq!(nodes.len(), (ns.end - ns.start - 1) as usize, "{}", v.show_rule(r));
+        for (k, (kind, size, _)) in (ns.start + 1..).zip(&nodes) {
+            let (kd, sz, _) = r.image().node(k);
+            assert_eq!((*kind, *size), (kd, sz), "{}: node {k}", v.show_rule(r));
+        }
+        assert!(seen.insert((v.rel_name(r.head().rel()).to_owned(), bytes)), "{}", v.show_rule(r));
+    }
+    assert!(lower::template_nodes(&[1, 0, 0, 0, 0, 9, 0, 0, 0]).is_none(), "a length past the end");
 }

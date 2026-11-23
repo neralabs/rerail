@@ -1362,7 +1362,7 @@ fn program_key(src: &str, scope: &[crate::content_store::HashKey]) -> crate::con
 
 /// The alias a module's image is kept under (`library_modules`).
 fn module_key<'k>(files: impl Iterator<Item = &'k [u8; 32]>, scope: impl Iterator<Item = &'k crate::content_store::HashKey>) -> crate::content_store::HashKey {
-    let mut bytes = format!("rerail module image v2 (helpers made once) {}\0{}\0", super::program_image::FORMAT, crate::code_rule_dsl::build_ids::engine()).into_bytes();
+    let mut bytes = format!("rerail module image v3 (helpers named by content) {}\0{}\0", super::program_image::FORMAT, crate::code_rule_dsl::build_ids::engine()).into_bytes();
     switched(&mut bytes);
     for d in files {
         bytes.extend_from_slice(d);

@@ -245,6 +245,35 @@ with them. That is the one-time cost the canonical order (§1) already has. Four
 (22 literals). In exchange, an edit of one module no longer renumbers the helpers of every module linked after it,
 so their printed rules and digests stay the same (0225's incremental work).
 
+**As built (step 3).** Every walk names its helpers at its end (`Lowerer::name_helpers`), so a library module, a
+program's own module and a whole text are named alike:
+- A `once` helper is `rr_h_{stem}_{128 bits}`. Its key holds its `once` stem, its column types, its rules' templates
+  sorted, every header row that names it (any `.about` row with a cell of its name: a qualifier, a tape column, a
+  native, a layout, an answer, a request's readers, ...), its facts, and whether it is an input or an output. A field
+  added later joins the key with no change here (Collisions 4, T7).
+- Any other helper, and a cycle of several, is `rr_m_{stem}_{128 bits}`, of its module's digest and its walk's
+  name. The module's digest is its own walk's content (its rules, declarations, header rows, facts, inputs and
+  outputs), not its plan key, so the walk names without its caller passing a key, and two modules share these names
+  only where they are one.
+- A Python candidates native is `rr_h_python_candidates_{128 bits}`, of the native's content, where it is made.
+- Helpers of one content name in a walk are one, and the later's rules and declaration are left out. Their keys are
+  compared byte for byte, so a digest's collision is an error (Collisions 1, 2). This replaces `merge_helpers`,
+  `once_key` and its `DefaultHasher` template: no merge reads a 64-bit hash.
+- A template is length-prefixed fields, read back by `lower::template_nodes` (Collisions 3).
+
+The link then decides no name. A helper of a name linked before is that one, and the module's rules and declaration
+of it are left out. No renumbering, no native renamed, no key compared. The `must`/`may` positions are moved past the
+rules a merge leaves out, in the walk and in the link, where before they kept the index of a dropped rule's place. The
+walk's counter is spent at its end, so the findings' helpers are numbered from one whatever was linked. A module's
+image keeps its helpers by name (`module_helper`); `made`, `next` and `once` are no longer kept, and the image key's
+format is v3.
+
+The code that found a helper by its old stem (aggregate demand's helpers, the widening of cyclic contexts, hiding's
+contexts) reads it with `lower::helper_stem` and `lower::holds_helper`, one parse of the two forms. T6 holds for the
+Python and Rust packs: a library's modules, linked by name, have the whole list's rule lines (each module-named
+helper by its stem, and the walk's numbered variables, which a template takes by slot, aside), the same content
+names and as many module names.
+
 **Why the tail stays Rust.** The tail's whole-program questions (which core relations are read, which kind sets are
 read) belong to preparation's fact spaces (0246 §3, 0225 §5).
 
@@ -440,7 +469,9 @@ silently. Each place a digest stands for content, what can collide, and what is 
 2. §3: the engine answer, its reuse check, and `Graph::holds` over images. T4, T5. **Done**: T4
    `phase_0_lowers_each_module_its_store_does_not_hold`, T5 `a_graph_holds_only_while_its_modules_images_are_held`.
 3. §4's names: `content_names` in the walk's end, `once_key` on SHA-256, the findings' and rule positions' counters
-   per module. T6, T7.
+   per module. T6, T7. **Done**: T6 `modules_named_by_content_link_to_the_whole_lowering`, T7
+   `a_helpers_content_name_holds_every_field_that_names_it`, Collisions 3 `a_templates_bytes_read_back_as_its_rule`;
+   `once_key` is gone rather than moved to SHA-256, as the content name is the merge.
 4. §4's link: the union rules, the engine's view over module images, the conflicts. Single programs and
    `lower_library` onto it, and `link_versions` and the Rust plan removed. T1, T2, T8.
 5. §4's interface: a module declares the lowering-made declarations it uses; its key names its scope's interface
