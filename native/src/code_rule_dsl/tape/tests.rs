@@ -1810,12 +1810,12 @@ fn rr_parse_costs() {
     let all = files.len();
     files.retain(|f| rr_parser::compiled_tape(f).is_some());
     let bytes: usize = files.iter().map(String::len).sum();
-    let nodes: usize = files.iter().map(|f| rerail_rr_syntax::tape(f).len()).sum();
+    let nodes: usize = files.iter().map(|f| rerail_rr_syntax::tape(f).map_or(0, |t| t.len())).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     #[allow(clippy::type_complexity)]
     let steps: Vec<CostStep<'_>> = vec![
-        ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).len())),
+        ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).map_or(0, |t| t.len()))),
         (
             "lean: the tape (the engine's path)",
             Box::new(|f| {

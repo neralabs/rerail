@@ -7591,13 +7591,23 @@ impl CompiledStream {
         self.write16(&mut rerail_tape_format::f16::Writer::empty(), self.tokens(self.records_of(tier1), bytes.len()), &doc, |tape| self.run_raw(bytes, tier1, tape))
     }
 
+    /// The format 16 tape (16z where `z`) of `source` by this tier 2, compiled to write format 16, where the caller
+    /// gives tier 1's run: `call` runs the words on the tape (`call`, over the caller's `Tier1View`), and `tokens` is
+    /// its room (`tokens`). Its line index is the scan's of `terminators`. What a run over another executor's tier 1
+    /// (the device's buffers, `rerail_cpu_stream::tier2_on`) writes its tapes by.
+    pub fn image16_by(&self, source: &[u8], terminators: rerail_tape_format::newlines::Terminators, lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool, tokens: usize, call: impl FnMut(&mut Tape) -> u64) -> Result<rerail_tape_format::f16::Written, String> {
+        let scan = |out: &mut Vec<u8>| rerail_tape_format::newlines::index_into(out, source, terminators);
+        let doc = Doc16 { source, lang, numbers, z, lines: &scan };
+        self.write16(&mut rerail_tape_format::f16::Writer::empty(), tokens, &doc, call)
+    }
+
     /// A format 16 run of `source` (`Parser::image16`): the writer made and its room reserved for the tape's nodes and
     /// a guess of the depth, then `call` on the tape that carries it; again with the bound's room where a part was
     /// full (the open nodes past the guess) or the call overflowed tier 2's own room.
     fn write16(&self, w: &mut rerail_tape_format::f16::Writer, tokens: usize, doc: &Doc16<'_>, mut call: impl FnMut(&mut Tape) -> u64) -> Result<rerail_tape_format::f16::Written, String> {
         use rerail_clif::writer::{fail, part};
         if !self.sixteen {
-            return Err("a tier 2 compiled for format 15".into());
+            return Err("a tier 2 that writes format 15".into());
         }
         let mut tape = self.tape(tokens);
         let (mut depth, mut full) = (64, false);
@@ -8015,7 +8025,7 @@ impl Parser {
     /// caller keeps its parser: no room made or zeroed for a document no larger than one before. A tape given back
     /// (`f16::Writer::recycle`) is the next one's room.
     pub fn image16_in(&self, w: &mut rerail_tape_format::f16::Writer, bytes: &[u8], terminators: rerail_tape_format::newlines::Terminators, lang: &rerail_tape_format::f16::Lang, numbers: &Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
-        let t2 = self.sixteen().ok_or("no format 16 tier 2 for this parser")?;
+        let t2 = self.sixteen().ok_or("the parser has no format 16 tier 2")?;
         let mut batch = crate::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
         batch.call(&self.tier1);
         let tokens = t2.tokens(self.records_bound(&batch, t2.starts), bytes.len());

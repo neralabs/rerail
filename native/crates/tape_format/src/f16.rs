@@ -1140,6 +1140,11 @@ pub fn write(lang: &Lang, n: usize, source: &[u8], terminators: crate::newlines:
     write_with(Writer::new(lang, source, terminators, tag, z, false, n), n, node).map(|f| f.tape)
 }
 
+/// `write`, with each block's presence after the tape, as a parser's run writes it (§4).
+pub fn write_present(lang: &Lang, n: usize, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, node: impl FnMut(usize) -> Node) -> Result<Written, String> {
+    write_with(Writer::new(lang, source, terminators, tag, z, true, n), n, node).map(|f| f.tape)
+}
+
 /// `write` by `w`'s ops.
 pub(crate) fn write_with(mut w: impl WriterOps, n: usize, mut node: impl FnMut(usize) -> Node) -> Result<Finished, String> {
     // The open nodes' subtree ends and ends.

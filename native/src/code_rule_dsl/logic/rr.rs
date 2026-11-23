@@ -49,11 +49,12 @@ pub fn message_masked(src: &str) -> std::borrow::Cow<'_, str> {
         return std::borrow::Cow::Borrowed(src);
     }
     let message = tape::Field::Message as u16;
-    // The messages' spans, read off the lean parser's image in place (`tape_format::View`).
-    let image = tape(src);
-    let Ok(v) = rerail_rr_syntax::tape_format::View::new(&image) else { return std::borrow::Cow::Borrowed(src) };
+    // The messages' spans, read off the lean parser's tape in place (format 16's reads).
+    use rerail_rr_syntax::tape_format::tape::Tape as _;
+    let Ok(t) = tape(src) else { return std::borrow::Cow::Borrowed(src) };
+    let Ok(v) = t.reader(tape::lang()) else { return std::borrow::Cow::Borrowed(src) };
     let mut spans: Vec<(usize, usize)> = (0..v.len())
-        .filter(|&i| matches!(tape::kind_field(v.key(i)), (kind, field) if field == message && kind != tape::ERROR))
+        .filter(|&i| matches!(tape::entry_kind_field(v.table().entry(v.code(i))), (kind, field) if field == message && kind != tape::ERROR))
         .map(|i| (v.start(i) as usize, v.end(i) as usize))
         .collect();
     spans.sort();

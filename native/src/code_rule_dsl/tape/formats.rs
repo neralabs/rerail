@@ -267,35 +267,11 @@ impl TapeImage {
     }
 }
 
-/// The finish the `.rerail` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
-/// keys are the codes (`kf | flags << 16`, no supertypes).
-struct Rr {
-    target: Result<rerail_tape_format::Sixteen, String>,
-}
-
-impl rerail_tape_format::Finish for Rr {
-    type Out = Result<f16::Finished, String>;
-    fn target(&self) -> rerail_tape_format::Target {
-        self.target.clone().map_or(rerail_tape_format::Target::F15, rerail_tape_format::Target::F16)
-    }
-
-    fn finish<L: rerail_tape_format::Layout>(&mut self, mut w: Writer<L>) -> Result<Self::Out, Redo> {
-        if let Err(e) = &self.target {
-            return Ok(Err(e.clone()));
-        }
-        w.finish_16()
-    }
-}
-
-/// `source`'s tape from the `.rerail` parser, in the run's format (`Rr`).
+/// `source`'s tape from the `.rerail` parser, in the run's format: the parser's own sink (`lean::Sink16`, its keys
+/// numbered in the language's table), with each block's presence.
 pub(super) fn rr_tape(source: &str) -> Result<f16::Finished, String> {
-    let kind_mask = (1u16 << rerail_tape_format::KIND_BITS) - 1;
-    let entry = move |key: u32| {
-        let kf = (key & 0xffff) as u16;
-        Entry { kind: kf & kind_mask, field: kf >> rerail_tape_format::KIND_BITS, flags: (key >> 16 & 7) as u8, alias: None, classes: Vec::new() }
-    };
-    let target = sixteen(GrammarDialect::Rr, move |lang, key| lang.number(&entry(key)));
-    rerail_rr_syntax::lean::tape_into(source, &mut Rr { target })
+    let (_, _, z) = run_16(GrammarDialect::Rr)?;
+    rerail_rr_syntax::lean::tape_into(source, &mut rerail_rr_syntax::lean::Sink16::new(z, true))
 }
 
 /// A document's tape as held (its image), shared by the document (`TapeDoc`) and the facts read off it

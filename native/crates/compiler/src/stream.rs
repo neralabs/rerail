@@ -343,6 +343,24 @@ pub fn image(nodes: &[Node], extras: &[u16], tag: u8, src: &[u8]) -> Vec<u8> {
     rerail_tape_format::preorder_image_in(tag, &classes, src, &rows)
 }
 
+/// The format 16 tape of `nodes`, in preorder as `run` gives them, over `src` (decisions 0434, 0626): each node's code
+/// (its kind, field and supertypes; flagged an extra where its kind is one of `extras`) numbered in `lang`'s table,
+/// written by format 16's ops in one pass with each block's presence, its lines those `terminators` end, as the
+/// format 16 tier 2's run writes it. The interpreter's tape: the meaning the compiled tiers' tapes are checked against.
+pub fn image16(nodes: &[Node], extras: &[u16], lang: &rerail_tape_format::f16::Lang, terminators: rerail_tape_format::newlines::Terminators, tag: u8, src: &[u8]) -> Result<rerail_tape_format::f16::Written, String> {
+    let mut numbers = Vec::with_capacity(nodes.len());
+    for n in nodes {
+        let mut classes = n.supers.clone();
+        classes.sort_unstable();
+        classes.dedup();
+        let flags = if extras.contains(&n.kind) { rerail_tape_format::CODE_EXTRA } else { 0 };
+        let entry = rerail_tape_format::tape::Entry { kind: n.kind, field: n.field, flags, alias: None, classes };
+        numbers.push(lang.number(&entry).ok_or_else(|| format!("code {entry:?}: a code the language's table lacks"))?);
+    }
+    let node = |i: usize| rerail_tape_format::f16::Node { number: numbers[i], start: u64::from(nodes[i].start), end: u64::from(nodes[i].end), subtree_end: i + nodes[i].size.max(1) as usize };
+    rerail_tape_format::f16::write_present(lang, nodes.len(), src, terminators, tag, false, node)
+}
+
 /// Why a file went to tree-sitter: the word that refused it, and what it found.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Refused {

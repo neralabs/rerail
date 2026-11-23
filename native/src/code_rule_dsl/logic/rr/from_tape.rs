@@ -1,8 +1,8 @@
-//! A `.rerail` file's statements, read off its tape (decision 0062). The tape is the lean parser's image
-//! (`rerail_rr_syntax::tape`, decision 0140) and what the content store keeps; lowering reads the statements this
-//! module gives, so a rule file's program is a function of its stored tape. The image is read where it is
-//! (`tape_format::View`): each node's kind, field and span from its columns, its children by their subtree sizes,
-//! with no node decoded ahead and no index of children made.
+//! A `.rerail` file's statements, read off its tape (decision 0062). The tape is the lean parser's, in format 16
+//! (`rerail_rr_syntax::tape`, decisions 0140, 0626); lowering reads the statements this module gives, so a rule
+//! file's program is a function of its tape. The tape is read where it is, through format 16's reads (`f16::F16`):
+//! each node's code and span, its kind and field its code's entry in the language's table, its children by their
+//! subtree ends, with no node decoded ahead and no index of children made.
 //!
 //! A statement is a node (`Stmt`), read by what it is (`S`) and its readers here; a clause is read by `clause::Reads`.
 //! No statement or term is made into another form (decision 0276, stage 6 A). Texts come from the source by the
@@ -13,21 +13,22 @@ use super::Error;
 use super::syntax;
 use super::syntax::Lines;
 use super::tape::{ERROR, Field, Kind};
-use rerail_rr_syntax::tape_format::{CODE_EXTRA, View};
+use rerail_rr_syntax::tape_format::CODE_EXTRA;
+use rerail_rr_syntax::tape_format::f16::{F16, Tape16};
+use rerail_rr_syntax::tape_format::tape::Tape as _;
 
-/// A `.rerail` tape read in place: its source and its image's columns.
+/// A `.rerail` tape read in place: its source and its format 16 reader.
 pub struct Tape<'a> {
     src: &'a str,
     lines: &'a Lines,
-    v: View<'a>,
+    v: F16<'a>,
 }
 
-/// A `.rerail` file as a run holds it: its text and its tape, the lean parser's image of it (decision 0140), checked
-/// once when read; and the text's line starts. A statement of it is a node of the tape (`Stmt`), read in place.
+/// A `.rerail` file as a run holds it: its text and its tape, the lean parser's (decision 0140), checked once when
+/// read; and the text's lines. A statement of it is a node of the tape (`Stmt`), read in place.
 pub struct RrFile {
     src: std::sync::Arc<str>,
-    image: Box<[u8]>,
-    keys: Box<[u32]>,
+    tape: Tape16,
     lines: Lines,
 }
 
@@ -41,10 +42,10 @@ impl RrFile {
     /// `src` and its tape. A tape with an ERROR gives the error running the file gives (`syntax_error`).
     pub fn read(src: impl Into<std::sync::Arc<str>>) -> Result<std::sync::Arc<RrFile>, Error> {
         let src: std::sync::Arc<str> = src.into();
-        let image = rerail_rr_syntax::tape(&src).into_boxed_slice();
-        let keys = View::new(&image).map_err(|e| Error::Syntax(format!("tape: {e}")))?.into_keys();
+        let tape = rerail_rr_syntax::tape(&src).map_err(|e| Error::Syntax(format!("tape: {e}")))?;
+        tape.reader(super::tape::lang()).map_err(|e| Error::Syntax(format!("tape: {e}")))?;
         let lines = Lines::of(&src);
-        let file = RrFile { src, image, keys, lines };
+        let file = RrFile { src, tape, lines };
         if file.tape().has_error() {
             let (_, message) = syntax_error(&file.src).unwrap_or((0, "a statement that does not parse".to_owned()));
             return Err(Error::Syntax(message));
@@ -59,7 +60,7 @@ impl RrFile {
 
     /// Its tape, read in place.
     pub fn tape(&self) -> Tape<'_> {
-        Tape { src: &self.src, lines: &self.lines, v: View::with_keys(&self.image, &self.keys) }
+        Tape { src: &self.src, lines: &self.lines, v: self.tape.reader(super::tape::lang()).expect("read when the file was") }
     }
 
     /// Its statements, in order.
@@ -180,21 +181,26 @@ fn bad<T>(what: &str) -> Result<T, Error> {
 }
 
 impl<'a> Tape<'a> {
+    /// Node `n`'s code's entry in the language's table.
+    fn entry(&self, n: u32) -> &rerail_rr_syntax::tape_format::tape::Entry {
+        self.v.table().entry(self.v.code(n as usize))
+    }
+
     pub fn kind(&self, n: u32) -> u16 {
-        super::tape::kind_field(self.v.key(n as usize)).0
+        super::tape::entry_kind_field(self.entry(n)).0
     }
 
     pub fn field(&self, n: u32) -> u16 {
-        super::tape::kind_field(self.v.key(n as usize)).1
+        super::tape::entry_kind_field(self.entry(n)).1
     }
 
     pub fn extra(&self, n: u32) -> bool {
-        self.v.key(n as usize) >> 16 & u32::from(CODE_EXTRA) != 0
+        self.entry(n).flags & CODE_EXTRA != 0
     }
 
     /// How many nodes node `n`'s subtree holds, `n` included.
     pub fn size(&self, n: u32) -> u32 {
-        self.v.size(n as usize) as u32
+        (self.v.subtree_end(n as usize) - n as usize) as u32
     }
 
     pub fn is(&self, n: u32, kind: Kind) -> bool {
@@ -215,14 +221,14 @@ impl<'a> Tape<'a> {
 
     /// `n`'s children in order, extras (comments) left out.
     pub fn kids(&self, n: u32) -> impl Iterator<Item = u32> + '_ {
-        self.v.children(n as usize).map(|c| c as u32).filter(move |&c| !self.extra(c))
+        rerail_rr_syntax::tape_format::tape::children(&self.v, n as usize).map(|c| c as u32).filter(move |&c| !self.extra(c))
     }
 
     /// The names node `n`'s subtree reads, `n` included: each relation and function named (an atom's, a head's, a
     /// call's), each variable, and each identifier in a string, a JSON object or a backtick literal that is not a
     /// pattern's or a selector's (a relation may be an argument: `nearest(n, p, block_node)`, a set of nodes).
     pub fn names_in(&self, n: u32, out: &mut std::collections::BTreeSet<String>) {
-        for i in n..n + self.v.size(n as usize) as u32 {
+        for i in n..n + self.size(n) {
             let (kind, field) = (self.kind(i), self.field(i));
             if self.extra(i) || field == Field::Pattern as u16 || field == Field::Selector as u16 {
                 continue;
