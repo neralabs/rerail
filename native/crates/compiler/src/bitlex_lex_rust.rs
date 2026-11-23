@@ -6000,9 +6000,10 @@ impl Gen<'_> {
                     pieces.push(t);
                 }
                 let starts = by.starts(&skip)?;
-                let pair_words: String = pair_rows.iter().filter(|(f, _)| pieces.iter().any(|q| q.contains(&format!("k_{f}")))).map(|(f, _)| format!("        let k_{f} = unsafe {{ w_{f}::<S>(src, base) }};\n")).collect();
+                // The pairs masks the loop reads: of the block's classes, as its other masks (`Bytes::pairs`).
+                by.pairs = pair_rows.iter().filter(|(f, _)| pieces.iter().any(|q| q.contains(&format!("k_{f}")))).cloned().collect();
                 let (decl, words) = by.block_words();
-                Ok((pieces, format!("{words}{pair_words}        let mut firsts = {starts}"), decl))
+                Ok((pieces, format!("{words}        let mut firsts = {starts}"), decl))
             };
             go().ok().map(|(p, st, decl)| (p, st, by.code(), decl))
         } else {
@@ -6094,7 +6095,10 @@ impl Gen<'_> {
                 let pairs: Vec<String> = two.iter().map(|(a, b)| format!("S::and(S::eq(v, S::splat({a:#04x})), S::eq(w, S::splat({b:#04x})))")).collect();
                 let joined = pairs.iter().skip(1).fold(pairs.first().cloned().unwrap_or_default(), |acc, p| format!("S::or({acc},\n            {p})"));
                 let test = [format!("S::to_bitmask({joined})")];
-                let _ = write!(out, "\n/// `{f}`'s pairs' first bytes in the block at `base`, as the lean lexer's `pair`: where a pair's two bytes are. A token\n/// never starts at a pair's second byte, so at a token's start this is the grammar's mask of pairs (read left to right).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn w_{f}<S: rerail_simd8::Simd8x64>(src: &[u8], base: usize) -> u64 {{\n    // The block and the one a byte on: in the padded source.\n    let at: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let on: &[u8; 64] = src[base + 1..base + 65].try_into().expect(\"the padded source\");\n    // SAFETY: the caller's.\n    unsafe {{\n        let (v, w) = (S::load(at), S::load(on));\n        {}\n    }}\n}}\n", test.join("\n            | "));
+                // Its own loads only where the block's classes are not made (`Bytes::block_words`).
+                if out.contains(&format!("w_{f}::<S>")) {
+                    let _ = write!(out, "\n/// `{f}`'s pairs' first bytes in the block at `base`, as the lean lexer's `pair`: where a pair's two bytes are. A token\n/// never starts at a pair's second byte, so at a token's start this is the grammar's mask of pairs (read left to right).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn w_{f}<S: rerail_simd8::Simd8x64>(src: &[u8], base: usize) -> u64 {{\n    // The block and the one a byte on: in the padded source.\n    let at: &[u8; 64] = src[base..base + 64].try_into().expect(\"the padded source\");\n    let on: &[u8; 64] = src[base + 1..base + 65].try_into().expect(\"the padded source\");\n    // SAFETY: the caller's.\n    unsafe {{\n        let (v, w) = (S::load(at), S::load(on));\n        {}\n    }}\n}}\n", test.join("\n            | "));
+                }
                 // The function the mask replaces, where nothing calls it.
                 if !out.contains(&format!("{f}(src, s)")) {
                     if let Some(at) = out.find(&format!("`'s last byte from its first, `s`: its next where the two are a pair, and the one after where the three are a triple, as the lean lexer reads an operator.\nfn {f}(")) {

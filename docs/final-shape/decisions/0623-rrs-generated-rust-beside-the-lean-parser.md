@@ -553,3 +553,13 @@ equal to the calls' on every sample and corpus file (`tape_differs`), and both a
 the loop. Side by side on spark1, three rounds in turns: tier 2 33.6–36.4 ms as the loop, 28.1–28.5 ms as calls (load
 2); 35.5–36.6 against 30.2–30.9 ms at load 13. Lean's tier 2 is 28.4 ms. All tests pass: rr_parser 52 (the loop's tapes
 equal to the calls'), kotlin_parser 70, `json_rust_is_current`, the product build.
+
+## The pairs mask of the block's one load, as lean's `pair` (done)
+
+Tier 1's block classes (`block_classes`) were one load and one classify, but the operators' pairs mask (`k_pair_6`)
+loaded the block again, and the block a byte on, and compared each pair's two bytes. It is now made of the same load,
+as the lean lexer's `pair`: one nibble-table pair names the pairs a byte starts, another, of the block shifted a byte
+on (`shift_in`, the next block's first byte in), those it ends; a pair is a bit of both, packed once (eight pairs a
+pair of tables). The block is classified once, and its five masks packed from it, as lean's four.
+
+Side by side on spark1 (load 12), three rounds in turns: tier 1 24.1–24.4 ms before, 23.0–23.2 ms after. All tests pass.

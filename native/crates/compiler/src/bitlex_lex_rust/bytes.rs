@@ -33,6 +33,9 @@ pub(super) struct Bytes<'a> {
     class_code: HashMap<String, String>,
     /// Whether the line read is in a region's row: its reads go from the opener, as the lean lexer's micro-lexers.
     in_region: bool,
+    /// The operators' pairs masks the loop reads (`k_pair_K`): each row's pairs of bytes, a pair's first byte's bit where
+    /// the second is the byte after (lean's `pair`), made of the block's classes too.
+    pub(super) pairs: Vec<(String, Vec<(u8, u8)>)>,
 }
 
 /// The calls of the loop that read a mask: their name, and how many of their first arguments are masks.
@@ -56,7 +59,7 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new() }
     }
 
     /// `prev(E, k)` and `next(E, k)`: the call's mask and its distance, back (negative) or on.
@@ -355,6 +358,9 @@ impl<'a> Bytes<'a> {
                 for m in &self.block {
                     let _ = writeln!(out, "        let k_{m} = unsafe {{ w_{m}::<S>(src, n, base as isize, &mut 0) }};");
                 }
+                for (f, _) in &self.pairs {
+                    let _ = writeln!(out, "        let k_{f} = unsafe {{ w_{f}::<S>(src, base) }};");
+                }
                 (String::new(), out)
             }
         }
@@ -369,6 +375,32 @@ impl<'a> Bytes<'a> {
             let e = self.expr(&m).ok()?;
             words.push((m, self.blk(&e, 0, 0, &mut used, &mut back, &mut on)?));
         }
+        // Each pairs mask of the block's one load too, as lean's `pair`: the byte's nibble tables name the pairs it
+        // starts, the next byte's (`shift_in`) the pairs it ends; a pair is a bit of both, packed once. Eight pairs a
+        // pair of tables.
+        let mut statics = String::new();
+        let mut shifted = false;
+        for (f, two) in self.pairs.clone() {
+            let mut groups = Vec::new();
+            for (g, chunk) in two.chunks(8).enumerate() {
+                let (mut flo, mut fhi, mut slo, mut shi) = ([0u8; 16], [0u8; 16], [0u8; 16], [0u8; 16]);
+                for (bit, &(a, b)) in chunk.iter().enumerate() {
+                    flo[usize::from(a & 15)] |= 1 << bit;
+                    fhi[usize::from(a >> 4)] |= 1 << bit;
+                    slo[usize::from(b & 15)] |= 1 << bit;
+                    shi[usize::from(b >> 4)] |= 1 << bit;
+                }
+                let t = format!("{}_{g}", f.to_uppercase());
+                let row = |t: &[u8; 16]| t.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(", ");
+                let _ = write!(statics, "/// `{f}`'s pairs ({}): a first byte's bits the pairs it starts, a second's those it ends.\nstatic {t}_FIRST: ([u8; 16], [u8; 16]) = ([{}], [{}]);\nstatic {t}_SECOND: ([u8; 16], [u8; 16]) = ([{}], [{}]);\n\n", chunk.iter().map(|(a, b)| format!("`{}{}`", *a as char, *b as char)).collect::<Vec<_>>().join(", "), row(&flo), row(&fhi), row(&slo), row(&shi));
+                let c = format!("{f}_{g}");
+                self.class_code.insert(c.clone(), format!("S::to_bitmask(S::test(S::classify(v, &{t}_FIRST.0, &{t}_FIRST.1), S::classify(d, &{t}_SECOND.0, &{t}_SECOND.1)))"));
+                used.push(c);
+                groups.push(format!("cur[{}]", used.len() - 1));
+                shifted = true;
+            }
+            words.push((f, if groups.is_empty() { "0u64".to_owned() } else { groups.join(" | ") }));
+        }
         if used.is_empty() {
             return None;
         }
@@ -380,6 +412,11 @@ impl<'a> Bytes<'a> {
             }
         }
         let bits: Vec<String> = used.iter().map(|c| self.class_bits(c)).collect::<Option<_>>()?;
+        self.code.push_str(&statics);
+        if shifted {
+            // The block a byte on: its last byte the next block's first, in the padded source.
+            tables.insert_str(0, "        let d = S::shift_in(v, src[base + 64]);\n");
+        }
         let k = used.len();
         let _ = write!(
             self.code,

@@ -731,26 +731,26 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
         (m_o_line, m_o_block, m_o_t1, m_o_t2, m_e_t2, m_o_t3, t1, t2, t3)
     };
     // The next block's classes, made with the block before it: the block's own, where the loop goes on to it.
-    let (mut ahead_b, mut ahead) = (usize::MAX, [0u64; 4]);
+    let (mut ahead_b, mut ahead) = (usize::MAX, [0u64; 5]);
     // The last block's classes: the block before's, where the loop came to it from there.
-    let (mut behind_b, mut behind) = (usize::MAX, [0u64; 4]);
+    let (mut behind_b, mut behind) = (usize::MAX, [0u64; 5]);
     'tokens: while b < nw {
         let base = b * 64;
         // The block's masks, from its classes (the lean lexer's `Window`): what its tokens read of it.
         // SAFETY: `base` is in the file.
         let cur = if ahead_b == b { ahead } else { unsafe { block_classes::<S>(src, n, base) } };
         // SAFETY: `base + 64` is in the file.
-        let next = if base + 64 < n { unsafe { block_classes::<S>(src, n, base + 64) } } else { [0u64; 4] };
+        let next = if base + 64 < n { unsafe { block_classes::<S>(src, n, base + 64) } } else { [0u64; 5] };
         (ahead_b, ahead) = (b + 1, next);
         // SAFETY: `base - 64` is in the file.
-        let prev = if behind_b.wrapping_add(1) == b { behind } else if b > 0 { unsafe { block_classes::<S>(src, n, base - 64) } } else { [0u64; 4] };
+        let prev = if behind_b.wrapping_add(1) == b { behind } else if b > 0 { unsafe { block_classes::<S>(src, n, base - 64) } } else { [0u64; 5] };
         (behind_b, behind) = (b, cur);
         let k_m_word = cur[0];
         let k_m_num_run = (cur[1] | ((cur[2] & (cur[1] << 1 | prev[1] >> 63)) & (cur[1] >> 1 | next[1] << 63)));
         let k_m_dot = cur[2];
         let k_m_digit = cur[1];
         let k_m_ws = cur[3];
-        let k_pair_6 = unsafe { w_pair_6::<S>(src, base) };
+        let k_pair_6 = cur[4];
         let mut firsts = !k_m_ws & (!0u64 << at.saturating_sub(base));
         while firsts != 0 {
         let s = base + firsts.trailing_zeros() as usize;
@@ -1663,46 +1663,28 @@ unsafe fn w_m_ws<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
     unsafe { cls_ws::<S>(src, n, p) }
 }
 
-/// The classes the block's words read (`word`, `digit`, `dot`, `ws`), each's bits in the block at `base`, a byte of the file: one load, and one
+/// `pair_6`'s pairs (`:-`, `=>`, `!=`, `<=`, `<:`, `>=`, `->`): a first byte's bits the pairs it starts, a second's those it ends.
+static PAIR_6_0_FIRST: ([u8; 16], [u8; 16]) = ([0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x18, 0x42, 0x20, 0x00], [0x00, 0x00, 0x44, 0x3b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+static PAIR_6_0_SECOND: ([u8; 16], [u8; 16]) = ([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x2d, 0x42, 0x00], [0x00, 0x00, 0x01, 0x7e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+/// The classes the block's words read (`word`, `digit`, `dot`, `ws`, `pair_6_0`), each's bits in the block at `base`, a byte of the file: one load, and one
 /// classify a pair of nibble tables, as the lean lexer's `Window`. None past the file.
 ///
 /// # Safety
 /// The CPU runs `S`'s backend.
 #[inline(always)]
-unsafe fn block_classes<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, base: usize) -> [u64; 4] {
+unsafe fn block_classes<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, base: usize) -> [u64; 5] {
     let block: &[u8; 64] = src[base..base + 64].try_into().expect("the padded source");
     let lv = valid(n, base as isize);
     // SAFETY: the caller's.
     unsafe {
         let v = S::load(block);
+        let d = S::shift_in(v, src[base + 64]);
         let c0 = S::classify(v, &LO_0, &HI_0);
-        [S::to_bitmask(S::test(c0, S::splat(0x3c))) & lv, S::to_bitmask(S::test(c0, S::splat(0x04))) & lv, S::eq_mask(v, 0x2e) & lv, S::to_bitmask(S::test(c0, S::splat(0x03))) & lv]
+        [S::to_bitmask(S::test(c0, S::splat(0x3c))) & lv, S::to_bitmask(S::test(c0, S::splat(0x04))) & lv, S::eq_mask(v, 0x2e) & lv, S::to_bitmask(S::test(c0, S::splat(0x03))) & lv, S::to_bitmask(S::test(S::classify(v, &PAIR_6_0_FIRST.0, &PAIR_6_0_FIRST.1), S::classify(d, &PAIR_6_0_SECOND.0, &PAIR_6_0_SECOND.1))) & lv]
     }
 }
 
-
-/// `pair_6`'s pairs' first bytes in the block at `base`, as the lean lexer's `pair`: where a pair's two bytes are. A token
-/// never starts at a pair's second byte, so at a token's start this is the grammar's mask of pairs (read left to right).
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn w_pair_6<S: rerail_simd8::Simd8x64>(src: &[u8], base: usize) -> u64 {
-    // The block and the one a byte on: in the padded source.
-    let at: &[u8; 64] = src[base..base + 64].try_into().expect("the padded source");
-    let on: &[u8; 64] = src[base + 1..base + 65].try_into().expect("the padded source");
-    // SAFETY: the caller's.
-    unsafe {
-        let (v, w) = (S::load(at), S::load(on));
-        S::to_bitmask(S::or(S::or(S::or(S::or(S::or(S::or(S::and(S::eq(v, S::splat(0x3a)), S::eq(w, S::splat(0x2d))),
-            S::and(S::eq(v, S::splat(0x3d)), S::eq(w, S::splat(0x3e)))),
-            S::and(S::eq(v, S::splat(0x21)), S::eq(w, S::splat(0x3d)))),
-            S::and(S::eq(v, S::splat(0x3c)), S::eq(w, S::splat(0x3d)))),
-            S::and(S::eq(v, S::splat(0x3c)), S::eq(w, S::splat(0x3a)))),
-            S::and(S::eq(v, S::splat(0x3e)), S::eq(w, S::splat(0x3d)))),
-            S::and(S::eq(v, S::splat(0x2d)), S::eq(w, S::splat(0x3e)))))
-    }
-}
 
 /// Each byte's pick as a token's first byte, and its record kind (the lean lexer's `TOKEN`): the token's row where the
 /// byte picks one, else 7 and its group's index, whose tests pick it; `u8::MAX`, none.
