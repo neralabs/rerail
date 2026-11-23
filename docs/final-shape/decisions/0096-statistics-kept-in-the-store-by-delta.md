@@ -1,9 +1,9 @@
 # 0096: Planner statistics are kept in the store as deletable sketches, maintained by the deltas that change the rows
 
-Status: accepted as the design (2026-11-09), settled by the spikes in §"Evidence". Amended the same day (§2–§4):
-statistics live in memory and are written with the wave SQLite commits, as blobs, never a row per value. Steps 1
-to 4 are built for a session (`logic/plan/statkeep.rs`, `corpus/keptstats.rs`, `corpus/retain.rs`; "Order of
-work").
+Status: built (audited 2026-11-23). Accepted as the design (2026-11-09), settled by the spikes in §"Evidence". Amended
+the same day (§2–§4): statistics live in memory and are written with the wave SQLite commits, as blobs, never a row
+per value. Steps 1 to 4 are built for a session (`logic/plan/statkeep.rs`, `corpus/keptstats.rs`, `corpus/retain.rs`;
+"Order of work").
 
 ## Intro
 

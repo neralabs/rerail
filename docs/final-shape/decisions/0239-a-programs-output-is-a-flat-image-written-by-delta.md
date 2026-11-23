@@ -1,8 +1,8 @@
 # 0239: A program's output is a flat image, written by delta
 
-Status: draft (2026-11-14); stages 1–6 built (2026-11-15) (`plan::output`). Builds on decisions 0173 (a program is a flat image),
-0140 (the tape is the engine's bytes, read in place), 0209 (statistics are one flat table) and 0212 (kept frames
-are of content). Follows 0230, whose "still open" list it replaces at its top.
+Status: built (audited 2026-11-23). Draft (2026-11-14); stages 1–6 built (2026-11-15) (`plan::output`). Builds on
+decisions 0173 (a program is a flat image), 0140 (the tape is the engine's bytes, read in place), 0209 (statistics are
+one flat table) and 0212 (kept frames are of content). Follows 0230, whose "still open" list it replaces at its top.
 
 ## Intro
 

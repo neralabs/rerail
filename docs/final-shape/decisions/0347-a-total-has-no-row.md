@@ -1,7 +1,7 @@
 # 0347: A total has no row
 
-Status: decided (the user, 2026-11-17: "also do the two state-placement fixes", the second of
-which is the outputs that go to memory each block). Follows 0346 and 0341's "What is left".
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "also do the two state-placement fixes", the second
+of which is the outputs that go to memory each block). Follows 0346 and 0341's "What is left".
 
 ## Intro
 

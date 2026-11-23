@@ -1,6 +1,7 @@
 # 0348: Compiled preprocessing (mode (b)) is tier 2 words over a re-entrant token source
 
-Status: draft (2026-11-17). Step 8 of 0327's plan.
+Status: partly built (audited 2026-11-23). Left: the words on Metal (0408 gate missed); header units; 0436 moved the
+evaluator onto preprocessor tapes. Draft (2026-11-17). Step 8 of 0327's plan.
 
 ## Intro
 

@@ -1,7 +1,7 @@
 # 0335: A prefix is outside the stream
 
-Status: decided (2026-11-17); landed on the CPU and in `bitlex`'s evaluator.
-Metal runs it too (2026-11-18). Follows 0330.
+Status: built (audited 2026-11-23). Decided (2026-11-17); landed on the CPU and in `bitlex`'s evaluator. Metal runs it
+too (2026-11-18). Follows 0330.
 
 ## Intro
 

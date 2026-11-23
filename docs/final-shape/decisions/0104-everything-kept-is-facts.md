@@ -1,6 +1,7 @@
 # 0104: Everything kept is facts, on the same fact path
 
-Status: decided (2026-11-10). The checks are built; the moves are in the order below.
+Status: partly built (audited 2026-11-23). Left: move the remaining 31 tables and 6 maps (steps 1-8) to facts; load a
+stored fact space across processes. Decided (2026-11-10). The checks are built; the moves are in the order below.
 
 ## Intro
 

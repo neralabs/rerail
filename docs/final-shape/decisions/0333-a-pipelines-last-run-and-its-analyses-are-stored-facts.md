@@ -1,9 +1,9 @@
 # 0333: A pipeline's last run and its analyses are stored facts, so a new process reruns on an edit
 
-Status: accepted (2026-11-17, the user's choice: store the analyses as facts). Step P of 0281's path.
-Builds on 0281 §2 (analyses cached per version, carried and maintained across a `Delta`), §3 (`Pipeline::again`
-reruns on an edit of the last input), §6 (steps stored as facts in 0103's two-rule form), 0103 (caches are two
-rules), 0225 §5 (analyses as rules over the image).
+Status: built (audited 2026-11-23). Accepted (2026-11-17, the user's choice: store the analyses as facts). Step P of
+0281's path. Builds on 0281 §2 (analyses cached per version, carried and maintained across a `Delta`), §3
+(`Pipeline::again` reruns on an edit of the last input), §6 (steps stored as facts in 0103's two-rule form), 0103
+(caches are two rules), 0225 §5 (analyses as rules over the image).
 
 ## Intro
 

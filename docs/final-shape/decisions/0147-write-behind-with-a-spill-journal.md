@@ -1,7 +1,7 @@
 # 0147: Write behind, as far as memory allows, with a spill journal past it
 
-Status: draft (2026-11-11), an exploration. Only the measurement aids are built
-(`RERAIL_WRITE_QUEUE_MB`, the writer's account by kind of write, the end-of-run drain line).
+Status: superseded by 0259 (audited 2026-11-23). Draft (2026-11-11), an exploration. Only the measurement aids are
+built (`RERAIL_WRITE_QUEUE_MB`, the writer's account by kind of write, the end-of-run drain line).
 
 Numbered 0114 where it was written; renumbered 0147 in the hub (2026-11-13) because another record had 0114.
 

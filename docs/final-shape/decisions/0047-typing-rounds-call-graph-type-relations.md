@@ -1,6 +1,7 @@
 # 0047: Typing: k = 4 with a pending round; `calls:` moves to the programs after parity; type relations drafted here
 
-Status: accepted (the user, 2026-11-06; t20)
+Status: partly built (audited 2026-11-23). Left: §2: production calls: switching to the typing programs per language
+not confirmed in code. Accepted (the user, 2026-11-06; t20)
 
 ## Intro
 

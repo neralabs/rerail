@@ -1,7 +1,7 @@
 # 0375: A full body's classes are packed by place
 
-Status: decided (the user, 2026-11-17: "go ahead", on making tier 1's block work simdjson's
-rather than an imitation of it). Follows 0366.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "go ahead", on making tier 1's block work
+simdjson's rather than an imitation of it). Follows 0366.
 
 ## Intro
 

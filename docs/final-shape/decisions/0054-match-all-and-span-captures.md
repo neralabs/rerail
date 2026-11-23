@@ -1,6 +1,7 @@
 # 0054: `match_all`, and captures that are spans
 
-Status: accepted (2026-11-06; built and tested; `match_all` over a node's own text since 2026-11-08, decision 0081)
+Status: built (audited 2026-11-23). Accepted (2026-11-06; built and tested; `match_all` over a node's own text since
+2026-11-08, decision 0081)
 
 ## Intro
 

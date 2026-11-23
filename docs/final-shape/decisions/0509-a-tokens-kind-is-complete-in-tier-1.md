@@ -1,8 +1,8 @@
 # 0509: A token's kind is complete in tier 1
 
-Status: decided (the user, 2026-11-19: "the complete token kind in tier 1: integer, hex, binary,
-real, the name split, removing the `s.bit` row tests, as lean's `T`"). Item 1 of the lean shape;
-follows 0492, 0496 and 0498.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-19: "the complete token kind in tier 1: integer, hex,
+binary, real, the name split, removing the `s.bit` row tests, as lean's `T`"). Item 1 of the lean shape; follows 0492,
+0496 and 0498.
 
 ## Intro
 

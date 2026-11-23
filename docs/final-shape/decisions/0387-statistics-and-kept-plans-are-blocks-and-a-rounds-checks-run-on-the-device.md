@@ -1,10 +1,11 @@
 # 0387. Statistics and kept plans are blocks, and a round's plan checks run on the device
 
-Status: proposed (2026-11-17), for the user. Q139. Follows 0209 (statistics as one flat table, made in one batch),
-0221 and 0261 (statistics made on the device, reading resident columns), 0266 (blocks: big, everything nested,
-self-relative), 0301 (kept plans published by RCU, their feedback in cells), 0310 (reads written once, three
-backends), 0325 (relations are blocks), 0342 (one block allocator), 0353 (blocks are never copied), 0354 (the join
-model on the device), 0361 (declared shapes, plans from them), 0384 (a relation is one relation).
+Status: not started (audited 2026-11-23). Proposed (2026-11-17), for the user. Q139. Follows 0209 (statistics as one
+flat table, made in one batch), 0221 and 0261 (statistics made on the device, reading resident columns), 0266 (blocks:
+big, everything nested, self-relative), 0301 (kept plans published by RCU, their feedback in cells), 0310 (reads
+written once, three backends), 0325 (relations are blocks), 0342 (one block allocator), 0353 (blocks are never
+copied), 0354 (the join model on the device), 0361 (declared shapes, plans from them), 0384 (a relation is one
+relation).
 
 ## Intro
 

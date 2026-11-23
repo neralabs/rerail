@@ -1,10 +1,11 @@
 # 0353: Blocks are never copied: every reader reads the data where it lives
 
-Status: decided (2026-11-17), by the user: "the entire point is that the CPU and GPU kernels all operate on exactly
-the same linear data"; "it must be clear EVERYWHERE that blocks NEVER get copied into different data-structures for
-'convenience'". The plan below is being built. Supersedes the parts of 0289 §1–2, 0293 §6 and 0325 step 5 named in
-"What it replaces". Follows 0140 (the tape is the engine's bytes), 0266 (blocks), 0293 (one tape API, read in place),
-0310 (reads written once, three backends) and 0325 (relations are blocks).
+Status: partly built (audited 2026-11-23). Left: the marked copies of steps 3, 4/4a, 6, 7 and 8 (30 sites) are still
+to be removed. Decided (2026-11-17), by the user: "the entire point is that the CPU and GPU kernels all operate on
+exactly the same linear data"; "it must be clear EVERYWHERE that blocks NEVER get copied into different
+data-structures for 'convenience'". The plan below is being built. Supersedes the parts of 0289 §1–2, 0293 §6 and 0325
+step 5 named in "What it replaces". Follows 0140 (the tape is the engine's bytes), 0266 (blocks), 0293 (one tape API,
+read in place), 0310 (reads written once, three backends) and 0325 (relations are blocks).
 
 Amended between memory domains by 0440 §7.2 (the user, 2026-11-18): within one domain (a host's RAM and its unified GPUs) this holds as written; between domains (a discrete GPU's memory, another host) a block is copied as the same bytes, never into another data structure, and the engine keeps the copies coherent.
 

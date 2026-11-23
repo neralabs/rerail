@@ -1,8 +1,11 @@
 # 0567: UKL on the CPU is vector code between sync points, made by tape-to-tape passes
 
-Status: agreed with the user (2026-11-21). Steps 1 and 2 are built (2026-11-21, "Step 2, as built" below; its interpreter rebuilt as a code tape the same day). The goal is the user's: "run the same kernels on the GPU and
-the CPU", where the CPU backend's coroutine C++ (decision 0440 §8, "The CPU backend") "is correct but horribly
-slow". The answers below are the user's, given to the questions of the design pass. Follows 0440 and 0310.
+Status: partly built (audited 2026-11-23). Left: Step 3: own register allocator, per-call saves, Cranelift from SSA,
+the Rust SIMD back end, and the 1000x gate. Step 4: wider types. Agreed with the user (2026-11-21). Steps 1 and 2 are
+built (2026-11-21, "Step 2, as built" below; its interpreter rebuilt as a code tape the same day). The goal is the
+user's: "run the same kernels on the GPU and the CPU", where the CPU backend's coroutine C++ (decision 0440 §8, "The
+CPU backend") "is correct but horribly slow". The answers below are the user's, given to the questions of the design
+pass. Follows 0440 and 0310.
 
 ## What is there
 

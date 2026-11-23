@@ -1,7 +1,7 @@
 # 0300. A run's source files are read once: the digests' read is held for phase 1's and the run's builders
 
-Status: decided (2026-11-16). Builds on 0104 (phase 1, the waves read no store), 0105 (the observer), 0083
-(phases). Found tracing the kernel time of a cold run over PostHog (0296's follow-up).
+Status: built (audited 2026-11-23). Decided (2026-11-16). Builds on 0104 (phase 1, the waves read no store), 0105 (the
+observer), 0083 (phases). Found tracing the kernel time of a cold run over PostHog (0296's follow-up).
 
 ## Intro
 

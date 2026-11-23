@@ -1,6 +1,7 @@
 # 0077: A session keeps its cross-file part; an edit runs the strata it changed, then maintains their rows
 
-Status: accepted (2026-11-08). Stages 1 and 2 built; §4, the strata kept across processes, built 2026-11-09.
+Status: built (audited 2026-11-23). Accepted (2026-11-08). Stages 1 and 2 built; §4, the strata kept across processes,
+built 2026-11-09.
 
 (Numbered past 0076, which Bend-language-investigation uses for its per-component cross memo, not yet in this
 tip.)

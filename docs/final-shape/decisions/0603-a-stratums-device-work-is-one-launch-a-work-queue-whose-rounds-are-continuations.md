@@ -1,8 +1,9 @@
 # 0603. A stratum's device work is one launch: a work queue whose phases and rounds are continuations
 
-Status: accepted (2026-11-22), steps open. Follows 0601 (every launch counts, and past the budget is a hard failure)
-and takes 0540 step 6's scheme (a level's formulas as a work queue with continuations) to the device joins
-(`metal_join::Batch`, `setfix::device`).
+Status: partly built (audited 2026-11-23). Left: 5d's other half (the lattice fold still reads host tables), 5e (an
+index sorts claimed rows on the device), the closure launch test, non-recursive heads' rooms. Accepted (2026-11-22),
+steps open. Follows 0601 (every launch counts, and past the budget is a hard failure) and takes 0540 step 6's scheme
+(a level's formulas as a work queue with continuations) to the device joins (`metal_join::Batch`, `setfix::device`).
 
 ## Intro
 

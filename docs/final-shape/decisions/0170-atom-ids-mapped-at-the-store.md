@@ -1,6 +1,6 @@
 # 0170: A process whose atoms fork from the store's maps its ids at the store
 
-Status: decided (2026-11-13), with provisional ids (0160, `RERAIL_ATOMS_PROVISIONAL=1`)
+Status: built (audited 2026-11-23). Decided (2026-11-13), with provisional ids (0160, `RERAIL_ATOMS_PROVISIONAL=1`)
 
 ## Intro
 

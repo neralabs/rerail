@@ -1,7 +1,7 @@
 # 0529: The newline index is made from tier 1's bits
 
-Status: decided (the user, 2026-11-20: "go ahead in that order", the second of page 40 step 34's three changes).
-Follows 0528.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-20: "go ahead in that order", the second of page 40
+step 34's three changes). Follows 0528.
 
 ## Intro
 

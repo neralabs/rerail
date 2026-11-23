@@ -1,6 +1,7 @@
 # 0215. A maintained program's parts are a typed form beside its version
 
-Status: decided (2026-11-14). Continues decision 0173 (§7) for t36 item 7, step 1.
+Status: superseded by 0364 (audited 2026-11-23). Decided (2026-11-14). Continues decision 0173 (§7) for t36 item 7,
+step 1.
 
 ## Intro
 

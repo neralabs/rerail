@@ -1,6 +1,6 @@
 # 0030: Semantic predicates as labels from fact producers
 
-Status: accepted (2026-11-03, list step 26)
+Status: built (audited 2026-11-23). Accepted (2026-11-03, list step 26)
 
 ## Context
 

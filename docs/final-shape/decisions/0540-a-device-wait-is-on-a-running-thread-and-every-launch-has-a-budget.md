@@ -1,11 +1,13 @@
 # 0540. A device wait is on a thread that is running, and every persistent launch has a budget
 
-Status: decided (2026-11-20), by the user: "It sounds like we need a better solution for device-side enqueuing than
-busy waits. What can we do? can we make the kernels discover their order based on an atomic counter and do the work
-in those? Can we make a thread which wants to spin instead cooperatively take on part of the work it's waiting for?",
-then "please do 2 and 3 first": 2, the 16z cache's waits; 3, the persistent grid's and a budget for each launch.
-Amends `view::cache` (decision 0353 step 4b): "a miss waits for no thread" becomes a bounded wait for a writer.
-Follows 0524 point 5 (a wait is a turn of its function's one loop).
+Status: partly built (audited 2026-11-23). Left: Step 4 (a 16z block decoded by its SIMD group together); the resident
+interpreter's Metal gate; the preprocessor's own MSL still waits by polling. Decided (2026-11-20), by the user: "It
+sounds like we need a better solution for device-side enqueuing than busy waits. What can we do? can we make the
+kernels discover their order based on an atomic counter and do the work in those? Can we make a thread which wants to
+spin instead cooperatively take on part of the work it's waiting for?", then "please do 2 and 3 first": 2, the 16z
+cache's waits; 3, the persistent grid's and a budget for each launch. Amends `view::cache` (decision 0353 step 4b): "a
+miss waits for no thread" becomes a bounded wait for a writer. Follows 0524 point 5 (a wait is a turn of its
+function's one loop).
 
 ## Intro
 

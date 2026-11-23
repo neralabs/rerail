@@ -1,7 +1,6 @@
 # 0010: Waves run on one owner connection; SQL selects each wave's frontier; derived relations are fact families
 
-Status: accepted
-Date: 2026-10-27
+Status: built (audited 2026-11-23). Accepted Date: 2026-10-27
 
 ## Question
 Phase 7 rows 1, 2 and 4 copy D's SQL owner (`pool.rs`, `database.rs`), schema lifecycle

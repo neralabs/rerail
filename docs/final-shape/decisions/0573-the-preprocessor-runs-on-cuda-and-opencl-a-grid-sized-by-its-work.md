@@ -1,8 +1,9 @@
 # 0573. The preprocessor runs on CUDA and OpenCL, its grid sized by its work
 
-Status: accepted (2026-11-21, the user: "first merge in the hub and the cuda support branch, before you start chasing
-cuda and opencl"). The preprocessor's device passes (0468) and its tests (0448) now run on NVIDIA's CUDA and OpenCL as
-on Metal and UKL's CPU backend. The kernels' source is unchanged. This record covers what running it there found.
+Status: built (audited 2026-11-23). Accepted (2026-11-21, the user: "first merge in the hub and the cuda support
+branch, before you start chasing cuda and opencl"). The preprocessor's device passes (0468) and its tests (0448) now
+run on NVIDIA's CUDA and OpenCL as on Metal and UKL's CPU backend. The kernels' source is unchanged. This record
+covers what running it there found.
 
 ## Intro
 

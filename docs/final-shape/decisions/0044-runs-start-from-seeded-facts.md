@@ -1,6 +1,8 @@
 # 0044: A run starts from seeded facts; everything else is derived
 
-Status: accepted (user agreed, 2026-11-06); step 1 built for library files
+Status: partly built (audited 2026-11-23). Left: config_file seeds; corpus runner seeding file facts through the
+store; path facts as .rr rules; local ids with doc_tape; per-stratum derivations by tape hash. Accepted (user agreed,
+2026-11-06); step 1 built for library files
 
 ## Intro
 

@@ -1,8 +1,7 @@
 # 0362: The refill reads the body's rows
 
-Status: decided (the user, 2026-11-17: "complete this", of 0360's "not taken": the refill
-reading the body's words instead of classifying each block's bytes again). Follows 0355 and
-0360.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "complete this", of 0360's "not taken": the refill
+reading the body's words instead of classifying each block's bytes again). Follows 0355 and 0360.
 
 ## Intro
 

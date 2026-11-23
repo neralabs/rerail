@@ -1,5 +1,7 @@
 # 0487. One ledger owns a block's memory, for the CPU and the GPU
 
+Status: built (audited 2026-11-23).
+
 Date: 2026-11-20. Status: decided (the user, 2026-11-20, on Q337: "We need to understand live and queued readers and
 writers and reference counts over blocks, what is borrowed, etc on the CPU and the GPU, of each and every block, and
 have the memory management be accurate and taken care of by the system in a single place, not by each part of our
