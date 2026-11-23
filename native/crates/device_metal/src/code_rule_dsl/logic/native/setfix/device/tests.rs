@@ -353,7 +353,7 @@ use rerail_blocks::vector::Vector;
     /// fold made on the CPU alone.
     #[test]
     fn a_cpu_fold_goes_on_in_the_devices_key_map() {
-        use crate::code_rule_dsl::facts::rows::{BlockVec, Part};
+        use crate::code_rule_dsl::facts::rows::{Part};
         use crate::code_rule_dsl::transducer::packed::metal_join as mj;
         use super::super::keys::{KeyMap, SLOT};
         if !mj::available() {
@@ -387,7 +387,7 @@ use rerail_blocks::vector::Vector;
                 }
                 old => {
                     // SAFETY: the fold's first pass writes every slot before any read.
-                    map = Some(KeyMap::of(unsafe { BlockVec::unwritten_in(Some(&part.home()), need * SLOT) }, had));
+                    map = Some(KeyMap::of(unsafe { crate::code_rule_dsl::facts::rows::unwritten_in(Some(&part.home()), need * SLOT) }, had));
                     Some(old)
                 }
             };

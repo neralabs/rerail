@@ -45,7 +45,7 @@ impl Summary {
 #[derive(Default)]
 struct Groups {
     width: usize,
-    words: super::rows::BlockVec<i64>,
+    words: rerail_blocks::vector::Vector<i64>,
     len: usize,
 }
 impl Groups {
@@ -90,11 +90,11 @@ impl Groups {
     }
     fn insert(&mut self, key: &[i64], s: Summary) {
         if self.len == 0 && self.words.is_empty() || self.width != key.len() {
-            *self = Groups { width: key.len(), words: super::rows::BlockVec::new(), len: 0 };
+            *self = Groups { width: key.len(), words: crate::code_rule_dsl::facts::rows::vector_in(None, 0), len: 0 };
             self.words.resize(16 * self.stride(), 0);
         }
         if 2 * (self.len + 1) > self.slots() {
-            let mut grown = Groups { width: self.width, words: super::rows::BlockVec::new(), len: 0 };
+            let mut grown = Groups { width: self.width, words: crate::code_rule_dsl::facts::rows::vector_in(None, 0), len: 0 };
             grown.words.resize(2 * self.words.len(), 0);
             let st = self.stride();
             for at in 0..self.slots() {

@@ -25,7 +25,6 @@
 use rerail_blocks::vector::Vector;
 use super::{InRel, Key, Src, Step, is_dead, steps};
 use rerail_section::Section;
-use super::rows::BlockVec;
 use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
 use rerail_accel::{Batch, Kernel, Launch, Output};
 use rustc_hash::{FxHashMap as HashMap, FxHasher};
@@ -51,7 +50,7 @@ pub(super) struct Table {
     /// Open addressing by the key's hash (`rerail_blocks::key_hash`, `mask`): each slot a row holding its key (its
     /// first) and the key's rows, `[EMPTY, 0]` for none; in a block near the relation's rows (decision 0478 step 6b).
     /// A probe checks the key against its row's values, read where they lie.
-    slots: BlockVec<[u32; 2]>,
+    slots: rerail_blocks::vector::Vector<[u32; 2]>,
     mask: u64,
 }
 
@@ -81,7 +80,7 @@ impl Table {
         let mask = (cap - 1) as u64;
         let home = rel.rows.home();
         // SAFETY: every slot is written below before any read.
-        let mut slots = unsafe { BlockVec::<[u32; 2]>::unwritten_in(home.as_ref(), cap) };
+        let mut slots = unsafe { crate::code_rule_dsl::facts::rows::unwritten_in::<[u32; 2]>(home.as_ref(), cap) };
         slots.fill([EMPTY, 0]);
         let mut key = vec![0i64; cols.len()];
         for (rep, n) in keys {
@@ -448,6 +447,7 @@ pub(super) fn built() -> Built {
 #[cfg(test)]
 mod block_tests {
     use super::*;
+    use crate::code_rule_dsl::facts::rows::InRelations;
 
     /// Decision 0478 step 6b: a count table is slots in a block (a row holding the key, and the key's rows), found by
     /// the key's hash and checked against that row's values: no map of keys.

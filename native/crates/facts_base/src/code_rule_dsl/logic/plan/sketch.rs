@@ -34,14 +34,14 @@ const _: () = assert!(W == 64 && M == 64 && D == 3, "`add` takes 6 bits a counte
 /// went back to zero keeps its page, zeroed, but is not open.
 #[derive(Clone)]
 pub struct Sketch {
-    words: crate::code_rule_dsl::facts::rows::BlockVec<i64>,
+    words: rerail_blocks::vector::Vector<i64>,
     page: [u8; LEVELS],
     open: u32,
 }
 
 impl Default for Sketch {
     fn default() -> Self {
-        let mut words = crate::code_rule_dsl::facts::rows::BlockVec::new();
+        let mut words = crate::code_rule_dsl::facts::rows::vector_in(None, 0);
         words.resize(D * W, 0);
         Sketch { words, page: [0; LEVELS], open: 0 }
     }
@@ -305,7 +305,7 @@ pub mod tests {
         for v in 0..5000 {
             s.add(v, 2);
         }
-        assert!(s.words.facts().is_some() && s.open != 0, "its counters in a block");
+        assert!(rerail_blocks::maps::Placed::place(&s.words).is_some() && s.open != 0, "its counters in a block");
         let mut t = s.clone();
         for v in 5000..5100 {
             t.add(v, 1);

@@ -33,8 +33,8 @@ pub fn bucket(h: u64) -> (usize, i32) {
 /// it lies, held by both (decision 0353: read in place, never copied). Every cell is read and written as an atomic of
 /// its width, relaxed: the writer's stores are plain stores, and a reader on another thread reads a value whole.
 pub struct Counts {
-    counters: crate::code_rule_dsl::facts::rows::BlockVec<i32>,
-    few: crate::code_rule_dsl::facts::rows::BlockVec<[i64; 2]>,
+    counters: rerail_blocks::vector::Vector<i32>,
+    few: rerail_blocks::vector::Vector<[i64; 2]>,
     /// `few`'s values in use, or `PAST` once the column has had more than `EXACT`.
     len: std::sync::atomic::AtomicU32,
 }
@@ -48,9 +48,9 @@ use std::sync::atomic::{AtomicI32, AtomicI64};
 impl Counts {
     /// No rows: its arrays at their full size, in a block, so they never move while they are read.
     pub fn new() -> Counts {
-        let mut counters = crate::code_rule_dsl::facts::rows::BlockVec::new();
+        let mut counters = crate::code_rule_dsl::facts::rows::vector_in(None, 0);
         counters.resize(BUCKETS, 0i32);
-        let mut few = crate::code_rule_dsl::facts::rows::BlockVec::new();
+        let mut few = crate::code_rule_dsl::facts::rows::vector_in(None, 0);
         few.resize(EXACT, [0i64; 2]);
         Counts { counters, few, len: std::sync::atomic::AtomicU32::new(0) }
     }
@@ -130,7 +130,8 @@ impl Counts {
 
     /// Whether its arrays are in a block (decision 0478 step 6c).
     pub fn in_blocks(&self) -> bool {
-        self.counters.facts().is_some() && self.few.facts().is_some()
+        use rerail_blocks::maps::Placed;
+        self.counters.place().is_some() && self.few.place().is_some()
     }
 }
 

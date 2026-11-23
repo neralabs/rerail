@@ -218,6 +218,7 @@ fn an_order_made_at_a_probe_is_in_the_blocks_directory() {
 fn an_inputs_value_counts_and_statistics_are_in_a_block() {
     // A run of its own (decision 0442): its open blocks and counts are the run's.
     let _run = crate::code_rule_dsl::logic::profile::test_run();
+    use crate::code_rule_dsl::facts::rows::InRelations;
     use crate::code_rule_dsl::facts::vtab::Source;
     let n = 700;
     let rel = std::sync::Arc::new(InRel::from_flat(rows(n), n, vec![b'i'; 2]));

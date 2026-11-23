@@ -7,6 +7,9 @@ use crate::{Pod, Region, Room, default_room};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+/// Its region may be another holder's, borrowed (`borrowed`: a relation's rows its directory owns): its room then
+/// below its length, so that any write moves its `T`s to a region of its own first (`own`), and a clone borrows them
+/// again. A region with a guard has each CPU read and write checked by it (decision 0487 R4).
 pub struct Vector<T: Pod> {
     /// Its region (none while it has no room) and the room it came from.
     mem: Option<Region>,
@@ -47,6 +50,80 @@ impl<T: Pod> Vector<T> {
         v
     }
 
+    /// The `T`s of `items`, its regions from `room`.
+    pub fn from_iter_in(room: Arc<dyn Room>, items: impl IntoIterator<Item = T>) -> Self {
+        let items = items.into_iter();
+        let mut v = Vector::with_capacity_in(room, items.size_hint().0);
+        v.extend(items);
+        v
+    }
+
+    /// The `len` `T`s of `region`, its own (a chunk handed back: `into_region`), its growth from `room`.
+    ///
+    /// # Safety
+    /// `region` holds `len` written `T`s, aligned for `T`.
+    pub unsafe fn from_region(mut region: Region, len: usize, room: Option<Arc<dyn Room>>) -> Self {
+        let cap = if size_of::<T>() == 0 { usize::MAX } else { region.len() / size_of::<T>() };
+        debug_assert!(len <= cap);
+        let ptr = region.as_mut_ptr().cast::<T>();
+        Vector { mem: Some(region), room, ptr, len, cap, _t: PhantomData }
+    }
+
+    /// The `len` `T`s of `region`, borrowed: read where they lie, never written there (a write moves them to a region
+    /// of `room`'s first), cloned as another borrow where `region` is shared (`Region::shared_by`).
+    ///
+    /// # Safety
+    /// `region` holds `len` written `T`s, aligned for `T`, which its owner keeps while it lives.
+    pub unsafe fn borrowed(mut region: Region, len: usize, room: Option<Arc<dyn Room>>) -> Self {
+        if len == 0 {
+            return Vector { room, ..Vector::new() };
+        }
+        let ptr = region.as_mut_ptr().cast::<T>();
+        Vector { mem: Some(region), room, ptr, len, cap: 0, _t: PhantomData }
+    }
+
+    /// Whether its `T`s are borrowed (`borrowed`), not yet moved by a write.
+    #[inline]
+    pub fn is_borrowed(&self) -> bool {
+        self.cap < self.len
+    }
+
+    /// Its region and length, handed on whole (a chunk to its relation's directory), where it is its own: else
+    /// itself (borrowed, or with no region).
+    pub fn into_region(mut self) -> Result<(Region, usize), Self> {
+        if self.is_borrowed() || self.mem.is_none() {
+            return Err(self);
+        }
+        let len = self.len;
+        let region = self.mem.take().expect("a region");
+        Ok((region, len))
+    }
+
+    /// Its room: where its regions come from (none until its first, for the run's).
+    pub fn room(&self) -> Option<&Arc<dyn Room>> {
+        self.room.as_ref()
+    }
+
+    /// The CPU reads (or writes) `n` `T`s from its `from`th: its region's guard checks them (decision 0487 R4). With
+    /// none, no more than a load.
+    #[inline]
+    #[track_caller]
+    fn check(&self, from: usize, n: usize, write: bool) {
+        if let Some(m) = &self.mem
+            && let Some((g, at)) = m.guard()
+        {
+            let (at, len) = (at + from * size_of::<T>(), (n * size_of::<T>()).max(1));
+            if write { g.cpu_write(at, len) } else { g.cpu_read(at, len) }
+        }
+    }
+
+    /// Its borrowed `T`s moved to a region of its own, before a write.
+    #[cold]
+    #[inline(never)]
+    fn own(&mut self) {
+        self.reserve(0);
+    }
+
     #[inline]
     pub fn len(&self) -> usize {
         self.len
@@ -82,9 +159,10 @@ impl<T: Pod> Vector<T> {
         }
         let cap = need.max(2 * self.cap).max(4);
         let room = self.room.get_or_insert_with(default_room).clone();
-        let mut region = room.region(cap * size_of::<T>(), align_of::<T>(), "a vector");
+        let mut region = room.region(cap * size_of::<T>(), align_of::<T>(), std::any::type_name::<T>());
         let ptr = region.as_mut_ptr().cast::<T>();
         if self.len > 0 {
+            self.check(0, self.len, false);
             // SAFETY: the old region holds `len` written `T`s; the new one is this vector's alone.
             // copy: growth: an array that outgrew its region, moved once, as a vector's growth moves it
             unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.len) };
@@ -99,9 +177,10 @@ impl<T: Pod> Vector<T> {
             return self.reserve(extra);
         }
         let room = self.room.get_or_insert_with(default_room).clone();
-        let mut region = room.region(need * size_of::<T>(), align_of::<T>(), "a vector");
+        let mut region = room.region(need * size_of::<T>(), align_of::<T>(), std::any::type_name::<T>());
         let ptr = region.as_mut_ptr().cast::<T>();
         if self.len > 0 {
+            self.check(0, self.len, false);
             // SAFETY: as `reserve`'s.
             // copy: growth: an array that outgrew its region, moved once, as a vector's growth moves it
             unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.len) };
@@ -111,9 +190,11 @@ impl<T: Pod> Vector<T> {
 
     #[inline]
     pub fn push(&mut self, v: T) {
-        if self.len == self.cap {
+        // At its room, or borrowed (its room below its length): a region of its own, room to spare.
+        if self.len >= self.cap {
             self.reserve(1);
         }
+        self.check(self.len, 1, true);
         // SAFETY: `len` is below its room.
         unsafe { self.ptr.add(self.len).write(v) };
         self.len += 1;
@@ -137,6 +218,7 @@ impl<T: Pod> Vector<T> {
         T: Copy,
     {
         self.reserve(src.len());
+        self.check(self.len, src.len(), true);
         // SAFETY: room for `src` past `len`, this vector's alone, apart from `src`.
         // copy: derived: the values `extend_from_slice` writes
         unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), self.ptr.add(self.len), src.len()) };
@@ -150,6 +232,7 @@ impl<T: Pod> Vector<T> {
     {
         if n > self.len {
             self.reserve(n - self.len);
+            self.check(self.len, n - self.len, true);
             for i in self.len..n {
                 // SAFETY: below its room.
                 unsafe { self.ptr.add(i).write(v) };
@@ -315,6 +398,9 @@ impl<T: Pod> Vector<T> {
     }
 
     pub fn as_mut_ptr(&mut self) -> *mut T {
+        if self.is_borrowed() {
+            self.own();
+        }
         self.ptr
     }
 
@@ -339,6 +425,7 @@ impl<T: Pod> std::ops::Deref for Vector<T> {
     type Target = [T];
     #[inline]
     fn deref(&self) -> &[T] {
+        self.check(0, self.len, false);
         // SAFETY: `len` written `T`s at `ptr` (dangling and aligned when empty).
         unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
     }
@@ -347,6 +434,10 @@ impl<T: Pod> std::ops::Deref for Vector<T> {
 impl<T: Pod> std::ops::DerefMut for Vector<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut [T] {
+        if self.is_borrowed() {
+            self.own();
+        }
+        self.check(0, self.len, true);
         // SAFETY: as `deref`, through `&mut self`.
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
     }
@@ -360,6 +451,12 @@ impl<T: Pod> Default for Vector<T> {
 
 impl<T: Pod + Copy> Clone for Vector<T> {
     fn clone(&self) -> Self {
+        // Borrowed: another borrow of the same `T`s, where they lie.
+        if self.is_borrowed()
+            && let Some(region) = self.mem.as_ref().and_then(Region::share)
+        {
+            return Vector { mem: Some(region), room: self.room.clone(), ptr: self.ptr, len: self.len, cap: 0, _t: PhantomData };
+        }
         let mut v = Vector { room: self.room.clone(), ..Vector::new() };
         // copy: derived: an array written again for a holder of its own (`Clone`), as a `Vec`'s clone is
         v.extend_from_slice(self);

@@ -154,3 +154,24 @@ choice for its 16z reads' cost: "Faster 16z reads".
 - The lean `.rerail` parser writes its tape through `Sink<()>` (`rr_syntax::lean::tape_to`, `tape_format::Kept`): one
   instance of the parse, compiled in its crate and optimized in dev builds, not one per output type in the engine's
   crate, unoptimized there. The user: "make the writer optimize even in debug builds".
+
+## 8. One growable array in blocks: a relation's arrays are a `Vector` in its home's room
+
+The hub's merge (1f1d817c61) left two growable block arrays: this decision's `Vector` (a region from a `Room`) and the
+facts layer's `BlockVec` (a chunk in a relation's block, decisions 0384 step 4, 0478, 0487 R4, 0491 step 2). The user,
+asked which: "Fold into Vector". `BlockVec` is removed; what it did is `Vector`'s or its room's:
+
+- **Where it lies.** `Home::room()` is a room: its first region in the relation's block when that has room past its
+  relations' margin and the bytes its tail would take to double, its growth in the same block, else the open block of
+  its life (`LifeRoom`). No home: the run's open relation block (`rows::room_near(None)`, `vector_in`, `collect_in`).
+  What was `BlockVec::new()` or its default takes that room too (`vector_in(None, 0)`), as it did.
+- **R4.** A `Region` carries an optional guard (`rerail_vector::Guard`, the block's `Ledger`): a relation block's
+  region has each CPU read and write checked against the device's queued uses, as `BlockVec`'s were.
+- **Borrowed rows (0478 step 5b).** `Vector::borrowed`: its room below its length, so any write moves it first; a
+  clone borrows again (`Region::shared_by`). `rows::shared` makes one over a relation's directory chunk.
+- **A chunk handed on (0491 step 2).** `Vector::into_region` / `from_region`; `rows::InRelations::into_chunk` and
+  `rows::from_chunk` hand a relation's array to its directory and back, its heap-profile charge with it.
+- **Its block.** `InRelations::facts`, `offset`, `can_give`, `is_shared`: read off the region's owner.
+
+A test that a structure is "in a block" asks `Placed::place`; one that it lies in its relation's block asks
+`InRelations::facts`.

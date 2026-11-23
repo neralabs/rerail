@@ -269,7 +269,7 @@ fn made_by() -> Arc<str> {
 
 /// The relations' blocks live now, by the span that made them and their `Life`: their bytes used (written up to
 /// their top, less what their free lists hold), most first. Empty unless heap sampling is on.
-/// Under a heap profile, the bytes of the chunks' open run-life blocks each span's arrays hold (`BlockVec::charged`):
+/// Under a heap profile, the bytes of the chunks' open run-life blocks each span's arrays hold (`facts_region`'s charge):
 /// the open block is every array's, so the blocks' account names what lies in it.
 #[derive(Default)]
 struct OpenUse(Mutex<std::collections::HashMap<(u32, &'static str), (usize, usize)>>);
@@ -656,10 +656,7 @@ pub struct LifeRoom(pub Life);
 impl rerail_blocks::maps::Room for LifeRoom {
     fn region(&self, bytes: usize, align: usize, name: &'static str) -> rerail_blocks::maps::Region {
         let life = if self.0 == Life::Device { Life::Run } else { self.0 };
-        let (facts, (at, kept)) = open_chunk(life, bytes, align.max(8)).unwrap_or_else(|e| panic!("a block for {bytes} bytes of {name}: {e}"));
-        // SAFETY: the chunk was just taken for this region: `kept` bytes from `at`.
-        let region = unsafe { rerail_blocks::region::Mutable::adopt(&facts.block, at, bytes, kept, name) };
-        rerail_blocks::maps::region_of(region, Some(facts as Arc<dyn std::any::Any + Send + Sync>))
+        placed(None, life, bytes, align, name)
     }
 }
 
@@ -673,7 +670,7 @@ pub fn source_room() -> Arc<dyn rerail_blocks::maps::Room> {
     Arc::new(LifeRoom(Life::Source))
 }
 
-/// Where the structures derived from a relation's rows go (its indexes' arrays, `BlockVec`, decision 0384 step 4):
+/// Where the structures derived from a relation's rows go (its indexes' arrays, a `Vector` in its room, `Home::room`: decision 0384 step 4):
 /// the block its rows are written in, and how long they live.
 #[derive(Clone)]
 pub struct Home {
@@ -691,671 +688,212 @@ impl Home {
     }
 }
 
-/// An array of `T`s in a block of relations (decision 0384 step 4): a relation's derived structure (a sorted run's
-/// ids, tags, fences, prints), written once where it is computed, in its relation's block when that has room past
-/// its relations' margin (`Home`), else in the open block of the relation's life. Its chunk is a region it owns
-/// (decision 0491 step 2): back to the block's free list with it, after the GPU's work, and the block kept while it
-/// lives. Grows as a vector does, in the same block.
-pub struct BlockVec<T: rerail_blocks::Pod> {
-    facts: Option<Arc<Facts>>,
-    /// Its first `T` in the block (which never moves): read as a vector's buffer is, with no walk to the block.
-    ptr: std::ptr::NonNull<T>,
-    life: Life,
-    at: usize,
-    len: usize,
-    cap: usize,
-    /// Its own chunk, as a region (`None` for a borrowed one, `shared`, and an empty one).
-    region: Option<rerail_blocks::region::Mutable<T>>,
-    /// A borrowed one's relation, whose directory owns its chunk (decision 0478 step 5b): kept while it lives.
-    owner: Option<Part>,
-    /// Its block's ledger, beside the pointer: each read and write is checked against the GPU's queued uses of its
-    /// chunk (decision 0487 R4), with no walk to the block.
-    ledger: Option<Arc<rerail_blocks::ledger::Ledger>>,
-    /// Under a heap profile, the span its chunk of a chunk's open run-life block is charged to and its bytes
-    /// (`OpenUse`): given back with the chunk.
+/// What a vector's region in a relation block keeps (`facts_region`): the block, and under a heap profile the span
+/// its bytes of a run's open block are charged to (`OpenUse`), given back with the region.
+struct InFacts {
+    facts: Arc<Facts>,
     charged: Option<(u32, &'static str, usize)>,
-    _t: std::marker::PhantomData<T>,
 }
 
-// SAFETY: its `T`s lie in the block it keeps, written only through `&mut self`.
-unsafe impl<T: rerail_blocks::Pod + Send> Send for BlockVec<T> {}
-unsafe impl<T: rerail_blocks::Pod + Sync> Sync for BlockVec<T> {}
-
-impl<T: rerail_blocks::Pod> Default for BlockVec<T> {
-    fn default() -> Self {
-        BlockVec::new()
+impl Drop for InFacts {
+    fn drop(&mut self) {
+        if let Some((span, ty, bytes)) = self.charged.take() {
+            open_given_back(span, ty, bytes);
+        }
     }
 }
 
-impl<T: rerail_blocks::Pod> BlockVec<T> {
-    /// Empty, with no chunk.
-    pub const fn new() -> Self {
-        BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, region: None, owner: None, ledger: None, charged: None, _t: std::marker::PhantomData }
+/// A borrowed region's owner (`shared`): the relation whose directory owns the chunk (decision 0478 step 5b), kept
+/// while a vector reads it, and the chunk's offset.
+struct Borrowed {
+    part: Part,
+    at: usize,
+}
+
+/// The chunk of `kept` bytes at `at` of `facts`' block (its first `len` in use) as a vector's region: it keeps the
+/// block, gives the chunk back to its free list when it goes (decision 0491 step 2), and has each CPU read and write
+/// checked against the device's queued uses by the block's ledger (decision 0487 R4). Charged to the span under a
+/// heap profile where `charge` and the block is a run's shared open one.
+fn facts_region(facts: Arc<Facts>, at: usize, len: usize, kept: usize, name: &'static str, charge: bool) -> rerail_blocks::maps::Region {
+    // SAFETY: the chunk was taken for this region (or handed back to it whole): `kept` bytes from `at`.
+    let m = unsafe { rerail_blocks::region::Mutable::<u8>::adopt(&facts.block, at, len, kept, name) };
+    let charged = (charge && facts.shared && facts.life == Life::Run && rerail_prof::heap::on()).then(|| open_use(rerail_prof::heap::span(), name, kept));
+    let guard: Arc<dyn rerail_blocks::maps::Guard> = facts.block.ledger().clone();
+    rerail_blocks::maps::region_of(m, Some(Arc::new(InFacts { facts, charged }) as Arc<dyn std::any::Any + Send + Sync>)).guarded(guard, at)
+}
+
+/// `bytes` (aligned to `align`) for a vector: in `near`'s block when it has room past its relations' margin and the
+/// `grow` bytes its relation's tail would take to double, else the open block of `life`.
+fn placed(near: Option<(&Arc<Facts>, usize)>, life: Life, bytes: usize, align: usize, name: &'static str) -> rerail_blocks::maps::Region {
+    let (bytes, align) = (bytes.max(1), align.max(8));
+    let room = |&(f, grow): &(&Arc<Facts>, usize)| f.block.reserved().saturating_sub(f.block.used()) >= bytes + MARGIN + grow;
+    let (facts, (at, kept)) = match near.filter(room).and_then(|(f, _)| f.block.try_alloc_chunk_fit(bytes, align).map(|c| (f.clone(), c))) {
+        Some(found) => found,
+        None => {
+            let life = if life == Life::Device { Life::Run } else { life };
+            open_chunk(life, bytes, align).unwrap_or_else(|e| panic!("a block for {bytes} bytes of {name}: {e}"))
+        }
+    };
+    facts_region(facts, at, bytes, kept, name, true)
+}
+
+/// A relation's home as a vector's room (`Home::room`): its first region near the relation, with room kept for its
+/// tail to grow (so an index never makes the relation it indexes move), its growth after that in the same block
+/// where it has room.
+struct HomeRoom {
+    home: Home,
+    placed: std::sync::atomic::AtomicBool,
+}
+
+impl rerail_blocks::maps::Room for HomeRoom {
+    fn region(&self, bytes: usize, align: usize, name: &'static str) -> rerail_blocks::maps::Region {
+        let grow = if self.placed.swap(true, std::sync::atomic::Ordering::Relaxed) { 0 } else { self.home.grow };
+        placed(Some((&self.home.facts, grow)), self.home.life, bytes, align, name)
+    }
+}
+
+impl Home {
+    /// Its room (decision 0384 step 4): where a relation's derived arrays (`Vector`) are written, near its rows.
+    pub fn room(&self) -> Arc<dyn rerail_blocks::maps::Room> {
+        Arc::new(HomeRoom { home: self.clone(), placed: std::sync::atomic::AtomicBool::new(false) })
     }
 
-    /// The `len` `T`s at `at` of `owner`'s block, which `owner`'s relation keeps (its directory's: decision 0478 step
-    /// 5b), read where they lie: borrowed, never given back by this, and never written (a write moves them first).
-    ///
-    /// # Safety
-    /// `len` `T`s are written at `at` of `owner`'s block, and `owner`'s relation keeps them while it lives.
-    pub unsafe fn shared(owner: &Part, at: usize, len: usize) -> Self {
-        if len == 0 {
-            return BlockVec::new();
-        }
-        let facts = owner.facts().clone();
-        let ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(at)).expect("a block's chunk");
-        let ledger = Some(facts.block.ledger().clone());
-        BlockVec { facts: Some(facts), ptr, life: owner.life(), at, len, cap: len, region: None, owner: Some(owner.clone()), ledger, charged: None, _t: std::marker::PhantomData }
+    /// Its room, its first region placed already (an array taken back, or borrowed): grown in the same block.
+    fn room_placed(&self) -> Arc<dyn rerail_blocks::maps::Room> {
+        Arc::new(HomeRoom { home: self.clone(), placed: std::sync::atomic::AtomicBool::new(true) })
     }
+}
 
-    /// The chunk `into_chunk` handed on, its own again (no directory took it).
-    pub fn from_chunk(facts: &Arc<Facts>, life: Life, g: rerail_blocks::relation::Given) -> Self {
-        if g.len == 0 {
-            return BlockVec::new();
-        }
-        let ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(g.at)).expect("a block's chunk");
-        let ledger = Some(facts.block.ledger().clone());
-        let cap = g.kept / size_of::<T>();
-        // SAFETY: the chunk was this vector's (`into_chunk`), handed back whole: `kept` bytes, `cap` `T`s.
-        let region = Some(unsafe { rerail_blocks::region::Mutable::adopt(&facts.block, g.at, cap, g.kept, "a relation's array") });
-        BlockVec { facts: Some(facts.clone()), ptr, life, at: g.at, len: g.len, cap, region, owner: None, ledger, charged: None, _t: std::marker::PhantomData }
+/// The room near `home` (`Home::room`), else a run's open relation block (`LifeRoom`).
+pub fn room_near(home: Option<&Home>) -> Arc<dyn rerail_blocks::maps::Room> {
+    home.map_or_else(run_room, Home::room)
+}
+
+/// Empty, with room for `n` `T`s near `home` (`room_near`).
+pub fn vector_in<T: rerail_blocks::Pod>(home: Option<&Home>, n: usize) -> Vector<T> {
+    Vector::with_capacity_in(room_near(home), n)
+}
+
+/// The `T`s of `items`, near `home` (`room_near`).
+pub fn collect_in<T: rerail_blocks::Pod>(home: Option<&Home>, items: impl IntoIterator<Item = T>) -> Vector<T> {
+    Vector::from_iter_in(room_near(home), items)
+}
+
+/// `n` `T`s near `home`, not written: for a writer other than the host (the device) to write before any read.
+///
+/// # Safety
+/// Nothing reads them before that writer wrote every one.
+pub unsafe fn unwritten_in<T: rerail_blocks::Pod>(home: Option<&Home>, n: usize) -> Vector<T> {
+    let mut v = vector_in(home, n);
+    // SAFETY: room for `n`, written by the caller's writer before any read (the caller's contract).
+    unsafe { v.set_len(n) };
+    v
+}
+
+/// The chunk `into_chunk` handed on, a vector's own again (no directory took it): in `facts`' block, of `life`.
+pub fn from_chunk<T: rerail_blocks::Pod>(facts: &Arc<Facts>, life: Life, g: rerail_blocks::relation::Given) -> Vector<T> {
+    if g.len == 0 {
+        return Vector::new();
     }
+    let region = facts_region(facts.clone(), g.at, g.kept, g.kept, "a relation's array", false);
+    let room = Home { facts: facts.clone(), life, grow: 0 }.room_placed();
+    // SAFETY: the chunk was a vector's (`into_chunk`), handed back whole: `g.len` written `T`s in its `kept` bytes.
+    unsafe { Vector::from_region(region, g.len, Some(room)) }
+}
 
-    /// `n` items, those past its length `v`.
-    pub fn resize(&mut self, n: usize, v: T)
-    where
-        T: Copy,
-    {
-        if n <= self.len {
-            if self.owner.is_some() {
-                let near = self.facts.clone();
-                self.realloc(near.as_ref().map(|f| (f, 0)), self.len);
-            }
-            self.len = n;
-            return;
-        }
-        if self.owner.is_some() || n > self.cap {
-            let near = self.facts.clone();
-            self.realloc(near.as_ref().map(|f| (f, 0)), n.max(2 * self.cap));
-        }
-        self.check(self.len, n - self.len, true);
-        // SAFETY: room for `n` past the chunk's start, this vector's alone.
-        unsafe {
-            for i in self.len..n {
-                self.ptr_mut().add(i).write(v);
-            }
-        }
-        self.len = n;
+/// The `len` `T`s at `at` of `owner`'s block, which `owner`'s relation keeps (its directory's: decision 0478 step 5b),
+/// read where they lie: borrowed, never given back by the vector, and never written there (a write moves them first).
+///
+/// # Safety
+/// `len` `T`s are written at `at` of `owner`'s block, and `owner`'s relation keeps them while it lives.
+pub unsafe fn shared<T: rerail_blocks::Pod>(owner: &Part, at: usize, len: usize) -> Vector<T> {
+    if len == 0 {
+        return Vector::new();
     }
+    let room = Home { facts: owner.facts().clone(), life: owner.life(), grow: 0 }.room_placed();
+    // SAFETY: the caller's: `len` `T`s at `at`, kept by `owner` while the region lives.
+    unsafe { Vector::borrowed(borrowed_region(owner.clone(), at, len * size_of::<T>()), len, Some(room)) }
+}
 
+/// `len` bytes at `at` of `part`'s block as a region that `part` keeps: guarded by the block's ledger, borrowed again
+/// by a clone (`Region::shared_by`).
+fn borrowed_region(part: Part, at: usize, len: usize) -> rerail_blocks::maps::Region {
+    let facts = part.facts().clone();
+    let guard: Arc<dyn rerail_blocks::maps::Guard> = facts.block.ledger().clone();
+    // SAFETY: the bytes `part`'s relation keeps while the region (which holds `part`) lives; never written through it
+    // (a borrowed vector moves before a write).
+    let region = unsafe { rerail_blocks::maps::Region::new(facts.block.ptr::<u8>(at), len, Box::new(Borrowed { part, at })) };
+    fn again(r: &rerail_blocks::maps::Region) -> rerail_blocks::maps::Region {
+        let b = r.owner().downcast_ref::<Borrowed>().expect("a borrowed region");
+        borrowed_region(b.part.clone(), b.at, r.len())
+    }
+    region.guarded(guard, at).shared_by(again)
+}
+
+/// A vector's place among the relations' blocks (decision 0384 step 4): the block it lies in, its offset there, and
+/// its chunk handed on to the relation that will own it.
+pub trait InRelations: Sized {
+    /// The relation block it lies in (none in another room's region, or with none).
+    fn facts(&self) -> Option<&Arc<Facts>>;
+    /// Its first `T`'s offset in its block (0 with no region): where a reader that binds the block finds it.
+    fn offset(&self) -> usize;
+    /// Whether it is borrowed (`shared`), not yet moved by a write.
+    fn is_shared(&self) -> bool;
     /// Whether `into_chunk` would hand its chunk on to `facts`' block (or it has none to hand).
-    pub fn can_give(&self, facts: &Arc<Facts>) -> bool {
-        self.len == 0 || (self.facts.as_ref().is_some_and(|f| Arc::ptr_eq(f, facts)) && self.region.is_some())
-    }
-
-    /// Whether it is borrowed (`shared`).
-    pub fn is_shared(&self) -> bool {
-        self.owner.is_some()
-    }
-
+    fn can_give(&self, facts: &Arc<Facts>) -> bool;
     /// Its chunk, handed on to `facts`' block's owner of it (an order's directory entry, `Relation::try_add_order`)
-    /// when it lies there and is its own: (offset, items, kept bytes). Otherwise it stays this vector's (`Err`).
-    pub fn into_chunk(mut self, facts: &Arc<Facts>) -> Result<rerail_blocks::relation::Given, Self> {
-        if self.len == 0 {
+    /// when it lies there and is its own: (offset, items, kept bytes). Otherwise it stays this vector (`Err`).
+    fn into_chunk(self, facts: &Arc<Facts>) -> Result<rerail_blocks::relation::Given, Self>;
+}
+
+impl<T: rerail_blocks::Pod> InRelations for Vector<T> {
+    fn facts(&self) -> Option<&Arc<Facts>> {
+        let owner = self.region()?.owner();
+        if let Some(b) = owner.downcast_ref::<Borrowed>() {
+            return Some(b.part.facts());
+        }
+        let held = owner.downcast_ref::<rerail_blocks::maps::Held>()?;
+        held.1.as_ref()?.downcast_ref::<InFacts>().map(|i| &i.facts)
+    }
+
+    fn offset(&self) -> usize {
+        let Some(r) = self.region() else { return 0 };
+        match r.owner().downcast_ref::<Borrowed>() {
+            Some(b) => b.at,
+            None => rerail_blocks::maps::place_of(r).map_or(0, |(_, at)| at),
+        }
+    }
+
+    fn is_shared(&self) -> bool {
+        self.is_borrowed()
+    }
+
+    fn can_give(&self, facts: &Arc<Facts>) -> bool {
+        self.is_empty() || (!self.is_borrowed() && self.facts().is_some_and(|f| Arc::ptr_eq(f, facts)))
+    }
+
+    fn into_chunk(self, facts: &Arc<Facts>) -> Result<rerail_blocks::relation::Given, Self> {
+        if self.is_empty() {
             return Ok(rerail_blocks::relation::Given::default());
         }
-        match &self.facts {
-            Some(f) if Arc::ptr_eq(f, facts) && self.region.is_some() => {}
-            _ => return Err(self),
+        if !self.can_give(facts) {
+            return Err(self);
         }
-        let (at, kept) = self.region.take().expect("its own chunk").into_chunk();
+        let (region, len) = self.into_region()?;
+        let held = region.into_owner().downcast::<rerail_blocks::maps::Held>().unwrap_or_else(|_| unreachable!("a relation block's region (`can_give`)"));
+        let rerail_blocks::maps::Held(m, keep) = *held;
+        let (at, kept) = m.into_chunk();
         // Handed on to a relation's directory, its bytes are that relation's now, kept while it lives.
         // (Not given back when the relation frees it: an upper bound.)
-        if let Some((span, ty, bytes)) = self.charged.take() {
+        if let Some(keep) = keep
+            && let Ok(in_facts) = keep.downcast::<InFacts>()
+            && let Ok(mut in_facts) = Arc::try_unwrap(in_facts)
+            && let Some((span, ty, bytes)) = in_facts.charged.take()
+        {
             open_given_back(span, ty, bytes);
             open_use(rerail_prof::heap::intern("indexes' orders handed to their relations (kept while they live)"), ty, bytes);
         }
-        let given = rerail_blocks::relation::Given { at, len: self.len, kept };
-        // Handed on: nothing of it is given back here.
-        self.facts = None;
-        self.ledger = None;
-        self.cap = 0;
-        self.len = 0;
-        self.ptr = std::ptr::NonNull::dangling();
-        Ok(given)
-    }
-
-    /// Empty, with room for `n` `T`s, near `home` (`None`: a run's open block).
-    pub fn with_capacity_in(home: Option<&Home>, n: usize) -> Self {
-        let mut v = BlockVec::new();
-        v.life = home.map_or(Life::Run, |h| h.life);
-        if n > 0 {
-            v.realloc(home.map(|h| (&h.facts, h.grow)), n);
-        }
-        v
-    }
-
-    /// The `T`s of `items`, near `home`.
-    pub fn from_iter_in(home: Option<&Home>, items: impl IntoIterator<Item = T>) -> Self {
-        let items = items.into_iter();
-        let mut v = BlockVec::with_capacity_in(home, items.size_hint().0);
-        v.extend(items);
-        v
-    }
-
-    /// Moves its `T`s to a chunk of room for `n` (`n` at least its length): in `near`'s block when it has room past its
-    /// relations' margin and the `grow` bytes its relation's tail would take to double, else the open block of its
-    /// life.
-    fn realloc(&mut self, near: Option<(&Arc<Facts>, usize)>, n: usize) {
-        debug_assert!(n >= self.len);
-        let bytes = (n * size_of::<T>()).max(1);
-        let align = align_of::<T>().max(8);
-        let room = |&(f, grow): &(&Arc<Facts>, usize)| f.block.reserved().saturating_sub(f.block.used()) >= bytes + MARGIN + grow;
-        let (facts, (at, size)) = match near.filter(room).and_then(|(f, _)| f.block.try_alloc_chunk_fit(bytes, align).map(|c| (f.clone(), c))) {
-            Some(found) => found,
-            None => {
-                let life = if self.life == Life::Device { Life::Run } else { self.life };
-                open_chunk(life, bytes, align).unwrap_or_else(|e| panic!("a block for {bytes} bytes of an index: {e}"))
-            }
-        };
-        if self.len > 0 {
-            self.check(0, self.len, false);
-            // SAFETY: the old chunk holds `len` written `T`s; the new one is this vector's alone, apart from it.
-            // copy: growth: an array that outgrew its chunk, moved once, as a vector's growth moves it
-            unsafe { std::ptr::copy_nonoverlapping(self.as_ptr(), facts.block.ptr::<T>(at), self.len) };
-        }
-        self.free();
-        let cap = size / size_of::<T>();
-        // SAFETY: the chunk was just taken for this vector: `size` bytes, `cap` `T`s.
-        let mut region = unsafe { rerail_blocks::region::Mutable::adopt(&facts.block, at, cap, size, "a relation's array") };
-        self.ptr = std::ptr::NonNull::new(region.as_mut_ptr()).expect("a block's chunk");
-        self.region = Some(region);
-        if facts.shared && facts.life == Life::Run && rerail_prof::heap::on() {
-            self.charged = Some(open_use(rerail_prof::heap::span(), std::any::type_name::<T>(), size));
-        }
-        self.ledger = Some(facts.block.ledger().clone());
-        self.facts = Some(facts);
-        self.at = at;
-        self.cap = cap;
-    }
-
-    /// Its chunk given back: its region's last handle goes (a borrowed one's chunk is its owner's).
-    fn free(&mut self) {
-        if let Some((span, ty, bytes)) = self.charged.take() {
-            open_given_back(span, ty, bytes);
-        }
-        self.owner = None;
-        self.region = None;
-        self.facts = None;
-        self.ledger = None;
-        self.ptr = std::ptr::NonNull::dangling();
-        self.cap = 0;
-    }
-
-    /// Room for `extra` more `T`s.
-    pub fn reserve(&mut self, extra: usize) {
-        let need = self.len + extra;
-        if need > self.cap {
-            // Grown where it lies: its relation's room was kept when it was placed.
-            let near = self.facts.clone();
-            self.realloc(near.as_ref().map(|f| (f, 0)), need.max(2 * self.cap));
-        }
-    }
-
-    #[inline]
-    pub fn push(&mut self, v: T) {
-        if self.len == self.cap {
-            self.reserve(1);
-        }
-        self.check(self.len, 1, true);
-        // SAFETY: `len` is within the chunk's room, this vector's alone.
-        unsafe { self.ptr_mut().add(self.len).write(v) };
-        self.len += 1;
-    }
-
-    // copy: derived: an array's values written once where they are computed (a merged run's)
-    pub fn extend_from_slice(&mut self, src: &[T]) {
-        self.reserve(src.len());
-        self.check(self.len, src.len(), true);
-        // SAFETY: room for `src` past `len` is this vector's alone, apart from `src`.
-        // copy: derived: the values `extend_from_slice` writes
-        unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), self.ptr_mut().add(self.len), src.len()) };
-        self.len += src.len();
-    }
-
-    /// Empty, with room for `n` `T`s in a run's open block (`Vec::with_capacity`'s place).
-    pub fn with_capacity(n: usize) -> Self {
-        BlockVec::with_capacity_in(None, n)
-    }
-
-    /// Its last `T`, taken off.
-    pub fn pop(&mut self) -> Option<T>
-    where
-        T: Copy,
-    {
-        if self.len == 0 {
-            return None;
-        }
-        let v = self[self.len - 1];
-        self.truncate(self.len - 1);
-        Some(v)
-    }
-
-    /// Its first `n` `T`s kept.
-    pub fn truncate(&mut self, n: usize) {
-        if n < self.len {
-            if self.owner.is_some() {
-                let near = self.facts.clone();
-                self.realloc(near.as_ref().map(|f| (f, 0)), self.len);
-            }
-            self.len = n;
-        }
-    }
-
-    /// Empty again, its chunk kept.
-    pub fn clear(&mut self) {
-        self.truncate(0);
-    }
-
-    /// `v` put at `i`, the `T`s from `i` moved up one.
-    pub fn insert(&mut self, i: usize, v: T)
-    where
-        T: Copy,
-    {
-        assert!(i <= self.len, "insert at {i} of {}", self.len);
-        self.push(v);
-        self[i..].rotate_right(1);
-    }
-
-    /// The `T` at `i` taken out, those after it moved down one.
-    pub fn remove(&mut self, i: usize) -> T
-    where
-        T: Copy,
-    {
-        let v = self[i];
-        self[i..].rotate_left(1);
-        self.truncate(self.len - 1);
-        v
-    }
-
-    /// The `T` at `i` taken out, the last put in its place.
-    pub fn swap_remove(&mut self, i: usize) -> T
-    where
-        T: Copy,
-    {
-        let last = self.len - 1;
-        self.swap(i, last);
-        self.pop().expect("an item")
-    }
-
-    /// The `T`s `keep` holds for, in order.
-    pub fn retain(&mut self, mut keep: impl FnMut(&T) -> bool)
-    where
-        T: Copy,
-    {
-        let mut w = 0;
-        for r in 0..self.len {
-            let v = self[r];
-            if keep(&v) {
-                self[w] = v;
-                w += 1;
-            }
-        }
-        self.truncate(w);
-    }
-
-    /// Runs of equal `T`s, one of each kept.
-    pub fn dedup(&mut self)
-    where
-        T: Copy + PartialEq,
-    {
-        self.dedup_by_key(|v| *v);
-    }
-
-    pub fn dedup_by_key<K: PartialEq>(&mut self, mut key: impl FnMut(&T) -> K)
-    where
-        T: Copy,
-    {
-        if self.len < 2 {
-            return;
-        }
-        let mut w = 1;
-        for r in 1..self.len {
-            if key(&self[r]) != key(&self[w - 1]) {
-                self[w] = self[r];
-                w += 1;
-            }
-        }
-        self.truncate(w);
-    }
-
-    /// The `T`s from `at` on, taken off into a vector of their own.
-    pub fn split_off(&mut self, at: usize) -> BlockVec<T>
-    where
-        T: Copy,
-    {
-        let tail = BlockVec::from(&self[at..]);
-        self.truncate(at);
-        tail
-    }
-
-    /// The `T`s of `range` taken out, in order, those after them moved down.
-    pub fn drain(&mut self, range: impl std::ops::RangeBounds<usize>) -> BlockVecIter<T>
-    where
-        T: Copy,
-    {
-        use std::ops::Bound::*;
-        let a = match range.start_bound() {
-            Included(&a) => a,
-            Excluded(&a) => a + 1,
-            Unbounded => 0,
-        };
-        let b = match range.end_bound() {
-            Included(&b) => b + 1,
-            Excluded(&b) => b,
-            Unbounded => self.len,
-        };
-        let out = BlockVec::from(&self[a..b]);
-        self[a..].rotate_left(b - a);
-        self.truncate(self.len - (b - a));
-        out.into_iter()
-    }
-
-    /// The `T`s of `other` appended, `other` emptied.
-    pub fn append(&mut self, other: &mut BlockVec<T>)
-    where
-        T: Copy,
-    {
-        // copy: growth: `append` moves the other vector's values to its end
-        self.extend_from_slice(other);
-        other.clear();
-    }
-
-    pub fn as_slice(&self) -> &[T] {
-        self
-    }
-
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
-        self
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// `T`s it has room for.
-    pub fn capacity(&self) -> usize {
-        self.cap
-    }
-
-    #[inline]
-    pub fn as_ptr(&self) -> *const T {
-        self.ptr.as_ptr()
-    }
-
-    /// The CPU reads (or writes) `n` `T`s from its `from`th: none may be under a GPU write (or use) of its chunk
-    /// queued (decision 0487 R4). With none queued on its block, one load.
-    #[inline]
-    #[track_caller]
-    fn check(&self, from: usize, n: usize, write: bool) {
-        if let Some(l) = &self.ledger {
-            let (at, len) = (self.at + from * size_of::<T>(), (n * size_of::<T>()).max(1));
-            if write { l.cpu_write(at, len) } else { l.cpu_read(at, len) }
-        }
-    }
-
-    #[inline]
-    fn ptr_mut(&mut self) -> *mut T {
-        self.as_ptr().cast_mut()
-    }
-
-    /// The block it lies in, if it has a chunk.
-    pub fn facts(&self) -> Option<&Arc<Facts>> {
-        self.facts.as_ref()
-    }
-
-    /// Its first `T`'s offset in its block (0 with no chunk): where a reader that binds the block finds it.
-    pub fn offset(&self) -> usize {
-        self.at
-    }
-
-    /// `n` `T`s near `home`, not written: for a writer other than the host (the device) to write before any read.
-    ///
-    /// # Safety
-    /// Nothing reads them before that writer wrote every one.
-    pub unsafe fn unwritten_in(home: Option<&Home>, n: usize) -> Self {
-        let mut v = BlockVec::with_capacity_in(home, n);
-        v.len = n;
-        v
-    }
-}
-
-impl<T: rerail_blocks::Pod> std::ops::Deref for BlockVec<T> {
-    type Target = [T];
-    #[inline]
-    fn deref(&self) -> &[T] {
-        self.check(0, self.len, false);
-        // SAFETY: `len` `T`s are written at `as_ptr`, in the block it keeps.
-        unsafe { std::slice::from_raw_parts(self.as_ptr(), self.len) }
-    }
-}
-
-impl<T: rerail_blocks::Pod> std::ops::DerefMut for BlockVec<T> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [T] {
-        if self.owner.is_some() {
-            // A borrowed one is its owner's: written, it moves to a chunk of its own first.
-            let near = self.facts.clone();
-            self.realloc(near.as_ref().map(|f| (f, 0)), self.len);
-        }
-        self.check(0, self.len, true);
-        // SAFETY: as `deref`, and `&mut self` is the one writer.
-        unsafe { std::slice::from_raw_parts_mut(self.ptr_mut(), self.len) }
-    }
-}
-
-impl<T: rerail_blocks::Pod> Extend<T> for BlockVec<T> {
-    fn extend<I: IntoIterator<Item = T>>(&mut self, items: I) {
-        let items = items.into_iter();
-        self.reserve(items.size_hint().0);
-        for v in items {
-            self.push(v);
-        }
-    }
-}
-
-impl<'a, T: rerail_blocks::Pod + Copy> Extend<&'a T> for BlockVec<T> {
-    fn extend<I: IntoIterator<Item = &'a T>>(&mut self, items: I) {
-        self.extend(items.into_iter().copied());
-    }
-}
-
-impl<T: rerail_blocks::Pod> Clone for BlockVec<T> {
-    /// A copy in the same block (or its life's open block): a derived structure written again, as a merge writes one.
-    fn clone(&self) -> Self {
-        if let Some(owner) = &self.owner {
-            // Borrowed: another borrow of the same items, where they lie (never written in place).
-            // SAFETY: `owner` keeps them, as it keeps this one's.
-            return unsafe { BlockVec::shared(owner, self.at, self.len) };
-        }
-        let mut v = BlockVec::new();
-        v.life = self.life;
-        if self.len > 0 {
-            v.realloc(self.facts.as_ref().map(|f| (f, 0)), self.len);
-            self.check(0, self.len, false);
-            // SAFETY: room for `len` `T`s, this vector's alone.
-            // copy: derived: a derived array written again for a writer of its own (a merge of a shared run)
-            unsafe { std::ptr::copy_nonoverlapping(self.as_ptr(), v.ptr_mut(), self.len) };
-            v.len = self.len;
-        }
-        v
-    }
-}
-
-impl<T: rerail_blocks::Pod> Drop for BlockVec<T> {
-    fn drop(&mut self) {
-        self.free();
-    }
-}
-
-impl<T: rerail_blocks::Pod + PartialEq> PartialEq for BlockVec<T> {
-    fn eq(&self, other: &Self) -> bool {
-        **self == **other
-    }
-}
-
-impl<'a, T: rerail_blocks::Pod> IntoIterator for &'a BlockVec<T> {
-    type Item = &'a T;
-    type IntoIter = std::slice::Iter<'a, T>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
-impl<T: rerail_blocks::Pod> FromIterator<T> for BlockVec<T> {
-    /// In the open block of a run (`with_capacity_in(None, ..)`).
-    fn from_iter<I: IntoIterator<Item = T>>(items: I) -> Self {
-        BlockVec::from_iter_in(None, items)
-    }
-}
-
-impl<T: rerail_blocks::Pod + Copy> IntoIterator for BlockVec<T> {
-    type Item = T;
-    type IntoIter = BlockVecIter<T>;
-    fn into_iter(self) -> BlockVecIter<T> {
-        BlockVecIter { v: self, at: 0 }
-    }
-}
-
-/// A `BlockVec`'s `T`s by value, its chunk kept until the last.
-pub struct BlockVecIter<T: rerail_blocks::Pod> {
-    v: BlockVec<T>,
-    at: usize,
-}
-
-impl<T: rerail_blocks::Pod + Copy> Iterator for BlockVecIter<T> {
-    type Item = T;
-    #[inline]
-    fn next(&mut self) -> Option<T> {
-        let v = self.v.get(self.at).copied();
-        self.at += usize::from(v.is_some());
-        v
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let n = self.v.len() - self.at;
-        (n, Some(n))
-    }
-}
-
-impl<T: rerail_blocks::Pod + Copy> ExactSizeIterator for BlockVecIter<T> {}
-
-impl<T: rerail_blocks::Pod + Copy> DoubleEndedIterator for BlockVecIter<T> {
-    fn next_back(&mut self) -> Option<T> {
-        if self.v.len() > self.at {
-            self.v.pop()
-        } else {
-            None
-        }
-    }
-}
-
-impl<T: rerail_blocks::Pod + Eq> Eq for BlockVec<T> {}
-
-impl<T: rerail_blocks::Pod + std::hash::Hash> std::hash::Hash for BlockVec<T> {
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        (**self).hash(h)
-    }
-}
-
-impl<T: rerail_blocks::Pod + PartialOrd> PartialOrd for BlockVec<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        (**self).partial_cmp(&**other)
-    }
-}
-
-impl<T: rerail_blocks::Pod + Ord> Ord for BlockVec<T> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (**self).cmp(&**other)
-    }
-}
-
-impl<T: rerail_blocks::Pod + Copy> From<&[T]> for BlockVec<T> {
-    fn from(items: &[T]) -> Self {
-        let mut v = BlockVec::with_capacity_in(None, items.len());
-        // copy: derived: a vector made from values its caller computed
-        v.extend_from_slice(items);
-        v
-    }
-}
-
-impl<T: rerail_blocks::Pod + Copy, const N: usize> From<[T; N]> for BlockVec<T> {
-    fn from(items: [T; N]) -> Self {
-        BlockVec::from(&items[..])
-    }
-}
-
-impl<T: rerail_blocks::Pod + serde::Serialize> serde::Serialize for BlockVec<T> {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.collect_seq(self.iter())
-    }
-}
-
-impl<'de, T: rerail_blocks::Pod + serde::Deserialize<'de>> serde::Deserialize<'de> for BlockVec<T> {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct Seq<T>(std::marker::PhantomData<T>);
-        impl<'de, T: rerail_blocks::Pod + serde::Deserialize<'de>> serde::de::Visitor<'de> for Seq<T> {
-            type Value = BlockVec<T>;
-            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str("a sequence")
-            }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<BlockVec<T>, A::Error> {
-                let mut v = BlockVec::with_capacity(seq.size_hint().unwrap_or(0));
-                while let Some(x) = seq.next_element()? {
-                    v.push(x);
-                }
-                Ok(v)
-            }
-        }
-        d.deserialize_seq(Seq(std::marker::PhantomData))
-    }
-}
-
-impl<T: rerail_blocks::Pod + Copy> rayon::iter::FromParallelIterator<T> for BlockVec<T>
-where
-    T: Send,
-{
-    /// Each thread's run of items, then the runs in order (rayon's `Vec` collects so too).
-    fn from_par_iter<I: rayon::iter::IntoParallelIterator<Item = T>>(items: I) -> Self {
-        use rayon::iter::ParallelIterator;
-        // The caller's parallel loop, in the caller's pool (its `on_cores`): a collect starts no work of its own.
-        let runs: std::collections::LinkedList<BlockVec<T>> = rayon::iter::IntoParallelIterator::into_par_iter(items)
-            .fold(BlockVec::new, |mut v, x| {
-                v.push(x);
-                v
-            })
-            .map(|v| std::collections::LinkedList::from([v]))
-            .reduce(std::collections::LinkedList::new, |mut a, mut b| {
-                a.append(&mut b);
-                a
-            });
-        let mut out = BlockVec::with_capacity(runs.iter().map(|r| r.len()).sum());
-        for r in &runs {
-            // copy: derived: each thread's run of a parallel collect, written once in order (as rayon's `Vec`'s)
-            out.extend_from_slice(r);
-        }
-        out
-    }
-}
-
-impl<T: rerail_blocks::Pod + std::fmt::Debug> std::fmt::Debug for BlockVec<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_list().entries(self.iter()).finish()
+        Ok(rerail_blocks::relation::Given { at, len, kept })
     }
 }
 
@@ -1986,7 +1524,7 @@ impl Part {
         unsafe { self.rel().forget_indexes(&self.facts.block) };
     }
 
-    /// Where structures derived from its rows go (`BlockVec`): its block.
+    /// Where structures derived from its rows go (`Home::room`): its block.
     pub fn home(&self) -> Home {
         Home { facts: self.facts.clone(), life: self.life, grow: 0 }
     }
@@ -2817,7 +2355,7 @@ impl Rows {
         Row::from_fn(k, |c| tail.cols[c].get(at + i))
     }
 
-    /// Where structures derived from its rows go (`BlockVec`): its tail's block, else its newest segment's.
+    /// Where structures derived from its rows go (`Home::room`): its tail's block, else its newest segment's.
     pub fn home(&self) -> Option<Home> {
         if let Some(t) = &self.tail {
             return Some(Home { facts: t.facts.clone(), life: t.life, grow: t.capacity_bytes() });
@@ -3208,7 +2746,7 @@ mod tests {
         // copy: not block data: a test's rows
         rows.extend_from_slice(&[1, 2, 3]);
         let home = rows.home().expect("a relation with rows has a home");
-        let mut v = BlockVec::from_iter_in(Some(&home), 0..100u32);
+        let mut v = collect_in(Some(&home), 0..100u32);
         assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "in the relation's block");
         let cap = v.capacity();
         v.extend(100..cap as u32 + 50);
@@ -3220,18 +2758,18 @@ mod tests {
         drop((v, c));
         assert!(home.facts.block.free_bytes() > free, "its chunks back on the free list");
         // Without a home: a run's open block.
-        let lone = BlockVec::from_iter_in(None, [7i64, 8]);
+        let lone = collect_in(None, [7i64, 8]);
         assert_eq!(*lone, [7, 8]);
-        assert!(BlockVec::<u8>::new().facts().is_none(), "empty holds no chunk");
+        assert!(Vector::<u8>::new().facts().is_none(), "empty holds no chunk");
     }
 
-    /// Decision 0487 R4 at a relation's arrays: with a GPU read of a `BlockVec`'s items queued, a CPU write of them
+    /// Decision 0487 R4 at a relation's arrays: with a GPU read of a relation array's items queued, a CPU write of them
     /// fails and a push past them (in place) passes; with a GPU write queued, a read fails. Once the fence completes
     /// both pass.
     #[test]
     fn a_block_vec_under_a_queued_gpu_use_of_its_chunk_fails() {
         let fails = |f: &mut dyn FnMut()| std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err();
-        let mut v = BlockVec::from_iter_in(None, 0..64u64);
+        let mut v = collect_in(None, 0..64u64);
         // Room past its length, so the push below writes in place.
         v.reserve(8);
         let (facts, at, len) = (v.facts().expect("a chunk").clone(), v.offset(), v.len() * 8);
@@ -3411,14 +2949,14 @@ mod tests {
         // A run of its own: the open blocks are the run's (`Open`), and another test's would take their room.
         let _run = crate::code_rule_dsl::logic::profile::test_run();
         let room = |f: &Arc<Facts>| f.block.reserved().saturating_sub(f.block.used());
-        let probe = BlockVec::<u8>::from_iter_in(None, [0u8]);
+        let probe = collect_in::<u8>(None, [0u8]);
         let open = probe.facts().expect("a chunk").clone();
         // Fillers of whole classes bring the room to 3.5 MiB: past 2 MiB and the margin, short of 4 MiB.
         let target = 7usize << 19;
         let mut fillers = Vec::new();
         for bit in (6..40).rev() {
             while room(&open) >= target + (1 << bit) {
-                let v = BlockVec::<u8>::with_capacity_in(None, 1 << bit);
+                let v = vector_in::<u8>(None, 1 << bit);
                 assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &open), "a filler in the open block");
                 fillers.push(v);
             }
@@ -3426,7 +2964,7 @@ mod tests {
         let need = (1usize << 21) + 4;
         let left = room(&open);
         assert!(left >= need + MARGIN && left < need.next_power_of_two(), "room {left} for {need} bytes");
-        let v = BlockVec::<u32>::from_iter_in(None, 0..(need / 4) as u32);
+        let v = collect_in::<u32>(None, 0..(need / 4) as u32);
         assert!(!Arc::ptr_eq(v.facts().expect("a chunk"), &open), "in a new open block");
         assert!(v.iter().copied().eq(0..(need / 4) as u32));
     }

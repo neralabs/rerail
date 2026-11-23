@@ -14,8 +14,8 @@
 //!   its bytes.
 //! - [`Rec`]: one record (`structure!` type) in its region, with its children (spans of records) after it.
 //!
-//! Integer arrays frozen in the fewest bits are `col::IntCol` (MLDB's `RawMappedIntTable`); growable arrays are the
-//! facts layer's `BlockVec`.
+//! Integer arrays frozen in the fewest bits are `col::IntCol` (MLDB's `RawMappedIntTable`); growable arrays are
+//! `rerail_vector::vector::Vector`, in the region a room gives (a relation's block: the facts layer's `Home`).
 
 use crate::block::Block;
 use crate::refs::Span;
@@ -27,7 +27,7 @@ use std::sync::atomic::Ordering::Relaxed;
 
 
 /// What keeps a region's block leased while a structure holds the region (a facts layer's block handle).
-pub use rerail_vector::{Keep, Region, Room};
+pub use rerail_vector::{Guard, Keep, Region, Room};
 
 /// A block's region as a room gives it (`Region`'s owner): the region, and what keeps its block.
 pub struct Held(pub Mutable<u8>, pub Keep);

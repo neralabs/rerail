@@ -26,7 +26,7 @@ use std::cmp::Ordering;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
-use super::rows::{BlockVec, Facts, Home, Row};
+use super::rows::{Facts, Home, InRelations, Row};
 
 /// A relation's rows, read by id: one flat vector (`[i64]`, `k` values a row), or the segments a maintained relation
 /// shares with the kept one it started as (`super::Rows`, smoking gun 8). Every row lies whole in one segment.
@@ -73,19 +73,19 @@ const PROBE_PER_MERGED_ID: u64 = 8;
 #[derive(Clone)]
 pub(super) struct Run {
     ids: Ids,
-    fences: BlockVec<i64>,
-    tags: BlockVec<u16>,
+    fences: rerail_blocks::vector::Vector<i64>,
+    tags: rerail_blocks::vector::Vector<u16>,
     /// In an order probed by whole keys (`Index::printed`): each id's key print (`print`), beside it. A whole key's
     /// ids are found among the prints of its window, a word of prints at a time, and only the first and last match
     /// read (`print_span`). Empty otherwise.
-    prints: BlockVec<u8>,
+    prints: rerail_blocks::vector::Vector<u8>,
 }
 
 /// A run's ids: listed, or the rows `lo..hi` themselves, known to be in the order already (decision 0180), so no
 /// list is kept (4 bytes a row less) and a probe searches the rows in place.
 #[derive(Clone)]
 enum Ids {
-    List(BlockVec<u32>),
+    List(rerail_blocks::vector::Vector<u32>),
     Rows(u32, u32),
 }
 
@@ -531,9 +531,9 @@ impl GivenRun {
         let GivenOrder { rows, fences, tags, prints } = self.0;
         let ids = match rows {
             OrderRows::Range(lo, hi) => Ids::Rows(lo, hi),
-            OrderRows::Listed(g) => Ids::List(BlockVec::from_chunk(facts, life, g)),
+            OrderRows::Listed(g) => Ids::List(crate::code_rule_dsl::facts::rows::from_chunk(facts, life, g)),
         };
-        Run { ids, fences: BlockVec::from_chunk(facts, life, fences), tags: BlockVec::from_chunk(facts, life, tags), prints: BlockVec::from_chunk(facts, life, prints) }
+        Run { ids, fences: crate::code_rule_dsl::facts::rows::from_chunk(facts, life, fences), tags: crate::code_rule_dsl::facts::rows::from_chunk(facts, life, tags), prints: crate::code_rule_dsl::facts::rows::from_chunk(facts, life, prints) }
     }
 }
 
@@ -548,7 +548,7 @@ impl Run {
         if !(ids_ok && self.fences.can_give(facts) && self.tags.can_give(facts) && self.prints.can_give(facts)) {
             return Err(Box::new(self));
         }
-        fn take<T: rerail_blocks::Pod>(v: BlockVec<T>, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> rerail_blocks::relation::Given {
+        fn take<T: rerail_blocks::Pod>(v: rerail_blocks::vector::Vector<T>, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> rerail_blocks::relation::Given {
             v.into_chunk(facts).unwrap_or_else(|_| unreachable!("checked"))
         }
         use rerail_blocks::relation::{GivenOrder, OrderRows};
@@ -560,7 +560,7 @@ impl Run {
         Ok(GivenRun(GivenOrder { rows, fences: take(fences, facts), tags: take(tags, facts), prints: take(prints, facts) }))
     }
 
-    /// The run order `i` of `owner`'s relation's directory is, read where it lies (borrowed: `BlockVec::shared`).
+    /// The run order `i` of `owner`'s relation's directory is, read where it lies (borrowed: `rows::shared`).
     ///
     /// # Safety
     /// Order `i` is built in `owner`'s relation's directory, which `owner` keeps.
@@ -574,14 +574,14 @@ impl Run {
             let ids = if ix.ordered == ORDER_ROWS {
                 Ids::Rows((ix.mask >> 32) as u32, (ix.mask & 0xffff_ffff) as u32)
             } else {
-                Ids::List(BlockVec::shared(owner, at(ix.rows.as_ptr().cast()), ix.rows.len()))
+                Ids::List(crate::code_rule_dsl::facts::rows::shared(owner, at(ix.rows.as_ptr().cast()), ix.rows.len()))
             };
             let span = |len: usize, p: *const u8| if len == 0 { 0 } else { at(p) };
             Run {
                 ids,
-                fences: BlockVec::shared(owner, span(ix.fences.len(), ix.fences.as_ptr().cast()), ix.fences.len()),
-                tags: BlockVec::shared(owner, span(ix.tags.len(), ix.tags.as_ptr().cast()), ix.tags.len()),
-                prints: BlockVec::shared(owner, span(ix.prints.len(), ix.prints.as_ptr().cast()), ix.prints.len()),
+                fences: crate::code_rule_dsl::facts::rows::shared(owner, span(ix.fences.len(), ix.fences.as_ptr().cast()), ix.fences.len()),
+                tags: crate::code_rule_dsl::facts::rows::shared(owner, span(ix.tags.len(), ix.tags.as_ptr().cast()), ix.tags.len()),
+                prints: crate::code_rule_dsl::facts::rows::shared(owner, span(ix.prints.len(), ix.prints.as_ptr().cast()), ix.prints.len()),
             }
         }
     }
@@ -597,14 +597,14 @@ impl Run {
     fn fenced<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], ids: Ids) -> Run {
         let home = data.home();
         if tagged(cols, k) {
-            let tags = BlockVec::from_iter_in(home.as_ref(), ids.iter().map(|id| tag(data.value(id, k, cols[0]))));
-            return Run { ids, fences: BlockVec::new(), tags, prints: BlockVec::new() };
+            let tags = crate::code_rule_dsl::facts::rows::collect_in(home.as_ref(), ids.iter().map(|id| tag(data.value(id, k, cols[0]))));
+            return Run { ids, fences: crate::code_rule_dsl::facts::rows::vector_in(None, 0), tags, prints: crate::code_rule_dsl::facts::rows::vector_in(None, 0) };
         }
         let fences = match cols.first() {
-            Some(&lead) => BlockVec::from_iter_in(home.as_ref(), ids.iter().step_by(FENCE).map(|id| data.value(id, k, lead))),
-            None => BlockVec::new(),
+            Some(&lead) => crate::code_rule_dsl::facts::rows::collect_in(home.as_ref(), ids.iter().step_by(FENCE).map(|id| data.value(id, k, lead))),
+            None => crate::code_rule_dsl::facts::rows::vector_in(None, 0),
         };
-        Run { ids, fences, tags: BlockVec::new(), prints: BlockVec::new() }
+        Run { ids, fences, tags: crate::code_rule_dsl::facts::rows::vector_in(None, 0), prints: crate::code_rule_dsl::facts::rows::vector_in(None, 0) }
     }
 
     /// The rows `lo..hi`, known to be in the order on `cols` (`Sorted`): no sort and no list of ids.
@@ -614,7 +614,7 @@ impl Run {
 
     /// This run with its ids' key prints (an order probed by whole keys): one row read an id.
     fn printed<D: RowData + ?Sized>(mut self, data: &D, k: usize, cols: &[usize]) -> Run {
-        self.prints = BlockVec::from_iter_in(data.home().as_ref(), self.ids.iter().map(|id| print_vals(cols.iter().map(|&c| data.value(id, k, c)))));
+        self.prints = crate::code_rule_dsl::facts::rows::collect_in(data.home().as_ref(), self.ids.iter().map(|id| print_vals(cols.iter().map(|&c| data.value(id, k, c)))));
         self
     }
 
@@ -622,12 +622,12 @@ impl Run {
     /// they sort (`sort_keyed`).
     fn of<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], ids: impl IntoIterator<Item = u32>) -> Run {
         let home = data.home();
-        let mut ids = BlockVec::from_iter_in(home.as_ref(), ids);
+        let mut ids = crate::code_rule_dsl::facts::rows::collect_in(home.as_ref(), ids);
         let tagged = tagged(cols, k);
-        let mut tags = BlockVec::with_capacity_in(home.as_ref(), if tagged { ids.len() } else { 0 });
+        let mut tags = crate::code_rule_dsl::facts::rows::vector_in(home.as_ref(), if tagged { ids.len() } else { 0 });
         sort_keyed(&mut ids, tagged, cols.len(), |id, i| data.value(id, k, cols[i]), |a, b| cmp_rows(data, k, cols, a, b), &mut tags);
         if tagged {
-            return Run { ids: Ids::List(ids), fences: BlockVec::new(), tags, prints: BlockVec::new() };
+            return Run { ids: Ids::List(ids), fences: crate::code_rule_dsl::facts::rows::vector_in(None, 0), tags, prints: crate::code_rule_dsl::facts::rows::vector_in(None, 0) };
         }
         Run::fenced(data, k, cols, Ids::List(ids))
     }
@@ -750,25 +750,25 @@ impl Run {
             {
                 let home = data.home();
                 let joined = |a: &[_], b: &[_]| {
-                    let mut v = BlockVec::with_capacity_in(home.as_ref(), a.len() + b.len());
+                    let mut v = crate::code_rule_dsl::facts::rows::vector_in(home.as_ref(), a.len() + b.len());
                     // copy: derived: two runs' prints joined into the merged run's (an index written where it is computed)
                     v.extend_from_slice(a);
                     // copy: derived: as the line above
                     v.extend_from_slice(b);
                     v
                 };
-                let prints = if !first.prints.is_empty() && !second.prints.is_empty() { joined(&first.prints, &second.prints) } else { BlockVec::new() };
+                let prints = if !first.prints.is_empty() && !second.prints.is_empty() { joined(&first.prints, &second.prints) } else { crate::code_rule_dsl::facts::rows::vector_in(None, 0) };
                 let ids = Ids::Rows(*lo, *hi);
                 if tagged(cols, k) {
                     let tags = {
-                        let mut v = BlockVec::with_capacity_in(home.as_ref(), first.tags.len() + second.tags.len());
+                        let mut v = crate::code_rule_dsl::facts::rows::vector_in(home.as_ref(), first.tags.len() + second.tags.len());
                         // copy: derived: two runs' tags joined into the merged run's
                         v.extend_from_slice(&first.tags);
                         // copy: derived: as the line above
                         v.extend_from_slice(&second.tags);
                         v
                     };
-                    return Run { ids, fences: BlockVec::new(), tags, prints };
+                    return Run { ids, fences: crate::code_rule_dsl::facts::rows::vector_in(None, 0), tags, prints };
                 }
                 return Run { prints, ..Run::fenced(data, k, cols, ids) };
             }
@@ -787,11 +787,11 @@ impl Run {
     fn walked<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: &Run, b: &Run) -> Run {
         let (an, bn) = (a.ids.len(), b.ids.len());
         let home = data.home();
-        let mut ids = BlockVec::with_capacity_in(home.as_ref(), an + bn);
+        let mut ids = crate::code_rule_dsl::facts::rows::vector_in(home.as_ref(), an + bn);
         let tagged = !a.tags.is_empty() && !b.tags.is_empty();
-        let mut tags = BlockVec::with_capacity_in(home.as_ref(), if tagged { an + bn } else { 0 });
+        let mut tags = crate::code_rule_dsl::facts::rows::vector_in(home.as_ref(), if tagged { an + bn } else { 0 });
         let printed = !a.prints.is_empty() && !b.prints.is_empty();
-        let mut prints = BlockVec::with_capacity_in(home.as_ref(), if printed { an + bn } else { 0 });
+        let mut prints = crate::code_rule_dsl::facts::rows::vector_in(home.as_ref(), if printed { an + bn } else { 0 });
         let (mut i, mut j) = (0, 0);
         while i < an && j < bn {
             let (x, y) = (a.ids.get(i), b.ids.get(j));
@@ -818,7 +818,7 @@ impl Run {
         if tagged {
             tags.extend_from_slice(&a.tags[i..]);
             tags.extend_from_slice(&b.tags[j..]);
-            return Run { ids: Ids::List(ids), fences: BlockVec::new(), tags, prints };
+            return Run { ids: Ids::List(ids), fences: crate::code_rule_dsl::facts::rows::vector_in(None, 0), tags, prints };
         }
         Run { prints, ..Run::fenced(data, k, cols, Ids::List(ids)) }
     }
@@ -830,14 +830,14 @@ impl Run {
         let tagged = !large.tags.is_empty() && !small.tags.is_empty();
         let printed = !large.prints.is_empty() && !small.prints.is_empty();
         let home = data.home();
-        let mut ids = BlockVec::with_capacity_in(home.as_ref(), ln + sn);
-        let mut tags = BlockVec::with_capacity_in(home.as_ref(), if tagged { ln + sn } else { 0 });
-        let mut prints = BlockVec::with_capacity_in(home.as_ref(), if printed { ln + sn } else { 0 });
+        let mut ids = crate::code_rule_dsl::facts::rows::vector_in(home.as_ref(), ln + sn);
+        let mut tags = crate::code_rule_dsl::facts::rows::vector_in(home.as_ref(), if tagged { ln + sn } else { 0 });
+        let mut prints = crate::code_rule_dsl::facts::rows::vector_in(home.as_ref(), if printed { ln + sn } else { 0 });
         // Whether `large`'s position `p` orders before `small`'s `q` (the merge's test).
         let before = |p: usize, q: usize| {
             if tagged && large.tags[p] != small.tags[q] { large.tags[p] < small.tags[q] } else { cmp_rows(data, k, cols, large.ids.get(p), small.ids.get(q)).is_le() }
         };
-        let copy = |ids: &mut BlockVec<u32>, tags: &mut BlockVec<u16>, prints: &mut BlockVec<u8>, s: usize, e: usize| {
+        let copy = |ids: &mut rerail_blocks::vector::Vector<u32>, tags: &mut rerail_blocks::vector::Vector<u16>, prints: &mut rerail_blocks::vector::Vector<u8>, s: usize, e: usize| {
             match &large.ids {
                 Ids::List(v) => ids.extend_from_slice(&v[s..e]),
                 Ids::Rows(lo, _) => ids.extend(lo + s as u32..lo + e as u32),
@@ -860,7 +860,7 @@ impl Run {
         }
         copy(&mut ids, &mut tags, &mut prints, at, ln);
         if tagged {
-            return Run { ids: Ids::List(ids), fences: BlockVec::new(), tags, prints };
+            return Run { ids: Ids::List(ids), fences: crate::code_rule_dsl::facts::rows::vector_in(None, 0), tags, prints };
         }
         Run { prints, ..Run::fenced(data, k, cols, Ids::List(ids)) }
     }
@@ -991,7 +991,7 @@ fn on_pool() -> bool {
     crate::threads::max() > 1 && INLINE.with(|c| c.get() == 0)
 }
 
-/// What a sort or a merge works in: its keys and its merge's second buffer, in the run's blocks (`BlockVec`,
+/// What a sort or a merge works in: its keys and its merge's second buffer, in the run's blocks (`Vector`,
 /// decision 0353: a join's scratch is the run's memory, not the heap's), or a caller's vector it sorts in place.
 pub(super) trait Scratch<T: Copy>: std::ops::DerefMut<Target = [T]> + Sized {
     /// `n` items, each `v`.
@@ -1006,13 +1006,7 @@ impl<T: Copy> Scratch<T> for Vec<T> {
 
 impl<T: rerail_blocks::Pod + Copy> Scratch<T> for Vector<T> {
     fn filled(n: usize, v: T) -> Self {
-        rerail_blocks::vector![v; n]
-    }
-}
-
-impl<T: rerail_blocks::Pod + Copy> Scratch<T> for BlockVec<T> {
-    fn filled(n: usize, v: T) -> Self {
-        let mut b = BlockVec::with_capacity_in(None, n);
+        let mut b = crate::code_rule_dsl::facts::rows::vector_in(None, n);
         b.resize(n, v);
         b
     }
@@ -1224,7 +1218,7 @@ fn bits(span: u64) -> u32 {
 /// value's bits with the sign flipped, so the fields order as the signed values do; `nf` a row, beside ids of `wid`
 /// bits.
 struct Held {
-    f: BlockVec<u64>,
+    f: rerail_blocks::vector::Vector<u64>,
     nf: usize,
     wid: u32,
 }
@@ -1233,7 +1227,7 @@ impl Held {
     fn of(ids: &[u32], tagged: bool, nv: usize, val: &impl Fn(u32, usize) -> i64) -> Held {
         let nf = usize::from(tagged) + nv;
         let flip = |v: i64| (v as u64) ^ (1 << 63);
-        let mut f: BlockVec<u64> = BlockVec::with_capacity_in(None, ids.len() * nf);
+        let mut f: rerail_blocks::vector::Vector<u64> = crate::code_rule_dsl::facts::rows::vector_in(None, ids.len() * nf);
         let mut top = 0u32;
         for &id in ids {
             top = top.max(id);
@@ -1309,8 +1303,8 @@ impl Key for [u64; 2] {
 
 /// A sort's packed keys, kept for its ties and tags (`sort_fields`).
 enum Keys {
-    Narrow(BlockVec<u64>),
-    Wide(BlockVec<[u64; 2]>),
+    Narrow(rerail_blocks::vector::Vector<u64>),
+    Wide(rerail_blocks::vector::Vector<[u64; 2]>),
 }
 
 /// Each field's least and greatest value in `f`, rows of `nf`.
@@ -1387,17 +1381,17 @@ impl Layout {
 
 /// `ids` sorted by their keys (`layout`'s, of `f`'s rows in turn), each in a u64 when the fields fit one: the sorted
 /// keys, kept when `keep`.
-fn sort_by_keys(ids: &mut [u32], f: BlockVec<u64>, layout: &Layout, keep: bool) -> Keys {
+fn sort_by_keys(ids: &mut [u32], f: rerail_blocks::vector::Vector<u64>, layout: &Layout, keep: bool) -> Keys {
     if layout.total > 64 {
         return Keys::Wide(sort_wide(ids, f, layout));
     }
     let narrow = sort_narrow(ids, f, layout);
-    Keys::Narrow(if keep { narrow } else { BlockVec::new() })
+    Keys::Narrow(if keep { narrow } else { crate::code_rule_dsl::facts::rows::vector_in(None, 0) })
 }
 
 /// `sort_by_keys` with keys of at most 64 bits.
-fn sort_narrow(ids: &mut [u32], f: BlockVec<u64>, layout: &Layout) -> BlockVec<u64> {
-    let mut narrow: BlockVec<u64> = BlockVec::from_iter_in(None, f.chunks_exact(layout.nf).zip(ids.iter()).map(|(row, &id)| layout.pack(row, id) as u64));
+fn sort_narrow(ids: &mut [u32], f: rerail_blocks::vector::Vector<u64>, layout: &Layout) -> rerail_blocks::vector::Vector<u64> {
+    let mut narrow: rerail_blocks::vector::Vector<u64> = crate::code_rule_dsl::facts::rows::collect_in(None, f.chunks_exact(layout.nf).zip(ids.iter()).map(|(row, &id)| layout.pack(row, id) as u64));
     drop(f);
     sort_unstable_par(&mut narrow);
     let mask = layout.id_mask();
@@ -1408,8 +1402,8 @@ fn sort_narrow(ids: &mut [u32], f: BlockVec<u64>, layout: &Layout) -> BlockVec<u
 }
 
 /// `sort_by_keys` with keys of more than 64 bits.
-fn sort_wide(ids: &mut [u32], f: BlockVec<u64>, layout: &Layout) -> BlockVec<[u64; 2]> {
-    let mut keys: BlockVec<[u64; 2]> = BlockVec::from_iter_in(None, f.chunks_exact(layout.nf).zip(ids.iter()).map(|(row, &id)| {
+fn sort_wide(ids: &mut [u32], f: rerail_blocks::vector::Vector<u64>, layout: &Layout) -> rerail_blocks::vector::Vector<[u64; 2]> {
+    let mut keys: rerail_blocks::vector::Vector<[u64; 2]> = crate::code_rule_dsl::facts::rows::collect_in(None, f.chunks_exact(layout.nf).zip(ids.iter()).map(|(row, &id)| {
         let k = layout.pack(row, id);
         [(k >> 64) as u64, k as u64]
     }));
@@ -1443,7 +1437,7 @@ fn sort_tupled(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, us
     // The tag, the first two values' bits with the sign flipped (so they order as the signed values do) and the id,
     // in the run's blocks.
     let flip = |v: i64| (v as u64) ^ (1 << 63);
-    let mut keys: BlockVec<[u64; 4]> = BlockVec::from_iter_in(None, ids.iter().map(|&id| {
+    let mut keys: rerail_blocks::vector::Vector<[u64; 4]> = crate::code_rule_dsl::facts::rows::collect_in(None, ids.iter().map(|&id| {
         let v0 = if ncols > 0 { val(id, 0) } else { 0 };
         [u64::from(if tagged { tag(v0) } else { 0 }), flip(v0), flip(if ncols > 1 { val(id, 1) } else { 0 }), u64::from(id)]
     }));
@@ -1520,9 +1514,9 @@ impl Index {
         if !self.printed {
             return Run::of(data, k, &self.cols, lo..hi);
         }
-        let by_row: BlockVec<u8> = BlockVec::from_iter_in(None, (lo..hi).map(|id| print_vals(self.cols.iter().map(|&c| data.value(id, k, c)))));
+        let by_row: rerail_blocks::vector::Vector<u8> = crate::code_rule_dsl::facts::rows::collect_in(None, (lo..hi).map(|id| print_vals(self.cols.iter().map(|&c| data.value(id, k, c)))));
         let mut run = Run::of(data, k, &self.cols, lo..hi);
-        run.prints = BlockVec::from_iter_in(data.home().as_ref(), run.ids.iter().map(|id| by_row[(id - lo) as usize]));
+        run.prints = crate::code_rule_dsl::facts::rows::collect_in(data.home().as_ref(), run.ids.iter().map(|id| by_row[(id - lo) as usize]));
         run
     }
 

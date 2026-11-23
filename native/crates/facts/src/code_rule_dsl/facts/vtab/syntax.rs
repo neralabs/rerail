@@ -29,7 +29,6 @@
 use rerail_tape_format::f16::ZCache;
 use crate::code_rule_dsl::facts::core::FactsIn;
 use rerail_blocks::vector::Vector;
-use crate::code_rule_dsl::facts::rows::BlockVec;
 use super::{Modules, Relation, Source};
 use crate::code_rule_dsl::facts::Graph;
 use crate::code_rule_dsl::facts::core::{Facts, NONE, TEXT, kind_atom, kind_code};
@@ -2135,23 +2134,23 @@ pub struct Growth {
 /// stratum's joins at a 300-file run's peak, on the M3).
 struct KindRows {
     /// The kinds, ascending.
-    keys: BlockVec<i64>,
+    keys: rerail_blocks::vector::Vector<i64>,
     /// Where each kind's matches start in `at`, and one past the last.
-    starts: BlockVec<u32>,
+    starts: rerail_blocks::vector::Vector<u32>,
     /// Each kind's nodes in row order: `[document, local id, tape node]`.
-    at: BlockVec<[u32; 3]>,
+    at: rerail_blocks::vector::Vector<[u32; 3]>,
 }
 
 impl KindRows {
     /// Over the documents of tape tag `tag` alone (`Batch::of_tag`).
     fn new(b: &Batch, tag: u8) -> Self {
-        let Some(dialect) = b.dialects.get(tag) else { return KindRows { keys: BlockVec::new(), starts: BlockVec::from_iter_in(None, [0]), at: BlockVec::new() } };
+        let Some(dialect) = b.dialects.get(tag) else { return KindRows { keys: crate::code_rule_dsl::facts::rows::vector_in(None, 0), starts: crate::code_rule_dsl::facts::rows::collect_in(None, [0]), at: crate::code_rule_dsl::facts::rows::vector_in(None, 0) } };
         let docs = &b.of_tag[usize::from(tag)];
         // The nodes in row order, and each one's kind; then the rows ordered by kind, stable: within a kind, the rows
         // stay in order.
         let n: usize = docs.iter().map(|&d| b.docs[d as usize].len() as usize).sum();
-        let mut at: BlockVec<[u32; 3]> = BlockVec::with_capacity_in(None, n);
-        let mut kinds: BlockVec<i64> = BlockVec::with_capacity_in(None, n);
+        let mut at: rerail_blocks::vector::Vector<[u32; 3]> = crate::code_rule_dsl::facts::rows::vector_in(None, n);
+        let mut kinds: rerail_blocks::vector::Vector<i64> = crate::code_rule_dsl::facts::rows::vector_in(None, n);
         for &doc in docs {
             let p = &b.docs[doc as usize];
             for (l, x) in p.nodes() {
@@ -2159,10 +2158,10 @@ impl KindRows {
                 kinds.push(dialect.kind(p.f(), x));
             }
         }
-        let mut order: BlockVec<u32> = BlockVec::from_iter_in(None, 0..at.len() as u32);
+        let mut order: rerail_blocks::vector::Vector<u32> = crate::code_rule_dsl::facts::rows::collect_in(None, 0..at.len() as u32);
         order.sort_by_key(|&i| kinds[i as usize]);
-        let (mut keys, mut starts) = (BlockVec::new(), BlockVec::new());
-        let mut sorted: BlockVec<[u32; 3]> = BlockVec::with_capacity_in(None, n);
+        let (mut keys, mut starts) = (crate::code_rule_dsl::facts::rows::vector_in(None, 0), crate::code_rule_dsl::facts::rows::vector_in(None, 0));
+        let mut sorted: rerail_blocks::vector::Vector<[u32; 3]> = crate::code_rule_dsl::facts::rows::vector_in(None, n);
         for (i, &o) in order.iter().enumerate() {
             let k = kinds[o as usize];
             if keys.last() != Some(&k) {

@@ -328,11 +328,11 @@ pub fn join<N: AsRef<str>>(out: &mut [(N, Arc<dyn Source>)], batch: &Arc<super::
 /// A place relation's second column's values with each row's document (`value`, `document`), in an array in the
 /// run's blocks, none on the heap: sorted, a run of one value is its postings, and within it a run of one document
 /// that document's, whatever the rows' order or the values' range.
-struct Pairs(crate::code_rule_dsl::facts::rows::BlockVec<[i64; 2]>);
+struct Pairs(rerail_blocks::vector::Vector<[i64; 2]>);
 
 impl Pairs {
     fn new() -> Pairs {
-        Pairs(crate::code_rule_dsl::facts::rows::BlockVec::new())
+        Pairs(crate::code_rule_dsl::facts::rows::vector_in(None, 0))
     }
     /// A row of `id` (the first column: its document is the high half) and `value`.
     fn add(&mut self, id: i64, value: i64) {

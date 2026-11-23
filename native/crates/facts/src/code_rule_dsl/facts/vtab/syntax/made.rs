@@ -947,7 +947,7 @@ impl MadeRows {
                 let (r, rows, covered) = self.sample()?;
                 let n = self.batch.docs.len();
                 profile::decision("a relation measured on a sample of its batch's documents (decision 0494)", || format!("{}: {covered} of {n} documents, {} rows", self.batch.rows.names[self.rel], rows.len()));
-                let mut pairs: crate::code_rule_dsl::facts::rows::BlockVec<[i64; 2]> = crate::code_rule_dsl::facts::rows::BlockVec::with_capacity_in(None, rows.len());
+                let mut pairs: rerail_blocks::vector::Vector<[i64; 2]> = crate::code_rule_dsl::facts::rows::vector_in(None, rows.len());
                 let measured: Vec<(String, i64, i64, i64, i64)> = self
                     .columns()
                     .into_iter()

@@ -30,10 +30,21 @@ unsafe impl<T: Pod, const N: usize> Pod for [T; N] {}
 pub type Keep = Option<Arc<dyn Any + Send + Sync>>;
 
 /// A region a room gave: its first byte, its bytes, and what holds it (a block's region, given back when this goes).
+/// A region a device may use carries its block's guard (the check of each CPU read and write against the device's
+/// queued uses, decision 0487 R4); one another holder owns, the way to borrow it again (`share`).
 pub struct Region {
     ptr: *mut u8,
     len: usize,
     owner: Box<dyn Any + Send + Sync>,
+    guard: Option<(Arc<dyn Guard>, usize)>,
+    share: Option<fn(&Region) -> Region>,
+}
+
+/// The check of the CPU's reads and writes of a block's bytes against the device's queued uses of them (decision 0487
+/// R4: `rerail_blocks::ledger::Ledger`): `at` and `len` in the block's bytes.
+pub trait Guard: Send + Sync {
+    fn cpu_read(&self, at: usize, len: usize);
+    fn cpu_write(&self, at: usize, len: usize);
 }
 
 // SAFETY: the region's bytes are its holder's alone, written through `&mut self` or as atomics.
@@ -46,7 +57,35 @@ impl Region {
     /// # Safety
     /// `ptr..ptr + len` is writable, aligned as asked, and this region's alone while `owner` lives.
     pub unsafe fn new(ptr: *mut u8, len: usize, owner: Box<dyn Any + Send + Sync>) -> Region {
-        Region { ptr, len, owner }
+        Region { ptr, len, owner, guard: None, share: None }
+    }
+
+    /// It, each CPU read and write checked by `guard`, its first byte at `at` of the guard's block.
+    pub fn guarded(mut self, guard: Arc<dyn Guard>, at: usize) -> Region {
+        self.guard = Some((guard, at));
+        self
+    }
+
+    /// It, borrowed again by `share` (a borrowed vector's clone: another borrow of the same bytes).
+    pub fn shared_by(mut self, share: fn(&Region) -> Region) -> Region {
+        self.share = Some(share);
+        self
+    }
+
+    /// Its guard and its first byte's offset in the guard's block.
+    #[inline]
+    pub fn guard(&self) -> Option<&(Arc<dyn Guard>, usize)> {
+        self.guard.as_ref()
+    }
+
+    /// Another borrow of its bytes, where it is borrowed (`shared_by`).
+    pub fn share(&self) -> Option<Region> {
+        self.share.map(|f| f(self))
+    }
+
+    /// What holds it, taken: a room's region handed on whole (its chunk to a relation's directory).
+    pub fn into_owner(self) -> Box<dyn Any + Send + Sync> {
+        self.owner
     }
     #[inline]
     pub fn as_mut_ptr(&mut self) -> *mut u8 {

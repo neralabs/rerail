@@ -33,7 +33,7 @@ use crate::code_rule_dsl::transducer::packed::metal_join as mj;
 use crate::code_rule_dsl::logic::device::{ColumnStats, StatColumn};
 use crate::code_rule_dsl::logic::device::caps;
 use crate::code_rule_dsl::logic::profile;
-use crate::code_rule_dsl::facts::rows::{BlockVec, Part};
+use crate::code_rule_dsl::facts::rows::{InRelations, Part};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -3569,7 +3569,7 @@ fn encode_program<'p>(seeding: Option<(&[(&'p Plan, &JoinRule, usize)], &mut Has
         }
         let part = &live[&h].total;
         // SAFETY: `lat_hclear_one` writes every slot before any read.
-        let words = unsafe { BlockVec::unwritten_in(Some(&part.home()), need * super::keys::SLOT) };
+        let words = unsafe { crate::code_rule_dsl::facts::rows::unwritten_in(Some(&part.home()), need * super::keys::SLOT) };
         let map = super::keys::KeyMap::of(words, lh.had);
         // Its keys so far placed again in it (none where its first round made none).
         batch.lattice_grow(&lp.own.total[&h], store.rels[h].k - 1, map_at(&map), lh.map.as_ref().map(map_at)).map_err(e)?;

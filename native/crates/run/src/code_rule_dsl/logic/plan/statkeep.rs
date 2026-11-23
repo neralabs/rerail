@@ -33,7 +33,7 @@ const EXACT: usize = 256;
 /// back), so a count of 0 is an empty slot. It starts at 16 slots and doubles past half full.
 #[derive(Clone, Default)]
 struct Exact {
-    slots: crate::code_rule_dsl::facts::rows::BlockVec<[i64; 2]>,
+    slots: rerail_blocks::vector::Vector<[i64; 2]>,
     len: usize,
 }
 impl Exact {
@@ -53,7 +53,7 @@ impl Exact {
         if !self.slots.is_empty() && 2 * (self.len + 1) <= self.slots.len() {
             return;
         }
-        let mut grown = Exact { slots: Default::default(), len: 0 };
+        let mut grown = Exact { slots: crate::code_rule_dsl::facts::rows::vector_in(None, 0), len: 0 };
         grown.slots.resize((2 * self.slots.len()).max(16), [0, 0]);
         for e in self.slots.iter().filter(|e| e[1] != 0) {
             let at = grown.slot(e[0]);
@@ -887,7 +887,7 @@ mod exact_tests {
             }
             assert_eq!(e.len(), want.len());
         }
-        assert!(e.slots.facts().is_some(), "its slots in a block");
+        assert!(rerail_blocks::maps::Placed::place(&e.slots).is_some(), "its slots in a block");
         let mut got: Vec<(i64, i64)> = e.iter().collect();
         got.sort_unstable();
         assert_eq!(got, want.into_iter().collect::<Vec<_>>());

@@ -43,7 +43,6 @@ use crate::code_rule_dsl::facts::rows::source_room;
 use rerail_blocks::vector::Vector;
 use rerail_blocks::maps::{BlockArray, BlockHash};
 use rustc_hash::FxHashMap;
-use crate::code_rule_dsl::facts::rows::BlockVec;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use crate::code_rule_dsl::facts::nearest::Binding;
@@ -86,11 +85,11 @@ const SOLVE_NS: f64 = 12.0;
 /// A chunk of the rows made on lookup, in a block of the run's (decision 0353): an axis's answer written once where it
 /// is computed. On the heap before (a 300-file run's peak held 13 MB of them under one stratum's joins, on the M3).
 /// Written and read as atomics: a row is written under the lock, and read by any thread once its run is handed out.
-struct Pairs(crate::code_rule_dsl::facts::rows::BlockVec<u64>);
+struct Pairs(rerail_blocks::vector::Vector<u64>);
 
 impl Pairs {
     fn new(n: usize) -> Self {
-        let mut v = crate::code_rule_dsl::facts::rows::BlockVec::with_capacity_in(None, n);
+        let mut v = crate::code_rule_dsl::facts::rows::vector_in(None, n);
         v.resize(n, 0);
         Pairs(v)
     }
@@ -108,7 +107,7 @@ impl Pairs {
 const UNMADE: u32 = u32::MAX;
 
 /// The run of `row`'s rows made on a side, if it is.
-fn made_run(slots: &BlockVec<[u32; 2]>, row: u32) -> Option<(u32, u32)> {
+fn made_run(slots: &rerail_blocks::vector::Vector<[u32; 2]>, row: u32) -> Option<(u32, u32)> {
     slots.get(row as usize).filter(|r| r[0] != UNMADE).map(|r| (r[0], r[1]))
 }
 
@@ -120,7 +119,7 @@ pub struct Within {
     /// Per side, the rows made and per node row the run of its rows as inner (`0`) or outer (`1`): `[start, len]`,
     /// `UNMADE` where none is made yet. In the run's blocks, one slot a node row (decision 0353: a scan of every node's
     /// containers held a map of them on the heap, 13 MB at the M3's 300-file peak, ab175).
-    made: Mutex<([usize; 2], [BlockVec<[u32; 2]>; 2])>,
+    made: Mutex<([usize; 2], [rerail_blocks::vector::Vector<[u32; 2]>; 2])>,
     /// Every node's containers made (a scan): the rows they span.
     all: OnceLock<usize>,
     /// Its nodes of zero width (locals), by document: document `d`'s are `locals[starts[d]..starts[d + 1]]`.
@@ -197,7 +196,7 @@ impl Within {
         Within {
             mode,
             chunks: std::array::from_fn(|_| std::array::from_fn(|_| OnceLock::new())),
-            made: Mutex::new(([0, 0], [BlockVec::new(), BlockVec::new()])),
+            made: Mutex::new(([0, 0], [crate::code_rule_dsl::facts::rows::vector_in(None, 0), crate::code_rule_dsl::facts::rows::vector_in(None, 0)])),
             all: OnceLock::new(),
             zero: OnceLock::new(),
             shape: OnceLock::new(),
