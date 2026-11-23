@@ -142,21 +142,23 @@ fn key_parts(programs: &[&str], root: &Path, options: &serde_json::Value, typing
 /// The run's frame key while the run is under way (`Naming`), for its manifest to name (`frame::named`): collection
 /// keeps the frame while it keeps the run.
 #[derive(Clone, Default)]
-struct RunFrame(Option<[u8; 32]>);
+struct RunFrame(std::sync::Arc<Vec<[u8; 32]>>);
 
-/// Names the run's frame `key` to the run's manifest until dropped.
+/// Names frame `key` to the run's manifest until dropped, with the frames named already (a command's, then its run's).
 pub struct Naming {
     _key: crate::code_rule_dsl::logic::profile::Bound,
 }
 impl Naming {
     pub fn enter(key: [u8; 32]) -> Naming {
-        Naming { _key: crate::code_rule_dsl::logic::profile::bind(RunFrame(Some(key))) }
+        let mut keys = Vec::clone(&crate::code_rule_dsl::logic::profile::bound::<RunFrame>().0);
+        keys.push(key);
+        Naming { _key: crate::code_rule_dsl::logic::profile::bind(RunFrame(std::sync::Arc::new(keys))) }
     }
 }
 
-/// The frame of the run under way, which its manifest names.
-pub fn naming() -> Option<[u8; 32]> {
-    crate::code_rule_dsl::logic::profile::bound::<RunFrame>().0
+/// The frames of the run under way, which its manifest names.
+pub fn naming() -> Vec<[u8; 32]> {
+    Vec::clone(&crate::code_rule_dsl::logic::profile::bound::<RunFrame>().0)
 }
 
 /// The record's entry of the texts' include graphs (`Texts::graphs`), each one's digest or none: with every rule file
@@ -181,7 +183,9 @@ fn graphs_line(graphs: &[Option<[u8; 32]>]) -> String {
 /// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249).
 fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Added> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    // A snapshot's settings file that does not read is keyed as unreadable: the run reads it only if its program needs it.
+    let (mut settings, unread) = crate::code_rule_dsl::logic::settings::settings_as_read(root, &flags).map_err(Error::Plan)?;
+    settings.extend(unread.map(|why| ("rerail.env unread".to_owned(), why)));
     Ok(super::added::Added::of(&settings, options))
 }
 
@@ -279,12 +283,19 @@ fn outputs_of<'a>(out: &Path, names: impl Iterator<Item = &'a str>) -> Vec<(Stri
 
 /// The kept outputs written into `out`, when every leaf of the last run under this key is as it was.
 #[allow(clippy::too_many_arguments)]
-pub fn reused(given: &super::Texts<'_>, key: &[u8; 32], root: &Path, out: &Path, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
+pub fn reused(given: &super::Texts<'_>, key: &[u8; 32], root: &Path, out: &Path, typing: &Typing, options: &serde_json::Value, captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
+    applied(Some(given), key, root, out, typing, options, captured)
+}
+
+/// The kept outputs of the run's frame `key`, given its texts where they are read (`reused`), or none: a command's
+/// frame led to it (`command`), whose rule files, as recorded, make the same texts and graphs.
+#[allow(clippy::too_many_arguments)]
+fn applied(given: Option<&super::Texts<'_>>, key: &[u8; 32], root: &Path, out: &Path, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
     // A run an analysis run owns (decision 0547) publishes what it recorded as the owner finishes: a hit re-owns the
     // manifests the recorded run wrote (`own_recorded_manifests`), below. Skipped instead, every `logic` command's
     // warm run evaluated again (each begins an analysis run).
     let owner = super::ThreadStore::owner(root).filter(|owner| owner.is_staged());
-    let programs = given.programs;
+    let programs: &[&str] = given.map_or(&[], |g| g.programs);
     let checking = super::thread_usage();
     let kept = super::phases::reading_store().and_then(|store| { let _s = crate::code_rule_dsl::logic::profile::span(|| "the run's frame, read".into()); super::frame::get(&store, key) });
     let Some(kept) = kept else {
@@ -311,19 +322,20 @@ pub fn reused(given: &super::Texts<'_>, key: &[u8; 32], root: &Path, out: &Path,
     // Decision 0275, rederived until a key settles it: with every rule file as recorded (a `stat` each, then its
     // sha), the same include graphs list the same rule files; the frame's are compared, and the rule files are
     // listed again only for a frame that has none.
-    match graphs.first() {
-        Some(g) if g.2 != graphs_line(&given.graphs) => {
+    match (given, graphs.first()) {
+        (None, _) => {}
+        (Some(given), Some(g)) if g.2 != graphs_line(&given.graphs) => {
             miss("the include graphs differ");
             return Ok(None);
         }
-        Some(_) => {}
-        None if rule_files(given, options)? != rules => {
+        (Some(_), Some(_)) => {}
+        (Some(given), None) if rule_files(given, options)? != rules => {
             miss("the rule files differ");
             return Ok(None);
         }
-        None => {}
+        (Some(_), None) => {}
     }
-    if !super::changes_of(programs, &given.graphs, given.read, root, typing, options, &rest, Some(summary))?.is_some_and(|c| c.is_empty()) {
+    if !super::changes_of(programs, given.map_or(&[], |g| &g.graphs[..]), given.and_then(|g| g.read), root, typing, options, &rest, Some(summary))?.is_some_and(|c| c.is_empty()) {
         miss("a leaf changed");
         return Ok(None);
     }
@@ -409,8 +421,78 @@ pub fn record(given: &super::Texts<'_>, key: &[u8; 32], root: &Path, out: &Path,
     if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
         eprintln!("rerail: the run's frame: kept under {} ({} leaves)", &crate::content_store::observe::hex(key)[..12], reads.len());
     }
-    super::frame::put(&store, key, &super::frame::Frame { reads, plans: report.plans.clone(), summary, image });
+    super::frame::put(&store, key, &super::frame::Frame { reads, plans: report.plans.clone(), summary, image, then: None });
     Ok(())
+}
+
+/// A command's frame (t33 K4): what a command line reads before its run, its rule files and their directory, and the
+/// run's frame they lead to. Its key is the command's (`command_key`): the rule files by path, with everything else
+/// the run's key is of; a command whose every rule file, and its directory's listing, is as recorded makes the same
+/// texts and graphs, so the run's frame is checked without reading them (`command_reused`).
+pub mod command {
+    use super::{Path, Report, Result, Typing};
+    use sha2::{Digest as _, Sha256};
+
+    /// The command's key: its rule files' paths, the run's other parts (`key`'s, less the texts) and `extra`, the
+    /// command line's own switches.
+    pub fn key(files: &[std::path::PathBuf], root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing, extra: &str) -> Result<[u8; 32]> {
+        let mut h = Sha256::new();
+        h.update(b"rerail.command-frame/v1\0");
+        for f in files {
+            h.update(f.to_string_lossy().as_bytes());
+            h.update([0]);
+        }
+        super::settings(root, options)?.hash(&mut h);
+        h.update(options.to_string().as_bytes());
+        h.update([0]);
+        match crate::git_workspace::snapshot::run_identity(root) {
+            Some(identity) => h.update(identity.as_bytes()),
+            None => h.update(crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes()),
+        }
+        h.update([0]);
+        h.update(modes.as_bytes());
+        h.update(format!("\0{typing:?}\0{extra}\0").as_bytes());
+        h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
+        h.update([u8::from(crate::code_rule_dsl::facts::vtab::syntax::definition_ids())]);
+        h.update(super::switches());
+        Ok(h.finalize().into())
+    }
+
+    /// The command's leaves: its rule directory's listing (where it ran a directory) and each rule file.
+    fn leaves(dir: Option<&Path>, files: &[std::path::PathBuf]) -> Vec<(String, String, String)> {
+        let hex = crate::content_store::observe::hex;
+        let mut out: Vec<_> = dir.into_iter().map(|d| ("rule_dir".to_owned(), d.to_string_lossy().into_owned(), super::observe(|o| o.listing_digest(d)).map(|x| hex(&x)).unwrap_or_default())).collect();
+        out.extend(files.iter().map(|f| ("rule".to_owned(), f.to_string_lossy().into_owned(), super::observe(|o| o.digest(f)).map(|x| hex(&x)).unwrap_or_default())));
+        out
+    }
+
+    /// The run's kept outputs, written into `out`, when the command's frame `key` finds every rule file as recorded
+    /// and its run's frame every leaf as recorded: no rule text read.
+    /// With the run's report, the number of programs its command ran (a directory's files less those another includes).
+    pub fn reused(key: &[u8; 32], root: &Path, out: &Path, typing: &Typing, options: &serde_json::Value) -> Result<Option<(Report, usize)>> {
+        let Some(kept) = super::super::phases::reading_store().and_then(|store| { let _s = crate::code_rule_dsl::logic::profile::span(|| "the command's frame, read".into()); super::super::frame::get(&store, key) }) else {
+            return Ok(None);
+        };
+        let (Some(then), Some(programs)) = (kept.then, std::str::from_utf8(&kept.summary).ok().and_then(|n| n.parse().ok())) else { return Ok(None) };
+        let mut leaves = super::super::leaves::Leaves::files(Path::new("/"));
+        if let Some(c) = kept.reads.iter().find(|c| !leaves.still(c)) {
+            super::miss(&format!("the command's {} {} changed", c.0, c.1));
+            return Ok(None);
+        }
+        let report = super::applied(None, &then, root, out, typing, options, None)?;
+        Ok(report.map(|mut r| {
+            r.phases.insert(0, ("the command's frame: every rule file as it was, no rule text read", 0.0, 0.0, 0.0, 0));
+            (Report { frame: Some(then), ..r }, programs)
+        }))
+    }
+
+    /// Keeps the command's frame `key`: its rule files, as read now, leading to the run's frame `then`, and the
+    /// number of programs the command ran.
+    pub fn record(key: &[u8; 32], dir: Option<&Path>, files: &[std::path::PathBuf], then: &[u8; 32], programs: usize) {
+        let Some(store) = super::super::phases::reading_store() else { return };
+        let frame = super::super::frame::Frame { reads: leaves(dir, files), then: Some(*then), summary: programs.to_string().into_bytes(), ..Default::default() };
+        super::super::frame::put(&store, key, &frame);
+    }
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the

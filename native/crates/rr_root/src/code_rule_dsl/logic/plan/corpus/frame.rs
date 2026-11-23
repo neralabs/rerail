@@ -27,6 +27,8 @@ const SUMMARY: &str = "frame_summary";
 const SIZE: &str = "frame_size";
 /// The output image, a word a row (eight bytes, little-endian), in order.
 const IMAGE: &str = "frame_image";
+/// The frame this one leads to, in hex: a command's frame names its run's (`reuse::command`).
+const THEN: &str = "frame_then";
 
 fn source_text(key: &[u8; 32]) -> String {
     format!("rerail/frame\0{}", crate::content_store::observe::hex(key))
@@ -45,13 +47,15 @@ pub fn named(key: &[u8; 32]) -> (String, [u8; 32]) {
     (source_text(key), plan())
 }
 
-/// A run's frame: the leaves it read, its plans, its program's summary and its output image.
+/// A run's frame: the leaves it read, its plans, its program's summary and its output image; or a command's: the
+/// leaves it read before its run (its rule files), and the run's frame (`then`).
 #[derive(Clone, Default)]
 pub struct Frame {
     pub reads: Vec<(String, String, String)>,
     pub plans: Vec<[u8; 32]>,
     pub summary: Vec<u8>,
     pub image: Vec<u8>,
+    pub then: Option<[u8; 32]>,
 }
 
 impl Frame {
@@ -62,6 +66,9 @@ impl Frame {
         facts.insert(READ.to_owned(), self.reads.iter().map(|(k, p, d)| vec![s(k), s(p), s(d)].into()).collect());
         facts.insert(PLAN.to_owned(), self.plans.iter().map(|p| vec![s(&crate::content_store::observe::hex(p))].into()).collect());
         facts.insert(SUMMARY.to_owned(), vec![vec![s(&String::from_utf8_lossy(&self.summary))].into()]);
+        if let Some(then) = &self.then {
+            facts.insert(THEN.to_owned(), vec![vec![s(&crate::content_store::observe::hex(then))].into()]);
+        }
         facts.insert(SIZE.to_owned(), vec![vec![Value::Int(self.image.len() as i64)].into()]);
         facts.insert(IMAGE.to_owned(), self.image.chunks(8).map(|w| {
             let mut b = [0u8; 8];
@@ -81,7 +88,7 @@ pub fn put(store: &ContentStore, key: &[u8; 32], frame: &Frame) {
 /// The frame `key`, read where the store keeps it; `None` where it keeps none, or one that does not read.
 pub fn get(store: &ContentStore, key: &[u8; 32]) -> Option<Frame> {
     let (mut reads, mut plans, mut words) = (Vec::new(), Vec::new(), Vec::new());
-    let (mut summary, mut size) = (None, None);
+    let (mut summary, mut size, mut then) = (None, None, None);
     let mut whole = true;
     let (found, bad) = ENTRIES.visit(store, Some(&[Entries::part(key)]), &|_| true, &mut |_, rel, row| {
         match rel {
@@ -95,6 +102,7 @@ pub fn get(store: &ContentStore, key: &[u8; 32]) -> Option<Frame> {
             },
             SUMMARY => summary = row.text(0).map(|t| t.to_string().into_bytes()),
             SIZE => size = row.int(0),
+            THEN => then = row.text(0).and_then(|h| crate::content_store::observe::unhex(&h)),
             IMAGE => match row.int(0) {
                 Some(w) => words.push((row.at, w)),
                 None => whole = false,
@@ -112,7 +120,7 @@ pub fn get(store: &ContentStore, key: &[u8; 32]) -> Option<Frame> {
         return None;
     }
     image.truncate(size);
-    Some(Frame { reads: ordered(reads), plans: ordered(plans), summary: summary?, image })
+    Some(Frame { reads: ordered(reads), plans: ordered(plans), summary: summary?, image, then })
 }
 
 /// Rows read with their places, in their relation's order.

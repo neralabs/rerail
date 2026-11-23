@@ -109,6 +109,8 @@ pub struct Report {
     /// Where the prepared program came from: `prepared` by this run, kept in this process's `memory`, or read from the
     /// `store` (decision 0073).
     pub prepared: &'static str,
+    /// The run's frame (`frame`, t33 K4): the one it was answered from, or kept under as it ended.
+    pub frame: Option<[u8; 32]>,
     /// A session's run: the cross-file strata it evaluated, of all (decision 0077; `None` outside a session).
     pub cross_strata: Option<(usize, usize)>,
     /// A run with no session, its strata kept in the tape cache (decision 0077 §4): the cross-file strata it
@@ -307,7 +309,9 @@ impl ProgramFields for Summary {
 /// (`texts_digest`, decision 0225 §3).
 pub fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
+    // As the run reads them: a snapshot's settings file that does not read is none, for a program that reads Git's
+    // metadata alone (any other's run fails on it).
+    let (settings, _) = crate::code_rule_dsl::logic::settings::settings_as_read(root, &flags).map_err(Error::Plan)?;
     let masked = masked(programs);
     Ok(combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read)?.0)
 }

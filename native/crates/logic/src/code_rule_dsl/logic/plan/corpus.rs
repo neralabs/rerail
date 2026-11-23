@@ -1460,7 +1460,7 @@ pub fn run_handed(
     // Phase 0's cutoff (`reuse`): a run whose every read is as it was writes the outputs it wrote.
     let reuse = reuse::wanted(options, typing, t_facts);
     let frame_key = if reuse { Some(reuse::key_of(&texts, root, options, modes, typing)?) } else { None };
-    let kept = match &frame_key { Some(key) => reuse::reused(&texts, key, root, out, typing, options, image.as_deref_mut()), None => Ok(None) };
+    let kept = match &frame_key { Some(key) => reuse::reused(&texts, key, root, out, typing, options, image.as_deref_mut()).map(|r| r.map(|r| Report { frame: Some(*key), ..r })), None => Ok(None) };
     let report = match kept {
         // A profiled run that the cutoff answered writes its profile too: the lifecycle below appends to it.
         Ok(Some(report)) if crate::code_rule_dsl::logic::profile::on() && !phase0::active() && runs_under_way() == 0 => {
@@ -1483,6 +1483,7 @@ pub fn run_handed(
                 refuse_unplaced(out)?;
                 if let Some(key) = &frame_key {
                     reuse::record(&texts, key, root, out, options, &report, image.as_deref().map(Vec::as_slice))?;
+                    return Ok(Report { frame: Some(*key), ..report });
                 }
                 Ok(report)
             })
@@ -2347,7 +2348,7 @@ fn run_observed_within(
     // each named in the manifest, so collection keeps it while it keeps the run. The run's is kept as the run ends
     // (`reuse::record`).
     if durable.is_some() {
-        if let Some(key) = reuse::naming() {
+        for key in reuse::naming() {
             let (text, plan) = frame::named(&key);
             memo::named_source(store, text, true, None, &late_sources);
             if !program_plans.contains(&plan) {
@@ -2757,6 +2758,11 @@ fn run_observed_within(
         let digest = memo_local;
         let reads_options = local_v.rules().flat_map(|r| r.reads()).any(|a| crate::code_rule_dsl::typing::file_local::option_input(local_v.rel_name(a.rel())));
         let digest = if reads_options { memo::with_options(digest, options) } else { digest };
+        // The text tests the part reads, by what they test: their relations' rows are the batch's, made from the run's
+        // vocabulary, which the program's digest does not hold (`strtest_0` is whichever pattern the program's first
+        // test has).
+        let patterns: BTreeSet<(&str, String)> = local_v.rules().flat_map(|r| r.reads()).map(|a| local_v.rel_name(a.rel())).filter_map(|r| Some((r, vocabulary.pattern_of(r)?))).collect();
+        let digest = if patterns.is_empty() { digest } else { memo::with_patterns(digest, patterns.iter().map(|(r, p)| (*r, p.as_str()))) };
         // Under the earlier phases' rows only those rules read that a memoised row depends on (an export's or an
         // output's): a constant the per-file part derives for nothing it keeps (phase 1's keys) does not change a
         // file's entry. Nor does a constant the cross-file part reads (phase 1's `py_own`): its rows name no document,
@@ -2831,7 +2837,7 @@ fn run_observed_within(
         };
         debug_assert!(phased.keys().all(|r| local_v.rel(r).is_none_or(|id| local_v.heads(id).next().is_none())), "an earlier phase's export the file-local part derives");
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the memo's identities".into());
-        strata.identities(options, &phased, &base_rows)
+        strata.identities(options, &phased, &base_rows, &|r| vocabulary.pattern_of(r))
     };
     let memo_space = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the memo's space".into()); memo::space_digest(&memo_ids, &local_placed, phases::current().as_deref()) };
     // The file-local outputs, whose memo entries hold lines (recorded for a SQL session below).
@@ -9280,7 +9286,7 @@ fn run_observed_within(
         CorpusDocs { from_tape: built(&hit_docs_built.0), parsed: built(&hit_docs_built.1), made, documents }
     };
     crate::code_rule_dsl::logic::profile::decision("the corpus batch's documents (Q332)", || format!("{corpus_docs:?}"));
-    let report = Report { corpus_docs, parsed: core::parses(), phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), programs: (programs_counted.0.load(std::sync::atomic::Ordering::Relaxed), programs_counted.1.load(std::sync::atomic::Ordering::Relaxed)), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, cross_unseen, unfillable, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { corpus_docs, parsed: core::parses(), phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), programs: (programs_counted.0.load(std::sync::atomic::Ordering::Relaxed), programs_counted.1.load(std::sync::atomic::Ordering::Relaxed)), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, cross_unseen, unfillable, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, frame: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }

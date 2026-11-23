@@ -664,7 +664,7 @@ pub fn sources(
     let frame = (store.is_some() && !report.consulted.is_empty())
         .then(|| super::Summary::of(&[], &[], Some(&handed), root, &options).ok().and_then(|s| s.encode()))
         .flatten()
-        .map(|summary| (identity, Some(super::frame::Frame { reads: report.consulted.clone(), plans: report.plans.clone(), summary, image: image.clone() })));
+        .map(|summary| (identity, Some(super::frame::Frame { reads: report.consulted.clone(), plans: report.plans.clone(), summary, image: image.clone(), then: None })));
     let (one, exports) = one_of_rows(root, label, files, &declared, rows);
     if let Some(k) = key {
         Batch::put(k, (one.clone(), exports.clone()));
