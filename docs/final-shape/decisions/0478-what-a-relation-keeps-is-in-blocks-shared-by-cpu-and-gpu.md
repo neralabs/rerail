@@ -578,3 +578,5 @@ sort again).
   statkeep and sketch tests pass unchanged.
 - hogql cold, four pairs against 6e at load 25-37: CPU 83.5-84.1 B against 83.6-83.9 B; Metal 75.6-77.7 B, 1,629 in
   each of 3 runs.
+
+**2026-11-23:** `BlockVec` is folded into `Vector` (decision 0628 §8). A relation's arrays are `Vector`s in its home's room (`Home::room`, `rows::vector_in`); the ledger check, borrowed rows (`rows::shared`) and the chunk hand-off (`InRelations::into_chunk`, `rows::from_chunk`) are `Vector`'s and its region's. Where this record says `BlockVec`, read that.

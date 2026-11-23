@@ -46,7 +46,7 @@ test-hooks = ["rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "rerail
 # A chunk's admitted values' parts, read without a lock by every probe of a layered source (`values::Values`).
 arc-swap = "=1.9.3"
 # Blocks (decision 0266): a batch's chunk block (decision 0289), the automata's block (0478 step 2c), and the
-# `BlockVec`s every platform holds rows in.
+# block `Vector`s every platform holds rows in.
 rerail-blocks = { path = "../blocks" }
 rerail-section = { path = "../section" }
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).

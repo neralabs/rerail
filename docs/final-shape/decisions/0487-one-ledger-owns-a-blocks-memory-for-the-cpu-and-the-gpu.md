@@ -121,3 +121,5 @@ it, and a kernel that was still queued reads the new rows. Nothing reports it; a
   Still not seen: a CPU write of rows a kernel reads through a whole-block bind, which registers no chunk.
 
 The forest's own Metal work (`rerail_forest`'s cost model and trainer) has its own queue and buffers, no block's.
+
+**2026-11-23:** `BlockVec` is folded into `Vector` (decision 0628 §8). A relation's arrays are `Vector`s in its home's room (`Home::room`, `rows::vector_in`); the ledger check, borrowed rows (`rows::shared`) and the chunk hand-off (`InRelations::into_chunk`, `rows::from_chunk`) are `Vector`'s and its region's. Where this record says `BlockVec`, read that.
