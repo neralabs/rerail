@@ -3985,11 +3985,11 @@
         }
     }
 
-    /// The executor's workload: `files` Python files of `reps` functions each, and four programs that between them
-    /// write every kind of output a task copies out: results, captures, a quantified capture, captured text, static
-    /// properties, and dynamic properties whose value is a span of the source (`application/json`) or bytes the
-    /// task writes (`importmap` and `module` name `json` and `javascript`).
-    fn batch_workload(files: usize, reps: usize) -> (Vec<Program>, Vec<TapeDoc>) {
+    /// The executor's workload: `files` Python files, file `f` of `reps(f)` functions with `f` in each function's name
+    /// and string, and four programs that between them write every kind of output a task copies out: results,
+    /// captures, a quantified capture, captured text, static properties, and dynamic properties whose value is a span of
+    /// the source (`application/json`) or bytes the task writes (`importmap` and `module` name `json` and `javascript`).
+    fn batch_workload(files: usize, reps: impl Fn(usize) -> usize) -> (Vec<Program>, Vec<TapeDoc>) {
         let language = SupportLang::Python.get_ts_language();
         let programs = [
             "(comment)+ @comment.around",
@@ -4000,8 +4000,8 @@
         .map(|query| Program::compile_tree_sitter_query_pattern(query, &language).unwrap())
         .to_vec();
         let file = |f: usize| {
-            tape(&(0..reps)
-                .map(|i| format!("# first {f} {i}\n# second {i}\ndef f{i}(x, y):\n    return g(x, y) + h(x, \"s{i}\", 'application/json', 'importmap', 'module')\n"))
+            tape(&(0..reps(f))
+                .map(|i| format!("# first {f} {i}\n# second {i}\ndef f{f}_{i}(x, y):\n    return g(x, y) + h(x, \"s{f}_{i}\", 'application/json', 'importmap', 'module')\n"))
                 .collect::<String>())
         };
         (programs, (0..files).map(file).collect())
@@ -4014,10 +4014,11 @@
 
     /// A batch of several files gives the interpreter's outputs: each task's results, captures and properties are
     /// copied out of its arenas and rebased onto the batch's. The workload's outputs reach static and dynamic
-    /// properties and captured text, so a copy that drops or misplaces one shows.
+    /// properties and captured text, so a copy that drops or misplaces one shows. Each file has its own size and
+    /// text, so outputs handed to the wrong file show too.
     #[test]
     fn multi_file_batches_give_the_interpreter_outputs() {
-        let (programs, files) = batch_workload(6, 3);
+        let (programs, files) = batch_workload(6, |f| 1 + f % 3);
         for batch in files.chunks(3) {
             let anchors = every_root(&programs, batch);
             let expected =
@@ -4037,7 +4038,7 @@
     #[ignore = "timing: run in a release build to compare the CPU batch executor before and after a change"]
     fn cpu_batch_executor_timing() {
         let iterations = std::env::var("RERAIL_PACKED_CPU_BATCH_ITERATIONS").map_or(30, |v| v.parse().unwrap());
-        let (programs, files) = batch_workload(64, 5);
+        let (programs, files) = batch_workload(64, |_| 5);
         let batches = files.chunks(1).map(|batch| (batch, every_root(&programs, batch))).collect::<Vec<_>>();
         let run = || {
             batches

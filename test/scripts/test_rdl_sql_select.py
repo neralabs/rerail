@@ -99,13 +99,21 @@ def golden_text():
     return "".join(text)
 
 
+def golden_difference(golden, made):
+    """What differs between the golden and the text the test made, as at most 20 `-`/`+` lines by position."""
+    old, new = golden.splitlines(), made.splitlines()
+    at = next((i for i, (a, b) in enumerate(zip(old, new)) if a != b), min(len(old), len(new)))
+    return "\n".join([f"from line {at + 1}:", *(f"- {line}" for line in old[at:at + 10]), *(f"+ {line}" for line in new[at:at + 10])])
+
+
 class SqlSelect(unittest.TestCase):
     def test_sql_select_builds_the_golden_sql(self):
         made = golden_text()
-        if os.environ.get("RERAIL_BLESS_SQL"):
+        if os.environ.get("RERAIL_BLESS_SQL") == "1":
             GOLDEN.write_text(made)
-        self.maxDiff = 4000
-        self.assertEqual(GOLDEN.read_text(), made, f"sql_select's SQL differs from {GOLDEN} (RERAIL_BLESS_SQL=1 rewrites it)")
+        golden = GOLDEN.read_text()
+        if golden != made:
+            self.fail(f"sql_select's SQL differs from {GOLDEN} (RERAIL_BLESS_SQL=1 rewrites it), {golden_difference(golden, made)}")
 
 
 if __name__ == "__main__":

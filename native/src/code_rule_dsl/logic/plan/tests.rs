@@ -3035,9 +3035,9 @@ fn golden_difference(golden: &str, made: &str) -> String {
 fn sql_query_builds_the_golden_sql() {
     let path = root().join("plan/golden/sql_query.txt");
     let made = sql_query_golden();
-    if std::env::var_os("RERAIL_BLESS_SQL").is_some() {
+    if std::env::var("RERAIL_BLESS_SQL").as_deref() == Ok("1") {
         std::fs::write(&path, &made).unwrap();
     }
-    let golden = std::fs::read_to_string(&path).unwrap_or_default();
+    let golden = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e} (RERAIL_BLESS_SQL=1 writes it)", path.display()));
     assert!(golden == made, "sql_query's SQL differs from {} (RERAIL_BLESS_SQL=1 rewrites it), {}", path.display(), golden_difference(&golden, &made));
 }
