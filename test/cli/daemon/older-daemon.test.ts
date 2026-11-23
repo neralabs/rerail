@@ -84,7 +84,7 @@ describe("a daemon of Rerail 0.1.4 or earlier", () => {
     const state: DaemonState = { ...OLDER, pid: 4343, version: "0.2.0" };
     const health: DaemonHealth = {
       status: "ok", pid: 4343, version: "0.2.0", ui: "bundled", uptimeMs: 1, database: { path: "/nowhere/rerail.sqlite", exists: true },
-      native: { ok: true, kernelVersion: "1.0.0" }, model: { ok: true, message: "ok" }, healthy: true, workspaceRoot: root, installedAt: null, experiments: [],
+      native: { ok: true, kernelVersion: "1.0.0" }, model: { ok: true, message: "ok" }, healthy: true, workspaceRoot: root, installedAt: null, experiments: [], update: null,
     };
     answers.start = { started: true, daemon: { state, health }, replaced: { pid: 4242, version: "0.1.4" } };
     const { stdout, exit } = await rerail(["daemon", "start"]);

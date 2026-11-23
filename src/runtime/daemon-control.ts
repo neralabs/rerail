@@ -282,6 +282,11 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
   installedAt: number | null;
   /** The experimental features this daemon runs (docs/internal-testing.md); the dashboard shows only theirs. */
   experiments: ExperimentalFeature[];
+  /**
+   * The newest Rerail on the update channel and when npm said so (epoch ms), from the daily update check
+   * (`setup/update-check.ts`); null before its first answer, and always for a daemon that does not check.
+   */
+  update: { latest: string; checkedAt: number } | null;
 }
 
 /**

@@ -69,6 +69,13 @@ describe("Cursor plugin contract", () => {
     }
   });
 
+  // A shell write in another worktree is the session's own only when its call ran there (#535).
+  it("keeps the folder a tool call ran in where the hook names one, and none where only the workspace root says", () => {
+    const call = { conversation_id: "c", generation_id: "g", hook_event_name: "preToolUse", tool_use_id: "t", tool_name: "Shell", tool_input: {} };
+    expect(cursorHookEvent({ ...call, cwd: "/repo/w", workspace_roots: ["/repo"] })).toMatchObject({ kind: "call", cwd: "/repo/w" });
+    expect(cursorHookEvent({ ...call, workspace_roots: ["/repo"] })).not.toHaveProperty("cwd");
+  });
+
   it("normalizes documented Cursor hook payloads and supported delivery outputs", () => {
     const common = {
       conversation_id: "cursor-session",

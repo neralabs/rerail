@@ -591,11 +591,16 @@ describe("audit rule provenance", () => {
     }
 
     // The older build reads `[]` as the provenance of each audit this build moved or wrote, and every other field as it
-    // read it before the move and as this build reads it.
+    // read it before the move and as this build reads it, but the owner beside the session, which it never reads.
     const after = readAsOlder(path, ids);
     expect(provenanceTexts(after)).toEqual(ids.map(() => "[]"));
     expect(withoutProvenance(after.slice(0, olderIds.length))).toEqual(withoutProvenance(before));
-    expect(withoutProvenance(after)).toEqual(withoutProvenance(current));
+    const asOlderReads = (audit: AuditRecord | undefined) => {
+      if (audit === undefined) return undefined;
+      const { repositoryId: _repositoryId, recordedBy: _recordedBy, ...read } = audit;
+      return read;
+    };
+    expect(withoutProvenance(after)).toEqual(withoutProvenance(current.map(asOlderReads)));
     expect(provenanceTexts(current)).toEqual([...written.map(({ text }) => text), JSON.stringify(app), "[]"]);
   });
 
