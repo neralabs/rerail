@@ -209,6 +209,40 @@ describe("placeCheckout", () => {
     expect(vi.mocked(learnDeclaredSubmodules).mock.calls.length - learnt).toBe(checkouts.length + 3);
   });
 
+  it("starts at most four Git processes at once to place the submodules checked out in a repository's checkouts", async () => {
+    const root = temporaryRoot();
+    const main = repository(join(root, "main"));
+    const paths = Array.from({ length: 6 }, (_, i) => `lib-${i}`);
+    writeFileSync(join(main, ".gitmodules"), paths.map(path => `[submodule "${path}"]\n\tpath = ${path}\n\turl = ./${path}\n`).join(""));
+    const commit = git(main, ["rev-parse", "HEAD"]);
+    for (const path of paths) git(main, ["update-index", "--add", "--cacheinfo", `160000,${commit},${path}`]);
+    git(main, ["add", ".gitmodules"]);
+    git(main, ["commit", "--quiet", "-m", "libs"]);
+    const linked = join(root, "linked");
+    git(main, ["worktree", "add", "--quiet", "-b", "linked", linked]);
+    // Each a repository of its own, which Git places by asking it: the main checkout's and the linked worktree's.
+    for (const checkout of [main, linked]) for (const path of paths) git(checkout, ["init", "--quiet", path]);
+    const spawn = vi.mocked(childProcess.spawn);
+    const { spawn: realSpawn } = await vi.importActual<typeof childProcess>("node:child_process");
+    let [running, most] = [0, 0];
+    spawn.mockImplementation((...args: Parameters<typeof childProcess.spawn>) => {
+      const child = realSpawn(...args);
+      if (/^git(\.exe)?$/iu.test(basename(String(args[0]))) && String(args[1]).includes("--show-toplevel")) {
+        most = Math.max(most, (running += 1));
+        child.once("exit", () => (running -= 1));
+      }
+      return child;
+    });
+    try {
+      const placing = await gitStarts(() => placeCheckout(main));
+      // The main checkout, then each submodule in it and in the linked worktree.
+      expect(placing.notBlocking.filter(args => args.includes("--show-toplevel")).length).toBeGreaterThanOrEqual(1 + 2 * paths.length);
+      expect(most).toBeLessThanOrEqual(PLACING_AT_ONCE);
+    } finally {
+      spawn.mockImplementation(realSpawn);
+    }
+  });
+
   it("places no further worktree once its signal is aborted midway", async () => {
     const { checkouts } = repositoryWithWorktrees(12);
     const stopping = new AbortController();
