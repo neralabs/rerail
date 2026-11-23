@@ -6,7 +6,7 @@
 //! when they start at the same bit phase. Four forms, each kept as the arrays it reads in place, one stream an
 //! array:
 //!
-//! - **F15**: format 15's image as the capture holds it (explicit columns at byte widths, its code table).
+//! - **E16**: the engine's format 16 tape as the capture holds it.
 //! - **XF**: the earlier candidate: codes at the file's width, slots in per-block PFOR, starts by FOR, lengths.
 //! - **new, bit-packed**: codes and slots (by sibling, K = 8) at one width a language with escapes that name
 //!   nothing, starts by gap with a start every 8, lengths; widths as E16 chose them.
@@ -26,7 +26,7 @@ use crate::relative::{gaps, sib_slots};
 use crate::repeat::{Esc, Hist};
 use std::ffi::{c_char, c_int, c_void};
 
-pub const FORMS: [&str; 4] = ["F15", "XF", "new, bit-packed", "new, byte-aligned"];
+pub const FORMS: [&str; 4] = ["E16", "XF", "new, bit-packed", "new, byte-aligned"];
 pub const STREAMS: [&[&str]; 4] = [
     &["image"],
     &["codes", "slots", "starts", "lengths"],
@@ -375,7 +375,7 @@ pub struct Report {
 /// A language's code table, and the new form's widths over every file of it (E16's choice): codes, slots,
 /// gaps, lengths.
 pub fn lang_widths(files: &[&File]) -> (Codes, [u32; 4]) {
-    let read = |f: &File| crate::v15::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
+    let read = |f: &File| crate::captured::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
     let mut codes = Codes::default();
     for f in files {
         codes.learn(&read(f));
@@ -394,7 +394,7 @@ pub fn lang_widths(files: &[&File]) -> (Codes, [u32; 4]) {
 
 /// Over one language's files.
 pub fn run(files: &[&File]) -> Report {
-    let read = |f: &File| crate::v15::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
+    let read = |f: &File| crate::captured::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
     let (codes, widths) = lang_widths(files);
     // Dictionaries are trained on the even files and measured on the odd; with fewer than 16 files, no
     // dictionary, and every file measured.

@@ -25,7 +25,7 @@ pub fn place(files: &[(&[u8], bool)]) -> Result<Unit, rerail_metal::Error> {
 /// residency let them go. Also the tapes it built.
 pub fn place_kept(files: &[(&[u8], bool)], kept: &mut Vec<[u8; 32]>) -> Result<(Unit, usize), rerail_metal::Error> {
     use sha2::{Digest as _, Sha256};
-    let image = |k: usize| rerail_c_pp::tape::image_16(files[k].0, crate::pp::options(files[k].1));
+    let image = |k: usize| rerail_c_pp::tape::image(files[k].0, crate::pp::options(files[k].1));
     let mut tapes: Vec<Option<_>> = (0..files.len()).map(|_| None).collect();
     kept.truncate(files.len());
     for k in kept.len()..files.len() {

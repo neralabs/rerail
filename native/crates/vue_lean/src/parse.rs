@@ -87,10 +87,10 @@ struct P<'a> {
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<Tape> {
-    parse_into(src, &mut Writer::<Widths>::finish_columns)
+    parse_into(src, &mut crate::sink()).map(crate::written)
 }
 
-/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+/// [`parse`], the writer finished by `finish`: format 16 or 16z (decisions 0293, 0434).
 pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     // The scanner reads a NUL as the text's end.
     if src.contains(&0) {
@@ -102,7 +102,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
         let mut p = P {
             src,
             b: &b,
-            w: Writer::new(0, widths, src.len() / 4 + 16).to(finish.target(), src).omitting(finish.omissions()),
+            w: Writer::new(widths, src.len() / 4 + 16).to(finish.target(), src).omitting(finish.omissions()),
             open: Vec::new(),
             serialized: tags::SERIALIZED_EMPTY,
             frames: Vec::new(),

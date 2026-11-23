@@ -2,7 +2,7 @@
 
 **Numbered 0365 until 2026-11-17** (0365 is three other branches' records; its commits name it so). Its work queue items Q81 and Q101 are Q130 and Q84 since its merge into django-bugs, and Q81 and Q84 since django-bugs' merge into cost-classifier (the hub's numbers).
 
-**Status:** building (the user's choice, 2026-11-17).
+Status: built (audited 2026-11-23). Building (the user's choice, 2026-11-17).
 
 ## Intro
 

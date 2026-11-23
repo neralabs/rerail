@@ -149,9 +149,6 @@ namespace stage2 {
 // A node's kind, by slot, and its field: as `rerail_simdjson`'s writer numbers them.
 enum : uint32_t { DOCUMENT = 0, PAIR = 1, CONTENT = 2, ESCAPE = 3, OBJECT = 4, ARRAY = 5, STRING = 6, NUMBER = 7, TRUE_ = 8, FALSE_ = 9, NULL_ = 10, COMMENT = 11, SLOTS = 12 };
 enum : uint32_t { NO_FIELD = 0, KEY = 1, VALUE = 2 };
-// The tape's buffers, in the sink's order.
-enum : uint32_t { CODE = 0, SIZE = 1, OFF = 2, TAIL = 3, BASE = 4 };
-constexpr uint32_t STRIDE = 16;
 // Format 16's events (`rerail_v9np_sink::ev`): the low byte of an event's first word.
 enum : uint32_t { EV_OPEN = 0, EV_LEAF = 1, EV_CLOSE = 2 };
 
@@ -215,49 +212,16 @@ simdjson_inline uint64_t backslash_quote(const uint8_t* p) {
   }
 }
 
-// The bytes of `c` for `nodes` nodes, `size`, `off` and `tail` at `width`.
-simdjson_inline size_t column_bytes(uint32_t c, uint32_t nodes, const uint32_t* width) {
-  return c == CODE ? size_t(nodes) * 2 : c == BASE ? size_t((nodes + STRIDE - 1) / STRIDE) * 4 : size_t(nodes) * width[c - 1];
-}
-
-// The tape's buffers made to hold `nodes` nodes at `width`, empty.
-simdjson_never_inline void reserve_columns(rerail_v9np_sink* sink, uint32_t nodes, const uint32_t* width) noexcept {
-  size_t need[5];
-  for (uint32_t c = 0; c < 5; c++) {
-    sink->len[c] = 0;
-    need[c] = column_bytes(c, nodes, width);
-  }
-  sink->grow(sink, need);
-}
-
-// What a walk leaves: 0 and each 2-byte column's largest value fitting, or a column's bit (1 size,
-// 2 off, 4 tail) where one did not, 8 where `size` is 4 bytes and its values fit 2; or simdjson's
-// error code negated.
+// What a walk leaves: 0, or simdjson's error code negated.
 //
 // The walk is simdjson's stage 2 (`json_iterator::walk_document`) with the tape builder's checks,
-// each state a label, its state in locals. `SZ`, `OF` and `TL` are the widths of `size`, `off` and
-// `tail`: each cell is stored unchecked, and each column's values or-ed together.
-template <typename SZ, typename OF, typename TL, bool C>
+// each state a label, its state in locals. Each node is format 16's event (decision 0434), in
+// preorder: the walk never edits a node it gave.
+template <bool C>
 simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const index, const uint32_t count, const uint32_t shift, const uint32_t len,
-                               rerail_v9np_sink* const sink, uint32_t* const container, uint32_t* const pair, bool* const object,
-                               const uint32_t* const comments, const uint32_t comment_count) noexcept {
-  const uint32_t widths[3] = {sizeof(SZ), sizeof(OF), sizeof(TL)};
-  // A node starts at a byte of its own, but a pair (its key's quote) and the document (its value's
-  // first byte); a pair takes four bytes or more. So the tape has at most this many nodes, and the
-  // buffers are made for them once: no node checks for room.
-  const uint32_t bound = len + len / 4 + 2;
-  // Format 16's events (`rerail_v9np_sink::ev`), or the columns.
+                               rerail_v9np_sink* const sink, bool* const object, const uint32_t* const comments, const uint32_t comment_count) noexcept {
   uint32_t* const ev = sink->ev;
-  const bool events = ev != nullptr;
   uint32_t el = 0;
-  if (!events) { reserve_columns(sink, bound, widths); }
-  uint16_t* const code = reinterpret_cast<uint16_t*>(sink->col[CODE]);
-  uint32_t* const base = reinterpret_cast<uint32_t*>(sink->col[BASE]);
-  SZ* const size = reinterpret_cast<SZ*>(sink->col[SIZE]);
-  OF* const off = reinterpret_cast<OF*>(sink->col[OFF]);
-  TL* const tail = reinterpret_cast<TL*>(sink->col[TAIL]);
-  uint32_t n = 0, block_base = 0, last_start = 0;
-  uint32_t high_size = 0, high_off = 0, high_tail = 0;
   uint16_t ids[SLOTS * 3];
   std::memset(ids, 0xff, sizeof(ids));
   sink->codes = 0;
@@ -276,7 +240,7 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
     }
     return id;
   };
-  // An event (`events`): the window passed on when full.
+  // An event: the window passed on when full.
   auto event = [&](uint32_t head, uint32_t a, uint32_t b) simdjson_inline_lambda {
     if (simdjson_unlikely(el + 3 > sink->ev_cap)) {
       sink->ev_len = el;
@@ -288,53 +252,18 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
     ev[el + 2] = b;
     el += 3;
   };
-  // A node's start: its code, its offset from its block's base, the base of each block.
-  auto open = [&](uint32_t slot, uint32_t field, uint32_t start) simdjson_inline_lambda -> uint32_t {
-    if (events) {
-      event(EV_OPEN | uint32_t(code_of(slot, field)) << 8, start, 0);
-      return n++;
-    }
-    code[n] = code_of(slot, field);
-    if ((n % STRIDE) == 0) {
-      block_base = start;
-      base[n / STRIDE] = start;
-    }
-    const uint32_t o = start - block_base;
-    high_off |= o;
-    off[n] = OF(o);
-    last_start = start;
-    return n++;
-  };
-  // A node's end: its size and its tail (its end less its last descendant's start).
-  auto close = [&](uint32_t ord, uint32_t end) simdjson_inline_lambda {
-    if (events) {
-      event(EV_CLOSE, end, 0);
-      return;
-    }
-    const uint32_t t = end - last_start, z = n - ord;
-    high_tail |= t;
-    high_size |= z;
-    tail[ord] = TL(t);
-    size[ord] = SZ(z);
-  };
+  // A node's start, its code and start; its end, the innermost open node's; a node with no children.
+  auto open = [&](uint32_t slot, uint32_t field, uint32_t start) simdjson_inline_lambda { event(EV_OPEN | uint32_t(code_of(slot, field)) << 8, start, 0); };
+  auto close = [&](uint32_t end) simdjson_inline_lambda { event(EV_CLOSE, end, 0); };
   auto leaf = [&](uint32_t slot, uint32_t field, uint32_t start, uint32_t end) simdjson_inline_lambda {
-    if (events) {
-      event(EV_LEAF | uint32_t(code_of(slot, field)) << 8, start, end);
-      n++;
-      return;
-    }
-    const uint32_t ord = open(slot, field, start);
-    const uint32_t t = end - start;
-    high_tail |= t;
-    tail[ord] = TL(t);
-    size[ord] = SZ(1);
+    event(EV_LEAF | uint32_t(code_of(slot, field)) << 8, start, end);
   };
   auto at = [&](const uint8_t* p) simdjson_inline_lambda -> uint32_t { return uint32_t(p - buf) + shift; };
 
   // A string with escapes: its contents' runs and its escapes (`\` and the byte after it; a `\u`'s
   // digits are content), each escape checked as simdjson's `parse_string` checks it. Its end, or 0.
   auto escaped_string = [&](const uint8_t* v, uint32_t field) simdjson_inline_lambda -> uint32_t {
-    const uint32_t ord = open(STRING, field, at(v));
+    open(STRING, field, at(v));
     const uint8_t* p = v + 1;
     const uint8_t* from = p;
     const uint8_t* low_checked = nullptr;
@@ -345,7 +274,7 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
         const uint8_t* q = p + trailing_zeroes(quote);
         if (q > from) { leaf(CONTENT, NO_FIELD, at(from), at(q)); }
         const uint32_t end = at(q) + 1;
-        close(ord, end);
+        close(end);
         return end;
       }
       if (bs == 0) {
@@ -386,19 +315,9 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
         leaf(STRING, field, s, s + 2);
         return s + 2;
       }
-      if (events) {
-        open(STRING, field, s);
-        leaf(CONTENT, NO_FIELD, s + 1, s + 1 + q);
-        close(0, s + q + 2);
-        return s + q + 2;
-      }
-      const uint32_t ord = open(STRING, field, s);
-      const uint32_t content = open(CONTENT, NO_FIELD, s + 1);
-      high_tail |= q + 1;
-      tail[content] = TL(q);
-      size[content] = SZ(1);
-      tail[ord] = TL(q + 1);
-      size[ord] = SZ(2);
+      open(STRING, field, s);
+      leaf(CONTENT, NO_FIELD, s + 1, s + 1 + q);
+      close(s + q + 2);
       return s + q + 2;
     }
     return escaped_string(v, field);
@@ -498,9 +417,9 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
     const uint32_t start = at(v);
     end = *next + shift + 1;
     if (C && ci < comment_count && comments[2 * ci] < *next) {
-      const uint32_t ord = open(slot, field, start);
+      open(slot, field, start);
       gap(*next);
-      close(ord, end);
+      close(end);
     } else {
       leaf(slot, field, start, end);
     }
@@ -534,14 +453,14 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
 
 object_begin:
   if (++d >= DEFAULT_MAX_DEPTH) { return -int(DEPTH_ERROR); }
-  container[d] = open(OBJECT, vf, at(v));
+  open(OBJECT, vf, at(v));
   object[d] = true;
   vf = VALUE;
   gap(*next);
   v = buf + *next++;
   if (*v != '"') { return -int(TAPE_ERROR); }
 object_key:
-  pair[d] = open(PAIR, NO_FIELD, at(v));
+  open(PAIR, NO_FIELD, at(v));
   if (simdjson_unlikely(string(v, KEY) == 0)) { return -int(STRING_ERROR); }
   gap(*next);
   if (simdjson_unlikely(buf[*next++] != ':')) { return -int(TAPE_ERROR); }
@@ -551,21 +470,21 @@ object_key:
     case '{':
       if (buf[*next] == '}') {
         empty(OBJECT, VALUE);
-        close(pair[d], end);
+        close(end);
         break;
       }
       goto object_begin;
     case '[':
       if (buf[*next] == ']') {
         empty(ARRAY, VALUE);
-        close(pair[d], end);
+        close(end);
         break;
       }
       goto array_begin;
     default:
       end = primitive(v, VALUE, error);
       if (simdjson_unlikely(end == 0)) { return -int(error); }
-      close(pair[d], end);
+      close(end);
   }
 object_continue:
   gap(*next);
@@ -583,7 +502,7 @@ object_continue:
 
 array_begin:
   if (++d >= DEFAULT_MAX_DEPTH) { return -int(DEPTH_ERROR); }
-  container[d] = open(ARRAY, vf, at(v));
+  open(ARRAY, vf, at(v));
   object[d] = false;
   vf = NO_FIELD;
 array_value:
@@ -625,12 +544,12 @@ array_continue:
 scope_end:
   // The container's closer is the structural just read; the pair it is the value of ends with it.
   end = next[-1] + shift + 1;
-  close(container[d], end);
+  close(end);
   d--;
   if (d == 0) { goto document_end; }
   if (object[d]) {
     vf = VALUE;
-    close(pair[d], end);
+    close(end);
     goto object_continue;
   }
   vf = NO_FIELD;
@@ -640,16 +559,10 @@ document_end:
   // More than one value, or bytes after it.
   if (next != index + count) { return -int(TAPE_ERROR); }
   gap(UINT32_MAX);
-  close(0, len);
-  if (events) {
-    sink->ev_len = el;
-    sink->flush(sink);
-    return 0;
-  }
-  for (uint32_t c = 0; c < 5; c++) { sink->len[c] = column_bytes(c, n, widths); }
-  for (int c = 0; c < 3; c++) { sink->width[c] = uint8_t(widths[c]); }
-  return (sizeof(SZ) == 2 && high_size > 0xffff ? 1 : 0) | (sizeof(OF) == 2 && high_off > 0xffff ? 2 : 0) | (sizeof(TL) == 2 && high_tail > 0xffff ? 4 : 0) |
-         (sizeof(SZ) == 4 && high_size <= 0xffff ? 8 : 0);
+  close(len);
+  sink->ev_len = el;
+  sink->flush(sink);
+  return 0;
 }
 
 }  // namespace stage2
@@ -661,36 +574,10 @@ struct Thread {
   std::unique_ptr<simdjson::internal::dom_parser_implementation> stage1;
   std::unique_ptr<char[]> buffer;
   size_t buffer_capacity = 0;
-  std::unique_ptr<uint32_t[]> stacks;  // container and pair, by depth
-  std::unique_ptr<bool[]> objects;
+  std::unique_ptr<bool[]> objects;  // whether each open container is an object, by depth
   std::vector<uint32_t> comments;  // JSONC: each comment's start and end
 };
 thread_local Thread thread;
-// Walks made again at other widths, for a measurement.
-thread_local uint64_t rewalks = 0;
-
-// A walk at the widths `wide` names (bit 1 size, 2 off, 4 tail: 4 bytes).
-template <bool C>
-int walk_at(uint32_t wide, const uint8_t* buf, const uint32_t* index, uint32_t count, uint32_t shift, uint32_t len, rerail_v9np_sink* sink,
-            const std::vector<uint32_t>& comments) {
-  const uint32_t* cm = comments.data();
-  const uint32_t nc = uint32_t(comments.size() / 2);
-  using namespace stage2;
-  Thread& s = thread;
-  uint32_t* container = s.stacks.get();
-  uint32_t* pair = s.stacks.get() + simdjson::DEFAULT_MAX_DEPTH + 1;
-  bool* object = s.objects.get();
-  switch (wide) {
-    case 0: return walk<uint16_t, uint16_t, uint16_t, C>(buf, index, count, shift, len, sink, container, pair, object, cm, nc);
-    case 1: return walk<uint32_t, uint16_t, uint16_t, C>(buf, index, count, shift, len, sink, container, pair, object, cm, nc);
-    case 2: return walk<uint16_t, uint32_t, uint16_t, C>(buf, index, count, shift, len, sink, container, pair, object, cm, nc);
-    case 3: return walk<uint32_t, uint32_t, uint16_t, C>(buf, index, count, shift, len, sink, container, pair, object, cm, nc);
-    case 4: return walk<uint16_t, uint16_t, uint32_t, C>(buf, index, count, shift, len, sink, container, pair, object, cm, nc);
-    case 5: return walk<uint32_t, uint16_t, uint32_t, C>(buf, index, count, shift, len, sink, container, pair, object, cm, nc);
-    case 6: return walk<uint16_t, uint32_t, uint32_t, C>(buf, index, count, shift, len, sink, container, pair, object, cm, nc);
-    default: return walk<uint32_t, uint32_t, uint32_t, C>(buf, index, count, shift, len, sink, container, pair, object, cm, nc);
-  }
-}
 
 // This thread's stage 1 parser, this implementation's, made to hold `body` bytes.
 simdjson::error_code ready(Thread& s, size_t body) {
@@ -701,14 +588,11 @@ simdjson::error_code ready(Thread& s, size_t body) {
     auto error = impl->create_dom_parser_implementation(body < 64 ? 64 : body, simdjson::DEFAULT_MAX_DEPTH, s.stage1);
     if (error) { return error; }
   }
-  if (!s.stacks) {
-    s.stacks.reset(new uint32_t[2 * (simdjson::DEFAULT_MAX_DEPTH + 1)]);
-    s.objects.reset(new bool[simdjson::DEFAULT_MAX_DEPTH + 1]);
-  }
+  if (!s.objects) { s.objects.reset(new bool[simdjson::DEFAULT_MAX_DEPTH + 1]); }
   return simdjson::SUCCESS;
 }
 
-// 0 and the tape and the source's digest written to `sink`, or simdjson's error code. With `C`, the
+// 0 and the tape's events and the source's digest given to `sink`, or simdjson's error code. With `C`, the
 // source is read as JSONC: its comments are the tape's too (`index_and_hash`, `walk`).
 template <typename H, bool C>
 int tape(const char* src, size_t len, rerail_v9np_sink* sink) {
@@ -723,19 +607,9 @@ int tape(const char* src, size_t len, rerail_v9np_sink* sink) {
   // The source is hashed as it was given: with `C`, `buf`'s comments are blanked.
   error = stage1::index_and_hash<H, C>(p, buf + shift, body, reinterpret_cast<const uint8_t*>(src), len, sink->digest, s.comments);
   if (error) { return int(error); }
-  // `size` 4 bytes wide where the nodes, about one and a quarter a structural, pass 2 bytes; `off`
-  // and `tail` 2. A prediction a walk shows wrong is walked again at the widths it showed (rare: a
-  // node count near 65,536, or a node 65,536 bytes from its block's start or its last descendant).
-  const uint32_t count = p.n_structural_indexes;
-  uint32_t wide = count > 52000 ? 1 : 0;
-  for (int attempt = 0; attempt < 3; attempt++) {
-    const int r = walk_at<C>(wide, buf + shift, p.structural_indexes.get(), count, shift, uint32_t(len), sink, s.comments);
-    if (r < 0) { return -r; }
-    if (r == 0) { return 0; }
-    rewalks++;
-    wide = (wide | uint32_t(r & 7)) & ~((r & 8) ? 1u : 0u);
-  }
-  return int(simdjson::UNEXPECTED_ERROR);
+  const int r = stage2::walk<C>(buf + shift, p.structural_indexes.get(), p.n_structural_indexes, shift, uint32_t(len), sink, s.objects.get(), s.comments.data(),
+                                uint32_t(s.comments.size() / 2));
+  return r < 0 ? -r : 0;
 }
 
 // Stage 1 alone (a measurement's): simdjson's, or, `hashed`, ours with the digest. The structural
@@ -766,6 +640,5 @@ void release_above(size_t keep) {
   }
 }
 
-uint64_t walked_again() { return rewalks; }
 
 }  // namespace rerail_v9np

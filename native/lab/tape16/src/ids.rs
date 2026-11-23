@@ -6,12 +6,15 @@ use std::collections::HashMap;
 /// A kind: its name and whether it is named.
 pub type Kind = (String, bool);
 
-/// `kinds.tsv` by id: (tag, id) to (name, named) and its public symbol, (tag, field id) to name. A kind's line is
-/// `tag, id, name, named, public`; a field's `tag, "field id", name, ""`.
+/// `kinds.tsv` by id: (tag, id) to (name, named), its public symbol and its name's lookup as a named kind, (tag, field
+/// id) to name. A kind's line is `tag, id, name, named, public, as named`; a field's `tag, "field id", name, ""`.
 pub struct Ids {
     pub kinds: HashMap<(u8, u16), Kind>,
     /// Each kind's public symbol: the id a node of its name and kind has (0: none, a hidden symbol).
     pub public: HashMap<(u8, u16), u16>,
+    /// The id its name looks up as a named kind (`id_for_node_kind(name, true)`): a supertype's, by which a parser
+    /// names a class (0: none).
+    pub as_named: HashMap<(u8, u16), u16>,
     pub fields: HashMap<(u8, u8), String>,
 }
 
@@ -20,12 +23,12 @@ impl Ids {
     /// `\n`, `\r`, `\t`, `\0`: C's and Go's tokens hold a newline and a NUL). A line of another shape stops the run:
     /// a name read wrong would leave its codes out of a table.
     pub fn load() -> Ids {
-        let (mut kinds, mut public, mut fields) = (HashMap::new(), HashMap::new(), HashMap::new());
+        let (mut kinds, mut public, mut as_named, mut fields) = (HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
         for (n, line) in include_str!("../kinds.tsv").lines().enumerate() {
             let c: Vec<&str> = line.split('\t').collect();
             let (tag, id, name) = match c[..] {
                 [tag, id, name, ""] if id.starts_with("field ") => (tag, id, name),
-                [tag, id, name, _, _] => (tag, id, name),
+                [tag, id, name, _, _, _] => (tag, id, name),
                 _ => bad_line(n + 1, line),
             };
             let tag: u8 = tag.parse().unwrap_or_else(|_| bad_line(n + 1, line));
@@ -36,9 +39,10 @@ impl Ids {
                 let id: u16 = id.parse().unwrap_or_else(|_| bad_line(n + 1, line));
                 kinds.insert((tag, id), (name, c[3] == "1"));
                 public.insert((tag, id), c[4].parse().unwrap_or_else(|_| bad_line(n + 1, line)));
+                as_named.insert((tag, id), c[5].parse().unwrap_or_else(|_| bad_line(n + 1, line)));
             }
         }
-        Ids { kinds, public, fields }
+        Ids { kinds, public, as_named, fields }
     }
 }
 

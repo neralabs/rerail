@@ -2,8 +2,8 @@
 
 (Was 0460 on Go-C-and-C-support; renumbered at its roll-up into rr-align, roll-up 12, past 0474.)
 
-Status: accepted (2026-11-19); being built in the steps below. Revises 0448 (§2's memory, §3's
-passes) and 0436 (R1, the tape's format). Numbered past the highest in any worktree then (0459).
+Status: built (audited 2026-11-23). Accepted (2026-11-19); being built in the steps below. Revises 0448 (§2's memory,
+§3's passes) and 0436 (R1, the tape's format). Numbered past the highest in any worktree then (0459).
 
 The user, on 0448 as built:
 

@@ -1,5 +1,5 @@
-//! The translation gives the C++ kernel's answers: stage 1's index and refusal, and the tape, byte
-//! for byte. Over documents made to reach each node and check (those `rerail-simdjson`'s kernel
+//! The translation gives the C++ kernel's answers: stage 1's index and refusal, and the walk's
+//! events, word for word. Over documents made to reach each node and check (those `rerail-simdjson`'s kernel
 //! tests use), lengths over every block edge, and JSON's corpus and test suite where
 //! `RERAIL_JSON_CORPUS` and `RERAIL_JSON_SUITE` name them.
 
@@ -94,26 +94,48 @@ fn stage1_is_simdjsons() {
     eprintln!("{} files, stage 1 the same", files.len());
 }
 
-/// The tape: byte for byte the kernel's, and the same refusal.
+/// The walk: word for word the kernel's events and codes, and the same refusal.
 #[test]
-fn tape_is_the_kernels() {
+fn walk_is_the_kernels() {
     let kernel = Kernel::Arm64Sha;
     let mut p = Parser::new();
     let files = files();
     let mut accepted = 0;
     for f in &files {
-        let ours = p.tape(f, &KINDS);
-        let theirs = rerail_simdjson::tape_with(kernel, f, &KINDS);
+        let ours = p.walk(f, &KINDS);
+        let theirs = rerail_simdjson::walk_unhashed_with(kernel, f, &KINDS);
         match (ours, theirs) {
             (Ok(a), Ok(b)) => {
                 accepted += 1;
-                assert_eq!((&a.code, &a.codes, &a.size, &a.base, &a.off, &a.tail, a.widths), (&b.code, &b.codes, &b.size, &b.base, &b.off, &b.tail, b.widths), "{:?}", String::from_utf8_lossy(&f[..f.len().min(200)]));
+                assert_eq!(a, b, "{:?}", String::from_utf8_lossy(&f[..f.len().min(200)]));
             }
             (Err(a), Err(b)) => assert_eq!(format!("{a}"), format!("{b}"), "{:?}", String::from_utf8_lossy(&f[..f.len().min(200)])),
             (a, b) => panic!("{:?}: {:?} against {:?}", String::from_utf8_lossy(&f[..f.len().min(200)]), a.map(|t| t.node_count()), b.map(|t| t.node_count())),
         }
     }
-    eprintln!("{} files, {accepted} accepted; each tape and refusal the kernel's", files.len());
+    eprintln!("{} files, {accepted} accepted; each walk and refusal the kernel's", files.len());
+}
+
+/// The nodes of the kernel's walk of `f`, its source not hashed, counted as they come.
+#[cfg(target_os = "macos")]
+fn kernel_nodes(kernel: Kernel, f: &[u8]) -> usize {
+    let mut n = 0;
+    rerail_simdjson::events_unhashed_with(kernel, f, &KINDS, |_, w| n += nodes_in(w)).expect("parses");
+    n
+}
+
+/// The nodes of the translation's walk of `f`, counted as they come.
+#[cfg(target_os = "macos")]
+fn lean_nodes(p: &mut Parser, f: &[u8]) -> usize {
+    let mut n = 0;
+    p.events(f, &KINDS, &mut |w| n += nodes_in(w)).expect("parses");
+    n
+}
+
+/// The nodes a window of events gives: its events but closes.
+#[cfg(target_os = "macos")]
+fn nodes_in(w: &[u32]) -> usize {
+    w.chunks_exact(3).filter(|e| e[0] & 0xff != rerail_simdjson::EV_CLOSE).count()
 }
 
 /// The process's instructions retired and cycles (`proc_pid_rusage`, macOS's).
@@ -138,7 +160,7 @@ fn inputs(kernel: Kernel) -> Vec<(&'static str, Vec<Vec<u8>>)> {
     if let Ok(dir) = std::env::var("RERAIL_JSON_CORPUS") {
         let mut paths: Vec<_> = std::fs::read_dir(&dir).expect("the directory").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
         paths.sort();
-        corpus.extend(paths.iter().map(|p| std::fs::read(p).expect("reads")).filter(|b| b.len() < 1 << 20 && rerail_simdjson::tape_with(kernel, b, &KINDS).is_ok()));
+        corpus.extend(paths.iter().map(|p| std::fs::read(p).expect("reads")).filter(|b| b.len() < 1 << 20 && rerail_simdjson::events_with(kernel, b, &KINDS, false, |_, _| ()).is_ok()));
     }
     let n = 60_000;
     let one = |v: Vec<u8>| (0..16).map(|_| v.clone()).collect::<Vec<_>>();
@@ -153,7 +175,7 @@ fn inputs(kernel: Kernel) -> Vec<(&'static str, Vec<Vec<u8>>)> {
 }
 
 /// The translation against simdjson, instructions and cycles a byte, each the least of
-/// `RR_ROUNDS` rounds: stage 1 (simdjson's own, `stage1_only`) and the tape (the kernel, its
+/// `RR_ROUNDS` rounds: stage 1 (simdjson's own, `stage1_only`) and the walk (the kernel, its
 /// source not hashed), over JSON's corpus (`RERAIL_JSON_CORPUS`) and inputs that part the masks
 /// from the tokens (those of `rr_parser`'s `json_tier1_by_pass`).
 #[test]
@@ -175,7 +197,7 @@ fn against_simdjson() {
         best
     };
     eprintln!("least of {rounds} rounds, instructions / cycles a byte; simdjson's kernel {}", kernel.name());
-    eprintln!("{:>20}  {:>15} {:>15}   {:>15} {:>15}", "", "stage 1 C++", "stage 1 Rust", "tape C++", "tape Rust");
+    eprintln!("{:>20}  {:>15} {:>15}   {:>15} {:>15}", "", "stage 1 C++", "stage 1 Rust", "walk C++", "walk Rust");
     for (name, files) in &inputs {
         if files.is_empty() {
             continue;
@@ -183,8 +205,8 @@ fn against_simdjson() {
         let bytes: usize = files.iter().map(Vec::len).sum();
         let s_cpp = least(&mut || files.iter().map(|f| kernel.stage1(f, false) as usize).sum());
         let s_rs = least(&mut || files.iter().map(|f| p.stage1(f) as usize).sum());
-        let t_cpp = least(&mut || files.iter().map(|f| rerail_simdjson::tape_unhashed_with(kernel, f, &KINDS).unwrap().node_count()).sum());
-        let t_rs = least(&mut || files.iter().map(|f| p.tape(f, &KINDS).unwrap().node_count()).sum());
+        let t_cpp = least(&mut || files.iter().map(|f| kernel_nodes(kernel, f)).sum());
+        let t_rs = least(&mut || files.iter().map(|f| lean_nodes(&mut p, f)).sum());
         let per = |(i, c): (u64, u64)| format!("{:6.2} / {:5.2}", i as f64 / bytes as f64, c as f64 / bytes as f64);
         eprintln!("{name:>20}  {} {}   {} {}", per(s_cpp), per(s_rs), per(t_cpp), per(t_rs));
     }
@@ -192,10 +214,10 @@ fn against_simdjson() {
 
 /// The three parsers phase by phase, and each one's whole path to a format 16 and a 16z tape, over the files
 /// `RERAIL_JSON_FILES` names (`:`-separated): instructions and cycles a byte, each the least of `RR_ROUNDS` rounds.
-/// - simdjson: its DOM parser (stage 1 and its stage 2, `structurals`); the kernel's stage 1; the kernel's v9np tape;
-///   and the engine's path to 16 and 16z, the kernel's walk (its source hashed) giving its nodes to format 16's ops
+/// - simdjson: its DOM parser (stage 1 and its stage 2, `structurals`); the kernel's stage 1; the kernel's walk (its
+///   source not hashed, its events counted); and the engine's path to 16 and 16z, the kernel's walk (its source hashed) giving its nodes to format 16's ops
 ///   (`events_with`, as `json_parser::simdjson::encode_16`).
-/// - the lean parser (this crate): stage 1 and its v9np tape. It has no path to format 16.
+/// - the lean parser (this crate): stage 1 and its walk, its events counted.
 /// - Bitlex (`rerail-json-aot`): tier 1; tier 2 and the writer, on tier 1's records; the whole path to 16 and to
 ///   16z, the file padded first (each kernel above copies it into its padded buffer too).
 ///
@@ -266,9 +288,9 @@ fn three_parsers_phase_by_phase() {
         let s16z = least(&mut || simdjson_16(true));
         let dom = least(&mut || _ = std::hint::black_box(rerail_simdjson_native::structurals(f, |i| i.len()).expect("parses")));
         let s1 = least(&mut || _ = std::hint::black_box(kernel.stage1(f, false)));
-        let tape = least(&mut || _ = std::hint::black_box(rerail_simdjson::tape_unhashed_with(kernel, f, &KINDS).expect("parses").node_count()));
+        let walk = least(&mut || _ = std::hint::black_box(kernel_nodes(kernel, f)));
         let l1 = least(&mut || _ = std::hint::black_box(p.stage1(f)));
-        let ltape = least(&mut || _ = std::hint::black_box(p.tape(f, &KINDS).expect("parses").node_count()));
+        let lwalk = least(&mut || _ = std::hint::black_box(lean_nodes(&mut p, f)));
         // Bitlex.
         let fp = rerail_json_aot::padded(f);
         let t1 = least(&mut || _ = std::hint::black_box(rerail_json_aot::lex(&fp, f.len())));
@@ -294,11 +316,11 @@ fn three_parsers_phase_by_phase() {
         for (what, m) in [
             ("simdjson: DOM parse (stage 1 + 2)", dom),
             ("simdjson: kernel stage 1", s1),
-            ("simdjson: kernel v9np tape", tape),
+            ("simdjson: kernel walk", walk),
             ("simdjson: kernel walk -> 16", s16),
             ("simdjson: kernel walk -> 16z", s16z),
             ("lean: stage 1", l1),
-            ("lean: v9np tape", ltape),
+            ("lean: walk", lwalk),
             ("bitlex: tier 1", t1),
             ("bitlex: tier 2 + writer, 16", t2),
             ("bitlex: padded + tier 1 + 2 -> 16", b16),

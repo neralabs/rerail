@@ -1634,7 +1634,7 @@ fn nodes_read_as_codes_are_the_nodes_read_by_name() {
             let codes = nodes.of_dialect(&dialect);
             for (_, id, _) in p.node_ids() {
                 let by_name = nodes.reads(&p, id, &dialect);
-                assert_eq!(codes.reads(nodes, &p, id, &dialect), by_name, "{label}: node {id} ({}) in {nodes:?}", dialect.name(&facts, id));
+                assert_eq!(codes.reads(nodes, &p, id, &dialect), by_name, "{label}: node {id} ({}) in {nodes:?}", dialect.name(p.f(), id));
                 read += usize::from(by_name);
             }
         }
@@ -2055,12 +2055,6 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 for (l, _, q) in p.walk() {
                     assert_eq!(q, p.parent(l as usize), "{label} {format:?} {shape:?}: the parent of local {l}");
                 }
-                // A parent searched from the innermost granule holding the node is the tape's (`Tape::parent_within`).
-                if let Some(t) = p.table() {
-                    for x in 1..f.len() as u32 {
-                        assert_eq!(f.parent_within(x, t.holding(x)), f.parent(x), "{label} {format:?} {shape:?}: tape node {x}'s parent");
-                    }
-                }
                 // A node's place among its parent's children and its depth, read off the tape (decision 0353 step 3),
                 // are the walk's.
                 let (mut next, mut depth) = (vec![0u32; p.len() as usize], vec![0u32; p.len() as usize]);
@@ -2395,7 +2389,7 @@ fn the_token_order_is_the_sorted_tokens() {
         if p.len() == 0 || p.facts.len() > 10_000 {
             continue;
         }
-        let f = &*p.facts;
+        let f = p.f();
         let dialect = Dialect::new(core::facts_tag(&p.facts)).unwrap();
         let places = p.len() + p.ranks().count(Item::Token);
         let span = |l: u32| {
@@ -2473,7 +2467,7 @@ fn host_id_reads(h: &rerail_clif::ids::Numbering, x: u32) -> [u32; 12] {
 
 /// Decision 0536: the numbering's reads written directly in Rust (`Numbering::is`, …) answer what its reads in CLIF
 /// answer, by the JIT: for every tape node, the kernels' probes (`the_kernels_id_reads_are_the_hosts`) and every
-/// item's bit, rank and select, and lows and order keys that are no item's. In all three formats, whole and narrowed.
+/// item's bit, rank and select, and lows and order keys that are no item's. In both formats (16 and 16z), whole and narrowed.
 #[test]
 fn the_jits_id_reads_are_the_hosts() {
     if !definition_ids() {
@@ -2520,7 +2514,7 @@ fn the_jits_id_reads_are_the_hosts() {
 /// Decision 0353 step 2: the numbering's reads as UKL (`<ukl/reads/ids.h>`, written once in CLIF), run on the device
 /// over a projection's descriptor where it lies in its block, answer what the host's reads (written directly) answer: for
 /// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
-/// and back. In all three formats, whole and narrowed, a document of more nodes than a granule's slot holds. The
+/// and back. In both formats (16 and 16z), whole and narrowed, a document of more nodes than a granule's slot holds. The
 /// kernel is UKL, on the process's device (decision 0440 step C).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
@@ -2596,7 +2590,7 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
 /// the host and as MSL on the device, over the document's entry, its numbering where it lies in its block and its
 /// tape where it is read in place, are the host's rows (`Viewed::value_of`): every numbered node's document, id, kind,
 /// start and end; each child's parent, id and place; each fielded node's parent, field and id; each node's tape node;
-/// each node's line, by its lines where they lie (step 4d). In all three formats, whole and narrowed.
+/// each node's line, by its lines where they lie (step 4d). In both formats (16 and 16z), whole and narrowed.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_view_reads_are_the_hosts_rows() {
@@ -3150,7 +3144,7 @@ fn a_probe_by_a_document_key_makes_that_document_alone() {
     let of = |b: &Arc<Batch>| Arc::clone(&made_sources(b).into_iter().find(|(n, _, _)| *n == "docof").expect("docof made as rows").2);
     let (want, got) = (of(&eager), of(&lazy));
     let key = i64::from(lazy.docs.key(2));
-    let rows = |s: &Arc<dyn Source>, found: Vec<usize>| -> BTreeSet<(i64, i64)> { found.into_iter().map(|r| (s.value(r, 0), s.value(r, 1))).collect() };
+    let rows = |s: &Arc<dyn Source>, found: Vector<usize>| -> BTreeSet<(i64, i64)> { found.iter().map(|&r| (s.value(r, 0), s.value(r, 1))).collect() };
     let found = rows(&got, got.lookup(1, &[key]).unwrap());
     assert!(!found.is_empty(), "the document's nodes");
     assert_eq!(lazy.docs.made_count(), 1, "the probe made its document alone");
@@ -3177,7 +3171,7 @@ fn a_probe_by_a_node_and_another_document_makes_no_document() {
     let (want, got) = (of(&eager), of(&lazy));
     let (home, other) = (i64::from(lazy.docs.key(1)), i64::from(lazy.docs.key(2)));
     let node = want.lookup(1, &[home]).unwrap().into_iter().map(|r| want.value(r, 0)).min().expect("a node of the document");
-    let rows = |s: &Arc<dyn Source>, found: Vec<usize>| -> BTreeSet<(i64, i64)> { found.into_iter().map(|r| (s.value(r, 0), s.value(r, 1))).collect() };
+    let rows = |s: &Arc<dyn Source>, found: Vector<usize>| -> BTreeSet<(i64, i64)> { found.iter().map(|&r| (s.value(r, 0), s.value(r, 1))).collect() };
     let none = got.lookup_columns(&[0, 1], &[node, other]).expect("a probe the batch keeps to its documents");
     assert!(none.is_empty(), "a node of another document: no row");
     assert_eq!(lazy.docs.made_count(), 0, "and no document made");
@@ -3192,16 +3186,16 @@ fn a_probe_by_a_node_and_another_document_makes_no_document() {
 #[test]
 fn a_relation_of_runs_reads_them_where_they_lie() {
     let cols = ["a", "b"];
-    let base = Relation::from_rows(&cols, &mut (0..10i64).map(|i| vec![i, 100 + i])).growable();
+    let base = Relation::from_rows(&cols, &mut (0..10i64).map(|i| Vector::from(&[i, 100 + i][..]))).growable();
     let names: Vec<String> = cols.iter().map(|c| (*c).to_owned()).collect();
     let runs = Relation::of_runs(&names, &[(&base, 2..5), (&base, 7..9)]);
     let rows = |r: &Relation| -> Vec<(i64, i64)> { (0..Source::len(r)).map(|i| (Source::value(r, i, 0), Source::value(r, i, 1))).collect() };
     assert_eq!(rows(&runs), vec![(2, 102), (3, 103), (4, 104), (7, 107), (8, 108)], "the runs' rows, in order");
     assert!(runs.shares_rows(&base), "read in the base's part, not copied");
-    let grown = runs.grown(Relation::from_rows(&cols, &mut [vec![50, 150], vec![51, 151]].into_iter()));
+    let grown = runs.grown(Relation::from_rows(&cols, &mut [[50i64, 150], [51, 151]].into_iter().map(|r| Vector::from(&r[..]))));
     assert_eq!(rows(&grown), vec![(2, 102), (3, 103), (4, 104), (7, 107), (8, 108), (50, 150), (51, 151)], "the rows grown after them follow");
     assert_eq!(rows(&base), (0..10).map(|i| (i, 100 + i)).collect::<Vec<_>>(), "the base is as it was");
-    let more = grown.grown(Relation::from_rows(&cols, &mut [vec![52, 152]].into_iter()));
+    let more = grown.grown(Relation::from_rows(&cols, &mut [[52i64, 152]].into_iter().map(|r| Vector::from(&r[..]))));
     assert_eq!(Source::len(&more), 8);
     assert_eq!(Source::value(&more, 7, 0), 52);
     assert_eq!(more.bound_rows(), Some(8), "a reader binding it whole reads every row");
@@ -3228,8 +3222,8 @@ fn a_renewed_batch_takes_its_unchanged_groups_and_makes_the_changed_document_alo
     assert_eq!(held.groups(), 4, "one group a document");
     let renewed = make(docs(true), Some(Arc::clone(&held)));
     let fresh = Batch::new(&store, docs(true), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
-    let rows = |s: &Arc<dyn Source>, found: Vec<usize>| -> Vec<Vec<i64>> {
-        let mut v: Vec<Vec<i64>> = found.into_iter().map(|r| (0..s.columns().len()).map(|c| s.value(r, c)).collect()).collect();
+    let rows = |s: &Arc<dyn Source>, found: Vector<usize>| -> Vec<Vec<i64>> {
+        let mut v: Vec<Vec<i64>> = found.iter().map(|&r| (0..s.columns().len()).map(|c| s.value(r, c)).collect()).collect();
         v.sort();
         v
     };
@@ -3297,8 +3291,8 @@ fn a_sessions_probe_of_many_documents_makes_groups_the_next_run_takes_but_the_ch
     assert_eq!(held.groups(), 2, "one probe of four documents, in groups of two");
     let renewed = Batch::renewed(&store, docs(true), &projection, Some(Arc::clone(&held))).unwrap();
     let fresh = Batch::new(&store, docs(true), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
-    let rows = |s: &Arc<dyn Source>, found: Vec<usize>| -> Vec<Vec<i64>> {
-        let mut v: Vec<Vec<i64>> = found.into_iter().map(|r| (0..s.columns().len()).map(|c| s.value(r, c)).collect()).collect();
+    let rows = |s: &Arc<dyn Source>, found: Vector<usize>| -> Vec<Vec<i64>> {
+        let mut v: Vec<Vec<i64>> = found.iter().map(|&r| (0..s.columns().len()).map(|c| s.value(r, c)).collect()).collect();
         v.sort();
         v
     };

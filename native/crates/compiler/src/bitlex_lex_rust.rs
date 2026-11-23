@@ -791,6 +791,17 @@ impl Ctx {
         usize::try_from(o + 4).ok().and_then(|i| self.0.get(i)).copied().unwrap_or([true; 256])
     }
 
+    /// Its bytes as bits, offset by offset: a memo's key.
+    fn key(&self) -> [u64; 36] {
+        let mut k = [0u64; 36];
+        for (o, set) in self.0.iter().enumerate() {
+            for (i, &b) in set.iter().enumerate() {
+                k[o * 4 + i / 64] |= u64::from(b) << (i % 64);
+            }
+        }
+        k
+    }
+
     /// Its byte's set narrowed to `b`'s.
     fn and0(&self, b: &[bool; 256]) -> Ctx {
         let mut c = self.clone();
@@ -1077,6 +1088,10 @@ struct Gen<'a> {
     ends: Option<Vec<End>>,
     /// The fills shown to hold only in a body's bytes (`fill_kept`), by their key.
     fill_proofs: std::cell::RefCell<HashMap<String, bool>>,
+    /// `in_region_of`'s values, by the mask's key, the region, its part and the bytes about it: a
+    /// mask's parts and the shifts' values at each part are asked again and again, so without
+    /// it the walk grows as the parts' count to the depth of the shifts.
+    region_values: std::cell::RefCell<HashMap<(String, Option<usize>, u8, [u64; 36]), Option<Expr>>>,
     opener_at: [[bool; 256]; 4],
     /// The escapes tested at each token's start; at the file's end, of a fill the loop keeps.
     start_checks: Vec<(String, Expr, [bool; 256])>,
@@ -2271,6 +2286,8 @@ impl Gen<'_> {
             let xg = if matches!(xg, Expr::Empty) { None } else { Some(self.val(&xg)?) };
             let start0 = if prev { Expr::Call("prev".into(), vec![Arg::E(x0.clone())]) } else { x0.clone() };
             self.fills.push(LoopFill { name: name.clone(), key, shown: show(e), prev, x, xg, eg, within: None, rows: codes, info, start0, stop0: e0.clone() });
+            // What `in_region_of` read has changed.
+            self.region_values.get_mut().clear();
         }
         Ok(())
     }
@@ -2347,6 +2364,8 @@ impl Gen<'_> {
             codes.push((*row, g_l.code(), Known::No.code()));
         }
         self.fills.push(LoopFill { name: name.clone(), key: key.to_owned(), shown: show(e), prev: false, x: x.clone(), xg: None, eg: None, within: Some(j), rows: codes, info, start0: (**y).clone(), stop0: Expr::Empty });
+        // What `in_region_of` read has changed.
+        self.region_values.get_mut().clear();
         Ok(true)
     }
 
@@ -2593,6 +2612,17 @@ impl Gen<'_> {
     /// `in_region` where the byte is one of `ctx` (the bytes the rest of a `&` holds at): a mask
     /// that holds at none of them is none there.
     fn in_region_of(&self, e: &Expr, k: Option<usize>, part: u8, ctx: &Ctx, memo: &mut ByteMemo) -> Option<Expr> {
+        let key = (format!("{e:?}"), k, part, ctx.key());
+        if let Some(v) = self.region_values.borrow().get(&key) {
+            return v.clone();
+        }
+        let v = self.in_region_once(e, k, part, ctx, memo);
+        self.region_values.borrow_mut().insert(key, v.clone());
+        v
+    }
+
+    /// `in_region_of`, worked out.
+    fn in_region_once(&self, e: &Expr, k: Option<usize>, part: u8, ctx: &Ctx, memo: &mut ByteMemo) -> Option<Expr> {
         let all = || Expr::Not(Box::new(Expr::Empty));
         let opens = self.opens.as_ref()?;
         // A region's start is its opener's first byte.
@@ -3042,6 +3072,8 @@ impl Gen<'_> {
         }
         self.opener_at = opener_at;
         self.ends = Some(ends);
+        // What `in_region_of` read has changed.
+        self.region_values.get_mut().clear();
         Ok(())
     }
 
@@ -4034,6 +4066,8 @@ impl Gen<'_> {
         let Some(x) = self.of_code(e) else { return Ok(false) };
         if !self.regional.contains("code_l") {
             self.regional.insert("code_l".to_owned());
+            // What `in_region_of` read has changed.
+            self.region_values.get_mut().clear();
             self.names.insert("code_l".to_owned(), "code_l".to_owned());
         }
         let before = std::mem::take(&mut self.body);
@@ -4363,6 +4397,8 @@ impl Gen<'_> {
     fn regions(&mut self, rg: &::bitlex::syntax::Regions) -> Result<(), String> {
         let ks = &rg.kinds;
         self.kinds = ks.clone();
+        // What `in_region_of` read has changed.
+        self.region_values.get_mut().clear();
         self.hidden = rg.hidden.clone();
         let mut opens = Vec::new();
         let mut closers = Vec::new();
@@ -4382,6 +4418,8 @@ impl Gen<'_> {
                 v.push((r.kind.clone(), opens[k].clone(), after));
             }
             self.opens = Some(v);
+            // What `in_region_of` read has changed.
+            self.region_values.get_mut().clear();
         }
         // One region whose closer is its opener, one byte, nothing else (a JSON string): its bytes are the parity of
         // the openers up to each (simdjson's `prefix_xor`), in stage 1, and so is every mask made of it.
@@ -4479,6 +4517,8 @@ impl Gen<'_> {
                 self.regional.insert(e.clone());
             }
         }
+        // What `in_region_of` read has changed.
+        self.region_values.get_mut().clear();
         Ok(())
     }
 
@@ -4680,6 +4720,8 @@ impl Gen<'_> {
                 }
                 self.class(name, &set);
                 self.class_bytes.insert(name.clone(), set);
+                // What `in_region_of` read has changed.
+                self.region_values.get_mut().clear();
             }
         }
         let mut skip: Option<Expr> = None;
@@ -4698,6 +4740,8 @@ impl Gen<'_> {
                 // A mask not made of the regions: stage 1's.
                 Stmt::Mask(name, e) if !self.regional(e) => {
                     self.defs.insert(name.clone(), e.clone());
+                    // What `in_region_of` read has changed.
+                    self.region_values.get_mut().clear();
                     let id = match e {
                         Expr::Name(_) => self.node(e)?,
                         _ => {
@@ -4715,6 +4759,8 @@ impl Gen<'_> {
                 }
                 Stmt::Mask(name, e) => {
                     self.defs.insert(name.clone(), e.clone());
+                    // What `in_region_of` read has changed.
+                    self.region_values.get_mut().clear();
                     let _ = writeln!(self.body, "    // mask {name} = {}", show(e));
                     // Its expression reads the names before it, so it is made before it is a name of the regions.
                     let v = match e {
@@ -4728,6 +4774,8 @@ impl Gen<'_> {
                         }
                     };
                     self.regional.insert(name.clone());
+                    // What `in_region_of` read has changed.
+                    self.region_values.get_mut().clear();
                     self.bind(name, v);
                 }
                 Stmt::Rounds { regions: Some(rg), .. } => self.regions(rg)?,
@@ -7059,7 +7107,7 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new() }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new() }.source()
 }
 
 #[cfg(test)]

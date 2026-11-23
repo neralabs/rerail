@@ -1,9 +1,9 @@
 # 0588. The expansion is a loop a lane group runs, every stretch at once
 
-Status: accepted (2026-11-21, the user: "go ahead", after "do you think this is an intellectual puzzle where you solve
-a programming task without being able to use loops"; the goal, the user: as fast as it can be, "one nanosecond").
-Replaces 0527's level-synchronous rounds for the text's expansion. 0520's pieces, the arena (0468 §3) and the
-tapes read in place stay.
+Status: built (audited 2026-11-23). Accepted (2026-11-21, the user: "go ahead", after "do you think this is an
+intellectual puzzle where you solve a programming task without being able to use loops"; the goal, the user: as fast
+as it can be, "one nanosecond"). Replaces 0527's level-synchronous rounds for the text's expansion. 0520's pieces, the
+arena (0468 §3) and the tapes read in place stay.
 
 ## Intro
 

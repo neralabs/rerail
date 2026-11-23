@@ -1,45 +1,14 @@
 //! A Python file's tape from the lean parser (`rerail_python_lean`): tree-sitter-python's tape,
-//! written as the parse goes, with nothing packed again (`formats::lean`: format 15's columns, or format 16 written in one pass). The tape is the one
+//! written as the parse goes, with nothing packed again (`formats::lean_named`: the run's format, written in one pass). The tape is the one
 //! tree-sitter-python's tree encodes to, node for node (`python_tapes_from_the_lean_parser_are_tree_sitters`).
 //!
 //! The parser's keys name kinds, fields and supertypes by their names in tree-sitter-python
-//! (`rerail_python_lean::{KINDS, FIELDS, CLASSES}`); here they are its ids. A file the parser refuses
+//! (`rerail_python_lean::{KINDS, FIELDS, CLASSES}`); its language's table numbers them by those names
+//! (`names`, decision 0631). A file the parser refuses
 //! (any syntax error, the text's end included, which tree-sitter recovers from; a construct it does
 //! not read) goes to tree-sitter-python (decision 0163, amended).
 
-use crate::code_rule_dsl::tape::{CODE_EXTRA, Code, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, TapeImage, TemplateError, TreeParser};
-
-/// tree-sitter-python's ids of the parser's kinds, fields and supertype sets.
-struct Ids {
-    kinds: Vec<u16>,
-    fields: Vec<u16>,
-    classes: Vec<Vec<u16>>,
-}
-
-fn ids() -> Option<&'static Ids> {
-    static IDS: std::sync::OnceLock<Option<Ids>> = std::sync::OnceLock::new();
-    IDS.get_or_init(|| {
-        use crate::code_rule_dsl::language::GrammarDialect;
-        use ast_grep_language::LanguageExt;
-        let language = GrammarDialect::Python.get_ts_language();
-        let id = |name: &str, named: bool| Some(language.id_for_node_kind(name, named)).filter(|&k| k != 0 && (k as usize) < KIND_LIMIT);
-        let kinds = rerail_python_lean::KINDS.iter().map(|&(name, named)| id(name, named)).collect::<Option<Vec<_>>>()?;
-        let fields = rerail_python_lean::FIELDS
-            .iter()
-            .map(|&name| if name.is_empty() { Some(0) } else { language.field_id_for_name(name).map(|f| f.get()).filter(|&f| (f as usize) < FIELD_LIMIT) })
-            .collect::<Option<Vec<_>>>()?;
-        let classes = rerail_python_lean::CLASSES
-            .iter()
-            .map(|set| {
-                let mut ids = set.iter().map(|name| id(name, true)).collect::<Option<Vec<_>>>()?;
-                ids.sort_unstable();
-                Some(ids)
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Some(Ids { kinds, fields, classes })
-    })
-    .as_ref()
-}
+use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser};
 
 /// `source`'s tape from the lean parser: `Err` where it refuses the file; `Ok(Err)` where the tape
 /// cannot be made.
@@ -49,18 +18,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
 
 /// [`encode`] from the node kind `start` (decision 0466).
 pub fn encode_from(grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_python_lean::Refusal> {
-    let Some(ids) = ids() else {
-        return Ok(Err("tree-sitter-python lacks a kind or field the lean parser names".into()));
-    };
-    let code_of = move |&key: &u32| -> Result<Code, String> {
-        let (kind, field, class, extra) = rerail_python_lean::unkey(key);
-        let mut code = Code::plain(ids.kinds[usize::from(kind)], ids.fields[usize::from(field)], &ids.classes[usize::from(class)])?;
-        if extra {
-            code.flags |= CODE_EXTRA;
-        }
-        Ok(code)
-    };
-    rerail_python_lean::tape_from_into(source.as_bytes(), start, &mut super::formats::lean(grammar, source, budget, code_of))
+    rerail_python_lean::tape_from_into(source.as_bytes(), start, &mut super::formats::lean_named(grammar, source, budget, rerail_python_lean::names))
 }
 
 /// Python's tree parser: the lean parser, standing in for tree-sitter-python where it reads the file.

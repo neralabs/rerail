@@ -1,11 +1,10 @@
 # 0448: Macro expansion on the device: a tree of lists, rounds, rollback
 
-Status: accepted (2026-11-19). Follows 0436 step 4. The user: "I want you to work on parallel,
-recursive macro expansion. Both the GPU-based setup phase, and the GPU-based execution phase.
-I want to get that part solid first; do just enough of the rest of P1 to be able to test it";
-"We need memory management to be clearly part of the design"; "We need to do everything in
-parallel and I need to see how this maps both to warp threads and the kernel grid". Numbered
-past the highest in any worktree (0447).
+Status: built (audited 2026-11-23). Accepted (2026-11-19). Follows 0436 step 4. The user: "I want you to work on
+parallel, recursive macro expansion. Both the GPU-based setup phase, and the GPU-based execution phase. I want to get
+that part solid first; do just enough of the rest of P1 to be able to test it"; "We need memory management to be
+clearly part of the design"; "We need to do everything in parallel and I need to see how this maps both to warp
+threads and the kernel grid". Numbered past the highest in any worktree (0447).
 
 ## Intro
 

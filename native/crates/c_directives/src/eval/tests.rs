@@ -1,8 +1,33 @@
 use rerail_c_pp::tape::{IDENTIFIER, PUNCT, image};
 use rerail_metal::pp_eval::{Unit, evaluate, name_key};
-use rerail_tape_format::View;
-/// A tape image, in the run's blocks.
-type Tape = rerail_tape_format::Vector<u8>;
+use rerail_tape_format::f16::Tape16;
+use rerail_tape_format::tape::Tape as _;
+
+/// A preprocessor tape read in place as the device reads it: each node's key (its code's kind and field, `kind |
+/// field << 10`), span and subtree.
+struct View<'a>(rerail_tape_format::f16::F16<'a>);
+
+impl<'a> View<'a> {
+    fn new(t: &'a Tape16) -> Result<Self, String> {
+        Ok(View(t.reader(rerail_c_pp::tape::lang())?))
+    }
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    fn key(&self, i: usize) -> u32 {
+        let e = self.0.table().entry(self.0.code(i));
+        u32::from(e.kind) | u32::from(e.field) << rerail_tape_format::KIND_BITS
+    }
+    fn start(&self, i: usize) -> u32 {
+        self.0.start(i) as u32
+    }
+    fn end(&self, i: usize) -> u32 {
+        self.0.end(i) as u32
+    }
+    fn size(&self, i: usize) -> usize {
+        self.0.subtree_end(i) - i
+    }
+}
 
 /// `a == b`, or the difference printed and a panic (Relax keeps no assert's message).
 #[track_caller]
@@ -16,7 +41,7 @@ fn same<T: PartialEq + std::fmt::Debug>(a: T, b: T, what: impl std::fmt::Display
 use super::rounds::{place, place_kept};
 
 /// `corpus`'s files, each with whether it is C++.
-fn corpus_in() -> Vec<(Vec<u8>, Tape, bool)> {
+fn corpus_in() -> Vec<(Vec<u8>, Tape16, bool)> {
     let root = corpus_root();
     let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(40);
     let mut out = Vec::new();
@@ -85,19 +110,13 @@ fn the_arena_is_one_block() {
     assert!(blocks.contains("lease_block_within("), "the arena is leased within the budget");
 }
 
-/// The device's reader gives every node of every file as `View` does, and each identifier leaf's
+/// The device's reader gives every node of every file as the host's reads do (`View`), and each identifier leaf's
 /// key is its bytes' (`name_key`), a one-byte punctuator's its byte under `0x100`, every other
 /// node's 0; the unit's node bases are the files' counts' prefix sum.
 #[test]
 fn the_names_pass_reads_the_tapes_in_place() {
-    let mut files = vec![
-        (b"#define F(a) a + x\nint y = F(abcdefghijklmnopq);\n".to_vec(), Tape::new(), true),
-        (b"".to_vec(), Tape::new(), true),
-        (b"x\n".to_vec(), Tape::new(), true),
-    ];
-    for f in &mut files {
-        f.1 = image(&f.0, crate::pp::options(true));
-    }
+    let shapes: [&[u8]; 3] = [b"#define F(a) a + x\nint y = F(abcdefghijklmnopq);\n", b"", b"x\n"];
+    let mut files: Vec<(Vec<u8>, Tape16, bool)> = shapes.iter().map(|s| (s.to_vec(), image(s, crate::pp::options(true)), true)).collect();
     files.extend(corpus_in());
     let unit = place(&files.iter().map(|(s, _, cpp)| (s.as_slice(), *cpp)).collect::<Vec<_>>()).unwrap();
     let got = evaluate(&unit, true).unwrap();
@@ -145,7 +164,7 @@ fn the_directives_pass_gives_the_spikes_tables() {
         b"#ifndef 1\n#endif\n",
         b"#define\n#define 1\n#define G(x) x\n#undef\n#undef G H\n#ifdef\n#elifdef X\n#endif\n#ifndef abcdefghijklmnopqrs\n#elifndef Y\n#endif\n#elifdef Z\n",
     ];
-    let mut files: Vec<(Vec<u8>, Tape, bool)> = shapes.iter().map(|s| (s.to_vec(), image(s, crate::pp::options(false)), false)).collect();
+    let mut files: Vec<(Vec<u8>, Tape16, bool)> = shapes.iter().map(|s| (s.to_vec(), image(s, crate::pp::options(false)), false)).collect();
     files.extend(corpus_in());
     let unit = place(&files.iter().map(|(s, _, cpp)| (s.as_slice(), *cpp)).collect::<Vec<_>>()).unwrap();
     let got = evaluate(&unit, false).unwrap();
@@ -193,7 +212,7 @@ fn the_definitions_are_the_serial_passes() {
         b"#define FF(a) a##\n#define GG(a) ##a\n#define HH(a) a ## ## a\n",
         b"#define II std\\\nint \\  \n x\n#define JJ(a\\\n) a\n",
     ];
-    let mut files: Vec<(Vec<u8>, Tape, bool)> = Vec::new();
+    let mut files: Vec<(Vec<u8>, Tape16, bool)> = Vec::new();
     for s in shapes {
         for cpp in [false, true] {
             files.push((s.to_vec(), image(s, crate::pp::options(cpp)), cpp));
@@ -369,7 +388,7 @@ struct Ran {
 }
 
 /// A unit settled by the rounds (`settled_many`): its expansion and its files' tapes, or why the rounds refused it.
-type SettledUnit = Result<(super::rounds::Settled, Vec<Tape>), &'static str>;
+type SettledUnit = Result<(super::rounds::Settled, Vec<Tape16>), &'static str>;
 
 /// The units whose main files are `units`' (each its files), settled in batched rounds
 /// (`rounds::run_many`) under `cfg`: each its expansion and its files' tapes, or why the rounds
@@ -890,7 +909,7 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
 
 /// A part's output spelled: each ref's token in its file (`files` and `tapes`, the unit's), each
 /// scratch token's bytes.
-fn part_tokens(part: &rerail_metal::pp_expand::Part, files: &[Vec<u8>], tapes: &[Tape]) -> Vec<Vec<u8>> {
+fn part_tokens(part: &rerail_metal::pp_expand::Part, files: &[Vec<u8>], tapes: &[Tape16]) -> Vec<Vec<u8>> {
     use rerail_metal::pp_expand::SCRATCH;
     let x = &*part.x;
     let views: Vec<View> = tapes.iter().map(|t| View::new(t).unwrap()).collect();
@@ -2304,7 +2323,7 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
             path: &'a str,
             serial: Vec<Vec<u8>>,
             s: super::rounds::Settled,
-            tapes: Vec<Tape>,
+            tapes: Vec<Tape16>,
         }
         let mut entries = Vec::new();
         let settled = settled_many(&cfg, &mut ios, &mut ran);
@@ -2852,7 +2871,7 @@ fn a_round_starts_from_the_last_rounds_tree() {
             xs
         });
         let s = r.into_iter().next().unwrap().unwrap_or_else(|_| panic!("refused"));
-        let tapes: Vec<Tape> = s.loaded.files.iter().map(|f| image(f, crate::pp::options(false))).collect();
+        let tapes: Vec<Tape16> = s.loaded.files.iter().map(|f| image(f, crate::pp::options(false))).collect();
         (part_tokens(&s.part, &s.loaded.files, &tapes), s.rounds, iters)
     };
     let (seeded, n, si) = rounds(false);

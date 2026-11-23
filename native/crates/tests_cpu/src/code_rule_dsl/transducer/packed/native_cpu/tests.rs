@@ -9,12 +9,12 @@
     use ast_grep_core::tree_sitter::LanguageExt;
     use std::sync::Arc;
 
-    /// A test's nodes as the tape the JIT reads (decision 0310): format 15's columns over `nodes` in preorder, the
-    /// tree their parent links describe (a later node with none is a child of node 0), each node its own code
-    /// (its kind, field and flags; its supertype memberships from `classes`, (node, kind) pairs), its span as
-    /// written. A node's other links (siblings, children, subtree end) are the tree's.
+    /// A test's nodes as the tape the JIT reads (decision 0310): format 16 over `nodes` in preorder, written by its
+    /// writer, the tree their parent links describe (a later node with none is a child of node 0), each node its
+    /// own code (its kind, field and flags; its supertype memberships from `classes`, (node, kind) pairs), its span
+    /// as written. A node's other links (siblings, children, subtree end) are the tree's.
     struct TestTape {
-        bytes: Vec<u8>,
+        tape: rerail_tape_format::f16::Tape16,
         view: rerail_clif::view::TapeView,
         codes: Vec<crate::code_rule_dsl::tape::resident::DeviceCode>,
     }
@@ -25,6 +25,8 @@
         }
 
         fn with_classes(nodes: &[MetalNode], classes: &[(u32, u16)]) -> Self {
+            use rerail_tape_format::f16::{Lang, Node, Written, placement, write};
+            use rerail_tape_format::tape::{CodeTable, Entry};
             let n = nodes.len();
             let parent = |i: usize| match nodes[i].parent {
                 p if i > 0 && (p == NONE || p as usize >= i) => 0,
@@ -38,23 +40,19 @@
                 let p = parent(i);
                 assert!(i < p + size[p] as usize, "node {i} lies outside its parent {p}'s subtree: the nodes are not in preorder");
             }
-            let block_base = |k: usize| nodes[k * 16..n.min(k * 16 + 16)].iter().map(|node| node.source_start).min().unwrap_or(0);
-            let words = |values: &mut dyn Iterator<Item = u32>| values.flat_map(u32::to_le_bytes).collect::<Vec<u8>>();
-            let code: Vec<u8> = (0..n as u16).flat_map(u16::to_le_bytes).collect();
-            let sizes = words(&mut size.iter().copied());
-            let base = words(&mut (0..n.div_ceil(16)).map(block_base));
-            let off = words(&mut (0..n).map(|i| nodes[i].source_start - block_base(i / 16)));
-            let tail = words(&mut nodes.iter().map(|node| node.source_end - node.source_start));
-            let mut bytes = Vec::new();
-            let mut at = [0_u32; 5];
-            for (k, column) in [code, sizes, base, off, tail].into_iter().enumerate() {
-                at[k] = bytes.len() as u32;
-                bytes.extend_from_slice(&column);
-                bytes.resize(bytes.len().next_multiple_of(8), 0);
-            }
-            // The source its nodes span, as a tape's header states it: its reads hold spans to it (decision 0463).
+            // Each node its own number in a table of one entry a node: its code is the test's (`codes`), by number.
+            let entries = (0..n).map(|i| Entry { kind: (i % 1024) as u16, field: (i / 1024) as u16, flags: 0, alias: None, classes: Vec::new() }).collect();
+            let lang = Lang::new(CodeTable::new(entries), [1, 1, 1], 1).expect("a table");
+            // The source its nodes span, as the tape's header states it: its reads hold spans to it (decision 0463).
             let source_len = nodes.iter().map(|node| node.source_end).max().unwrap_or(0);
-            let view = rerail_clif::view::TapeView { nodes: n as u32, format: 15, widths: 4 | 4 << 4 | 4 << 8 | 1 << 12, columns: at, source_len, ..Default::default() };
+            let source = vec![b' '; source_len as usize];
+            let node = |i: usize| Node { number: i as u32, start: u64::from(nodes[i].source_start), end: u64::from(nodes[i].source_end), subtree_end: i + size[i] as usize };
+            let tape = match write(&lang, n, &source, rerail_tape_format::newlines::Terminators::Lf, 0, false, node) {
+                Ok(Written::F16(tape)) => tape,
+                Ok(Written::F16Z(_)) => unreachable!("format 16 was asked for"),
+                Err(why) => panic!("the test's nodes are not a format 16 tape: {why}"),
+            };
+            let view = placement(tape.as_bytes()).and_then(|p| p.view(&lang, 0)).expect("the tape's view");
             let codes = nodes
                 .iter()
                 .enumerate()
@@ -68,12 +66,17 @@
                     code
                 })
                 .collect();
-            Self { bytes, view, codes }
+            Self { tape, view, codes }
+        }
+
+        /// The tape's bytes, where its view's offsets count from.
+        fn bytes(&self) -> &[u8] {
+            self.tape.as_bytes()
         }
 
         /// The context reads this tape, as the batch's only document.
         fn bind(&self, context: &mut NativeTaskContext) {
-            context.tape = self.bytes.as_ptr();
+            context.tape = self.bytes().as_ptr();
             context.view = &self.view;
             context.codes = self.codes.as_ptr();
             (context.node_base, context.source_base) = (0, 0);
@@ -599,7 +602,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -704,7 +707,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -816,7 +819,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1003,7 +1006,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1131,8 +1134,9 @@
             };
             let mut nodes = vec![MetalNode { parent: NONE, ..MetalNode::default() }];
             nodes.extend((0..siblings).map(|_| MetalNode { parent: 0, ..MetalNode::default() }));
-            if let Some(third) = nodes.get_mut(3) {
-                (third.source_start, third.source_end) = (4, 4);
+            // The third sibling and those after it at 4 (a tape's starts never go back in preorder).
+            for later in nodes.iter_mut().skip(3) {
+                (later.source_start, later.source_end) = (4, 4);
             }
             if mode == NAMED {
                 (nodes[3].flags, nodes[4].flags) = (1, 1);
@@ -1145,7 +1149,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -1268,7 +1272,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1370,7 +1374,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1490,7 +1494,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1671,7 +1675,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1941,7 +1945,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -2173,7 +2177,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -2376,6 +2380,8 @@
             nodes[2].source_end = 3;
             nodes[3].parent = 0;
             nodes[3].flags = 1;
+            // After node 2 in preorder, so not before it (a tape's starts never go back).
+            (nodes[3].source_start, nodes[3].source_end) = (3, 3);
             let mut pending = [PendingRecord::default(); 2];
             let mut query_buckets = [QueryBucketRecord::default(); 8];
             let mut query_members = [QueryMemberRecord::default(); 8];
@@ -2384,7 +2390,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -3359,7 +3365,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -3464,7 +3470,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::with_classes(&nodes, &[(0, 9)]);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -3580,7 +3586,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -3696,7 +3702,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -3793,7 +3799,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,

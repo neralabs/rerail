@@ -1,5 +1,5 @@
 //! Our stage 2, `kernel.inc`'s `walk`, translated: simdjson's `json_iterator::walk_document` with
-//! the tape builder's checks, writing the v9np tape at each node's preorder slot. Each lambda of
+//! the tape builder's checks, giving each node in preorder as format 16's event (decision 0434). Each lambda of
 //! `walk` is a method of `Walk`, inlined; each `goto` label a state of one loop, whose every
 //! transition is a constant (LLVM threads them into the branches `goto` makes).
 //!
@@ -27,40 +27,17 @@ pub(crate) const SLOTS: usize = 12;
 pub(crate) const NO_FIELD: u32 = 0;
 pub(crate) const KEY: u32 = 1;
 pub(crate) const VALUE: u32 = 2;
-// The tape's buffers, in the sink's order.
-pub(crate) const CODE: usize = 0;
-pub(crate) const SIZE: usize = 1;
-pub(crate) const OFF: usize = 2;
-pub(crate) const TAIL: usize = 3;
-pub(crate) const BASE: usize = 4;
-const STRIDE: u32 = 16;
 pub(crate) const DEFAULT_MAX_DEPTH: u32 = 1024;
+// Format 16's events (`rerail_v9np_sink::ev`): the low byte of an event's first word.
+const EV_OPEN: u32 = rerail_simdjson::EV_OPEN;
+const EV_LEAF: u32 = rerail_simdjson::EV_LEAF;
+const EV_CLOSE: u32 = rerail_simdjson::EV_CLOSE;
 
-/// A column's cell: 2 or 4 bytes (`kernel.inc`'s `SZ`, `OF` and `TL`).
-pub(crate) trait Cell: Copy {
-    const WIDTH: u32;
-    fn of(v: u32) -> Self;
-}
-impl Cell for u16 {
-    const WIDTH: u32 = 2;
-    #[inline(always)]
-    fn of(v: u32) -> Self {
-        v as u16
-    }
-}
-impl Cell for u32 {
-    const WIDTH: u32 = 4;
-    #[inline(always)]
-    fn of(v: u32) -> Self {
-        v
-    }
-}
-
-/// The tape's buffers and codes (`kernel.inc`'s `rerail_v9np_sink`): the columns are the caller's
-/// vectors, grown once for the most nodes a file can have, then written through raw pointers.
-pub(crate) struct Sink {
-    pub(crate) col: [rerail_simdjson::Vector<u8>; 5],
-    pub(crate) width: [u8; 3],
+/// What the walk gives its nodes to, and its codes (`kernel.inc`'s `rerail_v9np_sink`): the events
+/// into `ev`'s window, passed to `flush` when full and at the end.
+pub(crate) struct Sink<'o> {
+    pub(crate) ev: &'o mut [u32],
+    pub(crate) flush: &'o mut dyn FnMut(&[u32]),
     pub(crate) kind: [u16; SLOTS],
     pub(crate) key_field: u16,
     pub(crate) value_field: u16,
@@ -68,27 +45,6 @@ pub(crate) struct Sink {
     pub(crate) code_kind: [u16; 36],
     pub(crate) code_field: [u16; 36],
     pub(crate) code_value: [u8; 36],
-}
-
-/// `column_bytes`: the bytes of `c` for `nodes` nodes, `size`, `off` and `tail` at `width`.
-#[inline(always)]
-fn column_bytes(c: usize, nodes: u32, width: &[u32; 3]) -> usize {
-    if c == CODE {
-        nodes as usize * 2
-    } else if c == BASE {
-        nodes.div_ceil(STRIDE) as usize * 4
-    } else {
-        nodes as usize * width[c - 1] as usize
-    }
-}
-
-/// `reserve_columns`: the buffers made to hold `nodes` nodes at `width`, empty.
-#[inline(never)]
-fn reserve_columns(sink: &mut Sink, nodes: u32, width: &[u32; 3]) {
-    for c in 0..5 {
-        sink.col[c].clear();
-        sink.col[c].reserve(column_bytes(c, nodes, width));
-    }
 }
 
 /// `hex_to_u32_nocheck`.
@@ -182,26 +138,17 @@ unsafe fn backslash_quote(p: *const u8) -> u64 {
 }
 
 /// `walk`'s locals that its lambdas share.
-struct Walk<SZ, OF, TL> {
+struct Walk {
     buf: *const u8,
     shift: u32,
-    code: *mut u16,
-    base: *mut u32,
-    size: *mut SZ,
-    off: *mut OF,
-    tail: *mut TL,
-    n: u32,
-    block_base: u32,
-    last_start: u32,
-    high_size: u32,
-    high_off: u32,
-    high_tail: u32,
+    /// The events in the window (`el`).
+    el: usize,
     /// `ids`, a local of `walk` of its own (an array the walk indexes, kept apart from the
     /// scalars, which stay in registers).
     ids: *mut u16,
 }
 
-impl<SZ: Cell, OF: Cell, TL: Cell> Walk<SZ, OF, TL> {
+impl Walk {
     /// `code_of`: a node's code, numbered by first use. The first use is `simdjson_unlikely`, in
     /// place.
     #[inline(always)]
@@ -228,52 +175,42 @@ impl<SZ: Cell, OF: Cell, TL: Cell> Walk<SZ, OF, TL> {
         id
     }
 
-    /// `open`: a node's start: its code, its offset from its block's base, the base of each block.
+    /// `event`: the window passed on when full.
     #[inline(always)]
-    fn open(&mut self, sink: &mut Sink, slot: u32, field: u32, start: u32) -> u32 {
-        let c = self.code_of(sink, slot, field);
-        // SAFETY: the columns hold `bound` nodes, more than any file has.
-        unsafe {
-            self.code.add(self.n as usize).write_unaligned(c);
-            if self.n.is_multiple_of(STRIDE) {
-                self.block_base = start;
-                self.base.add((self.n / STRIDE) as usize).write_unaligned(start);
-            }
-            let o = start - self.block_base;
-            self.high_off |= o;
-            self.off.add(self.n as usize).write_unaligned(OF::of(o));
+    fn event(&mut self, sink: &mut Sink, head: u32, a: u32, b: u32) {
+        if self.el + 3 > sink.ev.len() {
+            core::hint::cold_path();
+            (sink.flush)(&sink.ev[..self.el]);
+            self.el = 0;
         }
-        self.last_start = start;
-        let ord = self.n;
-        self.n += 1;
-        ord
+        // SAFETY: the window holds `el + 3` words, checked above.
+        unsafe {
+            let e = sink.ev.as_mut_ptr().add(self.el);
+            e.write(head);
+            e.add(1).write(a);
+            e.add(2).write(b);
+        }
+        self.el += 3;
     }
 
-    /// `close`: a node's end: its size and its tail (its end less its last descendant's start).
+    /// `open`: a node's start, its code and start.
     #[inline(always)]
-    fn close(&mut self, ord: u32, end: u32) {
-        let t = end.wrapping_sub(self.last_start);
-        let z = self.n - ord;
-        self.high_tail |= t;
-        self.high_size |= z;
-        // SAFETY: `ord` was opened.
-        unsafe {
-            self.tail.add(ord as usize).write_unaligned(TL::of(t));
-            self.size.add(ord as usize).write_unaligned(SZ::of(z));
-        }
+    fn open(&mut self, sink: &mut Sink, slot: u32, field: u32, start: u32) {
+        let c = u32::from(self.code_of(sink, slot, field));
+        self.event(sink, EV_OPEN | c << 8, start, 0);
+    }
+
+    /// `close`: the innermost open node's end.
+    #[inline(always)]
+    fn close(&mut self, sink: &mut Sink, end: u32) {
+        self.event(sink, EV_CLOSE, end, 0);
     }
 
     /// `leaf`.
     #[inline(always)]
     fn leaf(&mut self, sink: &mut Sink, slot: u32, field: u32, start: u32, end: u32) {
-        let ord = self.open(sink, slot, field, start);
-        let t = end.wrapping_sub(start);
-        self.high_tail |= t;
-        // SAFETY: `ord` was opened.
-        unsafe {
-            self.tail.add(ord as usize).write_unaligned(TL::of(t));
-            self.size.add(ord as usize).write_unaligned(SZ::of(1));
-        }
+        let c = u32::from(self.code_of(sink, slot, field));
+        self.event(sink, EV_LEAF | c << 8, start, end);
     }
 
     /// `at`.
@@ -287,7 +224,7 @@ impl<SZ: Cell, OF: Cell, TL: Cell> Walk<SZ, OF, TL> {
     /// checked as simdjson's `parse_string` checks it. Its end, or 0.
     #[inline(always)]
     unsafe fn escaped_string(&mut self, sink: &mut Sink, v: *const u8, field: u32) -> u32 {
-        let ord = self.open(sink, STRING, field, self.at(v));
+        self.open(sink, STRING, field, self.at(v));
         // SAFETY: within the padded source: a string ends before the padding.
         unsafe {
             let mut p = v.add(1);
@@ -303,7 +240,7 @@ impl<SZ: Cell, OF: Cell, TL: Cell> Walk<SZ, OF, TL> {
                         self.leaf(sink, CONTENT, NO_FIELD, self.at(from), self.at(q));
                     }
                     let end = self.at(q) + 1;
-                    self.close(ord, end);
+                    self.close(sink, end);
                     return end;
                 }
                 if bs == 0 {
@@ -355,16 +292,9 @@ impl<SZ: Cell, OF: Cell, TL: Cell> Walk<SZ, OF, TL> {
                 self.leaf(sink, STRING, field, s, s + 2);
                 return s + 2;
             }
-            let ord = self.open(sink, STRING, field, s);
-            let content = self.open(sink, CONTENT, NO_FIELD, s + 1);
-            self.high_tail |= q + 1;
-            // SAFETY: both opened.
-            unsafe {
-                self.tail.add(content as usize).write_unaligned(TL::of(q));
-                self.size.add(content as usize).write_unaligned(SZ::of(1));
-                self.tail.add(ord as usize).write_unaligned(TL::of(q + 1));
-                self.size.add(ord as usize).write_unaligned(SZ::of(2));
-            }
+            self.open(sink, STRING, field, s);
+            self.leaf(sink, CONTENT, NO_FIELD, s + 1, s + 1 + q);
+            self.close(sink, s + q + 2);
             return s + q + 2;
         }
         // `simdjson_likely` above: the escaped string is the cold path.
@@ -503,56 +433,16 @@ enum Label {
     DocumentEnd,
 }
 
-/// The walk's stacks by depth, as simdjson's parser holds them: each open container's node, each
-/// open pair's node, and whether each open container is an object.
-#[derive(Clone, Copy)]
-pub(crate) struct Stacks {
-    pub(crate) container: *mut u32,
-    pub(crate) pair: *mut u32,
-    pub(crate) object: *mut bool,
-}
-
-/// `walk`: what a walk leaves: 0 and each 2-byte column's largest value fitting, or a column's bit
-/// (1 size, 2 off, 4 tail) where one did not, 8 where `size` is 4 bytes and its values fit 2; or
-/// simdjson's error code negated.
+/// `walk`: what a walk leaves: 0, or simdjson's error code negated.
 ///
 /// # Safety
 /// `buf` is the padded source after any byte order mark, `index` its `count` structurals and the
-/// three entries after them; `stacks`' each hold `DEFAULT_MAX_DEPTH + 1`.
+/// three entries after them; `object` holds `DEFAULT_MAX_DEPTH + 1` (whether each open container is
+/// an object, by depth).
 #[inline(never)]
-pub(crate) unsafe fn walk<SZ: Cell, OF: Cell, TL: Cell>(
-    buf: *const u8,
-    index: *const u32,
-    count: u32,
-    shift: u32,
-    len: u32,
-    sink: &mut Sink,
-    stacks: Stacks,
-) -> i32 {
-    let Stacks { container, pair, object } = stacks;
-    let widths = [SZ::WIDTH, OF::WIDTH, TL::WIDTH];
-    // A node starts at a byte of its own, but a pair (its key's quote) and the document (its value's
-    // first byte); a pair takes four bytes or more. So the tape has at most this many nodes, and the
-    // buffers are made for them once: no node checks for room.
-    let bound = len + len / 4 + 2;
-    reserve_columns(sink, bound, &widths);
+pub(crate) unsafe fn walk(buf: *const u8, index: *const u32, count: u32, shift: u32, len: u32, sink: &mut Sink, object: *mut bool) -> i32 {
     let mut ids = [0xffffu16; SLOTS * 3];
-    let mut w = Walk::<SZ, OF, TL> {
-        buf,
-        shift,
-        code: sink.col[CODE].as_mut_ptr().cast(),
-        base: sink.col[BASE].as_mut_ptr().cast(),
-        size: sink.col[SIZE].as_mut_ptr().cast(),
-        off: sink.col[OFF].as_mut_ptr().cast(),
-        tail: sink.col[TAIL].as_mut_ptr().cast(),
-        n: 0,
-        block_base: 0,
-        last_start: 0,
-        high_size: 0,
-        high_off: 0,
-        high_tail: 0,
-        ids: ids.as_mut_ptr(),
-    };
+    let mut w = Walk { buf, shift, el: 0, ids: ids.as_mut_ptr() };
     sink.codes = 0;
     let neg = |e: Code| -(e as i32);
 
@@ -627,7 +517,7 @@ pub(crate) unsafe fn walk<SZ: Cell, OF: Cell, TL: Cell>(
                         if d >= DEFAULT_MAX_DEPTH {
                             return neg(Code::DepthError);
                         }
-                        *container.add(d as usize) = w.open(sink, OBJECT, vf, w.at(v));
+                        w.open(sink, OBJECT, vf, w.at(v));
                         *object.add(d as usize) = true;
                         vf = VALUE;
                         v = buf.add(take!() as usize);
@@ -637,7 +527,7 @@ pub(crate) unsafe fn walk<SZ: Cell, OF: Cell, TL: Cell>(
                     }
                     loop {
                         // object_key
-                        *pair.add(d as usize) = w.open(sink, PAIR, NO_FIELD, w.at(v));
+                        w.open(sink, PAIR, NO_FIELD, w.at(v));
                         if w.string(sink, v, KEY) == 0 {
                             core::hint::cold_path();
                             return neg(Code::StringError);
@@ -653,14 +543,14 @@ pub(crate) unsafe fn walk<SZ: Cell, OF: Cell, TL: Cell>(
                                     break Label::ObjectBegin;
                                 }
                                 empty!(OBJECT, VALUE);
-                                w.close(*pair.add(d as usize), end);
+                                w.close(sink, end);
                             }
                             b'[' => {
                                 if *buf.add(*next as usize) != b']' {
                                     break Label::ArrayBegin;
                                 }
                                 empty!(ARRAY, VALUE);
-                                w.close(*pair.add(d as usize), end);
+                                w.close(sink, end);
                             }
                             _ => {
                                 end = w.primitive(sink, v, VALUE, &mut error);
@@ -668,7 +558,7 @@ pub(crate) unsafe fn walk<SZ: Cell, OF: Cell, TL: Cell>(
                                     core::hint::cold_path();
                                     return neg(error);
                                 }
-                                w.close(*pair.add(d as usize), end);
+                                w.close(sink, end);
                             }
                         }
                         // object_continue
@@ -692,7 +582,7 @@ pub(crate) unsafe fn walk<SZ: Cell, OF: Cell, TL: Cell>(
                         if d >= DEFAULT_MAX_DEPTH {
                             return neg(Code::DepthError);
                         }
-                        *container.add(d as usize) = w.open(sink, ARRAY, vf, w.at(v));
+                        w.open(sink, ARRAY, vf, w.at(v));
                         *object.add(d as usize) = false;
                         vf = NO_FIELD;
                     }
@@ -731,14 +621,14 @@ pub(crate) unsafe fn walk<SZ: Cell, OF: Cell, TL: Cell>(
                     // scope_end: the container's closer is the structural just read; the pair it is
                     // the value of ends with it.
                     end = *next.sub(1) + shift + 1;
-                    w.close(*container.add(d as usize), end);
+                    w.close(sink, end);
                     d -= 1;
                     if d == 0 {
                         break Label::DocumentEnd;
                     }
                     if *object.add(d as usize) {
                         vf = VALUE;
-                        w.close(*pair.add(d as usize), end);
+                        w.close(sink, end);
                         // object_continue
                         match *buf.add(take!() as usize) {
                             b',' => {
@@ -770,16 +660,8 @@ pub(crate) unsafe fn walk<SZ: Cell, OF: Cell, TL: Cell>(
         if next != index.add(count as usize) {
             return neg(Code::TapeError);
         }
-        w.close(0, len);
-        for c in 0..5 {
-            sink.col[c].set_len(column_bytes(c, w.n, &widths));
-        }
-        for (to, &w) in sink.width.iter_mut().zip(&widths) {
-            *to = w as u8;
-        }
-        (if SZ::WIDTH == 2 && w.high_size > 0xffff { 1 } else { 0 })
-            | (if OF::WIDTH == 2 && w.high_off > 0xffff { 2 } else { 0 })
-            | (if TL::WIDTH == 2 && w.high_tail > 0xffff { 4 } else { 0 })
-            | (if SZ::WIDTH == 4 && w.high_size <= 0xffff { 8 } else { 0 })
+        w.close(sink, len);
+        (sink.flush)(&sink.ev[..w.el]);
+        0
     }
 }

@@ -1,7 +1,8 @@
 # Plan: smaller crates, one at a time
 
-Status: plan, revision 2 (2026-11-21), at 066698e84e. Builds on the in-place split (`in-place-plan.md`), which
-landed. Nothing here is built yet.
+Status: built, steps 1 to 7i (2026-11-21 to 2026-11-22; each step in the Log at the end). Left: moving the files
+into the crates (§6), which this plan put after it. Plan revision 2 (2026-11-21), at 066698e84e. Builds on the
+in-place split (`in-place-plan.md`), which landed.
 
 The user's choices (2026-11-21):
 

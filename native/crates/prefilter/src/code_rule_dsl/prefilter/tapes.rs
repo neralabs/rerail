@@ -1,10 +1,10 @@
-//! The content store's tapes as `nera_tree` reads them (03 §17, the pure-SQL fallback): a tape's
-//! v9np image decoded from its `tape_objects` frame on first read, its `size` column read in
-//! place. The last few images are held (`HELD`), as SQLite holds pages, each read in a batch of its
-//! own (a 16z tape's blocks decoded into a cache made for it, decision 0628 §6). A node's size and
-//! its parent are the tape's reads (`Tape::subtree_end`, `Tape::parent`): nothing walks the tape
-//! when it is loaded, and no node's parent is kept apart from it. `RERAIL_TREE_DESCENT=1` finds an
-//! ancestor chain by descent from the root instead, for the lab's comparison (list step 12).
+//! The content store's tapes as `nera_tree` reads them (03 §17, the pure-SQL fallback): a tape
+//! read from its `tape_objects` frame on first read, its sizes read in place. The last few images
+//! are held (`HELD`), as SQLite holds pages, each read in a batch of its own (a 16z tape's blocks
+//! decoded into a cache made for it, decision 0628 §6). A node's size and its parent are the tape's
+//! reads (`Tape::subtree_end`, `Tape::parent`): nothing walks the tape when it is loaded, and no
+//! node's parent is kept apart from it. `RERAIL_TREE_DESCENT=1` finds an ancestor chain by descent
+//! from the root instead, for the lab's comparison (list step 12).
 use super::tree::{Shared, Structure, descend};
 use crate::code_rule_dsl::language;
 use crate::code_rule_dsl::tape::{Grammar, TapeImage};

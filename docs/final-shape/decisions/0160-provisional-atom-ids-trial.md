@@ -1,6 +1,7 @@
 # 0160: Provisional atom ids, without the lease (a trial)
 
-Status: trial (2026-11-13), behind `RERAIL_ATOMS_PROVISIONAL=1`; the default is still the lease (0049)
+Status: built (audited 2026-11-23). Trial (2026-11-13), behind `RERAIL_ATOMS_PROVISIONAL=1`; the default is still the
+lease (0049)
 
 ## Intro
 

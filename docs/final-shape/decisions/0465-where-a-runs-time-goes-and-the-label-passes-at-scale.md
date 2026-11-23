@@ -1,7 +1,7 @@
 # 0465. Where a run's time goes, a level's phases as one persistent dispatch, and the label passes at scale
 
-Status: accepted (2026-11-19). Three measures. Follows 0475. The persistent dispatch (§2) was built, measured and
-removed.
+Status: analysis (audited 2026-11-23). Accepted (2026-11-19). Three measures. Follows 0475. The persistent dispatch
+(§2) was built, measured and removed.
 
 ## Intro
 

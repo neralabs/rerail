@@ -1,7 +1,7 @@
 # 0326: Kotlin, Swift and Scala become product languages, read by their lean parsers
 
-Status: decided (user, 2026-11-16: "please make sure that these are the top-tier parsers for their
-languages").
+Status: built (audited 2026-11-23). Decided (user, 2026-11-16: "please make sure that these are the top-tier parsers
+for their languages").
 
 ## Intro
 

@@ -1,6 +1,6 @@
 # 0108: Long node text by demand, shortlex symbols, and the data-layer gaps closed
 
-Status: proposed (2026-11-10)
+Status: built (audited 2026-11-23). Proposed (2026-11-10)
 
 ## Intro
 

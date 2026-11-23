@@ -1,7 +1,6 @@
 # 0017: A label walk's text tests are bits computed once per (value, kind); a Metal wave runs its roots on the CPU
 
-Status: accepted
-Date: 2026-10-31
+Status: built (audited 2026-11-23). Accepted Date: 2026-10-31
 
 ## Question
 After 0015, Metal still lost to the CPU at S7's size. On 75 of S7's files, labels took 18.2 s and

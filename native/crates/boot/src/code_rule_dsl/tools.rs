@@ -2131,7 +2131,7 @@ fn kind_names_command(args: &[String]) -> Result<String, String> {
     use crate::code_rule_dsl::language::{from_tape_tag, tape_tag};
     use crate::code_rule_dsl::language::GrammarDialect;
     let [out] = args else { return Err("usage: rerail-engine kind-names <out file>".to_owned()) };
-    // A name escaped, so each kind and field is one line of four cells: C's and Go's tokens hold a newline and a NUL.
+    // A name escaped, so each kind and field is one line of cells: C's and Go's tokens hold a newline and a NUL.
     let escaped = |name: &str| {
         let mut s = String::with_capacity(name.len());
         for c in name.chars() {
@@ -2155,14 +2155,16 @@ fn kind_names_command(args: &[String]) -> Result<String, String> {
         }
         tags += 1;
         // Each kind's public symbol: the id a node of its name and kind has (`ts_node_symbol`). A grammar's symbols of
-        // one name and kind share one; an own parser's kinds are their own.
+        // one name and kind share one; an own parser's kinds are their own. Then the id its name looks up as a named
+        // kind: a supertype's, by which a parser names its classes (C#'s `type` token is 24, its supertype 294).
         let grammar = lang.kinds().grammar();
         for id in 0..lang.kind_count() {
             let id = id as u16;
             if let Some(name) = lang.kind_name(id) {
                 let named = lang.kinds().kind_is_named(id);
                 let public = grammar.map_or(id, |g| g.id_for_node_kind(name, named));
-                text.push_str(&format!("{tag}\t{id}\t{}\t{}\t{public}\n", escaped(name), u8::from(named)));
+                let as_named = grammar.map_or(id, |g| g.id_for_node_kind(name, true));
+                text.push_str(&format!("{tag}\t{id}\t{}\t{}\t{public}\t{as_named}\n", escaped(name), u8::from(named)));
             }
         }
         for id in 1..=lang.kinds().field_count() {

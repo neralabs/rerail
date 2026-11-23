@@ -25,7 +25,7 @@ use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
 /// The format's constants are `rerail_tape_format`'s: the parsers write tapes with its writer
 /// (decision 0140), and an image is one byte string however it was made.
-pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, COLUMN_ALIGN, ERROR_CODE, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT, MAGIC as TAPE_MAGIC, SENTINEL, TAIL_FROM_START, header, padded};
+pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, ERROR_CODE, FIELD_LIMIT, KIND_LIMIT, SENTINEL};
 pub use rerail_tape_format::CODE_EXTRA;
 /// Format 16's writer and tables, for the parsers the engine's crates compile (JSON's kernels: `encode_16`).
 pub use rerail_tape_format::f16;
@@ -396,7 +396,7 @@ pub const DERIVED_CLASS_BASE: u16 = 0x4000;
 const _: () = assert!(DERIVED_CLASS_BASE as usize >= KIND_LIMIT);
 
 /// A document's tape: format 16 (or 16z) as its parser wrote it or the store kept it, read where it lies (decisions
-/// 0156, 0293, 0434). Each node's code is a number in its language's table (made from its grammar, decision 0626).
+/// 0156, 0293, 0434). Each node's code is a number in its language's table (made from its grammar, decision 0631).
 #[derive(Clone)]
 pub struct TapeImage {
     /// The tape in the format the run stores (decision 0293 §4).
@@ -1255,8 +1255,7 @@ impl TapeImage {
         Self::sixteen(rerail_tape_format::Vector::from(bytes).into(), grammar)
     }
 
-    /// A format 16 or 16z tape held as stored, in `bytes`: any other bytes (a format 15 image's included) are
-    /// refused.
+    /// A format 16 or 16z tape held as stored, in `bytes`: any other bytes are refused.
     fn sixteen(bytes: rerail_tape_format::home::Home, grammar: &Arc<Grammar>) -> Result<Self, String> {
         use rerail_tape_format::f16::{MAGIC16, MAGIC16Z, Tape16, Tape16Z};
         let magic = bytes.get(..8).ok_or("a short tape")?;
@@ -2353,7 +2352,7 @@ impl TapeDoc {
     }
 
     /// Each node's parent, in preorder, from the subtrees open around it: a pass that reads no parent, where
-    /// `transducer_parent` reads one (format 15 searches for it, decision 0293).
+    /// `transducer_parent` reads one (a search back over the sizes, decision 0293).
     pub fn transducer_parents(&self) -> impl Iterator<Item = Option<u32>> + '_ {
         let t = self.t();
         let mut open: Vec<(u32, usize)> = Vec::new();

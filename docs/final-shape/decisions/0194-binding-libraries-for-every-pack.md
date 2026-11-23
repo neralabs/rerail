@@ -1,7 +1,7 @@
 # 0194: Every language's names library speaks main's binding terms; main's other packs pass the reader
 
-Status: decided (2026-11-13, in the work to run main's rules directly: "please address these", on what decision
-0191 left open).
+Status: built (audited 2026-11-23). Decided (2026-11-13, in the work to run main's rules directly: "please address
+these", on what decision 0191 left open).
 
 ## Intro
 

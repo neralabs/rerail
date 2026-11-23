@@ -1,6 +1,6 @@
 # 0413: A token's run cut at a mask's second bit (`once`), and `all` tests
 
-Status: accepted (2026-11-18). Extends 0177 ("A number's checks at its token").
+Status: built (audited 2026-11-23). Accepted (2026-11-18). Extends 0177 ("A number's checks at its token").
 
 ## Intro
 

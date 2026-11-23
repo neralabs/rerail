@@ -77,15 +77,15 @@ fn table_of(head: &[u8], codes: usize) -> Result<Table, Error> {
 /// `tape` bytes long as stored.
 fn planned(head: &[u8], tape: usize, source: usize) -> Result<Plan, Error> {
     let stored = resident::stored(head).map_err(invalid)?;
-    // Every format's header states its source's length at the same place: the tape's reads hold every span to it,
-    // so it must be the source the document holds (decision 0463).
-    const AT: usize = crate::code_rule_dsl::tape::header::SOURCE_LEN;
+    // Format 16's and 16z's headers state the source's length at the same place: the tape's reads hold every span
+    // to it, so it must be the source the document holds (decision 0463).
+    const AT: usize = rerail_tape_format::f16::head::SOURCE_LEN;
     let stated = head.get(AT..AT + 8).map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes")));
     if stated != Some(source as u64) {
         return Err(invalid(format!("a tape whose header states a source of {stated:?} bytes, held with one of {source}")));
     }
     // Format 16's and 16z's headers agree on where the node count is.
-    let nodes = head.get(24..32).ok_or_else(|| invalid("a short format 16 header"))?;
+    let nodes = head.get(rerail_tape_format::f16::head::NODES..rerail_tape_format::f16::head::NODES + 8).ok_or_else(|| invalid("a short format 16 header"))?;
     let nodes = usize::try_from(u64::from_le_bytes(nodes.try_into().expect("8 bytes"))).map_err(invalid)?;
     let codes = resident::lang_of(head).map_err(invalid)?.table().len();
     let table = table_of(head, codes)?;
@@ -145,7 +145,7 @@ fn insert_parts(digests: &[[u8; 32]], parts: Vec<([u8; 32], &Plan, &Grammar, Par
     let placements = parts
         .into_iter()
         .map(|(digest, plan, grammar, parts)| -> Placement<'_> {
-            (digest, plan.bytes(), Some(plan.table), Box::new(move |slab: &Arc<Slab>, offset: usize, table: Option<TableAt>| place(slab, offset, table, &digest, parts, plan, grammar)))
+            (digest, plan.bytes(), plan.table, Box::new(move |slab: &Arc<Slab>, offset: usize, table: TableAt| place(slab, offset, table, &digest, parts, plan, grammar)))
         })
         .collect();
     insert(digests, placements)
@@ -164,7 +164,7 @@ enum Parts<'a> {
 fn place(
     slab: &Arc<Slab>,
     offset: usize,
-    table: Option<TableAt>,
+    table: TableAt,
     digest: &[u8; 32],
     parts: Parts<'_>,
     plan: &Plan,
@@ -280,15 +280,14 @@ fn place(
         len: plan.bytes(),
         bytes: [aligned(plan.tape), aligned(plan.source), 0],
         tape_length: plan.tape,
-        table: Some(plan.table),
+        table: plan.table,
     };
     Ok(Placed { document, table: new_table })
 }
 
 /// A format 16 or 16z document's language table: the slab's (`table`), made into `new_table` where the slab does
 /// not hold it yet (decision 0336 §7); its offset from the document's start.
-fn slab_table(table: Option<TableAt>, lang: &crate::code_rule_dsl::tape::f16::Lang, grammar: &Grammar, plan: &Plan, offset: usize, new_table: &mut Option<Vec<u8>>) -> Result<u32, Error> {
-    let table = table.ok_or_else(|| invalid("a format 16 document without its language's table"))?;
+fn slab_table(table: TableAt, lang: &crate::code_rule_dsl::tape::f16::Lang, grammar: &Grammar, plan: &Plan, offset: usize, new_table: &mut Option<Vec<u8>>) -> Result<u32, Error> {
     if !table.held {
         let codes = resident::device_codes_of(lang.table(), grammar).map_err(invalid)?;
         if codes.len() != plan.codes {

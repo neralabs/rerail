@@ -302,7 +302,7 @@ fn bad<T>(what: &str) -> Result<T, Error> {
 }
 
 impl<'a> Tape<'a> {
-    /// Code `code`, as the language's table (or format 15's own) holds it: the parser's kind, field and flags.
+    /// Code `code`, as the language's table holds it: the parser's kind, field and flags.
     fn entry(&self, code: u32) -> EntryRef<'_> {
         self.t.table().entry(code)
     }
@@ -353,14 +353,12 @@ impl<'a> Tape<'a> {
         &self.src[start as usize..end as usize]
     }
 
-    /// Its line, from 1: the newlines before its first byte, by the tape's newline index. Format 15 holds none (a run
-    /// that stores it, a measurement's), so there they are counted.
+    /// Its line, from 1: the newlines before its first byte, by the tape's newline index.
     pub fn line(&self, n: u32) -> usize {
         let x = self.start(n);
         1 + match self.t {
             AnyTape::F16(t) => t.line(x as u32) as usize,
             AnyTape::F16Z(t) => t.line(x as u32) as usize,
-            AnyTape::F15(_) => self.src.as_bytes()[..x].iter().filter(|&&b| b == b'\n').count(),
         }
     }
 

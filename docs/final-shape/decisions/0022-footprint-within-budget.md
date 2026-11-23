@@ -1,6 +1,6 @@
 # 0022: the engine's footprint within 500 MB: return freed pages, and size GPU buffers by the run
 
-Status: accepted (2026-10-31)
+Status: built (audited 2026-11-23). Accepted (2026-10-31)
 
 ## Context
 

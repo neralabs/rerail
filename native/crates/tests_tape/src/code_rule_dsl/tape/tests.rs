@@ -1811,12 +1811,12 @@ fn rr_parse_costs() {
     let all = files.len();
     files.retain(|f| rr_parser::compiled_tape(f).is_some());
     let bytes: usize = files.iter().map(String::len).sum();
-    let nodes: usize = files.iter().map(|f| rerail_rr_syntax::tape(f).len()).sum();
+    let nodes: usize = files.iter().map(|f| rerail_rr_syntax::tape(f).map_or(0, |t| t.len())).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     #[allow(clippy::type_complexity)]
     let steps: Vec<CostStep<'_>> = vec![
-        ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).len())),
+        ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).map_or(0, |t| t.len()))),
         (
             "lean: the tape (the engine's path)",
             Box::new(|f| {
@@ -2284,7 +2284,9 @@ fn simdjson_tapes_over_files() {
         match simdjson_tapes(&source) {
             Err(_) => refused.push(path.to_owned()),
             Ok((ours, theirs)) if ours == theirs => {
-                if rerail_simdjson::tape_with(kernel, source.as_bytes(), kinds).is_ok() {
+                if rerail_simdjson::events_with(kernel, source.as_bytes(), kinds, false, |_, _| ())
+                    .is_ok()
+                {
                     strict += 1
                 } else {
                     jsonc += 1
@@ -2381,7 +2383,7 @@ fn json_parse_costs() {
     let nodes: usize = files
         .iter()
         .map(|f| {
-            rerail_simdjson::tape(f.as_bytes(), kinds)
+            rerail_simdjson::walk_from_index(f.as_bytes(), kinds)
                 .unwrap()
                 .node_count()
         })
@@ -2402,19 +2404,23 @@ fn json_parse_costs() {
             Box::new(|f| rerail_simdjson::structurals(f.as_bytes(), <[u32]>::len).unwrap()),
         ),
         (
-            "simdjson: DOM parse, columns from index",
+            "simdjson: DOM parse, events from index",
             Box::new(|f| {
-                rerail_simdjson::tape_from_index(f.as_bytes(), kinds)
-                    .unwrap()
-                    .node_count()
+                let mut n = 0;
+                rerail_simdjson::events_from_index(f.as_bytes(), kinds, |_, w| n += w.len() / 3)
+                    .unwrap();
+                n
             }),
         ),
         (
             "simdjson: stage 1 (hashed), stage 2",
             Box::new(|f| {
-                rerail_simdjson::tape_with(kernel, f.as_bytes(), kinds)
-                    .unwrap()
-                    .node_count()
+                let mut n = 0;
+                rerail_simdjson::events_with(kernel, f.as_bytes(), kinds, false, |_, w| {
+                    n += w.len() / 3
+                })
+                .unwrap();
+                n
             }),
         ),
         // Through the router's `TreeParser::parse`, as the product calls it (the tape's generic code is made in the parser's crate).
@@ -3348,8 +3354,8 @@ fn python_parse_costs() {
             Box::new(|f| rerail_python_lean::token_count(f.as_bytes()).unwrap_or(0)),
         ),
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_python_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_python_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -3878,8 +3884,8 @@ fn ecma_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_ecma_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_ecma_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -4104,8 +4110,8 @@ fn rust_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_rust_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_rust_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -4319,8 +4325,8 @@ fn java_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_java_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_java_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -4513,8 +4519,8 @@ fn go_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_go_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_go_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -4627,8 +4633,8 @@ fn cpp_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_c_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_c_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -5314,8 +5320,8 @@ fn php_parse_costs() {
     type IndexStep<'a> = (&'static str, Box<dyn Fn(usize) -> usize + 'a>);
     let steps: Vec<IndexStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|i| rerail_php_lean::tape(views[i].as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|i| rerail_php_lean::tape(views[i].as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -5422,8 +5428,8 @@ fn csharp_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_csharp_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_csharp_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -5648,8 +5654,8 @@ fn html_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_html_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_html_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -5855,8 +5861,8 @@ fn css_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_css_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_css_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -6101,8 +6107,8 @@ fn sql_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_sql_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_sql_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -6307,8 +6313,8 @@ fn markdown_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_markdown_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_markdown_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -6597,8 +6603,8 @@ fn vue_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
-            Box::new(|f| rerail_vue_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())),
+            "lean: the parser's tape",
+            Box::new(|f| rerail_vue_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())),
         ),
         (
             "lean: the tape",
@@ -6845,9 +6851,9 @@ fn markdown_inline_parse_costs() {
     let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let steps: Vec<CostStep<'_>> = vec![
         (
-            "lean: the parser's columns",
+            "lean: the parser's tape",
             Box::new(|f| {
-                rerail_markdown_inline_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len())
+                rerail_markdown_inline_lean::tape(f.as_bytes()).map_or(0, |t| t.tape.len())
             }),
         ),
         (
@@ -7529,6 +7535,8 @@ fn scala_tapes_from_the_lean_parser_are_tree_sitters() {
             "val xs = List(1, 2).map(_ * 2).filter { x => x > 1 }\n",
             "def g(a: Any) = a match {\n  case s: String => s.length\n  case _ => 0\n}\n",
             "trait T {\n  val s = s\"$x ${y + 1}\"\n  lazy val n = 0x1FL\n}\n",
+            // A constructor annotation's `(`: id 40, named `arguments`, under its contextual alias `(` (decision 0631).
+            "class A @Inject() (x: Int)\n",
         ],
         &["class A {\n", "def f( = 1\n", "val x = (1,\n"],
     );

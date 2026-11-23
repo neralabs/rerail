@@ -1,5 +1,5 @@
 //! A loaded tape's one home (decision 0353 step 4a): a room in a residency slab, a GPU-shareable chunk block, which
-//! the store's load writes the tape into once (a format 15 frame decompressed, format 16 and 16z as stored) and every
+//! the store's load writes the tape into once (format 16 and 16z as stored) and every
 //! reader reads in place: the host's facts and matchers, the JIT and the kernels. A host without a device, or a pool
 //! that refuses the room, keeps the tape in a vector of its own.
 

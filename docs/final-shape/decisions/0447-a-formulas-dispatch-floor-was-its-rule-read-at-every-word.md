@@ -1,8 +1,8 @@
 # 0447. A formula's dispatch floor was its rule, read at every word
 
-Status: accepted (2026-11-19). Follows 0457. Answers its "What is left" (the floor of a dispatch), and keeps the
-parent reads of ops 7 and 8. Its measurement switch (`RERAIL_GPU_ENCODER_TIMES`) is not on the hub's device-layer
-launches since the roll-up (work queue Q335).
+Status: built (audited 2026-11-23). Accepted (2026-11-19). Follows 0457. Answers its "What is left" (the floor of a
+dispatch), and keeps the parent reads of ops 7 and 8. Its measurement switch (`RERAIL_GPU_ENCODER_TIMES`) is not on
+the hub's device-layer launches since the roll-up (work queue Q335).
 
 ## Intro
 

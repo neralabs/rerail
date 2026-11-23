@@ -13,32 +13,30 @@ pub struct TapeView {
     pub at: u32,
     pub nodes: u32,
     pub node_base: u32,
-    /// The tape's format: 15, 16, or `F16Z_FORMAT` (a 16z tape as stored, read through a cache of its decoded
+    /// The tape's format: 16, or `F16Z_FORMAT` (a 16z tape as stored, read through a cache of its decoded
     /// blocks, decision 0353 step 4b).
     pub format: u32,
-    /// Format 15: `size`'s, `off`'s and `tail`'s widths in bytes, at bits 0, 4 and 8; bit 12: tails
-    /// measured from the node's own start. Format 16: the slot, gap and length widths at bits 0, 4
-    /// and 8, the checkpoints' at 12, and the four side lists' value widths at 16, 20, 24 and 28.
+    /// The slot, gap and length widths at bits 0, 4 and 8, the checkpoints' at 12, and the four side
+    /// lists' value widths at 16, 20, 24 and 28.
     pub widths: u32,
-    /// Format 15's columns (code, size, base, off, tail). Format 16 (block-major, decision 0434): block
-    /// 0's start, then the bytes a row holds before the slots, the gaps, the lengths and the checkpoints
-    /// (a block of R rows holds column r at `R * columns[r]` from its start).
+    /// Block-major (decision 0434): block 0's start, then the bytes a row holds before the slots, the gaps, the
+    /// lengths and the checkpoints (a block of R rows holds column r at `R * columns[r]` from its start).
     pub columns: [u32; 5],
-    /// Format 16: the blocks' stride, in bytes (a block is `F16_PART` nodes).
+    /// The blocks' stride, in bytes (a block is `F16_PART` nodes).
     pub stride: u32,
-    /// Format 16: the four side lists (codes' low parts, escaped slots, gaps, lengths), and each
-    /// one's part starts (u32s, a part a 1,024 nodes).
+    /// The four side lists (codes' low parts, escaped slots, gaps, lengths), and each one's part starts
+    /// (u32s, a part a 1,024 nodes).
     pub side: [u32; 4],
     pub parts: [u32; 4],
-    /// Format 16: its language's cutoff and the numbers a prefix byte covers.
+    /// Its language's cutoff and the numbers a prefix byte covers.
     pub cut: u32,
     pub per: u32,
-    /// The code table (the device's `DeviceCode`s; format 16's: the language's).
+    /// The code table (its language's).
     pub codes: u32,
     pub source: u32,
     pub source_len: u32,
-    /// The document's line index (`rerail_tape_format::newlines`, decision 0612): format 16's in its tape, format 15's
-    /// placed beside it. And how many lines.
+    /// The document's line index (`rerail_tape_format::newlines`, decision 0612), in its tape or placed beside it. And
+    /// how many lines.
     pub lines: u32,
     pub line_count: u32,
     /// The code table's length.
@@ -48,9 +46,9 @@ pub struct TapeView {
     pub line_base: u32,
     /// Where the stored tape starts.
     pub tape: u32,
-    /// Format 16 and 16z: the tape's presence (decision 0434 §4, step 6), in its home after the tape: `[u32 kind words,
-    /// u32 field words, u32 presences, u32 0]`, then the document's words and each block's (`tape_has_kind`). 0 where
-    /// it has none (format 15, or a tape stored without one).
+    /// The tape's presence (decision 0434 §4, step 6), in its home after the tape: `[u32 kind words, u32 field words,
+    /// u32 presences, u32 0]`, then the document's words and each block's (`tape_has_kind`). 0 where it has none (a
+    /// tape stored without one).
     pub presence: u32,
     /// `at`'s high word (`at` and this, an i64: `TapeView::offset`).
     pub at_high: u32,
@@ -420,9 +418,6 @@ pub mod cache {
     }
 }
 
-/// Format 15's checkpoint stride (`base`'s, a u32 every 16 nodes) and its tails-from-start flag.
-pub const F15_STRIDE_SHIFT: u32 = 4;
-pub const F15_TAIL_FROM_START: u32 = 1 << 12;
 
 /// A field's byte offset in a view.
 pub mod at {

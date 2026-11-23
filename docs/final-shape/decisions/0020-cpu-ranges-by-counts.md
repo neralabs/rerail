@@ -1,6 +1,6 @@
 # 0020: CPU execution ranges packed by u32 record counts; program groups from one batch; text rows shared across runs
 
-Status: accepted (2026-10-31)
+Status: built (audited 2026-11-23). Accepted (2026-10-31)
 
 ## Context
 

@@ -4596,7 +4596,7 @@ impl<'a> RowRef<'a> {
     }
     /// `read`, the view's columns in `need` alone (bit `c`: column `c`), the others left 0 and never read: a step
     /// reads only the columns it binds, tests or checks. A view's column may be a search on the tape (a node's
-    /// parent on format 15), which a key the probe already matched need not pay (decision 0353 step 2).
+    /// parent), which a key the probe already matched need not pay (decision 0353 step 2).
     #[inline]
     pub fn read_need(self, need: u64) -> RowRef<'a> {
         let (v, row) = match self {
@@ -8199,7 +8199,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let handed = given.is_some();
                 // The key columns a view's probe matched exactly, which its rows need not be read or checked for: the
                 // sorted index's column, a lookup on one key column, every column of a composite lookup. A view's
-                // column may be a search on the tape (decision 0353 step 2: a node's parent on format 15).
+                // column may be a search on the tape (decision 0353 step 2: a node's parent).
                 let exact: u64 = match src {
                     _ if handed || keys.is_empty() => 0,
                     Src::In(rel, ix) if j.bound(rel).view.is_some() && j.bound(ix).runs(j.bound(rel)).is_none() => {

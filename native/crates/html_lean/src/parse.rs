@@ -42,10 +42,10 @@ struct P<'a> {
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<Tape> {
-    parse_into(src, &mut Writer::<Widths>::finish_columns)
+    parse_into(src, &mut crate::sink()).map(crate::written)
 }
 
-/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+/// [`parse`], the writer finished by `finish`: format 16 or 16z (decisions 0293, 0434).
 pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     parse_from(src, Start::Document, finish)
 }
@@ -66,7 +66,7 @@ pub fn parse_from<Out>(src: &[u8], start: Start, finish: &mut dyn Sink<Out>) -> 
     let b = Blocks::of(src);
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut p = P { src, b: &b, w: Writer::new(0, widths, src.len() / 4 + 16).to(finish.target(), src).omitting(finish.omissions()), open: Vec::new(), serialized: tags::SERIALIZED_EMPTY, at: 0 };
+        let mut p = P { src, b: &b, w: Writer::new(widths, src.len() / 4 + 16).to(finish.target(), src).omitting(finish.omissions()), open: Vec::new(), serialized: tags::SERIALIZED_EMPTY, at: 0 };
         match start {
             Start::Document => p.document()?,
             Start::Element => p.element_fragment()?,

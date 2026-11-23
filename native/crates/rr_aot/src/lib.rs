@@ -17,21 +17,11 @@ mod tier2;
 
 pub use tier1::{Lexed, PADDING, lex};
 
-/// The tape of `buf[..n]`, format 15's image as the lean parser finishes it (`Writer::finish`), or the byte the parser
-/// refused it at (0: tier 1 sends it to the engine). `buf` is the file padded, as simdjson's: `PADDING` spaces after it
-/// (`padded`), so that tier 1 loads each block where it is.
-pub fn parse(buf: &[u8], n: usize) -> Result<Vec<u8>, u32> {
-    tier2::parse(&buf[..n], &tier1::lex(buf, n), &mut Image(&buf[..n]))
-}
-
-/// The writer finished into the image of the source it read.
-struct Image<'s>(&'s [u8]);
-
-impl rerail_tape_format::Finish for Image<'_> {
-    type Out = Vec<u8>;
-    fn finish<L: rerail_tape_format::Layout>(&mut self, w: rerail_tape_format::Writer<L>) -> Result<Vec<u8>, rerail_tape_format::Redo> {
-        w.finish(self.0)
-    }
+/// The tape of `buf[..n]`, written to `finish`'s target and finished by it (decision 0434: format 16 as the parse
+/// goes), or the byte the parser refused it at (0: tier 1 sends it to the engine). `buf` is the file padded, as
+/// simdjson's: `PADDING` spaces after it (`padded`), so that tier 1 loads each block where it is.
+pub fn parse<F: rerail_tape_format::Finish>(buf: &[u8], n: usize, finish: &mut F) -> Result<F::Out, u32> {
+    tier2::parse(&buf[..n], &tier1::lex(buf, n), finish)
 }
 
 /// `src` padded for `parse` and `lex`: a buffer of it and `PADDING` spaces (a caller that reads files makes its buffer

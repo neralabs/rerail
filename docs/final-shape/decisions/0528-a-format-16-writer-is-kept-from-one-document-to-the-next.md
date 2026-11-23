@@ -1,7 +1,7 @@
 # 0528: A format 16 writer is kept from one document to the next
 
-Status: decided (the user, 2026-11-20: "go ahead in that order", the first of page 40 step 34's three changes). Amends
-0434's writer (`rerail_tape_format::f16::Writer`).
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-20: "go ahead in that order", the first of page 40 step
+34's three changes). Amends 0434's writer (`rerail_tape_format::f16::Writer`).
 
 ## Intro
 
