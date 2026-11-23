@@ -647,7 +647,12 @@ impl Pass {
         match call(&self.queue) {
             Ok(made) => {
                 self.dispatches.set(self.dispatches.get() + made);
-                launch::charge_made(self.pointer(), "a UKL library launch", made);
+                // A stack's are its own: the stack one launch (decision 0638).
+                if self.stacked.get() {
+                    launch::charge_made_stacked(self.pointer(), "a UKL library launch", made);
+                } else {
+                    launch::charge_made(self.pointer(), "a UKL library launch", made);
+                }
             }
             Err(e) => *self.error.borrow_mut() = Some(format!("the UKL library: {e}")),
         }

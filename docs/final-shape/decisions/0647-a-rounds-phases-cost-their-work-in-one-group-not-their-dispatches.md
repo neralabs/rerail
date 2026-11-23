@@ -139,3 +139,46 @@ From the per-phase table above, the size scripts are the largest kind left above
 median of 22.6 µs against a floor of 13, up to 167 µs. One thread runs each script's ops in turn, its claims atomic
 adds on the arena's top. That is a lead from phases timed alone, which the index's placing showed can differ from a
 stack's.
+
+## A real run's recursive strata
+
+The user, 2026-11-23, on the next step: "batch the axis lookups into stacked launches, the way 0638 did for joins,
+so a real run stays within the budget. Then rerun this test to see real recursive strata on the device, rounds
+included."
+
+The test is the python pack (540 of its 546 rules; the other six do not lower or load yet) over 10 files of the
+django corpus, with every stratum the device can run sent to it (`RERAIL_DEVICE=always`), on the M3, in a profiling build.
+
+- **The kind-set axis solve was over the budget.** A tape-value layer's solve (`axis_in_chunk`, 0289) went out as a
+  submission a chunk for its count and scan, then one a chunk for its writes. With about 99 layers, the run's first
+  evaluation hard-failed the 200-launch budget. Its chunks now go out stacked (`Pass::stack`, 0638): every chunk's
+  count and scan in one submission, then every chunk's writes in another. A stacked pass's library kernels are
+  charged as stacked (`launch::charge_made_stacked`), not as launches each.
+- **The profile has each stratum's GPU time and rounds.** `placement.tsv` has `gpu_s` (its command buffers' time)
+  and `gpu_rounds` (its components' rounds on the device, `fixpoint`). The GPU times of strata sent in one wave
+  overlap, so they can sum past the run's.
+
+Measured, cold (a fresh store), on the M3:
+
+- The run took 24.6 s wall and 2.3 GB at its peak, and 1.4 s warm. The CPU run took 30.9 s cold.
+- Both runs' results are the same: 1,109 relations, 2,108 rows, compared as CSV.
+- Of 112 recursive strata, 91 ran on the device. 8 lack a form for a computed term, 1 a string join, and 12 were
+  sent back at run time.
+- The 91 took 0.91 s of GPU time, against 2.43 s of CPU time for the same strata in the CPU run.
+- They ran 392 rounds: a median of 3 a stratum, at most 44. The deep ones took 1 to 3 ms a round, against the
+  measure's 0.5 ms.
+
+| Stratum | Rounds | GPU | CPU run |
+|---|---|---|---|
+| runs_at_import | 3 | 102.3 ms | 2.0 ms |
+| p453_rr_near_def_kind | 25 | 73.6 ms | 65.7 ms |
+| rr_up102 | 25 | 54.9 ms | 100.5 ms |
+| rr_up103 | 22 | 48.8 ms | 112.2 ms |
+| py_minor | 44 | 44.2 ms | 1.4 ms |
+| pth_unpack | 2 | 24.6 ms | 15.4 ms |
+| ast_parent | 4 | 24.0 ms | 97.4 ms |
+| pep604_member | 6 | 21.4 ms | 194.6 ms |
+
+The costliest recursive stratum on the device, `runs_at_import`, made 6.7 million rows in 3 rounds, where the CPU
+took 2 ms. That is its join's plan on the device, not its rounds. The strata of many rounds and few rows
+(`py_minor`: 44 rounds, 3 rows) are where a round's fixed cost shows.

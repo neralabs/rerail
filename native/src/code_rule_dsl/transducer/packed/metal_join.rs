@@ -430,8 +430,13 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
     let _evaluation = super::metal_backend::launch::LaunchScope::enter();
     let count = pipeline("chunk_views", "axis_count", chunk_views_source)?;
     let write = pipeline("chunk_views", "axis_write", chunk_views_source)?;
-    // Each chunk's counts scanned into its starts: its parameters, its starts' offset, and its rows.
+    // Each chunk's counts scanned into its starts: its parameters, its starts' offset, and its rows. Every chunk's
+    // count and scan in one submission, a stack (decision 0647): one launch however many chunks the axis is over (a
+    // layered source's, one a tape value's), waited for once.
     let mut each: Vec<([u32; 8], usize, usize)> = Vec::with_capacity(chunks.len());
+    let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
+    // Each chunk's buffers and scan, kept until the submission completes.
+    let mut kept: Vec<(Buffer, Buffer, Scan)> = Vec::with_capacity(chunks.len());
     for chunk in chunks {
         let b = &chunk.block;
         // SAFETY: the chunk's root, which `device_chunk::build` wrote.
@@ -453,14 +458,18 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
         let starts = unsafe { rerail_device::device::wrap_host_memory(device, b.ptr::<u8>(start_at), start_bytes)? };
         let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), 0, 0, 0, 0];
         let scan = Scan::owned(n)?;
-        let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
         let pass = batch.pass().map_err(|e| format!("{e:?}"))?;
+        pass.stack();
         pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
         scan.encode(pass, &starts)?;
-        batch.finish().map_err(|e| format!("{e:?}"))?;
-        // SAFETY: the scan completed: its last value is the total.
-        let len = unsafe { *b.ptr::<u32>(start_at + 4 * n) } as usize;
-        each.push((p, start_at, len));
+        kept.push((whole, starts, scan));
+        each.push((p, start_at, 0));
+    }
+    batch.finish().map_err(|e| format!("{e:?}"))?;
+    drop(kept);
+    for (chunk, e) in chunks.iter().zip(each.iter_mut()) {
+        // SAFETY: the scans completed: each chunk's last start is its total.
+        e.2 = unsafe { *chunk.block.ptr::<u32>(e.1 + 4 * e.0[1] as usize) } as usize;
     }
     let total: usize = each.iter().map(|e| e.2).sum();
     let first_start = each.first().map_or(0, |e| e.1);
@@ -502,6 +511,9 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
         let rows_at = rows.rows_at() as i64;
         let out = rows.facts().block.device_buffer(device)?;
         let mut past = 0usize;
+        // Every chunk's rows written in one submission, a stack (decision 0647).
+        let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
+        let mut kept: Vec<(Buffer, Buffer)> = Vec::with_capacity(chunks.len());
         for (chunk, (mut p, start_at, len)) in chunks.iter().zip(each) {
             let b = &chunk.block;
             let n = p[1] as usize;
@@ -514,11 +526,13 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
             let whole = b.device_buffer(device)?;
             // SAFETY: as the count's: the chunk's block outlives the work, waited for below.
             let starts = unsafe { rerail_device::device::wrap_host_memory(device, b.ptr::<u8>(start_at), (4 * (n + 1)).next_multiple_of(PAGE))? };
-            let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
             let pass = batch.pass().map_err(|e| format!("{e:?}"))?;
+            pass.stack();
             pass.run(&write, &[&whole, &starts, &out], &p, &[rows_at], groups(n));
-            batch.finish().map_err(|e| format!("{e:?}"))?;
+            kept.push((whole, starts));
         }
+        batch.finish().map_err(|e| format!("{e:?}"))?;
+        drop(kept);
         // Bounded by the relation's chunks (decision 0463): what the writer refused fails the solve, which the host
         // then makes.
         let now = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);

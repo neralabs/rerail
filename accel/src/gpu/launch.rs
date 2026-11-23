@@ -278,6 +278,13 @@ pub fn charge_made(pointer: usize, kernel: &str, made: usize) {
     }
 }
 
+/// `charge_made` for a stack's library launches (decision 0638): recorded, the stack charged once.
+pub fn charge_made_stacked(pointer: usize, kernel: &str, made: usize) {
+    for _ in 0..made {
+        attempt_stacked(pointer, kernel, [0; 3], [0; 3], false, Vec::new());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -413,6 +413,8 @@ pub struct GpuTotal {
     pub levels: u64,
     /// Stages screened by their relation's kept filter (decision 0488).
     pub screened: u64,
+    /// Rounds the recursive components ran on the device (`fixpoint`).
+    pub rounds: u64,
 }
 
 impl GpuTotal {
@@ -447,6 +449,7 @@ impl GpuTotal {
         self.waved += o.waved;
         self.arena_reruns += o.arena_reruns;
         self.levels += o.levels;
+        self.rounds += o.rounds;
         self.screened += o.screened;
     }
 
