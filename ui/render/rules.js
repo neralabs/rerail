@@ -1,5 +1,5 @@
 /**
- * A pack page's rule table (`#pack/<id>`, `#created`): the column labels Rule · Violations · Enforcement · On/off, then one row per
+ * A pack page's rule table (`#pack/<id>`, `#created`): the column labels Rule · Enforcement · Violations · On/off, then one row per
  * rule, reconciled in place on every poll. A row opens the rule's sheet; its switch turns the rule on or off.
  */
 import { h, setAttr, setText, setClass, syncChildren } from "../dom.js";
@@ -23,7 +23,7 @@ function createRow(stored) {
   const folder = h("span.mono", { title: "Added at" });
   const last = h("span");
   const row = h("div.row", { "data-act": "detail", "data-i": id },
-    h("div.rmain", null, h("div.rtitle", null, title), h("div.rside", null, count, enforcement, sw),
+    h("div.rmain", null, h("div.rtitle", null, title), h("div.rside", null, enforcement, count, sw),
       h("div.rmeta", null, internal, stopped, h("span.mono", null, id), folder, last)));
   row._r = { title, count, sw, enforcement, internal, stopped, folder, last };
   return row;

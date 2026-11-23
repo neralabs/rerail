@@ -368,5 +368,6 @@ native/src/git_start/run.rs
 native/src/git_start/spawn.rs
 native/src/git_workspace/worktree_stat.rs
 native/src/path_owner.rs
+native/src/pipe_server.rs
 scripts/profiling/preparation/src/code_rule_dsl.rs
 scripts/profiling/reachability/src/code_rule_dsl.rs

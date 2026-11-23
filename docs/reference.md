@@ -365,7 +365,14 @@ The trust-root file must arrive through an authenticated channel independent of 
 
 ## Update
 
-Updates are explicit: Rerail never checks a registry or installs on its own.
+Updates are explicit: Rerail never installs on its own. Once a day the daemon of an installed Rerail asks npm for the
+newest version on the update channel, the one a bare `rerail update` installs, and keeps the answer in
+`update-check.json` in the Rerail home. `/healthz` reports it as `update` while that channel is still the update channel, and the dashboard shows "Update available"
+while it is newer than the daemon's version. A failed ask keeps the last answer, logs one line to `daemon.log` and is
+tried again a day later; a restarted daemon asks only once that day has passed. Unless you add a remote or turn Merge
+Assist on (internal testing), it is the only request Rerail makes on its own, apart from an npm rebuild of the SQLite binding when it fails to load ([privacy](privacy.md)). `RERAIL_UPDATE_CHECK=0` (or `false`) set for the daemon turns it off. A daemon run from a checkout never
+checks, and neither does one while its home holds a signed customer profile (internal testing), whose channel it cannot
+read. The daemon runs npm with the Node it runs under first on `PATH`, so a daemon started with an agent's shorter `PATH` still reaches the npm installed beside that Node.
 
 ```sh
 rerail version            # the installed version
@@ -374,7 +381,7 @@ rerail update check       # resolve the channel without installing
 rerail update             # install and activate a newer version
 ```
 
-`rerail update` backs up the database, installs and validates the new version, activates it, and re-registers your connected coding agents. It names each step on stderr as it starts, and ends by listing the installed rule packs with a newer version.
+`rerail update` backs up the database, installs and validates the new version, activates it, and re-registers your connected coding agents. It names each step on stderr as it starts, and ends by updating each installed rule pack to the newest version that fits the active core.
 
 <details>
 <summary>Update steps and failures</summary>
@@ -386,9 +393,9 @@ rerail update             # install and activate a newer version
 3. Validates its native runtime and event stream.
 4. Activates it atomically for new harness sessions; `rerail update status` names the replaced version.
 5. Updated or not, re-registers every connected coding agent (`rerail install --refresh`, which also runs on its own), adding new commands, skills and hooks and removing retired ones. A coding agent never connected is left alone.
-6. Updated or not, once the refresh succeeds, lists each installed rule pack with a newer version on the channel that fits the active core (on `next` for a pack the channel has no version of, which is where set-up installs it from; its line says `(on next)`), and the `rerail packs add <id>@<version>` command that installs them ([rule packs](rule-packs.md#third-parties-packs)). It installs none. A pack npm cannot be asked about gets a `warning:` line; the update still succeeds.
+6. Updated or not, once the refresh succeeds, the active version runs `rerail packs update`: each installed rule pack moves to the newest version up to the channel's that the active core accepts by its core range (up to `next`'s for a pack the channel has no version of, which is where set-up installs it from; its line says `(from next)`), so the active core's engine checks it ([updating packs](rule-packs.md#rerail-packs)). A third party's new version runs in Log until you approve it. A pack npm cannot be asked about gets a `warning:` line. A pack that does not install or load, or whose npm install has not finished at 1 min 20 s, is put back alone, the others still move, and the update exits 1 with the new core active. If another Rerail process holds the rule packs past the 5 min Rerail waits for them, the packs after that one are not tried: each gets a line, and the packs already moved are still listed.
 
-Steps 2 to 4 and 6 each print a line on stderr as they start. On a terminal the line counts the step's time up; elsewhere (a coding agent, CI) a step that runs past 30 s prints `… still running after 30 s`, then again every 30 s. An npm request warns that npm may be stuck after 30 s and is stopped at 3 min; the download warns at 3 min and is stopped at 20. Step 6 asks npm about each pack with requests stopped at 1 min each. A stopped npm that has not exited 5 s later is killed. A stopped step fails the update, and the version that was active stays active. A version change prints `Updated Rerail <old> → <new> in <time>` on stdout.
+Steps 2 to 4 and 6 each print a line on stderr as they start. On a terminal the line counts the step's time up; elsewhere (a coding agent, CI) a step that runs past 30 s prints `… still running after 30 s`, then again every 30 s. An npm request warns that npm may be stuck after 30 s and is stopped at 3 min; the download warns at 3 min and is stopped at 20. Step 6 asks npm about each pack with requests stopped at 1 min each, then installs each pack as a step of its own. A stopped npm that has not exited 5 s later is killed. A stopped step fails the update, and the version that was active stays active. A version change prints `Updated Rerail <old> → <new> in <time>` on stdout.
 
 An agent that can't be re-registered is named with the reason, the rest are refreshed, and the update exits 1 with the new version active. One whose configuration can't be read is named and skipped. Coming from a version without step 5, run `rerail install --refresh` once.
 
@@ -434,7 +441,8 @@ The daemon owns the resident kernel and exposes the database over HTTP, OpenAPI 
 
 The daemon writes rules and work links; the shared runtime records harness events.
 
-- `/healthz` reports version, pid, database path and presence, kernel status, `installedAt`, and `model`: bundled model files checked once per process against `model/manifest.json`, `ok` or the problem and file. `healthy` means engine and model are ok; `status` only means the daemon answers.
+- `/healthz` reports version, pid, database path and presence, kernel status, `installedAt`, `update` (the daily
+  update check's last answer, `{ latest, checkedAt }`, or null; [Update](#update)), and `model`: bundled model files checked once per process against `model/manifest.json`, `ok` or the problem and file. `healthy` means engine and model are ok; `status` only means the daemon answers.
 - `/mcp` is stateless and JSON-response. Non-POST gets `405 Allow: POST`; there is no SSE listener or transport session.
 - UI client-side routes fall back to `index.html`.
 
@@ -464,7 +472,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `rules_activity` | `GET /api/rules/activity?since=&repository=` | Per rule since a time: violations (log-only count), sessions, last sighting, `audits`, steers; removed rules with violations as `removed: true`. `sessions: { started, withViolations }`. |
 | `rule_packs_list` | `GET /api/rule-packs?checkout=` | Packs with npm package, publisher (`rerail`, or a third party's scope or package name) and rules (kind, title, group, mode, on/off, examples). With a checkout (MCP: the caller's), also its `.rerail/rules` as pack and publisher `worktree`, skipped files in `skipped`. Read-only. |
 | `rule_packs_recommend` | `GET /api/rule-packs/recommendations?repository=&checkout=` | Packs fitting a checkout: rule count, reason, folder. Local; changes nothing. |
-| `coding_agents_list` | `GET /api/coding-agents` | Per coding agent: `found`, `connected`, `problem`, and whether its tools can read Rerail's data (`rerailData`: `access` is `kept-out`, `file-tools` or `open`, with `why`). Dry run; shown in Settings and `rerail status`. |
+| `coding_agents_list` | `GET /api/coding-agents` | Per coding agent: `found`, `connected`, `problem`, and whether its tools can read Rerail's data (`rerailData`: `access` is `kept-out`, `file-tools` or `open`, with `why`, and `fix`: what a person can do to keep the rest of its tools out, or null). Dry run; shown in Settings and `rerail status`. |
 | `rerail_rules_list` | `GET /api/rerail-rules?kind=` | By Rerail rules with their pack. |
 | `library_rules_list` | `GET /api/library-rules?kind=` | Rules created by you. |
 | `library_rules_get` | `GET /api/library-rules/{id}` | One rule created by you. |
@@ -631,6 +639,8 @@ A Rerail home has one daemon. The daemon holds `locks/daemon.lock` in the home f
 
 `daemon.json` also records `kernelSocketPath` (Unix socket or Windows named pipe), which hooks reuse; when another process already holds the default pipe name, the daemon listens on that name with a random suffix and records that one; `RERAIL_ENGINE_SOCKET` selects an explicitly managed endpoint. Events there need `x-rerail-access`. For a `RERAIL_ENGINE_SOCKET` socket, hooks send the capability from the Rerail home's `daemon.json` if it names the same socket.
 
+On Windows, where any local user can create a pipe of any name, a hook sends its events to the pipe `RERAIL_ENGINE_SOCKET` names, with the capability, only when that pipe is the home's own daemon: Windows says the process holding the pipe is the daemon `daemon.json` records (its pid, started no later than it recorded itself), as it is for a daemon of any Rerail version, 0.1.4 and earlier included, and one before 0.1.1, whose `daemon.json` records no capability, gets the event with none; or else the engine on the pipe proves it holds the capability `daemon.json` records, whichever pipe `daemon.json` names. The proof the hook's start check got from that same pipe answers for both, for up to 12 s. The hook checks before it waits for its session's lock, up to 30 s, and then sends each event on a connection of its own, which can wait up to 30 s for a free instance of a busy pipe after Windows has answered; a Cursor hook that reads its transcript sends each new line of it, then its own event, on that one check. If the daemon ends in that time and another user creates a pipe of that name, that user gets the event and the capability. While other clients hold every instance of the pipe, asking Windows waits for one to free, as the event's own request would, and the event keeps its own 30 s from when its request is on the pipe; after a proof asked once Windows answered, the event has what the proof left of those 30 s, from its own request. Another process holding the pipe's name gets neither the capability nor the event, nor does any engine when there is no `daemon.json`, or when it records no capability and Windows names another process or none. The hook then fails and says why: nothing listens on the pipe (the daemon is not running: start it), other clients kept the pipe busy for 30 s, the pipe is not this Rerail home's daemon, the engine did not prove itself within 30 s, or there is no `daemon.json`; `rerail status` lists that failure.
+
 </details>
 
 ### Session storage
@@ -756,7 +766,7 @@ A file written and committed in one command stays an edit, measured from the tre
 <details>
 <summary>What counts as the session's own write</summary>
 
-A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp, and by its folder's for a file removed. An agent writes only through its tool calls, so each session notes when each of its calls ran, whatever the tool, including those answered while its code rules were still opening. A Codex `apply_patch` runs no hook, so a Codex session counts its whole turn, from your prompt (or, after a daemon restart, its next tool call) to the turn's end, as one call. A change stamped while one of them ran is the session's own. Any other is another writer's (another session, your editor, a process a command left running in the background): it steers nobody, and the session's next shell edit of the file is measured from what that writer left; where the session had changed the file, the change is recorded in Log with no generated lines. When two sessions' calls ran at once, both take a change made then, so a Codex session in the middle of a turn takes another session's change too. A call whose result never comes (one you interrupted) counts as running until the turn or the session ends; a subagent's, until the main agent's next stop after its own.
+A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp, and by its folder's for a file removed. An agent writes only through its tool calls, so each session notes when each of its calls ran, whatever the tool, including those answered while its code rules were still opening. A Codex `apply_patch` runs no hook, so a Codex session counts its whole turn, from your prompt (or, after a daemon restart, its next tool call) to the turn's end, as one call. A change stamped while one of them ran is the session's own. Any other is another writer's (another session, your editor, a process a command left running in the background): it steers nobody, and the session's next shell edit of the file is measured from what that writer left; where the session had changed the file, the change is recorded in Log with no generated lines. When two sessions' calls ran at once, both take a change made then, so a Codex session in the middle of a turn takes another session's change too. In another of the repository's worktrees, a change is the session's own only when the call that ran as it was written ran in that worktree, by the folder the hook names ([Rule scoping](rule-scoping.md)); one no session made there is recorded once, in Log, as the repository's. A call whose result never comes (one you interrupted) counts as running until the turn or the session ends; a subagent's, until the main agent's next stop after its own.
 
 </details>
 

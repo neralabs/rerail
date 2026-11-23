@@ -72,6 +72,7 @@ import { colourDepth } from "../presentation/rerail-mark.js";
 import { isStatusFileEntry } from "../presentation/claude-status-files.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import { CURRENT_LINK, LAUNCHER_DIR, LAUNCHER_HEADER, UPDATE_LOCK_DIR, UPDATE_STATE_FILE, VERSIONS_DIR, type ManagedUpdater } from "../setup/updater.js";
+import { UPDATE_CHECK_FILE } from "../setup/update-check.js";
 import { requireLfsContent } from "../setup/lfs-pointers.js";
 import { streamProgress } from "../runtime/progress.js";
 import { SCRUB_HINT_FILE, scrubHintOnce } from "./scrub-cli.js";
@@ -490,6 +491,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   MACHINE_ID_FILE,
   STATUS_LINES_FOLDER,
   UPDATE_STATE_FILE,
+  UPDATE_CHECK_FILE,
   UPDATE_LOCK_DIR,
   VERSIONS_DIR,
   CURRENT_LINK,
