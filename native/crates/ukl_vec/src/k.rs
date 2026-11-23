@@ -384,13 +384,14 @@ impl Level {
     }
 }
 
-/// The tape's language tag: none of a grammar's.
-pub const TAG: u8 = 0xfe;
+/// The bits of a node's key below its field: its kind's.
+pub const KIND_BITS: u32 = 10;
 
-/// A kernel tape being written: its nodes in preorder (key, start, end, size), and its payload words.
+/// A kernel tape being written: its nodes in preorder, each `[key, start, end, size]` (its kind and field, its span
+/// in payload words, its subtree's nodes), and its payload words. The tape is these, as written (`finish`).
 #[derive(Default)]
 pub struct Builder {
-    nodes: Vec<(u32, u32, u32, u32)>,
+    nodes: Vec<[u32; 4]>,
     pub words: Vec<u32>,
 }
 
@@ -399,15 +400,14 @@ impl Builder {
     pub fn open(&mut self, kind: Kind, words: &[u32]) -> usize {
         let start = self.words.len() as u32;
         self.words.extend_from_slice(words);
-        self.nodes.push((rerail_tape_format::key(kind as u16, 0, 0), start, start, 0));
+        self.nodes.push([u32::from(kind as u16), start, start, 0]);
         self.nodes.len() - 1
     }
 
     /// Closes node `n`, opened last of those open: its subtree and its span end here.
     pub fn close(&mut self, n: usize) {
-        let (size, end) = ((self.nodes.len() - n) as u32, self.words.len() as u32);
-        self.nodes[n].2 = end;
-        self.nodes[n].3 = size;
+        self.nodes[n][2] = self.words.len() as u32;
+        self.nodes[n][3] = (self.nodes.len() - n) as u32;
     }
 
     /// A node of `kind` with no children.
@@ -428,72 +428,91 @@ impl Builder {
 
     /// Node `n`'s payload word `k` changed (a forward reference filled in).
     pub fn set_word(&mut self, n: usize, k: usize, w: u32) {
-        let at = self.nodes[n].1 as usize + k;
+        let at = self.nodes[n][1] as usize + k;
         self.words[at] = w;
     }
 
     /// Node `n`'s key, as written.
     pub fn key(&self, n: usize) -> u32 {
-        self.nodes[n].0
+        self.nodes[n][0]
     }
 
     /// Node `n`'s subtree, once closed.
     pub fn size(&self, n: usize) -> usize {
-        self.nodes[n].3 as usize
+        self.nodes[n][3] as usize
     }
 
     /// Node `n`'s payload word `k`.
     pub fn word(&self, n: usize, k: usize) -> u32 {
-        self.words[self.nodes[n].1 as usize + k]
+        self.words[self.nodes[n][1] as usize + k]
     }
 
     /// Node `n`'s field set to `field` (a vector tape's bits, `LEVEL`, ...).
     pub fn set_field(&mut self, n: usize, field: u16) {
-        self.nodes[n].0 |= u32::from(field) << rerail_tape_format::KIND_BITS;
+        self.nodes[n][0] |= u32::from(field) << KIND_BITS;
     }
 
-    /// The tape: its image (spans in payload words) and the words.
+    /// The tape: its nodes and words, as written.
     pub fn finish(self) -> Tape {
-        let bytes: Vec<u8> = self.words.iter().flat_map(|w| w.to_le_bytes()).collect();
-        let image = rerail_tape_format::preorder_image(TAG, &bytes, &self.nodes);
-        Tape { image, words: self.words }
+        Tape { nodes: self.nodes, words: self.words }
     }
 }
 
-/// A kernel tape: its image, and its payload words (its spans' units).
+/// A kernel tape: its nodes in preorder (`[key, start, end, size]`, `Builder`'s), and its payload words.
 pub struct Tape {
-    pub image: Vec<u8>,
+    pub nodes: Vec<[u32; 4]>,
     pub words: Vec<u32>,
+}
+
+impl Tape {
+    /// Whether the nodes are a tape over `words`: each subtree within the tape and within its parent's, each
+    /// span within the words, each kind a kernel tape's.
+    pub fn well_formed(&self) -> bool {
+        let n = self.nodes.len();
+        let mut open: Vec<usize> = Vec::new();
+        for (i, &[key, start, end_word, size]) in self.nodes.iter().enumerate() {
+            while open.last().is_some_and(|&e| e <= i) {
+                open.pop();
+            }
+            let end = i + size as usize;
+            let kind = (key & ((1 << KIND_BITS) - 1)) as u16;
+            if size == 0 || end > n || open.last().is_some_and(|&e| end > e) || start > end_word || end_word as usize > self.words.len() || !(1..=Kind::LAST).contains(&kind) {
+                return false;
+            }
+            open.push(end);
+        }
+        true
+    }
 }
 
 /// A kernel tape read in place.
 pub struct View<'t> {
-    pub v: rerail_tape_format::View<'t>,
+    pub nodes: &'t [[u32; 4]],
     pub words: &'t [u32],
 }
 
 impl<'t> View<'t> {
     pub fn new(t: &'t Tape) -> View<'t> {
-        View { v: rerail_tape_format::View::new(&t.image).expect("a kernel tape's image"), words: &t.words }
+        View { nodes: &t.nodes, words: &t.words }
     }
 
     pub fn len(&self) -> usize {
-        self.v.len()
+        self.nodes.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.v.is_empty()
+        self.nodes.is_empty()
     }
 
     #[inline(always)]
     pub fn kind(&self, i: usize) -> Kind {
-        Kind::of((self.v.key(i) & 0x3ff) as u16)
+        Kind::of((self.nodes[i][0] & ((1 << KIND_BITS) - 1)) as u16)
     }
 
     /// Node `i`'s field (a vector tape's bits).
     #[inline(always)]
     pub fn field(&self, i: usize) -> u16 {
-        (self.v.key(i) >> rerail_tape_format::KIND_BITS) as u16 & 0x3f
+        (self.nodes[i][0] >> KIND_BITS) as u16 & 0x7f
     }
 
     pub fn level(&self, i: usize) -> Level {
@@ -508,27 +527,44 @@ impl<'t> View<'t> {
     /// Node `i`'s payload, its words from its start (a visit's reads, its start found once).
     #[inline(always)]
     pub fn p(&self, i: usize) -> &'t [u32] {
-        &self.words[self.v.start(i) as usize..]
+        &self.words[self.nodes[i][1] as usize..]
     }
 
     /// Node `i`'s payload word `k`.
     #[inline(always)]
     pub fn w(&self, i: usize, k: usize) -> u32 {
-        self.words[self.v.start(i) as usize + k]
+        self.words[self.nodes[i][1] as usize + k]
     }
 
     /// Node `i`'s payload words from `k` on, to its span's end.
     pub fn ws(&self, i: usize, k: usize, n: usize) -> &'t [u32] {
-        let s = self.v.start(i) as usize + k;
+        let s = self.nodes[i][1] as usize + k;
         &self.words[s..s + n]
     }
 
-    pub fn size(&self, i: usize) -> usize {
-        self.v.size(i)
+    /// Node `i`'s span in payload words.
+    pub fn start(&self, i: usize) -> usize {
+        self.nodes[i][1] as usize
     }
 
+    pub fn end(&self, i: usize) -> usize {
+        self.nodes[i][2] as usize
+    }
+
+    pub fn size(&self, i: usize) -> usize {
+        self.nodes[i][3] as usize
+    }
+
+    /// Node `i`'s children, in order: each after the one before's subtree.
     pub fn children(&self, i: usize) -> impl Iterator<Item = usize> + '_ {
-        self.v.children(i)
+        let (mut c, end) = (i + 1, i + self.size(i));
+        std::iter::from_fn(move || {
+            let here = c;
+            (here < end).then(|| {
+                c += self.size(here);
+                here
+            })
+        })
     }
 
     /// Node `i`'s `k`-th child.
@@ -536,7 +572,7 @@ impl<'t> View<'t> {
         // Children follow their parent in preorder, each after the one before's subtree.
         let mut c = i + 1;
         for _ in 0..k {
-            c += self.v.size(c);
+            c += self.size(c);
         }
         c
     }

@@ -6,8 +6,8 @@
 //!   as stored;
 //! - **16z**: format 16 in fixed LZ4 blocks, a block decoded where a read falls in it.
 //!
-//! Every language has its table, made from its grammar (decision 0626). A node whose code the table lacks, or past
-//! format 16's bounds, is an error: there is no other format to keep (format 15 is removed, 0626).
+//! Every language has its table, made from its grammar (decision 0631). A node whose code the table lacks, or past
+//! format 16's bounds, is an error: there is no other format to keep (format 15 is removed, 0631).
 
 use super::{Code, FileImage, Grammar, Held, TapeDoc, TapeImage};
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -42,7 +42,7 @@ impl Format {
         rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_TAPE").as_deref() {
             Err(_) | Ok("" | "16") => Format::F16,
             Ok("16z") => Format::F16Z,
-            Ok(other) => panic!("RERAIL_TAPE={other}: the formats are 16 and 16z (format 15 is removed, decision 0626)"),
+            Ok(other) => panic!("RERAIL_TAPE={other}: the formats are 16 and 16z (format 15 is removed, decision 0631)"),
         })
     }
 
@@ -114,7 +114,7 @@ fn sixteen(language: GrammarDialect, number: impl Fn(&'static Lang, u32) -> Opti
 }
 
 /// The language's format 16 table, its tag and whether the run stores 16z; `Err` for a language with no tape tag or
-/// no table (every tape tag has one: decision 0626).
+/// no table (every tape tag has one: decision 0631).
 pub fn run_16(language: GrammarDialect) -> Result<(&'static Lang, u8, bool), String> {
     let tag = crate::code_rule_dsl::language::tape_tag(language).ok_or_else(|| format!("{language:?} has no tape tag"))?;
     let lang = f16::lang(tag).ok_or_else(|| format!("{language:?} (tape tag {tag}) has no format 16 table"))?;
@@ -155,7 +155,7 @@ impl TreeOps {
                 }
             },
         };
-        // A code's classes ascending, each once, as format 15's codes hold them.
+        // A code's classes ascending, each once, as a table's entries hold them.
         let mut sorted = [0u16; super::MAX_NODE_SUPERTYPES];
         let mut count = 0;
         for &c in classes {
@@ -223,7 +223,7 @@ pub struct Lean<'a> {
     target: Result<rerail_tape_format::Sixteen, String>,
 }
 
-/// The sink for a lean parser whose crate names its keys (`names`, decision 0626): each numbered in the language's
+/// The sink for a lean parser whose crate names its keys (`names`, decision 0631): each numbered in the language's
 /// table by the grammar's names the table carries (`Lang::number_named`), as the crate's own tapes are (its `sink`).
 pub fn lean_named<'a>(grammar: &'a Grammar, source: &'a str, budget: &'a dyn Fn() -> bool, names: fn(u32) -> Option<rerail_tape_format::KeyNames>) -> Lean<'a> {
     let target = sixteen(grammar.lang, move |lang, key| lang.number_named(&names(key)?));
@@ -232,13 +232,10 @@ pub fn lean_named<'a>(grammar: &'a Grammar, source: &'a str, budget: &'a dyn Fn(
 
 impl rerail_tape_format::Sink<Result<TapeImage, String>> for Lean<'_> {
     fn target(&self) -> rerail_tape_format::Target {
-        self.target.clone().map_or(rerail_tape_format::Target::F15, rerail_tape_format::Target::F16)
+        self.target.clone()
     }
 
     fn finish(&mut self, mut w: Writer) -> Result<Result<TapeImage, String>, Redo> {
-        if let Err(e) = &self.target {
-            return Ok(Err(e.clone()));
-        }
         Ok(w.finish_16()?.and_then(|f| TapeImage::written_16(f, self.grammar.lang, self.source, None, self.budget)))
     }
 }

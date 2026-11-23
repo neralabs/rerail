@@ -363,7 +363,7 @@ pub(in crate::code_rule_dsl) fn run_view_format() -> u32 {
 /// A program's worker (`join_run`, decision 0603) for views of `format` (0: several): the join kernels' source with
 /// the program's part, which reads its tables and blocks coherent across the device (other groups of its launch
 /// write them). Its stages read views, each compiled for the tape format of the views it reads (decision 0576): on an
-/// Arc 140V `stage_count` compiled in 36 s over every format, 16 s over format 16's and 7 s over format 15's.
+/// Arc 140V `stage_count` compiled in 36 s over every format, and 16 s over format 16's.
 fn program_pipe(format: u32) -> Result<Arc<rerail_accel::gpu::join::Pipe>, String> {
     pipeline(&format!("joinprog{format}"), "join_run", || format!("#define JOIN_PROGRAM 1\n#define CLIF_BLOCKS_COHERENT 1\n{}", view_source(format)))
 }

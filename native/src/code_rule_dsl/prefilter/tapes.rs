@@ -1,6 +1,5 @@
-//! The content store's tapes as `nera_tree` reads them (03 §17, the pure-SQL fallback): a tape's
-//! v9np image decoded from its `tape_objects` frame on first read, its `size` column read in
-//! place. The last few images are held (`HELD`), as SQLite holds pages. With each image its
+//! The content store's tapes as `nera_tree` reads them (03 §17, the pure-SQL fallback): a tape
+//! read from its `tape_objects` frame on first read, its sizes read in place. The last few images are held (`HELD`), as SQLite holds pages. With each image its
 //! parents are rebuilt by one stack pass over the sizes (as `TapeDoc` restores them), so a parent
 //! or an ancestor chain is read, not found by descent from the root; this is a reader's working
 //! state, never stored (decision 0026). `RERAIL_TREE_DESCENT=1` finds them by descent instead,

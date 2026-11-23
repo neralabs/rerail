@@ -14,7 +14,7 @@
 //! - **No statements.** Only the tape is built: the engine's tape, format 16, written by
 //!   `rerail_tape_format::Writer` as the parse goes. Each node's key, size and tail are written in
 //!   the writer's window as it opens and closes, and each statement's nodes passed to format 16's ops
-//!   at its commit (decisions 0140, 0434, 0626). The window's widths are guessed from the source's
+//!   at its commit (decisions 0140, 0434, 0631). The window's widths are guessed from the source's
 //!   length, and the file parsed again at the right ones where the guess was wrong. The open nodes and
 //!   their children are a stack.
 //! - **A wrap** (an operator found after its left operand: `a - b`, `x <= y`) puts its node
@@ -613,7 +613,7 @@ pub fn token_count(src: &str) -> usize {
     lex(src).n
 }
 
-/// The `.rerail` parser's format 16 sink (decision 0626): each key numbered in the language's table
+/// The `.rerail` parser's format 16 sink (decision 0631): each key numbered in the language's table
 /// (`tape::number`), the lines `syntax::TERMINATORS` ends; 16z where `z`, each block's presence where `blocks`. The
 /// engine's run gives its own `z` and `blocks` (its `formats::rr_tape`).
 pub struct Sink16 {
@@ -629,7 +629,7 @@ impl Sink16 {
 
 impl rerail_tape_format::Sink<Result<rerail_tape_format::f16::Finished, String>> for Sink16 {
     fn target(&self) -> rerail_tape_format::Target {
-        rerail_tape_format::Target::F16(self.target.clone())
+        Ok(self.target.clone())
     }
     fn finish(&mut self, mut w: Writer) -> Result<Result<rerail_tape_format::f16::Finished, String>, Redo> {
         w.finish_16()
@@ -639,7 +639,7 @@ impl rerail_tape_format::Sink<Result<rerail_tape_format::f16::Finished, String>>
 impl Finish for Sink16 {
     type Out = Result<rerail_tape_format::f16::Finished, String>;
     fn target(&self) -> rerail_tape_format::Target {
-        rerail_tape_format::Target::F16(self.target.clone())
+        Ok(self.target.clone())
     }
     fn finish<L: Layout>(&mut self, mut w: Writer<L>) -> Result<Self::Out, Redo> {
         w.finish_16()
@@ -673,7 +673,7 @@ pub fn tape_into<F: Finish>(src: &str, finish: &mut F) -> F::Out {
 /// `tape` at `layout`'s widths, the lexer's tokens given.
 fn tape_at<L: Layout, F: Finish>(src: &str, lexed: &Lexed, layout: L, finish: &mut F) -> Result<F::Out, Redo> {
     let Lexed { toks, n, comments } = lexed;
-    let mut out = Writer::new(rerail_tape_format::RR_TAG, layout, n + n / 2 + comments.len() + 8).to(finish.target(), src.as_bytes());
+    let mut out = Writer::new(layout, n + n / 2 + comments.len() + 8).to(finish.target(), src.as_bytes());
     out.push(code(Kind::SourceFile as u16, 0, false), 0);
     let next_comment = comments.first().map_or(u32::MAX, |c| c.0);
     let mut p = Parser { b: src.as_bytes(), t: toks, n: *n, i: 0, no_named: false, out, open: vec![(0, 0)], kids: Vec::with_capacity(64), comments, comment: 0, next_comment };

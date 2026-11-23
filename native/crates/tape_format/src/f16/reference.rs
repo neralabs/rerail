@@ -602,7 +602,7 @@ fn part_into(out: &mut Vec<u8>, e: &[(u16, u64)], nb: usize, vw: usize) {
     }
 }
 
-/// `f16::write_from` by the reference writer.
+/// The tree `t` in format 16 (16z where `z`) by the reference writer, each code mapped to the language's number.
 pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Written, String> {
     write_with(Writer::new(lang, source, crate::newlines::Terminators::Lf, tag, z, false, t.len()), t.len(), nodes_of(t, number)).map(|f| f.tape)
 }

@@ -34,7 +34,7 @@ mod oracle;
 
 pub use kinds::{FIELDS, K, KINDS, f};
 pub use lex::Refusal;
-/// A tape this crate writes (`tape`): format 16 in its language's table, numbered by names (`sink`; decision 0626).
+/// A tape this crate writes (`tape`): format 16 in its language's table, numbered by names (`sink`; decision 0631).
 pub type Tape = rerail_tape_format::f16::Finished;
 
 /// The language's tape tag.
@@ -44,7 +44,7 @@ pub const TAPE_TAG: u8 = 26;
 pub const TERMINATORS: rerail_tape_format::newlines::Terminators = rerail_tape_format::newlines::Terminators::Newlines;
 
 /// Key `key`'s names, as the grammar names them: what its number in its language's table is found by (decision
-/// 0626; `sink`, and the engine's `formats::lean_named`). `None` for a key the parser does not write.
+/// 0631; `sink`, and the engine's `formats::lean_named`). `None` for a key the parser does not write.
 pub fn names(key: u32) -> Option<rerail_tape_format::KeyNames> {
     let (kind, field, class, extra) = unkey(key);
     let (kind, named) = *KINDS.get(usize::from(kind))?;
@@ -57,7 +57,7 @@ pub fn names(key: u32) -> Option<rerail_tape_format::KeyNames> {
     })
 }
 
-/// The crate's own sink (decision 0626): format 16, each key numbered in the language's table by its names (`names`),
+/// The crate's own sink (decision 0631): format 16, each key numbered in the language's table by its names (`names`),
 /// as the engine numbers the parser's keys (its `formats::lean_named`): one numbering, so the tapes are the same.
 pub fn sink() -> rerail_tape_format::Named {
     rerail_tape_format::Named::new(TAPE_TAG, TERMINATORS, names)
@@ -88,8 +88,8 @@ pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
     parse::parse(src)
 }
 
-/// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 15's columns (`tape`), or
-/// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0434).
+/// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 16 or 16z, written by its ops
+/// as the parse goes (`Writer::finish_16`, decision 0434).
 pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
     if src.len() >= u32::MAX as usize / 2 {
         return Err(Refusal::TooLarge);

@@ -46,11 +46,10 @@ pub struct Compiled {
     /// Tier 2's words and its state machine as text.
     pub words: String,
     pub machine: String,
-    /// The tape's format 16 table (decision 0626): the preprocessor tape's, or one of the grammar's names.
+    /// The tape's format 16 table (decision 0631): the preprocessor tape's, or one of the grammar's names.
     table: Table,
-    /// The table's numbers by the format 16 tier 2's keys, made at the first tape: `None` where tier 2 does not
-    /// compile to write format 16.
-    numbers: std::sync::OnceLock<Option<native_cpu_stream::Numbers>>,
+    /// The table's numbers by tier 2's keys, made at the first tape.
+    numbers: std::sync::OnceLock<native_cpu_stream::Numbers>,
 }
 
 /// A compiled grammar's format 16 table: one shared with another writer of its tapes (the preprocessor tape's,
@@ -60,7 +59,7 @@ enum Table {
     Own(rerail_tape_format::f16::Lang),
 }
 
-/// The format 16 table of a grammar's tape (decision 0626): each of its kinds (the `kinds` given, then the `own`
+/// The format 16 table of a grammar's tape (decision 0631): each of its kinds (the `kinds` given, then the `own`
 /// names numbered from `OWN_IDS`) with no field, then with each of its `fields`; an extra's (`extras`) flagged one.
 /// Its numbers are its entries' places, the kinds with no field first: most of a tape's nodes.
 fn table(kinds: usize, own: usize, fields: usize, extras: &[u16]) -> rerail_tape_format::f16::Lang {
@@ -227,14 +226,14 @@ impl Compiled {
         }
     }
 
-    /// The table's numbers by the format 16 tier 2's keys, made once.
-    fn numbers(&self) -> Result<&native_cpu_stream::Numbers, String> {
-        self.numbers.get_or_init(|| Some(self.parser.sixteen()?.numbers(self.lang()))).as_ref().ok_or_else(|| "the grammar's tier 2 does not compile to write format 16".into())
+    /// The table's numbers by tier 2's keys, made once.
+    fn numbers(&self) -> &native_cpu_stream::Numbers {
+        self.numbers.get_or_init(|| self.parser.tier2.numbers(self.lang()))
     }
 
     /// `src`'s tape in format 16 as tier 2 writes it, or why the grammar refuses the file.
     pub fn tape(&self, src: &[u8]) -> Result<Tape16, String> {
-        let w = self.parser.image16(src, TERMINATORS, self.lang(), self.numbers()?, false)?;
+        let w = self.parser.image16(src, TERMINATORS, self.lang(), self.numbers(), false)?;
         written(w).ok_or_else(|| "a 16z tape where format 16 was asked for".into())
     }
 
@@ -278,7 +277,7 @@ impl Compiled {
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn metal_images(&self, files: &[&[u8]]) -> Result<Vec<Option<Tape16>>, rerail_compiler::Error> {
         use rerail_metal::block_program::serial::{Segments, run_resident};
-        let numbers = self.numbers().map_err(|_| rerail_compiler::Error::BackendFailure)?;
+        let numbers = self.numbers();
         let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f, program: 0 }).collect();
         match run_resident(&[&self.native], &batch, Segments { blocks: 29, warm: 1 }) {
             Ok((_, run)) => Ok((0..files.len()).map(|i| rerail_cpu_stream::tier2_on::image16_on(&self.parser, &run, i, TERMINATORS, self.lang(), numbers, false).ok().and_then(written)).collect()),

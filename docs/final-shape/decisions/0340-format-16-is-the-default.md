@@ -2,7 +2,8 @@
 
 Status: decided (2026-11-17), by the user: "Switch to format 16". Decision 0293 kept format 15 as the default until
 0156 was decided. This decision makes format 16 the default. `RERAIL_TAPE=15` and `RERAIL_TAPE=16z` still choose
-the other formats.
+the other formats. **0631 (2026-11-22):** format 15 is removed, so format 16 is the one format and 16z its block
+store; `RERAIL_TAPE=15` is refused.
 
 ## Intro
 

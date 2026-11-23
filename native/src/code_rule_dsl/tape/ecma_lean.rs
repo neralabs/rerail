@@ -5,7 +5,7 @@
 //!
 //! The parser's keys name kinds, fields and supertypes by their names in the grammars
 //! (`rerail_ecma_lean::{KINDS, FIELDS, CLASSES}`), one list for the three; its language's table numbers them by those names
-//! (`names`, decision 0626). A kind one grammar lacks (TypeScript's in JavaScript) has none, and the parser
+//! (`names`, decision 0631). A kind one grammar lacks (TypeScript's in JavaScript) has none, and the parser
 //! never writes it there. A file the parser refuses (any syntax error, which tree-sitter recovers
 //! from; a construct it does not read) goes to tree-sitter.
 

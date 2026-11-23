@@ -3,7 +3,7 @@
 //!
 //! - **The table**: every code the grammar allows (E25, `gcodes`), as the engine's ids: a kind name expanded to
 //!   every id of that name, a field by its id, supertypes by theirs; the plain codes first, then by kind, field and
-//!   memberships. No corpus orders or bounds it (decision 0626): a file of any shape is written in format 16.
+//!   memberships. No corpus orders or bounds it (decision 0631): a file of any shape is written in format 16.
 //! - **The widths**: a byte each; a wider value is escaped to its side list.
 //! - **The revision**: the language's (`f16::revision`).
 //! - **The names** (`f16::Names`): each kind id a node can have with its name, the names that look up another id, and
@@ -101,7 +101,7 @@ pub fn run(tag: u8, scratch: &Path, out: &Path) -> Result<Report, String> {
     let names = names_of(of, &ids, &table);
     let lang = Lang::new(CodeTable::new(table), [1, 1, 1], crate::f16::revision(tag))?.with_names(names);
     let comment = format!(
-        "Tape format 16's choices for tape tag {tag} ({}), decisions 0293 §3 and 0626. Written by the lab from the grammar:\n  tape16 table <tags…> (native/lab/tape16/src/table.rs)\n{} codes{}.",
+        "Tape format 16's choices for tape tag {tag} ({}), decisions 0293 §3 and 0631. Written by the lab from the grammar:\n  tape16 table <tags…> (native/lab/tape16/src/table.rs)\n{} codes{}.",
         crate::capture::language(tag),
         lang.table().len(),
         if bound { "; no node types declared: the grammar's list is the bound" } else { "" }

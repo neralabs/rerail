@@ -1692,10 +1692,9 @@ impl Projected {
         self.parent_of_node(self.node(local as u32))
     }
     /// The parent's local id of the node at tape node `x` (a node of the projection, not its root): its tape parent,
-    /// searched from the innermost granule holding it (`granules::Table::holding`), else its document's root.
+    /// else its document's root.
     pub fn parent_of_node(&self, x: u32) -> u32 {
-        let anchor = self.defs.as_ref().map_or(0, |d| d.table.holding(x));
-        match self.facts.parent_within(x, anchor).map_or(NONE, |q| self.local_of_node(q)) {
+        match self.facts.parent(x).map_or(NONE, |q| self.local_of_node(q)) {
             NONE => 0,
             p => p,
         }

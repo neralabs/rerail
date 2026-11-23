@@ -5,7 +5,7 @@
 //! built from the tape (`FileImage::embedding`), as it is from tree-sitter's.
 //!
 //! The parser's keys name kinds by their names in tree-sitter-vue (`rerail_vue_lean::KINDS`); its language's table numbers them by those names
-//! (`names`, decision 0626). A file the parser refuses (any syntax error, which tree-sitter recovers from;
+//! (`names`, decision 0631). A file the parser refuses (any syntax error, which tree-sitter recovers from;
 //! a construct it does not read) goes to tree-sitter-vue.
 
 use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser};

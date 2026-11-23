@@ -23,7 +23,7 @@ pub enum Error {
 /// as extras, and an ERROR leaf for each statement that does not parse: a file the engine refuses
 /// to run still has a tape.
 ///
-/// Written by the lean parser (`lean::tape`, docs/parser-generators/30) in format 16 (decisions 0140, 0434, 0626:
+/// Written by the lean parser (`lean::tape`, docs/parser-generators/30) in format 16 (decisions 0140, 0434, 0631:
 /// `rerail_tape_format::Writer`), each statement's nodes passed to format 16's ops as the parse commits them, with no
 /// statements built and no conversion after it. It is `engine_tape`'s tree written by format 16's reference ops,
 /// byte for byte (`lean_tape_is_the_engines`, every `.rerail` file of the repository and seven cuts of each). `Err`

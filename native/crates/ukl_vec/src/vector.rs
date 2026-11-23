@@ -43,19 +43,19 @@ pub struct Kernel {
 type R<T> = Result<T, Error>;
 
 /// The kept form's first bytes, and its version: a change to the layout below changes it.
-const KEPT: &[u8; 8] = b"UKLVEC01";
+const KEPT: &[u8; 8] = b"UKLVEC02";
 
 impl Kernel {
     /// The kernel as bytes, for a store of compiled kernels (the device's): its name, its flag, then each tape's
-    /// image and words, each a length and its bytes, little-endian.
+    /// nodes (`[key, start, end, size]` each) and words, each a count and its words, little-endian.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = KEPT.to_vec();
         out.extend((self.name.len() as u64).to_le_bytes());
         out.extend(self.name.as_bytes());
         out.push(u8::from(self.lid));
         for t in [&self.tape, &self.code] {
-            out.extend((t.image.len() as u64).to_le_bytes());
-            out.extend(&t.image);
+            out.extend((t.nodes.len() as u64).to_le_bytes());
+            out.extend(t.nodes.iter().flatten().flat_map(|w| w.to_le_bytes()));
             out.extend((t.words.len() as u64).to_le_bytes());
             out.extend(t.words.iter().flat_map(|w| w.to_le_bytes()));
         }
@@ -79,12 +79,16 @@ impl Kernel {
         let lid = take(1)?[0] != 0;
         let mut tapes = Vec::new();
         for _ in 0..2 {
+            let word = |c: &[u8; 4]| u32::from_le_bytes(*c);
             let n = len(take(8)?)?;
-            let image = take(n)?.to_vec();
+            let nodes = take(n.checked_mul(16)?)?.as_chunks::<16>().0.iter().map(|c| std::array::from_fn(|k| word(&c.as_chunks::<4>().0[k]))).collect();
             let n = len(take(8)?)?;
-            let words = take(n.checked_mul(4)?)?.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect();
-            rerail_tape_format::View::new(&image).ok()?;
-            tapes.push(Tape { image, words });
+            let words = take(n.checked_mul(4)?)?.as_chunks::<4>().0.iter().map(word).collect();
+            let t = Tape { nodes, words };
+            if !t.well_formed() {
+                return None;
+            }
+            tapes.push(t);
         }
         if at != b.len() {
             return None;
@@ -239,9 +243,9 @@ fn callee_instance(b: &Builder, call: usize) -> u32 {
 impl<'p> Emitter<'_, 'p> {
     /// Node `n`'s own payload words (before its first child's).
     fn own(&self, n: usize) -> &'p [u32] {
-        let v = &self.kv.v;
-        let s = v.start(n) as usize;
-        let e = if v.size(n) > 1 { v.start(n + 1) } else { v.end(n) } as usize;
+        let v = self.kv;
+        let s = v.start(n);
+        let e = if v.size(n) > 1 { v.start(n + 1) } else { v.end(n) };
         &self.kv.words[s..e]
     }
 

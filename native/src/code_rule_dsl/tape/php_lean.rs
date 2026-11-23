@@ -6,7 +6,7 @@
 //! bytes tree-sitter-php parses; the view keeps the file's length and every offset, so the tape
 //! reads the file. The parser's keys name kinds, fields and supertypes by their names in
 //! tree-sitter-php (`rerail_php_lean::{KINDS, FIELDS, CLASSES}`); its language's table numbers them by those names
-//! (`names`, decision 0626). A file the
+//! (`names`, decision 0631). A file the
 //! parser refuses (any syntax error, which tree-sitter recovers from; a construct it does not read)
 //! goes to tree-sitter-php.
 

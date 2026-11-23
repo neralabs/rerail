@@ -5,7 +5,7 @@
 //!
 //! The parser's keys name kinds and fields by their names in tree-sitter-sql
 //! (`rerail_sql_lean::{KINDS, FIELDS}`); its language's table numbers them by those names
-//! (`names`, decision 0626). A file the parser refuses (any
+//! (`names`, decision 0631). A file the parser refuses (any
 //! syntax error, which tree-sitter recovers from; a construct it does not read) goes to
 //! tree-sitter-sql.
 

@@ -4,7 +4,7 @@
 //!
 //! The parser's keys name kinds, fields and supertypes by their names in tree-sitter-scala
 //! (`rerail_scala_lean::{KINDS, FIELDS, CLASSES}`); its language's table numbers them by those names
-//! (`names`, decision 0626). A file the parser refuses
+//! (`names`, decision 0631). A file the parser refuses
 //! (any syntax error, which tree-sitter recovers from; a construct it does not read) goes to
 //! tree-sitter-scala.
 

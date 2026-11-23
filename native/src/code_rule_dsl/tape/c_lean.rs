@@ -6,7 +6,7 @@
 //! One parser reads both languages (`rerail_c_lean::Dialect`). Its keys name kinds, fields and
 //! supertypes by their names in tree-sitter-cpp, whose grammar extends tree-sitter-c's
 //! (`rerail_c_lean::{KINDS, FIELDS, CLASSES}`); its language's table numbers them by those names
-//! (`names`, decision 0626). A name the
+//! (`names`, decision 0631). A name the
 //! dialect's grammar lacks is a kind only the other language writes. A file the parser refuses (any
 //! syntax error, which tree-sitter recovers from; a construct it does not read exactly) goes to
 //! tree-sitter.

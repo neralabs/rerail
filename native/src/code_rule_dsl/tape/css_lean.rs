@@ -3,7 +3,7 @@
 //! tree-sitter-css's tree encodes to, node for node (`css_tapes_from_the_lean_parser_are_tree_sitters`).
 //!
 //! The parser's keys name kinds by their names in tree-sitter-css (`rerail_css_lean::KINDS`); its language's table numbers them by those names
-//! (`names`, decision 0626). A file the parser refuses (any syntax error, which tree-sitter recovers from; a
+//! (`names`, decision 0631). A file the parser refuses (any syntax error, which tree-sitter recovers from; a
 //! construct it does not read) goes to tree-sitter-css.
 
 use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser};

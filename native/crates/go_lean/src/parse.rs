@@ -168,7 +168,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
     parse_into(src, &mut crate::sink()).map(crate::written)
 }
 
-/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+/// [`parse`], the writer finished by `finish`: format 16 or 16z (decisions 0293, 0434).
 pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     let lx = Lexer::new(src);
     if let Some(at) = lx.blocks.first_nul() {
@@ -186,7 +186,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
             extras: Vec::new(),
             e: 0,
             extra_at: u32::MAX,
-            w: Writer::new(0, widths, src.len() / 3 + 16).to(finish.target(), src),
+            w: Writer::new(widths, src.len() / 3 + 16).to(finish.target(), src),
             last_end: 0,
             depth: 0,
             far: 0,

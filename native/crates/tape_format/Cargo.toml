@@ -3,7 +3,7 @@ name = "rerail-tape-format"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The engine's tape as bytes: format 15 (v9np), its constants and a writer a parser writes it with; format 16 and its fixed blocks; one API over them, read in place (0293)."
+description = "The engine's tape as bytes: format 16 and its fixed blocks (16z), the writer a parser writes it with, and one API over them, read in place (0293, 0631)."
 
 [features]
 # The tests' shared object for reads outside a run (decision 0442).

@@ -1,4 +1,4 @@
-//! The tape's reads in Rust, written directly (decision 0534): what this crate's readers (`F16`, `F16Z`, `F15`,
+//! The tape's reads in Rust, written directly (decision 0534): what this crate's readers (`F16`, `F16Z`,
 //! `StoredPresence`) read a node with. The reads in CLIF (`rerail_clif::reads`, decision 0310) are the JIT's and
 //! the kernels'; these read the same bytes the same way, and a test holds every read of every node equal to the
 //! JIT's (`f16::tests::the_rust_reads_are_the_jits`).
@@ -7,7 +7,8 @@
 //! slice's: a load past the bytes is a corrupt tape, and panics. Every value read is held where a reader's next
 //! step needs it held (decision 0463): a size is at least 1, a span lies in the source, a parent's step moves back.
 
-use rerail_clif::view::TapeView;
+/// The view every read takes: where the tape's parts lie in its bytes (`rerail_clif::view`, decision 0310).
+pub use rerail_clif::view::TapeView;
 
 /// No node.
 pub const NONE: u32 = u32::MAX;
@@ -353,103 +354,9 @@ pub mod f16 {
     pub use super::has_kind;
 }
 
-/// The reads of a format 15 tape.
-pub mod f15 {
-    use super::{NONE, TapeView, u16_at, u32_at, width};
-    use rerail_clif::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START};
-
-    /// Row `i`'s cell of a column of width 2 or 4.
-    #[inline(always)]
-    fn cell(t: &[u8], column: u32, w: u32, i: u32) -> u32 {
-        if w == 2 { u16_at(t, column, i.wrapping_mul(2)) } else { u32_at(t, column, i.wrapping_mul(4)) }
-    }
-
-    /// The node's subtree's size, at least 1 (decision 0463).
-    #[inline(always)]
-    pub fn size(t: &[u8], v: &TapeView, i: u32) -> u32 {
-        cell(t, v.columns[1], width(v, 0), i).max(1)
-    }
-
-    /// The node's code's number in the tape's own table.
-    #[inline(always)]
-    pub fn number(t: &[u8], v: &TapeView, i: u32) -> u32 {
-        u16_at(t, v.columns[0], i.wrapping_mul(2))
-    }
-
-    /// The node's start as the tape states it: its stride's checkpoint and its offset.
-    #[inline(always)]
-    pub fn start_stated(t: &[u8], v: &TapeView, i: u32) -> u32 {
-        let checkpoint = u32_at(t, v.columns[2], (i >> F15_STRIDE_SHIFT) * 4);
-        checkpoint.wrapping_add(cell(t, v.columns[3], width(v, 1), i))
-    }
-
-    /// The node's end as the tape states it: a tail from the node's own start, or from its last descendant's.
-    #[inline(always)]
-    pub fn end_stated(t: &[u8], v: &TapeView, i: u32) -> u32 {
-        let from = if v.widths & F15_TAIL_FROM_START != 0 { i } else { i.wrapping_add(size(t, v, i)).wrapping_sub(1) };
-        start_stated(t, v, from).wrapping_add(cell(t, v.columns[4], width(v, 2), i))
-    }
-
-    /// The node's start, held to the source (decision 0463).
-    #[inline(always)]
-    pub fn start(t: &[u8], v: &TapeView, i: u32) -> u32 {
-        start_stated(t, v, i).min(v.source_len)
-    }
-
-    /// The node's end, held between its start and the source's end (decision 0463).
-    #[inline(always)]
-    pub fn end(t: &[u8], v: &TapeView, i: u32) -> u32 {
-        end_stated(t, v, i).max(start(t, v, i)).min(v.source_len)
-    }
-
-    /// `c + size`, no further than the tape's nodes, and always past `c` however `size` wraps (decision 0463): from
-    /// the view's last node (a short count, a node asked past it) a hop clamped to the nodes was a step of zero, and a
-    /// walk stopped only past its end never stopped.
-    #[inline(always)]
-    fn hop(v: &TapeView, c: u32, size: u32) -> u32 {
-        let past = c.wrapping_add(1);
-        c.wrapping_add(size).max(past).min(v.nodes).max(past)
-    }
-
-    /// The node's parent, or `NONE` at the root: the nearest node before whose subtree holds the node, back over
-    /// at most 64 nodes, else a descent from the root over the siblings' subtrees.
-    pub fn parent(t: &[u8], v: &TapeView, i: u32) -> u32 {
-        if i == 0 {
-            return NONE;
-        }
-        let mut j = i;
-        for _ in 0..64 {
-            if j == 0 {
-                break;
-            }
-            j -= 1;
-            if hop(v, j, size(t, v, j)) > i {
-                return j;
-            }
-        }
-        let mut at = 0;
-        loop {
-            let mut c = at + 1;
-            loop {
-                let after = hop(v, c, size(t, v, c));
-                if after > i {
-                    break;
-                }
-                c = after;
-            }
-            if c == i {
-                return at;
-            }
-            at = c;
-        }
-    }
-
-    pub use super::has_kind;
-}
-
 /// Whether the tape's block `block` (its nodes `PART * block ..`; `NONE`: the whole document) has a node of kind
-/// `kind`, by its presence (decision 0434 §4, step 6): 1 where the tape has none to tell by (format 15, or one
-/// stored without it), and the document's answer where its blocks' presences are not held.
+/// `kind`, by its presence (decision 0434 §4, step 6): 1 where the tape has none to tell by (one stored without
+/// it), and the document's answer where its blocks' presences are not held.
 pub fn has_kind(t: &[u8], v: &TapeView, block: u32, kind: u32) -> u32 {
     let at = v.presence;
     if at == 0 {

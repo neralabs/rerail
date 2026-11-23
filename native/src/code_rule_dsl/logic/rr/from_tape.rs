@@ -1,5 +1,5 @@
 //! A `.rerail` file's statements, read off its tape (decision 0062). The tape is the lean parser's, in format 16
-//! (`rerail_rr_syntax::tape`, decisions 0140, 0626); lowering reads the statements this module gives, so a rule
+//! (`rerail_rr_syntax::tape`, decisions 0140, 0631); lowering reads the statements this module gives, so a rule
 //! file's program is a function of its tape. The tape is read where it is, through format 16's reads (`f16::F16`):
 //! each node's code and span, its kind and field its code's entry in the language's table, its children by their
 //! subtree ends, with no node decoded ahead and no index of children made.

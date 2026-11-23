@@ -352,7 +352,7 @@ pub fn kind_field(key: u32) -> (u16, u16) {
     if key >> 16 & u32::from(rerail_tape_format::CODE_ERROR) != 0 { (ERROR, 0) } else { ((key & 0x3ff) as u16, (key >> 10 & 0x3f) as u16) }
 }
 
-/// A key's entry in the `.rerail` language's table (format 16, decision 0626): its kind, field and flags (`code`'s);
+/// A key's entry in the `.rerail` language's table (format 16, decision 0631): its kind, field and flags (`code`'s);
 /// a `.rerail` node is in no supertype.
 pub fn entry(key: u32) -> rerail_tape_format::tape::Entry {
     let kf = (key & 0xffff) as u16;
@@ -365,7 +365,7 @@ pub fn entry_kind_field(e: &rerail_tape_format::tape::Entry) -> (u16, u16) {
     if e.flags & rerail_tape_format::CODE_ERROR != 0 { (ERROR, 0) } else { (e.kind, e.field) }
 }
 
-/// The `.rerail` language's format 16 table (tag `RR_TAG`, made from this grammar: decision 0626).
+/// The `.rerail` language's format 16 table (tag `RR_TAG`, made from this grammar: decision 0631).
 pub fn lang() -> &'static rerail_tape_format::f16::Lang {
     rerail_tape_format::f16::lang(rerail_tape_format::RR_TAG).expect("the .rerail language's format 16 table")
 }
@@ -375,7 +375,7 @@ pub fn number(key: u32) -> Option<u32> {
     lang().number(&entry(key))
 }
 
-/// The engine's tape of `nodes` (this parser's, in preorder) over `src`, in format 16 (decision 0626): each node's
+/// The engine's tape of `nodes` (this parser's, in preorder) over `src`, in format 16 (decision 0631): each node's
 /// code numbered in the `.rerail` table, its subtree the nodes whose parent chain reaches it, written by format 16's
 /// ops in one pass with each block's presence (`f16::write_present`), as a parser's run writes it. The lean parser's
 /// tape is checked against it.

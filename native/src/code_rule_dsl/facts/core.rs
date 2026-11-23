@@ -157,7 +157,7 @@ pub struct Facts {
     errors: std::sync::OnceLock<Vec<u32>>,
     /// The codes the document holds, ascending, found on the first kind or class test (a scan of the codes): a
     /// summary of the document, not of its nodes. On format 16 the table is the language's, so a test of a kind the
-    /// document lacks is answered here without a scan, as format 15's table of the document's own codes answers it.
+    /// document lacks is answered here without a scan.
     held: std::sync::OnceLock<Held>,
     /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape. `Err`: `ast.parse`
     /// raises another exception than `SyntaxError` (`facts::vtab::syntax::python_syntax`).
@@ -1049,7 +1049,7 @@ impl Facts {
         on_tape!(self, |t| t.parent(id as usize).map(|p| p as u32))
     }
     /// The nodes `a..b` in preorder, each with its parent: from the subtrees open around it, read in the same pass,
-    /// where its parent is in the range; else read off the tape (on format 15, a search back). So a walk over a
+    /// where its parent is in the range; else read off the tape (a search back). So a walk over a
     /// subtree reads one parent off the tape, not one a node.
     pub fn with_parents(&self, a: u32, b: u32) -> impl Iterator<Item = (u32, Option<u32>)> + '_ {
         let mut open: Vec<(u32, u32)> = Vec::new();
@@ -1066,11 +1066,6 @@ impl Facts {
         })
     }
     /// The node's parent, `NONE` for the root.
-    /// `id`'s parent, `a` an ancestor of it the caller knows (`Tape::parent_within`: on format 15 the search starts
-    /// there).
-    pub fn parent_within(&self, id: u32, a: u32) -> Option<u32> {
-        on_tape!(self, |t| t.parent_within(id as usize, a as usize).map(|p| p as u32))
-    }
     pub fn parent_or_none(&self, id: u32) -> u32 {
         self.parent(id).unwrap_or(NONE)
     }

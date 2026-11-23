@@ -378,7 +378,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
     parse_into(src, &mut crate::sink()).map(crate::written)
 }
 
-/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+/// [`parse`], the writer finished by `finish`: format 16 or 16z (decisions 0293, 0434).
 pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     if src.is_empty() {
         return Err(Refusal::Parse(0));
@@ -1321,7 +1321,7 @@ impl<'a> P<'a> {
         }
         let mut widths = Widths::guess(self.src.len());
         loop {
-            let mut w = Writer::new(0, widths, nodes.len() + 1).to(finish.target(), self.src);
+            let mut w = Writer::new(widths, nodes.len() + 1).to(finish.target(), self.src);
             let mut stack: Vec<(usize, u32, usize)> = Vec::new();
             for (i, &(k, s, e, size)) in nodes.iter().enumerate() {
                 while stack.last().is_some_and(|&(_, _, end)| end <= i) {

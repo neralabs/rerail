@@ -743,25 +743,6 @@ impl Table {
         (low != rerail_clif::ids::NONE).then_some(low)
     }
 
-    /// The start of the innermost granule whose subtree holds tape node `x` below its start (an ancestor of `x`),
-    /// 0 when none does: where a parent search may start (`Facts::parent_within`).
-    pub fn holding(&self, x: u32) -> u32 {
-        let mut g = self.starts.partition_point(|&s| s < x);
-        while g > 0 {
-            g -= 1;
-            if self.starts[g] < x && self.ends[g] > x {
-                return self.starts[g];
-            }
-            // An earlier granule's subtree ended before `x`, or it starts at `x`: its parent's may hold it.
-            let up = self.parents[g];
-            if up == u32::MAX {
-                return 0;
-            }
-            g = up as usize + 1;
-        }
-        0
-    }
-
     /// The item whose id's low 32 bits are `low` (`low_of`'s inverse): what it is and its number (`num_number_of`).
     #[inline]
     pub fn number_of(&self, r: &Ranks, low: u32) -> Option<(Item, u32)> {

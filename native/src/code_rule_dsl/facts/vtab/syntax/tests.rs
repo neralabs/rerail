@@ -1815,12 +1815,6 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 for (l, _, q) in p.walk() {
                     assert_eq!(q, p.parent(l as usize), "{label} {format:?} {shape:?}: the parent of local {l}");
                 }
-                // A parent searched from the innermost granule holding the node is the tape's (`Tape::parent_within`).
-                if let Some(t) = p.table() {
-                    for x in 1..f.len() as u32 {
-                        assert_eq!(f.parent_within(x, t.holding(x)), f.parent(x), "{label} {format:?} {shape:?}: tape node {x}'s parent");
-                    }
-                }
                 // A node's place among its parent's children and its depth, read off the tape (decision 0353 step 3),
                 // are the walk's.
                 let (mut next, mut depth) = (vec![0u32; p.len() as usize], vec![0u32; p.len() as usize]);
@@ -2156,7 +2150,7 @@ fn host_id_reads(h: &rerail_clif::ids::Numbering, x: u32) -> [u32; 12] {
 
 /// Decision 0536: the numbering's reads written directly in Rust (`Numbering::is`, …) answer what its reads in CLIF
 /// answer, by the JIT: for every tape node, the kernels' probes (`the_kernels_id_reads_are_the_hosts`) and every
-/// item's bit, rank and select, and lows and order keys that are no item's. In all three formats, whole and narrowed.
+/// item's bit, rank and select, and lows and order keys that are no item's. In both formats (16 and 16z), whole and narrowed.
 #[test]
 fn the_jits_id_reads_are_the_hosts() {
     if !definition_ids() {
@@ -2203,7 +2197,7 @@ fn the_jits_id_reads_are_the_hosts() {
 /// Decision 0353 step 2: the numbering's reads as UKL (`<ukl/reads/ids.h>`, written once in CLIF), run on the device
 /// over a projection's descriptor where it lies in its block, answer what the host's reads (written directly) answer: for
 /// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
-/// and back. In all three formats, whole and narrowed, a document of more nodes than a granule's slot holds. The
+/// and back. In both formats (16 and 16z), whole and narrowed, a document of more nodes than a granule's slot holds. The
 /// kernel is UKL, on the process's device (decision 0440 step C).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
@@ -2272,14 +2266,14 @@ DEFINE_KERNEL2(syntax_tests, ids_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, I
         }
         tried += 1;
     }
-    assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
+    assert_eq!(tried, 3 * crate::code_rule_dsl::tape::formats::Format::ALL.len() * 3, "every case, format and shape");
 }
 
 /// Decision 0353 step 4c: the `node`, `child`, `field`, `core_node` and `line` views' rows read through the views' reads (written once in CLIF), by the JIT on
 /// the host and as MSL on the device, over the document's entry, its numbering where it lies in its block and its
 /// tape where it is read in place, are the host's rows (`Viewed::value_of`): every numbered node's document, id, kind,
 /// start and end; each child's parent, id and place; each fielded node's parent, field and id; each node's tape node;
-/// each node's line, by its lines where they lie (step 4d). In all three formats, whole and narrowed.
+/// each node's line, by its lines where they lie (step 4d). In both formats (16 and 16z), whole and narrowed.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_view_reads_are_the_hosts_rows() {

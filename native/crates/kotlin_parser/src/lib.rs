@@ -31,12 +31,11 @@ pub struct Compiled {
     pub proofs: Vec<(rerail_bitlex::bitlex_prove::Key, rerail_bitlex::bitlex_prove::Answer)>,
     /// Tier 2 as Rust, written by the Bitlex compiler from the tree rules (`bitlex_rust`).
     pub rust: Option<Result<String, String>>,
-    /// Kotlin's numbers by the format 16 tier 2's keys, made at the first tape: `None` where tier 2 does not compile
-    /// to write format 16.
-    numbers: std::sync::OnceLock<Option<native_cpu_stream::Numbers>>,
+    /// Kotlin's numbers by tier 2's keys, made at the first tape.
+    numbers: std::sync::OnceLock<native_cpu_stream::Numbers>,
 }
 
-/// The tape: format 16, in Kotlin's table (decision 0626).
+/// The tape: format 16, in Kotlin's table (decision 0631).
 pub type Tape = rerail_tape_format::f16::Tape16;
 
 /// Kotlin's format 16 table.
@@ -181,7 +180,7 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
     lap("tier 1 Cranelift");
     let tier2 = native_cpu_stream::compile_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 2 Cranelift");
-    let parser = native_cpu_stream::Parser::with_tiers(&native, &cut, tier1, tier2);
+    let parser = native_cpu_stream::Parser::from_parts(tier1, tier2);
     Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone(), rust: compiled.rust.clone(), numbers: Default::default() })
 }
 
@@ -202,7 +201,11 @@ impl Compiled {
         }
         let interp = rerail_compiler::stream::run(&self.program, src.as_bytes(), &run);
         out.push_str(&format!("interpreter: {:?}\n", interp.as_ref().map(|n| n.len())));
-        out.push_str(&format!("compiled tier 2 over the interpreter's tier 1: {:?}\n", self.parser.tier2.run(src.as_bytes(), &run).map(|n| n.len())));
+        #[cfg(feature = "test-hooks")]
+        {
+            let tape = self.parser.tier2.image16_on(src.as_bytes(), lean::TERMINATORS, &run, lang(), self.numbers(), false);
+            out.push_str(&format!("compiled tier 2 over the interpreter's tier 1: {:?}\n", tape.map(|w| w.extent().len())));
+        }
         if let Err(why) = &interp {
             for line in self.words.lines().filter(|l| l.split_whitespace().next().and_then(|w| w.parse::<usize>().ok()).is_some_and(|pc| pc + 6 >= why.pc && pc <= why.pc + 3)) {
                 out.push_str(line);
@@ -218,14 +221,14 @@ impl Compiled {
         rerail_compiler::stream::run(&self.program, src.as_bytes(), &run).err().and_then(|r| r.at)
     }
 
-    /// The numbers by the format 16 tier 2's keys, made once.
-    fn numbers(&self) -> Result<&native_cpu_stream::Numbers, String> {
-        self.numbers.get_or_init(|| Some(self.parser.sixteen()?.numbers_by(&number))).as_ref().ok_or_else(|| "the grammar's tier 2 does not compile to write format 16".into())
+    /// The numbers by tier 2's keys, made once.
+    fn numbers(&self) -> &native_cpu_stream::Numbers {
+        self.numbers.get_or_init(|| self.parser.tier2.numbers_by(&number))
     }
 
     /// `src`'s tape in format 16 as tier 2 writes it, or why the grammar refuses the file.
     pub fn tape(&self, src: &str) -> Result<Tape, String> {
-        sixteen(self.parser.image16(src.as_bytes(), lean::TERMINATORS, lang(), self.numbers()?, false)?)
+        sixteen(self.parser.image16(src.as_bytes(), lean::TERMINATORS, lang(), self.numbers(), false)?)
     }
 
     /// `src`'s tape, or `None` where the grammar refuses the file.
@@ -237,7 +240,7 @@ impl Compiled {
     pub fn interpreted(&self, src: &str) -> Result<Tape, String> {
         let run = self.program.block_programs[0].run(src.as_bytes());
         let nodes = rerail_compiler::stream::run(&self.program, src.as_bytes(), &run).map_err(|why| format!("{why:?}"))?;
-        sixteen(rerail_compiler::stream::image16_by(&nodes, &self.program.readings.extras, lang(), &number, lean::TERMINATORS, TAG, src.as_bytes())?)
+        sixteen(rerail_compiler::stream::image16_by(&nodes, &self.program.readings.extras, &number, rerail_compiler::stream::Form16 { lang: lang(), terminators: lean::TERMINATORS, tag: TAG, z: false }, src.as_bytes())?)
     }
 }
 

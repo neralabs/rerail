@@ -221,7 +221,7 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
     parse_from(src, None, dialect, &mut crate::sink(dialect)).map(crate::written)
 }
 
-/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+/// [`parse`], the writer finished by `finish`: format 16 or 16z (decisions 0293, 0434).
 pub fn parse_into<Out>(src: &[u8], dialect: Dialect, finish: &mut dyn Sink<Out>) -> R<Out> {
     parse_from(src, None, dialect, finish)
 }
@@ -253,7 +253,7 @@ fn parse_from<Out>(src: &[u8], given: Option<&[Tok]>, dialect: Dialect, finish: 
             extras: Vec::new(),
             e: 0,
             extra_at: u32::MAX,
-            w: Writer::new(0, widths, src.len() / 3 + 16).to(finish.target(), src),
+            w: Writer::new(widths, src.len() / 3 + 16).to(finish.target(), src),
             last_end: 0,
             depth: 0,
             far: 0,

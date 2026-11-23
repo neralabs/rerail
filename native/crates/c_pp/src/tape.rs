@@ -155,7 +155,7 @@ impl Gather<'_> {
 pub fn image(src: &[u8], opts: Options) -> Tape16 {
     let nodes = nodes(src, opts);
     let mut widths = Widths::guess(src.len());
-    let target = Target::F16(Sixteen { lang: lang(), terminators: LINE_ENDS, tag: TAG, z: false, blocks: true, number: std::sync::Arc::new(number) });
+    let target: Target = Ok(Sixteen { lang: lang(), terminators: LINE_ENDS, tag: TAG, z: false, blocks: true, number: std::sync::Arc::new(number) });
     loop {
         match write(&nodes, src, widths, target.clone()).and_then(|mut w| w.finish_16()) {
             Ok(Ok(f)) => match f.tape {
@@ -358,7 +358,7 @@ fn nodes(src: &[u8], opts: Options) -> Vec<Node> {
 /// The nodes, sorted by start, then the longest first, then by rank, written in preorder under the
 /// root: a node is inside the open ones that end after its start.
 fn write(nodes: &[Node], src: &[u8], widths: Widths, target: Target) -> Result<Writer<Widths>, Redo> {
-    let mut w = Writer::new(TAG, widths, nodes.len() + 16).to(target, src);
+    let mut w = Writer::new(widths, nodes.len() + 16).to(target, src);
     let root = w.push(key(PP, 0, 0), 0);
     let mut open: Vec<(usize, u32)> = Vec::new();
     for n in nodes {

@@ -6,7 +6,7 @@
 //!
 //! The parser's keys name kinds by their names in the inline grammar
 //! (`rerail_markdown_inline_lean::KINDS`; it has no fields); its language's table numbers them by those names
-//! (`names`, decision 0626). A text the
+//! (`names`, decision 0631). A text the
 //! parser refuses (an ambiguity tree-sitter settles by its own measure, a construct it does not
 //! read) goes to tree-sitter-md-inline.
 

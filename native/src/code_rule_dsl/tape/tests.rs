@@ -329,7 +329,7 @@ fn persisted_image_round_trips_without_parsing() {
     // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`, Patch 28's
     // `_member_name_here`, Patch 29's `_template_escape_without_digits`, Patch 30's `using`
     // declarations, `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; so does the language's format 16
-    // table (its codes, from the grammar, decision 0626), and a change of format 16's layout (decision 0434).
+    // table (its codes, from the grammar, decision 0631), and a change of format 16's layout (decision 0434).
     assert_eq!(
         digest,
         "b59b19b661ab9911df54b886b1ec64f133f66485c30abc507292be89cb1ee60d"
@@ -2283,7 +2283,9 @@ fn simdjson_tapes_over_files() {
         match simdjson_tapes(&source) {
             Err(_) => refused.push(path.to_owned()),
             Ok((ours, theirs)) if ours == theirs => {
-                if rerail_simdjson::tape_with(kernel, source.as_bytes(), kinds).is_ok() {
+                if rerail_simdjson::events_with(kernel, source.as_bytes(), kinds, false, |_, _| ())
+                    .is_ok()
+                {
                     strict += 1
                 } else {
                     jsonc += 1
@@ -2380,7 +2382,7 @@ fn json_parse_costs() {
     let nodes: usize = files
         .iter()
         .map(|f| {
-            rerail_simdjson::tape(f.as_bytes(), kinds)
+            rerail_simdjson::walk_from_index(f.as_bytes(), kinds)
                 .unwrap()
                 .node_count()
         })
@@ -2401,19 +2403,23 @@ fn json_parse_costs() {
             Box::new(|f| rerail_simdjson::structurals(f.as_bytes(), <[u32]>::len).unwrap()),
         ),
         (
-            "simdjson: DOM parse, columns from index",
+            "simdjson: DOM parse, events from index",
             Box::new(|f| {
-                rerail_simdjson::tape_from_index(f.as_bytes(), kinds)
-                    .unwrap()
-                    .node_count()
+                let mut n = 0;
+                rerail_simdjson::events_from_index(f.as_bytes(), kinds, |_, w| n += w.len() / 3)
+                    .unwrap();
+                n
             }),
         ),
         (
             "simdjson: stage 1 (hashed), stage 2",
             Box::new(|f| {
-                rerail_simdjson::tape_with(kernel, f.as_bytes(), kinds)
-                    .unwrap()
-                    .node_count()
+                let mut n = 0;
+                rerail_simdjson::events_with(kernel, f.as_bytes(), kinds, false, |_, w| {
+                    n += w.len() / 3
+                })
+                .unwrap();
+                n
             }),
         ),
         // Through the router's `TreeParser::parse`, as the product calls it (the tape's generic code is made in the parser's crate).
@@ -7498,7 +7504,7 @@ fn scala_tapes_from_the_lean_parser_are_tree_sitters() {
             "val xs = List(1, 2).map(_ * 2).filter { x => x > 1 }\n",
             "def g(a: Any) = a match {\n  case s: String => s.length\n  case _ => 0\n}\n",
             "trait T {\n  val s = s\"$x ${y + 1}\"\n  lazy val n = 0x1FL\n}\n",
-            // A constructor annotation's `(`: id 40, named `arguments`, under its contextual alias `(` (decision 0626).
+            // A constructor annotation's `(`: id 40, named `arguments`, under its contextual alias `(` (decision 0631).
             "class A @Inject() (x: Int)\n",
         ],
         &["class A {\n", "def f( = 1\n", "val x = (1,\n"],

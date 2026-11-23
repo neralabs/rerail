@@ -1,5 +1,5 @@
 //! The C tape (tree-sitter-c's, `rerail-c-lean`'s format 16 tape) read in place: a node's kind, field, span, text
-//! and children, by its index in preorder, named by its language's table (decision 0626).
+//! and children, by its index in preorder, named by its language's table (decision 0631).
 
 use rerail_c_lean::Tape;
 use rerail_tape_format::f16::{F16, Lang, Written, lang};

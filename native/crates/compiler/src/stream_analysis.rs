@@ -415,12 +415,10 @@ pub enum Mem {
     Live,
     /// The count of tokens (`COUNT`).
     Depth,
-    /// The tape: the last block's base; the nodes committed (their codes written) and the
-    /// codes; the flags of values that did not fit their widths (`native_cpu_tape::WIDE_OFF`).
-    BlockBase,
+    /// The tape: the commit point (the nodes before it final) and the nodes passed to the writer's ops
+    /// (`native_cpu_tape::pass`).
     Coded,
     Codes,
-    Wide,
     /// A region tier 2 splits (`Split::Tier2`, decision 0323): the byte its next part starts at
     /// (0: none), and its closer's last byte.
     PartAt,
@@ -434,7 +432,7 @@ pub enum Mem {
 }
 
 impl Mem {
-    pub const COUNT: u32 = 31;
+    pub const COUNT: u32 = 29;
 }
 
 /// The fields a rule's function holds in registers (`Cut::held`) and passes to its calls, given
@@ -447,12 +445,11 @@ pub const HELD_IN_RULES: [u32; 0] = [];
 
 /// The fields tier 2 holds as SSA values where it is one function (`Cut::one`): those every
 /// token reads and writes (the next token's index, its start, limit and code, the end of the
-/// token before, the nodes made and open, the tape block's base every leaf's start is coded
-/// from, a split region's cursor), as simdjson's stage 2
+/// token before, the nodes made and open, a split region's cursor), as simdjson's stage 2
 /// keeps `next_structural` and `src` in registers. The loop's cold calls keep the caller's
 /// general registers (`preserve_most`), and the values from far away are made again where used
 /// (`remat_far`), so these stay in registers. The rest stays in the frame, read where used.
-pub const HELD_IN_ONE: [u32; 9] = [Mem::Next as u32, Mem::Start as u32, Mem::Limit as u32, Mem::Taken as u32, Mem::LastEnd as u32, Mem::Nodes as u32, Mem::Open as u32, Mem::BlockBase as u32, Mem::PartAt as u32];
+pub const HELD_IN_ONE: [u32; 8] = [Mem::Next as u32, Mem::Start as u32, Mem::Limit as u32, Mem::Taken as u32, Mem::LastEnd as u32, Mem::Nodes as u32, Mem::Open as u32, Mem::PartAt as u32];
 
 /// The token's last bytes at which a token's check can hold (decision 0428), where its test is
 /// at its last byte (`token_ops_past`: `Last` read `delay` back from the test, in a conjunct).
@@ -672,7 +669,7 @@ pub fn one_byte(ft: &Fetch, rule: &crate::records::EndRule) -> bool {
 }
 
 /// The supertypes a program's nodes are put in (`NODE_SUPER`'s kinds), ascending: each a bit of
-/// a code's key (`native_cpu_tape::commit`). Past `MAX_CLASSES`, refused.
+/// a key's slot (`id_slots`). Past `MAX_CLASSES`, refused.
 pub fn supertype_classes(native: &Structure) -> Result<Vec<u16>, Error> {
     let mut c: Vec<u16> = native.structural.iter().filter_map(|b| if let Op::NodeSuper { kind } = b.operation { Some(kind) } else { None }).collect();
     c.sort_unstable();
@@ -886,10 +883,3 @@ pub const fn id_slots(classes: usize) -> usize {
 /// The most supertype classes a program's codes carry (`NODE_SUPER`'s kinds).
 pub const MAX_CLASSES: usize = 4;
 
-/// No code for a key yet (`id_of`).
-pub const NO_CODE: i64 = 0xffff;
-
-/// The flags of a value that did not fit its width (`Mem::Wide`): an offset, a tail (or an end
-/// before the last descendant's start, from the last descendant).
-pub const WIDE_OFF: i64 = 1;
-pub const WIDE_TAIL: i64 = 2;

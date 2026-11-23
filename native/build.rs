@@ -303,7 +303,7 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     view_sources.push(manifest.join("src/code_rule_dsl/tape/tokens.rs"));
     // A stored tape's line index holds its language's terminators (decision 0612): their definition is the tape's.
     view_sources.push(manifest.join("crates/tape_format/src/newlines.rs"));
-    // A format 16 tape's codes are numbers in its language's table (decision 0626: the grammar's codes): a table
+    // A format 16 tape's codes are numbers in its language's table (decision 0631: the grammar's codes): a table
     // written again makes the stored tapes again.
     collect_sources(&manifest.join("crates/tape_format/tables"), &mut view_sources);
     view_sources.push(manifest.join("grammars/token-grammars/rust/grammar.json"));

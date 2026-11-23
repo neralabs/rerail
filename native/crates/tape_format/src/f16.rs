@@ -47,7 +47,7 @@ pub struct Lang {
     names: Names,
 }
 
-/// A language's names, as its grammar has them (decision 0626): each kind id a node can have (a public symbol) with
+/// A language's names, as its grammar has them (decision 0631): each kind id a node can have (a public symbol) with
 /// its name and whether it is named, each name's lookup (the id a node of that name has), and each field id's name. A parser that names its kinds and fields as the grammar does numbers its
 /// nodes by them (`kind_of`, `field_of`), as tree-sitter's `id_for_node_kind` and `field_id_for_name` do; a tape is
 /// shown by them (`tape::plain_text`).
@@ -274,7 +274,7 @@ impl Lang {
 }
 
 /// The choices format 16 ships for the language of tape tag `tag` (`tables/<tag>.tsv`, written by the lab's
-/// `tape16 table`), read once; none for a language without them, whose documents keep format 15 (0293 §3).
+/// `tape16 table`), read once; none for a language without them, whose documents are held without a tape (0293 §3).
 pub fn lang(tag: u8) -> Option<&'static Lang> {
     static LANGS: [std::sync::OnceLock<Option<Lang>>; 256] = [const { std::sync::OnceLock::new() }; 256];
     LANGS[usize::from(tag)]
@@ -298,7 +298,7 @@ pub const MAGIC16Z: &[u8; 8] = b"TMPTAPBZ";
 
 /// Where a stored format 16 or 16z tape's header holds each value. A 16z tape's header is the header of the format
 /// 16 tape it decodes to, but for its magic and its own fields (`Z`).
-mod head {
+pub mod head {
     /// The language's tape tag, a byte; then the revision mark and the checkpoints' width.
     pub const LANGUAGE: usize = 8;
     pub const MARK: usize = 9;
@@ -306,8 +306,7 @@ mod head {
     /// The source's newlines, u32: its newline index's count (`newlines`).
     pub const NEWLINES: usize = 12;
     /// The source's length, u64; the node count, u64.
-    /// Where format 15's header states it too (`header::SOURCE_LEN`): a reader of either finds it there.
-    pub const SOURCE_LEN: usize = crate::header::SOURCE_LEN;
+    pub const SOURCE_LEN: usize = 16;
     pub const NODES: usize = 24;
     /// The side lists' value widths, a byte each; then the slot, gap and length widths.
     pub const VW: usize = 32;
@@ -849,7 +848,7 @@ pub struct StoredPresence<'a> {
 
 impl<'a> StoredPresence<'a> {
     /// The presence `buf` holds after its tape, checked to fill it, of `lang`'s kinds and fields; `None` where it holds
-    /// none (format 15, or a tape stored without one) or is no format 16 or 16z tape's home.
+    /// none (a tape stored without one) or is no format 16 or 16z tape's home.
     pub fn of(buf: &'a [u8], lang: &Lang) -> Option<Self> {
         let p = header(buf).ok()?;
         let end = if buf.starts_with(MAGIC16) {
@@ -1169,30 +1168,15 @@ pub(crate) fn write_with(mut w: impl WriterOps, n: usize, mut node: impl FnMut(u
 
 const NONE: u32 = u32::MAX;
 
-/// Format 16 (or 16z where `z`) written from another tape `t`, each node's code mapped to the language's number
-/// (`number`, by `t`'s code), in one pass (`write`): a tape a parser did not write in format 16 (decision 0293).
-pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Written, String> {
-    write(lang, t.len(), source, terminators, tag, z, nodes_of(t, number))
-}
-
-/// `write_from`, with the tape's presence, the document's and each block's (§4).
-pub fn write_from_with_presence<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Finished, String> {
-    write_with(Writer::new(lang, source, terminators, tag, z, true, t.len()), t.len(), nodes_of(t, number))
-}
-
-/// `t`'s nodes in preorder, as `write` takes them.
+/// `t`'s nodes in preorder, as `write` takes them, each code mapped to the language's number (`number`, by `t`'s
+/// code): a tree written in format 16 by a test or the reference writer.
+#[cfg(any(test, feature = "reference"))]
 pub(crate) fn nodes_of<'t, T: Tape>(t: &'t T, number: &'t [u32]) -> impl FnMut(usize) -> Node + 't {
     let mut s = 0;
     move |i| {
         s = t.start_next(i, s);
         Node { number: number[t.code(i) as usize], start: s, end: t.end_with_start(i, s), subtree_end: t.subtree_end(i) }
     }
-}
-
-/// Each of `table`'s codes as `lang`'s number: what `write_from` maps a tape's codes with. An error names a code the
-/// language's table does not hold.
-pub fn numbers(lang: &Lang, table: &CodeTable) -> Result<Vec<u32>, String> {
-    table.entries().iter().map(|e| lang.number(e).ok_or_else(|| format!("code {e:?} is not in the language's table"))).collect()
 }
 
 // ---- the reader ------------------------------------------------------------------------------------------
@@ -1950,7 +1934,19 @@ mod lz4 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tape::{F15, children, f15_columns};
+    use crate::tape::children;
+    use crate::tape::tests::{Plain, sample};
+
+    /// Format 16 (or 16z where `z`) written from the tree `t`, each node's code mapped to the language's number
+    /// (`number`, by `t`'s code), in one pass (`write`).
+    fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Written, String> {
+        write(lang, t.len(), source, terminators, tag, z, nodes_of(t, number))
+    }
+
+    /// Each of `table`'s codes as `lang`'s number: what `write_from` maps a tree's codes with.
+    fn numbers(lang: &Lang, table: &CodeTable) -> Result<Vec<u32>, String> {
+        table.entries().iter().map(|e| lang.number(e).ok_or_else(|| format!("code {e:?} is not in the language's table"))).collect()
+    }
 
     /// Format 16 written from `t` in one pass, and 16z written the same way, which is the format 16 tape's blocks.
     fn sixteen<T: Tape>(lang: &Lang, t: &T, number: &[u32], source_len: u64) -> Tape16 {
@@ -2025,18 +2021,17 @@ mod tests {
     /// The line reads over sources whose newlines are dense, sparse, bunched and absent: a tape of one node.
     #[test]
     fn format_16_answers_lines() {
-        let (image, _) = crate::tape::tests::sample();
-        let (columns, table) = f15_columns(&image).unwrap();
-        let f15 = F15::new(&image, columns, &table).unwrap();
+        let (nodes, table) = sample();
+        let tree = Plain(&nodes, &table);
         let lang = lang_of(&table);
         let number = numbers(&lang, &table).unwrap();
-        let span = f15.end(0);
+        let span = tree.end(0);
         for mut source in crate::newlines::tests::sources() {
             source.resize(source.len().max(span as usize), b'y');
-            let Ok(Written::F16(t)) = write_from(&lang, &f15, &number, &source, crate::newlines::Terminators::Lf, 0, false) else { panic!("format 16") };
+            let Ok(Written::F16(t)) = write_from(&lang, &tree, &number, &source, crate::newlines::Terminators::Lf, 0, false) else { panic!("format 16") };
             let back = Tape16::from_bytes(t.as_bytes().to_vec()).unwrap();
             lines_answer(&back.reader(&lang).unwrap(), &source);
-            let Ok(Written::F16Z(z)) = write_from(&lang, &f15, &number, &source, crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
+            let Ok(Written::F16Z(z)) = write_from(&lang, &tree, &number, &source, crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
             let z = Tape16Z::from_bytes(z.as_bytes().to_vec()).unwrap();
             let mut decoded = vec![0u8; z.decoded_len()];
             z.decode_into(&mut decoded).unwrap();
@@ -2064,26 +2059,25 @@ mod tests {
         }
     }
 
-    /// Format 16 written from format 15 answers every question as format 15 does.
+    /// Format 16 written from a tree answers every question as the tree does.
     #[test]
-    fn format_16_answers_as_format_15() {
-        let (image, _) = crate::tape::tests::sample();
-        let (columns, table) = f15_columns(&image).unwrap();
-        let f15 = F15::new(&image, columns, &table).unwrap();
+    fn format_16_answers_as_its_tree() {
+        let (nodes, table) = sample();
+        let tree = Plain(&nodes, &table);
         let lang = lang_of(&table);
         let number = numbers(&lang, &table).unwrap();
-        let t = sixteen(&lang, &f15, &number, 2_000);
-        same(&f15, &t.reader(&lang).unwrap(), &number);
-        same(&f15, &t.blocks().reader(&lang).unwrap(), &number);
+        let t = sixteen(&lang, &tree, &number, 2_000);
+        same(&tree, &t.reader(&lang).unwrap(), &number);
+        same(&tree, &t.blocks().reader(&lang).unwrap(), &number);
         // As stored, and read back where it lies.
         let mut tagged = t.clone();
         tagged.set_tag(7);
         let back = Tape16::from_bytes(tagged.as_bytes().to_vec()).unwrap();
         assert_eq!((back.tag(), back.source_len()), (7, 2_000));
-        same(&f15, &back.reader(&lang).unwrap(), &number);
+        same(&tree, &back.reader(&lang).unwrap(), &number);
         let z = Tape16Z::from_bytes(tagged.blocks().as_bytes().to_vec()).unwrap();
         assert_eq!((z.tag(), z.source_len()), (7, 2_000));
-        same(&f15, &z.reader(&lang).unwrap(), &number);
+        same(&tree, &z.reader(&lang).unwrap(), &number);
         let mut short = tagged.as_bytes().to_vec();
         short.pop();
         assert!(Tape16::from_bytes(short).is_err());
@@ -2207,32 +2201,6 @@ mod tests {
         (nodes, pos)
     }
 
-    /// Nodes read straight from their cells: a reference.
-    struct Plain<'a>(&'a [(u32, u64, u64, usize)], &'a CodeTable);
-    impl Tape for Plain<'_> {
-        fn len(&self) -> usize {
-            self.0.len()
-        }
-        fn table(&self) -> &CodeTable {
-            self.1
-        }
-        fn code(&self, i: usize) -> u32 {
-            self.0[i].0
-        }
-        fn subtree_end(&self, i: usize) -> usize {
-            i + self.0[i].3
-        }
-        fn parent(&self, i: usize) -> Option<usize> {
-            (0..i).rev().find(|&j| self.subtree_end(j) > i)
-        }
-        fn start(&self, i: usize) -> u64 {
-            self.0[i].1
-        }
-        fn end(&self, i: usize) -> u64 {
-            self.0[i].2
-        }
-    }
-
     /// Every read of every node equals `t`'s, read where the tape lies.
     fn same_reads<T: Tape>(reads: &rerail_clif::jit::Reads, t: &T, tape: &[u8], view: &rerail_clif::view::TapeView) {
         const NONE: u32 = u32::MAX;
@@ -2261,12 +2229,11 @@ mod tests {
     }
 
     /// The CLIF reads (decision 0310) read every node as this crate's readers do: format 16 with every side list
-    /// in use, and format 15; the format's numbers they are written for are this crate's.
+    /// in use, and 16z; the format's numbers they are written for are this crate's.
     #[test]
     fn the_clif_reads_read_every_node_as_the_crate_does() {
         use rerail_clif::view;
         assert_eq!((view::F16_K, view::F16_BLOCK, view::F16_PART, view::F16_SUB), (K as u32, BLOCK as u32, PART as u32, (PART / BLOCK) as u32));
-        assert_eq!(1 << view::F15_STRIDE_SHIFT, crate::CHECKPOINT_STRIDE);
         let reads = rerail_clif::jit::Reads::new();
         // Format 16, every side list in use.
         let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
@@ -2283,19 +2250,13 @@ mod tests {
         let reader = rerail_clif::view::Reader::new(&z.view(&lang).unwrap(), z.as_bytes().as_ptr());
         // SAFETY: the reader's view, which this thread alone reads.
         same_reads(&reads, &z.reader(&lang).unwrap(), z.as_bytes(), unsafe { &*reader.view() });
-        // Format 15.
-        let (image, _) = crate::tape::tests::sample();
-        let (columns, table) = crate::tape::f15_columns(&image).unwrap();
-        let f15 = crate::tape::F15::new(&image, columns, &table).unwrap();
-        let v = crate::tape::f15_view(&image, 0).unwrap();
-        same_reads(&reads, &f15, &image, &v);
     }
 
     /// The Rust reads (`crate::reads`, written directly, decision 0534) read every node, byte and line as the CLIF
-    /// reads do through the JIT: format 16 with every side list in use, and format 15.
+    /// reads do through the JIT: format 16 with every side list in use.
     #[test]
     fn the_rust_reads_are_the_jits() {
-        use crate::reads::{f15, f16};
+        use crate::reads::f16;
         let jit = rerail_clif::jit::Reads::new();
         // SAFETY: the read's signature: the tape's base, its view, a node; a u64.
         let slot: extern "C" fn(*const u8, *const TapeView, u32) -> u64 = unsafe { std::mem::transmute(jit.function("tape_slot")) };
@@ -2330,19 +2291,6 @@ mod tests {
                 assert_eq!(f16::has_kind(b, &v, block, kind), jit.two("tape_has_kind", b, &v, block as usize, kind), "kind {kind} in block {block}");
             }
         }
-        // Format 15.
-        let (image, _) = crate::tape::tests::sample();
-        let v = crate::tape::f15_view(&image, 0).unwrap();
-        for i in 0..v.nodes {
-            let n = i as usize;
-            assert_eq!(f15::size(&image, &v, i), jit.one("tape_size", &image, &v, n), "size of {i}");
-            assert_eq!(f15::number(&image, &v, i), jit.one("tape_number", &image, &v, n), "number of {i}");
-            assert_eq!(f15::start_stated(&image, &v, i), jit.one("tape_start_stated", &image, &v, n), "stated start of {i}");
-            assert_eq!(f15::end_stated(&image, &v, i), jit.one("tape_end_stated", &image, &v, n), "stated end of {i}");
-            assert_eq!(f15::start(&image, &v, i), jit.one("tape_start", &image, &v, n), "start of {i}");
-            assert_eq!(f15::end(&image, &v, i), jit.one("tape_end", &image, &v, n), "end of {i}");
-            assert_eq!(f15::parent(&image, &v, i), jit.one("tape_parent", &image, &v, n), "parent of {i}");
-        }
     }
 
     /// Decision 0463: every walk ends, whatever it is asked of whatever view. A node at or past the view's count, a
@@ -2360,10 +2308,8 @@ mod tests {
         let plain = Plain(&nodes, &table);
         let t = sixteen(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2);
         let v16 = placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
-        let (image, _) = crate::tape::tests::sample();
-        let v15 = crate::tape::f15_view(&image, 0).unwrap();
         let tail = |bytes: &[u8]| bytes.iter().copied().chain(std::iter::repeat_n(0u8, 8 << 20)).collect::<Vec<u8>>();
-        let tapes = vec![("format 16", tail(t.as_bytes()), v16), ("format 15", tail(&image), v15)];
+        let tapes = vec![("format 16", tail(t.as_bytes()), v16)];
         let asked = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
         let (done, finished) = std::sync::mpsc::channel();
         let at = asked.clone();
@@ -2398,44 +2344,32 @@ mod tests {
                         reads.two("tape_next_in", bytes, v, i as usize, u32::MAX);
                     }
                 }
-                // Bytes past the source, lines past the last: a format 16 tape's own line index. A format 15 image
-                // holds none (decision 0612: its slab places its language's index beside it).
-                if *format == "format 16" {
-                    for x in [view.source_len, view.source_len + 1, view.source_len + 4096] {
-                        ask(format!("{format}: tape_line({x}) of a source of {} bytes", view.source_len));
-                        reads.one("tape_line", bytes, view, x as usize);
-                    }
-                    let lines = reads.one("tape_line", bytes, view, view.source_len.saturating_sub(1) as usize);
-                    for k in [lines + 1, lines + 2, lines + 1000] {
-                        ask(format!("{format}: tape_line_start({k}) of {} lines", lines + 1));
-                        reads.one("tape_line_start", bytes, view, k as usize);
-                    }
+                // Bytes past the source, lines past the last: the tape's own line index.
+                for x in [view.source_len, view.source_len + 1, view.source_len + 4096] {
+                    ask(format!("{format}: tape_line({x}) of a source of {} bytes", view.source_len));
+                    reads.one("tape_line", bytes, view, x as usize);
+                }
+                let lines = reads.one("tape_line", bytes, view, view.source_len.saturating_sub(1) as usize);
+                for k in [lines + 1, lines + 2, lines + 1000] {
+                    ask(format!("{format}: tape_line_start({k}) of {} lines", lines + 1));
+                    reads.one("tape_line_start", bytes, view, k as usize);
                 }
                 // The same walks by the reads written directly in Rust (decision 0534), on the same views and nodes.
-                let f16_tape = *format == "format 16";
+                use crate::reads::f16;
                 for (v, nodes) in &short {
                     for &i in nodes {
                         ask(format!("{format}: the direct reads of {i} of a view of {} nodes", v.nodes));
-                        if f16_tape {
-                            use crate::reads::f16;
-                            let _ = (f16::size(bytes, v, i), f16::parent(bytes, v, i), f16::start(bytes, v, i), f16::end(bytes, v, i));
-                        } else {
-                            use crate::reads::f15;
-                            let _ = (f15::size(bytes, v, i), f15::parent(bytes, v, i), f15::start(bytes, v, i), f15::end(bytes, v, i));
-                        }
+                        let _ = (f16::size(bytes, v, i), f16::parent(bytes, v, i), f16::start(bytes, v, i), f16::end(bytes, v, i));
                     }
                 }
-                if f16_tape {
-                    use crate::reads::f16;
-                    for x in [view.source_len, view.source_len + 1, view.source_len + 4096] {
-                        ask(format!("{format}: the direct line({x}) of a source of {} bytes", view.source_len));
-                        let _ = f16::line(bytes, view, x);
-                    }
-                    let lines = f16::line(bytes, view, view.source_len.saturating_sub(1));
-                    for k in [lines + 1, lines + 2, lines + 1000] {
-                        ask(format!("{format}: the direct line_start({k}) of {} lines", lines + 1));
-                        let _ = f16::line_start(bytes, view, k);
-                    }
+                for x in [view.source_len, view.source_len + 1, view.source_len + 4096] {
+                    ask(format!("{format}: the direct line({x}) of a source of {} bytes", view.source_len));
+                    let _ = f16::line(bytes, view, x);
+                }
+                let lines = f16::line(bytes, view, view.source_len.saturating_sub(1));
+                for k in [lines + 1, lines + 2, lines + 1000] {
+                    ask(format!("{format}: the direct line_start({k}) of {} lines", lines + 1));
+                    let _ = f16::line_start(bytes, view, k);
                 }
             }
             let _ = done.send(());
@@ -2734,9 +2668,8 @@ mod tests {
 
     /// Decision 0400 step 6 (0310 §4's test, per backend): the reads as UKL, compiled for this process's GPU (Metal
     /// on macOS, CUDA on Linux), read every node as this crate's readers do: format 16 with every side list in use,
-    /// 16z through a cache the device's threads share (sized for the whole tape, so no read finds it full), and
-    /// format 15. `<ukl/reads/tape.h>` reads 16 and 15; `tape_z.h` reads all three. Without a device it passes,
-    /// saying so.
+    /// and 16z through a cache the device's threads share (sized for the whole tape, so no read finds it full).
+    /// `<ukl/reads/tape.h>` reads 16; `tape_z.h` reads both. Without a device it passes, saying so.
     #[test]
     fn the_device_reads_read_every_node_as_the_crate_does() {
         use rerail_clif::view::cache;
@@ -2774,14 +2707,6 @@ mod tests {
         spec.init(&mut bytes[at..]).unwrap();
         (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (at as u32, 0, spec.entry_bytes() as u32, 1);
         same_device_reads(z_reads, "16z, tape_z.h", &z.reader(&lang).unwrap(), &bytes, &view);
-        // Format 15.
-        let (image, _) = crate::tape::tests::sample();
-        let (columns, table) = crate::tape::f15_columns(&image).unwrap();
-        let f15 = crate::tape::F15::new(&image, columns, &table).unwrap();
-        let v = crate::tape::f15_view(&image, 0).unwrap();
-        for (reads, what) in [(plain_reads, "15, tape.h"), (z_reads, "15, tape_z.h")] {
-            same_device_reads(reads, what, &f15, &image, &v);
-        }
     }
 
     /// Decision 0353 step 4b: a rolling cache shared by threads (`view::cache`, its stamps checked after each read)
@@ -2951,11 +2876,10 @@ mod tests {
     /// A tape of another revision is not read.
     #[test]
     fn another_revision_is_refused() {
-        let (image, _) = crate::tape::tests::sample();
-        let (columns, table) = f15_columns(&image).unwrap();
-        let f15 = F15::new(&image, columns, &table).unwrap();
+        let (nodes, table) = sample();
+        let tree = Plain(&nodes, &table);
         let lang = lang_of(&table);
-        let t = sixteen(&lang, &f15, &numbers(&lang, &table).unwrap(), 2_000);
+        let t = sixteen(&lang, &tree, &numbers(&lang, &table).unwrap(), 2_000);
         let other = Lang::new(table.clone(), [1, 1, 1], 2).unwrap();
         assert!(t.reader(&other).is_err());
     }
@@ -2964,11 +2888,10 @@ mod tests {
     /// from the header, the tail after.
     #[test]
     fn one_block_is_the_regions() {
-        let (image, _) = crate::tape::tests::sample();
-        let (columns, table) = f15_columns(&image).unwrap();
-        let f15 = F15::new(&image, columns, &table).unwrap();
+        let (nodes, table) = sample();
+        let tree = Plain(&nodes, &table);
         let lang = lang_of(&table);
-        let t = sixteen(&lang, &f15, &numbers(&lang, &table).unwrap(), 2_000);
+        let t = sixteen(&lang, &tree, &numbers(&lang, &table).unwrap(), 2_000);
         let (p, n) = (t.p, t.len());
         assert_eq!(p.block_count(), 1);
         for r in 0..COLUMNS {
