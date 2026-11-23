@@ -4766,7 +4766,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 }
                 Ok((set, except, by_rows))
             };
-            for (offset, names, words, not, end, run, nest_rows, ending_row, without_names) in elems {
+            for (offset, names, words, not, end, run, nest_rows, ending_row, without_names, whole) in elems {
                 let (set, except, by_rows) = kind_set(names)?;
                 token_read |= by_rows;
                 // `without M`, `with M`: mark `M`'s bit in the record's code, so a mark of a mask
@@ -4799,7 +4799,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     }
                     None => None,
                 };
-                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end, run: *run, nests, ending, without, with, first: [0; 4], since: false, rows: by_rows });
+                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end, run: *run, nests, whole: *whole, ending, without, with, first: [0; 4], since: false, rows: by_rows });
             }
             tms.push(crate::program::TokenMark { order: *order, elems: out, refuses: *refuses, unless: *unless });
         }

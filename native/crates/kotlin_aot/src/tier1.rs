@@ -165,6 +165,7 @@ fn word(b: &[u8]) -> u32 {
         b"U" => 120,
         b"uL" => 121,
         b"UL" => 122,
+        b"\x26" => 123,
         _ => 0,
     }
 }
@@ -263,79 +264,55 @@ struct Stage1 {
     t33: Vec<u64>,
     t34: Vec<u64>,
     t35: Vec<u64>,
-    t41: Vec<u64>,
-    t42: Vec<u64>,
-    t43: Vec<u64>,
-    t44: Vec<u64>,
-    t45: Vec<u64>,
-    t46: Vec<u64>,
+    m_two_start: Vec<u64>,
+    m_two_start_three: Vec<u64>,
     t47: Vec<u64>,
+    t46: Vec<u64>,
     t48: Vec<u64>,
     t49: Vec<u64>,
     t50: Vec<u64>,
     t51: Vec<u64>,
-    t53: Vec<u64>,
+    t52: Vec<u64>,
     t54: Vec<u64>,
     t55: Vec<u64>,
+    t56: Vec<u64>,
     t57: Vec<u64>,
     t58: Vec<u64>,
-    t59: Vec<u64>,
-    t60: Vec<u64>,
-    t61: Vec<u64>,
     t62: Vec<u64>,
-    t63: Vec<u64>,
+    t60: Vec<u64>,
     t64: Vec<u64>,
+    t63: Vec<u64>,
     t65: Vec<u64>,
+    t66: Vec<u64>,
     t68: Vec<u64>,
-    m_closer: Vec<u64>,
-    m_two_start: Vec<u64>,
-    m_two_start_three: Vec<u64>,
-    t81: Vec<u64>,
-    t80: Vec<u64>,
-    t82: Vec<u64>,
-    t83: Vec<u64>,
-    t84: Vec<u64>,
-    t85: Vec<u64>,
-    t86: Vec<u64>,
-    t88: Vec<u64>,
+    t69: Vec<u64>,
     t89: Vec<u64>,
     t90: Vec<u64>,
-    t91: Vec<u64>,
-    t92: Vec<u64>,
-    t96: Vec<u64>,
-    t94: Vec<u64>,
-    t98: Vec<u64>,
-    t97: Vec<u64>,
-    t99: Vec<u64>,
-    t100: Vec<u64>,
-    t102: Vec<u64>,
-    t103: Vec<u64>,
-    t123: Vec<u64>,
-    t124: Vec<u64>,
-    t142: Vec<u64>,
-    t151: Vec<u64>,
-    t189: Vec<u64>,
-    t190: Vec<u64>,
-    t194: Vec<u64>,
-    t196: Vec<u64>,
-    t192: Vec<u64>,
-    t197: Vec<u64>,
-    t199: Vec<u64>,
-    t200: Vec<u64>,
-    t201: Vec<u64>,
-    t202: Vec<u64>,
-    t203: Vec<u64>,
-    t204: Vec<u64>,
-    t205: Vec<u64>,
-    t206: Vec<u64>,
-    t207: Vec<u64>,
-    t219: Vec<u64>,
-    t220: Vec<u64>,
-    t221: Vec<u64>,
-    t222: Vec<u64>,
-    t227: Vec<u64>,
-    t228: Vec<u64>,
-    t233: Vec<u64>,
+    t108: Vec<u64>,
+    t117: Vec<u64>,
+    t128: Vec<u64>,
+    t129: Vec<u64>,
+    t130: Vec<u64>,
+    t152: Vec<u64>,
+    t154: Vec<u64>,
+    t150: Vec<u64>,
+    t155: Vec<u64>,
+    t157: Vec<u64>,
+    t158: Vec<u64>,
+    t159: Vec<u64>,
+    t160: Vec<u64>,
+    t161: Vec<u64>,
+    t162: Vec<u64>,
+    t163: Vec<u64>,
+    t164: Vec<u64>,
+    t165: Vec<u64>,
+    t177: Vec<u64>,
+    t178: Vec<u64>,
+    t179: Vec<u64>,
+    t180: Vec<u64>,
+    t185: Vec<u64>,
+    t186: Vec<u64>,
+    t191: Vec<u64>,
     fw_rd0_close: Vec<u64>,
     fw_rd1_close: Vec<u64>,
     refused: bool,
@@ -463,168 +440,157 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut r_t34 = [0u64; RING];
     let mut r_b_3e = [0u64; RING];
     let mut r_t35 = [0u64; RING];
-    let mut r_b_26 = [0u64; RING];
-    let mut r_t41 = [0u64; RING];
-    let mut r_b_7c = [0u64; RING];
-    let mut r_t42 = [0u64; RING];
-    let mut r_b_3a = [0u64; RING];
     let mut r_t43 = [0u64; RING];
-    let mut r_b_7d = [0u64; RING];
-    let mut r_t44 = [0u64; RING];
-    let mut r_b_29 = [0u64; RING];
-    let mut r_t45 = [0u64; RING];
-    let mut r_b_5d = [0u64; RING];
-    let mut r_t46 = [0u64; RING];
-    let mut r_b_2c = [0u64; RING];
+    let mut r_t42 = [0u64; RING];
+    let mut c_t42 = 0u64;
+    let mut r_m_two_start = [0u64; RING];
+    let mut r_m_two_start_three = [0u64; RING];
     let mut r_t47 = [0u64; RING];
-    let mut r_b_2d = [0u64; RING];
+    let mut r_t46 = [0u64; RING];
     let mut r_t48 = [0u64; RING];
-    let mut r_b_76 = [0u64; RING];
-    let mut r_b_6c = [0u64; RING];
     let mut r_t49 = [0u64; RING];
-    let mut r_b_72 = [0u64; RING];
     let mut r_t50 = [0u64; RING];
-    let mut r_b_65 = [0u64; RING];
     let mut r_t51 = [0u64; RING];
-    let mut r_b_28 = [0u64; RING];
     let mut r_t53 = [0u64; RING];
-    let mut r_b_5b = [0u64; RING];
+    let mut r_t52 = [0u64; RING];
     let mut r_t54 = [0u64; RING];
-    let mut r_b_7b = [0u64; RING];
     let mut r_t55 = [0u64; RING];
-    let mut r_b_40 = [0u64; RING];
+    let mut r_t56 = [0u64; RING];
     let mut r_t57 = [0u64; RING];
-    let mut r_b_3b = [0u64; RING];
-    let mut r_t58 = [0u64; RING];
-    let mut r_b_66 = [0u64; RING];
     let mut r_t59 = [0u64; RING];
-    let mut r_b_77 = [0u64; RING];
-    let mut r_b_68 = [0u64; RING];
-    let mut r_b_6e = [0u64; RING];
-    let mut r_t60 = [0u64; RING];
-    let mut r_b_74 = [0u64; RING];
-    let mut r_b_79 = [0u64; RING];
-    let mut r_t61 = [0u64; RING];
-    let mut r_b_75 = [0u64; RING];
+    let mut r_t58 = [0u64; RING];
     let mut r_t62 = [0u64; RING];
-    let mut r_b_6f = [0u64; RING];
-    let mut r_t63 = [0u64; RING];
+    let mut r_t61 = [0u64; RING];
+    let mut c_t61 = 0u64;
+    let mut r_t60 = [0u64; RING];
     let mut r_t64 = [0u64; RING];
-    let mut r_b_62 = [0u64; RING];
-    let mut r_b_6a = [0u64; RING];
-    let mut r_b_63 = [0u64; RING];
+    let mut r_t63 = [0u64; RING];
     let mut r_t65 = [0u64; RING];
-    let mut r_b_3d = [0u64; RING];
+    let mut r_t67 = [0u64; RING];
+    let mut r_t66 = [0u64; RING];
     let mut r_t68 = [0u64; RING];
-    let mut r_m_closer = [0u64; RING];
+    let mut r_t72 = [0u64; RING];
+    let mut r_t71 = [0u64; RING];
+    let mut c_t71 = 0u64;
+    let mut r_t75 = [0u64; RING];
+    let mut r_t74 = [0u64; RING];
+    let mut r_t73 = [0u64; RING];
+    let mut c_t73 = 0u64;
+    let mut r_t79 = [0u64; RING];
+    let mut r_t78 = [0u64; RING];
+    let mut r_t80 = [0u64; RING];
     let mut r_t77 = [0u64; RING];
     let mut r_t76 = [0u64; RING];
     let mut c_t76 = 0u64;
-    let mut r_m_two_start = [0u64; RING];
-    let mut r_m_two_start_three = [0u64; RING];
-    let mut r_t81 = [0u64; RING];
-    let mut r_t80 = [0u64; RING];
     let mut r_t82 = [0u64; RING];
-    let mut r_t83 = [0u64; RING];
-    let mut r_t84 = [0u64; RING];
+    let mut r_t81 = [0u64; RING];
     let mut r_t85 = [0u64; RING];
+    let mut r_t84 = [0u64; RING];
+    let mut r_t83 = [0u64; RING];
+    let mut c_t83 = 0u64;
+    let mut r_t88 = [0u64; RING];
     let mut r_t87 = [0u64; RING];
     let mut r_t86 = [0u64; RING];
-    let mut r_t88 = [0u64; RING];
+    let mut c_t86 = 0u64;
+    let mut r_t70 = [0u64; RING];
+    let mut r_t69 = [0u64; RING];
     let mut r_t89 = [0u64; RING];
     let mut r_t90 = [0u64; RING];
-    let mut r_t91 = [0u64; RING];
-    let mut r_t93 = [0u64; RING];
-    let mut r_t92 = [0u64; RING];
-    let mut r_t96 = [0u64; RING];
-    let mut r_t95 = [0u64; RING];
-    let mut c_t95 = 0u64;
-    let mut r_t94 = [0u64; RING];
-    let mut r_t98 = [0u64; RING];
-    let mut r_t97 = [0u64; RING];
-    let mut r_t99 = [0u64; RING];
-    let mut r_t101 = [0u64; RING];
-    let mut r_t100 = [0u64; RING];
-    let mut r_t102 = [0u64; RING];
-    let mut r_t106 = [0u64; RING];
-    let mut r_t105 = [0u64; RING];
-    let mut c_t105 = 0u64;
-    let mut r_t109 = [0u64; RING];
     let mut r_t108 = [0u64; RING];
-    let mut r_t107 = [0u64; RING];
-    let mut c_t107 = 0u64;
-    let mut r_t113 = [0u64; RING];
-    let mut r_t112 = [0u64; RING];
-    let mut r_t114 = [0u64; RING];
-    let mut r_t111 = [0u64; RING];
-    let mut r_t110 = [0u64; RING];
-    let mut c_t110 = 0u64;
-    let mut r_t116 = [0u64; RING];
-    let mut r_t115 = [0u64; RING];
-    let mut r_t119 = [0u64; RING];
-    let mut r_t118 = [0u64; RING];
-    let mut r_t117 = [0u64; RING];
-    let mut c_t117 = 0u64;
-    let mut r_t122 = [0u64; RING];
-    let mut r_t121 = [0u64; RING];
-    let mut r_t120 = [0u64; RING];
-    let mut c_t120 = 0u64;
-    let mut r_t104 = [0u64; RING];
-    let mut r_t103 = [0u64; RING];
-    let mut r_t123 = [0u64; RING];
-    let mut r_t124 = [0u64; RING];
-    let mut r_t142 = [0u64; RING];
     let mut r_b_0d = [0u64; RING];
+    let mut r_t117 = [0u64; RING];
+    let mut r_t128 = [0u64; RING];
+    let mut r_t129 = [0u64; RING];
+    let mut r_b_2e = [0u64; RING];
+    let mut r_t131 = [0u64; RING];
+    let mut r_b_3a = [0u64; RING];
+    let mut r_t132 = [0u64; RING];
+    let mut r_b_2a = [0u64; RING];
+    let mut r_t133 = [0u64; RING];
+    let mut r_b_25 = [0u64; RING];
+    let mut r_t134 = [0u64; RING];
+    let mut r_b_2f = [0u64; RING];
+    let mut r_t135 = [0u64; RING];
+    let mut r_b_28 = [0u64; RING];
+    let mut r_t136 = [0u64; RING];
+    let mut r_b_5b = [0u64; RING];
+    let mut r_t137 = [0u64; RING];
+    let mut r_b_7b = [0u64; RING];
+    let mut r_t138 = [0u64; RING];
+    let mut r_b_3d = [0u64; RING];
+    let mut r_t139 = [0u64; RING];
+    let mut r_b_21 = [0u64; RING];
+    let mut r_t140 = [0u64; RING];
+    let mut r_b_7c = [0u64; RING];
+    let mut r_t141 = [0u64; RING];
+    let mut r_b_26 = [0u64; RING];
+    let mut r_t142 = [0u64; RING];
+    let mut r_b_2c = [0u64; RING];
+    let mut r_t143 = [0u64; RING];
+    let mut r_b_3b = [0u64; RING];
+    let mut r_t144 = [0u64; RING];
+    let mut r_b_77 = [0u64; RING];
+    let mut r_b_68 = [0u64; RING];
+    let mut r_b_65 = [0u64; RING];
+    let mut r_b_72 = [0u64; RING];
+    let mut r_t145 = [0u64; RING];
+    let mut r_b_63 = [0u64; RING];
+    let mut r_b_74 = [0u64; RING];
+    let mut r_t146 = [0u64; RING];
+    let mut r_b_66 = [0u64; RING];
+    let mut r_b_6e = [0u64; RING];
+    let mut r_b_6c = [0u64; RING];
+    let mut r_b_79 = [0u64; RING];
+    let mut r_t147 = [0u64; RING];
+    let mut r_t148 = [0u64; RING];
+    let mut r_t130 = [0u64; RING];
+    let mut r_t149 = [0u64; RING];
+    let mut r_t152 = [0u64; RING];
+    let mut r_t154 = [0u64; RING];
+    let mut r_t153 = [0u64; RING];
     let mut r_t151 = [0u64; RING];
+    let mut c_t151 = 0u64;
+    let mut r_t150 = [0u64; RING];
+    let mut r_t156 = [0u64; RING];
+    let mut r_t155 = [0u64; RING];
+    let mut r_t157 = [0u64; RING];
+    let mut r_t158 = [0u64; RING];
+    let mut r_t159 = [0u64; RING];
+    let mut r_t160 = [0u64; RING];
+    let mut r_t161 = [0u64; RING];
+    let mut r_t162 = [0u64; RING];
+    let mut r_t163 = [0u64; RING];
+    let mut r_t164 = [0u64; RING];
+    let mut r_t167 = [0u64; RING];
+    let mut r_t166 = [0u64; RING];
+    let mut c_t166 = 0u64;
+    let mut r_t170 = [0u64; RING];
+    let mut r_t169 = [0u64; RING];
+    let mut r_t168 = [0u64; RING];
+    let mut c_t168 = 0u64;
+    let mut r_t171 = [0u64; RING];
+    let mut r_t172 = [0u64; RING];
+    let mut r_t175 = [0u64; RING];
+    let mut r_t174 = [0u64; RING];
+    let mut r_t173 = [0u64; RING];
+    let mut c_t173 = 0u64;
+    let mut r_t176 = [0u64; RING];
+    let mut r_t165 = [0u64; RING];
+    let mut r_t177 = [0u64; RING];
+    let mut r_t178 = [0u64; RING];
+    let mut r_t179 = [0u64; RING];
+    let mut r_t181 = [0u64; RING];
+    let mut r_t183 = [0u64; RING];
+    let mut r_t182 = [0u64; RING];
+    let mut c_t182 = 0u64;
+    let mut r_t180 = [0u64; RING];
+    let mut r_t185 = [0u64; RING];
+    let mut r_t187 = [0u64; RING];
     let mut r_t189 = [0u64; RING];
-    let mut r_t190 = [0u64; RING];
+    let mut r_t188 = [0u64; RING];
+    let mut c_t188 = 0u64;
+    let mut r_t186 = [0u64; RING];
     let mut r_t191 = [0u64; RING];
-    let mut r_t194 = [0u64; RING];
-    let mut r_t196 = [0u64; RING];
-    let mut r_t195 = [0u64; RING];
-    let mut r_t193 = [0u64; RING];
-    let mut c_t193 = 0u64;
-    let mut r_t192 = [0u64; RING];
-    let mut r_t198 = [0u64; RING];
-    let mut r_t197 = [0u64; RING];
-    let mut r_t199 = [0u64; RING];
-    let mut r_t200 = [0u64; RING];
-    let mut r_t201 = [0u64; RING];
-    let mut r_t202 = [0u64; RING];
-    let mut r_t203 = [0u64; RING];
-    let mut r_t204 = [0u64; RING];
-    let mut r_t205 = [0u64; RING];
-    let mut r_t206 = [0u64; RING];
-    let mut r_t209 = [0u64; RING];
-    let mut r_t208 = [0u64; RING];
-    let mut c_t208 = 0u64;
-    let mut r_t212 = [0u64; RING];
-    let mut r_t211 = [0u64; RING];
-    let mut r_t210 = [0u64; RING];
-    let mut c_t210 = 0u64;
-    let mut r_t213 = [0u64; RING];
-    let mut r_t214 = [0u64; RING];
-    let mut r_t217 = [0u64; RING];
-    let mut r_t216 = [0u64; RING];
-    let mut r_t215 = [0u64; RING];
-    let mut c_t215 = 0u64;
-    let mut r_t218 = [0u64; RING];
-    let mut r_t207 = [0u64; RING];
-    let mut r_t219 = [0u64; RING];
-    let mut r_t220 = [0u64; RING];
-    let mut r_t221 = [0u64; RING];
-    let mut r_t223 = [0u64; RING];
-    let mut r_t225 = [0u64; RING];
-    let mut r_t224 = [0u64; RING];
-    let mut c_t224 = 0u64;
-    let mut r_t222 = [0u64; RING];
-    let mut r_t227 = [0u64; RING];
-    let mut r_t229 = [0u64; RING];
-    let mut r_t231 = [0u64; RING];
-    let mut r_t230 = [0u64; RING];
-    let mut c_t230 = 0u64;
-    let mut r_t228 = [0u64; RING];
-    let mut r_t233 = [0u64; RING];
     let mut m_ws = vec![0u64; nw];
     let mut m_lf = vec![0u64; nw];
     let mut m_slash = vec![0u64; nw];
@@ -679,79 +645,55 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut t33 = vec![0u64; nw];
     let mut t34 = vec![0u64; nw];
     let mut t35 = vec![0u64; nw];
-    let mut t41 = vec![0u64; nw];
-    let mut t42 = vec![0u64; nw];
-    let mut t43 = vec![0u64; nw];
-    let mut t44 = vec![0u64; nw];
-    let mut t45 = vec![0u64; nw];
-    let mut t46 = vec![0u64; nw];
+    let mut m_two_start = vec![0u64; nw];
+    let mut m_two_start_three = vec![0u64; nw];
     let mut t47 = vec![0u64; nw];
+    let mut t46 = vec![0u64; nw];
     let mut t48 = vec![0u64; nw];
     let mut t49 = vec![0u64; nw];
     let mut t50 = vec![0u64; nw];
     let mut t51 = vec![0u64; nw];
-    let mut t53 = vec![0u64; nw];
+    let mut t52 = vec![0u64; nw];
     let mut t54 = vec![0u64; nw];
     let mut t55 = vec![0u64; nw];
+    let mut t56 = vec![0u64; nw];
     let mut t57 = vec![0u64; nw];
     let mut t58 = vec![0u64; nw];
-    let mut t59 = vec![0u64; nw];
-    let mut t60 = vec![0u64; nw];
-    let mut t61 = vec![0u64; nw];
     let mut t62 = vec![0u64; nw];
-    let mut t63 = vec![0u64; nw];
+    let mut t60 = vec![0u64; nw];
     let mut t64 = vec![0u64; nw];
+    let mut t63 = vec![0u64; nw];
     let mut t65 = vec![0u64; nw];
+    let mut t66 = vec![0u64; nw];
     let mut t68 = vec![0u64; nw];
-    let mut m_closer = vec![0u64; nw];
-    let mut m_two_start = vec![0u64; nw];
-    let mut m_two_start_three = vec![0u64; nw];
-    let mut t81 = vec![0u64; nw];
-    let mut t80 = vec![0u64; nw];
-    let mut t82 = vec![0u64; nw];
-    let mut t83 = vec![0u64; nw];
-    let mut t84 = vec![0u64; nw];
-    let mut t85 = vec![0u64; nw];
-    let mut t86 = vec![0u64; nw];
-    let mut t88 = vec![0u64; nw];
+    let mut t69 = vec![0u64; nw];
     let mut t89 = vec![0u64; nw];
     let mut t90 = vec![0u64; nw];
-    let mut t91 = vec![0u64; nw];
-    let mut t92 = vec![0u64; nw];
-    let mut t96 = vec![0u64; nw];
-    let mut t94 = vec![0u64; nw];
-    let mut t98 = vec![0u64; nw];
-    let mut t97 = vec![0u64; nw];
-    let mut t99 = vec![0u64; nw];
-    let mut t100 = vec![0u64; nw];
-    let mut t102 = vec![0u64; nw];
-    let mut t103 = vec![0u64; nw];
-    let mut t123 = vec![0u64; nw];
-    let mut t124 = vec![0u64; nw];
-    let mut t142 = vec![0u64; nw];
-    let mut t151 = vec![0u64; nw];
-    let mut t189 = vec![0u64; nw];
-    let mut t190 = vec![0u64; nw];
-    let mut t194 = vec![0u64; nw];
-    let mut t196 = vec![0u64; nw];
-    let mut t192 = vec![0u64; nw];
-    let mut t197 = vec![0u64; nw];
-    let mut t199 = vec![0u64; nw];
-    let mut t200 = vec![0u64; nw];
-    let mut t201 = vec![0u64; nw];
-    let mut t202 = vec![0u64; nw];
-    let mut t203 = vec![0u64; nw];
-    let mut t204 = vec![0u64; nw];
-    let mut t205 = vec![0u64; nw];
-    let mut t206 = vec![0u64; nw];
-    let mut t207 = vec![0u64; nw];
-    let mut t219 = vec![0u64; nw];
-    let mut t220 = vec![0u64; nw];
-    let mut t221 = vec![0u64; nw];
-    let mut t222 = vec![0u64; nw];
-    let mut t227 = vec![0u64; nw];
-    let mut t228 = vec![0u64; nw];
-    let mut t233 = vec![0u64; nw];
+    let mut t108 = vec![0u64; nw];
+    let mut t117 = vec![0u64; nw];
+    let mut t128 = vec![0u64; nw];
+    let mut t129 = vec![0u64; nw];
+    let mut t130 = vec![0u64; nw];
+    let mut t152 = vec![0u64; nw];
+    let mut t154 = vec![0u64; nw];
+    let mut t150 = vec![0u64; nw];
+    let mut t155 = vec![0u64; nw];
+    let mut t157 = vec![0u64; nw];
+    let mut t158 = vec![0u64; nw];
+    let mut t159 = vec![0u64; nw];
+    let mut t160 = vec![0u64; nw];
+    let mut t161 = vec![0u64; nw];
+    let mut t162 = vec![0u64; nw];
+    let mut t163 = vec![0u64; nw];
+    let mut t164 = vec![0u64; nw];
+    let mut t165 = vec![0u64; nw];
+    let mut t177 = vec![0u64; nw];
+    let mut t178 = vec![0u64; nw];
+    let mut t179 = vec![0u64; nw];
+    let mut t180 = vec![0u64; nw];
+    let mut t185 = vec![0u64; nw];
+    let mut t186 = vec![0u64; nw];
+    let mut t191 = vec![0u64; nw];
     let mut fw_rd0_close = vec![0u64; nw];
     let mut fw_rd1_close = vec![0u64; nw];
     let mut refused = false;
@@ -1196,270 +1138,207 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             if q < nw {
                 t35[q] = w;
             }
-            // the byte 0x26
-            let w = unsafe { S::eq_mask(v, 0x26) & lv };
-            r_b_26[q % RING] = w;
-            // text("&")
-            let w = r_b_26[q % RING] & lv;
-            r_t41[q % RING] = w;
-            if q < nw {
-                t41[q] = w;
-            }
-            // the byte 0x7c
-            let w = unsafe { S::eq_mask(v, 0x7c) & lv };
-            r_b_7c[q % RING] = w;
-            // text("|")
-            let w = r_b_7c[q % RING] & lv;
-            r_t42[q % RING] = w;
-            if q < nw {
-                t42[q] = w;
-            }
-            // the byte 0x3a
-            let w = unsafe { S::eq_mask(v, 0x3a) & lv };
-            r_b_3a[q % RING] = w;
-            // text(":")
-            let w = r_b_3a[q % RING] & lv;
-            r_t43[q % RING] = w;
-            if q < nw {
-                t43[q] = w;
-            }
-            // the byte 0x7d
-            let w = unsafe { S::eq_mask(v, 0x7d) & lv };
-            r_b_7d[q % RING] = w;
-            // text("}")
-            let w = r_b_7d[q % RING] & lv;
-            r_t44[q % RING] = w;
-            if q < nw {
-                t44[q] = w;
-            }
-            // the byte 0x29
-            let w = unsafe { S::eq_mask(v, 0x29) & lv };
-            r_b_29[q % RING] = w;
-            // text(")")
-            let w = r_b_29[q % RING] & lv;
-            r_t45[q % RING] = w;
-            if q < nw {
-                t45[q] = w;
-            }
-            // the byte 0x5d
-            let w = unsafe { S::eq_mask(v, 0x5d) & lv };
-            r_b_5d[q % RING] = w;
-            // text("]")
-            let w = r_b_5d[q % RING] & lv;
-            r_t46[q % RING] = w;
-            if q < nw {
-                t46[q] = w;
-            }
-            // the byte 0x2c
-            let w = unsafe { S::eq_mask(v, 0x2c) & lv };
-            r_b_2c[q % RING] = w;
-            // text(",")
-            let w = r_b_2c[q % RING] & lv;
+            // word | high
+            let w = (r_m_word[q % RING] | r_m_high[q % RING]);
             r_t47[q % RING] = w;
             if q < nw {
                 t47[q] = w;
             }
-            // the byte 0x2d
-            let w = unsafe { S::eq_mask(v, 0x2d) & lv };
-            r_b_2d[q % RING] = w;
-            // text("-")
-            let w = r_b_2d[q % RING] & lv;
+            // ((word | high) & (alpha | high)) & ~prev(word | high)
+            let w = (r_m_word[q % RING] | r_m_high[q % RING]) & (r_m_alpha[q % RING] | r_m_high[q % RING]) & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv);
+            r_t46[q % RING] = w;
+            if q < nw {
+                t46[q] = w;
+            }
+            // ~(word | high)
+            let w = !(r_m_word[q % RING] | r_m_high[q % RING]) & lv;
             r_t48[q % RING] = w;
             if q < nw {
                 t48[q] = w;
             }
-            // the byte 0x76
-            let w = unsafe { S::eq_mask(v, 0x76) & lv };
-            r_b_76[q % RING] = w;
-            // the byte 0x6c
-            let w = unsafe { S::eq_mask(v, 0x6c) & lv };
-            r_b_6c[q % RING] = w;
-            // the byte 0x72
-            let w = unsafe { S::eq_mask(v, 0x72) & lv };
-            r_b_72[q % RING] = w;
-            // the byte 0x65
-            let w = unsafe { S::eq_mask(v, 0x65) & lv };
-            r_b_65[q % RING] = w;
-            // the byte 0x28
-            let w = unsafe { S::eq_mask(v, 0x28) & lv };
-            r_b_28[q % RING] = w;
-            // text("(")
-            let w = r_b_28[q % RING] & lv;
-            r_t53[q % RING] = w;
+            // ((word & digit) & ~prev(word | high)) & ~prev(dot & ~prev(dot))
+            let w = r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv);
+            r_t49[q % RING] = w;
             if q < nw {
-                t53[q] = w;
+                t49[q] = w;
             }
-            // the byte 0x5b
-            let w = unsafe { S::eq_mask(v, 0x5b) & lv };
-            r_b_5b[q % RING] = w;
-            // text("[")
-            let w = r_b_5b[q % RING] & lv;
+            // ~ws
+            let w = !r_m_ws[q % RING] & lv;
+            r_t50[q % RING] = w;
+            if q < nw {
+                t50[q] = w;
+            }
+            // ~text(" ")
+            let w = !r_t32[q % RING] & lv;
+            r_t51[q % RING] = w;
+            if q < nw {
+                t51[q] = w;
+            }
+            // ~((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))
+            let w = !((((((r_m_word[q % RING] | r_m_high[q % RING]) | r_m_dot[q % RING]) | r_t32[q % RING]) | r_t33[q % RING]) | r_t34[q % RING]) | r_t35[q % RING]) & lv;
             r_t54[q % RING] = w;
             if q < nw {
                 t54[q] = w;
             }
-            // the byte 0x7b
-            let w = unsafe { S::eq_mask(v, 0x7b) & lv };
-            r_b_7b[q % RING] = w;
-            // text("{")
-            let w = r_b_7b[q % RING] & lv;
-            r_t55[q % RING] = w;
+            // (text("?") | text("<")) | (gt & prev(gt))
+            let w = ((r_t33[q % RING] | r_t34[q % RING]) | r_m_gt[q % RING] & (r_m_gt[q % RING] << 1 | r_m_gt[(q + RING - 1) % RING] >> 63) & lv);
+            r_t56[q % RING] = w;
             if q < nw {
-                t55[q] = w;
+                t56[q] = w;
             }
-            // the byte 0x40
-            let w = unsafe { S::eq_mask(v, 0x40) & lv };
-            r_b_40[q % RING] = w;
-            // text("@")
-            let w = r_b_40[q % RING] & lv;
+            // prev(lbrace)
+            let w = (r_m_lbrace[q % RING] << 1 | r_m_lbrace[(q + RING - 1) % RING] >> 63) & lv;
             r_t57[q % RING] = w;
             if q < nw {
                 t57[q] = w;
             }
-            // the byte 0x3b
-            let w = unsafe { S::eq_mask(v, 0x3b) & lv };
-            r_b_3b[q % RING] = w;
-            // text(";")
-            let w = r_b_3b[q % RING] & lv;
-            r_t58[q % RING] = w;
-            if q < nw {
-                t58[q] = w;
-            }
-            // the byte 0x66
-            let w = unsafe { S::eq_mask(v, 0x66) & lv };
-            r_b_66[q % RING] = w;
-            // the byte 0x77
-            let w = unsafe { S::eq_mask(v, 0x77) & lv };
-            r_b_77[q % RING] = w;
-            // the byte 0x68
-            let w = unsafe { S::eq_mask(v, 0x68) & lv };
-            r_b_68[q % RING] = w;
-            // the byte 0x6e
-            let w = unsafe { S::eq_mask(v, 0x6e) & lv };
-            r_b_6e[q % RING] = w;
-            // the byte 0x74
-            let w = unsafe { S::eq_mask(v, 0x74) & lv };
-            r_b_74[q % RING] = w;
-            // the byte 0x79
-            let w = unsafe { S::eq_mask(v, 0x79) & lv };
-            r_b_79[q % RING] = w;
-            // the byte 0x75
-            let w = unsafe { S::eq_mask(v, 0x75) & lv };
-            r_b_75[q % RING] = w;
-            // the byte 0x6f
-            let w = unsafe { S::eq_mask(v, 0x6f) & lv };
-            r_b_6f[q % RING] = w;
-            // the byte 0x62
-            let w = unsafe { S::eq_mask(v, 0x62) & lv };
-            r_b_62[q % RING] = w;
-            // the byte 0x6a
-            let w = unsafe { S::eq_mask(v, 0x6a) & lv };
-            r_b_6a[q % RING] = w;
-            // the byte 0x63
-            let w = unsafe { S::eq_mask(v, 0x63) & lv };
-            r_b_63[q % RING] = w;
-            // the byte 0x3d
-            let w = unsafe { S::eq_mask(v, 0x3d) & lv };
-            r_b_3d[q % RING] = w;
-            // text("=")
-            let w = r_b_3d[q % RING] & lv;
-            r_t68[q % RING] = w;
-            if q < nw {
-                t68[q] = w;
-            }
-            // mask closer = (text(")") | text("]")) | text("}")
-            let w = ((r_t45[q % RING] | r_t46[q % RING]) | r_t44[q % RING]);
-            r_m_closer[q % RING] = w;
-            if q < nw {
-                m_closer[q] = w;
-            }
-            // word | high
-            let w = (r_m_word[q % RING] | r_m_high[q % RING]);
-            r_t81[q % RING] = w;
-            if q < nw {
-                t81[q] = w;
-            }
-            // ((word | high) & (alpha | high)) & ~prev(word | high)
-            let w = (r_m_word[q % RING] | r_m_high[q % RING]) & (r_m_alpha[q % RING] | r_m_high[q % RING]) & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv);
-            r_t80[q % RING] = w;
-            if q < nw {
-                t80[q] = w;
-            }
-            // ~(word | high)
-            let w = !(r_m_word[q % RING] | r_m_high[q % RING]) & lv;
-            r_t82[q % RING] = w;
-            if q < nw {
-                t82[q] = w;
-            }
-            // ((word & digit) & ~prev(word | high)) & ~prev(dot & ~prev(dot))
-            let w = r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv);
-            r_t83[q % RING] = w;
-            if q < nw {
-                t83[q] = w;
-            }
-            // ~ws
-            let w = !r_m_ws[q % RING] & lv;
-            r_t84[q % RING] = w;
-            if q < nw {
-                t84[q] = w;
-            }
-            // ~text(" ")
-            let w = !r_t32[q % RING] & lv;
-            r_t85[q % RING] = w;
-            if q < nw {
-                t85[q] = w;
-            }
-            // ~((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))
-            let w = !((((((r_m_word[q % RING] | r_m_high[q % RING]) | r_m_dot[q % RING]) | r_t32[q % RING]) | r_t33[q % RING]) | r_t34[q % RING]) | r_t35[q % RING]) & lv;
-            r_t88[q % RING] = w;
-            if q < nw {
-                t88[q] = w;
-            }
-            // (text("?") | text("<")) | (gt & prev(gt))
-            let w = ((r_t33[q % RING] | r_t34[q % RING]) | r_m_gt[q % RING] & (r_m_gt[q % RING] << 1 | r_m_gt[(q + RING - 1) % RING] >> 63) & lv);
-            r_t90[q % RING] = w;
-            if q < nw {
-                t90[q] = w;
-            }
-            // prev(lbrace)
-            let w = (r_m_lbrace[q % RING] << 1 | r_m_lbrace[(q + RING - 1) % RING] >> 63) & lv;
-            r_t91[q % RING] = w;
-            if q < nw {
-                t91[q] = w;
-            }
             // dq | dollar
             let w = (r_m_dq[q % RING] | r_m_dollar[q % RING]);
-            r_t93[q % RING] = w;
+            r_t59[q % RING] = w;
             // slash & prev(star)
             let w = r_m_slash[q % RING] & (r_m_star[q % RING] << 1 | r_m_star[(q + RING - 1) % RING] >> 63) & lv;
-            r_t101[q % RING] = w;
+            r_t67[q % RING] = w;
             // (slash & prev(star)) & prev(slash & prev(star), 2)
-            let w = r_m_slash[q % RING] & (r_m_star[q % RING] << 1 | r_m_star[(q + RING - 1) % RING] >> 63) & lv & (r_t101[q % RING] << 2 | r_t101[(q + RING - 1) % RING] >> 62) & lv;
-            r_t100[q % RING] = w;
+            let w = r_m_slash[q % RING] & (r_m_star[q % RING] << 1 | r_m_star[(q + RING - 1) % RING] >> 63) & lv & (r_t67[q % RING] << 2 | r_t67[(q + RING - 1) % RING] >> 62) & lv;
+            r_t66[q % RING] = w;
             if q < nw {
-                t100[q] = w;
+                t66[q] = w;
             }
             // at_sign & prev(high)
             let w = r_m_at_sign[q % RING] & (r_m_high[q % RING] << 1 | r_m_high[(q + RING - 1) % RING] >> 63) & lv;
-            r_t142[q % RING] = w;
+            r_t108[q % RING] = w;
             if q < nw {
-                t142[q] = w;
+                t108[q] = w;
             }
             // the byte 0x0d
             let w = unsafe { S::eq_mask(v, 0x0d) & lv };
             r_b_0d[q % RING] = w;
             // text("\r")
             let w = r_b_0d[q % RING] & lv;
-            r_t151[q % RING] = w;
+            r_t117[q % RING] = w;
             if q < nw {
-                t151[q] = w;
+                t117[q] = w;
             }
             // prev(gt)
             let w = (r_m_gt[q % RING] << 1 | r_m_gt[(q + RING - 1) % RING] >> 63) & lv;
-            r_t190[q % RING] = w;
+            r_t129[q % RING] = w;
             if q < nw {
-                t190[q] = w;
+                t129[q] = w;
             }
+            // the byte 0x2e
+            let w = unsafe { S::eq_mask(v, 0x2e) & lv };
+            r_b_2e[q % RING] = w;
+            // text(".")
+            let w = r_b_2e[q % RING] & lv;
+            r_t131[q % RING] = w;
+            // the byte 0x3a
+            let w = unsafe { S::eq_mask(v, 0x3a) & lv };
+            r_b_3a[q % RING] = w;
+            // text(":")
+            let w = r_b_3a[q % RING] & lv;
+            r_t132[q % RING] = w;
+            // the byte 0x2a
+            let w = unsafe { S::eq_mask(v, 0x2a) & lv };
+            r_b_2a[q % RING] = w;
+            // text("*")
+            let w = r_b_2a[q % RING] & lv;
+            r_t133[q % RING] = w;
+            // the byte 0x25
+            let w = unsafe { S::eq_mask(v, 0x25) & lv };
+            r_b_25[q % RING] = w;
+            // text("%")
+            let w = r_b_25[q % RING] & lv;
+            r_t134[q % RING] = w;
+            // the byte 0x2f
+            let w = unsafe { S::eq_mask(v, 0x2f) & lv };
+            r_b_2f[q % RING] = w;
+            // text("/")
+            let w = r_b_2f[q % RING] & lv;
+            r_t135[q % RING] = w;
+            // the byte 0x28
+            let w = unsafe { S::eq_mask(v, 0x28) & lv };
+            r_b_28[q % RING] = w;
+            // text("(")
+            let w = r_b_28[q % RING] & lv;
+            r_t136[q % RING] = w;
+            // the byte 0x5b
+            let w = unsafe { S::eq_mask(v, 0x5b) & lv };
+            r_b_5b[q % RING] = w;
+            // text("[")
+            let w = r_b_5b[q % RING] & lv;
+            r_t137[q % RING] = w;
+            // the byte 0x7b
+            let w = unsafe { S::eq_mask(v, 0x7b) & lv };
+            r_b_7b[q % RING] = w;
+            // text("{")
+            let w = r_b_7b[q % RING] & lv;
+            r_t138[q % RING] = w;
+            // the byte 0x3d
+            let w = unsafe { S::eq_mask(v, 0x3d) & lv };
+            r_b_3d[q % RING] = w;
+            // text("=")
+            let w = r_b_3d[q % RING] & lv;
+            r_t139[q % RING] = w;
+            // the byte 0x21
+            let w = unsafe { S::eq_mask(v, 0x21) & lv };
+            r_b_21[q % RING] = w;
+            // text("!")
+            let w = r_b_21[q % RING] & lv;
+            r_t140[q % RING] = w;
+            // the byte 0x7c
+            let w = unsafe { S::eq_mask(v, 0x7c) & lv };
+            r_b_7c[q % RING] = w;
+            // text("|")
+            let w = r_b_7c[q % RING] & lv;
+            r_t141[q % RING] = w;
+            // the byte 0x26
+            let w = unsafe { S::eq_mask(v, 0x26) & lv };
+            r_b_26[q % RING] = w;
+            // text("&")
+            let w = r_b_26[q % RING] & lv;
+            r_t142[q % RING] = w;
+            // the byte 0x2c
+            let w = unsafe { S::eq_mask(v, 0x2c) & lv };
+            r_b_2c[q % RING] = w;
+            // text(",")
+            let w = r_b_2c[q % RING] & lv;
+            r_t143[q % RING] = w;
+            // the byte 0x3b
+            let w = unsafe { S::eq_mask(v, 0x3b) & lv };
+            r_b_3b[q % RING] = w;
+            // text(";")
+            let w = r_b_3b[q % RING] & lv;
+            r_t144[q % RING] = w;
+            // the byte 0x77
+            let w = unsafe { S::eq_mask(v, 0x77) & lv };
+            r_b_77[q % RING] = w;
+            // the byte 0x68
+            let w = unsafe { S::eq_mask(v, 0x68) & lv };
+            r_b_68[q % RING] = w;
+            // the byte 0x65
+            let w = unsafe { S::eq_mask(v, 0x65) & lv };
+            r_b_65[q % RING] = w;
+            // the byte 0x72
+            let w = unsafe { S::eq_mask(v, 0x72) & lv };
+            r_b_72[q % RING] = w;
+            // the byte 0x63
+            let w = unsafe { S::eq_mask(v, 0x63) & lv };
+            r_b_63[q % RING] = w;
+            // the byte 0x74
+            let w = unsafe { S::eq_mask(v, 0x74) & lv };
+            r_b_74[q % RING] = w;
+            // the byte 0x66
+            let w = unsafe { S::eq_mask(v, 0x66) & lv };
+            r_b_66[q % RING] = w;
+            // the byte 0x6e
+            let w = unsafe { S::eq_mask(v, 0x6e) & lv };
+            r_b_6e[q % RING] = w;
+            // the byte 0x6c
+            let w = unsafe { S::eq_mask(v, 0x6c) & lv };
+            r_b_6c[q % RING] = w;
+            // the byte 0x79
+            let w = unsafe { S::eq_mask(v, 0x79) & lv };
+            r_b_79[q % RING] = w;
         }
         // The masks 1 block behind the classes.
         if t >= 1 && t - 1 <= nw {
@@ -1556,83 +1435,23 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             if q < nw {
                 t29[q] = w;
             }
-            // text("val")
-            let w = r_b_76[q % RING] & (r_b_61[q % RING] >> 1 | r_b_61[(q + 1) % RING] << 63) & (r_b_6c[q % RING] >> 2 | r_b_6c[(q + 1) % RING] << 62) & lv;
-            r_t49[q % RING] = w;
-            if q < nw {
-                t49[q] = w;
-            }
-            // text("var")
-            let w = r_b_76[q % RING] & (r_b_61[q % RING] >> 1 | r_b_61[(q + 1) % RING] << 63) & (r_b_72[q % RING] >> 2 | r_b_72[(q + 1) % RING] << 62) & lv;
-            r_t50[q % RING] = w;
-            if q < nw {
-                t50[q] = w;
-            }
-            // text("else")
-            let w = r_b_65[q % RING] & (r_b_6c[q % RING] >> 1 | r_b_6c[(q + 1) % RING] << 63) & (r_b_73[q % RING] >> 2 | r_b_73[(q + 1) % RING] << 62) & (r_b_65[q % RING] >> 3 | r_b_65[(q + 1) % RING] << 61) & lv;
-            r_t51[q % RING] = w;
-            if q < nw {
-                t51[q] = w;
-            }
-            // text("if")
-            let w = r_b_69[q % RING] & (r_b_66[q % RING] >> 1 | r_b_66[(q + 1) % RING] << 63) & lv;
-            r_t59[q % RING] = w;
-            if q < nw {
-                t59[q] = w;
-            }
-            // text("when")
-            let w = r_b_77[q % RING] & (r_b_68[q % RING] >> 1 | r_b_68[(q + 1) % RING] << 63) & (r_b_65[q % RING] >> 2 | r_b_65[(q + 1) % RING] << 62) & (r_b_6e[q % RING] >> 3 | r_b_6e[(q + 1) % RING] << 61) & lv;
-            r_t60[q % RING] = w;
-            if q < nw {
-                t60[q] = w;
-            }
-            // text("try")
-            let w = r_b_74[q % RING] & (r_b_72[q % RING] >> 1 | r_b_72[(q + 1) % RING] << 63) & (r_b_79[q % RING] >> 2 | r_b_79[(q + 1) % RING] << 62) & lv;
-            r_t61[q % RING] = w;
-            if q < nw {
-                t61[q] = w;
-            }
-            // text("return")
-            let w = r_b_72[q % RING] & (r_b_65[q % RING] >> 1 | r_b_65[(q + 1) % RING] << 63) & (r_b_74[q % RING] >> 2 | r_b_74[(q + 1) % RING] << 62) & (r_b_75[q % RING] >> 3 | r_b_75[(q + 1) % RING] << 61) & (r_b_72[q % RING] >> 4 | r_b_72[(q + 1) % RING] << 60) & (r_b_6e[q % RING] >> 5 | r_b_6e[(q + 1) % RING] << 59) & lv;
-            r_t62[q % RING] = w;
-            if q < nw {
-                t62[q] = w;
-            }
-            // text("throw")
-            let w = r_b_74[q % RING] & (r_b_68[q % RING] >> 1 | r_b_68[(q + 1) % RING] << 63) & (r_b_72[q % RING] >> 2 | r_b_72[(q + 1) % RING] << 62) & (r_b_6f[q % RING] >> 3 | r_b_6f[(q + 1) % RING] << 61) & (r_b_77[q % RING] >> 4 | r_b_77[(q + 1) % RING] << 60) & lv;
-            r_t63[q % RING] = w;
-            if q < nw {
-                t63[q] = w;
-            }
-            // text("fun")
-            let w = r_b_66[q % RING] & (r_b_75[q % RING] >> 1 | r_b_75[(q + 1) % RING] << 63) & (r_b_6e[q % RING] >> 2 | r_b_6e[(q + 1) % RING] << 62) & lv;
-            r_t64[q % RING] = w;
-            if q < nw {
-                t64[q] = w;
-            }
-            // text("object")
-            let w = r_b_6f[q % RING] & (r_b_62[q % RING] >> 1 | r_b_62[(q + 1) % RING] << 63) & (r_b_6a[q % RING] >> 2 | r_b_6a[(q + 1) % RING] << 62) & (r_b_65[q % RING] >> 3 | r_b_65[(q + 1) % RING] << 61) & (r_b_63[q % RING] >> 4 | r_b_63[(q + 1) % RING] << 60) & (r_b_74[q % RING] >> 5 | r_b_74[(q + 1) % RING] << 59) & lv;
-            r_t65[q % RING] = w;
-            if q < nw {
-                t65[q] = w;
-            }
             // ((((((((((((((((pair_byte_2d & next(pair_byte_3e)) | (pair_byte_3d & next(pair_byte_3d))) | (pair_byte_21 & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3d))) | (pair_byte_26 & next(pair_byte_26))) | (pair_byte_7c & next(pair_byte_7c))) | (pair_byte_2b & next(pair_byte_2b))) | (pair_byte_2d & next(pair_byte_2d))) | (pair_byte_2b & next(pair_byte_3d))) | (pair_byte_2d & next(pair_byte_3d))) | (pair_byte_2a & next(pair_byte_3d))) | (pair_byte_2f & next(pair_byte_3d))) | (pair_byte_25 & next(pair_byte_3d))) | (pair_byte_3a & next(pair_byte_3a))) | (pair_byte_3f & next(pair_byte_3a))) | (pair_byte_2e & next(pair_byte_2e))) | (pair_byte_21 & next(pair_byte_21))
             let w = ((((((((((((((((r_m_pair_byte_2d[q % RING] & (r_m_pair_byte_3e[q % RING] >> 1 | r_m_pair_byte_3e[(q + 1) % RING] << 63) | r_m_pair_byte_3d[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_21[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_3c[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_26[q % RING] & (r_m_pair_byte_26[q % RING] >> 1 | r_m_pair_byte_26[(q + 1) % RING] << 63)) | r_m_pair_byte_7c[q % RING] & (r_m_pair_byte_7c[q % RING] >> 1 | r_m_pair_byte_7c[(q + 1) % RING] << 63)) | r_m_pair_byte_2b[q % RING] & (r_m_pair_byte_2b[q % RING] >> 1 | r_m_pair_byte_2b[(q + 1) % RING] << 63)) | r_m_pair_byte_2d[q % RING] & (r_m_pair_byte_2d[q % RING] >> 1 | r_m_pair_byte_2d[(q + 1) % RING] << 63)) | r_m_pair_byte_2b[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_2d[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_2a[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_2f[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_25[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_3a[q % RING] & (r_m_pair_byte_3a[q % RING] >> 1 | r_m_pair_byte_3a[(q + 1) % RING] << 63)) | r_m_pair_byte_3f[q % RING] & (r_m_pair_byte_3a[q % RING] >> 1 | r_m_pair_byte_3a[(q + 1) % RING] << 63)) | r_m_pair_byte_2e[q % RING] & (r_m_pair_byte_2e[q % RING] >> 1 | r_m_pair_byte_2e[(q + 1) % RING] << 63)) | r_m_pair_byte_21[q % RING] & (r_m_pair_byte_21[q % RING] >> 1 | r_m_pair_byte_21[(q + 1) % RING] << 63));
-            r_t77[q % RING] = w;
-            // escaped(t77)
+            r_t43[q % RING] = w;
+            // escaped(t43)
             let w = {
                     const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
-                    let bs = r_t77[q % RING];
-                    let potential = bs & !c_t76;
+                    let bs = r_t43[q % RING];
+                    let potential = bs & !c_t42;
                     let series = ((potential << 1) | ODD).wrapping_sub(potential);
                     let escape_and_terminal = series ^ ODD;
-                    let escaped = escape_and_terminal ^ (bs | c_t76);
-                    c_t76 = (escape_and_terminal & bs) >> 63;
+                    let escaped = escape_and_terminal ^ (bs | c_t42);
+                    c_t42 = (escape_and_terminal & bs) >> 63;
                     escaped & lv
                 };
-            r_t76[q % RING] = w;
+            r_t42[q % RING] = w;
             // mask two_start = (((((((((((((((((pair_byte_2d & next(pair_byte_3e)) | (pair_byte_3d & next(pair_byte_3d))) | (pair_byte_21 & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3d))) | (pair_byte_26 & next(pair_byte_26))) | (pair_byte_7c & next(pair_byte_7c))) | (pair_byte_2b & next(pair_byte_2b))) | (pair_byte_2d & next(pair_byte_2d))) | (pair_byte_2b & next(pair_byte_3d))) | (pair_byte_2d & next(pair_byte_3d))) | (pair_byte_2a & next(pair_byte_3d))) | (pair_byte_2f & next(pair_byte_3d))) | (pair_byte_25 & next(pair_byte_3d))) | (pair_byte_3a & next(pair_byte_3a))) | (pair_byte_3f & next(pair_byte_3a))) | (pair_byte_2e & next(pair_byte_2e))) | (pair_byte_21 & next(pair_byte_21))) & ~escaped(((((((((((((((((pair_byte_2d & next(pair_byte_3e)) | (pair_byte_3d & next(pair_byte_3d))) | (pair_byte_21 & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3d))) | (pair_byte_26 & next(pair_byte_26))) | (pair_byte_7c & next(pair_byte_7c))) | (pair_byte_2b & next(pair_byte_2b))) | (pair_byte_2d & next(pair_byte_2d))) | (pair_byte_2b & next(pair_byte_3d))) | (pair_byte_2d & next(pair_byte_3d))) | (pair_byte_2a & next(pair_byte_3d))) | (pair_byte_2f & next(pair_byte_3d))) | (pair_byte_25 & next(pair_byte_3d))) | (pair_byte_3a & next(pair_byte_3a))) | (pair_byte_3f & next(pair_byte_3a))) | (pair_byte_2e & next(pair_byte_2e))) | (pair_byte_21 & next(pair_byte_21)))
-            let w = ((((((((((((((((r_m_pair_byte_2d[q % RING] & (r_m_pair_byte_3e[q % RING] >> 1 | r_m_pair_byte_3e[(q + 1) % RING] << 63) | r_m_pair_byte_3d[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_21[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_3c[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_26[q % RING] & (r_m_pair_byte_26[q % RING] >> 1 | r_m_pair_byte_26[(q + 1) % RING] << 63)) | r_m_pair_byte_7c[q % RING] & (r_m_pair_byte_7c[q % RING] >> 1 | r_m_pair_byte_7c[(q + 1) % RING] << 63)) | r_m_pair_byte_2b[q % RING] & (r_m_pair_byte_2b[q % RING] >> 1 | r_m_pair_byte_2b[(q + 1) % RING] << 63)) | r_m_pair_byte_2d[q % RING] & (r_m_pair_byte_2d[q % RING] >> 1 | r_m_pair_byte_2d[(q + 1) % RING] << 63)) | r_m_pair_byte_2b[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_2d[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_2a[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_2f[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_25[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_3a[q % RING] & (r_m_pair_byte_3a[q % RING] >> 1 | r_m_pair_byte_3a[(q + 1) % RING] << 63)) | r_m_pair_byte_3f[q % RING] & (r_m_pair_byte_3a[q % RING] >> 1 | r_m_pair_byte_3a[(q + 1) % RING] << 63)) | r_m_pair_byte_2e[q % RING] & (r_m_pair_byte_2e[q % RING] >> 1 | r_m_pair_byte_2e[(q + 1) % RING] << 63)) | r_m_pair_byte_21[q % RING] & (r_m_pair_byte_21[q % RING] >> 1 | r_m_pair_byte_21[(q + 1) % RING] << 63)) & (!r_t76[q % RING] & lv);
+            let w = ((((((((((((((((r_m_pair_byte_2d[q % RING] & (r_m_pair_byte_3e[q % RING] >> 1 | r_m_pair_byte_3e[(q + 1) % RING] << 63) | r_m_pair_byte_3d[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_21[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_3c[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_26[q % RING] & (r_m_pair_byte_26[q % RING] >> 1 | r_m_pair_byte_26[(q + 1) % RING] << 63)) | r_m_pair_byte_7c[q % RING] & (r_m_pair_byte_7c[q % RING] >> 1 | r_m_pair_byte_7c[(q + 1) % RING] << 63)) | r_m_pair_byte_2b[q % RING] & (r_m_pair_byte_2b[q % RING] >> 1 | r_m_pair_byte_2b[(q + 1) % RING] << 63)) | r_m_pair_byte_2d[q % RING] & (r_m_pair_byte_2d[q % RING] >> 1 | r_m_pair_byte_2d[(q + 1) % RING] << 63)) | r_m_pair_byte_2b[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_2d[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_2a[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_2f[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_25[q % RING] & (r_m_pair_byte_3d[q % RING] >> 1 | r_m_pair_byte_3d[(q + 1) % RING] << 63)) | r_m_pair_byte_3a[q % RING] & (r_m_pair_byte_3a[q % RING] >> 1 | r_m_pair_byte_3a[(q + 1) % RING] << 63)) | r_m_pair_byte_3f[q % RING] & (r_m_pair_byte_3a[q % RING] >> 1 | r_m_pair_byte_3a[(q + 1) % RING] << 63)) | r_m_pair_byte_2e[q % RING] & (r_m_pair_byte_2e[q % RING] >> 1 | r_m_pair_byte_2e[(q + 1) % RING] << 63)) | r_m_pair_byte_21[q % RING] & (r_m_pair_byte_21[q % RING] >> 1 | r_m_pair_byte_21[(q + 1) % RING] << 63)) & (!r_t42[q % RING] & lv);
             r_m_two_start[q % RING] = w;
             if q < nw {
                 m_two_start[q] = w;
@@ -1644,383 +1463,401 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                 m_two_start_three[q] = w;
             }
             // ((word & ~prev(word | high)) & (text("as") | text("is"))) & ~next(word | high, 2)
-            let w = r_m_word[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (r_t28[q % RING] | r_t29[q % RING]) & (!(r_t81[q % RING] >> 2 | r_t81[(q + 1) % RING] << 62) & lv);
-            r_t87[q % RING] = w;
+            let w = r_m_word[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (r_t28[q % RING] | r_t29[q % RING]) & (!(r_t47[q % RING] >> 2 | r_t47[(q + 1) % RING] << 62) & lv);
+            r_t53[q % RING] = w;
             // prev(((word & ~prev(word | high)) & (text("as") | text("is"))) & ~next(word | high, 2))
-            let w = (r_t87[q % RING] << 1 | r_t87[(q + RING - 1) % RING] >> 63) & lv;
-            r_t86[q % RING] = w;
+            let w = (r_t53[q % RING] << 1 | r_t53[(q + RING - 1) % RING] >> 63) & lv;
+            r_t52[q % RING] = w;
             if q < nw {
-                t86[q] = w;
+                t52[q] = w;
             }
-            // t88 & ~prev(t86)
-            let w = (!((((((r_m_word[q % RING] | r_m_high[q % RING]) | r_m_dot[q % RING]) | r_t32[q % RING]) | r_t33[q % RING]) | r_t34[q % RING]) | r_t35[q % RING]) & lv) & (!(r_t86[q % RING] << 1 | r_t86[(q + RING - 1) % RING] >> 63) & lv & lv);
-            r_t89[q % RING] = w;
+            // t54 & ~prev(t52)
+            let w = (!((((((r_m_word[q % RING] | r_m_high[q % RING]) | r_m_dot[q % RING]) | r_t32[q % RING]) | r_t33[q % RING]) | r_t34[q % RING]) | r_t35[q % RING]) & lv) & (!(r_t52[q % RING] << 1 | r_t52[(q + RING - 1) % RING] >> 63) & lv & lv);
+            r_t55[q % RING] = w;
             if q < nw {
-                t89[q] = w;
+                t55[q] = w;
             }
             // (dollar & escaped(backslash)) & next(dq | dollar)
-            let w = r_m_dollar[q % RING] & r_t1[q % RING] & (r_t93[q % RING] >> 1 | r_t93[(q + 1) % RING] << 63);
-            r_t92[q % RING] = w;
+            let w = r_m_dollar[q % RING] & r_t1[q % RING] & (r_t59[q % RING] >> 1 | r_t59[(q + 1) % RING] << 63);
+            r_t58[q % RING] = w;
             if q < nw {
-                t92[q] = w;
+                t58[q] = w;
             }
             // (dollar & ~escaped(backslash)) & next(alpha | high)
             let w = r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63);
-            r_t96[q % RING] = w;
+            r_t62[q % RING] = w;
             if q < nw {
-                t96[q] = w;
+                t62[q] = w;
             }
             // fill((dollar & ~escaped(backslash)) & next(alpha | high), ~(word | high))
             let w = {
-                    let (s, e) = (r_t96[q % RING], r_t82[q % RING]);
+                    let (s, e) = (r_t62[q % RING], r_t48[q % RING]);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t95) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t61) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t95 = f >> 63;
+                    c_t61 = f >> 63;
                     f & lv
                 };
-            r_t95[q % RING] = w;
+            r_t61[q % RING] = w;
             // (fill((dollar & ~escaped(backslash)) & next(alpha | high), ~(word | high)) & high) & ~uni
-            let w = r_t95[q % RING] & r_m_high[q % RING] & (!r_m_uni[q % RING] & lv);
-            r_t94[q % RING] = w;
+            let w = r_t61[q % RING] & r_m_high[q % RING] & (!r_m_uni[q % RING] & lv);
+            r_t60[q % RING] = w;
             if q < nw {
-                t94[q] = w;
+                t60[q] = w;
             }
             // (backslash & ~escaped(backslash)) & next(u_letter)
             let w = r_m_backslash[q % RING] & (!r_t1[q % RING] & lv) & (r_m_u_letter[q % RING] >> 1 | r_m_u_letter[(q + 1) % RING] << 63);
-            r_t98[q % RING] = w;
+            r_t64[q % RING] = w;
             if q < nw {
-                t98[q] = w;
+                t64[q] = w;
             }
-            // prev(t98, 2) & ~(((hex_digit & next(hex_digit)) & next(hex_digit, 2)) & next(hex_digit, 3))
-            let w = (r_t98[q % RING] << 2 | r_t98[(q + RING - 1) % RING] >> 62) & lv & (!(r_m_hex_digit[q % RING] & (r_m_hex_digit[q % RING] >> 1 | r_m_hex_digit[(q + 1) % RING] << 63) & (r_m_hex_digit[q % RING] >> 2 | r_m_hex_digit[(q + 1) % RING] << 62) & (r_m_hex_digit[q % RING] >> 3 | r_m_hex_digit[(q + 1) % RING] << 61)) & lv);
-            r_t97[q % RING] = w;
+            // prev(t64, 2) & ~(((hex_digit & next(hex_digit)) & next(hex_digit, 2)) & next(hex_digit, 3))
+            let w = (r_t64[q % RING] << 2 | r_t64[(q + RING - 1) % RING] >> 62) & lv & (!(r_m_hex_digit[q % RING] & (r_m_hex_digit[q % RING] >> 1 | r_m_hex_digit[(q + 1) % RING] << 63) & (r_m_hex_digit[q % RING] >> 2 | r_m_hex_digit[(q + 1) % RING] << 62) & (r_m_hex_digit[q % RING] >> 3 | r_m_hex_digit[(q + 1) % RING] << 61)) & lv);
+            r_t63[q % RING] = w;
             if q < nw {
-                t97[q] = w;
+                t63[q] = w;
             }
             // high & ~uni
             let w = r_m_high[q % RING] & (!r_m_uni[q % RING] & lv);
-            r_t99[q % RING] = w;
+            r_t65[q % RING] = w;
             if q < nw {
-                t99[q] = w;
+                t65[q] = w;
             }
-            // (((t83 & zero) & next(b_letter)) & next(t13, 2)) | (((t83 & zero) & next(x_letter)) & next(t11, 2))
-            let w = (r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_b_letter[q % RING] >> 1 | r_m_b_letter[(q + 1) % RING] << 63) & (r_t13[q % RING] >> 2 | r_t13[(q + 1) % RING] << 62) | r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_x_letter[q % RING] >> 1 | r_m_x_letter[(q + 1) % RING] << 63) & (r_t11[q % RING] >> 2 | r_t11[(q + 1) % RING] << 62));
-            r_t102[q % RING] = w;
+            // (((t49 & zero) & next(b_letter)) & next(t13, 2)) | (((t49 & zero) & next(x_letter)) & next(t11, 2))
+            let w = (r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_b_letter[q % RING] >> 1 | r_m_b_letter[(q + 1) % RING] << 63) & (r_t13[q % RING] >> 2 | r_t13[(q + 1) % RING] << 62) | r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_x_letter[q % RING] >> 1 | r_m_x_letter[(q + 1) % RING] << 63) & (r_t11[q % RING] >> 2 | r_t11[(q + 1) % RING] << 62));
+            r_t68[q % RING] = w;
             if q < nw {
-                t102[q] = w;
+                t68[q] = w;
             }
-            // (t83 & ~((t83 & zero) & next(x_letter))) & ~((t83 & zero) & next(b_letter))
-            let w = r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_x_letter[q % RING] >> 1 | r_m_x_letter[(q + 1) % RING] << 63)) & lv) & (!(r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_b_letter[q % RING] >> 1 | r_m_b_letter[(q + 1) % RING] << 63)) & lv);
-            r_t106[q % RING] = w;
-            // fill(t106, t15)
+            // (t49 & ~((t49 & zero) & next(x_letter))) & ~((t49 & zero) & next(b_letter))
+            let w = r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_x_letter[q % RING] >> 1 | r_m_x_letter[(q + 1) % RING] << 63)) & lv) & (!(r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_b_letter[q % RING] >> 1 | r_m_b_letter[(q + 1) % RING] << 63)) & lv);
+            r_t72[q % RING] = w;
+            // fill(t72, t15)
             let w = {
-                    let (s, e) = (r_t106[q % RING], r_t15[q % RING]);
+                    let (s, e) = (r_t72[q % RING], r_t15[q % RING]);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t105) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t71) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t105 = f >> 63;
+                    c_t71 = f >> 63;
                     f & lv
                 };
-            r_t105[q % RING] = w;
-            // ((dot & prev(t105)) & next(digit)) | (((dot & next(digit)) & ~prev(t81)) & ~prev(dot))
-            let w = (r_m_dot[q % RING] & (r_t105[q % RING] << 1 | r_t105[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv));
-            r_t109[q % RING] = w;
-            // prev(t109)
-            let w = (r_t109[q % RING] << 1 | r_t109[(q + RING - 1) % RING] >> 63) & lv;
-            r_t108[q % RING] = w;
-            // fill(t108, t15)
+            r_t71[q % RING] = w;
+            // ((dot & prev(t71)) & next(digit)) | (((dot & next(digit)) & ~prev(t47)) & ~prev(dot))
+            let w = (r_m_dot[q % RING] & (r_t71[q % RING] << 1 | r_t71[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv));
+            r_t75[q % RING] = w;
+            // prev(t75)
+            let w = (r_t75[q % RING] << 1 | r_t75[(q + RING - 1) % RING] >> 63) & lv;
+            r_t74[q % RING] = w;
+            // fill(t74, t15)
             let w = {
-                    let (s, e) = (r_t108[q % RING], r_t15[q % RING]);
+                    let (s, e) = (r_t74[q % RING], r_t15[q % RING]);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t107) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t73) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t107 = f >> 63;
+                    c_t73 = f >> 63;
                     f & lv
                 };
-            r_t107[q % RING] = w;
-            // t105 | t107
-            let w = (r_t105[q % RING] | r_t107[q % RING]);
-            r_t113[q % RING] = w;
-            // (e_letter & prev(t113)) & (next(digit) | (next(sign) & next(digit, 2)))
-            let w = r_m_e_letter[q % RING] & (r_t113[q % RING] << 1 | r_t113[(q + RING - 1) % RING] >> 63) & lv & ((r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | (r_m_sign[q % RING] >> 1 | r_m_sign[(q + 1) % RING] << 63) & (r_m_digit[q % RING] >> 2 | r_m_digit[(q + 1) % RING] << 62));
-            r_t112[q % RING] = w;
-            // sign & prev(t112)
-            let w = r_m_sign[q % RING] & (r_t112[q % RING] << 1 | r_t112[(q + RING - 1) % RING] >> 63) & lv;
-            r_t114[q % RING] = w;
-            // (prev(t112) & digit) | prev(t114)
-            let w = ((r_t112[q % RING] << 1 | r_t112[(q + RING - 1) % RING] >> 63) & lv & r_m_digit[q % RING] | (r_t114[q % RING] << 1 | r_t114[(q + RING - 1) % RING] >> 63) & lv);
-            r_t111[q % RING] = w;
-            // fill(t111, t15)
+            r_t73[q % RING] = w;
+            // t71 | t73
+            let w = (r_t71[q % RING] | r_t73[q % RING]);
+            r_t79[q % RING] = w;
+            // (e_letter & prev(t79)) & (next(digit) | (next(sign) & next(digit, 2)))
+            let w = r_m_e_letter[q % RING] & (r_t79[q % RING] << 1 | r_t79[(q + RING - 1) % RING] >> 63) & lv & ((r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | (r_m_sign[q % RING] >> 1 | r_m_sign[(q + 1) % RING] << 63) & (r_m_digit[q % RING] >> 2 | r_m_digit[(q + 1) % RING] << 62));
+            r_t78[q % RING] = w;
+            // sign & prev(t78)
+            let w = r_m_sign[q % RING] & (r_t78[q % RING] << 1 | r_t78[(q + RING - 1) % RING] >> 63) & lv;
+            r_t80[q % RING] = w;
+            // (prev(t78) & digit) | prev(t80)
+            let w = ((r_t78[q % RING] << 1 | r_t78[(q + RING - 1) % RING] >> 63) & lv & r_m_digit[q % RING] | (r_t80[q % RING] << 1 | r_t80[(q + RING - 1) % RING] >> 63) & lv);
+            r_t77[q % RING] = w;
+            // fill(t77, t15)
             let w = {
-                    let (s, e) = (r_t111[q % RING], r_t15[q % RING]);
+                    let (s, e) = (r_t77[q % RING], r_t15[q % RING]);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t110) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t76) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t110 = f >> 63;
+                    c_t76 = f >> 63;
                     f & lv
                 };
-            r_t110[q % RING] = w;
-            // t113 | t110
-            let w = ((r_t105[q % RING] | r_t107[q % RING]) | r_t110[q % RING]);
-            r_t116[q % RING] = w;
-            // ((((((t105 | ((dot & prev(t105)) & next(digit))) | (((dot & next(digit)) & ~prev(t81)) & ~prev(dot))) | t107) | t112) | t114) | t110) | (f_letter & prev(t116))
-            let w = (((((((r_t105[q % RING] | r_m_dot[q % RING] & (r_t105[q % RING] << 1 | r_t105[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63)) | r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv)) | r_t107[q % RING]) | r_m_e_letter[q % RING] & (r_t113[q % RING] << 1 | r_t113[(q + RING - 1) % RING] >> 63) & lv & ((r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | (r_m_sign[q % RING] >> 1 | r_m_sign[(q + 1) % RING] << 63) & (r_m_digit[q % RING] >> 2 | r_m_digit[(q + 1) % RING] << 62))) | r_m_sign[q % RING] & (r_t112[q % RING] << 1 | r_t112[(q + RING - 1) % RING] >> 63) & lv) | r_t110[q % RING]) | r_m_f_letter[q % RING] & (r_t116[q % RING] << 1 | r_t116[(q + RING - 1) % RING] >> 63) & lv);
-            r_t115[q % RING] = w;
+            r_t76[q % RING] = w;
+            // t79 | t76
+            let w = ((r_t71[q % RING] | r_t73[q % RING]) | r_t76[q % RING]);
+            r_t82[q % RING] = w;
+            // ((((((t71 | ((dot & prev(t71)) & next(digit))) | (((dot & next(digit)) & ~prev(t47)) & ~prev(dot))) | t73) | t78) | t80) | t76) | (f_letter & prev(t82))
+            let w = (((((((r_t71[q % RING] | r_m_dot[q % RING] & (r_t71[q % RING] << 1 | r_t71[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63)) | r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv)) | r_t73[q % RING]) | r_m_e_letter[q % RING] & (r_t79[q % RING] << 1 | r_t79[(q + RING - 1) % RING] >> 63) & lv & ((r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | (r_m_sign[q % RING] >> 1 | r_m_sign[(q + 1) % RING] << 63) & (r_m_digit[q % RING] >> 2 | r_m_digit[(q + 1) % RING] << 62))) | r_m_sign[q % RING] & (r_t78[q % RING] << 1 | r_t78[(q + RING - 1) % RING] >> 63) & lv) | r_t76[q % RING]) | r_m_f_letter[q % RING] & (r_t82[q % RING] << 1 | r_t82[(q + RING - 1) % RING] >> 63) & lv);
+            r_t81[q % RING] = w;
             // ((((word & digit) & ~prev(word | high)) & ~prev(dot & ~prev(dot))) & zero) & next(x_letter)
-            let w = r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_x_letter[q % RING] >> 1 | r_m_x_letter[(q + 1) % RING] << 63);
-            r_t119[q % RING] = w;
-            // prev(t119, 2) & hexd
-            let w = (r_t119[q % RING] << 2 | r_t119[(q + RING - 1) % RING] >> 62) & lv & r_m_hexd[q % RING];
-            r_t118[q % RING] = w;
-            // fill(t118, t11)
+            let w = r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_x_letter[q % RING] >> 1 | r_m_x_letter[(q + 1) % RING] << 63);
+            r_t85[q % RING] = w;
+            // prev(t85, 2) & hexd
+            let w = (r_t85[q % RING] << 2 | r_t85[(q + RING - 1) % RING] >> 62) & lv & r_m_hexd[q % RING];
+            r_t84[q % RING] = w;
+            // fill(t84, t11)
             let w = {
-                    let (s, e) = (r_t118[q % RING], r_t11[q % RING]);
+                    let (s, e) = (r_t84[q % RING], r_t11[q % RING]);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t117) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t83) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t117 = f >> 63;
+                    c_t83 = f >> 63;
                     f & lv
                 };
-            r_t117[q % RING] = w;
+            r_t83[q % RING] = w;
             // ((((word & digit) & ~prev(word | high)) & ~prev(dot & ~prev(dot))) & zero) & next(b_letter)
-            let w = r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_b_letter[q % RING] >> 1 | r_m_b_letter[(q + 1) % RING] << 63);
-            r_t122[q % RING] = w;
-            // prev(t122, 2) & bind
-            let w = (r_t122[q % RING] << 2 | r_t122[(q + RING - 1) % RING] >> 62) & lv & r_m_bind[q % RING];
-            r_t121[q % RING] = w;
-            // fill(t121, t13)
+            let w = r_m_word[q % RING] & r_m_digit[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_b_letter[q % RING] >> 1 | r_m_b_letter[(q + 1) % RING] << 63);
+            r_t88[q % RING] = w;
+            // prev(t88, 2) & bind
+            let w = (r_t88[q % RING] << 2 | r_t88[(q + RING - 1) % RING] >> 62) & lv & r_m_bind[q % RING];
+            r_t87[q % RING] = w;
+            // fill(t87, t13)
             let w = {
-                    let (s, e) = (r_t121[q % RING], r_t13[q % RING]);
+                    let (s, e) = (r_t87[q % RING], r_t13[q % RING]);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t120) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t86) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t120 = f >> 63;
+                    c_t86 = f >> 63;
                     f & lv
                 };
-            r_t120[q % RING] = w;
+            r_t86[q % RING] = w;
+            // text("where")
+            let w = r_b_77[q % RING] & (r_b_68[q % RING] >> 1 | r_b_68[(q + 1) % RING] << 63) & (r_b_65[q % RING] >> 2 | r_b_65[(q + 1) % RING] << 62) & (r_b_72[q % RING] >> 3 | r_b_72[(q + 1) % RING] << 61) & (r_b_65[q % RING] >> 4 | r_b_65[(q + 1) % RING] << 60) & lv;
+            r_t145[q % RING] = w;
+            // text("catch")
+            let w = r_b_63[q % RING] & (r_b_61[q % RING] >> 1 | r_b_61[(q + 1) % RING] << 63) & (r_b_74[q % RING] >> 2 | r_b_74[(q + 1) % RING] << 62) & (r_b_63[q % RING] >> 3 | r_b_63[(q + 1) % RING] << 61) & (r_b_68[q % RING] >> 4 | r_b_68[(q + 1) % RING] << 60) & lv;
+            r_t146[q % RING] = w;
+            // text("finally")
+            let w = r_b_66[q % RING] & (r_b_69[q % RING] >> 1 | r_b_69[(q + 1) % RING] << 63) & (r_b_6e[q % RING] >> 2 | r_b_6e[(q + 1) % RING] << 62) & (r_b_61[q % RING] >> 3 | r_b_61[(q + 1) % RING] << 61) & (r_b_6c[q % RING] >> 4 | r_b_6c[(q + 1) % RING] << 60) & (r_b_6c[q % RING] >> 5 | r_b_6c[(q + 1) % RING] << 59) & (r_b_79[q % RING] >> 6 | r_b_79[(q + 1) % RING] << 58) & lv;
+            r_t147[q % RING] = w;
+            // text("else")
+            let w = r_b_65[q % RING] & (r_b_6c[q % RING] >> 1 | r_b_6c[(q + 1) % RING] << 63) & (r_b_73[q % RING] >> 2 | r_b_73[(q + 1) % RING] << 62) & (r_b_65[q % RING] >> 3 | r_b_65[(q + 1) % RING] << 61) & lv;
+            r_t148[q % RING] = w;
+            // ~(((((((((((((((((t131 | t33) | t132) | t133) | t134) | t135) | t136) | t137) | t138) | t34) | t35) | t139) | (t140 & next(t139))) | t141) | t142) | t143) | t144) | (~prev(t47) & (((((t28 & ~next(t47, 2)) | (t145 & ~next(t47, 5))) | (t146 & ~next(t47, 5))) | (t147 & ~next(t47, 7))) | (t148 & ~next(t47, 4)))))
+            let w = !(((((((((((((((((r_t131[q % RING] | r_t33[q % RING]) | r_t132[q % RING]) | r_t133[q % RING]) | r_t134[q % RING]) | r_t135[q % RING]) | r_t136[q % RING]) | r_t137[q % RING]) | r_t138[q % RING]) | r_t34[q % RING]) | r_t35[q % RING]) | r_t139[q % RING]) | r_t140[q % RING] & (r_t139[q % RING] >> 1 | r_t139[(q + 1) % RING] << 63)) | r_t141[q % RING]) | r_t142[q % RING]) | r_t143[q % RING]) | r_t144[q % RING]) | (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & ((((r_t28[q % RING] & (!(r_t47[q % RING] >> 2 | r_t47[(q + 1) % RING] << 62) & lv) | r_t145[q % RING] & (!(r_t47[q % RING] >> 5 | r_t47[(q + 1) % RING] << 59) & lv)) | r_t146[q % RING] & (!(r_t47[q % RING] >> 5 | r_t47[(q + 1) % RING] << 59) & lv)) | r_t147[q % RING] & (!(r_t47[q % RING] >> 7 | r_t47[(q + 1) % RING] << 57) & lv)) | r_t148[q % RING] & (!(r_t47[q % RING] >> 4 | r_t47[(q + 1) % RING] << 60) & lv))) & lv;
+            r_t130[q % RING] = w;
+            if q < nw {
+                t130[q] = w;
+            }
             // (dq_close | t_dollar) | (rclose | t_dollar)
             let w = ((r_m_dq_close[q % RING] | r_m_t_dollar[q % RING]) | (r_m_rclose[q % RING] | r_m_t_dollar[q % RING]));
-            r_t191[q % RING] = w;
+            r_t149[q % RING] = w;
             if q < nw {
                 fw_rd0_close[q] = w;
                 fw_rd1_close[q] = w;
             }
             // prev((dollar & ~escaped(backslash)) & next(alpha | high))
-            let w = (r_t96[q % RING] << 1 | r_t96[(q + RING - 1) % RING] >> 63) & lv;
-            r_t194[q % RING] = w;
+            let w = (r_t62[q % RING] << 1 | r_t62[(q + RING - 1) % RING] >> 63) & lv;
+            r_t152[q % RING] = w;
             if q < nw {
-                t194[q] = w;
+                t152[q] = w;
             }
             // (word | high) & ~next(word | high)
-            let w = (r_m_word[q % RING] | r_m_high[q % RING]) & (!(r_t81[q % RING] >> 1 | r_t81[(q + 1) % RING] << 63) & lv);
-            r_t196[q % RING] = w;
+            let w = (r_m_word[q % RING] | r_m_high[q % RING]) & (!(r_t47[q % RING] >> 1 | r_t47[(q + 1) % RING] << 63) & lv);
+            r_t154[q % RING] = w;
             if q < nw {
-                t196[q] = w;
+                t154[q] = w;
             }
             // prev((word | high) & ~next(word | high))
-            let w = (r_t196[q % RING] << 1 | r_t196[(q + RING - 1) % RING] >> 63) & lv;
-            r_t195[q % RING] = w;
-            // fill(t194, t195)
+            let w = (r_t154[q % RING] << 1 | r_t154[(q + RING - 1) % RING] >> 63) & lv;
+            r_t153[q % RING] = w;
+            // fill(t152, t153)
             let w = {
-                    let (s, e) = (r_t194[q % RING], r_t195[q % RING]);
+                    let (s, e) = (r_t152[q % RING], r_t153[q % RING]);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t193) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t151) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t193 = f >> 63;
+                    c_t151 = f >> 63;
                     f & lv
                 };
-            r_t193[q % RING] = w;
-            // ((~t96 & ~((dollar & ~t1) & ~next(t6))) & ~t193) & ~(dq3 & next(dq, 3))
-            let w = (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63)) & lv) & (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (!(r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63) & lv)) & lv) & (!r_t193[q % RING] & lv) & (!(r_m_dq3[q % RING] & (r_m_dq[q % RING] >> 3 | r_m_dq[(q + 1) % RING] << 61)) & lv);
-            r_t192[q % RING] = w;
+            r_t151[q % RING] = w;
+            // ((~t62 & ~((dollar & ~t1) & ~next(t6))) & ~t151) & ~(dq3 & next(dq, 3))
+            let w = (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63)) & lv) & (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (!(r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63) & lv)) & lv) & (!r_t151[q % RING] & lv) & (!(r_m_dq3[q % RING] & (r_m_dq[q % RING] >> 3 | r_m_dq[(q + 1) % RING] << 61)) & lv);
+            r_t150[q % RING] = w;
             if q < nw {
-                t192[q] = w;
+                t150[q] = w;
             }
             // dq & ~next(dq)
             let w = r_m_dq[q % RING] & (!(r_m_dq[q % RING] >> 1 | r_m_dq[(q + 1) % RING] << 63) & lv);
-            r_t198[q % RING] = w;
-            // t192 & (~prev(t192) | prev(t198))
-            let w = (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63)) & lv) & (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (!(r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63) & lv)) & lv) & (!r_t193[q % RING] & lv) & (!(r_m_dq3[q % RING] & (r_m_dq[q % RING] >> 3 | r_m_dq[(q + 1) % RING] << 61)) & lv) & (!(r_t192[q % RING] << 1 | r_t192[(q + RING - 1) % RING] >> 63) & lv & lv | (r_t198[q % RING] << 1 | r_t198[(q + RING - 1) % RING] >> 63) & lv);
-            r_t197[q % RING] = w;
+            r_t156[q % RING] = w;
+            // t150 & (~prev(t150) | prev(t156))
+            let w = (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63)) & lv) & (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (!(r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63) & lv)) & lv) & (!r_t151[q % RING] & lv) & (!(r_m_dq3[q % RING] & (r_m_dq[q % RING] >> 3 | r_m_dq[(q + 1) % RING] << 61)) & lv) & (!(r_t150[q % RING] << 1 | r_t150[(q + RING - 1) % RING] >> 63) & lv & lv | (r_t156[q % RING] << 1 | r_t156[(q + RING - 1) % RING] >> 63) & lv);
+            r_t155[q % RING] = w;
             if q < nw {
-                t197[q] = w;
+                t155[q] = w;
             }
-            // t198 | t192
-            let w = (r_m_dq[q % RING] & (!(r_m_dq[q % RING] >> 1 | r_m_dq[(q + 1) % RING] << 63) & lv) | (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63)) & lv) & (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (!(r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63) & lv)) & lv) & (!r_t193[q % RING] & lv) & (!(r_m_dq3[q % RING] & (r_m_dq[q % RING] >> 3 | r_m_dq[(q + 1) % RING] << 61)) & lv));
-            r_t199[q % RING] = w;
+            // t156 | t150
+            let w = (r_m_dq[q % RING] & (!(r_m_dq[q % RING] >> 1 | r_m_dq[(q + 1) % RING] << 63) & lv) | (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63)) & lv) & (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (!(r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63) & lv)) & lv) & (!r_t151[q % RING] & lv) & (!(r_m_dq3[q % RING] & (r_m_dq[q % RING] >> 3 | r_m_dq[(q + 1) % RING] << 61)) & lv));
+            r_t157[q % RING] = w;
             if q < nw {
-                t199[q] = w;
+                t157[q] = w;
             }
             // dq3 & next(dq, 3)
             let w = r_m_dq3[q % RING] & (r_m_dq[q % RING] >> 3 | r_m_dq[(q + 1) % RING] << 61);
-            r_t201[q % RING] = w;
+            r_t159[q % RING] = w;
             if q < nw {
-                t201[q] = w;
+                t159[q] = w;
             }
             // (dollar & ~escaped(backslash)) & ~next(alpha | high)
             let w = r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (!(r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63) & lv);
-            r_t202[q % RING] = w;
+            r_t160[q % RING] = w;
             if q < nw {
-                t202[q] = w;
+                t160[q] = w;
             }
             // dq_close | rclose
             let w = (r_m_dq_close[q % RING] | r_m_rclose[q % RING]);
-            r_t203[q % RING] = w;
+            r_t161[q % RING] = w;
             if q < nw {
-                t203[q] = w;
+                t161[q] = w;
             }
             // prev((backslash & ~escaped(backslash)) & next(u_letter), 2)
-            let w = (r_t98[q % RING] << 2 | r_t98[(q + RING - 1) % RING] >> 62) & lv;
-            r_t204[q % RING] = w;
+            let w = (r_t64[q % RING] << 2 | r_t64[(q + RING - 1) % RING] >> 62) & lv;
+            r_t162[q % RING] = w;
             if q < nw {
-                t204[q] = w;
+                t162[q] = w;
             }
             // (backslash & ~escaped(backslash)) & ~next(u_letter)
             let w = r_m_backslash[q % RING] & (!r_t1[q % RING] & lv) & (!(r_m_u_letter[q % RING] >> 1 | r_m_u_letter[(q + 1) % RING] << 63) & lv);
-            r_t205[q % RING] = w;
+            r_t163[q % RING] = w;
             if q < nw {
-                t205[q] = w;
+                t163[q] = w;
             }
             // (digit & ~(zero & (next(x_letter) | next(b_letter)))) & ~prev(dot & ~prev(dot))
             let w = r_m_digit[q % RING] & (!(r_m_zero[q % RING] & ((r_m_x_letter[q % RING] >> 1 | r_m_x_letter[(q + 1) % RING] << 63) | (r_m_b_letter[q % RING] >> 1 | r_m_b_letter[(q + 1) % RING] << 63))) & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv);
-            r_t206[q % RING] = w;
+            r_t164[q % RING] = w;
             if q < nw {
-                t206[q] = w;
+                t164[q] = w;
             }
-            // ((((t81 & digit) & ~prev(t81)) & ~prev(t9)) & ~(((((t81 & digit) & ~prev(t81)) & ~prev(t9)) & zero) & next(x_letter))) & ~(((((t81 & digit) & ~prev(t81)) & ~prev(t9)) & zero) & next(b_letter))
-            let w = (r_m_word[q % RING] | r_m_high[q % RING]) & r_m_digit[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & (!((r_m_word[q % RING] | r_m_high[q % RING]) & r_m_digit[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_x_letter[q % RING] >> 1 | r_m_x_letter[(q + 1) % RING] << 63)) & lv) & (!((r_m_word[q % RING] | r_m_high[q % RING]) & r_m_digit[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_b_letter[q % RING] >> 1 | r_m_b_letter[(q + 1) % RING] << 63)) & lv);
-            r_t209[q % RING] = w;
-            // fill(t209, t15)
+            // ((((t47 & digit) & ~prev(t47)) & ~prev(t9)) & ~(((((t47 & digit) & ~prev(t47)) & ~prev(t9)) & zero) & next(x_letter))) & ~(((((t47 & digit) & ~prev(t47)) & ~prev(t9)) & zero) & next(b_letter))
+            let w = (r_m_word[q % RING] | r_m_high[q % RING]) & r_m_digit[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & (!((r_m_word[q % RING] | r_m_high[q % RING]) & r_m_digit[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_x_letter[q % RING] >> 1 | r_m_x_letter[(q + 1) % RING] << 63)) & lv) & (!((r_m_word[q % RING] | r_m_high[q % RING]) & r_m_digit[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_b_letter[q % RING] >> 1 | r_m_b_letter[(q + 1) % RING] << 63)) & lv);
+            r_t167[q % RING] = w;
+            // fill(t167, t15)
             let w = {
-                    let (s, e) = (r_t209[q % RING], r_t15[q % RING]);
+                    let (s, e) = (r_t167[q % RING], r_t15[q % RING]);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t208) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t166) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t208 = f >> 63;
+                    c_t166 = f >> 63;
                     f & lv
                 };
-            r_t208[q % RING] = w;
-            // ((dot & prev(t208)) & next(digit)) | (((dot & next(digit)) & ~prev(t81)) & ~prev(dot))
-            let w = (r_m_dot[q % RING] & (r_t208[q % RING] << 1 | r_t208[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv));
-            r_t212[q % RING] = w;
-            // prev(t212)
-            let w = (r_t212[q % RING] << 1 | r_t212[(q + RING - 1) % RING] >> 63) & lv;
-            r_t211[q % RING] = w;
-            // fill(t211, t15)
+            r_t166[q % RING] = w;
+            // ((dot & prev(t166)) & next(digit)) | (((dot & next(digit)) & ~prev(t47)) & ~prev(dot))
+            let w = (r_m_dot[q % RING] & (r_t166[q % RING] << 1 | r_t166[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv));
+            r_t170[q % RING] = w;
+            // prev(t170)
+            let w = (r_t170[q % RING] << 1 | r_t170[(q + RING - 1) % RING] >> 63) & lv;
+            r_t169[q % RING] = w;
+            // fill(t169, t15)
             let w = {
-                    let (s, e) = (r_t211[q % RING], r_t15[q % RING]);
+                    let (s, e) = (r_t169[q % RING], r_t15[q % RING]);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t210) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t168) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t210 = f >> 63;
+                    c_t168 = f >> 63;
                     f & lv
                 };
-            r_t210[q % RING] = w;
-            // t208 | t210
-            let w = (r_t208[q % RING] | r_t210[q % RING]);
-            r_t213[q % RING] = w;
-            // (e_letter & prev(t213)) & (next(digit) | (next(sign) & next(digit, 2)))
-            let w = r_m_e_letter[q % RING] & (r_t213[q % RING] << 1 | r_t213[(q + RING - 1) % RING] >> 63) & lv & ((r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | (r_m_sign[q % RING] >> 1 | r_m_sign[(q + 1) % RING] << 63) & (r_m_digit[q % RING] >> 2 | r_m_digit[(q + 1) % RING] << 62));
-            r_t214[q % RING] = w;
-            // sign & prev(t214)
-            let w = r_m_sign[q % RING] & (r_t214[q % RING] << 1 | r_t214[(q + RING - 1) % RING] >> 63) & lv;
-            r_t217[q % RING] = w;
-            // (prev(t214) & digit) | prev(t217)
-            let w = ((r_t214[q % RING] << 1 | r_t214[(q + RING - 1) % RING] >> 63) & lv & r_m_digit[q % RING] | (r_t217[q % RING] << 1 | r_t217[(q + RING - 1) % RING] >> 63) & lv);
-            r_t216[q % RING] = w;
-            // fill(t216, t15)
+            r_t168[q % RING] = w;
+            // t166 | t168
+            let w = (r_t166[q % RING] | r_t168[q % RING]);
+            r_t171[q % RING] = w;
+            // (e_letter & prev(t171)) & (next(digit) | (next(sign) & next(digit, 2)))
+            let w = r_m_e_letter[q % RING] & (r_t171[q % RING] << 1 | r_t171[(q + RING - 1) % RING] >> 63) & lv & ((r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | (r_m_sign[q % RING] >> 1 | r_m_sign[(q + 1) % RING] << 63) & (r_m_digit[q % RING] >> 2 | r_m_digit[(q + 1) % RING] << 62));
+            r_t172[q % RING] = w;
+            // sign & prev(t172)
+            let w = r_m_sign[q % RING] & (r_t172[q % RING] << 1 | r_t172[(q + RING - 1) % RING] >> 63) & lv;
+            r_t175[q % RING] = w;
+            // (prev(t172) & digit) | prev(t175)
+            let w = ((r_t172[q % RING] << 1 | r_t172[(q + RING - 1) % RING] >> 63) & lv & r_m_digit[q % RING] | (r_t175[q % RING] << 1 | r_t175[(q + RING - 1) % RING] >> 63) & lv);
+            r_t174[q % RING] = w;
+            // fill(t174, t15)
             let w = {
-                    let (s, e) = (r_t216[q % RING], r_t15[q % RING]);
+                    let (s, e) = (r_t174[q % RING], r_t15[q % RING]);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t215) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t173) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t215 = f >> 63;
+                    c_t173 = f >> 63;
                     f & lv
                 };
-            r_t215[q % RING] = w;
-            // t213 | t215
-            let w = ((r_t208[q % RING] | r_t210[q % RING]) | r_t215[q % RING]);
-            r_t218[q % RING] = w;
-            // ((((((t208 | ((dot & prev(t208)) & next(digit))) | (((dot & next(digit)) & ~prev(t81)) & ~prev(dot))) | t210) | t214) | t217) | t215) | (f_letter & prev(t218))
-            let w = (((((((r_t208[q % RING] | r_m_dot[q % RING] & (r_t208[q % RING] << 1 | r_t208[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63)) | r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv)) | r_t210[q % RING]) | r_m_e_letter[q % RING] & (r_t213[q % RING] << 1 | r_t213[(q + RING - 1) % RING] >> 63) & lv & ((r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | (r_m_sign[q % RING] >> 1 | r_m_sign[(q + 1) % RING] << 63) & (r_m_digit[q % RING] >> 2 | r_m_digit[(q + 1) % RING] << 62))) | r_m_sign[q % RING] & (r_t214[q % RING] << 1 | r_t214[(q + RING - 1) % RING] >> 63) & lv) | r_t215[q % RING]) | r_m_f_letter[q % RING] & (r_t218[q % RING] << 1 | r_t218[(q + RING - 1) % RING] >> 63) & lv);
-            r_t207[q % RING] = w;
+            r_t173[q % RING] = w;
+            // t171 | t173
+            let w = ((r_t166[q % RING] | r_t168[q % RING]) | r_t173[q % RING]);
+            r_t176[q % RING] = w;
+            // ((((((t166 | ((dot & prev(t166)) & next(digit))) | (((dot & next(digit)) & ~prev(t47)) & ~prev(dot))) | t168) | t172) | t175) | t173) | (f_letter & prev(t176))
+            let w = (((((((r_t166[q % RING] | r_m_dot[q % RING] & (r_t166[q % RING] << 1 | r_t166[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63)) | r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv)) | r_t168[q % RING]) | r_m_e_letter[q % RING] & (r_t171[q % RING] << 1 | r_t171[(q + RING - 1) % RING] >> 63) & lv & ((r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | (r_m_sign[q % RING] >> 1 | r_m_sign[(q + 1) % RING] << 63) & (r_m_digit[q % RING] >> 2 | r_m_digit[(q + 1) % RING] << 62))) | r_m_sign[q % RING] & (r_t172[q % RING] << 1 | r_t172[(q + RING - 1) % RING] >> 63) & lv) | r_t173[q % RING]) | r_m_f_letter[q % RING] & (r_t176[q % RING] << 1 | r_t176[(q + RING - 1) % RING] >> 63) & lv);
+            r_t165[q % RING] = w;
             if q < nw {
-                t207[q] = w;
+                t165[q] = w;
             }
-            // (((dot & prev(t105)) & next(digit)) | t112) | (f_letter & prev(t116))
-            let w = ((r_m_dot[q % RING] & (r_t105[q % RING] << 1 | r_t105[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | r_m_e_letter[q % RING] & (r_t113[q % RING] << 1 | r_t113[(q + RING - 1) % RING] >> 63) & lv & ((r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | (r_m_sign[q % RING] >> 1 | r_m_sign[(q + 1) % RING] << 63) & (r_m_digit[q % RING] >> 2 | r_m_digit[(q + 1) % RING] << 62))) | r_m_f_letter[q % RING] & (r_t116[q % RING] << 1 | r_t116[(q + RING - 1) % RING] >> 63) & lv);
-            r_t219[q % RING] = w;
+            // (((dot & prev(t71)) & next(digit)) | t78) | (f_letter & prev(t82))
+            let w = ((r_m_dot[q % RING] & (r_t71[q % RING] << 1 | r_t71[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | r_m_e_letter[q % RING] & (r_t79[q % RING] << 1 | r_t79[(q + RING - 1) % RING] >> 63) & lv & ((r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | (r_m_sign[q % RING] >> 1 | r_m_sign[(q + 1) % RING] << 63) & (r_m_digit[q % RING] >> 2 | r_m_digit[(q + 1) % RING] << 62))) | r_m_f_letter[q % RING] & (r_t82[q % RING] << 1 | r_t82[(q + RING - 1) % RING] >> 63) & lv);
+            r_t177[q % RING] = w;
             if q < nw {
-                t219[q] = w;
+                t177[q] = w;
             }
             // ((dot & next(digit)) & ~prev(word | high)) & ~prev(dot)
-            let w = r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv);
-            r_t220[q % RING] = w;
+            let w = r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv);
+            r_t178[q % RING] = w;
             if q < nw {
-                t220[q] = w;
+                t178[q] = w;
             }
             // (zero & next(x_letter)) & ~prev(dot & ~prev(dot))
             let w = r_m_zero[q % RING] & (r_m_x_letter[q % RING] >> 1 | r_m_x_letter[(q + 1) % RING] << 63) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv);
-            r_t221[q % RING] = w;
+            r_t179[q % RING] = w;
             if q < nw {
-                t221[q] = w;
+                t179[q] = w;
             }
             // (((((word | high) & digit) & ~prev(word | high)) & ~prev(dot & ~prev(dot))) & zero) & next(x_letter)
-            let w = (r_m_word[q % RING] | r_m_high[q % RING]) & r_m_digit[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_x_letter[q % RING] >> 1 | r_m_x_letter[(q + 1) % RING] << 63);
-            r_t223[q % RING] = w;
-            // prev(t223, 2) & hexd
-            let w = (r_t223[q % RING] << 2 | r_t223[(q + RING - 1) % RING] >> 62) & lv & r_m_hexd[q % RING];
-            r_t225[q % RING] = w;
-            // fill(t225, t11)
+            let w = (r_m_word[q % RING] | r_m_high[q % RING]) & r_m_digit[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_x_letter[q % RING] >> 1 | r_m_x_letter[(q + 1) % RING] << 63);
+            r_t181[q % RING] = w;
+            // prev(t181, 2) & hexd
+            let w = (r_t181[q % RING] << 2 | r_t181[(q + RING - 1) % RING] >> 62) & lv & r_m_hexd[q % RING];
+            r_t183[q % RING] = w;
+            // fill(t183, t11)
             let w = {
-                    let (s, e) = (r_t225[q % RING], r_t11[q % RING]);
+                    let (s, e) = (r_t183[q % RING], r_t11[q % RING]);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t224) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t182) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t224 = f >> 63;
+                    c_t182 = f >> 63;
                     f & lv
                 };
-            r_t224[q % RING] = w;
-            // prev(t223) | t224
-            let w = ((r_t223[q % RING] << 1 | r_t223[(q + RING - 1) % RING] >> 63) & lv | r_t224[q % RING]);
-            r_t222[q % RING] = w;
+            r_t182[q % RING] = w;
+            // prev(t181) | t182
+            let w = ((r_t181[q % RING] << 1 | r_t181[(q + RING - 1) % RING] >> 63) & lv | r_t182[q % RING]);
+            r_t180[q % RING] = w;
             if q < nw {
-                t222[q] = w;
+                t180[q] = w;
             }
             // (zero & next(b_letter)) & ~prev(dot & ~prev(dot))
             let w = r_m_zero[q % RING] & (r_m_b_letter[q % RING] >> 1 | r_m_b_letter[(q + 1) % RING] << 63) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv);
-            r_t227[q % RING] = w;
+            r_t185[q % RING] = w;
             if q < nw {
-                t227[q] = w;
+                t185[q] = w;
             }
             // (((((word | high) & digit) & ~prev(word | high)) & ~prev(dot & ~prev(dot))) & zero) & next(b_letter)
-            let w = (r_m_word[q % RING] | r_m_high[q % RING]) & r_m_digit[q % RING] & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_b_letter[q % RING] >> 1 | r_m_b_letter[(q + 1) % RING] << 63);
-            r_t229[q % RING] = w;
-            // prev(t229, 2) & bind
-            let w = (r_t229[q % RING] << 2 | r_t229[(q + RING - 1) % RING] >> 62) & lv & r_m_bind[q % RING];
-            r_t231[q % RING] = w;
-            // fill(t231, t13)
+            let w = (r_m_word[q % RING] | r_m_high[q % RING]) & r_m_digit[q % RING] & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_t9[q % RING] << 1 | r_t9[(q + RING - 1) % RING] >> 63) & lv & lv) & r_m_zero[q % RING] & (r_m_b_letter[q % RING] >> 1 | r_m_b_letter[(q + 1) % RING] << 63);
+            r_t187[q % RING] = w;
+            // prev(t187, 2) & bind
+            let w = (r_t187[q % RING] << 2 | r_t187[(q + RING - 1) % RING] >> 62) & lv & r_m_bind[q % RING];
+            r_t189[q % RING] = w;
+            // fill(t189, t13)
             let w = {
-                    let (s, e) = (r_t231[q % RING], r_t13[q % RING]);
+                    let (s, e) = (r_t189[q % RING], r_t13[q % RING]);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t230) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t188) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t230 = f >> 63;
+                    c_t188 = f >> 63;
                     f & lv
                 };
-            r_t230[q % RING] = w;
-            // prev(t229) | t230
-            let w = ((r_t229[q % RING] << 1 | r_t229[(q + RING - 1) % RING] >> 63) & lv | r_t230[q % RING]);
-            r_t228[q % RING] = w;
+            r_t188[q % RING] = w;
+            // prev(t187) | t188
+            let w = ((r_t187[q % RING] << 1 | r_t187[(q + RING - 1) % RING] >> 63) & lv | r_t188[q % RING]);
+            r_t186[q % RING] = w;
             if q < nw {
-                t228[q] = w;
+                t186[q] = w;
             }
             // (punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~(((dot & next(digit)) & ~prev(word)) & ~prev(dot))
             let w = r_m_punct[q % RING] & (!((r_m_two_start[q % RING] << 1 | r_m_two_start[(q + RING - 1) % RING] >> 63) & lv | (r_m_two_start_three[q % RING] << 2 | r_m_two_start_three[(q + RING - 1) % RING] >> 62) & lv) & lv) & (!(r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_m_word[q % RING] << 1 | r_m_word[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv)) & lv);
-            r_t233[q % RING] = w;
+            r_t191[q % RING] = w;
             if q < nw {
-                t233[q] = w;
+                t191[q] = w;
             }
         }
         // The masks 2 blocks behind the classes.
@@ -2028,38 +1865,38 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             let q = t - 2;
             // The block's bits inside the file (none past its end).
             let lv = if 64 * q + 64 <= n { !0u64 } else if q < nw { (1u64 << (n % 64)) - 1 } else { 0 };
-            // (((t116 & ~next(t115)) & t105) | (t117 & ~next(t117))) | (t120 & ~next(t120))
-            let w = ((((r_t105[q % RING] | r_t107[q % RING]) | r_t110[q % RING]) & (!(r_t115[q % RING] >> 1 | r_t115[(q + 1) % RING] << 63) & lv) & r_t105[q % RING] | r_t117[q % RING] & (!(r_t117[q % RING] >> 1 | r_t117[(q + 1) % RING] << 63) & lv)) | r_t120[q % RING] & (!(r_t120[q % RING] >> 1 | r_t120[(q + 1) % RING] << 63) & lv));
-            r_t104[q % RING] = w;
-            // (word & digit) & prev(t104)
-            let w = r_m_word[q % RING] & r_m_digit[q % RING] & (r_t104[q % RING] << 1 | r_t104[(q + RING - 1) % RING] >> 63) & lv;
-            r_t103[q % RING] = w;
+            // (((t82 & ~next(t81)) & t71) | (t83 & ~next(t83))) | (t86 & ~next(t86))
+            let w = ((((r_t71[q % RING] | r_t73[q % RING]) | r_t76[q % RING]) & (!(r_t81[q % RING] >> 1 | r_t81[(q + 1) % RING] << 63) & lv) & r_t71[q % RING] | r_t83[q % RING] & (!(r_t83[q % RING] >> 1 | r_t83[(q + 1) % RING] << 63) & lv)) | r_t86[q % RING] & (!(r_t86[q % RING] >> 1 | r_t86[(q + 1) % RING] << 63) & lv));
+            r_t70[q % RING] = w;
+            // (word & digit) & prev(t70)
+            let w = r_m_word[q % RING] & r_m_digit[q % RING] & (r_t70[q % RING] << 1 | r_t70[(q + RING - 1) % RING] >> 63) & lv;
+            r_t69[q % RING] = w;
             if q < nw {
-                t103[q] = w;
+                t69[q] = w;
             }
-            // ((t115 & ~next(t115)) & ~t105) & next(t81)
-            let w = (((((((r_t105[q % RING] | r_m_dot[q % RING] & (r_t105[q % RING] << 1 | r_t105[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63)) | r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv)) | r_t107[q % RING]) | r_m_e_letter[q % RING] & (r_t113[q % RING] << 1 | r_t113[(q + RING - 1) % RING] >> 63) & lv & ((r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | (r_m_sign[q % RING] >> 1 | r_m_sign[(q + 1) % RING] << 63) & (r_m_digit[q % RING] >> 2 | r_m_digit[(q + 1) % RING] << 62))) | r_m_sign[q % RING] & (r_t112[q % RING] << 1 | r_t112[(q + RING - 1) % RING] >> 63) & lv) | r_t110[q % RING]) | r_m_f_letter[q % RING] & (r_t116[q % RING] << 1 | r_t116[(q + RING - 1) % RING] >> 63) & lv) & (!(r_t115[q % RING] >> 1 | r_t115[(q + 1) % RING] << 63) & lv) & (!r_t105[q % RING] & lv) & (r_t81[q % RING] >> 1 | r_t81[(q + 1) % RING] << 63);
-            r_t123[q % RING] = w;
+            // ((t81 & ~next(t81)) & ~t71) & next(t47)
+            let w = (((((((r_t71[q % RING] | r_m_dot[q % RING] & (r_t71[q % RING] << 1 | r_t71[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63)) | r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv)) | r_t73[q % RING]) | r_m_e_letter[q % RING] & (r_t79[q % RING] << 1 | r_t79[(q + RING - 1) % RING] >> 63) & lv & ((r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | (r_m_sign[q % RING] >> 1 | r_m_sign[(q + 1) % RING] << 63) & (r_m_digit[q % RING] >> 2 | r_m_digit[(q + 1) % RING] << 62))) | r_m_sign[q % RING] & (r_t78[q % RING] << 1 | r_t78[(q + RING - 1) % RING] >> 63) & lv) | r_t76[q % RING]) | r_m_f_letter[q % RING] & (r_t82[q % RING] << 1 | r_t82[(q + RING - 1) % RING] >> 63) & lv) & (!(r_t81[q % RING] >> 1 | r_t81[(q + 1) % RING] << 63) & lv) & (!r_t71[q % RING] & lv) & (r_t47[q % RING] >> 1 | r_t47[(q + 1) % RING] << 63);
+            r_t89[q % RING] = w;
             if q < nw {
-                t123[q] = w;
+                t89[q] = w;
             }
-            // (((t116 & ~next(t115)) | (t117 & ~next(t117))) | (t120 & ~next(t120))) & underscore
-            let w = ((((r_t105[q % RING] | r_t107[q % RING]) | r_t110[q % RING]) & (!(r_t115[q % RING] >> 1 | r_t115[(q + 1) % RING] << 63) & lv) | r_t117[q % RING] & (!(r_t117[q % RING] >> 1 | r_t117[(q + 1) % RING] << 63) & lv)) | r_t120[q % RING] & (!(r_t120[q % RING] >> 1 | r_t120[(q + 1) % RING] << 63) & lv)) & r_m_underscore[q % RING];
-            r_t124[q % RING] = w;
+            // (((t82 & ~next(t81)) | (t83 & ~next(t83))) | (t86 & ~next(t86))) & underscore
+            let w = ((((r_t71[q % RING] | r_t73[q % RING]) | r_t76[q % RING]) & (!(r_t81[q % RING] >> 1 | r_t81[(q + 1) % RING] << 63) & lv) | r_t83[q % RING] & (!(r_t83[q % RING] >> 1 | r_t83[(q + 1) % RING] << 63) & lv)) | r_t86[q % RING] & (!(r_t86[q % RING] >> 1 | r_t86[(q + 1) % RING] << 63) & lv)) & r_m_underscore[q % RING];
+            r_t90[q % RING] = w;
             if q < nw {
-                t124[q] = w;
+                t90[q] = w;
             }
-            // (((punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~t109) & two_start_three) & next(two_start_two, 2)
-            let w = r_m_punct[q % RING] & (!((r_m_two_start[q % RING] << 1 | r_m_two_start[(q + RING - 1) % RING] >> 63) & lv | (r_m_two_start_three[q % RING] << 2 | r_m_two_start_three[(q + RING - 1) % RING] >> 62) & lv) & lv) & (!(r_m_dot[q % RING] & (r_t105[q % RING] << 1 | r_t105[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t81[q % RING] << 1 | r_t81[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv)) & lv) & r_m_two_start_three[q % RING] & (r_t77[q % RING] >> 2 | r_t77[(q + 1) % RING] << 62);
-            r_t189[q % RING] = w;
+            // (((punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~t75) & two_start_three) & next(two_start_two, 2)
+            let w = r_m_punct[q % RING] & (!((r_m_two_start[q % RING] << 1 | r_m_two_start[(q + RING - 1) % RING] >> 63) & lv | (r_m_two_start_three[q % RING] << 2 | r_m_two_start_three[(q + RING - 1) % RING] >> 62) & lv) & lv) & (!(r_m_dot[q % RING] & (r_t71[q % RING] << 1 | r_t71[(q + RING - 1) % RING] >> 63) & lv & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) | r_m_dot[q % RING] & (r_m_digit[q % RING] >> 1 | r_m_digit[(q + 1) % RING] << 63) & (!(r_t47[q % RING] << 1 | r_t47[(q + RING - 1) % RING] >> 63) & lv & lv) & (!(r_m_dot[q % RING] << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv & lv)) & lv) & r_m_two_start_three[q % RING] & (r_t43[q % RING] >> 2 | r_t43[(q + 1) % RING] << 62);
+            r_t128[q % RING] = w;
             if q < nw {
-                t189[q] = w;
+                t128[q] = w;
             }
-            // t198 | (t192 & ~next(t192))
-            let w = (r_m_dq[q % RING] & (!(r_m_dq[q % RING] >> 1 | r_m_dq[(q + 1) % RING] << 63) & lv) | (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63)) & lv) & (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (!(r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63) & lv)) & lv) & (!r_t193[q % RING] & lv) & (!(r_m_dq3[q % RING] & (r_m_dq[q % RING] >> 3 | r_m_dq[(q + 1) % RING] << 61)) & lv) & (!(r_t192[q % RING] >> 1 | r_t192[(q + 1) % RING] << 63) & lv));
-            r_t200[q % RING] = w;
+            // t156 | (t150 & ~next(t150))
+            let w = (r_m_dq[q % RING] & (!(r_m_dq[q % RING] >> 1 | r_m_dq[(q + 1) % RING] << 63) & lv) | (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63)) & lv) & (!(r_m_dollar[q % RING] & (!r_t1[q % RING] & lv) & (!(r_t6[q % RING] >> 1 | r_t6[(q + 1) % RING] << 63) & lv)) & lv) & (!r_t151[q % RING] & lv) & (!(r_m_dq3[q % RING] & (r_m_dq[q % RING] >> 3 | r_m_dq[(q + 1) % RING] << 61)) & lv) & (!(r_t150[q % RING] >> 1 | r_t150[(q + 1) % RING] << 63) & lv));
+            r_t158[q % RING] = w;
             if q < nw {
-                t200[q] = w;
+                t158[q] = w;
             }
         }
     }
@@ -2118,79 +1955,55 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
         t33,
         t34,
         t35,
-        t41,
-        t42,
-        t43,
-        t44,
-        t45,
-        t46,
+        m_two_start,
+        m_two_start_three,
         t47,
+        t46,
         t48,
         t49,
         t50,
         t51,
-        t53,
+        t52,
         t54,
         t55,
+        t56,
         t57,
         t58,
-        t59,
-        t60,
-        t61,
         t62,
-        t63,
+        t60,
         t64,
+        t63,
         t65,
+        t66,
         t68,
-        m_closer,
-        m_two_start,
-        m_two_start_three,
-        t81,
-        t80,
-        t82,
-        t83,
-        t84,
-        t85,
-        t86,
-        t88,
+        t69,
         t89,
         t90,
-        t91,
-        t92,
-        t96,
-        t94,
-        t98,
-        t97,
-        t99,
-        t100,
-        t102,
-        t103,
-        t123,
-        t124,
-        t142,
-        t151,
-        t189,
-        t190,
-        t194,
-        t196,
-        t192,
-        t197,
-        t199,
-        t200,
-        t201,
-        t202,
-        t203,
-        t204,
-        t205,
-        t206,
-        t207,
-        t219,
-        t220,
-        t221,
-        t222,
-        t227,
-        t228,
-        t233,
+        t108,
+        t117,
+        t128,
+        t129,
+        t130,
+        t152,
+        t154,
+        t150,
+        t155,
+        t157,
+        t158,
+        t159,
+        t160,
+        t161,
+        t162,
+        t163,
+        t164,
+        t165,
+        t177,
+        t178,
+        t179,
+        t180,
+        t185,
+        t186,
+        t191,
         fw_rd0_close,
         fw_rd1_close,
         refused,
@@ -2212,11 +2025,11 @@ pub fn lex(src: &[u8]) -> Lexed {
     // Each word's bits inside the file.
     let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();
     // Stage 1: the masks the regions and the tokens read, and whether an escape holds.
-    let Stage1 { m_ws, m_lf, m_slash, m_word, m_alpha, m_digit, m_dot, m_at_sign, m_semicolon, m_rbrace, m_gt, m_dq, m_sq, m_bt, m_u_letter, m_zero, m_x_letter, m_b_letter, m_e_letter, m_f_letter, m_sign, m_hexd, m_bind, m_backslash, m_dollar, m_lbrace, m_high, m_punct, t0, m_line_open, m_block_open, m_block_end, t1, m_dq_close, m_sq_close, m_t_dollar, m_t_lex, m_dq3, m_rclose, t2, t3, t4, t5, t6, t9, t11, t13, t15, t28, t29, t32, t33, t34, t35, t41, t42, t43, t44, t45, t46, t47, t48, t49, t50, t51, t53, t54, t55, t57, t58, t59, t60, t61, t62, t63, t64, t65, t68, m_closer, m_two_start, m_two_start_three, t81, t80, t82, t83, t84, t85, t86, t88, t89, t90, t91, t92, t96, t94, t98, t97, t99, t100, t102, t103, t123, t124, t142, t151, t189, t190, t194, t196, t192, t197, t199, t200, t201, t202, t203, t204, t205, t206, t207, t219, t220, t221, t222, t227, t228, t233, mut fw_rd0_close, mut fw_rd1_close, refused: escapes } = stage1_best(src);
+    let Stage1 { m_ws, m_lf, m_slash, m_word, m_alpha, m_digit, m_dot, m_at_sign, m_semicolon, m_rbrace, m_gt, m_dq, m_sq, m_bt, m_u_letter, m_zero, m_x_letter, m_b_letter, m_e_letter, m_f_letter, m_sign, m_hexd, m_bind, m_backslash, m_dollar, m_lbrace, m_high, m_punct, t0, m_line_open, m_block_open, m_block_end, t1, m_dq_close, m_sq_close, m_t_dollar, m_t_lex, m_dq3, m_rclose, t2, t3, t4, t5, t6, t9, t11, t13, t15, t28, t29, t32, t33, t34, t35, m_two_start, m_two_start_three, t47, t46, t48, t49, t50, t51, t52, t54, t55, t56, t57, t58, t62, t60, t64, t63, t65, t66, t68, t69, t89, t90, t108, t117, t128, t129, t130, t152, t154, t150, t155, t157, t158, t159, t160, t161, t162, t163, t164, t165, t177, t178, t179, t180, t185, t186, t191, mut fw_rd0_close, mut fw_rd1_close, refused: escapes } = stage1_best(src);
     let mut refused = escapes;
     // The regions' walk and the masks made of it: only a test build's checks read them.
     #[cfg(feature = "test-hooks")]
-    let (m_t_brace, m_code, m_nb, m_name_more, m_p_start, t226, t232) = {
+    let (m_t_brace, m_code, m_nb, m_name_more, m_p_start, t184, t190) = {
         // regions hidden { … }: the first opener not hidden opens its region, to its closer.
         let mut m_hidden = vec![0u64; nw];
         let mut m_o_line = vec![0u64; nw];
@@ -2668,54 +2481,6 @@ pub fn lex(src: &[u8]) -> Lexed {
         let t38: Vec<u64> = (0..nw).map(|i| m_as_dot[i] & t34[i]).collect();
         let t39: Vec<u64> = (0..nw).map(|i| (((!m_as_dot[i] & lv[i] | t33[i]) | t34[i]) | m_gt[i] & prev(&m_gt, i, 1))).collect();
         let m_as_lt = fill(&t38, &t39);
-        // mask as_nl = ((lf & code) & prev(as_lt)) & prev(gt)
-        let m_as_nl: Vec<u64> = (0..nw).map(|i| m_lf[i] & m_code[i] & prev(&m_as_lt, i, 1) & prev(&m_gt, i, 1)).collect();
-        // mask as_lead = fill(as_nl, code & ~ws)
-        let t40: Vec<u64> = (0..nw).map(|i| m_code[i] & (!m_ws[i] & lv[i])).collect();
-        let m_as_lead = fill(&m_as_nl, &t40);
-        // mask as_first = (code & ~ws) & prev(as_lead)
-        let m_as_first: Vec<u64> = (0..nw).map(|i| m_code[i] & (!m_ws[i] & lv[i]) & prev(&m_as_lead, i, 1)).collect();
-        // mask as_skip = ((((((((((dot | text("?")) | text("&")) | text("|")) | text(":")) | text("}")) | text(")")) | text("]")) | text(",")) | (text("-") & next(gt))) | ((text("val") | text("var")) & ~next(w, 3))) | (text("else") & ~next(w, 4))
-        let m_as_skip: Vec<u64> = (0..nw).map(|i| (((((((((((m_dot[i] | t33[i]) | t41[i]) | t42[i]) | t43[i]) | t44[i]) | t45[i]) | t46[i]) | t47[i]) | t48[i] & next(&m_gt, i, 1)) | (t49[i] | t50[i]) & (!next(&m_w, i, 3) & lv[i])) | t51[i] & (!next(&m_w, i, 4) & lv[i]))).collect();
-        // mask as_sline = fill(as_first & ~as_skip, lf & code)
-        let t52: Vec<u64> = (0..nw).map(|i| m_as_first[i] & (!m_as_skip[i] & lv[i])).collect();
-        let m_as_sline = fill(&t52, &t25);
-        // mask as_opener = (as_sline & code) & ((text("(") | text("[")) | text("{"))
-        let m_as_opener: Vec<u64> = (0..nw).map(|i| m_as_sline[i] & m_code[i] & ((t53[i] | t54[i]) | t55[i])).collect();
-        // mask as_in1 = fill(as_opener, (code & ((text(")") | text("]")) | text("}"))) | (lf & code))
-        let t56: Vec<u64> = (0..nw).map(|i| (m_code[i] & ((t45[i] | t46[i]) | t44[i]) | m_lf[i] & m_code[i])).collect();
-        let m_as_in1 = fill(&m_as_opener, &t56);
-        // mask as_dng = code & ((((((text("<") | gt) | text("@")) | text(";")) | (as_opener & prev(as_in1))) | (((text(")") | text("]")) | text("}")) & ~prev(as_in1))) | (kw_start & ((((((((text("if") & ~next(w, 2)) | (text("when") & ~next(w, 4))) | (text("try") & ~next(w, 3))) | (text("return") & ~next(w, 6))) | (text("throw") & ~next(w, 5))) | ((text("as") | text("is")) & ~next(w, 2))) | (text("fun") & ~next(w, 3))) | (text("object") & ~next(w, 6)))))
-        let m_as_dng: Vec<u64> = (0..nw).map(|i| m_code[i] & ((((((t34[i] | m_gt[i]) | t57[i]) | t58[i]) | m_as_opener[i] & prev(&m_as_in1, i, 1)) | ((t45[i] | t46[i]) | t44[i]) & (!prev(&m_as_in1, i, 1) & lv[i])) | m_kw_start[i] & (((((((t59[i] & (!next(&m_w, i, 2) & lv[i]) | t60[i] & (!next(&m_w, i, 4) & lv[i])) | t61[i] & (!next(&m_w, i, 3) & lv[i])) | t62[i] & (!next(&m_w, i, 6) & lv[i])) | t63[i] & (!next(&m_w, i, 5) & lv[i])) | (t28[i] | t29[i]) & (!next(&m_w, i, 2) & lv[i])) | t64[i] & (!next(&m_w, i, 3) & lv[i])) | t65[i] & (!next(&m_w, i, 6) & lv[i])))).collect();
-        // mask as_unsafe = fill(as_sline & as_dng, lf & code)
-        let t66: Vec<u64> = (0..nw).map(|i| m_as_sline[i] & m_as_dng[i]).collect();
-        let m_as_unsafe = fill(&t66, &t25);
-        // mask as_k = fill((((as_sline & code) & ((text("=") | text("&")) | text("|"))) & ~as_in1) & ~as_unsafe, lf & code)
-        let t67: Vec<u64> = (0..nw).map(|i| m_as_sline[i] & m_code[i] & ((t68[i] | t41[i]) | t42[i]) & (!m_as_in1[i] & lv[i]) & (!m_as_unsafe[i] & lv[i])).collect();
-        let m_as_k = fill(&t67, &t25);
-        // mask as_glt = (((as_sline & code) & text("<")) & ~as_in1) & prev(w)
-        let m_as_glt: Vec<u64> = (0..nw).map(|i| m_as_sline[i] & m_code[i] & t34[i] & (!m_as_in1[i] & lv[i]) & prev(&m_w, i, 1)).collect();
-        // mask as_ggt = (code & gt) & ((next(text("(")) | next(text("{"))) | (next(text(" ")) & next(text("{"), 2)))
-        let m_as_ggt: Vec<u64> = (0..nw).map(|i| m_code[i] & m_gt[i] & ((next(&t53, i, 1) | next(&t55, i, 1)) | next(&t32, i, 1) & next(&t55, i, 2))).collect();
-        // mask as_gen = fill(as_glt, as_ggt | (lf & code))
-        let t69: Vec<u64> = (0..nw).map(|i| (m_as_ggt[i] | m_lf[i] & m_code[i])).collect();
-        let m_as_gen = fill(&m_as_glt, &t69);
-        // mask as_cmp = code & (((((text("<") & ~prev(w)) | ((gt & ~prev(text("-"))) & ~(as_ggt & prev(as_gen)))) | text("=")) | text("&")) | text("|"))
-        let m_as_cmp: Vec<u64> = (0..nw).map(|i| m_code[i] & ((((t34[i] & (!prev(&m_w, i, 1) & lv[i]) | m_gt[i] & (!prev(&t48, i, 1) & lv[i]) & (!(m_as_ggt[i] & prev(&m_as_gen, i, 1)) & lv[i])) | t68[i]) | t41[i]) | t42[i])).collect();
-        // mask line_lead = fill(lf & code, code & ~ws)
-        let m_line_lead = fill(&t25, &t40);
-        // mask as_cont = fill((((lf & code) & prev(as_in1)) & prev(as_sline)) & ~prev(as_k), (code & closer) & prev(line_lead))
-        let t70: Vec<u64> = (0..nw).map(|i| m_lf[i] & m_code[i] & prev(&m_as_in1, i, 1) & prev(&m_as_sline, i, 1) & (!prev(&m_as_k, i, 1) & lv[i])).collect();
-        let t71: Vec<u64> = (0..nw).map(|i| m_code[i] & m_closer[i] & prev(&m_line_lead, i, 1)).collect();
-        let m_as_cont = fill(&t70, &t71);
-        // mask as_cline = fill(((code & closer) & prev(line_lead)) & prev(as_cont), lf & code)
-        let t72: Vec<u64> = (0..nw).map(|i| m_code[i] & m_closer[i] & prev(&m_line_lead, i, 1) & prev(&m_as_cont, i, 1)).collect();
-        let m_as_cline = fill(&t72, &t25);
-        // mask as_c_open = (as_cline & code) & ((text("(") | text("[")) | text("{"))
-        let m_as_c_open: Vec<u64> = (0..nw).map(|i| m_as_cline[i] & m_code[i] & ((t53[i] | t54[i]) | t55[i])).collect();
-        // mask as_c_in1 = fill(as_c_open, (code & closer) | (lf & code))
-        let t73: Vec<u64> = (0..nw).map(|i| (m_code[i] & m_closer[i] | m_lf[i] & m_code[i])).collect();
-        let m_as_c_in1 = fill(&m_as_c_open, &t73);
         // mask at_after = (code & at_sign) & prev(w)
         let m_at_after: Vec<u64> = (0..nw).map(|i| m_code[i] & m_at_sign[i] & prev(&m_w, i, 1)).collect();
         // mask word_start = (word_run & ~prev(word_run)) | sfx_start
@@ -2727,9 +2492,9 @@ pub fn lex(src: &[u8]) -> Lexed {
         // mask r_q = (rbody & dq) & ~next(dq)
         let m_r_q: Vec<u64> = (0..nw).map(|i| m_rbody[i] & m_dq[i] & (!next(&m_dq, i, 1) & lv[i])).collect();
         // mask r_id = fill(prev(id_dollar), prev(id_last))
-        let t74: Vec<u64> = (0..nw).map(|i| prev(&m_id_dollar, i, 1)).collect();
-        let t75: Vec<u64> = (0..nw).map(|i| prev(&m_id_last, i, 1)).collect();
-        let m_r_id = fill(&t74, &t75);
+        let t40: Vec<u64> = (0..nw).map(|i| prev(&m_id_dollar, i, 1)).collect();
+        let t41: Vec<u64> = (0..nw).map(|i| prev(&m_id_last, i, 1)).collect();
+        let m_r_id = fill(&t40, &t41);
         // mask r_stop = (((~rbody | r_q) | id_dollar) | lone) | r_id
         let m_r_stop: Vec<u64> = (0..nw).map(|i| ((((!m_rbody[i] & lv[i] | m_r_q[i]) | m_id_dollar[i]) | m_lone[i]) | m_r_id[i])).collect();
         // mask r_lead = (rbody & dq3) & next(dq, 3)
@@ -2744,11 +2509,11 @@ pub fn lex(src: &[u8]) -> Lexed {
         let m_second: Vec<u64> = (0..nw).map(|i| (prev(&m_two_start, i, 1) | prev(&m_two_start_three, i, 2)) & m_code[i]).collect();
         // mask p_start = ((code & punct) & ~second) & ~nb
         let m_p_start: Vec<u64> = (0..nw).map(|i| m_code[i] & m_punct[i] & (!m_second[i] & lv[i]) & (!m_nb[i] & lv[i])).collect();
-        let t78: Vec<u64> = (0..nw).map(|i| m_dq_close[i] & prev(&m_f_tail, i, 1)).collect();
-        let t79: Vec<u64> = (0..nw).map(|i| m_rclose[i] & prev(&m_f_rtail, i, 1)).collect();
-        let t226: Vec<u64> = (0..nw).map(|i| (prev(&m_hex_at, i, 1) | m_hx[i])).collect();
-        let t232: Vec<u64> = (0..nw).map(|i| (prev(&m_bin_at, i, 1) | m_bx[i])).collect();
-        (m_t_brace, m_code, m_nb, m_name_more, m_p_start, t226, t232)
+        let t44: Vec<u64> = (0..nw).map(|i| m_dq_close[i] & prev(&m_f_tail, i, 1)).collect();
+        let t45: Vec<u64> = (0..nw).map(|i| m_rclose[i] & prev(&m_f_rtail, i, 1)).collect();
+        let t184: Vec<u64> = (0..nw).map(|i| (prev(&m_hex_at, i, 1) | m_hx[i])).collect();
+        let t190: Vec<u64> = (0..nw).map(|i| (prev(&m_bin_at, i, 1) | m_bx[i])).collect();
+        (m_t_brace, m_code, m_nb, m_name_more, m_p_start, t184, t190)
     };
     // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.
     let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);
@@ -2875,8 +2640,8 @@ pub fn lex(src: &[u8]) -> Lexed {
                 0 | 1 | 2 | 3 | 4 => if {
                 // `assume … at starts p_start = (punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~(((dot & next(digit)) & ~prev(word)) & ~prev(dot))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t233, s), "assume p_start at byte {s}");
-                bit(&t233, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t191, s), "assume p_start at byte {s}");
+                bit(&t191, s)
             } {
                     13
                 } else {
@@ -2893,13 +2658,13 @@ pub fn lex(src: &[u8]) -> Lexed {
                 // `'`
                 6 => 11,
                 // `.`
-                7 => if bit(&t220, s) {
+                7 => if bit(&t178, s) {
                     4
                 } else if {
                 // `assume … at starts p_start = (punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~(((dot & next(digit)) & ~prev(word)) & ~prev(dot))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t233, s), "assume p_start at byte {s}");
-                bit(&t233, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t191, s), "assume p_start at byte {s}");
+                bit(&t191, s)
             } {
                     13
                 } else {
@@ -2913,25 +2678,25 @@ pub fn lex(src: &[u8]) -> Lexed {
                 } else if {
                 // `assume … at starts p_start = (punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~(((dot & next(digit)) & ~prev(word)) & ~prev(dot))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t233, s), "assume p_start at byte {s}");
-                bit(&t233, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t191, s), "assume p_start at byte {s}");
+                bit(&t191, s)
             } {
                     13
                 } else {
                     usize::MAX
                 },
                 // `0`
-                9 => if bit(&t206, s) {
+                9 => if bit(&t164, s) {
                     3
-                } else if bit(&t221, s) {
+                } else if bit(&t179, s) {
                     5
-                } else if bit(&t227, s) {
+                } else if bit(&t185, s) {
                     6
                 } else {
                     usize::MAX
                 },
                 // `123456789`
-                10 => if bit(&t206, s) {
+                10 => if bit(&t164, s) {
                     3
                 } else {
                     usize::MAX
@@ -2948,8 +2713,8 @@ pub fn lex(src: &[u8]) -> Lexed {
                 } else if {
                 // `assume … at starts p_start = (punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~(((dot & next(digit)) & ~prev(word)) & ~prev(dot))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t233, s), "assume p_start at byte {s}");
-                bit(&t233, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t191, s), "assume p_start at byte {s}");
+                bit(&t191, s)
             } {
                     13
                 } else {
@@ -3001,7 +2766,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, 0, true, 0x400)
+                    (l, 0, true, 0x800)
                 }
 ,
                 1 => {
@@ -3035,7 +2800,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         Some(c) => {
                             let last = c + 0;
                             // a `*/*/` in a block comment
-                            if any_in(&t100, s, c - 1) {
+                            if any_in(&t66, s, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -3063,7 +2828,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, 0, true, 0xc00)
+                    (l, 0, true, 0x1800)
                 }
 ,
                 2 => {
@@ -3071,7 +2836,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `fill(prev(code & semicolon), solid)`: at the byte before the token.
                     let fs_2 = fill_2 || (s > at && xl_2);
                     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
-                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t85, at))) && !any_in(&t85, at + 1, s - 1) } else { fill_4 };
+                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t51, at))) && !any_in(&t51, at + 1, s - 1) } else { fill_4 };
                     let xs_4 = s == at && xl_4;
                     // `fill(as_run & dot, ~as_run)`: at the byte before the token.
                     let fs_5 = fill_5 && fs_4;
@@ -3079,42 +2844,42 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let fs_6 = fill_6 && fs_5;
                     here_1 = (bit(&m_rbrace, s) && (fs_2 || xs_2));
                     here_3 = false;
-                    let l = run_last(&t81, s);
+                    let l = run_last(&t47, s);
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
-                    assert_eq!(run_last(&m_name_more, s), run_last(&t81, s), "assume in simple_identifier at byte {s}");
+                    assert_eq!(run_last(&m_name_more, s), run_last(&t47, s), "assume in simple_identifier at byte {s}");
                     let l = l.max(s);
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
                     fill_2 = if l > s { false } else { xs_2 };
                     xl_2 = false;
-                    fill_4 = if l > s { match last_in(&t88, s + 1, l) { Some(q) => any_in(&t86, q - 1, l - 1), None => ((xs_4 || (!bit(&t88, s) && fs_4)) || any_in(&t86, s, l - 1)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) };
-                    xl_4 = if l > s { bit(&t86, l) } else { bit(&t86, s) };
-                    fill_5 = (((xs_4 || (!bit(&t88, s) && fs_4)) && fs_5) && !any_in(&t89, s + 1, l));
-                    fill_6 = ((((xs_4 || (!bit(&t88, s) && fs_4)) && fs_5) && !any_in(&t89, s + 1, l)) && (((xs_4 || (!bit(&t88, s) && fs_4)) && fs_5) && fs_6));
+                    fill_4 = if l > s { match last_in(&t54, s + 1, l) { Some(q) => any_in(&t52, q - 1, l - 1), None => ((xs_4 || (!bit(&t54, s) && fs_4)) || any_in(&t52, s, l - 1)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) };
+                    xl_4 = if l > s { bit(&t52, l) } else { bit(&t52, s) };
+                    fill_5 = (((xs_4 || (!bit(&t54, s) && fs_4)) && fs_5) && !any_in(&t55, s + 1, l));
+                    fill_6 = ((((xs_4 || (!bit(&t54, s) && fs_4)) && fs_5) && !any_in(&t55, s + 1, l)) && (((xs_4 || (!bit(&t54, s) && fs_4)) && fs_5) && fs_6));
                     // a byte above 0x7f outside a comment, not a name's letter
-                    if any_in(&t99, s, l) {
+                    if any_in(&t65, s, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a `0x` or `0b` with no digit
-                    if bit(&t102, s) {
+                    if bit(&t68, s) {
                         refused = true;
                         break 'tokens;
                     }
                     // a digit after a binary number
-                    if any_in(&t103, s, l) {
+                    if any_in(&t69, s, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a word touching a real number
-                    if any_in(&t123, s, l) {
+                    if any_in(&t89, s, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a number that ends in `_`
-                    if any_in(&t124, s, l) {
+                    if any_in(&t90, s, l) {
                         refused = true;
                         break 'tokens;
                     }
@@ -3122,11 +2887,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                 }
 ,
                 3 => {
-                    // `integer_literal`: run nb, read as ((((((t208 | ((dot & prev(t208)) & next(digit))) | (((dot & next(digit)) & ~prev(t81)) & ~prev(dot))) | t210) | t214) | t217) | t215) | (f_letter & prev(t218)) (assumed)
+                    // `integer_literal`: run nb, read as ((((((t166 | ((dot & prev(t166)) & next(digit))) | (((dot & next(digit)) & ~prev(t47)) & ~prev(dot))) | t168) | t172) | t175) | t173) | (f_letter & prev(t176)) (assumed)
                     // `fill(prev(code & semicolon), solid)`: at the byte before the token.
                     let fs_2 = fill_2 || (s > at && xl_2);
                     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
-                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t85, at))) && !any_in(&t85, at + 1, s - 1) } else { fill_4 };
+                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t51, at))) && !any_in(&t51, at + 1, s - 1) } else { fill_4 };
                     let xs_4 = s == at && xl_4;
                     // `fill(as_run & dot, ~as_run)`: at the byte before the token.
                     let fs_5 = fill_5 && fs_4;
@@ -3134,45 +2899,45 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let fs_6 = fill_6 && fs_5;
                     here_1 = (bit(&m_rbrace, s) && (fs_2 || xs_2));
                     here_3 = false;
-                    let l = run_last(&t207, s);
+                    let l = run_last(&t165, s);
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
-                    assert_eq!(run_last(&m_nb, s), run_last(&t207, s), "assume in integer_literal at byte {s}");
+                    assert_eq!(run_last(&m_nb, s), run_last(&t165, s), "assume in integer_literal at byte {s}");
                     let l = l.max(s);
-                    if count_in(&t219, s, l) >= 1 {
-                        hits |= 1 << 8;
+                    if count_in(&t177, s, l) >= 1 {
+                        hits |= 1 << 9;
                     }
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
                     fill_2 = if l > s { false } else { xs_2 };
                     xl_2 = false;
-                    fill_4 = if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) };
+                    fill_4 = if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) };
                     xl_4 = false;
-                    fill_5 = (if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) } && (((xs_4 || (!bit(&t88, s) && fs_4)) && fs_5) || any_in(&m_dot, s + 1, l)));
-                    fill_6 = ((if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) } && (((xs_4 || (!bit(&t88, s) && fs_4)) && fs_5) || any_in(&m_dot, s + 1, l))) && (((xs_4 || (!bit(&t88, s) && fs_4)) && fs_5) && fs_6));
+                    fill_5 = (if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) } && (((xs_4 || (!bit(&t54, s) && fs_4)) && fs_5) || any_in(&m_dot, s + 1, l)));
+                    fill_6 = ((if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) } && (((xs_4 || (!bit(&t54, s) && fs_4)) && fs_5) || any_in(&m_dot, s + 1, l))) && (((xs_4 || (!bit(&t54, s) && fs_4)) && fs_5) && fs_6));
                     // a `0x` or `0b` with no digit
-                    if any_in(&t102, s, l) {
+                    if any_in(&t68, s, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a digit after a binary number
-                    if any_in(&t103, s, l) {
+                    if any_in(&t69, s, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a word touching a real number
-                    if any_in(&t123, s, l) {
+                    if any_in(&t89, s, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a number that ends in `_`
-                    if any_in(&t124, s + 1, l) {
+                    if any_in(&t90, s + 1, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // punct: a triple's last byte starts a pair
-                    if any_in(&t189, s + 1, l) {
+                    if any_in(&t128, s + 1, l) {
                         refused = true;
                         break 'tokens;
                     }
@@ -3180,11 +2945,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                 }
 ,
                 4 => {
-                    // `real_literal`: run nb, read as ((((((t208 | ((dot & prev(t208)) & next(digit))) | t220) | t210) | t214) | t217) | t215) | (f_letter & prev(t218)) (assumed)
+                    // `real_literal`: run nb, read as ((((((t166 | ((dot & prev(t166)) & next(digit))) | t178) | t168) | t172) | t175) | t173) | (f_letter & prev(t176)) (assumed)
                     // `fill(prev(code & semicolon), solid)`: at the byte before the token.
                     let fs_2 = fill_2 || (s > at && xl_2);
                     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
-                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t85, at))) && !any_in(&t85, at + 1, s - 1) } else { fill_4 };
+                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t51, at))) && !any_in(&t51, at + 1, s - 1) } else { fill_4 };
                     let xs_4 = s == at && xl_4;
                     // `fill(as_run & dot, ~as_run)`: at the byte before the token.
                     let fs_5 = fill_5 && fs_4;
@@ -3192,42 +2957,42 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let fs_6 = fill_6 && fs_5;
                     here_1 = (bit(&m_rbrace, s) && (fs_2 || xs_2));
                     here_3 = false;
-                    let l = run_last(&t207, s);
+                    let l = run_last(&t165, s);
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
-                    assert_eq!(run_last(&m_nb, s), run_last(&t207, s), "assume in real_literal at byte {s}");
+                    assert_eq!(run_last(&m_nb, s), run_last(&t165, s), "assume in real_literal at byte {s}");
                     let l = l.max(s);
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
                     fill_2 = if l > s { false } else { xs_2 };
                     xl_2 = false;
-                    fill_4 = if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) };
+                    fill_4 = if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) };
                     xl_4 = false;
-                    fill_5 = (if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) } && ((xs_4 || (!bit(&t88, s) && fs_4)) || any_in(&m_dot, s + 1, l)));
-                    fill_6 = ((if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) } && ((xs_4 || (!bit(&t88, s) && fs_4)) || any_in(&m_dot, s + 1, l))) && ((xs_4 || (!bit(&t88, s) && fs_4)) && fs_6));
+                    fill_5 = (if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) } && ((xs_4 || (!bit(&t54, s) && fs_4)) || any_in(&m_dot, s + 1, l)));
+                    fill_6 = ((if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) } && ((xs_4 || (!bit(&t54, s) && fs_4)) || any_in(&m_dot, s + 1, l))) && ((xs_4 || (!bit(&t54, s) && fs_4)) && fs_6));
                     // a `0x` or `0b` with no digit
-                    if any_in(&t102, s + 1, l) {
+                    if any_in(&t68, s + 1, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a digit after a binary number
-                    if any_in(&t103, s + 1, l) {
+                    if any_in(&t69, s + 1, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a word touching a real number
-                    if any_in(&t123, s, l) {
+                    if any_in(&t89, s, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a number that ends in `_`
-                    if any_in(&t124, s + 1, l) {
+                    if any_in(&t90, s + 1, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // punct: a triple's last byte starts a pair
-                    if any_in(&t189, s, l) {
+                    if any_in(&t128, s, l) {
                         refused = true;
                         break 'tokens;
                     }
@@ -3235,11 +3000,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                 }
 ,
                 5 => {
-                    // `hex_literal`: run prev(hex_at) | hx, read as prev(t223) | t224 (assumed)
+                    // `hex_literal`: run prev(hex_at) | hx, read as prev(t181) | t182 (assumed)
                     // `fill(prev(code & semicolon), solid)`: at the byte before the token.
                     let fs_2 = fill_2 || (s > at && xl_2);
                     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
-                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t85, at))) && !any_in(&t85, at + 1, s - 1) } else { fill_4 };
+                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t51, at))) && !any_in(&t51, at + 1, s - 1) } else { fill_4 };
                     let xs_4 = s == at && xl_4;
                     // `fill(as_run & dot, ~as_run)`: at the byte before the token.
                     let fs_5 = fill_5 && fs_4;
@@ -3247,37 +3012,37 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let fs_6 = fill_6 && fs_5;
                     here_1 = (bit(&m_rbrace, s) && (fs_2 || xs_2));
                     here_3 = false;
-                    let l = run_last(&t222, s);
+                    let l = run_last(&t180, s);
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
-                    assert_eq!(run_last(&t226, s), run_last(&t222, s), "assume in hex_literal at byte {s}");
+                    assert_eq!(run_last(&t184, s), run_last(&t180, s), "assume in hex_literal at byte {s}");
                     let l = l.max(s);
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
                     fill_2 = if l > s { false } else { xs_2 };
                     xl_2 = false;
-                    fill_4 = if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) };
+                    fill_4 = if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) };
                     xl_4 = false;
-                    fill_5 = (if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) } && ((xs_4 || (!bit(&t88, s) && fs_4)) && fs_5));
-                    fill_6 = ((if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) } && ((xs_4 || (!bit(&t88, s) && fs_4)) && fs_5)) && (((xs_4 || (!bit(&t88, s) && fs_4)) && fs_5) && fs_6));
+                    fill_5 = (if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) } && ((xs_4 || (!bit(&t54, s) && fs_4)) && fs_5));
+                    fill_6 = ((if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) } && ((xs_4 || (!bit(&t54, s) && fs_4)) && fs_5)) && (((xs_4 || (!bit(&t54, s) && fs_4)) && fs_5) && fs_6));
                     // a `0x` or `0b` with no digit
-                    if bit(&t102, s) {
+                    if bit(&t68, s) {
                         refused = true;
                         break 'tokens;
                     }
                     // a digit after a binary number
-                    if any_in(&t103, s, l) {
+                    if any_in(&t69, s, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a word touching a real number
-                    if any_in(&t123, s, l) {
+                    if any_in(&t89, s, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a number that ends in `_`
-                    if any_in(&t124, s + 1, l) {
+                    if any_in(&t90, s + 1, l) {
                         refused = true;
                         break 'tokens;
                     }
@@ -3285,11 +3050,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                 }
 ,
                 6 => {
-                    // `bin_literal`: run prev(bin_at) | bx, read as prev(t229) | t230 (assumed)
+                    // `bin_literal`: run prev(bin_at) | bx, read as prev(t187) | t188 (assumed)
                     // `fill(prev(code & semicolon), solid)`: at the byte before the token.
                     let fs_2 = fill_2 || (s > at && xl_2);
                     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
-                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t85, at))) && !any_in(&t85, at + 1, s - 1) } else { fill_4 };
+                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t51, at))) && !any_in(&t51, at + 1, s - 1) } else { fill_4 };
                     let xs_4 = s == at && xl_4;
                     // `fill(as_run & dot, ~as_run)`: at the byte before the token.
                     let fs_5 = fill_5 && fs_4;
@@ -3297,37 +3062,37 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let fs_6 = fill_6 && fs_5;
                     here_1 = (bit(&m_rbrace, s) && (fs_2 || xs_2));
                     here_3 = false;
-                    let l = run_last(&t228, s);
+                    let l = run_last(&t186, s);
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
-                    assert_eq!(run_last(&t232, s), run_last(&t228, s), "assume in bin_literal at byte {s}");
+                    assert_eq!(run_last(&t190, s), run_last(&t186, s), "assume in bin_literal at byte {s}");
                     let l = l.max(s);
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
                     fill_2 = if l > s { false } else { xs_2 };
                     xl_2 = false;
-                    fill_4 = if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) };
+                    fill_4 = if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) };
                     xl_4 = false;
-                    fill_5 = (if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) } && ((xs_4 || (!bit(&t88, s) && fs_4)) && fs_5));
-                    fill_6 = ((if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) } && ((xs_4 || (!bit(&t88, s) && fs_4)) && fs_5)) && (((xs_4 || (!bit(&t88, s) && fs_4)) && fs_5) && fs_6));
+                    fill_5 = (if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) } && ((xs_4 || (!bit(&t54, s) && fs_4)) && fs_5));
+                    fill_6 = ((if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) } && ((xs_4 || (!bit(&t54, s) && fs_4)) && fs_5)) && (((xs_4 || (!bit(&t54, s) && fs_4)) && fs_5) && fs_6));
                     // a `0x` or `0b` with no digit
-                    if bit(&t102, s) {
+                    if bit(&t68, s) {
                         refused = true;
                         break 'tokens;
                     }
                     // a digit after a binary number
-                    if any_in(&t103, s, l) {
+                    if any_in(&t69, s, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a word touching a real number
-                    if any_in(&t123, s, l) {
+                    if any_in(&t89, s, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a number that ends in `_`
-                    if any_in(&t124, s + 1, l) {
+                    if any_in(&t90, s + 1, l) {
                         refused = true;
                         break 'tokens;
                     }
@@ -3358,7 +3123,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             {
                             let last = if bit(&m_t_dollar, c) { c + 1 } else { c + 0 };
                             // a template's name with a byte past ASCII, not a name's letter
-                            if any_in(&t94, s + 1, c - 1) {
+                            if any_in(&t60, s + 1, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -3368,17 +3133,17 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `o_str`, for tier 2
                             set(&mut fw_o_str, s, s + 1);
                             // `id_dollar`, for tier 2
-                            put(&mut fw_id_dollar, &t96, s + 1, c - 1);
+                            put(&mut fw_id_dollar, &t62, s + 1, c - 1);
                             // `rd0_part4`, for tier 2
-                            put(&mut fw_rd0_part4, &t194, s + 1, c - 1);
+                            put(&mut fw_rd0_part4, &t152, s + 1, c - 1);
                             // `id_last`, for tier 2
-                            put(&mut fw_id_last, &t196, s + 1, c - 1);
+                            put(&mut fw_id_last, &t154, s + 1, c - 1);
                             // `lone`, for tier 2
-                            put(&mut fw_lone, &t202, s + 1, c - 1);
+                            put(&mut fw_lone, &t160, s + 1, c - 1);
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t203, s, s);
+                            put(&mut fw_rd1_close, &t161, s, s);
                             last
                         }
                         },
@@ -3425,12 +3190,12 @@ pub fn lex(src: &[u8]) -> Lexed {
                             {
                             let last = if bit(&m_t_dollar, c) { c + 1 } else { if bit(&m_t_dollar, c) { c + 0 } else { c + 2 } };
                             // a `$` before a quote or a `$` in a raw string
-                            if any_in(&t92, s + 1, c - 1) {
+                            if any_in(&t58, s + 1, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
                             // a template's name with a byte past ASCII, not a name's letter
-                            if any_in(&t94, s + 1, c - 1) {
+                            if any_in(&t60, s + 1, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -3456,10 +3221,10 @@ pub fn lex(src: &[u8]) -> Lexed {
                                 set(&mut fw_rd0_part0, c, c + 1);
                             }
                             // `r_start`, for tier 2
-                            put(&mut fw_r_start, &t192, s + 3, (s + 3).min(c - 1));
-                            put(&mut fw_r_start, &t197, s + 4, c - 1);
+                            put(&mut fw_r_start, &t150, s + 3, (s + 3).min(c - 1));
+                            put(&mut fw_r_start, &t155, s + 4, c - 1);
                             // `rd0_part1_last`, for tier 2
-                            put(&mut fw_rd0_part1_last, &t200, s + 1, c - 1);
+                            put(&mut fw_rd0_part1_last, &t158, s + 1, c - 1);
                             if s + 1 < c {
                                 clear(&mut fw_rd0_part1_last, s + 1, s + 1);
                             }
@@ -3468,33 +3233,33 @@ pub fn lex(src: &[u8]) -> Lexed {
                             }
                             if s + 3 < c {
                                 match c - s - 3 {
-                                    1 => { put(&mut fw_rd0_part1_last, &t199, s + 3, s + 3); }
+                                    1 => { put(&mut fw_rd0_part1_last, &t157, s + 3, s + 3); }
                                     _ => {}
                                 }
                             }
                             if s + 4 < c {
                                 match c - s - 4 {
-                                    1 => { put(&mut fw_rd0_part1_last, &t199, s + 4, s + 4); }
+                                    1 => { put(&mut fw_rd0_part1_last, &t157, s + 4, s + 4); }
                                     _ => {}
                                 }
                             }
                             if c > s + 5 {
-                                put(&mut fw_rd0_part1_last, &t199, c - 1, c - 1);
+                                put(&mut fw_rd0_part1_last, &t157, c - 1, c - 1);
                             }
                             // `r_lead`, for tier 2
-                            put(&mut fw_r_lead, &t201, s + 3, c - 1);
+                            put(&mut fw_r_lead, &t159, s + 3, c - 1);
                             // `id_dollar`, for tier 2
-                            put(&mut fw_id_dollar, &t96, s + 1, c - 1);
+                            put(&mut fw_id_dollar, &t62, s + 1, c - 1);
                             // `rd0_part4`, for tier 2
-                            put(&mut fw_rd0_part4, &t194, s + 1, c - 1);
+                            put(&mut fw_rd0_part4, &t152, s + 1, c - 1);
                             // `id_last`, for tier 2
-                            put(&mut fw_id_last, &t196, s + 1, c - 1);
+                            put(&mut fw_id_last, &t154, s + 1, c - 1);
                             // `lone`, for tier 2
-                            put(&mut fw_lone, &t202, s + 1, c - 1);
+                            put(&mut fw_lone, &t160, s + 1, c - 1);
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t203, s, s);
+                            put(&mut fw_rd1_close, &t161, s, s);
                             last
                         }
                         },
@@ -3526,25 +3291,25 @@ pub fn lex(src: &[u8]) -> Lexed {
                             close = c;
                             let last = if bit(&m_dq_close, c) { c + 0 } else if bit(&m_t_dollar, c) { c + 1 } else { c + 0 };
                             // an empty `${}`
-                            if bit(&t91, s) {
+                            if bit(&t57, s) {
                                 refused = true;
                                 break 'tokens;
                             }
                             // a template's name with a byte past ASCII, not a name's letter
-                            if any_in(&t94, s + 1, c - 1) {
+                            if any_in(&t60, s + 1, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
                             // `rd0_close`, for tier 2
                             clear(&mut fw_rd0_close, s, s);
                             // `id_dollar`, for tier 2
-                            put(&mut fw_id_dollar, &t96, s + 1, c - 1);
+                            put(&mut fw_id_dollar, &t62, s + 1, c - 1);
                             // `rd0_part4`, for tier 2
-                            put(&mut fw_rd0_part4, &t194, s + 1, c - 1);
+                            put(&mut fw_rd0_part4, &t152, s + 1, c - 1);
                             // `id_last`, for tier 2
-                            put(&mut fw_id_last, &t196, s + 1, c - 1);
+                            put(&mut fw_id_last, &t154, s + 1, c - 1);
                             // `lone`, for tier 2
-                            put(&mut fw_lone, &t202, s + 1, c - 1);
+                            put(&mut fw_lone, &t160, s + 1, c - 1);
                             // `rd1_close`, for tier 2
                             clear(&mut fw_rd1_close, s, s);
                             put(&mut fw_rd1_close, &t4, s + 1, c - 1);
@@ -3612,40 +3377,40 @@ pub fn lex(src: &[u8]) -> Lexed {
                             close = c;
                             let last = if bit(&m_rclose, c) { c + 2 } else if bit(&m_t_dollar, c) { c + 1 } else { if bit(&m_t_dollar, c) { c + 0 } else { c + 2 } };
                             // an empty `${}`
-                            if bit(&t91, s) {
+                            if bit(&t57, s) {
                                 refused = true;
                                 break 'tokens;
                             }
                             // a `$` before a quote or a `$` in a raw string
-                            if any_in(&t92, s + 1, c - 1) {
+                            if any_in(&t58, s + 1, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
                             // a template's name with a byte past ASCII, not a name's letter
-                            if any_in(&t94, s + 1, c - 1) {
+                            if any_in(&t60, s + 1, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
                             // `rd0_close`, for tier 2
                             clear(&mut fw_rd0_close, s, s);
                             // `r_start`, for tier 2
-                            put(&mut fw_r_start, &t192, s + 1, (s + 1).min(c - 1));
-                            put(&mut fw_r_start, &t197, s + 2, c - 1);
+                            put(&mut fw_r_start, &t150, s + 1, (s + 1).min(c - 1));
+                            put(&mut fw_r_start, &t155, s + 2, c - 1);
                             // `rd0_part1_last`, for tier 2
-                            put(&mut fw_rd0_part1_last, &t200, s + 1, c - 1);
+                            put(&mut fw_rd0_part1_last, &t158, s + 1, c - 1);
                             if c > s + 1 {
-                                put(&mut fw_rd0_part1_last, &t199, c - 1, c - 1);
+                                put(&mut fw_rd0_part1_last, &t157, c - 1, c - 1);
                             }
                             // `r_lead`, for tier 2
-                            put(&mut fw_r_lead, &t201, s + 1, c - 1);
+                            put(&mut fw_r_lead, &t159, s + 1, c - 1);
                             // `id_dollar`, for tier 2
-                            put(&mut fw_id_dollar, &t96, s + 1, c - 1);
+                            put(&mut fw_id_dollar, &t62, s + 1, c - 1);
                             // `rd0_part4`, for tier 2
-                            put(&mut fw_rd0_part4, &t194, s + 1, c - 1);
+                            put(&mut fw_rd0_part4, &t152, s + 1, c - 1);
                             // `id_last`, for tier 2
-                            put(&mut fw_id_last, &t196, s + 1, c - 1);
+                            put(&mut fw_id_last, &t154, s + 1, c - 1);
                             // `lone`, for tier 2
-                            put(&mut fw_lone, &t202, s + 1, c - 1);
+                            put(&mut fw_lone, &t160, s + 1, c - 1);
                             // `rd1_close`, for tier 2
                             clear(&mut fw_rd1_close, s, s);
                             put(&mut fw_rd1_close, &t2, s + 1, c - 1);
@@ -3717,7 +3482,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                                 break 'tokens;
                             }
                             // a `\u` without four hex digits
-                            if any_in(&t97, s + 1, c - 1) || any_in(&t97, c, last) {
+                            if any_in(&t63, s + 1, c - 1) || any_in(&t63, c, last) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -3728,12 +3493,12 @@ pub fn lex(src: &[u8]) -> Lexed {
                             clear(&mut fw_rd1_close, s, s);
                             clear(&mut fw_rd1_close, c, last);
                             // `c_uesc`, for tier 2
-                            put(&mut fw_c_uesc, &t98, s + 1, c - 1);
+                            put(&mut fw_c_uesc, &t64, s + 1, c - 1);
                             // `rd2_part1`, for tier 2
-                            put(&mut fw_rd2_part1, &t204, s + 1, c - 1);
-                            put(&mut fw_rd2_part1, &t204, c, last);
+                            put(&mut fw_rd2_part1, &t162, s + 1, c - 1);
+                            put(&mut fw_rd2_part1, &t162, c, last);
                             // `rd2_part2`, for tier 2
-                            put(&mut fw_rd2_part2, &t205, s + 1, c - 1);
+                            put(&mut fw_rd2_part2, &t163, s + 1, c - 1);
                             // `o_chr`, for tier 2
                             set(&mut fw_o_chr, s, s + 1);
                             last
@@ -3793,7 +3558,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x200)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x400)
                 }
 ,
                 13 => {
@@ -3801,7 +3566,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `fill(prev(code & semicolon), solid)`: at the byte before the token.
                     let fs_2 = fill_2 || (s > at && xl_2);
                     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
-                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t85, at))) && !any_in(&t85, at + 1, s - 1) } else { fill_4 };
+                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t51, at))) && !any_in(&t51, at + 1, s - 1) } else { fill_4 };
                     let xs_4 = s == at && xl_4;
                     // `fill(as_run & dot, ~as_run)`: at the byte before the token.
                     let fs_5 = fill_5 && fs_4;
@@ -3816,27 +3581,27 @@ pub fn lex(src: &[u8]) -> Lexed {
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
                     fill_2 = if l > s { bit(&m_semicolon, l - 1) } else { xs_2 };
                     xl_2 = if l > s { false } else { bit(&m_semicolon, s) };
-                    fill_4 = if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) };
+                    fill_4 = if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) };
                     xl_4 = false;
-                    fill_5 = (if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) } && (((xs_4 || (!bit(&t88, s) && fs_4)) && (bit(&m_dot, s) || fs_5)) || any_in(&m_dot, s + 1, l)));
-                    fill_6 = ((((if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) } && (((xs_4 || (!bit(&t88, s) && fs_4)) && (bit(&m_dot, s) || fs_5)) || any_in(&m_dot, s + 1, l))) && ((((xs_4 || (!bit(&t88, s) && fs_4)) && (bit(&m_dot, s) || fs_5)) && (bit(&t34, s) || (fs_6 && !bit(&t90, s)))) || any_in(&t34, s + 1, l))) && !any_in(&t90, s + 1, l)) || ((if l > s { match last_in(&t88, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t88, s) && fs_4)) } } else { (xs_4 || (!bit(&t88, s) && fs_4)) } && (((xs_4 || (!bit(&t88, s) && fs_4)) && (bit(&m_dot, s) || fs_5)) || any_in(&m_dot, s + 1, l))) && any_in(&t34, s + 1, l)));
+                    fill_5 = (if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) } && (((xs_4 || (!bit(&t54, s) && fs_4)) && (bit(&m_dot, s) || fs_5)) || any_in(&m_dot, s + 1, l)));
+                    fill_6 = ((((if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) } && (((xs_4 || (!bit(&t54, s) && fs_4)) && (bit(&m_dot, s) || fs_5)) || any_in(&m_dot, s + 1, l))) && ((((xs_4 || (!bit(&t54, s) && fs_4)) && (bit(&m_dot, s) || fs_5)) && (bit(&t34, s) || (fs_6 && !bit(&t56, s)))) || any_in(&t34, s + 1, l))) && !any_in(&t56, s + 1, l)) || ((if l > s { match last_in(&t54, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t54, s) && fs_4)) } } else { (xs_4 || (!bit(&t54, s) && fs_4)) } && (((xs_4 || (!bit(&t54, s) && fs_4)) && (bit(&m_dot, s) || fs_5)) || any_in(&m_dot, s + 1, l))) && any_in(&t34, s + 1, l)));
                     // a `$` outside a string
                     if bit(&m_dollar, s) {
                         refused = true;
                         break 'tokens;
                     }
                     // a word touching a real number
-                    if any_in(&t123, s, l) {
+                    if any_in(&t89, s, l) {
                         refused = true;
                         break 'tokens;
                     }
                     // a name with a letter past ASCII before an `@`
-                    if bit(&t142, s) {
+                    if bit(&t108, s) {
                         refused = true;
                         break 'tokens;
                     }
                     // punct: a triple's last byte starts a pair
-                    if any_in(&t189, s, l) {
+                    if any_in(&t128, s, l) {
                         refused = true;
                         break 'tokens;
                     }
@@ -3901,13 +3666,17 @@ pub fn lex(src: &[u8]) -> Lexed {
                 if (tested >> 6 & 1 == 1 || rec_0) {
                     marks |= 1 << 6;
                 }
-                // `apart`
-                if (tested >> 7 & 1 == 1 || acc_3 || here_3) {
+                // `nl_end`
+                if (tested >> 7 & 1 == 1 || rec_0 && bit(&t130, s)) {
                     marks |= 1 << 7;
                 }
-                // `real`
-                if (tested >> 8 & 1 == 1) {
+                // `apart`
+                if (tested >> 8 & 1 == 1 || acc_3 || here_3) {
                     marks |= 1 << 8;
+                }
+                // `real`
+                if (tested >> 9 & 1 == 1) {
+                    marks |= 1 << 9;
                 }
             from = s + 1;
             before = word;
@@ -3944,80 +3713,47 @@ pub fn lex(src: &[u8]) -> Lexed {
     if !refused {
         assert!(code_l == m_code, "code_l is the regions' code");
     }
-    let t129: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i])).collect();
-    let t128: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!prev(&t129, i, 1) & lv[i]) & (!prev(&t9, i, 1) & lv[i])).collect();
-    let t130: Vec<u64> = (0..nw).map(|i| !(code_l[i] & (m_word[i] | m_high[i])) & lv[i]).collect();
-    let t127 = fill(&t128, &t130);
-    let t132: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!prev(&t129, i, 1) & lv[i]) & (!prev(&t9, i, 1) & lv[i]) & (!(code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!prev(&t129, i, 1) & lv[i]) & (!prev(&t9, i, 1) & lv[i]) & m_zero[i] & next(&m_x_letter, i, 1)) & lv[i]) & (!(code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!prev(&t129, i, 1) & lv[i]) & (!prev(&t9, i, 1) & lv[i]) & m_zero[i] & next(&m_b_letter, i, 1)) & lv[i])).collect();
-    let t131 = fill(&t132, &t15);
-    let t135: Vec<u64> = (0..nw).map(|i| (code_l[i] & m_dot[i] & prev(&t131, i, 1) & next(&m_digit, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t129, i, 1) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]))).collect();
-    let t134: Vec<u64> = (0..nw).map(|i| prev(&t135, i, 1)).collect();
-    let t133 = fill(&t134, &t15);
-    let t136: Vec<u64> = (0..nw).map(|i| (t131[i] | t133[i])).collect();
-    let t137: Vec<u64> = (0..nw).map(|i| code_l[i] & m_e_letter[i] & prev(&t136, i, 1) & (next(&m_digit, i, 1) | next(&m_sign, i, 1) & next(&m_digit, i, 2))).collect();
-    let t140: Vec<u64> = (0..nw).map(|i| m_sign[i] & prev(&t137, i, 1)).collect();
-    let t139: Vec<u64> = (0..nw).map(|i| (prev(&t137, i, 1) & m_digit[i] | prev(&t140, i, 1))).collect();
-    let t138 = fill(&t139, &t15);
-    let t141: Vec<u64> = (0..nw).map(|i| ((t131[i] | t133[i]) | t138[i])).collect();
-    let t126: Vec<u64> = (0..nw).map(|i| (t127[i] | (((((((t131[i] | code_l[i] & m_dot[i] & prev(&t131, i, 1) & next(&m_digit, i, 1)) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t129, i, 1) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i])) | t133[i]) | code_l[i] & m_e_letter[i] & prev(&t136, i, 1) & (next(&m_digit, i, 1) | next(&m_sign, i, 1) & next(&m_digit, i, 2))) | m_sign[i] & prev(&t137, i, 1)) | t138[i]) | code_l[i] & m_f_letter[i] & prev(&t141, i, 1)))).collect();
-    let t125: Vec<u64> = (0..nw).map(|i| code_l[i] & m_high[i] & prev(&t126, i, 1)).collect();
+    let t95: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i])).collect();
+    let t94: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!prev(&t95, i, 1) & lv[i]) & (!prev(&t9, i, 1) & lv[i])).collect();
+    let t96: Vec<u64> = (0..nw).map(|i| !(code_l[i] & (m_word[i] | m_high[i])) & lv[i]).collect();
+    let t93 = fill(&t94, &t96);
+    let t98: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!prev(&t95, i, 1) & lv[i]) & (!prev(&t9, i, 1) & lv[i]) & (!(code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!prev(&t95, i, 1) & lv[i]) & (!prev(&t9, i, 1) & lv[i]) & m_zero[i] & next(&m_x_letter, i, 1)) & lv[i]) & (!(code_l[i] & (m_word[i] | m_high[i]) & m_digit[i] & (!prev(&t95, i, 1) & lv[i]) & (!prev(&t9, i, 1) & lv[i]) & m_zero[i] & next(&m_b_letter, i, 1)) & lv[i])).collect();
+    let t97 = fill(&t98, &t15);
+    let t101: Vec<u64> = (0..nw).map(|i| (code_l[i] & m_dot[i] & prev(&t97, i, 1) & next(&m_digit, i, 1) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t95, i, 1) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i]))).collect();
+    let t100: Vec<u64> = (0..nw).map(|i| prev(&t101, i, 1)).collect();
+    let t99 = fill(&t100, &t15);
+    let t102: Vec<u64> = (0..nw).map(|i| (t97[i] | t99[i])).collect();
+    let t103: Vec<u64> = (0..nw).map(|i| code_l[i] & m_e_letter[i] & prev(&t102, i, 1) & (next(&m_digit, i, 1) | next(&m_sign, i, 1) & next(&m_digit, i, 2))).collect();
+    let t106: Vec<u64> = (0..nw).map(|i| m_sign[i] & prev(&t103, i, 1)).collect();
+    let t105: Vec<u64> = (0..nw).map(|i| (prev(&t103, i, 1) & m_digit[i] | prev(&t106, i, 1))).collect();
+    let t104 = fill(&t105, &t15);
+    let t107: Vec<u64> = (0..nw).map(|i| ((t97[i] | t99[i]) | t104[i])).collect();
+    let t92: Vec<u64> = (0..nw).map(|i| (t93[i] | (((((((t97[i] | code_l[i] & m_dot[i] & prev(&t97, i, 1) & next(&m_digit, i, 1)) | code_l[i] & m_dot[i] & next(&m_digit, i, 1) & (!prev(&t95, i, 1) & lv[i]) & (!prev(&m_dot, i, 1) & lv[i])) | t99[i]) | code_l[i] & m_e_letter[i] & prev(&t102, i, 1) & (next(&m_digit, i, 1) | next(&m_sign, i, 1) & next(&m_digit, i, 2))) | m_sign[i] & prev(&t103, i, 1)) | t104[i]) | code_l[i] & m_f_letter[i] & prev(&t107, i, 1)))).collect();
+    let t91: Vec<u64> = (0..nw).map(|i| code_l[i] & m_high[i] & prev(&t92, i, 1)).collect();
     // a name's letter past ASCII touching a number
-    refused |= any(&t125);
-    let t147: Vec<u64> = (0..nw).map(|i| m_lf[i] & code_l[i]).collect();
-    let t148: Vec<u64> = (0..nw).map(|i| (code_l[i] & (!m_ws[i] & lv[i]) | (!code_l[i] & lv[i]) & prev(&code_l, i, 1))).collect();
-    let t146 = fill(&t147, &t148);
-    let t145: Vec<u64> = (0..nw).map(|i| (!code_l[i] & lv[i]) & prev(&code_l, i, 1) & m_slash[i] & prev(&t146, i, 1)).collect();
-    let t149: Vec<u64> = (0..nw).map(|i| (code_l[i] & (!m_ws[i] & lv[i]) | (!code_l[i] & lv[i]) & prev(&code_l, i, 1) & (!m_slash[i] & lv[i]))).collect();
-    let t144 = fill(&t145, &t149);
-    let t143: Vec<u64> = (0..nw).map(|i| code_l[i] & m_semicolon[i] & prev(&t144, i, 1)).collect();
+    refused |= any(&t91);
+    let t113: Vec<u64> = (0..nw).map(|i| m_lf[i] & code_l[i]).collect();
+    let t114: Vec<u64> = (0..nw).map(|i| (code_l[i] & (!m_ws[i] & lv[i]) | (!code_l[i] & lv[i]) & prev(&code_l, i, 1))).collect();
+    let t112 = fill(&t113, &t114);
+    let t111: Vec<u64> = (0..nw).map(|i| (!code_l[i] & lv[i]) & prev(&code_l, i, 1) & m_slash[i] & prev(&t112, i, 1)).collect();
+    let t115: Vec<u64> = (0..nw).map(|i| (code_l[i] & (!m_ws[i] & lv[i]) | (!code_l[i] & lv[i]) & prev(&code_l, i, 1) & (!m_slash[i] & lv[i]))).collect();
+    let t110 = fill(&t111, &t115);
+    let t109: Vec<u64> = (0..nw).map(|i| code_l[i] & m_semicolon[i] & prev(&t110, i, 1)).collect();
     // a `;` after a line break and a comment
-    refused |= any(&t143);
-    let t158: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i]) & (!prev(&t129, i, 1) & lv[i]) & (t28[i] | t29[i]) & (!next(&t129, i, 2) & lv[i])).collect();
-    let t157: Vec<u64> = (0..nw).map(|i| prev(&t158, i, 2)).collect();
-    let t159: Vec<u64> = (0..nw).map(|i| !(code_l[i] & ((((((m_word[i] | m_high[i]) | m_dot[i]) | t32[i]) | t33[i]) | t34[i]) | t35[i])) & lv[i]).collect();
-    let t156 = fill(&t157, &t159);
-    let t155: Vec<u64> = (0..nw).map(|i| t156[i] & m_dot[i]).collect();
-    let t160: Vec<u64> = (0..nw).map(|i| !t156[i] & lv[i]).collect();
-    let t154 = fill(&t155, &t160);
-    let t153: Vec<u64> = (0..nw).map(|i| t154[i] & t34[i]).collect();
-    let t161: Vec<u64> = (0..nw).map(|i| (((!t154[i] & lv[i] | t33[i]) | t34[i]) | m_gt[i] & prev(&m_gt, i, 1))).collect();
-    let t152 = fill(&t153, &t161);
-    let t150: Vec<u64> = (0..nw).map(|i| ((t32[i] | m_slash[i]) | t151[i]) & prev(&t152, i, 1) & prev(&m_gt, i, 1)).collect();
+    refused |= any(&t109);
+    let t124: Vec<u64> = (0..nw).map(|i| code_l[i] & (m_word[i] | m_high[i]) & (!prev(&t95, i, 1) & lv[i]) & (t28[i] | t29[i]) & (!next(&t95, i, 2) & lv[i])).collect();
+    let t123: Vec<u64> = (0..nw).map(|i| prev(&t124, i, 2)).collect();
+    let t125: Vec<u64> = (0..nw).map(|i| !(code_l[i] & ((((((m_word[i] | m_high[i]) | m_dot[i]) | t32[i]) | t33[i]) | t34[i]) | t35[i])) & lv[i]).collect();
+    let t122 = fill(&t123, &t125);
+    let t121: Vec<u64> = (0..nw).map(|i| t122[i] & m_dot[i]).collect();
+    let t126: Vec<u64> = (0..nw).map(|i| !t122[i] & lv[i]).collect();
+    let t120 = fill(&t121, &t126);
+    let t119: Vec<u64> = (0..nw).map(|i| t120[i] & t34[i]).collect();
+    let t127: Vec<u64> = (0..nw).map(|i| (((!t120[i] & lv[i] | t33[i]) | t34[i]) | m_gt[i] & prev(&m_gt, i, 1))).collect();
+    let t118 = fill(&t119, &t127);
+    let t116: Vec<u64> = (0..nw).map(|i| ((t32[i] | m_slash[i]) | t117[i]) & prev(&t118, i, 1) & prev(&m_gt, i, 1)).collect();
     // a blank, a comment or a `` after a type the lean parser may split
-    refused |= any(&t150);
-    let t168: Vec<u64> = (0..nw).map(|i| m_lf[i] & code_l[i] & prev(&t152, i, 1) & prev(&m_gt, i, 1)).collect();
-    let t169: Vec<u64> = (0..nw).map(|i| code_l[i] & (!m_ws[i] & lv[i])).collect();
-    let t167 = fill(&t168, &t169);
-    let t166: Vec<u64> = (0..nw).map(|i| code_l[i] & (!m_ws[i] & lv[i]) & prev(&t167, i, 1) & (!(((((((((((m_dot[i] | t33[i]) | t41[i]) | t42[i]) | t43[i]) | t44[i]) | t45[i]) | t46[i]) | t47[i]) | t48[i] & next(&m_gt, i, 1)) | (t49[i] | t50[i]) & (!next(&t129, i, 3) & lv[i])) | t51[i] & (!next(&t129, i, 4) & lv[i])) & lv[i])).collect();
-    let t165 = fill(&t166, &t147);
-    let t171: Vec<u64> = (0..nw).map(|i| t165[i] & code_l[i] & ((t53[i] | t54[i]) | t55[i])).collect();
-    let t172: Vec<u64> = (0..nw).map(|i| (code_l[i] & ((t45[i] | t46[i]) | t44[i]) | m_lf[i] & code_l[i])).collect();
-    let t170 = fill(&t171, &t172);
-    let t164: Vec<u64> = (0..nw).map(|i| t165[i] & code_l[i] & t34[i] & (!t170[i] & lv[i]) & prev(&t129, i, 1)).collect();
-    let t173: Vec<u64> = (0..nw).map(|i| (code_l[i] & m_gt[i] & ((next(&t53, i, 1) | next(&t55, i, 1)) | next(&t32, i, 1) & next(&t55, i, 2)) | m_lf[i] & code_l[i])).collect();
-    let t163 = fill(&t164, &t173);
-    let t177: Vec<u64> = (0..nw).map(|i| t165[i] & code_l[i] & ((((((t34[i] | m_gt[i]) | t57[i]) | t58[i]) | t165[i] & code_l[i] & ((t53[i] | t54[i]) | t55[i]) & prev(&t170, i, 1)) | ((t45[i] | t46[i]) | t44[i]) & (!prev(&t170, i, 1) & lv[i])) | code_l[i] & (m_word[i] | m_high[i]) & (!prev(&t129, i, 1) & lv[i]) & (((((((t59[i] & (!next(&t129, i, 2) & lv[i]) | t60[i] & (!next(&t129, i, 4) & lv[i])) | t61[i] & (!next(&t129, i, 3) & lv[i])) | t62[i] & (!next(&t129, i, 6) & lv[i])) | t63[i] & (!next(&t129, i, 5) & lv[i])) | (t28[i] | t29[i]) & (!next(&t129, i, 2) & lv[i])) | t64[i] & (!next(&t129, i, 3) & lv[i])) | t65[i] & (!next(&t129, i, 6) & lv[i])))).collect();
-    let t176 = fill(&t177, &t147);
-    let t175: Vec<u64> = (0..nw).map(|i| t165[i] & code_l[i] & ((t68[i] | t41[i]) | t42[i]) & (!t170[i] & lv[i]) & (!t176[i] & lv[i])).collect();
-    let t174 = fill(&t175, &t147);
-    let t162: Vec<u64> = (0..nw).map(|i| m_lf[i] & code_l[i] & prev(&t163, i, 1) & (!prev(&t174, i, 1) & lv[i])).collect();
-    // a `<` on a split's line that no generic call's `>` closes
-    refused |= any(&t162);
-    let t178: Vec<u64> = (0..nw).map(|i| t165[i] & code_l[i] & ((((t34[i] & (!prev(&t129, i, 1) & lv[i]) | m_gt[i] & (!prev(&t48, i, 1) & lv[i]) & (!(code_l[i] & m_gt[i] & ((next(&t53, i, 1) | next(&t55, i, 1)) | next(&t32, i, 1) & next(&t55, i, 2)) & prev(&t163, i, 1)) & lv[i])) | t68[i]) | t41[i]) | t42[i]) & (!t170[i] & lv[i]) & (!t174[i] & lv[i])).collect();
-    // an operator that may stop the lean parser's trial read of a split's line
-    refused |= any(&t178);
-    let t182 = fill(&t147, &t169);
-    let t184: Vec<u64> = (0..nw).map(|i| m_lf[i] & code_l[i] & prev(&t170, i, 1) & prev(&t165, i, 1) & (!prev(&t174, i, 1) & lv[i])).collect();
-    let t185: Vec<u64> = (0..nw).map(|i| code_l[i] & m_closer[i] & prev(&t182, i, 1)).collect();
-    let t183 = fill(&t184, &t185);
-    let t181: Vec<u64> = (0..nw).map(|i| code_l[i] & m_closer[i] & prev(&t182, i, 1) & prev(&t183, i, 1)).collect();
-    let t180 = fill(&t181, &t147);
-    let t187: Vec<u64> = (0..nw).map(|i| t180[i] & code_l[i] & ((t53[i] | t54[i]) | t55[i])).collect();
-    let t188: Vec<u64> = (0..nw).map(|i| (code_l[i] & m_closer[i] | m_lf[i] & code_l[i])).collect();
-    let t186 = fill(&t187, &t188);
-    let t179: Vec<u64> = (0..nw).map(|i| t180[i] & (code_l[i] & ((((t34[i] & (!prev(&t129, i, 1) & lv[i]) | m_gt[i] & (!prev(&t48, i, 1) & lv[i]) & (!(code_l[i] & m_gt[i] & ((next(&t53, i, 1) | next(&t55, i, 1)) | next(&t32, i, 1) & next(&t55, i, 2)) & prev(&t163, i, 1)) & lv[i])) | t68[i]) | t41[i]) | t42[i]) | code_l[i] & t34[i]) & (!t186[i] & lv[i])).collect();
-    // an operator after a split's line left open, where the lean parser's trial read may stop
-    refused |= any(&t179);
+    refused |= any(&t116);
     Lexed {
         starts,
         lasts,

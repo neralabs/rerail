@@ -2226,7 +2226,19 @@ fn pat_follow(f: &mut FunctionBuilder<'_>, p: &Pat, els: &[&crate::program::Toke
         pat_follow(f, p, &els[i + 1..], from, step, yes, heads);
         f.switch_to_block(step);
         let (j, c) = pat_after(f, p, from, fail, heads);
-        test(f, c, r, fail);
+        // Its test, but inside a depth it takes whole (decision 0633): there any record.
+        let inside = (0..counters).filter(|&k| r.whole >> k & 1 == 1).map(|k| depth[k]).reduce(|a, d| f.ins().bor(a, d));
+        match inside {
+            Some(x) => {
+                let (tested, taken) = (f.create_block(), f.create_block());
+                f.ins().brif(x, taken, &[], tested, &[]);
+                f.switch_to_block(tested);
+                test(f, c, r, fail);
+                f.ins().jump(taken, &[]);
+                f.switch_to_block(taken);
+            }
+            None => test(f, c, r, fail),
+        }
         // 1 where a side of a depth takes the record, else 0.
         let hit = |f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem| -> Value {
             let (miss, merged) = (f.create_block(), f.create_block());

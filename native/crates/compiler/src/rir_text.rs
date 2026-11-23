@@ -114,6 +114,9 @@ fn mark_rows(out: &mut String, row: &str, marks: &[crate::program::TokenMark]) {
             if e.since {
                 out.push_str(" since");
             }
+            if e.whole != 0 {
+                let _ = write!(out, " whole{:x}", e.whole);
+            }
             if e.without != 0 {
                 let _ = write!(out, " w{:x}", e.without);
             }

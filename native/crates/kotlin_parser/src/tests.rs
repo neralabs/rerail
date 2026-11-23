@@ -973,9 +973,10 @@ fn as_types_the_lean_parser_does_not_split_are_its() {
     ]);
 }
 
-/// The line after a type the lean parser may split (decisions 0630, 0632): read as the lean
-/// parser's trial read reads it, a keyword no expression starts with a name there, an operator in
-/// brackets; and where the trial stops on the line, the type whole and the line a statement.
+/// The line after a type the lean parser may split (decisions 0630, 0632, 0633): split where the
+/// lean parser's trial read reaches the line's end (a keyword no expression starts with a name
+/// there, brackets read whole, lines that continue the statement read on); where it stops or
+/// fails, the type whole and the line a statement.
 #[test]
 fn split_lines_are_the_lean_parsers() {
     same(&[
@@ -1013,18 +1014,7 @@ fn split_lines_are_the_lean_parsers() {
         "fun f() {\n  val v = x as a.B<C>\n  f(a).b = c\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  a[0] = b\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  f { a } == b\n}\n",
-        "fun f() {\n  val v = x as a.B<C>\n  a = f(b) == c\n}\n",
-    ]);
-}
-
-/// What the grammar does not read: refused, and sent to the lean parser.
-#[test]
-fn what_the_grammar_does_not_read_is_refused() {
-    refused(&[
-        // A split's line where the lean parser's trial read may stop past what the grammar's
-        // keep pattern reads: a `<`, a nested bracket, a word whose operand may take the
-        // operator, a keyword line that fails (decisions 0630, 0632).
-        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) g()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a = f(b) == c\n}\n",        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) g()\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  while (c) g()\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  class D\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  a < b\n}\n",
@@ -1035,6 +1025,39 @@ fn what_the_grammar_does_not_read_is_refused() {
         "fun f() {\n  val v = x as a.B<C>\n  f(\n    a\n  ) == b\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  a < b > (c)\n}\n",
         "fun f() {\n  val v = x as a.B<C>\n  a<b> (c)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(if (a) b else c) == d\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  class D : B()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  class D\n  foo()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  for (i in l) g()\n  foo()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a < b > c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f<T>(a) == b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(\n    a\n  ) < b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a(\n    b, c\n  )\n  d()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a\n    .b()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a\n    ?.b()\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a\n    ?: b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a\n  (b)\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a\n  b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(x) {\n    y\n  }\n  z\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a > b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  return x\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a + b * c\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a !in b\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  f(x) { y }\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a + \"s${b}\"\n}\n",
+        "fun f() {\n  val v = x as a.B<C>\n  a = b\n  c < d\n}\n",
+    ]);
+}
+
+/// What the grammar does not read: refused, and sent to the lean parser.
+#[test]
+fn what_the_grammar_does_not_read_is_refused() {
+    refused(&[
+        // A split's line that starts with a string, which a token mark does not name (decision
+        // 0633).
+        "fun f() {\n  val v = x as a.B<C>\n  \"s\" + a\n}\n",
+        // An intersection type among type arguments, which the grammar's types do not read.
+        "val x = f<A & B>()\n",
         // A token on the line of a block comment after one that starts the line: the lean
         // lexer's `asi` inserts no semicolon there, which a mark's questions can not say.
         "val a = 1\n/* c */ /* d */ + 2\n",
@@ -1086,6 +1109,22 @@ fn generic_calls_over_tighter_operations_are_the_lean_parsers() {
         "class A {\n    private val m by lazy { m ?: getSystemService<M>()!! }\n}\n",
         "val a = mapOf(\"a\" to mutableListOf<String>(\"456\"), \"b\" to c)\n",
         "val a = x && y == f<T> { z }\nval b = p || q as R\n",
+    ]);
+}
+
+/// A `<` that opens a call's type arguments whatever is around it, as the lean parser's
+/// `type_args_end` reads it: blanks, an operand that is no name, a `,` and an `&` among them
+/// (decision 0633).
+#[test]
+fn spaced_generic_calls_are_the_lean_parsers() {
+    same(&[
+        "val x = a < b > (c)\n",
+        "val x = f <T>()\n",
+        "val x = a<b> (c)\n",
+        "val x = f(a < b, c > (d))\n",
+        "val x = a[0] < b > (c)\n",
+        "val x = a < b > c\n",
+        "fun f() {\n  if (a < b && c > (d)) g()\n}\n",
     ]);
 }
 

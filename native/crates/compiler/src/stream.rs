@@ -1133,6 +1133,7 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
                 && e.ending.as_ref().is_none_or(|x| !x.not && !x.end && !x.run && x.nests.is_empty() && x.ending.is_none())
                 && e.nests.iter().all(|n| usize::from(n.counter) < crate::program::NESTS && !n.test.not && !n.test.end && !n.test.run && n.test.nests.is_empty())
                 && counters(true) == counters(false)
+                && e.whole & !counters(true) == 0
         });
         let words = m.elems.iter().flat_map(|e| e.words.iter().chain(e.nests.iter().flat_map(|n| &n.test.words))).all(|&s| usize::from(s) < program.strings.len());
         let words = words && nests;
@@ -1206,7 +1207,7 @@ fn token_follows(rest: &[&crate::program::TokenElem], at: Option<usize>, last: O
                 return true;
             }
             match at {
-                Some(j) if e.holds(Some(codes[j])) => match crate::program::nest_step(&e.nests, depth, codes[j]) {
+                Some(j) if !crate::program::tests_at(e.whole, depth) || e.holds(Some(codes[j])) => match crate::program::nest_step(&e.nests, depth, codes[j]) {
                     Some(d) => {
                         depth = d;
                         last = Some(j);

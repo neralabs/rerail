@@ -897,6 +897,9 @@ impl<'a> G<'a> {
                 let ok_end = if ending.is_empty() { "true".to_owned() } else { format!("prev < self.n && {}", self.elem(ending, "prev")?) };
                 let _ = writeln!(b, "            if depth.iter().all(|&d| d == 0) && {ok_end} && {after} {{\n                return true;\n            }}");
                 let c = self.elem(choices, "j")?;
+                // Inside a depth it takes whole (decision 0633): any token.
+                let inside: Vec<String> = nests.iter().enumerate().filter(|(_, n)| n.whole).map(|(d, _)| format!("depth[{d}] > 0")).collect();
+                let c = if inside.is_empty() { c } else { format!("{} || {c}", inside.join(" || ")) };
                 let _ = writeln!(b, "            if j >= self.n || !({c}) {{\n                return false;\n            }}");
                 for (d, n) in nests.iter().enumerate() {
                     let _ = writeln!(b, "            if {} {{\n                depth[{d}] += 1;\n            }} else if {} {{\n                if depth[{d}] == 0 {{\n                    return false;\n                }}\n                depth[{d}] -= 1;\n            }}", self.elem(&n.open, "j")?, self.elem(&n.close, "j")?);
@@ -1018,15 +1021,19 @@ impl<'a> G<'a> {
             let mut holds = Vec::new();
             for (d, (_, def)) in defs.iter().enumerate() {
                 let mut c = Vec::new();
+                // A token mark's run and its `after`: one of the mark's patterns, its other
+                // `before`s the rest (decision 0633).
+                let mut main = None;
                 if let Some((before, seq)) = def.tokens {
                     let pat = format!("pat_{n}_{d}");
                     self.run(seq, &pat, &mut fns)?;
-                    c.push(format!("self.{pat}_0(self.i, self.prev_tok(self.i))"));
+                    let mut m = vec![format!("self.{pat}_0(self.i, self.prev_tok(self.i))")];
                     if !before.is_empty() {
                         let p = self.elem(before, "p")?;
                         let negated = matches!(before, [TokenElem::Not(_)]);
-                        c.push(if negated { format!("{{ let p = self.prev_tok(self.i); p >= self.n || {p} }}") } else { format!("{{ let p = self.prev_tok(self.i); p < self.n && {p} }}") });
+                        m.push(if negated { format!("{{ let p = self.prev_tok(self.i); p >= self.n || {p} }}") } else { format!("{{ let p = self.prev_tok(self.i); p < self.n && {p} }}") });
                     }
+                    main = Some(m.join(" && "));
                 } else if let Some(b) = def.bit {
                     if def.word != 0 {
                         c.push(format!("self.word() == {}", def.word));
@@ -1051,6 +1058,9 @@ impl<'a> G<'a> {
                 }
                 for x in no {
                     c.push(format!("!{x}"));
+                }
+                if let Some(m) = main {
+                    yes.insert(0, format!("({m})"));
                 }
                 if !yes.is_empty() {
                     c.push(format!("({})", yes.join(" || ")));

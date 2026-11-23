@@ -4235,10 +4235,11 @@ impl Gen<'_> {
             /// The loop's accumulator of its mask (`GapAcc`), where it keeps one.
             acc: Option<usize>,
             /// A mask that holds at a grammar token's start where an accumulator's held since the
-            /// record before (`rec_J`): `A & prev(fill(M, ~W))`, `A` at every start but an extra's
-            /// (where no gap mark is written), `W` every skipped byte, `M` the accumulator's (a
-            /// token first on its line, after a line break).
-            rec: Option<usize>,
+            /// record before (`rec_J`): `A & prev(fill(M, ~W))`, `W` every skipped byte, `M` the
+            /// accumulator's (a token first on its line, after a line break), and `A` its test at
+            /// the start (none where it holds at every start but an extra's, where no gap mark is
+            /// written).
+            rec: Option<(usize, Option<String>)>,
         }
         /// A gap mark's mask made of the regions, kept by the loop as it reads (the lean lexer's
         /// "a line break since the token before"): whether it held since the grammar token before
@@ -4337,7 +4338,22 @@ impl Gen<'_> {
                         && t != "false"
                     {
                         accs[j].own = true;
-                        rec = Some(j);
+                        // `A`'s conjuncts that read no region, tested at the start; one that reads
+                        // them holds at every start (a token's first byte is code or an opener's).
+                        let mut parts = Vec::new();
+                        let mut stack = vec![(**st).clone()];
+                        while let Some(e) = stack.pop() {
+                            match e {
+                                Expr::And(a, b) => {
+                                    stack.push(*a);
+                                    stack.push(*b);
+                                }
+                                e if !self.regional(&e) => parts.push(format!("bit(&{}, s)", self.val(&e)?)),
+                                _ => {}
+                            }
+                        }
+                        let _ = t;
+                        rec = Some((j, (!parts.is_empty()).then(|| parts.join(" && "))));
                     }
                 }
             }
@@ -4670,7 +4686,10 @@ impl Gen<'_> {
         let mut own_code = String::new();
         for g in &gaps {
             let since = match (&g.mask, g.acc) {
-                _ if let Some(j) = g.rec => format!("tested >> {} & 1 == 1 || rec_{j}", g.bit),
+                _ if let Some((j, a)) = &g.rec => match a {
+                    None => format!("tested >> {} & 1 == 1 || rec_{j}", g.bit),
+                    Some(a) => format!("tested >> {} & 1 == 1 || rec_{j} && {a}", g.bit),
+                },
                 (_, Some(j)) => format!("tested >> {0} & 1 == 1 || acc_{j}{1}", g.bit, if accs[j].here == "false" { String::new() } else { format!(" || here_{j}") }),
                 (Some(m), None) => format!("tested >> {0} & 1 == 1 || any_in(&{m}, from, s)", g.bit),
                 (None, None) => format!("tested >> {} & 1 == 1", g.bit),

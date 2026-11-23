@@ -591,6 +591,9 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                         2 => el.ending.as_mut().ok_or("an ending's row marks")?.rows = bits,
                         _ => el.rows = bits,
                     }
+                } else if let Some(h) = w.strip_prefix("whole") {
+                    let bits = u8::from_str_radix(h, 16).map_err(|_| format!("a bad `whole` `{w}`"))?;
+                    elems.last_mut().ok_or("a `whole` before its run")?.whole = bits;
                 } else if let Some(h) = w.strip_prefix('w') {
                     let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad `without` `{w}`"))?;
                     elems.last_mut().ok_or("a `without` before its element")?.without = bits;

@@ -154,8 +154,8 @@ enum Pre {
 /// whether it is a run of its choices (`program::TokenElem`), a run's depths' sides: each its
 /// counter, whether it opens, its kinds' names and its words (`program::Nest`), and a run's
 /// `ending`'s kinds and words, and the marks it holds with or without (`with M`, `without M`:
-/// each its name and whether with).
-pub type TokenElemRow = (i8, Vec<String>, Vec<u16>, bool, bool, bool, Vec<NestRow>, Option<(Vec<String>, Vec<u16>)>, Vec<(String, bool)>);
+/// each its name and whether with), and the depths it takes whole (bits of the counters).
+pub type TokenElemRow = (i8, Vec<String>, Vec<u16>, bool, bool, bool, Vec<NestRow>, Option<(Vec<String>, Vec<u16>)>, Vec<(String, bool)>, u8);
 
 /// One side of a run's depth, as `TokenElemRow` holds it: counter, opens, kinds, words.
 pub type NestRow = (u8, bool, Vec<String>, Vec<u16>);
@@ -1550,6 +1550,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                 };
                 // The run's depths (Q339): each side its counter's.
                 let mut nest_rows = Vec::new();
+                // The depths whose contents it takes whole (decision 0633).
+                let whole = nests.iter().enumerate().filter(|(_, n)| n.whole).fold(0u8, |a, (k, _)| a | 1 << k);
                 for (k, n) in nests.iter().enumerate() {
                     for (open, side) in [(true, &n.open), (false, &n.close)] {
                         let (mut ks, mut ws) = (Vec::new(), Vec::new());
@@ -1576,7 +1578,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                 }
                 // The token before, `~`: it holds with no token before too (`end` there).
                 let end = end || (offset == -1 && not);
-                elems.push((offset, kinds, words, not, end, run, nest_rows, ending_row, without));
+                elems.push((offset, kinds, words, not, end, run, nest_rows, ending_row, without, whole));
             }
             // A refusing one's word: its bit in the record is the word's alone (no state tests
             // it, so no `MARK` names the word).
