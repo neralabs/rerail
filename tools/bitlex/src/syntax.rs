@@ -858,6 +858,14 @@ pub struct Reading {
     pub root: Option<ReadKind>,
 }
 
+/// What a `speculate` statement states (decision 0654).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Speculation {
+    /// `gap ends`: every token ends at the next token's start less the blanks (`skip`) before it, or
+    /// at the file's end less them (decision 0411's claims).
+    GapEnds,
+}
+
 #[derive(Clone, Debug)]
 pub enum Stmt {
     Lexer(String),
@@ -923,6 +931,11 @@ pub enum Stmt {
     /// `{`, after its string's `${`), and a fill from the byte after it (`fill(prev(NAME), E)`) is
     /// the loop's to keep, from that token to the next byte of `E`.
     AssumeEnds { why: String, name: String },
+    /// `speculate "WHY" FACT` (decision 0654): a fact the compiler uses with no proof, which every
+    /// build checks while it runs: a file where it fails is refused, as an `escape` refuses it, and
+    /// goes to the fallback. Sound in every build (an `assume` is checked by test builds only); a
+    /// fact false on many files costs their fallbacks. It changes no mask.
+    Speculate { why: String, fact: Speculation },
     /// `escape "WHY" at KIND when count(E) at least N` (or `run(E)`): a test of each token of
     /// the kind over its own bytes, as a lexer checks a token it reads (decision 0177): `count`,
     /// `E`'s bits in the token at least `N`; `run`, `E` at each of its first `N` bytes (the token
@@ -2149,6 +2162,12 @@ impl P {
                 let n = self.ident()?;
                 self.want_p("=")?;
                 self.pairs(n)?
+            }
+            "speculate" => {
+                let why = String::from_utf8_lossy(&self.string()?).into_owned();
+                self.want_kw("gap")?;
+                self.want_kw("ends")?;
+                Stmt::Speculate { why, fact: Speculation::GapEnds }
             }
             "assume" => {
                 let why = String::from_utf8_lossy(&self.string()?).into_owned();

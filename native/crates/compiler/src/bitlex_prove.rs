@@ -55,6 +55,11 @@ impl Budget {
         Budget(std::sync::Arc::new((std::sync::atomic::AtomicU64::new(steps), std::sync::atomic::AtomicU64::new(0), steps / 16)))
     }
 
+    /// The steps the compile has taken: its budget less those left.
+    pub fn spent(&self) -> u64 {
+        (self.0.2 * 16).saturating_sub(self.total())
+    }
+
     /// No limit: a question asked apart from a compile (the provers' own tests).
     pub fn unlimited() -> Self {
         Budget::new(u64::MAX)

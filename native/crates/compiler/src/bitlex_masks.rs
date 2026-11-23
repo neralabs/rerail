@@ -369,6 +369,13 @@ pub struct Lowering {
     /// Values proved never to hold at one byte (`regions_apart`'s fills), each an operation and
     /// its delay: what `bitlex_prove::never_by_shape` reads of them.
     pub apart: Vec<bitlex_prove::Apart>,
+    /// The grammar's `speculate "WHY" gap ends` (decision 0654): `gap_ends` takes the fact with no
+    /// proof, and its claims refuse the file where they fail.
+    pub speculate_gap_ends: bool,
+    /// The speculations' checks (decision 0654), each refusing the file where it holds: fallbacks
+    /// once the provers are done, so no proof reads them (a claim that need hold only up to a
+    /// refusal holds up to an escape's).
+    pub speculated: Vec<Val>,
     pub keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, bool)>,
     /// Each row's soft keywords: a word's kind where the grammar takes it, the row's elsewhere.
     pub soft: Vec<(String, Vec<Vec<u8>>)>,
@@ -529,6 +536,18 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     compile_proved(stmts, outputs, symbols, shape, HashMap::default())
 }
 
+/// With `RERAIL_PROVING_TRACE`, the prover's steps and the time spent so far in a compile, at
+/// each of its phases (decision 0654).
+fn phase_mark(low: &Lowering, what: &str) {
+    thread_local! { static START: std::cell::Cell<Option<(std::time::Instant, u64)>> = const { std::cell::Cell::new(None) }; }
+    if std::env::var_os("RERAIL_PROVING_TRACE").is_none() {
+        return;
+    }
+    let left = low.proofs.work.left();
+    let (t, l0) = START.with(|c| if what == "start" || c.get().is_none() { c.set(Some((std::time::Instant::now(), left))); c.get().unwrap() } else { c.get().unwrap() });
+    eprintln!("phase {what}: {} steps spent, {:.1} s", l0.saturating_sub(left), t.elapsed().as_secs_f64());
+}
+
 /// `compile_shaped`, with the provers' answers a compile made before (`Compiled::proofs`,
 /// decision 0414): a question among them is answered without its proof. The program is the same.
 pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>, shape: Shape, known: bitlex_prove::Known) -> Result<Compiled, String> {
@@ -564,6 +583,8 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         inside_of: Vec::new(),
         scope_of: Vec::new(),
         apart: Vec::new(),
+        speculated: Vec::new(),
+        speculate_gap_ends: stmts.iter().any(|s| matches!(s, Stmt::Speculate { fact: ::bitlex::syntax::Speculation::GapEnds, .. })),
         keywords: Vec::new(),
         skip: None,
         prefix: None,
@@ -612,9 +633,12 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     }
     low.stmts(stmts)?;
     let from = low.program.ops.len();
+    phase_mark(&low, "start");
     let token_rows = low.tokens()?;
     low.cost("the token rows".into(), from);
+    phase_mark(&low, "token rows");
     assumptions(&mut low, stmts, &token_rows)?;
+    phase_mark(&low, "assumptions");
     let from = low.program.ops.len();
     // The tree section: its state machine, its checks and tier 2's words (decision 0087), before
     // the outputs, since the words' guards join the fallback.
@@ -624,6 +648,9 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         let symbols = symbols.ok_or("a tree section needs the grammar's ids")?;
         tier2 = Some(tree_section(symbols, &mut low, &token_rows)?);
     }
+    let speculated = std::mem::take(&mut low.speculated);
+    low.fallbacks.extend(speculated);
+    phase_mark(&low, "tree section");
     // The checks left: the fallback's.
     for (a, l, not) in std::mem::take(&mut low.pending_checks) {
         let x = match low.back_fallbacks.get(&(a.v, l.v)) {
@@ -885,8 +912,9 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         .map(|(name, x)| Named { name, op: place[usize::from(x.v)] as u16, delay: x.d })
         .collect();
     let fallbacks = labels.iter().filter(|(l, _)| l == FALLBACK).map(|&(_, k)| k).collect();
+    phase_mark(&low, "end");
     if std::env::var_os("RERAIL_PROVING_TRACE").is_some() {
-        eprintln!("proving: {} steps of {}, {} answers made, {} known", bitlex_prove::PROVING_STEPS - low.proofs.work.left(), bitlex_prove::PROVING_STEPS, low.proofs.made.len(), low.proofs.used.len());
+        eprintln!("proving: {} steps, {} answers made, {} known", low.proofs.work.spent(), low.proofs.made.len(), low.proofs.used.len());
     }
     let proofs = std::mem::take(&mut low.proofs.made);
     let used = std::mem::take(&mut low.proofs.used);
@@ -1187,7 +1215,7 @@ impl Lowering {
                 // Made first (`prefix_value`).
                 Stmt::Prefix(_) => {}
                 // Asked once the token rows are made (`assumptions`).
-                Stmt::Assume { .. } | Stmt::AssumeEnds { .. } => {}
+                Stmt::Assume { .. } | Stmt::AssumeEnds { .. } | Stmt::Speculate { .. } => {}
                 Stmt::Skip(expr) => {
                     let x = self.expr(expr)?;
                     self.skip = Some(match self.skip {
@@ -1776,6 +1804,18 @@ impl Lowering {
         self.proofs.never(key, || bitlex_prove::never_in(&work, &ops, tables, x.v, x.d))
     }
 
+    /// Whether `x` is zero everywhere, by the plain search and else an induction of `horizon`
+    /// bytes and `conflicts` a solve, with no equations of the walk: answered before
+    /// (`Proofs`) where it was asked before, as every question (decision 0414).
+    pub fn never_within(&mut self, x: Val, horizon: u32, conflicts: u32) -> bool {
+        let ops = proof_ops(&self.program, &self.prefix);
+        let tables = &self.program.tables;
+        let mut prover = bitlex_prove::Induction::new(&[], horizon, conflicts).within(&self.proofs.work);
+        let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("plain or never"));
+        let work = self.proofs.work.clone();
+        self.proofs.never(key, || bitlex_prove::never_in(&work, &ops, tables, x.v, x.d) || prover.never(&ops, tables, x.v, x.d))
+    }
+
     /// The bytes `x` can be at, by the plain search (`bitlex_prove::first_bytes`).
     pub fn first_bytes(&mut self, x: Val) -> ByteSet {
         let ops = proof_ops(&self.program, &self.prefix);
@@ -2092,8 +2132,7 @@ impl Lowering {
         // The same refusals: `A & (L ^ L')` never holds.
         let differ = self.xor(l, sub)?;
         let differ = self.and(a, differ)?;
-        let ops = self.proof_ops();
-        if !(bitlex_prove::never_in(&self.proofs.work, &ops, &self.program.tables, differ.v, differ.d) || bitlex_prove::Induction::new(&[], 10, 4000).within(&self.proofs.work).never(&ops, &self.program.tables, differ.v, differ.d)) {
+        if !self.never_within(differ, 10, 4000) {
             return Ok(None);
         }
         let Some(mut ops) = self.local_ops_with(a, true, Some((last.v, L::Const(u64::MAX), 0))) else { return Ok(None) };
@@ -3437,13 +3476,17 @@ fn gap_ends(low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Opt
         claims.push(low.andnot(in_skip, refused)?);
         claims.push(low.and(*l, after_bad)?);
     }
+    // Speculated (decision 0654): no proof; the claims refuse the file where one holds, in every
+    // executor, as an escape does. The skip then ends the tokens, as proved.
+    if low.speculate_gap_ends {
+        let all = all_of(low, &claims)?;
+        low.speculated.push(all);
+        return Ok(Some(skip));
+    }
     // One question (decision 0414): whether they all never hold, a function of their union's
     // cone alone (the lemmas below are made from the regions it reads), so keyed by it. The
     // prover's settings are in the key.
-    let mut all = claims[0];
-    for &c in &claims[1..] {
-        all = low.or(all, c)?;
-    }
+    let all = all_of(low, &claims)?;
     let prover = low.induction(8, 100_000);
     let key = bitlex_prove::key_of(&bitlex_prove::question_given(&low.proof_ops(), &low.program.tables, &low.program.rounds, all.v, all.d, &prover.asker("gap ends"), prover.given()));
     let holds = match low.proofs.known.get(&key) {
@@ -3458,6 +3501,15 @@ fn gap_ends(low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Opt
         }
     };
     Ok(holds.then_some(skip))
+}
+
+/// The union of `claims`.
+fn all_of(low: &mut Lowering, claims: &[Val]) -> Result<Val, String> {
+    let mut all = claims[0];
+    for &c in &claims[1..] {
+        all = low.or(all, c)?;
+    }
+    Ok(all)
 }
 
 /// `gap_ends`' claims, each zero everywhere: by the plain search, then `prover`, then by
@@ -3485,6 +3537,7 @@ fn gap_claims(low: &mut Lowering, prover: bitlex_prove::Induction, claims: &[Val
             left.push(c);
         }
     }
+    phase_mark(low, &format!("gap claims, {} of {} left", left.len(), claims.len()));
     if left.is_empty() {
         return Ok(true);
     }
@@ -3502,6 +3555,7 @@ fn gap_claims(low: &mut Lowering, prover: bitlex_prove::Induction, claims: &[Val
     let mut fills: Vec<Val> = low.names.values().copied().filter(|x| carried(low, x.v) && read.binary_search(&x.v).is_ok()).collect();
     fills.sort_by_key(|x| x.v);
     fills.dedup_by_key(|x| x.v);
+    phase_mark(low, &format!("gap claims refuted, {} fills", fills.len()));
     for (i, &a) in fills.iter().enumerate() {
         for &b in &fills[i + 1..] {
             let both = low.and(a, b)?;
@@ -3517,7 +3571,10 @@ fn gap_claims(low: &mut Lowering, prover: bitlex_prove::Induction, claims: &[Val
             }
         }
     }
-    Ok(left.into_iter().all(|c| never(low, c)))
+    phase_mark(low, "gap lemmas");
+    let out = left.into_iter().all(|c| never(low, c));
+    phase_mark(low, "gap claims with lemmas");
+    Ok(out)
 }
 
 /// The grammar row whose tokens' last bytes hold every bit of `a`, as the prover shows it.
@@ -3525,7 +3582,7 @@ fn last_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows: 
     let grammar_rows: Vec<usize> = (0..rows.len()).filter(|&r| !low.extra.contains(&token_rows[r].0) && !row_kinds(&rows[r]).is_empty()).collect();
     for r in grammar_rows {
         let off = low.andnot(a, token_rows[r].2)?;
-        if bitlex_prove::never_in(&low.proofs.work, &low.proof_ops(), &low.program.tables, off.v, off.d) || bitlex_prove::Induction::new(&[], 4, 1000).within(&low.proofs.work).never(&low.proof_ops(), &low.program.tables, off.v, off.d) {
+        if low.never_within(off, 4, 1000) {
             return Ok(Some(r));
         }
     }
@@ -3865,9 +3922,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
     }
+    phase_mark(low, "pair lemmas");
     if walks.is_empty() {
         regions_apart(low, &mut settled)?;
     }
+    phase_mark(low, "regions apart (pairs)");
     for a in 0..rows.len() {
         for b in a + 1..rows.len() {
             if shares(a, b) {
@@ -3889,6 +3948,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
     }
+    phase_mark(low, "token pairs");
     if std::env::var_os("RERAIL_TIER2_SIZES").is_some() {
         let names: Vec<String> = pairs.iter().map(|&(a, b)| format!("{a}{}/{b}{}", token_rows[a].0, token_rows[b].0)).collect();
         eprintln!("rows that share a first byte: {} pairs to the fallback, {} operations: {}", pairs.len(), low.program.ops.len() - ops_before, names.join(" "));
@@ -4482,7 +4542,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
     }
+    phase_mark(low, "before row modes");
     let meets = row_modes(low, token_rows, &rows, &states, &arms, &mark_kinds)?;
+    phase_mark(low, "row modes");
     // The totals are one flag (`BlockRun::totals`), tested once: `EMPTY 0`.
     let empties = 1;
     // The counts no value reads whose ups and downs are tokens' starts, each of tokens whose text
@@ -5250,7 +5312,15 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
         rd.quiet = quiet;
     }
-    let gap = gap_ends(low, token_rows)?.map(|v| mask_of_val(v, &mut mark_masks));
+    phase_mark(low, "before gap ends");
+    // The gaps' ends (decision 0411) are the record pass's, with no end rules: with them the
+    // token loop ends each token by its rule, and a gap is no records' (`BlockProgram::verify`),
+    // so the claims are not asked (Kotlin's took 88 s, decision 0654).
+    if low.speculate_gap_ends && !rules.is_empty() {
+        return Err("`speculate … gap ends`: the tokens end by their end rules, so no gap ends them".into());
+    }
+    let gap = if rules.is_empty() { gap_ends(low, token_rows)?.map(|v| mask_of_val(v, &mut mark_masks)) } else { None };
+    phase_mark(low, "gap ends");
     // The gap marks the CPU's token loop reads from the blanks (decision 0430), as the lean
     // lexer's `skip` sets `nl` while it passes them: a mark whose mask `M` holds at the bytes of
     // one class `C` alone (its first bytes), at no byte of a token, and at every byte of `C`
@@ -5307,7 +5377,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 for k in (1..8u64).filter(|_| fixed.is_none()) {
                     let at = low.prev(t.1, k)?;
                     let differ = low.xor(at, t.2)?;
-                    if bitlex_prove::never_in(&low.proofs.work, &low.proof_ops(), &low.program.tables, differ.v, differ.d) {
+                    if low.never(differ) {
                         fixed = Some(k);
                         break;
                     }
@@ -5376,6 +5446,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
     }
+    phase_mark(low, "gap marks");
     // The marks an extra keeps of its own gap (`Records::own`): the blank marks, which tier 2's
     // gap patterns read, and the settling marks, which `SETTLE` reads at the extras pending.
     let settling = low.settles.iter().filter(|&&k| gaps >> k & 1 == 1 && low.tested_only.iter().all(|&t| t != k)).fold(0u32, |a, &k| a | 1 << k);
