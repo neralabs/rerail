@@ -609,6 +609,52 @@ be reported as tape corruption somehow; it should not be a silent failure".
 Metal (14% behind); `parent_group` stays beside them, and its walk past a group's links is a real case (its walk
 past 7 is not reported: the host's read, `clif_f16_parent`, walks any chain).
 
+### The step's Rust as hand-written SIMD would be (the user's: "please address all of these", 2026-11-22)
+
+The step's Rust was slower than the host's scalar step because it did per lane what a hand-written NEON loop does
+once a chunk. Each gap, and what `rs.rs` writes now (commits 6c931fa5d2, 94388e3d25):
+
+1. **The window load, a gather.** Each lane's aligned word, shift and second word at its own 64-bit pointer.
+   Now `ukl_ld_window` of 8 bytes is one unaligned load under `UKL_VEC` (memory.h: it touches exactly the words the
+   aligned form reads), and an index of lanes `first + j * stride` (`V::Lin`, the stride a value read from the tape,
+   carried through `+ - * <<`, a zero extension and a 64-bit base in `V::At`) is loaded as `vld2q_u32` pairs where
+   the program finds `stride == 8` and no lane's index wraps, else gathered.
+2. **64-bit lanes as `uint64x2_t`.** Now `[uint32x4_t; 2P]`, low halves then high, one mask register for both;
+   `V::Z` where the high half is known zero. Carries, borrows, the product's cross terms, shifts across 32, compares.
+3. **An `any()` after each early return.** A short side that ends (no loop, call or effect) merges by its mask.
+4. **Values uniform across the chunk, per lane.** `i - 1` stays a `u32` of its first lane (a variable stored where
+   all lanes run, or where the lanes off have returned, `Cx::left`), passed as `Sh::Iota`. A function that shifts
+   it down by K or masks it to K bits asks its callers for `Sh::Run(K)`; the caller that made the lanes tests the
+   chunk once (`(f & (2^K - 1)) <= 2^K - W`) and calls that instance, where `i >> 10` is one value (the block's
+   lookup scalar code) and `i & 1023` consecutive lanes. A `?:`, a short circuit or a loop whose condition is one
+   value in an instance of uniform arguments is Rust's, whatever the tape's level says.
+5. **The side search for the whole chunk.** A `?:` arm that is a call of a function that reads no lane id, SIMD
+   group or barrier runs, where at most 2 of the chunk's lanes take it, its instance of one value once a lane
+   (a loop over the mask's bits); its offset loop is then a plain scalar loop. 4 lanes measured the same as 2.
+6. **The links as a second launch.** Measured against the walk inline (`parent_group`, `parent_back`): the two
+   launches cost fewer instructions and cycles on every document, so they stay.
+
+A test kernel, `ukl_aot/kernels/wide.uglykl`, checks every 64-bit operation, the stride-tested window (8 and 4),
+a `Run` instance and a rare call against a scalar model, at groups that end in part of a chunk.
+
+Instructions (cycles) a node, `parent_bench`, profiling build, this Mac at load 11–21:
+
+| | records (`parent_bench records 40000`) | numbers (`numbers 200000`) | random (`random 400000`) |
+|---|---|---|---|
+| the step, before | 50.0 | 330 | 73.5 |
+| the step, now | 27.5 (5.0) | 58.3 (9.6) | 31.2 (7.4) |
+| the host's scalar step | 53.9 (10.6) | 86.3 (10.8) | 57.3 (16.1) |
+| two launches, now | 54.9 (11.0) | 112.0 (29.0) | 59.7 (17.5) |
+| `parent_group` (walk inline) | 79.7 (19.0) | 135.7 (38.9) | 85.9 (25.3) |
+| `parent_back` | 83.7 (21.2) | 172.8 (63.3) | 95.2 (33.9) |
+| the host's scalar read | 104.7 (17.6) | 482.0 (94.9) | 132.1 (34.1) |
+| hand-written scan (`hand::parent_all_scan`) | 27.9 (4.5) | 73.5 (9.8) | 34.5 (9.6) |
+
+Left: a slot narrower than 8 bytes (the usual width) still gathers its windows (a table lookup over the chunk's
+bytes would read past the words the C reads, which only a 16z entry's slack allows); the link launch is now half of
+numbers' two; and a C stack slot two variables share (a loop's counter, then a later local) is one Rust variable,
+each lane's if either is.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one
