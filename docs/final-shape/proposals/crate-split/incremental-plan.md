@@ -1396,3 +1396,13 @@ dropped the `--timings` runs (2026-11-22).
       boot's library, 61 of 74. Of the 13 failures, 11 need pack test data the host lacks, one is a Metal test on
       Linux, and one predates the split (`revision_cli_reads_commit_metadata_without_its_tree`: the run's settings
       read of `rerail.env` meets the missing root tree, which `6f1867702e` made an error).
+  - **10c-2, the overlay** over the store and its frozen layers (`facts::overlay`, `facts::runs`, 1.4k lines) are
+    `rerail-overlay`, which boot mounts in its `facts`. Only boot's slices write through it, and tests-lang's
+    families tests through boot, and the overlay is `runs`' one user. An edit to them rebuilds 23 crates, from 60.
+    - observe's crash-recovery tests (a direct push and an overlay push) move beside the overlay with the
+      observer's test trees they used. observe's `push_root` is public for them.
+    - The methods only the tests call are `cfg(test)`. `Run::relation` and `Run::is_empty` had no caller and
+      are gone: facts-base's `allow(dead_code)` on the mounts hid them.
+    - Then: facts-base 15.8k lines, 61 above (the new crate is one of them). rerail-overlay 1.4k lines, 23 above.
+    - Checks: the workspace with `--tests` is clean on Linux and macOS. clippy has nothing in the moved files. The
+      repository's checks pass. Tests (Linux): the overlay's and runs', 11; observe's, 3; families', 5.

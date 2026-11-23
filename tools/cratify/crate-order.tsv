@@ -68,6 +68,7 @@ rerail-logic-core	core
 rerail-json-rules	core
 rerail-matcher	core
 rerail-sql-profile	core
+rerail-overlay	core
 rerail-run	core
 rerail-rules-base	core
 rerail-p-anchors	core

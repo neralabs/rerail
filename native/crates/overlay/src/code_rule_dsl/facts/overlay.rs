@@ -106,6 +106,9 @@ struct Runs {
     readers: Run,
 }
 
+/// A name and the digest it is bound to, as a layer writes it.
+type Bound = (Sym, [u8; 32]);
+
 impl Runs {
     fn bytes(&self) -> usize {
         self.bindings.bytes() + self.derivations.bytes() + self.inputs.bytes() + self.readers.bytes()
@@ -158,8 +161,8 @@ impl Runs {
         })
     }
 
-    /// The layer as the store's bulk write takes it.
-    fn rows(&self) -> (Vec<(Sym, [u8; 32])>, Vec<(Sym, StoredDerivation)>) {
+    /// The layer as the store's bulk write takes it (`write_derivation_layer`).
+    fn rows(&self) -> (Vec<Bound>, Vec<(Sym, StoredDerivation)>) {
         let bindings = (0..self.bindings.len())
             .map(|row| (self.bindings.cell(row, 0), runs::digest(self.bindings.row(row).skip(1))))
             .collect();
@@ -261,17 +264,20 @@ impl Overlay {
         Ok(Self { shared, writer })
     }
 
+    #[cfg(test)]
     pub(crate) fn counters(&self) -> Counters {
         self.shared.lock().counters
     }
 
     /// Bytes the top and the resident layers hold.
+    #[cfg(test)]
     pub(crate) fn resident_bytes(&self) -> usize {
         let state = self.shared.lock();
         state.top.bytes + resident_layer_bytes(&state)
     }
 
     /// Layers frozen and not yet written.
+    #[cfg(test)]
     pub(crate) fn behind(&self) -> usize {
         self.shared.lock().frozen.len()
     }
@@ -353,6 +359,7 @@ impl Overlay {
 impl Overlay {
     /// A crash: the writer stops where it is and nothing still in memory or spilled is written.
     /// Returns what the overlay did, as it stopped.
+    #[cfg(test)]
     pub(crate) fn crash(mut self) -> Counters {
         self.shared.lock().failed = Some("crashed".to_owned());
         self.shared.wake.notify_all();
@@ -707,3 +714,5 @@ fn failed(state: &State) -> StoreResult<()> {
 
 #[cfg(test)]
 pub mod tests;
+#[cfg(test)]
+mod recovery;

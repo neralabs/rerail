@@ -928,6 +928,8 @@ pub mod code_rule_dsl {
             use std::sync::Arc;
         }
         pub use rerail_facts::code_rule_dsl::facts::*;
+        // The overlay over the store its slices write through (rerail-overlay, crate split 10c).
+        pub use rerail_overlay::code_rule_dsl::facts::overlay;
         pub mod producers {
             pub mod python {
                 pub mod python_facts {

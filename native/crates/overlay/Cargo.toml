@@ -1,0 +1,24 @@
+[package]
+name = "rerail-overlay"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The facts' in-memory overlay over the content store, written back in the background: boot's, above the facts."
+
+[features]
+# The test hooks of the crates below.
+test-hooks = ["rerail-facts-base/test-hooks", "rerail-observe/test-hooks"]
+
+[dependencies]
+rerail-facts-base = { path = "../facts_base" }
+# The store's interface and records (`content_store::FactStore`).
+rerail-observe = { path = "../observe" }
+rerail-accel = { path = "../../../accel" }
+rustc-hash = "=2.1.3"
+
+[dev-dependencies]
+rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-overlay = { path = ".", features = ["test-hooks"] }
+# The tests open stores (the overlay holds one through `FactStore`).
+rerail-store = { path = "../store", features = ["test-hooks"] }

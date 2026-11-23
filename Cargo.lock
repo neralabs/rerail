@@ -3322,6 +3322,7 @@ dependencies = [
  "rerail-lang-sql",
  "rerail-logic",
  "rerail-metal",
+ "rerail-overlay",
  "rerail-prefilter",
  "rerail-prof",
  "rerail-rir",
@@ -5120,6 +5121,19 @@ dependencies = [
  "tikv-jemalloc-sys",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-overlay"
+version = "0.1.0"
+dependencies = [
+ "rerail-accel",
+ "rerail-facts-base",
+ "rerail-observe",
+ "rerail-overlay",
+ "rerail-store",
+ "rusqlite",
+ "rustc-hash",
 ]
 
 [[package]]

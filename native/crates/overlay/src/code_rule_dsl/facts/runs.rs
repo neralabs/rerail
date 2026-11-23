@@ -69,16 +69,8 @@ impl Builder {
 }
 
 impl Run {
-    pub(crate) fn relation(&self) -> u32 {
-        self.relation
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.rows
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.rows == 0
     }
 
     pub(crate) fn cell(&self, row: usize, column: usize) -> u32 {

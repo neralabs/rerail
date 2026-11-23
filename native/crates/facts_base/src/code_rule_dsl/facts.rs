@@ -10,26 +10,22 @@ pub mod span_prefilter;
 pub mod connection;
 pub mod grammar_shape;
 // cratify: `families` is rerail-facts' (it mounts it, over the base)
-/// M's layered map as copied; `overlay` is its adaptation (open item O19).
+/// M's layered map as copied; rerail-overlay's `facts::overlay` is its adaptation (open item O19).
 #[allow(dead_code)]
 pub mod lmap;
 // cratify: `facts_a` is rerail-workspace's (it mounts it)
-/// D's projection batches as copied; `runs` is their adaptation (open item O19).
+/// D's projection batches as copied; rerail-overlay's `facts::runs` is their adaptation (open item O19).
 #[cfg(test)]
 #[allow(dead_code)]
 pub mod d_projection;
 #[allow(dead_code)]
 pub mod observe;
 #[allow(dead_code)]
-pub mod overlay;
-#[allow(dead_code)]
 pub mod producers;
 #[allow(dead_code)]
 pub mod propagate;
 /// Rows in blocks the CPU and GPU read in place (decision 0325): setfix's relations' and the vtab's `Relation`'s.
 pub mod rows;
-#[allow(dead_code)]
-pub mod runs;
 // cratify: `set_census` is rerail-transducer's (it mounts it)
 #[allow(dead_code)]
 pub mod vtab;

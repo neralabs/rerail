@@ -2,15 +2,36 @@
 //! overlay, leaves SQLite holding a prefix of its writes, and `recover` then finds exactly the
 //! invalid derivations and brings the store to what a push that never crashed leaves.
 
-use super::*;
 use crate::code_rule_dsl::facts::Graph;
+use crate::code_rule_dsl::facts::observe::{path_name, push_root, recover, tree_name};
 use crate::code_rule_dsl::facts::overlay::{Limits, Overlay};
+use crate::content_store::{ABSENT, ContentStore, Derivation, DerivationInput, DerivationRecord, GitTree, GitTreeEntry, HashKey, StoreResult};
+use std::time::{SystemTime, UNIX_EPOCH};
 use crate::content_store::{Binding, StoreError};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+// The observer's test trees (facts-base's `facts::observe::tests`).
+fn hash(n: u8) -> HashKey {
+    HashKey::git_sha1([n; 20])
+}
+
+fn file(name: &str, n: u8) -> GitTreeEntry {
+    GitTreeEntry { name: name.to_owned(), mode: 0o100644, target: hash(n) }
+}
+
+fn dir(name: &str, tree: &GitTree) -> GitTreeEntry {
+    GitTreeEntry { name: name.to_owned(), mode: 0o040000, target: tree.id }
+}
+
+fn tree(n: u8, entries: Vec<GitTreeEntry>) -> GitTree {
+    GitTree { id: hash(n), prefix: String::new(), entries }
+}
+
+const WS: &str = "/repo";
 
 const V1: u8 = 100;
 const V2: u8 = 101;
@@ -93,8 +114,11 @@ fn seeded(at: &Path) -> ContentStore {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Dump {
     bindings: BTreeMap<String, Vec<u8>>,
-    inputs: BTreeMap<String, Vec<(Option<String>, Vec<u8>)>>,
+    inputs: BTreeMap<String, Vec<Input>>,
 }
+
+/// A derivation's input as SQLite holds it: its name, if any, and the digest read.
+type Input = (Option<String>, Vec<u8>);
 
 fn dump(dir: &Path) -> Dump {
     let connection = rusqlite::Connection::open(dir.join("store.sqlite")).unwrap();
