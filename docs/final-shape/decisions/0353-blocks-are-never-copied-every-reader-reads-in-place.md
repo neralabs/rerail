@@ -1,7 +1,8 @@
 # 0353: Blocks are never copied: every reader reads the data where it lives
 
-Status: partly built (audited 2026-11-23). Left: the marked copies of steps 3, 4/4a, 6, 7 and 8 (30 sites) are still
-to be removed. Decided (2026-11-17), by the user: "the entire point is that the CPU and GPU kernels all operate on
+Status: partly built (audited 2026-11-23; steps 3-8 merged 2026-11-23). Left: 5 marked copies, step 3's one
+(core.rerail's per-node rows) and step 4a's four (a queued tape not in a room, the parsers' columns, a source made in
+memory). Decided (2026-11-17), by the user: "the entire point is that the CPU and GPU kernels all operate on
 exactly the same linear data"; "it must be clear EVERYWHERE that blocks NEVER get copied into different
 data-structures for 'convenience'". The plan below is being built. Supersedes the parts of 0289 §1–2, 0293 §6 and 0325
 step 5 named in "What it replaces". Follows 0140 (the tape is the engine's bytes), 0266 (blocks), 0293 (one tape API,

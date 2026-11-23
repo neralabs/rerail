@@ -21,26 +21,88 @@ Of the 374: 174 a, 169 b, 31 c. By state: 291 built, 61 partly built, 1 not star
 The 163 records already marked built, done, withdrawn or superseded before the audit are not in these
 counts. Their origins were not read.
 
+## Open, underway and closed
+
+Every record has one of three states now (2026-11-23, 15:20), read from its own status line in this tree, which has
+merged the hub, django-bugs, Native-and-GPU-strata and Typing-support:
+
+- **closed:** built, done, superseded, withdrawn, removed, or an analysis or measurement that answered.
+- **underway:** not closed, and an active worktree's own records name it ("Who works on what", below).
+- **open:** not closed, and no worktree is on it.
+
+Of all 568 records: 477 closed, 15 underway, 76 open. A campaign is closed
+when every record of it is closed and a check keeps its invariant ("How to close them").
+
 ## The campaigns
 
-| Campaign | Records | Open | a / b / c | Priority |
-|---|---:|---:|---|---|
-| [Generated parsers in the shape of simdjson and the lean parsers](#parsers-shape) | 88 | 8 | 28 / 56 / 4 | |
-| [Fast parsers for every product language, on every host](#lean-parsers) | 8 | 0 | 5 / 3 / 0 | |
-| [One tape format and one block layout, read in place by CPU and GPU (never copied)](#tape-blocks) | 26 | 6 | 17 / 8 / 1 | |
-| [An edit costs what it changes](#edit-cost) | 22 | 8 | 7 / 14 / 1 | |
-| [The store: caches are facts, writes keep up, growth is bounded](#store) | 29 | 7 | 21 / 6 / 2 | |
-| [Cold runs fast: every core used, the critical path short](#cold-run) | 32 | 2 | 12 / 17 / 3 | |
-| [The planner: never costs more than it saves, improves from feedback](#planner) | 17 | 4 | 14 / 1 / 2 | |
-| [Rules on Metal: label walks, device waves, bounded launches, memory budgets](#metal-rules) | 49 | 6 | 16 / 22 / 11 | |
-| [Any GPU, and the CPU's SIMD units: kernels written once in UKL](#any-gpu) | 2 | 2 | 2 / 0 / 0 | |
-| [A C/C++ preprocessor on the CPU and every GPU](#preprocessor) | 17 | 2 | 10 / 7 / 0 | |
-| [Main's rules run directly, as Datalog (.rr), with main's findings and W's speed](#rules-parity) | 43 | 7 | 21 / 20 / 2 | |
-| [Embedded languages: strings parsed as their language, no guest documents](#embedded) | 9 | 1 | 5 / 4 / 0 | |
-| [Typing and libraries: cross-file facts as ordinary facts, libraries held once](#typing) | 7 | 4 | 4 / 1 / 2 | |
-| [Programs as flat images and versions, passes over them, never text](#programs) | 11 | 2 | 6 / 3 / 2 | |
-| [Work bounded by its readers: nothing widened past what is read, no widened output kept](#widening) | 8 | 2 | 3 / 5 / 0 | |
-| [A re-entrant engine with bounded memory and no global state; one shape across the worktrees](#hygiene) | 6 | 1 | 3 / 2 / 1 | |
+| Campaign | Records | Closed | Underway | Open | a / b / c | Priority |
+|---|---:|---:|---:|---:|---|---|
+| [Generated parsers in the shape of simdjson and the lean parsers](#parsers-shape) | 88 | 80 | 1 | 7 | 28 / 56 / 4 | |
+| [Fast parsers for every product language, on every host](#lean-parsers) (closed 2026-11-23) | 8 | 8 | 0 | 0 | 5 / 3 / 0 | |
+| [One tape format and one block layout, read in place by CPU and GPU (never copied)](#tape-blocks) | 26 | 20 | 1 | 5 | 17 / 8 / 1 | |
+| [An edit costs what it changes](#edit-cost) | 22 | 14 | 0 | 8 | 7 / 14 / 1 | |
+| [The store: caches are facts, writes keep up, growth is bounded](#store) | 29 | 22 | 1 | 6 | 21 / 6 / 2 | |
+| [Cold runs fast: every core used, the critical path short](#cold-run) | 32 | 30 | 0 | 2 | 12 / 17 / 3 | |
+| [The planner: never costs more than it saves, improves from feedback](#planner) | 17 | 13 | 0 | 4 | 14 / 1 / 2 | |
+| [Rules on Metal: label walks, device waves, bounded launches, memory budgets](#metal-rules) | 49 | 43 | 2 | 4 | 16 / 22 / 11 | |
+| [Any GPU, and the CPU's SIMD units: kernels written once in UKL](#any-gpu) | 2 | 0 | 2 | 0 | 2 / 0 / 0 | |
+| [A C/C++ preprocessor on the CPU and every GPU](#preprocessor) | 17 | 15 | 0 | 2 | 10 / 7 / 0 | |
+| [Main's rules run directly, as Datalog (.rr), with main's findings and W's speed](#rules-parity) | 43 | 36 | 0 | 7 | 21 / 20 / 2 | |
+| [Embedded languages: strings parsed as their language, no guest documents](#embedded) | 9 | 8 | 0 | 1 | 5 / 4 / 0 | |
+| [Typing and libraries: cross-file facts as ordinary facts, libraries held once](#typing) | 7 | 3 | 0 | 4 | 4 / 1 / 2 | |
+| [Programs as flat images and versions, passes over them, never text](#programs) | 11 | 9 | 0 | 2 | 6 / 3 / 2 | |
+| [Work bounded by its readers: nothing widened past what is read, no widened output kept](#widening) | 8 | 6 | 1 | 1 | 3 / 5 / 0 | |
+| [A re-entrant engine with bounded memory and no global state; one shape across the worktrees](#hygiene) | 6 | 5 | 0 | 1 | 3 / 2 / 1 | |
+
+### Underway, across the campaigns
+
+| Record | Campaign | Worktree | Left |
+|---|---|---|---|
+| [0104](decisions/0104-everything-kept-is-facts.md) Everything kept is facts, on the same fact path | [store](#store) | Typing-support | an unchanged run's fixed cost, so the kept frames can go, and the kept entries read in place (t33, "K4: what is left") |
+| [0353](decisions/0353-blocks-are-never-copied-every-reader-reads-in-place.md) Blocks are never copied: every reader reads the data where it lives | [tape-blocks](#tape-blocks) | Native-and-GPU-strata, Benchmarks-and-parity, wolfeel | 5 marked copies, step 3's one (core.rerail's per-node rows) and step 4a's four (a queued tape not in a room, the parsers' columns, a source made in memory) |
+| [0414](decisions/0414-a-grammars-proofs-are-answers-by-content.md) A grammar's proofs are answers by content | [parsers-shape](#parsers-shape) | Two-pass-roots-and-cross-file, Swift-Kotlin-Scala-support | Answers read from and written to the engine build's content store for every grammar compiled for a run (Q234), not only Kotlin's shipped seed |
+| [0440](decisions/0440-gpus-beyond-metal-through-ukl.md) GPUs beyond Metal: kernels written once in UKL, a device layer under … | [any-gpu](#any-gpu) | CUDA-support | step 10 block directory/coherency across domains, 11 partitioned memory on discrete GPU, 12 multi-GPU/host; ROCm/HIP and WebGPU backends |
+| [0540](decisions/0540-a-device-wait-is-on-a-running-thread-and-every-launch-has-a-budget.md) A device wait is on a thread that is running, and every persistent … | [metal-rules](#metal-rules) | django-bugs | Step 4 (a 16z block decoded by its SIMD group together); the resident interpreter's Metal gate; the preprocessor's own MSL still waits by polling |
+| [0567](decisions/0567-ukl-on-the-cpu-is-vector-code-between-sync-points.md) UKL on the CPU is vector code between sync points, made by … | [any-gpu](#any-gpu) | uglykl-CPU-SIMD-parallelization | Step 3: own register allocator, per-call saves, Cranelift from SSA, the Rust SIMD back end, and the 1000x gate |
+| [0597](decisions/0597-a-guest-context-is-a-pass-of-its-own-rules-reading-its-host-explicitly.md) A guest context is a pass of its own rules, reading its host's … | [widening](#widening) | cost-classifier | Step 4: remove hiding's annotation range, FoldOwn, narrow copies and one_document (still in the code) |
+| [0603](decisions/0603-a-stratums-device-work-is-one-launch-a-work-queue-whose-rounds-are-continuations.md) A stratum's device work is one launch: a work queue whose phases and … | [metal-rules](#metal-rules) | Two-pass-roots-and-cross-file, django-bugs | 5d's other half (the lattice fold still reads host tables), 5e (an index sorts claimed rows on the device), the closure launch test, non-recursive heads' rooms. |
+
+### Not closed, in no campaign (29)
+
+Records the audit of 2026-11-23 did not take (written since, or merged in from a branch), whose status is not
+closed. Each is a candidate for a campaign.
+
+| Record | State | Worktree | Status |
+|---|---|---|---|
+| [0285](decisions/0285-a-small-runs-fixed-cost.md) a small run's fixed cost | open |  | built in part (2026-11-15). Amends the cost statistics (decision 0100 §14) and the checkout's finding (`source_tree`, decision 0224). |
+| [0388](decisions/0388-a-held-view-has-its-inputs-old-rows-and-delta.md) A view the run holds of an input's columns has its input's old rows … | open |  |  |
+| [0564](decisions/0564-the-token-loop-keeps-the-gap-masks-and-the-semicolons-fills.md) The token loop keeps the gap masks and the semicolon's fills | open |  | decided (the user, 2026-11-21: "Next: step C item 3, the escapes tested over code … Then the template masks, which need state kept in the … |
+| [0566](decisions/0566-a-shift-outside-the-regions-is-of-the-masks-outside-values.md) A shift outside the regions is of the masks' outside values | open |  | decided (the user, 2026-11-21: "… After those, nothing reads the regions' walk and it can go (step D)", the instruction "do this"). The … |
+| [0572](decisions/0572-a-region-tokens-parts-write-tier-2s-fields-and-test-its-closes.md) A region token's parts write tier 2's fields and test its closes | open |  | decided (the user, 2026-11-21: "Next: the same shift rule inside a region's body, which covers the raw-string and character escapes and … |
+| [0574](decisions/0574-a-mapped-file-and-its-folder-are-the-users-alone.md) A mapped file and its folder are the user's alone | underway | Native-and-GPU-strata |  |
+| [0587](decisions/0587-an-escape-of-the-code-is-tested-in-the-tokens-it-may-hold-in.md) An escape of the code is tested in the tokens it may hold in | open |  | decided (the user, 2026-11-21: "maybe compare the rust code", on choosing the next step by the lean parser's Rust). Follows 0609 and 0608 … |
+| [0589](decisions/0589-a-mark-of-rows-is-the-picked-rows-constant.md) A mark of rows is the picked row's constant | open |  | decided (the user, 2026-11-21: "now please again compare the rust code"). Follows 0614 (the first byte's group picks the row). |
+| [0590](decisions/0590-an-escape-at-a-tokens-start-is-tested-in-its-rows.md) An escape at a token's start is tested in its rows | open |  | decided (the user, 2026-11-21: "now please again compare the rust code"). Follows 0589 and 0587 (an escape of the code is tested in the … |
+| [0593](decisions/0593-the-token-loop-reads-a-blocks-first-bytes.md) The token loop reads a block's first bytes | open |  | decided (the user, 2026-11-21: "please address these", of four differences from the lean lexer found by comparing the Rust; this is the … |
+| [0594](decisions/0594-a-kept-fills-value-is-made-in-the-rows-that-read-it.md) A kept fill's value is made in the rows that read it | open |  | decided (the user, 2026-11-21: "please address these": the second). Follows 0593, 0609 (the type after `as` a kept fill) and 0564 (the … |
+| [0595](decisions/0595-a-templates-span-is-tested-in-the-rows-it-may-hold-in.md) A template's span is tested in the rows it may hold in | open |  | decided (the user, 2026-11-21: "please address these": the third). Follows 0594 and 0562 (the loop keeps a template's code as its own … |
+| [0596](decisions/0596-the-openers-pick-the-rows.md) The openers pick the rows | open |  | decided (the user, 2026-11-21: "please address these": the fourth, "strings and comments are opened as numbered regions with `plain` … |
+| [0598](decisions/0598-a-tail-goes-back-to-the-string-its-template-closed.md) A template's tail goes back to the string its template closed | open |  | decided (the user, 2026-11-21: "go ahead with the full change", on reading strings as the lean lexer does; this is its first step). … |
+| [0607](decisions/0607-a-grammar-states-what-the-token-loop-knows-and-the-compiler-checks-it.md) A grammar states what the token loop knows, and the compiler checks it | open |  | decided (the user, 2026-11-21: "please do 1 / to make it easier for the compiler, we can also add information in the bitlex grammar about … |
+| [0608](decisions/0608-the-last-escapes-leave-the-walk-and-the-walk-is-the-test-builds.md) The last escapes leave the walk, and the walk is the test build's | open |  | decided (renumbered from 0573, which another worktree holds; the user, 2026-11-21: "go ahead", on converting the two escapes left on the … |
+| [0609](decisions/0609-the-loop-keeps-the-type-after-as-a-fill-within-a-kept-fill.md) The loop keeps the type after `as`, a fill within a kept fill | open |  | decided (the user, 2026-11-21: "go ahead", on keeping the `as` escape's state token by token in the loop, as the semicolon's fills, in … |
+| [0610](decisions/0610-the-gap-before-a-token-is-scanned-once-a-mask.md) The gap before a token is scanned once a mask | open |  | decided (the user, 2026-11-21: "now please again compare the rust code"). Follows 0590. |
+| [0613](decisions/0613-macro-expansions-are-memoized-requests-run-in-waves-their-results-a-tree.md) Macro expansions are memoized requests, run in waves; their results … | underway | Go-C-and-C-support | proposed (2026-11-22, the user: "macro expansion should be a) something that we can memoize and b) something that we can do in parallel; … |
+| [0614](decisions/0614-a-tokens-first-byte-picks-its-region-and-row-by-nibble-tables.md) A token's first byte picks its region and its row by nibble tables | open |  | decided (the user, 2026-11-21: "no, use simdjson's approach for this where possible. We already have done some of the proving … |
+| [0615](decisions/0615-the-token-loop-keeps-a-templates-code-as-its-own-state.md) The token loop keeps a template's code as its own state | open |  | decided (the user, 2026-11-21: "Next: step C item 3, the escapes tested over code … Then the template masks, which need state kept in the … |
+| [0616](decisions/0616-a-sessions-corpus-batch-takes-its-unchanged-groups-from-the-last-run.md) A session's corpus batch takes its unchanged groups from the last run | open |  | accepted (2026-11-22). Amends 0494 (a batch makes a document when first read) for a session's corpus batch. |
+| [0617](decisions/0617-matrix-units-through-ukl.md) Matrix units through UKL: native-shaped fragments, owned by one or … | underway | CUDA-support | decided (2026-11-22), by the user's answers: |
+| [0623](decisions/0623-rrs-generated-rust-beside-the-lean-parser.md) `.rerail`'s generated Rust, read beside the lean parser | underway | Parser-generators, Swift-Kotlin-Scala-support | the comparison is made, and the order below is done. The item is the user's (2026-11-22): "please figure out how JIT is faster than AOT, … |
+| [0628](decisions/0628-the-planners-statistics-and-the-tapes-code-tables-in-blocks.md) The planner's statistics are overlay blocks; a tape's code table is … | underway | Two-pass-roots-and-cross-file, Swift-Kotlin-Scala-support |  |
+| [0638](decisions/0638-format-16-codes-are-the-grammars-numbered-by-a-corpus.md) Format 16's codes are the grammar's, numbered by a corpus's counts | underway | Bend-language-investigation | decided (2026-11-23), by the user: "you may ORDER the codes based on a corpus, so long as it's large (we have a 502-repo corpus and the … |
+| [0641](decisions/0641-a-programs-phases-are-indirect-on-metal-too-its-kernels-call-free.md) A program's phases are indirect on Metal too: its kernels call-free | open |  | accepted (2026-11-23). Amends 0648 (a program's levels are stacked dispatches): its Metal exception, a phase dispatched directly with its … |
+| [0647](decisions/0647-a-rounds-phases-cost-their-work-in-one-group-not-their-dispatches.md) A round's phases cost their work in one group, not their dispatches | open |  | spike (2026-11-23). Measured; nothing here changes 0641's times past the M3's run-to-run noise. Each of the three mechanisms below is in … |
+| [0648](decisions/0648-a-programs-levels-are-stacked-dispatches-one-launch-a-stack.md) A program's levels are stacked dispatches, one launch a stack | underway | django-bugs | accepted (2026-11-23), amended by 0641: Metal dispatches a phase indirectly too, its program's kernels call-free (the M3 hung at an … |
 
 ## How to close them
 
@@ -53,30 +115,32 @@ needs is under "Check to add" below.
 
 ### Where the counts stand
 
-This tree is 340 commits behind the hub (`final-shape-serverplan-quality`), and some branches are further along
-than the hub. The audit's statuses are this tree's. These are the counts on each:
+This tree has merged the hub (`final-shape-serverplan-quality`), django-bugs, Native-and-GPU-strata and
+Typing-support (2026-11-23), so it is the furthest along of any branch. The records' statuses are this tree's. These
+are the counts here, on the hub, and on the branch furthest along:
 
 | Count | Here | The hub | Furthest | Where |
 |---|---:|---:|---:|---|
-| Marked copies (0353) | 27 | 27 | 5 | Native-and-GPU-strata |
-| Tables not yet facts (0104) | 31 | 8 | 0 | Typing-support |
-| Maps not yet facts (0104) | 6 | 6 | 6 | none |
+| Marked copies (0353) | 5 | 27 | 5 | here (Native-and-GPU-strata merged) |
+| Tables not yet facts (0104) | 0 | 8 | 0 | here (Typing-support merged) |
+| Maps not yet facts (0104) | 0 | 6 | 0 | here (Typing-support merged) |
 | Shared statics (0442) | 4 | 4 | 4 | none |
-| `FoldOwn` references (0597) | 31 | 1 | 0 | cost-classifier |
-| `HIDDEN_KEYS` references (0597) | 33 | 16 | 16 | the hub |
-| `rr_narrow_` references (0597) | 37 | 14 | 14 | the hub |
-| `rr_long_text_node` references (0174 step 3) | 19 | 20 | 18 | wolfeel |
-| `rr_wide_` references (widened requests) | 47 | 47 | 47 | none |
+| `FoldOwn` references (0597) | 1 | 1 | 0 | cost-classifier |
+| `HIDDEN_KEYS` references (0597) | 16 | 16 | 16 | the hub |
+| `rr_narrow_` references (0597) | 15 | 14 | 14 | the hub |
+| `rr_long_text_node` references (0174 step 3) | 25 | 20 | 18 | wolfeel |
+| `rr_wide_` references (widened requests) | 44 | 44 | 44 | none |
 | `combine_read` references (0246 stage 3) | 2 | 2 | 2 | none |
 
 ### The order of work
 
-1. **Merge what is done.** The two hubs are mostly emptied on branches the hub has not taken. Then this tree merges the hub, and the audit is taken again on it.
-   - **tape-blocks:** Native-and-GPU-strata: 26 commits; the marked copies from 27 to 5.
-   - **store:** Typing-support: 8 commits; the tables not yet facts from 8 to 0.
-   - Before that, renumber django-bugs' 0638 and Swift-Kotlin-Scala-support's 0591, which collide with the hub's.
-2. **Close now.**
-   - **lean-parsers:** No open records.
+1. **Merge what is done (done 2026-11-23).** This tree merged the hub, then django-bugs, Native-and-GPU-strata and Typing-support.
+   - **tape-blocks:** Native-and-GPU-strata: the marked copies from 27 to 5.
+   - **store:** Typing-support: the tables and maps not yet facts from 8 and 6 to 0.
+   - **metal-rules:** django-bugs: its 0638 renumbered 0648 (stacked dispatches).
+   - Left: Swift-Kotlin-Scala-support's 0591, which collides with the hub's.
+2. **Closed (2026-11-23).**
+   - **lean-parsers:** Every record built; kept by the byte tests on every backend.
 3. **The short ones.** Each has one or two open records, and none waits on the two hubs.
    - **widening:** 0597 steps 4–7 are in the hub. Left: the remaining `HIDDEN_KEYS`, `rr_narrow_` and `one_document` references, then 0174 step 3 (long text on request), which also removes 0353's step 3 copy.
    - **embedded:** 0431's four loose ends.
@@ -103,31 +167,31 @@ Some open items reach past their campaign's invariant: a second hash, the Neural
 backends, deferred device functions. Each campaign lists them under "Beyond the invariant". Whether they stay in it
 is your call. Kept, the campaign closes when they are done. Made records of their own, it closes without them.
 
-## Who works on what (surveyed 2026-11-23, 16:00)
+## Who works on what (surveyed 2026-11-23, 15:20)
 
-Each active worktree, the campaigns its work since 2026-11-16 serves, and what it is doing. "Not in hub" counts
-its own commits the hub has not taken. Worktrees idle since 2026-11-20, and detached scratch checkouts, are left out.
+Each active worktree, the campaigns its work since 2026-11-16 serves, and what it is doing. "Not here" counts
+its commits this tree has not taken. Worktrees idle since 2026-11-20, and detached scratch checkouts, are left out.
 
-| Worktree | Campaigns | Doing | Records | Not in hub |
+| Worktree | Campaigns | Doing | Records | Not here |
 |---|---|---|---|---:|
-| Native-and-GPU-strata | [tape-blocks](#tape-blocks) | Removing 0353's copies: steps 4, 6, 7 and 8 are gone (27 marked copies down to 5: step 3's one, step 4a's four). Now asked for rows 7 and 17. Not in the hub: last merged the hub 11-22. | 0353, 0574 | 26 |
-| Benchmarks-and-parity | [tape-blocks](#tape-blocks), [rules-parity](#rules-parity) | The token relations, `visit_index`, `tree_digest`, `structural_before`/`after` and `doc` made views of the tape (0353 row 7); heap blocks moved into the run's blocks; parity held at 463 findings. 735 hub commits behind (last merged 11-21). | 0353 | 8 |
-| wolfeel | [rules-parity](#rules-parity), [tape-blocks](#tape-blocks) | The Python rules moved from Rust to `.rerail`, and their speed back: the gap to W measured (t53), sealed chunks (0622), a node read in one step (0640), a probed node's text off its tape (0353 step 3). 728 hub commits behind (last merged 11-21). | 0611, 0622, 0640, 0353 | 38 |
-| Two-pass-roots-and-cross-file | [planner](#planner), [tape-blocks](#tape-blocks), [metal-rules](#metal-rules) | The planner's statistics as overlay blocks (0628); `BlockVec` folded into `Vector`, one run room; a closure's levels as one launch (0601, 0603); a `.rerail` file read as every document is (0569 §7). Now running the benchmarks. | 0628, 0569, 0603, 0414 | 17 |
-| Typing-support | [store](#store) | t33 step 3: the corpus runs' tables became kept facts (the 8 `corpus_*` tables dropped, read through virtual tables). Its pin of tables not yet facts is 0: the hub's is 8, this tree's 31. A session keeps its store and nothing else. Despite its name, its current work is the store's. | 0104 (t33) | 8 |
-| final-shape-rr-align | [programs](#programs), [store](#store) | Draft 0639: a program linked from module images that phase 0 plans and keeps as facts. This is 0246 stage 3, specified, with no code yet. The session is More-ergonomic-rule-syntax's. | 0639 (draft) | 7 |
-| cost-classifier | [widening](#widening), [embedded](#embedded) | 0597 steps 4–7: hiding's annotation range, `FoldOwn` and the narrow copies removed; f-strings and Vue as contexts; a pass's tape-local rows kept per tape value. All in the hub. Now: a Vue file's embedded script read in place on Metal. Everything is in the hub. | 0597 | 0 |
-| Bend-language-investigation | [rules-parity](#rules-parity), [tape-blocks](#tape-blocks) | Format 16's codes numbered by the sampo corpora's counts (its 0638); a node view's membership test as its own read. Now: the probe code. | 0638 (its own) | 2 |
-| django-bugs | [metal-rules](#metal-rules) | 0603 done; 0637 (idle groups poll, bounded); its 0638 (a program's levels as stacked dispatches, one launch a stack); 0540's resident interpreter gate passes. Now: why Metal's indirect dispatch hangs. Its 0638 collides with the hub's. | 0603, 0637, 0638 (its own), 0540 | 10 |
-| Go-C-and-C-support | [preprocessor](#preprocessor) | 0613: macro expansions as memoized requests run in waves on the GPU, their results a tree. 880 hub commits behind (last merged 11-21). | 0613 | 9 |
-| Parser-generators | [parsers-shape](#parsers-shape) | 0623: `.rerail`'s generated Rust read beside the lean parser, tier 1 and tier 2 against lean's; 0618 tier 2 as one loop over tier 1's records (0496's direction). | 0623, 0618 | 12 |
-| Swift-Kotlin-Scala-support | [parsers-shape](#parsers-shape) | Kotlin read as the lean parser reads it (0621, 0624–0636). Now: the proofs' cost (0414). 1,051 hub commits behind (last merged 11-21); its 0591 collides with the hub's. | 0621–0636, 0414 | 19 |
-| CUDA-support | [any-gpu](#any-gpu) | 0617: matrix units through UKL. Now: kernels compiled for each GPU family in production builds (Apple M families, CUDA, ROCm). | 0617, 0440 | 2 |
-| uglykl-CPU-SIMD-parallelization | [any-gpu](#any-gpu) | 0567 step 3: the CPU device runs kernels as `rs.rs`'s Rust. Now: the CPU's join path through UKL, the same kernel as the GPU's. | 0567 | 3 |
-| Final-shape-quality | [hygiene](#hygiene) | The hub: roll-ups of every branch, from the Pulling-it-all-together session. 340 commits ahead of this tree. |  | 0 |
-| engine-crating | none | The crate split, step 10 (build time; in no campaign). | crate-split plan | 9 |
+| Native-and-GPU-strata | [tape-blocks](#tape-blocks) | Removing 0353's copies: steps 3-8 merged here (27 marked copies down to 5: step 3's one and step 4a's four). Now asked for rows 7 and 17. Merged here at baf42d65cf (2e9760dbb2); its 43 newer commits are not. | 0353, 0574 | 43 |
+| Benchmarks-and-parity | [tape-blocks](#tape-blocks), [rules-parity](#rules-parity) | The token relations, `visit_index`, `tree_digest`, `structural_before`/`after` and `doc` made views of the tape (0353 row 7); heap blocks moved into the run's blocks; parity held at 463 findings. 71 commits behind this tree. | 0353 | 13 |
+| wolfeel | [rules-parity](#rules-parity), [tape-blocks](#tape-blocks) | The Python rules moved from Rust to `.rerail`, and their speed back: the gap to W measured (t53), sealed chunks (0622), a node read in one step (0640), a probed node's text off its tape (0353 step 3). 835 commits behind this tree. | 0611, 0622, 0640, 0353 | 41 |
+| Two-pass-roots-and-cross-file | [planner](#planner), [tape-blocks](#tape-blocks), [metal-rules](#metal-rules) | The planner's statistics as overlay blocks (0628); `BlockVec` folded into `Vector`, one run room; a closure's levels as one launch (0601, 0603); a `.rerail` file read as every document is (0569 §7). Now running the benchmarks. 80 commits behind this tree. | 0628, 0569, 0603, 0414 | 6 |
+| Typing-support | [store](#store) | t33 steps 1-8 and K1-K4, merged here: no table and no map is left not yet facts (the hub's: 8 and 6). A session keeps its store, its connections and its last corpus batch. Now: K4's fixed cost, so the frames can go. Merged here at acdd65304e (6f277440ff), with 0616's corpus batch kept in its session (the user's call). Despite its name, its current work is the store's. | 0104 (t33) | 6 |
+| final-shape-rr-align | [programs](#programs), [store](#store) | Draft 0639: a program linked from module images that phase 0 plans and keeps as facts. This is 0246 stage 3, specified, with no code yet. The session is More-ergonomic-rule-syntax's. | 0639 (draft) | 13 |
+| cost-classifier | [widening](#widening), [embedded](#embedded) | 0597 steps 4–7: hiding's annotation range, `FoldOwn` and the narrow copies removed; f-strings and Vue as contexts; a pass's tape-local rows kept per tape value. All in the hub. Now: a Vue file's embedded script read in place on Metal. | 0597 | 3 |
+| Bend-language-investigation | [rules-parity](#rules-parity), [tape-blocks](#tape-blocks) | Format 16's codes numbered by the sampo corpora's counts (its 0638); a node view's membership test as its own read. Now: the probe code. | 0638 (its own) | 10 |
+| django-bugs | [metal-rules](#metal-rules) | 0603 done; 0637 (idle groups poll, bounded); 0648 (a program's levels as stacked dispatches, one launch a stack, merged here); 0540's resident interpreter gate passes. Now: why Metal's indirect dispatch hangs. Merged here at 7155e34bad (ff39158899); its 0638 renumbered 0648. | 0603, 0637, 0648, 0540 | 1 |
+| Go-C-and-C-support | [preprocessor](#preprocessor) | 0613: macro expansions as memoized requests run in waves on the GPU, their results a tree. 979 commits behind this tree. | 0613 | 5 |
+| Parser-generators | [parsers-shape](#parsers-shape) | 0623: `.rerail`'s generated Rust read beside the lean parser, tier 1 and tier 2 against lean's; 0618 tier 2 as one loop over tier 1's records (0496's direction). | 0623, 0618 | 24 |
+| Swift-Kotlin-Scala-support | [parsers-shape](#parsers-shape) | Kotlin read as the lean parser reads it (0621, 0624–0636). Now: the proofs' cost (0414). 1,158 commits behind this tree; its 0591 collides with the hub's. | 0621–0636, 0414 | 21 |
+| CUDA-support | [any-gpu](#any-gpu) | 0617: matrix units through UKL. Now: kernels compiled for each GPU family in production builds (Apple M families, CUDA, ROCm). | 0617, 0440 | 9 |
+| uglykl-CPU-SIMD-parallelization | [any-gpu](#any-gpu) | 0567 step 3: the CPU device runs kernels as `rs.rs`'s Rust. Now: the CPU's join path through UKL, the same kernel as the GPU's. | 0567 | 5 |
+| Final-shape-quality | [hygiene](#hygiene) | The hub: roll-ups of every branch, from the Pulling-it-all-together session. Merged here (94de18b47a); its 15 newer commits are not. |  | 15 |
+| engine-crating | none | The crate split, step 10 (build time; in no campaign). | crate-split plan | 13 |
 | build-and-test-loop-time | none | The build farm (in no campaign). |  | 0 |
-| oscar (this tree) | [hygiene](#hygiene) | The audit, the campaigns and this plan. 340 hub commits behind. |  | 0 |
+| oscar (this tree) | [hygiene](#hygiene) | The audit, the campaigns and this plan; the merges of the hub and the three branches. The hub, django-bugs, Native-and-GPU-strata and Typing-support merged here 2026-11-23. |  | 0 |
 
 **Where worktrees overlap:**
 
@@ -142,7 +206,7 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 <a id="parsers-shape"></a>
 ## Generated parsers in the shape of simdjson and the lean parsers
 
-88 records: 74 built, 8 partly built, 6 superseded. Origin: 28 a, 56 b, 4 c.
+88 records, now: 80 closed, 1 underway, 7 open. At the audit: 74 built, 8 partly built, 6 superseded. Origin: 28 a, 56 b, 4 c.
 
 **Invariant.** A generated parser is the lean parser's shape, written from the grammar by the Bitlex compiler: tier 1 is a token loop that decides at the token what the lean lexer decides there (0177, 0415); tier 2 takes tier 1's records a batch at a time (0496); the writer writes the tape in one pass, as simdjson does (0434, 0530).
 
@@ -166,13 +230,18 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 - "The issue is the structure of the generated code vs simdjson, not the lack of micro-optimizatoins. Start by comparing the Rust code only with the Rust JSON parser and SIMDJSON, and get the structure right." (0338)
 - "so go ahead and remove the back fills. … Then make the fixes and transformations to make the grammar generate the same general structure and peeks as the lean parser" (0407)
 
+**Underway:**
+
+| Record | Left | Worktree |
+|---|---|---|
+| [0414](decisions/0414-a-grammars-proofs-are-answers-by-content.md) A grammar's proofs are answers by content | Answers read from and written to the engine build's content store for every grammar compiled for a run (Q234), not only Kotlin's shipped seed | Two-pass-roots-and-cross-file, Swift-Kotlin-Scala-support |
+
 **Open:**
 
 | Record | Left | Origin |
 |---|---|---|
 | [0177](decisions/0177-tier1-on-the-cpu-is-a-token-loop.md) Tier 1 on the CPU is a token loop, as the lean lexer is | marks and checks made at the token as its bits, so the CPU makes no mask but the loop's | a |
 | [0332](decisions/0332-kotlin-swift-scala-in-bitlex.md) Kotlin, Swift and Scala in Bitlex: ladders against the lean parsers, … | Swift and Scala Bitlex versions not started; Kotlin's open gaps (lost block comments, Q198) | a |
-| [0414](decisions/0414-a-grammars-proofs-are-answers-by-content.md) A grammar's proofs are answers by content | Answers read from and written to the engine build's content store for every grammar compiled for a run (Q234), not only Kotlin's shipped seed | a |
 | [0415](decisions/0415-kotlins-generated-parser-in-the-lean-parsers-shape.md) Kotlin's generated parser, in the lean parser's shape | stage 3-4 end state: tier 1 body's masks the lean lexer's five, context as token-loop state fully | a |
 | [0429](decisions/0429-context-over-tokens-is-the-token-loops-state.md) Context over tokens is the token loop's state | Marks' context (acc, recv, generic, dotted) still byte masks, not token-loop state; class header context; region masks | c |
 | [0430](decisions/0430-a-line-break-before-a-token-is-the-token-loops.md) A line break before a token is the token loop's, as the lean lexer's … | dotted, acc, generic, decl_mod marks: decide at the token where the lean parser does, not as marks every level ends on | b |
@@ -187,9 +256,9 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 - [0429](decisions/0429-context-over-tokens-is-the-token-loops-state.md) Context over tokens is the token loop's state (partly built). Served: Kotlin Bitlex parser on par with, shaped like, the lean parser, from "we're not moving off Kotlin until we have its bitlex performance roughly on par with the lean parser".
 
 <a id="lean-parsers"></a>
-## Fast parsers for every product language, on every host
+## Fast parsers for every product language, on every host (closed 2026-11-23)
 
-8 records: 8 built, 0 partly built. Origin: 5 a, 3 b, 0 c.
+8 records, now: 8 closed, 0 underway, 0 open. At the audit: 8 built, 0 partly built. Origin: 5 a, 3 b, 0 c.
 
 **Invariant.** Every product language has a lean parser on every host.
 
@@ -197,7 +266,7 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 
 **Kept by.** The byte tests' masks on every backend (`every_backend_gives_the_byte_tests_masks`, each lean crate).
 
-**Closes when.** Closed: no open records.
+**Closes when.** Closed 2026-11-23: every record built, and the byte tests keep every backend's masks.
 
 **Your words:**
 
@@ -208,21 +277,18 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 <a id="tape-blocks"></a>
 ## One tape format and one block layout, read in place by CPU and GPU (never copied)
 
-26 records: 19 built, 6 partly built, 1 superseded. Origin: 17 a, 8 b, 1 c.
+26 records, now: 20 closed, 1 underway, 5 open. At the audit: 19 built, 6 partly built, 1 superseded. Origin: 17 a, 8 b, 1 c.
 
 **Invariant.** Data lives in one place, in one layout, and every reader reads it there (0353). A view is a read of the tape, not a relation. The reads are written once in CLIF (0310), proven within the tape's bytes (0463).
 
 **Worktrees.** Native-and-GPU-strata, Benchmarks-and-parity, wolfeel (in part), Two-pass-roots-and-cross-file (in part), Bend-language-investigation (in part).
 
-**Kept by.** `check_no_block_copies.py`; 27 marked copies left.
+**Kept by.** `check_no_block_copies.py`; 5 marked copies left (steps 4, 6, 7 and 8 merged from Native-and-GPU-strata, 2026-11-23).
 
 **To apply it everywhere:**
 
 - Step 3 (1 site, `syntax.rs`, the eager per-node rows): goes with widening's 0174 step 3 and Q121.
-- Step 6 (11 sites: `setfix.rs`'s staged head rows, `rows.rs`'s merged parts, `metal_join.rs` and `setfix/device.rs`'s uploads and second-key index): with 0266 step 4, a run's relations as blocks.
-- Step 8 (4 sites, `retain.rs`: an input's documents read into tables).
-- Steps 4 and 4a (7 sites: the device's views and node columns, `device_chunk.rs`, `metal_join.rs`; the parsers' column vector and queued tapes, `tape.rs`, `core.rs`): with 0549.
-- Step 7 (4 sites: the transducer's packed batch and residency slabs).
+- Step 4a (4 sites: the parsers' column vector, `tape.rs`; a queued tape not in a room, `core.rs`; a source made in memory, `placed.rs`, row 17): Native-and-GPU-strata is asked for rows 7 and 17.
 - Then 0260 (facts between waves as base and delta blocks), 0458 (documents made when first read; phase runs read old sources without SQL, after 0104), 0336 (the planner's choice of decompression, Q65), 0156 §6 (text as a stream of pieces).
 
 **Closes when.** No `copy (0353 step N)` marker is left, so the check refuses every copy with no exception.
@@ -235,6 +301,12 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 - "I want the kernels to operate over the tape directly, either compressed or decompressed, and format 15 or 16. There must be no intermediate 'decompress to an array of nodes' step." (0324)
 - "The invariants are that the actual stored tape format is directly written and read, the same on CPU and GPU, with no decoding/translation to a different format." (0336)
 
+**Underway:**
+
+| Record | Left | Worktree |
+|---|---|---|
+| [0353](decisions/0353-blocks-are-never-copied-every-reader-reads-in-place.md) Blocks are never copied: every reader reads the data where it lives | 5 marked copies, step 3's one (core.rerail's per-node rows) and step 4a's four (a queued tape not in a room, the parsers' columns, a source made in memory) | Native-and-GPU-strata, Benchmarks-and-parity, wolfeel |
+
 **Open:**
 
 | Record | Left | Origin |
@@ -243,7 +315,6 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 | [0260](decisions/0260-blocks-one-slab-relative-offsets-cpu-and-gpu.md) Everything lives in blocks: linear, relative offsets, the same bytes … | facts handed between waves as base+delta blocks; scheduler and scoreboard over kernels; remaining 0353 copies | a |
 | [0266](decisions/0266-a-block-is-a-big-thing-with-everything-nested-inside.md) A block is one of the engine's few big things; everything it holds … | step 4: setfix relations as RelationW/RelationV blocks, maintained runs as deltas, kernels reading relations in place | a |
 | [0336](decisions/0336-the-tape-reaches-every-reader-as-stored.md) The tape reaches every reader as stored: blocks decompressed on the … | the planner's choice between per-block and whole decompression (Q65); whether the stored header is the view (axis A) | a |
-| [0353](decisions/0353-blocks-are-never-copied-every-reader-reads-in-place.md) Blocks are never copied: every reader reads the data where it lives | the marked copies of steps 3, 4/4a, 6, 7 and 8 (30 sites) are still to be removed | a |
 | [0458](decisions/0458-the-cross-part-reads-the-base-relations-off-every-files-tape.md) The cross part reads the base relations off every file's tape | documents made when first read (batch still makes every document); phase-run old sources read without SQL | b |
 
 **The assistant's own choices (c), and the goal each served:**
@@ -253,7 +324,7 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 <a id="edit-cost"></a>
 ## An edit costs what it changes
 
-22 records: 13 built, 8 partly built, 1 superseded. Origin: 7 a, 14 b, 1 c.
+22 records, now: 14 closed, 0 underway, 8 open. At the audit: 13 built, 8 partly built, 1 superseded. Origin: 7 a, 14 b, 1 c.
 
 **Invariant.** An edit costs what it changes: a relation carries its delta (0117), maintenance reaches only what the delta reaches (0090, 0101), what an edit invalidates is keyed by definition (0092), and rules are keyed by module (0225).
 
@@ -299,23 +370,21 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 <a id="store"></a>
 ## The store: caches are facts, writes keep up, growth is bounded
 
-29 records: 19 built, 7 partly built, 3 superseded. Origin: 21 a, 6 b, 2 c.
+29 records, now: 22 closed, 1 underway, 6 open. At the audit: 19 built, 7 partly built, 3 superseded. Origin: 21 a, 6 b, 2 c.
 
 **Invariant.** Everything kept is facts, on the same fact path (0104). A cache is two rules (0103). Kept facts are blocks in mapped files (0401). The store stays bounded (0053).
 
 **Worktrees.** Typing-support, final-shape-rr-align (in part).
 
-**Kept by.** `facts_only.rs` pins 31 tables and 6 maps not yet facts; `check_no_new_caches.py` refuses new ones.
+**Kept by.** `facts_only.rs` pins 0 tables and 0 maps not yet facts (t33 steps 1-8, merged from Typing-support 2026-11-23); `check_no_new_caches.py` refuses new ones.
 
 **To apply it everywhere:**
 
-- 0104 step 6: 9 tables (`models`, `stat_blob`, `kind_size`, `edge_freq`, `tape_kind_counts`, the 4 `term_*`) and 5 maps (`KeptPlans`, `SESSION_PLANS`, `Memoized`, `SESSION_MEMO`, `ObservedAt`). This is 0387's statistics and kept plans.
-- 0104 step 1: `run_record`, `derivations`, `derivation_inputs`, `name_bindings` (0103's run record and derivation graph).
-- 0104 step 3: the 8 `corpus_*` tables and `InSession`.
-- 0104 step 7: the 10 text-matcher and vocabulary tables.
+- t33 K4: a warm run's fixed cost, so the frames (the main run's and phase 1's) can go; then `inputs::still` and `git::still` with them.
+- A session holds its store, its connections and its last corpus batch (0616): the batch stays a cache the store's facts validate (by documents' keys and digests), the user's call at the Typing-support merge.
 - Then 0053 §7 (the atom epoch), 0115 (digest-only kept relations; inputs not kept twice), 0142 (artifact stamps), 0164 (orders kept in frames), then 0190 (re-sorting at idle).
 
-**Closes when.** Both pins at 0, and the atom epoch keeps the store bounded.
+**Closes when.** Both pins at 0 (done), K4's frames retired, and the atom epoch keeps the store bounded.
 
 **Beyond the invariant (your call):** 0190's launchd agent for machines without a daemon.
 
@@ -325,13 +394,18 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 - "SQLite writeback as rows needs to happen, but as a bulk insert and as a kind of "archive" operation for the packfile; this is essential an application WAL" (0295)
 - "We are moving away from sqlite as bulk storage and towards it having metadata pointing to memory mapped files with the data accessed through virtual tables." (0456)
 
+**Underway:**
+
+| Record | Left | Worktree |
+|---|---|---|
+| [0104](decisions/0104-everything-kept-is-facts.md) Everything kept is facts, on the same fact path | an unchanged run's fixed cost, so the kept frames can go, and the kept entries read in place (t33, "K4: what is left") | Typing-support |
+
 **Open:**
 
 | Record | Left | Origin |
 |---|---|---|
 | [0053](decisions/0053-background-store-collection.md) The store collects in the background, keeping recent runs and a … | §7: the atom epoch (empty the arena and clear atom-keyed tables past 64 MB) is not built | a |
 | [0103](decisions/0103-a-cache-is-two-rules.md) A cache is two rules | move the remaining pre-0103 caches (tape/index tables, run_record, stat_blob, derivation graph) to two rules | a |
-| [0104](decisions/0104-everything-kept-is-facts.md) Everything kept is facts, on the same fact path | move the remaining 31 tables and 6 maps (steps 1-8) to facts; load a stored fact space across processes | a |
 | [0115](decisions/0115-what-a-run-keeps-for-the-next.md) What a run keeps for the next: rows where a maintained reader needs … | digest-only kept relations; derived frames split by document granule; inputs referenced from the memo, not kept twice | b |
 | [0142](decisions/0142-artifacts-cached-by-what-they-depend-on.md) Run artifacts: rules first, then entries kept by what they depend on | per-entry artifact stamps and Unknown places, digests from phase 0, stamps stored by digest, entry inputs as import closure | a |
 | [0164](decisions/0164-one-order-written-once-probed-by-density.md) One sorted order a key set, written once, kept in the frames, probed … | orders kept in frames (full/delta, compaction), density probing (dense merge, node-key interpolation), readers building nothing | a |
@@ -345,7 +419,7 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 <a id="cold-run"></a>
 ## Cold runs fast: every core used, the critical path short
 
-32 records: 28 built, 2 partly built, 1 superseded, 1 analysis. Origin: 12 a, 17 b, 3 c.
+32 records, now: 30 closed, 0 underway, 2 open. At the audit: 28 built, 2 partly built, 1 superseded, 1 analysis. Origin: 12 a, 17 b, 3 c.
 
 **Invariant.** A cold run uses every core, and its critical path is short: strata are issued from a scoreboard (0113), and no thread ever blocks, because every wait is a scoreboard event (0114).
 
@@ -384,7 +458,7 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 <a id="planner"></a>
 ## The planner: never costs more than it saves, improves from feedback
 
-17 records: 13 built, 3 partly built, 1 not started. Origin: 14 a, 1 b, 2 c.
+17 records, now: 13 closed, 0 underway, 4 open. At the audit: 13 built, 3 partly built, 1 not started. Origin: 14 a, 1 b, 2 c.
 
 **Invariant.** Planning never costs more than running (0122). Budgets never change results (0334). Plans come from the relations' declared shapes, so a run plans nothing (0361). Statistics and kept plans are blocks (0387).
 
@@ -426,7 +500,7 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 <a id="metal-rules"></a>
 ## Rules on Metal: label walks, device waves, bounded launches, memory budgets
 
-49 records: 42 built, 6 partly built, 1 superseded. Origin: 16 a, 22 b, 11 c.
+49 records, now: 43 closed, 2 underway, 4 open. At the audit: 42 built, 6 partly built, 1 superseded. Origin: 16 a, 22 b, 11 c.
 
 **Invariant.** The Metal budget is the overall budget (0549). Every launch is counted by one ledger, and past `KERNEL_LAUNCH_LIMIT` a run fails. A device wait is on a running thread, never a poll (0540). A stratum's device work is one launch (0603).
 
@@ -454,16 +528,21 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 - "please take a look at the ast-index-spike design and journal, where this idea was comprehensively explored, and tell me what we should do with it now" (0365)
 - "Take a step back and tell me what the optimal launch shape is and how we could do a fair amount of work per thread whilst using the full parllelism and avoiding the overhead of too many launches" (0474)
 
+**Underway:**
+
+| Record | Left | Worktree |
+|---|---|---|
+| [0540](decisions/0540-a-device-wait-is-on-a-running-thread-and-every-launch-has-a-budget.md) A device wait is on a thread that is running, and every persistent … | Step 4 (a 16z block decoded by its SIMD group together); the resident interpreter's Metal gate; the preprocessor's own MSL still waits by polling | django-bugs |
+| [0603](decisions/0603-a-stratums-device-work-is-one-launch-a-work-queue-whose-rounds-are-continuations.md) A stratum's device work is one launch: a work queue whose phases and … | 5d's other half (the lattice fold still reads host tables), 5e (an index sorts claimed rows on the device), the closure launch test, non-recursive heads' rooms. | Two-pass-roots-and-cross-file, django-bugs |
+
 **Open:**
 
 | Record | Left | Origin |
 |---|---|---|
 | [0095](decisions/0095-relational-work-on-metal.md) The logic engine's relational work on Metal: one plan, device waves, … | Aggregates and recursion on the device, device waves (§5), text tests on device, the cross-file part, planner pricing of tile | a |
 | [0098](decisions/0098-acceleration-lanes.md) Accelerating relational work: forms first, then four lanes (CPU, … | step 1's data-layer profile at scale and step 6c (library facts held once on the Neural Engine) not shown built | a |
-| [0287](decisions/0287-the-devices-functions-are-one-table-and-its-missing-shapes-are-measured.md) The device's functions are one table, and its missing shapes are … | §2–§4 drafts: node texts read from source on the device, made texts inside recursion, remaining functions (deferred until a workload shows gain) | b |
-| [0540](decisions/0540-a-device-wait-is-on-a-running-thread-and-every-launch-has-a-budget.md) A device wait is on a thread that is running, and every persistent … | Step 4 (a 16z block decoded by its SIMD group together); the resident interpreter's Metal gate; the preprocessor's own MSL still waits by polling. | a |
-| [0549](decisions/0549-the-metal-budget-is-the-overall-budget.md) The Metal budget is the overall budget | Remove each thread's own resident copies and sorts of the same relations, so the Metal budget can come back down. | a |
-| [0603](decisions/0603-a-stratums-device-work-is-one-launch-a-work-queue-whose-rounds-are-continuations.md) A stratum's device work is one launch: a work queue whose phases and … | 5d's other half (the lattice fold still reads host tables), 5e (an index sorts claimed rows on the device), the closure launch test, non-recursive heads' rooms. | a |
+| [0287](decisions/0287-the-devices-functions-are-one-table-and-its-missing-shapes-are-measured.md) The device's functions are one table, and its missing shapes are … | §2–§4 drafts: node texts read from source on the device, made texts inside recursion, remaining functions (deferred until a workload shows gain). §1 built (2026-11-15); §2–§4 draft, not to be built … | b |
+| [0549](decisions/0549-the-metal-budget-is-the-overall-budget.md) The Metal budget is the overall budget | Remove each thread's own resident copies and sorts of the same relations, so the Metal budget can come back down | a |
 
 **The assistant's own choices (c), and the goal each served:**
 
@@ -482,7 +561,7 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 <a id="any-gpu"></a>
 ## Any GPU, and the CPU's SIMD units: kernels written once in UKL
 
-2 records: 0 built, 2 partly built. Origin: 2 a, 0 b, 0 c.
+2 records, now: 0 closed, 2 underway, 0 open. At the audit: 0 built, 2 partly built. Origin: 2 a, 0 b, 0 c.
 
 **Invariant.** Kernels are written once in UKL, and every device reads the same blocks (0440). UKL on the CPU is vector code between sync points (0567).
 
@@ -504,17 +583,17 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 - "use it to bring support for CUDA (and other GPUs via ROCm, OpenCL and WebGPU/WebGL/whatever but starting with CUDA) without rewriting all of the kernels over and over again" (0440)
 - "I want to run the same kernels on the GPU and the CPU … Currently they lower to coroutine C++ which is correct but horribly slow" (0567)
 
-**Open:**
+**Underway:**
 
-| Record | Left | Origin |
+| Record | Left | Worktree |
 |---|---|---|
-| [0440](decisions/0440-gpus-beyond-metal-through-ukl.md) GPUs beyond Metal: kernels written once in UKL, a device layer under … | step 10 block directory/coherency across domains, 11 partitioned memory on discrete GPU, 12 multi-GPU/host; ROCm/HIP and WebGPU backends | a |
-| [0567](decisions/0567-ukl-on-the-cpu-is-vector-code-between-sync-points.md) UKL on the CPU is vector code between sync points, made by … | Step 3: own register allocator, per-call saves, Cranelift from SSA, the Rust SIMD back end, and the 1000x gate. Step 4: wider types. | a |
+| [0440](decisions/0440-gpus-beyond-metal-through-ukl.md) GPUs beyond Metal: kernels written once in UKL, a device layer under … | step 10 block directory/coherency across domains, 11 partitioned memory on discrete GPU, 12 multi-GPU/host; ROCm/HIP and WebGPU backends | CUDA-support |
+| [0567](decisions/0567-ukl-on-the-cpu-is-vector-code-between-sync-points.md) UKL on the CPU is vector code between sync points, made by … | Step 3: own register allocator, per-call saves, Cranelift from SSA, the Rust SIMD back end, and the 1000x gate | uglykl-CPU-SIMD-parallelization |
 
 <a id="preprocessor"></a>
 ## A C/C++ preprocessor on the CPU and every GPU
 
-17 records: 12 built, 2 partly built, 2 superseded, 1 analysis. Origin: 10 a, 7 b, 0 c.
+17 records, now: 15 closed, 0 underway, 2 open. At the audit: 12 built, 2 partly built, 2 superseded, 1 analysis. Origin: 10 a, 7 b, 0 c.
 
 **Invariant.** One parse a file into the preprocessor's tape, and an evaluator over tapes (0436), whose device passes read in place (0468), on the CPU and every GPU.
 
@@ -546,7 +625,7 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 <a id="rules-parity"></a>
 ## Main's rules run directly, as Datalog (.rr), with main's findings and W's speed
 
-43 records: 36 built, 7 partly built. Origin: 21 a, 20 b, 2 c.
+43 records, now: 36 closed, 0 underway, 7 open. At the audit: 36 built, 7 partly built. Origin: 21 a, 20 b, 2 c.
 
 **Invariant.** Main's rules run as `.rr`, with main's findings (the same finding keys) at W's speed. Text is matched a chunk at a time, never per node per byte (0041). A run starts from seeded facts (0044). A relation no rule fills makes no stratum (0563).
 
@@ -576,9 +655,9 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 | [0044](decisions/0044-runs-start-from-seeded-facts.md) A run starts from seeded facts; everything else is derived | config_file seeds; corpus runner seeding file facts through the store; path facts as .rr rules; local ids with doc_tape; per-stratum derivations by tape hash | a |
 | [0045](decisions/0045-sets-in-chunked-containers.md) Node sets are chunked containers: arrays, bitmaps and runs | Step 4: device containers for Metal set steps and label passes (threadgroup per present chunk) | a |
 | [0511](decisions/0511-an-aggregate-bounded-by-its-probe-is-an-as-of-search.md) An aggregate bounded by its probe is an as-of search, not a helper … | §3's binary search through an order on key+value columns; the device's merge-path form (it only refuses the stratum, untested) | b |
-| [0561](decisions/0561-a-climbs-readers-are-answered-in-the-climb-each-row-test-asked-once.md) A climb's readers are answered in the climb, each of a row's tests … | Metal: the device refuses a keyed closure. walk's rows are still pushed during the climb. Cheaper probes are the probe structure's job. | b |
-| [0563](decisions/0563-a-relation-no-rule-can-fill-makes-no-stratum-and-a-delta-reaches-by-kind.md) A relation no rule can fill makes no stratum, and an edit's delta … | A3: guest inputs counted empty once admission has closed, for corpora whose file-local part answers requests. | a |
-| [0570](decisions/0570-a-walk-keyed-by-its-row-runs-as-a-closure-in-one-wave.md) A walk keyed by its row runs as a closure in one wave: the climb W's … | Metal form (t50's segmented scan by key); a per-scope-and-name probe as cheap as W's. | c |
+| [0561](decisions/0561-a-climbs-readers-are-answered-in-the-climb-each-row-test-asked-once.md) A climb's readers are answered in the climb, each of a row's tests … | Metal: the device refuses a keyed closure. walk's rows are still pushed during the climb | b |
+| [0563](decisions/0563-a-relation-no-rule-can-fill-makes-no-stratum-and-a-delta-reaches-by-kind.md) A relation no rule can fill makes no stratum, and an edit's delta … | A3: guest inputs counted empty once admission has closed, for corpora whose file-local part answers requests | a |
+| [0570](decisions/0570-a-walk-keyed-by-its-row-runs-as-a-closure-in-one-wave.md) A walk keyed by its row runs as a closure in one wave: the climb W's … | Metal form (t50's segmented scan by key); a per-scope-and-name probe as cheap as W's | c |
 
 **The assistant's own choices (c), and the goal each served:**
 
@@ -588,7 +667,7 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 <a id="embedded"></a>
 ## Embedded languages: strings parsed as their language, no guest documents
 
-9 records: 8 built, 1 partly built. Origin: 5 a, 4 b, 0 c.
+9 records, now: 8 closed, 0 underway, 1 open. At the audit: 8 built, 1 partly built. Origin: 5 a, 4 b, 0 c.
 
 **Invariant.** There are no guest documents: a string the rules parse is a tape value, and a program the grammar holds is the file's (0431).
 
@@ -617,7 +696,7 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 <a id="typing"></a>
 ## Typing and libraries: cross-file facts as ordinary facts, libraries held once
 
-7 records: 1 built, 4 partly built, 2 superseded. Origin: 4 a, 1 b, 2 c.
+7 records, now: 3 closed, 0 underway, 4 open. At the audit: 1 built, 4 partly built, 2 superseded. Origin: 4 a, 1 b, 2 c.
 
 **Invariant.** Typing's cross-file facts are ordinary facts: one fixpoint, maintained by deltas (0065, 0083). A library is a module, held once per run (0089).
 
@@ -659,7 +738,7 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 <a id="programs"></a>
 ## Programs as flat images and versions, passes over them, never text
 
-11 records: 7 built, 2 partly built, 2 superseded. Origin: 6 a, 3 b, 2 c.
+11 records, now: 9 closed, 0 underway, 2 open. At the audit: 7 built, 2 partly built, 2 superseded. Origin: 6 a, 3 b, 2 c.
 
 **Invariant.** A program is a flat image, written through a writer and read as versions, never as text (0173, 0276). Rules load in one pass (0246). Passes run under a pass manager over maintained analyses (0281).
 
@@ -697,7 +776,7 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 <a id="widening"></a>
 ## Work bounded by its readers: nothing widened past what is read, no widened output kept
 
-8 records: 6 built, 2 partly built. Origin: 3 a, 5 b, 0 c.
+8 records, now: 6 closed, 1 underway, 1 open. At the audit: 6 built, 2 partly built. Origin: 3 a, 5 b, 0 c.
 
 **Invariant.** Nothing is computed past what its readers read, and nothing widened is kept. Each relation, copy and attribute exists for a reader's demand (0291, 0461, 0099).
 
@@ -729,17 +808,22 @@ its own commits the hub has not taken. Worktrees idle since 2026-11-20, and deta
 
 **Open elsewhere:** Q121 (`text` on request, 0353 step 3), Q420 (a partial hit's cone that sees annotations only through `FoldOwn`), Q426 (a wildcard node not bounded by hiding), Q454 (requests by reader where the shared one closes a loading cycle), 0458 (documents made when first read, tape-blocks), 0115 (digest-only kept relations, inputs not kept twice, store), 0099 (the factorized store).
 
+**Underway:**
+
+| Record | Left | Worktree |
+|---|---|---|
+| [0597](decisions/0597-a-guest-context-is-a-pass-of-its-own-rules-reading-its-host-explicitly.md) A guest context is a pass of its own rules, reading its host's … | Step 4: remove hiding's annotation range, FoldOwn, narrow copies and one_document (still in the code) | cost-classifier |
+
 **Open:**
 
 | Record | Left | Origin |
 |---|---|---|
 | [0174](decisions/0174-per-node-source-attributes-are-answered-on-request.md) A node's source attributes are answered on request, by rules | step 3: long text on request, removing the twins, rr_long_text_node and text_kind_demand; step 4 measure inline text | b |
-| [0597](decisions/0597-a-guest-context-is-a-pass-of-its-own-rules-reading-its-host-explicitly.md) A guest context is a pass of its own rules, reading its host's … | Step 4: remove hiding's annotation range, FoldOwn, narrow copies and one_document (still in the code). Step 5: f-strings and Vue. Step 6: measure. | a |
 
 <a id="hygiene"></a>
 ## A re-entrant engine with bounded memory and no global state; one shape across the worktrees
 
-6 records: 5 built, 1 partly built. Origin: 3 a, 2 b, 1 c.
+6 records, now: 5 closed, 0 underway, 1 open. At the audit: 5 built, 1 partly built. Origin: 3 a, 2 b, 1 c.
 
 **Invariant.** The engine is re-entrant and holds no global state (0442). A run's state is the run's (0441). No thread-local is unlisted (0192). Parallel work runs on the machine's pool (0442 step 5). The worktrees share one shape (0094).
 
