@@ -8589,6 +8589,7 @@ name = "rerail-vector"
 version = "0.1.0"
 dependencies = [
  "rayon",
+ "rerail-registry",
  "serde",
 ]
 

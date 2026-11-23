@@ -8,6 +8,9 @@ rerail-device	core
 rerail-simd8	core
 rerail-simdjson-native	core
 rerail-registry	core
+rerail-vector	core
+rerail-section-derive	core
+rerail-section	core
 rerail-blocks	core
 rerail-simdjson	core
 rerail-clif	core
@@ -41,6 +44,7 @@ rerail-cpu-pp	core
 rerail-vue-lean	core
 rerail-ukl	core
 rerail-ukl-vec	core
+rerail-ukl-aot	core
 rerail-gpu	core
 rerail-forest	core
 rerail-accel	core

@@ -7,6 +7,8 @@ description = "Plain values (`Pod`), the rooms structures take their regions fro
 
 
 [dependencies]
+# The run's room, registered at load (`install_default_room`).
+rerail-registry = { path = "../registry" }
 rayon = "=1.12.0"
 # A vector is written and read as a sequence, as the `Vec` it replaces was.
 serde = "1.0"

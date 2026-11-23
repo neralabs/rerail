@@ -350,7 +350,7 @@ pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
     }
     // What lies in the batches' blocks of sources, by relation (`made::sources_held`): the span of its first group and
     // of its latest, and the batch's documents made.
-    let sources = SOURCES_HELD.get().map_or_else(Vec::new, |held| held());
+    let sources = SOURCES_HELD.try_get().map_or_else(Vec::new, |held| held());
     let (mut small, mut small_n, all, n) = (0, 0, sources.iter().map(|s| s.0).sum::<usize>(), sources.len());
     for (k, (bytes, name, made, docs, first, last)) in sources.into_iter().enumerate() {
         if bytes >= 1 << 20 && k < 24 {
@@ -628,12 +628,13 @@ pub fn install_block_device(device: fn() -> rerail_blocks::alloc::Device) {
 
 /// The batches' relations held now, the most bytes first (`syntax::made::sources_held`, above this crate, installed by
 /// `install_sources_held`): (bytes in their blocks, name, documents made, the batch's documents, the span of its first
-/// group, of its latest). None until one is installed.
-static SOURCES_HELD: std::sync::OnceLock<fn() -> Vec<(usize, String, usize, usize, u32, u32)>> = std::sync::OnceLock::new();
+/// group, of its latest). None until one is registered.
+static SOURCES_HELD: rerail_registry::Slot<fn() -> Vec<(usize, String, usize, usize, u32, u32)>> =
+    rerail_registry::Slot::new("the batches' relations held");
 
-/// Installs what lists the batches' relations held (`syntax::made::sources_held`); the first one stays.
+/// Registers what lists the batches' relations held (`syntax::made::sources_held`): boot's, once a process.
 pub fn install_sources_held(held: fn() -> Vec<(usize, String, usize, usize, u32, u32)>) {
-    let _ = SOURCES_HELD.set(held);
+    SOURCES_HELD.register("the batches' relations", held);
 }
 
 /// A new block for relations of `life` with room for `need` bytes and its others' margin: the chunk's, if a chunk's
