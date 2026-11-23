@@ -1224,7 +1224,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
   /**
    * The Git reads that place a session's checkout (`placeCheckout`): a disposed runtime ends them, and returns once
-   * each Git has exited, so none is left running in a checkout (Windows refuses to remove a folder a process holds).
+   * each Git they started has exited, so none is left running in a checkout (Windows refuses to remove a folder a
+   * process holds). A read another runtime started and shares with them goes on, and is not waited for (`sharedRead`).
    */
   readonly #placing = new GitReads();
   readonly #sessions = new Map<string, RuntimeSessionState>();

@@ -2,6 +2,7 @@ import * as childProcess from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
@@ -15,6 +16,7 @@ import { placeCheckout, PLACING_AT_ONCE } from "../../../../src/engine/catalog/c
 import { learnDeclaredSubmodules } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
 import { readRemoteAddress, repositoryIdentityLocation, worktreeRegistry } from "../../../../src/engine/catalog/repository-identity.js";
+import { GitReads } from "../../../../src/engine/git.js";
 import { standingGitAccess } from "../../../../src/engine/native/git-access.js";
 import { pathsOwnedByCurrentUser } from "../../../../src/engine/native/native.js";
 import { removeFolderSync } from "../../../support/platform/remove-folder.js";
@@ -109,6 +111,51 @@ async function learntWhile(act: () => Promise<unknown>, onCall: (calls: number) 
     learn.mockImplementation(actual);
   }
   return learn.mock.calls.length - before;
+}
+
+/**
+ * A repository with `count` linked worktrees, each of whose placements asks Git (Git reads a worktree's own config once
+ * `extensions.worktreeConfig` is set), and no submodule; its remote is kept.
+ */
+function repositoryPlacedByGit(count: number): { main: string; worktrees: string[] } {
+  const root = temporaryRoot();
+  const main = repository(join(root, "main"));
+  git(main, ["config", "extensions.worktreeConfig", "true"]);
+  const worktrees = Array.from({ length: count }, (_, i) => join(root, `wt-${i}`));
+  for (const [i, worktree] of worktrees.entries()) git(main, ["worktree", "add", "--quiet", "-b", `wt-${i}`, worktree]);
+  readRemoteAddress(main);
+  return { main, worktrees };
+}
+
+/**
+ * Two sessions placing `main` together, each through Git reads of its own, as two runtimes of one daemon do. Neither
+ * asks Git before the pass over the worktrees but through the placement and the list they share, so one starts the
+ * pass and the other joins it. `atPass` is called as the pass learns a linked worktree's submodules the first time,
+ * with the session that started it and the other.
+ */
+async function twoSessionsPlacing(main: string, atPass: (starter: GitReads, joiner: GitReads) => Promise<void> | void): Promise<void> {
+  const sessions = new Map<AbortSignal, GitReads>();
+  const learn = vi.mocked(learnDeclaredSubmodules);
+  const { learnDeclaredSubmodules: actual } = await vi.importActual<typeof import("../../../../src/engine/catalog/checkouts/declared-submodules.js")>(
+    "../../../../src/engine/catalog/checkouts/declared-submodules.js",
+  );
+  let first = true;
+  learn.mockImplementation(async (root, options) => {
+    const starter = options?.signal === undefined ? undefined : sessions.get(options.signal);
+    if (first && starter !== undefined && basename(root).startsWith("wt-")) {
+      first = false;
+      await atPass(starter, [...sessions.values()].find(session => session !== starter)!);
+    }
+    return await actual(root, options);
+  });
+  try {
+    await Promise.all([new GitReads(), new GitReads()].map(session => session.run(signal => {
+      sessions.set(signal, session);
+      return placeCheckout(main, { signal });
+    })));
+  } finally {
+    learn.mockImplementation(actual);
+  }
 }
 
 /** What the first events of a session ask of each checkout: where it sits, its registry, its remote and its submodules. */
@@ -207,6 +254,24 @@ describe("placeCheckout", () => {
     // session's own checkout once per session besides).
     expect(gitLists() - lists).toBe(1);
     expect(vi.mocked(learnDeclaredSubmodules).mock.calls.length - learnt).toBe(checkouts.length + 3);
+  });
+
+  it("places every worktree for a session whose pass another session's stop cut short", async () => {
+    const { main, worktrees } = repositoryPlacedByGit(12);
+    await twoSessionsPlacing(main, starter => void starter.stop());
+    expect(await gitStarts(() => worktrees.map(worktree => repositoryIdentityLocation(worktree)))).toEqual({ blocking: [], notBlocking: [] });
+  });
+
+  it("lets a session's stop return while the pass it shares with another session goes on", async () => {
+    const { main } = repositoryPlacedByGit(12);
+    let [passHeld, returnedWhileHeld] = [true, false];
+    await twoSessionsPlacing(main, async (_starter, joiner) => {
+      void joiner.stop().then(() => (returnedWhileHeld = passHeld));
+      // The pass waits here until the next turn of the event loop.
+      await setImmediate();
+      passHeld = false;
+    });
+    expect(returnedWhileHeld).toBe(true);
   });
 
   it("starts at most four Git processes at once to place the submodules checked out in a repository's checkouts", async () => {

@@ -1144,6 +1144,50 @@ export class GitReads {
   }
 }
 
+/** A read that the callers asking for one thing meanwhile share, and the signal of the caller that started it. */
+export interface SharedRead<T> {
+  readonly answer: Promise<T>;
+  readonly signal: AbortSignal | undefined;
+}
+
+/**
+ * `read`, shared through `reads` by the callers that ask for `key` while it runs. It runs under the signal of the caller
+ * that started it, and a caller under that signal waits for all of it, each Git it started included. A caller under
+ * another signal is answered undefined once its own signal is aborted, with no wait for the read; where the starter's
+ * signal stopped the read while its own is live, it reads again under its own. So no caller's stop cuts another's read.
+ */
+export async function sharedRead<K, T>(reads: Map<K, SharedRead<T>>, key: K, options: GitReadOptions, read: () => Promise<T>): Promise<T | undefined> {
+  const shared = reads.get(key) ?? startShared(reads, key, options.signal, read);
+  if (shared.signal === options.signal) return await shared.answer;
+  const answer = await untilAborted(shared.answer, options.signal);
+  return stoppedByStarter(shared.signal, options.signal) ? await sharedRead(reads, key, options, read) : answer;
+}
+
+/** Whether the starter's signal is aborted, which may have cut its read short, while the caller's is live. */
+function stoppedByStarter(starter: AbortSignal | undefined, caller: AbortSignal | undefined): boolean {
+  return starter?.aborted === true && caller?.aborted !== true;
+}
+
+function startShared<K, T>(reads: Map<K, SharedRead<T>>, key: K, signal: AbortSignal | undefined, read: () => Promise<T>): SharedRead<T> {
+  const shared = { answer: read().finally(() => reads.delete(key)), signal };
+  reads.set(key, shared);
+  return shared;
+}
+
+/** `answer`, or undefined as soon as `signal` is aborted: the abort stops no read, it only stops the wait. */
+async function untilAborted<T>(answer: Promise<T>, signal: AbortSignal | undefined): Promise<T | undefined> {
+  if (signal === undefined) return await answer;
+  const { promise: aborted, resolve: stop } = Promise.withResolvers<undefined>();
+  const onAbort = (): void => stop(undefined);
+  signal.addEventListener("abort", onAbort, { once: true });
+  if (signal.aborted) stop(undefined);
+  try {
+    return await Promise.race([answer, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
 /** The Git to start a read with; undefined without Git, or once `signal` is aborted. */
 function readerGit(signal: AbortSignal | undefined): string | undefined {
   if (signal?.aborted === true) return undefined;

@@ -1,5 +1,5 @@
 import { tmpdir } from "node:os";
-import { GitUnavailableError, runGit, runGitAsync, type GitReadOptions, type GitResult, type RunGitOptions } from "../git.js";
+import { GitUnavailableError, runGit, runGitAsync, sharedRead, type GitReadOptions, type GitResult, type RunGitOptions, type SharedRead } from "../git.js";
 import { loadNativeBinding, type NativeBinding, type NativeGitAccess, type NativeGitInstallation } from "./native.js";
 
 const NULL_DEVICE = process.platform === "win32" ? "nul" : "/dev/null";
@@ -152,35 +152,28 @@ export function standingGitAccess(): NativeGitAccess | undefined {
   return processOwner?.standing();
 }
 
-/**
- * The ask of Git's installation under way without blocking: callers meanwhile share its two Git processes. It gives
- * true where the signal of the caller that started it stopped it, so it made nothing.
- */
-let learning: Promise<boolean> | undefined;
+/** The ask of Git's installation under way without blocking: callers meanwhile share its two Git processes ({@link sharedRead}). */
+const learning = new Map<"installation", SharedRead<void>>();
 
 /**
  * Makes the process's owner ({@link nativeGitAccess}) unless its answer stands, from asks run as Git processes no thread
  * waits on, so {@link standingGitAccess} gives it after. Callers meanwhile share one ask; where another caller's signal
- * stopped it, a caller whose own signal is live asks again. It never fails: where no engine loads, Git is missing or
- * `options.signal` is aborted, it makes nothing.
+ * stopped it, a caller whose own signal is live asks again, and a caller whose own signal is aborted returns without
+ * waiting for it. It never fails: where no engine loads, Git is missing or `options.signal` is aborted, it makes nothing.
  */
 export async function learnGitAccess(options: GitReadOptions = {}): Promise<void> {
   if (standingGitAccess() !== undefined) return;
-  const shared = (learning ??= learnedGitAccess(options).catch(() => false).finally(() => {
-    learning = undefined;
-  }));
-  if ((await shared) && options.signal?.aborted !== true) await learnGitAccess(options);
+  await sharedRead(learning, "installation", options, async () => await learnedGitAccess(options).catch(() => undefined));
 }
 
-/** Makes the owner from asks run without blocking; true where `options.signal` stopped them, so it made nothing. */
-async function learnedGitAccess(options: GitReadOptions): Promise<boolean> {
+/** Makes the owner from asks run without blocking; nothing where `options.signal` stopped them. */
+async function learnedGitAccess(options: GitReadOptions): Promise<void> {
   const binding = loadNativeBinding();
   const report = await readGitInstallationWithoutBlocking(options);
-  if (report === undefined) return true;
+  if (report === undefined) return;
   processOwner ??= gitAccessKeeper(binding, Date.now);
   // A blocking ask that answered meanwhile stands: its owner stays, and the readers that opened under it.
   if (processOwner.standing() === undefined) processOwner.take(report);
-  return false;
 }
 
 /**

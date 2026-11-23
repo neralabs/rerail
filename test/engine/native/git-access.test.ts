@@ -189,6 +189,28 @@ describe("the engine's Git installation learnt without blocking", () => {
     expect(standingGitAccess()).toBeDefined();
   });
 
+  it("returns at once for a caller whose own signal is aborted, while the ask it shares with another caller goes on", async () => {
+    const { learnGitAccess, standingGitAccess, asks } = await freshGitAccess();
+    const held = Promise.withResolvers<void>();
+    asks.mockImplementation(async (cwd, args) => {
+      await held.promise;
+      return await answered(cwd, args);
+    });
+    const stopping = new AbortController();
+    let asking = true;
+    const starter = learnGitAccess();
+    const joiner = learnGitAccess({ signal: stopping.signal }).then(() => asking);
+    stopping.abort();
+    // The shared asks answer at the next turn of the event loop.
+    setImmediate(() => {
+      asking = false;
+      held.resolve();
+    });
+    expect(await joiner).toBe(true);
+    await starter;
+    expect(standingGitAccess()?.systemConfig).toBe("/opt/git/etc/gitconfig");
+  });
+
   it("keeps the owner a blocking ask made while its own asks ran", async () => {
     const { learnGitAccess, nativeGitAccess: blockingAccess, standingGitAccess, asks } = await freshGitAccess();
     const held = Promise.withResolvers<void>();

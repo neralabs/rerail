@@ -34,7 +34,7 @@ import { foldersGitSearches } from "./checkouts/git-search.js";
 import { forgetGoneSubmodules } from "./checkouts/declared-submodules.js";
 import { openNoFollowSync } from "../no-follow.js";
 import { learnGitAccess, standingGitAccess } from "../native/git-access.js";
-import { GitUnavailableError, gitHome, gitText, runGit, runGitAsync, type GitReadOptions, type GitReads, type GitResult } from "../git.js";
+import { GitUnavailableError, gitHome, gitText, runGit, runGitAsync, sharedRead, type GitReadOptions, type GitReads, type GitResult, type SharedRead } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
 /** Where a checkout keeps its clone id, and which checkout it is. */
@@ -143,8 +143,8 @@ function settled(requested: string, inputs: PlacementInputs, located: Located): 
   return { ...located.location };
 }
 
-/** The placements asking Git without blocking, by folder: two asks for one folder meanwhile share one Git process. */
-const placingWithoutBlocking = new Map<string, Promise<RepositoryIdentityLocation>>();
+/** The placements asking Git without blocking, by folder: two asks for one folder meanwhile share one Git process ({@link sharedRead}). */
+const placingWithoutBlocking = new Map<string, SharedRead<RepositoryIdentityLocation>>();
 
 /**
  * {@link repositoryIdentityLocation} of `workspace` without blocking the caller's thread: the same kept answers and
@@ -159,13 +159,8 @@ export function placeWithoutBlocking(workspace: string, options: GitReadOptions 
   if (!keptForPlacements(inputs)) return Promise.resolve(undefined);
   const known = inputs === undefined ? undefined : keptOrFromFiles(requested, inputs, false);
   if (known !== undefined) return Promise.resolve(known);
-  let asking = placingWithoutBlocking.get(requested);
-  if (asking === undefined) {
-    asking = inputs === undefined ? acceptedWithoutBlocking(requested, options) : locatedWithoutBlocking(requested, true, options).then(located => settled(requested, inputs, located));
-    placingWithoutBlocking.set(requested, asking);
-    void asking.finally(() => placingWithoutBlocking.delete(requested)).catch(() => undefined);
-  }
-  return asking.then(location => ({ ...location }));
+  const asking = sharedRead(placingWithoutBlocking, requested, options, async () => (inputs === undefined ? await acceptedWithoutBlocking(requested, options) : settled(requested, inputs, await locatedWithoutBlocking(requested, true, options))));
+  return asking.then(location => (location === undefined ? undefined : { ...location }));
 }
 
 /**
@@ -681,13 +676,7 @@ export async function learnWorktreeRegistry(checkout: string, options: GitReadOp
   if (!existsSync(checkout) || (await placeWithoutBlocking(checkout, options))?.git !== true) return undefined;
   const place = registryPlace(checkout);
   if (place === undefined) return undefined;
-  const { commonDirectory } = place;
-  let listing = listingWithoutBlocking.get(commonDirectory);
-  if (listing === undefined) {
-    listing = listedWithoutBlocking(checkout, place, options).finally(() => listingWithoutBlocking.delete(commonDirectory));
-    listingWithoutBlocking.set(commonDirectory, listing);
-  }
-  return await listing;
+  return await sharedRead(listingWithoutBlocking, place.commonDirectory, options, async () => await listedWithoutBlocking(checkout, place, options));
 }
 
 /**
@@ -733,8 +722,8 @@ function storedRegistry(checkout: string): WorktreeRegistry | undefined {
   return storedList({ commonDirectory, unstamped: false }, registryContents(commonDirectory));
 }
 
-/** The lists of a registry read without blocking, by common directory: sessions opening together share one Git process. */
-const listingWithoutBlocking = new Map<string, Promise<WorktreeRegistry | undefined>>();
+/** The lists of a registry read without blocking, by common directory: sessions opening together share one Git process ({@link sharedRead}). */
+const listingWithoutBlocking = new Map<string, SharedRead<WorktreeRegistry | undefined>>();
 
 async function listedWithoutBlocking(checkout: string, place: RegistryPlace, options: GitReadOptions): Promise<WorktreeRegistry | undefined> {
   // Read before Git runs, as the registry reads it.

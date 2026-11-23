@@ -19,7 +19,7 @@ import {
   type RepositoryIdentityLocation,
   type WorktreeRegistry,
 } from "../repository-identity.js";
-import type { GitReadOptions } from "../../git.js";
+import { sharedRead, type GitReadOptions, type SharedRead } from "../../git.js";
 
 /**
  * Learns what `folder`'s first events ask Git, as processes no thread waits on. Each read ends with its Git's exit, at
@@ -57,16 +57,14 @@ async function placeRepository(location: RepositoryIdentityLocation, options: Gi
   if (registry.status === "fulfilled" && registry.value !== undefined) await placeListed(registry.value, options);
 }
 
-/** The passes over a registry's worktrees under way, one per registry as Git listed it: sessions opening together share it. */
-const listedPasses = new Map<WorktreeRegistry, Promise<void>>();
+/**
+ * The passes over a registry's worktrees under way, one per registry as Git listed it: sessions opening together share
+ * it, and a session's stop cuts no other session's pass short ({@link sharedRead}).
+ */
+const listedPasses = new Map<WorktreeRegistry, SharedRead<void>>();
 
-function placeListed(registry: WorktreeRegistry, options: GitReadOptions): Promise<void> {
-  let pass = listedPasses.get(registry);
-  if (pass === undefined) {
-    pass = placeEach(registry.worktrees, options).finally(() => listedPasses.delete(registry));
-    listedPasses.set(registry, pass);
-  }
-  return pass;
+async function placeListed(registry: WorktreeRegistry, options: GitReadOptions): Promise<void> {
+  await sharedRead(listedPasses, registry, options, async () => await placeEach(registry.worktrees, options));
 }
 
 /** How many folders a worker places between two turns of the event loop: each costs a few file reads on the caller's thread. */

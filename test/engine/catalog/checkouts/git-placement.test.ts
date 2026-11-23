@@ -414,6 +414,29 @@ describe("a placement asked without blocking the caller's thread", () => {
     expect(await learnWorktreeRegistry(main)).toBeUndefined();
     expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main));
   });
+
+  it("gives a caller whose signal is live Git's placement and list when another caller's stop cut the ask they shared", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    const live = new AbortController().signal;
+    /** The next Git no thread waits on is stopped as it starts, as by a runtime disposed meanwhile. */
+    const stoppedAsItStarts = (): AbortSignal => {
+      const stopping = new AbortController();
+      const actual = vi.mocked(runGitAsync).getMockImplementation()!;
+      vi.mocked(runGitAsync).mockImplementationOnce(async (...ask) => {
+        const asking = actual(...ask);
+        stopping.abort();
+        return await asking;
+      });
+      return stopping.signal;
+    };
+
+    let signal = stoppedAsItStarts();
+    const [, placed] = await Promise.all([placeWithoutBlocking(main, { signal }), placeWithoutBlocking(main, { signal: live })]);
+    signal = stoppedAsItStarts();
+    const [, listed] = await Promise.all([learnWorktreeRegistry(main, { signal }), learnWorktreeRegistry(main, { signal: live })]);
+    expect({ placed, listed: listed?.worktrees }).toEqual({ placed: gitsAnswer(main), listed: gitsRegistry(main) });
+  });
 });
 
 describe("a walk's learn step of Git's list of the worktrees", () => {
