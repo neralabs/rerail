@@ -1,4 +1,4 @@
-# The engine's tests of logic and the sessions: the planner, the .rr lowering, the program image, the native set kernels, typing, the SQL executor, the statistics and the residency (docs/final-shape/proposals/crate-split/incremental-plan.md, step 2).
+# The engine's tests of logic: the planner, the native set kernels, the profile, typing, the waves and the statistics (docs/final-shape/proposals/crate-split/incremental-plan.md, step 7i).
 # A test crate: its library is its tests (`#![cfg(test)]`). Its manifest is boot's, with boot below it
 # (tools/cratify/split_test_crates.py), and kept by hand since.
 [package]
@@ -6,7 +6,7 @@ name = "rerail-tests-logic"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The engine's tests of logic and the sessions: the planner, the .rr lowering, the program image, the native set kernels, typing, the SQL executor, the statistics and the residency."
+description = "The engine's tests of logic: the planner, the native set kernels, the profile, typing, the waves and the statistics."
 
 [features]
 # Every registry language (`languages/<id>.json`) is built by default. A build without `lang-<id>` keeps the
@@ -94,9 +94,9 @@ base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 # Relational kernels on every lane and the executor that batches their launches (decision 0098).
 rerail-accel = { path = "../../../accel" }
-# The tree watch, built apart (`crates/tree_watch`) so its tests build without the engine; its sources stay in `src/`.
+# The tree watch, built apart (`crates/tree_watch`) so its tests build without the engine; its sources are in its `src/`.
 rerail-tree-watch = { path = "../tree_watch" }
-# The content store and the git workspace, built apart (`crates/store`): their sources stay in `src/`.
+# The content store and the git workspace, built apart (`crates/store`): their sources are in its `src/`.
 rerail-store = { path = "../store", features = ["test-hooks"] }
 ast-grep-core = "=0.51.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched

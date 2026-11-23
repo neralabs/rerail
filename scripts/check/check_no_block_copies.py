@@ -27,14 +27,19 @@ DIRS = (
     "native/src/code_rule_dsl/logic/native/",
     "native/src/code_rule_dsl/facts/",
     "native/src/code_rule_dsl/transducer/packed/",
-    "native/src/code_rule_dsl/device_metal.rs",
+    "native/crates/device_metal/src/code_rule_dsl/device_metal.rs",
     "native/src/code_rule_dsl/residency/",
-    "native/src/code_rule_dsl/tape.rs",
+    "native/crates/lang/src/code_rule_dsl/tape.rs",
     "native/crates/metal/src/",
     "native/crates/blocks/src/",
     "native/crates/facts/src/",
     "native/crates/device_metal/src/",
     "accel/src/gpu/",
+)
+# A directory of the engine's module tree is in every crate that keeps a part of it (native/crates/*/src/...), as well
+# as in the engine's own native/src: each crate's sources are in its own src/.
+DIRS = DIRS + tuple(
+    "native/crates/*/src/" + d[len("native/src/"):] + ("*" if d.endswith("/") else "") for d in DIRS if d.startswith("native/src/")
 )
 COPY = re.compile(
     r"copy_nonoverlapping\s*\(|copy_from_slice\s*\(|extend_from_slice\s*\(|\bupload\s*\(|DevRel::upload|"

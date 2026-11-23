@@ -250,8 +250,10 @@ fn pointers(family: Family) -> (&'static str, &'static str) {
     match family {
         Family::Tape => ("UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v", "t,v"),
         // A relation's block's base in the space its kernel reads blocks in (`CLIF_BLOCK_SPACE`, decision 0603); a
-        // view's tape and directory, which no dispatch writes, as they are.
-        Family::Relation | Family::Lines => ("CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0", "t"),
+        // view's tape and directory, which no dispatch writes, as they are, and so a document's line index (decision
+        // 0612: in its tape, or in a slab's room beside it), whose words are the tape's and read as the tape's.
+        Family::Relation => ("CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0", "t"),
+        Family::Lines => ("UKL_GLOBAL const uint8_t* t,uint64_t a0", "t"),
         Family::View => ("UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll", "t"),
     }
 }
@@ -829,14 +831,16 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             let readonly = data.memflags().is_some_and(|m| m.readonly());
             if aligned && family != Family::Tape {
                 // The block's own words, at their alignment, in the space its base is in (`CLIF_BLOCK_SPACE`:
-                // coherent where other groups of its kernel's dispatch write them, decision 0603).
+                // coherent where other groups of its kernel's dispatch write them, decision 0603), but the lines',
+                // which are the tape's (decision 0612).
                 let t = match size {
                     8 => "uint8_t",
                     16 => "uint16_t",
                     32 => "uint32_t",
                     _ => "uint64_t",
                 };
-                set(format!("(({u})(*(CLIF_BLOCK_SPACE const {t}*)(t+{})))", addr(&args[0])))
+                let space = if family == Family::Lines { "UKL_GLOBAL" } else { "CLIF_BLOCK_SPACE" };
+                set(format!("(({u})(*({space} const {t}*)(t+{})))", addr(&args[0])))
             } else if aligned {
                 // The view: its u32 fields.
                 if size != 32 {
@@ -889,6 +893,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             let pointers = match (family, to) {
                 (Family::View, Family::Tape) => "tt,v".to_owned(),
                 (Family::View, Family::Lines) => "ll,0".to_owned(),
+                (Family::Lines, Family::Lines) => "t,a0".to_owned(),
                 (Family::View, Family::View) => format!("t,{},tt,v,ll", args[0]),
                 (_, Family::Relation) => format!("t,{}", args[0]),
                 (Family::Tape, _) => pointers(family).1.to_owned(),

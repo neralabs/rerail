@@ -75,6 +75,60 @@ Ruff's. The old `Loc` view read `line(e - 1)` instead. It is now `line(e)`, the 
 - The granules' `ExtraSpan` kinds are `Line`, `Comment` and `Match`. `MATCH_SLOTS` is 14, so `EXTRA_SLOTS` stays 16
   and node ids do not move. Line positions moved by one per file: the empty final line is a line.
   `definition_ids_are_pinned` records the new digest and why.
+- The tape's line index is the language's lines. Before, it held each `\n` alone. `Terminators` is now
+  `rerail_tape_format::newlines`'s, and the engine re-exports it. The index records the last byte of each
+  terminator of the document's set, so a terminator's bytes belong to the line they end. A line's text end is
+  that byte, less the terminator's length, which comes from the bytes before it (`length_ending_at`).
+  - Every producer passes the set it writes for: the format 16 writer and its reference, `Sixteen`, the engine's
+    tree ops, the JSON parser and the C preprocessor. The preprocessor's is `LINE_ENDS`, the C adapter's
+    `TERMINATORS`.
+  - Bitlex's tier 1 marks the bytes a terminator of its grammar's set can end with (`last_bytes`), as one class.
+    The index keeps each one where it ends a terminator (`ends_at`). The set is carried on the grammar's
+    `Symbols` and recorded with the output (`BlockProgram::newlines`). A parser uses those bits only for that
+    set, and otherwise scans. A single class leaves the hot loop's registers as they were
+    (`the_hot_loop_keeps_simdjsons_utf8_and_error_registers`).
+  - A token loop's tier 1 (`.rr`'s) makes no mask of its own. Its line ends are among `records_made`, and its
+    index is the scan's.
+  - `newlines.rs` is part of the grammar build id, so stored tapes are made again.
+- There is one line index: the tape's. `LineTable` reads it and holds no lines of its own. It used to hold
+  `[n, starts, ends]` words. Its reads are the tape's (`reads::f16::line`, `line_start`) over a view whose
+  `lines` is the index's start.
+  - A document with a format 16 or 16z tape made with its language's terminators reads the index where it lies
+    in that tape (`TapeImage::lines`, `LineTable::of_f16`), the tape held.
+  - Any other document has an index of its own in the same format. Where the device reads tapes, it is placed in
+    a slab's room (`LineTable::placed`, `newlines::index_in`).
+  - A line's text end comes from the source's bytes at its terminator (`end`, `text_of`).
+  - Tree-sitter's rows are `Lf`'s lines (`Points`).
+- The device reads the same index.
+  - The lines' reads (`lines_line`, `lines_start`, `lines_count`, `lines_select`) are the tape's line reads'
+    bodies, with the index at their base (`ll`). They are written once in CLIF, into `<ukl/reads/lines.h>`.
+    `lines_word` is removed.
+  - Format 15's branch of the line reads is removed, in CLIF and in the kernels' `tape_body.h`. A format 15 slab
+    places its language's index beside its tape, where `\n`-only line starts were.
+  - A `Loc` view places a line from its start, which its text's end shares.
+  - The chunk's `flines` (`fill_lines`, the listed copy of 0353 step 4) now hold the index. `chunk_views` reads
+    it with the generated reads, not a search of its own.
+- The packed batch's line starts (in its listed copy, 0353 step 7) are the document's lines, read off its index. They
+  were its `\n`s.
+- A text no tape holds reads its lines through `newlines::Lines`: an index of its own, in the tape's format, read by the
+  tape's reads. Every other count of a file's lines is gone:
+  - The rule files' parser reads the rr language's lines (`rr_syntax::syntax::TERMINATORS`, which the rr adapter
+    names). This covers `Lines`, `line_of`, the translator's errors, and its two baseline lexers. They counted `\n`
+    alone.
+  - The C preprocessor reads C's line ends (`tape::LINE_ENDS`). The directive scan and the TU's facts count them
+    forward (`tape::LineCount`). The pp words' `__LINE__` and `#line` read each unit's index, interpreted and
+    compiled.
+    - The compiled words call the CLIF `lines_line`, which the module's pass inlines.
+    - The cold reads it reaches are defined once (`inline::define_cold_of`), and they are kept with the IR that
+      `pp_aot` lowers.
+    - The Metal pp already read the tape's index.
+  - CPython's syntax errors read Python's `LineTable`.
+  - Tree-sitter's rows (`TSPoint`'s, `\n` alone) are `Lf`'s lines wherever they are given. That covers `Points`,
+    Blade's source, literal subtrees, the transducer's directives and its same-line predicate (`TapeDoc::row`).
+  - One function, `terminators_of`, gives the set for a file of no language (ECMAScript's). The evidence, the
+    evaluator, the workspace and the text facts all call it.
+  - A test oracle that labels a finding with its line reads `lines::line_of` in the fixture's language, or
+    `line_at_path`.
 - The data-layer pack's test data follows. The overlays were edited, the converter's output was regenerated
   (`convert_the_data_layer_pack`), and the 50 changed files were staged in the lint tool-pack's `publish/`
   (`npm run fixtures:stage`).
@@ -83,10 +137,15 @@ Ruff's. The old `Loc` view read `line(e - 1)` instead. It is now `line(e)`, the 
 
 - `lines_end_at_each_ecosystem_s_terminators` checks each set's lines over one source holding every terminator.
   `a_place_is_read_off_the_lines` checks `place`.
+- `a_terminator_is_known_by_its_last_byte` checks each set's terminators, their lengths from the last byte, and
+  the candidates `ends_at` keeps. `the_newline_output_is_every_newline` checks tier 1's candidates on every grammar,
+  over lone `\r`, `\r\n` and `\n\r`.
 - `a_files_lines_are_its_languages` runs a program per language (Python, JavaScript, Rust) over files holding each
   ambiguous ending. It checks `src_line` and the line of a call.
 - `source_lines_are_the_languages_lines` checks `src_line` against the `LineTable`, `py_line` against W's
   splitlines lines, and `line_count`.
+- `stored_tapes_are_admitted_into_slabs_and_read_in_place` reads each line's start off a format 15 slab's placed
+  index. `the_lines_reads_are_these` holds `lines.h` to its CLIF.
 - `views_made_on_the_device_are_the_hosts_rows` (Metal, with a guest and without) checks that the `line`,
   `end_line`, `col` and `docof` views read in place on the device are the host's rows. It caught `loc_word`
   reading the lines' words from the chunk's base, which `lines_word` fixed.

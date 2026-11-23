@@ -328,8 +328,6 @@ generic_builtin("tuple"). generic_builtin("type").
 annotated_meta(s, a) :- typing_subscript(s, "Annotated"), tsub(s, _, i, a), i > 0.
 .decl type_ctx(n: node)
 type_ctx(t) :- type_root(t).
-// A string in a type context is a forward reference; its parsed tree is a type too (`x: "list[int]"`).
-type_ctx(r) :- type_ctx(s), str_node(s), parsed(s, "annotation", r).
 type_ctx(c) :- type_ctx(p), child(p, c, _), !type_stop(p, c).
 // type_stop(p, c): below p, child c leaves the type context: Literal's arguments, Annotated's metadata.
 .decl type_stop(p: node, c: node)
@@ -391,6 +389,7 @@ checked_scope(s) :- kind(s, "class_definition"), in_stub(s).
 unused_private(s, x, site) :- private_last(s, x, site), !read_in(s, x).
 .decl read_in(s: node, x: symbol)
 read_in(s, x) :- look(r, x, s), expr_ctx(r, "load").
+read_in(s, x) :- ann_look(_, x, s).   // a name a string annotation reads (python/annotation, python/names)
 read_in(s, x) :- in_dunder_all(e), plain_str(e, x), nearest(e, s, scope).   // `__all__ = ["_T"]` exports it
 // in_dunder_all(n): n is in a module-level `__all__ = …`, `__all__ += …` or `__all__: … = …`
 // (Ruff's in_dunder_all_assignment).

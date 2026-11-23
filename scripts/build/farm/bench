@@ -3,10 +3,13 @@
 each host compiles").
 
     scripts/build/farm/bench [HOST...] [--jobs 1,4,8]
-    scripts/build/farm/bench --table      # the saved results only, nothing run
+    scripts/build/farm/bench [HOST...] --jobs own     # only at each host's own cores
+    scripts/build/farm/bench --table [--jobs 1,4,8]   # the saved results only, nothing run
 
 The task: a clean debug build of the workspace's `gix` (121 crates, the same Cargo.lock everywhere),
-with no compile cache (`build.rustc-wrapper=''`), from an empty target directory, at each job count.
+with no compile cache (`build.rustc-wrapper=''`), from an empty target directory, at each job count: by default 1, 4, 8 and the host's own cores as
+the farm counts them (SMT threads included: the jobs the farm gives it), and the host is rated at
+those, against this Mac at its own (`farm.bench_rating`).
 On a host it runs through `test-remote --host HOST --remote-only` (so as a Linux or Windows build on
 those hosts), on this Mac at nice 19. With no HOST: every enabled test host and this Mac (`local`).
 One machine's hosts (a Mac and its VMs, a PC's Windows and Linux sides) run one after another;
@@ -36,6 +39,8 @@ CLEAN = ["cargo", "clean", "--offline", "--target-dir", "../tmp/farm-bench"]
 TIMEOUT = 30 * 60      # one build, the wait for a test slot included
 CONTENDED_BUSY = 25    # % of the host's CPU busy with other work before a run
 LOCAL = "local"
+DEFAULT_JOBS = [1, 4, 8]
+OWN = "own"
 CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../../.."))
 printing = threading.Lock()
 
@@ -96,9 +101,17 @@ def save(name, jobs, result):
     farm.write_json(path, r)
 
 
+def job_counts(name, jobs):
+    """The job counts to measure `name` at: `jobs` (`--jobs`; `own`: its own cores), else DEFAULT_JOBS
+    and its own cores."""
+    if jobs == OWN:
+        return [farm.bench_cores(name)]
+    return jobs or sorted(set(DEFAULT_JOBS + [farm.bench_cores(name)]))
+
+
 def bench(names, jobs):
     for name in names:
-        for j in jobs:
+        for j in job_counts(name, jobs):
             # Each job count builds from nothing: without this, the second count found the first's
             # build and timed a no-op (0.1 s, 2026-11-21).
             code, text = run(name, CLEAN)
@@ -122,27 +135,36 @@ def bench(names, jobs):
 
 
 def table(jobs):
+    """Each host's times at `jobs` (DEFAULT_JOBS when none given), its time at its own cores, and that
+    over this Mac's at its own (`farm.bench_rating`), fastest first."""
+    jobs = jobs if jobs and jobs != OWN else DEFAULT_JOBS
     rs = records()
-    base = (rs.get(LOCAL, {}).get("runs", {}).get(str(max(jobs))) or {}).get("s")
+    base = farm.bench_rating(LOCAL)
     rows = []
     for name, r in rs.items():
         cells = []
         for j in jobs:
             x = r.get("runs", {}).get(str(j)) or {}
             cells.append("-" if x.get("s") is None else f"{x['s']:.1f}{'*' if x.get('contended') else ''}")
-        last = (r.get("runs", {}).get(str(max(jobs))) or {}).get("s")
-        rows.append((last if last is not None else 1e9, name, cells, f"{last / base:.2f}" if last and base else "-"))
-    print("\n" + " ".join(f"{h:>12}" for h in ["host"] + [f"-j{j} s" for j in jobs] + [f"vs this Mac"]))
+        rated = farm.bench_rating(name)
+        star = "*" if rated and (r["runs"].get(str(rated[0])) or {}).get("contended") else ""
+        cells.append(f"{rated[1]:.1f}{star} (-j{rated[0]})" if rated else "-")
+        rel = f"{rated[1] / base[1]:.2f}" if rated and base else "-"
+        rows.append((rated[1] if rated else 1e9, name, cells, rel))
+    print("\n" + " ".join(f"{h:>13}" for h in ["host"] + [f"-j{j} s" for j in jobs] + ["own cores s", "vs this Mac"]))
     for _, name, cells, rel in sorted(rows):
-        print(" ".join(f"{c:>12}" for c in [name] + cells + [rel]))
-    print("(* contended: the host was busy with other work; vs this Mac: its -j" + str(max(jobs)) + " time over this Mac's)")
+        print(" ".join(f"{c:>13}" for c in [name] + cells + [rel]))
+    print("(* contended: the host was busy with other work; own cores: at the jobs the farm gives the host,"
+          " SMT threads included, else the most measured; vs this Mac: that time over this Mac's at its own)")
 
 
 def main(argv):
-    jobs = [1, 4, 8]
+    jobs = None
     if "--jobs" in argv:
         i = argv.index("--jobs")
-        jobs = [int(x) for x in argv[i + 1].split(",")]
+        if i + 1 >= len(argv):
+            sys.exit(__doc__)
+        jobs = OWN if argv[i + 1] == OWN else [int(x) for x in argv[i + 1].split(",")]
         argv = argv[:i] + argv[i + 2:]
     if argv == ["--table"]:
         return table(jobs)

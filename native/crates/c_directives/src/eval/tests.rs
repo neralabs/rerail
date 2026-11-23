@@ -374,21 +374,25 @@ type SettledUnit = Result<(super::rounds::Settled, Vec<Vec<u8>>), &'static str>;
 /// refused it; the runs counted in `ran`.
 fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::files::Files + '_>, String)], ran: &mut Ran) -> Vec<SettledUnit> {
     let cpp = cfg.opts.cpp;
-    let r = super::rounds::run_many(cfg, cpp, units, |u, l, s| {
+    let r = super::rounds::run_many(cfg, cpp, units, |pairs, sizes| {
         let t0 = std::time::Instant::now();
-        let x = rerail_metal::pp_expand::expand_sized(u, l, s, rerail_metal::pp_arena::groups());
-        if std::env::var_os("RERAIL_PP_TIME").is_some() {
-            eprintln!("TIME expand {:.3} ms (device {:.3} ms)", t0.elapsed().as_secs_f64() * 1e3, x.as_ref().map_or(0.0, |x| x.gpu_seconds * 1e3));
-        }
-        if let Ok(x) = &x {
+        let xs = rerail_metal::pp_expand::expand_teams(pairs, sizes);
+        if let Ok(xs) = &xs {
+            // The batch's GPU time is each answer's (`Expanded::run`): counted once.
+            let gpu = xs.iter().flatten().map(|x| x.gpu_seconds).next().unwrap_or(0.0);
+            if std::env::var_os("RERAIL_PP_TIME").is_some() {
+                eprintln!("TIME expand {} units {:.3} ms (device {:.3} ms)", pairs.len(), t0.elapsed().as_secs_f64() * 1e3, gpu * 1e3);
+            }
             ran.runs += 1;
-            ran.gpu_seconds += x.gpu_seconds;
-            for (k, &(u, c)) in x.room.iter().enumerate() {
-                ran.per_top[k] = ran.per_top[k].max(f64::from(u) / x.caps.top.max(1) as f64);
-                ran.per_cap[k] = ran.per_cap[k].max(f64::from(u) / f64::from(c.max(1)));
+            ran.gpu_seconds += gpu;
+            for x in xs.iter().flatten() {
+                for (k, &(u, c)) in x.room.iter().enumerate() {
+                    ran.per_top[k] = ran.per_top[k].max(f64::from(u) / x.caps.top.max(1) as f64);
+                    ran.per_cap[k] = ran.per_cap[k].max(f64::from(u) / f64::from(c.max(1)));
+                }
             }
         }
-        x
+        xs
     });
     r.into_iter()
         .zip(units.iter())
@@ -965,6 +969,47 @@ fn pragma_rows_are_the_serial_passes() {
 /// counts with the text's uses in the serial reading's order: text before and after, two lines,
 /// an arm not read, the text's uses feeding an `#if`, a call whose arguments run over a
 /// directive that counts, a header's uses. Each in C and C++, 2 launches.
+/// An `#if` line longer than its SIMD group's window (`p1_if_line`: 64 tokens a lane's, past them
+/// the group's, 32 tokens a step): a token the window does not read (`defined`, `__has_include`, a
+/// character constant, an alternative operator) at each place about a window's edge, and after
+/// it, the window again. Each as the serial pass, true and false.
+#[test]
+fn a_long_if_line_is_read_by_its_group() {
+    use rerail_c_pp::files::DirKind;
+    let head = "#define X
+#define T8 1+1+1+1+1+1+1+1
+#define T32 T8+T8+T8+T8
+";
+    let mut lines = vec![
+        "T32 + T32 + defined X + defined(Y) == 65".to_string(),
+        "T32 + T32 + defined X + defined(Y) == 66".to_string(),
+        "T32 && __has_include(<h1.h>) && T32 - 31 == 1".to_string(),
+        "T32 && __has_include(<none.h>) || T32 + T32 == 63".to_string(),
+        "(T32 * 2 > 63) ? 'a' == 97 : 0".to_string(),
+        "T32 - T32 or (T32 and 0) or (0x20 == T32)".to_string(),
+        "-T32 + T32 == 0 && !(T32 < 0) && (T32 | 64) == 96".to_string(),
+    ];
+    for pad in [29, 30, 31, 32, 33, 63, 64, 65, 66] {
+        let ones = "1+".repeat(pad);
+        lines.push(format!("{ones} defined X + T32 + defined Y == {}", pad + 33));
+        lines.push(format!("{ones} 'b' - 'a' + T32 == {}", pad + 32));
+    }
+    for line in &lines {
+        let main = format!("{head}#if {line}
+yes
+#else
+no
+#endif
+end
+");
+        for cpp in [false, true] {
+            let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+            let (got, want, _, _) = expanded_in(&[("main.c", main.as_str()), ("inc/h1.h", "h\n")], cfg, &[("inc", DirKind::Angle)]);
+            same(got.map(|g| show(&g)), Ok(show(&want)), format!("{line}, C++ {cpp}"));
+        }
+    }
+}
+
 #[test]
 fn counters_in_directives_are_the_serial_passes() {
     use rerail_c_pp::files::DirKind;
@@ -1002,8 +1047,8 @@ fn counters_in_directives_are_the_serial_passes() {
 /// Decision 0468, batching: units expanded in one batch give each its own serial answer. The same
 /// names are defined differently, undefined, or left undefined from unit to unit, so a unit that
 /// saw an earlier unit's row would differ; `__FILE__` used after another unit redefined it; one
-/// unit the device refuses (a call past its file's end), so the batch splits and that unit alone
-/// is refused.
+/// unit the device refuses (a call past its file's end), and that unit alone is refused: each
+/// unit is a team of its own (decision 0588 §6), and the batch is one run.
 #[test]
 fn a_batch_is_its_units() {
     use rerail_c_pp::files::Search;
@@ -1042,9 +1087,11 @@ fn a_batch_is_its_units() {
     }
     eprintln!("refused alone: {alone:?}");
     same(alone, vec![(5, rerail_metal::pp_expand::X_ACROSS)], "the units refused: a call past its file's end");
-    // The units before a refused one ran in a batch of more than one; the unit with an include
-    // took two rounds, the others riding with it.
-    assert!(std::rc::Rc::ptr_eq(&settled[0].0.part.x, &settled[1].0.part.x), "units 0 and 1 in one batch");
+    // Every unit's first round, the refused one's too, was the batch's one run; the unit with an
+    // include took two rounds, and its second ran alone.
+    let runs: Vec<u64> = settled.iter().map(|(s, _)| s.part.x.run).collect();
+    assert!(runs.iter().enumerate().all(|(k, &r)| k == 6 || r == runs[0]), "the units of one round in one run: {runs:?}");
+    assert_ne!(runs[6], runs[0], "the include's second round its own run");
     same(settled.iter().map(|(s, _)| s.rounds).collect::<Vec<_>>(), vec![1, 1, 1, 1, 1, 1, 2, 1], "each unit's rounds");
 }
 
@@ -1141,6 +1188,65 @@ fn calls_with_arguments_are_the_serial_passes() {
     ];
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
+}
+
+/// Decision 0613 §3: an argument's expansion is a node, and a body passes it on by reference. A chain
+/// of calls each handing its parameter to the next (libtiff's `REPEAT8` and `CASE8`, Boost's
+/// iterations) reads the argument's tokens once, where it is expanded, and once where the output takes
+/// them: not again at each level's collection, expansion and rescan. So the longest piece's steps
+/// grow with the output, not with the argument's length times the depth. The outputs are the serial
+/// pass's, including where a node's tokens are read one by one: a name in it that may still be called
+/// (`f` with no `(` in the argument, called by the body after it), a comma in it that splits the
+/// next call's arguments, and `#` or `##` beside its parameter.
+#[test]
+fn an_argument_passed_on_is_read_once() {
+    let chain = |terms: usize| -> String {
+        let op: Vec<String> = (0..terms).map(|k| format!("a{k} X")).collect();
+        format!("#define X x\n#define R2(op) op; op\n#define R4(op) R2(op); R2(op)\n#define R8(op) R4(op); R4(op)\n#define C8(n, op) switch (n) {{ case 1: R8(op); case 2: R4(op); }}\nC8(w, {})\n", op.join(" "))
+    };
+    let mut steps = Vec::new();
+    for terms in [4usize, 40] {
+        let src = chain(terms);
+        let (got, want, _, _, _, n) = expanded_steps(&[("main.c", &src)], false);
+        same(show(&got.expect("refused")), show(&want), format!("{terms} terms"));
+        steps.push(n);
+    }
+    // The 36 terms more are read once where the argument is expanded (each `X` an invocation: its name,
+    // its body, the run before it, at most 4 steps a term), and are 72 entries more of its expansion
+    // (`a` from the text, `x` from `X`'s body), each output 12 times: 864 entries the output takes 32 at a
+    // time (27 asks). The levels' own steps do not change. Read again at each level, they were 835 steps
+    // more (137 and 972).
+    eprintln!("steps: {steps:?}");
+    assert!(steps[1] <= steps[0] + 4 * 36 + 27, "the steps grow with the argument times the depth: {steps:?}");
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define f(x) [x]\n#define X f\n#define A(op) op(1) op\n#define B(op) A(op)\nB(X y X) B(X)\n")],
+        &[("main.c", "#define X a, b\n#define Y (c, d)\n#define P(x, y) <x|y>\n#define A(op) P(op)\n#define B(op) A(op)\nB(X) B(Y) B((X))\n")],
+        &[("main.c", "#define X x\n#define S(a) #a\n#define T(a) S(a) a ## 1 a\n#define A(op) T(op)\nA(X y X) A(X)\n")],
+        &[("main.c", "#define I(x) x\n#define A(op) I(I(op)) I(op)\nA(I(1) I(2)) A(A(3 I(4)))\n")],
+        &[("main.c", "#define g(x) x\n#define F(op) op op\n#define G(op) F(op)\nG(g g) (1) G(g)(2)\n")],
+    ];
+    let (tokens, _) = shapes_agree(shapes);
+    eprintln!("{} shapes, {tokens} tokens", shapes.len() * 2);
+}
+
+/// `expanded_run`, and the longest piece's steps.
+fn expanded_steps(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32, u32) {
+    use rerail_c_pp::files::Search;
+    let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+    let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+    let mut serial = Spelled::default();
+    let m2 = m.clone();
+    let mut io = Search::new(Vec::new(), move |p: &str| m2.get(p).cloned());
+    let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
+    assert!(pp.run("main.c"));
+    drop(pp);
+    let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(Vec::new(), move |p: &str| m.get(p).cloned())), "main.c".into())];
+    let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
+    let x = &*s.part.x;
+    if x.refused != 0 {
+        return (Err(x.refused), serial.0, x.rung, x.launches, x.gives, x.steps);
+    }
+    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches, x.gives, x.steps)
 }
 
 /// R6 of decision 0448, its second part: `#`, a parameter's raw argument as one string literal:
@@ -1270,6 +1376,13 @@ fn the_corpus_preprocesses_on_the_device() {
         paths.sort();
         langs.push((paths.into_iter().skip(first).take(count).collect(), cpp));
     }
+    // `RERAIL_PP_AGAIN`: the batches once before, the units' second evaluation the one checked (their teams
+    // sized by the loop's work the first measured: `Sizes::work`).
+    if std::env::var_os("RERAIL_PP_AGAIN").is_some() {
+        eprintln!("the first evaluation:");
+        against_serial(langs.clone(), vec![("<stub>".into(), DirKind::After)], true);
+        eprintln!("the second:");
+    }
     let r = against_serial(langs, vec![("<stub>".into(), DirKind::After)], true);
     same(r.refused, std::collections::BTreeMap::new(), "the units refused");
     assert!(r.same_units == 0 || r.launches == LAUNCHES, "{} launches a round, not {LAUNCHES}", r.launches);
@@ -1300,6 +1413,710 @@ fn boost_preprocessor_is_the_serial_passes() {
 /// The launches of an evaluation's command buffer: `pp_setup` and `pp_check` (decisions 0468 §4,
 /// 0485 §1).
 const LAUNCHES: usize = 2;
+
+/// Decision 0588's Tests: the serial pass over the corpus batch (`the_corpus_preprocesses_on_the_device`'s units,
+/// `RERAIL_PP_FIRST` and `RERAIL_PP_COUNT` alike), a thread a core, each taking the next unit: its wall time, best
+/// and median of 5, the files read into memory first (the device's time is its GPU time, the files placed). Run in
+/// the optimized build (`--profile profiling`).
+#[test]
+#[ignore = "a measurement over the corpus (~/orca/rerail-shared/lean-corpus)"]
+fn measure_the_serial_pass_on_all_cores() {
+    use rerail_c_pp::Config;
+    use rerail_c_pp::files::{DirKind, Search};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Count(usize);
+    impl rerail_c_pp::sink::Sink for Count {
+        fn token(&mut self, _t: &rerail_c_pp::macros::Tk, _text: &[u8], _at: Option<rerail_c_pp::sink::At>, _off: u32) {
+            self.0 += 1;
+        }
+    }
+    let root = corpus_root();
+    let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(40);
+    let first = std::env::var("RERAIL_PP_FIRST").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let mut units: Vec<(String, bool)> = Vec::new();
+    for (dir, cpp) in [("c", false), ("cpp", true)] {
+        let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
+        let mut paths: Vec<String> = rd.flatten().map(|e| e.path().to_string_lossy().into_owned()).collect();
+        paths.sort();
+        units.extend(paths.into_iter().skip(first).take(count).map(|p| (p, cpp)));
+    }
+    assert!(!units.is_empty(), "no corpus at {}", root.display());
+    let files: std::sync::Arc<std::collections::HashMap<String, Vec<u8>>> =
+        std::sync::Arc::new(units.iter().filter_map(|(p, _)| std::fs::read(p).ok().map(|b| (p.clone(), b))).collect());
+    let cfgs = [Config::new(crate::pp::options(false)), Config::new(crate::pp::options(true))];
+    let dirs = vec![("<stub>".to_string(), DirKind::After)];
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let run = |threads: usize| -> (f64, usize) {
+        let next = AtomicUsize::new(0);
+        let tokens = AtomicUsize::new(0);
+        let t0 = std::time::Instant::now();
+        std::thread::scope(|sc| {
+            for _ in 0..threads {
+                sc.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some((path, cpp)) = units.get(i) else { break };
+                        let f = std::sync::Arc::clone(&files);
+                        let mut io = Search::new(dirs.clone(), move |q: &str| f.get(q).cloned().or_else(|| q.starts_with("<stub>").then(Vec::new)));
+                        let mut sink = Count(0);
+                        let mut pp = rerail_c_pp::Pp::new(cfgs[usize::from(*cpp)].clone(), &mut io, &mut sink);
+                        pp.run(path);
+                        drop(pp);
+                        tokens.fetch_add(sink.0, Ordering::Relaxed);
+                    }
+                });
+            }
+        });
+        (t0.elapsed().as_secs_f64() * 1e3, tokens.load(Ordering::Relaxed))
+    };
+    for t in [1, threads] {
+        let mut ms: Vec<f64> = Vec::new();
+        let mut tokens = 0;
+        for _ in 0..5 {
+            let (m, k) = run(t);
+            ms.push(m);
+            tokens = k;
+        }
+        ms.sort_by(f64::total_cmp);
+        eprintln!("SERIAL {} units, {tokens} tokens, {t} threads: best {:.2} ms, median {:.2} ms", units.len(), ms[0], ms[2]);
+    }
+}
+
+/// What a memo and waves of expansions would find in the corpus (decision 0613; `RERAIL_PP_FIRST`,
+/// `RERAIL_PP_COUNT` as above): each unit's macro invocations through the serial pass, keyed by what
+/// their expansions depend on (`Sink::entered`). The keys bound a memo's hits: `key` (the spellings
+/// and the disabled names) from above, `epoch_key` (no definition changed since) from below. The
+/// depth a miss is entered at is a wave its expansion waits for.
+#[test]
+#[ignore = "a measurement over the corpus (~/orca/rerail-shared/lean-corpus)"]
+fn measure_what_expansions_repeat() {
+    use rerail_c_pp::Config;
+    use rerail_c_pp::files::{DirKind, Search};
+    use std::collections::{HashMap, HashSet};
+    #[derive(Default)]
+    struct Rec(Vec<rerail_c_pp::sink::Entered>);
+    impl rerail_c_pp::sink::Sink for Rec {
+        fn wants_entries(&self) -> bool {
+            true
+        }
+        fn entered(&mut self, e: rerail_c_pp::sink::Entered) {
+            self.0.push(e);
+        }
+    }
+    let root = corpus_root();
+    let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
+    let first = std::env::var("RERAIL_PP_FIRST").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let mut units: Vec<(String, bool)> = Vec::new();
+    for (dir, cpp) in [("c", false), ("cpp", true)] {
+        let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
+        let mut paths: Vec<String> = rd.flatten().map(|e| e.path().to_string_lossy().into_owned()).collect();
+        paths.sort();
+        units.extend(paths.into_iter().skip(first).take(count).map(|p| (p, cpp)));
+    }
+    assert!(!units.is_empty(), "no corpus at {}", root.display());
+    let cfgs = [Config::new(crate::pp::options(false)), Config::new(crate::pp::options(true))];
+    let dirs = vec![("<stub>".to_string(), DirKind::After)];
+    // Across the units: the keys seen, and their invocations' sizes.
+    let mut all_keys: HashSet<u64> = HashSet::new();
+    let (mut n_all, mut n_unit_key, mut n_unit_epoch, mut n_cross) = (0usize, 0usize, 0usize, 0usize);
+    let (mut size_all, mut size_unit_epoch_miss) = (0u64, 0u64);
+    let mut depth_hist = [0usize; 12];
+    let mut rows: Vec<(usize, usize, usize, u32, u32, String)> = Vec::new();
+    for (path, cpp) in &units {
+        let mut io = Search::new(dirs.clone(), |q: &str| std::fs::read(q).ok().or_else(|| q.starts_with("<stub>").then(Vec::new)));
+        let mut rec = Rec::default();
+        {
+            let mut pp = rerail_c_pp::Pp::new(cfgs[usize::from(*cpp)].clone(), &mut io, &mut rec);
+            pp.run(path);
+        }
+        let e = rec.0;
+        let (mut keys, mut epochs): (HashSet<u64>, HashMap<u64, u32>) = (HashSet::new(), HashMap::new());
+        let (mut miss_key, mut miss_epoch, mut waves, mut deepest) = (0usize, 0usize, 0u32, 0u32);
+        for x in &e {
+            n_all += 1;
+            size_all += u64::from(x.size);
+            depth_hist[(x.depth as usize).min(11)] += 1;
+            deepest = deepest.max(x.depth);
+            if !all_keys.contains(&x.key) && !keys.contains(&x.key) {
+                n_cross += 1;
+            }
+            if keys.insert(x.key) {
+                miss_key += 1;
+            }
+            if epochs.insert(x.epoch_key, x.depth).is_none() {
+                miss_epoch += 1;
+                size_unit_epoch_miss += u64::from(x.size);
+                waves = waves.max(x.depth);
+            }
+        }
+        all_keys.extend(keys.iter().copied());
+        n_unit_key += miss_key;
+        n_unit_epoch += miss_epoch;
+        rows.push((e.len(), miss_key, miss_epoch, waves, deepest, path.rsplit('/').next().unwrap_or(path).to_string()));
+    }
+    let pct = |a: usize, b: usize| 100.0 * a as f64 / b.max(1) as f64;
+    eprintln!("EXPANSIONS {} units: {n_all} invocations, {size_all} tokens substituted", units.len());
+    eprintln!("EXPANSIONS a unit's memo: distinct by spelling {n_unit_key} ({:.1}% of the invocations), by spelling and no definition changed {n_unit_epoch} ({:.1}%; {:.1}% of the tokens substituted)", pct(n_unit_key, n_all), pct(n_unit_epoch, n_all), 100.0 * size_unit_epoch_miss as f64 / size_all.max(1) as f64);
+    eprintln!("EXPANSIONS one memo for the batch, by spelling: {} distinct ({:.1}% of the invocations); {n_cross} invocations new to the batch", all_keys.len(), pct(all_keys.len(), n_all));
+    eprintln!("EXPANSIONS invocations by depth entered (0, 1, .., 11+): {depth_hist:?}");
+    rows.sort_by_key(|r| std::cmp::Reverse(r.0));
+    let only = std::env::var("RERAIL_PP_NAME").ok();
+    for (n, mk, me, w, d, name) in rows.iter().filter(|r| only.as_deref().is_none_or(|o| r.5.contains(o))).take(12) {
+        eprintln!("EXPANSIONS {name}: {n} invocations, {mk} distinct by spelling, {me} with no definition changed; the deepest miss {w}, the deepest {d}");
+    }
+}
+
+/// Decision 0613's waves, modelled on the serial pass (`Sink::requests`): each invocation and
+/// argument expansion a request, every ready request at once, a unit's memo (a hit computes
+/// nothing and waits for the first's result). A request's reading starts when it is posted; its
+/// children are posted as its reading reaches them; it is done when its reading and its children
+/// are. A child with an open tail holds its parent's reading after it until it is done. Three rules
+/// for arguments:
+/// - `after`: an invocation's rescan starts once its arguments are expanded;
+/// - `holes`: the rescan reads past them, but waits for one whose edge it can't decide
+///   (`Request::blocks`), and a call made of an argument's tokens waits for the arguments
+///   (`needs_args`);
+/// - `free`: neither wait (a bound).
+///
+/// Costs are counted two ways: tokens, a token read a unit; and steps, 0588's loop modelled
+/// (`Request::steps`: a plain run a look-ahead each 32 tokens, a macro's name a step, its arguments a
+/// list ask each 32 tokens). The serial pass's cost of a top-level invocation is everything read
+/// under it.
+///
+/// Inputs:
+/// - the corpus (`RERAIL_PP_FIRST`, `RERAIL_PP_COUNT`), its headers stubs, or found in
+///   `RERAIL_PP_INCLUDE` and `RERAIL_PP_INCLUDE_CPP` (C's and C++'s directories, `:` between) with
+///   `RERAIL_PP_PREDEF_C` and `_CPP` (files of `#define` lines, a compiler's predefines); a header
+///   found in none is a stub;
+/// - Boost.Preprocessor's tests with `RERAIL_PP_SET=boost` (each test once: its `.c`, else its
+///   `.cpp`; `RERAIL_PP_ONLY` a part of the name).
+///
+/// `RERAIL_PP_NAME` filters the rows. `RERAIL_PP_PIECE=A..B` also models the top-level tokens A..B
+/// (0588's piece, as `RERAIL_PP_LOOP_LOG` names the slowest) of the units shown.
+#[test]
+#[ignore = "a measurement over the corpus (~/orca/rerail-shared/lean-corpus)"]
+fn measure_the_waves_of_expansions() {
+    use rerail_c_pp::Config;
+    use rerail_c_pp::files::{DirKind, Search};
+    use rerail_c_pp::sink::Request;
+    use std::collections::{HashMap, HashSet};
+    #[derive(Default)]
+    struct Rec(Vec<Request>, Vec<u32>);
+    impl rerail_c_pp::sink::Sink for Rec {
+        fn wants_entries(&self) -> bool {
+            true
+        }
+        fn requests(&mut self, r: &[Request], deps: &[u32]) {
+            self.0 = r.to_vec();
+            self.1 = deps.to_vec();
+        }
+    }
+    let env = |k: &str| std::env::var(k).ok();
+    let count = env("RERAIL_PP_COUNT").and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
+    let first = env("RERAIL_PP_FIRST").and_then(|n| n.parse().ok()).unwrap_or(0);
+    let boost = env("RERAIL_PP_SET").is_some_and(|v| v == "boost");
+    let mut units: Vec<(String, bool)> = Vec::new();
+    let mut dirs: Vec<(String, DirKind)> = Vec::new();
+    if boost {
+        let root = env("RERAIL_PP_BOOST").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/boost-preprocessor"));
+        let only = env("RERAIL_PP_ONLY");
+        let mut paths: Vec<String> = std::fs::read_dir(root.join("test")).unwrap().flatten().map(|e| e.path().to_string_lossy().into_owned())
+            .filter(|p| p.ends_with(".c") || p.ends_with(".cpp") && !std::path::Path::new(&p.replace(".cpp", ".c")).exists())
+            .filter(|p| only.as_ref().is_none_or(|o| p.contains(o.as_str()))).collect();
+        paths.sort();
+        units.extend(paths.into_iter().skip(first).take(count).map(|p| { let c = !p.ends_with(".c"); (p, c) }));
+        dirs.push((root.join("include").to_string_lossy().into_owned(), DirKind::Angle));
+    } else {
+        let root = corpus_root();
+        for (dir, cpp) in [("c", false), ("cpp", true)] {
+            let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
+            let mut paths: Vec<String> = rd.flatten().map(|e| e.path().to_string_lossy().into_owned()).collect();
+            paths.sort();
+            units.extend(paths.into_iter().skip(first).take(count).map(|p| (p, cpp)));
+        }
+    }
+    let mut dirs_cpp = dirs.clone();
+    for (var, to) in [("RERAIL_PP_INCLUDE", &mut dirs), ("RERAIL_PP_INCLUDE_CPP", &mut dirs_cpp)] {
+        for d in env(var).iter().flat_map(|v| v.split(':').filter(|d| !d.is_empty()).map(str::to_string).collect::<Vec<_>>()) {
+            to.push((d, DirKind::System));
+        }
+        to.push(("<stub>".to_string(), DirKind::After));
+    }
+    assert!(!units.is_empty(), "no units");
+    let mut cfgs = [Config::new(crate::pp::options(false)), Config::new(crate::pp::options(true))];
+    for (k, var) in [(0, "RERAIL_PP_PREDEF_C"), (1, "RERAIL_PP_PREDEF_CPP")] {
+        let Some(f) = env(var) else { continue };
+        for line in std::fs::read_to_string(&f).unwrap().lines() {
+            let Some(rest) = line.strip_prefix("#define ") else { continue };
+            let (n, b) = rest.split_once(' ').unwrap_or((rest, ""));
+            cfgs[k].predefines.push((n.to_string(), Some(b.to_string())));
+        }
+    }
+    #[derive(Clone, Copy, PartialEq)]
+    enum Args {
+        After,
+        Holes,
+        Free,
+    }
+    struct Model<'a> {
+        r: &'a [Request],
+        kids: &'a [Vec<u32>],
+        place: &'a [bool],
+        steps: bool,
+        args: Args,
+        /// By key: when the first was done, and how long it took.
+        memo: HashMap<u64, (u64, u64)>,
+        work: u64,
+        computed: u64,
+        deepest: u32,
+    }
+    impl Model<'_> {
+        fn cost(&self, q: &Request) -> u64 {
+            if self.steps { u64::from(q.steps + q.run.div_ceil(32)) } else { u64::from(q.own) }
+        }
+        fn pos(&self, q: &Request) -> u64 {
+            u64::from(if self.steps { q.pos_steps } else { q.pos })
+        }
+        /// Request `i` posted at `post`, at nesting `depth`: when it is done.
+        fn run(&mut self, i: u32, post: u64, depth: u32) -> u64 {
+            let q = self.r[i as usize];
+            let memoizable = !self.place[i as usize];
+            // A hit waits for the first's result, or takes as long as the first took, whichever is
+            // sooner (a result is ready when the first is done).
+            if memoizable && let Some(&(f, took)) = self.memo.get(&q.key) {
+                return f.min(post + took).max(post);
+            }
+            self.work += self.cost(&q);
+            self.computed += 1;
+            self.deepest = self.deepest.max(depth);
+            let kids = &self.kids[i as usize];
+            let (mut start, mut args_done) = (post, post);
+            for &a in kids.iter().filter(|&&k| self.r[k as usize].arg) {
+                let f = self.run(a, post, depth + 1);
+                args_done = args_done.max(f);
+                if self.args == Args::Holes && self.r[a as usize].blocks {
+                    start = start.max(f);
+                }
+            }
+            if self.args == Args::After {
+                start = args_done;
+            }
+            let mut late = 0u64;
+            for &c in kids.iter().filter(|&&k| !self.r[k as usize].arg) {
+                let qc = self.r[c as usize];
+                let mut at = start + self.pos(&qc) + late;
+                if self.args == Args::Holes && qc.needs_args {
+                    at = at.max(args_done);
+                }
+                let f = self.run(c, at, depth + 1);
+                if qc.tails > 0 {
+                    late = late.max(f - at);
+                }
+                args_done = args_done.max(f);
+            }
+            let done = args_done.max(start + self.cost(&q) + late);
+            if memoizable {
+                self.memo.insert(q.key, (done, done - post));
+            }
+            done
+        }
+    }
+    /// Arguments as references (decision 0613), run by continuations: a request reads its list;
+    /// at each call it reaches, it waits only for the expansions its call's name and shape came from
+    /// (`Request::dep_at`: its name, its `(` and `)`, the commas that split it, a producer's
+    /// unpaired parentheses), not for its arguments, which the child takes as references. A wait
+    /// is a continuation left on the expansion it waits for, enqueued again when that one is done.
+    /// A child's arguments are posted when it is, and read as holes. A memo hit waits for the
+    /// first's result (or takes as long as the first took). A child with an open tail holds its
+    /// parent's reading after it until it is done.
+    struct Lazy<'a> {
+        r: &'a [Request],
+        deps: &'a [u32],
+        kids: &'a [Vec<u32>],
+        place: &'a [bool],
+        /// Each request's subtree: the requests `i..i + size[i]`.
+        size: &'a [u32],
+        /// By expansion id: its request (`u32::MAX`: none).
+        exp_req: &'a [u32],
+        memo: HashMap<u64, u32>,
+        /// 0 not posted, 1 posted, 2 done, 3 a memo hit (done at `done`).
+        state: Vec<u8>,
+        start: Vec<u64>,
+        done: Vec<u64>,
+        next: Vec<u32>,
+        late: Vec<u64>,
+        pending: Vec<u32>,
+        fin: Vec<u64>,
+        up: Vec<u32>,
+        waiters: Vec<Vec<u32>>,
+        queue: std::collections::VecDeque<u32>,
+        suspended: u64,
+        work: u64,
+        computed: u64,
+        odd: u64,
+    }
+    impl<'a> Lazy<'a> {
+        fn new(r: &'a [Request], deps: &'a [u32], kids: &'a [Vec<u32>], place: &'a [bool], size: &'a [u32], exp_req: &'a [u32]) -> Self {
+            let n = r.len();
+            Lazy { r, deps, kids, place, size, exp_req, memo: HashMap::new(), state: vec![0; n], start: vec![0; n], done: vec![0; n], next: vec![0; n], late: vec![0; n], pending: vec![0; n], fin: vec![0; n], up: vec![u32::MAX; n],
+                waiters: vec![Vec::new(); n], queue: std::collections::VecDeque::new(), suspended: 0, work: 0, computed: 0, odd: 0 }
+        }
+        fn cost(&self, i: u32) -> u64 {
+            let q = &self.r[i as usize];
+            u64::from(q.steps + q.run.div_ceil(32))
+        }
+        fn under(&self, p: u32, c: u32) -> bool {
+            p <= c && c < p + self.size[p as usize]
+        }
+        /// When expansion `e`'s tokens are final for request `c`: `Err(w)` to wait on `w`.
+        fn ready(&mut self, e: u32, c: u32) -> Result<u64, u32> {
+            let p = self.exp_req.get(e as usize).copied().unwrap_or(u32::MAX);
+            if p == u32::MAX || self.under(p, c) {
+                return Ok(0);
+            }
+            let mut x = p;
+            loop {
+                match self.state[x as usize] {
+                    2 | 3 => return Ok(self.done[x as usize]),
+                    1 => return Err(x),
+                    _ => {}
+                }
+                if x == 0 || self.under(x, c) {
+                    self.odd += 1;
+                    return Ok(0);
+                }
+                x = self.r[x as usize].parent;
+            }
+        }
+        /// Posts request `c` at `at`, its parent `up` counting it.
+        fn post(&mut self, c: u32, at: u64, up: u32) {
+            let ci = c as usize;
+            self.state[ci] = 1;
+            self.start[ci] = at;
+            self.pending[ci] = 1;
+            self.up[ci] = up;
+            if up != u32::MAX {
+                self.pending[up as usize] += 1;
+            }
+            self.work += self.cost(c);
+            self.computed += 1;
+            for k in 0..self.kids[ci].len() {
+                let a = self.kids[ci][k];
+                if !self.r[a as usize].arg {
+                    continue;
+                }
+                let key = self.r[a as usize].key;
+                if !self.place[a as usize] && let Some(&f) = self.memo.get(&key) && self.state[f as usize] == 2 {
+                    let took = self.done[f as usize] - self.start[f as usize];
+                    self.state[a as usize] = 3;
+                    self.done[a as usize] = self.done[f as usize].min(at + took).max(at);
+                    continue;
+                }
+                if !self.place[a as usize] {
+                    self.memo.entry(key).or_insert(a);
+                }
+                self.post(a, at, c);
+            }
+            self.queue.push_back(c);
+        }
+        fn resume(&mut self, i: u32) {
+            let ii = i as usize;
+            if self.state[ii] != 1 {
+                return;
+            }
+            while (self.next[ii] as usize) < self.kids[ii].len() {
+                let c = self.kids[ii][self.next[ii] as usize];
+                let (ci, q) = (c as usize, self.r[c as usize]);
+                if q.arg {
+                    self.next[ii] += 1;
+                    continue;
+                }
+                let mut at = self.start[ii] + u64::from(q.pos_steps) + self.late[ii];
+                for k in q.dep_at..q.dep_at + q.dep_n {
+                    match self.ready(self.deps[k as usize], c) {
+                        Ok(t) => at = at.max(t),
+                        Err(w) => {
+                            self.waiters[w as usize].push(i);
+                            self.suspended += 1;
+                            return;
+                        }
+                    }
+                }
+                if self.state[ci] == 0 {
+                    // A first that is this one's ancestor (an open tail re-entering the expansion
+                    // whose list it ended) can't be waited for: computed again.
+                    let hit = if self.place[ci] { None } else { self.memo.get(&q.key).copied().filter(|&f| !self.under(f, c)) };
+                    match hit {
+                        Some(f) if f != c => {
+                            if self.state[f as usize] != 2 {
+                                self.waiters[f as usize].push(i);
+                                self.suspended += 1;
+                                return;
+                            }
+                            let took = self.done[f as usize] - self.start[f as usize];
+                            self.state[ci] = 3;
+                            self.done[ci] = self.done[f as usize].min(at + took).max(at);
+                            self.fin[ii] = self.fin[ii].max(self.done[ci]);
+                        }
+                        _ => {
+                            if !self.place[ci] {
+                                self.memo.insert(q.key, c);
+                            }
+                            self.post(c, at, i);
+                        }
+                    }
+                }
+                if q.tails > 0 {
+                    if self.state[ci] == 1 {
+                        self.waiters[ci].push(i);
+                        self.suspended += 1;
+                        return;
+                    }
+                    self.late[ii] = self.late[ii].max(self.done[ci].saturating_sub(at));
+                }
+                self.next[ii] += 1;
+            }
+            let own = self.start[ii] + self.cost(i) + self.late[ii];
+            self.fin[ii] = self.fin[ii].max(own);
+            self.pending[ii] -= 1;
+            if self.pending[ii] == 0 {
+                self.complete(i);
+            }
+        }
+        fn complete(&mut self, i: u32) {
+            let mut i = i;
+            loop {
+                let ii = i as usize;
+                self.state[ii] = 2;
+                self.done[ii] = self.fin[ii];
+                let w = std::mem::take(&mut self.waiters[ii]);
+                self.queue.extend(w);
+                let up = self.up[ii];
+                if up == u32::MAX {
+                    return;
+                }
+                let u = up as usize;
+                self.fin[u] = self.fin[u].max(self.done[ii]);
+                self.pending[u] -= 1;
+                if self.pending[u] != 0 {
+                    return;
+                }
+                i = up;
+            }
+        }
+        /// Runs the calls `tops` of the top, each posted at `at(c)`: the latest done, and the
+        /// requests left waiting (none, unless the model is wrong).
+        fn run(&mut self, tops: &[u32], at: impl Fn(u32) -> u64) -> (u64, u64) {
+            let mut end = 0u64;
+            for &c in tops {
+                let ci = c as usize;
+                let q = self.r[ci];
+                if !self.place[ci] && let Some(&f) = self.memo.get(&q.key) {
+                    // A repeat at the top: done when the first is (the queue is drained between tops).
+                    self.state[ci] = 3;
+                    let took = self.done[f as usize] - self.start[f as usize];
+                    self.done[ci] = self.done[f as usize].min(at(c) + took).max(at(c));
+                    end = end.max(self.done[ci]);
+                    continue;
+                }
+                if !self.place[ci] {
+                    self.memo.insert(q.key, c);
+                }
+                self.post(c, at(c), u32::MAX);
+                while let Some(i) = self.queue.pop_front() {
+                    self.resume(i);
+                }
+                end = end.max(self.done[ci]);
+            }
+            let stuck = self.state.iter().filter(|&&s| s == 1).count() as u64;
+            (end, stuck)
+        }
+    }
+    let modes = [(false, Args::After), (false, Args::Holes), (false, Args::Free), (true, Args::After), (true, Args::Holes), (true, Args::Free)];
+    let piece: Option<(u32, u32)> = env("RERAIL_PP_PIECE").and_then(|v| v.split_once("..").and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?))));
+    let only = env("RERAIL_PP_NAME");
+    #[derive(Default)]
+    struct Sum {
+        reqs: u64,
+        computed: u64,
+        read: u64,
+        work: u64,
+        read_steps: u64,
+        work_steps: u64,
+        top: u64,
+        tails: u64,
+        place: u64,
+        blocks: u64,
+        edge_first: u64,
+        edge_last: u64,
+        taken: u64,
+        needs: u64,
+        args: u64,
+        batch_work: u64,
+        batch_steps: u64,
+        lazy_suspended: u64,
+        lazy_stuck: u64,
+        lazy_odd: u64,
+        lazy_work: u64,
+    }
+    let mut t = Sum::default();
+    let mut batch: HashSet<u64> = HashSet::new();
+    // By mode: the longest serial and wave chain of any top-level invocation.
+    let (mut worst_serial, mut worst, mut worst_lazy) = ([0u64; 2], [0u64; 6], 0u64);
+    let mut rows: Vec<(u64, String)> = Vec::new();
+    for (path, cpp) in &units {
+        let mut io = Search::new(if *cpp { dirs_cpp.clone() } else { dirs.clone() }, |q: &str| std::fs::read(q).ok().or_else(|| q.starts_with("<stub>").then(Vec::new)));
+        let mut rec = Rec::default();
+        {
+            let mut pp = rerail_c_pp::Pp::new(cfgs[usize::from(*cpp)].clone(), &mut io, &mut rec);
+            pp.run(path);
+        }
+        let (r, deps) = (rec.0, rec.1);
+        if r.is_empty() {
+            continue;
+        }
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        let mut kids: Vec<Vec<u32>> = vec![Vec::new(); r.len()];
+        for (i, q) in r.iter().enumerate().skip(1) {
+            kids[q.parent as usize].push(i as u32);
+        }
+        let mut place: Vec<bool> = r.iter().map(|q| q.place).collect();
+        for i in (1..r.len()).rev() {
+            if place[i] {
+                place[r[i].parent as usize] = true;
+            }
+        }
+        let steps_of = |q: &Request| u64::from(q.steps + q.run.div_ceil(32));
+        let (mut under, mut under_s): (Vec<u64>, Vec<u64>) = (r.iter().map(|q| u64::from(q.own)).collect(), r.iter().map(steps_of).collect());
+        for i in (1..r.len()).rev() {
+            under[r[i].parent as usize] += under[i];
+            under_s[r[i].parent as usize] += under_s[i];
+        }
+        // A memo across the units, by spelling (a bound: it assumes the lookups alike): what is
+        // computed once in the batch, a hit's subtree not.
+        {
+            let mut stack: Vec<u32> = kids[0].clone();
+            t.batch_work += u64::from(r[0].own);
+            t.batch_steps += steps_of(&r[0]);
+            while let Some(i) = stack.pop() {
+                let q = &r[i as usize];
+                if !place[i as usize] && !batch.insert(q.skey) {
+                    continue;
+                }
+                t.batch_work += u64::from(q.own);
+                t.batch_steps += steps_of(q);
+                stack.extend(kids[i as usize].iter().copied());
+            }
+        }
+        let tops = &kids[0];
+        let mut chains = [0u64; 6];
+        let (mut serial, mut serial_s) = (0u64, 0u64);
+        let mut computed = 0u64;
+        let (mut work, mut work_s, mut deep) = (0u64, 0u64, 0u32);
+        for &c in tops {
+            serial = serial.max(under[c as usize]);
+            serial_s = serial_s.max(under_s[c as usize]);
+        }
+        for (k, &(steps, args)) in modes.iter().enumerate() {
+            let mut m = Model { r: &r, kids: &kids, place: &place, steps, args, memo: HashMap::new(), work: 0, computed: 0, deepest: 0 };
+            for &c in tops {
+                chains[k] = chains[k].max(m.run(c, 0, 1));
+            }
+            if k == 1 {
+                (work, computed) = (m.work + u64::from(r[0].own), m.computed);
+            }
+            if k == 4 {
+                (work_s, deep) = (m.work + steps_of(&r[0]), m.deepest);
+            }
+            worst[k] = worst[k].max(chains[k]);
+        }
+        let mut size: Vec<u32> = vec![1; r.len()];
+        for i in (1..r.len()).rev() {
+            size[r[i].parent as usize] += size[i];
+        }
+        let mut exp_req: Vec<u32> = vec![u32::MAX; r.iter().map(|q| q.exp as usize + 1).max().unwrap_or(1)];
+        for (i, q) in r.iter().enumerate() {
+            if q.exp != 0 && !q.arg {
+                exp_req[q.exp as usize] = i as u32;
+            }
+        }
+        let mut lz = Lazy::new(&r, &deps, &kids, &place, &size, &exp_req);
+        lz.state[0] = 1;
+        let mut lazy = 0u64;
+        for &c in tops {
+            let (e, _) = lz.run(&[c], |_| 0);
+            lazy = lazy.max(e);
+        }
+        let stuck = lz.state.iter().filter(|&&s| s == 1).count() as u64 - 1;
+        if stuck != 0 && env("RERAIL_PP_WHY").is_some() {
+            for (i, st) in lz.state.iter().enumerate().skip(1).filter(|p| *p.1 == 1).take(30) {
+                let q = &r[i];
+                let waits: Vec<usize> = lz.waiters.iter().enumerate().filter(|w| w.1.contains(&(i as u32))).map(|w| w.0).collect();
+                eprintln!("WAVES stuck {name}: request {i} (state {st}, parent {}, arg {}, next {}/{}, pending {}), waiting on {waits:?} (states {:?}; ancestors of it: {:?})", q.parent, q.arg, lz.next[i], kids[i].len(), lz.pending[i], waits.iter().map(|&w| lz.state[w]).collect::<Vec<_>>(), waits.iter().map(|&w| lz.under(w as u32, i as u32)).collect::<Vec<_>>());
+                let ds: Vec<(u32, u32, u8)> = (q.dep_at..q.dep_at + q.dep_n).map(|k| { let e = deps[k as usize]; let p = exp_req.get(e as usize).copied().unwrap_or(u32::MAX); (e, p, if p == u32::MAX { 9 } else { lz.state[p as usize] }) }).collect();
+                eprintln!("WAVES   its deps (exp, request, state): {ds:?}; its kids {:?} (states {:?}), tails {}", kids[i], kids[i].iter().map(|&k| lz.state[k as usize]).collect::<Vec<_>>(), q.tails);
+            }
+        }
+        t.lazy_suspended += lz.suspended;
+        t.lazy_stuck += stuck;
+        t.lazy_odd += lz.odd;
+        t.lazy_work += lz.work + steps_of(&r[0]);
+        worst_lazy = worst_lazy.max(lazy);
+        worst_serial[0] = worst_serial[0].max(serial);
+        worst_serial[1] = worst_serial[1].max(serial_s);
+        let sum = |f: &dyn Fn(&Request) -> u64| -> u64 { r.iter().skip(1).map(f).sum() };
+        t.reqs += r.len() as u64 - 1;
+        t.computed += computed;
+        t.read += under[0];
+        t.work += work;
+        t.read_steps += under_s[0];
+        t.work_steps += work_s;
+        t.top += u64::from(r[0].own);
+        t.tails += sum(&|q| u64::from(q.tails));
+        t.place += place.iter().skip(1).filter(|&&p| p).count() as u64;
+        t.blocks += sum(&|q| u64::from(q.blocks));
+        t.edge_first += sum(&|q| u64::from(q.edge_first));
+        t.edge_last += sum(&|q| u64::from(q.edge_last));
+        t.taken += sum(&|q| u64::from(q.taken));
+        t.needs += sum(&|q| u64::from(q.needs_args));
+        t.args += sum(&|q| u64::from(q.arg));
+        if only.as_deref().is_none_or(|o| name.contains(o)) {
+            rows.push((serial_s, format!("{name}: the longest invocation in steps {serial_s} serially, waves after/holes/references/free {}/{}/{lazy}/{}; in tokens {serial}, {}/{}/{}; read {} steps, {} with the memo; {} deep; {} continuations left waiting",
+                chains[3], chains[4], chains[5], chains[0], chains[1], chains[2], under_s[0], work_s, deep, lz.suspended)));
+            if let Some((a, b)) = piece {
+                // The piece: the top-level tokens a..b, its calls posted at their steps in it.
+                let inside: Vec<u32> = tops.iter().copied().filter(|&c| r[c as usize].pos > a && r[c as usize].pos <= b).collect();
+                let base = tops.iter().copied().filter(|&c| r[c as usize].pos <= a).last().map_or(0, |c| r[c as usize].pos_steps);
+                let last = inside.last().map_or((a, base), |&c| (r[c as usize].pos, r[c as usize].pos_steps));
+                let own_s = u64::from(last.1 - base) + u64::from(b.saturating_sub(last.0)).div_ceil(32);
+                let serial_piece: u64 = own_s + inside.iter().map(|&c| under_s[c as usize]).sum::<u64>();
+                let mut out = Vec::new();
+                for args in [Args::After, Args::Holes, Args::Free] {
+                    let mut m = Model { r: &r, kids: &kids, place: &place, steps: true, args, memo: HashMap::new(), work: 0, computed: 0, deepest: 0 };
+                    let mut done = own_s;
+                    for &c in &inside {
+                        done = done.max(m.run(c, u64::from(r[c as usize].pos_steps - base), 1));
+                    }
+                    out.push(done);
+                }
+                let mut lz = Lazy::new(&r, &deps, &kids, &place, &size, &exp_req);
+                lz.state[0] = 1;
+                let (e, _) = lz.run(&inside, |c| u64::from(r[c as usize].pos_steps - base));
+                eprintln!("WAVES {name} piece {a}..{b}: {} calls at the top; {serial_piece} steps serially ({own_s} the top's own), waves after/holes/references/free {}/{}/{}/{}", inside.len(), out[0], out[1], e.max(own_s), out[2]);
+            }
+        }
+    }
+    let pct = |a: u64, b: u64| 100.0 * a as f64 / b.max(1) as f64;
+    eprintln!("WAVES {} units: {} requests ({} arguments), {} computed with a unit's memo ({:.1}%), {} place-dependent", units.len(), t.reqs, t.args, t.computed, pct(t.computed, t.reqs), t.place);
+    eprintln!("WAVES read serially: {} tokens ({} the files' own), {} steps; with a unit's memo {:.1}% of the tokens, {:.1}% of the steps; with a batch's memo by spelling {:.1}%, {:.1}%", t.read, t.top, t.read_steps, pct(t.work, t.read), pct(t.work_steps, t.read_steps), pct(t.batch_work, t.read), pct(t.batch_steps, t.read_steps));
+    eprintln!("WAVES edges: open tails {}; argument holes whose edge waits {} (before {}, after {}); calls whose name and ( came from different parts {}; calls needing their parent's arguments {}", t.tails, t.blocks, t.edge_first, t.edge_last, t.taken, t.needs);
+    eprintln!("WAVES the longest top-level invocation: serially {} steps ({} tokens); waves after/holes/references/free {}/{}/{worst_lazy}/{} steps ({}/{}/-/{} tokens)", worst_serial[1], worst_serial[0], worst[3], worst[4], worst[5], worst[0], worst[1], worst[2]);
+    eprintln!("WAVES arguments as references: {} continuations left waiting, {} steps computed ({:.1}% of the serial steps), {} requests stuck, {} odd waits", t.lazy_suspended, t.lazy_work, pct(t.lazy_work, t.read_steps), t.lazy_stuck, t.lazy_odd);
+    rows.sort_by_key(|r| std::cmp::Reverse(r.0));
+    for (_, row) in rows.iter().take(15) {
+        eprintln!("WAVES {row}");
+    }
+}
 
 /// What `against_serial` found.
 struct Against {
@@ -1410,15 +2227,22 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
         if let Some(k) = std::env::var("RERAIL_PP_STAGES").ok().and_then(|k| k.parse::<usize>().ok()) {
             batch_stages(&units[..k.min(units.len())]);
         }
-        let mut seen: Vec<*const Expanded> = Vec::new();
+        // A batch's units answer with its run (`Expanded::run`): its GPU time once, and its units.
+        let mut seen: Vec<u64> = Vec::new();
         for e in &entries {
             let (path, part) = (e.path, &e.s.part);
             let x = &*part.x;
-            if !seen.contains(&std::ptr::from_ref(x)) {
-                seen.push(std::ptr::from_ref(x));
-                launches = launches.max(x.launches);
-                gpu.push(x.gpu_seconds);
-                batches.push(x.unit_out.len().saturating_sub(1).max(1));
+            launches = launches.max(x.launches);
+            match seen.iter().position(|&r| r == x.run) {
+                Some(b) => {
+                    let at = batches.len() - seen.len() + b;
+                    batches[at] += 1;
+                }
+                None => {
+                    seen.push(x.run);
+                    gpu.push(x.gpu_seconds);
+                    batches.push(1);
+                }
             }
             // Room counts only alone: with another refusal the unit is not rerun, and the other is why.
             let refused_by = if x.refused & !X_ROOM != 0 { x.refused & !X_ROOM } else { x.refused };
@@ -1723,6 +2547,36 @@ fn the_output_is_pieces_that_refer_to_the_text() {
     let got = got.unwrap_or_else(|why| panic!("refused {why}"));
     same(show(&got), show(&want), "the text");
     assert!(want.len() > 2000 && pieces <= 5 + 4 * 4, "{} tokens in {pieces} pieces", want.len());
+}
+
+/// Decision 0588 §1: the text's expansion is one phase of the loop, whatever its rescans' depth (the rounds took
+/// a few phases a rescan): a run's phases are the same for chains of object-like and function-like macros 1, 8 and
+/// 20 deep (within the loop's stacks: deeper is refused for depth, `X_DEPTH`), and each output is the serial pass's.
+#[test]
+fn the_expansion_is_one_loop_phase() {
+    use rerail_c_pp::files::Search;
+    use rerail_metal::pp_expand::{expand_from, phase_lines};
+    let mut runs: Vec<(usize, Vec<u32>)> = Vec::new();
+    for depth in [1usize, 8, 20] {
+        let mut text = String::from("#define C0 x\n#define F0(a) [a]\n");
+        for k in 1..=depth {
+            text += &format!("#define C{k} C{}\n#define F{k}(a) F{}(a C{k})\n", k - 1, k - 1);
+        }
+        text += &format!("int a = C{depth};\nint b = F{depth}(y) + C{};\n", depth / 2);
+        let (got, want, _, _) = expanded(&[("main.c", text.as_str())], false);
+        same(got.map(|g| show(&g)), Ok(show(&want)), format!("the output at depth {depth}"));
+        let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), text.into_bytes())].into_iter().collect();
+        let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+        let d = on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
+        let x = expand_from(&d.unit, &d.lay, 0).unwrap();
+        same(x.refused, 0, format!("refused at depth {depth}"));
+        runs.push((depth, phase_lines(&d.unit, &d.lay, &x).unwrap()));
+    }
+    assert!(!runs[0].1.is_empty(), "a traced run writes its phases");
+    for (depth, lines) in &runs[1..] {
+        same(lines.len(), runs[0].1.len(), format!("the phases at depth {depth}, against depth 1"));
+        same(lines, &runs[0].1, format!("the phases' lines at depth {depth}"));
+    }
 }
 
 /// Decision 0588: the loop writes its output once, where each piece makes it. A piece that reads

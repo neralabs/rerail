@@ -1,27 +1,27 @@
 {
   "caught": [
     {
-      "path": "native/src/git_workspace.rs",
+      "path": "native/crates/observe/src/git_workspace.rs",
       "content": "/// The extensions of the files the host evaluates (`SOURCE_LANGUAGES` in\n/// code-rule-languages.ts): dialect sources and the text files regex clauses read.\nconst SOURCE_SUFFIXES: &[&str] = &[\n    \"bash\", \"cjs\", \"css\", \"cts\", \"html\", \"js\", \"json\", \"jsx\", \"md\", \"mdx\", \"mjs\", \"mts\", \"php\",\n    \"py\", \"pyi\", \"rs\", \"rst\", \"scss\", \"sh\", \"sql\", \"toml\", \"ts\", \"tsx\", \"txt\", \"yaml\", \"yml\",\n    \"zsh\",\n];\n"
     },
     {
-      "path": "native/src/code_rule_dsl/language.rs",
+      "path": "native/crates/lang/src/code_rule_dsl/language.rs",
       "content": "impl SourceType {\n    pub(crate) fn of_path(path: &str, package: Option<PackageType>) -> Option<Self> {\n        let name = path.rsplit('/').next().unwrap_or(path);\n        match name.rsplit_once('.').map(|(_, extension)| extension) {\n            Some(\"cjs\" | \"cts\") => Some(Self::CommonJs),\n            Some(\"ts\") if is_declaration_file(name) => Some(Self::Module),\n            Some(\"js\" | \"jsx\" | \"ts\") => match package {\n                None | Some(PackageType::Module) => Some(Self::Module),\n                Some(PackageType::CommonJs) => Some(Self::CommonJs),\n                Some(PackageType::Unset) => None,\n            },\n            _ => Some(Self::Module),\n        }\n    }\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/module_graph.rs",
+      "path": "native/crates/lang_ecma/src/code_rule_dsl/module_graph.rs",
       "content": "fn ecma_label(path: &str) -> Option<&'static str> {\n    let extension = path.rsplit_once('.')?.1.to_ascii_lowercase();\n    match extension.as_str() {\n        \"ts\" | \"mts\" | \"cts\" => Some(\"typescript\"),\n        \"tsx\" => Some(\"tsx\"),\n        \"js\" | \"jsx\" | \"mjs\" | \"cjs\" => Some(\"javascript\"),\n        _ => None,\n    }\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/workspace/ingest.rs",
+      "path": "native/crates/workspace/src/code_rule_dsl/workspace/ingest.rs",
       "content": "const EXTENSIONS: [&str; 8] = [\".tsx\", \".ts\", \".jsx\", \".js\", \".mjs\", \".cjs\", \".mts\", \".cts\"];\n"
     },
     {
-      "path": "native/src/code_rule_dsl/compile/mod.rs",
+      "path": "native/crates/rules_base/src/code_rule_dsl/compile/mod.rs",
       "content": "fn planned(language: &str) -> bool {\n    for planned in [\"vue\", \"sql\", \"rust\"] {\n        if planned == language { return true; }\n    }\n    false\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/matcher/resolve.rs",
+      "path": "native/crates/adapters/src/code_rule_dsl/matcher/resolve.rs",
       "content": "fn typescript_importer(path: &str) -> bool {\n    matches!(extension(path), \".ts\" | \".tsx\" | \".cts\" | \".mts\")\n}\n"
     },
     {
@@ -37,15 +37,15 @@
       "content": "const SOURCE_LANGUAGES = new Map<string, CodeRuleSourceLanguage>([\n  [\".py\", \"python\"], [\".pyi\", \"python\"], [\".ts\", \"typescript\"],\n]);\n"
     },
     {
-      "path": "native/src/code_rule_dsl/calls/closure.rs",
+      "path": "native/crates/adapters/src/code_rule_dsl/calls/closure.rs",
       "content": "pub(crate) fn path_module(path: &str) -> Option<String> {\n    let path = path\n        .strip_suffix(\".py\")\n        .or_else(|| path.strip_suffix(\".pyi\"))?;\n    Some(path.replace('/', \".\"))\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/workspace/index.rs",
+      "path": "native/crates/workspace/src/code_rule_dsl/workspace/index.rs",
       "content": "const SOURCE_LANGUAGES: &[(&str, &str)] = &[(\".py\", \"python\"), (\".ts\", \"typescript\"), (\".php\", \"php\")];\n"
     },
     {
-      "path": "native/src/code_rule_dsl/eval/query.rs",
+      "path": "native/crates/rules_base/src/code_rule_dsl/eval/query.rs",
       "content": "fn label(extension: &str) -> Option<&'static str> {\n    match extension {\n        \"py\" => Some(\"python\"),\n        \"php\" => Some(\"php\"),\n        _ => None,\n    }\n}\n"
     },
     {
@@ -71,15 +71,15 @@
       "content": "fn planned(language: &str) -> bool {\n    crate::code_rule_dsl::language::PLANNED_LANGUAGES.contains(&language)\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/language/adapter.rs",
+      "path": "native/crates/adapters/src/code_rule_dsl/language/adapter.rs",
       "content": "impl Adapter for Ecma {\n    fn source_type(path: &str) -> Option<SourceType> {\n        match path.rsplit_once('.').map(|(_, extension)| extension) {\n            Some(\"cjs\" | \"cts\") => Some(SourceType::CommonJs),\n            _ => Some(SourceType::Module),\n        }\n    }\n}\n"
     },
     {
-      "path": "native/src/code_rule_dsl/import_target/mod.rs",
+      "path": "native/crates/lang_ecma/src/code_rule_dsl/import_target/mod.rs",
       "content": "const TS_EXTENSIONS: &[&str] = &[\n    \".js\", \".ts\", \".mjs\", \".mts\", \".cjs\", \".cts\", \".json\", \".node\",\n];\n"
     },
     {
-      "path": "native/src/code_rule_dsl/vue/sfc.rs",
+      "path": "native/crates/lang_ecma/src/code_rule_dsl/vue/sfc.rs",
       "content": "fn lang_dialect(lang: &str) -> Option<GrammarDialect> {\n    match lang {\n        \"ts\" => Some(GrammarDialect::TypeScript),\n        \"tsx\" => Some(GrammarDialect::Tsx),\n        \"js\" | \"jsx\" => Some(GrammarDialect::JavaScript),\n        _ => None,\n    }\n}\n"
     },
     {

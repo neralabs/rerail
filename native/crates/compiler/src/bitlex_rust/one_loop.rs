@@ -116,6 +116,23 @@ struct Lp<'g, 'a> {
     making: RefCell<Vec<Numbers>>,
     /// Each place made of code (`to_place`), by its code.
     placed: RefCell<BTreeMap<String, usize>>,
+    /// Whether the token taken now is followed in its node by a token of the node's (so no close reads its end):
+    /// a separator, an opener, a pair's `:` (`walk`'s `take!()`, its end not kept).
+    end_unread: std::cell::Cell<bool>,
+    /// Each checked kind's check (`check K = G`).
+    check_of: BTreeMap<String, Gram>,
+    /// Whether the check being written reads its bytes with no bound (`b[j]`): none of its bytes the padding's, so its
+    /// match stops before the padded source's end, as the lean parser's `number_end` reads.
+    direct: std::cell::Cell<bool>,
+    /// Whether the code being written is the root's, outside every level: there no level is open (`depth` is 0), and
+    /// a call tests no depth, as `walk`'s document.
+    at_root: std::cell::Cell<bool>,
+    /// The run row whose tokens end where `ends` holds (`bitlex_lex_rust::ends_after_run`, simdjson's structural or
+    /// whitespace), and `ends`' code.
+    run_ends: Option<(u8, String)>,
+    /// The methods that decide every byte themselves (a choice's alternatives that call no level, `walk`'s
+    /// `primitive`), refusing what none takes as a decision does: a decision's arm calling one is its `_`.
+    deciding: RefCell<std::collections::BTreeSet<String>>,
 }
 
 /// A set of bytes.
@@ -439,7 +456,21 @@ impl Lp<'_, '_> {
             }
             arm_bytes.entry(a).or_default().push(b);
         }
-        let otherwise = none.to_owned();
+        // An arm that calls a method deciding every byte itself is the `_`, where none passing is refused, as `walk`'s
+        // `_ => primitive`: the method written once, called from each place.
+        let err = "return Err(at(src, starts, i));\n";
+        let mut otherwise = none.to_owned();
+        if none == err && split.is_empty() {
+            let deciding = self.deciding.borrow().clone();
+            for &a in arm_bytes.keys() {
+                let c = code(a, T::Byte)?;
+                if deciding.iter().any(|m| c.starts_with(&format!("e = unsafe {{ {m}::<S>(src, len, starts, d, &mut i, ["))) {
+                    otherwise = c;
+                    arm_bytes.remove(&a);
+                    break;
+                }
+            }
+        }
         // One `match` on the token's first byte: a split kind's words its arms too, each a guard on its bytes, and the
         // kind's own arm its row's bytes after them (simdjson's `primitive`: one `switch`).
         let mut out = if split.is_empty() { String::from("match peek(src, starts, i) {\n") } else { String::from("let s = starts[i] as usize;\nmatch src[s] {\n") };
@@ -451,7 +482,11 @@ impl Lp<'_, '_> {
             // A word: its first byte, its bytes, the byte after not the row's (simdjson's atoms, `str4ncmp`).
             let word = |w: u8| -> (String, usize) {
                 let b = &self.g.x.words[usize::from(w) - 1];
-                (format!("{:#04x} if src[s..s + {l}] == *b\"{}\" && !in_row(src[s + {l}], {})", b[0], lit(b), rk + 1, l = b.len()), b.len())
+                let after = match &self.run_ends {
+                    Some((r, _)) if *r == *rk => format!("ends(src[s + {}])", b.len()),
+                    _ => format!("!in_row(src[s + {}], {})", b.len(), rk + 1),
+                };
+                (format!("{:#04x} if src[s..s + {l}] == *b\"{}\" && {after}", b[0], lit(b), l = b.len()), b.len())
             };
             let _ = writeln!(out, "// `{name}`: its words by their bytes, then its own.");
             for (w, a) in words {
@@ -463,7 +498,17 @@ impl Lp<'_, '_> {
                 for h in self.hard_words(name).iter().filter(|h| !words.iter().any(|(w, _)| w == *h)) {
                     let _ = write!(out, "{} => {{\n{none}}}\n", word(*h).0);
                 }
-                let _ = write!(out, "{} => {{\nlet end = {};\n{}}}\n", pattern(&self.bytes_of(*rk)), self.end_code(name, &end)?, code(*a, T::Word)?);
+                // A checked run's arm at its check's first bytes alone, where the rest is refused at the token's byte, as
+                // the check refuses there (`walk`'s number at a digit or `-`).
+                let mut bytes = self.bytes_of(*rk);
+                if matches!(end, End::Run)
+                    && none == "return Err(at(src, starts, i));\n"
+                    && let Some(body) = self.check_of.get(name)
+                    && let Ok((first, false)) = self.check_first(body)
+                {
+                    bytes.retain(|b| first.contains(b));
+                }
+                let _ = write!(out, "{} => {{\nlet end = {};\n{}}}\n", pattern(&bytes), self.end_code(name, &end)?, code(*a, T::Word)?);
             }
         }
         let _ = write!(out, "_ => {{\n{otherwise}}}\n}}\n");
@@ -491,6 +536,9 @@ impl Lp<'_, '_> {
             {
                 let n = self.number(k, key)?;
                 return Ok(if t == T::Word { format!("e = token(d, &mut i, {n}, s, end);\n") } else { format!("let s = starts[i] as usize;\ne = token(d, &mut i, {n}, s, {});\n", self.end_code(&name, &end)?) });
+            }
+            if kind.is_none() && t != T::Word && matches!(end, End::One) && self.end_unread.get() {
+                return Ok("i += 1;\n".to_owned());
             }
             let mut body = if t == T::Word { "i += 1;\ne = end;\n".to_owned() } else { format!("let s = starts[i] as usize;\ni += 1;\ne = {};\n", self.end_code(&name, &end)?) };
             if let Some(k) = kind {
@@ -556,9 +604,20 @@ impl Lp<'_, '_> {
         let mut check = if required.is_empty() { String::new() } else { format!("if !matches!(&src[p..p + {len}], {}) {{\nreturn Err(p as u32);\n}}\n", required.join(" | ")) };
         // The grammar's errors at an escape, where it is read (the lean parser's stage 2; decision 0599): tier 1 leaves
         // them out (`bitlex_lex_rust::piece_covers`).
-        let state = match crate::bitlex_piece_checks::piece_checks(self.g.x.lexer, part_start) {
+        // The pieces' words of two bytes, the lead's, decided by their second byte once (`escaped_string`'s `c`): the
+        // gate's bytes its checks' arm, the other words' an arm of none, any other byte refused.
+        let seconds: Option<Vec<u8>> = (*len == 2 && words.iter().all(|w| w.len() == 2)).then(|| words.iter().map(|w| w[1]).collect());
+        let state = match crate::bitlex_piece_checks::piece_checks(self.g.x.lexer, part_start, Some(quote)) {
             Ok(pc) => {
-                check.push_str(&pc.at_piece);
+                match (&pc.gate, &seconds) {
+                    (Some((g, head, inside)), Some(sec)) if sec.iter().any(|b| g[usize::from(*b)]) && (0..256).all(|b| !g[b] || sec.contains(&(b as u8))) => {
+                        let gb: Vec<u8> = sec.iter().copied().filter(|b| g[usize::from(*b)]).collect();
+                        let rest: Vec<u8> = sec.iter().copied().filter(|b| !g[usize::from(*b)]).collect();
+                        let others = if rest.is_empty() { String::new() } else { format!("{} => {{}}\n", pattern(&rest)) };
+                        check = format!("{head}// Its second byte decided once: the words', the checks at the gate's.\nmatch src[y] {{\n{} => {{\n{inside}}}\n{others}_ => return Err(p as u32),\n}}\n", pattern(&gb));
+                    }
+                    _ => check.push_str(&pc.at_piece),
+                }
                 if !self.method_code.borrow().contains(&pc.statics) {
                     self.method_code.borrow_mut().push(pc.statics);
                 }
@@ -566,6 +625,9 @@ impl Lp<'_, '_> {
             }
             Err(_) => String::new(),
         };
+        // Tier 1 refuses a file the region is open at the end of: the read meets its closer before it, as simdjson's
+        // stage 2 reads past no bound.
+        let bound = if !rd.regions.is_empty() && rd.regions.iter().all(|r| crate::bitlex_lex_rust::refuses_open_at_end(self.g.x.lexer, &r.kind)) { String::new() } else { "if x >= len {\nreturn Err(s as u32);\n}\n".to_owned() };
         let test = if t == T::No { format!("match peek(src, starts, i) {{\n{} => {{}}\n_ => return Err(at(src, starts, i)),\n}}\n", pattern(&self.bytes_of(self.token(&o)?.0))) } else { String::new() };
         // The read, a method of its own (`string` in the lean parser), the node's number its caller's.
         let ns = self.method(&ident(kind), &format!("`{kind}`, its pieces leaves"), |key| {
@@ -598,14 +660,13 @@ impl Lp<'_, '_> {
              e = c + 1;\n\
              break;\n\
              }}\n\
-             if lead == 0 {{\nx += 32;\nif x >= len {{\nreturn Err(s as u32);\n}}\n(lead, quote) = unsafe {{ marks::<S>(src, x, {lead_b:#04x}, {quote_b:#04x}) }};\ncontinue;\n}}\n\
+             if lead == 0 {{\nx += 32;\n{bound}(lead, quote) = unsafe {{ marks::<S>(src, x, {lead_b:#04x}, {quote_b:#04x}) }};\ncontinue;\n}}\n\
              let q = x + lead.trailing_zeros() as usize;\n\
              if q > p {{\nleaf(d, {content}, p as u64, q as u64);\n}}\n\
              p = q;\n{check}\
              leaf(d, {piece}, p as u64, (p + {len}) as u64);\n\
              p += {len};\n\
-             x = p;\n\
-             if x >= len {{\nreturn Err(s as u32);\n}}\n\
+             x = p;\n{bound}\
              (lead, quote) = unsafe {{ marks::<S>(src, x, {lead_b:#04x}, {quote_b:#04x}) }};\n\
              }}\n\
              close(d, e as u64);\n",
@@ -652,8 +713,30 @@ impl Lp<'_, '_> {
     /// among them; each other alternative is an arm of its own.
     fn alt_arms<'s>(&'s self, h: Heads, k: K) -> Result<Vec<Arm<'s>>, String> {
         let mut arms: Vec<Arm<'s>> = Vec::new();
-        // Each alternative its own arm of the decision: the byte matched once, by the place's `match`, a container's
-        // and a primitive's alike (page 40, fix 9).
+        // The alternatives that call no level, one method (`walk`'s `primitive`), written once and called from each
+        // place: its arm the place's `_`. The level calls' alternatives are the place's arms of their own.
+        let plain: Vec<&Gram> = h.alts.iter().filter(|a| !self.calls(a)).collect();
+        if let Some((name, at)) = &h.choice
+            && plain.len() > 1
+        {
+            let alts: Vec<Gram> = plain.iter().map(|a| (*a).clone()).collect();
+            let first: Vec<First> = alts.iter().map(|a| self.g.first(a).map(|f| f.0)).collect::<Result<Vec<_>, _>>()?.concat();
+            let mname = format!("{}_primitive", ident(name));
+            let ns = self.method(&mname, &format!("`{name}`'s alternatives that call no level (`walk`'s `primitive`)"), |place| {
+                let Some(hp) = self.heads(&Gram::Sym(name.clone()), place)? else { return self.err(format!("`{name}`: no alternatives")) };
+                let mine: Vec<Gram> = hp.alts.into_iter().filter(|a| !self.calls(a)).collect();
+                self.plain(&Gram::Alt(mine), &hp.key, T::No)
+            })?;
+            self.deciding.borrow_mut().insert(mname.clone());
+            let (call, k2) = (self.call(&mname, &ns, at)?, k.clone());
+            arms.push((first, Box::new(move |_| Ok(format!("{call}{}", Self::jump(&k2))))));
+            for a in h.alts.into_iter().filter(|a| self.calls(a)) {
+                let (first, _) = self.g.first(&a)?;
+                let (akey, k) = (h.key.clone(), k.clone());
+                arms.push((first, Box::new(move |t| self.walk(&a, &akey, k.clone(), t))));
+            }
+            return Ok(arms);
+        }
         for a in h.alts {
             let (first, _) = self.g.first(&a)?;
             let (akey, k) = (h.key.clone(), k.clone());
@@ -704,7 +787,7 @@ impl Lp<'_, '_> {
         let code = code?;
         let n = if ns.is_empty() { "_n" } else { "n" };
         self.method_code.borrow_mut().push(format!(
-            "/// {what}, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its\n/// caller's key, as each place gives them.\n///\n/// # Safety\n/// The CPU runs `S`'s backend (`run_best` chose it).\n#[inline(always)]\nunsafe fn {name}<S: rerail_simd8::Simd8x64>(src: &[u8], len: usize, starts: &[u32], d: *mut u8, ip: &mut usize, {n}: [u32; {}]) -> Result<usize, u32> {{\nlet mut i = *ip;\nlet mut e = 0usize;\n{code}*ip = i;\nOk(e)\n}}\n\n",
+            "/// {what}, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its\n/// caller's key, as each place gives them.\n///\n/// # Safety\n/// The CPU runs `S`'s backend (`run_best` chose it).\n#[inline(always)]\nunsafe fn {name}<S: rerail_simd8::Simd8x64>(src: &[u8], len: usize, starts: &[u32], d: &mut Cursor<Cells>, ip: &mut usize, {n}: [u32; {}]) -> Result<usize, u32> {{\nlet mut i = *ip;\nlet mut e = 0usize;\n{code}*ip = i;\nOk(e)\n}}\n\n",
             ns.len()
         ));
         self.methods.borrow_mut().insert(name.to_owned(), ns.clone());
@@ -733,11 +816,37 @@ impl Lp<'_, '_> {
 
     /// A list `a (sep a)*`, then `rest`, then `k`: its head (`a`, its first token tested there) and its cycle (a
     /// decision on the separator, going on to the head, and on what follows, going on to `rest`), one place each.
+    /// `f` with `end_unread` set where `g` is a token without a node, and a token of the node follows it
+    /// (`follows`): its end then is read by no close.
+    fn unread<R>(&self, g: &Gram, follows: bool, f: impl FnOnce() -> R) -> R {
+        // A token without a node is one `as` nothing (`take` writes a leaf for every other).
+        let bare = matches!(g, Gram::As(k, a) if k == ::bitlex::syntax::IMPLIED && self.g.token_of(a).is_some());
+        let was = self.end_unread.replace(follows && bare);
+        let r = f();
+        self.end_unread.set(was);
+        r
+    }
+
+    /// Whether some of `gs` cannot be empty: a token is taken there before the node's close.
+    fn takes(&self, gs: &[Gram]) -> Result<bool, String> {
+        for g in gs {
+            if !self.g.first(g)?.1 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn list(&self, a: &Gram, sep: &[Gram], rest: &[Gram], k: K) -> Result<usize, String> {
         let head = self.place(String::new());
         let again = format!("continue 'l{head};\n");
         let (sep, rest, none) = (Gram::Seq(sep.to_vec()), Gram::Seq(rest.to_vec()), Key::default());
-        let mut arms: Vec<Arm<'_>> = vec![(self.g.first(&sep)?.0, Box::new(|t| self.walk(&sep, &none, K::Code(again.clone()), t)))];
+        // A separator of one token: the element follows it.
+        let one = match &sep {
+            Gram::Seq(gs) if gs.len() == 1 => gs[0].clone(),
+            g => g.clone(),
+        };
+        let mut arms: Vec<Arm<'_>> = vec![(self.g.first(&sep)?.0, Box::new(|t| self.unread(&one, true, || self.walk(&one, &none, K::Code(again.clone()), t))))];
         let (_, empty) = self.g.first(&rest)?;
         let otherwise = if empty {
             self.walk(&rest, &none, k, T::No)?
@@ -810,7 +919,8 @@ impl Lp<'_, '_> {
             Gram::Seq(gs) => {
                 let (mut out, none) = (String::new(), Key::default());
                 for (k, g) in gs.iter().enumerate() {
-                    out.push_str(&self.plain(g, if k == 0 { key } else { &none }, if k == 0 { t } else { T::No })?);
+                    let follows = self.takes(&gs[k + 1..])?;
+                    out.push_str(&self.unread(g, follows, || self.plain(g, if k == 0 { key } else { &none }, if k == 0 { t } else { T::No }))?);
                 }
                 out
             }
@@ -871,6 +981,7 @@ impl Lp<'_, '_> {
                     let empty_end = if falls { String::new() } else { Self::go(ret) };
                     let number = self.number(kind, key)?;
                     let mut out = String::new();
+                    let depth_test = if self.at_root.get() { "" } else { "if depth == DEPTH {\nreturn Err(at(src, starts, i));\n}\n" };
                     if let Some((_, close)) = self.brackets(n)? {
                         // The level the root's value: the file's last record its closer, checked before the walk, as
                         // the lean parser's `last != '}'`.
@@ -881,11 +992,11 @@ impl Lp<'_, '_> {
                         // its depth tested as a level's.
                         let _ = write!(
                             out,
-                            "if depth == DEPTH {{\nreturn Err(at(src, starts, i));\n}}\nif peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty.\nlet s = starts[i] as usize;\ne = starts[i + 1] as usize + 1;\ni += 2;\nleaf(d, {number}, s as u64, e as u64);\n{}}} else {{\n",
-                            empty_end
+                            "{}if peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty.\nlet s = starts[i] as usize;\ne = starts[i + 1] as usize + 1;\ni += 2;\nleaf(d, {number}, s as u64, e as u64);\n{}}} else {{\n",
+                            depth_test, empty_end
                         );
                     } else {
-                        out.push_str("if depth == DEPTH {\nreturn Err(at(src, starts, i));\n}\n");
+                        out.push_str(depth_test);
                     }
                     let _ = write!(out, "open(d, {number}, at(src, starts, i) as u64);\nret[depth] = {ret};\ndepth += 1;\n{}", Self::go(first));
                     if self.brackets(n)?.is_some() {
@@ -921,7 +1032,8 @@ impl Lp<'_, '_> {
                     None => (&gs[..], k),
                 };
                 for (j, g) in gs.iter().enumerate().rev() {
-                    k = K::Code(self.walk(g, if j == 0 { key } else { &none }, k, if j == 0 { t } else { T::No })?);
+                    let follows = list.is_some() || self.takes(&gs[j + 1..])?;
+                    k = K::Code(self.unread(g, follows, || self.walk(g, if j == 0 { key } else { &none }, k, if j == 0 { t } else { T::No }))?);
                 }
                 Self::jump(&k)
             }
@@ -966,6 +1078,7 @@ impl Lp<'_, '_> {
         }
         let first = self.place(String::new());
         self.levels.borrow_mut().insert(rule.to_owned(), first);
+        let root = self.at_root.replace(false);
         let Some(Stmt::Node { body, .. }) = self.g.rules.get(rule) else { return self.err(format!("`{rule}`: no node")) };
         // Bracketed, `O [M] C`: each call took `O C` as the level empty, so here `M` is there.
         let there;
@@ -986,15 +1099,30 @@ impl Lp<'_, '_> {
             _ => body,
         };
         let end = "close(d, e as u64);\n// The place the level's call returns to, by its depth (a level ends only inside its call).\ndepth -= 1;\nst = ret[depth];\ncontinue 'run;\n".to_owned();
-        let code = self.walk(body, &Key::default(), K::Code(end), T::Byte)?;
-        self.places.borrow_mut()[first] = code;
+        let code = self.walk(body, &Key::default(), K::Code(end), T::Byte);
+        self.at_root.set(root);
+        self.places.borrow_mut()[first] = code?;
         Ok(first)
     }
 
     /// A `check K = G` as a function of the token's bytes: `G` over them, its names byte classes, its literals
     /// bytes, each decision at the next byte.
     fn check_fn(&self, kind: &str, body: &Gram) -> Result<String, String> {
-        Ok(format!("/// `check {kind}`: the end of the check's grammar's match from the start of `b` (the bytes from the token's,\n/// to the padded source's end), or none.\nfn check_{}(b: &[u8]) -> Option<usize> {{\nlet mut j = 0usize;\n{}Some(j)\n}}\n\n", ident(kind), self.check_code(body, false)?))
+        // The padding's byte (a space) none of the check's: its match stops at the padding at the latest.
+        self.direct.set(!self.check_bytes(body)?.contains(&b' '));
+        let code = self.check_code(body, false)?;
+        self.direct.set(false);
+        Ok(format!("/// `check {kind}`: the end of the check's grammar's match from the start of `b` (the bytes from the token's,\n/// to the padded source's end), or none.\nfn check_{}(b: &[u8]) -> Option<usize> {{\nlet mut j = 0usize;\n{}Some(j)\n}}\n\n", ident(kind), code))
+    }
+
+    /// Every byte a check's grammar may read.
+    fn check_bytes(&self, g: &Gram) -> Result<Vec<u8>, String> {
+        Ok(match g {
+            Gram::Lit(_) | Gram::Sym(_) => self.check_first(g)?.0,
+            Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().map(|g| self.check_bytes(g)).collect::<Result<Vec<_>, _>>()?.concat(),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) => self.check_bytes(a)?,
+            other => return self.err(format!("a check's {other:?}")),
+        })
     }
 
     /// The bytes a check's grammar may start with, and whether it may match none.
@@ -1046,7 +1174,7 @@ impl Lp<'_, '_> {
         let (mut f, _) = self.check_first(g)?;
         f.sort_unstable();
         f.dedup();
-        Ok(format!("matches!(b.get(j), Some({}))", pattern(&f)))
+        Ok(if self.direct.get() { format!("matches!(b[j], {})", pattern(&f)) } else { format!("matches!(b.get(j), Some({}))", pattern(&f)) })
     }
 
     /// The code of a check's `g`; `tested`, whether the test before it found its first byte (an `[A]`, `A*`, `A+` or
@@ -1059,6 +1187,14 @@ impl Lp<'_, '_> {
             Gram::Opt(a) => format!("if {} {{\n{}}}\n", self.at_byte(a)?, self.check_code(a, true)?),
             Gram::Star(a) => format!("while {} {{\n{}}}\n", self.at_byte(a)?, self.check_code(a, true)?),
             Gram::Plus(a) => format!("{}while {} {{\n{}}}\n", self.check_code(a, tested)?, self.at_byte(a)?, self.check_code(a, true)?),
+            // Each alternative one byte: one test of them all (`walk`'s exponent sign), none where the test before found it.
+            Gram::Alt(gs) if gs.iter().all(|g| matches!(g, Gram::Lit(_) | Gram::Sym(_))) => {
+                if tested {
+                    "j += 1;\n".to_owned()
+                } else {
+                    format!("if !{} {{\nreturn None;\n}}\nj += 1;\n", self.at_byte(g)?)
+                }
+            }
             Gram::Alt(gs) => {
                 let mut out = String::new();
                 for g in gs {
@@ -1080,34 +1216,31 @@ enum Admit {
 
 /// The parser's own code: the writer's ops, the record's first byte, the block's bytes; what nothing calls is left out.
 const RUNTIME: &str = r#"
-/// Node `number` opened at `start`, by the writer's op on its state `d`. `parse` reserved the run's room once
-/// (`reserve_run`), for every node and level it can write, so the op does not fail.
+/// Node `number` opened at `start`, stored through the walk's hold on the tape (`d`, the lean parser's `Walk`).
+/// `parse` reserved the run's room once (`reserve_run`), for every node and level it can write.
 #[inline(always)]
-fn open(d: *mut u8, number: u32, start: u64) {
-    // SAFETY: `d` is the writer's state, its room reserved for the run (`parse`).
-    let r = unsafe { w_open_with::<Cells>(d, number, start) };
-    debug_assert_eq!(r, 0, "the writer's open, its room reserved");
+fn open(d: &mut Cursor<Cells>, number: u32, start: u64) {
+    // SAFETY: the cursor's state's room is reserved for the run (`parse`).
+    unsafe { d.open(number, start) }
 }
 
 /// A leaf, as `open`.
 #[inline(always)]
-fn leaf(d: *mut u8, number: u32, start: u64, end: u64) {
+fn leaf(d: &mut Cursor<Cells>, number: u32, start: u64, end: u64) {
     // SAFETY: as `open`'s.
-    let r = unsafe { w_leaf_with::<Cells>(d, number, start, end) };
-    debug_assert_eq!(r, 0, "the writer's leaf, its room reserved");
+    unsafe { d.leaf(number, start, end) }
 }
 
 /// A node of one leaf child, both at once (the writer's `leaf_in`), as `open`.
 #[inline(always)]
-fn leaf_in(d: *mut u8, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) {
+fn leaf_in(d: &mut Cursor<Cells>, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) {
     // SAFETY: as `open`'s.
-    let r = unsafe { w_leaf_in_with::<Cells>(d, number, child, start, cs, ce, end) };
-    debug_assert_eq!(r, 0, "the writer's node of one leaf, its room reserved");
+    unsafe { d.leaf_in(number, child, start, cs, ce, end) }
 }
 
 /// A token's leaf from `s` to `end`, the next record taken: its end (the lean parser's `leaf`, for each place's arm).
 #[inline(always)]
-fn token(d: *mut u8, i: &mut usize, number: u32, s: usize, end: usize) -> usize {
+fn token(d: &mut Cursor<Cells>, i: &mut usize, number: u32, s: usize, end: usize) -> usize {
     *i += 1;
     leaf(d, number, s as u64, end as u64);
     end
@@ -1115,21 +1248,20 @@ fn token(d: *mut u8, i: &mut usize, number: u32, s: usize, end: usize) -> usize 
 
 /// The innermost open node closed at `end`, as `open`.
 #[inline(always)]
-fn close(d: *mut u8, end: u64) {
+fn close(d: &mut Cursor<Cells>, end: u64) {
     // SAFETY: as `open`'s; a node is open (each close is its open's).
-    let r = unsafe { w_close_with::<Cells>(d, end) };
-    debug_assert_eq!(r, 0, "the writer's close, its room reserved");
+    unsafe { d.close(end) }
 }
 
 /// The first byte of record `i`: past the last, the padding's (a space, which no token starts with), as simdjson's
 /// stage 2 reads `*next`.
 #[inline(always)]
-fn peek(src: &[u8], starts: &[u32], i: usize) -> u16 {
+fn peek(src: &[u8], starts: &[u32], i: usize) -> u8 {
     debug_assert!(i < starts.len() && (starts[i] as usize) < src.len());
     // SAFETY: `i` is at most the count: a record past the last is the first of the index's three last entries,
     // `len`, whose byte is the padding's, which no arm takes, so nothing reads past it; `len` is within the padded
     // source.
-    unsafe { u16::from(*src.get_unchecked(*starts.get_unchecked(i) as usize)) }
+    unsafe { *src.get_unchecked(*starts.get_unchecked(i) as usize) }
 }
 
 /// Where record `i` starts: past the last, the file's end (the index's last entries).
@@ -1235,7 +1367,32 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
             _ => {}
         }
     }
-    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()) };
+    // A run's end: the bytes it may end before, as tier 1's records allow, one test (`ends`) where they are rows.
+    let run_ends = x.lexer.iter().find_map(|s| match s {
+        Stmt::Token { kind, rule: Some(::bitlex::syntax::TokenRule::Run(r)), .. } => Some((kind.clone(), r.clone())),
+        _ => None,
+    });
+    let run_ends = run_ends.and_then(|(kind, r)| {
+        let (rk, _) = *ends.get(&kind)?;
+        let ok = crate::bitlex_lex_rust::ends_after_run(x.lexer, &r)?;
+        let row = |b: usize| row_of[b].map_or(0, |r| u16::from(r) + 1);
+        let mut rows: Vec<u16> = (0..256).filter(|&b| ok[b]).map(row).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        if !(0..256).all(|b| ok[b] == rows.contains(&row(b))) || rows.contains(&(u16::from(rk) + 1)) {
+            return None;
+        }
+        let pat = rows.iter().map(u16::to_string).collect::<Vec<_>>().join(" | ");
+        Some((rk, format!("/// Whether a `{kind}` token, and a word of its row, may end before byte `b`: a byte no token starts at, or one a
+/// record starts at after it (simdjson's `is_not_structural_or_whitespace` false); at any other the file is refused.
+#[inline(always)]
+fn ends(b: u8) -> bool {{
+matches!(ROWS[usize::from(b)], {pat})
+}}
+
+")))
+    });
+    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), check_of: checks.iter().cloned().collect(), direct: std::cell::Cell::new(false), at_root: std::cell::Cell::new(false), run_ends, deciding: RefCell::new(std::collections::BTreeSet::new()) };
     // The root: its node, its body, then the stream's end. It ends at the file's end, as tree-sitter's root does.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (kind, body) = match g.rules[root] {
@@ -1247,7 +1404,9 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     let end = "close(d, len as u64);\nif i != count {\nreturn Err(at(src, starts, i));\n}\nreturn Ok(());\n".to_owned();
     let mut lp = lp;
     lp.root_end = end.clone();
+    lp.at_root.set(true);
     let code = format!("open(d, {number}, at(src, starts, i) as u64);\n{}", lp.walk(body, &Key::default(), K::Code(end), T::No)?);
+    lp.at_root.set(false);
     lp.places.borrow_mut()[first] = code;
     // The words of the kinds split by them.
     let mut words = String::new();
@@ -1266,12 +1425,16 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
         }
         let _ = write!(words, "/// A `{name}` token's word: its keyword's, 0 for none.\n#[inline(always)]\nfn word_{}(b: &[u8]) -> u32 {{\nmatch b {{\n{arms}_ => 0,\n}}\n}}\n\n", ident(name));
     }
-    let mut check_fns = String::new();
+    let mut check_fns = lp.run_ends.as_ref().map(|(_, c)| c.clone()).unwrap_or_default();
     for (k, b) in &checks {
         check_fns.push_str(&lp.check_fn(k, b)?);
         // A run's end, its check's (the lean parser's `number_end`): written once, read at each place.
         if let Ok((rk, End::Run)) = lp.token(k) {
-            let _ = write!(check_fns, "/// A `{k}`'s end from its first byte at `s`: its check's match, the byte after it none of its row's (the lean\n/// parser's `number_end`), or the byte it is refused at.\n#[inline(always)]\nfn {name}_end(src: &[u8], s: usize) -> Result<usize, u32> {{\nmatch check_{name}(&src[s..]) {{\nSome(j) if !in_row(src[s + j], {r}) => Ok(s + j),\n_ => Err(s as u32),\n}}\n}}\n\n", name = ident(k), r = rk + 1);
+            let after = match &lp.run_ends {
+                Some((r, _)) if *r == rk => "ends(src[s + j])".to_owned(),
+                _ => format!("!in_row(src[s + j], {})", rk + 1),
+            };
+            let _ = write!(check_fns, "/// A `{k}`'s end from its first byte at `s`: its check's match, the byte after it one it may end before (the lean\n/// parser's `number_end`), or the byte it is refused at.\n#[inline(always)]\nfn {name}_end(src: &[u8], s: usize) -> Result<usize, u32> {{\nmatch check_{name}(&src[s..]) {{\nSome(j) if {after} => Ok(s + j),\n_ => Err(s as u32),\n}}\n}}\n\n", name = ident(k));
         }
     }
     let places = lp.places.borrow();
@@ -1286,9 +1449,36 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
             into.insert(l, b);
         }
     }
+    // The places a level's call returns to are one arm, a loop of its own (`walk`'s `scope_end`): a level that ends
+    // there returns to another of them without passing the run's match, so a run of closers stays in the loop.
+    const RETURN: &str = "st = ret[depth];\ncontinue 'run;\n";
+    let mut rets: Vec<usize> = Vec::new();
+    for code in places.iter() {
+        for (k, _) in code.match_indices("ret[depth] = ") {
+            let n: String = code[k + 13..].chars().take_while(char::is_ascii_digit).collect();
+            if let Ok(n) = n.parse::<usize>()
+                && !rets.contains(&n)
+            {
+                rets.push(n);
+            }
+        }
+    }
+    rets.sort_unstable();
+    if rets.len() < 2 || rets.iter().any(|r| into.contains_key(r) || into.values().any(|b| b == r)) {
+        rets.clear();
+    }
     let mut arms = String::new();
     for (l, code) in places.iter().enumerate() {
-        if into.contains_key(&l) {
+        if into.contains_key(&l) || rets.contains(&l) && l != rets[0] {
+            continue;
+        }
+        if rets.first() == Some(&l) {
+            let pats = rets.iter().map(usize::to_string).collect::<Vec<_>>().join(" | ");
+            let mut inner = String::new();
+            for &r in &rets {
+                let _ = write!(inner, "{r} => {{\n{}}}\n", places[r].replace(RETURN, "st = ret[depth];\ncontinue 'ret;\n"));
+            }
+            let _ = write!(arms, "{pats} => 'ret: loop {{\n// Where a level returns: its caller's rest, by the place it pushed.\nmatch st {{\n{inner}_ => unreachable!(),\n}}\n}},\n");
             continue;
         }
         match into.iter().find(|(_, b)| **b == l) {
@@ -1315,7 +1505,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     }
     let mut out = String::new();
     out.push_str("// Generated by the Bitlex compiler (`rerail_bitlex::bitlex_rust::tier2_loop`) from the grammar's tree rules. Do not edit.\n\n");
-    out.push_str("use rerail_tape_format::f16::Writer;\nuse rerail_tape_format::writer16::{Fixed, w_close_with, w_leaf_in_with, w_leaf_with, w_open_with};\n\n");
+    out.push_str("use rerail_tape_format::f16::Writer;\nuse rerail_tape_format::writer16::{Cursor, Fixed};\n\n");
     // The language's widths (slots, gaps, lengths) are the parser's: a value past its width is its side list's, as
     // every format 16 tape's. One byte each, the implementer's choice.
     out.push_str("/// The language's cell widths, slots, gaps and lengths: the writer's language is to have these (`Lang::new`).\npub const WIDTHS: [usize; 3] = [1, 1, 1];\n\n/// The writer's cells at those widths, constants in the ops.\ntype Cells = Fixed<1, 1, 1>;\n\n");
@@ -1334,12 +1524,29 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     }
     let _ = write!(
         out,
-        "/// `src`'s tape into `w` (`src` the file padded, `lx.len` its length), from tier 1's records (each token's first byte) and the bytes, or the byte it was\n/// refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\n// A file with no token: simdjson's `EMPTY`.\nif lx.count == 0 {{\nreturn Err(lx.len as u32);\n}}\nw.reserve_run(1 + lx.count + lx.len, (DEPTH + 1) * {frames} + 1);\n// Each node final as written: no commit after each.\nw.final_as_written();\nlet d = w.state_address();\nrun_best(src, lx, d)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`, its byte reads on `S`'s backend (chosen once, `run_best`).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn run<S: rerail_simd8::Simd8x64>(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {{\n// The records, then the index's three last entries; their count; the file's length (`src` is it padded).\nlet (starts, count, len) = (&lx.starts[..], lx.count, lx.len);\n// The next record, the last token's end, by depth the place each open level returns to (the lean parser's `object[d]`), the levels open, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut ret: [{ty}; DEPTH] = [0; DEPTH];\nlet mut depth = 0usize;\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n\nrerail_simd8::dispatch! {{\n    fn run_best(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> = run, on run_on;\n}}\n"
+        "/// `src`'s tape into `w` (`src` the file padded, `lx.len` its length), from tier 1's records (each token's first byte) and the bytes, or the byte it was\n/// refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\n// A file with no token: simdjson's `EMPTY`.\nif lx.count == 0 {{\nreturn Err(lx.len as u32);\n}}\nw.reserve_run(1 + lx.count + lx.len, (DEPTH + 1) * {frames} + 1);\n// Each node final as written: no commit after each.\nw.final_as_written();\nlet d = w.state_address();\nrun_best(src, lx, d)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`, its byte reads on `S`'s backend (chosen once, `run_best`).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn run<S: rerail_simd8::Simd8x64>(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8) -> Result<(), u32> {{\n// The walk's hold on the tape, its own while it runs (the lean parser's `Walk`): the nodes stored through it.\n// SAFETY: `state` is the writer's, its room reserved (`parse`).\nlet mut cursor = unsafe {{ Cursor::<Cells>::begin(state) }};\nlet d = &mut cursor;\n// The records, then the index's three last entries; their count; the file's length (`src` is it padded).\nlet (starts, count, len) = (&lx.starts[..], lx.count, lx.len);\n// The next record, the last token's end, by depth the place each open level returns to (the lean parser's `object[d]`), the levels open, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut ret: [{ty}; DEPTH] = [0; DEPTH];\nlet mut depth = 0usize;\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n\nrerail_simd8::dispatch! {{\n    fn run_best(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8) -> Result<(), u32> = run, on run_on;\n}}\n"
     );
     let _ = &x.tokens;
     // The parser's own code, but for what nothing in it calls.
     let parts: Vec<String> = RUNTIME.split("\n\n").chain(words.split("\n\n")).map(|p| p.trim_matches('\n').to_owned()).filter(|p| !p.is_empty()).collect();
+    // The methods take the file's length only where one reads it (`walk`'s `string` takes none).
+    let (sig, call) = ("src: &[u8], len: usize, starts: &[u32]", "(src, len, starts, d, &mut i, [");
+    let methods: String = lp.method_code.borrow().concat();
+    if !reads_ident(&methods.replace(sig, "").replace(call, ""), "len") {
+        out = out.replace(sig, "src: &[u8], starts: &[u32]").replace(call, "(src, starts, d, &mut i, [");
+    }
     Ok(drop_uncalled(out, &parts))
+}
+
+/// Whether `code` names `id` (not as part of a longer name, a field or a method).
+fn reads_ident(code: &str, id: &str) -> bool {
+    let b = code.as_bytes();
+    code.match_indices(id).any(|(k, _)| {
+        let before = k.checked_sub(1).map(|j| b[j]);
+        let after = b.get(k + id.len()).copied();
+        let ident = |c: Option<u8>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == b'_');
+        !ident(before) && before != Some(b'.') && !ident(after)
+    })
 }
 
 /// `out` without each of `parts` (a function and its comments, as written in `out`) that nothing else in `out` calls.

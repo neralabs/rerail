@@ -597,7 +597,7 @@ export interface NativeBinding {
    * other platform. A binary built before it lacks it.
    */
   pathsOwnedByCurrentUser?(paths: string[]): boolean;
-  /** The content-store file name this binary's store schema owns (`content-v9.sqlite` at store floor 9). */
+  /** The content-store file name this binary's store schema owns (`content-v10.sqlite` at store floor 10). */
   contentStoreFileName(): string;
   deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string, expectedStore?: string, recorded?: boolean): void;
   releaseNamedAnalysisScope(store: string, name: string, expectedIdentities: string[]): { identity: string; hadMembers: boolean } | null;

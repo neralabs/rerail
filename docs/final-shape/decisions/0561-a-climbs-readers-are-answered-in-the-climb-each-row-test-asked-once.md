@@ -25,7 +25,9 @@ again.
 1. **The climb's ends join its stratum** (`plan::climb_ends`). A stratum of one relation joins the stratum of a
    keyed walk (0570's shape as written: `plan::keyed_walk`) when:
    - each of its rules reads the walk once, as a positive atom;
-   - everything else it reads is made before the walk.
+   - everything else it reads is made before the walk;
+   - each of its rules binds nothing past the walk's row (`plan::of_the_row`): every variable of its other literals is
+     one of the row's, so its rest is tests of the row (amended 2026-11-22, below).
 
    It is then answered where the walk's rows are made. A maintained run keeps the version's strata.
    `RERAIL_CLIMB_ENDS=off` keeps them apart.
@@ -45,6 +47,24 @@ again.
 
 So each reference's row asks `bound_in` once, `cls_late` once, `gbefore` where it is not bound, and the axis where
 it climbs: W's questions, read from the rules.
+
+## Amended (2026-11-22): a reader that joins out from the row stays apart
+
+`annotated_on_chain(n, x) :- walk(n, x, s), bare_annotation(_, _, x, s)` met the first two conditions, so it joined
+`walk`'s stratum and was driven by every row of the climb. Lowered, its rest joins out from the row: its long-text twin
+(`$x = @rr_node_text($l)`) cannot look up by `x`, so each row went from its scope `s` to every node whose nearest scope
+is `s` (an estimate of 4.6 M rows a wave). Apart, it is planned from its own side (`bare_annotation`, an estimate of
+31 rows). On corpus0 × B-now, off, one thread (M1 Max), that stratum was 43 of a profiled pack's 47 s:
+
+| | before | a reader binds nothing past the row |
+|---|---|---|
+| normal packs | 3.188 T | 1.679 T |
+| one pack | 0.752 T | 0.747 T |
+| findings | 463, d067ec2ebf6f | the same |
+
+`look` and `miss` are the readers this decision was made for, and they still join: their rests are tests of the row
+(`bound_in(s, x)`, `cls_late`, `gbefore`, `kind(m, "module")`). Test:
+`plan::climb_tests::a_reader_that_joins_out_from_the_walks_row_is_not_a_climb_end`.
 
 ## Test
 

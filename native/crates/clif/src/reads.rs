@@ -39,8 +39,8 @@ pub enum Family {
     /// numbering's reads with the descriptor its entry refers to, the tape's with the tape's base and view, the
     /// lines' with their base.
     View,
-    /// A document's lines' (`lines_*`, decision 0353 step 4d): the base of its `LineTable`'s words (`[n, starts[n],
-    /// ends[n]]`, u32s, in a slab's room beside its tape), every load aligned, an offset from it.
+    /// A document's lines' (`lines_*`, decisions 0353 step 4d and 0612): the base of its line index
+    /// (`rerail_tape_format::newlines`: its tape's, or one of its own in a slab's room), an offset from it.
     Lines,
 }
 
@@ -118,8 +118,10 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "num_order_of", params: &[I32], ret: I32, hot: true, body: crate::id_reads::order_of },
     Read { family: Family::Relation, name: "num_number_of_order", params: &[I32], ret: I32, hot: true, body: crate::id_reads::number_of_order },
     // A view's rows (decision 0353 step 4c): row `l` of the document's rows, column `col`.
-    Read { family: Family::Lines, name: "lines_line", params: &[I32], ret: I32, hot: true, body: crate::view_reads::lines_line },
-    Read { family: Family::Lines, name: "lines_word", params: &[I32], ret: I32, hot: true, body: crate::view_reads::lines_word },
+    Read { family: Family::Lines, name: "lines_select", params: &[I32, I32], ret: I32, hot: false, body: line_select },
+    Read { family: Family::Lines, name: "lines_line", params: &[I32], ret: I32, hot: true, body: lines_line },
+    Read { family: Family::Lines, name: "lines_start", params: &[I32], ret: I32, hot: true, body: line_start },
+    Read { family: Family::Lines, name: "lines_count", params: &[], ret: I32, hot: true, body: lines_count },
     Read { family: Family::View, name: "view_node", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::node },
     Read { family: Family::View, name: "view_child", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::child },
     Read { family: Family::View, name: "view_field", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::field },
@@ -252,14 +254,27 @@ pub fn view_ukl_source() -> Result<(String, String), String> {
     let funcs: Vec<(u32, Function, &str)> = READS
         .iter()
         .enumerate()
-        .filter(|(_, read)| matches!(read.family, Family::View | Family::Lines))
+        .filter(|(_, read)| read.family == Family::View)
         .map(|(k, read)| (k as u32, build_for(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None)))
         .map(|(k, f)| (k, f, READS[k as usize].name))
         .collect();
     let (header, body) = crate::ukl::translate_view_reads(&funcs, "clif_")?;
     let (head, rest) = header.split_at(crate::ukl::HELPERS.len());
     let made = generated("view_ukl_source", "the views' reads in CLIF (decision 0353 step 4c, 0576)", "the_view_kernels_reads_are_these");
-    Ok((format!("{made}{head}#include <ukl/reads/tape_z.h>\n#include <ukl/reads/ids.h>\n{}{rest}", crate::view_reads::ukl()), format!("{made}{body}")))
+    Ok((format!("{made}{head}#include <ukl/reads/tape_z.h>\n#include <ukl/reads/ids.h>\n#include <ukl/reads/lines.h>\n{}{rest}", crate::view_reads::ukl()), format!("{made}{body}")))
+}
+
+/// A document's lines' reads as UKL (decision 0612): `<ukl/reads/lines.h>`, its line index read at its base, which the
+/// views' reads call and a kernel that places spans includes; made again by `the_lines_reads_are_these`.
+pub fn lines_ukl_source() -> Result<String, String> {
+    let funcs: Vec<(u32, Function, &str)> = READS
+        .iter()
+        .enumerate()
+        .filter(|(_, read)| read.family == Family::Lines)
+        .map(|(k, read)| (k as u32, build(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex), read.name))
+        .collect();
+    let body = crate::ukl::translate_reads(&funcs, "clif_", Family::Lines)?;
+    Ok(format!("{}{body}", generated("lines_ukl_source", "a document's lines' reads in CLIF (decision 0612)", "the_lines_reads_are_these")))
 }
 
 /// Where a read's calls of other reads go when it is translated: by its place in `READS`, as the translators name
@@ -460,12 +475,6 @@ impl B<'_, '_> {
             |b| b.in_block(0, sixteen),
             fifteen,
         )
-    }
-    /// `by_format` for a read of the tape's whole, not of a node (its newline index): a 16z tape holds it raw, where
-    /// its view names it, so a 16z tape's body is format 16's, read in place of the stored bytes (decision 0434).
-    fn by_format_whole(&mut self, ty: ir::Type, sixteen: impl Fn(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
-        let sixteen = &sixteen;
-        self.by_formats(ty, |b| sixteen(b), |b| sixteen(b), fifteen)
     }
     /// `by_format` with a 16z tape's body of its own (`zed`).
     fn by_formats(&mut self, ty: ir::Type, sixteen: impl FnOnce(&mut Self) -> Value, zed: impl FnOnce(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
@@ -2284,19 +2293,30 @@ fn child(b: &mut B<'_, '_>) -> Value {
     b.f.block_params(done)[0]
 }
 
-// ---- lines: format 16's newline index (`rerail_tape_format::newlines`), format 15's line starts ----------------
+// ---- lines: a document's line index (`rerail_tape_format::newlines`, decision 0612) ----------------------------
 
-/// The newline index's u32 field `k` (0 the newlines' count, 1 the low parts' width, 2 and 3 the zero and one
+/// Where the line index starts: the tape's reads find it at the view's `lines` (a document's own, in its tape or
+/// beside it), the lines' reads at their base (`Family::Lines`, `ll`: a guest's are its host's). One body for both.
+fn lines_base(b: &mut B<'_, '_>) -> Value {
+    if b.view.is_some() { b.view(at::LINES) } else { b.c32(0) }
+}
+
+/// The select its family calls (`tape_line_select`, `lines_select`).
+fn select_read(b: &B<'_, '_>) -> &'static str {
+    if b.view.is_some() { "tape_line_select" } else { "lines_select" }
+}
+
+/// The line index's u32 field `k` (0 the line ends' count, 1 the low parts' width, 2 and 3 the zero and one
 /// samples' counts, 4 the high bits' words).
 fn lines_field(b: &mut B<'_, '_>, k: i64) -> Value {
-    let lines = b.view(at::LINES);
+    let lines = lines_base(b);
     let k = b.c32(4 * k);
     b.u32(lines, k)
 }
 
 /// Where the newline index's part at `offset` bytes past its first fields lies (tape-relative).
 fn lines_part(b: &mut B<'_, '_>, offset: Value) -> Value {
-    let lines = b.view(at::LINES);
+    let lines = lines_base(b);
     let at = b.f.ins().iadd(lines, offset);
     b.f.ins().iadd_imm(at, HEAD_LINES)
 }
@@ -2403,76 +2423,50 @@ fn line_select(b: &mut B<'_, '_>) -> Value {
     b.f.block_params(done)[0]
 }
 
-/// The line byte `x` lies in (from 0): format 16's newlines before it, by the index (the zeros before and after its
-/// bucket, then a search of the bucket's low parts); format 15's line starts searched.
+/// The line byte `x` lies in (from 0): the line ends before it, by the index (the zeros before and after its bucket,
+/// then a search of the bucket's low parts). A terminator's bytes are the line's they end: the index holds each one's
+/// last byte.
 fn line(b: &mut B<'_, '_>) -> Value {
     let x = b.arg(0);
-    b.by_format_whole(
+    line_in(b, x)
+}
+
+fn line_in(b: &mut B<'_, '_>, x: Value) -> Value {
+    let m = lines_field(b, 0);
+    let none = b.f.ins().icmp_imm(IntCC::Equal, m, 0);
+    b.either(
         I32,
+        none,
+        |b| b.c32(0),
         |b| {
-            let m = lines_field(b, 0);
-            let none = b.f.ins().icmp_imm(IntCC::Equal, m, 0);
-            b.either(
+            let l = lines_field(b, 1);
+            let h = b.f.ins().ushr(x, l);
+            let one = b.c32(1);
+            let lbits = b.f.ins().ishl(one, l);
+            let lmask = b.f.ins().iadd_imm(lbits, -1);
+            let xl = b.f.ins().band(x, lmask);
+            let xl = b.f.ins().uextend(I64, xl);
+            let zero = b.c32(0);
+            // The newlines in buckets before `h`, and through it.
+            let first = b.f.ins().icmp_imm(IntCC::Equal, h, 0);
+            let lo = b.either(
                 I32,
-                none,
+                first,
                 |b| b.c32(0),
                 |b| {
-                    let l = lines_field(b, 1);
-                    let h = b.f.ins().ushr(x, l);
-                    let one = b.c32(1);
-                    let lbits = b.f.ins().ishl(one, l);
-                    let lmask = b.f.ins().iadd_imm(lbits, -1);
-                    let xl = b.f.ins().band(x, lmask);
-                    let xl = b.f.ins().uextend(I64, xl);
-                    let zero = b.c32(0);
-                    // The newlines in buckets before `h`, and through it.
-                    let first = b.f.ins().icmp_imm(IntCC::Equal, h, 0);
-                    let lo = b.either(
-                        I32,
-                        first,
-                        |b| b.c32(0),
-                        |b| {
-                            let h1 = b.f.ins().iadd_imm(h, -1);
-                            let p = b.call("tape_line_select", &[zero, h1]);
-                            b.f.ins().isub(p, h1)
-                        },
-                    );
-                    let p = b.call("tape_line_select", &[zero, h]);
-                    let hi = b.f.ins().isub(p, h);
-                    // The bucket's first newline whose low part is at or past `x`'s.
-                    let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
-                    b.f.append_block_param(head, I32);
-                    b.f.append_block_param(head, I32);
-                    b.f.append_block_param(done, I32);
-                    b.f.ins().jump(head, &[lo.into(), hi.into()]);
-                    b.f.switch_to_block(head);
-                    let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
-                    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
-                    b.f.ins().brif(more, body, &[], done, &[lo.into()]);
-                    b.f.switch_to_block(body);
-                    let sum = b.f.ins().iadd(lo, hi);
-                    let middle = b.f.ins().ushr_imm(sum, 1);
-                    let low = line_low(b, middle, l);
-                    let below = b.f.ins().icmp(IntCC::UnsignedLessThan, low, xl);
-                    let next = b.f.ins().iadd_imm(middle, 1);
-                    let lo = b.f.ins().select(below, next, lo);
-                    let hi = b.f.ins().select(below, hi, middle);
-                    b.f.ins().jump(head, &[lo.into(), hi.into()]);
-                    b.f.switch_to_block(done);
-                    b.f.block_params(done)[0]
+                    let h1 = b.f.ins().iadd_imm(h, -1);
+                    let p = b.call(select_read(b), &[zero, h1]);
+                    b.f.ins().isub(p, h1)
                 },
-            )
-        },
-        |b| {
-            // The last line start at or before `x`.
-            let lines = b.view(at::LINES);
-            let count = b.view(at::LINE_COUNT);
+            );
+            let p = b.call(select_read(b), &[zero, h]);
+            let hi = b.f.ins().isub(p, h);
+            // The bucket's first newline whose low part is at or past `x`'s.
             let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
             b.f.append_block_param(head, I32);
             b.f.append_block_param(head, I32);
             b.f.append_block_param(done, I32);
-            let one = b.c32(1);
-            b.f.ins().jump(head, &[one.into(), count.into()]);
+            b.f.ins().jump(head, &[lo.into(), hi.into()]);
             b.f.switch_to_block(head);
             let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
             let more = b.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
@@ -2480,16 +2474,14 @@ fn line(b: &mut B<'_, '_>) -> Value {
             b.f.switch_to_block(body);
             let sum = b.f.ins().iadd(lo, hi);
             let middle = b.f.ins().ushr_imm(sum, 1);
-            let at = b.f.ins().imul_imm(middle, 4);
-            let start = b.u32(lines, at);
-            let past = b.f.ins().icmp(IntCC::UnsignedGreaterThan, start, x);
+            let low = line_low(b, middle, l);
+            let below = b.f.ins().icmp(IntCC::UnsignedLessThan, low, xl);
             let next = b.f.ins().iadd_imm(middle, 1);
-            let lo = b.f.ins().select(past, lo, next);
-            let hi = b.f.ins().select(past, middle, hi);
+            let lo = b.f.ins().select(below, next, lo);
+            let hi = b.f.ins().select(below, hi, middle);
             b.f.ins().jump(head, &[lo.into(), hi.into()]);
             b.f.switch_to_block(done);
-            let found = b.f.block_params(done)[0];
-            b.f.ins().iadd_imm(found, -1)
+            b.f.block_params(done)[0]
         },
     )
 }
@@ -2541,36 +2533,44 @@ fn has_kind(b: &mut B<'_, '_>) -> Value {
     )
 }
 
-/// Line `k`'s first byte: 0 for the first; else one past newline `k - 1` (format 16: its bucket, from its one's
-/// position, and its low part); format 15's line start.
+/// `lines_line(at)`: the lines starting at or before byte `at`, the 1-based line holding it (`LineTable::line` + 1):
+/// the `line` view's and the `Loc` views' read.
+fn lines_line(b: &mut B<'_, '_>) -> Value {
+    let x = b.arg(0);
+    let line = line_in(b, x);
+    b.f.ins().iadd_imm(line, 1)
+}
+
+/// `lines_count()`: the document's lines, one more than its line ends (`LineTable::count`).
+fn lines_count(b: &mut B<'_, '_>) -> Value {
+    let m = lines_field(b, 0);
+    b.f.ins().iadd_imm(m, 1)
+}
+
+/// Line `k`'s first byte: 0 for the first; else one past line end `k - 1` (its bucket, from its one's position, and
+/// its low part).
 fn line_start(b: &mut B<'_, '_>) -> Value {
     let k = b.arg(0);
-    b.by_format_whole(
+    line_start_in(b, k)
+}
+
+fn line_start_in(b: &mut B<'_, '_>, k: Value) -> Value {
+    let first = b.f.ins().icmp_imm(IntCC::Equal, k, 0);
+    b.either(
         I32,
+        first,
+        |b| b.c32(0),
         |b| {
-            let first = b.f.ins().icmp_imm(IntCC::Equal, k, 0);
-            b.either(
-                I32,
-                first,
-                |b| b.c32(0),
-                |b| {
-                    let i = b.f.ins().iadd_imm(k, -1);
-                    let one = b.c32(1);
-                    let p = b.call("tape_line_select", &[one, i]);
-                    let bucket = b.f.ins().isub(p, i);
-                    let l = lines_field(b, 1);
-                    let high = b.f.ins().ishl(bucket, l);
-                    let low = line_low(b, i, l);
-                    let low = b.f.ins().ireduce(I32, low);
-                    let at = b.f.ins().bor(high, low);
-                    b.f.ins().iadd_imm(at, 1)
-                },
-            )
-        },
-        |b| {
-            let lines = b.view(at::LINES);
-            let at = b.f.ins().imul_imm(k, 4);
-            b.u32(lines, at)
+            let i = b.f.ins().iadd_imm(k, -1);
+            let one = b.c32(1);
+            let p = b.call(select_read(b), &[one, i]);
+            let bucket = b.f.ins().isub(p, i);
+            let l = lines_field(b, 1);
+            let high = b.f.ins().ishl(bucket, l);
+            let low = line_low(b, i, l);
+            let low = b.f.ins().ireduce(I32, low);
+            let at = b.f.ins().bor(high, low);
+            b.f.ins().iadd_imm(at, 1)
         },
     )
 }
@@ -2612,6 +2612,18 @@ mod tests {
             let held = std::fs::read_to_string(&path).unwrap_or_default();
             assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these");
         }
+    }
+
+    /// A document's lines' reads are these, as UKL (`<ukl/reads/lines.h>`): written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_lines_reads_are_these() {
+        let path = format!("{}/lines.h", super::ukl_reads());
+        let source = super::lines_ukl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(&path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_lines_reads_are_these");
     }
 }
 

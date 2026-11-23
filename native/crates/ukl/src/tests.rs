@@ -66,7 +66,8 @@ fn same_as_clang(backend: Backend, main: &str, min_tokens: usize) {
 #[test]
 fn every_library_header_stands_alone_on_every_backend() {
     let dir = format!("{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Cpu, Backend::OpenCl] {
+    let backends = [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Hip { wave: 32 }, Backend::Hip { wave: 64 }, Backend::Cpu, Backend::OpenCl];
+    for backend in backends {
         // A body is included by its header, with its parameters, and refuses to stand alone.
         for (name, _) in LIBRARY.iter().filter(|(n, _)| !n.starts_with("ukl/body/")) {
             // The shim's tokens, at least, and the header's own.
@@ -109,6 +110,11 @@ fn a_kernel_includes_the_library() {
     assert!(!old.contains("__reduce_add_sync"), "sm 7.0: the reference sum, by shuffles");
     let metal = Preprocess::new(Backend::Metal { version: 310 }).file("/mem/k", k).run("/mem/k").unwrap();
     assert!(metal.contains("simd_prefix_inclusive_sum"), "Metal's native scan");
+    // HIP: CUDA's kernels and rows, AMD's maskless shuffles, none of CUDA's `*_sync` nor its PTX.
+    let hip = Preprocess::new(Backend::Hip { wave: 32 }).file("/mem/k.hip", k).run("/mem/k.hip").unwrap();
+    assert!(hip.contains("ukl_scan_u32_tiles__ukl_params"), "HIP: the scan's kernels, with their rows");
+    assert!(hip.contains("__shfl_xor(") && hip.contains("__ballot("), "HIP's shuffles and ballot");
+    assert!(!hip.contains("_sync(") && !hip.contains("__CUDA_ARCH__") && !hip.contains("asm("), "nothing of CUDA's own");
 }
 
 /// The random forest's kernels for Metal, as `forest/build.rs` preprocesses them.

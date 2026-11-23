@@ -1,0 +1,301 @@
+//! C and C++ files' family: tree-sitter-c's and tree-sitter-cpp's trees, written by the lean parser (`tape::c_lean`) where it reads a
+//! file and by tree-sitter otherwise, read by rules through the tape and its text facts. Scope, values, arguments,
+//! calls and format arguments are not supported yet (the registry's `not-supported-yet`), so the compile refuses a
+//! rule that asks for them on a C or C++ file and nothing here is reached. Each such hook answers "nothing known".
+
+use super::QueryWhen;
+use super::{
+    Adapter, Refusal, Refused, ScopeFeature, ScopeRules, SyntaxFeature, SyntaxRules, ValueFeature, ValueRules,
+};
+use crate::code_rule_dsl::compile::config::Options;
+use crate::code_rule_dsl::compile::options;
+use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::scope::ScopeName;
+use crate::code_rule_dsl::matcher::Unresolved;
+use crate::code_rule_dsl::module_path::ModulePath;
+use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
+use crate::code_rule_dsl::scope::usage::{Steps, Usage};
+use crate::code_rule_dsl::scope::{
+    Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeTable,
+};
+use crate::code_rule_dsl::suppress::Suppress;
+use crate::code_rule_dsl::value::structure::{Equality, Tok};
+use crate::code_rule_dsl::value::{BigInt, Context, NodeRef, Value};
+use ast_grep_core::tree_sitter::StrDoc;
+use ast_grep_core::{Doc, Language, Node};
+use serde_json::Value as JsonValue;
+use std::borrow::Cow;
+use std::cmp::Ordering;
+use std::ops::Range;
+use std::path::Path;
+use std::sync::Arc;
+
+/// C and C++ files.
+pub struct C;
+
+fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
+    Err(Refusal::Refused(message.into()))
+}
+
+/// The expression of the one statement of the function body `root` holds, where the file parsed
+/// cleanly and that statement is an expression statement.
+fn lone_expression<'t>(root: &tree_sitter::Node<'t>) -> Option<tree_sitter::Node<'t>> {
+    root.child(0)
+        .and_then(|function| function.child_by_field_name("body"))
+        .filter(|body| !root.has_error() && body.named_child_count() == 1)
+        .and_then(|body| body.named_child(0))
+        .filter(|statement| statement.kind() == "expression_statement")
+        .and_then(|statement| statement.named_child(0))
+}
+
+impl Adapter for C {
+    const FAMILY: Family = Family::C;
+    const LABEL: &'static str = "c";
+    // The preprocessor's tape's, one constant: `__LINE__` counts the lines a finding is on.
+    const TERMINATORS: Terminators = rerail_c_pp::tape::LINE_ENDS;
+    const PACKAGES: bool = false;
+    const PACKAGE_MANIFESTS: bool = false;
+    const JSX_RUNTIMES: bool = false;
+    const DECLARATION_FILES: bool = false;
+    const STRIPS_BOM: bool = false;
+    /// tree-sitter-c and tree-sitter-cpp's comments, which walks pass over.
+    const COMMENT_KINDS: &'static [&'static str] = &["comment"];
+    const PREAMBLE_KINDS: &'static [&'static str] = &[];
+    const BODY_KINDS: &'static [&'static str] = &[];
+    type Scope = Self;
+    type Value = Self;
+    type Arguments = Refused;
+    type Calls = Refused;
+    type FormatArgs = Refused;
+
+    fn name(text: Cow<'_, str>) -> Cow<'_, str> {
+        text
+    }
+
+    fn parse_input(source: &str) -> Cow<'_, str> {
+        Cow::Borrowed(source)
+    }
+
+    fn module_path(_: &Path) -> Option<JsonValue> {
+        None
+    }
+
+    /// No suppression comments are read for C and C++ yet.
+    fn suppresses<D: Doc>(
+        _: &str,
+        _: &Suppress,
+        _: &Node<'_, D>,
+        _: &str,
+        _: &LineTable,
+        _: Range<usize>,
+        _: (usize, usize),
+    ) -> bool {
+        false
+    }
+}
+
+impl ScopeRules for C {
+    const SUPPORTED: bool = false;
+    const FLOW: bool = false;
+    const STUBS: bool = false;
+    const REDEFINES_SHADOWED: bool = false;
+    const REFERENCE_KINDS: &'static [&'static str] = &[];
+    const ANNOTATION_STRING_KINDS: &'static [&'static str] = &[];
+    const NAME_KINDS: &'static [&'static str] = &[];
+    const PRIVATE_NAME_KINDS: &'static [&'static str] = &[];
+    const FORMS: &'static [(&'static str, Form)] = &[];
+    const SCOPES: &'static [(&'static str, ScopeName)] = &[];
+    const REFUSED_FILTERS: &'static [&'static str] = &[];
+    const IMPORT_PATHS: bool = false;
+    /// The kinds the shared walks name in every dialect (`shared_walks_read_the_kinds_they_named`).
+    const PAREN_KINDS: &'static [&'static str] = &["parenthesized_expression"];
+    const DOTTED_NAME_KINDS: &'static [&'static str] = &[];
+    const ATTRIBUTE_KINDS: &'static [&'static str] = &["attribute"];
+    const THIS_KINDS: &'static [&'static str] = &["this"];
+
+    fn visit<D: Doc>(_: &mut Builder<'_>, _: &Node<'_, D>, _: Reading) -> Result<(), BuildError> {
+        Ok(())
+    }
+
+    fn finish<D: Doc>(_: &mut ScopeTable, _: &Node<'_, D>) {}
+
+    fn resolve<'t>(_: &'t ScopeTable, _: &Reference, _: &str) -> Option<&'t Binding> {
+        None
+    }
+
+    fn binding<'t>(_: &'t ScopeTable, _: &Reference, _: &str) -> Option<(&'t Binding, Option<NodeRef>)> {
+        None
+    }
+
+    fn binding_by<'t>(_: &'t ScopeTable, _: &Reference, _: &str, _: Lookup) -> Option<(&'t Binding, Option<NodeRef>)> {
+        None
+    }
+
+    fn index(_: &ScopeTable, _: &Reference, _: &str, _: Lookup) -> Option<(u32, usize)> {
+        None
+    }
+
+    fn undecided(_: &ScopeTable, _: &Reference) -> bool {
+        true
+    }
+
+    fn unbound_annotation(_: &ScopeTable, _: &Reference, _: &str) -> Option<(u32, usize)> {
+        None
+    }
+
+    fn unresolved(
+        _: &ScopeTable,
+        _: &Reference,
+        _: &str,
+        _: Unresolved,
+        _: &PythonOptions,
+        _: Option<&LanguageOptions>,
+        _: Option<&Directives>,
+    ) -> bool {
+        false
+    }
+
+    fn eslint_options(_: Option<&Arc<LanguageOptions>>) -> Option<Arc<LanguageOptions>> {
+        None
+    }
+
+    fn ruff_options(_: Option<&Arc<PythonOptions>>) -> Option<Arc<PythonOptions>> {
+        None
+    }
+
+    /// Never reached: scope is not supported yet, so no rule asks for a C and C++ file's usage.
+    fn usage<D: Doc>(_: &ScopeTable, _: &Node<'_, D>, _: &mut Steps<'_>) -> Result<Usage, BuildError> {
+        Err(BuildError::Budget)
+    }
+
+    fn unpackaged_module(_: &str) -> Option<ModulePath> {
+        None
+    }
+
+    fn import_path<D: Doc>(_: &ScopeTable, _: &Node<'_, D>, _: Option<&str>) -> Option<String> {
+        None
+    }
+
+    fn feature(_: ScopeFeature) -> Result<(), Refusal> {
+        refused("scope is not supported for C and C++ rules yet")
+    }
+}
+
+impl ValueRules for C {
+    const SUPPORTED: bool = false;
+    const LANG: Family = Family::C;
+    const EXPRESSION_KINDS: &'static [&'static str] = &[];
+    const VALUE_KINDS: &'static [&'static str] = &[];
+    const NAME_KINDS: &'static [&'static str] = &[];
+
+    fn truthy(_: &Value) -> Option<bool> {
+        None
+    }
+
+    fn type_name(_: &Value) -> Option<&'static str> {
+        None
+    }
+
+    fn equals(_: &Value, _: &Value) -> Option<bool> {
+        None
+    }
+
+    fn order(_: &Value, _: &Value) -> Option<Option<Ordering>> {
+        None
+    }
+
+    fn relation(_: &str, _: &Value, _: &Value) -> Option<bool> {
+        None
+    }
+
+    fn numeric(_: &Value) -> bool {
+        false
+    }
+
+    fn integer(_: &Value) -> Option<BigInt> {
+        None
+    }
+
+    fn to_str<D: Doc>(_: &Value, _: &Node<'_, D>) -> Option<String> {
+        None
+    }
+
+    fn decode<D: Doc>(_: &Node<'_, D>, _: &mut Context<'_>) -> Value {
+        Value::Unknown
+    }
+
+    fn structure<D: Doc>(_: &Node<'_, D>, _: Equality, _: &mut Context<'_>) -> Option<Vec<Tok>> {
+        None
+    }
+
+    fn string(_: &str) -> Value {
+        Value::Unknown
+    }
+
+    fn number(_: &serde_json::Number) -> Value {
+        Value::Unknown
+    }
+
+    fn spelled<D: Doc>(_: &Node<'_, D>) -> bool {
+        false
+    }
+
+    fn node_name<D: Doc>(_: &Node<'_, D>) -> Option<Vec<u16>> {
+        None
+    }
+
+    fn key_name<'r, D: Doc>(_: &Node<'r, D>, _: &mut dyn FnMut(&Node<'r, D>) -> Value) -> Option<Vec<u16>> {
+        None
+    }
+
+    fn member_name<'r, D: Doc>(_: &Node<'r, D>, _: &mut dyn FnMut(&Node<'r, D>) -> Value) -> Option<Vec<u16>> {
+        None
+    }
+
+    fn same_reference<D: Doc>(_: &Node<'_, D>, _: &Node<'_, D>, _: bool) -> Option<bool> {
+        None
+    }
+
+    fn feature(_: ValueFeature<'_>) -> Result<(), Refusal> {
+        refused("values are not supported for C and C++ rules yet")
+    }
+}
+
+/// A C and C++ file hosts no literal grammar a policy parses, and has no `languageOptions`.
+impl SyntaxRules for C {
+    const DOLLAR_NAMES: bool = false;
+
+    /// C and C++ allow only declarations at file scope, so tree-sitter reads a bare call there as
+    /// one: `gets($A)` as a C `macro_type_specifier`, `std::atoi($A)` as a C++ declaration of `$A`.
+    fn body_pattern(pattern: &str, language: GrammarDialect) -> Option<(String, String)> {
+        const PREFIX: &str = "void f() { ";
+        let pattern = pattern.trim();
+        let processed = language.pre_process_pattern(pattern);
+        let parsed = StrDoc::try_new(&format!("{PREFIX}{processed}; }}"), language).ok()?;
+        let expression = lone_expression(&parsed.tree.root_node())?;
+        (expression.byte_range() == (PREFIX.len()..PREFIX.len() + processed.len()))
+            .then(|| (format!("{PREFIX}{pattern}; }}"), expression.kind().to_owned()))
+    }
+
+    fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
+        match feature {
+            SyntaxFeature::LanguageOptions => refused("`languageOptions` is not available for C and C++ policies"),
+            SyntaxFeature::Parse(grammar) => refused(format!("`{}` parses {}", grammar.name(), grammar.host())),
+        }
+    }
+
+    fn compile_language_options(_: &JsonValue, _: &str) -> napi::Result<(Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>)> {
+        Ok((None, None))
+    }
+
+    fn compile_when(
+        value: &JsonValue,
+        path: &str,
+        _: Option<&LanguageOptions>,
+        _: Option<&PythonOptions>,
+        document: &Options,
+    ) -> napi::Result<QueryWhen> {
+        Ok((options::compile_option_when(value, path, document)?, None))
+    }
+}

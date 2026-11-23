@@ -45,7 +45,9 @@ fn sixteen(src: &[u8], opts: Options, v: &View<'_>) -> Result<(), String> {
         if got != want {
             return Err(format!("node {i}: {got:?} in format 16, {want:?} in 15"));
         }
-        let line = src[..v.start(i) as usize].iter().filter(|&&b| b == b'\n').count() as u32;
+        // C's line ends (`LINE_ENDS`) whose last byte is before the node.
+        let mut line = 0u32;
+        LINE_ENDS.each(src, |at, len| line += u32::from(at + len - 1 < v.start(i) as usize));
         if r.line(v.start(i)) != line {
             return Err(format!("node {i}: line {} by the index, {line} counted", r.line(v.start(i))));
         }

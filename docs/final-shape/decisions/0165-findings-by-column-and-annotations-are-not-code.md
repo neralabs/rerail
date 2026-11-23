@@ -159,3 +159,20 @@ Where the two meet, a rule that reads an original widened at an atom of no shown
 rows there. So `one_document`'s *covered* counts such an atom as no read of a narrow copy; the deltas' graph
 (`Diffed::new`), a change point (`Diffed::write`) and a twin's places (`beside_twin`) are found an atom at a time; and
 a native operator reads narrow where its relation is shown.
+
+Added 2026-11-21 (Native-and-GPU-strata, 3d8f990a26), ported 2026-11-22 beside `one_document`. A filter copy
+(`within`) is made only where a narrow reader needs it. An annotation is a document of its own (`RUN_VALUE_KEYS` to
+`HIDDEN_KEYS`), so an original whose every row is one document's (`Local`, decision 0361; its folded copies too) and
+whose narrow copy `one_document` proves is its rows under the narrow bound holds those rows already for a reader that
+bounds it. Its readers read it as it is (`same`) where each atom of it they hold has a node the reader bounds narrow,
+or one document's with a bounded node (`nearest`, an equality, a local atom). They also read it so where the reader
+repeats a rule of its head over the copies: that is hiding's twin for the annotation (`walk`'s rule over
+`rr_in_annotation_0_nameref`), which the reader is once the copies fold, and it goes as a repeat. An original that
+reads a narrow copy, or that a native operator reads, keeps its copy (`Narrowing::unbounded`). Only a proven filter
+is a candidate: `Local` alone let a reader keep an annotation's row a filter drops (eef396c894's `type_arg`).
+
+- Cold hogql (CPU, 1,629 findings, the same before and after), measured where it was written: 102.9 B instructions
+  merged with #923, 90.3-90.6 B after this change, 90.5 B before #923. `nameref`, `attr_of`, `tp_ref` and their
+  dependents are read in place. `gbefore` keeps its copy: it joins `gbind` to `nameref` by name, across documents.
+
+Test: `a_local_original_read_bounded_is_read_in_place_not_copied`.
