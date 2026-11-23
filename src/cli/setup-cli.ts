@@ -21,7 +21,7 @@ import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { commandLine, powershellLiteral, type Shell } from "../engine/command-line.js";
 import { ENTRY_POINTS } from "../engine/package-root.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
-import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
+import { INSTALLED_PACKS_DIR, installedPacksPrefix, loadRuleCatalog, packsWithRulesNotRun } from "../engine/catalog/rule-catalog.js";
 import { PACK_COMPILE_CHECKS_FILE } from "../engine/catalog/pack-compile-checks.js";
 import { MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_OUTBOX_FILE, REMOTE_TOKENS_FOLDER, STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
@@ -68,7 +68,7 @@ import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
-import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, type DashboardLink, type SetupCommand, type SetupLane } from "../harness/setup-screens.js";
+import { notRunLine, renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, type DashboardLink, type SetupCommand, type SetupLane } from "../harness/setup-screens.js";
 import { colourDepth } from "../presentation/rerail-mark.js";
 import { isStatusFileEntry } from "../presentation/claude-status-files.js";
 import type { SetupStep } from "../harness/setup-step.js";
@@ -798,6 +798,18 @@ async function configCopies(configs: readonly string[]): Promise<Array<{ copy: s
 }
 
 /**
+ * {@link notRunLine} for the packs installed in `home`; undefined when every rule runs, or when the catalog cannot be
+ * read, which `rerail packs list` reports.
+ */
+function installedRulesNotRun(home: string): string | undefined {
+  try {
+    return notRunLine(packsWithRulesNotRun(loadRuleCatalog(home)));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * `rerail install --refresh`: register this version again with every coding agent already connected to the managed
  * install, so commands it added arrive and ones it retired go, and write the launcher again; `rerail update` runs it
  * from the version it activated. Both then name the node it runs on. Coding agents never connected stay untouched, and
@@ -834,6 +846,10 @@ async function runRefresh(context: SetupContext): Promise<number> {
   // After an update to a version that scrubs what it stores: once, the hint to scrub what earlier versions stored.
   const scrubHint = scrubHintOnce(context.home);
   if (scrubHint !== undefined) process.stdout.write(scrubHint);
+  // Every update ends with this refresh, run by the version it activated: the one place an update hears what that
+  // version's engine says of the packs it keeps at their installed versions.
+  const notRun = installedRulesNotRun(context.home);
+  if (notRun !== undefined) process.stdout.write(`${notRun}\n`);
   for (const { agent, message } of result.failures) {
     process.stderr.write(`rerail: could not refresh ${CODING_AGENT_NAMES[agent]}: ${message}\n`);
   }

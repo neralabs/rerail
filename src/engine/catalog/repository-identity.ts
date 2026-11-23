@@ -217,7 +217,8 @@ function answersInputs(folder: string, inputs: PlacementInputs, located: Located
 /** Whether `location` is in Git and names `folder` as its own top level; false when a real path cannot be read. */
 function namesItself(folder: string, location: RepositoryIdentityLocation): boolean {
   try {
-    return location.git && physicalPath(location.workspaceRoot) === physicalPath(folder);
+    // As stored: on macOS a folder asked in another letter case is still the top level Git names in the stored case.
+    return location.git && storedPath(location.workspaceRoot) === storedPath(folder);
   } catch {
     return false;
   }
