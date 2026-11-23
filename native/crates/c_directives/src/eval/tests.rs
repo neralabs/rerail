@@ -1314,6 +1314,26 @@ fn a_definition_changed_between_uses_is_expanded_again() {
     same(hits, 1, "the hits: the last call's");
 }
 
+/// Decision 0613 §4, stage 4: a call's arguments are requests of their own, read by groups that are free (another
+/// unit's team among them, `lp_help`), and taken by the call where they are done. Here each of a call's arguments
+/// is a chain of 8 calls, on 8 lines, and two hold `__COUNTER__`: a reading elsewhere stops at it, and the call
+/// reads that argument itself, in order, so the counts are the serial pass's.
+#[test]
+fn arguments_read_elsewhere_are_the_serial_passes() {
+    let mut t = String::from("#define ID(x) x\n#define F(a, b, c, d) [a|b|c|d]\n#define K() __COUNTER__\n#define C0(x) x\n");
+    for k in 1..=8 {
+        t += &format!("#define C{k}(x) C{}(ID(x))\n", k - 1);
+    }
+    for i in 0..8 {
+        t += &format!("F(C8({i}), C8(K() a{i}), C8(ID(a{i}) b), K())\n");
+    }
+    for cpp in [false, true] {
+        let (got, want, _, _) = expanded_x(&[("main.c", t.as_str())], cpp);
+        let got = got.unwrap_or_else(|why| panic!("refused {why}"));
+        same(show(&got), show(&want), "a call's arguments, read elsewhere");
+    }
+}
+
 /// Decision 0613 §1: a result that reads a place's built-in (`__LINE__`, `__COUNTER__`) or the text
 /// past its `)` (a function-like name at its end) is not kept; nor (§4) one whose call inside it, a request
 /// of its own, reads one (`C`'s `L()`, on four lines: a tensorflow test printed another line's `__LINE__`).

@@ -512,6 +512,42 @@ So:
      commit before this one does the same. It is fixed when the evaluator reads the results' tree (stage 2's
      roll-up, on the device).
 
+   **Stage 4, built** (2026-11-23): a call's arguments are requests.
+   - **An argument's request.** At a call's first argument turn (`lp_call_next`), each argument it uses plainly
+     but the next to be read is posted (`lp_args_post`). Its record holds its own copy of the raw entries, the
+     macros disabled there, its looked-up set and its level. The table entry holds the request
+     (`rq | LP_HOLDRQ`). A group that takes it reads the entries to their end in isolation, under a list frame of
+     no macro: `LP_OFF` keeps that frame out of the disabled macros, the memo's keys and the dead lists, so its
+     keys are an inline reading's. Its expansion is a node in the store, written once, then marked done.
+   - **A claim, never a wait.** At its turn, the caller takes a done result (`lp_arg_take`). Otherwise it claims
+     the record and reads the argument inline, as before. If a taker holds the claim, the caller reads it inline
+     anyway and posts nothing under it (`LP_BI_DUP`). Nothing waits on another group.
+   - **Order is kept.** Arguments are read in their order, because `__COUNTER__`'s ranks follow the reading's
+     order. A run that reaches `__COUNTER__` or a pragma stops, and its caller reads it inline.
+   - **Posting gate.** Arguments are posted only while the unit's queue has nothing waiting. With every group busy,
+     a posted argument was read by its own caller, and its record was work for nothing: the corpus slices ran 12
+     to 18% slower before this gate.
+   - **Helpers.** A group left with no team seat helps the units whose loop is open and has items waiting
+     (`PG_LOOP`, `PG_HELP`). The team waits for its helpers to leave before it resets its queue.
+   - **The M3's back end.** The kernel failed on m3 from build to build, by a hang or a page fault, while it
+     passed on the CPU backend and on CUDA, and also passed when a run-time word was read in each argument path.
+     These are now masked by constants: the memo's slots (`LP_MO`), a run's regions (`LP_RG`), the template
+     builder's stacks, the memo and request table rows (`LP_ROW`), and `lp_leaves`'s stack (`LP_RD`, now 64
+     deep). `lp_leaves`'s walk was an unbounded loop: a hang there kept the GPU busy for 17 minutes after its
+     process was killed. It is now bounded by the output's room and the store's, and past that it refuses.
+   - **Measured on m3** (Metal, load 2 to 8). Every corpus unit is the serial pass's, and none is refused. GPU time
+     per slice, two runs:
+
+     | Slice | Stages 1 to 3 | Stage 4 |
+     |---|---|---|
+     | 0/500 | 187 ms | 153 to 158 ms |
+     | 500/600 | 272 ms | 184 to 213 ms |
+     | 1100/all | 359 ms | 191 to 199 ms |
+
+     The last slice's longest run went from 209 to about 76 ms. The eval tests pass on Metal, on CUDA and on the
+     CPU backend, `arguments_read_elsewhere_are_the_serial_passes` among them. Boost.Preprocessor's `control`
+     passes on the CPU backend, which runs one group, so it posts no arguments.
+
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 

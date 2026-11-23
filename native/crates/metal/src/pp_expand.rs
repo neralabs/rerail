@@ -1794,7 +1794,7 @@ impl<'u> Runs<'u> {
             // SAFETY: as `w`: the queue's control words (`LPQ`, 16), 5 to 7 the requests posted, the pieces read
             // again and the requests' steps.
             let q = |k: usize| unsafe { *exp.lpq.host().cast::<u32>().add(k) };
-            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept; requests {}, {} steps, pieces read again {}; tokens {:?} rung {} top {}", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29), q(5), q(7), q(6), exp.room()[0], x.rung, p1.top);
+            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept; requests {}, {} steps, pieces read again {}; arguments taken {}, read by their caller {}, read twice {}; tokens {:?} rung {} top {}", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29), q(5), q(7), q(6), q(8), q(9), q(10), exp.room()[0], x.rung, p1.top);
         }
         // The loop's work, where the run reached the text (a round that ends at its requests did not): the
         // unit's, kept for its next run and its next evaluation.
