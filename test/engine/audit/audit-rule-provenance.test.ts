@@ -1768,7 +1768,7 @@ describe("an audit whose other stored lists do not read", () => {
   const OBJECT = '{"blind":"budget"}';
   it.each([
     ["ruleRevisions", BROKEN], ["ruleProvenance", BROKEN], ["paths", OBJECT], ["violations", BROKEN], ["violations", OBJECT],
-    ["failures", BROKEN], ["failures", OBJECT], ["ruleProvenance", "[null]"], ...STRAY_ITEMS,
+    ["violations", "{}"], ["failures", BROKEN], ["failures", OBJECT], ["ruleProvenance", "[null]"], ...STRAY_ITEMS,
   ] as const)("answers the session's summary when its latest audit's %s read as %s, with the counts of its record", async (list, text) => {
     const path = await temporaryDatabase();
     threeAudits(path);

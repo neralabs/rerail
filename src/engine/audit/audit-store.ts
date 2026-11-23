@@ -468,12 +468,15 @@ const FILE_WORK_STOPPED = sql.raw(`(json_extract(value, '$.blind') IS NULL AND j
 
 /**
  * How many items `text` holds when it is a JSON array whose items are each of JSON type `item`, as `parsedList` reads
- * it, else NULL, in SQL: one walk of its items tests them and counts them. Each test runs only once the one before it
- * passed, so text that does not parse fails no query.
+ * it, else NULL, in SQL. Text that does not parse is never walked, so it fails no query. One walk of the rest tests and
+ * counts its items: an array's items have integer keys, an object's members text keys, and a lone value none. Only text
+ * with nothing to walk is read a third time, to tell `[]` from `{}`, since each read of a 2 MB list shows in the cost
+ * of the session's summary.
  */
 function listLength(text: SQL | SQLiteColumn, item: StoredItem): SQL<number | null> {
-  return sql<number | null>`(CASE WHEN NOT json_valid(${text}) THEN NULL WHEN json_type(${text}) <> 'array' THEN NULL
-    ELSE (SELECT CASE WHEN max(entry.type <> ${item}) THEN NULL ELSE count(*) END FROM json_each(${text}) entry) END)`;
+  return sql<number | null>`(CASE WHEN NOT json_valid(${text}) THEN NULL ELSE (SELECT CASE
+    WHEN count(*) = 0 THEN (CASE WHEN json_type(${text}) = 'array' THEN 0 END)
+    WHEN max(entry.type <> ${item} OR typeof(entry.key) <> 'integer') THEN NULL ELSE count(*) END FROM json_each(${text}) entry) END)`;
 }
 /** 1 when `text` holds a JSON array whose items are each of JSON type `item`, as `parsedList` reads it, else 0, in SQL. */
 function holdsList(text: SQL | SQLiteColumn, item: StoredItem): SQL<number> {
