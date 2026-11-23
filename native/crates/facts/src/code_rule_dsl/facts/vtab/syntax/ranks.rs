@@ -256,6 +256,15 @@ impl Ranks {
         (x != rerail_clif::ids::NONE).then_some(x)
     }
 
+    /// `select`, from the group in `hint` where it is near (`num_select`'s `Numbering::select_near`): probes in key
+    /// order.
+    #[inline]
+    pub fn select_near(&self, item: Item, r: u32, hint: &mut u32) -> Option<u32> {
+        // SAFETY: as `is`.
+        let x = unsafe { self.numbering().select_near(item as u32, r, hint) };
+        (x != rerail_clif::ids::NONE).then_some(x)
+    }
+
     /// Every `item`, in order: `(number, tape node)`.
     pub fn iter(&self, item: Item) -> Iter<'_> {
         Iter { groups: &self.groups, item: item as usize, g: 0, base: self.first * 64, bits: 0, k: 0 }

@@ -805,8 +805,13 @@ impl Table {
     /// The item whose id's low 32 bits are `low` (`low_of`'s inverse): what it is and its number (`num_number_of`).
     #[inline]
     pub fn number_of(&self, r: &Ranks, low: u32) -> Option<(Item, u32)> {
+        self.number_of_near(r, low, &mut rerail_clif::ids::NONE)
+    }
+
+    /// `number_of`, its slot's entry first looked for at `hint` (`Numbering::number_of_near`): probes in key order.
+    pub fn number_of_near(&self, r: &Ranks, low: u32, hint: &mut u32) -> Option<(Item, u32)> {
         // SAFETY: as `low_of`.
-        let (item, k) = unsafe { r.numbering().number_of(low) }?;
+        let (item, k) = unsafe { r.numbering().number_of_near(low, hint) }?;
         Some((if item == 0 { Item::Node } else { Item::Token }, k))
     }
 

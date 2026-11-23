@@ -1767,6 +1767,10 @@ impl Projected {
     /// The tape node of local id `local` (a select of the rank index).
     #[inline]
     #[cfg_attr(feature = "tape-reads", track_caller)]
+    /// `node`, its group found from `hint` (`Ranks::select_near`): probes in key order.
+    pub fn node_near(&self, local: u32, hint: &mut u32) -> u32 {
+        self.ranks.select_near(Item::Node, local, hint).expect("a local id of the projection")
+    }
     pub fn node(&self, local: u32) -> u32 {
         self.ranks.select(Item::Node, local).expect("a local id of the projection")
     }
@@ -2052,9 +2056,13 @@ impl Projected {
     }
     /// The node or span whose id's low 32 bits are `low` (`global`'s inverse): from the table's numbers, no select.
     pub fn local_of(&self, low: u32) -> Option<u32> {
+        self.local_of_near(low, &mut rerail_clif::ids::NONE)
+    }
+    /// `local_of`, the slot's entry first looked for at `hint` (`granules::Table::number_of_near`): probes in key order.
+    pub fn local_of_near(&self, low: u32, hint: &mut u32) -> Option<u32> {
         match &self.defs {
             Some(_) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| self.len() + self.ranks.count(Item::Token) + i),
-            Some(d) => d.table.number_of(&self.ranks, low).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
+            Some(d) => d.table.number_of_near(&self.ranks, low, hint).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
             None => Some(low),
         }
     }
@@ -3974,8 +3982,12 @@ impl Batch {
     }
     /// `node`, its document found from `hint` (`doc_near`).
     fn node_near(&self, n: i64, hint: &mut u32) -> Option<(usize, u32)> {
+        self.node_nearer(n, hint, &mut rerail_clif::ids::NONE)
+    }
+    /// `node_near`, the id's slot entry first looked for at `slot` (`Projected::local_of_near`), checked there.
+    fn node_nearer(&self, n: i64, hint: &mut u32, slot: &mut u32) -> Option<(usize, u32)> {
         let doc = self.doc_near(n >> 32, hint)?;
-        let local = self.docs[doc].local_of((n & 0xffff_ffff) as u32)?;
+        let local = self.docs[doc].local_of_near((n & 0xffff_ffff) as u32, slot)?;
         (n >= 0 && local < self.docs[doc].len()).then_some((doc, local))
     }
     /// The document index and node of id `n`.
@@ -4316,9 +4328,10 @@ impl Source for Viewed {
         }
         let plan = self.plan_for(column, columns, cursor)?;
         let b = &*self.batch;
-        let Some((doc, local)) = b.node_near(value, &mut cursor.hint[0]) else { return Some(false) };
+        // Each hint is checked against this document's tables: another document's gives the same answer.
+        let Some((doc, local)) = b.node_nearer(value, &mut cursor.hint[0], &mut cursor.near[0]) else { return Some(false) };
         let p = &b.docs[doc];
-        let x = if plan.needs & NEED_X != 0 { p.node(local) } else { NONE };
+        let x = if plan.needs & NEED_X != 0 { p.node_near(local, &mut cursor.near[1]) } else { NONE };
         let up = if plan.needs & NEED_UP != 0 { Self::parent_id_of(p, local, x) } else { 0 };
         Some(plan.ops[..usize::from(plan.len)].iter().zip(want).all(|(&op, &w)| Self::op_value(b, p, local, x, value, up, Known::default(), op) == w))
     }

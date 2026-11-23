@@ -136,6 +136,9 @@ pub struct ProbeCursor {
     /// A second key column's value of this probe, `(column, value)`, which the source may keep its matches to (a
     /// child by its place: `child(p, c, i)` by `p` and `i`). A hint too: the caller checks every key column.
     pub also: Option<(usize, i64)>,
+    /// Where the last probe's id was found in its document (a view of the tape): its slot's entry in the granule
+    /// table, and its select's group. Hints, checked before use; any value gives the same rows.
+    pub near: [u32; 2],
 }
 
 /// A source's plan of a probe's reads (`ProbeCursor::plan`): for the key column and output columns it was made for, one

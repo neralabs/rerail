@@ -367,7 +367,8 @@ fn a_views_probes_read_through_a_cursor_are_its_lookups_and_rows() {
 
 /// A view's membership test (`Source::test_at`, a membership step's `kind(n, k)`) is what its rows say: for every view
 /// that has the test, by its key column with each other column, every row's own values are held and a value no row
-/// of that key has is not; a node id no view has is not held; and the test keeps no state but its cursor's.
+/// of that key has is not, probed in key order, back and strided through one cursor; a node id no view has is not
+/// held; and the test keeps no state but its cursor's.
 #[test]
 fn a_views_membership_test_is_its_rows() {
     use crate::code_rule_dsl::facts::vtab::ProbeCursor;
@@ -382,9 +383,12 @@ fn a_views_membership_test_is_its_rows() {
         if source.test_at(0, source.value(0, 0), &[1], &[source.value(0, 1)], &mut cursor).is_none() {
             continue;
         }
-        for other in 1..width {
+        // One cursor through each order: its hints (the document, the slot entry, the select's group) found again,
+        // kept, or left behind, the answers the same.
+        let orders: [Vec<usize>; 3] = [(0..n).collect(), (0..n).rev().collect(), (0..n).map(|i| i * 7919 % n).collect()];
+        for (other, order) in (1..width).flat_map(|c| orders.iter().map(move |o| (c, o))) {
             let mut cursor = ProbeCursor::default();
-            for r in 0..n {
+            for &r in order {
                 let (key, v) = (source.value(r, 0), source.value(r, other));
                 let rows = source.lookup(0, &[key]).expect("a tested view looks up");
                 let held = |w: i64| rows.iter().any(|&q| source.value(q, other) == w);
