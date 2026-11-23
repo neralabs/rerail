@@ -383,6 +383,17 @@ So:
      0.25 to 0.36 ms: its 101 phases on one group, whatever its size (254 to 3,745 nodes). Its work in round 2
      is the same phases, so keeping it would remove no phase. Rounds cost phases, not data.
 
+   **Measured, not kept: a batch's first round held before its text** (2026-11-22).
+   - Every unit of a batch's first round stopped at P1's end, so that the units that request ran their second
+     round beside the others' text. GB10, CUDA, warm, a second evaluation: the answer rounds' GPU time 7.2 to
+     7.6 ms; C's round 1 1.30 to 1.25 ms. Round 1 is set by unit 34's P1 (146 phases, 1.12 ms on 2 groups), not
+     only by unit 42's text, and C++'s by unit 1's P1 (193 phases). The change is out.
+   - What round 2 repeats of round 1 is P1's iterations (unit 34: 146 phases, then 178; C++ unit 1: 193, then
+     228). A round 2 started from round 1's settled conditionals saves only the iterations past the one every
+     round runs: in the corpus's final rounds, 7 units take 1 P1 iteration, 77 take 2 (the text's included), 14
+     take 3 and 2 take 4. The front and the definitions over the files round 1 read are under 0.1 ms of a
+     round-2 unit's 1.3 ms setup.
+
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 
