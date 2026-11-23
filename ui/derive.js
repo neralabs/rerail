@@ -36,8 +36,9 @@ export const awaitingApproval = item => item.approval?.approved === false;
 /**
  * Whether a rule is one created by you (the library) that waits for your approval: `/rerail-create` adds the rules it
  * finds there, unapproved, so they run in Log until you approve them. A worktree's own rules and packs Rerail did not
- * publish are not: someone else wrote those, and each is read on its own page before it is approved. Nor is your edited
- * copy of a rule Rerail ships: approving it turns the original off where the copy is added, which its page says.
+ * publish are not: someone else wrote those, and each is read on its own page before it is approved. Nor is an edited
+ * copy (of a rule Rerail ships, or of your approved rule a coding agent edited): approving it turns the original off
+ * where the copy is added, which its page says.
  */
 export const awaitingYourApproval = stored => awaitingApproval(stored) && !isFromPack(stored) && stored.approval.subject.kind === "rule"
   && !stored.copiedFromRuleId;
@@ -239,7 +240,7 @@ function storedRule(entry) {
     addedAt: entry.addedAt ?? null,
     // Present for a rule Rerail did not publish: until `approved`, it runs in Log (`mode` says so).
     approval: entry.approval ?? null,
-    // Your edited copy of a rule Rerail ships (`<id>-copy`): the rule it was copied from.
+    // An edited copy (`<id>-copy`, of a rule Rerail ships or of your approved rule): the rule it was copied from.
     copiedFromRuleId: entry.copiedFromRuleId ?? null,
     updatedAt: entry.updatedAt ?? null,
   };

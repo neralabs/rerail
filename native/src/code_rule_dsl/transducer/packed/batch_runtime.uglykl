@@ -76,7 +76,9 @@ UKL_INLINE File file_at(UKL_PRIVATE const FileTable* t,uint32_t i){DocView d=t->
 UKL_SHARED bool reserve_atomic(UKL_GLOBAL uint32_t* cursor,uint32_t capacity,uint32_t count,UKL_PRIVATE uint32_t* start){uint32_t old=ukl_atomic_poll(cursor);while(true){if(old>capacity||count>capacity-old)return false;uint32_t next=old+count;if(ukl_atomic_cas(cursor,old,next)==old){(*start)=old;return true;}old=ukl_atomic_poll(cursor);}}
 UKL_SHARED uint32_t reserve_shared(UKL_GLOBAL EvaluationQuota* quota,UKL_GLOBAL SharedArena* globalArena,uint32_t count,UKL_PRIVATE uint32_t* offset){uint32_t logical=0u;if(!reserve_atomic(&quota->used,quota->limit,count,&(logical)))return 1u;uint32_t physical=0u;if(!reserve_atomic(&globalArena->cursor,globalArena->capacity,count,&(physical)))return 2u;if(physical>0xffffffffu-globalArena->start)return 2u;(*offset)=globalArena->start+physical;return 0u;}
 UKL_INLINE uint32_t reserve_transient(UKL_GLOBAL EvaluationQuota* quota,UKL_GLOBAL LazyArenaBlock* block,uint32_t count,UKL_PRIVATE uint32_t* offset){uint32_t logical=0u;if(!reserve_atomic(&quota->used,quota->limit,count,&(logical)))return 1u;if(logical>0xffffffffu-block->start)return 2u;(*offset)=block->start+logical;return 0u;}
-UKL_COLD uint32_t ensure_lazy_block(UKL_GLOBAL LazyArenaBlock* block,UKL_GLOBAL SharedArena* globalArena,UKL_PRIVATE uint32_t* start){while(true){uint32_t state=ukl_atomic_poll(&block->state);if(state==0xffffffffu)return 2u;if(state>=2u){(*start)=state-2u;return 0u;}if(state==0u){if(ukl_atomic_cas(&block->state,0u,1u)==0u){uint32_t relative=0u;if(!reserve_atomic(&globalArena->cursor,globalArena->capacity,block->limit,&(relative))||relative>0xfffffffdu-globalArena->start){ukl_atomic_store(&block->state,0xffffffffu);return 2u;}(*start)=globalArena->start+relative;block->start=(*start);ukl_atomic_store(&block->state,(*start)+2u);return 0u;}}}}
+// A lane's lazy block, taken from its global arena at the lane's first need. The lane is its thread's own
+// (`lane_arenas_full`: a lane a thread), so nothing else takes it and nothing waits (decision 0540 step 7).
+UKL_COLD uint32_t ensure_lazy_block(UKL_GLOBAL LazyArenaBlock* block,UKL_GLOBAL SharedArena* globalArena,UKL_PRIVATE uint32_t* start){uint32_t state=block->state;if(state==0xffffffffu)return 2u;if(state>=2u){(*start)=state-2u;return 0u;}uint32_t relative=0u;if(!reserve_atomic(&globalArena->cursor,globalArena->capacity,block->limit,&(relative))||relative>0xfffffffdu-globalArena->start){block->state=0xffffffffu;return 2u;}(*start)=globalArena->start+relative;block->start=(*start);block->state=(*start)+2u;return 0u;}
 
 UKL_INLINE uint32_t mix(uint32_t h,uint32_t value){h^=value+0x9e3779b9u+(h<<6u)+(h>>2u);return h;}
 UKL_INLINE uint32_t cursor_value(UKL_GLOBAL const Link* links,uint32_t base,uint32_t head,uint32_t slot){while(head){Link x=links[base+head-1u];if(x.first==slot)return x.second;head=x.previous;}return NONE;}
@@ -307,7 +309,7 @@ DEFINE_KERNEL2(batch_runtime, run_batch,
   return;
  }
 #ifdef RERAIL_RESIDENT
- // A lane's status is its own, reused by its tasks; it keeps their first error (`label_sink`).
+ // A lane's status is its own, reused by its tasks; it keeps their first error (`label_settle` folds it).
  UKL_GLOBAL const uint8_t* chunk=nodes;
  UKL_GLOBAL Status* status=&statuses[tid];
  uint32_t firstError=0u;

@@ -1436,9 +1436,7 @@ mod tests {
 
     #[test]
     fn a_language_left_out_of_the_build_keeps_its_tables_but_no_grammar() {
-        let root = std::path::PathBuf::from(
-            std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
-        );
+        let root = crate::source_tree::native();
         let vendored = [
             "python",
             "sql",
@@ -1481,9 +1479,7 @@ mod tests {
 
     #[test]
     fn the_repository_registry_generates_the_engine_tables() {
-        let root = std::path::PathBuf::from(
-            std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
-        );
+        let root = crate::source_tree::native();
         let vendored = [
             "python",
             "sql",
@@ -1534,9 +1530,7 @@ mod tests {
 
     #[test]
     fn the_test_only_registry_holds_the_exemplar_and_changes_no_identity() {
-        let root = std::path::PathBuf::from(
-            std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
-        );
+        let root = crate::source_tree::native();
         let out = Registry::new("exemplar", &[]);
         let read = |test_directory: Option<&Path>| {
             generate(

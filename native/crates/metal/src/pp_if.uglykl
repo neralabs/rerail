@@ -4,8 +4,8 @@
 // tokens read in place through `IF_NODES` (a node each, the line's operands' leaves), at its
 // directive's slot. Its names are looked up there as the serial pass's `in_if` reads them:
 // `defined X` and `defined ( X )` are answered and their operands not expanded, and the
-// `__has_*` tests' operands are left raw. The line is then expanded by the text's own passes and
-// queue (`px_top_*`, `px_worker`), and each test's output is evaluated by one thread, as
+// `__has_*` tests' operands are left raw. The line is then expanded by the text's own loop
+// (`lp_loop`, decision 0588), and each test's output is evaluated by one thread, as
 // `expr::eval` evaluates it.
 
 // A top token's mark (`IF_OPS`): `defined` as the operator; a `__has_*` test followed by `(`.
@@ -92,14 +92,16 @@ UKL_INLINE bool p1_defined_operand(Ux u, uint32_t g, uint32_t s, uint32_t lo, ui
 // as `in_if` reads it (an operator or a raw operand is no name).
 UKL_INLINE void p1_if_tokens(Ux u, PP_GLOBAL const uint32_t* count, PP_GLOBAL const uint32_t* first, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* n_dirs,
                              PP_GLOBAL const uint32_t* total, PP_GLOBAL const uint32_t* dslot, uint64_t defined_key, PP_GLOBAL const uint64_t* op_keys, PP_GLOBAL const uint32_t* op_kinds, uint32_t n_ops,
-                             PP_GLOBAL uint32_t* if_nodes, PP_GLOBAL uint32_t* ops, PP_GLOBAL uint32_t* lookups, PP_GLOBAL uint32_t* flags, PP_GLOBAL uint32_t* bad, uint32_t s) {
+                             PP_GLOBAL uint32_t* if_nodes, PP_GLOBAL uint32_t* ops, PP_GLOBAL uint32_t* lookups, PP_GLOBAL uint32_t* trows, PP_GLOBAL uint32_t* flags, PP_GLOBAL uint32_t* bad, uint32_t s) {
     if (s >= total[0]) return;
     uint32_t j = pb_item_of(at, n_dirs[0], s);
     uint32_t lo = at[j], g = first[j] + (s - lo), end = lo + count[j];
     if_nodes[s] = g;
     ops[s] = 0u;
     lookups[s] = L_NOT_NAME;
+    trows[2u * s] = IR_NONE; trows[2u * s + 1u] = IR_NONE;
     if (ref_kind(u, g) != K_IDENTIFIER) return;
+    trows[2u * s] = name_rows_lo(u.sorted, u.n_rows, u.keys[g]); trows[2u * s + 1u] = name_rows_hi(u.sorted, u.n_rows, u.keys[g]);
     // An include's name is expanded as text is.
     if (kinds[j] != IL_TEST) {
         lookups[s] = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.floors, u.n_units, u.keys[g], dslot[j], bad);
@@ -122,37 +124,6 @@ UKL_INLINE void p1_if_tokens(Ux u, PP_GLOBAL const uint32_t* count, PP_GLOBAL co
         }
     }
     lookups[s] = m;
-}
-
-// A test's operand's end (its `)` + 1, or its line's end), for the reach's max scan.
-// A header test's operand that starts with neither `"…"` nor `<` is expanded first
-// (`Pp::header_of`): it is read as text is.
-UKL_INLINE void p1_if_has_ends(Ux u, PP_GLOBAL const uint32_t* if_nodes, PP_GLOBAL const uint32_t* ops, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* total, PP_GLOBAL const uint32_t* depth,
-                               PP_GLOBAL const uint64_t* closes, PP_GLOBAL const uint32_t* n_close, PP_GLOBAL uint32_t* hend, uint32_t s) {
-    uint32_t n = total[0];
-    if (s >= n) return;
-    hend[s] = 0u;
-    if (ops[s] < IO_HAS) return;
-    uint32_t end = top_end(at, n_dirs[0], n, s);
-    uint32_t kind = ops[s] - IO_HAS;
-    if (kind >= OPK_HAS_INCLUDE && kind <= OPK_HAS_EMBED && s + 2u < end) {
-        Span r = ref_span(u, if_nodes[s + 2u]);
-        bool str = r.kind == K_LITERAL && r.len >= 1u && r.p[0] == ((uint8_t)('"'));
-        bool lt = r.kind == K_PUNCT && r.len == 1u && r.p[0] == ((uint8_t)('<'));
-        if (!str && !lt) return;
-    }
-    uint32_t c = top_close(closes, n_close[0], depth, s + 1u, end);
-    hend[s] = c == NO_POS ? end : c + 1u;
-}
-
-// A test's operand's tokens are read raw (`Pp::builtin_operand`): no names.
-UKL_INLINE void p1_if_mask(PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* total, PP_GLOBAL const uint32_t* reach, PP_GLOBAL uint32_t* ops, PP_GLOBAL uint32_t* lookups, uint32_t s) {
-    if (s >= total[0] || s == 0u) return;
-    uint32_t j = pb_item_of(at, n_dirs[0], s);
-    if (s > at[j] && reach[s - 1u] > s) {
-        lookups[s] = L_NOT_NAME;
-        ops[s] = 0u;
-    }
 }
 
 // --- A test's value -------------------------------------------------------------------------------
@@ -605,17 +576,19 @@ typedef struct IfFiles {
     PP_GLOBAL const uint32_t* found_by; PP_GLOBAL const uint32_t* unit_file;
     PP_GLOBAL PpReq* reqs; PP_GLOBAL uint32_t* n_reqs; uint32_t req_cap;
     PP_GLOBAL uint32_t* flags;
+    // The grid's control words: a long line's evaluation beats (`ukl_grid_beat`).
+    PP_GLOBAL uint32_t* grid;
 } IfFiles;
 
 // A header name, spelled from tokens already expanded (`Pp::header_of`): `"…"`'s bytes inside
 // its quotes, or the tokens after `<` to `>`, each after the first with a blank where space was
-// before it (the output's flags, `ov_ref(u, out, out_cap + k)`).
+// before it (the output's flags, `ov_ref(u, &out, out_cap + k)`).
 typedef struct HName { uint32_t p0, close; bool angle; } HName;
 
 // The header name `out[p0..p1)` spells, if any.
 UKL_INLINE bool p1_header_of(Ux u, Ov out, uint32_t p0, uint32_t p1, UKL_PRIVATE HName* h) {
     if (p0 >= p1) return false;
-    Span r = ref_span(u, ov_ref(u, out, p0));
+    Span r = ref_span(u, ov_ref(u, &out, p0));
     h->p0 = p0;
     if (r.kind == K_LITERAL && r.len >= 2u && r.p[0] == ((uint8_t)('"'))) {
         h->angle = false;
@@ -624,7 +597,7 @@ UKL_INLINE bool p1_header_of(Ux u, Ov out, uint32_t p0, uint32_t p1, UKL_PRIVATE
     }
     if (r.kind != K_PUNCT || r.len != 1u || r.p[0] != ((uint8_t)('<'))) return false;
     for (uint32_t k = p0 + 1u; k < p1; k++) {
-        if (ref_is(u, ov_ref(u, out, k), ((uint8_t)('>')))) {
+        if (ref_is(u, ov_ref(u, &out, k), ((uint8_t)('>')))) {
             h->angle = true;
             h->close = k;
             return true;
@@ -652,19 +625,19 @@ UKL_INLINE uint32_t p1_bytes(Span r, uint32_t mode, UKL_PRIVATE KeyAcc* ka, PP_G
 // The name's bytes, as `p1_bytes` reads a span.
 UKL_INLINE uint32_t p1_header_bytes(Ux u, Ov out, HName h, uint32_t mode, UKL_PRIVATE KeyAcc* ka, PP_GLOBAL uint8_t* dst) {
     if (!h.angle) {
-        Span r = ref_span(u, ov_ref(u, out, h.p0));
+        Span r = ref_span(u, ov_ref(u, &out, h.p0));
         r.p += 1u;
         r.len -= 2u;
         return p1_bytes(r, mode, ka, dst, 0u);
     }
     uint32_t n = 0u;
     for (uint32_t k = h.p0 + 1u; k < h.close; k++) {
-        if (k > h.p0 + 1u && (ov_flags(u, out, k) & T_SPACE) != 0u) {
+        if (k > h.p0 + 1u && (ov_flags(u, &out, k) & T_SPACE) != 0u) {
             if (mode == 1u) ka_byte(ka, ((uint8_t)(' ')));
             else if (mode == 2u) dst[n] = ((uint8_t)(' '));
             n++;
         }
-        n = p1_bytes(ref_span(u, ov_ref(u, out, k)), mode, ka, dst, n);
+        n = p1_bytes(ref_span(u, ov_ref(u, &out, k)), mode, ka, dst, n);
     }
     return n;
 }
@@ -738,7 +711,7 @@ UKL_INLINE void p1_inc_find(Ux u, IfFiles x, IfNames nm, PP_GLOBAL const PpInst*
                             PP_GLOBAL uint32_t* cand, PP_GLOBAL uint32_t* once, uint32_t w) {
     if (w >= n_dirs[0]) return;
     // The output (decision 0520 §3), read through its pieces.
-    Ov out; out.cols = outc; out.cap = out_cap; out.np = ptotal[0];
+    Ov out = ov_new(outc, out_cap, ptotal[0]);
     cand[w] = PP_NONE;
     if (dactive[w] == 0u) return;
     uint32_t i, r = p1_row_of(insts, n_nodes[0], dir_bases, w, &i);
@@ -789,16 +762,46 @@ UKL_INLINE void p1_inc_find(Ux u, IfFiles x, IfNames nm, PP_GLOBAL const PpInst*
 // Directive word `w`'s test value (`IF_VAL`): its line's output (`out`, from the place of its
 // first top token), evaluated as `expr::eval` evaluates it, with `defined` and the `__has_*`
 // tests answered where they stand.
-UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint32_t* n_nodes, PP_GLOBAL const PpNode* nodes, PP_GLOBAL const uint32_t* dir_bases,
+// A token of an `#if` line's expansion that feeds the evaluation as it is (`p1_if_line`'s group
+// window): its operator, value and flags; false where it needs the line's own step (a test's
+// mark, `defined`, a number or literal it cannot read, any other token).
+UKL_INLINE bool p1_if_plain(Ux u, UKL_PRIVATE Ov* out, uint32_t o, uint32_t g0, uint32_t n_line, PP_GLOBAL const uint32_t* ops, uint32_t s0, uint64_t defined_key, uint64_t true_key, uint32_t true_is_one,
+                            PP_GLOBAL const uint64_t* op_keys, PP_GLOBAL const uint32_t* op_kinds, uint32_t n_ops, UKL_PRIVATE uint32_t* op, UKL_PRIVATE uint64_t* bits, UKL_PRIVATE uint32_t* f) {
+    uint32_t g = ov_ref(u, out, o);
+    if ((g & SCRATCH) == 0u && g >= g0 && g < g0 + n_line && ops[s0 + (g - g0)] != 0u) return false;
+    *op = 0u; *bits = 0ul; *f = 0u;
+    Span r = ref_span(u, g);
+    if (r.kind == K_IDENTIFIER) {
+        uint64_t key = ref_key(u, g);
+        if (key == defined_key) return false;
+        uint32_t k = p1_if_opk(op_keys, op_kinds, n_ops, key);
+        if (k >= OPK_ALT) { *op = k - OPK_ALT; return true; }
+        *bits = true_is_one != 0u && key == true_key ? 1ul : 0ul;
+        return true;
+    }
+    if (r.kind == K_NUMBER || r.kind == K_LITERAL) {
+        uint8_t b[IF_TOKB];
+        uint32_t n = if_bytes(r, b);
+        if (n > IF_TOKB) return false;
+        IfVal c = r.kind == K_NUMBER ? if_number(b, n) : if_char(b, n);
+        if (!c.ok) return false;
+        *bits = c.bits; *f = r.kind == K_NUMBER ? c.f : 0u;
+        return true;
+    }
+    if (r.kind == K_PUNCT && r.len >= 1u) { *op = eo_punct(r.p, r.len); return true; }
+    return false;
+}
+
+// An `#if` line's test: its lane's, or (`group`) its SIMD group's, every lane running the
+// evaluation alike: at each step the lanes read the next 32 tokens, one each (`p1_if_plain`), and
+// the run before the first that needs the step below feeds the evaluation at once.
+UKL_INLINE void p1_if_line(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint32_t* n_nodes, PP_GLOBAL const PpNode* nodes, PP_GLOBAL const uint32_t* dir_bases,
                            PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* count, PP_GLOBAL const uint32_t* first, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* total,
                            PP_GLOBAL const uint32_t* dslot, PP_GLOBAL const uint32_t* ops, PP_GLOBAL const uint32_t* state, PP_GLOBAL const uint32_t* outc, PP_GLOBAL const uint32_t* obase,
                            PP_GLOBAL const uint32_t* vtotal, PP_GLOBAL const uint32_t* ptotal, uint64_t defined_key, uint64_t true_key, uint32_t true_is_one, PP_GLOBAL const uint64_t* op_keys, PP_GLOBAL const uint32_t* op_kinds,
-                           uint32_t n_ops, PP_GLOBAL const uint64_t* feat_keys, PP_GLOBAL const uint64_t* feat_vals, uint32_t n_feat, PP_GLOBAL uint32_t* vals, PP_GLOBAL uint32_t* bad, uint32_t w) {
-    if (w >= n_dirs[0]) return;
+                           uint32_t n_ops, PP_GLOBAL const uint64_t* feat_keys, PP_GLOBAL const uint64_t* feat_vals, uint32_t n_feat, PP_GLOBAL uint32_t* vals, PP_GLOBAL uint32_t* bad, uint32_t w, uint32_t ln, bool group __UKL_PARAMS) {
     // The output (decision 0520 §3), read through its pieces.
-    Ov out; out.cols = outc; out.cap = out_cap; out.np = ptotal[0];
-    vals[w] = 0u;
-    if (kinds[w] != IL_TEST || count[w] == 0u) return;
+    Ov out = ov_new(outc, out_cap, ptotal[0]);
     uint32_t i;
     p1_row_of(insts, n_nodes[0], dir_bases, w, &i);
     uint32_t f = insts[i].file, unit = nodes[i].unit, slot = dslot[w];
@@ -809,8 +812,25 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
     IfSy y;
     y.nv = 0u; y.no = 0u; y.want = true; y.bad = false; y.big = false;
     uint8_t b[IF_TOKB];
-    for (uint32_t o = o0; o < o1 && !y.bad && !y.big;) {
-        uint32_t g = ov_ref(u, out, o++);
+    Ov look = out;
+    for (uint32_t o = o0, step = 0u; o < o1 && !y.bad && !y.big; step++) {
+        // A beat each 128 steps (a group's step reads up to 32 tokens): the groups waiting count their
+        // spins from the last beat.
+        if ((step & 127u) == 127u && ln == 0u) ukl_grid_beat(x.grid);
+        if (group) {
+            // The group's window: lane `ln` reads token `o + ln`.
+            uint32_t wop = 0u, wf = 0u;
+            uint64_t wb = 0ul;
+            bool plain = o + ln < o1 && p1_if_plain(u, &look, o + ln, g0, count[w], ops, s0, defined_key, true_key, true_is_one, op_keys, op_kinds, n_ops, &wop, &wb, &wf);
+            uint32_t k = ukl_min(ukl_min((uint32_t)ukl_ctz64((uint64_t)(ukl_sg_ballot(!plain __UKL_ARGS))), (uint32_t)UKL_SIMD_WIDTH), o1 - o);
+            for (uint32_t j = 0u; j < k && !y.bad && !y.big; j++) {
+                uint32_t lo = ukl_sg_shuffle((uint32_t)wb, j __UKL_ARGS), hi = ukl_sg_shuffle((uint32_t)(wb >> 32), j __UKL_ARGS);
+                sy_feed(&y, ukl_sg_shuffle(wop, j __UKL_ARGS), (uint64_t)lo | ((uint64_t)hi << 32), ukl_sg_shuffle(wf, j __UKL_ARGS));
+            }
+            o += k;
+            if (k == (uint32_t)UKL_SIMD_WIDTH || o >= o1 || y.bad || y.big) continue;
+        }
+        uint32_t g = ov_ref(u, &out, o++);
         // A top token of the line, read raw: its mark.
         uint32_t mark = 0u;
         if ((g & SCRATCH) == 0u && g >= g0 && g < g0 + count[w]) {
@@ -823,8 +843,8 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
             uint32_t n = PP_NONE;
             bool paren = false;
             if (o < o1) {
-                n = ov_ref(u, out, o++);
-                if (ref_is(u, n, ((uint8_t)('(')))) { paren = true; n = o < o1 ? ov_ref(u, out, o++) : PP_NONE; }
+                n = ov_ref(u, &out, o++);
+                if (ref_is(u, n, ((uint8_t)('(')))) { paren = true; n = o < o1 ? ov_ref(u, &out, o++) : PP_NONE; }
             }
             bool v = n != PP_NONE && ref_kind(u, n) == K_IDENTIFIER
                      && visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.floors, u.n_units, ref_key(u, n), slot, bad) != L_NONE;
@@ -836,7 +856,7 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
             // The test's `(`, its operand to the `)` at its depth, read raw.
             uint32_t kind = mark - IO_HAS, p0 = o + 1u, p1 = p0, depth = 0u;
             for (; p1 < o1; p1++) {
-                uint32_t d = paren_delta(u, ov_ref(u, out, p1));
+                uint32_t d = paren_delta(u, ov_ref(u, &out, p1));
                 if (d == 1u) depth++;
                 else if (d == 0xffffffffu) { if (depth == 0u) break; depth--; }
             }
@@ -846,9 +866,9 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
                 // By the test's name and its operand's tokens spelled together.
                 uint32_t n = 0u;
                 KeyAcc ka = ka_new(0u);
-                for (uint32_t k = p0; k < p1; k++) n += ka_span(&ka, ref_span(u, ov_ref(u, out, k)), true);
+                for (uint32_t k = p0; k < p1; k++) n += ka_span(&ka, ref_span(u, ov_ref(u, &out, k)), true);
                 ka = ka_new(n);
-                for (uint32_t k = p0; k < p1; k++) ka_span(&ka, ref_span(u, ov_ref(u, out, k)), false);
+                for (uint32_t k = p0; k < p1; k++) ka_span(&ka, ref_span(u, ov_ref(u, &out, k)), false);
                 uint64_t key = key_mix(ref_key(u, g), ka_end(ka));
                 uint32_t c = pb_lower_bound(feat_keys, n_feat, key);
                 v = c < n_feat && feat_keys[c] == key ? feat_vals[c] : (kind == OPK_IS_IDENTIFIER ? 1ul : 0ul);
@@ -886,6 +906,37 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
     }
     if (y.big) { ukl_atomic_or(x.flags, P1_IF_BIG); return; }
     vals[w] = sy_end(&y) ? 1u : 0u;
+}
+
+// The `#if` lines of a SIMD group's lanes (a lane a directive): each lane's own at once, then each
+// longer than `IF_GROUP_MIN` tokens one at a time, every lane with each (`p1_if_line`). A short
+// line's lanes would wait.
+#define IF_GROUP_MIN (64u)
+UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint32_t* n_nodes, PP_GLOBAL const PpNode* nodes, PP_GLOBAL const uint32_t* dir_bases,
+                           PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* count, PP_GLOBAL const uint32_t* first, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* total,
+                           PP_GLOBAL const uint32_t* dslot, PP_GLOBAL const uint32_t* ops, PP_GLOBAL const uint32_t* state, PP_GLOBAL const uint32_t* outc, PP_GLOBAL const uint32_t* obase,
+                           PP_GLOBAL const uint32_t* vtotal, PP_GLOBAL const uint32_t* ptotal, uint64_t defined_key, uint64_t true_key, uint32_t true_is_one, PP_GLOBAL const uint64_t* op_keys, PP_GLOBAL const uint32_t* op_kinds,
+                           uint32_t n_ops, PP_GLOBAL const uint64_t* feat_keys, PP_GLOBAL const uint64_t* feat_vals, uint32_t n_feat, PP_GLOBAL uint32_t* vals, PP_GLOBAL uint32_t* bad, uint32_t w0, uint32_t ln __UKL_PARAMS) {
+    bool mine = w0 < n_dirs[0];
+    if (mine) vals[w0] = 0u;
+    mine = mine && kinds[w0] == IL_TEST && count[w0] != 0u;
+    bool big = false;
+    if (mine) {
+        uint32_t s0 = at[w0], s1 = s0 + count[w0];
+        uint32_t o0 = obase[s0], o1 = s1 < total[0] ? obase[s1] : vtotal[0];
+        big = o1 - o0 > IF_GROUP_MIN;
+        if (!big)
+            p1_if_line(u, x, nm, out_cap, kinds, insts, n_nodes, nodes, dir_bases, n_dirs, count, first, at, total, dslot, ops, state, outc, obase, vtotal, ptotal, defined_key, true_key, true_is_one, op_keys, op_kinds, n_ops,
+                       feat_keys, feat_vals, n_feat, vals, bad, w0, ln, false __UKL_ARGS);
+    }
+    uint64_t todo = (uint64_t)(ukl_sg_ballot(big __UKL_ARGS));
+    while (todo != 0u) {
+        uint32_t lead = ukl_ctz64(todo);
+        todo &= todo - 1u;
+        uint32_t w = ukl_sg_shuffle(w0, lead __UKL_ARGS);
+        p1_if_line(u, x, nm, out_cap, kinds, insts, n_nodes, nodes, dir_bases, n_dirs, count, first, at, total, dslot, ops, state, outc, obase, vtotal, ptotal, defined_key, true_key, true_is_one, op_keys, op_kinds, n_ops,
+                   feat_keys, feat_vals, n_feat, vals, bad, w, ln, true __UKL_ARGS);
+    }
 }
 
 // --- `#line` (decision 0467 §6) ------------------------------------------------------------------
@@ -929,7 +980,7 @@ UKL_INLINE void p1_line_row(Ux u, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL con
                             PP_GLOBAL uint32_t* lctl, uint32_t lb_cap, PP_GLOBAL PxScratch* stoks, PP_GLOBAL uint8_t* sbytes, PP_GLOBAL uint32_t* changed, PP_GLOBAL uint32_t* flags, uint32_t w) {
     if (w >= n_dirs[0]) return;
     // The output (decision 0520 §3), read through its pieces.
-    Ov out; out.cols = outc; out.cap = out_cap; out.np = ptotal[0];
+    Ov out = ov_new(outc, out_cap, ptotal[0]);
     uint32_t i, r = p1_row_of(insts, n_nodes[0], dir_bases, w, &i);
     lhead[w] = w == insts[i].dir_first ? 1u : 0u;
     bool on = false, named = false;
@@ -939,8 +990,8 @@ UKL_INLINE void p1_line_row(Ux u, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL con
         uint32_t s0 = at[w], s1 = s0 + count[w];
         uint32_t o0 = obase[s0], o1 = s1 < total[0] ? obase[s1] : vtotal[0];
         uint8_t b[IF_TOKB];
-        if (o0 < o1 && ref_kind(u, ov_ref(u, out, o0)) == K_NUMBER) {
-            uint32_t n = if_bytes(ref_span(u, ov_ref(u, out, o0)), b);
+        if (o0 < o1 && ref_kind(u, ov_ref(u, &out, o0)) == K_NUMBER) {
+            uint32_t n = if_bytes(ref_span(u, ov_ref(u, &out, o0)), b);
             IfVal c = n <= IF_TOKB ? if_number(b, n) : if_val(false, 0ul, 0u);
             if (c.ok) {
                 on = true;
@@ -953,7 +1004,7 @@ UKL_INLINE void p1_line_row(Ux u, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL con
             }
         }
         if (on && o0 + 1u < o1) {
-            Span sr = ref_span(u, ov_ref(u, out, o0 + 1u));
+            Span sr = ref_span(u, ov_ref(u, &out, o0 + 1u));
             uint32_t n = if_bytes(sr, b);
             uint32_t q = 0u;
             while (q < n && q < 4u && b[q] != ((uint8_t)('"')) && b[q] != ((uint8_t)('\''))) q++;

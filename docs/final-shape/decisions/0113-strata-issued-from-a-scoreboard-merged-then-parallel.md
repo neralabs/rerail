@@ -83,7 +83,7 @@ components then run on as many threads as the executor gives them, and retire in
 
 ## Prior work consulted
 
-- **ast-index-spike design index, partitioning (D S145).** "Partitioning alone is not a win (it pays the fixed
+- **SQL index prototype design index, partitioning (D S145).** "Partitioning alone is not a win (it pays the fixed
   cost P times)." Client parallelism over 8 connections gave up to 10.5×.
   - **Agrees.** Splitting the strata over threads without merging them pays each fixed cost on another thread,
     and the CPU is unchanged or worse. So merging comes first, and parallelism takes components, never strata.

@@ -113,6 +113,10 @@
 (decl remat (Value) Value)
 (extern constructor remat remat)
 
+;; Whether a value is an `iconst` (rerail's patch).
+(decl pure value_is_iconst (Value) bool)
+(extern constructor value_is_iconst value_is_iconst)
+
 ;; Mark a node as subsuming whatever else it's rewritten from -- this
 ;; is definitely preferable, not just a possible option. Useful for,
 ;; e.g., constant propagation where we arrive at a definite "final

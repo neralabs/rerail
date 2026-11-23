@@ -6,7 +6,7 @@
 #   corpus0, pack-B, home-B, rules/<dir>, rs-now/lib (async_blocking renamed in the copy).
 # CPU = user + sys from /usr/bin/time -l; peak = footprint (RSS also shown: it counts the store's file map).
 set -u
-SP=${SP:-${RERAIL_SHARED:-$HOME/orca/rerail-shared}/bench/step-vs-main}
+SP=${SP:-${RERAIL_SHARED:?set SP, or RERAIL_SHARED to the shared data folder}/bench/step-vs-main}
 CLI=${CLI:-$SP/main-pkg/node_modules/@neralabs/rerail/dist/cli/cli.js}
 RULES=$1; ENGINE=$2; shift 2; EXTRA=("RERAIL_SQL_STRICT=1" "$@"); R=${OUT:-$PWD/tmp/bench}/run-steps  # run outputs: the caller's ./tmp, never the shared inputs
 rm -rf "$R"; mkdir -p "$R"

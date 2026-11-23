@@ -26,7 +26,7 @@ mod tables;
 
 pub use rerail_simdjson::{Error, Kinds, Refusal, Tape};
 
-use stage2::{DEFAULT_MAX_DEPTH, SLOTS, Sink, walk};
+use stage2::{DEFAULT_MAX_DEPTH, SLOTS, Sink, Stacks, walk};
 
 /// simdjson's `error_code`, the values this reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -209,18 +209,18 @@ impl Parser {
     /// `walk_at`: a walk at the widths `wide` names (bit 1 size, 2 off, 4 tail: 4 bytes).
     fn walk_at(&mut self, wide: u32, buf: *const u8, count: u32, shift: u32, len: u32, sink: &mut Sink) -> i32 {
         let index = self.indexes.as_ptr();
-        let (c, p, o) = (self.container.as_mut_ptr(), self.pair.as_mut_ptr(), self.objects.as_mut_ptr());
+        let st = Stacks { container: self.container.as_mut_ptr(), pair: self.pair.as_mut_ptr(), object: self.objects.as_mut_ptr() };
         // SAFETY: `buf` and the index are stage 1's; the stacks hold `DEFAULT_MAX_DEPTH + 1`.
         unsafe {
             match wide {
-                0 => walk::<u16, u16, u16>(buf, index, count, shift, len, sink, c, p, o),
-                1 => walk::<u32, u16, u16>(buf, index, count, shift, len, sink, c, p, o),
-                2 => walk::<u16, u32, u16>(buf, index, count, shift, len, sink, c, p, o),
-                3 => walk::<u32, u32, u16>(buf, index, count, shift, len, sink, c, p, o),
-                4 => walk::<u16, u16, u32>(buf, index, count, shift, len, sink, c, p, o),
-                5 => walk::<u32, u16, u32>(buf, index, count, shift, len, sink, c, p, o),
-                6 => walk::<u16, u32, u32>(buf, index, count, shift, len, sink, c, p, o),
-                _ => walk::<u32, u32, u32>(buf, index, count, shift, len, sink, c, p, o),
+                0 => walk::<u16, u16, u16>(buf, index, count, shift, len, sink, st),
+                1 => walk::<u32, u16, u16>(buf, index, count, shift, len, sink, st),
+                2 => walk::<u16, u32, u16>(buf, index, count, shift, len, sink, st),
+                3 => walk::<u32, u32, u16>(buf, index, count, shift, len, sink, st),
+                4 => walk::<u16, u16, u32>(buf, index, count, shift, len, sink, st),
+                5 => walk::<u32, u16, u32>(buf, index, count, shift, len, sink, st),
+                6 => walk::<u16, u32, u32>(buf, index, count, shift, len, sink, st),
+                _ => walk::<u32, u32, u32>(buf, index, count, shift, len, sink, st),
             }
         }
     }

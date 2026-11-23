@@ -1,1 +1,0 @@
-`rerail daemon start` with an empty `--tls-key`, or one that is not a PEM private key, serves this computer alone whoever can read it, naming the file. Such a key others could read stopped the start; an empty one only its owner read started a daemon that refused every https connection. An empty `--tls-cert` stops the start, naming the file.

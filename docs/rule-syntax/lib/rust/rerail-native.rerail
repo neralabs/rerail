@@ -1,0 +1,27 @@
+// rust/rerail-native: vocabulary of the rerail pack's rules about this repository's own engine (native/src): the test
+// code they leave out, the language labels they look for, and the modules a language family owns.
+//
+// What a rule gets from this library:
+//   native_test_item(n)     n is a mod, fn or impl that #[cfg(test)] or #[cfg(all(test, …))] applies to (other
+//                           attributes and comments may stand between): `#[cfg(test)] mod tests { … }`
+//   in_native_test(n)       n is inside a native_test_item
+//   native_label(n)         string literal n is a language label, "python", "typescript", "tsx", "javascript", "php",
+//                           "blade", "sql", "vue", "rust" or "ecma", quotes included: `dialect_by_label("python")`
+//   family_owned(d)         document d is a family's own module, which may name its own languages and suffixes:
+//                           …/python.rs, …/php_view/…, …/phpdoc.rs, embed/*.rs, suppress/ruff-like readers, literal
+//                           parsers, the module graph and the import resolvers (the JSON rules' shared path list)
+//
+// Builds on core and rust/syntax.rerail (attached: an attribute and the item it applies to).
+#include "rust/syntax.rerail"
+
+.decl native_test_item(n: node)
+native_test_item(n) :- kind(a, "attribute_item"), match("#\\[cfg\\((?:test|all\\(test\\b[^\\]]*)\\)\\]", a),
+    attached(a, n), (kind(n, "mod_item") ; kind(n, "function_item") ; kind(n, "impl_item")).
+.decl in_native_test(n: node)
+in_native_test(n) :- native_test_item(t), within(n, t).
+
+.decl native_label(n: node)
+native_label(n) :- kind(n, "string_literal"), glob("\"{python,typescript,tsx,javascript,php,blade,sql,vue,rust,ecma}\"", n).
+
+.decl family_owned(d: number)
+family_owned(d) :- doc(d, p, _), match("(?s:.*)(?:^|/)(?:(?:python|ecma|php|blade|vue|rust|sql)(?:\\.rs$|/)|(?:python|php|rust)_[a-z_]+(?:\\.rs$|/)|phpdoc(?:\\.rs$|/)|arguments_sql\\.rs$|suppress/(?:biome|clippy|eslint|noqa|nosec|oxlint|phpcs|phpstan|psalm|sqlfluff)\\.rs$|literal/(?:annotation|brace|percent|offsets|semantic|printf|scanf|eslint_directive)\\.rs$|embed/[a-z_]+\\.rs$|code_rule_dsl/(?:import_target/|npm_ignore/|module_graph(?:\\.rs$|/)|package_manifest\\.rs$|module_path\\.rs$|identifier(?:\\.rs$|/)))(?s:.*)", p).

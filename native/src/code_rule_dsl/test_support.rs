@@ -2,7 +2,7 @@
 
 use super::matcher::GrammarMatcher;
 use super::model::{ClauseKind, Query};
-use super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
+use super::CompiledCodeRuleDsl;
 use napi::Result;
 use serde_json::{Map, Value, json};
 use std::path::PathBuf;
@@ -12,9 +12,7 @@ pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
 /// Pack test data at `relative` (a repository path under `packs/<id>/upstream/<tool>/`), which is not in
 /// git (scripts/s3/pack-fixtures.mjs): its path in the checkout, or a failure saying to fetch and derive it.
 pub(super) fn pack_test_data(relative: &str) -> PathBuf {
-    let path = std::path::PathBuf::from(
-        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
-    )
+    let path = crate::source_tree::native()
     .join("..")
     .join(relative);
     assert!(
@@ -49,20 +47,6 @@ pub(super) fn alone(test: &str) {
     assert!(status.success(), "{test} failed: {status}");
 }
 
-/// A child process of this test binary at the lowest priority: `nice -n 19` on Unix. Windows has no `nice`: a child
-/// there takes its parent's priority class when that is below normal, so a run started low keeps it.
-pub(super) fn this_binary() -> std::process::Command {
-    let binary = std::env::current_exe().unwrap();
-    #[cfg(unix)]
-    {
-        let mut command = std::process::Command::new("nice");
-        command.args(["-n", "19"]).arg(binary);
-        command
-    }
-    #[cfg(not(unix))]
-    std::process::Command::new(binary)
-}
-
 pub(super) const JSX_SOURCE: &str =
     "export const View = () => <button type=\"button\">Go</button>;\n";
 
@@ -78,11 +62,7 @@ pub(super) fn compile_typescript_rule(rule: Value) -> Result<CompiledCodeRuleDsl
             "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
         }],
     });
-    CodeRuleDslRuntime::compile(
-        document.to_string(),
-        "json".to_owned(),
-        CAPABILITIES.to_owned(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES)
 }
 
 pub(super) fn evaluate_file(
@@ -117,11 +97,7 @@ pub(super) fn compile_document_with(
     document: Value,
     capabilities: &Value,
 ) -> Result<CompiledCodeRuleDsl> {
-    CodeRuleDslRuntime::compile(
-        document.to_string(),
-        "json".to_owned(),
-        capabilities.to_string(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", &capabilities.to_string())
 }
 
 pub(super) fn clause_document(clause: Value) -> Value {
@@ -453,4 +429,34 @@ pub(super) fn pattern_for<D: 'static>(
     } else {
         unfiltered_pattern(text, lang)
     }
+}
+
+/// This test binary as a child process at the lowest priority (AGENTS.md: every test run at a high nice value):
+/// through `nice -n 19` on Unix; on Windows, which has no `nice`, started in the idle priority class.
+pub(crate) fn niced_self() -> std::process::Command {
+    let exe = std::env::current_exe().expect("the test binary's path");
+    #[cfg(unix)]
+    {
+        let mut c = std::process::Command::new("nice");
+        c.args(["-n", "19"]).arg(exe);
+        c
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        use windows_sys::Win32::System::Threading::{BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass, IDLE_PRIORITY_CLASS};
+        let mut c = std::process::Command::new(exe);
+        // Windows' classes are strict where Unix's nice is a share: a child in a class below the tests beside it
+        // (the farm runs them below normal) gets no core while they run (a 15 s graph took 37 s under the quick
+        // tier). A test already below normal hands its class on (a child inherits it); one at normal or above starts
+        // its child below normal.
+        // SAFETY: the process's pseudo-handle; no arguments otherwise.
+        let mine = unsafe { GetPriorityClass(GetCurrentProcess()) };
+        if mine != BELOW_NORMAL_PRIORITY_CLASS && mine != IDLE_PRIORITY_CLASS {
+            c.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
+        }
+        c
+    }
+    #[cfg(not(any(unix, windows)))]
+    std::process::Command::new(exe)
 }

@@ -46,11 +46,21 @@ mod dl {
     }
 }
 
+/// A symbol's address as the function type `T` its use names (a field's, where the macro is given `_`).
+///
+/// # Safety
+/// `p` is the address of a function of type `T`.
+unsafe fn as_fn<T: Copy>(p: Ptr) -> T {
+    const { assert!(size_of::<T>() == size_of::<Ptr>(), "a function pointer") };
+    // SAFETY: the caller's: `p` is a `T`, of a pointer's size.
+    unsafe { std::mem::transmute_copy::<Ptr, T>(&p) }
+}
+
 macro_rules! f {
     ($lib:expr, $name:literal, $ty:ty) => {{
         let p = dl::sym($lib, $name);
         assert!(!p.is_null(), concat!("no ", $name));
-        unsafe { std::mem::transmute::<Ptr, $ty>(p) }
+        unsafe { as_fn::<$ty>(p) }
     }};
 }
 

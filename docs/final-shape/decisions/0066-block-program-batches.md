@@ -19,7 +19,7 @@ groups:   [a a a][b b][c][d d d d][e e]     one file per group; each group runs 
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike ran no GPU experiments (prior-work `README.md`, "Known
+- **SQL index prototype indexes:** the spike ran no GPU experiments (prior-work `README.md`, "Known
   differences"), so there is no direct evidence on device batches.
 - **Lessons ledger #9** (batch sharing across a union scope loses, re-learned three times; "a
   heterogeneous batch took 935 vs 118 ms"). **Agrees:** a batch shares the launch, never the

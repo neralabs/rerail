@@ -51,6 +51,16 @@ pub fn configure() {
     MADE.get_or_init(crate::blocks::install);
 }
 
+/// Whether this is one of the pool's threads running a job: on the pool, and not the main thread the machine took
+/// into it (`Machine::here`, which records it: `rerail_context::MainThread`, on every platform).
+fn in_a_job() -> bool {
+    on_pool() && !rerail_context::is_main_thread()
+}
+
+/// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory. A
+/// thread that runs a job's work off the pool (`rerail_engine`'s `threads::beside`) takes the same.
+pub use rerail_context::POOL_STACK;
+
 /// The stack a wait keeps free before it runs another's job on its frames ([`help_once`]).
 const HELP_STACK_MARGIN: usize = 4 << 20;
 
@@ -451,9 +461,15 @@ impl Bell {
     }
 
     /// Waits until `poll` gives a value, recorded under `site` ([`waits`]), running no job: it polls each time the
-    /// bell rings, and at least every millisecond (a ring is never needed for the wait to end).
+    /// bell rings, and at least every millisecond (a ring is never needed for the wait to end). On one of the pool's
+    /// threads running a job (a run nested in one, as the typing run `bridge::facts` starts) it runs the pool's jobs
+    /// instead ([`help_until_as`]): a job that waited running none would hold its pool thread for the whole nested run,
+    /// and with 2 threads the main thread and the typing run's both waited for chunks no thread was left to build.
     pub fn wait_as<T>(&self, site: &'static str, mut poll: impl FnMut() -> Option<T>) -> T {
         assert_no_uncommitted(site);
+        if in_a_job() {
+            return help_until_as(site, poll);
+        }
         let mut wait = Waiting::new(site);
         loop {
             let seen = *self.rung.lock().unwrap_or_else(|p| p.into_inner());
@@ -697,11 +713,41 @@ pub struct Executor {
     pub prices: Prices,
 }
 
-/// Runs `ks` on `backend` as one job: started and finished on the scoreboard, a panic made an error.
+/// A launch past its evaluation's launch budget, or outside any evaluation (`gpu::launch`, decision 0601): a hard
+/// failure of the engine's device code, never an error to route around. It is a panic's payload, which every catch
+/// of a job's or a submission's panic raises again ([`resume_over_budget`]).
+#[derive(Debug)]
+pub struct OverBudget(pub String);
+
+/// `payload`, a caught panic's, raised again when it is the launch budget's ([`OverBudget`]); else given back, for
+/// the catch to make its error of. For a catch on the thread that waits for the work.
+pub fn resume_over_budget(payload: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send> {
+    if payload.is::<OverBudget>() {
+        std::panic::resume_unwind(payload);
+    }
+    payload
+}
+
+/// [`resume_over_budget`] for a catch on a worker that cannot hand the panic to the thread waiting for its work (a
+/// lane's worker, a stream's, a chunk's): the launch budget's is a hard failure there, the process ended (the
+/// ledger printed its account, `gpu::launch`), never an error its waiter would route around.
+pub fn abort_over_budget(payload: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send> {
+    if let Some(OverBudget(account)) = payload.downcast_ref::<OverBudget>() {
+        eprintln!("rerail: past the launch budget, a hard failure (decision 0601): {account}");
+        std::process::abort();
+    }
+    payload
+}
+
+/// Runs `ks` on `backend` as one job: started and finished on the scoreboard, a panic made an error (but the launch
+/// budget's, [`OverBudget`], which goes on).
 fn run_job(backend: &dyn Backend, board: &Scoreboard, ks: &[&Kernel], mut ticket: Ticket) -> Reply {
     board.start(&mut ticket);
     let start = Instant::now();
-    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.submit(ks))).unwrap_or_else(|_| Err("its submission panicked".into()));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.submit(ks))).unwrap_or_else(|p| {
+        abort_over_budget(p);
+        Err("its submission panicked".into())
+    });
     let (_, cpu) = board.finish(ticket, r.is_ok());
     (r, start, Instant::now(), cpu)
 }
@@ -730,7 +776,10 @@ impl Flight<'_> {
         let Flight { claims, ids, mut ticket, start, pending } = self;
         ticket.resume();
         let r = pending.and_then(|p| {
-            let (r, elsewhere) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| p.finish_counted())).unwrap_or_else(|_| (Err("its submission panicked".into()), 0.0));
+            let (r, elsewhere) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| p.finish_counted())).unwrap_or_else(|p| {
+                abort_over_budget(p);
+                (Err("its submission panicked".into()), 0.0)
+            });
             ticket.add_cpu(elsewhere);
             r
         });
@@ -862,7 +911,10 @@ fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc:
                         let (t, backend, ks) = (&mut ticket, &backend, &ks);
                         lane_host(lane, move || {
                             t.resume();
-                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.start(ks))).unwrap_or_else(|_| Err("its submission panicked".into()));
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.start(ks))).unwrap_or_else(|p| {
+                                abort_over_budget(p);
+                                Err("its submission panicked".into())
+                            });
                             t.pause();
                             r
                         })
@@ -1196,7 +1248,10 @@ impl<R> Job<R> {
         });
         match got {
             Ok(Ok(r)) => Ok(r),
-            Ok(Err(_)) => Err(format!("host job {}: it panicked", self.name)),
+            Ok(Err(p)) => {
+                resume_over_budget(p);
+                Err(format!("host job {}: it panicked", self.name))
+            }
             Err(()) => Err(format!("host job {}: its worker ended", self.name)),
         }
     }
@@ -1465,11 +1520,8 @@ impl Executor {
             let est: f64 = order[lane.index()].iter().map(|&i| costs[i].1.wall).sum();
             self.board.plan(lane, per_lane[lane.index()] as i64, est);
         }
-        // The engine's launch budget, checked on the submitting thread (decision 0100 §2).
-        #[cfg(gpu_lane)]
-        if per_lane[Lane::Gpu.index()] > 0 {
-            crate::gpu::shared::guard().map_err(|e| format!("gpu lane: {e}"))?;
-        }
+        // The GPU lane's launches are charged to the launch budget where they are made (`gpu::GpuBackend::run`,
+        // decision 0100 §2).
         let (send, take) = std::sync::mpsc::channel();
         let claims = Arc::new(Claims {
             kernels: batch.0.into_iter().map(|l| l.kernel).collect(),

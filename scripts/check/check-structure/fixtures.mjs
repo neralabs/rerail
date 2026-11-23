@@ -1,4 +1,4 @@
-// Where fixture data lives (Jeff's structure metric #3) and what each fixtures/<family>/<feature> tests (#10).
+// Where fixture data lives (structure metric #3) and what each fixtures/<family>/<feature> tests (#10).
 //
 // #3: a tracked file is fixture data when
 //   - a directory in its path is named `fixtures` or `__fixtures__`,
@@ -85,7 +85,7 @@ const KEPT = new Map([
   ["docs/rule-syntax/nested-routers.json", "the source rule of the workbench's nested-routers drafts beside it (nested-routers.b1.rerail, .b2.rerail)"],
   // engine-layout
   ["accel/src/ane/fixtures/", "the 2 KB coremltools outputs the Neural Engine writer's test embeds (`include_bytes!`), and the script that wrote them"],
-  ["native/src/code_rule_dsl/logic/profile/fixtures/outer-binding.tsv", "the profile analysis's test table, embedded by `include_str!` beside its test"],
+  ["native/crates/prof/src/code_rule_dsl/logic/profile/fixtures/outer-binding.tsv", "the profile analysis's test table, embedded by `include_str!` beside its test"],
   ["benchmark/sql-executor.py", "the SQL execution benchmark's harness (benchmark/README.md): Python code, not data"],
 ]);
 

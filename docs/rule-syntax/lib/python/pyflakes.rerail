@@ -147,6 +147,7 @@ field_name(x) :- kind(n, "identifier"), text(n, x).
 //   later = 1
 .decl unbound_ref(n: node, x: symbol)
 unbound_ref(n, x) :- load_ref(n, x), miss(n, x), !annotated_on_chain(n, x).
+unbound_ref(n, x) :- ann_miss(n, x).   // a name of a string annotation's tree (python/annotation, python/names)
 unbound_ref(n, x) :- load_ref(n, x), look(n, x, s), nearest(n, s, scope), (kind(s, "module") ; kind(s, "class_definition")),
     x != "__qualname__", x != "__module__",
     count : { binding(s, x, b, _), b < n, !within(n, b) } = 0, !outer_bound(s, x),

@@ -1559,7 +1559,7 @@ Surveyed in `native/src/code_rule_dsl` (2026-11-14).
 - (1) and (2) carry over to (3) unchanged if they are written against a `Reader`-like interface
   over `Facts` from the start. So (1) should be written that way.
 
-## 4b. Against ast-index-spike's tape
+## 4b. Against the SQL index prototype's tape
 
 The spike's tape (prior-work design index, topic 1; DESIGN S012, S039, S045–S047, S071) is a fixed
 6-byte record a node:

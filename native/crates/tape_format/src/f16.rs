@@ -41,6 +41,8 @@ pub struct Lang {
     revision: u8,
     /// Each number's kind and field: what a presence's bits are (decision 0434 §4).
     kind_field: Vec<(u16, u16)>,
+    /// `presence_words`, counted once: a tape's reader checks its presence against it at every read.
+    presence_words: (usize, usize),
 }
 
 impl Lang {
@@ -56,14 +58,15 @@ impl Lang {
         let cut = if n <= 256 { 256 } else { 255 };
         let per = if cut >= 256 { 1 } else { n - cut };
         let index = table.entries().iter().enumerate().map(|(k, e)| (e.clone(), k as u32)).collect();
-        let kind_field = table.entries().iter().map(|e| (e.kind, e.field)).collect();
-        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field })
+        let kind_field: Vec<(u16, u16)> = table.entries().iter().map(|e| (e.kind, e.field)).collect();
+        let kinds = kind_field.iter().map(|&(k, _)| usize::from(k) + 1).max().unwrap_or(0);
+        let fields = kind_field.iter().map(|&(_, f)| usize::from(f) + 1).max().unwrap_or(0);
+        let presence_words = (kinds.div_ceil(64), fields.div_ceil(64));
+        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field, presence_words })
     }
     /// The words of a presence's kinds' and fields' bitmaps: one bit a kind and a field the table names.
     pub fn presence_words(&self) -> (usize, usize) {
-        let kinds = self.kind_field.iter().map(|&(k, _)| usize::from(k) + 1).max().unwrap_or(0);
-        let fields = self.kind_field.iter().map(|&(_, f)| usize::from(f) + 1).max().unwrap_or(0);
-        (kinds.div_ceil(64), fields.div_ceil(64))
+        self.presence_words
     }
     pub fn table(&self) -> &CodeTable {
         &self.table
@@ -611,6 +614,47 @@ DEFINE_KERNEL2(tests, t_reads,
     o[9] = clif_tape_child_count(tape, view, i);
     for (uint32_t k = 0u; k <= 12u; k++)
         o[10u + k] = clif_tape_child(tape, view, i, k);
+}
+
+typedef struct RandomArgs {
+    uint32_t n;
+    uint32_t threads;
+    uint32_t rounds;
+    uint32_t cache;
+} RandomArgs;
+UKL_REFLECT_STRUCT(RandomArgs, n, threads, rounds, cache)
+
+// Each thread's reads of `rounds` nodes at random (its code, start, end and parent, against `want`'s): how many were
+// wrong, and how many of those were wrong with no failure yet counted by the cache (at `cache` in the tape), in its
+// own two words (no counter shared by every thread).
+DEFINE_KERNEL2(tests, t_random,
+               ARGS,     RandomArgs, args,  ,
+               RWBUFFER, uint8_t,    tape,  "[bytes]",
+               ROBUFFER, uint32_t,   view,  "[29]",
+               ROBUFFER, uint32_t,   want,  "[n * 4]",
+               RWBUFFER, uint32_t,   out,   "[threads * 2]",
+               GID0,     uint32_t,   i,     )
+{
+    if (i >= args.threads)
+        return;
+    uint32_t x = i * 0x9E3779B9u + 1u, wrong = 0u, silent = 0u;
+    for (uint32_t r = 0u; r < args.rounds; r++) {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        uint32_t node = x % args.n;
+        ROBUFFER(uint32_t) w = want + node * 4u;
+        uint32_t bad = 0u;
+        bad += clif_tape_number(tape, view, node) != w[0] ? 1u : 0u;
+        bad += clif_tape_start(tape, view, node) != w[1] ? 1u : 0u;
+        bad += clif_tape_end(tape, view, node) != w[2] ? 1u : 0u;
+        bad += clif_tape_parent(tape, view, node) != w[3] ? 1u : 0u;
+        wrong += bad;
+        if (bad != 0u && ukl_atomic_load_at(tape, (uint64_t)args.cache + CLIF_T_C_FAILED) == 0u)
+            silent += bad;
+    }
+    out[2u * i] = wrong;
+    out[2u * i + 1u] = silent;
 }
 "#;
 
@@ -2413,6 +2457,16 @@ mod tests {
     }
     unsafe impl rerail_gpu::Pod for ReadArgs {}
 
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct RandomArgs {
+        n: u32,
+        threads: u32,
+        rounds: u32,
+        cache: u32,
+    }
+    unsafe impl rerail_gpu::Pod for RandomArgs {}
+
     /// `t`'s every read of every node, as the kernel lays them out; `parent_end` each node's parent's subtree's end.
     fn reads_of<T: Tape>(t: &T) -> (Vec<u32>, Vec<u32>) {
         const NONE: u32 = u32::MAX;
@@ -2594,6 +2648,73 @@ mod tests {
         assert!(counts.rotated > 100 && counts.promoted > 0 && counts.hits > 0, "the cache turned: {counts:?}");
         assert!(wrong <= failed() as usize, "{wrong} reads wrong, {} failures", failed());
         drop(buf);
+    }
+
+    /// Decision 0540: the device's threads read a 16z tape through a cache they share while it turns, as this crate
+    /// does: 256 threads read 32 nodes each at random through a cache of three generations, each of one block fewer
+    /// than the tape's, so lookups find blocks other threads are decoding, promote blocks from the oldest generation
+    /// and fill the head. Read at random, the cache thrashes (every turn's head filled by promotions), and a lookup
+    /// may run out of tries (on Metal most do: a SIMD group's turn outlasts several turns of the cache, and once one
+    /// lookup has failed, a pending one does not wait). What holds is the cache's promise: a read wrong only where
+    /// the cache counted a failure (the dead entry read), so a caller refuses the batch (decision 0463). Each thread
+    /// reads the failure count after each of its reads: no read is wrong while it is still 0. Without a device it
+    /// passes, saying so.
+    #[test]
+    fn the_device_reads_16z_through_a_cache_that_turns() {
+        use rerail_clif::view::cache;
+        use rerail_gpu::kernels::{alloc, buffer_of, launch, read};
+        let Some(shared) = rerail_gpu::shared::get() else {
+            eprintln!("no device: the reads as UKL did not run");
+            return;
+        };
+        // The reads' 16z program, as compiled ahead (`kernels`): it holds `t_random` too.
+        let (name, text) = device_reads_kernel("tape_z.h");
+        let program = rerail_gpu::kernels::program(&name, &text).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let t = z.reader(&lang).unwrap();
+        let n = t.len();
+        assert!(z.p.block_count() > 2, "a tape of more blocks than a generation holds");
+        let want: Vec<u32> = (0..n).flat_map(|i| [t.code(i), t.start(i) as u32, t.end(i) as u32, t.parent(i).map_or(u32::MAX, |p| p as u32)]).collect();
+        let mut view = z.view(&lang).unwrap();
+        let blocks = z.p.block_count() as u32;
+        let spec = cache::Spec::new(3, blocks - 1, view.columns[3] as usize);
+        let at = z.as_bytes().len().next_multiple_of(64);
+        let mut bytes = z.as_bytes().to_vec();
+        bytes.resize(at + spec.bytes(), 0);
+        spec.init(&mut bytes[at..]).unwrap();
+        bytes.resize(bytes.len().next_multiple_of(8) + 8, 0);
+        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (at as u32, 0, spec.entry_bytes() as u32, 1);
+        // SAFETY: the view is plain u32s.
+        let words = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(&view).cast::<u32>(), size_of::<TapeView>() / 4) };
+        let (threads, rounds) = (256u32, 32u32);
+        let (tb, vb, wb) = (buffer_of(&bytes).unwrap(), buffer_of(words).unwrap(), buffer_of(&want).unwrap());
+        let out = alloc::<u32>(2 * threads as usize).unwrap();
+        let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
+        let started = std::time::Instant::now();
+        launch(&q, program.function("t_random").unwrap())
+            .value("args", &RandomArgs { n: n as u32, threads, rounds, cache: at as u32 })
+            .buffer("tape", &tb)
+            .buffer("view", &vb)
+            .buffer("want", &wb)
+            .buffer("out", &out)
+            .run(&[threads.div_ceil(64) as u64], &[64])
+            .unwrap();
+        q.flush().await_().unwrap();
+        let words: Vec<u32> = read(&out, 2 * threads as usize);
+        let wrong: u64 = words.iter().step_by(2).map(|&w| u64::from(w)).sum();
+        let silent: u64 = words.iter().skip(1).step_by(2).map(|&w| u64::from(w)).sum();
+        let back: Vec<u8> = read(&tb, bytes.len());
+        // SAFETY: the cache `Spec::init` made at the view's offset, in the bytes read back.
+        let counts = unsafe { cache::Counts::read(back.as_ptr().add(at)) };
+        eprintln!("{}: {} reads in {:.2} s, wrong {wrong} (before any failure {silent}): {:?}", rerail_gpu::device::backend(), threads * rounds * 4, started.elapsed().as_secs_f64(), counts.named());
+        assert_eq!(silent, 0, "reads wrong with no failure counted yet: {:?}", counts.named());
+        assert!(counts.rotated > 0, "the cache turned: {:?}", counts.named());
+        assert!(wrong <= u64::from(counts.failed), "{wrong} reads wrong, {} failures", counts.failed);
     }
 
     /// Every shipped table loads, and its text reads back to the same choices.
@@ -3313,5 +3434,156 @@ mod tests {
             assert!(n < raw.len(), "case {case}: a piece cut short decodes less");
             assert_eq!(jits(&buf[..cut], 5, cut, raw.len()), dst[..n], "case {case}: the JIT's decode of the piece cut short");
         }
+    }
+
+    /// The ops at constant widths (`writer16::Fixed`) write the bytes the state's widths do (`Run`, the methods), in
+    /// format 16 and 16z: values past each width (escapes and side lists), codes past the cut, many blocks. So does a
+    /// walk's hold on the writer (`writer16::Cursor`, as generated tier 2s write), each node final as written: its
+    /// stores through the held block, and the state's ops at a block's first node and a close of a block before.
+    #[test]
+    fn the_ops_at_constant_widths_write_the_state_widths_bytes() {
+        use crate::tape::Entry;
+        use crate::writer16::{CellWidths, Cursor, Fixed, w_close_with, w_commit, w_leaf_in_with, w_leaf_with, w_open_with};
+        #[derive(Clone, Copy)]
+        enum Op {
+            Open(u32, u64),
+            Leaf(u32, u64, u64),
+            /// A node and its one leaf child: number, child's, start, the child's start and end, end.
+            LeafIn(u32, u32, u64, u64, u64, u64),
+            Close(u64),
+        }
+        // A tree over `len` bytes: gaps and lengths of every size, numbers up to `kinds`.
+        fn tree(len: u64, kinds: u32, seed: u64) -> Vec<Op> {
+            let mut x = seed;
+            let mut next = move || {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x
+            };
+            let (mut ops, mut at, mut open) = (vec![Op::Open(0, 0)], 0u64, 1usize);
+            while at < len {
+                let r = next();
+                // The long steps and lengths rare, so a tree is many blocks of nodes; a leaf past two bytes each 3000.
+                let long = |r: u64| if r.is_multiple_of(64) { 0x3ff } else { 7 };
+                let step = r >> 8 & if r % 3 == 0 { long(r >> 3) } else { 3 };
+                at = (at + step).min(len);
+                let number = (r >> 40) as u32 % kinds;
+                match r >> 4 & 3 {
+                    0 if open < 40 => {
+                        ops.push(Op::Open(number, at));
+                        open += 1;
+                    }
+                    1 if open > 1 => {
+                        ops.push(Op::Close(at));
+                        open -= 1;
+                    }
+                    2 if r >> 6 & 1 == 1 => {
+                        let cs = (at + (r >> 12 & 3)).min(len);
+                        let ce = (cs + (r >> 20 & long(r >> 30))).min(len);
+                        let end = (ce + (r >> 14 & 1)).min(len);
+                        ops.push(Op::LeafIn(number, (r >> 50) as u32 % kinds, at, cs, ce, end));
+                        at = end;
+                    }
+                    _ => {
+                        let end = (at + if ops.len() % 3000 == 1500 { 0x1_0400 } else { r >> 20 & long(r >> 30) }).min(len);
+                        ops.push(Op::Leaf(number, at, end));
+                        at = end;
+                    }
+                }
+            }
+            ops.extend(std::iter::repeat_n(Op::Close(len), open));
+            ops
+        }
+        fn both<X: CellWidths>(widths: [usize; 3]) -> [usize; 4] {
+            let entries = (0..300).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+            let lang = Lang::new(CodeTable::new(entries), widths, 1).unwrap();
+            let source = source_of(300_000);
+            // The block edges the cursor meets (`Z` rows a block): an open, a leaf and a node of one leaf at a
+            // block's first row, and a node of one leaf whose child is at it.
+            let mut edges = [0usize; 4];
+            for seed in [1, 2, 3, 4, 5, 6, 7, 8] {
+                let ops = tree(source.len() as u64, 300, seed);
+                let mut n = 0u32;
+                for o in &ops {
+                    let at = n % crate::writer16::Z;
+                    match o {
+                        Op::Open(..) | Op::Leaf(..) if n != 0 && at == 0 => edges[usize::from(matches!(o, Op::Leaf(..)))] += 1,
+                        Op::LeafIn(..) if at == 0 => edges[2] += 1,
+                        Op::LeafIn(..) if at == crate::writer16::Z - 1 => edges[3] += 1,
+                        _ => {}
+                    }
+                    n += match o {
+                        Op::Close(_) => 0,
+                        Op::LeafIn(..) => 2,
+                        _ => 1,
+                    };
+                }
+                assert!(ops.iter().any(|o| matches!(*o, Op::Leaf(_, s, e) if e - s > 0xffff)), "a length past two bytes");
+                assert!(ops.len() > 4 * 1024 && ops.iter().filter(|o| matches!(o, Op::LeafIn(..))).count() > 1000, "many blocks, and nodes of one leaf: {} ops, {} of one leaf", ops.len(), ops.iter().filter(|o| matches!(o, Op::LeafIn(..))).count());
+                for z in [false, true] {
+                    let mut a = Writer::new(&lang, &source, 0, z, true, 2 * ops.len());
+                    for &op in &ops {
+                        match op {
+                            Op::Open(n, s) => _ = a.open(n, s),
+                            Op::Leaf(n, s, e) => _ = a.leaf(n, s, e),
+                            Op::LeafIn(n, c, s, cs, ce, e) => {
+                                _ = a.open(n, s);
+                                _ = a.leaf(c, cs, ce);
+                                a.close(e);
+                            }
+                            Op::Close(e) => a.close(e),
+                        }
+                        a.commit();
+                    }
+                    let mut b = Writer::new(&lang, &source, 0, z, true, 2 * ops.len());
+                    b.reserve_run(2 * ops.len(), 41);
+                    let d = b.state_address();
+                    for &op in &ops {
+                        // SAFETY: `d` is `b`'s state, its room reserved for every node and level.
+                        let r = unsafe {
+                            match op {
+                                Op::Open(n, s) => w_open_with::<X>(d, n, s),
+                                Op::Leaf(n, s, e) => w_leaf_with::<X>(d, n, s, e),
+                                Op::LeafIn(n, c, s, cs, ce, e) => w_leaf_in_with::<X>(d, n, c, s, cs, ce, e),
+                                Op::Close(e) => w_close_with::<X>(d, e),
+                            }
+                        };
+                        assert_eq!(r, 0, "widths {widths:?}: the op, its room reserved");
+                        // SAFETY: as the op's.
+                        assert_eq!(unsafe { w_commit(d) }, 0);
+                    }
+                    let mut c = Writer::new(&lang, &source, 0, z, true, 2 * ops.len());
+                    c.reserve_run(2 * ops.len(), 41);
+                    c.final_as_written();
+                    {
+                        // SAFETY: `c`'s state, its room reserved for every node and level, written by the cursor alone.
+                        let mut cur = unsafe { Cursor::<X>::begin(c.state_address()) };
+                        for &op in &ops {
+                            // SAFETY: as `begin`'s; each close is an open's.
+                            unsafe {
+                                match op {
+                                    Op::Open(n, s) => cur.open(n, s),
+                                    Op::Leaf(n, s, e) => cur.leaf(n, s, e),
+                                    Op::LeafIn(n, k, s, cs, ce, e) => cur.leaf_in(n, k, s, cs, ce, e),
+                                    Op::Close(e) => cur.close(e),
+                                }
+                            }
+                        }
+                    }
+                    assert!(c.failure().is_none(), "widths {widths:?}: the cursor's ops, the room reserved");
+                    let (a, b, c) = (a.finish().unwrap(), b.finish().unwrap(), c.finish().unwrap());
+                    assert!(a.tape.extent() == b.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the constant widths' bytes");
+                    assert!(a.tape.extent() == c.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the cursor's bytes");
+                }
+            }
+            edges
+        }
+        let edges = both::<Fixed<1, 1, 1>>([1, 1, 1]);
+        assert!(edges.iter().all(|&e| e > 0), "every block edge met (an open, a leaf, a node of one leaf, its child): {edges:?}");
+        _ = both::<Fixed<2, 1, 4>>([2, 1, 4]);
+        _ = both::<Fixed<1, 2, 2>>([1, 2, 2]);
+        _ = both::<Fixed<4, 4, 8>>([4, 4, 8]);
+        _ = both::<Fixed<3, 1, 1>>([3, 1, 1]);
     }
 }

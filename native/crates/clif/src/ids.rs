@@ -133,6 +133,11 @@ pub fn select64(m: u64, k: u32) -> u32 {
 /// The first `i` in `lo..hi` for which `below(i)` is false, `below` true before it and false from it (`hi` where
 /// none is; the CLIF's `bisect_in`).
 #[inline]
+/// The first `i` in `0..n` for which `below(i)` is false (`bisect` from 0).
+pub(crate) fn bisect_n(n: u32, below: impl Fn(u32) -> bool) -> u32 {
+    bisect(0, n, below)
+}
+
 fn bisect(mut lo: u32, mut hi: u32, below: impl Fn(u32) -> bool) -> u32 {
     while lo < hi {
         let middle = lo.wrapping_add(hi) >> 1;

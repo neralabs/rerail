@@ -1,1 +1,0 @@
-`/rerail-create` now adds the rules it suggests once they pass their tests, in Log, and asks once whether to approve them. The dashboard's Overview says how many your coding agent added and what they caught; each is approved on its page, where an edited copy of a rule Rerail ships says approving it turns the original off.

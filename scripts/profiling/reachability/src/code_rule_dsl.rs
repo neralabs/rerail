@@ -2,7 +2,7 @@
 // The engine's source keeps its own layout.
 #[rustfmt::skip]
 #[allow(dead_code, unused_imports)]
-#[path = "../../../../native/src/code_rule_dsl/profile/sql.rs"]
+#[path = "../../../../native/crates/facts_base/src/code_rule_dsl/profile/sql.rs"]
 mod sql;
 
 /// The engine's run profile, as when it is off: the tracer writes only its own capture.

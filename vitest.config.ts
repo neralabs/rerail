@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 import { TimeBalancedSequencer } from "./test/support/shards/time-balanced-sequencer.js";
 
-// Pulling-it-all-together's tests of its `relational` clause, merged in at cbee7a03c. This engine
+// PIAT's tests of its `relational` clause, merged in at cbee7a03c. This engine
 // compiles that clause only under `cargo test` (open item O18: it carries SQL, which rules do not),
 // so the addon refuses it ("unknown field `relational`"). RERAIL_RELATIONAL_TESTS=1 runs them
 // against an addon that has it, such as P's own (open item O84).

@@ -10,7 +10,7 @@
 //!   rerail-engine run-rr | run-policies | check-rr | convert-rr ... (`tools::cli`)
 //!
 //! Every command takes `--memory-mb <n>` (the overall memory budget, 1 GB by default) and `--metal-mb <n>` (the Metal
-//! budget, on top of it: half the overall budget by default); `RERAIL_MEMORY_MB` and `RERAIL_METAL_MB` set them too.
+//! budget, on top of it: the overall budget by default, decision 0549); `RERAIL_MEMORY_MB` and `RERAIL_METAL_MB` set them too.
 //!
 //! Runaways (decision 0462): a derived relation holds at most `RERAIL_WIDEST_ROWS` rows (50 M by default). Past it the
 //! run stops naming the relation's rules, or with `RERAIL_WIDEST=cut` keeps the rows so far, goes on, and exits 3.

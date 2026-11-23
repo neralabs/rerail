@@ -292,7 +292,7 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     }
     // The segment's count of each counted output (`counted_outputs`), for the positions' bases
     // and the totals.
-    // The totals' one count is every total's words OR-ed (`native_cpu_block::counted`).
+    // The totals' one count is every total's words OR-ed (`block_native::counted`).
     for (c, k) in counted_outputs(native).into_iter().enumerate() {
         let w = if c < native.extracts.len() { format!("ow{k}") } else { native.totals.iter().map(|t| format!("ow{t}")).collect::<Vec<_>>().join(" | ") };
         tail.push_str(&format!("  {{ const uint32_t n = ukl_sg_sum(ukl_popcount64({w}) __UKL_ARGS); if (l == 0u) counts[{c}u] = n; }}\n"));
@@ -473,7 +473,7 @@ fn halos(native: &BlockNative, levels: &Levels, from: &str, limit: usize, own: &
     let n = native.insts.len();
     let mut memo: Vec<Option<(HBit, HBit)>> = vec![None; n];
     let mut decls = String::new();
-    // What the walk reads at each instruction and does not change.
+    /// What every step of the walk reads.
     struct Walk<'a> {
         native: &'a BlockNative,
         levels: &'a Levels,
@@ -482,7 +482,7 @@ fn halos(native: &BlockNative, levels: &Levels, from: &str, limit: usize, own: &
         own: &'a [usize],
     }
     fn go(w: &Walk<'_>, at: usize, memo: &mut Vec<Option<(HBit, HBit)>>, decls: &mut String) -> (HBit, HBit) {
-        let Walk { native, levels, from, limit, own } = *w;
+        let &Walk { native, levels, from, limit, own } = w;
         if let Some(x) = &memo[at] {
             return x.clone();
         }
@@ -951,15 +951,15 @@ fn carried_serial(at: usize, inst: &BlockInst, out: &mut String) {
     }
 }
 
-/// A serial program's generated source, its states' widest words and its most counted outputs (`serial_source`).
-type Serial = (std::sync::Arc<String>, usize, usize);
+/// A generated source, with `generate_serial`'s two counts.
+type Source = (std::sync::Arc<String>, usize, usize);
 
 /// What the serial programs' runs keep of callers' programs (decision 0442: the caller's, `rerail_context::Shared`):
 /// each program's generated sources, what its runs learned, the sources that learn nothing more, its shapes and passes.
 #[derive(Default)]
 struct Programs {
     learned: std::sync::Mutex<std::collections::HashMap<u64, Vec<usize>>>,
-    sources: std::sync::Mutex<std::collections::HashMap<u64, Serial>>,
+    sources: std::sync::Mutex<std::collections::HashMap<u64, Source>>,
     settled: std::sync::Mutex<std::collections::HashSet<u64>>,
     shapes: std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<Shape>>>,
     passes: std::sync::Mutex<std::collections::HashMap<u64, std::sync::Arc<rerail_compiler::block_native::Passes>>>,
@@ -1023,9 +1023,10 @@ fn kernels<const N: usize>(key: u64, source: &str, names: [&'static str; N]) -> 
     made.try_into().map_err(|_| Error::BackendFailure)
 }
 
-/// `generate_serial`'s sources by what they are made from: each program, the pass's stores and
-/// slots, what runs have learned of each, and the switches the generator reads. A batch's
-/// source is made once, not at every run: made in a debug build, a pass of `.rerail`'s took 26 s.
+/// The serial kernels' source for `programs` (each in its planes form): the segments' runs, the check, and the
+/// positions and totals from the finished words. `generate_serial`'s sources are kept by what they are made from:
+/// each program, the pass's stores and slots, what runs have learned of each, and the switches the generator reads.
+/// A batch's source is made once, not at every run: made in a debug build, a pass of `.rerail`'s took 26 s.
 fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, std::sync::Arc<String>, usize, usize) {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1046,17 +1047,18 @@ fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, 
     // trace) that would otherwise make them again in each process.
     let disk = std::env::var_os("RERAIL_SERIAL_CACHE").map(|d| std::path::PathBuf::from(d).join(format!("{key:016x}.msl")));
     if let Some(Ok(text)) = disk.as_ref().map(std::fs::read_to_string)
-        && let Some((head, source)) = text.split_once('\n') {
-            let mut n = head.split(' ').filter_map(|x| x.parse::<usize>().ok());
-            if let (Some(sw), Some(counted)) = (n.next(), n.next()) {
-                let made = (std::sync::Arc::new(source.to_owned()), sw, counted);
-                let st_ = kept_programs();
-                if let Ok(mut m) = st_.sources.lock() {
-                    m.insert(key, made.clone());
-                }
-                return (key, made.0, made.1, made.2);
+        && let Some((head, source)) = text.split_once('\n')
+    {
+        let mut n = head.split(' ').filter_map(|x| x.parse::<usize>().ok());
+        if let (Some(sw), Some(counted)) = (n.next(), n.next()) {
+            let made = (std::sync::Arc::new(source.to_owned()), sw, counted);
+            let st_ = kept_programs();
+            if let Ok(mut m) = st_.sources.lock() {
+                m.insert(key, made.clone());
             }
+            return (key, made.0, made.1, made.2);
         }
+    }
     rerail_context::with_local::<Compiles, _>(|c| c.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let (source, sw, counted) = generate_serial(programs, io);
     if let Some(path) = &disk {
@@ -1882,7 +1884,7 @@ fn group_levels(programs: &[&BlockNative]) -> std::collections::BTreeSet<usize> 
 
 /// The outputs counted per segment: the extracts', then one for all the totals (one flag).
 fn counted_outputs(native: &BlockNative) -> Vec<usize> {
-    rerail_compiler::native_cpu_block::counted(native)
+    rerail_compiler::block_native::counted(native)
 }
 
 /// Whether the exact scans are left to the runs to learn: no `RERAIL_SERIAL_EXACT`.
@@ -1982,6 +1984,55 @@ const PREFIX_THREADS: usize = 256;
 
 /// Threads a threadgroup of the segment kernels.
 const THREADS: usize = 64;
+
+/// The forward carry's source for `programs` (each in its planes form), as a batch of them runs it: what the
+/// tests read of its lane code.
+pub fn source(programs: &[&BlockNative]) -> String {
+    let forms: Vec<BlockNative> = programs.iter().map(|p| p.planes_form()).collect();
+    let refs: Vec<&BlockNative> = forms.iter().collect();
+    serial_source(&refs, None).1.to_string()
+}
+
+/// The cone pass's kernel: in lanes form or one thread a segment (`lanes_on`).
+fn cone_kernel() -> &'static str {
+    if lanes_on() { "lanes_cone" } else { "serial_cone" }
+}
+
+/// Every kernel of a serial source that `run_serial_io` compiles.
+fn serial_kernels() -> [&'static str; 12] {
+    [
+        cone_kernel(),
+        "serial_cone_prefix",
+        "lanes_group",
+        "lanes_run",
+        "lanes_again",
+        "serial_run",
+        "serial_check",
+        "serial_count",
+        "serial_prefix",
+        "serial_write",
+        "lanes_write",
+        "serial_records",
+    ]
+}
+
+/// Whether `programs`' kernels in the forward carry (their source as runs have learned it) are compiled. When one is
+/// not, its compile starts on a thread of its own (`kernels::ready_behind_function`) and this is false at once: the
+/// caller runs the batch another way meanwhile, and no launch waits on the compiler (decision 0012). A batch with back
+/// fills or loads runs in passes (`run_passes`), one program at a time; its kernels are compiled at its run.
+pub fn compiled(programs: &[&BlockNative]) -> bool {
+    if super::ready().is_err() {
+        return false;
+    }
+    let forms: Vec<BlockNative> = programs.iter().map(|p| p.planes_form()).collect();
+    if forms.iter().any(|p| p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
+        return true;
+    }
+    let refs: Vec<&BlockNative> = forms.iter().collect();
+    let (_, source, _, _) = serial_source(&refs, None);
+    // Every kernel asked, so that each one not compiled starts compiling now (`all` would stop at the first).
+    serial_kernels().iter().filter(|name| rerail_accel::gpu::kernels::ready_behind_function(&source, name, None).is_none()).count() == 0
+}
 
 /// `run_serial`, split while the device refuses it for capacity, as `run_split` does: halves in
 /// the files' order, their counts and seconds summed.
@@ -2351,7 +2402,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         out_base += n.outputs.len() * blocks;
         // The extracts' positions, and with records a code a token after them.
         pos_base += (n.extracts.len() + usize::from(n.records.is_some())) * len.max(1);
-        tot_base += rerail_compiler::native_cpu_block::counted(n).len();
+        tot_base += rerail_compiler::block_native::counted(n).len();
     }
     let total = segs.len();
     let table = crate::pool::upload(&rows)?;
@@ -2391,24 +2442,8 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let group = group_lanes()?;
     assert!(2 * segments.warm < segments.blocks, "a segment is longer than its two warm-ups");
     // Every pass's kernel, made together (one program on OpenCL).
-    let [cone, cone_prefix, group_pass, lanes_run, lanes_again, run, check, count, prefix, write, lanes_write, records_pass] = kernels(
-        source_key,
-        source,
-        [
-            if lanes_on() { "lanes_cone" } else { "serial_cone" },
-            "serial_cone_prefix",
-            "lanes_group",
-            "lanes_run",
-            "lanes_again",
-            "serial_run",
-            "serial_check",
-            "serial_count",
-            "serial_prefix",
-            "serial_write",
-            "lanes_write",
-            "serial_records",
-        ],
-    )?;
+    let [cone, cone_prefix, group_pass, lanes_run, lanes_again, run, check, count, prefix, write, lanes_write, records_pass] =
+        kernels(source_key, source, serial_kernels())?;
     let lanes = lanes_on();
     if lanes {
         // The lanes: the warm-up, the segment, and the block after it for the delayed outputs.
@@ -2522,20 +2557,21 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         let parts: Vec<String> = state.parts.iter().zip(&wrong).filter(|(_, n)| **n > 0).map(|(&(at, bits, _, _, scan), n)| format!("%{at}{}/{bits}={:?}:{n}", if scan { "c" } else { "s" }, forms[0].insts[at])).collect();
         eprintln!("serial: {any} of {total} starts wrong; {}", parts.join(" "));
         if let Ok(at) = std::env::var("RERAIL_SERIAL_DEBUG").map(|v| v.parse::<usize>().unwrap_or(0))
-            && at > 0 {
-                let mut inside = vec![false; forms[0].insts.len()];
-                inside[at] = true;
-                for x in (0..=at).rev() {
-                    if inside[x] {
-                        for o in forms[0].insts[x].operands() {
-                            inside[o] = true;
-                        }
+            && at > 0
+        {
+            let mut inside = vec![false; forms[0].insts.len()];
+            inside[at] = true;
+            for x in (0..=at).rev() {
+                if inside[x] {
+                    for o in forms[0].insts[x].operands() {
+                        inside[o] = true;
                     }
                 }
-                for (x, i) in forms[0].insts.iter().enumerate().filter(|(x, _)| inside[*x]) {
-                    eprintln!("  %{x} = {i:?}");
-                }
             }
+            for (x, i) in forms[0].insts.iter().enumerate().filter(|(x, _)| inside[*x]) {
+                eprintln!("  %{x} = {i:?}");
+            }
+        }
     }
     let (mut rerun_seconds, mut reruns, mut rounds, mut launches) = (0.0, 0usize, 1usize, 1usize);
     loop {

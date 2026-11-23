@@ -7,7 +7,7 @@ description = "The tree watch: what the OS reports changed under each watched ch
 
 # Its own crate so its tests build without the engine: CI's macOS job runs only them, and on Windows they need none of
 # the engine's dependencies. The engine re-exports it (`rerail_engine::tree_watch`), and its `TreeWatcher` reaches the
-# addon from there, as rerail-w's `GitIgnoreMatcher` does.
+# addon from there, as rerail-workspace's `GitIgnoreMatcher` does.
 
 [features]
 # The engine's `headless` build (no addon): napi-derive generates no bindings.
@@ -26,5 +26,6 @@ libc = "0.2.189"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Threading"] }
 
 [dev-dependencies]
-# The tests' scratch folders, canonical (`/private/var`, not `/var`) as FSEvents reports them.
+# The tests name scratch folders canonically, as the watcher names its paths: `/private/var`, not `/var`, as FSEvents
+# reports them; on Windows without the verbatim `\\?\` prefix (as the engine's paths are).
 dunce = "=1.0.5"

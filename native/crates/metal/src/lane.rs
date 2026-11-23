@@ -151,9 +151,10 @@ impl Command {
         self.steps.is_empty()
     }
 
-    /// Submits the command: refused (and nothing of it run) when the evaluation is past its launch budget.
+    /// Submits the command, checked against the evaluation's launch budget (`launch::check_submission`): past it,
+    /// the hard failure (decision 0601).
     pub fn commit(self) -> Result<Committed, Error> {
-        crate::launch::check_submission()?;
+        crate::launch::check_submission();
         // The process's queue: every buffer its steps reach is held until the command completes (decision 0487).
         let queue = rerail_accel::gpu::shared::Queue::new().map_err(|_| Error::UnsupportedBackend)?;
         for step in &self.steps {
@@ -299,9 +300,9 @@ impl Launch<'_> {
 
     fn push(self, grid: Grid, shape: ([u64; 3], [u64; 3]), indirect: bool) {
         let buffers = self.buffers();
-        if crate::launch::attempt(self.command.pointer(), &self.label, shape.0, shape.1, indirect, buffers) {
-            self.command.steps.push(Step::Launch { kernel: self.kernel, label: self.label, args: self.args, grid });
-        }
+        // Charged before it is held: past the budget, the hard failure (decision 0601).
+        crate::launch::attempt(self.command.pointer(), &self.label, shape.0, shape.1, indirect, buffers);
+        self.command.steps.push(Step::Launch { kernel: self.kernel, label: self.label, args: self.args, grid });
     }
 
     /// `groups` threadgroups of `block` threads.
@@ -354,8 +355,12 @@ impl Committed {
     /// Waits for the command: `BackendFailure` when it did not complete.
     pub fn wait(self) -> Result<Times, Error> {
         if let Err(e) = self.event.await_() {
-            if std::env::var_os("RERAIL_LAUNCHES").is_some() {
+            if std::env::var_os("RERAIL_LAUNCHES").is_some() || std::env::var_os("RERAIL_PP_WHY").is_some() {
                 eprintln!("{}: {e}", self.label);
+            }
+            // The system took the GPU back (its watchdog, for the display): the work is not at fault.
+            if e.starts_with("preempted: ") {
+                return Err(Error::BackendPreempted);
             }
             return Err(Error::BackendFailure);
         }

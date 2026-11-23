@@ -26,7 +26,7 @@ fn main() {
         let mut peak = 0;
         loop {
             std::thread::sleep(std::time::Duration::from_millis(100));
-            let rss = std::fs::read_to_string("/proc/self/statm").ok().and_then(|s| s.split_whitespace().nth(1)?.parse::<u64>().ok()).unwrap_or(0) * page >> 20;
+            let rss = (std::fs::read_to_string("/proc/self/statm").ok().and_then(|s| s.split_whitespace().nth(1)?.parse::<u64>().ok()).unwrap_or(0) * page) >> 20;
             peak = peak.max(rss);
             let s = started.elapsed().as_secs_f64();
             if s > seconds {

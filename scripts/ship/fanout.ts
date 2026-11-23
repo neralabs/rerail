@@ -2,9 +2,10 @@
 // module holds what the fan-out decides and moves, apart from the measuring itself (shipbar.ts's `host` and `work`):
 //
 //   plan     every unit of the three slices, sized so no unit outlasts about UNIT_BUDGET_S on one worker (slice A by
-//            repetition: main and the candidate, cold then warm, one repetition per unit; slice B by chunks of rules;
-//            slice C by file), assigned to hosts longest first onto the least loaded (LPT). An A cell's repetitions
-//            share a host, so its confirmation runs there with all of its runs at hand.
+//            repetition: main and every candidate, cold then warm, one repetition per unit; slice B by chunks of
+//            rules, each rule timed on main and on every candidate that has it; slice C by file, every candidate),
+//            assigned to hosts longest first onto the least loaded (LPT). An A cell's repetitions share a host, so its
+//            confirmation runs there with all of its runs at hand.
 //   merge    each host's out/ pulled home, merged into one runs/ (logs concatenated, other files copied once), from
 //            which `verdict` reports.
 //   remote   ssh and rsync through one remote shell (`ssh` unless --ssh or SHIPBAR_SSH names another command, a
@@ -14,7 +15,7 @@
 import { spawn } from "node:child_process";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import type { Corpus } from "./shipbar.js";
+import type { Candidate, Corpus } from "./shipbar.js";
 import type { FileLabel } from "./verdict.js";
 
 /** A unit's planned length on one worker, at most (seconds): the longest unit bounds the measure phase. */
@@ -33,7 +34,7 @@ export interface PackInput {
   pack: string;
   /** The corpora the pack has (a pack without an upstream recording has no fixtures). */
   corpora: Corpus[];
-  /** Slice B's rules: "(none)" (the empty rule set) first, then every rule both sides ship. */
+  /** Slice B's rules: "(none)" (the empty rule set) first, then every rule main ships that a candidate has. */
   rules: string[];
   /** Slice C's files. */
   files: FileLabel[];
@@ -62,6 +63,8 @@ export interface PlannedUnit extends Unit {
 
 export interface Plan {
   format: 1;
+  /** The candidates every unit measures beside main. */
+  candidates: Candidate[];
   hosts: string[];
   /** Each host's workers: one CPU set each. */
   workers: string[];
@@ -76,22 +79,27 @@ export interface PlanOptions {
   runs: number;
   ruleRuns: number;
   fileRuns: number;
+  /** The candidates measured beside main: each unit runs every side. */
+  candidates: readonly Candidate[];
   unitBudgetS?: number;
 }
 
 /** Every unit of the three slices: A by repetition, B by chunks of rules within the budget, C by file. */
 export function planUnits(packs: readonly PackInput[], o: PlanOptions): Unit[] {
   const budget = o.unitBudgetS ?? UNIT_BUDGET_S;
+  const sides = 1 + o.candidates.length;
+  // The product sides' empty rule set beside each A repetition (fixed.jsonl): the `.rerail` side has none.
+  const productSides = 1 + o.candidates.filter((c) => c !== "rr").length;
   const units: Unit[] = [];
   for (const p of packs) {
     for (const corpus of p.corpora) {
       const key = `${p.pack}/${corpus}`;
       const a = A_COLD_S[key] ?? 1.2;
       for (let rep = 1; rep <= o.runs; rep += 1) {
-        // Each side cold then warm, and the empty rule set's cold then warm beside it (fixed.jsonl).
-        units.push({ id: `A|${p.pack}|${corpus}|r${rep}`, slice: "A", pack: p.pack, corpus, rep, est: 2 * 2 * a + 2 * 2 * STARTUP_S, group: `A|${p.pack}|${corpus}` });
+        // Each side cold then warm, and the empty rule set's cold then warm beside it.
+        units.push({ id: `A|${p.pack}|${corpus}|r${rep}`, slice: "A", pack: p.pack, corpus, rep, est: sides * 2 * a + productSides * 2 * STARTUP_S, group: `A|${p.pack}|${corpus}` });
       }
-      const perRule = o.ruleRuns * 2 * (B_RUN_S[key] ?? 0.8);
+      const perRule = o.ruleRuns * sides * (B_RUN_S[key] ?? 0.8);
       const size = Math.max(1, Math.floor(budget / perRule));
       for (let i = 0; i < p.rules.length; i += size) {
         const rules = p.rules.slice(i, i + size);
@@ -101,7 +109,7 @@ export function planUnits(packs: readonly PackInput[], o: PlanOptions): Unit[] {
     }
     for (const label of p.files) {
       const id = `C|${p.pack}|${label}`;
-      units.push({ id, slice: "C", pack: p.pack, corpus: "real", label, est: o.fileRuns * 2 * 2 * (C_RUN_S[p.pack] ?? 1.5), group: id });
+      units.push({ id, slice: "C", pack: p.pack, corpus: "real", label, est: o.fileRuns * sides * 2 * (C_RUN_S[p.pack] ?? 1.5), group: id });
     }
   }
   return units;
@@ -130,9 +138,25 @@ export function planFanout(packs: readonly PackInput[], hosts: readonly string[]
     for (const u of group) planned.push({ ...u, host });
   }
   planned.sort((a, b) => b.est - a.est || (a.id < b.id ? -1 : 1));
-  const cells = new Map<string, { id: string; pack: string; corpus: Corpus; host: string }>();
+  return { format: 1, candidates: [...o.candidates], hosts: [...hosts], workers: [...workers], units: planned, confirm: confirmations(planned), load: Object.fromEntries(hosts.map((h) => [h, Math.round(finish(h))])) };
+}
+
+/** Slice A's confirmation of each cell, on the host its repetitions went to, by id. */
+function confirmations(planned: readonly PlannedUnit[]): Plan["confirm"] {
+  const cells = new Map<string, Plan["confirm"][number]>();
   for (const u of planned) if (u.slice === "A") cells.set(u.group, { id: `A-confirm|${u.pack}|${u.corpus}`, pack: u.pack, corpus: u.corpus, host: u.host });
-  return { format: 1, hosts: [...hosts], workers: [...workers], units: planned, confirm: [...cells.values()].sort((a, b) => (a.id < b.id ? -1 : 1)), load: Object.fromEntries(hosts.map((h) => [h, Math.round(finish(h))])) };
+  return [...cells.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
+}
+
+/**
+ * Slice B's tag of one run, which names its files in the cell (result, output, stderr, scratch): `one.<side>.<rule>.<rep>`,
+ * `one-confirm.` for a confirmation run. A B unit without the empty rule set times rr's itself (its rules' net walls
+ * need it), and the units of one cell may run at once on one host: that run's tag names its unit (`chunk`, the unit's
+ * first rule), so no two units write the same files.
+ */
+export function oneRuleTag(side: string, rule: string, rep: number, o: { confirming?: boolean; chunk?: string | undefined } = {}): string {
+  const named = o.chunk === undefined ? rule : `${rule}@${o.chunk}`;
+  return `${o.confirming === true ? "one-confirm" : "one"}.${side}.${named}.${rep}`;
 }
 
 /** A unit's claim: a directory name, made atomically by the worker that takes the unit. */

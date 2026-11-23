@@ -1,0 +1,30 @@
+// tsx/rerail-module-loads: where JavaScript and TypeScript code names a module it loads, as the rerail pack's layering
+// rules (rerail-conformance-boundary, rerail-conformance-pinned-data) read it: the literal that names the module, so a
+// rule tests the specifier's text, quotes included.
+//
+// What a rule gets from this library:
+//   module_literal(n, s)  n loads the module literal s names: an import or `import x = require(…)` (s any string in
+//                         it), `export … from s`, or a call of require, import, module.require or
+//                         process.getBuiltinModule with s (a string or a template) among its arguments
+//   loads_types_only(n)   n loads types only: `import type …`, `export type … from …`, or it sits in a `typeof import(…)`
+//
+//   import { execFile } from "node:child_process";      module_literal(import, "\"node:child_process\"")
+//   export * from "./recorders/x.js";                   module_literal(export, "\"./recorders/x.js\"")
+//   const https = await import(`node:https`);           module_literal(call, "`node:https`")
+//   type Run = typeof import("node:child_process");     module_literal(call, …), loads_types_only(call)
+//
+// Builds on core only: kind, field, child, has, inside and a regex on a node's text (`match`).
+
+.decl module_literal(n: node, s: node)
+module_literal(n, s) :- kind(n, "import_statement"), has(n, s, "string").
+module_literal(n, s) :- kind(n, "export_statement"), field(n, "source", s), kind(s, "string").
+module_literal(n, s) :- kind(n, "call_expression"),
+    match("(?:require|import|module\\.require|process\\.getBuiltinModule)\\s*\\((?s:.*)", n),
+    child(n, a, _), kind(a, "arguments"), child(a, s, _), load_literal(s).
+.decl load_literal(s: node)
+load_literal(s) :- kind(s, "string").
+load_literal(s) :- kind(s, "template_string").
+
+.decl loads_types_only(n: node)
+loads_types_only(n) :- module_literal(n, _), match("(?:import|export)\\s+type\\b(?s:.*)", n).
+loads_types_only(n) :- module_literal(n, _), inside(n, _, "type_query").

@@ -1490,13 +1490,6 @@ impl BlockProgram {
         &self.outputs
     }
 
-    /// A row program on the CPU JIT (`native_cpu_rows`).
-    pub fn compile_rows(&self) -> Result<crate::native_cpu_rows::CompiledRows, Error> {
-        self.verify()?;
-        let shape = self.rows.ok_or(Error::InvalidTarget(0))?;
-        crate::native_cpu_rows::compile(&crate::block_native::BlockNative::lower(self), usize::from(shape.columns))
-    }
-
     /// A row program's extract pass: the rows (numbers within the batch, in order) whose bit
     /// output `k` sets, appended to `out`.
     pub fn extract_rows(&self, batch: &RowBatch<'_>, k: usize, values: &mut Vec<u64>, out: &mut Vec<u32>) {
@@ -1901,6 +1894,12 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                     let kind = p.kind.map_or(String::new(), |k| format!(" kind {k}"));
                     let _ = writeln!(out, "  block {at} recpart {k} {} {}{last}{kind}", p.start, p.bytes);
                 }
+                if let Some(kind) = rd.content {
+                    let _ = writeln!(out, "  block {at} reccontent {k} {kind}");
+                }
+                for &(b, kind) in &rd.closers {
+                    let _ = writeln!(out, "  block {at} recclose {k} {b} {kind}");
+                }
                 if rd.quiet {
                     let _ = writeln!(out, "  block {at} recquiet {k}");
                 }
@@ -1909,9 +1908,11 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 }
             }
         }
-        // `block N recretag O KIND MARKS [part]`: a reader's or a part's kind and marks by its start mask.
+        // `block N recretag O KIND MARKS [part] [first W0 W1 W2 W3]`: a reader's or a part's kind and
+        // marks by its start mask, and its row's first bytes.
         for t in &r.retags {
-            let _ = writeln!(out, "  block {at} recretag {} {} {}{}", t.o, t.kind, t.marks, if t.part { " part" } else { "" });
+            let first = if t.first == [0; 4] { String::new() } else { format!(" first {:x} {:x} {:x} {:x}", t.first[0], t.first[1], t.first[2], t.first[3]) };
+            let _ = writeln!(out, "  block {at} recretag {} {} {}{}{first}", t.o, t.kind, t.marks, if t.part { " part" } else { "" });
         }
         // `block N recgaps G` the gap marks' bits, `block N recextra K` an extra's mark.
         if r.gaps != 0 {

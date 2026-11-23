@@ -20,6 +20,9 @@ pub const HEAD16: u32 = 120;
 pub const MAX_NODES: u32 = 1 << 30;
 /// No node.
 pub const NONE: u32 = u32::MAX;
+/// The state's flag: each node is final as it is written (no `retag` or `set_start`), so the frontier is the count
+/// and a block settles once the node after it opens or its last open node closes, as after a commit each node.
+pub const FINAL_AS_WRITTEN: u32 = 4;
 /// Format 16's magic, as a little-endian word.
 pub const MAGIC16: u64 = u64::from_le_bytes(*b"TMPTAPB6");
 
@@ -133,7 +136,7 @@ pub struct State {
     /// A block's bytes, and where each of its columns starts in it.
     pub stride: u32,
     pub at: [u32; 5],
-    /// 1: a presence a block is kept; 2: the tape is 16z.
+    /// 1: a presence a block is kept; 2: the tape is 16z; 4: each node final as written (`FINAL_AS_WRITTEN`).
     pub flags: u32,
     /// The presence's words of kinds and of fields.
     pub kw: u32,
@@ -300,18 +303,21 @@ mod ops {
 
     /// Every op declared in `module` with `linkage` and defined there, each calling the others by its id there (as
     /// `declare_func_in_func`): the JIT's (`jit::Writer`), and a module whose own code calls the ops (tier 2's,
-    /// decision 0434 §6, R17). Each op's id and signature, by name.
-    pub fn define_ops<M: cranelift_module::Module>(module: &mut M, linkage: cranelift_module::Linkage) -> Result<std::collections::HashMap<&'static str, (cranelift_module::FuncId, Signature)>, String> {
+    /// decision 0434 §6, R17). Each op's id and signature, by name. `near`: the module's code is in one arena (or one
+    /// object), so an op's call of another is a direct branch; else a long-range call, as two of a JIT's mappings may
+    /// be farther apart than a `bl` reaches.
+    pub fn define_ops<M: cranelift_module::Module>(module: &mut M, linkage: cranelift_module::Linkage, near: bool) -> Result<std::collections::HashMap<&'static str, (cranelift_module::FuncId, Signature)>, String> {
         use cranelift_module::FuncId;
         // An op's call of another: the module's function of that name, by its id.
         struct ByName<'m> {
             ids: &'m std::collections::HashMap<&'static str, (FuncId, Signature)>,
+            near: bool,
         }
         impl Callee for ByName<'_> {
             fn func_ref(&mut self, name: &str, signature: &Signature, func: &mut Function) -> ir::FuncRef {
                 let name = func.declare_imported_user_function(ir::UserExternalName::new(0, self.ids[name].0.as_u32()));
                 let signature = func.import_signature(signature.clone());
-                func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: true })
+                func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: self.near })
             }
         }
         let cc = module.isa().default_call_conv();
@@ -323,7 +329,7 @@ mod ops {
         }
         for op in OPS {
             let id = ids[op.name].0;
-            let func = build(op, cc, UserFuncName::user(0, id.as_u32()), &mut ByName { ids: &ids });
+            let func = build(op, cc, UserFuncName::user(0, id.as_u32()), &mut ByName { ids: &ids, near });
             let mut context = module.make_context();
             context.func = func;
             module.define_function(id, &mut context).map_err(|e| format!("{}: {e:?}", op.name))?;
@@ -1348,6 +1354,11 @@ mod ops {
         let is_done = w.f.ins().icmp_imm(IntCC::NotEqual, done, 0);
         let short = w.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, n, end);
         let behind = w.f.ins().icmp(IntCC::UnsignedLessThan, frontier, end);
+        // Each node final as written: the frontier is the count.
+        let flags = w.get32(at::FLAGS);
+        let fin = w.f.ins().band_imm(flags, i64::from(FINAL_AS_WRITTEN));
+        let committing = w.f.ins().icmp_imm(IntCC::Equal, fin, 0);
+        let behind = w.f.ins().band(behind, committing);
         let not = w.f.ins().bor(is_done, short);
         let not = w.f.ins().bor(not, behind);
         let z = w.zero32();
@@ -1681,10 +1692,13 @@ mod ops {
         w.f.ins().return_(&[z]);
     }
 
-    /// Fails unless node `i` is written and its block not final.
+    /// Fails unless node `i` is written, its block not final, and nodes are not final as written.
     fn changeable(w: &mut W<'_, '_>, i: Value) {
         let n = w.get32(at::N);
         let written = w.f.ins().icmp(IntCC::UnsignedLessThan, i, n);
+        let flags = w.get32(at::FLAGS);
+        let direct = w.f.ins().band_imm(flags, i64::from(FINAL_AS_WRITTEN));
+        let direct = w.f.ins().icmp_imm(IntCC::NotEqual, direct, 0);
         w.if_else(
             written,
             |w| {
@@ -1692,6 +1706,7 @@ mod ops {
                 let e = w.entry(b);
                 let done = w.ld(I32, e, 8);
                 let fin = w.f.ins().icmp_imm(IntCC::NotEqual, done, 0);
+                let fin = w.f.ins().bor(fin, direct);
                 w.fail_if(fin, fail::FINAL, i);
             },
             |w| w.fail(fail::FINAL, i),
@@ -3326,6 +3341,7 @@ mod ukl_header {
             ("HEAD16", HEAD16.into()),
             ("MAX_NODES", MAX_NODES.into()),
             ("NONE", NONE.into()),
+            ("FINAL_AS_WRITTEN", FINAL_AS_WRITTEN.into()),
             ("MAGIC16", MAGIC16),
             ("MAGIC16Z", MAGIC16Z),
             ("OPEN", OPEN.into()),

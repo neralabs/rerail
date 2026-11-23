@@ -1,0 +1,77 @@
+.policy "rerail-table-probes-in-storage" revision 2
+.description "Keep checks for whether a table or column exists in Rerail's database inside the storage layer; one place then decides what a read-only open can read."
+.language typescript
+.mode log
+.scope include "src/**/*.ts"
+.scope exclude "src/engine/storage/**", "**/claude-status-store.ts", "**/*.test.ts", "**/*.generated.ts"
+// Whether a table or column exists in Rerail's database is asked in src/engine/storage/ only. A string or template
+// outside it that reads the schema tables or pragmas, or that matches SQLite's missing-table error, is reported:
+//   prepare("SELECT 1 FROM sqlite_master WHERE type = 'table'")    SCHEMA_PROBE_OUTSIDE_STORAGE
+//   prepare(`SELECT name FROM pragma_table_info('${table}')`)      SCHEMA_PROBE_OUTSIDE_STORAGE
+//   "PRAGMA main.table_xinfo(audits)", "sqlite_schema"              SCHEMA_PROBE_OUTSIDE_STORAGE
+//   if (/no such table/i.test(error.message)) …                    not reported (a regex literal, as the JSON)
+//   error.message.includes("no such table")                        MISSING_TABLE_ERROR_OUTSIDE_STORAGE
+//   tableExists(db, setupReviews)                                   not reported
+// The JSON's `regex` searches the literal's whole text, quotes included, as ast-grep's does: `^`/`$` are its ends.
+
+.violation SCHEMA_PROBE_OUTSIDE_STORAGE(at: node) "Move this schema probe into src/engine/storage/ and call it from here. Don't just drop it: a read-only open upgrades a file missing a table, but not one whose creator hasn't committed yet."
+SCHEMA_PROBE_OUTSIDE_STORAGE(n) :- string_literal(n),
+    match("(?s:.*)(?:(?i)\\b(?:from|join)\\s+(?:[\\\"`\\[]?\\w+[\\\"`\\]]?\\.)?[\\\"`\\[]?sqlite_(?:temp_)?(?:master|schema)\\b|^[\\\"'`](?:\\w+\\.)?sqlite_(?:temp_)?(?:master|schema)[\\\"'`]$|\\bpragma_table_(?:list|x?info)\\b|\\bpragma\\s+(?:[\\\"`\\[]?\\w+[\\\"`\\]]?\\.)?table_(?:list|x?info)\\b|^[\\\"'`]\\s*(?:\\w+\\.)?table_(?:list|x?info)\\b)(?s:.*)", n).
+
+.violation MISSING_TABLE_ERROR_OUTSIDE_STORAGE(at: node) "Ask storage whether the table is there before reading, instead of catching the missing-table error here; put that check in src/engine/storage/ and call it from here."
+MISSING_TABLE_ERROR_OUTSIDE_STORAGE(n) :- string_literal(n), match("(?s:.*)(?:(?i)\\bno such table\\b)(?s:.*)", n).
+
+.decl string_literal(n: node)
+string_literal(n) :- kind(n, "string") ; kind(n, "template_string").
+
+// The pack's example (packs/rerail/pack.json).
+.test a_master_probe_is_reported exactly
+    .fixture "src/engine/audit/audit-store.ts" ```
+        function holdsUnlistedTable(database: RerailDatabase): boolean {
+          return database.$client
+            .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audit_unlisted_failures'")
+            .get() !== undefined;
+        }
+        ```
+    .expect SCHEMA_PROBE_OUTSIDE_STORAGE at "src/engine/audit/audit-store.ts":3
+.end
+
+.test pragmas_names_and_the_error_are_reported exactly
+    .fixture "src/engine/audit/probes.ts" ```
+        const columns = db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all();
+        const info = db.prepare("PRAGMA main.table_xinfo(audits)").all();
+        const listed = db.pragma("table_list");
+        const schema = "sqlite_schema";
+        const joined = "select * from audits join temp.sqlite_temp_master m";
+        const missing = error.message.includes("No such table");
+        const pattern = /no such table/i;
+        const mention = "the sqlite_master table";
+        ```
+    .expect SCHEMA_PROBE_OUTSIDE_STORAGE at "src/engine/audit/probes.ts":1
+    .expect SCHEMA_PROBE_OUTSIDE_STORAGE at "src/engine/audit/probes.ts":2
+    .expect SCHEMA_PROBE_OUTSIDE_STORAGE at "src/engine/audit/probes.ts":3
+    .expect SCHEMA_PROBE_OUTSIDE_STORAGE at "src/engine/audit/probes.ts":4
+    .expect SCHEMA_PROBE_OUTSIDE_STORAGE at "src/engine/audit/probes.ts":5
+    .expect MISSING_TABLE_ERROR_OUTSIDE_STORAGE at "src/engine/audit/probes.ts":6
+.end
+
+// The pack's passing example, and the files the scope leaves out.
+.test storage_owns_the_probes exactly
+    .fixture "src/engine/catalog/setup-review.ts" ```
+        import { tableExists } from "../storage/database.js";
+        import { setupReviews } from "../storage/schema.js";
+
+        export function setupReviewKept(db: Reader): boolean {
+          return tableExists(db, setupReviews);
+        }
+        ```
+    .fixture "src/engine/storage/database.ts" ```
+        const row = db.prepare("SELECT 1 FROM sqlite_master WHERE name = ?").get(name);
+        ```
+    .fixture "src/harness/claude-status-store.ts" ```
+        if (/no such table/.test(String(error))) return; const e = "no such table";
+        ```
+    .fixture "src/engine/audit/audit-store.test.ts" ```
+        const row = db.prepare("SELECT 1 FROM sqlite_master").get();
+        ```
+.end

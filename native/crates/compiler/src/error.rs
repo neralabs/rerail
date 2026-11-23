@@ -30,15 +30,15 @@ pub enum Error {
     /// A label run's workspace is over Metal's buffer budget (`label_passes::run` halves its lanes'
     /// states; past the fewest it is `BackendCapacity`).
     BackendBudget,
-    BackendLaunchLimit,
     /// A label run's micro walk outgrew its frames, captures or steps on the device: the run
     /// again with deep stacks, then interpreted. Not a size refusal: the batch fits; its walks'
     /// pools do not.
     WalkFrames,
-    /// A label run's chain (a targets image's reach, decision 0475) had more levels than its phases hold: the run
-    /// again with twice them.
-    ChainLevels,
     BackendFailure,
+    /// The system stopped the command before it completed, the work not at fault: macOS's GPU watchdog ends a
+    /// command buffer that holds the GPU while the display waits ("Impacting Interactivity"), as several at once on
+    /// a Mac with a display do. The run again is the caller's, a bounded number of times.
+    BackendPreempted,
     /// A generated function with a call or an unstated loop (`native_cpu_shape`): refused.
     RefusedShape(String),
 }

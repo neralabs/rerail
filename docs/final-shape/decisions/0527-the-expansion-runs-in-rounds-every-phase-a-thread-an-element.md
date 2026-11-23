@@ -72,9 +72,12 @@ The CPU backend runs a launch's groups as coroutines on one host thread. Every b
 SIMD-group operation switches each thread of the group.
 - **One group** on the CPU (`pp_arena::groups`): past one, a group adds no core, only its
   threads' switches at every barrier.
-- **256 threads a group,** as on a GPU: the radix sort's tiles are written for
-  `UKL_RADIX_THREADS`. A 32-thread group cut a small unit's time from 10 to 3 ms, but its sorts of
-  more than 32 keys took the tile path and faulted.
+- **32 threads a group** (`pp_arena::tg`; 256 on a GPU). A phase costs the CPU its group's width
+  in switches. The radix sort's tiles are written for `UKL_RADIX_THREADS`, so on the CPU each
+  thread runs 8 of a tile's threads (`UKL_RADIX_VT_MAX`), each block between two barriers looping
+  over its own, a SIMD-group operation each in turn. A GPU's code is unchanged. A 150-level
+  chain's device time went from 188 to 53 ms, and with an argument scanned at each level from 540
+  to 136 ms.
 - **A SIMD-group operation is one wait.** The CPU had no native reductions or scans: each was five
   shuffles of two waits, so a sum suspended all 256 coroutines ten times, and the small sort's 32
   sums a SIMD group were most of a round. Now a reduction, a scan, a segmented scan, a shuffle and
@@ -84,6 +87,18 @@ SIMD-group operation switches each thread of the group.
   switch a wait, not two), and the counts of threads at the barrier, at each SIMD group's
   operation and done replace three scans of the 256 threads at every release (22% of a run's
   samples before, under 1% after).
+- **A SIMD-group operation's results are made once.** The lanes' values written, the first lane
+  past the wait makes every lane's result (a scan's, a segmented scan's, a reduction's, a
+  ballot's) in one pass over the 32, and the others read theirs: a scan had cost each lane its own
+  pass over the lanes before it, 528 reads a SIMD group.
+- **A group of one SIMD group scans in one operation a tile.** `ukl_tg_sum`, `ukl_tg_exclusive_sum`
+  and `ukl_tg_seg_inclusive` at 32 threads are the SIMD group's operation, its total read from the
+  same results (`UKL_NATIVE_SG_TOTALS`), with no threadgroup memory and no barrier: 1 wait a tile,
+  not 4 to 6.
+- **A scan's tile is 16 values a thread on the CPU** (`UKL_SCAN_VT`; 1 on a GPU, whose code is
+  unchanged): each thread folds its own in order, the group scans the threads' folds once, and
+  each thread writes its values from the one before's. A scan or a segmented scan of `n` values
+  waits `n / 512` times, not `n / 32`.
 - **One program a source:** each kernel of the preprocessor's source was its own program,
   preprocessed and loaded again (`accel::gpu::kernels::elsewhere`, keyed by the kernel's name). Now
   the program is keyed by the source's library key.
@@ -94,7 +109,7 @@ SIMD-group operation switches each thread of the group.
 |---|---|---|
 | R1 | Every evaluation test finishes within 1 s, under cargo on the CPU backend | `cargo nextest run -p rerail-c-directives --lib --profile second` (stops each test at 1 s) |
 | R2 | The expansion's tests give the serial pass's tokens | the eval tests (0448 R5–R8, 0485, 0486, 0520) |
-| R3 | A round's items run on every SIMD group of the grid; nothing polls | `px_worker` takes its share by index, with no queue |
+| R3 | A round's items run a thread an item over the grid; nothing polls | `px_item` takes an item by index, with no queue; `_Pragma`, the built-ins and the configuration's tests included (no SIMD group's items) |
 
 ## Steps
 
@@ -165,5 +180,203 @@ SIMD-group operation switches each thread of the group.
    barriers a level (a group's barrier switches the CPU's 256 coroutines as a grid's does). The
    `#if` line's time is `px_subst`'s body, a SIMD group a list (half its samples).
 
-   Next: the substitution, then the call, as grid phases.
+   - **The substitution is phases** (§2's "substitute" row), `px_sb_*`. A round's items add each
+     definition's list to substitute to a set (`QCTL` 6; `_Pragma` and the built-ins stay their
+     SIMD group's), and after the items the round runs, over every list of the set:
+     - a thread a list: its body's items, its `__VA_OPT__`s, its pieces' origin;
+     - a scan of the items; a thread an item: its role and its pieces' count;
+     - a scan of the pieces; a thread a list: its pieces' first in the round's array, its block;
+     - a thread a piece, writing it (a literal, a piece of an argument's flatten or raw tokens, a
+       placemarker, a `#`'s literal);
+     - a thread a list: a present `__VA_OPT__`'s space;
+     - a thread a `##` chain, from its head (a chain is its operators two pieces apart: no other
+       chain reads or writes their operands);
+     - a thread a piece: kept, and joined to the one before; two segmented scans (the runs'
+       lengths, each piece's run's first) and a scan of the kept;
+     - the compaction in place, a chunk of the grid's width read, then after a barrier written
+       at its rank (never past where it was);
+     - a segmented scan of the kept pieces' lengths: their places; a thread a list: its length,
+       its first token's space, done, and into the round's scan.
+
+     `px_pastes`, `px_compact` and `px_places` are gone. What is still one thread an element of
+     a list: a variadic definition's `__VA_OPT__` search (a thread its list), and a `#`'s
+     literal (a thread the `#`).
+
+   | Unit (CPU backend, here) | Rounds | Before the substitution's phases | Now |
+   |---|---|---|---|
+   | A chain of 150 plain levels | 154 | 53 ms | 31 ms |
+   | 150 levels, an argument scanned at each | 454 | 136 ms | 75 ms |
+   | 150 levels, an exit at each | 302 | 74 ms | 50 ms |
+   | A 32,768-token `#if` line, a run (C) | 12 | 574 ms | 126 ms |
+
+   The substitution alone took the `#if` line from 574 to 507 ms: the rest is §3's SIMD-group
+   operations once (446 ms), one operation a tile (210 ms) and 16 values a thread (126 ms).
+
+   - **The call is phases** (§2's "call" row), `px_cl_*`. A round's items add each definition's
+     call to a set (`QCTL` 7; `_Pragma` and the configuration's tests stay their SIMD group's),
+     and before the substitutions the round runs, over every call of the set:
+     - a thread a call: its raw tokens between its parentheses; a scan;
+     - a thread a token: its depth's change; the depth, a segmented scan by call; the commas at
+       depth 0, and their ranks, a scan (a variadic call's past its last parameter split nothing:
+       the splitting commas are each call's first, so a comma's rank is its argument's);
+     - a thread a call: its arguments' count (a wrong one leaves the name alone, painted) and
+       entries; scans of the calls' body items and arguments;
+     - a thread a splitting comma: the ranges either side;
+     - a thread a body item: the arguments it reads plain, claimed by the first;
+     - a thread an argument claimed: its tokens; a scan; a thread a token: whether it is a name
+       its scan would expand (a macro's, a built-in's or a call's);
+     - a thread an argument: read in place where none is, else its list, scanned in the round's
+       scan; a thread an item: the lists' order (the arguments' first plain uses);
+     - a thread a call: with no argument's list pending, into the round's substitutions.
+
+     `px_arg_flat` and the SIMD group's call body are gone. The calls' columns are the
+     substitutions' (`SB_L`), and a scan of a column is `SCANP`.
+
+   On these tests a chain's level is one call a round, so its time a round is as it was (a
+   100-level chain with an exit at each, 302 rounds: 52 ms); what the phases change is a round
+   with many calls, whose SIMD groups each walked a call's tokens 32 at a time.
+
+   - **A round's items are a thread an item** (`px_item`): a place, a scan, a call or a
+     substitution only adds to its phase's set. Only `_Pragma`, the built-ins and the
+     configuration's tests still take a SIMD group (`px_worker`, over the items `px_item` set
+     aside: `QCTL` 8).
+   - **The calls' and substitutions' small form.** As the walks' (above): the phases are one
+     macro over the phase forms (`PX_CALL_PHASES`, `PX_SUB_PHASES`), and a set whose elements fit
+     `UKL_GRID_SMALL` (each group sums its share and decides alike) runs on group 0 alone, with
+     its own barriers, then one grid barrier. A round of a chain's climb then crosses a grid
+     barrier only between the phases' sets, not within them. All 31 eval tests under the
+     `second` profile, the longest 0.55 s.
+   - **A list's children are slots, a thread a child.** A scanned list's calls were a chain
+     (`kid`, `sib`) one thread walked (`px_wk_seq`). They are now `nkid` slots, each a call's id
+     (one child held in `kid` itself, so a chain's levels take no block; more in a block of the
+     tokens' pool, given back with the list); forwarding rewrites a slot. The walk takes token
+     `j` of a list for its slot `j` (and slot `nkid` for its own exit's name).
+   - **Live claims by pointer doubling.** A claim is live unless a live one before it covers it.
+     Claims need not nest: in `f(0)( y ) z ) )` with `#define y k((`, `y`'s claim is covered by
+     `g`'s but reaches past it, so the cover is not the max over every claim (tried: shape 5 of
+     `calls_past_an_end_are_the_serial_passes` failed). Once a claim is live the cover is its
+     end, so the next live one is the first at or past it (a binary search), and the live ones
+     are the path from the first, marked by pointer doubling (`px_live_jump`, log₂ of the claims
+     rounds). A list's walk does it only when it has claims (no added barrier otherwise), and the
+     top level's (`px_top_cover`, a SIMD group, is gone) the same way. The test holds a list
+     whose claims do not nest (with every claim taken as live it fails).
+   - **`#` is phases, a thread a token** (`px_sb_str_*`), in place of a thread a `#`. The piece
+     writer flags each `#` (`QCTL` 9) and writes its piece with its ref to come. A round with any
+     `#` then ranks them, scans their tokens, and takes a thread a token for its bytes (its space,
+     a literal's escapes) and their scan. One block of scratch bytes and of scratch tokens is
+     taken for all of them, then a thread a token writes its bytes and a thread a `#` its quotes,
+     its scratch token and its piece's ref, before the pastes read them.
+   - **`__VA_OPT__` is the definition's, found once.** Each substitution of a variadic list walked
+     its body for `__VA_OPT__`s by one thread (`px_va_opts`, at most 4). The definitions' pass now
+     marks each body leaf once (`pd_va_opt`, a thread a `__VA_OPT__` over its content: `VAI`, its
+     name with its `)`'s offset, a parenthesis, or its content), and a substitution's roles read
+     an item's word (`px_va_at`), a list only whether its variadic argument has tokens. The bound
+     of 4 is gone (a test has 5); one inside another's is refused (`D_VANEST`, `X_VA_OPT`).
+   - **The exits are phases** (`px_ex_*`), in place of a SIMD group an exit climbing its frames 32
+     tokens at a time (`px_exit`). A round's exits are taken from its scanned lists (the depth a
+     call's name leaves open is the scan's depths at once). Each step of the climb is a thread an
+     exit (its frame; the top level's `)` by its close table), a thread a token of every frame's
+     rest (its depth change, a segmented scan, the first `)` back at the depth left open by an
+     atomic min), and a thread an exit again (found, or the depth carried up); the steps run while
+     one climbs (`MAX_SEGS` at most). The joins are a thread an exit (ids, block, call list) and a
+     thread a piece (its segment rebuilt from the frames climbed, `px_ex_seg`: an exit keeps no
+     segment table), then each call's `__LINE__` ref from its written join.
+   - **No SIMD group's items.** `_Pragma`'s, a configuration's test's and a built-in's items were
+     a SIMD group's (`px_worker`), whose lanes waited on lane 0 (each is one token's work, or a
+     look at an operand of a token or two). They are their item's thread's (`px_item`), and
+     `px_worker`, its set (`QCTL` 8) and its barrier a round are gone.
+   - **The pause's loops are phases** (`px_gv_*`, `PX_GIVE_LISTS`), in place of a thread a list
+     walking its children and moving its pieces (`px_forward`, `px_give`). The pause works in the
+     round's scan's stores (no scan runs in a pause; past their room the unit is refused, as a
+     round is). The live macro lists' slots are numbered (a scan of `nkid`), a slot's list found
+     by its number.
+     - Dead lists: a list is dead when one of its owner chain is dead or its call done; each
+       list's next owner and whether one before it hits come by pointer doubling
+       (`px_gc_seed`, `px_gc_jump`), in place of a thread a list climbing its chain.
+     - The freed ids: each run of marked ids is given back by its last, its first from a max scan
+       (each unmarked id's own + 1), in place of a run's first walking to its end.
+     - Forwarding: each list's forwarding is its exit's call's id, or its own; the chains' ends
+       come by pointer doubling over the lists. A thread a slot finds its list's stop (the first
+       slot past the list's exit's name, or whose chain ends at a call that is pending or has an
+       exit not forwarded; atomic min); the slots to the stop take their chains' ends, which are
+       marked, and a thread a list kills the forwarded calls whose chain's end is marked.
+     - Givings: a thread a slot gives its span's end and its next: the slot after it, or for a
+       claim the first slot past its cover (a binary search over the slots' places). Whether a
+       claim's calls are all final is a scan of the pending slots. The slots reached from each
+       list's first come by doubling (`px_live_jump`), and the list's last is its first reached
+       slot that stops. Each taken slot counts its pieces (two binary searches over the places),
+       and a scan of them gives, at each piece, how many before it leave; a segmented max gives
+       the last reached slot at or before each slot.
+     - Pieces: a thread a list gives back a dead list's blocks and counts a live one's kept
+       pieces (the trim at its exit's name included). The pieces of the lists that lose some are
+       numbered, and a thread a piece finds whether it is kept and where it goes. A list one of
+       whose kept pieces goes down takes a block of its kept pieces' class (one given back, else
+       the tokens' front), each kept piece is written there by its thread, and the old block is
+       given back. In-place moves would race (a piece's place is another's source), so the
+       pieces go to a new block, not through a staging copy.
+     - The test: `reclaimed_tokens_keep_a_chain_at_rung_0` has a shape with calls and plain
+       tokens beside each level's call (`G(s) a L(s) b G(s) c`), whose lists lose their first
+       call's pieces and move the rest (36 moves a run). Skipping the moves fails it, and skipping
+       the forwarding fails `a_chains_use_is_flat_in_its_length`.
+   - **A list's chain is read from the list, not climbed** (`px_link`, when a list is made).
+     - Its top call (`top`): an argument's its call's, a top call itself, any other its
+       parent's. `px_top_call` (each `__LINE__` and line row) climbed up to `MAX_CHAIN` lists.
+     - The definitions its chain disables (`troot`): a persistent trie of the definitions' ids,
+       2 bits a level (`TRIE_LV` levels: the unit's rows' bits over 2), 4 words a level a list
+       (`TRIE`). A macro's list copies its parent's path to its definition (its own nodes; the
+       rest shared), any other list takes its parent's root. A list never outlives the lists
+       above it (they die in one pause), so a shared node stays. `px_disabled` (each name a
+       scan or a walk looks up) climbed up to `MAX_CHAIN` parents; it reads `TRIE_LV` words.
+     - The test: making `px_disabled` answer no fails 5 eval tests (the recursion's), and making
+       `px_top_call` the list itself fails 2 (`__LINE__` in a call's arguments).
+   - **A chain of exits is summed by doubling, not walked.** A call whose exit is a call of the
+     same parent claims that one's span too, to the chain's last. Six places walked the chain
+     one list at a time (up to 2^20): the walk's claims (`px_claim`), their tokens and pieces
+     (`px_claim_pieces`), the placement of a live child's chain (a loop in `px_wk_write`), the
+     top level's claims, sizes, pieces and places, and the pause's spans (`px_claim_last`).
+     - Each exit's call is put in a table by its parent and its `)` there when it is made
+       (`HX`, open addressing, twice the lists' room; `F_EXIT`), emptied at each top and
+       rebuilt in each pause without the dead ones (their ids are given back).
+     - Where a parent's calls are read (its walk; the top level's places), a thread a position
+       of the parent: its children at their `)`, the table's exits at theirs, each one's next
+       (its exit's `)`, when that is the parent's), and the sums to the chain's last by pointer
+       doubling (`px_ch_*`, `CH` nine stores a scanned token, `TCH` nine a top token; the
+       rounds stop past the nexts' count). A claim's end, the exit it goes on by, its tokens and
+       pieces are reads at its `)`. A chain is placed from its first call's place, written at
+       the chain's last; each call places itself there less its own sums (`px_wk_member`,
+       `px_top_member`). No two chains meet: an exit's call is one list's of each parent.
+     - The pause: each list's exits' last position in its parent, and whether they go past it,
+       by doubling over the lists (`px_gv_xseed`, `px_gv_xjump`).
+     - The test: `a_done_calls_exits_are_given_back_to_their_last` (a done call beside each
+       level's pending one, whose exits chain two deep: 64 tokens a level, 96 if the pause
+       stops at the first exit). Skipping the walks' doubling fails 5 eval tests, the top's 3,
+       the table's rebuild 2.
+   - **`__COUNTER__`'s uses are ranked by a tour and a sort, not compared in pairs.**
+     `px_counter_place` built each use's chain (up to `MAX_CHAIN` lists, four 1,024-word arrays a
+     thread) and compared it with every other use's, and `px_counter_value` counted every use
+     before each one: both quadratic.
+     - Place: the lists are a tree, each under the list it is read in (an argument's under its
+       call, any other under its parent), its siblings in the serial reading's order (the keys
+       the chains compared). A 64-bit sort of the lists by (the list above, that order) gives
+       each one's first child and next sibling, and so the tree's tour (an arc into a list, its
+       children's, an arc out). Its sums from each arc to the end come by pointer doubling over
+       the arcs, twice: each rolled back list counted in and out (a use under one is no use),
+       then the uses under none. A use's rank is the uses from its top call's arc in to its own.
+     - Value: the uses of both passes sorted by their place, then stably by their unit and slot;
+       a use's value is the uses before its run of equals in its unit's (two max scans).
+     - The stores are the round's scan's and the chains' (`SC_*`, `CH`), free once the top's
+       rounds are done; past their room (twice the lists, or twice the uses) the unit is
+       refused for room. A chain past `MAX_CHAIN` lists is no longer refused (`X_DEPTH`).
+     - The test: a use's rank made 0 fails `the_refused_cases_are_the_serial_passes`, the
+       values' 0 fails it and `counters_in_directives_are_the_serial_passes`, and the rolled back
+       ones counted fails the first.
 3. **The tests past 1 s brought under it:** what each one runs is sized to what it checks.
+   Done: all 31 eval tests pass under the `second` profile's 1 s on a farm Mac (CPU backend),
+   the longest 0.68 s.
+   - `a_unit_past_its_room_runs_again_larger`'s `#if` line is `A3 == 4096` (8,191 tokens, not
+     32,767): it is still past rung 0's room (the test holds `rung > 0`).
+   - `reclaimed_tokens_keep_a_chain_at_rung_0` gave nothing back: since 0520 a level is a few
+     pieces, and 150 levels never came near rung 0's room (its shapes all settled at rung 0 with
+     giving back off). It now gives back every 16 units of a store's growth
+     (`RERAIL_PP_GIVE_GAP`, as `a_chains_use_is_flat_in_its_length`), holds that each shape gives
+     back (`Expanded::gives`, `ctl` 16: 8 to 40 givings), and runs 40 levels.

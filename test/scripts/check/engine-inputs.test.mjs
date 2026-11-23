@@ -1,7 +1,8 @@
 // scripts/check/ci/engine-inputs.mjs: the files the release engine is built from, whose hash names the engine artifact a
 // later build reuses (.github/actions/engine-artifact) and whose change selects the tests that load the engine
 // (test-selection.mjs). A crate the engine reaches by a cargo `path` is an input wherever it lives, so a change to it
-// never reuses an engine built without it.
+// never reuses an engine built without it. Markdown the build never reads is left out of the hash, so a README change
+// reuses the engine; Markdown a source embeds, and every file under native/src/ (hashed into the build id), stay in.
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -9,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { engineInputs, engineSources, isEngineInput } from "../../../scripts/check/ci/engine-inputs.mjs";
+import { engineInputs, engineSources, isEngineInput, unreadDoc } from "../../../scripts/check/ci/engine-inputs.mjs";
 import { removeFolderSync } from "../../support/platform/remove-folder.ts";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
@@ -63,6 +64,34 @@ const CRATES = {
   "src/index.ts": "",
 };
 
+/** Markdown in the engine's directories: READMEs and notes, one under native/src/, one a vendored crate embeds. */
+const DOCS = {
+  "native/README.md": "",
+  "accel/README.md": "",
+  "forest/README.md": "",
+  "languages/README.md": "",
+  "native/crates/run/src/code_rule_dsl/semver/UPSTREAM.md": "",
+  "native/vendor/v/PATCHES.md": "",
+  "native/vendor/v/README.md": "",
+  "native/vendor/v/lib.rs": '#![doc = include_str!("./README.md")]\n',
+};
+
+describe("unreadDoc", () => {
+  it("is Markdown outside native/src/", () => {
+    expect(unreadDoc("native/README.md")).toBe(true);
+    expect(unreadDoc("native/vendor/simdjson-5.0.5/README.md")).toBe(true);
+    expect(unreadDoc("native/grammars/tree-sitter-sql/PATCHES.md")).toBe(true);
+    expect(unreadDoc("languages/README.md")).toBe(true);
+  });
+
+  it("is not a note under native/src/, which the build id hashes, nor a file of another kind", () => {
+    expect(unreadDoc("native/crates/run/src/code_rule_dsl/semver/UPSTREAM.md")).toBe(false);
+    expect(unreadDoc("native/build.rs")).toBe(false);
+    expect(unreadDoc("languages/python.json")).toBe(false);
+    expect(unreadDoc("native/grammars/tree-sitter-vue/LICENSE")).toBe(false);
+  });
+});
+
 describe("engineSources", () => {
   it("reaches every crate a manifest names by path, transitively, and no crate nothing reaches", () => {
     const { dirs, paths } = engineSources(repository(CRATES));
@@ -96,6 +125,23 @@ describe("engineSources", () => {
     const { dirs } = engineSources(ROOT);
     for (const dir of ["accel/", "forest/", "tools/bitlex/", "languages/", "native/"]) expect(dirs).toContain(dir);
   });
+
+  it("leaves out the Markdown the build never reads, and keeps what a source embeds or native/src/ holds", () => {
+    const { paths } = engineSources(repository({ ...CRATES, ...DOCS }));
+    expect([...paths].filter((path) => path.endsWith(".md")).sort()).toEqual([
+      "native/crates/run/src/code_rule_dsl/semver/UPSTREAM.md",
+      "native/vendor/v/README.md",
+    ]);
+    expect(paths.has("native/vendor/v/lib.rs")).toBe(true);
+  });
+
+  it("leaves this repository's READMEs beside the crates out, and keeps the vendored README tree-sitter embeds", () => {
+    const { paths } = engineSources(ROOT);
+    expect(paths.has("native/README.md")).toBe(false);
+    expect(paths.has("languages/README.md")).toBe(false);
+    expect(paths.has("native/vendor/tree-sitter-0.27.1/binding_rust/README.md")).toBe(true);
+    expect(paths.has("native/crates/run/src/code_rule_dsl/semver/UPSTREAM.md")).toBe(true);
+  });
 });
 
 describe("isEngineInput", () => {
@@ -113,6 +159,10 @@ describe("isEngineInput", () => {
     expect(isEngineInput("docs/README.md", sources)).toBe(false);
     expect(isEngineInput("src/index.ts", sources)).toBe(false);
   });
+
+  it("is still every file of the engine's directories, Markdown included, for the test selection", () => {
+    expect(isEngineInput("native/README.md", sources)).toBe(true);
+  });
 });
 
 describe("engineInputs", () => {
@@ -123,5 +173,12 @@ describe("engineInputs", () => {
     expect(hashOf({ "package.json": JSON.stringify({ name: "x", napi: { ...NAPI, binaryName: "other" } }) })).not.toBe(base);
     expect(hashOf({ "unused/src/lib.rs": "pub fn f() {}" })).toBe(base);
     expect(hashOf({ "package.json": JSON.stringify({ name: "y", napi: NAPI }) })).toBe(base);
+  });
+
+  it("stays the same when Markdown the build never reads changes, and not when a note under native/src/ does", () => {
+    const hashOf = (files) => engineInputs(repository({ ...CRATES, ...files })).join("\n");
+    const base = hashOf({});
+    expect(hashOf({ "native/README.md": "x", "forest/README.md": "x", "languages/README.md": "x" })).toBe(base);
+    expect(hashOf({ "native/src/notes.md": "x" })).not.toBe(base);
   });
 });

@@ -5,8 +5,6 @@
 //! The helpers the engine's Metal measurements share are public (`json`).
 
 #[cfg(test)]
-mod aot_tests;
-#[cfg(test)]
 mod block_tests;
 pub mod executors;
 #[cfg(test)]

@@ -27,10 +27,6 @@ pub mod reads;
 pub mod writer16;
 
 
-/// The writer as Rust source (`writer16`, the host's own): a tier 2 generated ahead of time that writes format 16
-/// holds it as its module `w` (`rerail_compiler::rust_stream`).
-pub const WRITER_RUST: &str = include_str!("writer16.rs");
-
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:
 /// named-only at rest, no stored source digest (RER-131); 14: the tokens the grammar implies

@@ -13,10 +13,12 @@
 //!
 //! - **No CUDA at build time.** The driver (`libcuda`, Windows' `nvcuda.dll`) and NVRTC are opened at run time; without them there is no
 //!   device (`CudaDevice::system_default` is `None`), as on a Mac without Metal.
-//! - **Buffers are pinned, mapped host memory** (`cuMemHostAlloc`): the host reads and writes them in place
-//!   (`contents`), as Metal's shared storage, and kernels read them where they are. On a unified device (GB10) that
-//!   is as fast as device memory (0440 §2: 0.97x); on a discrete card it reads over the bus, which is correct and
-//!   slow: placing blocks in device memory there is the block directory's work (0440 §7.2, step 10).
+//! - **Buffers are host memory, mapped**: the host reads and writes them in place (`contents`), as Metal's shared
+//!   storage, and kernels read them where they are. On a device that reads pageable memory through the host's page
+//!   tables (a GB10's ATS) a block is the host's own pages; elsewhere it is pinned (`cuMemHostAlloc`). On a GB10 the
+//!   pinned path's atomics and fences are slow: a grid barrier of 32 groups 24-42 µs on it, 0.7-1.4 µs on the host's
+//!   pages (decision 0580). On a discrete card the pinned memory reads over the bus, which is correct and slow:
+//!   placing blocks in device memory there is the block directory's work (0440 §7.2, step 10).
 //! - **Arguments without reflection.** UKL's CUDA shim emits beside each kernel the text of its rows
 //!   (`Name__ukl_params`) and each row's type's size, alignment and kind (`Name__ukl_rows`), and for each `args`
 //!   structure its fields' names and a kernel that measures its layout (`Type__ukl_layout`). They give the same
@@ -265,10 +267,7 @@ fn cuda_api() -> Result<Api, String> {
     // The hardware queues the driver maps streams onto, round-robin in the order they are made: enough that no two of
     // the process's streams (a root's each, `CudaQueueRoot`, and any a caller makes) share one. Read by the driver when
     // it loads; a value the environment sets is kept.
-    if std::env::var_os("CUDA_DEVICE_MAX_CONNECTIONS").is_none() {
-        // SAFETY: once, before the driver loads, as the process's first use of the device.
-        unsafe { std::env::set_var("CUDA_DEVICE_MAX_CONNECTIONS", MAX_CONNECTIONS.to_string()) };
-    }
+    crate::os::nvidia_hardware_queues(MAX_CONNECTIONS);
     use crate::os::{Lib, Scope};
     let (driver, nvrtc_names) = cuda_library_names();
     let cuda = Lib::open(&driver, Scope::Global).ok_or_else(|| format!("no CUDA driver ({})", driver.join(", ")))?;
@@ -457,7 +456,9 @@ impl CudaDevice {
         match Self::open() {
             Ok(d) => Some(d),
             Err(e) => {
-                if std::env::var_os("RERAIL_CUDA_DEBUG").is_some() {
+                // A process that asked for CUDA (`RERAIL_GPU=cuda`) says why it has none, as one that asked for OpenCL
+                // does: without it every unit after was refused as over capacity, with no word of the device.
+                if std::env::var_os("RERAIL_CUDA_DEBUG").is_some() || crate::device::chosen() == "cuda" {
                     eprintln!("no CUDA or HIP device: {e}");
                 }
                 None
@@ -586,7 +587,7 @@ impl Drop for Allocation {
     }
 }
 
-/// A pinned block of a size class, free.
+/// A block of a size class, free: the host's pages or pinned memory (`alloc_uninitialized_array_sync`).
 struct Block {
     host: *mut u8,
     dev: DevPtr,
@@ -680,6 +681,12 @@ fn alloc(device: &CudaDevice, bytes: u64, coherent: bool) -> CudaBuffer {
     sweep_pending(device.current());
     let reused = POOL.lock().unwrap().get_mut(&(class, coherent)).and_then(Vec::pop);
     let Block { host, dev } = reused.unwrap_or_else(|| {
+        // The host's pages where the device reads them through its page tables (decision 0580): a pinned block's
+        // atomics and fences take a slow path there. `RERAIL_CUDA_PINNED` keeps pinned blocks, a measurement aid.
+        if device.pageable && std::env::var_os("RERAIL_CUDA_PINNED").is_none() {
+            let host = crate::os::map_zeroed(class as usize).expect("the host's pages for a CUDA block");
+            return Block { host, dev: host as DevPtr };
+        }
         let a = device.current();
         if a.vendor == Vendor::Hip && !coherent && class >= page_bytes() {
             return registered_block(a, class);
@@ -1059,8 +1066,16 @@ impl CudaComputeFunction {
     }
 }
 
-/// The hardware queues asked of the driver (its maximum).
-const MAX_CONNECTIONS: usize = 32;
+/// The streams the process makes: the waiting root's and the queue root's (`CudaQueueRoot`, `rerail_device`'s
+/// `shared`), one each.
+const STREAMS: usize = 2;
+
+/// The hardware queues asked of the driver: one a stream. Not its maximum of 32: each one costs the context's creation
+/// (`os::nvidia_hardware_queues`).
+const MAX_CONNECTIONS: usize = STREAMS;
+
+/// The streams made so far: past `STREAMS`, one would share a hardware queue with the waiting root's.
+static STREAMS_MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// What a queue's work goes to (`metal::CommandQueue`): one stream, made once. Its queues' work runs in the order it is
 /// flushed, as a Metal command queue's command buffers run in the order they are committed: the engine's batches rely
@@ -1072,7 +1087,8 @@ const MAX_CONNECTIONS: usize = 32;
 /// its hardware queue, and the work the host awaits before it signals may be among them: a deadlock (seen on a
 /// V100). Metal has the same rule within a command queue, which is why the forest keeps its waiting work on a queue
 /// of its own (`shared.waiting`). Here each root's stream has a hardware queue of its own (`MAX_CONNECTIONS`), so the
-/// waiting root's holds back nothing else.
+/// waiting root's holds back nothing else: the driver is given a hardware queue a stream the process makes, and a
+/// stream past them is refused (`STREAMS`).
 pub struct CudaQueueRoot {
     device: CudaDevice,
     stream: Ptr,
@@ -1168,6 +1184,8 @@ unsafe impl Sync for CudaQueueRoot {}
 impl CudaQueueRoot {
     /// A root on `device`. Made at the process's start (`shared`), the waiting root first.
     pub fn new(device: CudaDevice) -> CudaQueueRoot {
+        let made = STREAMS_MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        assert!(made < STREAMS, "a CUDA stream past the process's {STREAMS}: it would share a hardware queue with the waiting root's (MAX_CONNECTIONS)");
         let a = device.current();
         let mut stream = std::ptr::null_mut();
         must(unsafe { (a.cu_stream_create)(&mut stream, CU_STREAM_NON_BLOCKING) }, "cuStreamCreate");

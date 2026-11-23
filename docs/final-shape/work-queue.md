@@ -3126,22 +3126,50 @@ submitted" now hold device memory at once.
   counts (relations' rows in spare slabs are in no reservation).
   `has` built (6fdbc1eb2): probed by one column it is walked on the tape on the device, uploaded only for a whole
   read or a read by both columns; its measurement waited on strict runs, which every `logic` run failed at its start
-  after the merge: the CLI batch's analysis scope wrote its acquisition before the first wave. Decision 0514 moved
+  after the merge: the CLI batch's analysis scope wrote its acquisition before the first wave. Decision 0547 moved
   the scope onto a lease (a run's start only reads; a deletion that would revoke a running scan fails, retried
-  after it). Open from 0514: the workspace API's owner (`begin_analysis_scope_at`) still acquires as it begins.
-  Seen while testing 0514: `scope::sql::tests::reproduces_sqlfluff_rf01_and_al05` failed once in a group run on the
+  after it). Open from 0547: the workspace API's owner (`begin_analysis_scope_at`) still acquires as it begins.
+  Seen while testing 0547: `scope::sql::tests::reproduces_sqlfluff_rf01_and_al05` failed once in a group run on the
   M3 and passed alone on the M1 Max; not looked into.
   Measured (ab98, 2026-11-20, the M3, 300 files, strict, `--metal`, 1 GB, load 5–9; working-data/bench-1120/ab98.txt).
   The A/B first stalled in both arms, past 900 s: the merge's witness cut in the planner's search (c30a34fb2) priced a
   cross product past a bound head as free (`p155_rr_demand_agg_rr_agg3`, a `node_text` plan), fixed in 960374749f; and a
-  cold kernel store spent minutes building the transducer's interpreter (decision 0507). With both fixed, t81 (no walk)
+  cold kernel store spent minutes building the transducer's interpreter (decision 0548). With both fixed, t81 (no walk)
   against t82 (the walk): 463 violations every run; 544 G against 554 G instructions, 24 s wall each (means of three);
   refusals 64, 74, 67 against 65, 88, 34. `has` is walked 6 times a run; row 5's uploads rose from 312 MB (863 calls) to
   454 MB (949), since strata a keyed `has` kept on the CPU now run on the device and upload their other inputs. So the walk
   removes no refusals: what remains of (c) is what admission counts. Its `fits` counts every live lease, held rows too,
   so the refusals are leases a stratum makes past its own reservation (uploads, sorts' scratch, rows put in spare slabs)
-  that `expected()` does not estimate. Next: the refused leases at 1 GB by kind against the reservation they came under.
-  The interpreter's compile: done (decision 0507). `run_batch` builds in 7.1 s, not 44.7 s, with the six largest
+  that `expected()` does not estimate.
+  Measured (ab99-ab103, 2026-11-20, the M3, 300 files, strict, `--metal`, 1 GB so a 512 MB Metal budget, profiled with
+  the heap sampler, load 8-38; working-data/bench-1120/ab99*.txt..ab103.txt). Each refusal now names the span that asked
+  and the admission it came under. Who asks: every refused lease is a device join's (329 of 349 in ab99's three runs
+  `device joins`, 20 `to the wave`). Under what: 173 after the thread's admission was spent, 92 with none (rules with no
+  estimate reserve 0 MB), 84 larger than what was left. Who holds, at the first refusals (18 snapshots, ~500 MB each):
+  about ten strata at once, 8-113 MB each: the wave's joins ~146 MB a snapshot, the device fixpoint ~107 MB (never
+  admitted, its leases never bounded: live leases reached 576-588 MB of the 512), the tape residency's slab 64 MB, the
+  joins ~51 MB; 0 MB reserved in all. The measure that matters is in the profile, not the lease count: the runs placed
+  on the device and run on the CPU instead, 446-674 a run, 12.9-17 ms each, 7.5-10.2 s of CPU (t84).
+  Tried, by instructions against t84 in alternation, each kept out:
+  - A lease past its admission waiting for room until the admission's deadline: run inside the stratum's encoding, the
+    wait ran pool jobs that borrowed its thread's state again (`RefCell already borrowed`, 2 of 3 runs); waiting
+    without helping, no fewer refusals (103 vs 103) and 623 G vs 579 G.
+  - The fixpoint admitted, its leases bounded: 10-22 fixpoints a run refused in their rounds, which threw the rounds
+    away; with admission by held bytes (next), 182-377 runs to the CPU (from 663-674) but 37-58 ms each: 596-627 G vs
+    536-582 G.
+  - Admission for the most a stratum's rules held when they last ran in the run (by the rules' spec digests), the
+    fixpoint admitted unbounded: 428-523 runs to the CPU against 446-670, but 21-27 ms each (10.7-11.5 s against
+    7.5-8.6 s), 587-595 G against 548-563 G (two pairs; the M3's connection dropped in the third). Admitted for their
+    whole footprint, the large strata wait and, past what waiting is worth (114-190 ms), run on the CPU whole; they are
+    the dear ones. The patch is in the worktree's `tmp/parked/q203c-held-admission.patch`.
+  So what admission counts stays the planner's estimate of a stratum's tables: at a 512 MB budget the strata's working
+  set does not fit, and counting more of it moves larger strata to the CPU than the refusals it saves. The refusals
+  left are small strata, cheap on the CPU (~14 ms a run, ~9 s a run in all). What would remove them is room (the
+  budget is the user's: half the memory limit), or a stratum that splits its work when a lease is refused rather than
+  going to the CPU whole (0334's replanning, for the device joins). Kept from this: the refusal's span and admission in
+  its message (the profile's hook), and a lease's release through its own memory (a buffer dropped as its thread ends
+  read the run's context after it was gone: `cannot access a Thread Local Storage value during or after destruction`).
+  The interpreter's compile: done (decision 0548). `run_batch` builds in 7.1 s, not 44.7 s, with the six largest
   tape reads written `UKL_COLD`. The resident interpreter's results are the same with and without it. Its four
   `BackendFailure` clauses were the interpreted runs' chain levels (0475), never doubled; they are doubled now.
   `every_operation_runs_on_every_executor`'s ledger had no row for `@ascii_lower/1` (`source-language.rerail`, from
@@ -3160,7 +3188,7 @@ submitted" now hold device memory at once.
   `bench-shapes.sh full` on Metal, three runs: in each one edit step read 0 components and the step after it read
   both edits. The bench edits within milliseconds of the previous step's end; every edit changes the file's size,
   so a stat would have seen it. Their done-when is kept: the bench's full shape shows every edit step's components.
-- **Cause, measured** (t46, `scripts/profiling/fsevents-history-probe.py` on the M3 at load 31–60): a change made
+- **Cause, measured** (t46, `scripts/profiling/fsevents_history_probe.py` on the M3 at load 31–60): a change made
   before a stream starts reaches it only through fseventsd's on-disk log, and the log is written late under load.
   In 12 of 40 trials a new stream from the last run's cursor named neither the edited file nor a new one, though
   the cookie and `HistoryDone` came (the sync answered "complete"). The missing events never came later on that
@@ -3402,6 +3430,9 @@ reuses another's sync.
 - **Done when**: the test passes 20 of 20 on a host at load, or names why a run cannot answer.
 - **Record**: done 2026-11-19 (Typing-support): 22 of 22 on the M3, each run naming the questions the journal
   answered late.
+- **At the hub's merge into the sync branch** (2026-11-20): the hub's observer is taken whole, its lateness counts
+  (049b9aaa6) and the tests' `journal_answered` with it, and that line's Git snapshot reads (`source::`) added to it.
+  The sync branch's roll-up of Typing-support had left them out.
 
 ### Q224. (Q187 on benchmarks-on-integration) The full shape's cold run on Metal hangs, now and then: the main thread waits on the builder's bell, the pool idle
 
@@ -3983,6 +4014,10 @@ always a refusal.
   `jeremybarnes/build-and-test-loop-time`). The caller sends the `--extern` paths; the agent
   reports each one as it read it; a difference compiles here, uncached. The daemon also asks the
   host again for them before each compile. Not installed: the farm owner merges and installs it.
+- **Seen again** (2026-11-20, merging Parser-generators-final-shape, whose vendored `cranelift-codegen` adds
+  patches; written as Q377 on Swift-Kotlin-Scala-support): a profiling build of `rerail-kotlin-aot` failed at
+  `rerail-clif` with E0463 for `cranelift_frontend`, its `.rmeta` present; the debug build never failed. A
+  rebuild with `SCCACHE_RECACHE=1` (`RERAIL_FARM_ANY_ENV=1`) went through.
 - **Done when**: farm 24 (or its merge) is installed and the reproduction above no longer fails.
 
 ### Q123. (Done) An M1 Max repeats the persistent dispatch's launch (`a_batch_of_files_and_programs_is_one_launch`)
@@ -5113,7 +5148,7 @@ after the phases went on the run path (0083).
     rules run in 60 s (profiled) instead of past 180 s. All 57 rules run over the 50 files.
   - `RERAIL_KEEPS_TRACE=<text>` prints the pricing's estimates for relations whose names hold the text.
 
-### Q287. 0458's corpus batch is made again on every warm run: ep2's warm edit 18.8 G and 197 MB to 57.5 G and 545 MB (open)
+### Q287. 0458's corpus batch is made again on every warm run: ep2's warm edit 18.8 G and 197 MB to 57.5 G and 545 MB (done 2026-11-20, on sync-integration-hub-tape)
 
 - **Found** (2026-11-19, rr-align's roll-up of phased-facts 10158b23ccd, 0458 steps 1-4; ep2 on the M3): rows 0
   differing on every run, but each warm run (B101's constant edited, 1 of 300 files' rows unchanged in kind) makes
@@ -5129,6 +5164,122 @@ after the phases went on the run path (0083).
 - **Record**: open; the phased-facts branch's (0458 Open), measured here.
 - **Taken by** 0494 (phased-facts, the user 2026-11-19: "B: lazy Batch everywhere"): a batch makes a document when
   first read, its row space from kept counts; steps 1-4 there, ep2's numbers by its step 5.
+- **Found** (2026-11-20, the sync branch after merging Bend and phased-facts bf0d3742bd; the warm tier, 4 files): with
+  0494 in, a warm run over unchanged files still costs each file twice. `warm_tests` reports it by count
+  (`Report::corpus_docs`, `Report::parsed`). Over 4 unchanged files: `CorpusDocs { from_tape: 4, parsed: 0, made: 4 of
+  4 }` and 4 files parsed (`("direct", "python")`); after a one-file edit, 3 built from tape, 4 of 4 made, and 3
+  unchanged files parsed.
+  - The parses are phase 1's (`sources.rerail`, `phases::sources`, a corpus run inside the run). It loads every file
+    and reads `doc` and `tape_of` across files, so its cross part has base relations and its corpus batch makes
+    every file's document. A phase run reads nothing from the store inside the waves (0104), so its memo hits come
+    with no tape (`hit_tapes` empty) and `doc_of` parses each one (`core::build_with_tape`). Its
+    `.cache doc_tape by doc_key` would answer the phase from the last run, but the documents are made before any
+    rule reads them.
+  - The outer run's batch builds every memo hit's document from its stored tape (`doc_of`: the source read, the tape
+    decompressed, the facts built and digested) and makes every document's rows, unchanged or not.
+- **Tests** (2026-11-20): `warm_tests` (the `warm` nextest profile, with the cold-then-warm, R2 new-process, 0494 and
+  session tests: `cargo nextest run -p rerail-engine --lib --features test-hooks --profile warm`, 14 tests, about 10 s).
+  Its four fail until this item is done, each naming what the warm run did.
+- **Part done** (2026-11-20, the user: "make a memo hit's document lazy, made only when a rule first reads it, as
+  0494 already does for rows"). A warm run over unchanged files now parses, builds and makes nothing (the first two
+  warm tests pass). What it took:
+  - A memo hit's document is `syntax::Input::Pending`, made on its first read from its kept tape (else parsed). Its
+    key, tag, digest and facts' size come from the documents' table's counts (`#base-counts`, now 16 words a row: the
+    content it counted and the facts' size too), when they are of the content the file has now. A made document
+    whose key or digest is not the table's fails its batch, named. A hit that hosts guests is made at once.
+  - The counts' content is matched by stored source or by digest. Inside the waves (phase 1's loads) a file named
+    by its digest whose content is a source whose tape was read before the first wave is that source
+    (`wave_sources`), so phase 1's hits are pending too.
+  - The statistics of a view held in place (`kind`, a view of `node`) are counted when a plan first reads them
+    (`plan::InPlaceView`, a `Deferred` whose `live` statistics `resolve` applies as `live_stats` did): counting them
+    made every document, in a run whose plans never read the view.
+  - An edit's `input_delta::Before` counts its kept rows when first read, after the batch is given its totals.
+  - A batch is lazy when the only documents without counts are made already (an edit's changed ones).
+  - A text test's rows at its binding are its kept statistics' (as its statistics already were), not its `len`.
+  - The warm tests count every run's corpus batch, the phases' too (`Report::phase_runs`), and name each phase's.
+  - The kept frames' digest-only entry of a base relation records the rows it was bound with (`totals`), not its
+    `len` (a text test's is a scan of the batch's strings).
+  - A view of `node` held in place (`kind`) takes its statistics from `node`'s where the run holds them (kept and
+    patched by the edit; its kind values the tree's, `Stats::tree`, by the same kind atoms): none counted off the
+    documents. Where they do not add up to the view's rows it is counted when first planned with, as before.
+  - A text test's input delta in a maintained stratum is empty (its probe tests the string probed, whatever holds
+    it): diffed by the rules, it listed every string of the batch, every document made.
+  - A cross-file join by a value is pushed file by file (`PushLocalJoins`, `by_node_group`). `named`'s rule joined
+    two files' identifiers by their string, `text(a, t), text(b, t)`. The component it made had two independent node
+    groups and was skipped, so the cross part read `text` and `docof` as base relations, and its maintained probe of
+    `text(b, t)` by the string made every document (`MadeRows::target`). Now each node group, with the atoms over
+    its variables alone (`t != "self"`), is a file-local helper of the chunks (`fl<hash>_<head>`, kept per file in
+    the memo entries). The cross part joins the two helpers by the string and reads no base relation, so an edit
+    redoes the edited file's helper rows only. An equality across the groups stays in the rule (unclosed: the
+    `dr = ds` of `tree_digests_compare_subtrees_without_positions`). Two halves of one content are one helper.
+    `typing::file_local::tests::a_cross_file_join_by_a_value_pushes_each_files_part`; the main run's batch makes no
+    document in an edit (`a_warm_edits_own_batch_makes_the_changed_document_alone`). PostHog (`len-_py`, cold, CPU,
+    Linux): 29,747 findings, digest fa0efeaed6ff, with the split and without it.
+  - Found on the way: the kept-inputs route installed the kept exports before it checked the base relations, and a
+    refusal (a text test has no versions: it needs none) then fell back to the whole decode, which added the hits'
+    rows to exports the cross part had read (a panic, "added to after the cross-file part read it"). The check now
+    runs before the exports are installed and passes a text test. `made_batch_tests` R5 and R6 read base relations
+    through a join the push now takes into the chunks: R5 runs over R6's program (it reads `field` and `within`
+    whole), R6's `pair` is an output (inlined into `twins`, its file's part would be pushed).
+  - Phase 1 (`sources`) makes the changed document alone in an edit (0494 step 4, part 2). Three reads made every
+    document there:
+    - `doc`'s and `tape_of`'s statistics: its documents are what its loads make in its waves, where no store is read,
+      so it had no old documents, no versions and no totals. It is handed its files before its first wave
+      (`observer__source_file`, `phases::handed_files`: each path, module and content digest), so there it compares
+      them with the documents' table and reads the old sources, tapes and modules of those whose content changed
+      (`base_ahead`). The compare once its chunks found the files reads no store and takes them from that read (one it
+      did not read, a library that changed, leaves it with none, as before). An old document is made with its load's
+      module (`OldBase::module`).
+    - The lead column of `doc(d, f, m)`'s probe by two columns: `MadeRows::estimated_matches` made the batch whole.
+      The kept statistics' distinct values of each column read are given to the batch (`Batch::give_distinct`) and
+      estimate as the made relation would (rows over distinct values).
+    - The probe of `doc` by its path (`loaded(f, m, g), doc(d, f, m)`): only a read by the document's key was routed
+      to its document. A read of `doc`'s path column is routed too: the batch's documents' paths interned once
+      (`Batch::keys_of_paths`), the one document of that path made.
+    `warm_tests` all pass (8 with `made_batch_tests`). PostHog (`len-_py`, cold, CPU, Linux): 29,747 findings,
+    digest fa0efeaed6ff.
+- **Done** (2026-11-20): ep2 (`tmp/ep2/ep2.sh`: 300 files, 317 rules; profiling build, the M1 Max, CPU, instructions
+  retired, peak footprint), against the user's 18.8 G / 197 MB:
+
+  | Step | Before (this tree, 2026-11-20) | Now |
+  |---|---|---|
+  | warm, nothing changed | 33.5 G, 364 MB | 14.1 G, 147 MB (1.25 s) |
+  | B101's message edited (the warm edit) | 35.9 G, 371 MB | 13.8 G, 131 MB (1.17 s) |
+  | a run after two file edits, nothing changed since | 32.2 G, 392 MB (with the first two changes below) | 13.9 G, 131 MB |
+  | cold | 1,329 G | 1,331 G |
+
+  Findings as before (463; 464 after the edits). The file edits themselves (append 57.0 G and 587 MB, body 65.7 G and
+  672 MB) are measured, not yet held to a number. What the last part took:
+  - A semi-join's base relations (`ast_depth`, `docof`, `end_line`, `node_order`, `visit_index`) have their
+    statistics kept and patched as every base relation's are (`base_statistics`), not measured off every document
+    each run (`syntax::statistics`: every document made, 8 sorts of 430k-460k rows). The statistics written beside
+    their inputs' frames for that (`write_input_kept`, `kept_inputs`' `stats_of`, `KeptInput::stats`) are gone.
+  - A copy of any input's columns is a view held in place (decisions 0329, 0353), not only one of `node`. `hold_view`
+    read any other source into flat rows, a copy, and a view keeps nothing, so every run derived it again ("not
+    reached, its rows not kept"): ep2's `rr_ctx29($s) :- string_annotation($s)` made all 300 documents, 0.93 s of a
+    2.4 s warm run that read none of it. Its statistics are its base's where the run holds them, else counted off
+    its source when first planned with (`plan::SourceView`).
+  - An edit keeps its changed documents' views' counts. They were written only when the batch was not lazy, and an
+    edit's is, so every later run built the changed file from its tape again to count it.
+  - A base relation's rows are its statistics' (kept of these documents, patched and checked, or counted), not its
+    `len`: `within` (an axis no solve answers) made every node's containers to count its rows. The profile's "held
+    for the cross-file part" reads the run's counts too: profiled, it made them.
+  - A batch's value relations (`Valued`) read their documents when first asked, not when the batch is added to.
+  - Found on the way: a relation made outside a run and a chunk (a session's work between runs) leased a block of the
+    run's size each time, 16 GiB of address space under decision 0445, since the open block is no one's there:
+    `sql_executor::tests::scaling::tree_walk_file_edits_retain_the_walk_and_match_fresh_execution`'s 1,000
+    one-document batches reserved 256 TiB and mmap refused (on Linux hosts). Such a relation is alone in a block of
+    its room, doubled (`facts::rows`, `lease_room`).
+  - Found on the way: a pooled device buffer dropped on a pool thread outside a run read the run's ledger there and
+    panicked on macOS ("a pooled buffer is Metal's"); it reads the ledger it was made with (`accel::gpu::shared`).
+- **Tests**: `made_batch_tests::r7_a_run_after_an_edit_makes_no_document` (failed before: 3 of 3 documents built and
+  made) and `base_tests::a_copy_of_any_inputs_columns_is_held_in_place`, both in the `warm` profile (17 tests, about
+  17 s on a Linux host). PostHog (`len-_py`, cold, CPU, Linux): 29,747 findings, digest fa0efeaed6ff.
+- **Here** (roll-up 38, Q453): taken but for the semi-joins' statistics. This line counts a semi-join's base
+  relation at the nodes the exports hold (`keptstats::SemijoinCounts`, by a keyed walk of their documents), not its
+  every row, and keeps them beside its input's frame (`write_input_kept`, `kept_inputs`' `stats_of`): those stay, so
+  a warm run reads them and makes no document for them. The other base relations take the sync branch's rows from
+  their statistics and its session keeps, on this line's relations counted side by side (`base_counted`).
 
 ### Q423. (Q383 on investigate-bend-vs-datalog; Q354 there until 2026-11-20; Q288 on phased-facts) `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)
 
@@ -5547,6 +5698,11 @@ place of the views: copies of tape answers. The views already cover the whole so
   `granules::span_of`); then `Extra` makes no place rows, and `made` binds no place relation.
 - **Check**: the view's rows equal the rows made today, for a program reading each span relation.
 - **Done when**: no place row is made for a node or token in core.rerail's shape.
+- **Its cost on an edit** (2026-11-21, ep2's `body` on the M1 Max, Q332): a node's place in a made relation is a
+  probe that makes the node's document, every relation of its group (decision 0494). The strata derived again over
+  `line` (its rows after the edited line moved) probe the lines of every document's diagnostics: 38 unchanged
+  documents made, `line` by node 32 times and `visit_index` 4 (the profile's "a batch's documents made by a probe"),
+  about 0.09 s of the edit's 4.0 s. The view reads a node's place off the tape and makes nothing.
 
 
 ### Q264. (Q124 on Native-and-GPU-strata until 2026-11-18; Q185 on oscar until 2026-11-18) The device's `str_cmp` of made texts loses rows under load — done 2026-11-18
@@ -5706,23 +5862,7 @@ Not yet checked on the M3. **Done when**: each passes, or is fixed at its root.
   - `every_step_on_metal_equals_the_interpreter`: JSON's steps 14 and 15 start early (0330), which generated MSL
     lacks, and one refused step refused the whole batch. `block_program::missing_form` names the form (`run_batch`
     refuses by it); the test runs the 13 steps Metal can (2,206 files, equal) and counts the 2 refused by name.
-    Generating the early start is Q188.
-
-
-### Q188. Generated MSL has no early start (0330): JSON's ladder steps 14 and 15 do not run on Metal
-
-Found 2026-11-18 (Q183). `block_program::missing_form` refuses a program that `starts_late` (decision 0330: a value
-whose bits lie in a file's first 16 positions comes down to an earlier delay, so a file's first lane is shifted
-down). The CPU runs it; Metal refuses the batch (`metal-form`, "an early start").
-
-- **Done when**: generated MSL shifts a file's first lane as the CPU does, and `every_step_on_metal_equals_the_interpreter`
-  runs every step, none refused.
-- **Found 2026-11-20** (the ladders cut to their grammars, 0531): both JSON forms now run on Metal (0 refused, since
-  5670277876's early start), and `every_grammar_on_metal_equals_the_interpreter` (the test's new name) fails: on 42
-  of 378 `jsonc` files, all with comments, the outputs are equal and extract 4 (a comment's last bytes) differs, e.g.
-  `"// /* x\nfalse"`: Metal `[6]`, the interpreter `[2, 12]`. The same with the old seeds (`15-jsonc`: 39 files) and
-  with the newline output (0529) taken out, so neither change causes it. `json-rfc` is equal. **Done when** this
-  test passes.
+    Generated MSL has the early start since 5670277876: every grammar runs on Metal, equal.
 
 
 ### Q197. Tier 1 with no general body (0383) differs from the interpreter on 14 corpus programs
@@ -7989,6 +8129,38 @@ object.
   load 9): 1.80 and 1.89 s wall, 79.4 and 79.8 B, 1,629 findings. The corpus tests on a Linux host with no GPU
   then showed four panics ("a view's index home of 14 rows: no device"): a device life's block asked the device for
   memory where none was opened. It is anonymous memory there now (`lease_exact`); the 162 corpus tests pass.
+- **After the hub's merge** (2026-11-20, fast-forward to 3c65266120): 99.3-100.0 B, 2.6-2.8 s wall, 1,629
+  findings. The engine is not it: the probe resolves `builtins.len` through `python/names.rerail`, whose scope
+  rules final-rerail-shape made equal to W's graph (46793a3c78, t50 §4: `def_outside`, `cls_late`, `gbefore`,
+  `nl_try`). Their strata cost about 1.3 s of CPU more. Two things, found on the way:
+  - **The plan of `def_outside`** read every function's body: `within(n, p)` from the function's `parameters` was
+    priced at the function's size (t50 step 4's `part_of`), the same as the function's every node by `nearest`. A
+    field's part is now priced at the mean size of the kinds that field's children have under that parent
+    (`Fielded::part_size`, over the tree's (parent kind, child kind, field) counts); a body stays near its
+    function's. `def_outside`'s work 1.27 M to 0.35 M rows. Measured 91.5 and 91.6 B, 1,629 findings (load 40, so
+    the wall says nothing). Test: `within_read_from_a_fields_part_is_priced_by_that_fields_children`; the
+    planner's 95 tests, the corpus and converter tests, and the reference tests (W's graph) pass.
+  - **A sketch's clone** shared its original's few values (`Counts`) in place, and the original's passing them
+    (`end_few`) left the clone with neither few values nor a filter: `keys` reached `unreachable!` ("a sketch past
+    its few values keeps their filter"), one cold hogql run in four. A clone of a sketch still in its few values
+    now counts its own. Test: `a_clone_of_few_values_keeps_its_keys_when_the_sketch_passes_them` (fails without).
+  - Left: rewriting `cls_early` and `def_outside` through a relation of their candidates did nothing (the planner
+    inlines it back) and cost 11 B outside the spans, so it is not kept. t50's next steps (keyed nearest for
+    `walk`/`look`) are final-rerail-shape's.
+  - **`nameref`** (2026-11-21). Before the merge it was inlined into its readers. The merge gave it 16 reader
+    copies, so it is now built whole, and `pat_tail` (the merge's) was demanded. The demand split's scan took
+    `pat_tail(n)` at every `child` row, because `child(d, n, i)` binds `n`, though `d` is one of a few dotted names.
+    So `nameref` was a `pre_` relation of every identifier, a 236 k-row demand and a second pass: 0.45 s of strata
+    CPU. A scan's rows are now carried across the base atoms its variables share (the rows a probe of that column
+    meets, `stats.fan`), so `pat_tail` is not demanded, and `nameref` is one stratum at 0.22 s. Measured 90.5 and
+    90.9 B, 1.89-1.95 s wall at load 11-15, 1,629 findings. Test: `a_scan_bound_through_a_small_kinds_children_is_not_demanded`.
+    The demand, split and planner tests (338), the corpus and converter tests and the pack-data ones pass.
+    What is left of `nameref`, at 365 k identifiers: two `!field(_, #f, $n)` at 150-165 ns a probe and
+    `text($n, $x)` at 255-267 ns. Each resolves a node id to its document and tape node again: three times an
+    identifier, through the granule table (`number_of`). A test that reads `$n`'s own field and builds no rows
+    (`Source::holds` on `field`) measured the same, so the rows built are not the cost. It is not kept.
+  - The reference test on the projects needs the data-layer lint pack's two authored dead-code checks to include
+    `python/references.rerail` (Final-shape-quality's staged publish); with that local copy it passes.
 
 ### Q431. (Q412 on investigate-bend-vs-datalog; Q266 on Native-GPU-strata, Q397 on it after its merge of the hub) The CPU JIT runs a quantified query 6-10 times slower than the interpreter, and more so as its runs grow
 
@@ -8229,6 +8401,11 @@ on an M3 or M5:
   `cpp` its fan-out gives 8 tokens for 12,288 (the rung-1 run without `cpp` agrees), so it is ignored with them.
 - **The persistent grid (0468 R5, R6)**: `grid_barriers_see_every_groups_writes` and the grid's scan, segmented scan
   and sort fail at 8 groups: "a barrier failed" (bounded, never hangs). They fail at 1 test thread too.
+  - **Found (2026-11-20, decision 0540)**: Q123's stale polls. Traced on the Mac mini's Metal (it fails the same):
+    at the first barrier the last group stepped the generation, and every other group polled it a million times and
+    saw it unchanged, while their compare-and-swaps after found it stepped. The grid now reads its words by polls
+    (`ukl_atomic_poll`, a read-modify-write on Metal), and its four tests pass on the Mac mini's Metal, a DGX
+    Spark's CUDA and a Linux CPU. They stay ignored until the M3 and the M1 Max pass them.
 - **The AOT words** (not the device's; done 2026-11-20): `the_aot_words_are_the_interpreters` and
   `the_words_translate_to_rust` overflowed the test thread's 2 MB stack in `rust_source`.
   - The stack: under gdb, 711 frames deep. The structuring recurses once per level of the dominator tree
@@ -8610,7 +8787,22 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
     tests' object or any pool thread's copy held the image. The test passes un-ignored, three runs in a row on the
     M3. The program-image, prepared-program, normalization, run, profile, observer, workspace, lane and plan tests
     pass, except the three plan tests that were red before (Q378).
-
+- **On the sync branch** (Q363 there until 2026-11-20, the same segment, found apart):
+  - **Found** (2026-11-20, on the sync branch after the merges of 2026-11-19 and 2026-11-20):
+    `a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test` finds a file descriptor of the first probe's store
+    still open once its thread ended and its directory was removed: `store.sqlite.objects/14.seg`, a tape or source
+    segment (`object_segments`), held as a `Frozen` block (`rerail_blocks::journal::open`, which keeps the file).
+    Inside the probe, `content_store::holding` is `(0, 0)`: no handle or connection is left; the holder is a mapped
+    object's bytes (`ObjectBytes::Mapped`, `SegmentBytes`) kept past the store.
+  - **Ruled out**: the lowered libraries (`rr::lower_library`'s cache on the shared object). Forgetting a store's
+    libraries as the test's store goes left the segment open.
+  - **Candidates**: what holds a run's tapes on the shared or machine object, which a test's thread shares with every
+    other test of the process (decision 0442's `TESTS`): the tape residency (the tapes' slabs), the writer's queued
+    tapes (`QueuedTape`), a module image read in place (decision 0464). Each would hold a deleted store's bytes while
+    the process goes on.
+  - **Next**: list the holders of `SegmentBytes` on the shared and machine objects; the one holding a store's bytes
+    forgets them in `ContentStore::forget` (by the store's path), as the snapshots and identities do. The test is
+    ignored with this item.
 
 ### Q432. (Q389 on investigate-bend-vs-datalog; Q350 on rr-align) Roll-up 21 (Go-C-and-C-support onto rr-align): what the merge chose, and what stays open
 
@@ -8788,7 +8980,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   The engine's verdict is right on all 1,680, but its line differs on 59 and its message on 105. On the fixtures
   (the replay's input) all 152 agree. The differences are where the first error Ruff reports is not the one CPython
   raises: a keyword-argument error inside a call whose bracket is never closed, where CPython reports the bracket.
-- **To do**: generate the mutants again (`scripts/dev/python-syntax-mutants.py`, seeded), run
+- **To do**: generate the mutants again (`scripts/dev/python_syntax_mutants.py`, seeded), run
   `cpython::parity::syntax_error_parity` with `RERAIL_PARITY_ROOTS=fixtures:<mutants>` on a box with CPython 3.13,
   and follow CPython's choice in each class of difference, as `syntax_error` already does for tokenizer errors and
   brackets left open.
@@ -9325,7 +9517,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Here** (roll-up 25, Q422): the test is not ignored, and it passes (`rerail-engine`'s `plan::corpus` tests on a
   Linux DGX Spark, held to the CPU). Its third edit's rows are a full run's.
 
-### Q421. (Q287 on final-rerail-shape-phased-facts; Q361 on sync-integration-hub-tape) An edit keeps the rows of the cross part's `kind`, a view of `node` (open)
+### Q421. (Q287 on final-rerail-shape-phased-facts; Q361 on sync-integration-hub-tape) An edit keeps the rows of the cross part's `kind`, a view of `node` (done)
 
 Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one-file edit).
 - **What.** The data-layer prelude's `kind(n, k) :- node(_, n, k, _, _)` is a view of an input's columns (Q37). The
@@ -9338,6 +9530,16 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
 - **Next.** Confirm on the 50 files which run writes the entries (`RERAIL_PROFILE`'s "the kept part" decisions);
   then hold a view of a base relation as a view in the maintain mode too (its `Old`, `Minus` and `Plus` its input's
   versions read through its columns), and a guard in `retain::after` that refuses to keep an input view's rows.
+- **Found (2026-11-20).** Not on this tree. The same 50 data-layer files (`tmp/dl/c50`) with 56 of the 57 rule files
+  (`versioned-table-names` cannot run here, Q454), cold, then the one-file edit: `kind` is held as a view on both runs
+  ("held as a view", "not kept kind: a view", `RERAIL_SHAPE_TRACE`), and the chain (`kept_facts::by_relation`) holds
+  no entry of it; on 10 files likewise, and in a two-file program of the prelude's `kind` and `docof` on both routes
+  (kept frames, a session).
+- **Done.** The guard: `retain::cut` hands on the relations the program derives as a view of an input's columns
+  (`Cut::views`, by `input_view_shape`), and `retain::after` keeps none of their rows whatever form a run held them
+  in (the item's suspected path: a maintain mode deriving the view as a relation). The kept-parts fixture copied each
+  input bare (`result(x) :- input(x)`), a view: it filters now (`x >= 0`), a relation of rows. Test:
+  `maintain_tests::an_edit_keeps_no_rows_of_an_inputs_view` (cold and edited, both routes).
 
 ### Q422. Roll-up 25 (sync-integration-hub-tape onto Pulling-it-all-together): what the merge chose, and what stays open
 
@@ -9583,6 +9785,397 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
     not rewritten while it fails.
   - rerail-forest's five predict and procedure tests take 60-78 s each on the CPU backend.
 
+### Q446. Roll-ups 27-31 (five branches onto Pulling-it-all-together): what the merges chose, and what stays open
+
+- **Merged** (2026-11-21), each its pinned commit, smallest first:
+  - 27, cost-classifier-metal-rf at 9f451c11b2: its one commit was here already; the merge records it.
+  - 28, build-and-test-loop-time at c23de8f728: the farm dashboard's Windows card (farm 53), scripts only.
+  - 29, final-rerail-shape at 72464e680e: t50 step 5's index-probe spike (`setfix/runs/index_spike.rs`). The
+    join-lines log keeps ours' run-owned file (0442) under theirs' doc; the lab's device pass keeps ours' Linux gate
+    with theirs' `RERAIL_RELATIONAL_LAB_HOST_ONLY`.
+  - 30, final-rerail-shape-phased-facts at 12a217061f: 0494 step 6, 0342 amended (the blocks' free lists in the
+    ledger, buddies merged). 0494 keeps theirs' step 6 in its list, then ours' section on reads side by side.
+  - 31, Parser-generators-final-shape at 396842f60c: 0541-0546 (free numbers here; their text cites only 0526,
+    the same decision in both).
+- **Parser-generators, one shape from two**:
+  - The token's state is theirs' `T` (0542), a local of the one rule or passed from the entry. Ours' additions
+    from Swift-Kotlin-Scala (0431, 0451) read it there: the gap patterns (`gap_N`, `gaps_N`) and the token marks'
+    patterns (`pattern_N`, `patterns_N`) take the token or its `next`; `settle_before` and `lose` take the token;
+    a lost extra is made again with theirs' four-argument `leaf`.
+  - The grammar's names are one set, ours' `Names` (`name … ` rows). Theirs' `kindname` and `fieldname` rows
+    and `Words::kind_names`/`field_names` are gone; `Names` gained `fields` (`name field F "N"`), and theirs'
+    dispatch labels read `Structure::names`.
+  - Ours' named functions, words and kinds (`x.function`, `x.word`, `x.kind_field`), else-chains (`or_else`) and
+    `deeper()` stay. A call passes the token reborrowed (`&mut *t`), so the closure moves nothing.
+  - The writer's module is ours' `ops` (`w` is the words'): theirs' reserved-room ops (0544) and `fits` name it.
+  - Theirs' `near` for the writer's ops: a format 16 module is always one arena here, so it passes `near` there.
+  - `clif`'s `Writer` keeps ours' `builder()` reservation, with theirs' `near`.
+  - `rust.rs`'s graph triple is a named type (`Graph`), for clippy's `type_complexity` (its allow is gone too).
+- **Fixed on the way**: `rerail-kotlin-parser`'s tests did not compile. A merge had left
+  `a_constructor_off_its_modifiers_line_is_refused` in twice, the same test both times; one is gone.
+- **Checked**, held to the CPU (`RERAIL_GPU=cpu`, `RERAIL_DEVICE=cpu`; no Metal), on a Linux DGX Spark: clippy has no
+  finding in `rerail-compiler`, `-clif`, `-parser-tests`, `-blocks`, `-accel`, `-engine`, `-kotlin-aot` or `-kotlin-parser`. Tests:
+  `rerail-blocks` 72, `-accel` 88, `-clif` 17, `-compiler` 146, `-kotlin-parser` 44, the engine's plan tests 264
+  of 265 (the coverage gate, Q445), `-parser-tests` 89 of 93 at first, then the json test fixed.
+- **Open**, all on the CPU backend's device executors (the user, 2026-11-21: "we will address the CPU failures
+  later"):
+  - parser_tests' `extract_equals_reference_on_every_executor` (the Metal interpreter, 32-byte lanes, 768 bytes)
+    and `stage1_equals_simdjson_on_every_executor` (`edges.json`, the generated MSL, 16-byte lanes: the count
+    right, the indexes not). They fail the same way twice. Their positions are wrong where the file has several
+    groups, as in Q445's `a_files_start_on_metal_is_the_interpreters`, which still fails. No run showed whether
+    they passed before these merges.
+  - Q445's c_directives device reads and the coverage gate's `replace/3`.
+  - `aot_tests::grammars_rust_tapes_are_the_jits` takes 54-62 s.
+
+### Q447. Roll-up 32 (django-bugs onto Pulling-it-all-together): what the merge chose
+
+- **Merged** (2026-11-21): django-bugs at cff3d9e8fe, six commits: decision 0540 (a device wait is on a thread that
+  is running, and every persistent launch has a budget). 0540 is free here. Its text's 0518 is 0524 here, renumbered.
+  Its text named a farm host; that is now "a DGX Spark".
+- **The work queue** holds both sides: ours' ring (0486 §10, `ring`, `control[4]`) and theirs' budget (`budget`,
+  `ukl_wq_spent`). Every queue made names both (`{slots, control, capacity, ring, budget}`); the takes keep ours' end
+  of a ring; the idle poll keeps ours' yield.
+- **The grid**: ours' barrier (the arrivals never reset, a poll yielding on the CPU) and theirs' join (0540 §3: the
+  grid is the groups that took a ticket before the first closed the count; a fourth control word). The join itself
+  yields nowhere. With a yield there, the CPU's early groups spent their 1,000-round wait before the first closed
+  the count, and `a_grid_past_residency_is_the_groups_that_run` failed; without it the CPU's grid is the first group
+  alone, as theirs has it. The preprocessor's grids (`pp_grid`, `pp_probes`) do not join and keep three words.
+- **Ours kept**: the grid tests without theirs' ignores (they pass here: Q367's resolution), `work_queue.metal`
+  removed (its queue is `workqueue.h`'s, which has theirs' polls), CUDA's `sym_as`, the 16z cache lookup's fence.
+  The lookup's miss takes theirs' `own`; `<ukl/reads/relation.h>` is written again from the CLIF to match.
+- **Checked**, CPU only, on a Linux DGX Spark: clippy has no finding in `rerail-gpu`, `-device`, `-ukl`,
+  `-tape-format`, `-clif`, `-metal` or `-engine`. Tests: `rerail-gpu` 25, `-clif` 17, `-tape-format` 40, `-ukl` 9,
+  `-metal` 24, the engine's lattice, work queue, label pass and 16z tests 22.
+
+### Q448. Roll-up 33 (Typing-support-final-shape onto Pulling-it-all-together): what the merge chose
+
+- **Merged** (2026-11-21): Typing-support-final-shape at 4e36a1a085, seven commits: the JIT on x86-64 (frame
+  pointers, a return area), blocks on Windows (reserved address space committed as used, files mapped), paths named
+  one way on Windows (`dunce`, `Canonical`), phase 0 on Windows, a partial hit's cone and its annotations' requests.
+  No decisions or Q items.
+- **Blocks** hold both sides: theirs' `commit_to` before ours' free-list ledger (`listed`); ours' `map_read` and
+  `check_frozen` split, with theirs' Windows mapping as a `map_read` of its own and its rule that a Windows file may
+  run past its header's length; the scratch region has ours' ledger and theirs' committed bytes.
+- **The JIT writer** is ours' `builder()`, which already takes theirs' `flags`.
+- **Phase 0's path spelling** is ours': `bootstrap_spelling` and `host_spelling` at both boundaries, and
+  bootstrap's `rerail.windows_paths` aliases (abc55431b4, the CLI on Windows). Theirs' `native()` renaming (only what
+  the rules write) is a second scheme for the same paths and was removed; its separator-tolerant module directory in
+  `bootstrap.rerail` is kept, right under both. Ours' in-memory phase 0 run (`run_handed`, its image) is kept over
+  theirs' temporary root.
+- **The partial hit's cone** is ours': `DEMAND` joins a cone whose rule compares against the widened bound. Theirs'
+  `sees_annotations` (every request, keyed on `ANNOTATION_KEYS`, which 0512 renamed `RUN_VALUE_KEYS`) duplicated
+  `guests::widened` and was removed.
+- **Canonical paths**: ours' snapshot-aware helpers (`git_workspace::snapshot`), with the std `canonicalize`s left in
+  the conflicted files' code made `dunce`'s or `Canonical`'s, as theirs has it (the same on Unix).
+- **Ours kept** in tests: the demand split's `phase types: run`; a child process of `--help`.
+- **Fixed on the way**: clippy's `needless_range_loop` in `setfix/runs/index_spike.rs`.
+- **Checked**, CPU only, on a Linux DGX Spark: clippy has no finding in `rerail-blocks`, `-clif`, `-logic`, `-store`
+  or `-engine`. Tests: `rerail-blocks` 72, `-clif` 17, `-store` 279; the engine's phase 0, run state, corpus runs,
+  observe, policies and demand-split tests 16; its plan tests 264 of 265, the one red the coverage gate's
+  `replace/3` (Q445, open). Not run on Windows.
+
+### Q449. Roll-up 34 (Go-C-and-C-support onto Pulling-it-all-together): what the merge chose, and the CPU's thread key
+
+- **Merged** (2026-11-21): Go-C-and-C-support at ade589da86, twelve commits: 0527 (its 0523) steps 2 and 3, every
+  phase of the expansion a thread an element (the substitution, the call, a list's children, `#`, the exits, the
+  pause's loops as grid phases; no work queue in the evaluator), and §3, 32 threads a group on the CPU with the radix
+  tiles run 8 of their threads a thread. Its text's numbers are this tree's: 0421 0482, 0424 0459, 0425 0460, 0426
+  0434, 0427 0463, 0431 0479, 0445 0480, 0459 0473, 0460 0468, 0475 0485, 0478 0486, 0523 0527 (one pass).
+- **The kernels** `pp_expand.uglykl` and `pp_grid.uglykl` are theirs, with this tree's Q367 rules applied to them
+  (abbf70ac82): the passes' stores `PP_GLOBAL` (coherent on a GPU), but the host's inputs (`files`, `data`, `IN`) and
+  the pools' `UKL_GLOBAL` fields; every control word a loop or branch decides by polled (`ukl_atomic_poll`: `ctl`,
+  `qctl`, the lists' `pending`, the walks' and exits' counts), the values read once after a barrier left as loads;
+  the grid sort's words (`UKL_GRID_SORT_WORDS`) and rank-group digits (`sl.digits`).
+- **The radix sort** holds both: ours' rank groups (any SIMD width: 32 threads reading their digits where a SIMD
+  group is narrower, 255eebdc63) and theirs' virtual threads (`UKL_RADIX_VT_MAX`, 8 on the CPU), which match digits
+  in a SIMD group and so need matched groups (`#error` otherwise). The tile functions take `digits` and `lsz`.
+- **The CPU shim** has theirs' results made once a SIMD-group operation (`__ukl_cpu_once`) with ours' 64-bit ballot.
+- **Fixed on the way** (the 1 s rule, `--profile second`): five eval tests were past 1 s on an M1 Max on the CPU,
+  `reclaimed_tokens_keep_a_chain_at_rung_0` at 1.38 s alone. A sample put the host's thread-local behind the shim's
+  `__ukl_sched` and `__ukl_self` (ours: a call to Rust's `thread_local!`, unoptimized in a test build) at twice the
+  coroutine switches; theirs' `__ukl_cpu_once` asked it three times a lane. Now the running thread is the
+  scheduler's (`cur`), the hot paths pass the scheduler and thread they hold, and the slot is one pthread key of the
+  process (`tls_key`) the shim reads itself (`pthread_getspecific`): still no thread-local in a library. All 31 eval
+  tests pass under the 1 s stop, the slowest 0.76 s alone.
+- **Checked**, CPU only: the eval tests (31, macOS only) on an M1 Max; on a Linux DGX Spark, clippy has no finding in
+  `rerail-device`, `-c-directives`, `-metal`, `-gpu`, `-forest` or `-accel`; tests `rerail-ukl` 9, `-gpu` 25, `-metal`
+  24, `-device` 6, `-forest` 40, `-accel` 88, and the engine's lattice, work queue, label pass and 16z tests 22.
+
+### Q450. Roll-up 35 (main onto Pulling-it-all-together): what the merge chose
+
+- **Merged** (2026-11-21): main at 21f86868e9. Main's scrub is taken where it reached ours: `TEMPO_` switches are
+  `RERAIL_` (`RERAIL_PACKED_BATCH_PROFILE` and the rest, in the Metal and packed files too), `tempo_batch` is
+  `rerail_batch`, the content store's comments name "the predecessor", relax is "a private fork of makepad/relax", and
+  0305's shared path is `<shared data>/`.
+- **Ported onto ours**: negated `text` reads demand long text (`TextDemand::negated_any`; a negation of a short
+  constant adds nothing); #923's narrow copies onto `FoldOwn` (a rule that reaches no annotation reads the original
+  narrow, `rr_narrow_<head>`; ours' partial-hit test now asks that of `ids`, rows still a full run's); the corpus
+  listing that skips only the host's ignored directories (`corpus_listing`, `corpus_paths`, with ours' sort and
+  `RERAIL_SAMPLE_EVERY` kept); main's decomposed `SelectBuilder` with ours' `shell_unquote` and bounded aggregates;
+  main's `Beside` thread and `in_a_job` (a pool's own thread helps instead of waiting); the decomposed
+  `git_workspace` with ours' canonical paths and `snapshot`; the router's `gitIgnoreMatchers` beside ours' analysis
+  options. Main's new Windows router test reads the plain root as ours' owners do, from the database.
+- **Not ported**: main's decomposition of `block_program.rs`, `runtime.rs` and `metal_program_backend.rs` (ours whole,
+  renamed: no Metal work while Metal is off), and main's `MAIN` thread record (`is_main_thread` stays false on
+  Windows). Main's `CROSS_FILE` registry is gone here (0450 §3), so its STATE entry is cut.
+- **Fixed on the way**: the well-founded check multiplied its measures before comparing them with the bound and
+  overflowed on python/calls with the typing run (two threads, `a_run_on_two_threads_ends`): now stopped at 4,000 as
+  it multiplies (`a_component_of_many_measures_is_refused`). The choices key took out the settings' hash but not the
+  program's own `.about` row, which a version holds once it has any about row, so a program whose only setting was a
+  `.message` keyed apart from one with none (`a_message_setting_is_not_in_the_choices_key`): taken out too, key v3.
+- **Checked**, CPU only, on a Linux DGX Spark: clippy has no finding in `rerail-engine`, `-logic` or `-facts`; tests
+  `rerail-logic` 568, `-facts` 109, `-accel` 88, and the engine's corpus, partial-hit, threads, `git_workspace`,
+  `ast_rule`, syntax, packed and two-thread run tests (352 and 13); the executor-coverage table re-blessed for main's
+  packs. TypeScript type-checks apart from packages not installed for the check.
+
+### Q451. Roll-up 36 (benchmarks-on-integration 87de426f02 onto Pulling-it-all-together): what the merge chose
+
+- **Decisions renumbered**: theirs' 0494, 0507 and 0518 are 0547, 0548 and 0549 here (files, links and README rows);
+  theirs' stale "0473 node product" row is dropped (ours has it as 0461).
+- **Ported by hand** onto ours' device code (ours' rewrite of `setfix/device.rs` and `metal_join.rs`, the join kernel
+  in UKL, built on macOS and Linux): a walked `has` relation read through its set (`DevRel::has`, `Batch::by_has`,
+  the kernel's `has_member`/`by_has`/`has_up`, Stage 2352 bytes); the join scratch given back as the outermost device
+  stratum ends (`in_device`, its `DEPTH` in STATE); deltas made with room for the keys their probes use
+  (`Own::keyed`, `DevRel::empty_indexed`); a recursive set head grown in its one block round after round and placed
+  as it lies (`SetHead`, `HEAD_ROOM`: no total copied at the end); a large head relation alone in a block with index
+  room (`ALONE_ROWS`); tape, depth and order views read in place (the kernel's `vread` cases 9-11); and the counts
+  of why a view was uploaded and why a block refused an index.
+- **Ours kept**: `plan.rs` (ours' witnessed pricing supersedes theirs' cut), coverage, the label passes, `launch.rs`
+  (`wait_checked` gone, 0440 step D), `corpus.rs`, `global-state.txt`, the hand-written `tape.h`/`tape_z.h` over
+  `tape_body.h` (0524). Ours has no residency cache, so `Kept` holds the join scratch alone (no "resident
+  relations" line in the memory report or a refusal). Theirs' 0548 (a large read is cold, not inlined) is marked
+  on `tape_body.h`'s large reads; `view.h` and `relation.h` written again from the CLIF.
+- **Fixed on the way**: `rerail-device-metal`'s tests did not build (no `rerail-clif` dependency, a `Document`
+  without `unpackaged`, `Relation::index` for `index_at`, the file-local test's undefined `equal_columns`), and a
+  `has` walk read `Batch::nodes` as a field.
+- **Checked**, CPU only, on a Linux DGX Spark: clippy has no finding in `rerail-engine`, `-device-metal`, `-accel`,
+  `-clif`, `-facts` or `-logic`; tests: the device, join, within, syntax, vtab and rows tests (44), `rerail-clif`
+  17, `-accel` 88, the engine's plan, file-local and profile tests (112); the SQL profile report test (it runs
+  `node`) on an M1 Max; the executor-coverage table blessed again, unchanged.
+
+### Q452. Roll-up 37 (rr-align affee05623 onto Pulling-it-all-together): what the merge chose
+
+- **Ours' tree, then rr-align's own work**: rr-align's roll-ups 24-26 merged final-rerail-shape, build-and-test-loop-time
+  and Parser-generators-final-shape under rr-align's decision numbers. Ours had merged all three already under its
+  own numbers, so those merges' resolutions (and theirs' renumbered decisions, a `clif/src/cache.rs` ours keeps as
+  `view/cache`) are not taken. rr-align's five commits since are ported: Q188 done (every grammar on Metal, equal,
+  since e6be1c0f92; 0499 there is 0531 here); tier 2's return area for more results than registers;
+  `ladder::check_shape` and the mask test reading x86-64's code beside Arm's; a short window's word cut where no
+  file-end cut is needed; test-remote's named host waiting for its own slot.
+- **Joined with ours**: theirs put the return area and x86-64's frame pointers in each builder (`TARGET_FLAGS`); ours
+  has every JIT module take the host's flags from `rerail_clif::jit::flags`, which now adds the return area on every
+  host (it changes no function whose results fit), not on x86-64 alone.
+- **Checked**, CPU only, on a Linux DGX Spark: clippy has no finding in `rerail-compiler`, `-rr-parser` or `-clif`;
+  their libraries' tests 146, 49 and 17.
+
+### Q453. Roll-up 38 (sync-integration-hub-tape b4222a2d6f onto Pulling-it-all-together): what the merge chose
+
+- **Theirs' Q332 work taken** (a warm edit makes the changed document alone; Q287 here, done): a memo hit's document
+  made when first read (`syntax::Input::Pending`), the documents' table's 16-word counts, a base relation's rows its
+  statistics' (not its `len`), the corpus batch's distinct values (`give_distinct`), a held corpus batch for a session,
+  views held in place with their statistics deferred (`plan::SourceView`), no kept rows of an input's view (Q421, done),
+  and the six items new here (Q454-Q459, renumbered; the code's cites follow).
+- **Ours where both had a form**: phase 1's compare inside the waves (theirs read the old documents before the first
+  wave, `base_ahead`; ours reads them where the documents' table places them, decision 0494 step 4 part 2), so
+  `BaseRead` is not taken; tape values as ours' `memo::Answered` (theirs' guest rounds are gone here); the base
+  relations' statistics counted side by side (`base_counted`, in waves), with theirs' session keeps and rows from the
+  statistics folded in; a semi-join's statistics at the held nodes, kept beside its input's frame (theirs dropped
+  `input_stats` for the base route: kept here, see Q287); `package_root_modules` public with its packages; the loop
+  that returned at the corpus's first file (`corpus_files`) stays gone.
+- **Joined**: a host file (decision 0512) is made by ours' `doc_of` and never pending; other hits by theirs'
+  `hit_document`. A file's tree (0512's `Made::File`) is its file's guest in `guests_of`, as a program is its host's.
+  `Input::Made` holds its document boxed (a document is 280 bytes beside a pending one's pointer). Theirs' relation
+  made outside a run, alone in a block of its room: the block is at least 64 MiB of address space
+  (`UNOWNED_ROOM`), so its tail and tables grow in it as 0384 has them (a block of twice its first rows moved its tail
+  out and left its key map and pending rows behind: three `setfix` tests). `leaveInheritedRepository` added to ours'
+  `git.ts` for the headless scan.
+- **Stale forms from theirs' merges not taken**: `import_closure.rs`, `maintain.rs`'s counters, `product_demand.rs`,
+  `git-access.ts`, a second `doc_grammar` declaration in `core.rerail`, and a second copy of `tools.rs`'s
+  `policy_command_report` and `settings_tests` (theirs' fuller `run-policies` usage line is taken).
+- **Found on the way and fixed**: the owner test read a child's `.ready` file created and not yet written (written
+  beside it and renamed now); the survivor test's 20,000 inserts were a commit each (97 s beside its package's tests:
+  one transaction now); upkeep's fixture indexed its 1000-byte text (an index of a small column now, 13 s to 0.5 s);
+  the many-worktrees router test passed a version function as `CheckoutOwners`' database (the typecheck's one error on
+  ours).
+  The device parity tests' 1,200 random cases ran one after another on one connection (13 s): split over threads,
+  each with its fixture (12 tests in 5.4 s).
+- **Checked**, CPU only: clippy has no finding in `rerail-engine`, `-device-metal`, `-accel`, `-facts`, `-logic`,
+  `-store`, `-clif` and `-tape-format` (Linux); every test of `rerail-logic` (569), `-facts` (109), `-store` (289),
+  `-accel` (88), `-blocks` (72) and `-device-metal` (75) passes, and the engine's scaling and tools tests (18); the
+  coverage table is unchanged. The typecheck is clean (the M3). Not yet passing: the catalog's TypeScript tests
+  (bare repositories placed as Git checkouts by ours' older `repository-identity.ts`, now theirs' with 0497; the
+  git-placement, installed-packs, packs and letter-case tests still to read). The merge's architectural choices are
+  being reviewed (the user, 2026-11-21: "Merge conflicts are not about code. They are about architecture").
+
+### Q454. (Q388 on sync-integration-hub-tape) (Q376 on the sync branch until 2026-11-20; Bend's Q376 is a broken fan-out) Two data-layer rule files together are refused at the gate: `plain_str`'s `join` inside the component that parses (open)
+
+Found 2026-11-20, reproducing Q361 on the 50 data-layer files with the 57 rule files (`tmp/dl/full`).
+- **What.** `logic` on `schema-bootstrap-contracts` and `versioned-table-names` together (each alone passes) stops at
+  the gate (decision 0065 §2a): "plain_str aggregates rr_agg75 inside a component that loads: not supported; rr_agg75
+  reaches plain_str by rr_agg75 -> value -> rr_value_req -> ast_match -> rr_embed_req -> rr_ctx84 -> ann_whole_str ->
+  plain_str, and the component asks rr_embed_req". The gate's message names that path now.
+- **Why.** `rr_value_req` is one relation for every reader of `value` (0291, 0331). VTN003 binds its node by an AST
+  pattern (``n ~ `$O[:-$K]` ``, `value(K, "4")`), so a request rule reads `ast_match`, which the parse answer produces
+  for its guests (`guests::answered`: a taped relation the demand's rules reach). The parse demand reads
+  `ann_whole_str`, which reads `plain_str`, whose `join` (`rr_agg75`) reads `value`: one loading component holding an
+  aggregate. `plain_str`'s own value reads are bound by `child` and `kind`, which nothing produces: the cycle is the
+  shared request's, not a dependency of `plain_str` on the parse. The stratifier (`graph::components`) sees the same
+  edges, so cutting them in the gate alone would only move the refusal.
+- **Not yet known.** Why the phased-facts tree (2a460f611d) ran all 57 files: its profile has `value` asked on request
+  by `py_vtest`'s two readers alone; its build is gone, so it was not run again here.
+- **Next.** Requests by reader where one would close a loading cycle (a reader's ask apart from the shared
+  `rr_value_req`, the fact layer reading both), or the attribute kept eager for the readers the demand reaches
+  (`on_request`'s "no, every node").
+
+### Q455. (Q379 on sync-integration-hub-tape) (Q352 on the sync branch until 2026-11-20) A pinned Git revision is the process's: a read under its root, from any run, goes to it (done 2026-11-20)
+
+- **Seen** (2026-11-19, at the merge of rr-align's 0442 into the sync branch): `git_snapshot::Snapshot` (a scan's
+  pinned commit or tree, `GitRevisionSource`) registers its view in a process static (`VIEWS`, counted in `ACTIVE`),
+  and every read of a path under its root looks there (`git_snapshot::view`). Another workspace's run over the same
+  root, in the same process, reads the pinned revision, not its files. Decision 0442 puts what is shared by design
+  in the shared object its caller passes; `global-state.txt` lists both as `shared`, not yet moved.
+- **Do**: the snapshot registered in its workspace's `Shared` (the Node API's `CodeRuleDslWorkspace::shared`), and
+  `view` reads the shared object of the run under way; a read with no run sees no snapshot.
+- **Done when**: two workspaces, one with a revision pinned on a root, read the root's files each its own way in one
+  process (a test), and both entries leave `global-state.txt`.
+- **Done** (2026-11-20): the pinned revisions are the shared object's (`snapshot::Views`, with a count of pins
+  each). A revision is pinned where it is taken (`Snapshot::pin`): the workspace that attaches its storage from it
+  (`enableRevisionStorage`, the pin kept in `WorkspaceState::git_source`), a scan, a policy's inspection or load
+  (`on_revisions` in lib.rs: the entry point's object, which its runs join), or the run it is made in (the CLI's
+  `--revision`, a test's). A host's `GitRevisionSource`, made off any run, is pinned nowhere until taken. `view`
+  reads the run's object, and none with no run.
+  `a_revision_pinned_in_one_shared_object_is_read_by_its_runs_alone` is the test; `VIEWS` and `ACTIVE` left
+  `global-state.txt`. On the way: the run's Git storage batch was moved into a check before the run's later guards
+  dropped, so its binding dropped out of order (`run_handed`), which failed four `git_revision_tests`.
+
+### Q456. (Q380 on sync-integration-hub-tape) (Q359 on the sync branch until 2026-11-20) A file whose times are set is once named by the journal under load (done 2026-11-20)
+
+- **Seen** (2026-11-19, the sync branch's merge of investigate-bend-vs-datalog, the M1 Max, `-p rerail-store`
+  with 105 other tests): `the_journal_names_what_changed_since_its_cursor` failed once at "an access time set is
+  no change": `kept.py`, whose times were set and mtime kept, was named. journal.rs is unchanged by that merge.
+- **Not reproduced**: the test alone, then the store's 43 journal, observer and kept-facts tests together, both
+  pass. With the flags printed, a live stream delivers the times set as `0x10400` (inode metadata, a file), which
+  the filter drops (`META` without `CONTENT`), and the write after it as `0x11400`.
+- **Cause, not proved**: a record that carries content bits with the metadata one. That would be FSEvents
+  coalescing the file's creation (`0x11100`, at the test's start) with the times set, in a replay restarted
+  under load. The journal cannot split such a record, and naming the file is the safe answer (the observer
+  checks it).
+- **To do**: on the next failure, read its flags. `RERAIL_JOURNAL_TRACE` now prints every event's flags
+  (`journal flags <id> <flags> <path>`). If the record is coalesced, the test should set the times on a file
+  whose creation the stream's history does not hold.
+- **Found** (2026-11-20, two probes on the M1 Max, `RERAIL_JOURNAL_TRACE`): fseventsd keeps one record a path whose
+  flags gather, live as in a replay. A file made while its stream is told, then its times set, comes as `0x11500`
+  (made, modified, inode metadata) at every times-set for at least 21 s after; the test failed so on a run alone. A
+  file made 1.5 s before its stream started, its times set later, came as `0x10400`. A replay from a cursor after
+  the making gives the merged record too. So which record comes is fseventsd's, and the journal cannot split it:
+  naming the file is the safe answer, as the item said.
+- **Done**: the filter is `fsevents::names`, with its test over the flags measured
+  (`an_event_of_metadata_alone_names_nothing`). The end-to-end test asserts what the records that came for the
+  file say (a test build keeps each event's flags, `fsevents::flags_of`): with content bits the file is named, of
+  metadata alone it is not.
+
+### Q457. (Q381 on sync-integration-hub-tape) (Q360 on the sync branch until 2026-11-20) A session's edit reads its phases' kept parts back, and at the cycle cut finds no input delta in the entries (done 2026-11-20)
+
+- **Seen** (2026-11-20, the sync branch's merge of investigate-bend-vs-datalog at ee692490e, on a Mac farm host):
+  `r8_a_session_edit_reads_no_kept_frame` reads 10 kept frames at the first edit. Bend's step-13 check in
+  `r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows` (`inputs_from_entries > 0`) fails at "the
+  import cycle c → d → c cut". Both pass on Bend's branch.
+- **R8, found**: the frames read are one run's: a phase's, before the session's own run in each round. Its `load`
+  reads four changed inputs (`doc_key`, `observer__source_file`, `py_import`, `py_from_import`) and admits six
+  relations (`doc_tape`, `header_tape`, `library_key`, `library_tape`, `document`, `library`). The session's own part
+  is held, as R8 wants. A phase's run captures its outputs in memory on this line (a429546488, `phases.rs`'s
+  `Some(&mut image)`), and `run_read`'s session filter (`!in_memory`, 395a6ac2f7) leaves every in-memory run out of
+  the session. So its kept part is a run of no session's (`kept_cells`), bound from the store at every edit. On
+  Bend's branch a phase runs into an `out` directory, with the session. So R8 fails on this line since gctm's merge,
+  not from this one.
+- **Tried, not kept**: holding a captured run's kept part in the session's `cross` map (when `held` is some and the
+  thread's store is not ephemeral). R8 still read 10 frames. Not followed further: the run that reads them may not
+  hold the session at all (`session::current()` inside another run's scope).
+- **The cycle cut**: the inputs the session asks at that edit are `child` (old 50 + 0 new ≠ 47 now + 2 gone: a
+  semi-join input, already 0364's open item) and `edge_at` ("a row not its document's alone": an import edge names
+  the other file's node). The edits before it read `imp` from the entries. Not compared with Bend's run of the
+  same edit.
+- **Here**: R8's test and the entries check (now `r2_a_session_reads_its_inputs_deltas_from_the_changed_entries`)
+  are ignored with this item. R1 and R2's no-copy checks still run in `r1_r2_…`.
+- **To do**: find which `session::current()` a phase's run gets, and whether gctm's in-memory phase can hold its
+  kept part in the session. Then run Bend's branch at the cycle cut with `RERAIL_STRATA_LIVE=1` and compare which
+  inputs it asks.
+- **Done** (2026-11-20). The cause was `in_memory`, which stood for two things: a run whose outputs are captured
+  (a phase's, a429546488) and a run on an ephemeral store. `run_observed_within` left both out of the session, so
+  a phase's run bound its kept part from the store at every edit. A captured run is its session's again whenever
+  its store is not ephemeral: the session's store and kept parts, with an in-memory cross scratch (it has no output
+  directory). It leaves the session's output stacks and written outputs alone, and hashes no rows for them: no
+  directory holds its outputs. Its run databases are in memory only without a session. With the phase's run back
+  in the session, R8 reads no kept frame, and the entries check at the cycle cut passes too (the edit's inputs come
+  from the entries again). Both tests run un-ignored: `r8_a_session_edit_reads_no_kept_frame`,
+  `r2_a_session_reads_its_inputs_deltas_from_the_changed_entries`.
+
+### Q458. (Q386 on sync-integration-hub-tape) `kept-answers`' letter-case test fails on the M1 Max at the hub's tip (open)
+
+- **Seen** (2026-11-20, at the hub's merge into the sync branch, vitest on the M1 Max): `checkouts/kept-answers.test.ts`,
+  "in another letter case, where the file system ignores letter case": after four worktrees are removed with Git
+  and the registry is listed again, `heldTopLevels` is 0 where -4 is asserted, and `gitAcceptances` -8 where -4. The
+  same with the hub's own tree (86b1d8d31f's `src` and `test`), so not the merge's. The link case and the 8.3 case
+  pass. Main's #895.
+- **Done when**: it passes on macOS, or the case is shown to assert what the catalog no longer keeps on purpose.
+
+### Q459. (Q387 on sync-integration-hub-tape) The TypeScript catalog reads Git through the engine's gix reads, not Git commands (open)
+
+- **Asked** (the user, 2026-11-20, decision 0497): "we need to abstract away from a filesystem. We should not be
+  running git commands at all in the code that we're bringing, we should use gix to get whatever we need from the repo
+  directly."
+- **Now**: 0497 adds no Git process. The catalog's placement (`rev-parse --show-toplevel`, `worktree list`), its
+  identity reads (`config --local --get rerail.repository-id`, remotes) and the headless scan's reads (`symbolic-ref`,
+  `rev-parse`, blobs) still start Git.
+- **Do**: list each Git command the TypeScript side starts, by caller; for each, the gix read in the engine that
+  answers it (the native addon's), and what main's tests (which count Git processes through `runGit`) assert of it.
+- **Done when**: the scan and the catalog's placement start no Git process, their tests pass on the reads.
+
+### Q460. Roll-up 39 (engine-crating a422e17a72 onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-39-engine-crating.md`:
+
+- **Theirs' crate split taken whole**: boot, the registry, the six test crates and the compiler's five crates.
+- **One fix made twice**: `Batch::ensure` claims under the lock it found under. One body; theirs' comment.
+- **A semi-join's kept statistics**:
+  - Ours' t51 item 2: per document in the documents' table, under `held_stats_name`.
+  - Theirs' merge had added a second store beside it (`retain::semijoin_stats`). That store, its reads, its writes and
+    its encoding's test are gone, because two kept forms for one job is the split t51 item 2 removed.
+- **Metal's block programs**: ours' split of `run_batch` (t51 item 6), naming the front end's paths (`block_native`,
+  `lane_plan`), since theirs' step 4 has Metal read only the front end.
+- **Fixed on the way**: clippy over the whole workspace (16 findings, json_lean's `walk` among them), and the edit
+  bench's BSD-only `time`.
+- **Measured** on spark2: corpus0 under main's 49 bandit rules, cold 29.75–30.08 s CPU before and 29.74–30.18 s after;
+  warm and an append equal; the same findings.
+
+### Q461. Roll-up 40 (CUDA-support 9a204ab036 onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-40-cuda-support.md`:
+
+- **Blocks on Windows**: theirs' commit-on-touch fault handler taken whole. Ours' explicit `commit_to` counters were
+  a second mechanism for the same commit-limit fix, and every writer had to call them.
+- **Main's #923 ported twice**: theirs' `Narrowing`, which narrows only atoms that feed a shown column and drops the
+  clones that would show an annotation. Ours' port was main's whole-rule form. Theirs' is a superset: the same names
+  and the same `asks`.
+- **One mechanism a job**: one `Canonical` trait (the store root's, ours' blanket impl), one `slashed`, one
+  low-priority child helper (`niced_self`).
+- **Kernels compiled ahead, across the crate split**:
+  - nextest's setup filter names the test crates;
+  - boot depends on `rerail-gpu`;
+  - ours' `run_batch` split launches `interpreter_kernel`;
+  - ours' `t_random` is in the shared tape-reads text.
+- **Windows' gates** carried into the split's copies (boot, the test crates, their manifests, `cpu_stream`).
+- **JSON**: the fallback stays as simdjson's refusal path. Its MSVC role and ours' MSVC comparison test go.
+- **Fixed on the way**:
+  - rerail-gpu's store test called the removed `last_here`, so it did not build on theirs either;
+  - five clippy findings in theirs' code;
+  - the global-state guard's 15 unclassified statics, from the split.
+- **Measured** on spark2: corpus0 under main's 49 bandit rules.
+  - Cold: 28.91–29.55 s CPU before, 21.60–21.84 s after, with the same findings.
+  - The cause: the narrow copies' own time fell from 8.02 s to 2.48 s, the shown-columns narrowing making no copy of
+    the costliest stratum.
+  - Warm and an append are equal.
+
 ---
 
 > **Read this first. This queue is not a place to put work.** Recording something here as open is almost never
@@ -9590,3 +10183,327 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
 > complete now, and once it is complete it is not recorded here at all: the commit says what was done. An "Open:",
 > "Next:" or "left for later" line written instead of doing the work is a failure, not a record. The only things that
 > may go here are items the user has decided to defer, or a choice that is the user's to make, with the evidence.
+
+### Q462. Roll-up 41 (final-rerail-shape-rr-align ae1421e5c0 onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-41-rr-align.md`:
+
+- **Narrow copies**: theirs' copies (within one document, diffed, beside a twin, 0575) over ours' reads (only an
+  atom that feeds a shown column). One per-atom predicate, `Redirect::narrows`, for the fold and the copies'
+  analyses, where theirs had a rule-wide bool. One `Narrowing::declare`.
+- **The push**: ours' `Readers`. Theirs' hunks were the same fix.
+- **The manifest's root**: theirs' `manifest_root`, on ours' `Canonical` trait.
+- **A reader record in a wave**: the gather unions two puts of one record. Found by the warm-run tests.
+- **The Bitlex writers**: mounted by `rerail-bitlex`. `rust_block` and the old Kotlin build go, as theirs removed
+  them.
+- **Device gates**: theirs' arms (only no device is skipped) on ours' platforms (Windows too).
+- **The preprocessor grid**: theirs' state words, ours' join.
+
+### Q463. Roll-up 42 (engine-crating bd146745ab onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-42-engine-crating.md`:
+
+- **The Rust lowering's crate**: `rerail-rust-stream` mounts `rust_stream` only, marked deprecated (0550).
+  `rust_block` stays removed.
+- **Moved code**: theirs' homes (`stream_analysis`, `stream_facts`, `profile/memory.rs`, `hide/tests.rs`), with ours'
+  changes made there: `root_number` (0558), the split readers and their two slots (0509), Windows' memory readings,
+  and the narrow copy's hide test.
+- **Mirrors**: the split crates re-export what ours added (`rr::UNPLACED`, `rerail_store::Canonical`).
+- **State lists**: `Device` and `INSTALL` in 0104's STATE list. The split's eight load-time registrations go in
+  the global-state list.
+
+### Q464. Roll-up 43 (main 1609ac3a30 onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-43-main.md`:
+
+- **Compile off the daemon's thread** (#973): the one body stays in `rule_api` (`compile_rule`). Theirs'
+  `compile_contained`, `compile_async` and `CompileTask` call it.
+- **Owners**: ours' `refreshOwners()` (one look-again point), then theirs' `prepareRules(paths)`.
+- **Identity** (#977): theirs' lazy candidate, and ours' bare-folder ids and `checkoutIdentity`.
+
+### Q465. Roll-up 44 (CUDA-support 949511d462 onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-44-cuda-support.md`:
+
+- **Tape reads**: theirs' per-format files (0576), with ours' 16z cache polls and the take's `own` (0540) in
+  `tape_f16z.h`.
+- **Large reads cold** (0548): `CLIF_TAPE_READ` takes its linkage. Ours' six large reads are `UKL_COLD`.
+- **The launch**: ours' `dispatch_batch`, with theirs' choice of the batch format's interpreter.
+- **Generated view reads**: written again from the merged generator.
+
+### Q466. Roll-up 45 (build-and-test-loop-time c4d091a46f onto Pulling-it-all-together): what the merge chose
+
+The farm tooling (farm 54–57) is taken whole. In `test-remote`'s main, theirs' one line takes the new
+`--arch`/`--memory`/`--cpu-feature` results and keeps the single `pack_data` trees line both sides added
+(`notes/roll-up-45-build-and-test-loop-time.md`).
+
+### Q467. Roll-up 46 (final-rerail-shape-phased-facts 1c87fb5754 onto Pulling-it-all-together): what the merge chose
+
+0494 step 7 (key-run columns, 8-byte solves, shared axis solves) is taken whole. Its `solve` takes ours' Windows
+device gate. The manifests are ours', with one `rerail-clif` dev-dependency. 0494's section appears once
+(`notes/roll-up-46-phased-facts.md`).
+
+### Q468. Roll-up 47 (main b922e65dc8 onto Pulling-it-all-together): what the merge chose
+
+Main's two test fixes (#986, #988). In `outside-git.test.ts`, both sides fixed the named-pipe case's wait for its
+writer. Theirs (#986) supersedes ours (96142c32b3): it listens from the start, sends SIGKILL, and checks that nothing
+read the pipe. Ours' GIT_DIR shapes stay (`notes/roll-up-47-main.md`).
+
+### Q469. Roll-up 48 (CUDA-support 7eff18d065 onto Pulling-it-all-together): what the merge chose
+
+0576 §13-21, Intel at its own width, is taken. So is theirs' port of G15's and G13's read fixes, which ours lacked.
+The generated `relation.h` is the merged CLIF's own output, with 0494 step 7 and the slot mask. `UKL_SIMD_GROUP_FREE`
+was checked against ours' `vread` cases 9-11. Found: roll-up 41 left two meanings of `UKL_CALLED`, fixed in the next
+commit (`notes/roll-up-48-cuda-support.md`).
+
+### Q470. Roll-up 49 (engine-crating 07649a78d4 onto Pulling-it-all-together): what the merge chose
+
+Crate split 5g-7a taken whole. Ours' fact-phase and root-inventory plans (337e5ba842) are ported into theirs'
+`corpus/base.rs`, which holds the moved code. Ours' task-run `OnceLock` is a registry `Slot`, by theirs' guard. A
+key test reads its unset switches under `reading` (`notes/roll-up-49-engine-crating.md`).
+
+### Q471. Roll-up 50 (Typing-support-final-shape 509864e95a onto Pulling-it-all-together): what the merge chose
+
+t32's last stages and t33 taken whole: the observer's answers, a prepared program's pointer, the slice's last runs and
+the Neural Engine's models as kept facts, and each native step's answer declared (`.answer`). `boot`'s `test-hooks`
+is the union of both lists, and both sides' new rr tests are kept. Found red at both tips, fixed at root in the next
+commits: the prepared-plans test counted phase 0's line, since Q242 left its own rule unprepared; and two Git modules
+read relations no file in their program declared (`notes/roll-up-50-typing.md`).
+
+### Q472. Roll-up 51 (cost-classifier-metal-rf ca7e1c18a6 onto Pulling-it-all-together): what the merge chose
+
+Theirs' 83 commits taken: `rerail-json-aot` (0551, 0552), 0563, 0592, 0597's contexts, the witnessed greedy order, the
+held image store and kept rows staged. Theirs' edits of code ours' split moved are applied where it now is
+(`plan/search.rs`, `corpus/base.rs`, `statkeep/tests.rs`). `contexts` is rerail-rr-root's, beside `rr`, which runs it;
+R9's test of `own_names` stands beside it in `base.rs`. Found red at both tips, fixed at root in the next commits: a
+session's aggregate stratum derived again, and a warm host edit building an unchanged document from its tape, both only
+beside the other corpus tests (`notes/roll-up-51-cost-classifier-metal-rf.md`).
+
+### Q473. Roll-up 52 (django-bugs 87dbbe9135 onto Pulling-it-all-together): what the merge chose
+
+0540 steps 3-7 and 0601 taken whole: one launch ledger in `rerail-accel`, past it a hard failure, no guard and no
+split batches. Ours' moved `Device` impl loses `install_launch_guard`, the test loader registers its carriers once, and
+ours' `InFlight` index records stay on theirs' commit. Ours' new submissions all go through charged commits
+(`notes/roll-up-52-django-bugs.md`).
+
+### Q474. Roll-up 53 (final-rerail-shape 39de0fce60 onto Pulling-it-all-together): what the merge chose
+
+Theirs' picked puts taken: no kept put holds a heap vector, and ours' new puts (reader record, observer facts, slice,
+prepared facts, models) are blocks. A source's structure statistics keep ours' one patchable form; theirs'
+unpatchable `of_structure` and format 4 go. `source_rows` moves to the planner, which reads it
+(`notes/roll-up-53-final-rerail-shape.md`).
+
+### Q475. Roll-up 54 (final-rerail-shape-rr-align 00c113cfcd onto Pulling-it-all-together): what the merge chose
+
+A semi-join's statistics at its held nodes are theirs' kept rows beside the documents' table. Ours' t51 item 2
+(`held_counted`, `held_stats_name`) is reversed, its gap closed by theirs. Theirs' worklist runs ours' `covered` and
+anchor fixpoints. The image store's `where_kept` joins ours' `images_store` in `rr.rs`, above the corpus it reads
+(`notes/roll-up-54-rr-align.md`).
+
+### Q476. Roll-up 55 (Parser-generators-final-shape d558cc0919 onto Pulling-it-all-together): what the merge chose
+
+Theirs' removal of the IR-to-Rust lowerings goes whole (`rerail-rust-stream`, `rerail-pp-aot`), and tier 2's facts
+and analyses are in theirs' place: the JIT's `native_cpu_facts` and `native_cpu_stream`. Engine-crating's
+`stream_analysis` and `stream_facts` were moves for the removed lowering's sake, so they go. The parser decisions
+are numbered as theirs, 0577-0579. Theirs' 0561 and 0570 become 0562 and 0569 (`notes/roll-up-55-parser-generators.md`).
+
+### Q477. Roll-up 56 (Go-C-and-C-support cb23f84a49 onto Pulling-it-all-together): what the merge chose
+
+The preprocessor's grid is theirs' (0568, 0588; 0540 leaves its waits to its owner), and `<ukl/pool.h>` goes. The
+files theirs changed only through its merges of hub roll-up 38 and CUDA-support take ours. A function's call is
+named `UKL_ONCE` (forced) or `UKL_FUNC` (the compiler's choice). The setup's call depth is 4, since 0576's tape
+reads are one forced call shallower (`notes/roll-up-56-go-c.md`).
+
+### Q478. Roll-up 57 (sync-integration-hub-tape 3c058416f0 onto Pulling-it-all-together): what the merge chose
+
+Theirs' 0563 A (`may_embed`, `Report::unfillable`) is placed where ours' split keeps `Report` (`corpus/base.rs`), and
+reads the existing `observe::unhex` (`notes/roll-up-57-sync-hub-tape.md`).
+
+### Q479. Roll-up 58 (uglykl-CPU-SIMD-parallelization 091c4e099d onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-58-uglykl-simd.md`:
+
+- **Files theirs changed only through merges**: ours, Windows' cfgs with them. A recursive base had let theirs' older
+  text win clean hunks, in its own files too.
+- **The CPU device**: ours' `os::Lib` and stacks, carrying theirs' interpreted libraries (0567).
+- **0353 step 3**: theirs' self-relative directory and `ZCache`, with ours' tape `format` (0576) and delta rows.
+- **backend.h**: the vector path reads OpenCL 1.2's fence. Ours' `UKL_SIMD_GROUP_FREE` block is closed again.
+- **Q396**: theirs' pricing on ours' split (`plan/search.rs`). The sketch's clone is ours' `sharing` fix.
+
+### Q480. Roll-up 59 (main 92fbff1ccf onto Pulling-it-all-together): what the merge chose
+
+Main's #985 (a session lets go of removed worktrees) is taken whole, beside roll-up 43's `refreshOwners()`
+(`notes/roll-up-59-main.md`).
+
+### Q481. Roll-up 60 (CUDA-support 78f75cdb07 onto Pulling-it-all-together): what the merge chose
+
+0576 §17 and §22-§25 on ours' forward carry, the device's only block executor (`notes/roll-up-60-cuda-support.md`):
+- **Inlining per backend**: theirs' `UKL_SHARED`, `UKL_LARGE` and `UKL_RARE` sit beside ours' `UKL_ONCE` (called on
+  every backend). `UKL_SIMD_GROUP_FREE` is gone. `rget` is `UKL_SHARED`, and keeps its memo.
+- **Block programs at the device's width** (16 or 32): on the forward carry. The look-back's hunks have no code left
+  in ours.
+- **One batch per test, one build of the kernels**: `every_of_all` drives the forward carry. Its kernels are made
+  together from `serial_kernels()`.
+- **The JIT's table over the batch's format**: `programs` is passed down ours' split of the packed run.
+
+### Q482. Roll-up 61 (sync-integration-hub-tape 88bf7a54e1 onto Pulling-it-all-together): what the merge chose
+
+0612's one definition of a file's lines, and the maintain mode's lead-free lines, on ours' split planner
+(`notes/roll-up-61-sync-hub-tape.md`):
+- **The planner**: theirs' `plan.rs` hunks are in ours' `plan/search.rs` (`Stats::lead_free`, the delta's share, the
+  rows bounding distinct values). `past_floor` is ours' `plan::again`'s.
+- **The reads**: written again from the merged CLIF, bodies included (`write-reads.sh` now prints every generated
+  header).
+- **The lines in place**: ours' `home()` reads; theirs' guest places; the `Loc` views refused with the lines.
+
+### Q483. Roll-up 62 (benchmarks-on-integration b5fe5fcaa6 onto Pulling-it-all-together): what the merge chose
+
+Places off the tape with span rows only, and the measure's rows in blocks (`notes/roll-up-62-benchmarks.md`):
+- **The place rows**: theirs' `node_places` gate on ours' one placing closure (0612).
+- **One load hook** in rerail-device-metal's test binary: ours', with strict mode and the core names theirs' second
+  hook added (two registered the carriers twice).
+- **0601 in theirs' test**: the index-again test's launches are an evaluation's.
+
+### Q484. Roll-up 63 (final-rerail-shape-rr-align 994e894b9d onto Pulling-it-all-together): what the merge chose
+
+0401's combine, stats and deferred joins (`notes/roll-up-63-rr-align.md`):
+- **Theirs' merges are merges**: the files it changed only through them take ours. Its own files are ours with its
+  commits applied, so its hub merges' older text (`SemijoinRows` without statistics) does not come back.
+- **The kept texts** live beside the combine in ours' `corpus/base.rs` (rerail-rr-root).
+- **The watched constants** are on ours' statkeep column, and theirs' test is in ours' tests file.
+
+### Q485. Roll-up 64 (Typing-support-final-shape 56127ea208 onto Pulling-it-all-together): what the merge chose
+
+t33 steps 3, 6 and 8: the facts memo, fact statistics and compiled plans as kept facts (`notes/roll-up-64-typing.md`):
+- **Git's merge where the base is real**: one merge base, so the files both sides changed are git's three-way merge.
+  Rebuilding them from theirs' commits left out its hub merge's own lines (`KeptGather::folded`, `holder_put` on blocks).
+- **`kept_entry`** is rerail-plan-search's, as theirs mounts it.
+- **The crate DAG check's hooks** are only functions in files with a `OnceLock`. Two stale entries leave its list.
+- **rr-align's merge fix**, missed in roll-up 63: an exported file-local output is the cross part's to write.
+
+### Q486. Roll-up 65 (django-bugs 2ca60f63ac onto Pulling-it-all-together): what the merge chose
+
+Decision 0603, a stratum's levels and rounds as one program on the device (`notes/roll-up-65-django-bugs.md`):
+- **The kernels are theirs' one program** (`join_run`, `JSPACE`), with ours' §22 qualifiers, view-read memo and first
+  row (`r_from`, `src_from`, an index's `from`) in its phases.
+- **A live relation's rows are counted past its first row**, in both the stage's and the index's bounds.
+- **An index build keeps both sides' rules**: ours' taken-from-another-batch and give-back, and theirs' gated and live
+  builds, which are never told to other batches.
+- **A set head's delta is theirs' block**, which the device rounds read and write. Each rerun finds its indexes again.
+
+### Q487. Roll-up 66 (Go-C-and-C-support a39040bb03 onto Pulling-it-all-together): what the merge chose
+
+Decision 0588, the expansion as one loop phase and §6's teams (`notes/roll-up-66-go-c.md`):
+- **A slab's refusals by layer**: the lease's under the pool's `RERAIL_POOL_DEBUG`, the residency's under 0588's
+  `RERAIL_PP_WHY`. Only a capacity refusal counts as capacity (87fe4b4a28).
+- **The setup's split** is 9 libraries, 5 calls deep: ours' and theirs' levels both counted.
+- **`pp_expand::RUNS`** is an id counter in the global-state list.
+
+### Q488. Roll-up 67 (uglykl-CPU-SIMD-parallelization 7ff70f5dd7 onto Pulling-it-all-together): what the merge chose
+
+0567 step 3, UKL on the CPU as hand-shaped vector code (`notes/roll-up-67-uglykl-simd.md`):
+- **Git's merge**: one base, no file both sides changed.
+- **Theirs' vendored Cranelift patches** are recorded in its `PATCHES.md`.
+- **Roll-up 65's coherent atomics** are not defined on the vector path, which has one memory and whose C reader saw
+  them as defined twice. rerail-ukl-vec's 35 tests pass again.
+- **`fiber.rs`' `PREPARED`** is listed as `Thread`.
+
+### Q489. Roll-up 68 (cost-classifier-metal-rf 480a02cc10 onto Pulling-it-all-together): what the merge chose
+
+Decision 0597's contexts, steps 2 to 4 (`notes/roll-up-68-cost-classifier.md`):
+- **`passes_made` is rerail-plan-base's**, beside `answers`, below its readers in rerail-rr-root and
+  rerail-corpus-prep.
+- **The combine's context passes** are in ours' `corpus/base.rs`, the combine's tail.
+
+### Q490. Roll-up 69 (final-rerail-shape 9a082a2457 onto Pulling-it-all-together): what the merge chose
+
+The width census, 0165 §3's in-place local original, and t52 step 4 (`notes/roll-up-69-final-rerail-shape.md`):
+- **Theirs' merge of cost-classifier stays out.** Its inputs are in ours (roll-ups 53 and 68). Its own text joins
+  49f7195169's kept writer to the crate split, which ours does in `plan/source_rows.rs` with ours' statistics (Q474).
+- **Theirs' own commits on ours' files**: the census's `made_in` on ours' `Held`, and `Narrowing::unbounded` in ours'
+  narrowing loop.
+- **The census's `RANGED`, `BY_NAME` and `BY_SPAN`** are in the global-state list.
+
+### Q491. Roll-up 70 (engine-crating 001841e689 onto Pulling-it-all-together): what the merge chose
+
+Crate split steps 7b to 7i (`notes/roll-up-70-engine-crating.md`):
+- **Theirs' 7b stands** (corrected, Q494): the observer and git are below the store, and reach its kept facts and
+  manifests through an interface the store registers at load.
+- **Ours' `mod.rs` changes on theirs' split**: t33's removals and the in-memory store's own folder, in `mod.rs` and
+  `base.rs`.
+- **Ours' code on theirs' interfaces**: `Places::syntax_batch`, the `CHUNK_AXIS` slot in `within.rs`, and boot's
+  ungated `native_cpu::register`.
+- **The global-state list** follows theirs' moves and new slots.
+
+### Q492. Roll-up 71 (Parser-generators-final-shape 62187a8c9a onto Pulling-it-all-together): what the merge chose
+
+Decisions 0602 and 0604, JSON's generated Rust in simdjson's shape (`notes/roll-up-71-parser-generators.md`):
+- **Theirs' merge of the hub stays out.** Its inputs are in ours. Its text puts the lowerings' removal on the hub's
+  `stream_facts` split, and roll-up 55 chose the JIT's own `native_cpu_facts`. Ours' decision numbers (0562, 0569,
+  0577 to 0579) stand.
+- **Theirs' own commits** are applied to ours' files. The slab trace is already roll-up 66's print.
+- **The decisions index** gets rows for 0576, 0597, 0601 and 0603, with theirs' 0602 and 0604.
+
+### Q493. Roll-up 71, corrected: tier 2's facts in Parser-generators' layout (the user's choice)
+
+Roll-up 71 had kept roll-up 55's `native_cpu_facts` over Parser-generators-final-shape's own later merge of the hub
+(f1793ae112). The user chose the feeder's (2026-11-22):
+- `stream_facts` and `stream_analysis` are the front end's, and `native_cpu_clusters` is the compiler's.
+- `native_cpu_facts` goes.
+- 0565 is amended (`notes/roll-up-71-parser-generators.md`, "Correction").
+
+### Q494. Roll-up 70, corrected: theirs' 7b kept, t33 K2's store reads inverted (the user's choice)
+
+Roll-up 70 had folded rerail-observe into rerail-store, reversing engine-crating's 7b. The user chose (2026-11-22)
+to keep 7b and invert t33 K2 (`notes/roll-up-70-engine-crating.md`, "Correction"):
+- rerail-observe is below rerail-store again.
+- The observer's kept facts and git's `owned_again` reach the store through rerail-store-base's
+  `observer_store::base` (`Store`, `Kept`, the `STORE` slot), which rerail-store fills at load.
+- The puts' types are the base's (`kept_facts/base.rs`).
+- The store's sweep of the observer stays in the store.
+
+### Q495. A warm run over a Git snapshot takes the whole-run cutoff
+
+Every run over a Git snapshot root evaluated again, warm or not: `reuse::reused` and `reuse::record` returned early for
+any snapshot root (since 395a6ac2f7). So each warm run of a Git policy derived its views and fact relations again,
+the Git inventory's among them. Now the cutoff (t23 §4) applies to a snapshot run as to a run over files:
+- **The record's key** names a snapshot's root by what it is of: the repository's facts root under the selected
+  object, its commit or else its tree (`snapshot::run_identity`). A named analysis's view is another path in each run
+  (its invocation's), so a key of the view's path never found the last run's record.
+- **A loaded document** under a snapshot's root is recorded by its path from the root (`World::load_name`), as its
+  loaded identity already was. An absolute name carried the last run's view path, so the check found it gone.
+- What else a snapshot run read is checked as before: the documents by their blobs (the observer), and the
+  revisions, objects and file storage by the world's Git observations.
+- The test `an_unchanged_git_snapshot_run_writes_its_kept_outputs` covers a cold run, a warm run that is kept, a new
+  commit that runs again, and the next run kept in turn.
+
+On the way:
+- `RERAIL_WIDTH_CENSUS` only measures (`profile::memory`), so the run's key leaves it out.
+- The converter's overlay carries a library's `.pass` settings (decision 0597 step 2) with the merged program, as it
+  does `.global library` and `.answer`.
+
+### Q496. The converter's overlay keeps a made pass with what it names, or drops it whole
+
+`an_overlay_includes_the_python_library` failed: ".context annotation: its roots ann_tree are not declared". The
+overlay's merged program keeps only what `violation` reaches (`convert::reachable`). That undeclared every relation
+no rule left reads, but it kept every `.pass` setting (decision 0597 step 2). So a pass nothing reached kept a `.pass`
+naming roots no longer declared, and the next read of the program refused it. Now a made pass, as the unpruned
+program declares it, stays while a rule left reaches one of its exports' instances. Its roots, its exports' instances
+and what it reads stay declared with it. A pass's reads may be another pass's exports, which keeps that pass in turn.
+A pass nothing reaches goes, with its `.pass` setting, as its rules went.
+
+The pack's stored converter output (`candidates/datalog/`, compared byte for byte by
+`the_pack_holds_the_converters_run_over_every_authored_file`) predated t33 K3's `.answer` lines and the Python
+library's later rules. It is regenerated (`convert_the_data_layer_pack`) and staged in the lint tool-pack's
+`publish/` (`npm run fixtures:stage -- --pack data-layer --tool lint`) for the pack-data publish workflow.
+
+### Q497. Roll-up 72 (engine-crating a9b970f074 onto Pulling-it-all-together): what the merge chose
+
+Crate split 9a and 9b: each crate's sources move into its own `src/`, and every source reader follows. The hub's
+changes since the crating branch last merged it (Q495, Q496, the job-scope and gzip fixes) follow their files: the
+converter to `boot/src`, the wave to `run/src`, reuse and world to `rr_root/src`, git snapshots to `observe/src`, and
+the reuse and session tests to `tests_corpus/src`. One conflict, `reuse.rs`'s `NOT_OUTPUTS`: both sides added
+`RERAIL_WIDTH_CENSUS`; theirs' comment, which names the census, is kept. No architectural clash.
+
+Relax: the engine checks clean; the reuse and session tests (30), the converter's overlay, pack, replay and
+reference-fixture tests (4) and rerail-observe (42) pass.

@@ -95,9 +95,11 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "rows_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rows_at },
     Read { family: Family::Relation, name: "rows_width", params: &[I32], ret: I32, hot: true, body: crate::relation::rows_width },
     Read { family: Family::Relation, name: "rows_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rows_get },
+    Read { family: Family::Relation, name: "rows_len", params: &[], ret: I32, hot: true, body: crate::relation::rows_len },
     Read { family: Family::Relation, name: "rows_put", params: &[I32, I32, I64], ret: I32, hot: true, body: crate::relation::rows_put },
     Read { family: Family::Relation, name: "rel_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rel_get },
     Read { family: Family::Relation, name: "rel_dead", params: &[I32], ret: I32, hot: true, body: crate::relation::rel_dead },
+    Read { family: Family::Relation, name: "rel_len", params: &[], ret: I32, hot: true, body: crate::relation::rel_len },
     Read { family: Family::Relation, name: "rel_group", params: &[I32, I64], ret: I64, hot: true, body: crate::relation::rel_group },
     Read { family: Family::Relation, name: "rel_group_row", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_row },
     Read { family: Family::Relation, name: "rel_key_mix", params: &[I64, I64], ret: I64, hot: true, body: crate::relation::rel_key_mix },
@@ -117,13 +119,12 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "num_number_of_order", params: &[I32], ret: I32, hot: true, body: crate::id_reads::number_of_order },
     // A view's rows (decision 0353 step 4c): row `l` of the document's rows, column `col`.
     Read { family: Family::Lines, name: "lines_line", params: &[I32], ret: I32, hot: true, body: crate::view_reads::lines_line },
+    Read { family: Family::Lines, name: "lines_word", params: &[I32], ret: I32, hot: true, body: crate::view_reads::lines_word },
     Read { family: Family::View, name: "view_node", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::node },
     Read { family: Family::View, name: "view_child", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::child },
     Read { family: Family::View, name: "view_field", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::field },
     Read { family: Family::View, name: "view_core", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::core },
     Read { family: Family::View, name: "view_line", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::line },
-    // core.rerail's lines' (`core_rr::Lines`' words, in the batch's block): a relation's family, its base the entry's run.
-    Read { family: Family::Relation, name: "loc_line", params: &[I32], ret: I32, hot: true, body: crate::view_reads::lines_line },
     Read { family: Family::View, name: "view_loc_line", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_line },
     Read { family: Family::View, name: "view_loc_end", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_end },
     Read { family: Family::View, name: "view_loc_col", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_col },
@@ -149,13 +150,22 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "text_open", params: &[I32, I32, I32], ret: I64, hot: false, body: crate::verdict_reads::text_open },
     Read { family: Family::Relation, name: "cache_done", params: &[I64], ret: I32, hot: false, body: crate::verdict_reads::cache_done },
     // The cache's two lookups, each written once and called (decision 0310): the verdicts' (an entry made with its
-    // masks empty) and the texts' open one. Last, so no other read's number moves.
+    // masks empty) and the texts' open one.
     Read { family: Family::Relation, name: "verdict_entry", params: &[I32, I32], ret: I64, hot: false, body: crate::verdict_reads::verdict_entry },
     Read { family: Family::Relation, name: "cache_open", params: &[I64, I32], ret: I64, hot: false, body: crate::verdict_reads::cache_open },
     // `has` probed off the tape (decision 0353 step 5): a node's numbered ancestors by a climb, its numbered
     // descendants as a range of numbers. Last, so no other read's number moves.
     Read { family: Family::View, name: "view_up", params: &[I32], ret: I32, hot: false, body: crate::view_reads::up },
     Read { family: Family::View, name: "view_end", params: &[I32], ret: I32, hot: false, body: crate::view_reads::end },
+    // `tape`, `ast_depth` and `node_order` read in place (decision 0353 step 6: they were uploaded from the host).
+    // Last, so no other read's number moves.
+    Read { family: Family::View, name: "view_tape", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tape },
+    Read { family: Family::View, name: "view_depth", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::depth },
+    Read { family: Family::View, name: "view_order", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::order },
+    // The views' directory's searches (decision 0353 step 3 on the CPU, step 2): the descriptor is the directory, in
+    // its batch's block; each takes its caller's memo.
+    Read { family: Family::Relation, name: "dir_doc_of_row", params: &[I32, I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_row },
+    Read { family: Family::Relation, name: "dir_doc_of_key", params: &[I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_key },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
@@ -229,7 +239,7 @@ fn ukl_reads() -> String {
 /// A generated header's first lines: what made it, and how to make it again.
 fn generated(function: &str, decision: &str, test: &str) -> String {
     format!(
-        "// Generated by rerail_clif::reads::{function} from {decision}. Do not edit:\n\
+        "// Generated by native/crates/clif/src/reads.rs; do not edit. Made by rerail_clif::reads::{function} from {decision}:\n\
          // `RERAIL_WRITE_READS=1 cargo test -p rerail-clif {test}` writes it again.\n"
     )
 }
@@ -242,7 +252,7 @@ pub fn view_ukl_source() -> Result<(String, String), String> {
     let funcs: Vec<(u32, Function, &str)> = READS
         .iter()
         .enumerate()
-        .filter(|(_, read)| matches!(read.family, Family::View | Family::Lines) || read.name == "loc_line")
+        .filter(|(_, read)| matches!(read.family, Family::View | Family::Lines))
         .map(|(k, read)| (k as u32, build_for(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None)))
         .map(|(k, f)| (k, f, READS[k as usize].name))
         .collect();
@@ -271,8 +281,7 @@ fn numbering(read: &Read) -> bool {
 
 /// The relation's reads (decision 0325), each built and named by its place in `READS`, with whether it is hot.
 fn relation_funcs() -> Vec<(u32, Function, &'static Read)> {
-    // `loc_line` is the view reads' (`view_ukl_source`): over core.rerail's lines, not a relation.
-    family_funcs(|read| !numbering(read) && read.name != "loc_line")
+    family_funcs(|read| !numbering(read))
 }
 
 /// The reads of the relation's family that `keep` keeps, each built and named by its place in `READS`.
@@ -1340,7 +1349,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     let k = b.f.block_params(look)[0];
     let more = b.f.ins().icmp(IntCC::UnsignedLessThan, k, live);
     let check = b.f.create_block();
-    b.f.ins().brif(more, check, &[], miss, &[]);
+    b.f.append_block_param(miss, I32);
+    b.f.ins().brif(more, check, &[], miss, &[zero.into()]);
     b.f.switch_to_block(check);
     let want = b.f.ins().isub(epoch, k);
     let generation = gen_of(b, want);
@@ -1390,7 +1400,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     b.f.ins().brif(moved, read_slot, &[], slot_wait, &[spin.into()]);
     b.f.switch_to_block(slot_out);
     cache_stat(b, cache, c::DUPLICATES);
-    b.f.ins().jump(miss, &[]);
+    let own = b.c32(1);
+    b.f.ins().jump(miss, &[own.into()]);
     // A fence between the slot's number and its entry's offset, key and completion: the writer's fence before it put
     // the number is half of the pair; without this half a reader on a weakly ordered device (Metal's relaxed atomics)
     // can see the number with an older offset, key or completion, take the entry for another key's, and decode the
@@ -1445,7 +1456,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     b.f.ins().jump(found, &[e.into(), k.into(), stamp.into()]);
     b.f.switch_to_block(run_out);
     cache_stat(b, cache, c::DUPLICATES);
-    b.f.ins().jump(miss, &[]);
+    let own = b.c32(1);
+    b.f.ins().jump(miss, &[own.into()]);
     b.f.switch_to_block(probe_on);
     let p = b.f.ins().iadd_imm(p, 1);
     b.f.ins().jump(probe, &[p.into()]);
@@ -1464,7 +1476,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     b.f.switch_to_block(copy);
     // An entry's own bytes: what its copy takes and copies.
     let len = cache_load(b, e, c::LEN);
-    let copied = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, len, Some(&|b, to| {
+    let not_own = b.c32(0);
+    let copied = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, len, not_own, Some(&|b, to| {
         // The payload, a word at a time, and the source's completion read again after it.
         let (head, step, after) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
         b.f.append_block_param(head, I64);
@@ -1496,6 +1509,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     // A miss: an entry of the head taken and filled, else (the head full) the spare turned and tried again. An
     // entry past the most is never taken: no generation turns for it.
     b.f.switch_to_block(miss);
+    // Whether its wait ran out: an entry of its own, past the pending one's slot.
+    let own = b.f.block_params(miss)[0];
     let (sized, take_it, too_big, find_only) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
     let nothing = b.f.ins().icmp_imm(IntCC::Equal, size, 0);
     b.f.ins().brif(nothing, find_only, &[], sized, &[]);
@@ -1503,7 +1518,7 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     let over = b.f.ins().icmp(IntCC::UnsignedGreaterThan, size, max);
     b.f.ins().brif(over, too_big, &[], take_it, &[]);
     b.f.switch_to_block(take_it);
-    let taken = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, size, fill);
+    let taken = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, size, own, fill);
     let got = b.f.ins().icmp_imm(IntCC::NotEqual, taken, 0);
     let (hit_miss, retry, fail) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.ins().brif(got, hit_miss, &[], retry, &[]);
@@ -1580,6 +1595,7 @@ fn cache_take(
     h: Value,
     slot_mask: Value,
     size: Value,
+    own: Value,
     fill: Option<Fill<'_>>,
 ) -> Value {
     use crate::view::cache as c;
@@ -1594,8 +1610,9 @@ fn cache_take(
     let (take, full) = (b.f.create_block(), b.f.create_block());
     b.f.ins().brif(current, take, &[], done, &[none.into()]);
     // Its slot in the head's index claimed first, pending (its tag, no entry yet), so a thread that misses the same
-    // block at once finds it and waits rather than taking an entry too. A slot of the same block already: none
-    // (the lookup, tried again, finds it). No slot free in its probes: the head full.
+    // block at once finds it and waits rather than taking an entry too. A slot of the same block already, unless
+    // `own` (the lookup's wait for it ran out: an entry of its own, at a slot past it): none (the lookup, tried
+    // again, finds it). No slot free in its probes: the head full.
     b.f.switch_to_block(take);
     let (probe, place, check, theirs, mine_already, next, slotted) =
         (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
@@ -1619,6 +1636,8 @@ fn cache_take(
     b.f.switch_to_block(check);
     let its = b.f.ins().band_imm(was, !i64::from(c::NUMBER));
     let same_tag = b.f.ins().icmp(IntCC::Equal, its, tag);
+    let not_own = b.f.ins().icmp_imm(IntCC::Equal, own, 0);
+    let same_tag = b.f.ins().band(same_tag, not_own);
     b.f.ins().brif(same_tag, theirs, &[], next, &[]);
     b.f.switch_to_block(theirs);
     let number = b.f.ins().band_imm(was, i64::from(c::NUMBER));
@@ -1708,9 +1727,13 @@ fn cache_take(
     let fits = fill(b, e);
     let (complete, unfit) = (b.f.create_block(), b.f.create_block());
     b.f.ins().brif(fits, complete, &[], unfit, &[]);
-    // Too large for an entry: the entry given back.
+    // Not filled (too large for an entry, or a promotion whose source turned under its copy): the entry given back,
+    // its slot no key's (its number, no tag: every tag has bit 16), so it neither stops a probe nor blocks the next
+    // claim of the block (decision 0540).
     b.f.switch_to_block(unfit);
     cache_store(b, e, c::READY, zero);
+    b.f.ins().fence();
+    b.f.ins().atomic_store(MemFlags::trusted(), number, slot);
     b.f.ins().fence();
     cache_add(b, head, c::WRITERS, minus);
     b.f.ins().jump(done, &[none.into()]);

@@ -95,7 +95,7 @@ export {
   asLateSteer, headlineText, messageSteer, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines,
   steerRules, type SteerFinding, type SteerTrigger,
 } from "./code-rule/rerail-steer.js";
-export { steerOrigin } from "./code-rule/steer-origin.js";
+export { steerOrigin, steerTitle, type SteerRuleSource } from "./code-rule/steer-origin.js";
 export { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
 export {
   encodeCodeRuleWorkspaceRequest,
@@ -108,6 +108,7 @@ export {
   resolveNativeBindingPath,
 } from "./native/native.js";
 export { LOCKS_DIR } from "./native/file-lock.js";
+export { mainContentStoreDirectory } from "./native/rerail-build.js";
 export {
   acquireDirectoryAnalysisGeneration, acquireNamedAnalysisRun, analysisScopeHome, collectAnalysisCaches,
   deleteNamedAnalysisScope, finishNamedAnalysisRegistration, queueAnalysisScopeReleases, readAnalysisScopeGeneration,

@@ -10,14 +10,13 @@
 #![cfg(any(target_os = "macos", target_os = "linux", windows))]
 #![allow(clippy::missing_safety_doc)]
 
-/// Block programs on Metal (decision 0066): the interpreter and generated MSL, over a batch of
+/// Block programs on Metal (decision 0066): the forward carry's generated UKL, over a batch of
 /// files read in place from source slabs.
 pub mod block_program;
 pub mod buffer_observation;
 /// The engine's commands on the device layer (decision 0440 step C).
 pub mod lane;
 pub mod launch;
-pub mod launch_budget;
 /// The preprocessor's evaluation arena and its kernels' one UKL source (decisions 0448, 0468).
 pub mod pp_arena;
 /// The preprocessor's evaluator over tapes (decision 0436).
@@ -33,8 +32,6 @@ pub mod runtime;
 pub mod slabs;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod test_pool;
-/// Tier 2 on the buffers tier 1 left on the device (`image_on`).
-pub mod tier2_on;
 
 pub use rerail_compiler::Error;
 
@@ -57,7 +54,7 @@ pub static METAL_DEVICE: std::sync::LazyLock<Option<metal::Device>> = std::sync:
 pub(crate) fn pool_hooks() {
     rerail_context::machine::<PoolHooks>().0.get_or_init(|| {
         // Relational work's bounded leases count the pool's reservations against the device's budget (decision 0126).
-        rerail_accel::gpu::shared::set_other_reserved(runtime::reserved);
+        rerail_accel::gpu::shared::set_other_reserved(runtime::ledger);
         // The pool's one eviction order: idle buffers, then the residency's least recently used slabs (0266 §16).
         rerail_accel::gpu::shared::set_evictor(slabs::evict);
     });
@@ -83,17 +80,12 @@ pub fn every_kernel_ahead() -> bool {
     std::env::var_os("RERAIL_KERNELS_ALL").is_some_and(|v| v == "1")
 }
 
-/// The crate's fixed kernels, to compile ahead of their first use (`rerail_gpu::kernels::compile_ahead`): the block
-/// interpreter at each lane width (`block_program`) and the preprocessor's passes (`pp_arena`). Each is asked for as
-/// its use asks for it, so its use then finds it compiled.
+/// The crate's fixed kernels, to compile ahead of their first use (`rerail_gpu::kernels::compile_ahead`): the
+/// preprocessor's passes (`pp_arena`), asked for as their use asks for them, so their use then finds them compiled. A
+/// block program's kernels are its own (the forward carry's, `block_program::serial`), compiled behind its first batch.
 pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
     use rerail_accel::gpu::{ahead, caught, released};
-    // The block interpreter where its batches run (`block_program::ready`: a device with SIMD groups of 32).
-    let blocks = if block_program::ready().is_ok() { &block_program::LaneWidth::ALL[..] } else { &[] };
-    let mut v: Vec<_> = blocks
-        .iter()
-        .map(|&w| ahead(format!("block_batch {w:?}"), move || released(|| caught(|| _ = block_program::interpreter_kernel(w)))))
-        .collect();
+    let mut v = Vec::new();
     // The preprocessor's passes only on the CPU, where they run (every preprocessor run is the CPU's for now). A GPU's
     // compiler does not compile their source in bounded time: NVRTC grew past 90 GB resident on a DGX Spark, Intel's
     // OpenCL (an Arc 140V) was still compiling at 90 s, and the CPU's compiler takes 7 s.

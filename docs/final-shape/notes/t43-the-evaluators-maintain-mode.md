@@ -187,7 +187,7 @@ build, `RERAIL_DEVICE=cpu`, on a farm host (M3 and M1 Max, otherwise idle):
 - `kept`: a process per step, its store kept (the CLI's path, the kept part from frames);
 - `session`: one process (`repeat`, `RERAIL_SESSION`).
 
-`maintain-report.py` makes the table. Its baseline is the forms' runs of 2026-11-17 (`tmp/o125/logs`, the same
+`maintain_report.py` makes the table. Its baseline is the forms' runs of 2026-11-17 (`tmp/o125/logs`, the same
 harness, `dump.sh`): `qd` (DRed forms) and `kd` (counting).
 
 **Correction (2026-11-19, step 18):** the forms' runs of steps 05-08 all panicked ("index out of bounds",
@@ -829,9 +829,10 @@ the steps built on the frames:
 - **Step 19's `rows_decoded` dropped**: nothing decodes a kept row. The ignored in-place test is live, and asserts
   the kept entries bound and no row copied.
 - **Step 20 superseded**: a session's base relations are the corpus batch's (0458), not patched layers
-  (`Layered::then`, `session_ranges`). 0458's open item stands: a session holds no corpus batch.
+  (`Layered::then`, `session_ranges`). 0458's session item is done (2026-11-20, c4136b6442): a session holds its
+  corpus batch from run to run, an edit making the changed files' documents alone, and keeps its base statistics.
 - The frames' measure-key filter on gathered rows (`held_nodes`) is not taken. No rows are gathered, and measure
   keys stay where 0458 puts them (`stored`, `semijoin`).
-- **Open (Q405)**: R8 and step 13's entries check fail on this line. A phase's run is in memory here (a429546488),
+- **Open (Q457)**: R8 and step 13's entries check fail on this line. A phase's run is in memory here (a429546488),
   no session's, and binds its kept part from the store at each edit. At the cycle cut, no input the session asks
-  is read from the entries. Both tests are ignored with Q405.
+  is read from the entries. Both tests are ignored with Q457.

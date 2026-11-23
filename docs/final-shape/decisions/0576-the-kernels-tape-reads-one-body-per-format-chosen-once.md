@@ -98,7 +98,7 @@ format 16's reads alone.
    tests' writer and format 15's and 16's reads. Over 16z they do not: its block decode is a SIMD group's. The label
    walks (`label_group`, `label_micro`, `label_phase`) and the sorts use SIMD groups.
 15. **16z's block lookup is called, and a 16z block's load is one read.** `clif_z_block` (the cache's lookup or
-   decode of a block, 13 KB expanded) was the compiler's to inline (`UKL_CALLED`), and Intel's inlined it at every
+   decode of a block, 13 KB expanded) was the compiler's to inline (`UKL_CALLED` then, `UKL_FUNC` now), and Intel's inlined it at every
    read: 16 copies in the tape reads' test kernel. It is called on OpenCL (`UKL_SHARED`, §22). And format 16's body over a decoded
    block read each value through one load per width (`clif_f16b_ld`: four coherent reads, each two 64-bit words
    read by atomics on OpenCL), inlined at each of 142 loads: one coherent read of the words that hold the value,

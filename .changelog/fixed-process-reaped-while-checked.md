@@ -1,1 +1,0 @@
-On Linux, a process that ends and is cleaned up at the very moment Rerail checks on it, such as a daemon `rerail daemon stop` has just stopped, now reads as gone. Before, that one check could find it still running, so a stop, a lock or a start waiting on it looked once more.

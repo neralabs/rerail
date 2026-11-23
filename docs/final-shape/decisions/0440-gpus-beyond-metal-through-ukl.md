@@ -1306,7 +1306,7 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
 
 - **`clif_ukl`** (was `clif_msl`) prints the C preprocessor's compiled words (`native_cpu_pp::ukl_source`) as UKL's C:
   C types and casts, the library's bit counts, `ukl_min`/`ukl_max`, and one kernel, `pp_batch`, by `DEFINE_KERNEL2`.
-  Its functions are `UKL_CALLED` (the compiler inlines as it chooses; `UKL_FUNCTION` is MLDB's shims' own, a
+  Its functions are `UKL_FUNC` (the compiler inlines as it chooses; named `UKL_CALLED` until 0523 gave that name to a forced call; `UKL_FUNCTION` is MLDB's shims' own, a
   versioned macro). The words read and write their arena at several widths, so every access is a byte or an
   aligned 64-bit word: the library's new `ukl_ldw_*` and `ukl_stw_*` (`ukl/memory.h`), where MSL had its aliasing
   typedefs and direct accesses. The library has `ukl_umulhi64` and `ukl_reverse32`/`64` too, each tested

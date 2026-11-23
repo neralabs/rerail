@@ -46,6 +46,9 @@ npm run --silent check:ui-tokens
 # The engine's `test-hooks` feature carries what its dev-dependencies turn on, so the CLI and the tests build
 # their dependencies once (native/Cargo.toml).
 python3 scripts/check/check_dev_features.py
+# The crate split's graph (docs/final-shape/proposals/crate-split/incremental-plan.md, §5): no dependency up the
+# order in tools/cratify/crate-order.tsv, no core crate on a provider, no new install hook outside the registry.
+python3 scripts/check/check_crate_dag.py
 # Blocks are never copied into another data structure (decision 0353): a commit that adds a copy is refused.
 python3 scripts/check/check_no_block_copies.py
 # No process-global state (decision 0442): a commit that adds a static the list does not hold is refused.
