@@ -74,11 +74,13 @@ pub mod code_rule_dsl {
                 pub mod analysis_history;
                 pub mod combined;
                 pub mod constants;
+                pub mod frame;
                 pub mod git;
                 pub mod git_content;
                 pub mod import_closure;
                 pub mod inputs;
                 pub mod kept_link;
+                pub mod leaves;
                 pub mod kept_texts;
                 pub mod link;
                 pub mod phase0;

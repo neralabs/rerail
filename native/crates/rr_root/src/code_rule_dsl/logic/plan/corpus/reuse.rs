@@ -1,6 +1,6 @@
-//! The run's frame (t33 K4, after t23 §4): a run whose every read is as it was writes the outputs it wrote. A frame
-//! as phase 1's is (`phases::frame`): what the run consulted, each with its digest, and what it made, under its
-//! identity, checked by the reads' own observations (`base::changes_of`), the same check phase 1's frame takes.
+//! The run's frame (t33 K4, after t23 §4): a run whose every read is as it was writes the outputs it wrote. The frame
+//! is phase 1's (`frame`): the leaves the run read, each with its digest, and the image it wrote, under its identity,
+//! checked by the leaves' readers (`leaves`, through `base::changes_of`), as phase 1's frame is.
 //!
 //! A run consults a known set of things, and nothing else:
 //! - its programs' text, with the root's settings;
@@ -74,7 +74,12 @@ fn switches() -> Vec<u8> {
     out
 }
 
-fn key(given: &super::Texts<'_>, added: &super::added::Added, root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
+/// The run's key: its frame's (`frame::get`).
+pub fn key_of(given: &super::Texts<'_>, root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> Result<[u8; 32]> {
+    Ok(key(given, &settings(root, options)?, root, options, modes, typing))
+}
+
+fn key(given: &super::Texts<'_>, added: &super::added::Added, root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> [u8; 32] {
     let mut h = Sha256::new();
     // v4: the run's settings keyed as the rows it adds (decision 0249), the texts as the files'.
     h.update(b"rerail.run-reuse/v4\0");
@@ -112,7 +117,7 @@ fn key(given: &super::Texts<'_>, added: &super::added::Added, root: &Path, optio
     // guards, the matcher and planner switches). Listing only some reused a run made under others: a run with
     // `RERAIL_AST_PARTS=off` answered with the outputs of one with it on. The cache's own path names the store.
     h.update(switches());
-    format!("{FRAME}{}", h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>())
+    h.finalize().into()
 }
 
 /// The key's parts, each as a short digest, and the options (`RERAIL_REUSE_TRACE`): which part made a run miss.
@@ -134,10 +139,25 @@ fn key_parts(programs: &[&str], root: &Path, options: &serde_json::Value, typing
     )
 }
 
-/// The prefix of a run's frame (the observer's `run_record`, kept facts of its space). Its consulted lines name the
-/// plans the run used (`plan`, digest in hex): the observer's store is collected with the content store's, and a
-/// frame no live plan of which it names is dropped (`observe::collect`).
-pub const FRAME: &str = "frame:";
+/// The run's frame key while the run is under way (`Naming`), for its manifest to name (`frame::named`): collection
+/// keeps the frame while it keeps the run.
+#[derive(Clone, Default)]
+struct RunFrame(Option<[u8; 32]>);
+
+/// Names the run's frame `key` to the run's manifest until dropped.
+pub struct Naming {
+    _key: crate::code_rule_dsl::logic::profile::Bound,
+}
+impl Naming {
+    pub fn enter(key: [u8; 32]) -> Naming {
+        Naming { _key: crate::code_rule_dsl::logic::profile::bind(RunFrame(Some(key))) }
+    }
+}
+
+/// The frame of the run under way, which its manifest names.
+pub fn naming() -> Option<[u8; 32]> {
+    crate::code_rule_dsl::logic::profile::bound::<RunFrame>().0
+}
 
 /// The record's entry of the texts' include graphs (`Texts::graphs`), each one's digest or none: with every rule file
 /// as recorded, the same graphs list the same rule files, so the check need not list them again (decision 0275).
@@ -157,9 +177,6 @@ fn graphs_line(graphs: &[Option<[u8; 32]>]) -> String {
     }
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
-
-/// The record's entry of the program's parts the check reads (`corpus::Summary`), as JSON.
-const SUMMARY: &str = "program";
 
 /// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249).
 fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Added> {
@@ -260,70 +277,40 @@ fn outputs_of<'a>(out: &Path, names: impl Iterator<Item = &'a str>) -> Vec<(Stri
     crate::code_rule_dsl::logic::plan::output::base_of(out, names).map(|bytes| vec![(crate::code_rule_dsl::logic::plan::output::FILE.to_owned(), bytes)]).unwrap_or_default()
 }
 
-pub fn encode_outputs(files: &[(String, Vec<u8>)]) -> Vec<u8> {
-    let mut out = Vec::new();
-    for (name, bytes) in files {
-        out.extend((name.len() as u32).to_le_bytes());
-        out.extend(name.as_bytes());
-        out.extend((bytes.len() as u64).to_le_bytes());
-        out.extend(bytes);
-    }
-    out
-}
-
-pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
-    let mut files = Vec::new();
-    while !b.is_empty() {
-        let n = u32::from_le_bytes(b.get(..4)?.try_into().ok()?) as usize;
-        let name = String::from_utf8(b.get(4..4 + n)?.to_vec()).ok()?;
-        b = &b[4 + n..];
-        let m = u64::from_le_bytes(b.get(..8)?.try_into().ok()?) as usize;
-        files.push((name, b.get(8..8 + m)?.to_vec()));
-        b = &b[8 + m..];
-    }
-    Some(files)
-}
-
-/// The kept outputs written into `out`, when every read of the last run under this key is as it was.
+/// The kept outputs written into `out`, when every leaf of the last run under this key is as it was.
 #[allow(clippy::too_many_arguments)]
-pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
+pub fn reused(given: &super::Texts<'_>, key: &[u8; 32], root: &Path, out: &Path, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
     // A run an analysis run owns (decision 0547) publishes what it recorded as the owner finishes: a hit re-owns the
     // manifests the recorded run wrote (`own_recorded_manifests`), below. Skipped instead, every `logic` command's
     // warm run evaluated again (each begins an analysis run).
     let owner = super::ThreadStore::owner(root).filter(|owner| owner.is_staged());
     let programs = given.programs;
     let checking = super::thread_usage();
-    let key = key(given, &settings(root, options)?, root, options, modes, typing);
-    let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
-        miss(&format!("no record under the run's key {} (programs {}; {})", &key[..FRAME.len() + 12], programs.len(), key_parts(programs, root, options, typing)));
+    let kept = super::phases::reading_store().and_then(|store| { let _s = crate::code_rule_dsl::logic::profile::span(|| "the run's frame, read".into()); super::frame::get(&store, key) });
+    let Some(kept) = kept else {
+        miss(&format!("no frame under the run's key {} (programs {}; {})", &crate::content_store::observe::hex(key)[..12], programs.len(), key_parts(programs, root, options, typing)));
         return Ok(None);
     };
-    let Some(consulted) = decode_consulted(&consulted) else {
-        miss("the record's consulted list does not decode");
-        return Ok(None);
-    };
-    // The plans it names are for collection (`FRAME`), not reads to check: the reused run names them, as the run
-    // that made the record did, so its outer run records the manifest it recorded then.
-    let (plans, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "plan");
-    let (graphs, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == GRAPHS);
-    let (summary, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == SUMMARY);
-    let plans: Vec<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
-    let Some(outputs) = decode_outputs(&outputs) else {
-        miss("the record's outputs do not decode");
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "the run's frame, its leaves checked".into());
+    let plans = kept.plans;
+    let (graphs, consulted): (Vec<_>, Vec<_>) = kept.reads.into_iter().partition(|c| c.0 == GRAPHS);
+    let Some(summary) = super::Summary::decode(&kept.summary) else {
+        miss("the frame's summary does not decode");
         return Ok(None);
     };
     // The library files first (a `stat` each), then the documents and the resolution rules' reads.
     let (rules, rest): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "rule");
-    // What the record names, by its digest, first: an edit's document or rule file differs here, before the rule
-    // files are listed again (each phase program parsed) or the programs combined. Each is the observer's answer,
-    // which the journal trusts unread where nothing changed.
-    if let Some(c) = rules.iter().chain(rest.iter().filter(|c| c.0 == "doc" && !c.2.is_empty())).find(|c| super::world::bytes_digest(&root.join(&c.1)) != c.2) {
+    // What the frame names by its digest, first: an edit's document or rule file differs here, before the rule
+    // files are listed again (each phase program parsed). Each is the observer's answer, which the journal trusts
+    // unread where nothing changed.
+    let mut leaves = super::leaves::Leaves::new(root, &summary);
+    if let Some(c) = rules.iter().chain(rest.iter().filter(|c| c.0 == "doc")).find(|c| !leaves.still(c)) {
         miss(&format!("{} {} changed", c.0, c.1));
         return Ok(None);
     }
     // Decision 0275, rederived until a key settles it: with every rule file as recorded (a `stat` each, then its
-    // sha), the same include graphs list the same rule files; the record's are compared, and the rule files are
-    // listed again only for a record that has none.
+    // sha), the same include graphs list the same rule files; the frame's are compared, and the rule files are
+    // listed again only for a frame that has none.
     match graphs.first() {
         Some(g) if g.2 != graphs_line(&given.graphs) => {
             miss("the include graphs differ");
@@ -336,11 +323,8 @@ pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
         }
         None => {}
     }
-    // The program's parts the check reads, as recorded: a function of the texts (the key) and the rule files (as
-    // recorded), so the program is not combined again to read them.
-    let summary = summary.first().and_then(|c| super::Summary::decode(c.2.as_bytes()));
-    if !super::changes_of(programs, &given.graphs, given.read, root, typing, options, &rest, summary)?.is_some_and(|c| c.is_empty()) {
-        miss("a consulted file or read changed");
+    if !super::changes_of(programs, &given.graphs, given.read, root, typing, options, &rest, Some(summary))?.is_some_and(|c| c.is_empty()) {
+        miss("a leaf changed");
         return Ok(None);
     }
     if let Some(owner) = &owner {
@@ -357,19 +341,16 @@ pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
     crate::code_rule_dsl::logic::profile::decision("the run's frame (t33 K4)", || "every read as it was: the kept outputs written, nothing evaluated".into());
     if captured.is_none() { std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?; }
     let mut report = Report { plans, ..Report::default() };
-    for (name, bytes) in &outputs {
-        if name != crate::code_rule_dsl::logic::plan::output::FILE {
-            return Err(Error::Plan(format!("{name}: no output file of this run's")));
-        }
-        if let Some(target) = captured.as_deref_mut() {
-            target.extend_from_slice(bytes);
-        } else {
-            crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
-        }
-        let image = crate::code_rule_dsl::logic::plan::output::Image::one(bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
-        for rel in image.names() {
-            report.rows.insert(rel.to_owned(), image.rel(rel).expect("named").rows);
-        }
+    let name = crate::code_rule_dsl::logic::plan::output::FILE;
+    let bytes = &kept.image;
+    if let Some(target) = captured.as_deref_mut() {
+        target.extend_from_slice(bytes);
+    } else {
+        crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+    }
+    let image = crate::code_rule_dsl::logic::plan::output::Image::one(bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+    for rel in image.names() {
+        report.rows.insert(rel.to_owned(), image.rel(rel).expect("named").rows);
     }
     let now = super::thread_usage();
     report.phases.push(("the run's frame: every read as it was, outputs kept", now.0 - checking.0, now.1 - checking.1, super::usage().2, 0));
@@ -384,8 +365,6 @@ pub fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, ty
     Ok(Some(report))
 }
 
-/// Keeps the record of a run that ended: what it consulted (and the library files its text includes), and its
-/// outputs.
 /// Why the frame did not apply: a profile line, and stderr under `RERAIL_REUSE_TRACE`.
 fn miss(why: &str) {
     crate::code_rule_dsl::logic::profile::decision("the run's frame (t33 K4)", || format!("not applied: {why}"));
@@ -399,39 +378,38 @@ fn miss(why: &str) {
     }
 }
 
-pub fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report, captured: Option<&[u8]>) -> Result<()> {
+pub fn record(given: &super::Texts<'_>, key: &[u8; 32], root: &Path, out: &Path, options: &serde_json::Value, report: &Report, captured: Option<&[u8]>) -> Result<()> {
     let programs = given.programs;
-    // Every phase's program is among the rule files (`rule_files`), and what each phase consulted is the record's
-    // too: a phase's exports are a function of its program and what it consulted, so a run whose every read, its
+    // Every phase's program is among the rule files (`rule_files`), and what each phase consulted is the frame's
+    // too: a phase's exports are a function of its program and what it consulted, so a run whose every leaf, its
     // phases' included, is as it was derives the same (O-cutoff-phases). Phase 1's are the source files, and the
     // directories, files and library documents its imports read.
     if report.consulted.is_empty() {
         miss("not recorded: nothing consulted");
         return Ok(());
     }
-    let key = key(given, &settings(root, options)?, root, options, modes, typing);
-    let mut consulted = rule_files(given, options)?;
+    let mut reads = rule_files(given, options)?;
     let mut read: Vec<(String, String, String)> = report.consulted.iter().cloned().chain(report.phase_runs.iter().flat_map(|r| r.report.consulted.iter().cloned())).collect();
     read.sort();
     read.dedup();
     // One entry a document: a phase that read its bytes names its digest, where another listed it unread.
     let read_docs: std::collections::BTreeSet<String> = read.iter().filter(|c| c.0 == "doc" && !c.2.is_empty()).map(|c| c.1.clone()).collect();
     read.retain(|c| !(c.0 == "doc" && c.2.is_empty() && read_docs.contains(&c.1)));
-    consulted.extend(read);
-    consulted.extend(report.plans.iter().map(|plan| ("plan".to_owned(), String::new(), crate::content_store::observe::hex(plan))));
-    consulted.push((GRAPHS.to_owned(), String::new(), graphs_line(&given.graphs)));
-    if let Some(summary) = super::Summary::of(programs, &given.graphs, given.read, root, options)?.encode().and_then(|b| String::from_utf8(b).ok()) {
-        consulted.push((SUMMARY.to_owned(), String::new(), summary));
-    }
-    let files = match captured {
-        Some(bytes) => vec![(crate::code_rule_dsl::logic::plan::output::FILE.to_owned(), bytes.to_vec())],
-        None => outputs_of(out, report.rows.keys().map(String::as_str)),
+    reads.extend(read);
+    reads.push((GRAPHS.to_owned(), String::new(), graphs_line(&given.graphs)));
+    let Some(summary) = super::Summary::of(programs, &given.graphs, given.read, root, options)?.encode() else {
+        miss("not recorded: the program's summary does not encode");
+        return Ok(());
     };
-    let outputs = encode_outputs(&files);
+    let image = match captured {
+        Some(bytes) => bytes.to_vec(),
+        None => outputs_of(out, report.rows.keys().map(String::as_str)).into_iter().next().map(|(_, b)| b).unwrap_or_default(),
+    };
+    let Some(store) = super::phases::reading_store() else { return Ok(()) };
     if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
-        eprintln!("rerail: the run's frame: kept under {} ({} consulted)", &key[..FRAME.len() + 12], consulted.len());
+        eprintln!("rerail: the run's frame: kept under {} ({} leaves)", &crate::content_store::observe::hex(key)[..12], reads.len());
     }
-    observe(|o| o.put_run_record(&key, &encode_consulted(&consulted), &outputs));
+    super::frame::put(&store, key, &super::frame::Frame { reads, plans: report.plans.clone(), summary, image });
     Ok(())
 }
 

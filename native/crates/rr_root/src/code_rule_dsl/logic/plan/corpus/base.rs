@@ -352,19 +352,23 @@ pub fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&
         trace(format!("the documents differ: {} files, {} kept", files.len(), workspace.len()));
         return Ok(None);
     }
-    // A document listed without a digest was not read (none of the run's rules reads a document): its edit changes nothing.
-    let changed: Vec<String> = docs.iter().filter(|d| !d.2.is_empty() && world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
-    const READERS: [&str; 12] = ["git_object_predicate", "package_marker", "input", "input_dir", "artifact", "base", "git_rev", "git_index", "git_tracking_index", "git_revision_rows", "git_root_repo", analysis_history::INPUT];
-    let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
-    let mut world = world::World::new(root, &prog);
-    let moved = world.changed(&requests);
-    let (inputs_still, world_still) = (inputs::still(&prog, root, &read), moved.is_none());
-    if !(inputs_still && world_still) {
-        trace(format!("inputs as they were {inputs_still} ({} read), requests as they were {world_still} ({} requests; first changed {moved:?})", read.len(), requests.len()));
-    } else if !changed.is_empty() {
+    // Every leaf by its reader (`leaves`): a changed document is the run's delta, any other leaf changed none can say.
+    let mut leaves = leaves::Leaves::new(root, &prog);
+    let mut changed = Vec::new();
+    for leaf in consulted {
+        if leaves.still(leaf) {
+            continue;
+        }
+        if leaf.0 != "doc" {
+            trace(format!("a leaf changed: {} {}", leaf.0, leaf.1));
+            return Ok(None);
+        }
+        changed.push(leaf.1.clone());
+    }
+    if !changed.is_empty() {
         trace(format!("{} documents changed: {:?}", changed.len(), changed.iter().take(3).collect::<Vec<_>>()));
     }
-    Ok((inputs_still && world_still).then_some(changed))
+    Ok(Some(changed))
 }
 
 /// The `core.rerail` relations a rule may read that the engine does not make yet (O76): each is empty. None now:

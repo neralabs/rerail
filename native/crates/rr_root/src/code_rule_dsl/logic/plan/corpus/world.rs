@@ -450,15 +450,6 @@ impl World {
         out
     }
 
-    /// The first of `consulted` that would be answered otherwise now, with its answer now (`None` for a kind of
-    /// request no longer asked).
-    pub(super) fn changed<'c>(&mut self, consulted: &'c [(String, String, String)]) -> Option<(&'c (String, String, String), Option<String>)> {
-        consulted.iter().find_map(|c| {
-            let now = self.observation(&c.0, &c.1);
-            (now.as_ref() != Some(&c.2)).then_some((c, now))
-        })
-    }
-
     pub(super) fn observation(&mut self, what: &str, path: &str) -> Option<String> {
         Some(match what {
             "dir" => listing_digest(&self.dir(path)),

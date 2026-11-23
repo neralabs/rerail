@@ -1459,7 +1459,8 @@ pub fn run_handed(
     let lifecycle_seeded = usage();
     // Phase 0's cutoff (`reuse`): a run whose every read is as it was writes the outputs it wrote.
     let reuse = reuse::wanted(options, typing, t_facts);
-    let kept = if reuse { reuse::reused(&texts, root, out, modes, typing, options, image.as_deref_mut()) } else { Ok(None) };
+    let frame_key = if reuse { Some(reuse::key_of(&texts, root, options, modes, typing)?) } else { None };
+    let kept = match &frame_key { Some(key) => reuse::reused(&texts, key, root, out, typing, options, image.as_deref_mut()), None => Ok(None) };
     let report = match kept {
         // A profiled run that the cutoff answered writes its profile too: the lifecycle below appends to it.
         Ok(Some(report)) if crate::code_rule_dsl::logic::profile::on() && !phase0::active() && runs_under_way() == 0 => {
@@ -1475,13 +1476,17 @@ pub fn run_handed(
         }
         Ok(Some(report)) => Ok(report),
         Err(e) => Err(e),
-        Ok(None) => run_observed(&texts, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image.as_deref_mut()).and_then(|report| {
-            refuse_unplaced(out)?;
-            if reuse {
-                reuse::record(&texts, root, out, modes, typing, options, &report, image.as_deref().map(Vec::as_slice))?;
-            }
-            Ok(report)
-        }),
+        Ok(None) => {
+            // The run's manifest names its frame (`reuse::Naming`), kept once it ends.
+            let _naming = frame_key.map(reuse::Naming::enter);
+            run_observed(&texts, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image.as_deref_mut()).and_then(|report| {
+                refuse_unplaced(out)?;
+                if let Some(key) = &frame_key {
+                    reuse::record(&texts, key, root, out, options, &report, image.as_deref().map(Vec::as_slice))?;
+                }
+                Ok(report)
+            })
+        }
     };
     let lifecycle_executed = usage();
     // Phase 0's observations, written once the run has read everything (they may lag the run, never lead it).
@@ -2338,15 +2343,23 @@ fn run_observed_within(
         memo::named_source(store, text, true, None, &late_sources);
         program_plans.push(plan);
     }
-    // Phase 1's frame (`phases::frame`, t33 K4): kept where this run made it, behind the run, and named in the
-    // manifest either way, so collection keeps it while it keeps the run.
+    // Phase 1's frame and the run's (`frame`, t33 K4): phase 1's kept where this run made it, behind the run, and
+    // each named in the manifest, so collection keeps it while it keeps the run. The run's is kept as the run ends
+    // (`reuse::record`).
     if durable.is_some() {
-        for run in &phase_runs {
-            let Some((key, facts)) = &run.frame else { continue };
-            if let Some(facts) = facts {
-                phases::frame::put(store, key, facts);
+        if let Some(key) = reuse::naming() {
+            let (text, plan) = frame::named(&key);
+            memo::named_source(store, text, true, None, &late_sources);
+            if !program_plans.contains(&plan) {
+                program_plans.push(plan);
             }
-            let (text, plan) = phases::frame::named(key);
+        }
+        for run in &phase_runs {
+            let Some((key, kept)) = &run.frame else { continue };
+            if let Some(kept) = kept {
+                frame::put(store, key, kept);
+            }
+            let (text, plan) = frame::named(key);
             memo::named_source(store, text, true, None, &late_sources);
             if !program_plans.contains(&plan) {
                 program_plans.push(plan);
