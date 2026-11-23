@@ -139,10 +139,12 @@ fn the_kernels_rust_parent_is_the_hosts() {
     let lang = crate::parent::json_lang();
     for d in crate::parent::documents(&lang) {
         let want = crate::parent::scalar(&d);
-        for block in [8, 20, 32, 36, 256] {
-            let got = unsafe { crate::parent::run(crate::parent_group_w8::parent_group_w8, &d, block) };
-            if let Some(i) = (0..want.len()).find(|&i| got[i] != want[i]) {
-                panic!("{} ({} nodes), groups of {block}: node {i}'s parent {} (the host's {})", d.name, want.len(), got[i], want[i]);
+        for (name, k) in [("group", crate::parent_group_w8::parent_group_w8 as crate::Kernel), ("push", crate::parent_push_w8::parent_push_w8)] {
+            for block in [8, 20, 32, 36, 256] {
+                let got = unsafe { crate::parent::run(k, &d, block) };
+                if let Some(i) = (0..want.len()).find(|&i| got[i] != want[i]) {
+                    panic!("{name}: {} ({} nodes), groups of {block}: node {i}'s parent {} (the host's {})", d.name, want.len(), got[i], want[i]);
+                }
             }
         }
     }
@@ -203,4 +205,24 @@ fn every_chain_of_links_is_at_most_seven() {
         }
     }
     assert_eq!(longest, 7, "the documents hold a chain of the most links");
+}
+
+/// A node's link (`reads::f16::parent_step`) is to its previous sibling: `i = j + size(j)`. So a chain's head reaches
+/// every node linked to it forward, by sizes (`parent_push`).
+#[test]
+fn a_link_is_to_the_previous_sibling() {
+    use rerail_tape_format::reads::f16::{LINK, parent_step, size};
+    let lang = crate::parent::json_lang();
+    let mut links = 0;
+    for d in crate::parent::documents(&lang) {
+        for i in 0..d.nodes() {
+            let r = parent_step(&d.bytes, &d.view, i);
+            if r & LINK != 0 {
+                let j = r as u32;
+                assert_eq!(j + size(&d.bytes, &d.view, j), i, "{}: node {i} links to {j}", d.name);
+                links += 1;
+            }
+        }
+    }
+    assert!(links > 10_000, "{links} links");
 }

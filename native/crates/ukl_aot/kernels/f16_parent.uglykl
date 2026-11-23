@@ -47,3 +47,34 @@ DEFINE_KERNEL2(f16, parent_group,
     r=clif_f16_parent(tape,view,r&(LINKED-1u));
   out[i]=r;
 }
+
+// One launch, no barrier: a chain's head pushes its parent forward. A node whose step names its parent (or NONE)
+// writes it, then each sibling after it (`c = j + size(j)`) whose own step links back to `j`, in turn: every linked
+// node is written once, by its chain's head, and no thread reads another's result. A leaf's slot is the slot before
+// its next sibling, so a run of leaves reads one slot a node.
+DEFINE_KERNEL2(f16, parent_push,
+               ROBUFFER, uint8_t,    tape,  "[bytes]",
+               ROBUFFER, uint32_t,   view,  "[words]",
+               RWBUFFER, uint32_t,   out,   "[args.nodes]",
+               ARGS,     ParentArgs, args,  ,
+               GID0,     uint32_t,   i,     )
+{
+  if(i>=args.nodes)return;
+  uint64_t r=clif_f16_parent_step(tape,view,i);
+  if((r&CLIF_T_LINK)!=0u)return;
+  uint32_t p=(uint32_t)r;
+  out[i]=p;
+  uint32_t j=i;
+  uint64_t s=clif_f16_slot(tape,view,j);
+  for(;;){
+    uint32_t size=(s&1u)!=0u?1u:(uint32_t)(s>>1);
+    if(size==0u)size=1u;
+    uint32_t c=j+size;
+    if(c>=args.nodes||c<=j)break;
+    uint64_t b=size==1u?s:clif_f16_slot(tape,view,c-1u);
+    if((b&3u)!=1u||(uint32_t)(b>>2)!=c-j)break;
+    out[c]=p;
+    j=c;
+    s=clif_f16_slot(tape,view,j);
+  }
+}

@@ -1507,3 +1507,15 @@ fn a_barrier_not_at_the_top_of_the_kernels_function_is_refused() {
     let e = super::rs::kernel(&k, 8).expect_err("a barrier in a branch");
     assert!(e.0.contains("Barrier"), "{}", e.0);
 }
+
+/// `f16_parent`'s kernel of chains pushed forward (no barrier) as Rust at 8 lanes, as checked in.
+#[test]
+fn the_f16_parent_push_kernels_rust_is_the_checked_in_one() {
+    let rust = f16_parent_rust("parent_push").unwrap_or_else(|e| panic!("{}", e.0));
+    let at = format!("{}/../ukl_aot/src/parent_push_w8.rs", env!("CARGO_MANIFEST_DIR"));
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(&at, &rust).unwrap();
+    }
+    let kept = std::fs::read_to_string(&at).unwrap_or_default();
+    assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+}
