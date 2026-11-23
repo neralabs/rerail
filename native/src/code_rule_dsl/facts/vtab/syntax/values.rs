@@ -524,8 +524,32 @@ impl Source for Layered {
         });
         Some(out)
     }
+    /// The base's read, then each part that may hold `value` (`Parts::of`: its own nodes' key, or the host node its
+    /// rows name), at its rows' place past the base's. Refused with parts made on lookup, and where the base has no
+    /// such read (nothing given then). Refused whenever the chunk had parts, every probe of a chunk with a parsed string
+    /// made a list of its rows (t50 step 6: `text` and the matchers' relations at about 0.6 µs a probe).
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
-        !self.has_parts() && self.base.lookup_read(column, value, columns, each)
+        if !self.has_parts() {
+            return self.base.lookup_read(column, value, columns, each);
+        }
+        if self.made.is_some() || columns.len() > 8 || !self.base.lookup_read(column, value, columns, each) {
+            return false;
+        }
+        self.parts(|p| {
+            p.of(value, &mut |part| {
+                let at = self.base_len() + part.start;
+                if part.src.lookup_read(column, value, columns, &mut |r, row| each(at + r, row)) {
+                    return;
+                }
+                let rows = part.src.lookup(column, &[value]).unwrap_or_else(|| (0..part.src.len()).filter(|&r| part.src.value(r, column) == value).collect());
+                let mut row = [0i64; 8];
+                for r in rows {
+                    part.src.row_at(r, columns, &mut row[..columns.len()]);
+                    each(at + r, &row[..columns.len()]);
+                }
+            })
+        });
+        true
     }
     /// The base's order over several columns (`within`'s pair): without it a chunk's probe of both columns took the
     /// lead column's rows and filtered them, making every ancestor's row of each node it tested.
@@ -765,6 +789,26 @@ mod tests {
         assert_eq!(asked(a | 2), vec![0], "a value's own node");
         assert_eq!(asked(b | 1), vec![2]);
         assert!(values.source_of("guest_of", host | 8).is_none(), "a host's node is the batch's, not a value's");
+    }
+
+    /// A layered source's read in place with parts is its lookup's rows with their values: the base's, then each part's
+    /// that may hold the value, numbered past the base's.
+    #[test]
+    fn a_layered_read_in_place_is_its_lookups_rows() {
+        let values = Arc::new(Values::default());
+        let (host, a) = (5i64 << 32, 10i64 << 32);
+        let rel = |rows: Vec<Vec<i64>>| Arc::new(super::super::Relation::from_rows(&["n", "s"], &mut rows.into_iter())) as Arc<dyn Source>;
+        let base = rel(vec![vec![host | 1, 3], vec![host | 7, 4], vec![host | 7, 5]]);
+        values.add(&[10], &[5], vec![("r".to_owned(), rel(vec![vec![a | 1, host | 7], vec![host | 7, 6]]))]);
+        let layered = Layered::new("r", base, Arc::clone(&values));
+        for (column, v) in [(0, host | 7), (0, a | 1), (1, host | 7), (0, host | 1), (0, host | 9), (1, 4)] {
+            let mut read = Vec::new();
+            assert!(layered.lookup_read(column, v, &[0, 1], &mut |r, row| read.push((r, row.to_vec()))), "read in place");
+            let mut want: Vec<(usize, Vec<i64>)> = layered.lookup(column, &[v]).expect("a lookup").into_iter().map(|r| (r, vec![layered.value(r, 0), layered.value(r, 1)])).collect();
+            read.sort();
+            want.sort();
+            assert_eq!(read, want, "column {column} = {v:#x}");
+        }
     }
 
     /// An add makes the next parts from the last without copying them (R7's snapshots, 0494 step 5): only the last

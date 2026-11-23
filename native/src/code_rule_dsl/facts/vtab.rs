@@ -1753,6 +1753,27 @@ impl Source for Relation {
         }
         Some(&self.index(column).rows[self.between(column, value, value)])
     }
+    /// The rows of `value` with their values of `columns`, read from the column's order where they lie: no list of
+    /// ids made a probe (`lookup`'s), which the join's view probe made for every relation a chunk binds (t50 step 6).
+    fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        if columns.len() > 8 {
+            return false;
+        }
+        let mut row = [0i64; 8];
+        let cells = self.cells();
+        let mut give = |r: usize| {
+            for (j, &c) in columns.iter().enumerate() {
+                row[j] = cells.get(r as u32, c);
+            }
+            each(r, &row[..columns.len()]);
+        };
+        if self.ordered[column].is_some() {
+            self.ordered_between(column, value, value).for_each(&mut give);
+        } else {
+            self.index(column).rows[self.between(column, value, value)].iter().for_each(|&r| give(r as usize));
+        }
+        true
+    }
     /// A column pushed in order of the rows' ids: its rows a range, no identity list made.
     fn sorted_range(&self, column: usize, value: i64) -> Option<Range<u32>> {
         self.ordered[column].is_some().then(|| {

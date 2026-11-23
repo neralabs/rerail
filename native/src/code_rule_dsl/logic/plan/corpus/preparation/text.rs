@@ -189,6 +189,10 @@ impl RulePass for Absorb {
         }
         let mut drop: BTreeSet<usize> = BTreeSet::new();
         let mut added: Vec<(Slot, String, Vec<(String, Slot)>)> = Vec::new();
+        // A program that binds a guest's nodes (`guest_of`, decision 0431) can take a root of only a kind and its parent
+        // edges: the matcher answers the tape's nodes, and the rule as written, led by `guest_of(r, _)`, a guest's.
+        let guests = v.rel("guest_of").is_some();
+        let mut guest_roots: Vec<Slot> = Vec::new();
         for (ri, l) in body.iter().enumerate() {
             let Some(root) = positive(v, *l, "kind") else { continue };
             let root = args(root);
@@ -227,11 +231,13 @@ impl RulePass for Absorb {
                 }
                 taken.extend([fi, ki]);
             }
-            // The root's negated parent edges: `!field(_, "F", r)`, its first argument a wildcard. Only in a rule
-            // rewritten for its fields anyway: a matcher runs over a file's tape, not a guest's (a quoted annotation's
-            // nodes have no tape in the wave), so a rule of only a kind and its parent edges (`nameref`'s) made a
-            // matcher lost every read inside a guest (`quoted_annotations_are_read_as_their_code`).
-            if self.parents && parts.len() >= 2 {
+            // The root's negated parent edges: `!field(_, "F", r)`, its first argument a wildcard. A matcher runs over
+            // a file's tape, not a guest's (a quoted annotation's nodes have no tape in the wave): a rule of only a kind
+            // and its parent edges (`nameref`'s) made a matcher alone lost every read inside a guest
+            // (`quoted_annotations_are_read_as_their_code`). So such a root is taken only where the program binds a
+            // guest's nodes, and its rule is kept too, led by `guest_of(r, _)` (t50 step 6).
+            let fielded = parts.len() >= 2;
+            if self.parents && (fielded || guests) {
                 for (ni, nl) in body.iter().enumerate() {
                     let Lit::Atom(a) = nl.view() else { continue };
                     if !a.neg() || v.rel_name(a.rel()) != "field" || drop.contains(&ni) || taken.contains(&ni) {
@@ -246,6 +252,9 @@ impl RulePass for Absorb {
             }
             if parts.len() < 2 || captures.len() > MOST_CAPTURES {
                 continue;
+            }
+            if !fielded {
+                guest_roots.push(rv);
             }
             drop.extend(taken);
             let matcher = serde_json::json!({"language": "python", "rule": {"all": parts}}).to_string();
@@ -267,6 +276,14 @@ impl RulePass for Absorb {
             }
         }
         w.finish()?;
+        // A guest's nodes, which the matcher does not see: the rule as written, from the guest relation that binds them.
+        for &rv in &guest_roots {
+            let mut g = out.rule().head_from(v, r, r.head()).atom("guest_of", &[T::Var(name(v, r, rv)), T::Wild]);
+            for l in &body {
+                g = g.lit(v, r, *l);
+            }
+            g.finish()?;
+        }
         Ok(Step::Written)
     }
     fn finish(&mut self, cx: &Cx<'_>, _b: &mut Builder<'_>) -> Result<()> {
