@@ -44,7 +44,7 @@ unsafe fn b0_r0r1sg_p(l: &Launch, lid0: u32, k: [uint32x4_t; 2], arg0: *const u8
     let t2 = [vdupq_n_u32(a0); 2];
     let t3: [uint32x4_t; 2] = [vcgeq_u32(t1[0], t2[0]), vcgeq_u32(t1[1], t2[1])];
     let t4: [uint32x4_t; 2] = [vandq_u32(live[0], t3[0]), vandq_u32(live[1], t3[1])];
-    if any(&t4) {
+    {
         live = [vbicq_u32(live[0], t4[0]), vbicq_u32(live[1], t4[1])];
     }
     if any(&live) {
@@ -133,7 +133,7 @@ unsafe fn b0_r0r1sg_f(l: &Launch, lid0: u32, arg0: *const u8, arg1: *const u8, x
         let t48 = [vdupq_n_u32(a0); 2];
         let t49: [uint32x4_t; 2] = [vcgeq_u32(t47[0], t48[0]), vcgeq_u32(t47[1], t48[1])];
         let t50: [uint32x4_t; 2] = [vandq_u32(live[0], t49[0]), vandq_u32(live[1], t49[1])];
-        if any(&t50) {
+        {
             live = [vbicq_u32(live[0], t50[0]), vbicq_u32(live[1], t50[1])];
         }
         if any(&live) {

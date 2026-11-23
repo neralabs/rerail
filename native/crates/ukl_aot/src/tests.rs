@@ -229,3 +229,42 @@ fn every_chain_of_links_is_at_most_seven() {
     }
     assert_eq!(longest, 7, "the documents hold a chain of the most links");
 }
+
+/// rerail-ukl-vec's Rust of `wide_lanes` at 8 lanes (64-bit lanes as their halves): the scalar answers, on values
+/// that carry and borrow between the halves, of each sign, equal in either half, zero, and shifted by every count
+/// that ends below, at and past 32; at groups that end in part of a chunk.
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn the_kernels_rust_wide_is_the_scalar_one() {
+    let mut r = 0x9E37_79B9_7F4A_7C15u64;
+    let mut next = move || {
+        r ^= r << 13;
+        r ^= r >> 7;
+        r ^= r << 17;
+        r
+    };
+    let special = [0u64, 1, 2, 3, 0xFFFF_FFFF, 0x1_0000_0000, 0xFFFF_FFFF_FFFF_FFFF, 0x8000_0000_0000_0000, 0x7FFF_FFFF_FFFF_FFFF, 0x8000_0000, 0x1_FFFF_FFFF, 13, 0x0000_0001_0000_0001];
+    let mut sets: Vec<(Vec<u64>, Vec<u64>, Vec<u32>)> = vec![(vec![], vec![], vec![])];
+    let n = special.len();
+    sets.push(((0..n * n).map(|i| special[i / n]).collect(), (0..n * n).map(|i| special[i % n]).collect(), (0..n * n).map(|i| i as u32 * 5).collect()));
+    sets.push(((0..300).map(|_| next()).collect(), (0..300).map(|_| next()).collect(), (0..300).map(|_| next() as u32).collect()));
+    sets.push(((0..77).map(|i| next() & !(i & 3)).collect(), (0..77).map(|_| next() >> 20).collect(), (0..77).map(|i| i as u32).collect()));
+    sets.push(((0..64).map(|_| 0x1234_5678_9ABC_DEF1).collect(), (0..64).map(|_| 7).collect(), (0..64).map(|_| 33).collect()));
+    for (a, b, c) in &sets {
+        for k in [0u64, 5, 0xFFFF_FFFF_0000_0001] {
+            let len = a.len();
+            let mut want = vec![0u64; len * crate::WIDE_ROWS];
+            for i in 0..len {
+                for (row, v) in crate::scalar::wide(a, b, c, k, i).into_iter().enumerate() {
+                    want[row * len + i] = v;
+                }
+            }
+            for block in [8, 20, 32, 36, 256] {
+                let got = unsafe { crate::wide_run(crate::wide_lanes_w8::wide_lanes_w8, a, b, c, k, block) };
+                for row in 0..crate::WIDE_ROWS {
+                    assert_eq!(got[row * len..(row + 1) * len], want[row * len..(row + 1) * len], "row {row}, {len} values, k {k:#x}, groups of {block}");
+                }
+            }
+        }
+    }
+}

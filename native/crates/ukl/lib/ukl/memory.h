@@ -40,10 +40,22 @@
 #define __UKL_DIRECT_ukl_ldc 1
 #endif
 
+// The CPU's vector code (`UKL_VEC`) reads a whole window of 8 bytes as one unaligned load: the words it touches are
+// the aligned form's (the word at `a` alone if `a` is aligned, else it and the next), and a lane's consecutive
+// windows are then one vector load (rs.rs), not each lane's word, shift and second word.
+#if defined(UKL_VEC)
+#define __UKL_WINDOW_WHOLE(Ld, Space, t, a, n)                                                                          \
+    if ((n) == 8u)                                                                                                      \
+        return __UKL_WORD_##Ld((Space const uint64_t*)((t) + (a)));
+#else
+#define __UKL_WINDOW_WHOLE(Ld, Space, t, a, n)
+#endif
+
 #define UKL_DEFINE_BYTE_LOADS(Ld, Space, A)                                                                             \
     /* The 64 bits from byte `a` up, of which the low `n` bytes are wanted. */                                          \
     UKL_INLINE UKL_OVERLOAD uint64_t Ld##_window(Space const uint8_t* t, A a, uint32_t n)                               \
     {                                                                                                                   \
+        __UKL_WINDOW_WHOLE(Ld, Space, t, a, n)                                                                          \
         Space const uint64_t* w = (Space const uint64_t*)(t + (a & ~(A)7));                                             \
         uint32_t s = (uint32_t)(a & (A)7) * 8u;                                                                         \
         uint64_t lo = __UKL_WORD_##Ld(w) >> s;                                                                          \

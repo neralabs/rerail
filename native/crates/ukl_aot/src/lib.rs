@@ -24,6 +24,8 @@ pub mod parent_group_w8;
 pub mod parent_link_w8;
 #[cfg(target_arch = "aarch64")]
 pub mod parent_step_w8;
+#[cfg(target_arch = "aarch64")]
+pub mod wide_lanes_w8;
 pub mod parent;
 pub mod scalar;
 #[cfg(test)]
@@ -159,5 +161,33 @@ pub unsafe fn mix_run(k: Kernel, input: &[u32], rounds: u32, block: u32) -> Vec<
     let (counts, first): (*const u32, u32) = (std::ptr::null(), 0);
     let argv = [(&raw const ip).cast::<u8>(), (&raw const op).cast::<u8>(), (&raw const args).cast::<u8>(), (&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>()];
     unsafe { launch(k, &argv, args.n.div_ceil(block), block) };
+    out
+}
+
+/// `wide_lanes`'s arguments' struct (`WideArgs`, `kernels/wide.uglykl`), as its kernel reads its bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct WideArgs {
+    pub n: u32,
+    pub pad: u32,
+    pub k: u64,
+}
+
+/// The rows of `wide_lanes`'s answers (`WIDE_ROWS`): row `r`'s answer of thread `i` at `r * n + i`.
+pub const WIDE_ROWS: usize = 26;
+
+/// `wide_lanes` (its Rust `k`) over `a`, `b` and `c` (each a thread's), `k` its uniform value, in groups of `block`
+/// threads: each row's answers.
+///
+/// # Safety
+///
+/// `k` is a kernel of `wide_lanes`'s arguments, and `a`, `b` and `c` have one length.
+pub unsafe fn wide_run(kernel: Kernel, a: &[u64], b: &[u64], c: &[u32], k: u64, block: u32) -> Vec<u64> {
+    let mut out = vec![0u64; a.len() * WIDE_ROWS];
+    let (ap, bp, cp, op) = (a.as_ptr(), b.as_ptr(), c.as_ptr(), out.as_mut_ptr());
+    let args = WideArgs { n: a.len() as u32, pad: 0, k };
+    let (counts, first): (*const u32, u32) = (std::ptr::null(), 0);
+    let argv = [(&raw const ap).cast::<u8>(), (&raw const bp).cast::<u8>(), (&raw const cp).cast::<u8>(), (&raw const op).cast::<u8>(), (&raw const args).cast::<u8>(), (&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>()];
+    unsafe { launch(kernel, &argv, args.n.div_ceil(block), block) };
     out
 }

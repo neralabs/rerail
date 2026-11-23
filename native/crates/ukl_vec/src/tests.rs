@@ -1424,6 +1424,24 @@ fn mix_rust() -> String {
     super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()))
 }
 
+/// `wide.uglykl` (rerail-ukl-aot's test kernel of 64-bit lanes) as Rust at 8 lanes, checked in as `mix` is: its
+/// answers are the scalar ones there.
+#[test]
+fn the_wide_kernels_rust_is_the_checked_in_one() {
+    let text = include_str!("../../ukl_aot/kernels/wide.uglykl");
+    let src = super::source("/<kernels>/wide.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("wide_lanes").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let rust = super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()));
+    let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_aot/src/wide_lanes_w8.rs");
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(at, &rust).unwrap();
+    }
+    let kept = std::fs::read_to_string(at).unwrap_or_default();
+    assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+}
+
 #[test]
 fn the_mix_kernels_rust_is_the_checked_in_one() {
     let rust = mix_rust();
