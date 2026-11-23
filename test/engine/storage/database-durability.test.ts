@@ -7,9 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { commitDurably, openRerailDatabase, openSqliteDatabase } from "../../../src/engine/storage/database.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
-// The store's writers commit without waiting for the disk: SQLite's `PRAGMA synchronous` of the open connection is 1
-// (NORMAL), so a power cut can take the last seconds of records, which the reference tells a person; 2 (FULL) would make
-// every commit wait for the disk.
+// The store's writers open with SQLite's `PRAGMA synchronous` at 1 (NORMAL): a commit returns once it is in the
+// write-ahead log, so a power cut can take the last seconds of records, which the reference tells a person. At 2 (FULL)
+// every commit would wait for the disk.
 const REFERENCE = fileURLToPath(new URL("../../../docs/reference.md", import.meta.url));
 const MAY_LOSE_THE_LAST_RECORDS = "a power cut or an operating system crash can take the last seconds of records";
 const NORMAL = 1;
@@ -27,7 +27,7 @@ async function databasePath(): Promise<string> {
 }
 
 describe("what the store keeps through a power cut", () => {
-  it("opens every writer with the write-ahead log and NORMAL, so no commit waits for the disk", async () => {
+  it("opens every writer with the write-ahead log and NORMAL", async () => {
     const path = await databasePath();
     for (const open of [() => openRerailDatabase(path), () => openSqliteDatabase(path)]) {
       const database = open();
