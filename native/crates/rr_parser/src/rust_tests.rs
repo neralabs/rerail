@@ -286,6 +286,10 @@ fn a_statement_that_fails_is_one_error_leaf() {
         "a(x) :- b(x) ) #include \"x\"\nd(1).\n",
         "a(x) :- b(x) )\n  .decl d(y: number)\n",
         "a(x) :- b(x) ) /* c */ .decl d(y: number)\n",
+        // `line_dot`: a block comment over a line's end, then the `.` on its last line; a `\r` line end; the file's start.
+        "a(x) :- b(x) ) /* c\n d */ .decl d(y: number)\n.decl e(y: number)\n",
+        "a(x) :- b(x) )\r \t.decl d(y: number)\n",
+        ".decl d(y number)\n  .decl e(y: number)\n",
         "a(1) b(2) c(3)",
         "n\n// a comment\n.decl d(y: number)\n",
         ".mode{ steer\n.scope include \"*\"\na(1).\n",

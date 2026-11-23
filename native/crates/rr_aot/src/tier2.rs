@@ -6099,11 +6099,30 @@ impl<L: Layout> P<'_, L> {
         self.arrive()
     }
 
-    /// Whether token `j` is first on its line: only blanks before it back to a line's terminator (the lean parser's
-    /// `line_start`).
+    /// Whether token `j` is first on its line (the lean parser's `line_start`: only blanks before it back to a line's
+    /// terminator or the file's start). Tier 1 leaves only blanks and line ends between records, so: no record before
+    /// it, or a terminator among the bytes since the record before (the token before, or a comment after it), read a
+    /// word at a time.
     fn first_on_line(&self, j: usize) -> bool {
         let at = self.recs[j].start as usize;
-        self.src[..at].iter().rev().take_while(|c| !TERMINATORS.contains(c)).all(|c| c.is_ascii_whitespace())
+        let c = self.xs.partition_point(|x| (x.start as usize) < at);
+        let before = [j.checked_sub(1).map(|i| self.recs[i].last), c.checked_sub(1).map(|i| self.xs[i].last)];
+        let Some(last) = before.into_iter().flatten().max() else { return true };
+        let mut i = last as usize + 1;
+        while i < at {
+            let n = (at - i).min(8);
+            let mut w = [0u8; 8];
+            w[..n].copy_from_slice(&self.src[i..i + n]);
+            let x = u64::from_le_bytes(w);
+            if TERMINATORS.iter().any(|&t| {
+                let y = x ^ 0x0101_0101_0101_0101 * u64::from(t);
+                y.wrapping_sub(0x0101_0101_0101_0101) & !y & 0x8080_8080_8080_8080 != 0
+            }) {
+                return true;
+            }
+            i += 8;
+        }
+        false
     }
 }
 

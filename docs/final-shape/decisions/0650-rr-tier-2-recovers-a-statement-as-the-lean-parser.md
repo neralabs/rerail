@@ -64,8 +64,17 @@ recover source_file at hash_word | "#include", at first "." identifier, past "."
 It makes the repetition of a `whole` node lean's statement loop: each repetition is a statement, marked before it is
 read. Each clause is a token pattern, as a token mark's (`tokens …`), tested at a record from the failed statement's
 second token on: `at` stops the scan there, `past` stops it past the record. `first` asks that the record be first
-on its line: only blanks before it back to a line terminator's last byte, read off the bytes as lean's `line_start`
-reads them. It is read only in the scan, so it needs no mark of tier 1's.
+on its line, as lean's `line_start` asks: only blanks before it back to a line terminator or the file's start. Tier 1
+leaves only blanks and line ends between records, so a record is first on its line where no record comes before it,
+or where a terminator lies among the bytes since the record before (the token before, or a comment after it). The
+scan reads those bytes a word at a time, and only in recovery, as lean reads them.
+
+Not a mark of tier 1's. A `line_dot` mark was tried (stash `pg-0650-line-dot-mark-tried-2026-11-23`). As a plain mask
+a mark's bit is lifted over the gap to the next token, so a `.` at a line's head inside a comment or a string marks
+the token after it; excluding the regions makes the CPU's tier 1 walk them, which decision 0177 removed. As a mark of
+one word (the `.`'s starts and the line-head mask) it is exact and walks nothing, but the CPU's tier 1 then makes the
+line-head mask over every block: a mask no token's window can read, made for every file, where lean asks it only of a
+failed statement.
 
 **Which refusals recover.** A refusal is syntax or a limit. The syntax ones recover:
 
