@@ -402,6 +402,9 @@ impl Source for Layered {
     fn estimated_len(&self) -> usize {
         self.base.estimated_len()
     }
+    fn may_hold_rows(&self) -> bool {
+        self.base.may_hold_rows() || self.values.total(&self.name) > 0
+    }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.base.estimated_matches(column, batch)
     }

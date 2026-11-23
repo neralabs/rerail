@@ -768,6 +768,16 @@ admitted together (`Grower::admit_many`), one part of each source under all thei
 4.24 and 3.83 s against 2.8–3.5 s in the runs before: some of that is likely the larger parts (an axis made on lookup
 solves its part), so the net is about −1.5 s.
 
+**The cross part's `text`, probed, not made whole.** It was made whole by no join: the planner's test for an empty
+input (`native_stratum_`, a rule over an empty relation is left out) asked the corpus batch's `text` its `len`, which
+a cold run's batch (no kept counts, `give_totals`) answers by making every document. The test now asks
+`may_hold_rows`, which an unmade batch relation answers making nothing. The joins then probe `text` by node, and a
+probe reads its group's rows by value (`Group::rows_with`, the group's row ids ordered by the probed column, made at
+its first probe), where it filtered the group's every row per probe (without it, cross `rf_ref` 3.3 → 55.8 s). On
+`all` (m1max, load 7): 2,419 of 4,121 documents made, one at a time in the joins' morsels, where all were made in one
+serial make; CPU 170.4 → 169.2 s, rows the same. Most documents are still made, because the probes reach them: the
+next step is the tape view, `text` read off a probed node's tape and no document's node rows made.
+
 ### Step 6 in part: parent edges, label formulas and field captures in the matcher wave (2026-11-22)
 
 Three changes, each with its rows checked (s1000's digest, `all`'s 17 relations) and its own switch:

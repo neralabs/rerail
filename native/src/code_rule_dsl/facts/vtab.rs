@@ -200,6 +200,12 @@ pub trait Source: Send + Sync {
     fn estimated_len(&self) -> usize {
         self.len()
     }
+    /// Whether it may hold a row: `false` only where it holds none. A test for an empty input (a rule over one is
+    /// not run) asks this, not `len`, so a source whose rows are made when read (a batch's, decision 0494) answers
+    /// without making them, and is taken as holding rows.
+    fn may_hold_rows(&self) -> bool {
+        self.len() > 0
+    }
     /// The rows whose column `g` holds a node `owned` names, where the source finds them without reading every row
     /// (a view over a batch's documents, by its nodes): `None` when it cannot, and the caller reads them all.
     fn rows_owned(&self, _g: usize, _owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {

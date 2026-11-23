@@ -9022,7 +9022,7 @@ impl<'a> Run<'a, '_> {
                 // An input may be bound when its first reader runs, so it is not taken as empty unless it is bound
                 // already, in a program that asks nothing.
                 if !native_rels.contains(rel) {
-                    return asks_nothing && self.inputs.contains(rel) && crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some_and(|s| s.len() == 0);
+                    return asks_nothing && self.inputs.contains(rel) && crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some_and(|s| !s.may_hold_rows());
                 }
                 if let Some(&e) = empty.get(rel) {
                     return e;

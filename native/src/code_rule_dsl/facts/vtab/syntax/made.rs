@@ -380,6 +380,43 @@ pub(super) struct Group {
     pub(super) docs: Vec<usize>,
     /// Each relation's rows of the group, in `Rows::names`' order.
     pub(super) ranges: Vec<Range<usize>>,
+    /// Per relation and column probed, the group's rows ordered by that column's value (row ids, the values read where
+    /// they lie): an index of its range, made at its first probe, so a probe reads its rows, not the group's every row.
+    pub(super) by_value: parking_lot::Mutex<HashMap<(usize, usize), Arc<[u32]>>>,
+}
+
+impl Group {
+    pub(super) fn new(docs: Vec<usize>, ranges: Vec<Range<usize>>) -> Self {
+        Group { docs, ranges, by_value: Default::default() }
+    }
+    /// Relation `rel`'s rows of the group (of `r`, its relation) whose `column` is one of `values`.
+    fn rows_with(&self, rel: usize, column: usize, r: &Relation, values: &[i64], out: &mut Vec<usize>, keep: &impl Fn(&Relation, usize) -> bool) {
+        let range = self.ranges[rel].clone();
+        if range.len() <= 64 {
+            out.extend(range.filter(|&row| values.contains(&Source::value(r, row, column)) && keep(r, row)));
+            return;
+        }
+        let order = Arc::clone(self.by_value.lock().entry((rel, column)).or_insert_with(|| {
+            let mut rows: Vec<u32> = range.clone().map(|row| row as u32).collect();
+            rows.sort_by_key(|&row| Source::value(r, row as usize, column));
+            rows.into()
+        }));
+        let start = out.len();
+        for &v in values {
+            let from = order.partition_point(|&row| Source::value(r, row as usize, column) < v);
+            out.extend(order[from..].iter().map(|&row| row as usize).take_while(|&row| Source::value(r, row, column) == v).filter(|&row| keep(r, row)));
+        }
+        // In row order, as a filter of the range gives them; each row once (a value given twice).
+        out[start..].sort_unstable();
+        let mut seen = start;
+        for i in start..out.len() {
+            if i == start || out[i] != out[seen - 1] {
+                out[seen] = out[i];
+                seen += 1;
+            }
+        }
+        out.truncate(seen);
+    }
 }
 
 /// The batch's rows (decision 0494): each relation one block relation (`Relation::grown`), which every group goes on
@@ -563,7 +600,7 @@ impl Rows {
             for &i in &docs {
                 state.of[i] = Some(0);
             }
-            state.groups.push(Arc::new(Group { docs, ranges }));
+            state.groups.push(Arc::new(Group::new(docs, ranges)));
         }
         let by: Vec<ByDocument> = names.iter().zip(&template).map(|(n, t)| ByDocument::of(n, &Source::columns(t.as_ref()))).collect();
         let distinct = names.iter().map(|_| OnceLock::new()).collect();
@@ -676,7 +713,7 @@ impl Batch {
                 s.of[i] = Some(g);
             }
             profile::decision("a batch's documents made by group (decision 0494)", || format!("{} of {} documents", need.len(), self.docs.len()));
-            s.groups.push(Arc::new(Group { docs: need, ranges }));
+            s.groups.push(Arc::new(Group::new(need, ranges)));
             drop(s);
             drop(claim);
             if !waits {
@@ -889,7 +926,7 @@ impl MadeRows {
         let r = self.batch.made_so_far(self.rel);
         let mut rows = Vec::new();
         for g in groups {
-            rows.extend(g.ranges[self.rel].clone().filter(|&row| values.contains(&Source::value(r.as_ref(), row, column)) && keep(&r, row)));
+            g.rows_with(self.rel, column, &r, values, &mut rows, &keep);
         }
         Some((r, rows))
     }
@@ -1019,6 +1056,15 @@ impl Source for MadeRows {
     }
     fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
         self.target().rows_of(columns, out)
+    }
+    /// Without making a document: a relation every document made is read; one counted, by its count; else it may
+    /// hold rows wherever the batch has a document.
+    fn may_hold_rows(&self) -> bool {
+        match (self.done(), self.batch.rows.counted(self.rel)) {
+            (Some(t), _) => t.len() > 0,
+            (None, Some(n)) => n > 0,
+            (None, None) => self.batch.docs.len() > 0,
+        }
     }
     fn estimated_len(&self) -> usize {
         match (self.done(), self.batch.rows.counted(self.rel)) {
