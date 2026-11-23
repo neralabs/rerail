@@ -6067,7 +6067,7 @@ pub(super) fn float_key(f: f64) -> i64 {
 /// The empty value `unset(x)` binds (`core.rerail`): the id -1, which no node has, so no tree relation holds of it.
 /// Each `unset(x)` is taken out and `x` replaced by it in the rule; `!unset(x)` is `x != -1`. Its text is "":
 /// `text(x, t)` of it is `t = ""` (O77). (A `@place` with no valid line is `unset` too: `PLACE`.)
-pub(super) const UNSET: i64 = -1;
+pub const UNSET: i64 = -1;
 
 /// `re` with each named group made non-capturing (`(?P<x>…)`, `(?<x>…)` → `(?:…)`): what a test that binds nothing
 /// reads. Escapes and character classes are passed over.

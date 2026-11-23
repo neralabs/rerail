@@ -431,6 +431,35 @@ named(n) :- node(_, n, "identifier", _, _), text(n, x), side(x).
     assert!(!split.causes.contains_key("under"), "{:?}", split.causes);
 }
 
+/// A column filled by a node in one rule and by `unset` (-1) in another is a nullable location (decision 0649): a rule
+/// that joins through it, its variable placed by a node column too (`child(a, e, 0)`), stays on one document, as
+/// `conditional-architecture`'s `ca_alias_at` reads `ca_param`'s annotation. Two rows joined by that column alone may
+/// both be -1, of two documents: that rule is cross-file. The column is no location, so no row's document is read
+/// off it.
+#[test]
+fn a_location_or_unset_column_keeps_a_rule_through_it_on_one_document() {
+    let v = read(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.input node, child, field
+.decl ann_of(f: node, a: loc)
+ann_of(f, a) :- node(_, f, "function_definition", _, _), field(f, "return_type", a).
+ann_of(f, a) :- node(_, f, "function_definition", _, _), !field(f, "return_type", _), unset(a).
+.decl ann_head(f: node, e: node)
+ann_head(f, e) :- ann_of(f, a), child(a, e, 0).
+.decl same_ann(f: node, g: node)
+same_ann(f, g) :- ann_of(f, a), ann_of(g, a), f != g.
+.output ann_head, same_ann
+"#);
+    let split = split_of(&v);
+    assert_eq!(split.locations["ann_of"], [0], "{:?}", split.locations);
+    assert_eq!(split.nullable.get("ann_of").map(Vec::as_slice), Some(&[1][..]), "{:?}", split.nullable);
+    assert!(split.local.contains("ann_head"), "{:?} {:?}", split.local, split.causes);
+    assert!(!split.local.contains("same_ann"), "two -1s are of any documents: {:?}", split.local);
+    assert_eq!(split.same_doc.get("ann_of").map(Vec::as_slice), Some(&[0][..]), "{:?}", split.same_doc);
+}
+
 /// A relation stated with no rows is a constant, as one with rows is: reading it, or its negation, joins no document
 /// (t50 step 1). The `.references` setting's relations, which the lowering states empty when the program has no
 /// setting, are such. Declared and not stated, a relation has no location, and its readers are cross-file.
