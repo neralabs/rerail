@@ -10543,3 +10543,14 @@ Roll-up 74's red tests, at their causes (the three faults Q499 lists): a test bu
 sources by `stat`, so under Relax a checkout's edit, or another checkout, is another build; the two kept-facts tests
 that shared `store("wave-readers")` have a store each; the write-back retry test asserts retrying without counting
 on the clock.
+
+### Q501. Roll-up 75 (build-and-test-loop-time 58567d2eaa onto Pulling-it-all-together): what the merge chose
+
+build-and-test-loop-time: farm 58 (the bench rates each host at its own cores, SMT included) and the Relax fork's
+latest (NEON's `vqtbx1q`, `relax check`'s replay of the substituted smallvec's `smallvec!`, and edition 2024's
+`#[unsafe(link_section = ..)]` placing an item, so load hooks run). Two conflicts, `scripts/dev/relax/build` and
+`rerail.patch`: the hub's 6e4f47c1c6 (the crate split's) had written the same link-section change into the patch by
+hand; the feeder's is that change as the fork made it, with its own test, and `rerail.patch` is the fork's commits,
+so both files are the feeder's. No architectural clash.
+
+Checks: no engine code changed; `farm.py` parses and `build` passes `sh -n`.
