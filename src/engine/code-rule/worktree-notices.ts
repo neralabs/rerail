@@ -764,7 +764,10 @@ export class SessionNotices {
   readonly #byFolder: boolean;
   /** Whether the watch holds the folder now. */
   #watching = false;
-  /** Set once the session let go of the folder (`close`): nothing watches it again. */
+  /**
+   * Set once the session let go of the folder (`close`): `#watchFolders`, which every watch goes through, asks for none
+   * from then on.
+   */
   #closed = false;
   /** The folders the watch follows (Linux). */
   readonly #followed = new FollowedFolders();
@@ -938,7 +941,7 @@ export class SessionNotices {
   }
 
   #open(): void {
-    if (this.#closed || this.#watch === undefined || this.#watching || this.#refused !== undefined) return;
+    if (this.#watch === undefined || this.#watching || this.#refused !== undefined) return;
     this.#followed.restart();
     this.#watching = this.#watchFolders([""]);
   }

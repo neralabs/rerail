@@ -1556,13 +1556,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * When `sessionId` started as recorded, undefined when it never was: its row as it is on disk, else this runtime's
-   * record of it closed or suspended here (`#closedSessions`), whose row may still wait behind another process's write
-   * lock. The read makes none of this process's waiting record writes first, which would hold this thread, and so every
-   * session's hooks, for the lock until the oldest of them is 5 s old.
+   * When `sessionId` started as recorded, undefined when it never was: its row as it is on disk. The read makes none of
+   * this process's waiting record writes first, which would hold this thread, and so every session's hooks, for the lock
+   * until the oldest of them is 5 s old. A session this process opened has its row on disk already: its open ends with
+   * the owner claim, which this process's waiting writes are made before (`requireRecordWritesMade`), or fails.
    */
   #recordedStart(sessionId: string): number | undefined {
-    return this.#sessionStore.storedSession(sessionId)?.startedAt ?? this.#closedSessions.get(sessionId)?.startedAt;
+    return this.#sessionStore.storedSession(sessionId)?.startedAt;
   }
 
   /**
