@@ -11,7 +11,7 @@
 use crate::reads::{NONE, f16, f16z::Z};
 use rerail_clif::ids::{INDEX_BITS, Numbering, SLOT_BITS, SPAN_SLOTS};
 use rerail_clif::view::{F16Z_FORMAT, TapeView};
-use rerail_clif::view_reads::{NO_ROW, PLACED_AT, ViewDoc};
+use rerail_clif::view_reads::{NO_ROW, PLACED_AT, PLACED_TABLE, ViewDoc};
 
 /// A document's tape as the views read it: its bytes from its view's base, its view, in its format; a 16z tape with
 /// the cache its reads share.
@@ -399,6 +399,18 @@ impl<'a> Doc<'a> {
             }
         }
     }
+    /// `Loc` position `l`'s span where it stands in its host: by the entry's table where its placement is one
+    /// (`PLACED_TABLE`: no word maps it, its spans placed once), else its span as read, placed (`placed`). The CLIF
+    /// read's (`loc`).
+    #[inline]
+    fn placed_loc(&self, l: u32) -> (u32, u32) {
+        if self.entry.placement == PLACED_TABLE {
+            // SAFETY: the entry's table of u64s (`ViewDoc::placed`), one a position, set where it was made, in its block.
+            let span = unsafe { self.entry.placed.as_slice::<u64>() }[l as usize];
+            return ((span >> 32) as u32, span as u32);
+        }
+        self.placed(self.loc_span(l))
+    }
     /// The 1-based line holding byte `at` (`LineTable::line` + 1: the `line` view's read, `lines_line`).
     #[inline]
     fn loc_line(&self, at: u32) -> u32 {
@@ -414,7 +426,7 @@ impl<'a> Doc<'a> {
         if place == Place::Docof {
             return i64::from(self.entry.file);
         }
-        let (s, e) = self.placed(self.loc_span(l));
+        let (s, e) = self.placed_loc(l);
         if place == Place::Report {
             let at = if col <= 2 { s } else { e };
             let line = self.loc_line(at);

@@ -4653,7 +4653,9 @@ impl Source for Viewed {
     /// document found by the memo; read off the projection where the row has no tape read (`Docs::reads`, counted).
     fn row_at_memo(&self, row: usize, columns: &[usize], out: &mut [i64], memo: &mut u32) {
         let (doc, i) = self.batch.locate_doc(self.view, row, memo);
-        if let Some(d) = self.batch.docs.read(doc, matches!(self.view, View::Loc(_))) {
+        if self.kernel_view()
+            && let Some(d) = self.batch.docs.read(doc, matches!(self.view, View::Loc(_)))
+        {
             for (o, &c) in out.iter_mut().zip(columns) {
                 *o = self.read_value(&d, i, c);
             }
@@ -5005,7 +5007,8 @@ impl Viewed {
     }
     fn row_value(&self, row: usize, column: usize, memo: &mut u32) -> i64 {
         let (doc, i) = self.batch.locate_doc(self.view, row, memo);
-        match self.batch.docs.read(doc, matches!(self.view, View::Loc(_))) {
+        // A view the host reads alone (`kernel_view`) has no directory read: off the projection, as `each_row`'s.
+        match self.kernel_view().then(|| self.batch.docs.read(doc, matches!(self.view, View::Loc(_)))).flatten() {
             Some(d) => self.read_value(&d, i, column),
             None => self.value_at(&self.batch.docs[doc], i, column),
         }
@@ -5414,6 +5417,10 @@ pub fn views_read_both_ways(batch: &Arc<Batch>) -> Result<Vec<(&'static str, usi
     let mut out = Vec::new();
     for (name, view) in named_views(batch.shape) {
         let v = Viewed { batch: Arc::clone(batch), view, home: std::sync::OnceLock::new() };
+        // A view the host reads alone has no directory read to compare (`kernel_view`).
+        if !v.kernel_view() {
+            continue;
+        }
         let ncols = v.columns().len();
         let all: Vec<usize> = (0..ncols).collect();
         let mut memo = NO_MEMO;

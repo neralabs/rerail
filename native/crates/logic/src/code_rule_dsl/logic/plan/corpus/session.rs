@@ -11,7 +11,7 @@
 //! - its store (`session.sqlite`), which binding it selects for its runs (`ThreadStore`): atoms are never given out
 //!   again (decision 0049), and its kept facts are under them;
 //! - its connections (`connections`), kept from run to run: an edit's run opens none;
-//! - its last run's corpus batch (`batch`, decision 0616), which the next run renews: an edit makes only its changed
+//! - each program's last corpus batch (`batches`, decision 0616), which its next run renews: an edit makes only its changed
 //!   documents' rows, the others' read where the last run made them. It is not a second store of facts: a held group
 //!   is taken only where its documents' keys and digests are the store's now, and the batch's documents, statistics
 //!   and counts are the store's kept facts;
@@ -27,8 +27,9 @@ pub(in crate::code_rule_dsl) struct Session {
     path: PathBuf,
     /// Its runs' connections and stores, kept from run to run (`connections`): an edit's run opens none.
     connections: Arc<parking_lot::Mutex<super::connections::Connections>>,
-    /// Its last run's corpus batch, under the key of the cross program that read it (decision 0616): one at a time.
-    batch: parking_lot::Mutex<Option<([u8; 32], Arc<crate::code_rule_dsl::facts::vtab::syntax::Batch>)>>,
+    /// Each program's last corpus batch, under the key of the cross program that read it (decision 0616): a run's
+    /// phases are programs of their own (phase 1's sources, the rule's), each renewing its own batch.
+    batches: parking_lot::Mutex<std::collections::HashMap<[u8; 32], Arc<crate::code_rule_dsl::facts::vtab::syntax::Batch>>>,
 }
 
 /// A session, owned by whoever keeps it from run to run: a long-lived process (the browser's engine, `repeat`) keeps
@@ -43,7 +44,7 @@ impl Handle {
     pub fn open(dir: &Path) -> std::result::Result<Handle, String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = dir.join("session.sqlite");
-        let session = Session { path, connections: Arc::new(parking_lot::Mutex::new(super::connections::Connections::kept())), batch: Default::default() };
+        let session = Session { path, connections: Arc::new(parking_lot::Mutex::new(super::connections::Connections::kept())), batches: Default::default() };
         Ok(Handle { session: Arc::new(parking_lot::Mutex::new(session)) })
     }
 
@@ -137,15 +138,14 @@ impl Held {
     pub(super) fn connections(&self) -> Option<Arc<parking_lot::Mutex<super::connections::Connections>>> {
         self.0.as_deref().map(|s| Arc::clone(&s.connections))
     }
-    /// The session's last corpus batch, taken out for this run, when the cross program `key` read it (decision 0616).
+    /// The last corpus batch of the cross program `key`, taken out for this run (decision 0616).
     pub(super) fn take_batch(&self, key: &[u8; 32]) -> Option<Arc<crate::code_rule_dsl::facts::vtab::syntax::Batch>> {
-        let mut held = self.0.as_deref()?.batch.lock();
-        held.take_if(|h| h.0 == *key).map(|(_, batch)| batch)
+        self.0.as_deref()?.batches.lock().remove(key)
     }
-    /// This run's corpus batch, for the session's next run to renew: the one the session holds.
+    /// This run's corpus batch of the cross program `key`, for that program's next run to renew.
     pub(super) fn put_batch(&self, key: [u8; 32], batch: Arc<crate::code_rule_dsl::facts::vtab::syntax::Batch>) {
         if let Some(s) = self.0.as_deref() {
-            *s.batch.lock() = Some((key, batch));
+            s.batches.lock().insert(key, batch);
         }
     }
 }

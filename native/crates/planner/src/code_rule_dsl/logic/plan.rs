@@ -7355,13 +7355,12 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     // apart. (Measured against the stratum's own kept rows, a selective stratum over the whole tree,
                     // `rr_cover41` with 644 rows over `child`, `docof`, `col`, was derived again at every 2-file edit
                     // of the data layer: the edit cost the first run's 500 s at 2,410 files.)
-                    // An input's rows read are those its statistics planned the run with (`model.stats.card`): a
-                    // semi-join's at the nodes the exports hold, which is all its strata read, where its source's `len`
-                    // made every document's rows to count them, the unchanged ones too (Q332).
-                    let read_rows = |r: &str, now: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>| match run.model.stats.card.get(r) {
-                        Some(&n) if f0.is_input(r) => n as usize,
-                        _ => now.len(),
-                    };
+                    // An input's rows read are its rows now, measured as its delta is: a changed document's every row
+                    // (`input_delta`), against every document's. A semi-join's planned rows (`model.stats.card`, at the
+                    // nodes the exports hold) are not its delta's measure: an import that moved every line of a file
+                    // was 508 of `line`'s 744 rows at the held nodes, and derived again. Its `len` makes no document:
+                    // the corpus batch answers it by its counted total (`give_totals`, `held_total`, Q332).
+                    let read_rows = |_: &str, now: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>| now.len();
                     let sizes: BTreeMap<String, (usize, usize)> = moved.iter().map(|r| (r.clone(), match ins.get(r) {
                         Some((srcs, _)) => (srcs[1].len() + srcs[2].len(), read_rows(r, &srcs[3])),
                         None => super::native::component::held(db, r).map_or((0, 0), |x| {

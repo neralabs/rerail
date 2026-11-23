@@ -5134,6 +5134,7 @@ dependencies = [
  "rerail-prof",
  "rerail-store",
  "rerail-store-base",
+ "rerail-tape-format",
  "rusqlite",
  "same-file",
  "serde",
@@ -8605,6 +8606,7 @@ name = "rerail-vector"
 version = "0.1.0"
 dependencies = [
  "rayon",
+ "rerail-registry",
  "serde",
 ]
 
