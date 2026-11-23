@@ -512,7 +512,8 @@ fn level_batches(ex: &Executor, seed: u64, lanes: &str) {
             let (left, right) = &sides[i];
             let got: Vec<(u32, u32)> = each.take(i).unwrap().pairs().expect("a join's pairs");
             assert!(got.iter().all(|&(l, r)| (l as usize) < left.len() && (r as usize) < right.len()), "{lanes} lanes, batch {batch} join {i}: a pair past its sides ({} x {})", left.len(), right.len());
-            let want = crate::cpu::join(&vec![crate::col::Col::from(left.clone())].into(), &vec![crate::col::Col::from(right.clone())].into(), None);
+            let side = |s: &[i64]| crate::col::Col::from(rerail_blocks::vector::Vector::from(s));
+            let want: Vec<(u32, u32)> = crate::cpu::join(&vec![side(left)].into(), &vec![side(right)].into(), None).iter().map(|&[l, r]| (l, r)).collect();
             assert_eq!(got.len(), want.len(), "{lanes} lanes, batch {batch} join {i}: pairs");
             assert!(got == want, "{lanes} lanes, batch {batch} join {i}: the host's pairs, in its order");
         }

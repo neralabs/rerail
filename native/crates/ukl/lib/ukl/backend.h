@@ -171,13 +171,16 @@ UKL_INLINE float ukl_f16_to_f32_native(uint32_t h) { return float(as_type<half>(
 #define UKL_TABLE_SPACE
 
 UKL_INLINE uint32_t ukl_popcount32(uint32_t x) { return __popc(x); }
-UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return __popcll(x); }
+// The 64-bit intrinsics take their argument as CUDA declares it (`unsigned long long`, `long long`): HIP declares a
+// signed and an unsigned overload, and Linux's `uint64_t` (`unsigned long`) converts to both equally, which hiprtc
+// refuses ("call to '__ffsll' is ambiguous"); Windows' `uint64_t` is `unsigned long long`.
+UKL_INLINE uint32_t ukl_popcount64(uint64_t x) { return __popcll((unsigned long long)x); }
 UKL_INLINE uint32_t ukl_clz32(uint32_t x) { return __clz(x); }
-UKL_INLINE uint32_t ukl_clz64(uint64_t x) { return __clzll(x); }
+UKL_INLINE uint32_t ukl_clz64(uint64_t x) { return __clzll((long long)x); }
 UKL_INLINE int64_t ukl_mulhi64(int64_t a, int64_t b) { return __mul64hi(a, b); }
 UKL_INLINE uint64_t ukl_umulhi64(uint64_t a, uint64_t b) { return __umul64hi(a, b); }
 UKL_INLINE uint32_t ukl_ctz32(uint32_t x) { return x == 0u ? 32u : (uint32_t)(__ffs(x) - 1); }
-UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0u ? 64u : (uint32_t)(__ffsll(x) - 1); }
+UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0u ? 64u : (uint32_t)(__ffsll((long long)x) - 1); }
 
 #if defined(UKL_HIP)
 // HIP (AMD's wavefronts, 32 or 64 lanes): the shuffles take no mask, as every lane of a wavefront runs them together;
@@ -834,10 +837,13 @@ UKL_INLINE uint32_t ukl_mask_rank(ukl_mask_t m, uint32_t l) { return ukl_mask_co
 #define ukl_poll_yield() ((void)0)
 #endif
 
-// The device's clock in nanoseconds, for a measurement's trace: CUDA's global timer. 0 where the backend gives a kernel
-// no clock (Metal, OpenCL C).
+// The device's clock in nanoseconds, for a measurement's trace: CUDA's global timer; on AMD's GPUs the constant-rate
+// counter HIP reads (`wall_clock64`, 100 MHz: `the_device_clock_counts_nanoseconds`). 0 where the backend gives a
+// kernel no clock (Metal, OpenCL C).
 #ifndef ukl_clock_ns
-#if defined(UKL_CUDA)
+#if defined(UKL_HIP)
+UKL_INLINE uint64_t ukl_clock_ns(void) { return (uint64_t)wall_clock64() * 10u; }
+#elif defined(UKL_CUDA)
 UKL_INLINE uint64_t ukl_clock_ns(void) { uint64_t t; asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t)); return t; }
 #else
 #define ukl_clock_ns() ((uint64_t)0)

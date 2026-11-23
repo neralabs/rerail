@@ -74,12 +74,6 @@ native/crates/demand_catalog/src/lib.rs::LOAD	stays	code registered at load (an 
 native/crates/device_metal/src/code_rule_dsl/device_metal.rs::LOAD	stays	code registered at load
 native/crates/device_metal/src/code_rule_dsl/device_metal.rs::METAL	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/embed.rs::EMBEDDERS	stays	code registered at load
-native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::EXPRESSION	stays	a constant (an embedder with no state)
-native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::FOR_ALIAS	stays	a constant (an embedder with no state)
-native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::FOR_SOURCE	stays	a constant (an embedder with no state)
-native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::PARAMS	stays	a constant (an embedder with no state)
-native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::SCRIPT	stays	a constant (an embedder with no state)
-native/crates/lang_ecma/src/code_rule_dsl/embed/vue_code.rs::STATEMENTS	stays	a constant (an embedder with no state)
 native/crates/rules_base/src/code_rule_dsl/eval/mod.rs::ANCHOR_CORPUS	stays	code registered at load (a slot a crate above fills: rerail-registry)
 native/crates/rules_base/src/code_rule_dsl/eval/mod.rs::SNAPSHOT_CONTEXT	stays	computed once from the engine's constants
 native/crates/facts_base/src/code_rule_dsl/facts/core.rs::CORE_NAMES	stays	code a crate above registers at load
@@ -171,30 +165,12 @@ native/crates/lang/src/code_rule_dsl/semver/mod.rs::REGEXES	stays	computed once 
 native/crates/lang/src/code_rule_dsl/suppress/kinds.rs::KINDS	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape.rs::GRAMMARS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape.rs::ROUTER	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/c_lean.rs::C	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/c_lean.rs::CPP	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/csharp_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/css_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::IDS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::JAVASCRIPT	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TSX	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TYPESCRIPT	stays	code registered at load
-native/crates/lang/src/code_rule_dsl/tape/go_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/html_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/java_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/kotlin_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/markdown_inline_lean.rs::KINDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/markdown_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/php_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/python_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/rust_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/scala_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/sql_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/swift_lean.rs::IDS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/token_census.rs::BY_DIALECT	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/tokens.rs::BY_DIALECT	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/tokens.rs::KEPT	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/vue_lean.rs::IDS	stays	computed once from the engine's own files
 native/crates/lang_ecma/src/code_rule_dsl/import_target/mod.rs::FALLBACK	stays	computed once from the engine's constants
 native/crates/lang_ecma/src/code_rule_dsl/import_target/resolver.rs::INVALID_OR_EMPTY_SEGMENT	stays	a regex of a literal
 native/crates/lang_ecma/src/code_rule_dsl/import_target/resolver.rs::INVALID_SEGMENT	stays	a regex of a literal
@@ -237,30 +213,12 @@ native/crates/lang_python/src/code_rule_dsl/suppress/nosec.rs::NOSEC_COMMENT_TES
 native/crates/lang_php/src/code_rule_dsl/suppress/psalm.rs::STAR_LINE	stays	a regex of a literal
 native/crates/lang/src/code_rule_dsl/tape.rs::GRAMMARS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape.rs::ROUTER	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/c_lean.rs::C	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/c_lean.rs::CPP	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/csharp_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/css_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::IDS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::JAVASCRIPT	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TSX	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/tape/ecma_lean.rs::TYPESCRIPT	stays	code registered at load
-native/crates/lang/src/code_rule_dsl/tape/go_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/html_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/java_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/kotlin_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/markdown_inline_lean.rs::KINDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/markdown_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/php_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/python_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/rust_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/scala_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/sql_lean.rs::IDS	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/swift_lean.rs::IDS	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/token_census.rs::BY_DIALECT	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/tokens.rs::BY_DIALECT	stays	computed once from the engine's own files
 native/crates/lang/src/code_rule_dsl/tape/tokens.rs::KEPT	stays	computed once from the engine's own files
-native/crates/lang/src/code_rule_dsl/tape/vue_lean.rs::IDS	stays	computed once from the engine's own files
 native/crates/facts_base/src/code_rule_dsl/text.rs::NAMES	stays	counter names leaked once each (`&'static str`), from the engine's own text productions: an append-only interner of the engine's names
 native/crates/transducer_base/src/code_rule_dsl/transducer/packed.rs::CPU	stays	code registered at load (a slot a crate above fills: rerail-registry)
 native/crates/transducer/src/code_rule_dsl/transducer/packed/compile/matcher.rs::NAMES	stays	names leaked once each (`&'static str`), from the engine's own fallback reasons: an append-only interner of the engine's names
@@ -495,3 +453,5 @@ native/crates/store_base/src/content_store/observer_store/base.rs::STORE	stays	c
 native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::RANGED	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
 native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::BY_NAME	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
 native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::BY_SPAN	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
+native/crates/store/src/content_store/prefilter.rs::REJECT_TERM	stays	a test hook (test-hooks): the terms a store, named by its path, refuses to publish
+native/crates/tape_format/src/lib.rs::LANG	stays	a test fixture's language table, computed once from constants

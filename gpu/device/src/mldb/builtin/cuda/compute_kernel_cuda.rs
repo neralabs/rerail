@@ -107,7 +107,273 @@ struct Api {
     cu_driver_get_version: unsafe extern "C" fn(*mut i32) -> CUresult,
     /// HIP's device properties (`hipGetDevicePropertiesR0600`), for the architecture's name (`gcnArchName`).
     hip_get_device_properties: Option<unsafe extern "C" fn(*mut u8, i32) -> CUresult>,
+    /// The architectures NVRTC compiles for (`nvrtcGetNumSupportedArchs`, `nvrtcGetSupportedArchs`, CUDA 11.2 on):
+    /// a device it does not compile for is told which toolkit it needs (`needs`). None on HIP.
+    nvrtc_supported_archs: Option<(unsafe extern "C" fn(*mut i32) -> i32, unsafe extern "C" fn(*mut i32) -> i32)>,
 }
+
+/// What this machine lacks that the user must install for GPU support (decision 0645: Rerail ships no GPU
+/// compiler): a GPU driver without its runtime compiler, or a compiler that does not compile for the GPU. Said
+/// once, where the process then has no GPU (`rerail_device::shared`); a machine with no GPU driver says nothing.
+static NEEDS: OnceLock<String> = OnceLock::new();
+
+/// What the user must install for GPU support, when the process found a GPU it could not use (`NEEDS`).
+pub fn needs() -> Option<&'static str> {
+    NEEDS.get().map(String::as_str)
+}
+
+/// The compile's options for `target` (`sm_<N>`, `compute_<N>`, a `gfx` target): the device's compile and a build's
+/// for a target (`compile_offline`) take the same, so a kernel shipped for the device's target is the one its own
+/// compile makes.
+fn options_for(vendor: Vendor, target: &str) -> Vec<String> {
+    match vendor {
+        Vendor::Cuda => vec![format!("--gpu-architecture={target}"), "-std=c++20".into(), "-default-device".into()],
+        // hiprtc's functions are host functions unless marked; UKL's HIP shim marks every one a device's
+        // (`force_cuda_host_device`), as NVRTC's `-default-device` does.
+        Vendor::Hip => vec![format!("--offload-arch={target}"), "-std=c++20".into(), "-O3".into()],
+    }
+}
+
+/// A runtime compiler alone (NVRTC or hiprtc), without the driver or a GPU: what a build compiles ahead of time
+/// with (decision 0645 step 3).
+struct Rtc {
+    _lib: crate::os::Lib,
+    name: &'static str,
+    create: unsafe extern "C" fn(*mut Ptr, *const c_char, *const c_char, i32, *const *const c_char, *const *const c_char) -> i32,
+    compile: unsafe extern "C" fn(Ptr, i32, *const *const c_char) -> i32,
+    log_size: unsafe extern "C" fn(Ptr, *mut usize) -> i32,
+    log: unsafe extern "C" fn(Ptr, *mut c_char) -> i32,
+    /// SASS (`nvrtcGetCUBIN`), PTX, or hiprtc's code object.
+    code_size: unsafe extern "C" fn(Ptr, *mut usize) -> i32,
+    code: unsafe extern "C" fn(Ptr, *mut c_char) -> i32,
+    destroy: unsafe extern "C" fn(*mut Ptr) -> i32,
+    version: unsafe extern "C" fn(*mut i32, *mut i32) -> i32,
+    archs: Option<(unsafe extern "C" fn(*mut i32) -> i32, unsafe extern "C" fn(*mut i32) -> i32)>,
+}
+
+impl Rtc {
+    /// The compiler in the library at the first of `names` that opens, its entry points for `form` (`cubin`, `ptx`,
+    /// `hsaco`).
+    fn open(names: &[String], form: &str) -> Option<Rtc> {
+        use crate::os::{Lib, Scope};
+        let lib = Lib::open(names, Scope::Local)?;
+        let f = |n: &str| -> Option<*mut c_void> { Some(lib.sym(n)).filter(|p| !p.is_null()) };
+        let hip = f("hiprtcCreateProgram").is_some();
+        let p = if hip { "hiprtc" } else { "nvrtc" };
+        let g = |n: &str| f(&format!("{p}{n}"));
+        let (size, code) = match form {
+            "ptx" => ("GetPTXSize", "GetPTX"),
+            "cubin" => ("GetCUBINSize", "GetCUBIN"),
+            _ => ("GetCodeSize", "GetCode"),
+        };
+        Some(Rtc {
+            name: if hip { "hiprtc" } else { "NVRTC" },
+            create: sym_as(g("CreateProgram")?),
+            compile: sym_as(g("CompileProgram")?),
+            log_size: sym_as(g("GetProgramLogSize")?),
+            log: sym_as(g("GetProgramLog")?),
+            code_size: sym_as(g(size)?),
+            code: sym_as(g(code)?),
+            destroy: sym_as(g("DestroyProgram")?),
+            version: sym_as(g("Version")?),
+            archs: g("GetNumSupportedArchs").zip(g("GetSupportedArchs")).map(|(n, l)| (sym_as(n), sym_as(l))),
+            _lib: lib,
+        })
+    }
+
+    /// The architectures the compiler lists (NVRTC's; hiprtc lists none).
+    fn archs(&self) -> Option<Vec<i32>> {
+        let (count, list) = self.archs?;
+        let mut n = 0;
+        if unsafe { count(&mut n) } != 0 || n <= 0 {
+            return None;
+        }
+        let mut v = vec![0i32; n as usize];
+        (unsafe { list(v.as_mut_ptr()) } == 0).then_some(v)
+    }
+
+    fn version(&self) -> (i32, i32) {
+        let (mut major, mut minor) = (0, 0);
+        unsafe { (self.version)(&mut major, &mut minor) };
+        (major, minor)
+    }
+
+    fn compile(&self, options: &[String], source: &str, name: &str) -> Result<Vec<u8>, String> {
+        let src = CString::new(source).map_err(|e| e.to_string())?;
+        let cname = CString::new(name).map_err(|e| e.to_string())?;
+        let opts: Vec<CString> = options.iter().map(|o| CString::new(o.as_str()).unwrap()).collect();
+        let ptrs: Vec<*const c_char> = opts.iter().map(|o| o.as_ptr()).collect();
+        let mut prog = std::ptr::null_mut();
+        unsafe {
+            if (self.create)(&mut prog, src.as_ptr(), cname.as_ptr(), 0, std::ptr::null(), std::ptr::null()) != 0 {
+                return Err(format!("{}'s program creation failed", self.name));
+            }
+            let r = (self.compile)(prog, ptrs.len() as i32, ptrs.as_ptr());
+            if r != 0 {
+                let mut n = 0;
+                (self.log_size)(prog, &mut n);
+                let mut log = vec![0u8; n.max(1)];
+                (self.log)(prog, log.as_mut_ptr().cast());
+                (self.destroy)(&mut prog);
+                let log = String::from_utf8_lossy(&log);
+                let errors: Vec<&str> = log.lines().filter(|l| l.contains("error")).take(20).collect();
+                return Err(format!("{} compiling {name} ({}): {}", self.name, options.join(" "), errors.join("\n")));
+            }
+            let mut n = 0;
+            (self.code_size)(prog, &mut n);
+            let mut code = vec![0u8; n];
+            (self.code)(prog, code.as_mut_ptr().cast());
+            (self.destroy)(&mut prog);
+            Ok(code)
+        }
+    }
+}
+
+/// Compiles `source` (prepared for `target`) ahead of time, without a GPU (decision 0645 step 3): `sm_<N>`'s SASS
+/// and `compute_<N>`'s PTX by NVRTC, a `gfx` target's code object by hiprtc, with the options the device's own
+/// compile takes (`options_for`).
+///
+/// NVRTC is the newest that compiles for the architecture, of the toolkits in `RERAIL_SHIP_CUDA_HOMES` (a path
+/// list: no one toolkit compiles for every architecture from sm_70 to the newest, so a release names a 12.x one
+/// beside the newest) and `CUDA_HOME`'s and the system's.
+pub fn compile_offline(target: &str, source: &str, name: &str) -> Result<Vec<u8>, String> {
+    if target.starts_with("gfx") {
+        let rtc = Rtc::open(&hip_library_names().1, "hsaco").ok_or("no hiprtc (ROCm, or the HIP SDK on Windows): a build ships AMD's targets with it")?;
+        return rtc.compile(&options_for(Vendor::Hip, target), source, name);
+    }
+    let form = if target.starts_with("compute_") { "ptx" } else { "cubin" };
+    let sm: i32 = target.trim_start_matches("sm_").trim_start_matches("compute_").parse().map_err(|_| format!("{target}: no CUDA target"))?;
+    // A toolkit's libraries: Windows' `bin`; Linux's `lib64`, or `lib` (NVIDIA's NVRTC wheel, `nvidia-cuda-nvrtc-cu12`);
+    // or the directory holding them, named itself. Not Windows' `.alt.` build (the wheel's `nvrtc64_120_0.alt.dll`),
+    // whose builtins library the wheel does not hold.
+    let (sep, libs): (char, &[&str]) = if cfg!(windows) { (';', &["bin", "."]) } else { (':', &["lib64", "lib", "."]) };
+    let homes: Vec<String> = std::env::var("RERAIL_SHIP_CUDA_HOMES").unwrap_or_default().split(sep).filter(|h| !h.is_empty()).map(str::to_owned).collect();
+    let mut candidates: Vec<Vec<String>> = homes
+        .iter()
+        .map(|h| {
+            libs.iter()
+                .flat_map(|lib| std::fs::read_dir(format!("{h}/{lib}")))
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(if cfg!(windows) { "nvrtc64_" } else { "libnvrtc.so" }) && !n.contains("builtins") && !n.contains(".alt.")))
+                .map(|p| p.display().to_string())
+                .collect()
+        })
+        .collect();
+    candidates.push(cuda_library_names().1);
+    // NVRTC loads its builtins library (`nvrtc-builtins64_129.dll`) by name when it compiles, which Windows finds on
+    // `PATH`: the CUDA Toolkit's installer puts its `bin` there, and a build's toolkit (a wheel's) is put there here.
+    #[cfg(windows)]
+    for h in &homes {
+        let path = std::env::var("PATH").unwrap_or_default();
+        if !path.split(';').any(|p| p.eq_ignore_ascii_case(h)) {
+            // SAFETY: Windows' environment calls are thread-safe (`SetEnvironmentVariableW`, behind std's lock).
+            unsafe { std::env::set_var("PATH", format!("{h};{path}")) };
+        }
+    }
+    // The newest that compiles for the architecture.
+    let mut tried = Vec::new();
+    let mut best: Option<Rtc> = None;
+    for names in candidates {
+        let Some(rtc) = Rtc::open(&names, form) else { continue };
+        let (major, minor) = rtc.version();
+        if rtc.archs().is_some_and(|a| !a.contains(&sm)) {
+            tried.push(format!("NVRTC {major}.{minor}"));
+        } else if best.as_ref().is_none_or(|b| b.version() < (major, minor)) {
+            best = Some(rtc);
+        }
+    }
+    if let Some(rtc) = best {
+        return rtc.compile(&options_for(Vendor::Cuda, target), source, name);
+    }
+    Err(if tried.is_empty() {
+        format!("{target}: no NVRTC (the CUDA Toolkit): a build ships CUDA's targets with it")
+    } else {
+        format!("{target}: no NVRTC found compiles for it ({}): name a CUDA Toolkit that does in RERAIL_SHIP_CUDA_HOMES (12.x for sm_70)", tried.join(", "))
+    })
+}
+
+/// What the user must install where NVRTC (its version `nvrtc`) does not compile for the GPU's `sm`, among the
+/// architectures it lists (`archs`): an older toolkit for a GPU older than it compiles for (CUDA 13 dropped sm_70,
+/// the V100), a newer one for a newer GPU. None where it compiles for it.
+fn needs_for_arch(sm: u32, nvrtc: (i32, i32), archs: &[i32]) -> Option<String> {
+    if archs.contains(&(sm as i32)) || archs.is_empty() {
+        return None;
+    }
+    let (lo, hi) = (archs.iter().min().copied().unwrap_or(0), archs.iter().max().copied().unwrap_or(0));
+    let which = if (sm as i32) < lo { "an older CUDA Toolkit that still compiles for it (12.x for sm_70, the Tesla V100)" } else { "a newer CUDA Toolkit" };
+    Some(format!(
+        "This machine's NVIDIA GPU is sm_{sm}, and its CUDA Toolkit's NVRTC ({}.{}) compiles for sm_{lo} to sm_{hi}, not \
+         for it; Rerail runs on the CPU until it can compile for the GPU. Install {which}: {CUDA_TOOLKIT}, and set {} to it.",
+        nvrtc.0,
+        nvrtc.1,
+        if cfg!(windows) { "CUDA_PATH" } else { "CUDA_HOME" }
+    ))
+}
+
+/// Whether HIP's runtime compiler compiles for `arch`: a kernel of nothing, compiled as every kernel is
+/// (`options_for`); its log where it does not. The answer is kept in the store by hiprtc's version and the
+/// architecture, so a machine compiles it once.
+fn hip_compiles_for(a: &Api, arch: &str) -> Result<(), String> {
+    let (mut major, mut minor) = (0, 0);
+    unsafe { (a.nvrtc_version)(&mut major, &mut minor) };
+    let key = crate::store::key(&[b"hip arch probe", format!("{major}.{minor}").as_bytes(), arch.as_bytes()]);
+    if crate::store::load("hip", &key, "probe").is_some_and(|b| b == b"ok") {
+        return Ok(());
+    }
+    let src = CString::new("extern \"C\" __global__ void rerail_arch_probe(int* p) { if (p) *p = 0; }\n").unwrap();
+    let name = CString::new("rerail_arch_probe.hip").unwrap();
+    let opts: Vec<CString> = options_for(Vendor::Hip, arch).into_iter().map(|o| CString::new(o).unwrap()).collect();
+    let ptrs: Vec<*const c_char> = opts.iter().map(|o| o.as_ptr()).collect();
+    let mut prog = std::ptr::null_mut();
+    unsafe {
+        if (a.nvrtc_create_program)(&mut prog, src.as_ptr(), name.as_ptr(), 0, std::ptr::null(), std::ptr::null()) != 0 {
+            return Err("hiprtc's program creation failed".to_owned());
+        }
+        let r = (a.nvrtc_compile_program)(prog, ptrs.len() as i32, ptrs.as_ptr());
+        let mut n = 0;
+        (a.nvrtc_get_program_log_size)(prog, &mut n);
+        let mut log = vec![0u8; n.max(1)];
+        (a.nvrtc_get_program_log)(prog, log.as_mut_ptr().cast());
+        (a.nvrtc_destroy_program)(&mut prog);
+        if r != 0 {
+            let log = String::from_utf8_lossy(&log);
+            let log = log.trim_matches(|c: char| c == '\0' || c.is_whitespace());
+            let line = log.lines().find(|l| l.contains("error")).unwrap_or(log).trim();
+            // hiprtc's results (hiprtc.h): an architecture it does not know is an invalid option, with no log.
+            let code = match r {
+                5 => "HIPRTC_ERROR_INVALID_OPTION".to_owned(),
+                6 => "HIPRTC_ERROR_COMPILATION".to_owned(),
+                n => format!("hiprtc result {n}"),
+            };
+            return Err(if line.is_empty() { code } else { format!("{code}: {line}") });
+        }
+    }
+    crate::store::save("hip", &key, "probe", b"ok");
+    Ok(())
+}
+
+/// What the user must install where hiprtc (its version `hiprtc`) does not compile for the AMD GPU `arch` (its
+/// first error, `error`): a ROCm, or on Windows a HIP SDK, that supports the GPU.
+fn needs_for_hip(arch: &str, hiprtc: (i32, i32), error: &str) -> String {
+    let (what, url, var) = if cfg!(windows) {
+        ("AMD's HIP SDK", "https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html", "HIP_PATH")
+    } else {
+        ("ROCm", "https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/system-requirements.html", "ROCM_PATH")
+    };
+    format!(
+        "This machine's AMD GPU is {arch}, and its hiprtc ({}.{}, {what}'s compiler) does not compile for it ({}); \
+         Rerail runs on the CPU until it can. Install {what} in a version that supports {arch}: {url}. Installed \
+         elsewhere, set {var} to it.",
+        hiprtc.0,
+        hiprtc.1,
+        error.trim()
+    )
+}
+
+/// Where to get the CUDA Toolkit, in each message that asks for it.
+const CUDA_TOOLKIT: &str = "https://developer.nvidia.com/cuda-toolkit-archive";
 
 unsafe impl Send for Api {}
 unsafe impl Sync for Api {}
@@ -167,16 +433,20 @@ fn cuda_library_names() -> (Vec<String>, Vec<String>) {
     let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     if cfg!(windows) {
         let nvrtc = ["nvrtc64_130_0.dll", "nvrtc64_120_0.dll", "nvrtc64_112_0.dll"];
-        let mut names = s(&nvrtc);
-        if let Ok(home) = std::env::var("CUDA_PATH") {
-            names.extend(nvrtc.iter().map(|s| format!("{home}\\bin\\{s}")));
-        }
+        // The toolkit the user named first (`CUDA_PATH`: the one `needs` asks for), then the system's search.
+        let mut names: Vec<String> = std::env::var("CUDA_PATH").into_iter().flat_map(|home| nvrtc.iter().map(move |s| format!("{home}\\bin\\{s}"))).collect();
+        names.extend(s(&nvrtc));
         (s(&["nvcuda.dll"]), names)
     } else {
-        let home = std::env::var("CUDA_HOME").unwrap_or_else(|_| "/usr/local/cuda".into());
         let nvrtc = ["libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"];
-        let mut names = s(&nvrtc);
-        names.extend(nvrtc.iter().map(|s| format!("{home}/lib64/{s}")));
+        // The toolkit the user named first (`CUDA_HOME`: the one `needs` asks for), then the system's search, then
+        // the toolkit's default place.
+        let home = std::env::var("CUDA_HOME").ok();
+        let mut names: Vec<String> = home.iter().flat_map(|h| nvrtc.iter().map(move |s| format!("{h}/lib64/{s}"))).collect();
+        names.extend(s(&nvrtc));
+        if home.is_none() {
+            names.extend(nvrtc.iter().map(|s| format!("/usr/local/cuda/lib64/{s}")));
+        }
         (s(&["libcuda.so.1", "libcuda.so"]), names)
     }
 }
@@ -274,7 +544,15 @@ fn cuda_api() -> Result<Api, String> {
     use crate::os::{Lib, Scope};
     let (driver, nvrtc_names) = cuda_library_names();
     let cuda = Lib::open(&driver, Scope::Global).ok_or_else(|| format!("no CUDA driver ({})", driver.join(", ")))?;
-    let nvrtc = Lib::open(&nvrtc_names, Scope::Global).ok_or_else(|| format!("no NVRTC ({})", nvrtc_names.join(", ")))?;
+    let nvrtc = Lib::open(&nvrtc_names, Scope::Global).ok_or_else(|| {
+        let _ = NEEDS.set(format!(
+            "This machine has NVIDIA's GPU driver, but not NVRTC, the CUDA Toolkit's compiler, which Rerail needs to \
+             compile its GPU kernels; Rerail runs on the CPU until it is installed. Install the CUDA Toolkit (12.x or \
+             later; 12.x for a Tesla V100 or another sm_70 GPU): {CUDA_TOOLKIT}. Installed elsewhere, set {} to it.",
+            if cfg!(windows) { "CUDA_PATH" } else { "CUDA_HOME" }
+        ));
+        format!("no NVRTC ({})", nvrtc_names.join(", "))
+    })?;
     Ok(Api {
         vendor: Vendor::Cuda,
         cu_init: sym!(cuda, "cuInit"),
@@ -319,6 +597,10 @@ fn cuda_api() -> Result<Api, String> {
         nvrtc_version: sym!(nvrtc, "nvrtcVersion"),
         cu_driver_get_version: sym!(cuda, "cuDriverGetVersion"),
         hip_get_device_properties: None,
+        nvrtc_supported_archs: {
+            let (n, list) = (sym_opt!(nvrtc, "nvrtcGetNumSupportedArchs"), sym_opt!(nvrtc, "nvrtcGetSupportedArchs"));
+            (!n.is_null() && !list.is_null()).then(|| (sym_as(n), sym_as(list)))
+        },
     })
 }
 
@@ -331,7 +613,20 @@ fn hip_api() -> Result<Api, String> {
     use crate::os::{Lib, Scope};
     let (driver, rtc_names) = hip_library_names();
     let hip = Lib::open(&driver, Scope::Global).ok_or_else(|| format!("no HIP runtime ({})", driver.join(", ")))?;
-    let rtc = Lib::open(&rtc_names, Scope::Global).ok_or_else(|| format!("no hiprtc ({})", rtc_names.join(", ")))?;
+    let rtc = Lib::open(&rtc_names, Scope::Global).ok_or_else(|| {
+        let _ = NEEDS.set(if cfg!(windows) {
+            "This machine has AMD's HIP runtime, but not hiprtc, the HIP SDK's compiler, which Rerail needs to compile \
+             its GPU kernels on HIP. Install AMD's HIP SDK for Windows: https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html. \
+             Installed elsewhere, set HIP_PATH to it."
+                .to_string()
+        } else {
+            "This machine has AMD's HIP runtime, but not hiprtc, ROCm's compiler, which Rerail needs to compile its GPU \
+             kernels; Rerail runs on the CPU until it is installed. Install ROCm: https://rocm.docs.amd.com. Installed \
+             elsewhere, set ROCM_PATH to it."
+                .to_string()
+        });
+        format!("no hiprtc ({})", rtc_names.join(", "))
+    })?;
     Ok(Api {
         vendor: Vendor::Hip,
         cu_init: sym!(hip, "hipInit"),
@@ -376,6 +671,7 @@ fn hip_api() -> Result<Api, String> {
         nvrtc_version: sym!(rtc, "hiprtcVersion"),
         cu_driver_get_version: sym!(hip, "hipDriverGetVersion"),
         hip_get_device_properties: Some(sym!(hip, "hipGetDevicePropertiesR0600")),
+        nvrtc_supported_archs: None,
     })
 }
 
@@ -495,6 +791,20 @@ impl CudaDevice {
                 Vendor::Hip => &HIP_ATTRIBUTES,
             };
             let sm = (attr(at.capability_major)? * 10 + attr(at.capability_minor)?) as u32;
+            if let Some((count, list)) = a.nvrtc_supported_archs {
+                let mut n = 0;
+                if count(&mut n) == 0 && n > 0 {
+                    let mut archs = vec![0i32; n as usize];
+                    let (mut major, mut minor) = (0, 0);
+                    (a.nvrtc_version)(&mut major, &mut minor);
+                    if list(archs.as_mut_ptr()) == 0
+                        && let Some(needs) = needs_for_arch(sm, (major, minor), &archs)
+                    {
+                        let _ = NEEDS.set(needs);
+                        return Err(format!("NVRTC {major}.{minor} does not compile for sm_{sm}"));
+                    }
+                }
+            }
             let max_shared_per_block = attr(at.max_shared_per_block_optin)? as u32;
             let pageable = attr(at.pageable_uses_host_page_tables).unwrap_or(0) != 0;
             let says_host_pointer = attr(at.host_pointer_for_registered_mem).unwrap_or(0) != 0;
@@ -514,6 +824,14 @@ impl CudaDevice {
                     let name = name.split(':').next().unwrap_or_default();
                     if !name.starts_with("gfx") {
                         return Err(format!("HIP's architecture is {name:?}, not a gfx name"));
+                    }
+                    // hiprtc lists no architectures (NVRTC's `needs_for_arch`): one small compile for this one says,
+                    // once a machine (the store keeps the answer by hiprtc's version and the architecture).
+                    if let Err(log) = hip_compiles_for(a, name) {
+                        let (mut major, mut minor) = (0, 0);
+                        (a.nvrtc_version)(&mut major, &mut minor);
+                        let _ = NEEDS.set(needs_for_hip(name, (major, minor), &log));
+                        return Err(format!("hiprtc {major}.{minor} does not compile for {name}"));
                     }
                     Box::leak(name.to_owned().into_boxed_str())
                 }
@@ -541,15 +859,13 @@ impl CudaDevice {
         a
     }
 
-    /// The defines its kernels' preprocessing takes: on HIP, the dot-product instructions of the architectures they
-    /// were measured on (RDNA2's `v_dot4_i32_i8` and `v_dot2_f32_f16`, a Radeon 680M's gfx1035: `ukl/dot.h`); RDNA3
-    /// spells its byte form otherwise (`v_dot4_i32_iu8`), and takes the reference until it is measured.
-    pub fn defines(&self) -> Vec<(&'static str, String)> {
-        let mut v = Vec::new();
-        if self.vendor == Vendor::Hip && self.arch.starts_with("gfx103") {
-            v.push(("UKL_HIP_AMD_DOT", "1".to_string()));
+    /// The name of the device's target (decision 0645, `rerail_ukl::Target`): CUDA's `sm_<N>`, HIP's `gfx`
+    /// architecture.
+    pub fn target_name(&self) -> String {
+        match self.vendor {
+            Vendor::Cuda => format!("sm_{}", self.sm),
+            Vendor::Hip => self.arch.to_string(),
         }
-        v
     }
 
     /// An event the host signals and a queue waits on (`metal::SharedEvent`): a word of pinned memory.
@@ -936,10 +1252,8 @@ impl CudaComputeFunctionLibrary {
     pub fn compile_from_source(device: &CudaDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = device.current();
         let (mut options, kind, target): (Vec<String>, &str, String) = match device.vendor {
-            Vendor::Cuda => (vec![format!("--gpu-architecture=sm_{}", device.sm), "-std=c++20".into(), "-default-device".into()], "cuda", format!("sm_{}", device.sm)),
-            // hiprtc's functions are host functions unless marked; UKL's HIP shim marks every one a device's
-            // (`force_cuda_host_device`), as NVRTC's `-default-device` does.
-            Vendor::Hip => (vec![format!("--offload-arch={}", device.arch), "-std=c++20".into(), "-O3".into()], "hip", device.arch.to_string()),
+            Vendor::Cuda => (options_for(Vendor::Cuda, &format!("sm_{}", device.sm)), "cuda", format!("sm_{}", device.sm)),
+            Vendor::Hip => (options_for(Vendor::Hip, device.arch), "hip", device.arch.to_string()),
         };
         // `RERAIL_CUDA_OPTIONS`: more of NVRTC's (or hiprtc's) options, a measurement aid (they are in the key).
         options.extend(std::env::var("RERAIL_CUDA_OPTIONS").unwrap_or_default().split_whitespace().map(str::to_owned));
@@ -989,6 +1303,16 @@ impl CudaComputeFunctionLibrary {
             crate::store::save(kind, &key, "cubin", &cubin);
             Ok(CudaComputeFunctionLibrary { module, device: *device })
         }
+    }
+
+    /// A library of code compiled ahead of time for a target this device runs (decision 0645: a shipped kernel):
+    /// CUDA's SASS or PTX (which the driver compiles), or an AMD code object.
+    pub fn from_compiled(device: &CudaDevice, code: &[u8]) -> Result<Self, String> {
+        let a = device.current();
+        let mut module = std::ptr::null_mut();
+        ck(unsafe { (a.cu_module_load_data)(&mut module, code.as_ptr().cast()) }, "cuModuleLoadData")?;
+        crate::store::count(true);
+        Ok(CudaComputeFunctionLibrary { module, device: *device })
     }
 
     /// The PTX NVRTC makes of `preprocessed_source` for the device's virtual architecture (`compute_<sm>`), as its
@@ -1565,5 +1889,45 @@ impl CudaBindContext<'_> {
         let r = self.launch(max_groups, block);
         self.params[hidden] = vec![0];
         r
+    }
+}
+
+#[cfg(test)]
+mod needs_tests {
+    use super::needs_for_arch;
+
+    /// Decision 0645: a GPU the installed NVRTC does not compile for is told which toolkit to install.
+    #[test]
+    fn a_gpu_nvrtc_does_not_compile_for_is_told_the_toolkit() {
+        let without_sm70 = [75, 80, 86, 89, 90, 100, 120, 121]; // a toolkit that has dropped sm_70 (illustrative)
+        let v100 = needs_for_arch(70, (13, 0), &without_sm70).expect("CUDA 13 does not compile for sm_70");
+        assert!(v100.contains("sm_70") && v100.contains("12.x") && v100.contains("NVRTC (13.0)") && v100.contains("sm_75 to sm_121"), "{v100}");
+        assert!(v100.contains(if cfg!(windows) { "CUDA_PATH" } else { "CUDA_HOME" }) && v100.contains("https://"), "{v100}");
+        let newer = needs_for_arch(130, (12, 4), &[50, 60, 70, 80, 90]).expect("12.4 does not compile for sm_130");
+        assert!(newer.contains("a newer CUDA Toolkit"), "{newer}");
+        assert_eq!(needs_for_arch(121, (13, 0), &without_sm70), None);
+        assert_eq!(needs_for_arch(70, (13, 0), &[]), None, "an empty list says nothing");
+    }
+
+    /// Decision 0645 §6: an AMD GPU hiprtc does not compile for is told what to install, with hiprtc's reason.
+    #[test]
+    fn an_amd_gpu_hiprtc_does_not_compile_for_is_told_what_to_install() {
+        let m = super::needs_for_hip("gfx1250", (7, 2), "error: unsupported HIP gpu architecture: gfx1250");
+        assert!(m.contains("gfx1250") && m.contains("hiprtc (7.2") && m.contains("unsupported HIP gpu architecture") && m.contains("https://"), "{m}");
+        assert!(m.contains(if cfg!(windows) { "HIP_PATH" } else { "ROCM_PATH" }), "{m}");
+    }
+
+    /// The probe on a real HIP device: its own architecture compiles; one that is no GPU's does not, with a reason.
+    #[test]
+    fn hiprtc_is_asked_whether_it_compiles_for_the_gpu() {
+        let Ok(a) = super::api() else { return };
+        if a.vendor != super::Vendor::Hip {
+            return;
+        }
+        let Some(d) = super::CudaDevice::system_default() else { return };
+        assert_eq!(super::hip_compiles_for(a, d.arch), Ok(()));
+        let e = super::hip_compiles_for(a, "gfx9999").expect_err("no GPU is gfx9999");
+        eprintln!("gfx9999: {e}");
+        assert!(!e.is_empty());
     }
 }

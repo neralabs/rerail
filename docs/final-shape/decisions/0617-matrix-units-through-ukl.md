@@ -101,7 +101,7 @@ Every operation is convergent over the owner: every lane of every owning SIMD gr
 | NVIDIA sm_80 and later (the Sparks' GB10) | PTX `mma.sync` | f16, bf16, i8 | 16×8×16 (i8: 16×8×32), 1 group | the Sparks |
 | NVIDIA sm_70 (V100) | `mma.sync` m8n8k4, or `wmma` 16×16×16 | f16 | to choose by test; bf16 and i8 emulated | the V100 VM |
 | Apple M1-M4 | `simdgroup_matrix` | f16; bf16 where the device has it (to verify per Mac) | 8×8×8, 1 group | the Macs |
-| Apple M5 | Metal 4 `matmul2d` over `cooperative_tensor` | f16, bf16; i8 to verify | configured (dividing 64), several groups | the M5 |
+| Apple M5 | Metal 4 `matmul2d` over `cooperative_tensor` | f16, bf16, i8 | 16×16×32, 1 group (measured: "Step 4, built") | the M5 |
 | Intel Xe2 (the Arc 140V) | `cl_intel_subgroup_matrix_multiply_accumulate` (DPAS) | f16, bf16, i8 | 8×16×16 (i8: K 32) at sub-group width 16 (to verify) | the Arc: shape only, no performance work (decision 0576's compile times) |
 | AMD RDNA3 and later | `v_wmma_*` | f16, bf16, i8 | 16×16×16, 1 group (wave32) | none yet: emulated until one joins the farm |
 | AMD RDNA2 (the Radeon 680M) | none | none | emulated: 16×16×16, 1 group | the Radeon 680M host |
@@ -227,7 +227,8 @@ emulated form, which is the reference.
    and i8 ("Step 2 on the Sparks, built"). The V100 runs the emulation, its test's choice ("The V100").
 3. Metal's `simdgroup_matrix` on M1-M4 (f16; bf16 where present; i8 emulated). R4 is what checks the coordinates
    behind `thread_elements()`. Done 2026-11-23 ("Step 3, built").
-4. The M5's `matmul2d`: the first owner of several groups on a device (R5).
+4. The M5's `matmul2d`. It was to be the first owner of several groups on a device (R5); measured, it is not.
+   Done 2026-11-23 ("Step 4, built").
 5. Intel's DPAS on the Arc: R2, R4 and R7, the shape only. Done 2026-11-23 ("Step 5, built").
 6. The Radeon 680M: the emulation, with its dot-product instructions where they help. Done 2026-11-23 ("Step 6,
    built").
@@ -358,7 +359,8 @@ The user: "yes, please add the 1-bit path and emulation/lowering to popcount on 
     - then the words became 64 bits: the gap above.
     - Staging C through threadgroup memory, and storing it directly, did not change it.
 - **Open:**
-  - the M1's remaining gap, which needs its compiled shader read;
+  - the M1's remaining gap, which needed its compiled shader read. Read 2026-11-23 ("The M1's compiled bit
+    product"): it is the inner loop's address arithmetic, under register pressure;
   - the tile's reads, which bound both machines: larger tiles, or both sides' rows read once for several tiles.
     Measured 2026-11-23: they bind neither ("The bit product's reads").
 
@@ -410,6 +412,54 @@ The user: "yes, please add the 1-bit path and emulation/lowering to popcount on 
   R7 finding `air.simdgroup_matrix_8x8_multiply_accumulate.v64f32.v64f16.v64f16.v64f32` and its bf16 form; CUDA's and
   the CPU's pass as before; `accel`'s GPU tests (the bit product on the new layout) pass on the M3.
 
+### Step 4, built (2026-11-23)
+
+- **The M5 runs f16, bf16 and i8 on Metal 4's `matmul2d`** (MetalPerformancePrimitives; `UKL_MMA_M5`). The host
+  asks the device for Apple's GPU family 10 (`supportsFamily:` 1010, which the metal crate does not name) and gives
+  its kernels `UKL_METAL_APPLE10` (since decision 0645, the target `apple10`'s feature `UKL_HAS_MATMUL2D`); `RERAIL_METAL_MATRIX_UNITS=0` leaves it out. The M1-M4 keep `simdgroup_matrix`.
+- **The shape is 16×16×32, one SIMD group an owner.** A probe of `matmul2d` on the M5 Max (macOS 26.4) settled what
+  the headers leave open:
+  - With A and B in registers (cooperative input tensors), the operation takes one SIMD group only ("Input
+    cooperative tensors require a single SIMD group"), and one of M, N or K must be 32. So K is 32 for the three
+    types, as i8's already is on CUDA and DPAS.
+  - On several SIMD groups (`execution_simdgroups<4>`, A and B in memory), `matmul2d` gives each group its own 16×16
+    blocks of C. No 16×16 fragment belongs to several groups. So the M5 is not the first owner of several groups
+    this decision expected: R5 stays checked by the emulation's owners of 2 and 4 groups, on every backend.
+- **Fragments are the lane's elements, not the tensors.** A cooperative tensor has no constant size, so it cannot
+  be a struct's field. A fragment of A or B holds the lane's 16 elements in the tensor's order:
+  - A row-major operand is loaded by the tensor's own load, over the memory where it lies.
+  - A column-major one is loaded element by element, at the tensor's coordinates of each element
+    (`get_multidimensional_index`). A tensor whose first stride is not 1 loaded the wrong elements; R2 found it.
+  - A product makes the input tensors from the fragments, and moves C into the destination tensor and back.
+- **C's layout is `matmul2d`'s destination, measured:**
+  - a lane holds rows `(lane / 2) % 4 + 4 · (lane / 16)` and 8 on;
+  - and columns `4 · (lane % 2) + 8 · ((lane / 8) % 2)`, four side by side.
+  - R4 checks it. b1, emulated, takes the same layout.
+- **Metal's tensor headers reach the compiler past UKL's preprocessor.** `<metal_tensor>` and MetalPerformance-
+  Primitives are the front end's own, as `metal_stdlib` is, but Metal does not include them by itself. The
+  preprocessor leaves them empty, and a text that included them names them again at its top (`Preprocess::run`).
+- **R7 on the M5:** the product is a function the driver defines, `__tensorops_impl_matmul2d_op_run_cooperative_`
+  with `f16_f16_f32`, `b16_b16_f32` or `i8_i8_i32`. The forced emulation's text holds neither Metal unit's name.
+  When R7 fails, it now lists the names that only the native form's text holds.
+- **Measured** on the M5 Max, `bench_matrix_products`, device time:
+
+  | Type | Rate: native | Rate: emulated (best) | Tile call: native | Tile call: forced emulation |
+  |---|---|---|---|---|
+  | f16 | 0.656 ms | 1.576 ms | 0.112 ms | 1.318 ms |
+  | bf16 | 0.656 ms | 1.829 ms | 0.112 ms | 1.533 ms |
+  | i8 | 0.495 ms | 1.082 ms | 0.129 ms | 0.903 ms |
+
+  The native form stays on. The rate kernel holds every type in one kernel, and its b1 branch ran at half the
+  emulated programs' speed (0.206 against 0.105 ms) while `matmul2d`'s branches shared the kernel. The bit
+  product's own kernel has none of them.
+- **The engine's own Metal kernels do not take it yet.** `accel` preprocesses them with `rerail_ukl::metal_source`,
+  without the device's defines, so on the M5 the bit product keeps `simdgroup_matrix`'s C layout (its b1 is emulated
+  either way). A kernel there that wants the M5's f16, bf16 or i8 needs those defines passed on that path.
+- **Passing:**
+  - On the M5, the nine matrix tests and `accel`'s `bit_product_counts_and_pairs`.
+  - UKL's preprocessor tests, on Linux. Their clang comparison had pointed at the forest's shim directories since
+    the shims moved into `rerail-ukl` (f0f3aa6f5f); it now searches the crate's, as the preprocessor does.
+
 ### The V100 (2026-11-23)
 
 - **Volta's unit is `mma.sync.m8n8k4`** (sm_70): f16 into f32 only, no bf16 or i8. Built as a form of its own
@@ -457,6 +507,37 @@ The 1-bit section left the tile's reads open, as the limit on the GB10 and the M
   threadgroup a core, where the 64 tile's 9.7 KB leaves three.
 - So `bp_tile` stays as it was. The M1's gap of the 1-bit section (6-13%) is not its reads either; its compiled
   shader remains the way to it.
+
+### The M1's compiled bit product (2026-11-23)
+
+- **How it was read.** The engine's kernel store keeps each pipeline as a serialized `MTLBinaryArchive`, which holds
+  the device's own machine code. A run of `bit_product_counts_and_pairs` on the M1 with a fresh store
+  (`RERAIL_METAL_KERNELS=<dir>`, `RERAIL_SHIPPED_KERNELS=off`, and `RERAIL_METAL_UNITS=off` so that the kernel is
+  one library, not decision 0571's units) leaves the archives. Dougall Johnson's `applegpu` disassembles them: its
+  `metal-archive-extractor` takes the compute shader out of the archive and its `_agc.main` out of that, and
+  `disassemble.py` reads G13's instructions. `bp_tile` is the pipeline with 32 popcounts.
+- **What it shows.** Both kernels, the current one and the one before the port (8dfbbf1389), run an inner loop of 8
+  steps, each with 32 popcounts and 32 ANDs:
+
+  | Kernel | Inner loop | Integer adds | Threadgroup loads | Registers |
+  |---|---|---|---|---|
+  | before the port | 122 instructions | 45 | 8, 2 words each | 50 |
+  | current | 130 instructions | 56 | 6, 2 or 4 words each | 56 |
+
+  The current loop loads wider and fewer times, as the port meant. But before its six loads it rebuilds the six
+  threadgroup addresses from the step's counter: 23 instructions (shifts, adds, a mask), where the earlier kernel
+  spends about 12. Those six lanes' bases do not change from step to step. The compiler rebuilds them rather than
+  hold them in six registers.
+- **Register pressure is why.** The loop unrolled (`#pragma clang loop unroll(full)`: `#pragma unroll` alone was
+  ignored), every offset a constant, takes 127 registers and spills: 161 stack loads and 158 stack stores in 1,962
+  instructions. Holding more values live costs more than rebuilding them.
+- **So the M1's gap is the ported loop's register use, not its reads.** Its 8 extra instructions a step against 122
+  are close to the 9% measured at W1 on the M1 (and less than 1% at W5 on the M1 Max).
+- **The fragments' loop kept rolled** (`#pragma clang loop unroll(disable)` on `n`, so that the two fragments of B
+  are not both loaded first) is worse: a step of about 191 instructions, as the accumulators `c[n]` are then chosen
+  by selects (24 `icmpsel` a fragment), and still 55 registers. So the current loop stays: the compiler's choice to
+  rebuild addresses is the cheaper of the forms tried, and closing the gap would take a loop of fewer live values
+  than either, which the fragments' interface does not give by itself.
 
 ### Step 5, built (2026-11-23)
 

@@ -255,15 +255,25 @@ impl Device {
         Some(cores * by_threads.min(by_memory))
     }
 
-    /// The defines a kernel's preprocessing for this device takes (the CPU's knobs, `compute_kernel_cpu::defines`;
-    /// OpenCL's width and largest threadgroup; HIP's instructions by architecture): `rerail_gpu::Preprocessing`.
-    pub fn compile_defines(&self) -> Vec<(&'static str, String)> {
+    /// The name of the target a kernel's text is prepared for on this device (decision 0645, `rerail_ukl::Target`,
+    /// which `rerail_gpu::Preprocessing` makes of it): Metal's tier, CUDA's `sm_<N>`, HIP's `gfx` target. None on
+    /// OpenCL and the CPU, whose text is prepared from what the device reports (`local_defines`).
+    pub fn target_name(&self) -> Option<String> {
+        match self {
+            Device::Cpu(_) | Device::OpenCl(_) => None,
+            #[cfg(not(target_os = "macos"))]
+            Device::Native(d) => Some(d.target_name()),
+            #[cfg(target_os = "macos")]
+            Device::Native(d) => Some(crate::compute_kernel_metal::target_name(d).to_string()),
+        }
+    }
+
+    /// The defines of a device without a target's name (`target_name`): the CPU's knobs
+    /// (`compute_kernel_cpu::defines`), OpenCL's width and largest threadgroup and its units.
+    pub fn local_defines(&self) -> Vec<(&'static str, String)> {
         match self {
             Device::Cpu(_) => cpu::defines(),
             Device::OpenCl(d) => d.defines(),
-            #[cfg(not(target_os = "macos"))]
-            Device::Native(d) => d.defines(),
-            #[cfg(target_os = "macos")]
             Device::Native(_) => Vec::new(),
         }
     }
@@ -540,6 +550,22 @@ pub enum ComputeFunctionLibrary {
     OpenCl(cl::ClComputeFunctionLibrary),
 }
 
+/// Compiles `source`, prepared for the shippable target `target`, ahead of time and without a GPU (decision 0645
+/// step 3): Metal's tiers (their `__METAL_VERSION__` `metal_version`) on macOS by Xcode's compiler; CUDA's and AMD's
+/// targets elsewhere, by NVRTC and hiprtc.
+pub fn compile_offline(target: &str, metal_version: Option<u32>, source: &str, name: &str) -> Result<Vec<u8>, String> {
+    if let Some(version) = metal_version {
+        #[cfg(target_os = "macos")]
+        return crate::compute_kernel_metal::compile_offline(version, source, name);
+        #[cfg(not(target_os = "macos"))]
+        return Err(format!("{target} (Metal {version}): Metal's kernels ship from macOS"));
+    }
+    #[cfg(not(target_os = "macos"))]
+    return crate::compute_kernel_cuda::compile_offline(target, source, name);
+    #[cfg(target_os = "macos")]
+    return Err(format!("{target}: CUDA's and AMD's kernels ship from Linux or Windows ({name})"));
+}
+
 impl ComputeFunctionLibrary {
     /// `preprocessed_source`, UKL preprocessed for `device` (`Device::ukl_backend`), compiled.
     pub fn compile_from_source(device: &Device, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
@@ -548,6 +574,15 @@ impl ComputeFunctionLibrary {
             Device::Cpu(d) => ComputeFunctionLibrary::Cpu(cpu::CpuComputeFunctionLibrary::compile_from_source(d, preprocessed_source, file_name_to_appear_in_error_messages)?),
             Device::OpenCl(d) => ComputeFunctionLibrary::OpenCl(cl::ClComputeFunctionLibrary::compile_from_source(d, preprocessed_source, file_name_to_appear_in_error_messages)?),
         })
+    }
+
+    /// A library of code compiled ahead of time for a target the device runs (decision 0645: a shipped kernel). Only
+    /// a GPU's: OpenCL's and the CPU's targets are local.
+    pub fn from_compiled(device: &Device, code: &[u8]) -> Result<Self, String> {
+        match device {
+            Device::Native(d) => Ok(ComputeFunctionLibrary::Native(native::Library::from_compiled(d, code)?)),
+            Device::Cpu(_) | Device::OpenCl(_) => Err("no compiled code ships for a local target".to_owned()),
+        }
     }
 
     /// `preprocessed_source` compiled to the backend's text of its instructions (CUDA's PTX), for a test to read which

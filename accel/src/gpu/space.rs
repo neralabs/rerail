@@ -197,6 +197,9 @@ pub struct Started {
     /// This submission's scratch, which no other in flight holds: its second pass, if any, encodes on it, on
     /// whichever thread finishes it.
     scratch: Arc<super::join::Scratch>,
+    /// The submission's evaluation of the launch budget (decision 0601), which `finish` goes on with on whichever
+    /// thread finishes it: None where `start` ran in its caller's.
+    evaluation: Option<super::launch::Carried>,
 }
 
 /// [`run`]'s first half: the batch's first submission encoded and committed, and its right sides kept (a sort
@@ -205,7 +208,11 @@ pub struct Started {
 pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started, String> {
     let mut space = space.lock().map_err(|_| "the gpu lane's space was poisoned")?;
     let scratch = space.free_scratch();
-    super::join::on_scratch(&scratch, || start_on(space, ks, Arc::clone(&scratch)))
+    // The submission's launches are one evaluation (`launch`), or its caller's when it is in one.
+    let evaluation = super::launch::LaunchScope::enter();
+    let mut started = super::join::on_scratch(&scratch, || start_on(space, ks, Arc::clone(&scratch)))?;
+    started.evaluation = evaluation.carry();
+    Ok(started)
 }
 
 fn start_on(mut space: std::sync::MutexGuard<'_, Space>, ks: &[&Kernel], scratch: Arc<super::join::Scratch>) -> Result<Started, String> {
@@ -319,12 +326,13 @@ fn start_on(mut space: std::sync::MutexGuard<'_, Space>, ks: &[&Kernel], scratch
             space.put(id, by, rows, bytes, entry);
         }
     });
-    Ok(Started { command, held, committed, reads, tables, arena, jobs, scratch })
+    Ok(Started { command, held, committed, reads, tables, arena, jobs, scratch, evaluation: None })
 }
 
 impl Started {
     /// [`run`]'s second half: waits for the first submission, runs the second when needed, and reads the pairs.
-    pub fn finish(self) -> Result<Vec<Output>, String> {
+    pub fn finish(mut self) -> Result<Vec<Output>, String> {
+        let _evaluation = super::launch::LaunchScope::resume(self.evaluation.take());
         let scratch = Arc::clone(&self.scratch);
         super::join::on_scratch(&scratch, || self.finish_on_set())
     }

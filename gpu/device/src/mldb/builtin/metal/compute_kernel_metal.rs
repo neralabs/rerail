@@ -111,6 +111,16 @@ fn get_kernel_type_from_data_type(data_type: MTLDataType) -> Result<KernelBaseTy
     })
 }
 
+/// The name of the device's target (decision 0645, `rerail_ukl::Target`): Metal's highest tier the device has,
+/// `apple10` on Apple's GPU family 10 (the M5: Metal 4's `matmul2d`), else `apple7`. `RERAIL_METAL_MATRIX_UNITS=0`
+/// takes `apple7` on any device (`RERAIL_METAL_UNITS` is decision 0571's).
+pub fn target_name(device: &DeviceRef) -> &'static str {
+    let off = std::env::var("RERAIL_METAL_MATRIX_UNITS").is_ok_and(|v| v == "0");
+    // `MTLGPUFamilyApple10` (1010), which the metal crate does not name.
+    let apple10: bool = !off && unsafe { msg_send![device, supportsFamily: 1010_i64] };
+    if apple10 { "apple10" } else { "apple7" }
+}
+
 // `StructMemberRef::struct_type`/`array_type` and `ArrayTypeRef::element_struct_type`/`element_array_type` in the
 // metal crate return the (uninhabited) Objective-C types by value; these ask for the same properties by reference.
 fn member_struct_type(m: &metal::StructMemberRef) -> &StructTypeRef {
@@ -318,10 +328,57 @@ impl MetalComputeFunctionLibrary {
         Ok(MetalComputeFunctionLibrary { mtl_library })
     }
 
+    /// A library of AIR compiled ahead of time for a tier this device runs (decision 0645: a shipped kernel).
+    pub fn from_compiled(device: &DeviceRef, code: &[u8]) -> Result<Self, String> {
+        let mtl_library = objc::rc::autoreleasepool(|| device.new_library_with_data(code)).map_err(|e| format!("a compiled Metal library does not load: {e}"))?;
+        crate::store::count(true);
+        Ok(MetalComputeFunctionLibrary { mtl_library })
+    }
+
     pub fn get_function(&self, device: &DeviceRef, function_name: &str) -> Result<MetalComputeFunction, String> {
         let function = self.mtl_library.get_function(function_name, None).map_err(|e| format!("Error getting function '{function_name}' from Metal library ({}): {e}", self.mtl_library.function_names().join(", ")))?;
         MetalComputeFunction::new(device, function)
     }
+}
+
+/// The Metal language standard a text prepared for `__METAL_VERSION__` `version` is compiled with ahead of time, and
+/// the oldest macOS its library loads on. The device's own compile takes the newest its system has: a text of
+/// `apple7` (310) uses Metal 3.2's coherent memory and thread scopes (UKL's atomics), so Metal 3.2 and macOS 15;
+/// `apple10`'s (400) Metal 4 and macOS 26.
+fn standard(version: u32) -> (&'static str, &'static str) {
+    if version >= 400 { ("metal4.0", "26.0") } else { ("metal3.2", "15.0") }
+}
+
+/// Compiles Metal source (prepared for `__METAL_VERSION__` `version`) ahead of time to a library of AIR, without a
+/// device (decision 0645 step 3), by Xcode's Metal compiler (`xcrun metal`, `xcrun metallib`).
+pub fn compile_offline(version: u32, source: &str, name: &str) -> Result<Vec<u8>, String> {
+    let (std, macos) = standard(version);
+    let stem: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let dir = std::env::temp_dir().join(format!("rerail-ship-{}-{}-{stem}", std::process::id(), crate::store::unique()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let (src, air, lib) = (dir.join("k.metal"), dir.join("k.air"), dir.join("k.metallib"));
+    let run = |args: &[&std::ffi::OsStr]| -> Result<(), String> {
+        let out = std::process::Command::new("xcrun").args(args).output().map_err(|e| format!("xcrun: {e} (shipping Metal kernels needs Xcode's Metal compiler)"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let lines: Vec<&str> = err.lines().filter(|l| l.contains("error")).take(20).collect();
+            Err(format!("{name} ({std}): {} (the Metal Toolchain: `xcodebuild -downloadComponent MetalToolchain`)", if lines.is_empty() { err.trim().to_owned() } else { lines.join("\n") }))
+        }
+    };
+    let result = std::fs::write(&src, source).map_err(|e| e.to_string()).and_then(|()| {
+        let (std, min) = (format!("-std={std}"), format!("-mmacosx-version-min={macos}"));
+        // The device's compile (`newLibraryWithSource:`) includes Metal's standard library itself; a prepared text
+        // leaves it to the compiler (UKL's shim, under `__UKL_METAL_PREPROCESSING`).
+        let args: [&std::ffi::OsStr; 12] =
+            ["-sdk".as_ref(), "macosx".as_ref(), "metal".as_ref(), std.as_ref(), min.as_ref(), "-include".as_ref(), "metal_stdlib".as_ref(), "-c".as_ref(), src.as_os_str(), "-o".as_ref(), air.as_os_str(), "-w".as_ref()];
+        run(&args)?;
+        run(&["-sdk".as_ref(), "macosx".as_ref(), "metallib".as_ref(), air.as_os_str(), "-o".as_ref(), lib.as_os_str()])?;
+        std::fs::read(&lib).map_err(|e| e.to_string())
+    });
+    let _ = std::fs::remove_dir_all(&dir);
+    result
 }
 
 /// A queue of operations on the shared device (`MetalComputeQueue`): kernel launches, each in its own compute

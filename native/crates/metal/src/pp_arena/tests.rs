@@ -281,7 +281,7 @@ fn a_units_groups_are_one_a_small_grids_nodes() {
 /// (inlined, it crashed the M3's back end); small, it is kept in its callers' units.
 #[test]
 fn the_setup_splits_one_unit_a_barriered_function() {
-    let msl = rerail_ukl::metal_source("pp_setup", source()).expect("the setup's source preprocesses");
+    let msl = rerail_ukl::metal_source(&rerail_ukl::Target::named("apple7").unwrap(), "pp_setup", source()).expect("the setup's source preprocesses");
     let split = rerail_ukl::split::split(&msl).expect("the setup has barriered functions");
     for (l, units) in split.levels().iter().enumerate() {
         eprintln!("level {l}: {}", units.iter().map(|u| format!("{}({})", u.name, u.calls.join(","))).collect::<Vec<_>>().join(" "));
@@ -303,7 +303,7 @@ fn the_setup_splits_one_unit_a_barriered_function() {
 fn the_source_compiles() {
     // `RERAIL_PP_DUMP`: the source as Metal's front end takes it, written there (its errors' lines).
     if let Some(path) = std::env::var_os("RERAIL_PP_DUMP") {
-        std::fs::write(path, rerail_ukl::metal_source("pp_setup", source()).unwrap_or_else(|e| e.to_string())).unwrap();
+        std::fs::write(path, rerail_ukl::metal_source(&rerail_ukl::Target::named("apple7").unwrap(), "pp_setup", source()).unwrap_or_else(|e| e.to_string())).unwrap();
     }
     for name in ["pp_setup", "pp_check", "pb_search", "pb_expand", "pd_relex_test", "pb_sort_alone", "pb_barriers_alone"] {
         kernel(name);

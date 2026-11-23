@@ -10920,3 +10920,8 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - tests-logic filter 1;
   - tests-corpus 20 targeted (tape values, guests, cross views, semi-joins, field captures), then 16 (statistics, chunk, made batch).
 - Not run: Metal tests, and `the_run_after_a_cold_one_with_tape_values_writes_nothing` (the Relax share-path defect from roll-up 94).
+
+### Q523. Roll-up 96 (CUDA-support ba4bb0bec7 onto Pulling-it-all-together): what the merge chose
+
+- No conflicts. Decisions 0645 (kernels prepared for a named target, shipped per target, the user installs the GPU compiler) and 0651 (GPU kernels as npm packages, proposed) come in whole, with 0617's Metal 4 tensor-op matmul2d and the M1 read.
+- Checked (Relax, RERAIL_GPU=cpu): rerail-ukl, accel, gpu, device, boot, metal 0 errors; ukl's target tests 2 passed. The CUDA, HIP and Metal kernels themselves are not run here.

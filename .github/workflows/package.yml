@@ -197,9 +197,116 @@ jobs:
           path: native/*.node
           if-no-files-found: error
 
+  # The fixed GPU kernels compiled ahead of time for each target a release ships (decision 0645): Metal's tiers on
+  # macOS (Xcode 26's Metal 4 compiler), CUDA's from the V100 on and AMD's on Linux, CUDA's on Windows, whose text
+  # differs (LLP64). The compilers run without a GPU: the engine runs on its CPU device, and the text a kernel is
+  # prepared from is the device's (measured on a GB10: every program a CUDA device asked for loaded from kernels a
+  # CPU device shipped). NVRTC from NVIDIA's wheels (13 and 12: CUDA 13 compiles no sm_70), hiprtc from ROCm's
+  # packages. The user installs their own compiler to run generated kernels (0645 §6); these only spare the fixed
+  # kernels' first compile. AMD's kernels on Windows are compiled where they run (the HIP SDK's installer is not
+  # automated here).
+  kernels:
+    name: GPU kernels ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            name: Metal
+            targets: metal
+          - runner: ubuntu-24.04
+            name: CUDA and AMD on Linux
+            targets: cuda,amd
+          - runner: windows-2025
+            name: CUDA on Windows
+            targets: cuda
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      ROCM_VERSION: "7.2"
+    steps:
+      - name: Allow long paths in Git on Windows
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        shell: bash
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      # Metal 4 (`apple10`, the M5's matrix unit) needs Xcode 26's compiler, and Xcode 26 ships it as a component.
+      - name: Select Xcode 26 and its Metal Toolchain
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s "$(printf '%s\n' /Applications/Xcode_26*.app | sort -V | tail -1)"
+          xcrun -f metal >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+          xcrun metal --version
+
+      # NVRTC alone, from NVIDIA's wheels: 13 for sm_75 on, 12 for sm_70 (the V100). Each directory holding a
+      # library is a toolkit for the build (RERAIL_SHIP_CUDA_HOMES); each target takes the newest that compiles for it.
+      - name: Install NVRTC 13 and 12
+        if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --target "$RUNNER_TEMP/nvrtc13" "nvidia-cuda-nvrtc==13.*"
+          python3 -m pip install --quiet --target "$RUNNER_TEMP/nvrtc12" "nvidia-cuda-nvrtc-cu12==12.9.*"
+          if [ "$RUNNER_OS" = Windows ]; then lib='nvrtc64_*.dll'; sep=';'; else lib='libnvrtc.so*'; sep=':'; fi
+          homes=$(find "$RUNNER_TEMP/nvrtc13" "$RUNNER_TEMP/nvrtc12" -name "$lib" ! -name '*builtins*' -exec dirname {} \; | sort -u | tr '\n' "$sep")
+          test -n "$homes"
+          if [ "$RUNNER_OS" = Windows ]; then homes=$(cygpath -w -p "${homes%"$sep"}"); fi
+          echo "RERAIL_SHIP_CUDA_HOMES=$homes" >> "$GITHUB_ENV"
+
+      # hiprtc and what it compiles with (comgr, the device libraries), from ROCm's packages.
+      - name: Install ROCm's hiprtc
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg >/dev/null
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} noble main" | sudo tee /etc/apt/sources.list.d/rocm.list
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends hip-runtime-amd comgr rocm-device-libs
+          ls /opt/rocm/lib/libhiprtc.so*
+
+      # The engine's tool (`rerail-engine kernels ship`), a debug build: the kernels' text does not depend on it.
+      - name: Build the engine's tool
+        working-directory: native
+        run: cargo build --bin rerail-engine
+
+      - name: Ship the kernels
+        working-directory: native
+        shell: bash
+        env:
+          RERAIL_GPU: cpu
+          RERAIL_GPU_KERNELS: ${{ runner.temp }}/gpu-kernels-store
+          RERAIL_SHIPPED_KERNELS: "off"
+        run: ../target/debug/rerail-engine kernels ship ../rerail-kernels --targets ${{ matrix.targets }}
+
+      - name: Upload the kernels
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rerail-kernels-${{ runner.os }}
+          path: rerail-kernels/gpu
+          if-no-files-found: error
+
   package:
     name: Package
-    needs: native
+    needs: [native, kernels]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
@@ -239,6 +346,22 @@ jobs:
           pattern: rerail-native-*
           path: native
           merge-multiple: true
+
+      # Beside the engines, where the engine looks for them (`rerail-kernels/` beside the library it was loaded from).
+      - name: Download GPU kernels
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: rerail-kernels-*
+          path: native/rerail-kernels/gpu
+          merge-multiple: true
+
+      - name: Verify every shipped GPU target is present
+        run: |
+          set -euo pipefail
+          for target in apple7 apple10 sm_70 sm_80 sm_121 compute_70 compute_80 gfx1030 gfx1100 gfx942; do
+            ls native/rerail-kernels/gpu/${target}/* >/dev/null 2>&1 || { echo "no kernels for ${target}" >&2; exit 1; }
+          done
+          du -sh native/rerail-kernels
 
       - name: Verify every supported native target is present
         run: |
