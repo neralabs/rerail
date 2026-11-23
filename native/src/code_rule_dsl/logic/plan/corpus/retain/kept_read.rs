@@ -53,6 +53,17 @@ impl Bound {
     /// The entry of `rel` (its name and identity) at partition `part`, if the space keeps one.
     pub(in crate::code_rule_dsl) fn entry(self: &Arc<Self>, rel: &str, ident: &[u8; 32], part: i64) -> Option<Entry> {
         let found = self.view().entry(&FactKey { rel, ident, part })?;
+        self.held(found, ident)
+    }
+
+    /// `rel`'s (its name and identity) entries, for reads of several of its partitions (`Keyed::entry`): its name
+    /// searched once a file of the chain, not once a partition.
+    pub(in crate::code_rule_dsl) fn keyed(self: &Arc<Self>, rel: &str, ident: &[u8; 32]) -> Keyed {
+        Keyed { bound: Arc::clone(self), spans: self.view().spans(rel, ident), ident: *ident }
+    }
+
+    /// `found`, an entry of `ident`'s, held past the view's borrow, and named in the run's reader record.
+    fn held(self: &Arc<Self>, found: Kept<'_>, ident: &[u8; 32]) -> Option<Entry> {
         // SAFETY: what it borrows (its rows, key, types and reads) lies in the read-only mappings `self` holds, which
         // the entry holds too (`bound`), as `rows` was held before; `kept` gives it back borrowed from the entry.
         let kept: Kept<'static> = unsafe { std::mem::transmute::<Kept<'_>, Kept<'static>>(found) };
@@ -64,6 +75,21 @@ impl Bound {
             }
         });
         Some(Entry { bound: Arc::clone(self), kept })
+    }
+}
+
+/// One relation's entries in a bound space (`Bound::keyed`).
+pub(in crate::code_rule_dsl) struct Keyed {
+    bound: Arc<Bound>,
+    spans: Vec<(usize, usize)>,
+    ident: [u8; 32],
+}
+
+impl Keyed {
+    /// Its entry at partition `part`, as `Bound::entry` finds it.
+    pub(in crate::code_rule_dsl) fn entry(&self, part: i64) -> Option<Entry> {
+        let found = self.bound.view().entry_in(&self.spans, part)?;
+        self.bound.held(found, &self.ident)
     }
 }
 

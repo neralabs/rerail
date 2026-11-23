@@ -2439,7 +2439,9 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
     let mut out = HashMap::new();
     for rel in rels {
         let ident = input_ident(rel, prog, &binds);
-        let Some(docs_entry) = bound.entry(rel, &ident, DOCS_PART) else {
+        // Its entries, its name searched once (a granule's entry each, and its documents' and statistics').
+        let keyed = bound.keyed(rel, &ident);
+        let Some(docs_entry) = keyed.entry(DOCS_PART) else {
             return Ok(Err(format!("{rel}: no entry of its documents")));
         };
         let Some(width) = fields.arity(rel) else { return Ok(Err(format!("{rel}: not declared by the cross part"))) };
@@ -2459,7 +2461,7 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         let mut granules: Vec<kept_read::Entry> = Vec::with_capacity(ids.len());
         let mut counts: Vec<(i64, usize)> = Vec::with_capacity(ids.len());
         for (k, id) in ids.iter().enumerate() {
-            let Some(part) = bound.entry(rel, &ident, *id) else { return Ok(Err(format!("{rel}: a granule's entry is missing"))) };
+            let Some(part) = keyed.entry(*id) else { return Ok(Err(format!("{rel}: a granule's entry is missing"))) };
             let n = part.len();
             if part.width() != width {
                 return Ok(Err(format!("{rel}: a granule's entry does not hold its owners' rows")));
@@ -2480,8 +2482,8 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         // Each granule's first row, in the order the rows were laid out.
         let source: Arc<dyn Source> = if traced { Arc::new(Traced::new(rel.clone(), source, starts)) } else { source };
         // Its statistics at these rows: the entry under the documents' digest (an older entry is never matched).
-        let stats = bound
-            .entry(rel, &ident, kept_stats::PART)
+        let stats = keyed
+            .entry(kept_stats::PART)
             .filter(|p| kept_stats::on() && stats_of.contains(rel) && p.digest() == digest)
             .and_then(|p| kept_stats::from_words(&entry_words(&p)))
             .and_then(|all| all.get(&(rel.clone(), digest)).map(|(columns, _, _)| columns.clone()));

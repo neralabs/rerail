@@ -261,6 +261,23 @@ impl<B: Borrow<Block>> KeptFacts<B> {
         Some((self.key_of(e), self.entry(e)))
     }
 
+    /// The entries of `rel` under `ident`: their range, by one search of the name's bytes and the identity.
+    fn span(&self, rel: &str, ident: &[u8; 32]) -> (usize, usize) {
+        fn at<'e>(strings: &'e [u8], e: &'e KeptEntry) -> (&'e [u8], &'e [u8; 32]) {
+            (&strings[e.rel_at as usize..(e.rel_at + e.rel_len) as usize], &e.ident)
+        }
+        let (es, strings, want) = (self.entries(), self.strings(), (rel.as_bytes(), ident));
+        let lo = es.partition_point(|e| at(strings, e) < want);
+        (lo, lo + es[lo..].partition_point(|e| at(strings, e) == want))
+    }
+
+    /// The entry of partition `part` among `span`'s (`span`), by its part alone.
+    fn find_in(&self, (lo, hi): (usize, usize), part: i64) -> Option<(FactKey<'_>, Found<'_>)> {
+        let es = &self.entries()[lo..hi];
+        let e = &es[es.binary_search_by_key(&part, |e| e.part).ok()?];
+        Some((self.key_of(e), self.entry(e)))
+    }
+
     /// The entries of `rel`, by a binary search for their range.
     fn range(&self, rel: &str) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
         let es = self.entries();
@@ -405,6 +422,21 @@ impl<'a, B: Borrow<Block>> KeptChain<'a, B> {
     pub fn entry(&self, key: &FactKey) -> Option<Kept<'a>> {
         let files: &'a [KeptFacts<B>] = self.files;
         let mut found = files.iter().rev().filter_map(|f| f.find(key));
+        let (own, first) = found.next()?;
+        resolve(own, first, found.map(|(_, f)| f))
+    }
+
+    /// The entries of `rel` under `ident` in each file, oldest first (`entry_in`): a reader of many of one
+    /// relation's partitions searches its name once a file, then each part by its number.
+    pub fn spans(&self, rel: &str, ident: &[u8; 32]) -> Vec<(usize, usize)> {
+        self.files.iter().map(|f| f.span(rel, ident)).collect()
+    }
+
+    /// The entry of partition `part` among `spans` (`spans`, of these files): `entry` of the key they are of.
+    pub fn entry_in(&self, spans: &[(usize, usize)], part: i64) -> Option<Kept<'a>> {
+        let files: &'a [KeptFacts<B>] = self.files;
+        debug_assert_eq!(files.len(), spans.len(), "the spans of another chain");
+        let mut found = files.iter().zip(spans).rev().filter_map(|(f, s)| f.find_in(*s, part));
         let (own, first) = found.next()?;
         resolve(own, first, found.map(|(_, f)| f))
     }
