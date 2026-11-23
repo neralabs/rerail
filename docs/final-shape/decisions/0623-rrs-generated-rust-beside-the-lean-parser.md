@@ -393,6 +393,6 @@ they were 1.5 ms slower, left as calls.
 Every call and return of the one loop (0618) pushed and popped `self.stack`. After any `&mut self` call between them,
 the Vec's length, room and pointer were read from memory again. Only `run` reads the stack, so it now takes it into a
 local (`std::mem::take`) as it starts, and the code reads `stack`. Side by side on spark1 (at a load of 9), tier 2 went
-from 34.9–35.6 ms to 34.2–34.8 ms. Kotlin's loop is the same.
+from 34.9–35.6 ms to 34.2–34.8 ms. Kotlin's tier 2 is not this loop, and its file is unchanged.
 
 `rr_parser`'s 52 library tests and `kotlin_parser`'s 70 pass.
