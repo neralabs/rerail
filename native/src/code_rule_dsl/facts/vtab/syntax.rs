@@ -4602,7 +4602,9 @@ impl Viewed {
     /// probe did not bring, then fills each slot from its op.
     fn read_matches(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         use read_op::*;
-        if matches!(self.view, View::Field | View::Loc(_) | View::Tok(_)) {
+        // A field's rows are its fielded nodes: a probe's match without a field has no row (`row_of_node`), and is
+        // passed over. A place's and the token order's values are no slot op of the plan.
+        if matches!(self.view, View::Loc(_) | View::Tok(_)) {
             return false;
         }
         if !cursor.plan.is_for(column, columns) {
@@ -4662,9 +4664,14 @@ impl Viewed {
                     (View::Child, Some((2, i))) if counted => u32::try_from(i).ok(),
                     _ => None,
                 };
+                // A field probed by its parent and field (`field(p, f, c)`): the children under that field alone.
+                let field = match (view, cursor_also) {
+                    (View::Field, Some((1, f))) => Some(f),
+                    _ => None,
+                };
                 let mut i = 0;
                 p.each_child_node(local, |c, x| {
-                    if at.is_some_and(|a| a != i) {
+                    if at.is_some_and(|a| a != i) || field.is_some_and(|f| i64::from(field_atom(p.tag, p.facts.field(x))) != f) {
                         i += 1;
                         return;
                     }

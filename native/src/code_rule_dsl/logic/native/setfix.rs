@@ -1289,6 +1289,23 @@ struct LastProbe {
     memo: Option<(Vec<i64>, Probed)>,
     cursor: crate::code_rule_dsl::facts::vtab::ProbeCursor,
     spare: Option<Arc<Vec<(u32, [i64; READ])>>>,
+    /// The run's settings a probe reads, read at the step's first probe (`Settings`), not at each.
+    settings: Option<ProbeSettings>,
+}
+/// The run's settings a step's probes read (decision 0442): the probe report's (`probed::on`) and the within test's.
+#[derive(Clone, Copy)]
+struct ProbeSettings {
+    noted: bool,
+    within_test: bool,
+}
+impl LastProbe {
+    #[inline]
+    fn settings(&mut self) -> ProbeSettings {
+        *self.settings.get_or_insert_with(|| ProbeSettings {
+            noted: probed::on(),
+            within_test: rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_WITHIN_TEST").map_or(true, |v| v != "off")),
+        })
+    }
 }
 /// A probe's candidates: their ids, or their ids with their rows' values read as they were found (`View::find_read`);
 /// `Pending`: a probe read into its step as found (`Cands::Stream`) and not yet read through, which is no answer.

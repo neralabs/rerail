@@ -98,11 +98,29 @@ impl<'a> Rows<'a> {
 
 /// `stream`: the caller reads the candidates through `Rows::each`, which reads a view's probe as the source finds its
 /// rows (`Cands::Stream`); else a read probe's rows are listed first (`Cands::Read`).
+/// A probe of `v` by `cols` (`key`) read into the step as found (`Cands::Stream`), by column `lead`: the memo is its
+/// key, pending, until `Rows::each` reads it.
+fn stream_probe<'a>(v: &'a View, cols: &'a [usize], lead: usize, key: &[i64], last: &mut LastProbe) -> Cands<'a> {
+    let mut k = [0i64; STREAM_KEY];
+    k[..key.len()].copy_from_slice(key);
+    match &mut last.memo {
+        Some((mk, q)) => {
+            mk.clear();
+            // copy: not block data (a probe key's values, kept to compare the next probe with)
+            mk.extend_from_slice(key);
+            *q = Probed::Pending;
+        }
+        None => last.memo = Some((key.to_vec(), Probed::Pending)),
+    }
+    Cands::Stream(Stream { view: v, cols, lead, key: k, len: key.len() })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within, stream: bool) -> (Rows<'a>, Cands<'a>) {
     match src {
         Src::In(rel, ix) => {
-            if !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
+            let settings = last.settings();
+            if settings.noted && !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
             if keys.is_empty() { scan_within(Rows::In(rel), 0, rel.len() as u32, within) }
             else if let Some(index) = ix.runs(rel) {
                 // An order answering the key's columns, or leading with some of them (`chain_lead`: every key
@@ -113,7 +131,7 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
                 let found = index.find_at(&rel.rows, rel.k, permuted(&index.cols[..m], at, &mut buf), None, hints);
                 let found = match within {
                     Some((c, lo, hi)) if m == keys.len() && index.cols.get(m) == Some(&c) => {
-                        if probed::on() { probed::note(&format!("{} range", rel.name.get().map_or("?input", String::as_str)), std::iter::once(c)); }
+                        if settings.noted { probed::note(&format!("{} range", rel.name.get().map_or("?input", String::as_str)), std::iter::once(c)); }
                         found.within(&rel.rows, rel.k, c, lo, hi)
                     }
                     _ => found,
@@ -121,6 +139,13 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
                 (Rows::In(rel), Cands::Runs(found))
             }
             else if ix.keyed { let r = rel.keyed_rows(key[ix.lead]); (Rows::In(rel), Cands::Range(r.start, r.end)) }
+            else if ix.composite && let Some(v) = &rel.view && stream && key.len() <= STREAM_KEY && v.streams(&ix.cols) && need != 0 {
+                // A composite probe the view reads as found (a field by its parent and field): streamed by its first
+                // column, the others handed to the source as a hint and checked by the step.
+                // Led by the column the source looks up most cheaply (a field's parent).
+                let lead = (0..ix.cols.len()).min_by(|&a, &b| v.src.lookup_cost(v.cols[ix.cols[a]]).total_cmp(&v.src.lookup_cost(v.cols[ix.cols[b]]))).unwrap_or(0);
+                (Rows::Source(v), stream_probe(v, &ix.cols, lead, key, last))
+            }
             else if ix.composite && let Some(v) = &rel.view {
                 let mut eq = [(0usize, 0i64); MAX_KEY];
                 for (j, &c) in ix.cols.iter().enumerate() { eq[j] = (v.cols[c], key[j]); }
@@ -129,7 +154,7 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
                 // candidate it gives is never read.
                 // `RERAIL_WITHIN_TEST=off` (a measurement aid) probes such a step's rows as before: the
                 // run's setting (decision 0442), not the process's.
-                let test = || rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_WITHIN_TEST").map_or(true, |v| v != "off"));
+                let test = || settings.within_test;
                 if need == 0 && test() && let Some(h) = v.src.holds(&eq[..ix.cols.len()]) {
                     return (Rows::Source(v), Cands::Range(0, u32::from(h)));
                 }
@@ -158,18 +183,7 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
                         }
                         // Read into the step as found: the memo is its key, pending, until `Rows::each` reads it.
                         if stream && key.len() <= STREAM_KEY && v.streams(&ix.cols) {
-                            let mut k = [0i64; STREAM_KEY];
-                            k[..key.len()].copy_from_slice(key);
-                            match &mut last.memo {
-                                Some((mk, q)) => {
-                                    mk.clear();
-                                    // copy: not block data (a probe key's values, kept to compare the next probe with)
-                                    mk.extend_from_slice(key);
-                                    *q = Probed::Pending;
-                                }
-                                None => last.memo = Some((key.to_vec(), Probed::Pending)),
-                            }
-                            return (Rows::Source(v), Cands::Stream(Stream { view: v, cols: &ix.cols, lead: ix.lead, key: k, len: key.len() }));
+                            return (Rows::Source(v), stream_probe(v, &ix.cols, ix.lead, key, last));
                         }
                         let read = v.find_read(&ix.cols, key, ix.lead, need, &mut last.cursor, &mut last.spare);
                         let p = match read {
@@ -198,7 +212,7 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
         }
         Src::FullMulti(r, cols) => {
             let rel = &store.rels[*r];
-            probed::note(&rel.table, cols.iter().copied());
+            if last.settings().noted { probed::note(&rel.table, cols.iter().copied()); }
             (Rows::Comp(rel), rel.probe_at(cols, key, false, hints, within).0)
         }
         Src::Delta(r) | Src::Full(r) => {
@@ -207,7 +221,7 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
             if keys.is_empty() {
                 (Rows::Comp(rel), if delta { Cands::Range(rel.lo as u32, rel.hi as u32) } else { Cands::Range(0, rel.n as u32) })
             } else {
-                if probed::on() { probed::note(&if delta { format!("{}+delta", rel.table) } else { rel.table.clone() }, keys.iter().map(|&(c, _)| c)); }
+                if last.settings().noted { probed::note(&if delta { format!("{}+delta", rel.table) } else { rel.table.clone() }, keys.iter().map(|&(c, _)| c)); }
                 let mut cols = [0usize; MAX_KEY];
                 for (j, &(c, _)) in keys.iter().enumerate() { cols[j] = c; }
                 (Rows::Comp(rel), rel.probe_at(&cols[..keys.len()], key, delta, hints, within).0)
